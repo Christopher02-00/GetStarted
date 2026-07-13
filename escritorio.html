@@ -410,8 +410,10 @@
       <div class="subtabs">
         <div class="subtab active" onclick="setCadastroSub('form', this)">Formulário (link do cliente)</div>
         <div class="subtab" onclick="setCadastroSub('painel', this)">Painel de cadastros</div>
+        <div class="subtab" onclick="setCadastroSub('onboarding', this)">📋 Onboarding em andamento</div>
       </div>
-      <div class="iframeWrap"><iframe id="iframeCadastro" src="cadastro.html"></iframe></div>
+      <div class="iframeWrap" id="cadastroIframeWrap"><iframe id="iframeCadastro" src="cadastro.html"></iframe></div>
+      <div id="onboardingBox" style="display:none;"></div>
     </div>
 
     <!-- GERENCIA -->
@@ -959,6 +961,70 @@
     `).join('');
     cont.innerHTML = html;
   }
+
+  let onboardingProcessos = [];
+  let onboardingAberto = null;
+
+  async function renderOnboarding(){
+    const box = document.getElementById('onboardingBox');
+    const snap = await getDocs(collection(db,'onboarding_processos'));
+    onboardingProcessos = []; snap.forEach(d => onboardingProcessos.push({id:d.id, ...d.data()}));
+    const emAndamento = onboardingProcessos.filter(p => p.status !== 'concluido');
+    if(!emAndamento.length){ box.innerHTML = '<div class="empty">Nenhum onboarding em andamento no momento.</div>'; return; }
+
+    let html = '';
+    emAndamento.forEach(p => {
+      const etapas = Object.values(p.etapas || {});
+      const total = etapas.length;
+      const feitas = etapas.filter(e => e.feito).length;
+      const pct = total ? Math.round((feitas/total)*100) : 0;
+      const aberto = onboardingAberto === p.id;
+      html += `<div class="card">
+        <h2>${esc(p.clienteNome)} <span style="color:var(--muted);font-weight:400;font-size:11px;">${feitas}/${total} etapas</span></h2>
+        <div class="progressoBarra"><div class="fill" style="width:${pct}%;"></div></div>
+        <button class="btn secondary" style="margin-top:10px;" onclick="toggleOnboardingAberto('${p.id}')">${aberto?'Fechar':'Ver etapas'}</button>
+        ${aberto ? renderEtapasOnboarding(p) : ''}
+      </div>`;
+    });
+    box.innerHTML = html;
+  }
+
+  function renderEtapasOnboarding(p){
+    const etapasArr = Object.entries(p.etapas || {}).sort((a,b)=>parseInt(a[0].slice(1))-parseInt(b[0].slice(1)));
+    let html = '<div style="margin-top:14px;">';
+    etapasArr.forEach(([key, et]) => {
+      html += `<div class="itemChecklist ${et.feito?'feito':''}">
+        <input type="checkbox" class="chk" ${et.feito?'checked':''} onchange="toggleEtapaOnboarding('${p.id}','${key}')">
+        <div style="flex:1;">
+          <span class="txt2">${esc(et.texto)}</span>
+          ${et.feito && et.feitoPor ? '<div style="font-size:10px;color:var(--muted);margin-top:2px;">por '+esc(et.feitoPor)+'</div>' : ''}
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+    return html;
+  }
+
+  window.toggleOnboardingAberto = function(id){
+    onboardingAberto = onboardingAberto === id ? null : id;
+    renderOnboarding();
+  };
+
+  window.toggleEtapaOnboarding = async function(processoId, etapaKey){
+    const p = onboardingProcessos.find(x=>x.id===processoId);
+    if(!p) return;
+    const etapa = p.etapas[etapaKey];
+    const novoFeito = !etapa.feito;
+    const quem = usuarioAtual || 'Gerência';
+    p.etapas[etapaKey] = { ...etapa, feito: novoFeito, feitoPor: novoFeito ? quem : '', feitoEm: novoFeito ? new Date().toISOString() : '' };
+    await updateDoc(doc(db,'onboarding_processos', processoId), { etapas: p.etapas });
+    const todasFeitas = Object.values(p.etapas).every(e => e.feito);
+    if(todasFeitas){
+      await updateDoc(doc(db,'onboarding_processos', processoId), { status: 'concluido' });
+      mostrarToast(p.clienteNome + ' — onboarding concluído! 🎉');
+    }
+    renderOnboarding();
+  };
 
   async function renderGerenciaPagamentos(){
     const cont = document.getElementById('gerenciaPagamentos');
@@ -1659,7 +1725,17 @@
   window.setCadastroSub = function(qual, el){
     document.querySelectorAll('#view-cadastro .subtab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    document.getElementById('iframeCadastro').src = qual === 'form' ? 'cadastro.html' : 'cadastros.html';
+    const iframeWrap = document.getElementById('cadastroIframeWrap');
+    const onboardingBox = document.getElementById('onboardingBox');
+    if(qual === 'onboarding'){
+      iframeWrap.style.display = 'none';
+      onboardingBox.style.display = 'block';
+      renderOnboarding();
+    } else {
+      iframeWrap.style.display = 'block';
+      onboardingBox.style.display = 'none';
+      document.getElementById('iframeCadastro').src = qual === 'form' ? 'cadastro.html' : 'cadastros.html';
+    }
   };
 
   window.setGerenciaSub = function(qual, el){

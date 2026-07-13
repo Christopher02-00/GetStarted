@@ -232,6 +232,7 @@
       <div class="label">Ferramentas</div>
       <div class="navitem" onclick="irPara('roteiros', this)"><span class="ico">✍️</span> Central de Roteiros</div>
       <div class="navitem" onclick="irPara('referencias', this)"><span class="ico">🔗</span> Referências</div>
+      <div class="navitem" onclick="irPara('relatorioMensal', this)"><span class="ico">📊</span> Relatório Mensal</div>
       <div class="navitem" onclick="irPara('calendarios', this)"><span class="ico">🗓️</span> Calendários</div>
       <div class="navitem" onclick="irPara('cadastro', this)"><span class="ico">👤</span> Cliente Novo</div>
     </div>
@@ -396,6 +397,16 @@
       <div id="listaReferencias"></div>
     </div>
 
+    <div class="view" id="view-relatorioMensal">
+      <h1>Relatório <span class="y">Mensal</span></h1>
+      <div class="sub">Gerado automaticamente com os dados reais do sistema — pronto pra usar na reunião com o cliente.</div>
+      <div class="card">
+        <div class="field"><label>Cliente</label><select id="relCliente"></select></div>
+        <button class="btn" onclick="gerarRelatorioMensal()">Gerar relatório</button>
+      </div>
+      <div id="relatorioResultado"></div>
+    </div>
+
     <!-- CALENDARIOS -->
     <div class="view" id="view-calendarios">
       <h1>Calendários <span class="y">Editoriais</span></h1>
@@ -509,7 +520,7 @@
     "Chris": { setor: "Direção Geral", atalhos: [{ico:"🔒",nome:"Painel Gerência",view:"gerencia"}] },
     "Amanda": { setor: "Coordenação Geral", atalhos: [{ico:"🔒",nome:"Painel Gerência",view:"gerencia"},{ico:"✅",nome:"Minhas Demandas",view:"minhasDemandas"},{ico:"📋",nome:"Meu Checklist",view:"checklist"}] },
     "Cecília": { setor: "Produção & Agendamento", atalhos: [{ico:"🎥",nome:"Agendamento",view:"agendamento"},{ico:"🗓️",nome:"Calendários",view:"calendarios"},{ico:"✅",nome:"Minhas Demandas",view:"minhasDemandas"},{ico:"📋",nome:"Meu Checklist",view:"checklist"},{ico:"🎬",nome:"Vídeos em Edição",view:"videos"}] },
-    "Gabrielle": { setor: "Estratégia & Criação", atalhos: [{ico:"✍️",nome:"Central de Roteiros",view:"roteiros"},{ico:"🔗",nome:"Referências",view:"referencias"},{ico:"🗓️",nome:"Calendários",view:"calendarios"},{ico:"✅",nome:"Minhas Demandas",view:"minhasDemandas"},{ico:"📋",nome:"Meu Checklist",view:"checklist"}] },
+    "Gabrielle": { setor: "Estratégia & Criação", atalhos: [{ico:"✍️",nome:"Central de Roteiros",view:"roteiros"},{ico:"🔗",nome:"Referências",view:"referencias"},{ico:"📊",nome:"Relatório Mensal",view:"relatorioMensal"},{ico:"🗓️",nome:"Calendários",view:"calendarios"},{ico:"✅",nome:"Minhas Demandas",view:"minhasDemandas"},{ico:"📋",nome:"Meu Checklist",view:"checklist"}] },
     "Yas": { setor: "Artes", atalhos: [{ico:"✅",nome:"Minhas Demandas",view:"minhasDemandas"}] },
     "Helo": { setor: "Edição de Vídeo", atalhos: [{ico:"🎬",nome:"Meus Vídeos",view:"videos"},{ico:"✅",nome:"Minhas Demandas",view:"minhasDemandas"}] },
     "Luís": { setor: "Filmagem", atalhos: [{ico:"🎥",nome:"Minha Agenda",view:"agendamento"},{ico:"🗓️",nome:"Calendários (agenda)",view:"calendarios"},{ico:"✅",nome:"Minhas Demandas",view:"minhasDemandas"}] },
@@ -909,6 +920,76 @@
     html += `</div>`;
     cont.innerHTML = html;
   }
+
+  function popularClientesRelatorio(){
+    const sel = document.getElementById('relCliente');
+    if(!sel) return;
+    sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
+  }
+
+  window.gerarRelatorioMensal = async function(){
+    const sel = document.getElementById('relCliente');
+    const clienteSlug = sel.value;
+    const clienteNome = sel.selectedOptions[0].dataset.nome;
+    const cont = document.getElementById('relatorioResultado');
+    cont.innerHTML = '<div class="card"><div class="desc">Gerando relatório...</div></div>';
+
+    const mesAtual = new Date().toISOString().slice(0,7);
+    const [videosSnap, agSnap, avalSnap, demSnap, calSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')),
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'avaliacoes_clientes')),
+      getDocs(collection(db,'demandas')),
+      getDoc(doc(db,'calendarios', clienteSlug))
+    ]);
+
+    const videos = []; videosSnap.forEach(d=>{ if(d.data().cliente===clienteSlug) videos.push(d.data()); });
+    const videosMes = videos.filter(v => v.data?.startsWith(mesAtual));
+    const videosConcluidos = videosMes.filter(v => v.status === 'concluido').length;
+
+    const agendamentos = []; agSnap.forEach(d=>{ if(d.data().cliente===clienteSlug && d.data().data?.startsWith(mesAtual)) agendamentos.push(d.data()); });
+    const realizadas = agendamentos.filter(a => a.status === 'realizado');
+    const planejado = agendamentos.reduce((s,a)=>s+(a.qtdVideosPlanejados||0),0);
+    const realizado = realizadas.reduce((s,a)=>s+(a.qtdVideosRealizados||0),0);
+
+    const avaliacoes = []; avalSnap.forEach(d=>{ if(d.data().cliente===clienteSlug) avaliacoes.push(d.data()); });
+    avaliacoes.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+    const ultimaAval = avaliacoes[0];
+
+    const capsulas = []; demSnap.forEach(d=>{ if(d.data().titulo?.includes('Protocolo Cápsula') && d.data().titulo?.includes(clienteNome)) capsulas.push(d.data()); });
+
+    let aprovacaoTxt = 'Calendário ainda não iniciado.';
+    if(calSnap.exists()){
+      const items = calSnap.data().items || [];
+      const aprovados = items.filter(i=>i.apr).length;
+      aprovacaoTxt = aprovados + ' de ' + items.length + ' conteúdos aprovados pelo cliente (' + (items.length?Math.round(aprovados/items.length*100):0) + '%)';
+    }
+
+    let cor = 'verde';
+    if(capsulas.length || (ultimaAval && ultimaAval.nota<=3)) cor = 'vermelho';
+    else if(realizado < planejado) cor = 'amarelo';
+
+    cont.innerHTML = `
+      <div class="card">
+        <h2><span class="semaforo ${cor}"></span>${esc(clienteNome)} — ${mesAtual}</h2>
+        <div class="desc">Relatório automático, pronto pra reunião mensal.</div>
+      </div>
+      <div class="painelResumo">
+        <div class="resumoCard"><div class="num">${videosConcluidos}</div><div class="lbl">Vídeos entregues no mês</div></div>
+        <div class="resumoCard"><div class="num">${realizado}/${planejado||'—'}</div><div class="lbl">Gravações realizadas/planejadas</div></div>
+        <div class="resumoCard ${ultimaAval && ultimaAval.nota<=3 ? 'red':'green'}"><div class="num">${ultimaAval ? '⭐'.repeat(ultimaAval.nota) : '—'}</div><div class="lbl">Última avaliação</div></div>
+      </div>
+      <div class="card">
+        <h2>Aprovação do calendário</h2>
+        <div class="desc">${esc(aprovacaoTxt)}</div>
+      </div>
+      ${ultimaAval?.comentario ? `<div class="card"><h2>Comentário do cliente</h2><div class="desc">"${esc(ultimaAval.comentario)}"</div></div>` : ''}
+      <div class="card">
+        <h2>Protocolo Cápsula</h2>
+        <div class="desc">${capsulas.length ? capsulas.length + ' vez(es) recentemente — cliente teve período sem gravar.' : 'Nenhuma ocorrência recente. ✅'}</div>
+      </div>
+    `;
+  };
 
   async function renderSaudeClientes(){
     const cont = document.getElementById('gerenciaSaudeClientes');
@@ -1720,6 +1801,7 @@
     if(nome === 'videos') popularClientesVideo();
     if(nome === 'agendamento'){ popularClientesAgendamento(); renderListaAgendamentos(); verificarQtdHoje(); }
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
+    if(nome === 'relatorioMensal') popularClientesRelatorio();
   };
 
   window.setCadastroSub = function(qual, el){
@@ -1799,7 +1881,7 @@
   }
 
   window.irParaAtalho = function(nomeView){
-    const idx = {inicio:0, minhasDemandas:1, checklist:2, videos:3, agendamento:4, roteiros:5, referencias:6, calendarios:7, cadastro:8, gerencia:9}[nomeView];
+    const idx = {inicio:0, minhasDemandas:1, checklist:2, videos:3, agendamento:4, roteiros:5, referencias:6, relatorioMensal:7, calendarios:8, cadastro:9, gerencia:10}[nomeView];
     const el = document.querySelectorAll('.navitem')[idx];
     if(el) irPara(nomeView, el);
   };

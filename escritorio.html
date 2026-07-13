@@ -299,10 +299,12 @@
         <div class="subtabs">
           <div class="subtab active" onclick="setGerenciaSub('amanda', this)">Painel Operacional (Amanda)</div>
           <div class="subtab" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
+          <div class="subtab" onclick="setGerenciaSub('editarChecklist', this)">Editar Checklists</div>
           <div class="subtab" onclick="setGerenciaSub('chris', this)">Resumo Executivo (Chris)</div>
         </div>
         <div id="gerenciaAmanda"></div>
         <div id="gerenciaVideos" style="display:none;"></div>
+        <div id="gerenciaEditarChecklist" style="display:none;"></div>
         <div id="gerenciaChris" style="display:none;"></div>
       </div>
     </div>
@@ -318,7 +320,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -501,7 +503,7 @@
   }
 
   async function calcularStreak(funcionario){
-    const template = CHECKLIST_TEMPLATES[funcionario]?.["Diário"];
+    const template = templatesEfetivos[funcionario]?.["Diário"];
     if(!template) return 0;
     const totalItens = template.reduce((s,b)=>s+b.itens.length, 0);
     let streak = 0;
@@ -518,11 +520,22 @@
     return streak;
   }
 
+  let templatesEfetivos = {};
+
+  async function obterTemplatesEfetivos(funcionario){
+    const customSnap = await getDoc(doc(db,'checklist_templates_custom', funcionario));
+    if(customSnap.exists() && customSnap.data().periodos){
+      return customSnap.data().periodos;
+    }
+    return CHECKLIST_TEMPLATES[funcionario] || null;
+  }
+
   window.abrirChecklist = async function(){
     const sub = document.getElementById('checklistSub');
     const cont = document.getElementById('checklistConteudo');
     if(!usuarioAtual){ sub.textContent = 'Selecione seu nome na tela de Início primeiro.'; cont.innerHTML=''; return; }
-    const templates = CHECKLIST_TEMPLATES[usuarioAtual];
+    const templates = await obterTemplatesEfetivos(usuarioAtual);
+    templatesEfetivos[usuarioAtual] = templates;
     if(!templates){
       sub.textContent = 'Sua função ainda não tem checklist digital configurado.';
       cont.innerHTML = '<div class="card comingsoon"><div class="desc">Vamos configurar em breve.</div></div>';
@@ -547,7 +560,7 @@
   };
 
   function renderChecklist(){
-    const template = CHECKLIST_TEMPLATES[usuarioAtual]?.[checklistPeriodoAtual];
+    const template = templatesEfetivos[usuarioAtual]?.[checklistPeriodoAtual];
     const cont = document.getElementById('checklistItens');
     if(!template || !cont) return;
     const totalItens = template.reduce((s,b)=>s+b.itens.length, 0);
@@ -744,6 +757,107 @@
     renderGerenciaVideos();
   };
 
+  let editorFuncionarioAtual = '';
+  let editorTemplateAtual = {};
+
+  function renderEditorChecklistInicial(){
+    const cont = document.getElementById('gerenciaEditarChecklist');
+    cont.innerHTML = `
+      <div class="card">
+        <h2>Editar checklist de um funcionário</h2>
+        <div class="desc">Ajuste os blocos e itens com sua expertise — a automação continua funcionando do mesmo jeito por baixo.</div>
+        <div class="field"><label>Funcionário</label>
+          <select id="editorFuncSelect" onchange="selecionarFuncionarioEditor()">
+            <option value="">Selecione...</option>
+            ${Object.keys(CHECKLIST_TEMPLATES).map(f=>`<option value="${f}">${f}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div id="editorTemplateBox"></div>
+    `;
+  }
+
+  window.selecionarFuncionarioEditor = async function(){
+    editorFuncionarioAtual = document.getElementById('editorFuncSelect').value;
+    if(!editorFuncionarioAtual){ document.getElementById('editorTemplateBox').innerHTML=''; return; }
+    const templates = await obterTemplatesEfetivos(editorFuncionarioAtual);
+    editorTemplateAtual = JSON.parse(JSON.stringify(templates || {}));
+    renderEditorTemplate();
+  };
+
+  function gerarIdItem(){
+    return 'custom_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  }
+
+  function renderEditorTemplate(){
+    const box = document.getElementById('editorTemplateBox');
+    let html = '';
+    Object.keys(editorTemplateAtual).forEach(periodo => {
+      html += `<div class="card"><h2>${esc(periodo)}</h2>`;
+      editorTemplateAtual[periodo].forEach((bloco, bIdx) => {
+        html += `<div class="blocoChecklist">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+            <input type="text" value="${esc(bloco.bloco)}" style="flex:1;background:var(--deep);border:1px solid var(--line);border-radius:7px;color:#fff;padding:6px 10px;font-size:12.5px;font-weight:800;" onchange="editorAtualizarBloco('${periodo}',${bIdx},this.value)">
+            <button class="btn red" style="width:auto;padding:6px 12px;font-size:11px;" onclick="editorRemoverBloco('${periodo}',${bIdx})">Remover bloco</button>
+          </div>`;
+        bloco.itens.forEach((it, iIdx) => {
+          html += `<div class="itemChecklist">
+            <input type="checkbox" class="chk" ${it.critico?'checked':''} onchange="editorToggleCritico('${periodo}',${bIdx},${iIdx})" title="Marcar como crítico (pede prova)">
+            <input type="text" value="${esc(it.texto)}" style="flex:1;background:var(--deep);border:1px solid var(--line);border-radius:7px;color:#fff;padding:7px 10px;font-size:12.5px;" onchange="editorAtualizarItemTexto('${periodo}',${bIdx},${iIdx},this.value)">
+            <button class="btn red" style="width:auto;padding:6px 10px;font-size:10px;" onclick="editorRemoverItem('${periodo}',${bIdx},${iIdx})">✕</button>
+          </div>`;
+        });
+        html += `<button class="btn secondary" style="margin-top:4px;" onclick="editorAdicionarItem('${periodo}',${bIdx})">+ Adicionar item</button>
+        </div>`;
+      });
+      html += `<button class="btn secondary" onclick="editorAdicionarBloco('${periodo}')">+ Adicionar bloco em ${esc(periodo)}</button>`;
+      html += `</div>`;
+    });
+    html += `<div class="btnrow">
+      <button class="btn secondary" onclick="restaurarPadraoChecklist()">Restaurar padrão original</button>
+      <button class="btn green" onclick="salvarTemplateEditado()">Salvar alterações</button>
+    </div>`;
+    box.innerHTML = html;
+  }
+
+  window.editorAtualizarBloco = function(periodo, bIdx, valor){
+    editorTemplateAtual[periodo][bIdx].bloco = valor;
+  };
+  window.editorAtualizarItemTexto = function(periodo, bIdx, iIdx, valor){
+    editorTemplateAtual[periodo][bIdx].itens[iIdx].texto = valor;
+  };
+  window.editorToggleCritico = function(periodo, bIdx, iIdx){
+    editorTemplateAtual[periodo][bIdx].itens[iIdx].critico = !editorTemplateAtual[periodo][bIdx].itens[iIdx].critico;
+  };
+  window.editorRemoverItem = function(periodo, bIdx, iIdx){
+    editorTemplateAtual[periodo][bIdx].itens.splice(iIdx,1);
+    renderEditorTemplate();
+  };
+  window.editorAdicionarItem = function(periodo, bIdx){
+    editorTemplateAtual[periodo][bIdx].itens.push({ id: gerarIdItem(), texto: 'Novo item', critico:false });
+    renderEditorTemplate();
+  };
+  window.editorRemoverBloco = function(periodo, bIdx){
+    editorTemplateAtual[periodo].splice(bIdx,1);
+    renderEditorTemplate();
+  };
+  window.editorAdicionarBloco = function(periodo){
+    editorTemplateAtual[periodo].push({ bloco: 'Novo bloco', itens: [{ id: gerarIdItem(), texto: 'Novo item', critico:false }] });
+    renderEditorTemplate();
+  };
+
+  window.salvarTemplateEditado = async function(){
+    await setDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual), { periodos: editorTemplateAtual, editadoEm: new Date().toISOString() });
+    mostrarToast('Checklist de ' + editorFuncionarioAtual + ' atualizado!');
+  };
+
+  window.restaurarPadraoChecklist = async function(){
+    await deleteDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual));
+    editorTemplateAtual = JSON.parse(JSON.stringify(CHECKLIST_TEMPLATES[editorFuncionarioAtual] || {}));
+    renderEditorTemplate();
+    mostrarToast('Restaurado pro padrão original.');
+  };
+
   let toastTimeout;
   window.mostrarToast = function(mensagem, tipo){
     const t = document.getElementById('toast');
@@ -779,8 +893,10 @@
     el.classList.add('active');
     document.getElementById('gerenciaAmanda').style.display = qual==='amanda' ? 'block' : 'none';
     document.getElementById('gerenciaVideos').style.display = qual==='videos' ? 'block' : 'none';
+    document.getElementById('gerenciaEditarChecklist').style.display = qual==='editarChecklist' ? 'block' : 'none';
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     if(qual==='videos') renderGerenciaVideos();
+    if(qual==='editarChecklist') renderEditorChecklistInicial();
   };
 
   function calcularUrgencia(demanda){

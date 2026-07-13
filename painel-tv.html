@@ -64,6 +64,12 @@
   .funcionarioMesBanner .troco{font-size:32px;}
   .funcionarioMesBanner .txt{font-size:16px;font-weight:800;}
   .funcionarioMesBanner .txt span{display:block;font-size:11.5px;font-weight:400;color:var(--muted);margin-top:2px;}
+
+  .leaderboard{background:var(--paper);border:2px solid var(--yellow);border-radius:16px;padding:18px 22px;margin-bottom:20px;}
+  .leaderboard h2{font-size:13px;font-weight:800;color:var(--yellow2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:12px;}
+  .lbLinha{margin-bottom:10px;}
+  .lbTopo{display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:3px;}
+  .lbDica{font-size:10px;color:var(--muted);margin-top:2px;}
 </style>
 </head>
 <body>
@@ -84,6 +90,8 @@
   </div>
 
   <div class="semaforoTopo" id="semaforoTopo"></div>
+
+  <div class="leaderboard" id="leaderboard"></div>
 
   <div class="grid">
     <div class="painelCard">
@@ -123,7 +131,8 @@
   const SENHA = "Cg@102030";
   const EDITORES_GERAL = ["Helo","Cecília","João Victor"];
   const EDITORES_CAPACIDADE = { "Helo":5, "Cecília":2, "João Victor":3 };
-  const CHECKLIST_DIARIO_TOTAL = { "Cecília": 13, "Gabrielle": 8 };
+  const CHECKLIST_DIARIO_TOTAL = { "Cecília": 13, "Gabrielle": 9 };
+  const FUNCIONARIOS_ELEGIVEIS = ["Cecília","Gabrielle","Amanda","Helo","João Victor","Yas","Nathan","Luís"];
 
   function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
@@ -163,6 +172,7 @@
     renderStatsDemandas(demandas);
     renderBarrasVideos(videos);
     await renderChecklistHoje();
+    await renderLeaderboard(demandas, videos);
   }
 
   function renderSemaforo(demandas){
@@ -212,6 +222,58 @@
       html += `<div class="barraLinha"><div class="nomeBarra">${esc(nome)}</div><div class="trilho"><div class="fill" style="width:${pct}%;"></div></div><div class="valorBarra">${feitos}/${total}</div></div>`;
     }
     document.getElementById('barrasChecklist').innerHTML = html;
+  }
+
+  function calcularUrgenciaDemandaSimples(d){
+    if(d.status !== 'pendente') return 'normal';
+    const agora = new Date();
+    const prazo = new Date(d.prazoData + 'T' + (d.prazoHora || '19:00'));
+    return agora > prazo ? 'atrasado' : 'normal';
+  }
+
+  function gerarDicaMelhoriaTv(r){
+    const dicas = [];
+    if(r.atrasadasAtual > 0) dicas.push('reduzir atrasos (' + r.atrasadasAtual + ')');
+    if(r.checklistPct !== null && r.checklistPct < 80) dicas.push('checklist em ' + r.checklistPct + '%');
+    if(r.aprovadas === 0) dicas.push('concluir demandas');
+    return dicas.length ? dicas.join(' · ') : 'Sem pendências — ótimo ritmo';
+  }
+
+  async function calcularRankingTv(demandas, videos){
+    const mesAtual = new Date().toISOString().slice(0,7);
+    const ranking = [];
+    for(const nome of FUNCIONARIOS_ELEGIVEIS){
+      const minhasDemandas = demandas.filter(d => d.destinatario === nome);
+      const aprovadas = minhasDemandas.filter(d => d.status === 'aprovada').length;
+      const atrasadasAtual = minhasDemandas.filter(d => d.status === 'pendente' && calcularUrgenciaDemandaSimples(d) === 'atrasado').length;
+      const videosConcluidos = videos.filter(v => v.editorAtribuido === nome && v.status === 'concluido').length;
+
+      let checklistPct = null;
+      if(CHECKLIST_DIARIO_TOTAL[nome]){
+        const hoje = new Date().toISOString().slice(0,10);
+        const snap = await getDoc(doc(db,'checklist_execucoes', nome+'_diario_'+hoje));
+        const feitos = snap.exists() ? Object.keys(snap.data().itensFeitos||{}).length : 0;
+        checklistPct = Math.round((feitos/CHECKLIST_DIARIO_TOTAL[nome])*100);
+      }
+      const pontos = (aprovadas*10) - (atrasadasAtual*15) + (videosConcluidos*8) + ((checklistPct||0)*0.5);
+      ranking.push({ nome, aprovadas, atrasadasAtual, videosConcluidos, checklistPct, pontos: Math.round(pontos) });
+    }
+    return ranking.sort((a,b)=>b.pontos-a.pontos);
+  }
+
+  async function renderLeaderboard(demandas, videos){
+    const ranking = await calcularRankingTv(demandas, videos);
+    const maiorPontos = Math.max(...ranking.map(r=>r.pontos), 1);
+    let html = '<h2>🏆 Corrida do Funcionário do Mês</h2>';
+    ranking.forEach((r,i) => {
+      const pct = Math.max(5, Math.round((Math.max(r.pontos,0)/maiorPontos)*100));
+      html += `<div class="lbLinha">
+        <div class="lbTopo"><span>${i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':''}${esc(r.nome)}</span><span>${r.pontos} pts</span></div>
+        <div class="barraLinha" style="margin-bottom:2px;"><div class="trilho"><div class="fill" style="width:${pct}%;"></div></div></div>
+        <div class="lbDica">${esc(gerarDicaMelhoriaTv(r))}</div>
+      </div>`;
+    });
+    document.getElementById('leaderboard').innerHTML = html;
   }
 
   function iniciarPainel(){

@@ -456,6 +456,7 @@
         <div class="subtabs">
           <div class="subtab active" onclick="setGerenciaSub('amanda', this)">Painel Operacional (Amanda)</div>
           <div class="subtab" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
+          <div class="subtab" onclick="setGerenciaSub('aprovarVideos', this)">✅ Aprovar Vídeos</div>
           <div class="subtab" onclick="setGerenciaSub('pagamentos', this)">Pagamentos Extras</div>
           <div class="subtab" onclick="setGerenciaSub('avaliacoes', this)">Avaliações Clientes</div>
           <div class="subtab" onclick="setGerenciaSub('saudeClientes', this)">🚦 Saúde dos Clientes</div>
@@ -467,6 +468,7 @@
         </div>
         <div id="gerenciaAmanda"></div>
         <div id="gerenciaVideos" style="display:none;"></div>
+        <div id="gerenciaAprovarVideos" style="display:none;"></div>
         <div id="gerenciaPagamentos" style="display:none;"></div>
         <div id="gerenciaAvaliacoes" style="display:none;"></div>
         <div id="gerenciaSaudeClientes" style="display:none;"></div>
@@ -826,7 +828,7 @@
     const contagem = {}; EDITORES_GERAL.forEach(e => contagem[e]=0);
     snap.forEach(d => {
       const v = d.data();
-      if(v.status !== 'concluido' && contagem[v.editorAtribuido] !== undefined) contagem[v.editorAtribuido]++;
+      if(v.status !== 'aprovado' && contagem[v.editorAtribuido] !== undefined) contagem[v.editorAtribuido]++;
     });
     return contagem;
   }
@@ -883,32 +885,79 @@
     if(!usuarioAtual){ cont.innerHTML = '<div class="empty">Selecione seu nome na tela de Início primeiro.</div>'; return; }
     const snap = await getDocs(collection(db,'videos_producao'));
     const meus = [];
-    snap.forEach(d => { if(d.data().editorAtribuido === usuarioAtual && d.data().status !== 'concluido') meus.push({id:d.id, ...d.data()}); });
-    if(!meus.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo pendente pra você agora. 🎉</div>'; return; }
-    cont.innerHTML = meus.map(v => `
+    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status !== 'aprovado' && v.status !== 'aguardando_aprovacao') meus.push({id:d.id, ...v}); });
+    const aguardando = [];
+    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_aprovacao') aguardando.push({id:d.id, ...v}); });
+
+    let html = '';
+    if(aguardando.length){
+      html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardando.length} vídeo(s) aguardando aprovação do Chris/Amanda<span>Você já enviou, só aguardar.</span></div></div>`;
+      html += aguardando.map(v => `<div class="item"><div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div><div class="meta">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">link enviado</a></div></div>`).join('');
+    }
+
+    if(!meus.length && !aguardando.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo pendente pra você agora. 🎉</div>'; return; }
+    if(!meus.length){ cont.innerHTML = html; return; }
+
+    html += meus.map(v => `
       <div class="item" id="video_${v.id}">
         <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
         <div class="meta">${v.observacao ? '📝 ' + esc(v.observacao) : ''}</div>
-        <div class="field" style="margin-top:10px;"><input type="text" id="link_${v.id}" placeholder="Cola o link do vídeo pronto aqui"></div>
-        <button class="btn green" onclick="concluirVideo('${v.id}')">✅ Marcar como concluído</button>
+        ${v.status === 'correcao' ? '<div class="avisoBanner" style="border-color:var(--red);margin-top:8px;"><div class="icone">⚠️</div><div class="texto">Precisa de ajuste<span>'+esc(v.correcao||'')+'</span></div></div>' : ''}
+        <div class="field" style="margin-top:10px;"><input type="text" id="link_${v.id}" placeholder="Cola o link do vídeo pronto no Drive"></div>
+        <button class="btn green" onclick="enviarVideoParaAprovacao('${v.id}')">📤 Enviar pra aprovação</button>
       </div>
-    `).join('');
+    `).join('') + html;
+    cont.innerHTML = html;
   };
 
-  window.concluirVideo = async function(id){
+  window.enviarVideoParaAprovacao = async function(id){
     const link = document.getElementById('link_'+id).value.trim();
-    if(!link){ mostrarToast('Cola o link do vídeo antes de concluir.', 'erro'); return; }
-    await updateDoc(doc(db,'videos_producao', id), { status:'concluido', linkFinalizado: link, concluidoEm: serverTimestamp() });
-    mostrarToast('Vídeo marcado como concluído!');
+    if(!link){ mostrarToast('Cola o link do vídeo antes de enviar.', 'erro'); return; }
+    await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_aprovacao', linkFinalizado: link, enviadoEm: new Date().toISOString() });
+    mostrarToast('Vídeo enviado pra aprovação!');
     renderMeusVideos();
+  };
+
+
+  async function renderAprovacaoVideos(){
+    const cont = document.getElementById('gerenciaAprovarVideos');
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const pendentes = []; snap.forEach(d => { const v=d.data(); if(v.status==='aguardando_aprovacao') pendentes.push({id:d.id, ...v}); });
+    if(!pendentes.length){ cont.innerHTML = '<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="empty">Nenhum vídeo aguardando aprovação agora.</div></div>'; return; }
+    let html = `<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="desc">${pendentes.length} vídeo(s) aguardando revisão.</div></div>`;
+    pendentes.forEach(v => {
+      html += `<div class="item">
+        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${v.data}</div></div>
+        <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
+        <div class="btnrow" style="margin-top:10px;">
+          <button class="btn red" onclick="rejeitarVideoComCorrecao('${v.id}')">Pedir ajuste</button>
+          <button class="btn green" onclick="aprovarVideo('${v.id}')">Aprovar</button>
+        </div>
+      </div>`;
+    });
+    cont.innerHTML = html;
+  }
+
+  window.aprovarVideo = async function(id){
+    await updateDoc(doc(db,'videos_producao', id), { status:'aprovado', aprovadoEm: new Date().toISOString() });
+    mostrarToast('Vídeo aprovado!');
+    renderAprovacaoVideos();
+  };
+
+  window.rejeitarVideoComCorrecao = async function(id){
+    const motivo = prompt('O que precisa ser ajustado nesse vídeo?');
+    if(!motivo) return;
+    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo });
+    mostrarToast('Enviado de volta pro editor com a correção.');
+    renderAprovacaoVideos();
   };
 
   async function renderGerenciaVideos(){
     const cont = document.getElementById('gerenciaVideos');
     const snap = await getDocs(collection(db,'videos_producao'));
     const todos = []; snap.forEach(d => todos.push({id:d.id, ...d.data()}));
-    const abertos = todos.filter(v => v.status !== 'concluido');
-    const concluidos = todos.filter(v => v.status === 'concluido');
+    const abertos = todos.filter(v => v.status !== 'aprovado');
+    const concluidos = todos.filter(v => v.status === 'aprovado');
 
     let html = `<div class="painelResumo">`;
     EDITORES_GERAL.forEach(ed => {
@@ -928,7 +977,7 @@
             <option value="">Mudar pra...</option>
             ${EDITORES_GERAL.filter(e=>e!==v.editorAtribuido).map(e=>`<option value="${e}">${e}</option>`).join('')}
           </select>
-          ${v.status==='concluido' ? '<span class="selo aprovada">Concluído</span>' : '<span class="selo pendente">Em edição</span>'}
+          ${v.status==='aprovado' ? '<span class="selo aprovada">Aprovado</span>' : v.status==='aguardando_aprovacao' ? '<span class="selo aguardando">Aguardando aprovação</span>' : v.status==='correcao' ? '<span class="selo atrasado">Precisa ajuste</span>' : '<span class="selo pendente">Em edição</span>'}
         </div>
       </div>`;
     });
@@ -975,7 +1024,7 @@
     ]);
 
     const eventos = [];
-    videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteSlug) eventos.push({ data: v.data, tipo:'video', icone:'🎬', texto: v.titulo + ' — ' + (v.status==='concluido'?'concluído':'em edição') + ' (' + v.editorAtribuido + ')' }); });
+    videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteSlug) eventos.push({ data: v.data, tipo:'video', icone:'🎬', texto: v.titulo + ' — ' + (v.status==='aprovado'?'aprovado':v.status==='aguardando_aprovacao'?'aguardando aprovação':v.status==='correcao'?'precisa ajuste':'em edição') + ' (' + v.editorAtribuido + ')' }); });
     agSnap.forEach(d => { const a=d.data(); if(a.cliente===clienteSlug) eventos.push({ data: a.data, tipo:'gravacao', icone:'🎥', texto: 'Gravação ' + a.status + (a.qtdVideosRealizados?' — '+a.qtdVideosRealizados+' vídeo(s)':'') }); });
     avalSnap.forEach(d => { const av=d.data(); if(av.cliente===clienteSlug) eventos.push({ data: (av.criadoEm?.seconds ? new Date(av.criadoEm.seconds*1000).toISOString().slice(0,10) : ''), tipo:'avaliacao', icone:'⭐', texto: 'Avaliação: ' + '⭐'.repeat(av.nota) + (av.comentario ? ' — "'+av.comentario+'"' : '') }); });
     demSnap.forEach(d => { const dem=d.data(); if(dem.titulo?.includes(clienteNome)) eventos.push({ data: dem.prazoData, tipo:'demanda', icone: dem.titulo.includes('Cápsula')?'🥶':'📋', texto: dem.titulo + ' (' + dem.status + ')' }); });
@@ -1011,7 +1060,7 @@
 
     const videos = []; videosSnap.forEach(d=>{ if(d.data().cliente===clienteSlug) videos.push(d.data()); });
     const videosMes = videos.filter(v => v.data?.startsWith(mesAtual));
-    const videosConcluidos = videosMes.filter(v => v.status === 'concluido').length;
+    const videosConcluidos = videosMes.filter(v => v.status === 'aprovado').length;
 
     const agendamentos = []; agSnap.forEach(d=>{ if(d.data().cliente===clienteSlug && d.data().data?.startsWith(mesAtual)) agendamentos.push(d.data()); });
     const realizadas = agendamentos.filter(a => a.status === 'realizado');
@@ -1884,7 +1933,7 @@
       const minhasDemandas = demandas.filter(d => d.destinatario === nome);
       const aprovadas = minhasDemandas.filter(d => d.status === 'aprovada').length;
       const atrasadasAtual = minhasDemandas.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado').length;
-      const videosConcluidos = videos.filter(v => v.editorAtribuido === nome && v.status === 'concluido').length;
+      const videosConcluidos = videos.filter(v => v.editorAtribuido === nome && v.status === 'aprovado').length;
 
       let checklistPct = null;
       const template = CHECKLIST_TEMPLATES[nome]?.["Diário"];
@@ -2026,6 +2075,7 @@
     el.classList.add('active');
     document.getElementById('gerenciaAmanda').style.display = qual==='amanda' ? 'block' : 'none';
     document.getElementById('gerenciaVideos').style.display = qual==='videos' ? 'block' : 'none';
+    document.getElementById('gerenciaAprovarVideos').style.display = qual==='aprovarVideos' ? 'block' : 'none';
     document.getElementById('gerenciaPagamentos').style.display = qual==='pagamentos' ? 'block' : 'none';
     document.getElementById('gerenciaAvaliacoes').style.display = qual==='avaliacoes' ? 'block' : 'none';
     document.getElementById('gerenciaSaudeClientes').style.display = qual==='saudeClientes' ? 'block' : 'none';
@@ -2034,6 +2084,7 @@
     document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     if(qual==='videos') renderGerenciaVideos();
+    if(qual==='aprovarVideos') renderAprovacaoVideos();
     if(qual==='pagamentos') renderGerenciaPagamentos();
     if(qual==='avaliacoes') renderGerenciaAvaliacoes();
     if(qual==='saudeClientes') renderGerenciaSaudeClientes();

@@ -217,10 +217,7 @@
       </div>
       <div id="setorAtalhos"></div>
       <div id="avisoInicio"></div>
-      <div class="card comingsoon">
-        <h2>🏆 Funcionário do mês <span class="tagsoon">em breve</span></h2>
-        <div class="desc">Assim que o módulo de metas estiver ligado, o banner do funcionário do mês aparece fixo aqui.</div>
-      </div>
+      <div id="funcionarioMesInicioBox"></div>
     </div>
 
     <!-- MINHAS DEMANDAS -->
@@ -369,11 +366,13 @@
           <div class="subtab active" onclick="setGerenciaSub('amanda', this)">Painel Operacional (Amanda)</div>
           <div class="subtab" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
           <div class="subtab" onclick="setGerenciaSub('editarChecklist', this)">Editar Checklists</div>
+          <div class="subtab" onclick="setGerenciaSub('funcionarioMes', this)">Funcionário do Mês</div>
           <div class="subtab" onclick="setGerenciaSub('chris', this)">Resumo Executivo (Chris)</div>
         </div>
         <div id="gerenciaAmanda"></div>
         <div id="gerenciaVideos" style="display:none;"></div>
         <div id="gerenciaEditarChecklist" style="display:none;"></div>
+        <div id="gerenciaFuncionarioMes" style="display:none;"></div>
         <div id="gerenciaChris" style="display:none;"></div>
       </div>
     </div>
@@ -1170,6 +1169,114 @@
     `).join('');
   };
 
+  const FUNCIONARIOS_ELEGIVEIS = ["Cecília","Gabrielle","Amanda","Helo","João Victor","Yas","Nathan","Luís"];
+
+  async function calcularRankingMes(){
+    const mesAtual = new Date().toISOString().slice(0,7);
+    const [demandasSnap, videosSnap] = await Promise.all([
+      getDocs(collection(db,'demandas')),
+      getDocs(collection(db,'videos_producao'))
+    ]);
+    const demandas = []; demandasSnap.forEach(d => demandas.push(d.data()));
+    const videos = []; videosSnap.forEach(d => videos.push(d.data()));
+
+    const ranking = [];
+    for(const nome of FUNCIONARIOS_ELEGIVEIS){
+      const minhasDemandas = demandas.filter(d => d.destinatario === nome);
+      const aprovadas = minhasDemandas.filter(d => d.status === 'aprovada').length;
+      const atrasadasAtual = minhasDemandas.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado').length;
+      const videosConcluidos = videos.filter(v => v.editorAtribuido === nome && v.status === 'concluido').length;
+
+      let checklistPct = null;
+      const template = CHECKLIST_TEMPLATES[nome]?.["Diário"];
+      if(template){
+        const totalItens = template.reduce((s,b)=>s+b.itens.length,0);
+        let diasComDados = 0, somaPct = 0;
+        const hoje = new Date();
+        for(let i=0;i<30;i++){
+          const d = new Date(hoje); d.setDate(d.getDate()-i);
+          if(!d.toISOString().slice(0,7).startsWith(mesAtual)) continue;
+          const chave = nome+'_diario_'+d.toISOString().slice(0,10);
+          const snap = await getDoc(doc(db,'checklist_execucoes', chave));
+          if(snap.exists()){
+            diasComDados++;
+            somaPct += (Object.keys(snap.data().itensFeitos||{}).length / totalItens);
+          }
+        }
+        checklistPct = diasComDados ? Math.round((somaPct/diasComDados)*100) : 0;
+      }
+
+      const pontos = (aprovadas*10) - (atrasadasAtual*15) + (videosConcluidos*8) + ((checklistPct||0)*0.5);
+      ranking.push({ nome, aprovadas, atrasadasAtual, videosConcluidos, checklistPct, pontos: Math.round(pontos) });
+    }
+    return ranking.sort((a,b)=>b.pontos-a.pontos);
+  }
+
+  async function renderFuncionarioMesPainel(){
+    const cont = document.getElementById('gerenciaFuncionarioMes');
+    const mesAtual = new Date().toISOString().slice(0,7);
+    const atualSnap = await getDoc(doc(db,'funcionario_do_mes', mesAtual));
+    const jaAprovado = atualSnap.exists() && atualSnap.data().status === 'aprovado';
+
+    cont.innerHTML = `<div class="card"><div class="desc">Calculando ranking do mês...</div></div>`;
+    const ranking = await calcularRankingMes();
+
+    let html = '';
+    if(jaAprovado){
+      html += `<div class="funcionarioMesBanner" style="margin-bottom:18px;"><div class="troco">🏆</div><div class="txt">${esc(atualSnap.data().nome)} é o funcionário do mês oficial<span>Aprovado em ${new Date(atualSnap.data().aprovadoEm).toLocaleDateString('pt-BR')}</span></div></div>`;
+    }
+
+    html += `<div class="card"><h2>Ranking do mês (${mesAtual})</h2><div class="desc">Peso: demanda aprovada +10 · atraso atual -15 · vídeo concluído +8 · checklist diário até +50 (0.5 por %)</div>`;
+    ranking.forEach((r, i) => {
+      html += `<div class="item">
+        <div class="top"><div class="nome">${i===0?'🥇 ':''}${esc(r.nome)}</div><div class="meta">${r.pontos} pontos</div></div>
+        <div class="meta">✅ ${r.aprovadas} aprovadas · ⚠️ ${r.atrasadasAtual} atrasadas agora · 🎬 ${r.videosConcluidos} vídeos concluídos ${r.checklistPct!==null ? '· 📋 '+r.checklistPct+'% checklist' : ''}</div>
+      </div>`;
+    });
+    html += `</div>`;
+
+    if(!jaAprovado && ranking.length){
+      html += `<div class="card">
+        <h2>Sugestão do sistema: ${esc(ranking[0].nome)}</h2>
+        <div class="desc">A decisão final é sua — confira os números acima antes de confirmar.</div>
+        <button class="btn green" onclick="aprovarFuncionarioMes('${ranking[0].nome}')">Aprovar ${esc(ranking[0].nome)} como funcionário do mês</button>
+      </div>
+      <div class="card">
+        <h2>Ou escolher outra pessoa</h2>
+        <select id="escolhaManualFuncMes">${FUNCIONARIOS_ELEGIVEIS.map(f=>`<option value="${f}">${f}</option>`).join('')}</select>
+        <button class="btn secondary" style="margin-top:10px;" onclick="aprovarFuncionarioMesManual()">Aprovar escolha manual</button>
+      </div>`;
+    }
+
+    cont.innerHTML = html;
+  }
+
+  window.aprovarFuncionarioMes = async function(nome){
+    const mesAtual = new Date().toISOString().slice(0,7);
+    await setDoc(doc(db,'funcionario_do_mes', mesAtual), {
+      nome, status: 'aprovado', aprovadoEm: new Date().toISOString()
+    });
+    mostrarToast(nome + ' aprovado como funcionário do mês! 🏆');
+    renderFuncionarioMesPainel();
+  };
+
+  window.aprovarFuncionarioMesManual = async function(){
+    const nome = document.getElementById('escolhaManualFuncMes').value;
+    await window.aprovarFuncionarioMes(nome);
+  };
+
+  async function renderFuncionarioMesInicio(){
+    const mesAtual = new Date().toISOString().slice(0,7);
+    const snap = await getDoc(doc(db,'funcionario_do_mes', mesAtual));
+    const box = document.getElementById('funcionarioMesInicioBox');
+    if(!box) return;
+    if(snap.exists() && snap.data().status === 'aprovado'){
+      box.innerHTML = `<div class="funcionarioMesBanner"><div class="troco">🏆</div><div class="txt">Funcionário do mês: ${esc(snap.data().nome)}<span>Parabéns pela dedicação!</span></div></div>`;
+    } else {
+      box.innerHTML = `<div class="card comingsoon"><h2>🏆 Funcionário do mês</h2><div class="desc">Ainda não definido esse mês — a gerência decide em breve.</div></div>`;
+    }
+  }
+
   let toastTimeout;
   window.mostrarToast = function(mensagem, tipo){
     const t = document.getElementById('toast');
@@ -1208,9 +1315,11 @@
     document.getElementById('gerenciaAmanda').style.display = qual==='amanda' ? 'block' : 'none';
     document.getElementById('gerenciaVideos').style.display = qual==='videos' ? 'block' : 'none';
     document.getElementById('gerenciaEditarChecklist').style.display = qual==='editarChecklist' ? 'block' : 'none';
+    document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     if(qual==='videos') renderGerenciaVideos();
     if(qual==='editarChecklist') renderEditorChecklistInicial();
+    if(qual==='funcionarioMes') renderFuncionarioMesPainel();
   };
 
   function calcularUrgencia(demanda){
@@ -1506,6 +1615,8 @@
     } catch(err){ mostrarToast('Erro: ' + err.message, 'erro'); }
     btn.disabled = false; btn.textContent = 'Criar demanda';
   };
+
+  renderFuncionarioMesInicio();
 </script>
 </body>
 </html>

@@ -399,12 +399,17 @@
 
     <div class="view" id="view-relatorioMensal">
       <h1>Relatório <span class="y">Mensal</span></h1>
-      <div class="sub">Gerado automaticamente com os dados reais do sistema — pronto pra usar na reunião com o cliente.</div>
+      <div class="sub">Dados reais do sistema — pronto pra usar na reunião com o cliente.</div>
+      <div class="subtabs">
+        <div class="subtab active" onclick="setRelatorioSub('mensal', this)">Relatório do Mês</div>
+        <div class="subtab" onclick="setRelatorioSub('timeline', this)">Timeline Completa</div>
+      </div>
       <div class="card">
-        <div class="field"><label>Cliente</label><select id="relCliente"></select></div>
-        <button class="btn" onclick="gerarRelatorioMensal()">Gerar relatório</button>
+        <div class="field"><label>Cliente</label><select id="relCliente" onchange="relClienteMudou()"></select></div>
+        <button class="btn" id="btnGerarRelatorio" onclick="executarAcaoRelatorio()">Gerar relatório</button>
       </div>
       <div id="relatorioResultado"></div>
+      <div id="timelineResultado" style="display:none;"></div>
     </div>
 
     <!-- CALENDARIOS -->
@@ -445,6 +450,7 @@
           <div class="subtab" onclick="setGerenciaSub('pagamentos', this)">Pagamentos Extras</div>
           <div class="subtab" onclick="setGerenciaSub('avaliacoes', this)">Avaliações Clientes</div>
           <div class="subtab" onclick="setGerenciaSub('saudeClientes', this)">🚦 Saúde dos Clientes</div>
+          <div class="subtab" onclick="setGerenciaSub('ausencias', this)">🏖️ Modo Ausência</div>
           <div class="subtab" onclick="setGerenciaSub('saudeClientes', this)">Saúde dos Clientes</div>
           <div class="subtab" onclick="setGerenciaSub('editarChecklist', this)">Editar Checklists</div>
           <div class="subtab" onclick="setGerenciaSub('funcionarioMes', this)">Funcionário do Mês</div>
@@ -455,7 +461,7 @@
         <div id="gerenciaPagamentos" style="display:none;"></div>
         <div id="gerenciaAvaliacoes" style="display:none;"></div>
         <div id="gerenciaSaudeClientes" style="display:none;"></div>
-        <div id="gerenciaSaudeClientes" style="display:none;"></div>
+        <div id="gerenciaAusencias" style="display:none;"></div>
         <div id="gerenciaEditarChecklist" style="display:none;"></div>
         <div id="gerenciaFuncionarioMes" style="display:none;"></div>
         <div id="gerenciaChris" style="display:none;"></div>
@@ -927,6 +933,57 @@
     sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
   }
 
+  let relatorioSubAtual = 'mensal';
+
+  window.setRelatorioSub = function(qual, el){
+    relatorioSubAtual = qual;
+    document.querySelectorAll('#view-relatorioMensal .subtab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('relatorioResultado').style.display = qual==='mensal' ? 'block' : 'none';
+    document.getElementById('timelineResultado').style.display = qual==='timeline' ? 'block' : 'none';
+    document.getElementById('btnGerarRelatorio').textContent = qual==='mensal' ? 'Gerar relatório' : 'Montar timeline';
+  };
+
+  window.relClienteMudou = function(){};
+
+  window.executarAcaoRelatorio = function(){
+    if(relatorioSubAtual === 'mensal') gerarRelatorioMensal();
+    else montarTimelineCliente();
+  };
+
+  window.montarTimelineCliente = async function(){
+    const sel = document.getElementById('relCliente');
+    const clienteSlug = sel.value;
+    const clienteNome = sel.selectedOptions[0].dataset.nome;
+    const cont = document.getElementById('timelineResultado');
+    cont.innerHTML = '<div class="card"><div class="desc">Montando timeline...</div></div>';
+
+    const [videosSnap, agSnap, avalSnap, demSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')),
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'avaliacoes_clientes')),
+      getDocs(collection(db,'demandas'))
+    ]);
+
+    const eventos = [];
+    videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteSlug) eventos.push({ data: v.data, tipo:'video', icone:'🎬', texto: v.titulo + ' — ' + (v.status==='concluido'?'concluído':'em edição') + ' (' + v.editorAtribuido + ')' }); });
+    agSnap.forEach(d => { const a=d.data(); if(a.cliente===clienteSlug) eventos.push({ data: a.data, tipo:'gravacao', icone:'🎥', texto: 'Gravação ' + a.status + (a.qtdVideosRealizados?' — '+a.qtdVideosRealizados+' vídeo(s)':'') }); });
+    avalSnap.forEach(d => { const av=d.data(); if(av.cliente===clienteSlug) eventos.push({ data: (av.criadoEm?.seconds ? new Date(av.criadoEm.seconds*1000).toISOString().slice(0,10) : ''), tipo:'avaliacao', icone:'⭐', texto: 'Avaliação: ' + '⭐'.repeat(av.nota) + (av.comentario ? ' — "'+av.comentario+'"' : '') }); });
+    demSnap.forEach(d => { const dem=d.data(); if(dem.titulo?.includes(clienteNome)) eventos.push({ data: dem.prazoData, tipo:'demanda', icone: dem.titulo.includes('Cápsula')?'🥶':'📋', texto: dem.titulo + ' (' + dem.status + ')' }); });
+
+    eventos.sort((a,b) => (b.data||'').localeCompare(a.data||''));
+
+    if(!eventos.length){ cont.innerHTML = '<div class="empty">Nenhum evento registrado pra esse cliente ainda.</div>'; return; }
+
+    let html = `<div class="card"><h2>📍 Timeline — ${esc(clienteNome)}</h2><div class="desc">${eventos.length} eventos, mais recente primeiro.</div></div>`;
+    eventos.forEach(ev => {
+      html += `<div class="item">
+        <div class="top"><div class="nome">${ev.icone} ${esc(ev.texto)}</div><div class="meta">${ev.data||'sem data'}</div></div>
+      </div>`;
+    });
+    cont.innerHTML = html;
+  };
+
   window.gerarRelatorioMensal = async function(){
     const sel = document.getElementById('relCliente');
     const clienteSlug = sel.value;
@@ -990,58 +1047,6 @@
       </div>
     `;
   };
-
-  async function renderSaudeClientes(){
-    const cont = document.getElementById('gerenciaSaudeClientes');
-    cont.innerHTML = '<div class="card"><div class="desc">Calculando saúde de cada cliente...</div></div>';
-
-    const mesAtual = new Date().toISOString().slice(0,7);
-    const [agSnap, demSnap, avalSnap] = await Promise.all([
-      getDocs(collection(db,'agendamentos')),
-      getDocs(collection(db,'demandas')),
-      getDocs(collection(db,'avaliacoes_clientes'))
-    ]);
-    const agendamentos = []; agSnap.forEach(d=>agendamentos.push(d.data()));
-    const demandas = []; demSnap.forEach(d=>demandas.push(d.data()));
-    const avaliacoes = []; avalSnap.forEach(d=>avaliacoes.push(d.data()));
-
-    const resultado = CLIENTES_LISTA.map(c => {
-      let pontos = 0;
-      const motivos = [];
-
-      const agsCliente = agendamentos.filter(a => a.cliente === c.slug && a.data?.startsWith(mesAtual) && a.status !== 'cancelado');
-      const realizados = agsCliente.filter(a => a.status === 'realizado');
-      realizados.forEach(a => {
-        if(a.qtdVideosRealizados < a.qtdVideosPlanejados){ pontos -= 2; motivos.push('entregou menos vídeo que o planejado'); }
-      });
-
-      const capsulaRecente = demandas.some(d => d.titulo?.includes('Protocolo Cápsula') && d.titulo?.includes(c.nome));
-      if(capsulaRecente){ pontos -= 3; motivos.push('Protocolo Cápsula ativo/recente'); }
-
-      const avalCliente = avaliacoes.filter(a => a.cliente === c.slug).sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
-      if(avalCliente.length){
-        const ultima = avalCliente[0];
-        if(ultima.nota <= 3){ pontos -= 2; motivos.push('última avaliação foi ' + ultima.nota + '★'); }
-      }
-
-      let cor = 'verde';
-      if(pontos <= -4) cor = 'vermelho';
-      else if(pontos < 0) cor = 'amarelo';
-
-      return { nome: c.nome, slug: c.slug, cor, motivos };
-    });
-
-    resultado.sort((a,b)=>{ const ordem={vermelho:0,amarelo:1,verde:2}; return ordem[a.cor]-ordem[b.cor]; });
-
-    let html = `<div class="card"><h2>🚦 Saúde dos Clientes</h2><div class="desc">Combina entrega vs planejado, Protocolo Cápsula recente e última avaliação. Clique pra ver detalhes.</div></div>`;
-    html += resultado.map(r => `
-      <div class="item">
-        <div class="top"><div class="nome"><span class="semaforo ${r.cor}"></span>${esc(r.nome)}</div></div>
-        <div class="meta">${r.motivos.length ? esc(r.motivos.join(' · ')) : 'Sem pontos de atenção no momento'}</div>
-      </div>
-    `).join('');
-    cont.innerHTML = html;
-  }
 
   let onboardingProcessos = [];
   let onboardingAberto = null;
@@ -1513,6 +1518,57 @@
     return { cliente: clienteSlug, clienteNome, cor, motivos };
   }
 
+  async function renderGerenciaAusencias(){
+    const cont = document.getElementById('gerenciaAusencias');
+    await carregarAusencias();
+    let html = `<div class="card">
+      <h2>🏖️ Registrar ausência</h2>
+      <div class="desc">Enquanto a pessoa estiver de folga/férias, o sistema não marca atraso nem prejudica ela no Funcionário do Mês.</div>
+      <div class="field"><label>Funcionário</label><select id="ausFuncionario">${FUNCIONARIOS_ELEGIVEIS.map(f=>`<option value="${f}">${f}</option>`).join('')}</select></div>
+      <div class="row2">
+        <div class="field"><label>Início</label><input type="date" id="ausInicio"></div>
+        <div class="field"><label>Fim</label><input type="date" id="ausFim"></div>
+      </div>
+      <div class="field"><label>Motivo (opcional)</label><input type="text" id="ausMotivo" placeholder="Ex: férias, atestado..."></div>
+      <button class="btn" onclick="registrarAusencia()">Registrar ausência</button>
+    </div>`;
+
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const ativas = todasAusencias.filter(a => a.dataFim >= hojeStr).sort((a,b)=>a.dataInicio.localeCompare(b.dataInicio));
+    html += `<div class="grupoFuncionario"><h3>Ausências ativas/futuras</h3>`;
+    if(!ativas.length) html += `<div class="empty">Nenhuma ausência registrada.</div>`;
+    ativas.forEach(a => {
+      const emCurso = a.dataInicio <= hojeStr && a.dataFim >= hojeStr;
+      html += `<div class="item">
+        <div class="top"><div class="nome">${esc(a.funcionario)}</div><div class="meta">${a.dataInicio} → ${a.dataFim}</div></div>
+        <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          ${emCurso ? '<span class="selo hoje">Em curso agora</span>' : '<span class="selo pendente">Agendada</span>'}
+          ${a.motivo ? '<span class="meta">'+esc(a.motivo)+'</span>' : ''}
+          <button class="btn red" style="width:auto;padding:4px 10px;font-size:10px;" onclick="removerAusencia('${a.id}')">Remover</button>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+    cont.innerHTML = html;
+  }
+
+  window.registrarAusencia = async function(){
+    const funcionario = document.getElementById('ausFuncionario').value;
+    const dataInicio = document.getElementById('ausInicio').value;
+    const dataFim = document.getElementById('ausFim').value;
+    const motivo = document.getElementById('ausMotivo').value.trim();
+    if(!dataInicio || !dataFim){ mostrarToast('Preenche início e fim.', 'erro'); return; }
+    await addDoc(collection(db,'ausencias'), { funcionario, dataInicio, dataFim, motivo, criadoEm: serverTimestamp() });
+    mostrarToast('Ausência registrada pra ' + funcionario + '!');
+    renderGerenciaAusencias();
+  };
+
+  window.removerAusencia = async function(id){
+    await deleteDoc(doc(db,'ausencias', id));
+    mostrarToast('Ausência removida.');
+    renderGerenciaAusencias();
+  };
+
   async function renderGerenciaSaudeClientes(){
     const cont = document.getElementById('gerenciaSaudeClientes');
     cont.innerHTML = '<div class="card"><div class="desc">Calculando saúde de cada cliente...</div></div>';
@@ -1828,21 +1884,34 @@
     document.getElementById('gerenciaPagamentos').style.display = qual==='pagamentos' ? 'block' : 'none';
     document.getElementById('gerenciaAvaliacoes').style.display = qual==='avaliacoes' ? 'block' : 'none';
     document.getElementById('gerenciaSaudeClientes').style.display = qual==='saudeClientes' ? 'block' : 'none';
-    document.getElementById('gerenciaSaudeClientes').style.display = qual==='saudeClientes' ? 'block' : 'none';
+    document.getElementById('gerenciaAusencias').style.display = qual==='ausencias' ? 'block' : 'none';
     document.getElementById('gerenciaEditarChecklist').style.display = qual==='editarChecklist' ? 'block' : 'none';
     document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     if(qual==='videos') renderGerenciaVideos();
     if(qual==='pagamentos') renderGerenciaPagamentos();
     if(qual==='avaliacoes') renderGerenciaAvaliacoes();
-    if(qual==='saudeClientes') renderSaudeClientes();
     if(qual==='saudeClientes') renderGerenciaSaudeClientes();
+    if(qual==='ausencias') renderGerenciaAusencias();
     if(qual==='editarChecklist') renderEditorChecklistInicial();
     if(qual==='funcionarioMes') renderFuncionarioMesPainel();
   };
 
+  let todasAusencias = [];
+
+  function estaAusente(nome){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    return todasAusencias.some(a => a.funcionario === nome && a.dataInicio <= hojeStr && a.dataFim >= hojeStr);
+  }
+
+  async function carregarAusencias(){
+    const snap = await getDocs(collection(db,'ausencias'));
+    todasAusencias = []; snap.forEach(d => todasAusencias.push({id:d.id, ...d.data()}));
+  }
+
   function calcularUrgencia(demanda){
     if(demanda.status !== 'pendente') return 'normal';
+    if(estaAusente(demanda.destinatario)) return 'normal';
     const agora = new Date();
     const prazo = new Date(demanda.prazoData + 'T' + (demanda.prazoHora || '19:00'));
     if (agora > prazo) return 'atrasado';
@@ -1856,6 +1925,7 @@
     const snap = await getDocs(q);
     todasDemandas = [];
     snap.forEach(d => todasDemandas.push({id:d.id, ...d.data()}));
+    await carregarAusencias();
   }
 
   window.mudarUsuarioGlobal = async function(){
@@ -1887,6 +1957,12 @@
   };
 
   function renderAvisoInicio(){
+    if(estaAusente(usuarioAtual)){
+      const minhaAus = todasAusencias.find(a => a.funcionario === usuarioAtual && a.dataInicio <= new Date().toISOString().slice(0,10) && a.dataFim >= new Date().toISOString().slice(0,10));
+      document.getElementById('avisoInicio').innerHTML = `<div class="avisoBanner vazio"><div class="icone">🏖️</div><div class="texto">Você está de ausência até ${minhaAus?.dataFim}<span>Suas demandas não contam atraso nesse período. Aproveite!</span></div></div>`;
+      if(window.mascoteAtualizarEstado) window.mascoteAtualizarEstado(0, 100);
+      return;
+    }
     const minhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada');
     const atrasadas = minhas.filter(d => calcularUrgencia(d) === 'atrasado');
     if(window.mascoteAtualizarEstado){

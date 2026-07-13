@@ -1371,7 +1371,20 @@
       const a = d.data();
       if(a.cliente === clienteSlug && a.data?.startsWith(mesAtual) && a.status !== 'cancelado') count++;
     });
-    document.getElementById('historicoClienteMes').innerHTML = `<div class="avisoBanner"><div class="icone">📊</div><div class="texto">Esse cliente já teve ${count} gravação(ões) esse mês<span>Use isso pra decidir se ainda cabe mais uma.</span></div></div>`;
+
+    let calTxt = 'Calendário desse cliente ainda não foi iniciado.';
+    try {
+      const calSnap = await getDoc(doc(db,'calendarios', clienteSlug));
+      if(calSnap.exists()){
+        const items = calSnap.data().items || [];
+        const semPostar = items.filter(i => !i.posted).length;
+        calTxt = semPostar + ' conteúdo(s) no calendário ainda sem postar — use como referência pra quantidade a gravar.';
+        const sugestao = document.getElementById('agQtdPlanejada');
+        if(sugestao && semPostar > 0) sugestao.value = Math.min(semPostar, 4);
+      }
+    } catch(e){}
+
+    document.getElementById('historicoClienteMes').innerHTML = `<div class="avisoBanner"><div class="icone">📊</div><div class="texto">Esse cliente já teve ${count} gravação(ões) esse mês<span>${esc(calTxt)}</span></div></div>`;
   };
 
   window.verificarQtdHoje = async function(){
@@ -1830,14 +1843,34 @@
     }
 
     if(qtdRealizada < qtdPlanejada){
+      const faltaram = qtdPlanejada - qtdRealizada;
+      const explicacao = prompt(`Faltaram ${faltaram} vídeo(s) do planejado. O que aconteceu? (vai ficar registrado)`) || 'Sem explicação informada';
+
+      const todosAgSnap = await getDocs(collection(db,'agendamentos'));
+      let proximaAg = null;
+      todosAgSnap.forEach(d => {
+        const a = d.data();
+        if(a.cliente === clienteSlug && a.status === 'agendado' && a.data > agSnap.data().data){
+          if(!proximaAg || a.data < proximaAg.data) proximaAg = {id: d.id, ...a};
+        }
+      });
+
+      if(proximaAg){
+        await updateDoc(doc(db,'agendamentos', proximaAg.id), {
+          qtdVideosPlanejados: (proximaAg.qtdVideosPlanejados||0) + faltaram
+        });
+        mostrarToast(`${faltaram} vídeo(s) empurrado(s) automaticamente pra próxima gravação (${proximaAg.data}).`, 'erro');
+      } else {
+        mostrarToast(`${faltaram} vídeo(s) ficaram faltando — não há próxima gravação agendada. Avisando Cecília.`, 'erro');
+      }
+
       await addDoc(collection(db,'demandas'), {
         titulo: 'Gravação abaixo do planejado — ' + clienteNome,
-        descricao: `Planejado ${qtdPlanejada}, realizado ${qtdRealizada}. Verificar reagendamento.`,
-        origem: 'amanda', clienteNome: '', destinatario: 'Amanda',
+        descricao: `Planejado ${qtdPlanejada}, realizado ${qtdRealizada}. Motivo: ${explicacao}. ${proximaAg ? 'Vídeos já empurrados pra próxima gravação em '+proximaAg.data+'.' : 'PRECISA agendar nova gravação — não há próxima data marcada.'}`,
+        origem: 'amanda', clienteNome: '', destinatario: proximaAg ? 'Amanda' : 'Cecília',
         prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
         status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
       });
-      mostrarToast('Registrado — abaixo do planejado, aviso criado pra Amanda.', 'erro');
     } else {
       mostrarToast('Gravação registrada e vídeos distribuídos pros editores!');
     }

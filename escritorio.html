@@ -547,11 +547,28 @@
       <div class="sub">Formulário de entrada + painel de cadastros recebidos.</div>
       <div class="subtabs">
         <div class="subtab active" onclick="setCadastroSub('form', this)">Formulário (link do cliente)</div>
+        <div class="subtab" onclick="setCadastroSub('registroRapido', this)">⚡ Registrar da Reunião</div>
         <div class="subtab" onclick="setCadastroSub('painel', this)">Painel de cadastros</div>
         <div class="subtab" onclick="setCadastroSub('onboarding', this)">📋 Onboarding em andamento</div>
       </div>
       <div class="iframeWrap" id="cadastroIframeWrap"><iframe id="iframeCadastro" src="cadastro.html"></iframe></div>
       <div id="onboardingBox" style="display:none;"></div>
+      <div id="registroRapidoBox" style="display:none;">
+        <div class="card">
+          <h2>Registrar cliente novo direto da reunião</h2>
+          <div class="desc">Você já saiu da reunião com os dados — isso já cria o cadastro e dispara o onboarding da Amanda na hora, sem esperar o cliente preencher nada.</div>
+          <div class="row2">
+            <div class="field"><label>Nome da empresa</label><input type="text" id="rrNome" placeholder="Ex: Fior Restaurante"></div>
+            <div class="field"><label>Instagram</label><input type="text" id="rrInstagram" placeholder="@empresa"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>Telefone / WhatsApp</label><input type="text" id="rrTelefone" placeholder="(41) 99999-9999"></div>
+            <div class="field"><label>Plano contratado</label><input type="text" id="rrPlano" placeholder="Ex: Plano Intermediário + drone"></div>
+          </div>
+          <div class="field"><label>Observações do contrato / condições</label><textarea id="rrContrato" placeholder="Valor, data de início, particularidades combinadas na reunião..."></textarea></div>
+          <button class="btn" onclick="registrarClienteDaReuniao()">Registrar e disparar onboarding</button>
+        </div>
+      </div>
     </div>
 
     <!-- GERENCIA -->
@@ -1899,8 +1916,32 @@
     const data = document.getElementById('dataPost_'+id).value;
     const hora = document.getElementById('horaPost_'+id).value || '12:00';
     if(!data){ mostrarToast('Escolhe a data antes de agendar.', 'erro'); return; }
+
+    const postSnap = await getDoc(doc(db,'postagens', id));
+    const p = postSnap.data();
+
     await updateDoc(doc(db,'postagens', id), { dataAgendada: data, horaAgendada: hora, agendadoPor: usuarioAtual||'Cecília', agendadoEm: new Date().toISOString(), status: 'agendado' });
-    mostrarToast('Postagem agendada pra ' + data + '!');
+
+    try {
+      const calRef = doc(db,'calendarios', p.cliente);
+      const calSnap = await getDoc(calRef);
+      const diaDoMes = parseInt(data.split('-')[2]);
+      const novoItem = {
+        day: diaDoMes, name: p.titulo, desc: p.legenda || '', ref: p.linkVideo || '',
+        stage: 'meio', fmt: 'Reel', apr: true, posted: true
+      };
+      if(calSnap.exists()){
+        const dados = calSnap.data();
+        const items = dados.items || [];
+        items.push(novoItem);
+        await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+      } else {
+        await setDoc(calRef, { client: p.clienteNome, month: '', items: [novoItem], comments: [], updatedAt: new Date().toISOString() });
+      }
+      mostrarToast('Postagem agendada e já sincronizada no calendário do cliente!');
+    } catch(e){
+      mostrarToast('Postagem agendada, mas não consegui sincronizar com o calendário do cliente.', 'erro');
+    }
     renderAgendarPostagens();
   };
 
@@ -2405,15 +2446,58 @@
     el.classList.add('active');
     const iframeWrap = document.getElementById('cadastroIframeWrap');
     const onboardingBox = document.getElementById('onboardingBox');
+    const registroBox = document.getElementById('registroRapidoBox');
+    iframeWrap.style.display = 'none';
+    onboardingBox.style.display = 'none';
+    registroBox.style.display = 'none';
     if(qual === 'onboarding'){
-      iframeWrap.style.display = 'none';
       onboardingBox.style.display = 'block';
       renderOnboarding();
+    } else if(qual === 'registroRapido'){
+      registroBox.style.display = 'block';
     } else {
       iframeWrap.style.display = 'block';
-      onboardingBox.style.display = 'none';
       document.getElementById('iframeCadastro').src = qual === 'form' ? 'cadastro.html' : 'cadastros.html';
     }
+  };
+
+  const ETAPAS_ONBOARDING_LOCAL = [
+    "Criação do grupo","Boas vindas mensagem Amanda","Envio de documentos",
+    "Organização do grupo com descrição e foto","Envio link do briefing",
+    "Criação de plataformas Drive e Notion","Envio e explicação das plataformas",
+    "Agendamento de reunião","Análise de perfil","Apresentação de análise",
+    "Início de calendário editorial","Referências e roteiros","Agendamento de captação",
+    "Envio e aprovação do calendário e cronograma","Captação","Edição","Iniciar postagens"
+  ];
+
+  window.registrarClienteDaReuniao = async function(){
+    const nome = document.getElementById('rrNome').value.trim();
+    const instagram = document.getElementById('rrInstagram').value.trim();
+    const telefone = document.getElementById('rrTelefone').value.trim();
+    const plano = document.getElementById('rrPlano').value.trim();
+    const contrato = document.getElementById('rrContrato').value.trim();
+    if(!nome){ mostrarToast('Preenche pelo menos o nome da empresa.', 'erro'); return; }
+
+    await addDoc(collection(db,'cadastros_clientes'), {
+      nome, instagram, telefone, plano, contrato,
+      origem: 'reuniao_chris', criadoEm: serverTimestamp()
+    });
+
+    const etapasIniciais = {};
+    ETAPAS_ONBOARDING_LOCAL.forEach((texto, i) => {
+      etapasIniciais['e'+i] = { texto, feito: i===4 || i===7, feitoPor: (i===4||i===7) ? 'Chris (reunião)' : '', feitoEm: (i===4||i===7) ? new Date().toISOString() : '' };
+    });
+    await addDoc(collection(db,'onboarding_processos'), {
+      clienteNome: nome, instagram, telefone, plano, contrato,
+      etapas: etapasIniciais, status: 'em_andamento', criadoEm: serverTimestamp()
+    });
+
+    mostrarToast(nome + ' registrado! Onboarding já disparado pra Amanda.');
+    document.getElementById('rrNome').value = '';
+    document.getElementById('rrInstagram').value = '';
+    document.getElementById('rrTelefone').value = '';
+    document.getElementById('rrPlano').value = '';
+    document.getElementById('rrContrato').value = '';
   };
 
   window.setGerenciaSub = function(qual, el){

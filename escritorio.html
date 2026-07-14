@@ -557,6 +557,7 @@
         <div class="subtab active" onclick="setPostagensSub('legenda', this)">✍️ Escrever Legenda</div>
         <div class="subtab" onclick="setPostagensSub('agendar', this)">📅 Agendar Postagem</div>
         <div class="subtab" onclick="setPostagensSub('todas', this)">📋 Todas as Postagens</div>
+        <div class="subtab" onclick="setPostagensSub('statusCompleto', this)">🔍 Status Completo (do início ao fim)</div>
       </div>
       <div id="postagensConteudo"></div>
     </div>
@@ -748,6 +749,7 @@
             <div class="subtab" onclick="setGerenciaSub('pagamentos', this)">Pagamentos Extras</div>
             <div class="subtab" onclick="setGerenciaSub('avaliacoes', this)">Avaliações Clientes</div>
             <div class="subtab" onclick="setGerenciaSub('saudeClientes', this)">Saúde dos Clientes</div>
+            <div class="subtab" onclick="setGerenciaSub('clientesExtras', this)">Clientes Avulsos/Extras</div>
             <div class="labelInterno">Equipe</div>
             <div class="subtab" onclick="setGerenciaSub('ausencias', this)">Modo Ausência</div>
             <div class="subtab" onclick="setGerenciaSub('editarChecklist', this)">Editar Checklists</div>
@@ -760,6 +762,7 @@
             <div id="gerenciaPagamentos" style="display:none;"></div>
             <div id="gerenciaAvaliacoes" style="display:none;"></div>
             <div id="gerenciaSaudeClientes" style="display:none;"></div>
+            <div id="gerenciaClientesExtras" style="display:none;"></div>
             <div id="gerenciaAusencias" style="display:none;"></div>
             <div id="gerenciaEditarChecklist" style="display:none;"></div>
             <div id="gerenciaEditarFuncoesFixas" style="display:none;"></div>
@@ -1098,6 +1101,18 @@
     {nome:"Fior Restaurante", slug:"fior-restaurante"}
   ].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
 
+  async function carregarClientesExtras(){
+    try{
+      const snap = await getDocs(collection(db,'clientes_extras'));
+      snap.forEach(d => {
+        const v = d.data();
+        if(!CLIENTES_LISTA.some(c=>c.slug===v.slug)) CLIENTES_LISTA.push({nome:v.nome, slug:v.slug, extra:true});
+      });
+      CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+    }catch(e){}
+  }
+  carregarClientesExtras();
+
   const EDITORES_GERAL = ["Helo","Cecília","João Victor"];
   const EDITORES_CONFIG = {
     "Helo": { capacidade: 5 },
@@ -1224,33 +1239,61 @@
   async function renderAprovacaoVideos(){
     const cont = document.getElementById('gerenciaAprovarVideos');
     const snap = await getDocs(collection(db,'videos_producao'));
-    const pendentes = []; snap.forEach(d => { const v=d.data(); if(v.status==='aguardando_aprovacao') pendentes.push({id:d.id, ...v}); });
-    if(!pendentes.length){ cont.innerHTML = '<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="empty">Nenhum vídeo aguardando aprovação agora.</div></div>'; return; }
-    let html = `<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="desc">${pendentes.length} vídeo(s) aguardando revisão.</div></div>`;
-    pendentes.forEach(v => {
+    const pendentes = []; const aprovadosRecentes = [];
+    snap.forEach(d => {
+      const v=d.data();
+      if(v.status==='aguardando_aprovacao') pendentes.push({id:d.id, ...v});
+      if(v.status==='aprovado' && v.aprovadoEm) aprovadosRecentes.push({id:d.id, ...v});
+    });
+    aprovadosRecentes.sort((a,b)=> new Date(b.aprovadoEm) - new Date(a.aprovadoEm));
+    const ultimosAprovados = aprovadosRecentes.slice(0,8);
+
+    let html = '';
+    if(!pendentes.length){
+      html += '<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="empty">Nenhum vídeo aguardando aprovação agora.</div></div>';
+    } else {
+      html += `<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="desc">${pendentes.length} vídeo(s) aguardando revisão.</div></div>`;
+      pendentes.forEach(v => {
+        html += `<div class="item">
+          <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${v.data}</div></div>
+          <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
+          <div class="btnrow" style="margin-top:10px;">
+            <button class="btn red" onclick="rejeitarVideoComCorrecao('${v.id}')">Pedir ajuste</button>
+            <button class="btn green" onclick="aprovarVideo('${v.id}')">Aprovar</button>
+          </div>
+        </div>`;
+      });
+    }
+
+    html += `<div class="grupoFuncionario"><h3>Aprovados recentemente — quem aprovou cada um</h3>`;
+    if(!ultimosAprovados.length){ html += '<div class="empty">Nenhum vídeo aprovado ainda.</div>'; }
+    ultimosAprovados.forEach(v => {
       html += `<div class="item">
-        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${v.data}</div></div>
-        <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
-        <div class="btnrow" style="margin-top:10px;">
-          <button class="btn red" onclick="rejeitarVideoComCorrecao('${v.id}')">Pedir ajuste</button>
-          <button class="btn green" onclick="aprovarVideo('${v.id}')">Aprovar</button>
-        </div>
+        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${new Date(v.aprovadoEm).toLocaleDateString('pt-BR')}</div></div>
+        <div class="meta" style="margin-top:4px;">✅ Aprovado por <b>${esc(v.aprovadoPor||'—')}</b></div>
       </div>`;
     });
+    html += `</div>`;
+
     cont.innerHTML = html;
   }
 
   window.aprovarVideo = async function(id){
+    if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
+      mostrarToast('Só o Chris ou a Amanda podem dar aprovação final. Confirma que seu nome está selecionado certo.', 'erro');
+      return;
+    }
     const videoSnap = await getDoc(doc(db,'videos_producao', id));
     const v = videoSnap.data();
-    await updateDoc(doc(db,'videos_producao', id), { status:'aprovado', aprovadoEm: new Date().toISOString() });
+    await updateDoc(doc(db,'videos_producao', id), { status:'aprovado', aprovadoEm: new Date().toISOString(), aprovadoPor: usuarioAtual });
     await addDoc(collection(db,'postagens'), {
       videoId: id, cliente: v.cliente, clienteNome: v.clienteNome, titulo: v.titulo,
       linkVideo: v.linkFinalizado, legenda: '', legendaPor: '', legendaEm: '',
       dataAgendada: '', horaAgendada: '', agendadoPor: '', agendadoEm: '',
+      aprovadoPor: usuarioAtual, aprovadoEm: new Date().toISOString(),
       status: 'aguardando_legenda', criadoEm: serverTimestamp()
     });
-    mostrarToast('Vídeo aprovado! Já caiu na fila de legenda da Gabi.');
+    mostrarToast('Vídeo aprovado por ' + usuarioAtual + '! Já caiu na fila de legenda da Gabi.');
     renderAprovacaoVideos();
   };
 
@@ -2040,6 +2083,7 @@
     if(qual==='legenda') renderLegendasPendentes();
     if(qual==='agendar') renderAgendarPostagens();
     if(qual==='todas') renderTodasPostagens();
+    if(qual==='statusCompleto') renderStatusCompletoPipeline();
   };
 
   async function renderLegendasPendentes(){
@@ -2116,6 +2160,66 @@
     renderAgendarPostagens();
   };
 
+  async function renderStatusCompletoPipeline(){
+    const cont = document.getElementById('postagensConteudo');
+    cont.innerHTML = '<div class="card"><div class="desc">Montando a linha do tempo de cada vídeo...</div></div>';
+
+    const [videosSnap, postagensSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')),
+      getDocs(collection(db,'postagens'))
+    ]);
+    const videos = []; videosSnap.forEach(d => videos.push({id:d.id, ...d.data()}));
+    const postagens = []; postagensSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
+
+    videos.sort((a,b) => (b.data||'').localeCompare(a.data||''));
+
+    let html = `<div class="card"><h2>🔍 Onde cada vídeo está agora — do início ao fim</h2><div class="desc">Isso junta edição, aprovação, legenda e agendamento numa timeline só, pra nunca ficar dúvida de onde um vídeo específico está.</div></div>`;
+
+    if(!videos.length){ html += '<div class="empty">Nenhum vídeo no sistema ainda.</div>'; cont.innerHTML = html; return; }
+
+    videos.forEach(v => {
+      let etapaTexto = '', etapaCor = 'pendente', detalhe = '';
+
+      if(v.status === 'aguardando_edicao'){
+        etapaTexto = '1/5 — Em edição com ' + v.editorAtribuido;
+        etapaCor = 'pendente';
+      } else if(v.status === 'aguardando_aprovacao'){
+        etapaTexto = '2/5 — Aguardando SUA aprovação (Chris/Amanda)';
+        etapaCor = 'hoje';
+        detalhe = '🔗 <a href="'+esc(v.linkFinalizado)+'" target="_blank" style="color:var(--yellow);">Ver vídeo pra aprovar</a>';
+      } else if(v.status === 'correcao'){
+        etapaTexto = '2/5 — Em correção, voltou pro editor';
+        etapaCor = 'atrasado';
+        detalhe = 'Motivo do ajuste: "' + esc(v.correcao||'') + '"';
+      } else if(v.status === 'aprovado'){
+        const postagem = postagens.find(p => p.videoId === v.id);
+        if(!postagem){
+          etapaTexto = '3/5 — Aprovado, gerando fila de legenda...';
+          etapaCor = 'pendente';
+        } else if(postagem.status === 'aguardando_legenda'){
+          etapaTexto = '3/5 — Aprovado por ' + (v.aprovadoPor||'—') + ' · aguardando a Gabi escrever a legenda';
+          etapaCor = 'pendente';
+        } else if(postagem.status === 'aguardando_agendamento'){
+          etapaTexto = '4/5 — Legenda pronta · aguardando a Cecília agendar a postagem';
+          etapaCor = 'hoje';
+          detalhe = 'Legenda: "' + esc(postagem.legenda) + '"';
+        } else if(postagem.status === 'agendado'){
+          etapaTexto = '5/5 — Agendado pra postar em ' + postagem.dataAgendada + ' às ' + postagem.horaAgendada;
+          etapaCor = 'aprovada';
+          detalhe = 'Legenda: "' + esc(postagem.legenda) + '" · Agendado por ' + esc(postagem.agendadoPor||'—');
+        }
+      }
+
+      html += `<div class="item">
+        <div class="top"><div class="nome">${esc(v.clienteNome)} — ${esc(v.titulo)}</div><div class="meta">${v.data||''}</div></div>
+        <div style="margin-top:6px;"><span class="selo ${etapaCor}">${esc(etapaTexto)}</span></div>
+        ${detalhe ? '<div class="meta" style="margin-top:6px;">'+detalhe+'</div>' : ''}
+      </div>`;
+    });
+
+    cont.innerHTML = html;
+  }
+
   async function renderTodasPostagens(){
     const cont = document.getElementById('postagensConteudo');
     const snap = await getDocs(collection(db,'postagens'));
@@ -2129,6 +2233,7 @@
       return `<div class="item">
         <div class="top"><div class="nome">${esc(p.clienteNome)} — ${esc(p.titulo)}</div></div>
         <div style="margin-top:6px;">${selo}</div>
+        <div class="meta" style="margin-top:4px;">✅ Aprovado por <b>${esc(p.aprovadoPor||'—')}</b></div>
         ${p.legenda ? '<div class="meta" style="margin-top:6px;">"'+esc(p.legenda)+'"</div>' : ''}
       </div>`;
     }).join('');
@@ -2198,21 +2303,22 @@
     renderCampanhasKanban();
   };
 
-  async function renderEditarFuncoesFixas(){
+  async function renderEditarFuncoesFixas(mesChaveEscolhido){
     const cont = document.getElementById('gerenciaEditarFuncoesFixas');
     const hoje = new Date();
-    const mesChave = hoje.getFullYear() + '-' + String(hoje.getMonth()+1).padStart(2,'0');
+    const mesChave = mesChaveEscolhido || (hoje.getFullYear() + '-' + String(hoje.getMonth()+1).padStart(2,'0'));
     const snap = await getDocs(collection(db,'demandas'));
     const tarefas = []; snap.forEach(d => { const v=d.data(); if(v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push({id:d.id, ...v}); });
     tarefas.sort((a,b) => a.prazoData.localeCompare(b.prazoData));
 
     let html = `<div class="card">
-      <h2>📆 Editar Funções Fixas — ${mesChave}</h2>
-      <div class="desc">Mude a data de qualquer reunião ou entrega de calendário, ou force gerar o mês de novo do zero.</div>
-      <button class="btn secondary" onclick="regerarFuncoesFixas('${mesChave}')">🔄 Regerar esse mês do zero</button>
+      <h2>📆 Editar Funções Fixas</h2>
+      <div class="desc">Escolhe o mês — pode ser um mês futuro, pra já ir organizando com antecedência.</div>
+      <div class="field"><label>Mês</label><input type="month" id="mesEditarFuncoesFixas" value="${mesChave}" onchange="renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas').value)"></div>
+      <button class="btn secondary" onclick="regerarFuncoesFixas('${mesChave}')">🔄 Gerar / regerar esse mês do zero</button>
     </div>`;
 
-    if(!tarefas.length){ html += '<div class="empty">Nenhuma função fixa gerada pra esse mês ainda — abra "Funções Fixas" no menu pra gerar.</div>'; cont.innerHTML = html; return; }
+    if(!tarefas.length){ html += '<div class="empty">Nenhuma função fixa gerada pra '+mesChave+' ainda — clica em "Gerar / regerar esse mês do zero" acima.</div>'; cont.innerHTML = html; return; }
 
     tarefas.forEach(t => {
       const quem = t.tipoFuncaoFixa === 'reuniao' ? 'Cecília' : 'Gabrielle';
@@ -2228,12 +2334,14 @@
     cont.innerHTML = html;
   }
 
+  window.renderEditarFuncoesFixas = renderEditarFuncoesFixas;
+
   window.salvarNovaDataFuncaoFixa = async function(id){
     const novaData = document.getElementById('dataEdit_'+id).value;
     if(!novaData) return;
     await updateDoc(doc(db,'demandas', id), { prazoData: novaData });
     mostrarToast('Data atualizada!');
-    renderEditarFuncoesFixas();
+    renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas').value);
   };
 
   window.regerarFuncoesFixas = async function(mesChave){
@@ -2244,7 +2352,7 @@
     const [ano, mes] = mesChave.split('-').map(Number);
     await gerarFuncoesFixasDoMes(ano, mes, mesChave);
     mostrarToast('Mês regerado do zero!');
-    renderEditarFuncoesFixas();
+    renderEditarFuncoesFixas(mesChave);
   };
 
   async function renderGerenciaAusencias(){
@@ -2296,6 +2404,48 @@
     await deleteDoc(doc(db,'ausencias', id));
     mostrarToast('Ausência removida.');
     renderGerenciaAusencias();
+  };
+
+  async function renderClientesExtras(){
+    const cont = document.getElementById('gerenciaClientesExtras');
+    let html = `<div class="card">
+      <h2>Cadastrar cliente avulso/extra</h2>
+      <div class="desc">Pra clientes fora do banco fixo (trabalho pontual, "frio") que precisam aparecer nos formulários de gravação, vídeo e agendamento.</div>
+      <div class="field"><label>Nome do cliente</label><input type="text" id="extraNome" placeholder="Ex: Escolinha do Bairro"></div>
+      <button class="btn" onclick="adicionarClienteExtra()">Cadastrar cliente extra</button>
+    </div>
+    <div class="grupoFuncionario"><h3>Clientes extras cadastrados</h3>`;
+    const snap = await getDocs(collection(db,'clientes_extras'));
+    const extras = []; snap.forEach(d => extras.push({id:d.id, ...d.data()}));
+    if(!extras.length){ html += '<div class="empty">Nenhum cliente extra cadastrado ainda.</div>'; }
+    extras.forEach(e => {
+      html += `<div class="item"><div class="top"><div class="nome">${esc(e.nome)}</div>
+        <button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="removerClienteExtra('${e.id}','${e.slug}')">Remover</button>
+      </div></div>`;
+    });
+    html += `</div>`;
+    cont.innerHTML = html;
+  }
+
+  window.adicionarClienteExtra = async function(){
+    const nome = document.getElementById('extraNome').value.trim();
+    if(!nome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
+    const slug = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    if(CLIENTES_LISTA.some(c=>c.slug===slug)){ mostrarToast('Já existe um cliente com esse nome.', 'erro'); return; }
+    await addDoc(collection(db,'clientes_extras'), { nome, slug, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp() });
+    CLIENTES_LISTA.push({nome, slug, extra:true});
+    CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+    mostrarToast(nome + ' cadastrado! Já aparece nos formulários de gravação e vídeo.');
+    document.getElementById('extraNome').value = '';
+    renderClientesExtras();
+  };
+
+  window.removerClienteExtra = async function(id, slug){
+    await deleteDoc(doc(db,'clientes_extras', id));
+    const idx = CLIENTES_LISTA.findIndex(c=>c.slug===slug);
+    if(idx>-1) CLIENTES_LISTA.splice(idx,1);
+    mostrarToast('Cliente extra removido.');
+    renderClientesExtras();
   };
 
   async function renderGerenciaSaudeClientes(){
@@ -2727,6 +2877,7 @@
     document.getElementById('gerenciaPagamentos').style.display = qual==='pagamentos' ? 'block' : 'none';
     document.getElementById('gerenciaAvaliacoes').style.display = qual==='avaliacoes' ? 'block' : 'none';
     document.getElementById('gerenciaSaudeClientes').style.display = qual==='saudeClientes' ? 'block' : 'none';
+    document.getElementById('gerenciaClientesExtras').style.display = qual==='clientesExtras' ? 'block' : 'none';
     document.getElementById('gerenciaAusencias').style.display = qual==='ausencias' ? 'block' : 'none';
     document.getElementById('gerenciaEditarChecklist').style.display = qual==='editarChecklist' ? 'block' : 'none';
     document.getElementById('gerenciaEditarFuncoesFixas').style.display = qual==='editarFuncoesFixas' ? 'block' : 'none';
@@ -2742,6 +2893,7 @@
     if(qual==='pagamentos') renderGerenciaPagamentos();
     if(qual==='avaliacoes') renderGerenciaAvaliacoes();
     if(qual==='saudeClientes') renderGerenciaSaudeClientes();
+    if(qual==='clientesExtras') renderClientesExtras();
     if(qual==='ausencias') renderGerenciaAusencias();
     if(qual==='editarChecklist') renderEditorChecklistInicial();
     if(qual==='editarFuncoesFixas') renderEditarFuncoesFixas();
@@ -2946,7 +3098,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','pagamentos','avaliacoes','saudeClientes','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','pagamentos','avaliacoes','saudeClientes','clientesExtras','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {

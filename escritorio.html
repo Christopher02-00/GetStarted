@@ -393,7 +393,7 @@
       <div class="navitem" onclick="irPara('videos', this)"><span class="ico"><svg><use href="#i-video"/></svg></span> Vídeos em Edição</div>
       <div class="navitem" onclick="irPara('agendamento', this)"><span class="ico"><svg><use href="#i-camera"/></svg></span> Agendamento</div>
       <div class="navitem" onclick="irPara('funcoesFixas', this)"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Funções Fixas</div>
-      <div class="navitem" onclick="irPara('postagens', this)"><span class="ico"><svg><use href="#i-file"/></svg></span> Postagens</div>
+      <div class="navitem" onclick="irPara('postagens', this)"><span class="ico"><svg><use href="#i-file"/></svg></span> Postagens<span class="navbadge" id="badgePostagens" style="display:none;">0</span></div>
       <div class="navitem" onclick="irPara('campanhas', this)"><span class="ico"><svg><use href="#i-bulb"/></svg></span> Campanhas</div>
     </div>
 
@@ -855,6 +855,9 @@
           { id:"c_d_4", texto:"Ver vídeos aprovados pelos clientes" },
           { id:"c_d_5", texto:"Postar conforme cronograma" },
           { id:"c_d_6", texto:"Validar campanhas do dia" }
+        ]},
+        { bloco: "Agendamento de Postagens", itens: [
+          { id:"c_d_14", texto:"Confirmar que NENHUMA postagem ficou sem agendar hoje (aba Postagens → Agendar Postagem)", critico:true }
         ]},
         { bloco: "Gravações", itens: [
           { id:"c_d_7", texto:"Conferir filmagens do dia seguinte" },
@@ -2113,18 +2116,25 @@
     const cont = document.getElementById('postagensConteudo');
     const snap = await getDocs(collection(db,'postagens'));
     const pendentes = []; snap.forEach(d => { if(d.data().status==='aguardando_agendamento') pendentes.push({id:d.id, ...d.data()}); });
-    if(!pendentes.length){ cont.innerHTML = '<div class="empty">Nenhuma postagem esperando agendamento agora.</div>'; return; }
-    cont.innerHTML = pendentes.map(p => `
-      <div class="card">
-        <h2>${esc(p.clienteNome)} — ${esc(p.titulo)}</h2>
-        <div class="desc">🔗 <a href="${esc(p.linkVideo)}" target="_blank" style="color:var(--yellow);">Ver vídeo</a> · Legenda: "${esc(p.legenda)}"</div>
+    if(!pendentes.length){ cont.innerHTML = '<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'; return; }
+
+    pendentes.sort((a,b) => new Date(a.legendaEm||0) - new Date(b.legendaEm||0));
+
+    cont.innerHTML = pendentes.map(p => {
+      const diasEsperando = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime()) / 86400000) : 0;
+      const urgente = diasEsperando >= 1;
+      return `
+      <div class="card" style="${urgente ? 'border:2px solid var(--red);' : ''}">
+        <h2>${urgente ? '⚠️ ' : ''}${esc(p.clienteNome)} — ${esc(p.titulo)}</h2>
+        <div class="desc">${urgente ? '<b style="color:var(--red);">Esperando agendamento há '+diasEsperando+' dia(s) — priorize esse!</b><br>' : ''}🔗 <a href="${esc(p.linkVideo)}" target="_blank" style="color:var(--yellow);">Ver vídeo</a> · Legenda: "${esc(p.legenda)}"</div>
         <div class="row2">
           <div class="field"><label>Data da postagem</label><input type="date" id="dataPost_${p.id}"></div>
           <div class="field"><label>Hora</label><input type="time" id="horaPost_${p.id}" value="12:00"></div>
         </div>
         <button class="btn" onclick="salvarAgendamentoPostagem('${p.id}')">Agendar postagem</button>
       </div>
-    `).join('');
+    `;
+    }).join('');
   }
 
   window.salvarAgendamentoPostagem = async function(id){
@@ -2939,7 +2949,9 @@
     await carregarTodasDemandas();
     renderAvisoInicio();
     atualizarBadgeMinhas();
+    atualizarBadgePostagens();
     renderSetorAtalhos();
+    if(usuarioAtual === 'Cecília') verificarPostagensEsquecidas().then(()=>{ atualizarBadgePostagens(); });
   };
 
   function atualizarVisibilidadeSidebarExclusiva(){
@@ -2999,6 +3011,19 @@
     }
     const txtAtraso = atrasadas.length ? `, sendo <b>${atrasadas.length} atrasada(s)</b>` : '';
     box.innerHTML = `<div class="avisoBanner"><div class="icone">🔔</div><div class="texto">Você tem ${minhas.length} demanda(s) em aberto${txtAtraso}<span>Clica em "Minhas Demandas" no menu pra ver e resolver.</span></div></div>`;
+  }
+
+  async function atualizarBadgePostagens(){
+    const badge = document.getElementById('badgePostagens');
+    if(!badge) return;
+    if(usuarioAtual !== 'Cecília' && usuarioAtual !== 'Amanda' && usuarioAtual !== 'Chris'){ badge.style.display='none'; return; }
+    try{
+      const snap = await getDocs(collection(db,'postagens'));
+      let count = 0;
+      snap.forEach(d => { if(d.data().status==='aguardando_agendamento') count++; });
+      if(count){ badge.style.display='flex'; badge.textContent = count; }
+      else { badge.style.display='none'; }
+    }catch(e){}
   }
 
   function atualizarBadgeMinhas(){
@@ -3410,8 +3435,34 @@
   async function carregarGerencia(){
     await carregarTodasDemandas();
     await verificarClientesParaCapsulaAutomatico();
+    await verificarPostagensEsquecidas();
     await renderGerenciaAmanda();
     await renderGerenciaChris();
+  }
+
+  async function verificarPostagensEsquecidas(){
+    const snap = await getDocs(collection(db,'postagens'));
+    const demSnap = await getDocs(collection(db,'demandas'));
+    const alertasExistentes = [];
+    demSnap.forEach(d => { if(d.data().titulo?.includes('⚠️ Postagem sem agendar')) alertasExistentes.push(d.data().postagemId); });
+
+    let novasDemandas = 0;
+    for(const docSnap of snap.docs){
+      const p = docSnap.data();
+      if(p.status !== 'aguardando_agendamento') continue;
+      const diasEsperando = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime()) / 86400000) : 0;
+      if(diasEsperando >= 1 && !alertasExistentes.includes(docSnap.id)){
+        await addDoc(collection(db,'demandas'), {
+          titulo: '⚠️ Postagem sem agendar — ' + p.clienteNome,
+          descricao: `O conteúdo "${p.titulo}" está com legenda pronta há ${diasEsperando} dia(s) e ainda não foi agendado. Isso já causou problema com cliente antes — agenda ainda hoje!`,
+          origem: 'amanda', clienteNome: '', destinatario: 'Cecília', postagemId: docSnap.id,
+          prazoData: new Date().toISOString().slice(0,10), prazoHora: '12:00',
+          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+        });
+        novasDemandas++;
+      }
+    }
+    if(novasDemandas > 0) mostrarToast(novasDemandas + ' postagem(ns) esquecida(s) detectada(s) — demanda urgente criada pra Cecília!', 'erro');
   }
 
   async function verificarClientesParaCapsulaAutomatico(){

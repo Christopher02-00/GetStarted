@@ -1128,10 +1128,11 @@
     "divina-cantina": "Helo"
   };
 
-  function popularClientesVideo(){
+  async function popularClientesVideo(){
+    await carregarClientesExtras();
     const sel = document.getElementById('videoCliente');
     if(!sel) return;
-    sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
+    sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}${c.extra?' (avulso)':''}</option>`).join('');
   }
 
   window.setVideosSub = function(qual, el){
@@ -2039,6 +2040,42 @@
       idxG++;
     }
 
+    // Tipos de tarefa fixa customizados (criados pela Amanda)
+    const tiposSnap = await getDocs(collection(db,'tipos_tarefa_fixa'));
+    for(const tipoDoc of tiposSnap.docs){
+      const tipo = tipoDoc.data();
+      if(tipo.modo === 'unica'){
+        const diaEscolhido = Math.min(tipo.diaFixo || 5, ultimoDiaMes);
+        let dataAlvo = ano + '-' + String(mes).padStart(2,'0') + '-' + String(diaEscolhido).padStart(2,'0');
+        const dataObj = new Date(dataAlvo+'T12:00:00');
+        if(!ehDiaUtil(dataObj, obterFeriados(ano))){
+          const proximoUtil = uteis.find(d => d >= dataAlvo);
+          if(proximoUtil) dataAlvo = proximoUtil;
+        }
+        await addDoc(collection(db,'demandas'), {
+          titulo: tipo.nome,
+          descricao: 'Função fixa customizada, criada pela Amanda — recorrente todo mês.',
+          origem: 'amanda', clienteNome: '', destinatario: tipo.responsavel,
+          prazoData: dataAlvo, prazoHora: '19:00', status: 'pendente',
+          provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'custom_'+tipoDoc.id, tipoFuncaoFixaNome: tipo.nome, criadoEm: serverTimestamp()
+        });
+      } else if(tipo.modo === 'distribuida'){
+        const diasTipo = uteis.slice(0, Math.ceil(CLIENTES_LISTA.length/2));
+        let idxT = 0;
+        for(const cliente of CLIENTES_LISTA){
+          const dataAlvo = diasTipo[Math.floor(idxT/2)] || diasTipo[diasTipo.length-1];
+          await addDoc(collection(db,'demandas'), {
+            titulo: tipo.nome + ' — ' + cliente.nome,
+            descricao: 'Função fixa customizada, criada pela Amanda — recorrente todo mês, distribuída por cliente.',
+            origem: 'amanda', clienteNome: '', destinatario: tipo.responsavel,
+            prazoData: dataAlvo, prazoHora: '19:00', status: 'pendente',
+            provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'custom_'+tipoDoc.id, tipoFuncaoFixaNome: tipo.nome, criadoEm: serverTimestamp()
+          });
+          idxT++;
+        }
+      }
+    }
+
     await setDoc(doc(db,'funcoes_fixas_geradas', mesChave), { gerado: true, criadoEm: serverTimestamp() });
   }
 
@@ -2071,8 +2108,9 @@
       html += `<div class="calCell"><div class="cdnum">${d}</div>`;
       its.forEach(it => {
         const pendCls = it.status === 'aprovada' ? '' : 'pendente';
-        const quem = it.tipoFuncaoFixa==='reuniao' ? 'Cecília' : 'Gabi';
-        html += `<div class="calChip ${pendCls}">${quem}: ${esc(it.titulo.split('—')[1]?.trim()||'')}</div>`;
+        const quem = it.destinatario || '?';
+        const descricaoCurta = it.titulo.includes('—') ? it.titulo.split('—')[1]?.trim() : it.titulo;
+        html += `<div class="calChip ${pendCls}">${esc(quem)}: ${esc(descricaoCurta||'')}</div>`;
       });
       html += `</div>`;
     }
@@ -2313,6 +2351,58 @@
     renderCampanhasKanban();
   };
 
+  async function gerarHtmlTiposTarefaFixa(){
+    const snap = await getDocs(collection(db,'tipos_tarefa_fixa'));
+    const tipos = []; snap.forEach(d => tipos.push({id:d.id, ...d.data()}));
+
+    let html = `<div class="card">
+      <h2>⚙️ Tipos de tarefa fixa (recorrentes todo mês)</h2>
+      <div class="desc">Além da reunião da Cecília e do calendário da Gabi (padrão do sistema), crie qualquer outra tarefa fixa: envio de artes, reuniões de alinhamento, o que a agência precisar. Escolhe o responsável.</div>
+      <div class="row2">
+        <div class="field"><label>Nome da tarefa</label><input type="text" id="novoTipoNome" placeholder="Ex: Envio de artes do mês"></div>
+        <div class="field"><label>Responsável</label><select id="novoTipoResponsavel">${FUNCIONARIOS_ELEGIVEIS.map(f=>`<option value="${f}">${f}</option>`).join('')}</select></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Modo</label><select id="novoTipoModo" onchange="document.getElementById('novoTipoDiaWrap').style.display = this.value==='unica' ? 'block':'none';">
+          <option value="unica">Uma vez no mês, dia fixo</option>
+          <option value="distribuida">Distribuída por cliente (como reunião/calendário)</option>
+        </select></div>
+        <div class="field" id="novoTipoDiaWrap"><label>Dia do mês (aproximado)</label><input type="number" id="novoTipoDia" min="1" max="28" value="5"></div>
+      </div>
+      <button class="btn secondary" onclick="criarTipoTarefaFixa()">+ Criar tipo de tarefa</button>
+    </div>`;
+
+    if(tipos.length){
+      html += `<div class="grupoFuncionario"><h3>Tipos customizados ativos</h3>`;
+      tipos.forEach(t => {
+        html += `<div class="item">
+          <div class="top"><div class="nome">${esc(t.nome)}</div><div class="meta">${esc(t.responsavel)}</div></div>
+          <div class="meta">${t.modo === 'unica' ? 'Uma vez no mês, dia '+t.diaFixo : 'Distribuída por cliente'}</div>
+          <button class="btn red" style="width:auto;padding:4px 10px;font-size:10px;margin-top:6px;" onclick="removerTipoTarefaFixa('${t.id}')">Remover tipo</button>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+    return html;
+  }
+
+  window.criarTipoTarefaFixa = async function(){
+    const nome = document.getElementById('novoTipoNome').value.trim();
+    const responsavel = document.getElementById('novoTipoResponsavel').value;
+    const modo = document.getElementById('novoTipoModo').value;
+    const diaFixo = parseInt(document.getElementById('novoTipoDia').value) || 5;
+    if(!nome){ mostrarToast('Dá um nome pra tarefa.', 'erro'); return; }
+    await addDoc(collection(db,'tipos_tarefa_fixa'), { nome, responsavel, modo, diaFixo, criadoEm: serverTimestamp() });
+    mostrarToast('Tipo de tarefa criado! Vai entrar na próxima vez que gerar/regerar o mês.');
+    renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
+  };
+
+  window.removerTipoTarefaFixa = async function(id){
+    await deleteDoc(doc(db,'tipos_tarefa_fixa', id));
+    mostrarToast('Tipo removido.');
+    renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
+  };
+
   async function renderEditarFuncoesFixas(mesChaveEscolhido){
     const cont = document.getElementById('gerenciaEditarFuncoesFixas');
     const hoje = new Date();
@@ -2328,10 +2418,12 @@
       <button class="btn secondary" onclick="regerarFuncoesFixas('${mesChave}')">🔄 Gerar / regerar esse mês do zero</button>
     </div>`;
 
+    html += await gerarHtmlTiposTarefaFixa();
+
     if(!tarefas.length){ html += '<div class="empty">Nenhuma função fixa gerada pra '+mesChave+' ainda — clica em "Gerar / regerar esse mês do zero" acima.</div>'; cont.innerHTML = html; return; }
 
     tarefas.forEach(t => {
-      const quem = t.tipoFuncaoFixa === 'reuniao' ? 'Cecília' : 'Gabrielle';
+      const quem = t.destinatario || '?';
       html += `<div class="item">
         <div class="top"><div class="nome">${esc(t.titulo)}</div><div class="meta">${esc(quem)}</div></div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
@@ -2693,7 +2785,16 @@
 
     let html = '';
     if(jaAprovado){
-      html += `<div class="funcionarioMesBanner" style="margin-bottom:18px;"><div class="troco">🏆</div><div class="txt">${esc(atualSnap.data().nome)} é o funcionário do mês oficial<span>Aprovado em ${new Date(atualSnap.data().aprovadoEm).toLocaleDateString('pt-BR')}${dataResultadoAtual ? ' · revelado em '+dataResultadoAtual : ''}</span></div></div>`;
+      html += `<div class="funcionarioMesBanner" style="margin-bottom:18px;"><div class="troco">🏆</div><div class="txt">${esc(atualSnap.data().nome)} é o funcionário do mês oficial<span>Aprovado em ${new Date(atualSnap.data().aprovadoEm).toLocaleDateString('pt-BR')}${dataResultadoAtual ? ' · revelado em '+dataResultadoAtual : ''}</span></div></div>
+      <div class="card">
+        <h2>✏️ Editar resultado</h2>
+        <div class="desc">Errou, ou quer trocar o vencedor? Sem problema — muda aqui a qualquer momento.</div>
+        <select id="escolhaManualFuncMesEditar">${FUNCIONARIOS_RANKING_MES.map(f=>`<option value="${f}" ${f===atualSnap.data().nome?'selected':''}>${f}</option>`).join('')}</select>
+        <div class="btnrow" style="margin-top:10px;">
+          <button class="btn secondary" onclick="aprovarFuncionarioMesManual('escolhaManualFuncMesEditar')">Salvar novo vencedor</button>
+          <button class="btn red" onclick="reabrirFuncionarioMes()">Desfazer aprovação (voltar a decidir)</button>
+        </div>
+      </div>`;
     }
 
     html += `<div class="card">
@@ -2764,9 +2865,17 @@
     renderFuncionarioMesPainel();
   };
 
-  window.aprovarFuncionarioMesManual = async function(){
-    const nome = document.getElementById('escolhaManualFuncMes').value;
+  window.aprovarFuncionarioMesManual = async function(idSelect){
+    const nome = document.getElementById(idSelect || 'escolhaManualFuncMes').value;
     await window.aprovarFuncionarioMes(nome);
+  };
+
+  window.reabrirFuncionarioMes = async function(){
+    if(!confirm('Isso vai voltar o funcionário do mês pra "não decidido" — o banner some até você aprovar de novo. Confirma?')) return;
+    const mesAtual = new Date().toISOString().slice(0,7);
+    await setDoc(doc(db,'funcionario_do_mes', mesAtual), { status: 'pendente' }, { merge: true });
+    mostrarToast('Resultado reaberto — escolhe de novo quando quiser.');
+    renderFuncionarioMesPainel();
   };
 
   async function renderFuncionarioMesInicio(){
@@ -3067,6 +3176,10 @@
       <div class="linha"><b>Prazo:</b> ${d.prazoData} às ${d.prazoHora}</div>
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
       ${jaTemProva ? '<div class="linha" style="color:var(--yellow2);">✋ Já enviado, aguardando aprovação da gerência.</div>' : `
+      ${d.tipoFuncaoFixa === 'reuniao' ? `
+      <div class="field"><label>Data real da reunião marcada com o cliente</label><input type="date" id="reuniaoDataReal" value="${d.prazoData}"></div>
+      <div class="field"><label>Hora real da reunião</label><input type="time" id="reuniaoHoraReal" value="${d.prazoHora==='19:00'?'10:00':d.prazoHora}"></div>
+      ` : ''}
       <div class="field"><label>Descreva o que foi feito</label><textarea id="provaTextoInput" placeholder="O que você fez pra concluir..."></textarea></div>
       <div class="field"><label>Link do print/foto como prova (opcional)</label><input type="text" id="provaLinkInput" placeholder="Cola aqui o link do Drive/WhatsApp com o print"></div>
       <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Marcar como feita</button>
@@ -3082,11 +3195,14 @@
     const btn = document.getElementById('btnEnviarProva');
     btn.disabled = true; btn.textContent = 'Enviando...';
     try {
-      await updateDoc(doc(db,'demandas', id), {
-        status: 'concluida_aguardando_aprovacao',
-        provaTexto: texto, provaImagemUrl: link,
-        concluidaEm: serverTimestamp()
-      });
+      const dadosExtras = { status: 'concluida_aguardando_aprovacao', provaTexto: texto, provaImagemUrl: link, concluidaEm: serverTimestamp() };
+      const campoDataReal = document.getElementById('reuniaoDataReal');
+      const campoHoraReal = document.getElementById('reuniaoHoraReal');
+      if(campoDataReal && campoHoraReal){
+        dadosExtras.prazoData = campoDataReal.value;
+        dadosExtras.prazoHora = campoHoraReal.value;
+      }
+      await updateDoc(doc(db,'demandas', id), dadosExtras);
       mostrarToast('Enviado! Aguardando aprovação da gerência.');
       fecharModal();
       carregarMinhasDemandas();

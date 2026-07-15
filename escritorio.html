@@ -1656,21 +1656,70 @@
     const cont = document.getElementById('gerenciaPagamentos');
     const mesAtual = new Date().toISOString().slice(0,7);
     const snap = await getDocs(collection(db,'pagamentos_extra'));
-    const pagamentos = []; snap.forEach(d => pagamentos.push(d.data()));
+    const pagamentos = []; snap.forEach(d => pagamentos.push({id:d.id, ...d.data()}));
     const doMes = pagamentos.filter(p => p.mes === mesAtual);
-    if(!doMes.length){ cont.innerHTML = '<div class="card"><h2>Pagamentos Extras — ' + mesAtual + '</h2><div class="empty">Nenhum registro esse mês.</div></div>'; return; }
-    let html = `<div class="card"><h2>Pagamentos Extras — ${mesAtual}</h2><div class="desc">Uber (>30km) e valores de clientes avulsos, pra fechamento do mês.</div></div>`;
-    html += doMes.map(p => `
-      <div class="item">
-        <div class="top"><div class="nome">${esc(p.clienteNome)}</div></div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
-          ${p.temUber ? '<span class="selo pendente">🚗 Uber: <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a></span>' : ''}
-          ${p.valorExtra ? '<span class="selo cliente">💰 '+esc(p.valorExtra)+'</span>' : ''}
-        </div>
+
+    let html = `<div class="card">
+      <h2>💰 Pagamentos Extras — ${mesAtual}</h2>
+      <div class="desc">Uber (>30km) e valores de clientes avulsos. Alguns entram sozinhos quando o filmmaker registra a gravação — mas você também pode adicionar ou editar aqui na mão.</div>
+      <div class="row2">
+        <div class="field"><label>Cliente</label><input type="text" id="pagCliente" placeholder="Nome do cliente"></div>
+        <div class="field"><label>Valor extra (R$)</label><input type="number" id="pagValor" placeholder="0.00" step="0.01"></div>
       </div>
-    `).join('');
+      <div class="row2">
+        <div class="field"><label>Teve Uber?</label><select id="pagTemUber"><option value="nao">Não</option><option value="sim">Sim</option></select></div>
+        <div class="field"><label>Link do recibo (opcional)</label><input type="text" id="pagUberLink" placeholder="Link do Drive/print"></div>
+      </div>
+      <button class="btn" onclick="adicionarPagamentoExtra()">+ Adicionar pagamento extra</button>
+    </div>`;
+
+    if(!doMes.length){
+      html += '<div class="empty">Nenhum registro esse mês ainda — adicione acima, ou espere o filmmaker registrar uma gravação com Uber.</div>';
+    } else {
+      doMes.forEach(p => {
+        html += `<div class="item">
+          <div class="top"><div class="nome">${esc(p.clienteNome)}</div><div class="meta">${p.pago ? '✅ Pago' : '⏳ Pendente'}</div></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+            ${p.temUber ? '<span class="selo pendente">🚗 Uber' + (p.uberLink ? ': <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a>' : '') + '</span>' : ''}
+            ${p.valorExtra ? '<span class="selo cliente">💰 R$ '+esc(String(p.valorExtra))+'</span>' : ''}
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="marcarPagamentoExtra('${p.id}', ${!p.pago})">${p.pago ? 'Marcar como pendente' : '✓ Marcar como pago'}</button>
+            <button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="excluirPagamentoExtra('${p.id}')">Excluir</button>
+          </div>
+        </div>`;
+      });
+    }
     cont.innerHTML = html;
   }
+
+  window.adicionarPagamentoExtra = async function(){
+    const clienteNome = document.getElementById('pagCliente').value.trim();
+    const valorExtra = document.getElementById('pagValor').value;
+    const temUber = document.getElementById('pagTemUber').value === 'sim';
+    const uberLink = document.getElementById('pagUberLink').value.trim();
+    if(!clienteNome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
+    const mesAtual = new Date().toISOString().slice(0,7);
+    await addDoc(collection(db,'pagamentos_extra'), {
+      clienteNome, valorExtra: valorExtra ? parseFloat(valorExtra) : 0, temUber, uberLink, pago: false,
+      mes: mesAtual, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp()
+    });
+    mostrarToast('Pagamento extra adicionado!');
+    renderGerenciaPagamentos();
+  };
+
+  window.marcarPagamentoExtra = async function(id, novoEstado){
+    await updateDoc(doc(db,'pagamentos_extra', id), { pago: novoEstado });
+    mostrarToast(novoEstado ? 'Marcado como pago.' : 'Marcado como pendente.');
+    renderGerenciaPagamentos();
+  };
+
+  window.excluirPagamentoExtra = async function(id){
+    if(!confirm('Excluir esse pagamento extra?')) return;
+    await deleteDoc(doc(db,'pagamentos_extra', id));
+    mostrarToast('Removido.');
+    renderGerenciaPagamentos();
+  };
 
   async function renderGerenciaAvaliacoes(){
     const cont = document.getElementById('gerenciaAvaliacoes');

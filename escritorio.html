@@ -799,6 +799,7 @@
         <div class="gerenciaLayout">
           <div class="gerenciaMenuInterno">
             <div class="labelInterno">Painéis</div>
+            <div class="subtab" onclick="setGerenciaSub('comando', this)">🎛️ Central de Comando (tempo real)</div>
             <div class="subtab active" onclick="setGerenciaSub('amanda', this)">Painel Operacional (Amanda)</div>
             <div class="subtab" onclick="setGerenciaSub('chris', this)">Resumo Executivo</div>
             <div class="subtab" onclick="setGerenciaSub('funcionarioMes', this)">Funcionário do Mês</div>
@@ -833,6 +834,7 @@
             <div id="gerenciaAusencias" style="display:none;"></div>
             <div id="gerenciaEditarChecklist" style="display:none;"></div>
             <div id="gerenciaEditarFuncoesFixas" style="display:none;"></div>
+            <div id="gerenciaComando" style="display:none;"></div>
             <div id="gerenciaFuncionarioMes" style="display:none;"></div>
             <div id="gerenciaPainelTV" style="display:none;">
               <div class="card"><h2>Painel de TV</h2><div class="desc">Uso interno — Chris e Amanda. Não é pra enviar ao cliente. Deixe aberto numa TV/tablet do escritório se quiser.</div></div>
@@ -3578,6 +3580,7 @@
     el.classList.add('active');
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById('view-'+nome).classList.add('active');
+    if(nome !== 'gerencia') pararCentralComando();
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
     if(nome === 'checklist') abrirChecklist();
     if(nome === 'videos') popularClientesVideo();
@@ -3672,6 +3675,7 @@
     document.getElementById('gerenciaEditarFuncoesFixas').style.display = qual==='editarFuncoesFixas' ? 'block' : 'none';
     document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaPainelTV').style.display = qual==='painelTV' ? 'block' : 'none';
+    document.getElementById('gerenciaComando').style.display = qual==='comando' ? 'block' : 'none';
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     if(qual==='painelTV'){
       const iframe = document.getElementById('iframePainelTVInterno');
@@ -3680,6 +3684,8 @@
         iframe.dataset.carregado = 'true';
       }
     }
+    if(qual==='comando') iniciarCentralComando();
+    else pararCentralComando();
     if(qual==='videos') renderGerenciaVideos();
     if(qual==='aprovarVideos') renderAprovacaoVideos();
     if(qual==='pagamentos') renderGerenciaPagamentos();
@@ -3980,7 +3986,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','pagamentos','avaliacoes','saudeClientes','clientesExtras','rfv','exClientes','cofreSenhas','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','pagamentos','avaliacoes','saudeClientes','clientesExtras','rfv','exClientes','cofreSenhas','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -4400,6 +4406,104 @@
     });
     html += `</div>`;
     return html;
+  }
+
+  let intervalComando = null;
+  let ultimaAtualizacaoComando = null;
+
+  function iniciarCentralComando(){
+    renderCentralComando();
+    if(intervalComando) clearInterval(intervalComando);
+    intervalComando = setInterval(renderCentralComando, 25000);
+  }
+
+  function pararCentralComando(){
+    if(intervalComando){ clearInterval(intervalComando); intervalComando = null; }
+  }
+
+  async function renderCentralComando(){
+    const cont = document.getElementById('gerenciaComando');
+    if(!cont || cont.style.display === 'none') { pararCentralComando(); return; }
+    const jaTinhaConteudo = cont.innerHTML.length > 100;
+    if(!jaTinhaConteudo) cont.innerHTML = '<div class="card"><div class="desc">Carregando central de comando...</div></div>';
+
+    const hoje = new Date().toISOString().slice(0,10);
+    const [videosSnap, demandasSnap, agendamentosSnap, postagensSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')),
+      getDocs(collection(db,'demandas')),
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'postagens'))
+    ]);
+
+    const videos = []; videosSnap.forEach(d => videos.push({id:d.id, ...d.data()}));
+    const demandas = []; demandasSnap.forEach(d => demandas.push({id:d.id, ...d.data()}));
+    const agendamentos = []; agendamentosSnap.forEach(d => agendamentos.push({id:d.id, ...d.data()}));
+    const postagens = []; postagensSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
+
+    // Contagem de videos por estagio real do pipeline (1 a 6)
+    const emEdicao = videos.filter(v=>v.status==='aguardando_edicao').length;
+    const aguardApr = videos.filter(v=>v.status==='aguardando_aprovacao').length;
+    const emCorrecao = videos.filter(v=>v.status==='correcao').length;
+    const aguardCliente = videos.filter(v=>v.status==='aguardando_cliente').length;
+    const aguardLegenda = postagens.filter(p=>p.status==='aguardando_legenda').length;
+    const aguardAgendamento = postagens.filter(p=>p.status==='aguardando_agendamento').length;
+    const agendados = postagens.filter(p=>p.status==='agendado').length;
+
+    const maxEstagio = Math.max(emEdicao, aguardApr, emCorrecao, aguardCliente, aguardLegenda, aguardAgendamento, agendados, 1);
+
+    const pendentes = demandas.filter(d=>d.status==='pendente');
+    const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
+    const aguardandoAprovacaoDemanda = demandas.filter(d=>d.status==='concluida_aguardando_aprovacao');
+    const gravacoesHoje = agendamentos.filter(a => a.data === hoje && a.status !== 'cancelado');
+    const postagensSemana = postagens.filter(p => {
+      if(!p.dataAgendada) return false;
+      const diff = (new Date(p.dataAgendada) - new Date(hoje)) / 86400000;
+      return diff >= 0 && diff <= 7;
+    });
+
+    // Atividade recente - junta timestamps de varias fontes
+    const eventos = [];
+    videos.forEach(v => { if(v.clienteAprovouEm) eventos.push({ts: v.clienteAprovouEm, texto: '✅ Vídeo aprovado — '+v.clienteNome+' ('+v.titulo+')'}); });
+    demandas.forEach(d => { if(d.concluidaEm?.seconds) eventos.push({ts: new Date(d.concluidaEm.seconds*1000).toISOString(), texto: '📋 Demanda concluída — '+d.destinatario+': '+d.titulo}); });
+    postagens.forEach(p => { if(p.agendadoEm) eventos.push({ts: p.agendadoEm, texto: '📅 Postagem agendada — '+p.clienteNome+' pra '+p.dataAgendada}); });
+    eventos.sort((a,b) => new Date(b.ts) - new Date(a.ts));
+    const recentes = eventos.slice(0, 8);
+
+    ultimaAtualizacaoComando = new Date();
+
+    const barra = (label, valor, cor) => `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;"><span>${label}</span><b>${valor}</b></div>
+        <div style="background:var(--deep);border-radius:5px;height:10px;overflow:hidden;"><div style="background:${cor};height:100%;width:${(valor/maxEstagio)*100}%;transition:width .4s;"></div></div>
+      </div>`;
+
+    let html = `<div class="card">
+      <h2>🎛️ Central de Comando</h2>
+      <div class="desc">Tudo que está acontecendo agora na operação. Atualiza sozinho a cada 25 segundos.</div>
+    </div>
+    <div class="painelResumo">
+      <div class="resumoCard ${atrasadas.length ? 'red' : ''}"><div class="num">${atrasadas.length}</div><div class="lbl">Demandas atrasadas</div></div>
+      <div class="resumoCard yellow"><div class="num">${aguardandoAprovacaoDemanda.length}</div><div class="lbl">Aguardando aprovação</div></div>
+      <div class="resumoCard"><div class="num">${gravacoesHoje.length}</div><div class="lbl">Gravações hoje</div></div>
+      <div class="resumoCard green"><div class="num">${postagensSemana.length}</div><div class="lbl">Postagens nos próximos 7 dias</div></div>
+    </div>
+    <div class="card">
+      <h2>🎬 Vídeos — onde está cada um agora</h2>
+      ${barra('1. Em edição', emEdicao, '#8a8a8d')}
+      ${barra('2. Aguardando sua aprovação', aguardApr, '#e0c56a')}
+      ${barra('2. Em correção', emCorrecao, '#e07a7a')}
+      ${barra('3. Aguardando confirmação do cliente', aguardCliente, '#FBBC19')}
+      ${barra('4. Aguardando legenda', aguardLegenda, '#8a8a8d')}
+      ${barra('5. Aguardando agendamento', aguardAgendamento, '#e0c56a')}
+      ${barra('6. Agendados', agendados, '#4caf72')}
+    </div>
+    <div class="grupoFuncionario">
+      <h3>⚡ Atividade recente</h3>
+      ${recentes.length ? recentes.map(e => `<div class="item"><div class="meta">${new Date(e.ts).toLocaleString('pt-BR')}</div><div class="nome" style="margin-top:2px;">${esc(e.texto)}</div></div>`).join('') : '<div class="empty">Nada registrado ainda.</div>'}
+    </div>
+    <div class="meta" style="text-align:center;margin-top:10px;opacity:.6;">Atualizado às ${ultimaAtualizacaoComando.toLocaleTimeString('pt-BR')}</div>`;
+
+    cont.innerHTML = html;
   }
 
   async function renderGerenciaAmanda(){

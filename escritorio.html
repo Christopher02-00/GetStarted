@@ -2067,14 +2067,13 @@
     document.getElementById('calMesGrid').innerHTML = html;
   }
 
-  async function calcularSaudeCliente(clienteSlug, clienteNome){
+  function calcularSaudeCliente(clienteSlug, clienteNome, dadosCalendario, listaAgendamentos, listaDemandas, listaAvaliacoes){
     const motivos = [];
     let pontosRisco = 0;
     const mesAtual = new Date().toISOString().slice(0,7);
 
-    const calSnap = await getDoc(doc(db,'calendarios', clienteSlug));
-    if(calSnap.exists()){
-      const items = calSnap.data().items || [];
+    if(dadosCalendario && dadosCalendario.exists()){
+      const items = dadosCalendario.data().items || [];
       if(items.length){
         const aprovados = items.filter(i=>i.apr).length;
         const pctApr = Math.round((aprovados/items.length)*100);
@@ -2082,10 +2081,8 @@
       }
     }
 
-    const agSnap = await getDocs(collection(db,'agendamentos'));
     let planejado = 0, realizado = 0, temCapsulaRecente = false;
-    agSnap.forEach(d => {
-      const a = d.data();
+    listaAgendamentos.forEach(a => {
       if(a.cliente === clienteSlug && a.data?.startsWith(mesAtual) && a.status !== 'cancelado'){
         planejado += a.qtdVideosPlanejados || 0;
         if(a.status === 'realizado') realizado += a.qtdVideosRealizados || 0;
@@ -2093,19 +2090,15 @@
     });
     if(planejado > 0 && realizado < planejado){ pontosRisco++; motivos.push('gravações abaixo do planejado ('+realizado+'/'+planejado+')'); }
 
-    const demSnap = await getDocs(collection(db,'demandas'));
-    demSnap.forEach(d => {
-      const dem = d.data();
+    listaDemandas.forEach(dem => {
       if(dem.titulo?.includes('Protocolo Cápsula') && dem.titulo.includes(clienteNome)){
         temCapsulaRecente = true;
       }
     });
     if(temCapsulaRecente){ pontosRisco += 2; motivos.push('Protocolo Cápsula ativo recentemente'); }
 
-    const avalSnap = await getDocs(collection(db,'avaliacoes_clientes'));
     let ultimaNota = null, ultimaData = 0;
-    avalSnap.forEach(d => {
-      const a = d.data();
+    listaAvaliacoes.forEach(a => {
       if(a.cliente === clienteSlug){
         const t = a.criadoEm?.seconds || 0;
         if(t > ultimaData){ ultimaData = t; ultimaNota = a.nota; }
@@ -2978,10 +2971,22 @@
   async function renderGerenciaSaudeClientes(){
     const cont = document.getElementById('gerenciaSaudeClientes');
     cont.innerHTML = '<div class="card"><div class="desc">Calculando saúde de cada cliente...</div></div>';
-    const resultados = [];
-    for(const c of CLIENTES_LISTA){
-      resultados.push(await calcularSaudeCliente(c.slug, c.nome));
-    }
+
+    // Busca tudo em paralelo, UMA vez so — nao mais por cliente
+    const [agSnap, demSnap, avalSnap, ...calSnaps] = await Promise.all([
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'demandas')),
+      getDocs(collection(db,'avaliacoes_clientes')),
+      ...CLIENTES_LISTA.map(c => getDoc(doc(db,'calendarios', c.slug)))
+    ]);
+
+    const listaAgendamentos = []; agSnap.forEach(d => listaAgendamentos.push(d.data()));
+    const listaDemandas = []; demSnap.forEach(d => listaDemandas.push(d.data()));
+    const listaAvaliacoes = []; avalSnap.forEach(d => listaAvaliacoes.push(d.data()));
+
+    const resultados = CLIENTES_LISTA.map((c, i) =>
+      calcularSaudeCliente(c.slug, c.nome, calSnaps[i], listaAgendamentos, listaDemandas, listaAvaliacoes)
+    );
     const ordem = { vermelho:0, amarelo:1, verde:2 };
     resultados.sort((a,b) => ordem[a.cor]-ordem[b.cor]);
 
@@ -3155,12 +3160,14 @@
 
   async function calcularRankingMes(){
     const mesAtual = new Date().toISOString().slice(0,7);
-    const [demandasSnap, videosSnap] = await Promise.all([
+    const [demandasSnap, videosSnap, checklistSnap] = await Promise.all([
       getDocs(collection(db,'demandas')),
-      getDocs(collection(db,'videos_producao'))
+      getDocs(collection(db,'videos_producao')),
+      getDocs(collection(db,'checklist_execucoes'))
     ]);
     const demandas = []; demandasSnap.forEach(d => demandas.push(d.data()));
     const videos = []; videosSnap.forEach(d => videos.push(d.data()));
+    const execucoesMap = {}; checklistSnap.forEach(d => { execucoesMap[d.id] = d.data(); });
 
     const ranking = [];
     for(const nome of FUNCIONARIOS_RANKING_MES){
@@ -3179,10 +3186,10 @@
           const d = new Date(hoje); d.setDate(d.getDate()-i);
           if(!d.toISOString().slice(0,7).startsWith(mesAtual)) continue;
           const chave = nome+'_diario_'+d.toISOString().slice(0,10);
-          const snap = await getDoc(doc(db,'checklist_execucoes', chave));
-          if(snap.exists()){
+          const dados = execucoesMap[chave];
+          if(dados){
             diasComDados++;
-            somaPct += (Object.keys(snap.data().itensFeitos||{}).length / totalItens);
+            somaPct += (Object.keys(dados.itensFeitos||{}).length / totalItens);
           }
         }
         checklistPct = diasComDados ? Math.round((somaPct/diasComDados)*100) : 0;
@@ -3668,7 +3675,10 @@
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     if(qual==='painelTV'){
       const iframe = document.getElementById('iframePainelTVInterno');
-      if(!iframe.src) iframe.src = 'https://get-started.agency/painel-tv.html';
+      if(!iframe.dataset.carregado){
+        iframe.src = 'https://get-started.agency/painel-tv.html';
+        iframe.dataset.carregado = 'true';
+      }
     }
     if(qual==='videos') renderGerenciaVideos();
     if(qual==='aprovarVideos') renderAprovacaoVideos();
@@ -4283,8 +4293,7 @@
     await carregarTodasDemandas();
     await verificarClientesParaCapsulaAutomatico();
     await verificarPostagensEsquecidas();
-    await renderGerenciaAmanda();
-    await renderGerenciaChris();
+    await Promise.all([renderGerenciaAmanda(), renderGerenciaChris()]);
   }
 
   async function verificarPostagensEsquecidas(){

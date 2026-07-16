@@ -1134,6 +1134,10 @@
       const box = document.getElementById('streakBox');
       if(box) box.innerHTML = `<div class="streakBar"><div class="fogo">🔥</div><div class="txt">${streak} dia(s) seguido(s) com o Diário 100% completo<span>Continue assim — isso conta pra avaliação mensal.</span></div></div>`;
     }
+    if(usuarioAtual === 'Gabrielle'){
+      cont.innerHTML += `<div id="storiesDiariosBox" style="margin-top:20px;"></div>`;
+      renderStoriesDiarios();
+    }
   };
 
   function renderChecklist(){
@@ -3340,6 +3344,82 @@
   let usuarioAtual = '';
 
   function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function formatarDataBR(dataISO){
+    if(!dataISO || !/^\d{4}-\d{2}-\d{2}/.test(dataISO)) return dataISO || '';
+    const [ano, mes, dia] = dataISO.slice(0,10).split('-');
+    return `${dia}/${mes}/${ano}`;
+  }
+
+  // ===== STORIES DIARIOS — sub-checklist por cliente e dia da semana =====
+  const DIAS_SEMANA_ORDEM = ['domingo','segunda','terca','quarta','quinta','sexta','sabado'];
+  const DIAS_SEMANA_LABEL = { domingo:'Domingo', segunda:'Segunda', terca:'Terça', quarta:'Quarta', quinta:'Quinta', sexta:'Sexta', sabado:'Sábado' };
+
+  function obterChaveSemanaAtual(){
+    const hoje = new Date();
+    const d = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()));
+    const diaSemana = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - diaSemana);
+    const anoInicio = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+    const semanaNum = Math.ceil((((d - anoInicio) / 86400000) + 1)/7);
+    return d.getUTCFullYear() + '-W' + String(semanaNum).padStart(2,'0');
+  }
+
+  const STORIES_CLIENTES_PADRAO = [
+    { clienteNome: 'Joaquin Assados', dias: ['quarta','quinta','sexta','sabado'] },
+    { clienteNome: 'Divina Cantina', dias: ['terca','quarta','quinta','sexta','sabado','domingo'] },
+  ];
+
+  async function garantirConfigStoriesDiarios(){
+    const snap = await getDocs(collection(db,'stories_diarios_config'));
+    if(snap.empty){
+      for(const c of STORIES_CLIENTES_PADRAO){
+        await addDoc(collection(db,'stories_diarios_config'), c);
+      }
+    }
+  }
+
+  async function renderStoriesDiarios(){
+    const box = document.getElementById('storiesDiariosBox');
+    if(!box) return;
+    box.innerHTML = '<div class="card"><div class="desc">Carregando stories diários...</div></div>';
+
+    await garantirConfigStoriesDiarios();
+    const configSnap = await getDocs(collection(db,'stories_diarios_config'));
+    const clientes = []; configSnap.forEach(d => clientes.push({id:d.id, ...d.data()}));
+
+    const semanaChave = obterChaveSemanaAtual();
+    let html = `<div class="card"><h2>📖 Stories Diários da Semana</h2><div class="desc">Marca os dias que postou stories de cada cliente. Quando a semana fica completa, o próximo ciclo já começa do zero sozinho.</div></div>`;
+
+    for(const c of clientes){
+      const slug = c.clienteNome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-');
+      const docId = slug + '_' + semanaChave;
+      const execSnap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
+      const diasFeitos = execSnap.exists() ? (execSnap.data().dias || {}) : {};
+      const todosFeitos = c.dias.every(dia => diasFeitos[dia]);
+
+      html += `<div class="item" style="${todosFeitos?'border:2px solid var(--green);':''}">
+        <div class="top"><div class="nome">${todosFeitos?'🎉 ':''}${esc(c.clienteNome)}</div>${todosFeitos?'<span class="selo aprovada">Semana completa!</span>':''}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          ${c.dias.map(dia => `
+            <label style="display:flex;align-items:center;gap:5px;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;">
+              <input type="checkbox" ${diasFeitos[dia]?'checked':''} onchange="toggleStoryDiario('${docId}','${dia}', this.checked)">
+              <span style="font-size:11px;">${DIAS_SEMANA_LABEL[dia]}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>`;
+    }
+    box.innerHTML = html;
+  }
+
+  window.toggleStoryDiario = async function(docId, dia, valor){
+    const snap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
+    const diasAtuais = snap.exists() ? (snap.data().dias || {}) : {};
+    diasAtuais[dia] = valor;
+    await setDoc(doc(db,'stories_diarios_execucoes', docId), { dias: diasAtuais, atualizadoEm: serverTimestamp() }, { merge: true });
+    mostrarToast(valor ? 'Marcado!' : 'Desmarcado.');
+    renderStoriesDiarios();
+  };
 
   // ===== BIT — CENTRAL DE DUVIDAS (banco de perguntas, nao IA real) =====
   const BIT_FAQ = [
@@ -3906,7 +3986,7 @@
                       urg==='hoje' ? '<span class="selo hoje">Hoje</span>' : '<span class="selo pendente">Pendente</span>';
       const origemTag = d.origem==='cliente' ? '<span class="selo cliente">Cliente: '+esc(d.clienteNome)+'</span>' : '';
       return `<div class="item ${classe}" onclick="abrirDemandaMinha('${d.id}')">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">${d.prazoData} ${d.prazoHora}</div></div>
+        <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">${formatarDataBR(d.prazoData)} ${d.prazoHora}</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${seloTxt}${origemTag}</div>
       </div>`;
     }).join('');
@@ -3920,7 +4000,8 @@
     modal.innerHTML = `
       <h2>${esc(d.titulo)}</h2>
       <div class="linha"><b>Descrição:</b> ${esc(d.descricao || 'sem descrição')}</div>
-      <div class="linha"><b>Prazo:</b> ${d.prazoData} às ${d.prazoHora}</div>
+      <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
+      ${d.linkAnexo ? '<div class="linha">🔗 <a href="'+esc(d.linkAnexo)+'" target="_blank" style="color:var(--yellow);">Abrir link de anexo ↗</a></div>' : ''}
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
       ${jaTemProva ? '<div class="linha" style="color:var(--yellow2);">✋ Já enviado, aguardando aprovação da gerência.</div>' : `
       ${d.tipoFuncaoFixa === 'reuniao' ? `
@@ -4541,7 +4622,7 @@
                         urg==='atrasado' ? '<span class="selo atrasado">Atrasado</span>' :
                         urg==='hoje' ? '<span class="selo hoje">Hoje</span>' : '<span class="selo pendente">Pendente</span>';
         return `<div class="item ${classe}" onclick="abrirDemandaGerencia('${d.id}')">
-          <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">${d.prazoData} ${d.prazoHora}</div></div>
+          <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">${formatarDataBR(d.prazoData)} ${d.prazoHora}</div></div>
           <div style="margin-top:6px;">${seloTxt}</div>
         </div>`;
       }).join('');
@@ -4560,6 +4641,7 @@
         <div class="field"><label>Data prazo</label><input type="date" id="novoData"></div>
         <div class="field"><label>Hora prazo</label><input type="time" id="novoHora" value="19:00"></div>
       </div>
+      <div class="field"><label>🔗 Link de anexo (opcional)</label><input type="text" id="novoLinkAnexo" placeholder="Link de material de apoio — Canva, Drive, planejamento externo, etc"></div>
       <button class="btn" onclick="criarDemanda()" id="btnCriar">Criar demanda</button>
     </div>`;
 
@@ -4610,7 +4692,8 @@
       <h2>${esc(d.titulo)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(d.destinatario)}</div>
       <div class="linha"><b>Descrição:</b> ${esc(d.descricao || 'sem descrição')}</div>
-      <div class="linha"><b>Prazo:</b> ${d.prazoData} às ${d.prazoHora}</div>
+      <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
+      ${d.linkAnexo ? '<div class="linha">🔗 <a href="'+esc(d.linkAnexo)+'" target="_blank" style="color:var(--yellow);">Abrir link de anexo ↗</a></div>' : ''}
       ${d.provaTexto ? '<div class="linha"><b>Relato:</b> '+esc(d.provaTexto)+'</div>' : ''}
       ${d.provaImagemUrl ? '<div class="linha"><b>Prova:</b> <a href="'+esc(d.provaImagemUrl)+'" target="_blank" style="color:var(--yellow);">Abrir link ↗</a></div>' : ''}
       ${podeAprovar ? `<div class="btnrow" style="margin-top:12px;">
@@ -4651,13 +4734,14 @@
     const destinatario = document.getElementById('novoDestinatario').value;
     const prazoData = document.getElementById('novoData').value;
     const prazoHora = document.getElementById('novoHora').value || '19:00';
+    const linkAnexo = document.getElementById('novoLinkAnexo').value.trim();
     if(!titulo || !prazoData){ mostrarToast('Preenche título e data.', 'erro'); return; }
     const btn = document.getElementById('btnCriar');
     btn.disabled = true; btn.textContent = 'Criando...';
     try {
       await addDoc(collection(db,'demandas'), {
         titulo, descricao: desc, origem, clienteNome: '',
-        destinatario, prazoData, prazoHora,
+        destinatario, prazoData, prazoHora, linkAnexo,
         status: 'pendente', provaTexto: '', provaImagemUrl: '',
         criadoEm: serverTimestamp()
       });

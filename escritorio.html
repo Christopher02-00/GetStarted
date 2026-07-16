@@ -500,6 +500,7 @@
       <div class="subtabs">
         <div class="subtab active" id="subtabLancarGravacao" onclick="setVideosSub('lancar', this)">Lançar Gravação</div>
         <div class="subtab" id="subtabMeusVideos" onclick="setVideosSub('meus', this)">Meus Vídeos de Hoje</div>
+        <div class="subtab" id="subtabCorrecoes" onclick="setVideosSub('correcoes', this)">🔧 Vídeos para Correção<span class="navbadge" id="badgeCorrecoes" style="display:none;">0</span></div>
       </div>
       <div id="videosLancar">
         <div class="card">
@@ -527,6 +528,7 @@
         </div>
       </div>
       <div id="videosMeus" style="display:none;"></div>
+      <div id="videosCorrecoes" style="display:none;"></div>
     </div>
 
     <div class="view" id="view-agendamento">
@@ -1202,6 +1204,7 @@
   carregarClientesExtras();
 
   const EDITORES_GERAL = ["Helo","Cecília","João Victor"];
+  const EDITORES_SELECIONAVEIS = ["Helo","Cecília","João Victor","Nathan"];
   const EDITORES_CONFIG = {
     "Helo": { capacidade: 5 },
     "Cecília": { capacidade: 2 },
@@ -1222,7 +1225,7 @@
     const selEditor = document.getElementById('videoEditorEscolhido');
     if(selEditor){
       selEditor.innerHTML = '<option value="">Automático (o sistema escolhe o editor com mais espaço)</option>' +
-        EDITORES_GERAL.map(e=>`<option value="${e}">${e}</option>`).join('');
+        EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}">${e}</option>`).join('');
     }
     const campoData = document.getElementById('videoData');
     if(campoData && !campoData.value) campoData.value = new Date().toISOString().slice(0,10);
@@ -1257,8 +1260,10 @@
     el.classList.add('active');
     document.getElementById('videosLancar').style.display = qual==='lancar' ? 'block' : 'none';
     document.getElementById('videosMeus').style.display = qual==='meus' ? 'block' : 'none';
+    document.getElementById('videosCorrecoes').style.display = qual==='correcoes' ? 'block' : 'none';
     if(qual==='lancar') popularClientesVideo();
     if(qual==='meus') renderMeusVideos();
+    if(qual==='correcoes') renderVideosCorrecoes();
   };
 
   async function contarAbertosPorEditor(){
@@ -1334,9 +1339,15 @@
     if(!usuarioAtual){ cont.innerHTML = '<div class="empty">Selecione seu nome na tela de Início primeiro.</div>'; return; }
     const snap = await getDocs(collection(db,'videos_producao'));
     const meus = [];
-    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && !['aprovado','aguardando_aprovacao','aguardando_cliente'].includes(v.status)) meus.push({id:d.id, ...v}); });
+    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
     const aguardando = [];
     snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_aprovacao') aguardando.push({id:d.id, ...v}); });
+
+    // Atualiza o badge de correcoes pendentes tambem, ja que estamos com os dados na mao
+    let qtdCorrecao = 0;
+    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'correcao') qtdCorrecao++; });
+    const badge = document.getElementById('badgeCorrecoes');
+    if(badge){ badge.style.display = qtdCorrecao ? 'inline-block' : 'none'; badge.textContent = qtdCorrecao; }
 
     let html = '';
     if(aguardando.length){
@@ -1344,14 +1355,13 @@
       html += aguardando.map(v => `<div class="item"><div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div><div class="meta">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">link enviado</a></div><button class="btn red" style="width:auto;margin-top:8px;padding:5px 12px;font-size:11px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Cancelar / enviei errado</button></div>`).join('');
     }
 
-    if(!meus.length && !aguardando.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo pendente pra você agora. 🎉</div>'; return; }
+    if(!meus.length && !aguardando.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo novo pra editar agora. 🎉</div>' + html; return; }
     if(!meus.length){ cont.innerHTML = html; return; }
 
     html += meus.map(v => `
       <div class="item" id="video_${v.id}">
         <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
         <div class="meta">${v.observacao ? '📝 ' + esc(v.observacao) : ''}</div>
-        ${v.status === 'correcao' ? '<div class="avisoBanner" style="border-color:var(--red);margin-top:8px;"><div class="icone">⚠️</div><div class="texto">Precisa de ajuste<span>'+esc(v.correcao||'')+'</span></div></div>' : ''}
         <div class="field" style="margin-top:10px;"><input type="text" id="link_${v.id}" placeholder="Cola o link do vídeo pronto no Drive"></div>
         <div class="btnrow">
           <button class="btn red" style="flex:0 0 auto;width:auto;padding:0 14px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Excluir</button>
@@ -1360,6 +1370,39 @@
       </div>
     `).join('') + html;
     cont.innerHTML = html;
+  };
+
+  window.renderVideosCorrecoes = async function(){
+    const cont = document.getElementById('videosCorrecoes');
+    if(!usuarioAtual){ cont.innerHTML = '<div class="empty">Selecione seu nome na tela de Início primeiro.</div>'; return; }
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const correcoes = [];
+    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'correcao') correcoes.push({id:d.id, ...v}); });
+
+    let html = `<div class="card"><h2>🔧 Vídeos pra corrigir</h2><div class="desc">Aqui ficam só os vídeos que o Chris ou a Amanda pediram ajuste — organizados por nome, com o motivo e o link original pra você já abrir e ver o que precisa mudar.</div></div>`;
+    if(!correcoes.length){ html += '<div class="empty">Nenhum vídeo esperando correção agora. 🎉</div>'; cont.innerHTML = html; return; }
+
+    html += correcoes.map(v => `
+      <div class="item" style="border:2px solid var(--red);" id="correcao_${v.id}">
+        <div class="top"><div class="nome" style="font-size:15px;">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
+        <div class="meta" style="margin-top:8px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);font-weight:700;">Abrir vídeo original no Drive ↗</a></div>
+        <div class="avisoBanner" style="border-color:var(--red);margin-top:10px;"><div class="icone">⚠️</div><div class="texto">O que precisa mudar<span>${esc(v.correcao||'')}</span></div></div>
+        <div class="field" style="margin-top:10px;"><label>Novo link do vídeo já corrigido</label><input type="text" id="linkCorrigido_${v.id}" placeholder="Cola o novo link do Drive aqui"></div>
+        <div class="btnrow">
+          <button class="btn red" style="flex:0 0 auto;width:auto;padding:0 14px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Excluir</button>
+          <button class="btn green" onclick="reenviarVideoCorrigido('${v.id}')">📤 Reenviar corrigido</button>
+        </div>
+      </div>
+    `).join('');
+    cont.innerHTML = html;
+  };
+
+  window.reenviarVideoCorrigido = async function(id){
+    const novoLink = document.getElementById('linkCorrigido_'+id).value.trim();
+    if(!novoLink){ mostrarToast('Cola o novo link antes de reenviar.', 'erro'); return; }
+    await updateDoc(doc(db,'videos_producao', id), { status: 'aguardando_aprovacao', linkFinalizado: novoLink, correcao: '' });
+    mostrarToast('Reenviado pra aprovação!');
+    renderVideosCorrecoes();
   };
 
   window.cancelarVideoEnviado = async function(id, titulo){
@@ -1495,7 +1538,7 @@
           <span class="editorPill">🎞️ ${esc(v.editorAtribuido)}</span>
           <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${v.cliente}', this.value)">
             <option value="">Mudar pra...</option>
-            ${EDITORES_GERAL.filter(e=>e!==v.editorAtribuido).map(e=>`<option value="${e}">${e}</option>`).join('')}
+            ${EDITORES_SELECIONAVEIS.filter(e=>e!==v.editorAtribuido).map(e=>`<option value="${e}">${e}</option>`).join('')}
           </select>
           ${v.status==='aprovado' ? '<span class="selo aprovada">Aprovado</span>' : v.status==='aguardando_aprovacao' ? '<span class="selo aguardando">Aguardando aprovação</span>' : v.status==='aguardando_cliente' ? '<span class="selo hoje">Aguardando cliente</span>' : v.status==='correcao' ? '<span class="selo atrasado">Precisa ajuste</span>' : '<span class="selo pendente">Em edição</span>'}
         </div>
@@ -2119,7 +2162,7 @@
 
         <div class="field"><label>Pra qual editor esses vídeos devem ir?</label><select id="editorEscolhido_${a.id}">
           <option value="">Automático (o sistema escolhe o editor com mais espaço)</option>
-          ${EDITORES_GERAL.map(e=>`<option value="${e}">${e}</option>`).join('')}
+          ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}">${e}</option>`).join('')}
         </select></div>
 
         <div class="field"><label><input type="checkbox" id="uber_${a.id}" onchange="document.getElementById('uberLink_${a.id}').style.display=this.checked?'block':'none'"> Gravação a mais de 30km da cidade (Uber pago pela agência)</label></div>
@@ -2127,6 +2170,7 @@
         ${a.tipo==='avulso' ? `<div class="field"><label>Valor extra a receber (cliente fora do banco)</label><input type="text" id="valorExtra_${a.id}" placeholder="Ex: R$ 150,00"></div>` : ''}
         <div class="btnrow">
           <button class="btn secondary" onclick="reagendarGravacao('${a.id}')">Reagendar</button>
+          <button class="btn red" onclick="cancelarGravacaoAgendada('${a.id}')">✕ Cancelar</button>
           <button class="btn green" onclick="registrarGravacaoRealizada('${a.id}','${a.cliente}','${esc(a.clienteNome)}')">Confirmar gravação</button>
         </div>
       </div>`;
@@ -2661,6 +2705,7 @@
           <select onchange="moverEtapaCampanha('${c.id}', this.value)">
             ${ETAPAS_CAMPANHA.map(e2=>`<option value="${e2.chave}" ${e2.chave===c.etapa?'selected':''}>${e2.label}</option>`).join('')}
           </select>
+          <button class="btn red" style="width:100%;margin-top:6px;padding:3px;font-size:9.5px;" onclick="excluirCampanha('${c.id}')">✕ Excluir</button>
         </div>`;
       });
       html += `</div>`;
@@ -2672,6 +2717,13 @@
   window.moverEtapaCampanha = async function(id, novaEtapa){
     await updateDoc(doc(db,'campanhas', id), { etapa: novaEtapa });
     mostrarToast('Campanha movida!');
+    renderCampanhasKanban();
+  };
+
+  window.excluirCampanha = async function(id){
+    if(!confirm('Excluir essa campanha?')) return;
+    await deleteDoc(doc(db,'campanhas', id));
+    mostrarToast('Excluída.');
     renderCampanhasKanban();
   };
 
@@ -3112,6 +3164,13 @@
     const novaHora = prompt('Nova hora (HH:MM):', '10:00') || '10:00';
     await updateDoc(doc(db,'agendamentos', agId), { data: novaData, hora: novaHora, status: 'agendado' });
     mostrarToast('Gravação reagendada pra ' + novaData + '!');
+    renderMinhaAgendaFilmmaker();
+  };
+
+  window.cancelarGravacaoAgendada = async function(agId){
+    if(!confirm('Cancelar essa gravação? Ela some da sua agenda por completo.')) return;
+    await deleteDoc(doc(db,'agendamentos', agId));
+    mostrarToast('Gravação cancelada.');
     renderMinhaAgendaFilmmaker();
   };
 
@@ -3805,7 +3864,7 @@
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
     if(nome === 'checklist') abrirChecklist();
     if(nome === 'videos'){
-      const temLancar = ['Chris','Luís'].includes(usuarioAtual);
+      const temLancar = ['Chris','Luís','Nathan'].includes(usuarioAtual);
       const temMeus = ['Chris','Helo','João Victor','Nathan','Cecília'].includes(usuarioAtual);
       document.getElementById('subtabLancarGravacao').style.display = temLancar ? 'block' : 'none';
       document.getElementById('subtabMeusVideos').style.display = temMeus ? 'block' : 'none';
@@ -3983,7 +4042,7 @@
     'Gabrielle': ['navFuncoesFixas','navPostagens','navCampanhas','navRoteiros','navReferencias','navRelatorio','navCalendarios'],
     'Helo': ['navVideos'],
     'João Victor': ['navVideos'],
-    'Nathan': ['navVideos'],
+    'Nathan': ['navVideos','navAgendamento'],
     'Luís': ['navVideos','navAgendamento'],
     'Yas': [],
   };

@@ -603,9 +603,9 @@
       <h1>Ciclo de <span class="y">Postagens</span></h1>
       <div class="sub">Vídeo aprovado → legenda (Gabi) → agendamento (Cecília) → controle final.</div>
       <div class="subtabs">
-        <div class="subtab active" onclick="setPostagensSub('legenda', this)">✍️ Escrever Legenda</div>
-        <div class="subtab" onclick="setPostagensSub('legendasCalendario', this)">📖 Legendas do Calendário (por cliente)</div>
-        <div class="subtab" onclick="setPostagensSub('agendar', this)">📅 Agendar Postagem</div>
+        <div class="subtab active" id="subtabEscreverLegenda" onclick="setPostagensSub('legenda', this)">✍️ Escrever Legenda</div>
+        <div class="subtab" id="subtabLegendasCalendario" onclick="setPostagensSub('legendasCalendario', this)">📖 Legendas do Calendário (por cliente)</div>
+        <div class="subtab" id="subtabAgendarPostagem" onclick="setPostagensSub('agendar', this)">📅 Agendar Postagem</div>
         <div class="subtab" onclick="setPostagensSub('todas', this)">📋 Todas as Postagens</div>
         <div class="subtab" onclick="setPostagensSub('statusCompleto', this)">🔍 Status Completo (do início ao fim)</div>
       </div>
@@ -2596,13 +2596,28 @@
 
   async function renderAgendarPostagens(){
     const cont = document.getElementById('postagensConteudo');
-    const snap = await getDocs(collection(db,'postagens'));
-    const pendentes = []; snap.forEach(d => { if(d.data().status==='aguardando_agendamento') pendentes.push({id:d.id, ...d.data()}); });
-    if(!pendentes.length){ cont.innerHTML = '<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'; return; }
+    const [postSnap, agSnap] = await Promise.all([
+      getDocs(collection(db,'postagens')),
+      getDocs(collection(db,'agendamentos'))
+    ]);
+    const pendentes = []; postSnap.forEach(d => { if(d.data().status==='aguardando_agendamento') pendentes.push({id:d.id, ...d.data()}); });
+
+    const hoje = new Date().toISOString().slice(0,10);
+    let gravacoesHoje = 0;
+    agSnap.forEach(d => { const a=d.data(); if(a.data===hoje && a.status!=='cancelado') gravacoesHoje++; });
+    const atrasadasCount = pendentes.filter(p => p.legendaEm && Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) >= 1).length;
+
+    let resumo = `<div class="painelResumo">
+      <div class="resumoCard"><div class="num">${gravacoesHoje}</div><div class="lbl">Gravações hoje</div></div>
+      <div class="resumoCard ${pendentes.length ? 'yellow' : ''}"><div class="num">${pendentes.length}</div><div class="lbl">Postagens pra agendar</div></div>
+      <div class="resumoCard ${atrasadasCount ? 'red' : ''}"><div class="num">${atrasadasCount}</div><div class="lbl">Atrasadas — priorize</div></div>
+    </div>`;
+
+    if(!pendentes.length){ cont.innerHTML = resumo + '<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'; return; }
 
     pendentes.sort((a,b) => new Date(a.legendaEm||0) - new Date(b.legendaEm||0));
 
-    cont.innerHTML = pendentes.map(p => {
+    cont.innerHTML = resumo + pendentes.map(p => {
       const diasEsperando = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime()) / 86400000) : 0;
       const urgente = diasEsperando >= 1;
       return `
@@ -3982,7 +3997,16 @@
     }
     if(nome === 'agendamento'){ popularClientesAgendamento(); renderListaAgendamentos(); verificarQtdHoje(); }
     if(nome === 'funcoesFixas') abrirFuncoesFixas();
-    if(nome === 'postagens') setPostagensSub('legenda', document.querySelectorAll('#view-postagens .subtab')[0]);
+    if(nome === 'postagens'){
+      const ehGabi = ['Chris','Gabrielle'].includes(usuarioAtual);
+      const ehCecilia = ['Chris','Amanda','Cecília'].includes(usuarioAtual);
+      document.getElementById('subtabEscreverLegenda').style.display = ehGabi ? 'block' : 'none';
+      document.getElementById('subtabLegendasCalendario').style.display = ehCecilia ? 'block' : 'none';
+      document.getElementById('subtabAgendarPostagem').style.display = ehCecilia ? 'block' : 'none';
+      const primeiraAbaVisivel = ehGabi ? 'legenda' : 'agendar';
+      const elPrimeira = ehGabi ? document.getElementById('subtabEscreverLegenda') : document.getElementById('subtabAgendarPostagem');
+      setPostagensSub(primeiraAbaVisivel, elPrimeira);
+    }
     if(nome === 'campanhas'){ popularClientesCampanha(); renderCampanhasKanban(); }
     if(nome === 'manualFuncao') popularManualFuncao();
     if(nome === 'duvidasBit') popularPerguntasFrequentes();

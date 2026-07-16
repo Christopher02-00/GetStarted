@@ -3652,27 +3652,55 @@
     const clientes = []; configSnap.forEach(d => clientes.push({id:d.id, ...d.data()}));
 
     const semanaChave = obterChaveSemanaAtual();
-    let html = `<div class="card"><h2>📖 Stories Diários da Semana</h2><div class="desc">Marca os dias que postou stories de cada cliente. Quando a semana fica completa, o próximo ciclo já começa do zero sozinho.</div></div>`;
+    const hojeIdx = new Date().getDay(); // 0=domingo, 1=segunda...
+    const diaHojeChave = DIAS_SEMANA_ORDEM[hojeIdx];
+    const nomeDiaHoje = DIAS_SEMANA_LABEL[diaHojeChave];
+
+    let totalDias = 0, totalFeitos = 0;
+    const blocos = [];
 
     for(const c of clientes){
       const slug = c.clienteNome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-');
       const docId = slug + '_' + semanaChave;
       const execSnap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
       const diasFeitos = execSnap.exists() ? (execSnap.data().dias || {}) : {};
-      const todosFeitos = c.dias.every(dia => diasFeitos[dia]);
+      const feitosCount = c.dias.filter(d => diasFeitos[d]).length;
+      const todosFeitos = feitosCount === c.dias.length;
+      totalDias += c.dias.length;
+      totalFeitos += feitosCount;
 
-      html += `<div class="item" style="${todosFeitos?'border:2px solid var(--green);':''}">
-        <div class="top"><div class="nome">${todosFeitos?'🎉 ':''}${esc(c.clienteNome)}</div>${todosFeitos?'<span class="selo aprovada">Semana completa!</span>':''}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-          ${c.dias.map(dia => `
-            <label style="display:flex;align-items:center;gap:5px;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;">
-              <input type="checkbox" ${diasFeitos[dia]?'checked':''} onchange="toggleStoryDiario('${docId}','${dia}', this.checked)">
-              <span style="font-size:11px;">${DIAS_SEMANA_LABEL[dia]}</span>
-            </label>
-          `).join('')}
+      const precisaHoje = c.dias.includes(diaHojeChave) && !diasFeitos[diaHojeChave];
+
+      blocos.push(`<div class="item" style="${todosFeitos?'border:2px solid var(--green);':precisaHoje?'border:2px solid var(--yellow);':''}">
+        <div class="top">
+          <div class="nome">${todosFeitos?'🎉 ':precisaHoje?'📌 ':''}${esc(c.clienteNome)}</div>
+          ${todosFeitos ? '<span class="selo aprovada">Semana completa!</span>' : `<span class="selo ${precisaHoje?'hoje':'pendente'}">${feitosCount}/${c.dias.length} dias</span>`}
         </div>
-      </div>`;
+        <div style="background:var(--deep);border-radius:6px;height:8px;overflow:hidden;margin:8px 0 10px;">
+          <div style="background:${todosFeitos?'#4caf72':'#FBBC19'};height:100%;width:${(feitosCount/c.dias.length)*100}%;transition:width .3s;"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${c.dias.map(dia => {
+            const feito = !!diasFeitos[dia];
+            const ehHoje = dia === diaHojeChave;
+            return `<button type="button" onclick="toggleStoryDiario('${docId}','${dia}', ${!feito})"
+              style="display:flex;align-items:center;gap:5px;background:${feito?'#1e3428':'var(--deep)'};border:2px solid ${feito?'#4caf72':ehHoje?'var(--yellow)':'var(--line)'};border-radius:8px;padding:7px 12px;cursor:pointer;font-size:11.5px;font-weight:${ehHoje?'800':'500'};color:${feito?'#7fd99f':'#fff'};">
+              ${feito?'✓':ehHoje?'👉':''} ${DIAS_SEMANA_LABEL[dia]}${ehHoje?' (hoje)':''}
+            </button>`;
+          }).join('')}
+        </div>
+      </div>`);
     }
+
+    const pctGeral = totalDias ? Math.round((totalFeitos/totalDias)*100) : 0;
+    let html = `<div class="card">
+      <h2>📖 Stories Diários da Semana</h2>
+      <div class="desc">Hoje é <b>${nomeDiaHoje}</b>. Clica no dia pra marcar ou desmarcar — sem precisar de checkbox pequeno, é só apertar o botão.</div>
+      <div style="margin-top:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>Progresso da semana toda</span><b>${totalFeitos}/${totalDias} (${pctGeral}%)</b></div>
+        <div style="background:var(--deep);border-radius:7px;height:12px;overflow:hidden;"><div style="background:${pctGeral===100?'#4caf72':'#FBBC19'};height:100%;width:${pctGeral}%;transition:width .3s;"></div></div>
+      </div>
+    </div>` + blocos.join('');
     box.innerHTML = html;
   }
 
@@ -4354,7 +4382,7 @@
       <h2>${esc(d.titulo)}</h2>
       <div class="linha"><b>Descrição:</b> ${esc(d.descricao || 'sem descrição')}</div>
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
-      ${d.linkAnexo ? '<div class="linha">🔗 <a href="'+esc(d.linkAnexo)+'" target="_blank" style="color:var(--yellow);">Abrir link de anexo ↗</a></div>' : ''}
+      ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
       ${jaTemProva ? '<div class="linha" style="color:var(--yellow2);">✋ Já enviado, aguardando aprovação da gerência.</div><button class="btn red" style="margin-top:10px;" onclick="desfazerEnvioDemanda(\''+d.id+'\')">✕ Cancelar envio — voltar a fazer</button>' : `
       ${d.tipoFuncaoFixa === 'reuniao' ? `
@@ -5083,7 +5111,7 @@
       <div class="linha"><b>Funcionário:</b> ${esc(d.destinatario)}</div>
       <div class="linha"><b>Descrição:</b> ${esc(d.descricao || 'sem descrição')}</div>
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
-      ${d.linkAnexo ? '<div class="linha">🔗 <a href="'+esc(d.linkAnexo)+'" target="_blank" style="color:var(--yellow);">Abrir link de anexo ↗</a></div>' : ''}
+      ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
       ${d.provaTexto ? '<div class="linha"><b>Relato:</b> '+esc(d.provaTexto)+'</div>' : ''}
       ${d.provaImagemUrl ? '<div class="linha"><b>Prova:</b> <a href="'+esc(d.provaImagemUrl)+'" target="_blank" style="color:var(--yellow);">Abrir link ↗</a></div>' : ''}
       ${podeAprovar ? `<div class="btnrow" style="margin-top:12px;">

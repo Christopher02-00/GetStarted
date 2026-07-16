@@ -504,8 +504,7 @@
       <div class="sub">Lançamento de gravações, distribuição automática e confirmação de entrega.</div>
       <div class="subtabs">
         <div class="subtab active" id="subtabLancarGravacao" onclick="setVideosSub('lancar', this)">Lançar Gravação</div>
-        <div class="subtab" id="subtabMeusVideos" onclick="setVideosSub('meus', this)">Meus Vídeos de Hoje</div>
-        <div class="subtab" id="subtabCorrecoes" onclick="setVideosSub('correcoes', this)">🔧 Vídeos para Correção<span class="navbadge" id="badgeCorrecoes" style="display:none;">0</span></div>
+        <div class="subtab" id="subtabMeusVideos" onclick="setVideosSub('meus', this)">🎬 Meus Vídeos (editar e corrigir)<span class="navbadge" id="badgeCorrecoes" style="display:none;">0</span></div>
       </div>
       <div id="videosLancar">
         <div class="card">
@@ -537,7 +536,6 @@
         </div>
       </div>
       <div id="videosMeus" style="display:none;"></div>
-      <div id="videosCorrecoes" style="display:none;"></div>
     </div>
 
     <div class="view" id="view-agendamento">
@@ -1269,10 +1267,8 @@
     el.classList.add('active');
     document.getElementById('videosLancar').style.display = qual==='lancar' ? 'block' : 'none';
     document.getElementById('videosMeus').style.display = qual==='meus' ? 'block' : 'none';
-    document.getElementById('videosCorrecoes').style.display = qual==='correcoes' ? 'block' : 'none';
     if(qual==='lancar') popularClientesVideo();
     if(qual==='meus') renderMeusVideos();
-    if(qual==='correcoes') renderVideosCorrecoes();
   };
 
   async function contarAbertosPorEditor(){
@@ -1375,22 +1371,41 @@
     snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
     const aguardando = [];
     snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_aprovacao') aguardando.push({id:d.id, ...v}); });
+    const correcoes = [];
+    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'correcao') correcoes.push({id:d.id, ...v}); });
 
-    // Atualiza o badge de correcoes pendentes tambem, ja que estamos com os dados na mao
-    let qtdCorrecao = 0;
-    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'correcao') qtdCorrecao++; });
     const badge = document.getElementById('badgeCorrecoes');
-    if(badge){ badge.style.display = qtdCorrecao ? 'inline-block' : 'none'; badge.textContent = qtdCorrecao; }
+    if(badge){ badge.style.display = correcoes.length ? 'inline-block' : 'none'; badge.textContent = correcoes.length; }
 
     let html = '';
+
+    // CORREÇÕES SEMPRE NO TOPO — é o mais urgente, nunca escondido atrás de aba
+    if(correcoes.length){
+      html += `<div class="card" style="border:2px solid var(--red);"><h2>🔧 Precisa corrigir — ${correcoes.length} vídeo(s)</h2><div class="desc">O Chris ou a Amanda pediram ajuste nesses. Cola o novo link aqui mesmo pra reenviar.</div></div>`;
+      html += correcoes.map(v => `
+        <div class="item" style="border:2px solid var(--red);" id="correcao_${v.id}">
+          <div class="top"><div class="nome" style="font-size:15px;">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
+          <div class="meta" style="margin-top:8px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);font-weight:700;">Abrir vídeo original no Drive ↗</a></div>
+          <div class="avisoBanner" style="border-color:var(--red);margin-top:10px;"><div class="icone">⚠️</div><div class="texto">O que precisa mudar<span>${esc(v.correcao||'')}</span></div></div>
+          ${v.correcaoImagemUrl ? '<div class="meta" style="margin-top:8px;">📷 <a href="'+esc(v.correcaoImagemUrl)+'" target="_blank" style="color:var(--yellow);">Ver print/foto de apoio ↗</a></div>' : ''}
+          <div class="field" style="margin-top:10px;"><label>Novo link do vídeo já corrigido — cola aqui</label><input type="text" id="linkCorrigido_${v.id}" placeholder="Cola o novo link do Drive aqui"></div>
+          <div class="btnrow">
+            <button class="btn red" style="flex:0 0 auto;width:auto;padding:0 14px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Excluir</button>
+            <button class="btn green" onclick="reenviarVideoCorrigido('${v.id}')">📤 Reenviar corrigido</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
     if(aguardando.length){
       html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardando.length} vídeo(s) aguardando aprovação do Chris/Amanda<span>Você já enviou, só aguardar.</span></div></div>`;
       html += aguardando.map(v => `<div class="item"><div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div><div class="meta">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">link enviado</a></div><button class="btn red" style="width:auto;margin-top:8px;padding:5px 12px;font-size:11px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Cancelar / enviei errado</button></div>`).join('');
     }
 
-    if(!meus.length && !aguardando.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo novo pra editar agora. 🎉</div>' + html; return; }
+    if(!meus.length && !aguardando.length && !correcoes.length){ cont.innerHTML = html || '<div class="empty">Nenhum vídeo pendente pra você agora. 🎉</div>'; return; }
     if(!meus.length){ cont.innerHTML = html; return; }
 
+    if(meus.length) html += `<div class="grupoFuncionario"><h3>🎬 Novos pra editar</h3></div>`;
     html += meus.map(v => {
       const atrasado = videoEstaAtrasado(v);
       return `
@@ -1404,33 +1419,7 @@
           <button class="btn green" onclick="enviarVideoParaAprovacao('${v.id}')">📤 Enviar pra aprovação</button>
         </div>
       </div>
-    `;}).join('') + html;
-    cont.innerHTML = html;
-  };
-
-  window.renderVideosCorrecoes = async function(){
-    const cont = document.getElementById('videosCorrecoes');
-    if(!usuarioAtual){ cont.innerHTML = '<div class="empty">Selecione seu nome na tela de Início primeiro.</div>'; return; }
-    const snap = await getDocs(collection(db,'videos_producao'));
-    const correcoes = [];
-    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'correcao') correcoes.push({id:d.id, ...v}); });
-
-    let html = `<div class="card"><h2>🔧 Vídeos pra corrigir</h2><div class="desc">Aqui ficam só os vídeos que o Chris ou a Amanda pediram ajuste — organizados por nome, com o motivo e o link original pra você já abrir e ver o que precisa mudar.</div></div>`;
-    if(!correcoes.length){ html += '<div class="empty">Nenhum vídeo esperando correção agora. 🎉</div>'; cont.innerHTML = html; return; }
-
-    html += correcoes.map(v => `
-      <div class="item" style="border:2px solid var(--red);" id="correcao_${v.id}">
-        <div class="top"><div class="nome" style="font-size:15px;">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
-        <div class="meta" style="margin-top:8px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);font-weight:700;">Abrir vídeo original no Drive ↗</a></div>
-        <div class="avisoBanner" style="border-color:var(--red);margin-top:10px;"><div class="icone">⚠️</div><div class="texto">O que precisa mudar<span>${esc(v.correcao||'')}</span></div></div>
-        ${v.correcaoImagemUrl ? '<div class="meta" style="margin-top:8px;">📷 <a href="'+esc(v.correcaoImagemUrl)+'" target="_blank" style="color:var(--yellow);">Ver print/foto de apoio ↗</a></div>' : ''}
-        <div class="field" style="margin-top:10px;"><label>Novo link do vídeo já corrigido</label><input type="text" id="linkCorrigido_${v.id}" placeholder="Cola o novo link do Drive aqui"></div>
-        <div class="btnrow">
-          <button class="btn red" style="flex:0 0 auto;width:auto;padding:0 14px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Excluir</button>
-          <button class="btn green" onclick="reenviarVideoCorrigido('${v.id}')">📤 Reenviar corrigido</button>
-        </div>
-      </div>
-    `).join('');
+    `;}).join('');
     cont.innerHTML = html;
   };
 
@@ -1439,7 +1428,7 @@
     if(!novoLink){ mostrarToast('Cola o novo link antes de reenviar.', 'erro'); return; }
     await updateDoc(doc(db,'videos_producao', id), { status: 'aguardando_aprovacao', linkFinalizado: novoLink, correcao: '' });
     mostrarToast('Reenviado pra aprovação!');
-    renderVideosCorrecoes();
+    renderMeusVideos();
   };
 
   window.cancelarVideoEnviado = async function(id, titulo){
@@ -3996,7 +3985,6 @@
       const temMeus = ['Chris','Helo','João Victor','Nathan','Cecília'].includes(usuarioAtual);
       document.getElementById('subtabLancarGravacao').style.display = temLancar ? 'block' : 'none';
       document.getElementById('subtabMeusVideos').style.display = temMeus ? 'block' : 'none';
-      document.getElementById('subtabCorrecoes').style.display = temMeus ? 'block' : 'none';
       if(!temLancar && temMeus){ setVideosSub('meus', document.getElementById('subtabMeusVideos')); }
       else { popularClientesVideo(); }
     }

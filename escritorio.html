@@ -1286,7 +1286,7 @@
     let html = '';
     if(aguardando.length){
       html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardando.length} vídeo(s) aguardando aprovação do Chris/Amanda<span>Você já enviou, só aguardar.</span></div></div>`;
-      html += aguardando.map(v => `<div class="item"><div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div><div class="meta">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">link enviado</a></div></div>`).join('');
+      html += aguardando.map(v => `<div class="item"><div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div><div class="meta">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">link enviado</a></div><button class="btn red" style="width:auto;margin-top:8px;padding:5px 12px;font-size:11px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Cancelar / enviei errado</button></div>`).join('');
     }
 
     if(!meus.length && !aguardando.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo pendente pra você agora. 🎉</div>'; return; }
@@ -1298,10 +1298,20 @@
         <div class="meta">${v.observacao ? '📝 ' + esc(v.observacao) : ''}</div>
         ${v.status === 'correcao' ? '<div class="avisoBanner" style="border-color:var(--red);margin-top:8px;"><div class="icone">⚠️</div><div class="texto">Precisa de ajuste<span>'+esc(v.correcao||'')+'</span></div></div>' : ''}
         <div class="field" style="margin-top:10px;"><input type="text" id="link_${v.id}" placeholder="Cola o link do vídeo pronto no Drive"></div>
-        <button class="btn green" onclick="enviarVideoParaAprovacao('${v.id}')">📤 Enviar pra aprovação</button>
+        <div class="btnrow">
+          <button class="btn red" style="flex:0 0 auto;width:auto;padding:0 14px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Excluir</button>
+          <button class="btn green" onclick="enviarVideoParaAprovacao('${v.id}')">📤 Enviar pra aprovação</button>
+        </div>
       </div>
     `).join('') + html;
     cont.innerHTML = html;
+  };
+
+  window.cancelarVideoEnviado = async function(id, titulo){
+    if(!confirm('Excluir "'+titulo+'"? Isso apaga esse registro por completo — use quando subiu algo errado por engano.')) return;
+    await deleteDoc(doc(db,'videos_producao', id));
+    mostrarToast('Excluído.');
+    renderMeusVideos();
   };
 
   window.enviarVideoParaAprovacao = async function(id){
@@ -1450,6 +1460,7 @@
             <option value="verde" ${prio==='verde'?'selected':''}>🟢 Sem pressa</option>
           </select>
         </div>
+        <button class="btn red" style="width:auto;margin-top:10px;padding:5px 12px;font-size:11px;" onclick="excluirVideoGerencia('${v.id}','${esc(v.titulo)}')">✕ Excluir esse vídeo (foi enviado errado)</button>
       </div>`;
     });
     html += `</div>`;
@@ -1471,6 +1482,13 @@
   window.definirPrioridadeVideo = async function(id, cor){
     await updateDoc(doc(db,'videos_producao', id), { prioridade: cor });
     mostrarToast('Prioridade atualizada.');
+    renderGerenciaVideos();
+  };
+
+  window.excluirVideoGerencia = async function(id, titulo){
+    if(!confirm('Excluir "'+titulo+'"? Isso remove esse vídeo do sistema por completo.')) return;
+    await deleteDoc(doc(db,'videos_producao', id));
+    mostrarToast('Excluído.');
     renderGerenciaVideos();
   };
 
@@ -2024,9 +2042,12 @@
     for(const a of pendentes){
       const calSnap = await getDoc(doc(db,'calendarios', a.cliente));
       const itensCalendario = calSnap.exists() ? (calSnap.data().items||[]).map((it,idx)=>({...it, idx})).filter(it=>!it.gravado) : [];
+      const hojeStr = new Date().toISOString().slice(0,10);
+      const estaAtrasado = a.data < hojeStr;
 
-      html += `<div class="card" id="ag_${a.id}">
+      html += `<div class="card" id="ag_${a.id}" ${estaAtrasado ? 'style="border:2px solid var(--red);"' : ''}>
         <h2>${esc(a.clienteNome)} — ${a.data} ${a.hora}</h2>
+        ${estaAtrasado ? `<div class="meta" style="color:var(--red);font-weight:800;margin-bottom:6px;">⚠️ Essa gravação foi no dia ${a.data}, e você está registrando só hoje. Registra sempre no MESMO DIA a partir de agora — isso atrasa toda a fila de edição e aprovação.</div>` : ''}
         <div class="desc">${esc(a.local || '')} · Planejado: ${a.qtdVideosPlanejados} vídeo(s) · ${a.tipo==='avulso'?'Cliente avulso':'Cliente fixo'}</div>
 
         ${itensCalendario.length ? `
@@ -2040,6 +2061,11 @@
         ` : `<div class="meta">Esse cliente não tem itens pendentes no calendário editorial ainda.</div>`}
 
         <div class="field"><label>Outros vídeos / Bastidores (um por linha, não precisam estar no calendário)</label><textarea id="extras_${a.id}" placeholder="Ex: Bastidores She.joias&#10;Bastidores Hitech"></textarea></div>
+
+        <div class="field"><label>Pra qual editor esses vídeos devem ir?</label><select id="editorEscolhido_${a.id}">
+          <option value="">Automático (o sistema escolhe o editor com mais espaço)</option>
+          ${EDITORES_GERAL.map(e=>`<option value="${e}">${e}</option>`).join('')}
+        </select></div>
 
         <div class="field"><label><input type="checkbox" id="uber_${a.id}" onchange="document.getElementById('uberLink_${a.id}').style.display=this.checked?'block':'none'"> Gravação a mais de 30km da cidade (Uber pago pela agência)</label></div>
         <div id="uberLink_${a.id}" style="display:none;" class="field"><label>Link do recibo do Uber</label><input type="text" id="uberInput_${a.id}" placeholder="Link do print do recibo"></div>
@@ -3068,7 +3094,8 @@
     }
 
     if(qtdRealizada > 0){
-      const editor = await decidirEditor(clienteSlug);
+      const editorManual = document.getElementById('editorEscolhido_'+agId).value;
+      const editor = editorManual || await decidirEditor(clienteSlug);
       const hoje = new Date().toISOString().slice(0,10);
       for(const nomeVideo of nomesVideos){
         await addDoc(collection(db,'videos_producao'), {

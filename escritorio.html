@@ -2020,11 +2020,27 @@
       html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardandoAprovacao.length} gravação(ões) aguardando aprovação do Chris<span>Ainda não liberadas pra registrar.</span></div></div>`;
     }
     if(!pendentes.length && !aguardandoAprovacao.length){ cont.innerHTML = '<div class="empty">Nenhuma gravação pendente de registro.</div>'; return; }
-    html += pendentes.map(a => `
-      <div class="card" id="ag_${a.id}">
+
+    for(const a of pendentes){
+      const calSnap = await getDoc(doc(db,'calendarios', a.cliente));
+      const itensCalendario = calSnap.exists() ? (calSnap.data().items||[]).map((it,idx)=>({...it, idx})).filter(it=>!it.gravado) : [];
+
+      html += `<div class="card" id="ag_${a.id}">
         <h2>${esc(a.clienteNome)} — ${a.data} ${a.hora}</h2>
         <div class="desc">${esc(a.local || '')} · Planejado: ${a.qtdVideosPlanejados} vídeo(s) · ${a.tipo==='avulso'?'Cliente avulso':'Cliente fixo'}</div>
-        <div class="field"><label>Quantos vídeos ficaram prontos?</label><input type="number" id="realizado_${a.id}" min="0" value="${a.qtdVideosPlanejados}"></div>
+
+        ${itensCalendario.length ? `
+        <div class="field"><label>Marca os que você gravou hoje (vindo do calendário editorial)</label></div>
+        ${itensCalendario.map(it => `
+          <label style="display:flex;align-items:center;gap:8px;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:5px;cursor:pointer;">
+            <input type="checkbox" class="chkVideoCalendario_${a.id}" data-idx="${it.idx}" data-nome="${esc(it.name)}">
+            <span style="font-size:12px;">${esc(it.name)}</span>
+          </label>
+        `).join('')}
+        ` : `<div class="meta">Esse cliente não tem itens pendentes no calendário editorial ainda.</div>`}
+
+        <div class="field"><label>Outros vídeos / Bastidores (um por linha, não precisam estar no calendário)</label><textarea id="extras_${a.id}" placeholder="Ex: Bastidores She.joias&#10;Bastidores Hitech"></textarea></div>
+
         <div class="field"><label><input type="checkbox" id="uber_${a.id}" onchange="document.getElementById('uberLink_${a.id}').style.display=this.checked?'block':'none'"> Gravação a mais de 30km da cidade (Uber pago pela agência)</label></div>
         <div id="uberLink_${a.id}" style="display:none;" class="field"><label>Link do recibo do Uber</label><input type="text" id="uberInput_${a.id}" placeholder="Link do print do recibo"></div>
         ${a.tipo==='avulso' ? `<div class="field"><label>Valor extra a receber (cliente fora do banco)</label><input type="text" id="valorExtra_${a.id}" placeholder="Ex: R$ 150,00"></div>` : ''}
@@ -2032,8 +2048,8 @@
           <button class="btn secondary" onclick="reagendarGravacao('${a.id}')">Reagendar</button>
           <button class="btn green" onclick="registrarGravacaoRealizada('${a.id}','${a.cliente}','${esc(a.clienteNome)}')">Confirmar gravação</button>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }
     cont.innerHTML = html;
   }
 
@@ -3019,7 +3035,17 @@
   };
 
   window.registrarGravacaoRealizada = async function(agId, clienteSlug, clienteNome){
-    const qtdRealizada = parseInt(document.getElementById('realizado_'+agId).value) || 0;
+    // Coleta os itens do calendario marcados + os extras digitados em texto livre
+    const checkboxesMarcados = Array.from(document.querySelectorAll('.chkVideoCalendario_'+agId+':checked'));
+    const idxsGravados = checkboxesMarcados.map(c => parseInt(c.dataset.idx));
+    const nomesDoCalendario = checkboxesMarcados.map(c => c.dataset.nome);
+
+    const textoExtras = document.getElementById('extras_'+agId).value.trim();
+    const nomesExtras = textoExtras ? textoExtras.split('\n').map(s=>s.trim()).filter(Boolean) : [];
+
+    const nomesVideos = [...nomesDoCalendario, ...nomesExtras];
+    const qtdRealizada = nomesVideos.length;
+
     const temUber = document.getElementById('uber_'+agId).checked;
     const uberLink = temUber ? document.getElementById('uberInput_'+agId).value.trim() : '';
     const campoValorExtra = document.getElementById('valorExtra_'+agId);
@@ -3044,13 +3070,23 @@
     if(qtdRealizada > 0){
       const editor = await decidirEditor(clienteSlug);
       const hoje = new Date().toISOString().slice(0,10);
-      for(let i=0; i<qtdRealizada; i++){
+      for(const nomeVideo of nomesVideos){
         await addDoc(collection(db,'videos_producao'), {
           cliente: clienteSlug, clienteNome, data: hoje,
-          titulo: clienteNome + ' — vídeo ' + (i+1),
+          titulo: clienteNome + ' — ' + nomeVideo,
           observacao: '', editorSugerido: editor, editorAtribuido: editor,
           status: 'aguardando_edicao', linkFinalizado: '', criadoEm: serverTimestamp()
         });
+      }
+      // Marca os itens do calendario selecionados como gravados
+      if(idxsGravados.length){
+        const calRef = doc(db,'calendarios', clienteSlug);
+        const calSnap = await getDoc(calRef);
+        if(calSnap.exists()){
+          const dados = calSnap.data();
+          idxsGravados.forEach(idx => { if(dados.items[idx]) dados.items[idx].gravado = true; });
+          await setDoc(calRef, dados);
+        }
       }
     }
 

@@ -507,8 +507,12 @@
           <h2>Registrar vídeos gravados</h2>
           <div class="desc">Do jeito que vocês já organizam — lista os vídeos pelo nome, separa os bastidores, e escolhe o editor se quiser.</div>
           <div class="row2">
-            <div class="field"><label>Cliente</label><select id="videoCliente"></select></div>
+            <div class="field"><label>Cliente</label><select id="videoCliente" onchange="alternarCampoClienteNovo()"></select></div>
             <div class="field"><label>Data da gravação</label><input type="date" id="videoData" onchange="checarDataAtrasadaVideo()"></div>
+          </div>
+          <div class="field" id="campoClienteNovoBox" style="display:none;border:2px solid var(--yellow);border-radius:8px;padding:8px;">
+            <label>Nome do cliente novo (avulso — vai ser cadastrado automaticamente)</label>
+            <input type="text" id="videoClienteNovoNome" placeholder="Ex: Padaria do Zé">
           </div>
           <div id="avisoDataAtrasadaVideo" style="display:none;color:var(--red);font-weight:800;font-size:12px;margin:-6px 0 10px;">⚠️ Essa data já passou — registra sempre no MESMO DIA da gravação a partir de agora, isso atrasa toda a fila.</div>
 
@@ -1220,7 +1224,7 @@
     await carregarClientesExtras();
     const sel = document.getElementById('videoCliente');
     if(!sel) return;
-    sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}${c.extra?' (avulso)':''}</option>`).join('');
+    sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}${c.extra?' (avulso)':''}</option>`).join('') + '<option value="__novo__">+ Cliente novo (não está na lista)</option>';
 
     const selEditor = document.getElementById('videoEditorEscolhido');
     if(selEditor){
@@ -1291,10 +1295,30 @@
     return melhor;
   }
 
+  window.alternarCampoClienteNovo = function(){
+    const sel = document.getElementById('videoCliente');
+    document.getElementById('campoClienteNovoBox').style.display = sel.value === '__novo__' ? 'block' : 'none';
+  };
+
   window.lancarVideos = async function(){
     const sel = document.getElementById('videoCliente');
-    const clienteSlug = sel.value;
-    const clienteNome = sel.selectedOptions[0].dataset.nome;
+    let clienteSlug = sel.value;
+    let clienteNome;
+
+    if(clienteSlug === '__novo__'){
+      clienteNome = document.getElementById('videoClienteNovoNome').value.trim();
+      if(!clienteNome){ mostrarToast('Escreve o nome do cliente novo.', 'erro'); return; }
+      clienteSlug = clienteNome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+      const jaExisteSnap = await getDocs(collection(db,'clientes_extras'));
+      let jaExiste = false; jaExisteSnap.forEach(d => { if(d.data().slug === clienteSlug) jaExiste = true; });
+      if(!jaExiste){
+        await addDoc(collection(db,'clientes_extras'), { nome: clienteNome, slug: clienteSlug, criadoPor: usuarioAtual+' (direto no lançamento de vídeo)', criadoEm: serverTimestamp() });
+        CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
+        CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      }
+    } else {
+      clienteNome = sel.selectedOptions[0].dataset.nome;
+    }
     const data = document.getElementById('videoData').value || new Date().toISOString().slice(0,10);
     const obs = document.getElementById('videoObs').value.trim();
     const editorManual = document.getElementById('videoEditorEscolhido').value;
@@ -1327,6 +1351,9 @@
       document.getElementById('videoNomesPrincipais').value = '';
       document.getElementById('videoNomesBastidores').value = '';
       document.getElementById('videoObs').value = '';
+      if(document.getElementById('videoClienteNovoNome')) document.getElementById('videoClienteNovoNome').value = '';
+      document.getElementById('campoClienteNovoBox').style.display = 'none';
+      await popularClientesVideo();
       await renderLancadosHoje();
     } catch(err){
       mostrarToast('Erro: ' + err.message, 'erro');
@@ -3868,6 +3895,7 @@
       const temMeus = ['Chris','Helo','João Victor','Nathan','Cecília'].includes(usuarioAtual);
       document.getElementById('subtabLancarGravacao').style.display = temLancar ? 'block' : 'none';
       document.getElementById('subtabMeusVideos').style.display = temMeus ? 'block' : 'none';
+      document.getElementById('subtabCorrecoes').style.display = temMeus ? 'block' : 'none';
       if(!temLancar && temMeus){ setVideosSub('meus', document.getElementById('subtabMeusVideos')); }
       else { popularClientesVideo(); }
     }

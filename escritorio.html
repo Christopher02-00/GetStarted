@@ -1364,6 +1364,7 @@
   window.renderMeusVideos = async function(){
     const cont = document.getElementById('videosMeus');
     if(!usuarioAtual){ cont.innerHTML = '<div class="empty">Selecione seu nome na tela de Início primeiro.</div>'; return; }
+    await verificarVideosAtrasadosEAlertar();
     const snap = await getDocs(collection(db,'videos_producao'));
     const meus = [];
     snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
@@ -1385,9 +1386,12 @@
     if(!meus.length && !aguardando.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo novo pra editar agora. 🎉</div>' + html; return; }
     if(!meus.length){ cont.innerHTML = html; return; }
 
-    html += meus.map(v => `
-      <div class="item" id="video_${v.id}">
-        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
+    html += meus.map(v => {
+      const atrasado = videoEstaAtrasado(v);
+      return `
+      <div class="item" id="video_${v.id}" ${atrasado ? 'style="border:2px solid var(--red);"' : ''}>
+        <div class="top"><div class="nome">${atrasado?'⚠️ ':''}${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
+        ${atrasado ? '<div class="meta" style="color:var(--red);font-weight:800;margin-top:4px;">Passou do prazo de 1 dia útil (até 19h) — prioriza esse.</div>' : ''}
         <div class="meta">${v.observacao ? '📝 ' + esc(v.observacao) : ''}</div>
         <div class="field" style="margin-top:10px;"><input type="text" id="link_${v.id}" placeholder="Cola o link do vídeo pronto no Drive"></div>
         <div class="btnrow">
@@ -1395,7 +1399,7 @@
           <button class="btn green" onclick="enviarVideoParaAprovacao('${v.id}')">📤 Enviar pra aprovação</button>
         </div>
       </div>
-    `).join('') + html;
+    `;}).join('') + html;
     cont.innerHTML = html;
   };
 
@@ -1414,6 +1418,7 @@
         <div class="top"><div class="nome" style="font-size:15px;">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
         <div class="meta" style="margin-top:8px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);font-weight:700;">Abrir vídeo original no Drive ↗</a></div>
         <div class="avisoBanner" style="border-color:var(--red);margin-top:10px;"><div class="icone">⚠️</div><div class="texto">O que precisa mudar<span>${esc(v.correcao||'')}</span></div></div>
+        ${v.correcaoImagemUrl ? '<div class="meta" style="margin-top:8px;">📷 <a href="'+esc(v.correcaoImagemUrl)+'" target="_blank" style="color:var(--yellow);">Ver print/foto de apoio ↗</a></div>' : ''}
         <div class="field" style="margin-top:10px;"><label>Novo link do vídeo já corrigido</label><input type="text" id="linkCorrigido_${v.id}" placeholder="Cola o novo link do Drive aqui"></div>
         <div class="btnrow">
           <button class="btn red" style="flex:0 0 auto;width:auto;padding:0 14px;" onclick="cancelarVideoEnviado('${v.id}','${esc(v.titulo)}')">✕ Excluir</button>
@@ -1467,12 +1472,17 @@
     } else {
       html += `<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="desc">${pendentes.length} vídeo(s) aguardando revisão de qualidade.</div></div>`;
       pendentes.forEach(v => {
-        html += `<div class="item">
+        html += `<div class="item" id="itemAprovacao_${v.id}">
           <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${v.data}</div></div>
           <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
           <div class="btnrow" style="margin-top:10px;">
-            <button class="btn red" onclick="rejeitarVideoComCorrecao('${v.id}')">Pedir ajuste</button>
+            <button class="btn red" onclick="abrirFormularioAjuste('${v.id}')">Pedir ajuste</button>
             <button class="btn green" onclick="aprovarVideo('${v.id}')">Aprovar</button>
+          </div>
+          <div id="formAjuste_${v.id}" style="display:none;margin-top:10px;">
+            <div class="field"><label>O que precisa ser ajustado?</label><textarea id="motivoAjuste_${v.id}" placeholder="Descreve o ajuste..."></textarea></div>
+            <div class="field"><label>📷 Print/foto de apoio (opcional — cola o link da imagem)</label><input type="text" id="fotoAjuste_${v.id}" placeholder="Link do print, ex: Google Drive, Imgur..."></div>
+            <button class="btn red" onclick="confirmarRejeicaoComAjuste('${v.id}')">Confirmar e enviar de volta</button>
           </div>
         </div>`;
       });
@@ -1486,7 +1496,10 @@
         html += `<div class="item">
           <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">Aprovado por ${esc(v.aprovadoPor)}</div></div>
           <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
-          <button class="btn" style="margin-top:10px;" onclick="marcarClienteAprovouVideo('${v.id}')">✓ Cliente aprovou — liberar pra postagem</button>
+          <div class="btnrow" style="margin-top:10px;">
+            <button class="btn secondary" onclick="desfazerAprovacaoInterna('${v.id}')">↩ Desfazer aprovação</button>
+            <button class="btn" onclick="marcarClienteAprovouVideo('${v.id}')">✓ Cliente aprovou — liberar</button>
+          </div>
         </div>`;
       });
     }
@@ -1497,12 +1510,58 @@
       html += `<div class="item">
         <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${new Date(v.clienteAprovouEm).toLocaleDateString('pt-BR')}</div></div>
         <div class="meta" style="margin-top:4px;">✅ Aprovação interna: <b>${esc(v.aprovadoPor||'—')}</b> · Cliente confirmado por: <b>${esc(v.clienteAprovouPor||'—')}</b></div>
+        <div class="btnrow" style="margin-top:8px;">
+          <button class="btn secondary" style="font-size:11px;" onclick="desfazerConfirmacaoCliente('${v.id}')">↩ Desfazer confirmação</button>
+          <button class="btn red" style="font-size:11px;" onclick="clienteQuerAjustePosAprovado('${v.id}')">🔄 Cliente pediu ajuste agora</button>
+        </div>
       </div>`;
     });
     html += `</div>`;
 
     cont.innerHTML = html;
   }
+
+  window.abrirFormularioAjuste = function(id){
+    document.getElementById('formAjuste_'+id).style.display = 'block';
+  };
+
+  window.confirmarRejeicaoComAjuste = async function(id){
+    const motivo = document.getElementById('motivoAjuste_'+id).value.trim();
+    const foto = document.getElementById('fotoAjuste_'+id).value.trim();
+    if(!motivo){ mostrarToast('Escreve o que precisa ajustar.', 'erro'); return; }
+    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo, correcaoImagemUrl: foto });
+    mostrarToast('Enviado de volta pro editor com a correção.');
+    renderAprovacaoVideos();
+  };
+
+  window.desfazerAprovacaoInterna = async function(id){
+    if(!confirm('Desfazer a aprovação de qualidade? Volta pra fila de "Aprovar Vídeos".')) return;
+    await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_aprovacao', aprovadoPor:'', aprovadoInternoEm:'' });
+    mostrarToast('Aprovação desfeita.');
+    renderAprovacaoVideos();
+  };
+
+  window.desfazerConfirmacaoCliente = async function(id){
+    if(!confirm('Desfazer a confirmação de que o cliente aprovou? O vídeo volta pra aguardar confirmação, e a postagem gerada (se houver) será removida.')) return;
+    const postSnap = await getDocs(collection(db,'postagens'));
+    for(const d of postSnap.docs){ if(d.data().videoId === id) await deleteDoc(doc(db,'postagens', d.id)); }
+    await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:'' });
+    mostrarToast('Confirmação desfeita — postagem removida também.');
+    renderAprovacaoVideos();
+  };
+
+  window.clienteQuerAjustePosAprovado = async function(id){
+    const motivo = prompt('O cliente já tinha aprovado, mas pediu ajuste agora. O que precisa mudar?');
+    if(!motivo) return;
+    const postSnap = await getDocs(collection(db,'postagens'));
+    for(const d of postSnap.docs){ if(d.data().videoId === id) await deleteDoc(doc(db,'postagens', d.id)); }
+    await updateDoc(doc(db,'videos_producao', id), {
+      status:'correcao', correcao: '[Cliente pediu depois de já aprovado] ' + motivo,
+      clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:''
+    });
+    mostrarToast('Vídeo voltou pro editor com o pedido do cliente.');
+    renderAprovacaoVideos();
+  };
 
   window.aprovarVideo = async function(id){
     if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
@@ -1533,14 +1592,7 @@
     renderAprovacaoVideos();
   };
 
-  window.rejeitarVideoComCorrecao = async function(id){
-    const motivo = prompt('O que precisa ser ajustado nesse vídeo?');
-    if(!motivo) return;
-    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo });
-    mostrarToast('Enviado de volta pro editor com a correção.');
-    renderAprovacaoVideos();
-  };
-
+  
   async function renderGerenciaVideos(){
     const cont = document.getElementById('gerenciaVideos');
     const snap = await getDocs(collection(db,'videos_producao'));
@@ -3883,6 +3935,7 @@
 
 
   window.irPara = function(nome, el){
+    registrarAtividadeUsuario();
     document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
     el.classList.add('active');
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -4039,6 +4092,43 @@
     return 'normal';
   }
 
+  // ===== PRAZO DE EDICAO — 1 dia util, ate as 19h =====
+  function calcularPrazoEdicaoVideo(v){
+    if(!v.criadoEm?.seconds) return null;
+    const criado = new Date(v.criadoEm.seconds * 1000);
+    const prazo = new Date(criado);
+    prazo.setDate(prazo.getDate() + 1);
+    prazo.setHours(19, 0, 0, 0);
+    return prazo;
+  }
+
+  function videoEstaAtrasado(v){
+    if(!['aguardando_edicao','correcao'].includes(v.status)) return false;
+    if(estaAusente(v.editorAtribuido)) return false;
+    const prazo = calcularPrazoEdicaoVideo(v);
+    if(!prazo) return false;
+    return new Date() > prazo;
+  }
+
+  async function verificarVideosAtrasadosEAlertar(){
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const paraAlertar = [];
+    snap.forEach(d => {
+      const v = d.data();
+      if(videoEstaAtrasado(v) && !v.alertaAtrasoCriado){ paraAlertar.push({id:d.id, ...v}); }
+    });
+    for(const v of paraAlertar){
+      await addDoc(collection(db,'demandas'), {
+        titulo: '⚠️ Vídeo atrasado — ' + esc(v.titulo),
+        descricao: 'Esse vídeo passou do prazo de 1 dia útil pra edição (até às 19h). Prioriza ele.',
+        origem: 'sistema', clienteNome: v.clienteNome,
+        destinatario: v.editorAtribuido, prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+      await updateDoc(doc(db,'videos_producao', v.id), { alertaAtrasoCriado: true });
+    }
+  }
+
   async function carregarTodasDemandas(){
     const q = query(collection(db,'demandas'), orderBy('criadoEm','desc'));
     const snap = await getDocs(q);
@@ -4049,6 +4139,8 @@
 
   window.mudarUsuarioGlobal = async function(){
     usuarioAtual = document.getElementById('euSouGlobal').value;
+    ultimoRegistroAtividade = 0;
+    registrarAtividadeUsuario();
     const boxSetor = document.getElementById('setorAtalhos');
     atualizarVisibilidadeSidebarExclusiva();
     atualizarVisibilidadeMenuPorFuncao();
@@ -4649,6 +4741,7 @@
     await carregarTodasDemandas();
     await verificarClientesParaCapsulaAutomatico();
     await verificarPostagensEsquecidas();
+    await verificarVideosAtrasadosEAlertar();
     await Promise.all([renderGerenciaAmanda(), renderGerenciaChris()]);
   }
 
@@ -4767,6 +4860,17 @@
     intervalComando = setInterval(renderCentralComando, 25000);
   }
 
+  let ultimoRegistroAtividade = 0;
+  async function registrarAtividadeUsuario(){
+    if(!usuarioAtual) return;
+    const agora = Date.now();
+    if(agora - ultimoRegistroAtividade < 3 * 60000) return; // no maximo 1x a cada 3 min
+    ultimoRegistroAtividade = agora;
+    try {
+      await setDoc(doc(db,'presenca_funcionarios', usuarioAtual), { nome: usuarioAtual, ultimaAtividade: serverTimestamp() });
+    } catch(e){}
+  }
+
   function pararCentralComando(){
     if(intervalComando){ clearInterval(intervalComando); intervalComando = null; }
   }
@@ -4778,17 +4882,19 @@
     if(!jaTinhaConteudo) cont.innerHTML = '<div class="card"><div class="desc">Carregando central de comando...</div></div>';
 
     const hoje = new Date().toISOString().slice(0,10);
-    const [videosSnap, demandasSnap, agendamentosSnap, postagensSnap] = await Promise.all([
+    const [videosSnap, demandasSnap, agendamentosSnap, postagensSnap, presencaSnap] = await Promise.all([
       getDocs(collection(db,'videos_producao')),
       getDocs(collection(db,'demandas')),
       getDocs(collection(db,'agendamentos')),
-      getDocs(collection(db,'postagens'))
+      getDocs(collection(db,'postagens')),
+      getDocs(collection(db,'presenca_funcionarios'))
     ]);
 
     const videos = []; videosSnap.forEach(d => videos.push({id:d.id, ...d.data()}));
     const demandas = []; demandasSnap.forEach(d => demandas.push({id:d.id, ...d.data()}));
     const agendamentos = []; agendamentosSnap.forEach(d => agendamentos.push({id:d.id, ...d.data()}));
     const postagens = []; postagensSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
+    const presenca = {}; presencaSnap.forEach(d => { presenca[d.id] = d.data().ultimaAtividade; });
 
     // Contagem de videos por estagio real do pipeline (1 a 6)
     const emEdicao = videos.filter(v=>v.status==='aguardando_edicao').length;
@@ -4846,6 +4952,21 @@
       ${barra('4. Aguardando legenda', aguardLegenda, '#8a8a8d')}
       ${barra('5. Aguardando agendamento', aguardAgendamento, '#e0c56a')}
       ${barra('6. Agendados', agendados, '#4caf72')}
+    </div>
+    <div class="grupoFuncionario">
+      <h3>👥 Status da Equipe</h3>
+      ${FUNCIONARIOS.map(nome => {
+        const ts = presenca[nome];
+        let statusHtml;
+        if(!ts?.seconds){ statusHtml = '<span class="prioTag verde" style="opacity:.5;">⚪ Sem registro ainda</span>'; }
+        else {
+          const minAtras = Math.floor((Date.now() - ts.seconds*1000) / 60000);
+          if(minAtras < 15) statusHtml = '<span class="prioTag verde">🟢 Ativo agora</span>';
+          else if(minAtras < 60) statusHtml = '<span class="prioTag amarelo">🟡 Inativo há '+minAtras+' min</span>';
+          else { const h = Math.floor(minAtras/60); statusHtml = '<span class="prioTag vermelho">🔴 Inativo há '+h+'h</span>'; }
+        }
+        return `<div class="item" style="padding:8px 12px;"><div class="top"><div class="nome" style="font-size:13px;">${nome}</div>${statusHtml}</div></div>`;
+      }).join('')}
     </div>
     <div class="grupoFuncionario">
       <h3>⚡ Atividade recente</h3>

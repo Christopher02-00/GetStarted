@@ -503,16 +503,28 @@
       </div>
       <div id="videosLancar">
         <div class="card">
-          <h2>Registrar vídeos gravados hoje</h2>
-          <div class="desc">O sistema distribui automaticamente entre os editores, respeitando afinidade e capacidade.</div>
+          <h2>Registrar vídeos gravados</h2>
+          <div class="desc">Do jeito que vocês já organizam — lista os vídeos pelo nome, separa os bastidores, e escolhe o editor se quiser.</div>
           <div class="row2">
             <div class="field"><label>Cliente</label><select id="videoCliente"></select></div>
-            <div class="field"><label>Quantidade de vídeos</label><input type="number" id="videoQtd" min="1" max="10" value="1"></div>
+            <div class="field"><label>Data da gravação</label><input type="date" id="videoData" onchange="checarDataAtrasadaVideo()"></div>
           </div>
+          <div id="avisoDataAtrasadaVideo" style="display:none;color:var(--red);font-weight:800;font-size:12px;margin:-6px 0 10px;">⚠️ Essa data já passou — registra sempre no MESMO DIA da gravação a partir de agora, isso atrasa toda a fila.</div>
+
+          <div class="field"><label>🎬 Vídeos principais (um nome por linha)</label><textarea id="videoNomesPrincipais" placeholder="Ex:&#10;Logística verde&#10;Conforto e ergonomia&#10;Isenção e redução"></textarea></div>
+          <div class="field"><label>🎥 Bastidores (um por linha, opcional)</label><textarea id="videoNomesBastidores" placeholder="Ex:&#10;Bastidores Hitech&#10;Bastidores Divina Cantina"></textarea></div>
+
+          <div class="field"><label>Pra qual editor esses vídeos devem ir?</label><select id="videoEditorEscolhido">
+            <option value="">Automático (o sistema escolhe o editor com mais espaço)</option>
+          </select></div>
           <div class="field"><label>Observação (opcional)</label><input type="text" id="videoObs" placeholder="Ex: cliente pediu urgência"></div>
           <button class="btn" onclick="lancarVideos()" id="btnLancarVideos">Registrar e distribuir</button>
         </div>
         <div id="ultimaDistribuicao"></div>
+        <div class="grupoFuncionario">
+          <h3>📋 Lançados hoje — pode cancelar se subiu errado</h3>
+          <div id="lancadosHojeLista"></div>
+        </div>
       </div>
       <div id="videosMeus" style="display:none;"></div>
     </div>
@@ -1206,6 +1218,38 @@
     const sel = document.getElementById('videoCliente');
     if(!sel) return;
     sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}${c.extra?' (avulso)':''}</option>`).join('');
+
+    const selEditor = document.getElementById('videoEditorEscolhido');
+    if(selEditor){
+      selEditor.innerHTML = '<option value="">Automático (o sistema escolhe o editor com mais espaço)</option>' +
+        EDITORES_GERAL.map(e=>`<option value="${e}">${e}</option>`).join('');
+    }
+    const campoData = document.getElementById('videoData');
+    if(campoData && !campoData.value) campoData.value = new Date().toISOString().slice(0,10);
+
+    await renderLancadosHoje();
+  }
+
+  window.checarDataAtrasadaVideo = function(){
+    const data = document.getElementById('videoData').value;
+    const hoje = new Date().toISOString().slice(0,10);
+    document.getElementById('avisoDataAtrasadaVideo').style.display = (data && data < hoje) ? 'block' : 'none';
+  };
+
+  async function renderLancadosHoje(){
+    const cont = document.getElementById('lancadosHojeLista');
+    if(!cont || !usuarioAtual) return;
+    const hoje = new Date().toISOString().slice(0,10);
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const hojeList = [];
+    snap.forEach(d => { const v=d.data(); if(v.data === hoje && v.status === 'aguardando_edicao') hojeList.push({id:d.id, ...v}); });
+    if(!hojeList.length){ cont.innerHTML = '<div class="empty">Nada lançado hoje ainda.</div>'; return; }
+    cont.innerHTML = hojeList.map(v => `
+      <div class="item">
+        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)}</div></div>
+        <button class="btn red" style="width:auto;margin-top:6px;padding:4px 10px;font-size:10.5px;" onclick="excluirVideoGerencia('${v.id}','${esc(v.titulo)}')">✕ Cancelar — subi errado</button>
+      </div>
+    `).join('');
   }
 
   window.setVideosSub = function(qual, el){
@@ -1246,28 +1290,39 @@
     const sel = document.getElementById('videoCliente');
     const clienteSlug = sel.value;
     const clienteNome = sel.selectedOptions[0].dataset.nome;
-    const qtd = parseInt(document.getElementById('videoQtd').value) || 1;
+    const data = document.getElementById('videoData').value || new Date().toISOString().slice(0,10);
     const obs = document.getElementById('videoObs').value.trim();
+    const editorManual = document.getElementById('videoEditorEscolhido').value;
+
+    const textoPrincipais = document.getElementById('videoNomesPrincipais').value.trim();
+    const nomesPrincipais = textoPrincipais ? textoPrincipais.split('\n').map(s=>s.trim()).filter(Boolean) : [];
+    const textoBastidores = document.getElementById('videoNomesBastidores').value.trim();
+    const nomesBastidores = (textoBastidores ? textoBastidores.split('\n').map(s=>s.trim()).filter(Boolean) : []).map(n => n.toLowerCase().startsWith('bastidor') ? n : 'Bastidores '+n);
+
+    const todosNomes = [...nomesPrincipais, ...nomesBastidores];
+    if(!todosNomes.length){ mostrarToast('Escreve pelo menos um nome de vídeo.', 'erro'); return; }
+
     const btn = document.getElementById('btnLancarVideos');
     btn.disabled = true; btn.textContent = 'Distribuindo...';
 
     try {
-      const editor = await decidirEditor(clienteSlug);
-      const hoje = new Date().toISOString().slice(0,10);
-      for(let i=0; i<qtd; i++){
+      const editor = editorManual || await decidirEditor(clienteSlug);
+      for(const nomeVideo of todosNomes){
         await addDoc(collection(db,'videos_producao'), {
-          cliente: clienteSlug, clienteNome, data: hoje,
-          titulo: clienteNome + ' — vídeo ' + (i+1),
+          cliente: clienteSlug, clienteNome, data,
+          titulo: clienteNome + ' — ' + nomeVideo,
           observacao: obs,
           editorSugerido: editor, editorAtribuido: editor,
           status: 'aguardando_edicao', linkFinalizado: '',
           criadoEm: serverTimestamp()
         });
       }
-      mostrarToast(qtd + ' vídeo(s) distribuído(s) para ' + editor + '!');
-      document.getElementById('ultimaDistribuicao').innerHTML = `<div class="avisoBanner"><div class="icone">🎬</div><div class="texto">${qtd} vídeo(s) de ${esc(clienteNome)} foram pra <b>${esc(editor)}</b><span>Distribuição automática por afinidade + capacidade.</span></div></div>`;
-      document.getElementById('videoQtd').value = 1;
+      mostrarToast(todosNomes.length + ' vídeo(s) distribuído(s) para ' + editor + '!');
+      document.getElementById('ultimaDistribuicao').innerHTML = `<div class="avisoBanner"><div class="icone">🎬</div><div class="texto">${todosNomes.length} vídeo(s) de ${esc(clienteNome)} foram pra <b>${esc(editor)}</b><span>${todosNomes.join(', ')}</span></div></div>`;
+      document.getElementById('videoNomesPrincipais').value = '';
+      document.getElementById('videoNomesBastidores').value = '';
       document.getElementById('videoObs').value = '';
+      await renderLancadosHoje();
     } catch(err){
       mostrarToast('Erro: ' + err.message, 'erro');
     }

@@ -962,7 +962,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, where, orderBy, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -1540,6 +1540,7 @@
     const novoLink = document.getElementById('linkCorrigido_'+id).value.trim();
     if(!novoLink){ mostrarToast('Cola o novo link antes de reenviar.', 'erro'); return; }
     await updateDoc(doc(db,'videos_producao', id), { status: 'aguardando_aprovacao', linkFinalizado: novoLink, correcao: '' });
+    registrarHistorico('videos_producao', id, 'Reenviado pra aprovação após correção');
     mostrarToast('Reenviado pra aprovação!');
     renderMeusVideos();
   };
@@ -1547,6 +1548,7 @@
   window.cancelarVideoEnviado = async function(id, titulo){
     if(!confirm('Excluir "'+titulo+'"? Ele vai pra Lixeira, pode ser recuperado pelo Chris/Amanda se for engano.')) return;
     await updateDoc(doc(db,'videos_producao', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
+    registrarHistorico('videos_producao', id, 'Excluído (foi pra Lixeira)');
     await addDoc(collection(db,'demandas'), {
       titulo: 'Vídeo excluído — ' + titulo, descricao: (usuarioAtual||'Alguém') + ' excluiu esse vídeo. Se foi engano, tem na Lixeira de Vídeos pra restaurar.',
       origem: 'sistema', clienteNome: '', destinatario: 'Amanda',
@@ -1645,6 +1647,7 @@
           <button class="btn secondary" style="font-size:11px;" onclick="desfazerConfirmacaoCliente('${v.id}')">↩ Desfazer confirmação</button>
           <button class="btn red" style="font-size:11px;" onclick="clienteQuerAjustePosAprovado('${v.id}')">🔄 Cliente pediu ajuste agora</button>
         </div>
+        ${renderLinhaDoTempo(v.historico)}
       </div>`;
     });
     html += `</div>`;
@@ -1661,6 +1664,7 @@
     const foto = document.getElementById('fotoAjuste_'+id).value.trim();
     if(!motivo){ mostrarToast('Escreve o que precisa ajustar.', 'erro'); return; }
     await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo, correcaoImagemUrl: foto });
+    registrarHistorico('videos_producao', id, 'Pedido de ajuste enviado pro editor', motivo);
     mostrarToast('Enviado de volta pro editor com a correção.');
     renderAprovacaoVideos();
   };
@@ -1668,6 +1672,7 @@
   window.desfazerAprovacaoInterna = async function(id){
     if(!confirm('Desfazer a aprovação de qualidade? Volta pra fila de "Aprovar Vídeos".')) return;
     await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_aprovacao', aprovadoPor:'', aprovadoInternoEm:'' });
+    registrarHistorico('videos_producao', id, 'Aprovação interna desfeita');
     mostrarToast('Aprovação desfeita.');
     renderAprovacaoVideos();
   };
@@ -1677,6 +1682,7 @@
     const postSnap = await getDocs(collection(db,'postagens'));
     for(const d of postSnap.docs){ if(d.data().videoId === id) await deleteDoc(doc(db,'postagens', d.id)); }
     await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:'' });
+    registrarHistorico('videos_producao', id, 'Confirmação do cliente desfeita — postagem removida');
     mostrarToast('Confirmação desfeita — postagem removida também.');
     renderAprovacaoVideos();
   };
@@ -1690,6 +1696,7 @@
       status:'correcao', correcao: '[Cliente pediu depois de já aprovado] ' + motivo,
       clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:''
     });
+    registrarHistorico('videos_producao', id, 'Cliente pediu ajuste após já ter aprovado', motivo);
     mostrarToast('Vídeo voltou pro editor com o pedido do cliente.');
     renderAprovacaoVideos();
   };
@@ -1700,6 +1707,7 @@
       return;
     }
     await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', aprovadoInternoEm: new Date().toISOString(), aprovadoPor: usuarioAtual, clienteAprovou: false });
+    registrarHistorico('videos_producao', id, 'Aprovado internamente');
     mostrarToast('Aprovado por ' + usuarioAtual + '! Agora só falta a Amanda confirmar que o CLIENTE aprovou, pra seguir pra postagem.');
     renderAprovacaoVideos();
   };
@@ -1717,6 +1725,7 @@
     const ids = Array.from(checkboxes).map(c => c.dataset.id);
     for(const id of ids){
       await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', aprovadoInternoEm: new Date().toISOString(), aprovadoPor: usuarioAtual, clienteAprovou: false });
+      registrarHistorico('videos_producao', id, 'Aprovado internamente (em lote)');
     }
     mostrarToast(ids.length + ' vídeo(s) aprovado(s) de uma vez!');
     renderAprovacaoVideos();
@@ -1730,6 +1739,7 @@
     const videoSnap = await getDoc(doc(db,'videos_producao', id));
     const v = videoSnap.data();
     await updateDoc(doc(db,'videos_producao', id), { status:'aprovado', clienteAprovou: true, clienteAprovouEm: new Date().toISOString(), clienteAprovouPor: usuarioAtual });
+    registrarHistorico('videos_producao', id, 'Cliente confirmou aprovação — liberado pra postagem');
     await addDoc(collection(db,'postagens'), {
       videoId: id, cliente: v.cliente, clienteNome: v.clienteNome, titulo: v.titulo,
       linkVideo: v.linkFinalizado, legenda: '', legendaPor: '', legendaEm: '',
@@ -1841,6 +1851,7 @@
   window.excluirVideoGerencia = async function(id, titulo){
     if(!confirm('Excluir "'+titulo+'"? Ele vai pra Lixeira, pode ser recuperado se for engano.')) return;
     await updateDoc(doc(db,'videos_producao', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
+    registrarHistorico('videos_producao', id, 'Excluído pela Gerência (foi pra Lixeira)');
     mostrarToast('Excluído — mandado pra Lixeira.');
     renderGerenciaVideos();
   };
@@ -1865,6 +1876,7 @@
         <div class="meta" style="margin-top:6px;color:var(--red);">🗑️ Excluído por <b>${esc(v.excluidoPor||'?')}</b> em ${v.excluidoEm ? new Date(v.excluidoEm).toLocaleString('pt-BR') : '?'}</div>
         ${v.linkFinalizado ? '<div class="meta" style="margin-top:4px;">🔗 <a href="'+esc(v.linkFinalizado)+'" target="_blank" style="color:var(--yellow);">Link do vídeo</a></div>' : ''}
         <button class="btn secondary" style="width:auto;margin-top:8px;" onclick="restaurarVideo('${v.id}')">↩ Restaurar esse vídeo</button>
+        ${renderLinhaDoTempo(v.historico)}
       </div>
     `).join('');
     cont.innerHTML = html;
@@ -1873,6 +1885,7 @@
   window.restaurarVideo = async function(id){
     if(!confirm('Restaurar esse vídeo? Ele volta pro fluxo normal, no status de antes de ser excluído.')) return;
     await updateDoc(doc(db,'videos_producao', id), { excluido: false, excluidoPor: '', excluidoEm: '' });
+    registrarHistorico('videos_producao', id, 'Restaurado da Lixeira');
     mostrarToast('Vídeo restaurado!');
     renderLixeiraVideos();
   };
@@ -2168,6 +2181,7 @@
   window.reatribuirVideo = async function(videoId, clienteSlug, novoEditor){
     if(!novoEditor) return;
     await updateDoc(doc(db,'videos_producao', videoId), { editorAtribuido: novoEditor });
+    registrarHistorico('videos_producao', videoId, 'Reatribuído para ' + novoEditor);
 
     const afinidadeRef = doc(db, 'editores_afinidade', clienteSlug);
     const afinidadeSnap = await getDoc(afinidadeRef);
@@ -4263,6 +4277,32 @@
     return `${dia}/${mes}/${ano}`;
   }
 
+  /* ===== FASE 10 — LINHA DO TEMPO (auditoria viva) =====
+     Toda mudança relevante de status em vídeos e demandas passa a anexar
+     uma entrada no array `historico` do próprio documento. Não bloqueia a
+     ação principal — roda em paralelo (fire-and-forget com log de erro),
+     porque um histórico que falhou não pode travar a aprovação/rejeição
+     de verdade. */
+  async function registrarHistorico(colecaoNome, id, acao, detalhe){
+    try{
+      await updateDoc(doc(db, colecaoNome, id), {
+        historico: arrayUnion({ acao, por: usuarioAtual || 'sistema', em: new Date().toISOString(), detalhe: detalhe || '' })
+      });
+    }catch(e){ console.error('Falha ao registrar histórico (' + colecaoNome + '/' + id + '):', e); }
+  }
+
+  function renderLinhaDoTempo(historico){
+    if(!historico || !historico.length) return '';
+    const ordenado = [...historico].sort((a,b) => new Date(b.em) - new Date(a.em));
+    return `<div class="grupoFuncionario" style="margin-top:14px;">
+      <h3>🕒 Linha do tempo</h3>
+      ${ordenado.map(h => `<div class="item" style="cursor:default;border-left:3px solid var(--yellow);">
+        <div class="top"><div class="nome" style="font-size:12.5px;">${esc(h.acao)}</div><div class="meta">${esc(h.por)}</div></div>
+        <div class="meta" style="margin-top:3px;">${new Date(h.em).toLocaleString('pt-BR')}${h.detalhe ? ' — '+esc(h.detalhe) : ''}</div>
+      </div>`).join('')}
+    </div>`;
+  }
+
   // ===== STORIES DIARIOS — sub-checklist por cliente e dia da semana =====
   const DIAS_SEMANA_ORDEM = ['domingo','segunda','terca','quarta','quinta','sexta','sabado'];
   const DIAS_SEMANA_LABEL = { domingo:'Domingo', segunda:'Segunda', terca:'Terça', quarta:'Quarta', quinta:'Quinta', sexta:'Sexta', sabado:'Sábado' };
@@ -4874,6 +4914,7 @@
       status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
     });
     await updateDoc(doc(db,'videos_producao', videoId), { nivelEscalonamento: 2, escalonadoNivel2Em: serverTimestamp() });
+    registrarHistorico('videos_producao', videoId, 'Escalado (nível 2) pra Amanda', motivo);
     registrarLogAutomacao('escalonamento_video_nivel2', videoId, motivo);
   }
 
@@ -4905,6 +4946,7 @@
           status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
         await updateDoc(doc(db,'videos_producao', id), { alertaAtrasoCriado: true, nivelEscalonamento: 1, escalonadoNivel1Em: serverTimestamp() });
+        registrarHistorico('videos_producao', id, 'Escalado (nível 1) — avisado o editor');
       } else if(nivelAtual === 1){
         const desde = v.escalonadoNivel1Em?.seconds ? new Date(v.escalonadoNivel1Em.seconds*1000) : prazo;
         if(horasUteisDesde(desde, agora) >= 4) await escalarVideoNivel2(id, v, false);
@@ -4919,6 +4961,7 @@
             status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
           });
           await updateDoc(doc(db,'videos_producao', id), { nivelEscalonamento: 3, escalonadoNivel3Em: serverTimestamp() });
+          registrarHistorico('videos_producao', id, 'Escalado (nível 3) pro Chris');
           registrarLogAutomacao('escalonamento_video_nivel3', id, 'Escalado pro Chris');
         }
       }
@@ -5345,6 +5388,7 @@
       <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Marcar como feita</button>
       `}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
+      ${renderLinhaDoTempo(d.historico)}
     `;
     document.getElementById('overlayView').classList.add('show');
   };
@@ -5352,12 +5396,14 @@
   window.autorizarNovoPrazo = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
     await updateDoc(doc(db,'demandas', id), { prazoData: d.prazoSolicitado, prazoSolicitado: '', prazoSolicitadoPor: '' });
+    registrarHistorico('demandas', id, 'Novo prazo autorizado', 'Novo prazo: ' + formatarDataBR(d.prazoSolicitado));
     mostrarToast('Prazo novo autorizado!');
     carregarGerencia();
   };
 
   window.recusarNovoPrazo = async function(id){
     await updateDoc(doc(db,'demandas', id), { prazoSolicitado: '', prazoSolicitadoPor: '' });
+    registrarHistorico('demandas', id, 'Pedido de novo prazo recusado — prazo original mantido');
     mostrarToast('Prazo original mantido.');
     carregarGerencia();
   };
@@ -5366,6 +5412,7 @@
     const novaData = document.getElementById('novoPrazoInput_'+id).value;
     if(!novaData){ mostrarToast('Escolhe uma data.', 'erro'); return; }
     await updateDoc(doc(db,'demandas', id), { prazoSolicitado: novaData, prazoSolicitadoPor: usuarioAtual||'?' });
+    registrarHistorico('demandas', id, 'Pediu novo prazo', 'Solicitado: ' + formatarDataBR(novaData));
     mostrarToast('Pedido enviado — a Amanda vai autorizar.');
     fecharModal();
     carregarMinhasDemandas();
@@ -5374,6 +5421,7 @@
   window.desfazerEnvioDemanda = async function(id){
     if(!confirm('Voltar essa demanda pra pendente? Você vai poder refazer e enviar de novo.')) return;
     await updateDoc(doc(db,'demandas', id), { status: 'pendente', provaTexto: '', provaImagemUrl: '' });
+    registrarHistorico('demandas', id, 'Envio desfeito — voltou pra pendente');
     mostrarToast('Desfeito — pode refazer.');
     fecharModal();
     carregarMinhasDemandas();
@@ -5879,6 +5927,7 @@
 
       if(diasAtraso >= 1 && nivelAtual < 1){
         await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 1 });
+        registrarHistorico('demandas', docSnap.id, 'Marcada como atrasada (1 dia útil)');
       }
       if(diasAtraso >= 2 && nivelAtual < 2){
         await addDoc(collection(db,'demandas'), {
@@ -5889,6 +5938,7 @@
           status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
         await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 2 });
+        registrarHistorico('demandas', docSnap.id, 'Escalada (nível 2) pra Amanda');
         registrarLogAutomacao('escalonamento_demanda_nivel2', docSnap.id, 'Escalado pra Amanda');
       }
       if(diasAtraso >= 3 && nivelAtual < 3){
@@ -5900,6 +5950,7 @@
           status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
         await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 3 });
+        registrarHistorico('demandas', docSnap.id, 'Escalada (nível 3) pro Chris');
         registrarLogAutomacao('escalonamento_demanda_nivel3', docSnap.id, 'Escalado pro Chris');
       }
     }
@@ -6145,6 +6196,7 @@
         status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
         notaConclusao: 'Concluída automaticamente pelo sistema — postagem foi agendada.'
       });
+      registrarHistorico('demandas', d.id, 'Concluída automaticamente — postagem foi agendada');
     }
   }
 
@@ -6955,6 +7007,7 @@
         <button class="btn green" onclick="aprovarDemanda('${d.id}')">Aprovar</button>
       </div>` : ''}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
+      ${renderLinhaDoTempo(d.historico)}
     `;
     document.getElementById('overlayView').classList.add('show');
   };
@@ -6962,6 +7015,7 @@
   window.aprovarDemanda = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
     await updateDoc(doc(db,'demandas', id), { status: 'aprovada', aprovadoEm: new Date().toISOString() });
+    registrarHistorico('demandas', id, 'Aprovada');
     if(d?.agendamentoId){
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado: true });
       mostrarToast('Aprovado — gravação já liberada pro filmmaker!');
@@ -6973,6 +7027,7 @@
   window.rejeitarDemanda = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
     await updateDoc(doc(db,'demandas', id), { status: 'pendente', provaTexto: '', provaImagemUrl: '', rejeitadoEm: new Date().toISOString() });
+    registrarHistorico('demandas', id, 'Rejeitada — pedido pra refazer');
     if(d?.agendamentoId){
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { status: 'cancelado' });
       mostrarToast('Rejeitado — a gravação extra foi cancelada.');

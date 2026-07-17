@@ -556,7 +556,11 @@
           <h2>Nova gravação</h2>
           <div id="avisoQtdHoje"></div>
           <div class="row2">
-            <div class="field"><label>Cliente</label><select id="agCliente" onchange="mostrarHistoricoCliente()"></select></div>
+            <div class="field"><label>Cliente</label><select id="agCliente" onchange="mostrarHistoricoCliente(); alternarCampoClienteNovoAgendamento();"></select></div>
+            <div class="field" id="campoClienteNovoAgendamentoBox" style="display:none;border:2px solid var(--yellow);border-radius:8px;padding:8px;">
+              <label>Nome do cliente novo (avulso — vai ser cadastrado automaticamente)</label>
+              <input type="text" id="agClienteNovoNome" placeholder="Ex: Padaria do Zé">
+            </div>
             <div class="field"><label>Tipo</label><select id="agTipo"><option value="fixo">Cliente fixo</option><option value="avulso">Avulso (fora do banco)</option></select></div>
           </div>
           <div id="historicoClienteMes"></div>
@@ -2118,13 +2122,32 @@
     const sel1 = document.getElementById('agCliente');
     const sel2 = document.getElementById('capsulaCliente');
     const opts = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
-    if(sel1) sel1.innerHTML = opts;
+    if(sel1) sel1.innerHTML = opts + '<option value="__novo__">+ Cliente novo (não está na lista)</option>';
     if(sel2) sel2.innerHTML = opts;
+  }
+
+  window.alternarCampoClienteNovoAgendamento = function(){
+    const sel = document.getElementById('agCliente');
+    document.getElementById('campoClienteNovoAgendamentoBox').style.display = sel.value === '__novo__' ? 'block' : 'none';
+  };
+
+  async function garantirClienteNovo(nomeDigitado){
+    const clienteNome = nomeDigitado.trim();
+    const clienteSlug = clienteNome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    const jaExisteSnap = await getDocs(collection(db,'clientes_extras'));
+    let jaExiste = false; jaExisteSnap.forEach(d => { if(d.data().slug === clienteSlug) jaExiste = true; });
+    if(!jaExiste){
+      await addDoc(collection(db,'clientes_extras'), { nome: clienteNome, slug: clienteSlug, criadoPor: (usuarioAtual||'?')+' (cadastro rápido)', criadoEm: serverTimestamp() });
+      CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
+      CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+    }
+    return { clienteSlug, clienteNome };
   }
 
   window.mostrarHistoricoCliente = async function(){
     const sel = document.getElementById('agCliente');
     const clienteSlug = sel.value;
+    if(clienteSlug === '__novo__'){ document.getElementById('historicoClienteMes').innerHTML = ''; return; }
     const mesAtual = new Date().toISOString().slice(0,7);
     const snap = await getDocs(collection(db,'agendamentos'));
     let count = 0;
@@ -2163,8 +2186,14 @@
 
   window.agendarGravacao = async function(){
     const sel = document.getElementById('agCliente');
-    const clienteSlug = sel.value;
-    const clienteNome = sel.selectedOptions[0]?.dataset.nome;
+    let clienteSlug = sel.value;
+    let clienteNome = sel.selectedOptions[0]?.dataset.nome;
+    if(clienteSlug === '__novo__'){
+      const nomeDigitado = document.getElementById('agClienteNovoNome').value.trim();
+      if(!nomeDigitado){ mostrarToast('Escreve o nome do cliente novo.', 'erro'); return; }
+      const criado = await garantirClienteNovo(nomeDigitado);
+      clienteSlug = criado.clienteSlug; clienteNome = criado.clienteNome;
+    }
     const data = document.getElementById('agData').value;
     const hora = document.getElementById('agHora').value;
     const local = document.getElementById('agLocal').value.trim();
@@ -5429,4 +5458,4 @@
   mascoteAtualizarRosto('feliz');
 </script>
 </body>
-</html>
+</html> 

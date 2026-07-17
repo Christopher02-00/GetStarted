@@ -1245,7 +1245,7 @@
       const snap = await getDocs(collection(db,'clientes_extras'));
       snap.forEach(d => {
         const v = d.data();
-        if(!CLIENTES_LISTA.some(c=>c.slug===v.slug)) CLIENTES_LISTA.push({nome:v.nome, slug:v.slug, extra:true});
+        if(!v.excluido && !CLIENTES_LISTA.some(c=>c.slug===v.slug)) CLIENTES_LISTA.push({nome:v.nome, slug:v.slug, extra:true});
       });
       CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
     }catch(e){}
@@ -2215,6 +2215,7 @@
   };
 
   window.restaurarPadraoChecklist = async function(){
+    if(!confirm('Restaurar o checklist de '+editorFuncionarioAtual+' pro padrão original? Isso apaga TODAS as customizações feitas nele.')) return;
     await deleteDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual));
     editorTemplateAtual = JSON.parse(JSON.stringify(CHECKLIST_TEMPLATES[editorFuncionarioAtual] || {}));
     renderEditorTemplate();
@@ -2256,10 +2257,15 @@
     const clienteNome = nomeDigitado.trim();
     const clienteSlug = clienteNome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
     const jaExisteSnap = await getDocs(collection(db,'clientes_extras'));
-    let jaExiste = false; jaExisteSnap.forEach(d => { if(d.data().slug === clienteSlug) jaExiste = true; });
-    if(!jaExiste){
+    let jaExisteId = null, jaExisteExcluido = false;
+    jaExisteSnap.forEach(d => { if(d.data().slug === clienteSlug){ jaExisteId = d.id; jaExisteExcluido = !!d.data().excluido; } });
+    if(!jaExisteId){
       await addDoc(collection(db,'clientes_extras'), { nome: clienteNome, slug: clienteSlug, criadoPor: (usuarioAtual||'?')+' (cadastro rápido)', criadoEm: serverTimestamp() });
       CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
+      CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+    } else if(jaExisteExcluido){
+      await updateDoc(doc(db,'clientes_extras', jaExisteId), { excluido: false });
+      if(!CLIENTES_LISTA.some(c=>c.slug===clienteSlug)) CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
       CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
     }
     return { clienteSlug, clienteNome };
@@ -3047,6 +3053,7 @@
   };
 
   window.removerTipoTarefaFixa = async function(id){
+    if(!confirm('Remover esse tipo de tarefa fixa? Ele não vai mais ser gerado nos próximos meses.')) return;
     await deleteDoc(doc(db,'tipos_tarefa_fixa', id));
     mostrarToast('Tipo removido.');
     renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
@@ -3152,6 +3159,7 @@
   };
 
   window.removerAusencia = async function(id){
+    if(!confirm('Remover esse registro de ausência?')) return;
     await deleteDoc(doc(db,'ausencias', id));
     mostrarToast('Ausência removida.');
     renderGerenciaAusencias();
@@ -3306,7 +3314,7 @@
   async function renderCofreSenhas(){
     const cont = document.getElementById('gerenciaCofreSenhas');
     const snap = await getDocs(collection(db,'cofre_senhas'));
-    const lista = []; snap.forEach(d => lista.push({id:d.id, ...d.data()}));
+    const lista = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) lista.push({id:d.id, ...v}); });
 
     let html = `<div class="card">
       <h2>🔐 Cofre de Senhas dos Clientes</h2>
@@ -3368,7 +3376,7 @@
 
   window.excluirSenhaCofre = async function(id){
     if(!confirm('Excluir essa senha do cofre?')) return;
-    await deleteDoc(doc(db,'cofre_senhas', id));
+    await updateDoc(doc(db,'cofre_senhas', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
     mostrarToast('Removido do cofre.');
     renderCofreSenhas();
   };
@@ -3639,7 +3647,7 @@
     </div>
     <div class="grupoFuncionario"><h3>Clientes extras cadastrados</h3>`;
     const snap = await getDocs(collection(db,'clientes_extras'));
-    const extras = []; snap.forEach(d => extras.push({id:d.id, ...d.data()}));
+    const extras = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) extras.push({id:d.id, ...v}); });
     if(!extras.length){ html += '<div class="empty">Nenhum cliente extra cadastrado ainda.</div>'; }
     extras.forEach(e => {
       html += `<div class="item"><div class="top"><div class="nome">${esc(e.nome)}</div>
@@ -3664,10 +3672,12 @@
   };
 
   window.removerClienteExtra = async function(id, slug){
-    await deleteDoc(doc(db,'clientes_extras', id));
+    const cliente = CLIENTES_LISTA.find(c=>c.slug===slug);
+    if(!confirm('Remover "'+(cliente?cliente.nome:slug)+'" da lista de clientes? Se ele tiver vídeos ou demandas vinculadas, elas continuam existindo, só não vai mais aparecer nos seletores.')) return;
+    await updateDoc(doc(db,'clientes_extras', id), { excluido: true });
     const idx = CLIENTES_LISTA.findIndex(c=>c.slug===slug);
     if(idx>-1) CLIENTES_LISTA.splice(idx,1);
-    mostrarToast('Cliente extra removido.');
+    mostrarToast('Cliente removido da lista.');
     renderClientesExtras();
   };
 
@@ -4931,6 +4941,7 @@
   };
 
   window.excluirAnotacaoPessoal = async function(id){
+    if(!confirm('Excluir essa anotação?')) return;
     await deleteDoc(doc(db,'anotacoes_pessoais', id));
     mostrarToast('Anotação excluída.');
     renderAnotacoesPessoais();

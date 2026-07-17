@@ -2539,6 +2539,16 @@
     });
     if(temCapsulaRecente){ pontosRisco += 2; motivos.push('Protocolo Cápsula ativo recentemente'); }
 
+    // FASE 7 — mesmo critério da Cápsula Preditiva: só conta como risco se já
+    // faz 7+ dias sem gravar E não tem nenhuma gravação futura marcada.
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const realizadasSaude = listaAgendamentos.filter(a => a.cliente === clienteSlug && a.status === 'realizado').sort((a,b)=>b.data.localeCompare(a.data));
+    const diasSemGravarSaude = realizadasSaude[0] ? Math.floor((new Date() - new Date(realizadasSaude[0].data+'T00:00:00')) / 86400000) : 999;
+    const temGravacaoFuturaSaude = listaAgendamentos.some(a => a.cliente === clienteSlug && a.status === 'agendado' && a.aprovado !== false && a.data > hojeStr);
+    if(diasSemGravarSaude >= 7 && !temGravacaoFuturaSaude){
+      pontosRisco++; motivos.push('sem gravação futura agendada (última há ' + diasSemGravarSaude + ' dia(s))');
+    }
+
     let ultimaNota = null, ultimaData = 0;
     listaAvaliacoes.forEach(a => {
       if(a.cliente === clienteSlug){
@@ -5955,9 +5965,12 @@
     const todosAg = []; agSnap.forEach(d => todosAg.push(d.data()));
     const demSnap = await getDocs(collection(db,'demandas'));
     const capsulas = []; demSnap.forEach(d => { if(d.data().titulo?.includes('Protocolo Cápsula')) capsulas.push(d.data()); });
+    const alertasPreditivos = []; demSnap.forEach(d => { if(d.data().titulo?.includes('🟡 Alerta Cápsula Preditiva')) alertasPreditivos.push(d.data()); });
 
     const hoje = new Date();
+    const hojeStr = hoje.toISOString().slice(0,10);
     let novasCapsulas = 0;
+    let novasPreditivas = 0;
     for(const cliente of CLIENTES_LISTA){
       const realizadas = todosAg.filter(a => a.cliente === cliente.slug && a.status === 'realizado').sort((a,b)=>b.data.localeCompare(a.data));
       const ultima = realizadas[0];
@@ -5979,9 +5992,32 @@
           });
           novasCapsulas++;
         }
+      } else if(diasSemGravar >= 7){
+        // FASE 7 — Cápsula preditiva: avisa ANTES de virar emergência (14 dias).
+        // Só dispara se não tiver nenhuma gravação futura já marcada.
+        const temGravacaoFutura = todosAg.some(a => a.cliente === cliente.slug && a.status === 'agendado' && a.aprovado !== false && a.data > hojeStr);
+        if(!temGravacaoFutura){
+          const alertaRecente = alertasPreditivos.some(a => {
+            if(!a.titulo.includes(cliente.nome)) return false;
+            const diasDesde = a.criadoEm?.seconds ? Math.floor((Date.now()/1000 - a.criadoEm.seconds)/86400) : 0;
+            return diasDesde < 7; // não repete o mesmo aviso mais de 1x por semana
+          });
+          if(!alertaRecente){
+            await addDoc(collection(db,'demandas'), {
+              titulo: '🟡 Alerta Cápsula Preditiva — ' + cliente.nome,
+              descricao: `${cliente.nome} está há ${diasSemGravar} dia(s) sem gravar e não tem nenhuma gravação futura marcada. Agenda antes de virar Protocolo Cápsula (14 dias).`,
+              origem: 'sistema', clienteNome: cliente.nome, destinatario: 'Cecília',
+              prazoData: hojeStr, prazoHora: '18:00',
+              status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+            });
+            novasPreditivas++;
+            registrarLogAutomacao('capsula_preditiva', cliente.slug, diasSemGravar + ' dias sem gravar, sem agendamento futuro');
+          }
+        }
       }
     }
     if(novasCapsulas > 0) mostrarToast(novasCapsulas + ' cliente(s) sem gravar há 14+ dias — Protocolo Cápsula acionado automaticamente!', 'erro');
+    if(novasPreditivas > 0) mostrarToast(novasPreditivas + ' cliente(s) sem gravação futura marcada — aviso preditivo criado pra Cecília.', 'erro');
   }
 
   function gerarDicaMelhoria(r){

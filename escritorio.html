@@ -866,6 +866,7 @@
             <div class="subtab" onclick="setGerenciaSub('chris', this)">Resumo Executivo</div>
             <div class="subtab" onclick="setGerenciaSub('funcionarioMes', this)">Funcionário do Mês</div>
             <div class="subtab" onclick="setGerenciaSub('painelTV', this)">Painel de TV</div>
+            <div class="subtab" onclick="setGerenciaSub('digest', this)">📱 Digest WhatsApp</div>
             <div class="labelInterno">Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('aprovarVideos', this)">Aprovar Vídeos</div>
@@ -912,6 +913,7 @@
               <div class="iframeWrap" style="height:70vh;"><iframe id="iframePainelTVInterno" src=""></iframe></div>
             </div>
             <div id="gerenciaChris" style="display:none;"></div>
+            <div id="gerenciaDigest" style="display:none;"></div>
           </div>
         </div>
       </div>
@@ -4714,6 +4716,7 @@
     document.getElementById('gerenciaGravacoesDoDia').style.display = qual==='gravacoesDoDia' ? 'block' : 'none';
     document.getElementById('gerenciaCapsulaDetalhe').style.display = qual==='capsulaDetalhe' ? 'block' : 'none';
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
+    document.getElementById('gerenciaDigest').style.display = qual==='digest' ? 'block' : 'none';
     if(qual==='painelTV'){
       const iframe = document.getElementById('iframePainelTVInterno');
       if(!iframe.dataset.carregado){
@@ -4744,6 +4747,7 @@
     if(qual==='editarChecklist') renderEditorChecklistInicial();
     if(qual==='editarFuncoesFixas') renderEditarFuncoesFixas();
     if(qual==='funcionarioMes') renderFuncionarioMesPainel();
+    if(qual==='digest') renderDigest();
   };
 
   let todasAusencias = [];
@@ -4912,6 +4916,7 @@
     await carregarTodasDemandas();
     iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
     iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui (assinado antes de renderizar Meu Dia)
+    pedirPermissaoNotificacao(); // Fase 5 — pede permissão de notificação do navegador
     renderAvisoInicio();
     renderMeuDia();
     atualizarBadgeMinhas();
@@ -5397,7 +5402,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -5706,6 +5711,104 @@
     }
   };
 
+  /* ===== FASE 5 (parte 2) — DIGEST PRA WHATSAPP =====
+     Gera o texto pronto (gerencial ou por funcionário) pra copiar ou abrir
+     direto no WhatsApp. Usa só os caches já carregados pelas Fases 2/3 —
+     não faz nenhuma busca nova no banco. */
+
+  function gerarDigestGerencial(){
+    const hoje = new Date();
+    const hojeStr = hoje.toISOString().slice(0,10);
+    const amanhaStr = dataParaStr(addDias(hoje, 1));
+
+    const pendentes = todasDemandas.filter(d => d.status === 'pendente');
+    const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
+    const porPessoa = {};
+    atrasadas.forEach(d => { porPessoa[d.destinatario||'?'] = (porPessoa[d.destinatario||'?']||0) + 1; });
+
+    const videosAtivos = cacheVideosProducao.filter(v => !v.excluido);
+    const emEdicao = videosAtivos.filter(v => v.status==='aguardando_edicao').length;
+    const emCorrecao = videosAtivos.filter(v => v.status==='correcao').length;
+    const aguardApr = videosAtivos.filter(v => v.status==='aguardando_aprovacao').length;
+    const aguardCliente = videosAtivos.filter(v => v.status==='aguardando_cliente').length;
+
+    const gravacoesAmanha = cacheAgendamentos.filter(a => !a.excluido && a.status==='agendado' && a.aprovado!==false && a.data===amanhaStr);
+
+    let txt = `📊 *Resumo Get Started — ${formatarDataBR(hojeStr)}*\n\n`;
+    txt += `*Demandas atrasadas:* ${atrasadas.length}\n`;
+    if(atrasadas.length){
+      Object.entries(porPessoa).forEach(([nome,qtd]) => { txt += `  • ${nome}: ${qtd}\n`; });
+    } else {
+      txt += `  Nenhuma — time em dia! 🎉\n`;
+    }
+    txt += `\n*Vídeos:*\n  Em edição: ${emEdicao}\n  Em correção: ${emCorrecao}\n  Aguardando aprovação interna: ${aguardApr}\n  Aguardando aprovação do cliente: ${aguardCliente}\n`;
+    txt += `\n*Gravações amanhã (${formatarDataBR(amanhaStr)}):* ${gravacoesAmanha.length}\n`;
+    gravacoesAmanha.forEach(a => { txt += `  • ${a.clienteNome||'?'} às ${a.hora||'?'}\n`; });
+    return txt;
+  }
+
+  function gerarDigestFuncionario(nome){
+    const minhas = todasDemandas.filter(d => d.destinatario === nome && d.status !== 'aprovada');
+    const meusVideos = cacheVideosProducao.filter(v => !v.excluido && v.editorAtribuido === nome && ['aguardando_edicao','correcao'].includes(v.status));
+    let txt = `📋 *Suas pendências, ${nome}:*\n\n`;
+    if(!minhas.length && !meusVideos.length){
+      txt += 'Nenhuma pendência agora — tudo em dia! 🎉';
+      return txt;
+    }
+    minhas.forEach(d => {
+      const urg = calcularUrgencia(d);
+      txt += `${urg==='atrasado'?'⚠️ ':''}${d.titulo} — prazo ${formatarDataBR(d.prazoData)} ${d.prazoHora||''}\n`;
+    });
+    meusVideos.forEach(v => {
+      txt += `${v.status==='correcao'?'🔁 Corrigir':'🎬 Editar'}: ${v.titulo||''} (${v.clienteNome||''})\n`;
+    });
+    return txt;
+  }
+
+  window.gerarDigestNaTela = function(tipo){
+    const nomeSel = document.getElementById('digestFuncionarioSel');
+    const texto = tipo === 'gerencial' ? gerarDigestGerencial() : gerarDigestFuncionario(nomeSel.value);
+    document.getElementById('digestTextoArea').value = texto;
+  };
+
+  window.copiarDigestTexto = function(){
+    const area = document.getElementById('digestTextoArea');
+    area.select();
+    navigator.clipboard?.writeText(area.value).then(()=>{
+      mostrarToast('Digest copiado!');
+    }).catch(()=>{
+      document.execCommand('copy');
+      mostrarToast('Digest copiado!');
+    });
+  };
+
+  window.abrirDigestWhatsApp = function(){
+    const texto = document.getElementById('digestTextoArea').value;
+    if(!texto.trim()){ mostrarToast('Gera o digest primeiro.', 'erro'); return; }
+    window.open('https://wa.me/?text=' + encodeURIComponent(texto), '_blank');
+  };
+
+  function renderDigest(){
+    const cont = document.getElementById('gerenciaDigest');
+    cont.innerHTML = `
+      <div class="card">
+        <h2>📱 Digest pra WhatsApp</h2>
+        <div class="desc" style="margin-bottom:12px;">Gera o resumo pronto — copia ou abre direto no WhatsApp pra colar no grupo ou no privado de alguém.</div>
+        <div class="row2" style="margin-bottom:10px;">
+          <button class="btn secondary" onclick="gerarDigestNaTela('gerencial')">📊 Digest Gerencial</button>
+          <div class="field" style="margin:0;">
+            <select id="digestFuncionarioSel">${FUNCIONARIOS.map(f=>'<option value="'+f+'">'+f+'</option>').join('')}</select>
+          </div>
+        </div>
+        <button class="btn secondary" style="width:100%;margin-bottom:10px;" onclick="gerarDigestNaTela('funcionario')">📋 Digest desse Funcionário</button>
+        <textarea id="digestTextoArea" rows="12" style="width:100%;font-family:inherit;font-size:13px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--paper);color:inherit;" placeholder="Clica em um dos botões acima pra gerar o texto..."></textarea>
+        <div class="row2" style="margin-top:10px;">
+          <button class="btn secondary" onclick="copiarDigestTexto()">📋 Copiar</button>
+          <button class="btn" onclick="abrirDigestWhatsApp()">💬 Abrir no WhatsApp</button>
+        </div>
+      </div>`;
+  }
+
   async function carregarGerencia(){
     await carregarTodasDemandas();
     await motorAutomacoes('gerencia'); // redundância barata — o motor já roda sozinho (ver bloco FASE 1 abaixo)
@@ -5791,6 +5894,30 @@
 
   const MOTOR_INTERVALO_MIN = 8; // janela mínima entre execuções (minutos)
 
+  // FASE 5 (parte 3) — lembrete automático de segunda-feira: cria uma
+  // demanda pro Chris avisando que o digest da semana já está pronto pra
+  // gerar e mandar. Usa um marcador em 'sistema' (mesmo padrão do lock da
+  // Fase 1) pra garantir que dispara só 1 vez por segunda, mesmo com o
+  // motor rodando a cada 10 minutos o dia inteiro.
+  async function verificarDigestSemanal(){
+    const hoje = new Date();
+    if(hoje.getDay() !== 1) return; // só segunda-feira
+    const hojeStr = hoje.toISOString().slice(0,10);
+    const marcadorRef = doc(db, 'sistema', 'digest_semanal');
+    const marcadorSnap = await getDoc(marcadorRef);
+    if(marcadorSnap.exists() && marcadorSnap.data().ultimaSegunda === hojeStr) return; // já criou hoje
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '📱 Digest semanal pronto — abrir Gerência → Digest',
+      descricao: 'Começo de semana! O resumo gerencial completo já está pronto pra gerar e mandar no grupo da equipe.',
+      origem: 'sistema', clienteNome: '', destinatario: 'Chris',
+      prazoData: hojeStr, prazoHora: '09:00',
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+    await setDoc(marcadorRef, { ultimaSegunda: hojeStr });
+    registrarLogAutomacao('digest_semanal_lembrete', '', 'Lembrete de segunda-feira criado pro Chris');
+  }
+
   async function motorAutomacoes(origem){
     const lockRef = doc(db, 'sistema', 'motor_lock');
     try{
@@ -5812,7 +5939,8 @@
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
-      { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas }
+      { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
+      { nome: 'digestSemanal', fn: verificarDigestSemanal }
     ];
 
     for(const v of verificacoes){
@@ -5845,19 +5973,74 @@
      que algo muda em qualquer computador, o cache atualiza aqui em todos
      os outros na hora — sem esperar o próximo ciclo de 25s. */
 
+  /* ===== FASE 5 (parte 1) — NOTIFICAÇÕES DO NAVEGADOR =====
+     Antes, um aviso só existia se a pessoa estivesse com o sistema aberto
+     na tela certa. Agora, com a aba aberta em segundo plano, o navegador
+     avisa sozinho. Pede permissão 1x por semana no máximo (se a pessoa
+     ainda não decidiu), pra não insistir. */
+
+  function pedirPermissaoNotificacao(){
+    if(!('Notification' in window)) return;
+    if(Notification.permission === 'granted' || Notification.permission === 'denied') return;
+    try{
+      const ultimoPedido = localStorage.getItem('gs_notif_pedido_em');
+      const agora = Date.now();
+      if(ultimoPedido && (agora - parseInt(ultimoPedido, 10)) < 7 * 24 * 60 * 60000) return;
+      localStorage.setItem('gs_notif_pedido_em', String(agora));
+    }catch(e){ /* localStorage bloqueado — pede mesmo assim */ }
+    Notification.requestPermission();
+  }
+
+  function dispararNotificacaoNavegador(titulo, corpo){
+    if(!('Notification' in window)) return;
+    if(Notification.permission !== 'granted') return;
+    if(document.visibilityState === 'visible' && document.hasFocus()) return; // já está olhando, não precisa
+    try{ new Notification(titulo, { body: corpo }); }
+    catch(e){ console.error('Falha ao disparar notificação do navegador:', e); }
+  }
+
   function iniciarListenersTempoReal(){
     if(listenersTempoRealAtivos) return; // já tem listener rodando, não duplicar
     listenersTempoRealAtivos = true;
 
+    let primeiroSnapshotDemandas = true;
     onSnapshot(collection(db,'demandas'), (snap)=>{
+      const anterioresPorId = new Map(todasDemandas.map(d=>[d.id,d]));
       todasDemandas = [];
       snap.forEach(d => todasDemandas.push({id:d.id, ...d.data()}));
+      // FASE 5 — notifica no navegador quando uma demanda NOVA chega pro
+      // usuário logado (cobre também os escalonamentos das Fases 4/6/7,
+      // já que eles são só demandas novas criadas pelo sistema).
+      if(!primeiroSnapshotDemandas && usuarioAtual){
+        todasDemandas.forEach(d => {
+          if(d.destinatario === usuarioAtual && !anterioresPorId.has(d.id)){
+            dispararNotificacaoNavegador('📌 Nova demanda', d.titulo + ' — prazo ' + formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''));
+          }
+        });
+      }
+      primeiroSnapshotDemandas = false;
       onDadosTempoRealMudaram('demandas');
     }, (erro)=>{ console.error('Listener demandas falhou:', erro); listenersTempoRealAtivos = false; });
 
+    let primeiroSnapshotVideos = true;
     onSnapshot(collection(db,'videos_producao'), (snap)=>{
+      const anterioresPorId = new Map(cacheVideosProducao.map(v=>[v.id,v]));
       cacheVideosProducao = [];
       snap.forEach(d => cacheVideosProducao.push({id:d.id, ...d.data()}));
+      // FASE 5 — notifica o editor quando o vídeo dele volta em correção,
+      // e notifica quando um vídeo novo é atribuído pra ele editar.
+      if(!primeiroSnapshotVideos && usuarioAtual){
+        cacheVideosProducao.forEach(v => {
+          if(v.editorAtribuido !== usuarioAtual) return;
+          const antes = anterioresPorId.get(v.id);
+          if(!antes && v.status === 'aguardando_edicao'){
+            dispararNotificacaoNavegador('🎬 Vídeo novo pra editar', v.titulo + ' — ' + (v.clienteNome||''));
+          } else if(antes && antes.status !== 'correcao' && v.status === 'correcao'){
+            dispararNotificacaoNavegador('🔁 Vídeo em correção', v.titulo + ' voltou pra ajuste.');
+          }
+        });
+      }
+      primeiroSnapshotVideos = false;
       onDadosTempoRealMudaram('videos_producao');
     }, (erro)=>{ console.error('Listener videos_producao falhou:', erro); });
 

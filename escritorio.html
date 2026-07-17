@@ -5100,6 +5100,13 @@
     if(intervalComando){ clearInterval(intervalComando); intervalComando = null; }
   }
 
+  window.__comandoExpandido = window.__comandoExpandido || {};
+
+  window.toggleComandoSecao = function(chave){
+    window.__comandoExpandido[chave] = !window.__comandoExpandido[chave];
+    renderCentralComando();
+  };
+
   async function renderCentralComando(){
     const cont = document.getElementById('gerenciaComando');
     if(!cont || cont.style.display === 'none') { pararCentralComando(); return; }
@@ -5121,16 +5128,15 @@
     const postagens = []; postagensSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
     const presenca = {}; presencaSnap.forEach(d => { presenca[d.id] = d.data().ultimaAtividade; });
 
-    // Contagem de videos por estagio real do pipeline (1 a 6)
-    const emEdicao = videos.filter(v=>v.status==='aguardando_edicao').length;
-    const aguardApr = videos.filter(v=>v.status==='aguardando_aprovacao').length;
-    const emCorrecao = videos.filter(v=>v.status==='correcao').length;
-    const aguardCliente = videos.filter(v=>v.status==='aguardando_cliente').length;
-    const aguardLegenda = postagens.filter(p=>p.status==='aguardando_legenda').length;
-    const aguardAgendamento = postagens.filter(p=>p.status==='aguardando_agendamento').length;
-    const agendados = postagens.filter(p=>p.status==='agendado').length;
+    const emEdicao = videos.filter(v=>v.status==='aguardando_edicao');
+    const aguardApr = videos.filter(v=>v.status==='aguardando_aprovacao');
+    const emCorrecao = videos.filter(v=>v.status==='correcao');
+    const aguardCliente = videos.filter(v=>v.status==='aguardando_cliente');
+    const aguardLegenda = postagens.filter(p=>p.status==='aguardando_legenda');
+    const aguardAgendamento = postagens.filter(p=>p.status==='aguardando_agendamento');
+    const agendados = postagens.filter(p=>p.status==='agendado');
 
-    const maxEstagio = Math.max(emEdicao, aguardApr, emCorrecao, aguardCliente, aguardLegenda, aguardAgendamento, agendados, 1);
+    const maxEstagio = Math.max(emEdicao.length, aguardApr.length, emCorrecao.length, aguardCliente.length, aguardLegenda.length, aguardAgendamento.length, agendados.length, 1);
 
     const pendentes = demandas.filter(d=>d.status==='pendente');
     const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
@@ -5142,7 +5148,6 @@
       return diff >= 0 && diff <= 7;
     });
 
-    // Atividade recente - junta timestamps de varias fontes
     const eventos = [];
     videos.forEach(v => { if(v.clienteAprovouEm) eventos.push({ts: v.clienteAprovouEm, texto: '✅ Vídeo aprovado — '+v.clienteNome+' ('+v.titulo+')'}); });
     demandas.forEach(d => { if(d.concluidaEm?.seconds) eventos.push({ts: new Date(d.concluidaEm.seconds*1000).toISOString(), texto: '📋 Demanda concluída — '+d.destinatario+': '+d.titulo}); });
@@ -5151,32 +5156,72 @@
     const recentes = eventos.slice(0, 8);
 
     ultimaAtualizacaoComando = new Date();
+    const exp = window.__comandoExpandido;
 
-    const barra = (label, valor, cor) => `
-      <div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;"><span>${label}</span><b>${valor}</b></div>
-        <div style="background:var(--deep);border-radius:5px;height:10px;overflow:hidden;"><div style="background:${cor};height:100%;width:${(valor/maxEstagio)*100}%;transition:width .4s;"></div></div>
-      </div>`;
+    const diasAtraso = (d) => Math.floor((Date.now() - new Date(d.prazoData+'T'+(d.prazoHora||'19:00')).getTime()) / 86400000);
+
+    const detalheAtrasadas = atrasadas.length ? `<div class="grupoFuncionario" style="margin-top:8px;">
+      ${atrasadas.sort((a,b)=>diasAtraso(b)-diasAtraso(a)).map(d => `<div class="item" style="border-left:3px solid var(--red);" onclick="abrirDemandaGerencia('${d.id}')">
+        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag vermelho">${diasAtraso(d)} dia(s) atrasado</span></div>
+        <div class="meta" style="margin-top:4px;">👤 ${esc(d.destinatario)} · prazo era ${formatarDataBR(d.prazoData)} ${d.prazoHora}</div>
+      </div>`).join('')}
+    </div>` : '<div class="empty" style="margin-top:8px;">Nenhuma atrasada — tudo em dia. 🎉</div>';
+
+    const detalheAguardandoDemanda = aguardandoAprovacaoDemanda.length ? `<div class="grupoFuncionario" style="margin-top:8px;">
+      ${aguardandoAprovacaoDemanda.map(d => `<div class="item" onclick="abrirDemandaGerencia('${d.id}')">
+        <div class="top"><div class="nome">${esc(d.titulo)}</div></div>
+        <div class="meta" style="margin-top:4px;">👤 ${esc(d.destinatario)} enviou — clica pra revisar e aprovar</div>
+      </div>`).join('')}
+    </div>` : '<div class="empty" style="margin-top:8px;">Nada esperando sua aprovação agora.</div>';
+
+    const detalheVideosAprovacao = aguardApr.length ? `<div class="grupoFuncionario" style="margin-top:8px;">
+      ${aguardApr.map(v => `<div class="item" id="comandoVideo_${v.id}">
+        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${v.data}</div></div>
+        <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
+        <div class="btnrow" style="margin-top:8px;">
+          <button class="btn red" style="font-size:11px;" onclick="rejeitarDireto('${v.id}')">Pedir ajuste</button>
+          <button class="btn green" style="font-size:11px;" onclick="aprovarDireto('${v.id}')">✓ Aprovar</button>
+        </div>
+      </div>`).join('')}
+    </div>` : '<div class="empty" style="margin-top:8px;">Nenhum vídeo esperando sua aprovação agora. 🎉</div>';
+
+    const barraClicavel = (label, lista, cor, chave) => {
+      const abertoAgora = exp[chave];
+      let detalhe = '';
+      if(abertoAgora){
+        detalhe = `<div style="margin:4px 0 12px;">${lista.map(item => `<div class="item" style="padding:8px 12px;margin-bottom:4px;"><div class="nome" style="font-size:12px;">${esc(item.titulo||item.clienteNome||'—')}</div></div>`).join('') || '<div class="empty" style="font-size:11px;">Nada aqui agora.</div>'}</div>`;
+      }
+      return `
+      <div style="margin-bottom:10px;cursor:pointer;" onclick="toggleComandoSecao('${chave}')">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;"><span>${label} ${abertoAgora?'▲':'▼'}</span><b>${lista.length}</b></div>
+        <div style="background:var(--deep);border-radius:5px;height:10px;overflow:hidden;"><div style="background:${cor};height:100%;width:${(lista.length/maxEstagio)*100}%;transition:width .4s;"></div></div>
+      </div>${detalhe}`;
+    };
 
     let html = `<div class="card">
       <h2>🎛️ Central de Comando</h2>
-      <div class="desc">Tudo que está acontecendo agora na operação. Atualiza sozinho a cada 25 segundos.</div>
+      <div class="desc">Clica em qualquer número ou barra pra ver o detalhe e agir na hora, sem sair da tela. Atualiza sozinho a cada 25 segundos.</div>
     </div>
     <div class="painelResumo">
-      <div class="resumoCard ${atrasadas.length ? 'red' : ''}"><div class="num">${atrasadas.length}</div><div class="lbl">Demandas atrasadas</div></div>
-      <div class="resumoCard yellow"><div class="num">${aguardandoAprovacaoDemanda.length}</div><div class="lbl">Aguardando aprovação</div></div>
+      <div class="resumoCard ${atrasadas.length ? 'red' : ''}" style="cursor:pointer;" onclick="toggleComandoSecao('atrasadas')"><div class="num">${atrasadas.length}</div><div class="lbl">Demandas atrasadas ${exp.atrasadas?'▲':'▼'}</div></div>
+      <div class="resumoCard yellow" style="cursor:pointer;" onclick="toggleComandoSecao('aguardandoDemanda')"><div class="num">${aguardandoAprovacaoDemanda.length}</div><div class="lbl">Aguardando aprovação ${exp.aguardandoDemanda?'▲':'▼'}</div></div>
       <div class="resumoCard"><div class="num">${gravacoesHoje.length}</div><div class="lbl">Gravações hoje</div></div>
       <div class="resumoCard green"><div class="num">${postagensSemana.length}</div><div class="lbl">Postagens nos próximos 7 dias</div></div>
     </div>
-    <div class="card">
+    ${exp.atrasadas ? `<div class="card"><h2 style="font-size:15px;">⚠️ Demandas atrasadas — detalhe</h2>${detalheAtrasadas}</div>` : ''}
+    ${exp.aguardandoDemanda ? `<div class="card"><h2 style="font-size:15px;">🕓 Demandas aguardando sua aprovação</h2>${detalheAguardandoDemanda}</div>` : ''}
+
+    <div class="card" style="border:2px solid var(--yellow);">
       <h2>🎬 Vídeos — onde está cada um agora</h2>
-      ${barra('1. Em edição', emEdicao, '#8a8a8d')}
-      ${barra('2. Aguardando sua aprovação', aguardApr, '#e0c56a')}
-      ${barra('2. Em correção', emCorrecao, '#e07a7a')}
-      ${barra('3. Aguardando confirmação do cliente', aguardCliente, '#FBBC19')}
-      ${barra('4. Aguardando legenda', aguardLegenda, '#8a8a8d')}
-      ${barra('5. Aguardando agendamento', aguardAgendamento, '#e0c56a')}
-      ${barra('6. Agendados', agendados, '#4caf72')}
+      <div class="desc" style="margin-bottom:10px;">A barra "Aguardando sua aprovação" já deixa você aprovar direto aqui, sem precisar navegar.</div>
+      ${barraClicavel('1. Em edição', emEdicao, '#8a8a8d', 'pipeEdicao')}
+      ${barraClicavel('2. Aguardando SUA aprovação', aguardApr, '#e0c56a', 'pipeAprovacao')}
+      ${exp.pipeAprovacao ? detalheVideosAprovacao : ''}
+      ${barraClicavel('2. Em correção', emCorrecao, '#e07a7a', 'pipeCorrecao')}
+      ${barraClicavel('3. Aguardando confirmação do cliente', aguardCliente, '#FBBC19', 'pipeCliente')}
+      ${barraClicavel('4. Aguardando legenda', aguardLegenda, '#8a8a8d', 'pipeLegenda')}
+      ${barraClicavel('5. Aguardando agendamento', aguardAgendamento, '#e0c56a', 'pipeAgendamento')}
+      ${barraClicavel('6. Agendados', agendados, '#4caf72', 'pipeAgendados')}
     </div>
     <div class="grupoFuncionario">
       <h3>👥 Status da Equipe</h3>
@@ -5201,6 +5246,19 @@
 
     cont.innerHTML = html;
   }
+
+  window.aprovarDireto = async function(id){
+    await window.aprovarVideo(id);
+    renderCentralComando();
+  };
+
+  window.rejeitarDireto = async function(id){
+    const motivo = prompt('O que precisa ser ajustado nesse vídeo?');
+    if(!motivo) return;
+    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo });
+    mostrarToast('Enviado de volta pro editor com a correção.');
+    renderCentralComando();
+  };
 
   async function renderGerenciaAmanda(){
     const cont = document.getElementById('gerenciaAmanda');

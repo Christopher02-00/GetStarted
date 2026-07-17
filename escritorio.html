@@ -113,6 +113,11 @@
   .resumoCard.red .num{color:var(--red);}
   .resumoCard.yellow .num{color:var(--yellow2);}
   .resumoCard.green .num{color:var(--green);}
+  .resumoCard.cockpit{padding:16px;text-align:left;}
+  .resumoCard.cockpit .icone{font-size:22px;margin-bottom:6px;}
+  .resumoCard.cockpit .num{font-size:26px;}
+  .resumoCard.cockpit .lbl{font-size:11px;text-transform:none;letter-spacing:0;margin-top:4px;line-height:1.4;color:var(--muted);}
+  .resumoCard.cockpit.alerta{border-color:var(--red);background:var(--redbg);}
 
   .grupoFuncionario{margin-bottom:20px;}
   .grupoFuncionario h3{font-size:13px;font-weight:800;margin-bottom:8px;}
@@ -1584,9 +1589,15 @@
     if(!pendentes.length){
       html += '<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="empty">Nenhum vídeo aguardando aprovação agora.</div></div>';
     } else {
-      html += `<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="desc">${pendentes.length} vídeo(s) aguardando revisão de qualidade.</div></div>`;
+      html += `<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="desc">${pendentes.length} vídeo(s) aguardando revisão de qualidade.</div>
+        ${pendentes.length > 1 ? '<button class="btn" style="margin-top:10px;" onclick="aprovarVideosSelecionados()">✓✓ Aprovar selecionados</button>' : ''}
+      </div>`;
       pendentes.forEach(v => {
         html += `<div class="item" id="itemAprovacao_${v.id}">
+          <label style="display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;">
+            <input type="checkbox" class="checkAprovacaoLote" data-id="${v.id}">
+            <span style="font-size:11px;color:var(--muted);">Selecionar pra aprovação em lote</span>
+          </label>
           <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${v.data}</div></div>
           <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
           <div class="btnrow" style="margin-top:10px;">
@@ -1690,6 +1701,24 @@
     }
     await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', aprovadoInternoEm: new Date().toISOString(), aprovadoPor: usuarioAtual, clienteAprovou: false });
     mostrarToast('Aprovado por ' + usuarioAtual + '! Agora só falta a Amanda confirmar que o CLIENTE aprovou, pra seguir pra postagem.');
+    renderAprovacaoVideos();
+  };
+
+  /* ===== FASE 8 — APROVAÇÃO EM LOTE =====
+     Antes, aprovar N vídeos exigia N cliques + N re-renders separados.
+     Agora marca vários e aprova todos de uma vez, com um toast só no final. */
+  window.aprovarVideosSelecionados = async function(){
+    if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
+      mostrarToast('Só o Chris ou a Amanda podem dar aprovação final.', 'erro');
+      return;
+    }
+    const checkboxes = document.querySelectorAll('.checkAprovacaoLote:checked');
+    if(!checkboxes.length){ mostrarToast('Marca pelo menos um vídeo antes.', 'erro'); return; }
+    const ids = Array.from(checkboxes).map(c => c.dataset.id);
+    for(const id of ids){
+      await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', aprovadoInternoEm: new Date().toISOString(), aprovadoPor: usuarioAtual, clienteAprovou: false });
+    }
+    mostrarToast(ids.length + ' vídeo(s) aprovado(s) de uma vez!');
     renderAprovacaoVideos();
   };
 
@@ -6683,6 +6712,42 @@
     const pedidosPrazo = todasDemandas.filter(d => d.prazoSolicitado);
 
     let html = '';
+
+    /* ===== FASE 8 — TORRE DE CONTROLE DE PRODUÇÃO =====
+       Carga de cada editor (aberto vs capacidade) e reatribuição rápida
+       dos vídeos atrasados — tudo direto dos caches da Fase 2, sem busca
+       nova. Antes isso exigia entrar em "Meus Vídeos" pessoa por pessoa. */
+    const videosAtivosAmanda = cacheVideosProducao.filter(v => !v.excluido && v.status !== 'aprovado');
+    html += `<div class="card"><h2>🎛️ Carga por editor</h2><div class="desc">Quanto cada um tem aberto agora, comparado com a capacidade configurada.</div>`;
+    EDITORES_GERAL.forEach(nome => {
+      const abertos = videosAtivosAmanda.filter(v => v.editorAtribuido === nome).length;
+      const capacidade = EDITORES_CONFIG[nome]?.capacidade || 1;
+      const pct = Math.min(100, Math.round((abertos/capacidade)*100));
+      const estourou = abertos >= capacidade;
+      html += `<div style="margin-top:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><b>${esc(nome)}</b><span>${abertos}/${capacidade}</span></div>
+        <div style="background:var(--deep);border-radius:6px;height:10px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${estourou?'var(--red)':'var(--yellow)'};transition:width .2s;"></div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+
+    const videosAtrasadosAmanda = videosAtivosAmanda.filter(v => videoEstaAtrasado(v));
+    if(videosAtrasadosAmanda.length){
+      html += `<div class="card" style="border:2px solid var(--red);"><h2>⚠️ Reatribuição rápida</h2><div class="desc">${videosAtrasadosAmanda.length} vídeo(s) atrasado(s) — troca o editor direto daqui, sem precisar abrir outra tela.</div>`;
+      videosAtrasadosAmanda.forEach(v => {
+        html += `<div class="item">
+          <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${esc(v.clienteNome||'')}</div></div>
+          <div class="row2" style="margin-top:8px;">
+            <select id="reatribuirSel_${v.id}">${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}" ${e===v.editorAtribuido?'selected':''}>${e}</option>`).join('')}</select>
+            <button class="btn secondary" onclick="reatribuirVideo('${v.id}','${v.cliente}',document.getElementById('reatribuirSel_${v.id}').value)">Reatribuir</button>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
     if(pedidosPrazo.length){
       html += `<div class="card" style="border:2px solid var(--yellow);">
         <h2><svg class="ic"><use href="#i-clock"/></svg>Pedidos de novo prazo — ${pedidosPrazo.length}</h2>
@@ -6772,19 +6837,103 @@
     return {cor:'vermelho', texto:atrasadas.length+' atrasos — requer ação imediata'};
   }
 
+  /* ===== FASE 8 — COCKPIT DO CHRIS =====
+     Antes, essa tela só tinha o semáforo geral e 1 número solto — o resto
+     do controle estava espalhado pelas 23 subtabs. Agora tem 4 blocos que
+     respondem em 10 segundos: dinheiro, clientes em risco, produção
+     atrasada e time. Cada bloco é clicável e leva direto pro detalhe. */
+
+  async function calcularResumoSaudeClientes(){
+    const [agSnap, demSnap, avalSnap, ...calSnaps] = await Promise.all([
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'demandas')),
+      getDocs(collection(db,'avaliacoes_clientes')),
+      ...CLIENTES_LISTA.map(c => getDoc(doc(db,'calendarios', c.slug)))
+    ]);
+    const listaAgendamentos = []; agSnap.forEach(d => listaAgendamentos.push(d.data()));
+    const listaDemandas = []; demSnap.forEach(d => listaDemandas.push(d.data()));
+    const listaAvaliacoes = []; avalSnap.forEach(d => listaAvaliacoes.push(d.data()));
+    const resultados = CLIENTES_LISTA.map((c,i) => calcularSaudeCliente(c.slug, c.nome, calSnaps[i], listaAgendamentos, listaDemandas, listaAvaliacoes));
+    const vermelhos = resultados.filter(r => r.cor === 'vermelho');
+    return {
+      verdes: resultados.filter(r => r.cor === 'verde').length,
+      amarelos: resultados.filter(r => r.cor === 'amarelo').length,
+      vermelhosCount: vermelhos.length,
+      nomesVermelhos: vermelhos.map(r => r.clienteNome)
+    };
+  }
+
   async function renderGerenciaChris(){
     const cont = document.getElementById('gerenciaChris');
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando cockpit...</div></div>';
+
+    // 💰 Dinheiro
+    const mesAtual = new Date().toISOString().slice(0,7);
+    const pagSnap = await getDocs(collection(db,'pagamentos_extra'));
+    let pagPendentesCount = 0, pagPendentesSoma = 0;
+    pagSnap.forEach(d => {
+      const p = d.data();
+      if(p.excluido || p.mes !== mesAtual || p.pago) return;
+      pagPendentesCount++; pagPendentesSoma += Number(p.valorExtra) || 0;
+    });
+
+    // 🩺 Clientes
+    const saude = await calcularResumoSaudeClientes();
+
+    // 🎬 Produção — já vem dos caches da Fase 2, zero busca nova
+    const videosAtivos = cacheVideosProducao.filter(v => !v.excluido);
+    const videosAtrasados = videosAtivos.filter(v => videoEstaAtrasado(v) || (v.nivelEscalonamento||0) >= 2);
+    const postagensTravadas = cachePostagens.filter(p => {
+      if(p.status === 'aguardando_agendamento'){
+        const dias = p.legendaEm ? Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) : 0;
+        return dias >= 1;
+      }
+      if(p.status === 'aguardando_legenda'){
+        const dias = p.criadoEm?.seconds ? Math.floor((Date.now()-p.criadoEm.seconds*1000)/86400000) : 0;
+        return dias >= 2;
+      }
+      return false;
+    });
+
+    // 👥 Time
+    const pendentesPorPessoa = {};
+    todasDemandas.filter(d => d.status==='pendente' && calcularUrgencia(d)==='atrasado').forEach(d => {
+      pendentesPorPessoa[d.destinatario||'?'] = (pendentesPorPessoa[d.destinatario||'?']||0) + 1;
+    });
+    const totalAtrasadasTime = Object.values(pendentesPorPessoa).reduce((a,b)=>a+b,0);
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const ausentesHoje = todasAusencias.filter(a => a.dataInicio <= hojeStr && a.dataFim >= hojeStr);
+
     const semaforo = calcularSemaforoAgencia();
-    const aprovadas = todasDemandas.filter(d => d.status === 'aprovada').length;
+
     cont.innerHTML = `
       <div class="card">
         <h2><span class="semaforo ${semaforo.cor}"></span>Saúde geral da operação</h2>
         <div class="desc">${semaforo.texto}</div>
       </div>
       <div class="painelResumo">
-        <div class="resumoCard green"><div class="num">${aprovadas}</div><div class="lbl">Demandas concluídas (histórico)</div></div>
+        <div class="resumoCard cockpit clicavel ${pagPendentesCount?'alerta':''}" onclick="navegarGerenciaSub('pagamentos')">
+          <div class="icone">💰</div>
+          <div class="num">R$ ${pagPendentesSoma.toFixed(2)}</div>
+          <div class="lbl">${pagPendentesCount} pagamento(s) pendente(s) este mês →</div>
+        </div>
+        <div class="resumoCard cockpit clicavel ${saude.vermelhosCount?'alerta':''}" onclick="navegarGerenciaSub('saudeClientes')">
+          <div class="icone">🩺</div>
+          <div class="num">${saude.vermelhosCount}</div>
+          <div class="lbl">cliente(s) em risco${saude.nomesVermelhos.length ? ': '+esc(saude.nomesVermelhos.join(', ')) : ''} →</div>
+        </div>
+        <div class="resumoCard cockpit clicavel ${(videosAtrasados.length||postagensTravadas.length)?'alerta':''}" onclick="navegarGerenciaSub('videos')">
+          <div class="icone">🎬</div>
+          <div class="num">${videosAtrasados.length}</div>
+          <div class="lbl">vídeo(s) atrasado(s) · ${postagensTravadas.length} postagem(ns) travada(s) →</div>
+        </div>
+        <div class="resumoCard cockpit clicavel ${totalAtrasadasTime?'alerta':''}" onclick="navegarGerenciaSub('demandasAtrasadas')">
+          <div class="icone">👥</div>
+          <div class="num">${totalAtrasadasTime}</div>
+          <div class="lbl">atrasada(s) no time${ausentesHoje.length ? ' · '+ausentesHoje.length+' ausente(s) hoje' : ''} →</div>
+        </div>
       </div>
-      <div class="desc" style="text-align:center;margin-top:14px;opacity:.7;">Números em tempo real, vídeos por cliente e status da equipe já estão na <b>Central de Comando</b>, ao lado.</div>
+      <div class="desc" style="text-align:center;margin-top:14px;opacity:.7;">Clica em qualquer card pra ver o detalhe. Números em tempo real também na <b>Central de Comando</b>, ao lado.</div>
     `;
   }
 

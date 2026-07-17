@@ -468,6 +468,7 @@
       </div>
       <div id="setorAtalhos"></div>
       <div id="avisoInicio"></div>
+      <div id="meuDiaBox"></div>
       <div class="card" style="cursor:pointer;border:2px dashed var(--yellow);" onclick="window.irParaAtalho('minhasDemandas')">
         <h2>📝 Suas anotações pessoais</h2>
         <div class="desc">Sua agenda dentro do site — cria lembretes só seus, com prioridade colorida. Clica aqui pra abrir.</div>
@@ -4803,13 +4804,14 @@
     atualizarVisibilidadeMenuPorFuncao();
     if(!usuarioAtual){ document.getElementById('avisoInicio').innerHTML=''; boxSetor.innerHTML=''; return; }
     await carregarTodasDemandas();
+    iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
+    iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui (assinado antes de renderizar Meu Dia)
     renderAvisoInicio();
+    renderMeuDia();
     atualizarBadgeMinhas();
     atualizarBadgePostagens();
     renderSetorAtalhos();
     if(usuarioAtual === 'Cecília') verificarPostagensEsquecidas().then(()=>{ atualizarBadgePostagens(); });
-    iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
-    iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui
   };
 
   // Cada pessoa so ve os itens do menu que fazem parte do trabalho dela.
@@ -4900,6 +4902,161 @@
     }
     const txtAtraso = atrasadas.length ? `, sendo <b>${atrasadas.length} atrasada(s)</b>` : '';
     box.innerHTML = `<div class="avisoBanner" style="cursor:pointer;" onclick="window.irParaAtalho('minhasDemandas')"><div class="icone">🔔</div><div class="texto">Você tem ${minhas.length} demanda(s) em aberto${txtAtraso}<span>Clica aqui pra ver e resolver agora →</span></div></div>`;
+  }
+
+  /* ===== FASE 3 — "MEU DIA": FILA ÚNICA POR FUNCIONÁRIO =====
+     Antes, pra saber o que fazer, a pessoa navegava por Minhas Demandas +
+     Vídeos + Checklist + Postagens + Agendamento separadamente. Agora tudo
+     isso aparece junto, numa lista só, ordenada por urgência, com uma ação
+     de um clique em cada item. Alimentado pelos caches da Fase 2 — não faz
+     nenhuma busca nova no banco (exceto o checklist, que é 1 doc pequeno).
+     Editores elegíveis pra "vídeos": Helo, João Victor, Nathan (batendo com
+     quem tem a subtab "Meus Vídeos" liberada no sistema). */
+
+  window.meuDiaAbrirVideos = function(){
+    irParaAtalho('videos');
+    const el = document.getElementById('subtabMeusVideos');
+    if(el) setVideosSub('meus', el);
+  };
+  window.meuDiaAbrirLegenda = function(){
+    irParaAtalho('postagens');
+    const el = document.getElementById('subtabEscreverLegenda');
+    if(el) setPostagensSub('legenda', el);
+  };
+  window.meuDiaAbrirAgendar = function(){
+    irParaAtalho('postagens');
+    const el = document.getElementById('subtabAgendarPostagem');
+    if(el) setPostagensSub('agendar', el);
+  };
+  window.meuDiaAbrirGravacoes = function(){
+    irParaAtalho('agendamento');
+    const el = document.getElementById('subtabMinhaAgendaFilmmaker');
+    if(el) setAgendamentoSub('minhaAgenda', el);
+  };
+  window.meuDiaAbrirChecklist = function(){
+    irParaAtalho('checklist');
+  };
+
+  const MEUDIA_PESO_URGENCIA = { atrasado: 0, hoje: 1, normal: 2 };
+  let meuDiaZeradoComemorado = false;
+
+  async function contarChecklistDiarioPendente(){
+    try{
+      const templates = await obterTemplatesEfetivos(usuarioAtual);
+      if(!templates || !templates["Diário"]) return 0;
+      const chave = chaveExecucao(usuarioAtual, "Diário");
+      const snap = await getDoc(doc(db, 'checklist_execucoes', chave));
+      const feitosObj = snap.exists() ? (snap.data().itensFeitos || {}) : {};
+      const totalItens = templates["Diário"].reduce((s,b)=>s+b.itens.length, 0);
+      const feitos = templates["Diário"].reduce((s,b)=> s + b.itens.filter(it => feitosObj[it.id]?.feito).length, 0);
+      return Math.max(0, totalItens - feitos);
+    }catch(e){ console.error('Meu Dia: falha ao checar checklist', e); return 0; }
+  }
+
+  function meuDiaItemHtml(item){
+    const classe = item.urgencia === 'atrasado' ? 'atrasado' : (item.urgencia === 'hoje' ? 'hoje' : '');
+    const seloClasse = item.urgencia === 'atrasado' ? 'atrasado' : (item.urgencia === 'hoje' ? 'hoje' : 'pendente');
+    const seloTxt = item.urgencia === 'atrasado' ? 'Atrasado' : (item.urgencia === 'hoje' ? 'Hoje' : 'Pendente');
+    return `<div class="item ${classe}" onclick="${item.acao}">
+      <div class="top"><div class="nome">${item.icone} ${esc(item.titulo)}</div><div class="meta">${esc(item.meta||'')}</div></div>
+      <div class="desc" style="margin-bottom:6px;">${esc(item.desc||'')}</div>
+      <span class="selo ${seloClasse}">${seloTxt}</span>
+    </div>`;
+  }
+
+  async function renderMeuDia(){
+    const box = document.getElementById('meuDiaBox');
+    if(!box) return;
+    if(!usuarioAtual || estaAusente(usuarioAtual)){ box.innerHTML = ''; return; }
+
+    const itens = [];
+
+    // 1) Demandas pendentes/atrasadas
+    todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada').forEach(d => {
+      itens.push({
+        icone: '✅', titulo: d.titulo, meta: formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''),
+        desc: d.descricao || '', urgencia: calcularUrgencia(d),
+        acao: `abrirDemandaMinha('${d.id}')`
+      });
+    });
+
+    // 2) Vídeos em edição/correção atribuídos a mim
+    if(['Helo','João Victor','Nathan','Chris'].includes(usuarioAtual)){
+      cacheVideosProducao.filter(v => !v.excluido && v.editorAtribuido === usuarioAtual && ['aguardando_edicao','correcao'].includes(v.status)).forEach(v => {
+        const atrasado = videoEstaAtrasado(v);
+        const prazo = calcularPrazoEdicaoVideo(v);
+        const hojeStr = new Date().toISOString().slice(0,10);
+        const urgencia = atrasado ? 'atrasado' : (prazo && prazo.toISOString().slice(0,10) === hojeStr ? 'hoje' : 'normal');
+        itens.push({
+          icone: v.status === 'correcao' ? '🔁' : '🎬',
+          titulo: (v.status === 'correcao' ? 'Corrigir: ' : 'Editar: ') + (v.titulo||''),
+          meta: esc(v.clienteNome||''), desc: v.status === 'correcao' ? 'Vídeo voltou pra ajuste.' : 'Aguardando edição.',
+          urgencia, acao: `meuDiaAbrirVideos()`
+        });
+      });
+    }
+
+    // 3) Checklist diário pendente (1 item agregado)
+    const pendentesChecklist = await contarChecklistDiarioPendente();
+    if(pendentesChecklist > 0){
+      itens.push({
+        icone: '📋', titulo: pendentesChecklist + ' item(ns) do checklist diário', meta: 'Rotina de hoje',
+        desc: 'Ainda não marcados como feitos.', urgencia: 'hoje', acao: `meuDiaAbrirChecklist()`
+      });
+    }
+
+    // 4) Postagens — legenda (Gabrielle/Amanda) e agendamento (Cecília)
+    if(['Gabrielle','Amanda'].includes(usuarioAtual)){
+      cachePostagens.filter(p => p.status === 'aguardando_legenda').forEach(p => {
+        const dias = p.criadoEm?.seconds ? Math.floor((Date.now() - p.criadoEm.seconds*1000)/86400000) : 0;
+        itens.push({
+          icone: '✍️', titulo: 'Escrever legenda: ' + (p.titulo||''), meta: esc(p.clienteNome||''),
+          desc: dias >= 1 ? 'Esperando há ' + dias + ' dia(s).' : 'Vídeo liberado hoje.',
+          urgencia: dias >= 2 ? 'atrasado' : (dias >= 1 ? 'hoje' : 'normal'), acao: `meuDiaAbrirLegenda()`
+        });
+      });
+    }
+    if(usuarioAtual === 'Cecília'){
+      cachePostagens.filter(p => p.status === 'aguardando_agendamento').forEach(p => {
+        const dias = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime())/86400000) : 0;
+        itens.push({
+          icone: '📅', titulo: 'Agendar: ' + (p.titulo||''), meta: esc(p.clienteNome||''),
+          desc: dias >= 1 ? 'Legenda pronta há ' + dias + ' dia(s) sem agendar.' : 'Legenda pronta hoje.',
+          urgencia: dias >= 1 ? 'atrasado' : 'hoje', acao: `meuDiaAbrirAgendar()`
+        });
+      });
+    }
+
+    // 5) Gravações do dia (filmmakers)
+    if(['Chris','Luís','Nathan'].includes(usuarioAtual)){
+      const hojeStr = new Date().toISOString().slice(0,10);
+      cacheAgendamentos.filter(a => !a.excluido && a.data === hojeStr && a.status === 'agendado' && a.aprovado !== false).forEach(a => {
+        itens.push({
+          icone: '🎥', titulo: 'Gravação hoje: ' + (a.clienteNome||''), meta: a.hora||'',
+          desc: 'Confirma modelos e local antes do horário.', urgencia: 'hoje', acao: `meuDiaAbrirGravacoes()`
+        });
+      });
+    }
+
+    itens.sort((a,b) => (MEUDIA_PESO_URGENCIA[a.urgencia]??2) - (MEUDIA_PESO_URGENCIA[b.urgencia]??2));
+
+    const atrasadosCount = itens.filter(i=>i.urgencia==='atrasado').length;
+
+    if(!itens.length){
+      if(!meuDiaZeradoComemorado){
+        meuDiaZeradoComemorado = true;
+        if(window.mascoteDispararConfete) window.mascoteDispararConfete();
+      }
+      box.innerHTML = `<div class="card"><h2>☀️ Meu Dia</h2><div class="empty">Nenhuma pendência agora. Você está em dia! 🎉</div></div>`;
+      return;
+    }
+    meuDiaZeradoComemorado = false;
+
+    const txtAtraso = atrasadosCount ? `, <b>${atrasadosCount} atrasada(s)</b>` : '';
+    box.innerHTML = `<div class="card"><h2>☀️ Meu Dia</h2>
+      <div class="desc" style="margin-bottom:12px;">Você tem ${itens.length} pendência(s) hoje${txtAtraso} — em ordem de urgência.</div>
+      ${itens.map(meuDiaItemHtml).join('')}
+    </div>`;
   }
 
   async function atualizarBadgePostagens(){
@@ -5556,6 +5713,9 @@
     }
     if(colecao === 'postagens'){
       atualizarBadgePostagens();
+    }
+    if(viewAtiva === 'inicio' && ['demandas','videos_producao','postagens','agendamentos'].includes(colecao)){
+      renderMeuDia();
     }
     // A Central de Comando já checa sozinha se está visível antes de fazer
     // qualquer trabalho (ver início de renderCentralComando) — por isso é

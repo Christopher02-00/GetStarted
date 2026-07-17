@@ -840,6 +840,7 @@
             <div class="labelInterno">Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('aprovarVideos', this)">Aprovar Vídeos</div>
+            <div class="subtab" onclick="setGerenciaSub('lixeiraVideos', this)">🗑️ Lixeira de Vídeos</div>
             <div class="labelInterno">Clientes</div>
             <div class="subtab" onclick="setGerenciaSub('pagamentos', this)">Pagamentos Extras</div>
             <div class="subtab" onclick="setGerenciaSub('avaliacoes', this)">Avaliações Clientes</div>
@@ -858,6 +859,7 @@
             <div id="gerenciaAmanda"></div>
             <div id="gerenciaVideos" style="display:none;"></div>
             <div id="gerenciaAprovarVideos" style="display:none;"></div>
+            <div id="gerenciaLixeiraVideos" style="display:none;"></div>
             <div id="gerenciaPagamentos" style="display:none;"></div>
             <div id="gerenciaAvaliacoes" style="display:none;"></div>
             <div id="gerenciaSaudeClientes" style="display:none;"></div>
@@ -970,7 +972,8 @@
           { id:"c_d_10", texto:"Garantir clareza do que será gravado" },
           { id:"c_d_11", texto:"Enviar lembrete de captação do dia seguinte", critico:true },
           { id:"c_d_12", texto:"Receber nº de gravação do dia e conteúdos não gravados" },
-          { id:"c_d_13", texto:"Ajustar o calendário do cliente e regravações de conteúdos" }
+          { id:"c_d_13", texto:"Ajustar o calendário do cliente e regravações de conteúdos" },
+          { id:"c_d_15", texto:"Atualizar a Agenda com o que foi gravado ontem/hoje (mesmo que o filmmaker ainda não tenha lançado os vídeos) — o Chris usa isso pra ter o dado completo do dia", critico:true }
         ]}
       ]
     },
@@ -1266,7 +1269,7 @@
     const hoje = new Date().toISOString().slice(0,10);
     const snap = await getDocs(collection(db,'videos_producao'));
     const hojeList = [];
-    snap.forEach(d => { const v=d.data(); if(v.data === hoje && v.status === 'aguardando_edicao') hojeList.push({id:d.id, ...v}); });
+    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.data === hoje && v.status === 'aguardando_edicao') hojeList.push({id:d.id, ...v}); });
     if(!hojeList.length){ cont.innerHTML = '<div class="empty">Nada lançado hoje ainda.</div>'; return; }
     cont.innerHTML = hojeList.map(v => `
       <div class="item">
@@ -1290,7 +1293,7 @@
     const contagem = {}; EDITORES_GERAL.forEach(e => contagem[e]=0);
     snap.forEach(d => {
       const v = d.data();
-      if(v.status !== 'aprovado' && contagem[v.editorAtribuido] !== undefined) contagem[v.editorAtribuido]++;
+      if(!v.excluido && v.status !== 'aprovado' && contagem[v.editorAtribuido] !== undefined) contagem[v.editorAtribuido]++;
     });
     return contagem;
   }
@@ -1382,13 +1385,13 @@
     await verificarVideosAtrasadosEAlertar();
     const snap = await getDocs(collection(db,'videos_producao'));
     const meus = [];
-    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
+    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
     const aguardando = [];
-    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aguardando_aprovacao') aguardando.push({id:d.id, ...v}); });
+    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'aguardando_aprovacao') aguardando.push({id:d.id, ...v}); });
     const correcoes = [];
-    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'correcao') correcoes.push({id:d.id, ...v}); });
+    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'correcao') correcoes.push({id:d.id, ...v}); });
     const aprovados = [];
-    snap.forEach(d => { const v=d.data(); if(v.editorAtribuido === usuarioAtual && v.status === 'aprovado' && v.clienteAprovouEm) aprovados.push({id:d.id, ...v}); });
+    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'aprovado' && v.clienteAprovouEm) aprovados.push({id:d.id, ...v}); });
     aprovados.sort((a,b) => new Date(b.clienteAprovouEm) - new Date(a.clienteAprovouEm));
     const aprovadosRecentes = aprovados.slice(0, 15);
 
@@ -1469,9 +1472,9 @@
   };
 
   window.cancelarVideoEnviado = async function(id, titulo){
-    if(!confirm('Excluir "'+titulo+'"? Isso apaga esse registro por completo — use quando subiu algo errado por engano.')) return;
-    await deleteDoc(doc(db,'videos_producao', id));
-    mostrarToast('Excluído.');
+    if(!confirm('Excluir "'+titulo+'"? Ele vai pra Lixeira, pode ser recuperado pelo Chris/Amanda se for engano.')) return;
+    await updateDoc(doc(db,'videos_producao', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
+    mostrarToast('Excluído — mandado pra Lixeira, dá pra recuperar se precisar.');
     renderMeusVideos();
   };
 
@@ -1490,6 +1493,7 @@
     const pendentes = []; const aguardandoCliente = []; const aprovadosRecentes = [];
     snap.forEach(d => {
       const v=d.data();
+      if(v.excluido) return;
       if(v.status==='aguardando_aprovacao') pendentes.push({id:d.id, ...v});
       if(v.status==='aguardando_cliente') aguardandoCliente.push({id:d.id, ...v});
       if(v.status==='aprovado' && v.clienteAprovouEm) aprovadosRecentes.push({id:d.id, ...v});
@@ -1627,7 +1631,7 @@
   async function renderGerenciaVideos(){
     const cont = document.getElementById('gerenciaVideos');
     const snap = await getDocs(collection(db,'videos_producao'));
-    const todos = []; snap.forEach(d => todos.push({id:d.id, ...d.data()}));
+    const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
     const abertos = todos.filter(v => v.status !== 'aprovado');
     const concluidos = todos.filter(v => v.status === 'aprovado');
 
@@ -1694,10 +1698,42 @@
   };
 
   window.excluirVideoGerencia = async function(id, titulo){
-    if(!confirm('Excluir "'+titulo+'"? Isso remove esse vídeo do sistema por completo.')) return;
-    await deleteDoc(doc(db,'videos_producao', id));
-    mostrarToast('Excluído.');
+    if(!confirm('Excluir "'+titulo+'"? Ele vai pra Lixeira, pode ser recuperado se for engano.')) return;
+    await updateDoc(doc(db,'videos_producao', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
+    mostrarToast('Excluído — mandado pra Lixeira.');
     renderGerenciaVideos();
+  };
+
+  async function renderLixeiraVideos(){
+    const cont = document.getElementById('gerenciaLixeiraVideos');
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const excluidos = [];
+    snap.forEach(d => { const v=d.data(); if(v.excluido) excluidos.push({id:d.id, ...v}); });
+    excluidos.sort((a,b) => new Date(b.excluidoEm||0) - new Date(a.excluidoEm||0));
+
+    let html = `<div class="card">
+      <h2>🗑️ Lixeira de Vídeos</h2>
+      <div class="desc">Nada some do sistema de vez. Todo vídeo excluído por qualquer pessoa fica aqui, com quem excluiu e quando — dá pra restaurar se foi engano.</div>
+    </div>`;
+
+    if(!excluidos.length){ html += '<div class="empty">Lixeira vazia — nada foi excluído.</div>'; cont.innerHTML = html; return; }
+
+    html += excluidos.map(v => `
+      <div class="item">
+        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data||''}</div></div>
+        <div class="meta" style="margin-top:6px;color:var(--red);">🗑️ Excluído por <b>${esc(v.excluidoPor||'?')}</b> em ${v.excluidoEm ? new Date(v.excluidoEm).toLocaleString('pt-BR') : '?'}</div>
+        ${v.linkFinalizado ? '<div class="meta" style="margin-top:4px;">🔗 <a href="'+esc(v.linkFinalizado)+'" target="_blank" style="color:var(--yellow);">Link do vídeo</a></div>' : ''}
+        <button class="btn secondary" style="width:auto;margin-top:8px;" onclick="restaurarVideo('${v.id}')">↩ Restaurar esse vídeo</button>
+      </div>
+    `).join('');
+    cont.innerHTML = html;
+  }
+
+  window.restaurarVideo = async function(id){
+    if(!confirm('Restaurar esse vídeo? Ele volta pro fluxo normal, no status de antes de ser excluído.')) return;
+    await updateDoc(doc(db,'videos_producao', id), { excluido: false, excluidoPor: '', excluidoEm: '' });
+    mostrarToast('Vídeo restaurado!');
+    renderLixeiraVideos();
   };
 
   function popularClientesRelatorio(){
@@ -1773,7 +1809,7 @@
       getDoc(doc(db,'calendarios', clienteSlug))
     ]);
 
-    const videos = []; videosSnap.forEach(d=>{ if(d.data().cliente===clienteSlug) videos.push(d.data()); });
+    const videos = []; videosSnap.forEach(d=>{ const v=d.data(); if(v.cliente===clienteSlug && !v.excluido) videos.push(v); });
     const videosMes = videos.filter(v => v.data?.startsWith(mesAtual));
     const videosConcluidos = videosMes.filter(v => v.status === 'aprovado').length;
 
@@ -2739,7 +2775,7 @@
       getDocs(collection(db,'videos_producao')),
       getDocs(collection(db,'postagens'))
     ]);
-    const videos = []; videosSnap.forEach(d => videos.push({id:d.id, ...d.data()}));
+    const videos = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido) videos.push({id:d.id, ...v}); });
     const postagens = []; postagensSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
 
     videos.sort((a,b) => (b.data||'').localeCompare(a.data||''));
@@ -3610,7 +3646,7 @@
       getDocs(collection(db,'checklist_execucoes'))
     ]);
     const demandas = []; demandasSnap.forEach(d => demandas.push(d.data()));
-    const videos = []; videosSnap.forEach(d => videos.push(d.data()));
+    const videos = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido) videos.push(v); });
     const execucoesMap = {}; checklistSnap.forEach(d => { execucoesMap[d.id] = d.data(); });
 
     const ranking = [];
@@ -4247,6 +4283,7 @@
     document.getElementById('gerenciaAmanda').style.display = qual==='amanda' ? 'block' : 'none';
     document.getElementById('gerenciaVideos').style.display = qual==='videos' ? 'block' : 'none';
     document.getElementById('gerenciaAprovarVideos').style.display = qual==='aprovarVideos' ? 'block' : 'none';
+    document.getElementById('gerenciaLixeiraVideos').style.display = qual==='lixeiraVideos' ? 'block' : 'none';
     document.getElementById('gerenciaPagamentos').style.display = qual==='pagamentos' ? 'block' : 'none';
     document.getElementById('gerenciaAvaliacoes').style.display = qual==='avaliacoes' ? 'block' : 'none';
     document.getElementById('gerenciaSaudeClientes').style.display = qual==='saudeClientes' ? 'block' : 'none';
@@ -4273,6 +4310,7 @@
     else pararCentralComando();
     if(qual==='videos') renderGerenciaVideos();
     if(qual==='aprovarVideos') renderAprovacaoVideos();
+    if(qual==='lixeiraVideos') renderLixeiraVideos();
     if(qual==='pagamentos') renderGerenciaPagamentos();
     if(qual==='avaliacoes') renderGerenciaAvaliacoes();
     if(qual==='saudeClientes') renderGerenciaSaudeClientes();
@@ -4333,7 +4371,7 @@
     const paraAlertar = [];
     snap.forEach(d => {
       const v = d.data();
-      if(videoEstaAtrasado(v) && !v.alertaAtrasoCriado){ paraAlertar.push({id:d.id, ...v}); }
+      if(!v.excluido && videoEstaAtrasado(v) && !v.alertaAtrasoCriado){ paraAlertar.push({id:d.id, ...v}); }
     });
     for(const v of paraAlertar){
       await addDoc(collection(db,'demandas'), {
@@ -4653,7 +4691,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','pagamentos','avaliacoes','saudeClientes','clientesExtras','rfv','exClientes','cofreSenhas','calendariosEnviados','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','lixeiraVideos','pagamentos','avaliacoes','saudeClientes','clientesExtras','rfv','exClientes','cofreSenhas','calendariosEnviados','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -5063,7 +5101,7 @@
     CLIENTES_LISTA.forEach(c => contagem[c.slug] = 0);
     snap.forEach(d => {
       const v = d.data();
-      if(v.data?.startsWith(mesAtual) && v.status === 'aprovado' && contagem[v.cliente] !== undefined) contagem[v.cliente]++;
+      if(!v.excluido && v.data?.startsWith(mesAtual) && v.status === 'aprovado' && contagem[v.cliente] !== undefined) contagem[v.cliente]++;
     });
     const ordenado = CLIENTES_LISTA.map(c => ({nome:c.nome, qtd:contagem[c.slug]})).sort((a,b)=>b.qtd-a.qtd);
     const total = ordenado.reduce((s,c)=>s+c.qtd,0);
@@ -5122,7 +5160,7 @@
       getDocs(collection(db,'presenca_funcionarios'))
     ]);
 
-    const videos = []; videosSnap.forEach(d => videos.push({id:d.id, ...d.data()}));
+    const videos = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido) videos.push({id:d.id, ...v}); });
     const demandas = []; demandasSnap.forEach(d => demandas.push({id:d.id, ...d.data()}));
     const agendamentos = []; agendamentosSnap.forEach(d => agendamentos.push({id:d.id, ...d.data()}));
     const postagens = []; postagensSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
@@ -5174,6 +5212,18 @@
       </div>`).join('')}
     </div>` : '<div class="empty" style="margin-top:8px;">Nada esperando sua aprovação agora.</div>';
 
+    const detalheGravacoesHoje = gravacoesHoje.length ? `<div class="grupoFuncionario" style="margin-top:8px;">
+      <div class="desc" style="margin-bottom:8px;">O que está na agenda de hoje — mesmo antes do filmmaker lançar os vídeos, isso já vem do agendamento que a Cecília mantém atualizado.</div>
+      ${gravacoesHoje.map(a => {
+        const realizado = a.status === 'realizado';
+        return `<div class="item" style="${realizado?'border-left:3px solid var(--green);':'border-left:3px solid var(--yellow2);'}">
+          <div class="top"><div class="nome">${esc(a.clienteNome)}</div><span class="prioTag ${realizado?'verde':'amarelo'}">${realizado?'✓ Realizada':'⏳ Agendada'}</span></div>
+          <div class="meta" style="margin-top:4px;">🕐 ${a.hora||'?'} · Planejado: ${a.qtdVideosPlanejados||'?'} vídeo(s)${realizado ? ' · Feito: '+(a.qtdVideosRealizados??'?')+' vídeo(s)' : ''}</div>
+          ${a.local ? '<div class="meta">📍 '+esc(a.local)+'</div>' : ''}
+        </div>`;
+      }).join('')}
+    </div>` : '<div class="empty" style="margin-top:8px;">Nenhuma gravação agendada pra hoje.</div>';
+
     const detalheVideosAprovacao = aguardApr.length ? `<div class="grupoFuncionario" style="margin-top:8px;">
       ${aguardApr.map(v => `<div class="item" id="comandoVideo_${v.id}">
         <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${v.data}</div></div>
@@ -5205,11 +5255,12 @@
     <div class="painelResumo">
       <div class="resumoCard ${atrasadas.length ? 'red' : ''}" style="cursor:pointer;" onclick="toggleComandoSecao('atrasadas')"><div class="num">${atrasadas.length}</div><div class="lbl">Demandas atrasadas ${exp.atrasadas?'▲':'▼'}</div></div>
       <div class="resumoCard yellow" style="cursor:pointer;" onclick="toggleComandoSecao('aguardandoDemanda')"><div class="num">${aguardandoAprovacaoDemanda.length}</div><div class="lbl">Aguardando aprovação ${exp.aguardandoDemanda?'▲':'▼'}</div></div>
-      <div class="resumoCard"><div class="num">${gravacoesHoje.length}</div><div class="lbl">Gravações hoje</div></div>
+      <div class="resumoCard" style="cursor:pointer;" onclick="toggleComandoSecao('gravacoesHoje')"><div class="num">${gravacoesHoje.length}</div><div class="lbl">Gravações hoje ${exp.gravacoesHoje?'▲':'▼'}</div></div>
       <div class="resumoCard green"><div class="num">${postagensSemana.length}</div><div class="lbl">Postagens nos próximos 7 dias</div></div>
     </div>
     ${exp.atrasadas ? `<div class="card"><h2 style="font-size:15px;">⚠️ Demandas atrasadas — detalhe</h2>${detalheAtrasadas}</div>` : ''}
     ${exp.aguardandoDemanda ? `<div class="card"><h2 style="font-size:15px;">🕓 Demandas aguardando sua aprovação</h2>${detalheAguardandoDemanda}</div>` : ''}
+    ${exp.gravacoesHoje ? `<div class="card"><h2 style="font-size:15px;">🎥 Gravações de hoje — detalhe</h2>${detalheGravacoesHoje}</div>` : ''}
 
     <div class="card" style="border:2px solid var(--yellow);">
       <h2>🎬 Vídeos — onde está cada um agora</h2>

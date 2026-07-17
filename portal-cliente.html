@@ -115,6 +115,7 @@
       <div class="tab" onclick="toggleMenuMais()" id="tabMais">⋯ Mais</div>
     </div>
     <div id="menuMais" style="display:none;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:8px;margin:-10px 0 16px;">
+      <div class="tab" data-tab="videos" onclick="setTab('videos', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-film"/></svg>Status dos Vídeos</div>
       <div class="tab" data-tab="ideias" onclick="setTab('ideias', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-bulb"/></svg>Banco de Ideias</div>
       <div class="tab" data-tab="stories" onclick="setTab('stories', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-image"/></svg>Stories</div>
       <div class="tab" data-tab="atas" onclick="setTab('atas', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-pen"/></svg>Atas de Reunião</div>
@@ -124,6 +125,7 @@
     <div id="painelCalendario"></div>
     <div id="painelDemandas" style="display:none;"></div>
     <div id="painelDrive" style="display:none;"></div>
+    <div id="painelVideos" style="display:none;"></div>
     <div id="painelIdeias" style="display:none;"></div>
     <div id="painelStories" style="display:none;"></div>
     <div id="painelAtas" style="display:none;"></div>
@@ -183,6 +185,7 @@
     carregarCalendario();
     carregarDemandas();
     carregarDrive();
+    carregarVideos();
     carregarIdeias();
     carregarStories();
     carregarAtas();
@@ -202,8 +205,8 @@
   window.setTab = function(nome, el){
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    if(['ideias','stories','atas','info'].includes(nome)) document.getElementById('tabMais').classList.add('active');
-    ['Calendario','Demandas','Drive','Ideias','Stories','Atas','Info'].forEach(p => {
+    if(['videos','ideias','stories','atas','info'].includes(nome)) document.getElementById('tabMais').classList.add('active');
+    ['Calendario','Demandas','Drive','Videos','Ideias','Stories','Atas','Info'].forEach(p => {
       document.getElementById('painel'+p).style.display = (p.toLowerCase()===nome) ? 'block' : 'none';
     });
   };
@@ -244,6 +247,13 @@
 
     let html = `<div class="card">
       <h2>Nova demanda</h2>
+      <div class="field"><label>Pra quem é? (opcional — se não souber, deixa em "Equipe geral")</label>
+        <select id="novaDemandaDestino">
+          <option value="Amanda">Equipe geral (Amanda organiza)</option>
+          <option value="Gabrielle">Gabrielle — Estratégia/Roteiro</option>
+          <option value="Cecília">Cecília — Agendamento</option>
+        </select>
+      </div>
       <div class="field"><label>O que você precisa?</label><textarea id="novaDemandaTexto" placeholder="Descreve aqui o que você precisa da equipe..."></textarea></div>
       <button class="btn" onclick="enviarDemandaCliente()">Enviar demanda</button>
     </div>`;
@@ -263,14 +273,15 @@
   window.enviarDemandaCliente = async function(){
     const texto = document.getElementById('novaDemandaTexto').value.trim();
     if(!texto){ alert('Escreve o que você precisa.'); return; }
+    const destinatario = document.getElementById('novaDemandaDestino').value;
     await addDoc(collection(db,'demandas_cliente'), {
       cliente: clienteAtual.slug, clienteNome: clienteAtual.nome,
       texto, status: 'pendente', criadoEm: serverTimestamp()
     });
-    // Cria também no painel interno da Amanda, ja vinculada ao cliente
+    // Cria também no painel interno, ja vinculada ao cliente e pra pessoa certa
     await addDoc(collection(db,'demandas'), {
-      titulo: '👤 Cliente pediu: ' + texto.slice(0,60), descricao: texto,
-      origem: 'cliente', clienteNome: clienteAtual.nome, destinatario: 'Amanda',
+      titulo: 'Cliente pediu: ' + texto.slice(0,60), descricao: texto,
+      origem: 'cliente', clienteNome: clienteAtual.nome, destinatario,
       prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
       status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
     });
@@ -287,6 +298,42 @@
       <div class="sub" style="margin-bottom:12px;">Logos, identidade visual, fotos, vídeos e documentos importantes.</div>
       ${link ? '<a href="'+esc(link)+'" target="_blank" class="btn" style="display:block;text-align:center;text-decoration:none;">Abrir pasta no Drive ↗</a>' : '<div class="empty">O link do Drive ainda não foi configurado pela equipe. Fala com a Amanda!</div>'}
     </div>`;
+  }
+
+  const VIDEO_STATUS_LABEL = { aguardando_edicao:'Em edição', correcao:'Em ajuste', aguardando_aprovacao:'Em revisão interna', aguardando_cliente:'Esperando sua aprovação', aprovado:'Aprovado' };
+  const VIDEO_STATUS_COR = { aguardando_edicao:'roteiro', correcao:'gravacao', aguardando_aprovacao:'edicao', aguardando_cliente:'gravacao', aprovado:'publicado' };
+
+  async function carregarVideos(){
+    const cont = document.getElementById('painelVideos');
+    cont.innerHTML = '<div class="empty">Carregando...</div>';
+    const [videosSnap, postagensSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
+    ]);
+    const meusVideos = []; videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido && v.status!=='aprovado') meusVideos.push(v); });
+    const minhasPostagens = []; postagensSnap.forEach(d => { const p=d.data(); if(p.cliente===clienteAtual.slug) minhasPostagens.push(p); });
+    const agendadas = minhasPostagens.filter(p=>p.status==='agendado').sort((a,b)=>(a.dataAgendada||'').localeCompare(b.dataAgendada||''));
+    const aguardandoVoce = meusVideos.filter(v=>v.status==='aguardando_cliente');
+
+    let html = `<div class="card"><h2><svg class="ic"><use href="#i-activity"/></svg>Status dos Vídeos</h2><div class="sub" style="margin-bottom:0;">Direto da nossa produção — atualiza sozinho, sem ninguém precisar digitar nada aqui.</div></div>`;
+
+    if(aguardandoVoce.length){
+      html += `<div class="card" style="border-color:var(--yellow);"><h2 style="font-size:14px;">Esperando sua aprovação</h2>` +
+        aguardandoVoce.map(v => `<div class="item"><div class="nome">${esc(v.titulo)}</div></div>`).join('') + `</div>`;
+    }
+
+    html += `<div class="card"><h2 style="font-size:14px;">Em produção agora</h2>`;
+    html += meusVideos.length ? meusVideos.map(v => `
+      <div class="item"><div class="nome">${esc(v.titulo)}</div><span class="selo ${VIDEO_STATUS_COR[v.status]||'roteiro'}">${VIDEO_STATUS_LABEL[v.status]||v.status}</span></div>
+    `).join('') : '<div class="empty">Nenhum vídeo em produção agora.</div>';
+    html += `</div>`;
+
+    html += `<div class="card"><h2 style="font-size:14px;">Próximas postagens agendadas</h2>`;
+    html += agendadas.length ? agendadas.map(p => `
+      <div class="item"><div class="nome">${esc(p.titulo||'Postagem')}</div><div class="meta">${p.dataAgendada ? new Date(p.dataAgendada).toLocaleDateString('pt-BR') : ''} ${p.horaAgendada||''}</div></div>
+    `).join('') : '<div class="empty">Nada agendado ainda.</div>';
+    html += `</div>`;
+
+    cont.innerHTML = html;
   }
 
   const IDEIA_STATUS_LABEL = { recebida:'Recebida', analise:'Em análise', aprovada:'Aprovada', adaptando:'Adaptando', gravando:'Gravando', publicada:'Publicada', naoUsada:'Não será utilizada' };

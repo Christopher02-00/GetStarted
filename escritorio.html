@@ -955,7 +955,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, where, orderBy, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -2808,6 +2808,7 @@
     const legenda = document.getElementById('legenda_'+id).value.trim();
     if(!legenda){ mostrarToast('Escreve a legenda antes de salvar.', 'erro'); return; }
     await updateDoc(doc(db,'postagens', id), { legenda, legendaPor: usuarioAtual||'Gabrielle', legendaEm: new Date().toISOString(), status: 'aguardando_agendamento' });
+    criarDemandaAgendamentoAutomatica(id).catch(e => console.error('Fase 6: falha ao criar demanda automática de agendamento', e));
     mostrarToast('Legenda salva! Já caiu na fila da Cecília.');
     renderLegendasPendentes();
   };
@@ -2861,6 +2862,7 @@
     const p = postSnap.data();
 
     await updateDoc(doc(db,'postagens', id), { dataAgendada: data, horaAgendada: hora, agendadoPor: usuarioAtual||'Cecília', agendadoEm: new Date().toISOString(), status: 'agendado' });
+    darBaixaDemandaAgendamento(id).catch(e => console.error('Fase 6: falha ao dar baixa automática na demanda', e));
 
     try {
       const calRef = doc(db,'calendarios', p.cliente);
@@ -5879,25 +5881,69 @@
     renderCentralComando();
   }
 
+  /* ===== FASE 6 — POSTAGEM: DE REATIVO PARA PROATIVO =====
+     Antes, o sistema esperava a legenda ficar 1 dia parada pra reclamar.
+     Agora a demanda de agendar cai pra Cecília no instante em que a legenda
+     é salva — verificarPostagensEsquecidas() (abaixo) virou só uma rede de
+     segurança pro caso raro dessa demanda não ter sido criada. */
+
+  async function criarDemandaAgendamentoAutomatica(postagemId){
+    const snap = await getDoc(doc(db,'postagens', postagemId));
+    if(!snap.exists()) return;
+    const p = snap.data();
+    if(p.demandaAgendamentoCriada) return; // já existe, não duplicar
+
+    const agora = new Date();
+    let prazoData, prazoHora;
+    if(agora.getHours() < 18){
+      prazoData = agora.toISOString().slice(0,10);
+      prazoHora = '18:00';
+    } else {
+      const proximo = proximoDiaUtilApartirDe(addDias(agora, 1));
+      prazoData = dataParaStr(proximo);
+      prazoHora = '12:00';
+    }
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '📅 Agendar — ' + (p.clienteNome||'') + ': ' + (p.titulo||''),
+      descricao: 'Legenda pronta, precisa agendar a postagem.',
+      origem: 'sistema', clienteNome: p.clienteNome || '',
+      destinatario: 'Cecília', prazoData, prazoHora, postagemId,
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+    await updateDoc(doc(db,'postagens', postagemId), { demandaAgendamentoCriada: true });
+    registrarLogAutomacao('demanda_agendamento_automatica', postagemId, 'Criada na hora, assim que a legenda foi salva');
+  }
+
+  async function darBaixaDemandaAgendamento(postagemId){
+    const q = query(collection(db,'demandas'), where('postagemId','==', postagemId), where('status','==','pendente'));
+    const snap = await getDocs(q);
+    for(const d of snap.docs){
+      await updateDoc(doc(db,'demandas', d.id), {
+        status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
+        notaConclusao: 'Concluída automaticamente pelo sistema — postagem foi agendada.'
+      });
+    }
+  }
+
   async function verificarPostagensEsquecidas(){
     const snap = await getDocs(collection(db,'postagens'));
-    const demSnap = await getDocs(collection(db,'demandas'));
-    const alertasExistentes = [];
-    demSnap.forEach(d => { if(d.data().titulo?.includes('⚠️ Postagem sem agendar')) alertasExistentes.push(d.data().postagemId); });
-
     let novasDemandas = 0;
     for(const docSnap of snap.docs){
       const p = docSnap.data();
       if(p.status !== 'aguardando_agendamento') continue;
+      if(p.demandaAgendamentoCriada) continue; // caminho normal já cuidou disso na hora
       const diasEsperando = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime()) / 86400000) : 0;
-      if(diasEsperando >= 1 && !alertasExistentes.includes(docSnap.id)){
+      if(diasEsperando >= 1){
         await addDoc(collection(db,'demandas'), {
           titulo: '⚠️ Postagem sem agendar — ' + p.clienteNome,
-          descricao: `O conteúdo "${p.titulo}" está com legenda pronta há ${diasEsperando} dia(s) e ainda não foi agendado. Isso já causou problema com cliente antes — agenda ainda hoje!`,
-          origem: 'amanda', clienteNome: '', destinatario: 'Cecília', postagemId: docSnap.id,
+          descricao: `O conteúdo "${p.titulo}" está com legenda pronta há ${diasEsperando} dia(s) e ainda não foi agendado (rede de segurança — a demanda automática não chegou a ser criada). Agenda ainda hoje!`,
+          origem: 'sistema', clienteNome: p.clienteNome || '', destinatario: 'Cecília', postagemId: docSnap.id,
           prazoData: new Date().toISOString().slice(0,10), prazoHora: '12:00',
           status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
+        await updateDoc(doc(db,'postagens', docSnap.id), { demandaAgendamentoCriada: true });
+        registrarLogAutomacao('postagem_esquecida_rede_seguranca', docSnap.id, 'Demanda automática não existia — criada pela rede de segurança');
         novasDemandas++;
       }
     }

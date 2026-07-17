@@ -4961,8 +4961,16 @@
       <h2>${esc(d.titulo)}</h2>
       <div class="linha"><b>Descrição:</b> ${esc(d.descricao || 'sem descrição')}</div>
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
+      ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
+      ${!d.prazoSolicitado ? `
+      <div class="field" style="margin-top:10px;"><label>Precisa de mais prazo? Pede aqui (a Amanda autoriza)</label>
+        <div class="row2">
+          <input type="date" id="novoPrazoInput_${d.id}" value="${d.prazoData}">
+          <button class="btn secondary" onclick="solicitarNovoPrazo('${d.id}')">Solicitar</button>
+        </div>
+      </div>` : ''}
       ${jaTemProva ? '<div class="linha" style="color:var(--yellow2);">✋ Já enviado, aguardando aprovação da gerência.</div><button class="btn red" style="margin-top:10px;" onclick="desfazerEnvioDemanda(\''+d.id+'\')">✕ Cancelar envio — voltar a fazer</button>' : `
       ${d.tipoFuncaoFixa === 'reuniao' ? `
       <div class="field"><label>Data real da reunião marcada com o cliente</label><input type="date" id="reuniaoDataReal" value="${d.prazoData}"></div>
@@ -4975,6 +4983,28 @@
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
     `;
     document.getElementById('overlayView').classList.add('show');
+  };
+
+  window.autorizarNovoPrazo = async function(id){
+    const d = todasDemandas.find(x=>x.id===id);
+    await updateDoc(doc(db,'demandas', id), { prazoData: d.prazoSolicitado, prazoSolicitado: '', prazoSolicitadoPor: '' });
+    mostrarToast('Prazo novo autorizado!');
+    carregarGerencia();
+  };
+
+  window.recusarNovoPrazo = async function(id){
+    await updateDoc(doc(db,'demandas', id), { prazoSolicitado: '', prazoSolicitadoPor: '' });
+    mostrarToast('Prazo original mantido.');
+    carregarGerencia();
+  };
+
+  window.solicitarNovoPrazo = async function(id){
+    const novaData = document.getElementById('novoPrazoInput_'+id).value;
+    if(!novaData){ mostrarToast('Escolhe uma data.', 'erro'); return; }
+    await updateDoc(doc(db,'demandas', id), { prazoSolicitado: novaData, prazoSolicitadoPor: usuarioAtual||'?' });
+    mostrarToast('Pedido enviado — a Amanda vai autorizar.');
+    fecharModal();
+    carregarMinhasDemandas();
   };
 
   window.desfazerEnvioDemanda = async function(id){
@@ -5827,9 +5857,28 @@
     const pendentes = todasDemandas.filter(d => d.status === 'pendente');
     const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
     const aguardando = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao');
+    const pedidosPrazo = todasDemandas.filter(d => d.prazoSolicitado);
+
+    let html = '';
+    if(pedidosPrazo.length){
+      html += `<div class="card" style="border:2px solid var(--yellow);">
+        <h2><svg class="ic"><use href="#i-clock"/></svg>Pedidos de novo prazo — ${pedidosPrazo.length}</h2>
+        <div class="desc">Alguém pediu mais tempo. Autoriza ou mantém como está.</div>
+      </div>`;
+      html += pedidosPrazo.map(d => `
+        <div class="item">
+          <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">${esc(d.destinatario)}</div></div>
+          <div class="meta" style="margin-top:6px;">De <b>${formatarDataBR(d.prazoData)}</b> pra <b style="color:var(--yellow);">${formatarDataBR(d.prazoSolicitado)}</b></div>
+          <div class="btnrow" style="margin-top:8px;">
+            <button class="btn secondary" onclick="recusarNovoPrazo('${d.id}')">Manter prazo atual</button>
+            <button class="btn green" onclick="autorizarNovoPrazo('${d.id}')">Autorizar</button>
+          </div>
+        </div>
+      `).join('');
+    }
 
     const ranking = await calcularRankingMes();
-    let html = gerarHtmlLeaderboard(ranking);
+    html += gerarHtmlLeaderboard(ranking);
     html += await gerarHtmlVideosPorCliente();
 
     html += `<div class="painelResumo">

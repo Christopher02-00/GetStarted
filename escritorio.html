@@ -865,6 +865,7 @@
             <div class="labelInterno">Painéis</div>
             <div class="subtab active" onclick="setGerenciaSub('comando', this)">🎛️ Central de Comando (tempo real)</div>
             <div class="subtab" onclick="setGerenciaSub('demandasAtrasadas', this)">⚠️ Demandas Atrasadas — Detalhe</div>
+            <div class="subtab" onclick="setGerenciaSub('atrasosEquipe', this)">⏰ Atrasos da Equipe (2+ dias)</div>
             <div class="subtab" onclick="setGerenciaSub('demandasAguardando', this)">🕓 Demandas Aguardando Aprovação</div>
             <div class="subtab" onclick="setGerenciaSub('minhasDemandasEnviadas', this)">📤 Demandas que Eu Enviei</div>
             <div class="subtab" onclick="setGerenciaSub('gravacoesDoDia', this)">🎥 Gravações do Dia — Detalhe</div>
@@ -893,6 +894,7 @@
           </div>
           <div class="gerenciaConteudo">
             <div id="gerenciaDemandasAtrasadas" style="display:none;"></div>
+            <div id="gerenciaAtrasosEquipe" style="display:none;"></div>
             <div id="gerenciaDemandasAguardando" style="display:none;"></div>
             <div id="gerenciaMinhasDemandasEnviadas" style="display:none;"></div>
             <div id="gerenciaGravacoesDoDia" style="display:none;"></div>
@@ -4809,6 +4811,7 @@
     document.getElementById('gerenciaPainelTV').style.display = qual==='painelTV' ? 'block' : 'none';
     document.getElementById('gerenciaComando').style.display = qual==='comando' ? 'block' : 'none';
     document.getElementById('gerenciaDemandasAtrasadas').style.display = qual==='demandasAtrasadas' ? 'block' : 'none';
+    document.getElementById('gerenciaAtrasosEquipe').style.display = qual==='atrasosEquipe' ? 'block' : 'none';
     document.getElementById('gerenciaDemandasAguardando').style.display = qual==='demandasAguardando' ? 'block' : 'none';
     document.getElementById('gerenciaMinhasDemandasEnviadas').style.display = qual==='minhasDemandasEnviadas' ? 'block' : 'none';
     document.getElementById('gerenciaGravacoesDoDia').style.display = qual==='gravacoesDoDia' ? 'block' : 'none';
@@ -4825,6 +4828,7 @@
     if(qual==='comando') iniciarCentralComando();
     else pararCentralComando();
     if(qual==='demandasAtrasadas') renderDemandasAtrasadasDetalhe();
+    if(qual==='atrasosEquipe') renderAtrasosEquipe();
     if(qual==='demandasAguardando') renderDemandasAguardandoDetalhe();
     if(qual==='minhasDemandasEnviadas') renderMinhasDemandasEnviadas();
     if(qual==='gravacoesDoDia') renderGravacoesDoDiaDetalhe();
@@ -4935,15 +4939,12 @@
     const motivo = porAusencia
       ? 'O editor ' + esc(v.editorAtribuido) + ' está ausente — precisa reatribuir.'
       : 'O editor ' + esc(v.editorAtribuido) + ' não resolveu a tempo.';
-    await addDoc(collection(db,'demandas'), {
-      titulo: '⚠️ Vídeo atrasado precisa de intervenção — ' + esc(v.titulo),
-      descricao: motivo + ' Reatribui pra outro editor ou intervém direto (Vídeos → Meus Vídeos).',
-      origem: 'sistema', clienteNome: v.clienteNome, escalacaoGerencial: true,
-      destinatario: 'Amanda', prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-    });
+    // Não cria mais uma "demanda-aviso" pra Amanda — isso só bagunçava a
+    // lista pessoal dela. O vídeo escalado aparece sozinho na aba dedicada
+    // "⏰ Atrasos da Equipe" dentro da Gerência (consulta direta, sem
+    // duplicar registro nenhum).
     await updateDoc(doc(db,'videos_producao', videoId), { nivelEscalonamento: 2, escalonadoNivel2Em: serverTimestamp() });
-    registrarHistorico('videos_producao', videoId, 'Escalado (nível 2) pra Amanda', motivo);
+    registrarHistorico('videos_producao', videoId, 'Escalado (nível 2) — visível na aba Atrasos da Equipe', motivo);
     registrarLogAutomacao('escalonamento_video_nivel2', videoId, motivo);
   }
 
@@ -4982,16 +4983,11 @@
       } else if(nivelAtual === 2){
         const desde = v.escalonadoNivel2Em?.seconds ? new Date(v.escalonadoNivel2Em.seconds*1000) : agora;
         if(horasUteisDesde(desde, agora) >= 24){
-          await addDoc(collection(db,'demandas'), {
-            titulo: '🚨 Vídeo travado há dias — ' + esc(v.titulo),
-            descricao: 'Editor: ' + esc(v.editorAtribuido) + '. Já escalou pra Amanda e continua sem resolução — precisa de decisão sua.',
-            origem: 'sistema', clienteNome: v.clienteNome, escalacaoGerencial: true,
-            destinatario: 'Chris', prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-            status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-          });
+          // Não cria mais demanda-aviso pro Chris — o vídeo travado aparece
+          // sozinho na aba "⏰ Atrasos da Equipe" da Gerência.
           await updateDoc(doc(db,'videos_producao', id), { nivelEscalonamento: 3, escalonadoNivel3Em: serverTimestamp() });
-          registrarHistorico('videos_producao', id, 'Escalado (nível 3) pro Chris');
-          registrarLogAutomacao('escalonamento_video_nivel3', id, 'Escalado pro Chris');
+          registrarHistorico('videos_producao', id, 'Escalado (nível 3) — visível na aba Atrasos da Equipe');
+          registrarLogAutomacao('escalonamento_video_nivel3', id, 'Escalado nível 3');
         }
       }
       // nivelAtual === 3: já escalou tudo, fica só visível (cockpit/saúde de clientes na Fase 8)
@@ -5021,9 +5017,11 @@
     }
     if(botaoNovaDemanda) botaoNovaDemanda.style.display = 'flex';
     await carregarTodasDemandas();
+    await corrigirDemandasAvisoAntigas(); // roda na hora, sem esperar o motor — resolve os registros antigos já
     iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
     iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui (assinado antes de renderizar Meu Dia)
     pedirPermissaoNotificacao(); // Fase 5 — pede permissão de notificação do navegador
+    await carregarTodasDemandas(); // recarrega já com a correção aplicada
     renderAvisoInicio();
     renderMeuDia();
     renderMinhasDemandasAtribuidas();
@@ -5546,7 +5544,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -5978,6 +5976,41 @@
     return count;
   }
 
+  /* ===== CORREÇÃO DEFINITIVA — migração dos registros antigos =====
+     Antes desta correção, o escalonamento criava uma "demanda-aviso"
+     separada pra Amanda/Chris. Essas já existem no banco e continuavam
+     aparecendo nas telas pessoais mesmo depois da flag escalacaoGerencial
+     ter sido adicionada (a flag só valia pra registros novos). Esta função
+     arquiva (status: 'aprovada') qualquer uma dessas antigas — elas saem
+     de circulação em qualquer tela pessoal ou geral, porque a informação
+     que elas carregavam agora vive só na aba "⏰ Atrasos da Equipe",
+     consultada direto do dado original (vídeo/demanda), sem duplicar. */
+  const PREFIXOS_DEMANDA_AVISO_ANTIGA = [
+    '⚠️ Vídeo atrasado precisa de intervenção — ',
+    '🚨 Vídeo travado há dias — ',
+    '⚠️ Demanda atrasada 2 dias úteis — ',
+    '🚨 Demanda atrasada 3 dias úteis — '
+  ];
+
+  async function corrigirDemandasAvisoAntigas(){
+    const snap = await getDocs(collection(db,'demandas'));
+    let corrigidas = 0;
+    for(const docSnap of snap.docs){
+      const d = docSnap.data();
+      if(d.status === 'aprovada') continue;
+      if(!['Chris','Amanda'].includes(d.destinatario)) continue;
+      const ehAvisoAntigo = PREFIXOS_DEMANDA_AVISO_ANTIGA.some(p => (d.titulo||'').startsWith(p));
+      if(!ehAvisoAntigo) continue;
+      await updateDoc(doc(db,'demandas', docSnap.id), {
+        status: 'aprovada', escalacaoGerencial: true,
+        arquivadoPeloSistema: true, arquivadoEm: new Date().toISOString()
+      });
+      corrigidas++;
+    }
+    if(corrigidas > 0) registrarLogAutomacao('correcao_demandas_aviso_antigas', '', corrigidas + ' demanda(s)-aviso antiga(s) arquivada(s)');
+    return corrigidas;
+  }
+
   async function escalonarDemandasAtrasadas(){
     const snap = await getDocs(collection(db,'demandas'));
     const agora = new Date();
@@ -5997,28 +6030,17 @@
         registrarHistorico('demandas', docSnap.id, 'Marcada como atrasada (1 dia útil)');
       }
       if(diasAtraso >= 2 && nivelAtual < 2){
-        await addDoc(collection(db,'demandas'), {
-          titulo: '⚠️ Demanda atrasada 2 dias úteis — ' + esc(dem.titulo),
-          descricao: 'Destinatário: ' + esc(dem.destinatario || '?') + '. Ainda não foi resolvida.',
-          origem: 'sistema', clienteNome: dem.clienteNome || '', escalacaoGerencial: true,
-          destinatario: 'Amanda', prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-        });
+        // Não cria mais demanda-aviso pra Amanda — a demanda atrasada em si
+        // aparece na aba "⏰ Atrasos da Equipe" da Gerência, com o nome de
+        // quem é a responsável, gravidade e dias — sem duplicar registro.
         await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 2 });
-        registrarHistorico('demandas', docSnap.id, 'Escalada (nível 2) pra Amanda');
-        registrarLogAutomacao('escalonamento_demanda_nivel2', docSnap.id, 'Escalado pra Amanda');
+        registrarHistorico('demandas', docSnap.id, 'Escalada (nível 2) — visível na aba Atrasos da Equipe');
+        registrarLogAutomacao('escalonamento_demanda_nivel2', docSnap.id, 'Escalado nível 2');
       }
       if(diasAtraso >= 3 && nivelAtual < 3){
-        await addDoc(collection(db,'demandas'), {
-          titulo: '🚨 Demanda atrasada 3 dias úteis — ' + esc(dem.titulo),
-          descricao: 'Destinatário: ' + esc(dem.destinatario || '?') + '. Já escalou pra Amanda e continua parada.',
-          origem: 'sistema', clienteNome: dem.clienteNome || '', escalacaoGerencial: true,
-          destinatario: 'Chris', prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-        });
         await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 3 });
-        registrarHistorico('demandas', docSnap.id, 'Escalada (nível 3) pro Chris');
-        registrarLogAutomacao('escalonamento_demanda_nivel3', docSnap.id, 'Escalado pro Chris');
+        registrarHistorico('demandas', docSnap.id, 'Escalada (nível 3) — visível na aba Atrasos da Equipe');
+        registrarLogAutomacao('escalonamento_demanda_nivel3', docSnap.id, 'Escalado nível 3');
       }
     }
   }
@@ -6083,6 +6105,7 @@
     }
 
     const verificacoes = [
+      { nome: 'correcaoAvisosAntigos', fn: corrigirDemandasAvisoAntigas },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
@@ -6429,6 +6452,77 @@
   }
 
   window.__comandoExpandido = window.__comandoExpandido || {};
+
+  /* ===== ABA DEDICADA "⏰ ATRASOS DA EQUIPE" =====
+     Pedido explícito do Chris: uma aba separada, só na Gerência, mostrando
+     quem é o responsável, a gravidade, os dias de atraso e o que precisa
+     ser feito — pra vídeos e demandas escalados (nível 2 ou 3). Consulta
+     direto o dado original (nivelEscalonamento/nivelEscalonamentoDemanda),
+     sem criar nenhum registro novo — não tem como isso vazar pra tela
+     pessoal de ninguém porque não existe "demanda" nenhuma sendo criada. */
+  async function renderAtrasosEquipe(){
+    const cont = document.getElementById('gerenciaAtrasosEquipe');
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+
+    const [demSnap, videoSnap] = await Promise.all([
+      getDocs(collection(db,'demandas')),
+      getDocs(collection(db,'videos_producao'))
+    ]);
+
+    const itens = [];
+
+    demSnap.forEach(d => {
+      const dem = d.data();
+      const nivel = dem.nivelEscalonamentoDemanda || 0;
+      if(nivel < 2 || dem.status === 'aprovada') return;
+      const prazo = new Date(dem.prazoData + 'T' + (dem.prazoHora||'19:00'));
+      const dias = diasUteisEntre(prazo, new Date());
+      itens.push({
+        tipo: 'Demanda', responsavel: dem.destinatario || '?', nivel,
+        dias, titulo: dem.titulo, descricao: dem.descricao || '', id: d.id, colecao: 'demandas'
+      });
+    });
+
+    videoSnap.forEach(d => {
+      const v = d.data();
+      if(v.excluido) return;
+      const nivel = v.nivelEscalonamento || 0;
+      if(nivel < 2) return;
+      const prazo = calcularPrazoEdicaoVideo(v);
+      const dias = prazo ? diasUteisEntre(prazo, new Date()) : 0;
+      itens.push({
+        tipo: 'Vídeo', responsavel: v.editorAtribuido || '?', nivel,
+        dias, titulo: v.titulo, descricao: 'Cliente: ' + (v.clienteNome||'—') + ' · Status: ' + (v.status||'—'),
+        id: d.id, colecao: 'videos_producao'
+      });
+    });
+
+    itens.sort((a,b) => (b.nivel - a.nivel) || (b.dias - a.dias));
+
+    let html = `<div class="card">
+      <h2><svg class="ic"><use href="#i-alert"/></svg>⏰ Atrasos da Equipe</h2>
+      <div class="desc">Vídeos e demandas escalados (2+ dias/etapas sem solução) — só aparece aqui, no painel de controle. Não aparece na tela pessoal de ninguém.</div>
+      <button class="btn secondary" style="margin-top:10px;width:auto;padding:8px 16px;font-size:12px;" onclick="corrigirDemandasAvisoAntigas().then(n=>{mostrarToast(n+' registro(s) antigo(s) corrigido(s)!');renderAtrasosEquipe();})">🧹 Corrigir registros antigos agora</button>
+    </div>`;
+
+    if(!itens.length){
+      html += '<div class="empty">Nada escalado no momento — time em dia. 🎉</div>';
+    } else {
+      itens.forEach(it => {
+        const gravidade = it.nivel >= 3 ? 'vermelho' : 'laranja';
+        const corBorda = it.nivel >= 3 ? 'var(--red)' : 'var(--yellow2)';
+        html += `<div class="item" style="border-left:3px solid ${corBorda};">
+          <div class="top">
+            <div class="nome">${esc(it.titulo)}</div>
+            <span class="prioTag ${gravidade}">${it.nivel >= 3 ? 'Crítico' : 'Atenção'}</span>
+          </div>
+          <div class="meta" style="margin-top:6px;">👤 Responsável: <b>${esc(it.responsavel)}</b> · ${esc(it.tipo)} · ${it.dias} dia(s) útil(eis) de atraso</div>
+          <div class="meta" style="margin-top:4px;">${esc(it.descricao)}</div>
+        </div>`;
+      });
+    }
+    cont.innerHTML = html;
+  }
 
   async function renderDemandasAtrasadasDetalhe(){
     const cont = document.getElementById('gerenciaDemandasAtrasadas');

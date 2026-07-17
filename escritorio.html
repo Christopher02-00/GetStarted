@@ -4751,11 +4751,44 @@
   }
 
   // ===== PRAZO DE EDICAO — 1 dia util, ate as 19h =====
+  // ===== FASE 4 — PRAZOS EM DIAS ÚTEIS =====
+  // Antes, o prazo somava 1 dia corrido — vídeo lançado sexta vencia sábado
+  // às 19h, mesmo sem ninguém trabalhando. Agora avança até o próximo dia
+  // útil de verdade, pulando fim de semana e feriado (reaproveita ehDiaUtil
+  // e obterFeriados que já existiam no arquivo).
+  function proximoDiaUtilApartirDe(data){
+    let d = new Date(data);
+    while(!ehDiaUtil(d, obterFeriados(d.getFullYear()))){
+      d.setDate(d.getDate() + 1);
+    }
+    return d;
+  }
+
+  // Conta quantas horas, entre dataBase e agora, caíram em dias úteis —
+  // usado pra decidir quando escalar (nível 2 em 4h úteis, nível 3 em mais
+  // 1 dia útil). Ignora o dia inteiro se cair em fim de semana/feriado.
+  function horasUteisDesde(dataBase, agora){
+    let horas = 0;
+    let cursor = new Date(dataBase);
+    if(cursor >= agora) return 0;
+    while(cursor < agora){
+      const proximaHora = new Date(cursor);
+      proximaHora.setHours(cursor.getHours() + 1);
+      const limite = proximaHora < agora ? proximaHora : agora;
+      if(ehDiaUtil(cursor, obterFeriados(cursor.getFullYear()))){
+        horas += (limite - cursor) / 3600000;
+      }
+      cursor = limite;
+    }
+    return horas;
+  }
+
   function calcularPrazoEdicaoVideo(v){
     if(!v.criadoEm?.seconds) return null;
     const criado = new Date(v.criadoEm.seconds * 1000);
-    const prazo = new Date(criado);
+    let prazo = new Date(criado);
     prazo.setDate(prazo.getDate() + 1);
+    prazo = proximoDiaUtilApartirDe(prazo); // pula fim de semana/feriado
     prazo.setHours(19, 0, 0, 0);
     return prazo;
   }
@@ -4768,22 +4801,76 @@
     return new Date() > prazo;
   }
 
+  /* ===== FASE 4 — ESCALONAMENTO AUTOMÁTICO =====
+     Antes, o alerta de atraso disparava 1 vez (alertaAtrasoCriado) e
+     morria — se o editor ignorasse, ninguém acima ficava sabendo. Agora
+     tem 3 níveis, cada um disparando uma única vez:
+       nível 1 — venceu o prazo → demanda pro editor (comportamento antigo)
+       nível 2 — +4h úteis sem resolução → demanda pra Amanda (ou direto,
+                 sem esperar, se o editor estiver ausente)
+       nível 3 — +1 dia útil depois do nível 2 → demanda pro Chris        */
+
+  async function escalarVideoNivel2(videoId, v, porAusencia){
+    const motivo = porAusencia
+      ? 'O editor ' + esc(v.editorAtribuido) + ' está ausente — precisa reatribuir.'
+      : 'O editor ' + esc(v.editorAtribuido) + ' não resolveu a tempo.';
+    await addDoc(collection(db,'demandas'), {
+      titulo: '⚠️ Vídeo atrasado precisa de intervenção — ' + esc(v.titulo),
+      descricao: motivo + ' Reatribui pra outro editor ou intervém direto (Vídeos → Meus Vídeos).',
+      origem: 'sistema', clienteNome: v.clienteNome,
+      destinatario: 'Amanda', prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+    await updateDoc(doc(db,'videos_producao', videoId), { nivelEscalonamento: 2, escalonadoNivel2Em: serverTimestamp() });
+    registrarLogAutomacao('escalonamento_video_nivel2', videoId, motivo);
+  }
+
   async function verificarVideosAtrasadosEAlertar(){
     const snap = await getDocs(collection(db,'videos_producao'));
-    const paraAlertar = [];
-    snap.forEach(d => {
-      const v = d.data();
-      if(!v.excluido && videoEstaAtrasado(v) && !v.alertaAtrasoCriado){ paraAlertar.push({id:d.id, ...v}); }
-    });
-    for(const v of paraAlertar){
-      await addDoc(collection(db,'demandas'), {
-        titulo: '⚠️ Vídeo atrasado — ' + esc(v.titulo),
-        descricao: 'Esse vídeo passou do prazo de 1 dia útil pra edição (até às 19h). Prioriza ele.',
-        origem: 'sistema', clienteNome: v.clienteNome,
-        destinatario: v.editorAtribuido, prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-      });
-      await updateDoc(doc(db,'videos_producao', v.id), { alertaAtrasoCriado: true });
+    const agora = new Date();
+    for(const docSnap of snap.docs){
+      const v = docSnap.data();
+      const id = docSnap.id;
+      if(v.excluido) continue;
+      if(!['aguardando_edicao','correcao'].includes(v.status)) continue;
+      const prazo = calcularPrazoEdicaoVideo(v);
+      if(!prazo || agora <= prazo) continue; // ainda no prazo, nada a fazer
+
+      const nivelAtual = v.nivelEscalonamento || 0;
+      const ausente = estaAusente(v.editorAtribuido);
+
+      if(ausente){
+        if(nivelAtual < 2) await escalarVideoNivel2(id, v, true);
+        continue; // não cobra quem está ausente
+      }
+
+      if(nivelAtual === 0){
+        await addDoc(collection(db,'demandas'), {
+          titulo: '⚠️ Vídeo atrasado — ' + esc(v.titulo),
+          descricao: 'Esse vídeo passou do prazo de 1 dia útil pra edição (até às 19h). Prioriza ele.',
+          origem: 'sistema', clienteNome: v.clienteNome,
+          destinatario: v.editorAtribuido, prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+        });
+        await updateDoc(doc(db,'videos_producao', id), { alertaAtrasoCriado: true, nivelEscalonamento: 1, escalonadoNivel1Em: serverTimestamp() });
+      } else if(nivelAtual === 1){
+        const desde = v.escalonadoNivel1Em?.seconds ? new Date(v.escalonadoNivel1Em.seconds*1000) : prazo;
+        if(horasUteisDesde(desde, agora) >= 4) await escalarVideoNivel2(id, v, false);
+      } else if(nivelAtual === 2){
+        const desde = v.escalonadoNivel2Em?.seconds ? new Date(v.escalonadoNivel2Em.seconds*1000) : agora;
+        if(horasUteisDesde(desde, agora) >= 24){
+          await addDoc(collection(db,'demandas'), {
+            titulo: '🚨 Vídeo travado há dias — ' + esc(v.titulo),
+            descricao: 'Editor: ' + esc(v.editorAtribuido) + '. Já escalou pra Amanda e continua sem resolução — precisa de decisão sua.',
+            origem: 'sistema', clienteNome: v.clienteNome,
+            destinatario: 'Chris', prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+            status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+          });
+          await updateDoc(doc(db,'videos_producao', id), { nivelEscalonamento: 3, escalonadoNivel3Em: serverTimestamp() });
+          registrarLogAutomacao('escalonamento_video_nivel3', id, 'Escalado pro Chris');
+        }
+      }
+      // nivelAtual === 3: já escalou tudo, fica só visível (cockpit/saúde de clientes na Fase 8)
     }
   }
 
@@ -5606,6 +5693,67 @@
     await Promise.all([renderGerenciaAmanda(), renderGerenciaChris()]);
   }
 
+  /* ===== FASE 4 (parte 2) — ESCALONAMENTO DE DEMANDAS COMUNS =====
+     Mesma lógica dos vídeos, mas em dias úteis inteiros (não horas), porque
+     demandas comuns costumam ter granularidade de dia, não de hora:
+       1 dia útil atrasada → o destinatário já vê (badge / Meu Dia) — só
+                             marca o nível pra não reprocessar
+       2 dias úteis        → demanda pra Amanda
+       3 dias úteis        → demanda pro Chris                            */
+
+  function diasUteisEntre(inicio, fim){
+    let count = 0;
+    let cursor = new Date(inicio); cursor.setHours(0,0,0,0);
+    const fimDia = new Date(fim); fimDia.setHours(0,0,0,0);
+    while(cursor < fimDia){
+      cursor.setDate(cursor.getDate() + 1);
+      if(ehDiaUtil(cursor, obterFeriados(cursor.getFullYear()))) count++;
+    }
+    return count;
+  }
+
+  async function escalonarDemandasAtrasadas(){
+    const snap = await getDocs(collection(db,'demandas'));
+    const agora = new Date();
+    for(const docSnap of snap.docs){
+      const dem = docSnap.data();
+      if(dem.status !== 'pendente') continue;
+      if(dem.destinatario && estaAusente(dem.destinatario)) continue;
+      if(!dem.prazoData) continue;
+      const prazo = new Date(dem.prazoData + 'T' + (dem.prazoHora || '19:00'));
+      if(agora <= prazo) continue;
+
+      const diasAtraso = diasUteisEntre(prazo, agora);
+      const nivelAtual = dem.nivelEscalonamentoDemanda || 0;
+
+      if(diasAtraso >= 1 && nivelAtual < 1){
+        await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 1 });
+      }
+      if(diasAtraso >= 2 && nivelAtual < 2){
+        await addDoc(collection(db,'demandas'), {
+          titulo: '⚠️ Demanda atrasada 2 dias úteis — ' + esc(dem.titulo),
+          descricao: 'Destinatário: ' + esc(dem.destinatario || '?') + '. Ainda não foi resolvida.',
+          origem: 'sistema', clienteNome: dem.clienteNome || '', destinatario: 'Amanda',
+          prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+        });
+        await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 2 });
+        registrarLogAutomacao('escalonamento_demanda_nivel2', docSnap.id, 'Escalado pra Amanda');
+      }
+      if(diasAtraso >= 3 && nivelAtual < 3){
+        await addDoc(collection(db,'demandas'), {
+          titulo: '🚨 Demanda atrasada 3 dias úteis — ' + esc(dem.titulo),
+          descricao: 'Destinatário: ' + esc(dem.destinatario || '?') + '. Já escalou pra Amanda e continua parada.',
+          origem: 'sistema', clienteNome: dem.clienteNome || '', destinatario: 'Chris',
+          prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+        });
+        await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 3 });
+        registrarLogAutomacao('escalonamento_demanda_nivel3', docSnap.id, 'Escalado pro Chris');
+      }
+    }
+  }
+
   /* ===== FASE 1 — MOTOR DE AUTOMAÇÃO INDEPENDENTE DE TELA =====
      Antes, verificarVideosAtrasadosEAlertar / verificarPostagensEsquecidas /
      verificarClientesParaCapsulaAutomatico só rodavam quando alguém abria a
@@ -5644,7 +5792,8 @@
     const verificacoes = [
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
-      { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico }
+      { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
+      { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas }
     ];
 
     for(const v of verificacoes){

@@ -4795,6 +4795,7 @@
     atualizarBadgePostagens();
     renderSetorAtalhos();
     if(usuarioAtual === 'Cecília') verificarPostagensEsquecidas().then(()=>{ atualizarBadgePostagens(); });
+    iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
   };
 
   // Cada pessoa so ve os itens do menu que fazem parte do trabalho dela.
@@ -5423,10 +5424,72 @@
 
   async function carregarGerencia(){
     await carregarTodasDemandas();
-    await verificarClientesParaCapsulaAutomatico();
-    await verificarPostagensEsquecidas();
-    await verificarVideosAtrasadosEAlertar();
+    await motorAutomacoes('gerencia'); // redundância barata — o motor já roda sozinho (ver bloco FASE 1 abaixo)
     await Promise.all([renderGerenciaAmanda(), renderGerenciaChris()]);
+  }
+
+  /* ===== FASE 1 — MOTOR DE AUTOMAÇÃO INDEPENDENTE DE TELA =====
+     Antes, verificarVideosAtrasadosEAlertar / verificarPostagensEsquecidas /
+     verificarClientesParaCapsulaAutomatico só rodavam quando alguém abria a
+     Gerência. Agora rodam sozinhas, para qualquer usuário logado, a cada
+     10 minutos, com um lock no Firestore pra não duplicar disparo se houver
+     mais de uma máquina aberta ao mesmo tempo. */
+
+  async function registrarLogAutomacao(tipo, alvo, detalhe){
+    try{
+      await addDoc(collection(db,'log_automacoes'), {
+        tipo, alvo: alvo || '', detalhe: detalhe || '',
+        executadoEm: serverTimestamp(), disparadoPor: 'sistema'
+      });
+    }catch(e){ console.error('Falha ao registrar log_automacoes:', e); }
+  }
+
+  const MOTOR_INTERVALO_MIN = 8; // janela mínima entre execuções (minutos)
+
+  async function motorAutomacoes(origem){
+    const lockRef = doc(db, 'sistema', 'motor_lock');
+    try{
+      const lockSnap = await getDoc(lockRef);
+      if(lockSnap.exists()){
+        const dados = lockSnap.data();
+        const ultimaMs = dados.ultimaExecucao?.seconds ? dados.ultimaExecucao.seconds * 1000 : 0;
+        if(Date.now() - ultimaMs < MOTOR_INTERVALO_MIN * 60000){
+          return; // outra máquina já rodou o motor há pouco — não duplicar
+        }
+      }
+      await setDoc(lockRef, { ultimaExecucao: serverTimestamp(), executadoPor: usuarioAtual || 'sistema (' + (origem||'?') + ')' });
+    }catch(e){
+      console.error('motorAutomacoes: falha ao checar/gravar lock, abortando esta rodada.', e);
+      return;
+    }
+
+    const verificacoes = [
+      { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
+      { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
+      { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico }
+    ];
+
+    for(const v of verificacoes){
+      try{
+        await v.fn();
+      }catch(e){
+        console.error('motorAutomacoes: falha em ' + v.nome, e);
+        registrarLogAutomacao('erro_verificacao', v.nome, String(e?.message || e));
+      }
+    }
+    registrarLogAutomacao('motor_executado', origem || '?', 'rodada completa das verificações automáticas');
+  }
+
+  let motorIntervalId = null;
+
+  function iniciarMotorAutomacoes(){
+    if(motorIntervalId) return; // já está agendado
+    motorAutomacoes('boot'); // primeira rodada assim que alguém se identifica
+    motorIntervalId = setInterval(function(){
+      if(document.visibilityState === 'visible' && usuarioAtual){
+        motorAutomacoes('intervalo');
+      }
+    }, 10 * 60000);
   }
 
   async function verificarPostagensEsquecidas(){

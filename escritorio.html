@@ -848,10 +848,8 @@
             <div class="subtab" onclick="setGerenciaSub('lixeiraVideos', this)">🗑️ Lixeira de Vídeos</div>
             <div class="labelInterno">Clientes</div>
             <div class="subtab" onclick="setGerenciaSub('pagamentos', this)">Pagamentos Extras</div>
-            <div class="subtab" onclick="setGerenciaSub('avaliacoes', this)">Avaliações Clientes</div>
-            <div class="subtab" onclick="setGerenciaSub('saudeClientes', this)">Saúde dos Clientes</div>
+            <div class="subtab" onclick="setGerenciaSub('saudeClientes', this)">📋 Clientes — Visão Completa (saúde + RFV + avaliação)</div>
             <div class="subtab" onclick="setGerenciaSub('clientesExtras', this)">Clientes Avulsos/Extras</div>
-            <div class="subtab" onclick="setGerenciaSub('rfv', this)">📊 RFV (Recência/Frequência/Valor)</div>
             <div class="subtab" onclick="setGerenciaSub('exClientes', this)">📉 Clientes que Saíram</div>
             <div class="subtab" onclick="setGerenciaSub('cofreSenhas', this)">🔐 Cofre de Senhas</div>
             <div class="subtab" onclick="setGerenciaSub('calendariosEnviados', this)">📤 Calendários Enviados</div>
@@ -3135,7 +3133,18 @@
     const valorTotal = parseFloat(document.getElementById('rfvValor_'+slug).value) || 0;
     await setDoc(doc(db,'rfv_clientes', slug), { clienteNome: nome, ultimaContratacao, qtdContratacoes, valorTotal, atualizadoEm: serverTimestamp() });
     mostrarToast('RFV de ' + nome + ' salvo!');
-    renderRfv();
+    window.__expandidoClienteVisao[slug] = true;
+    renderGerenciaSaudeClientes();
+  };
+
+  window.registrarNovaAvaliacaoRapida = async function(slug, nome){
+    const nota = parseInt(document.getElementById('novaNota_'+slug).value);
+    const mes = document.getElementById('novoMes_'+slug).value.trim();
+    const comentario = document.getElementById('novoComentario_'+slug).value.trim();
+    await addDoc(collection(db,'avaliacoes_clientes'), { cliente: slug, clienteNome: nome, nota, mes, comentario, criadoEm: serverTimestamp() });
+    mostrarToast('Avaliação registrada!');
+    window.__expandidoClienteVisao[slug] = true;
+    renderGerenciaSaudeClientes();
   };
 
   async function renderExClientes(){
@@ -3427,36 +3436,89 @@
     renderClientesExtras();
   };
 
+  window.__expandidoClienteVisao = window.__expandidoClienteVisao || {};
+
+  window.toggleExpandirClienteVisao = function(slug){
+    window.__expandidoClienteVisao[slug] = !window.__expandidoClienteVisao[slug];
+    renderGerenciaSaudeClientes();
+  };
+
   async function renderGerenciaSaudeClientes(){
     const cont = document.getElementById('gerenciaSaudeClientes');
     cont.innerHTML = '<div class="card"><div class="desc">Calculando saúde de cada cliente...</div></div>';
 
-    // Busca tudo em paralelo, UMA vez so — nao mais por cliente
-    const [agSnap, demSnap, avalSnap, ...calSnaps] = await Promise.all([
+    const [agSnap, demSnap, avalSnap, rfvSnap, ...calSnaps] = await Promise.all([
       getDocs(collection(db,'agendamentos')),
       getDocs(collection(db,'demandas')),
       getDocs(collection(db,'avaliacoes_clientes')),
+      getDocs(collection(db,'rfv_clientes')),
       ...CLIENTES_LISTA.map(c => getDoc(doc(db,'calendarios', c.slug)))
     ]);
 
     const listaAgendamentos = []; agSnap.forEach(d => listaAgendamentos.push(d.data()));
     const listaDemandas = []; demSnap.forEach(d => listaDemandas.push(d.data()));
-    const listaAvaliacoes = []; avalSnap.forEach(d => listaAvaliacoes.push(d.data()));
+    const listaAvaliacoes = []; avalSnap.forEach(d => listaAvaliacoes.push({id:d.id, ...d.data()}));
+    const rfvDados = {}; rfvSnap.forEach(d => { rfvDados[d.id] = d.data(); });
 
-    const resultados = CLIENTES_LISTA.map((c, i) =>
-      calcularSaudeCliente(c.slug, c.nome, calSnaps[i], listaAgendamentos, listaDemandas, listaAvaliacoes)
-    );
+    const resultados = CLIENTES_LISTA.map((c, i) => {
+      const saude = calcularSaudeCliente(c.slug, c.nome, calSnaps[i], listaAgendamentos, listaDemandas, listaAvaliacoes);
+      const rfv = rfvDados[c.slug] || {};
+      let recenciaDias = null, rfvAlerta = false;
+      if(rfv.ultimaContratacao){
+        recenciaDias = Math.floor((Date.now() - new Date(rfv.ultimaContratacao).getTime()) / 86400000);
+        rfvAlerta = recenciaDias > 60;
+      }
+      const avaliacoesDoCliente = listaAvaliacoes.filter(a => a.cliente === c.slug).sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+      const ultimaAvaliacao = avaliacoesDoCliente[0] || null;
+      return { ...c, ...saude, recenciaDias, rfvAlerta, rfvDados: rfv, ultimaAvaliacao };
+    });
     const ordem = { vermelho:0, amarelo:1, verde:2 };
-    resultados.sort((a,b) => ordem[a.cor]-ordem[b.cor]);
+    resultados.sort((a,b) => ordem[a.cor]-ordem[b.cor] || (b.recenciaDias??-1)-(a.recenciaDias??-1));
 
-    let html = `<div class="card"><h2>🚦 Semáforo de Saúde dos Clientes</h2><div class="desc">Combina aprovação de calendário, gravações do mês, avaliação recente e Protocolo Cápsula.</div></div>`;
+    const emRisco = resultados.filter(r => r.cor==='vermelho' || r.rfvAlerta).length;
+
+    let html = `<div class="card">
+      <h2>📋 Clientes — Visão Completa</h2>
+      <div class="desc">Saúde operacional, recência de contratação e avaliação — tudo junto, cliente por cliente, sem precisar checar em 3 lugares diferentes.</div>
+      ${emRisco ? '<div class="meta" style="color:var(--red);font-weight:800;margin-top:8px;">⚠️ '+emRisco+' cliente(s) precisam de atenção</div>' : '<div class="meta" style="color:var(--green);margin-top:8px;">✅ Todo mundo em dia</div>'}
+    </div>`;
+
     resultados.forEach(r => {
-      html += `<div class="saudeCard">
-        <div class="bolaGrande semaforo ${r.cor}" style="margin:0;"></div>
-        <div class="infoCliente">
-          <div class="nomeCliente">${esc(r.clienteNome)}</div>
-          <div class="motivos">${esc(r.motivos.join(' · '))}</div>
+      const expandido = window.__expandidoClienteVisao[r.slug];
+      html += `<div class="saudeCard" style="flex-direction:column;align-items:stretch;">
+        <div style="display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="toggleExpandirClienteVisao('${r.slug}')">
+          <div class="bolaGrande semaforo ${r.cor}" style="margin:0;"></div>
+          <div class="infoCliente" style="flex:1;">
+            <div class="nomeCliente">${esc(r.clienteNome)}</div>
+            <div class="motivos">${esc(r.motivos.join(' · '))}</div>
+          </div>
+          <div style="text-align:right;">
+            <span class="prioTag ${r.rfvAlerta?'vermelho':r.recenciaDias!==null?'verde':'amarelo'}">${r.recenciaDias!==null ? r.recenciaDias+'d sem renovar' : 'sem dado RFV'}</span>
+            ${r.ultimaAvaliacao ? '<div class="meta" style="margin-top:4px;">'+'⭐'.repeat(r.ultimaAvaliacao.nota)+'</div>' : '<div class="meta" style="margin-top:4px;opacity:.5;">sem avaliação</div>'}
+          </div>
+          <span style="opacity:.5;">${expandido?'▲':'▼'}</span>
         </div>
+        ${expandido ? `
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);">
+          <div class="row2">
+            <div class="field"><label>Última contratação/renovação</label><input type="date" id="rfvData_${r.slug}" value="${r.rfvDados.ultimaContratacao||''}"></div>
+            <div class="field"><label>Qtd. de contratações históricas</label><input type="number" id="rfvQtd_${r.slug}" value="${r.rfvDados.qtdContratacoes||0}"></div>
+          </div>
+          <div class="field"><label>Valor total gasto (R$)</label><input type="number" id="rfvValor_${r.slug}" value="${r.rfvDados.valorTotal||0}"></div>
+          <button class="btn secondary" onclick="salvarRfv('${r.slug}','${esc(r.clienteNome)}')">Salvar RFV</button>
+          ${r.rfvAlerta ? '<div class="meta" style="margin-top:8px;color:var(--red);">💡 Mais de 60 dias sem renovar — considera oferecer algo pra reativar.</div>' : ''}
+
+          <div style="margin-top:16px;padding-top:12px;border-top:1px dashed var(--line);">
+            <div class="meta" style="font-weight:700;margin-bottom:6px;">Avaliações recentes</div>
+            ${r.ultimaAvaliacao ? '<div class="meta">'+'⭐'.repeat(r.ultimaAvaliacao.nota)+' — '+esc(r.ultimaAvaliacao.mes||'')+(r.ultimaAvaliacao.comentario?' — "'+esc(r.ultimaAvaliacao.comentario)+'"':'')+'</div>' : '<div class="empty" style="font-size:11px;">Nenhuma avaliação registrada ainda.</div>'}
+            <div class="row2" style="margin-top:8px;">
+              <div class="field"><label>Nova nota (1-5)</label><select id="novaNota_${r.slug}"><option value="5">⭐⭐⭐⭐⭐</option><option value="4">⭐⭐⭐⭐</option><option value="3">⭐⭐⭐</option><option value="2">⭐⭐</option><option value="1">⭐</option></select></div>
+              <div class="field"><label>Mês</label><input type="text" id="novoMes_${r.slug}" placeholder="Ex: Julho/2026"></div>
+            </div>
+            <div class="field"><label>Comentário (opcional)</label><input type="text" id="novoComentario_${r.slug}" placeholder="O que o cliente disse..."></div>
+            <button class="btn secondary" onclick="registrarNovaAvaliacaoRapida('${r.slug}','${esc(r.clienteNome)}')">+ Registrar avaliação</button>
+          </div>
+        </div>` : ''}
       </div>`;
     });
     cont.innerHTML = html;
@@ -4712,7 +4774,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','gravacoesDoDia','amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','lixeiraVideos','pagamentos','avaliacoes','saudeClientes','clientesExtras','rfv','exClientes','cofreSenhas','calendariosEnviados','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','gravacoesDoDia','amanda','chris','funcionarioMes','painelTV','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {

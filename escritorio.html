@@ -947,7 +947,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -4193,6 +4193,18 @@
   let todasDemandas = [];
   let usuarioAtual = '';
 
+  /* ===== FASE 2 — TEMPO REAL (onSnapshot) =====
+     Caches alimentados ao vivo pelas 4 coleções mais quentes do sistema.
+     todasDemandas (acima) já existia e agora também é alimentado pelo
+     listener; as outras três são novas. Views antigas continuam buscando
+     do jeito que já faziam (getDocs sob demanda) — nada foi tirado delas,
+     essas caches servem pra Central de Comando, badges, e pra Fase 3. */
+  let cacheVideosProducao = [];
+  let cachePostagens = [];
+  let cacheAgendamentos = [];
+  let listenersTempoRealAtivos = false;
+  let viewAtiva = 'inicio';
+
   function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function formatarDataBR(dataISO){
     if(!dataISO || !/^\d{4}-\d{2}-\d{2}/.test(dataISO)) return dataISO || '';
@@ -4550,6 +4562,7 @@
 
   window.irPara = function(nome, el){
     registrarAtividadeUsuario();
+    viewAtiva = nome; // Fase 2 — usado pelo dispatcher de tempo real
     document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
     el.classList.add('active');
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -4796,6 +4809,7 @@
     renderSetorAtalhos();
     if(usuarioAtual === 'Cecília') verificarPostagensEsquecidas().then(()=>{ atualizarBadgePostagens(); });
     iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
+    iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui
   };
 
   // Cada pessoa so ve os itens do menu que fazem parte do trabalho dela.
@@ -4893,9 +4907,16 @@
     if(!badge) return;
     if(usuarioAtual !== 'Cecília' && usuarioAtual !== 'Amanda' && usuarioAtual !== 'Chris'){ badge.style.display='none'; return; }
     try{
-      const snap = await getDocs(collection(db,'postagens'));
-      let count = 0;
-      snap.forEach(d => { if(d.data().status==='aguardando_agendamento') count++; });
+      let count;
+      if(listenersTempoRealAtivos){
+        // Fase 2: usa o cache ao vivo, sem buscar de novo no banco
+        count = cachePostagens.filter(p => p.status === 'aguardando_agendamento').length;
+      } else {
+        // Fallback de segurança — listeners ainda não iniciaram (ex.: antes do login)
+        const snap = await getDocs(collection(db,'postagens'));
+        count = 0;
+        snap.forEach(d => { if(d.data().status==='aguardando_agendamento') count++; });
+      }
       if(count){ badge.style.display='flex'; badge.textContent = count; }
       else { badge.style.display='none'; }
     }catch(e){}
@@ -5492,6 +5513,56 @@
     }, 10 * 60000);
   }
 
+  /* ===== FASE 2 — TEMPO REAL DE VERDADE (onSnapshot) =====
+     Antes, a Central de Comando refazia todas as buscas a cada 25s e cada
+     badge buscava sob demanda. Agora as 4 coleções mais quentes (demandas,
+     videos_producao, postagens, agendamentos) têm listener ao vivo: assim
+     que algo muda em qualquer computador, o cache atualiza aqui em todos
+     os outros na hora — sem esperar o próximo ciclo de 25s. */
+
+  function iniciarListenersTempoReal(){
+    if(listenersTempoRealAtivos) return; // já tem listener rodando, não duplicar
+    listenersTempoRealAtivos = true;
+
+    onSnapshot(collection(db,'demandas'), (snap)=>{
+      todasDemandas = [];
+      snap.forEach(d => todasDemandas.push({id:d.id, ...d.data()}));
+      onDadosTempoRealMudaram('demandas');
+    }, (erro)=>{ console.error('Listener demandas falhou:', erro); listenersTempoRealAtivos = false; });
+
+    onSnapshot(collection(db,'videos_producao'), (snap)=>{
+      cacheVideosProducao = [];
+      snap.forEach(d => cacheVideosProducao.push({id:d.id, ...d.data()}));
+      onDadosTempoRealMudaram('videos_producao');
+    }, (erro)=>{ console.error('Listener videos_producao falhou:', erro); });
+
+    onSnapshot(collection(db,'postagens'), (snap)=>{
+      cachePostagens = [];
+      snap.forEach(d => cachePostagens.push({id:d.id, ...d.data()}));
+      onDadosTempoRealMudaram('postagens');
+    }, (erro)=>{ console.error('Listener postagens falhou:', erro); });
+
+    onSnapshot(collection(db,'agendamentos'), (snap)=>{
+      cacheAgendamentos = [];
+      snap.forEach(d => cacheAgendamentos.push({id:d.id, ...d.data()}));
+      onDadosTempoRealMudaram('agendamentos');
+    }, (erro)=>{ console.error('Listener agendamentos falhou:', erro); });
+  }
+
+  function onDadosTempoRealMudaram(colecao){
+    if(colecao === 'demandas'){
+      atualizarBadgeMinhas();
+      if(viewAtiva === 'minhasDemandas') carregarMinhasDemandas();
+    }
+    if(colecao === 'postagens'){
+      atualizarBadgePostagens();
+    }
+    // A Central de Comando já checa sozinha se está visível antes de fazer
+    // qualquer trabalho (ver início de renderCentralComando) — por isso é
+    // seguro chamar sempre que qualquer uma das 4 coleções mudar.
+    renderCentralComando();
+  }
+
   async function verificarPostagensEsquecidas(){
     const snap = await getDocs(collection(db,'postagens'));
     const demSnap = await getDocs(collection(db,'demandas'));
@@ -5603,8 +5674,15 @@
 
   function iniciarCentralComando(){
     renderCentralComando();
+    // Fase 2: não usa mais setInterval de 25s — a Central agora se atualiza
+    // sozinha via onDadosTempoRealMudaram() sempre que demandas, vídeos,
+    // postagens ou agendamentos mudam de verdade em qualquer computador.
+    // Mantém um refresh leve de segurança a cada 30s (relógio/contadores
+    // locais), caso algum listener falhe silenciosamente.
     if(intervalComando) clearInterval(intervalComando);
-    intervalComando = setInterval(renderCentralComando, 25000);
+    intervalComando = setInterval(function(){
+      if(document.visibilityState === 'visible') renderCentralComando();
+    }, 30000);
   }
 
   let ultimoRegistroAtividade = 0;
@@ -5833,19 +5911,35 @@
     const clientesEmCapsula = await calcularClientesEmCapsula();
 
     const hoje = new Date().toISOString().slice(0,10);
-    const [videosSnap, demandasSnap, agendamentosSnap, postagensSnap, presencaSnap] = await Promise.all([
-      getDocs(collection(db,'videos_producao')),
-      getDocs(collection(db,'demandas')),
-      getDocs(collection(db,'agendamentos')),
-      getDocs(collection(db,'postagens')),
-      getDocs(collection(db,'presenca_funcionarios'))
-    ]);
 
-    const videos = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido) videos.push({id:d.id, ...v}); });
-    const qtdNaLixeira = videosSnap.docs.filter(d => d.data().excluido).length;
-    const demandas = []; demandasSnap.forEach(d => demandas.push({id:d.id, ...d.data()}));
-    const agendamentos = []; agendamentosSnap.forEach(d => agendamentos.push({id:d.id, ...d.data()}));
-    const postagens = []; postagensSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
+    // Fase 2: usa os caches ao vivo (onSnapshot) em vez de buscar tudo de novo
+    // a cada 25s. Se por algum motivo os listeners ainda não iniciaram, cai
+    // no comportamento antigo (getDocs direto) como rede de segurança.
+    let videosRaw, demandasRaw, agendamentosRaw, postagensRaw;
+    if(listenersTempoRealAtivos){
+      videosRaw = cacheVideosProducao;
+      demandasRaw = todasDemandas;
+      agendamentosRaw = cacheAgendamentos;
+      postagensRaw = cachePostagens;
+    } else {
+      const [videosSnap, demandasSnap, agendamentosSnap, postagensSnap] = await Promise.all([
+        getDocs(collection(db,'videos_producao')),
+        getDocs(collection(db,'demandas')),
+        getDocs(collection(db,'agendamentos')),
+        getDocs(collection(db,'postagens'))
+      ]);
+      videosRaw = []; videosSnap.forEach(d => videosRaw.push({id:d.id, ...d.data()}));
+      demandasRaw = []; demandasSnap.forEach(d => demandasRaw.push({id:d.id, ...d.data()}));
+      agendamentosRaw = []; agendamentosSnap.forEach(d => agendamentosRaw.push({id:d.id, ...d.data()}));
+      postagensRaw = []; postagensSnap.forEach(d => postagensRaw.push({id:d.id, ...d.data()}));
+    }
+    const presencaSnap = await getDocs(collection(db,'presenca_funcionarios')); // coleção fria, continua sob demanda
+
+    const videos = videosRaw.filter(v => !v.excluido);
+    const qtdNaLixeira = videosRaw.filter(v => v.excluido).length;
+    const demandas = demandasRaw;
+    const agendamentos = agendamentosRaw;
+    const postagens = postagensRaw;
     const presenca = {}; presencaSnap.forEach(d => { presenca[d.id] = d.data().ultimaAtividade; });
 
     const emEdicao = videos.filter(v=>v.status==='aguardando_edicao');

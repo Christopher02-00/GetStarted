@@ -875,6 +875,7 @@
             <div class="subtab" onclick="setGerenciaSub('funcionarioMes', this)">Funcionário do Mês</div>
             <div class="subtab" onclick="setGerenciaSub('painelTV', this)">Painel de TV</div>
             <div class="subtab" onclick="setGerenciaSub('digest', this)">📱 Digest WhatsApp</div>
+            <div class="subtab" onclick="setGerenciaSub('emailsEquipe', this)">📧 E-mails da Equipe</div>
             <div class="labelInterno">Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('aprovarVideos', this)">Aprovar Vídeos</div>
@@ -923,6 +924,7 @@
             </div>
             <div id="gerenciaChris" style="display:none;"></div>
             <div id="gerenciaDigest" style="display:none;"></div>
+            <div id="gerenciaEmailsEquipe" style="display:none;"></div>
           </div>
         </div>
       </div>
@@ -1450,7 +1452,7 @@
     try {
       const editor = editorManual || await decidirEditor(clienteSlug);
       for(const nomeVideo of todosNomes){
-        await addDoc(collection(db,'videos_producao'), {
+        const novoVideoRef = await addDoc(collection(db,'videos_producao'), {
           cliente: clienteSlug, clienteNome, data,
           titulo: clienteNome + ' — ' + nomeVideo,
           observacao: obs,
@@ -1458,6 +1460,9 @@
           status: 'aguardando_edicao', linkFinalizado: '',
           criadoEm: serverTimestamp()
         });
+        dispararEmailIndividual(editor, 'video_atribuido', {
+          titulo: clienteNome + ' — ' + nomeVideo, itemId: novoVideoRef.id, colecao: 'videos_producao'
+        }).catch(()=>{});
       }
       mostrarToast(todosNomes.length + ' vídeo(s) distribuído(s) para ' + editor + '!');
       document.getElementById('ultimaDistribuicao').innerHTML = `<div class="avisoBanner"><div class="icone">🎬</div><div class="texto">${todosNomes.length} vídeo(s) de ${esc(clienteNome)} foram pra <b>${esc(editor)}</b><span>${todosNomes.join(', ')}</span></div></div>`;
@@ -1695,6 +1700,11 @@
     if(!motivo){ mostrarToast('Escreve o que precisa ajustar.', 'erro'); return; }
     await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo, correcaoImagemUrl: foto });
     registrarHistorico('videos_producao', id, 'Pedido de ajuste enviado pro editor', motivo);
+    const vSnap = await getDoc(doc(db,'videos_producao', id));
+    if(vSnap.exists()){
+      const v = vSnap.data();
+      dispararEmailIndividual(v.editorAtribuido, 'video_correcao', { titulo: v.titulo, itemId: id, colecao: 'videos_producao' }).catch(()=>{});
+    }
     mostrarToast('Enviado de volta pro editor com a correção.');
     renderAprovacaoVideos();
   };
@@ -1727,6 +1737,11 @@
       clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:''
     });
     registrarHistorico('videos_producao', id, 'Cliente pediu ajuste após já ter aprovado', motivo);
+    const vSnap = await getDoc(doc(db,'videos_producao', id));
+    if(vSnap.exists()){
+      const v = vSnap.data();
+      dispararEmailIndividual(v.editorAtribuido, 'video_correcao', { titulo: v.titulo, itemId: id, colecao: 'videos_producao' }).catch(()=>{});
+    }
     mostrarToast('Vídeo voltou pro editor com o pedido do cliente.');
     renderAprovacaoVideos();
   };
@@ -4818,6 +4833,7 @@
     document.getElementById('gerenciaCapsulaDetalhe').style.display = qual==='capsulaDetalhe' ? 'block' : 'none';
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     document.getElementById('gerenciaDigest').style.display = qual==='digest' ? 'block' : 'none';
+    document.getElementById('gerenciaEmailsEquipe').style.display = qual==='emailsEquipe' ? 'block' : 'none';
     if(qual==='painelTV'){
       const iframe = document.getElementById('iframePainelTVInterno');
       if(!iframe.dataset.carregado){
@@ -4850,6 +4866,7 @@
     if(qual==='editarFuncoesFixas') renderEditarFuncoesFixas();
     if(qual==='funcionarioMes') renderFuncionarioMesPainel();
     if(qual==='digest') renderDigest();
+    if(qual==='emailsEquipe') renderEmailsEquipe();
   };
 
   let todasAusencias = [];
@@ -5018,6 +5035,7 @@
     if(botaoNovaDemanda) botaoNovaDemanda.style.display = 'flex';
     await carregarTodasDemandas();
     await corrigirDemandasAvisoAntigas(); // roda na hora, sem esperar o motor — resolve os registros antigos já
+    await semearEmailsEquipeIniciais(); // roda na hora — cadastra os e-mails que o Chris passou, sem sobrescrever nada manual
     iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
     iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui (assinado antes de renderizar Meu Dia)
     pedirPermissaoNotificacao(); // Fase 5 — pede permissão de notificação do navegador
@@ -5544,7 +5562,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -5951,6 +5969,74 @@
       </div>`;
   }
 
+  /* ===== FASE 11 — CADASTRO DE E-MAIL DA EQUIPE =====
+     Tela simples pra cadastrar o e-mail de cada pessoa 1 vez. Sem isso,
+     dispararEmailIndividual não tem pra onde mandar nada. */
+  /* ===== SEMENTE INICIAL DE E-MAILS DA EQUIPE =====
+     Cadastro feito pelo próprio Chris, aplicado automaticamente assim que
+     alguém entra no sistema — não sobrescreve nada que já tenha sido
+     alterado manualmente na tela "E-mails da Equipe" (só preenche o que
+     ainda não existe). Cecília ficou sem e-mail confirmado; Yas também —
+     falta o Chris passar os que faltam. */
+  const EMAILS_EQUIPE_SEMENTE = {
+    'Helo': 'heloisaksc@gmail.com',
+    'Gabrielle': 'gabrielleromaomarketing@gmail.com',
+    'Luís': 'luissouza280507@gmail.com',
+    'Nathan': 'nathanocosta652@gmail.com',
+    'João Victor': 'victorvieiraj814@gmail.com',
+    'Amanda': 'amandachamorrosm@gmail.com',
+    'Chris': 'christopherveloso0@gmail.com',
+    'Cecília': 'vitoriaboaron215@gmail.com'
+  };
+
+  async function semearEmailsEquipeIniciais(){
+    for(const [nome, email] of Object.entries(EMAILS_EQUIPE_SEMENTE)){
+      const ref = doc(db, 'emails_equipe', nome);
+      const snap = await getDoc(ref);
+      if(!snap.exists()){
+        await setDoc(ref, { nome, email, atualizadoPor: 'sistema (semente inicial)', atualizadoEm: serverTimestamp() });
+      }
+    }
+  }
+
+  async function renderEmailsEquipe(){
+    const cont = document.getElementById('gerenciaEmailsEquipe');
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+    const todos = ['Chris', ...FUNCIONARIOS];
+    const snap = await getDocs(collection(db,'emails_equipe'));
+    const emailsAtuais = {};
+    snap.forEach(d => { emailsAtuais[d.id] = d.data().email || ''; });
+
+    const statusConfig = EMAILJS_CONFIGURADO
+      ? '<span class="selo aprovado">EmailJS configurado ✓</span>'
+      : '<span class="selo atrasado">EmailJS ainda não configurado — ver comentário no topo do arquivo (linha ~985)</span>';
+
+    let html = `<div class="card">
+      <h2>📧 E-mails da Equipe</h2>
+      <div class="desc" style="margin-bottom:10px;">Cadastra o e-mail de cada pessoa 1 vez só — é pra onde os avisos importantes (demanda nova, vídeo atribuído, vídeo em correção) vão ser mandados. ${statusConfig}</div>
+    </div>`;
+
+    todos.forEach(nome => {
+      html += `<div class="item">
+        <div class="top"><div class="nome">${esc(nome)}</div></div>
+        <div class="row2" style="margin-top:8px;">
+          <input type="email" id="emailEquipe_${nome}" value="${esc(emailsAtuais[nome]||'')}" placeholder="email@exemplo.com">
+          <button class="btn secondary" onclick="salvarEmailEquipe('${nome}')">Salvar</button>
+        </div>
+      </div>`;
+    });
+    cont.innerHTML = html;
+  }
+
+  window.salvarEmailEquipe = async function(nome){
+    const input = document.getElementById('emailEquipe_'+nome);
+    const email = input.value.trim();
+    if(!email || !email.includes('@')){ mostrarToast('Escreve um e-mail válido.', 'erro'); return; }
+    await setDoc(doc(db,'emails_equipe', nome), { nome, email, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() });
+    mostrarToast('E-mail de ' + nome + ' salvo!');
+  };
+
+
   async function carregarGerencia(){
     await carregarTodasDemandas();
     await motorAutomacoes('gerencia'); // redundância barata — o motor já roda sozinho (ver bloco FASE 1 abaixo)
@@ -6061,6 +6147,67 @@
     }catch(e){ console.error('Falha ao registrar log_automacoes:', e); }
   }
 
+  /* ===== FASE 11 — NOTIFICAÇÃO POR E-MAIL INDIVIDUAL =====
+     Função central: busca o e-mail da pessoa em 'emails_equipe', monta o
+     conteúdo com os 3 elementos obrigatórios (o quê, prazo, link direto) e
+     dispara via EmailJS. Tem throttle de 2h por item — se a mesma pessoa
+     já recebeu e-mail sobre o MESMO item recentemente, não manda de novo. */
+  async function dispararEmailIndividual(destinatarioNome, tipo, dados){
+    if(!EMAILJS_CONFIGURADO || typeof emailjs === 'undefined'){
+      console.warn('Fase 11: EmailJS ainda não configurado — e-mail não enviado (ver Gerência → E-mails da Equipe). Destinatário seria: ' + destinatarioNome);
+      return;
+    }
+    try{
+      const emailSnap = await getDoc(doc(db, 'emails_equipe', destinatarioNome));
+      if(!emailSnap.exists() || !emailSnap.data().email){
+        return; // sem e-mail cadastrado pra essa pessoa, não tem como enviar
+      }
+      const email = emailSnap.data().email;
+
+      // Throttle — no máximo 1 e-mail por item a cada 2h
+      const chaveThrottle = (dados.colecao||'geral') + '_' + (dados.itemId||'x') + '_' + tipo;
+      const throttleRef = doc(db, 'email_throttle', chaveThrottle);
+      const throttleSnap = await getDoc(throttleRef);
+      if(throttleSnap.exists()){
+        const ultimaMs = throttleSnap.data().enviadoEm?.seconds ? throttleSnap.data().enviadoEm.seconds * 1000 : 0;
+        if(Date.now() - ultimaMs < 2 * 60 * 60000) return; // já mandou sobre isso há pouco
+      }
+
+      const prazoTexto = dados.prazoData ? formatarDataBR(dados.prazoData) + ' às ' + (dados.prazoHora||'19:00') : 'sem prazo definido';
+      const linkView = 'https://get-started.agency/escritorio.html';
+
+      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+        to_email: email, to_name: destinatarioNome,
+        titulo: dados.titulo || '', prazo: prazoTexto, link: linkView, tipo_aviso: tipo
+      });
+
+      await setDoc(throttleRef, { enviadoEm: serverTimestamp() });
+      registrarLogAutomacao('email_enviado', dados.itemId || '', tipo + ' pra ' + destinatarioNome);
+    }catch(e){
+      console.error('Fase 11: falha ao disparar e-mail individual pra ' + destinatarioNome + ':', e);
+    }
+  }
+
+  /* Varre demandas pendentes que ainda não geraram e-mail — assim não
+     preciso tocar nos ~20 lugares onde uma demanda é criada. Roda no motor,
+     então mesmo demandas criadas por qualquer pessoa acabam gerando e-mail
+     sozinhas, sem depender de quem criou lembrar de disparar nada. */
+  async function verificarEmailsDemandasNovas(){
+    const snap = await getDocs(collection(db,'demandas'));
+    for(const docSnap of snap.docs){
+      const d = docSnap.data();
+      if(d.emailEnviado) continue;
+      if(d.status !== 'pendente' || !d.destinatario){
+        await updateDoc(doc(db,'demandas', docSnap.id), { emailEnviado: true }); // não é acionável, não precisa de e-mail
+        continue;
+      }
+      await dispararEmailIndividual(d.destinatario, 'demanda', {
+        titulo: d.titulo, prazoData: d.prazoData, prazoHora: d.prazoHora, itemId: docSnap.id, colecao: 'demandas'
+      });
+      await updateDoc(doc(db,'demandas', docSnap.id), { emailEnviado: true });
+    }
+  }
+
   const MOTOR_INTERVALO_MIN = 8; // janela mínima entre execuções (minutos)
 
   // FASE 5 (parte 3) — lembrete automático de segunda-feira: cria uma
@@ -6105,12 +6252,14 @@
     }
 
     const verificacoes = [
+      { nome: 'sementeEmailsEquipe', fn: semearEmailsEquipeIniciais },
       { nome: 'correcaoAvisosAntigos', fn: corrigirDemandasAvisoAntigas },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
-      { nome: 'digestSemanal', fn: verificarDigestSemanal }
+      { nome: 'digestSemanal', fn: verificarDigestSemanal },
+      { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas }
     ];
 
     for(const v of verificacoes){

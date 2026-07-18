@@ -4959,10 +4959,14 @@
     // Não cria mais uma "demanda-aviso" pra Amanda — isso só bagunçava a
     // lista pessoal dela. O vídeo escalado aparece sozinho na aba dedicada
     // "⏰ Atrasos da Equipe" dentro da Gerência (consulta direta, sem
-    // duplicar registro nenhum).
+    // duplicar registro nenhum). O e-mail continua indo direto, sem criar
+    // nenhum registro novo em 'demandas'.
     await updateDoc(doc(db,'videos_producao', videoId), { nivelEscalonamento: 2, escalonadoNivel2Em: serverTimestamp() });
     registrarHistorico('videos_producao', videoId, 'Escalado (nível 2) — visível na aba Atrasos da Equipe', motivo);
     registrarLogAutomacao('escalonamento_video_nivel2', videoId, motivo);
+    dispararEmailIndividual('Amanda', 'video_escalado_nivel2', {
+      titulo: '⚠️ ' + v.titulo + ' — ' + motivo, itemId: videoId, colecao: 'videos_producao'
+    }).catch(()=>{});
   }
 
   async function verificarVideosAtrasadosEAlertar(){
@@ -5001,10 +5005,14 @@
         const desde = v.escalonadoNivel2Em?.seconds ? new Date(v.escalonadoNivel2Em.seconds*1000) : agora;
         if(horasUteisDesde(desde, agora) >= 24){
           // Não cria mais demanda-aviso pro Chris — o vídeo travado aparece
-          // sozinho na aba "⏰ Atrasos da Equipe" da Gerência.
+          // sozinho na aba "⏰ Atrasos da Equipe" da Gerência. O e-mail
+          // continua indo direto, sem criar registro novo.
           await updateDoc(doc(db,'videos_producao', id), { nivelEscalonamento: 3, escalonadoNivel3Em: serverTimestamp() });
           registrarHistorico('videos_producao', id, 'Escalado (nível 3) — visível na aba Atrasos da Equipe');
           registrarLogAutomacao('escalonamento_video_nivel3', id, 'Escalado nível 3');
+          dispararEmailIndividual('Chris', 'video_escalado_nivel3', {
+            titulo: '🚨 ' + v.titulo + ' — editor ' + v.editorAtribuido + ' travado, já escalou pra Amanda', itemId: id, colecao: 'videos_producao'
+          }).catch(()=>{});
         }
       }
       // nivelAtual === 3: já escalou tudo, fica só visível (cockpit/saúde de clientes na Fase 8)
@@ -6119,14 +6127,23 @@
         // Não cria mais demanda-aviso pra Amanda — a demanda atrasada em si
         // aparece na aba "⏰ Atrasos da Equipe" da Gerência, com o nome de
         // quem é a responsável, gravidade e dias — sem duplicar registro.
+        // O e-mail continua indo direto, sem criar registro novo.
         await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 2 });
         registrarHistorico('demandas', docSnap.id, 'Escalada (nível 2) — visível na aba Atrasos da Equipe');
         registrarLogAutomacao('escalonamento_demanda_nivel2', docSnap.id, 'Escalado nível 2');
+        dispararEmailIndividual('Amanda', 'demanda_escalada_nivel2', {
+          titulo: '⚠️ ' + dem.titulo + ' — ' + (dem.destinatario||'?') + ' está ' + diasAtraso + ' dia(s) útil(eis) atrasado',
+          itemId: docSnap.id, colecao: 'demandas'
+        }).catch(()=>{});
       }
       if(diasAtraso >= 3 && nivelAtual < 3){
         await updateDoc(doc(db,'demandas', docSnap.id), { nivelEscalonamentoDemanda: 3 });
         registrarHistorico('demandas', docSnap.id, 'Escalada (nível 3) — visível na aba Atrasos da Equipe');
         registrarLogAutomacao('escalonamento_demanda_nivel3', docSnap.id, 'Escalado nível 3');
+        dispararEmailIndividual('Chris', 'demanda_escalada_nivel3', {
+          titulo: '🚨 ' + dem.titulo + ' — ' + (dem.destinatario||'?') + ' já escalou pra Amanda, continua parada (' + diasAtraso + ' dias)',
+          itemId: docSnap.id, colecao: 'demandas'
+        }).catch(()=>{});
       }
     }
   }
@@ -6208,6 +6225,28 @@
     }
   }
 
+  /* ===== LEMBRETE "PRAZO É HOJE" =====
+     Antes, o sistema só falava alguma coisa por e-mail quando JÁ tinha
+     atrasado. Agora avisa também no próprio dia do prazo — antes de virar
+     atraso — pra pessoa conseguir se organizar. Manda 1 vez por dia (usa
+     a data de hoje como controle, não repete se o motor rodar de novo). */
+  async function verificarLembretesPrazoHoje(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const snap = await getDocs(collection(db,'demandas'));
+    for(const docSnap of snap.docs){
+      const d = docSnap.data();
+      if(d.status !== 'pendente' || !d.destinatario) continue;
+      if(d.prazoData !== hojeStr) continue;
+      if(d.lembretePrazoHojeEm === hojeStr) continue; // já lembrou hoje
+      if(estaAusente(d.destinatario)) continue;
+      await dispararEmailIndividual(d.destinatario, 'prazo_hoje', {
+        titulo: '⏰ Prazo é hoje: ' + d.titulo, prazoData: d.prazoData, prazoHora: d.prazoHora,
+        itemId: docSnap.id, colecao: 'demandas'
+      });
+      await updateDoc(doc(db,'demandas', docSnap.id), { lembretePrazoHojeEm: hojeStr });
+    }
+  }
+
   const MOTOR_INTERVALO_MIN = 8; // janela mínima entre execuções (minutos)
 
   // FASE 5 (parte 3) — lembrete automático de segunda-feira: cria uma
@@ -6259,7 +6298,8 @@
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'digestSemanal', fn: verificarDigestSemanal },
-      { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas }
+      { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
+      { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje }
     ];
 
     for(const v of verificacoes){

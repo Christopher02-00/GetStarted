@@ -1574,8 +1574,17 @@
   window.reenviarVideoCorrigido = async function(id){
     const novoLink = document.getElementById('linkCorrigido_'+id).value.trim();
     if(!novoLink){ mostrarToast('Cola o novo link antes de reenviar.', 'erro'); return; }
-    await updateDoc(doc(db,'videos_producao', id), { status: 'aguardando_aprovacao', linkFinalizado: novoLink, correcao: '' });
+    const vSnapAntes = await getDoc(doc(db,'videos_producao', id));
+    const vAntes = vSnapAntes.exists() ? vSnapAntes.data() : {};
+    await updateDoc(doc(db,'videos_producao', id), {
+      status: 'aguardando_aprovacao', linkFinalizado: novoLink, correcao: '',
+      nivelEscalonamento: 0, alertaAtrasoCriado: false
+    });
     registrarHistorico('videos_producao', id, 'Reenviado pra aprovação após correção');
+    darBaixaAlertaVideoAtrasado(id, vAntes.titulo, vAntes.editorAtribuido).catch(()=>{});
+    const tituloAprovacao = '✅ Pra aprovar (reenviado): ' + (vAntes.titulo||'') + ' (' + (vAntes.clienteNome||'') + ')';
+    dispararEmailIndividual('Amanda', 'video_para_aprovacao', { titulo: tituloAprovacao, itemId: id, colecao:'videos_producao' }).catch(()=>{});
+    dispararEmailIndividual('Chris', 'video_para_aprovacao', { titulo: tituloAprovacao, itemId: id, colecao:'videos_producao' }).catch(()=>{});
     mostrarToast('Reenviado pra aprovação!');
     renderMeusVideos();
   };
@@ -1602,7 +1611,16 @@
   window.enviarVideoParaAprovacao = async function(id){
     const link = document.getElementById('link_'+id).value.trim();
     if(!link){ mostrarToast('Cola o link do vídeo antes de enviar.', 'erro'); return; }
-    await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_aprovacao', linkFinalizado: link, enviadoEm: new Date().toISOString() });
+    const vSnapAntes = await getDoc(doc(db,'videos_producao', id));
+    const vAntes = vSnapAntes.exists() ? vSnapAntes.data() : {};
+    await updateDoc(doc(db,'videos_producao', id), {
+      status:'aguardando_aprovacao', linkFinalizado: link, enviadoEm: new Date().toISOString(),
+      nivelEscalonamento: 0, alertaAtrasoCriado: false
+    });
+    darBaixaAlertaVideoAtrasado(id, vAntes.titulo, vAntes.editorAtribuido).catch(()=>{});
+    const tituloAprovacao = '✅ Pra aprovar: ' + (vAntes.titulo||'') + ' (' + (vAntes.clienteNome||'') + ')';
+    dispararEmailIndividual('Amanda', 'video_para_aprovacao', { titulo: tituloAprovacao, itemId: id, colecao:'videos_producao' }).catch(()=>{});
+    dispararEmailIndividual('Chris', 'video_para_aprovacao', { titulo: tituloAprovacao, itemId: id, colecao:'videos_producao' }).catch(()=>{});
     mostrarToast('Vídeo enviado pra aprovação!');
     renderMeusVideos();
   };
@@ -1698,7 +1716,7 @@
     const motivo = document.getElementById('motivoAjuste_'+id).value.trim();
     const foto = document.getElementById('fotoAjuste_'+id).value.trim();
     if(!motivo){ mostrarToast('Escreve o que precisa ajustar.', 'erro'); return; }
-    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo, correcaoImagemUrl: foto });
+    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo, correcaoImagemUrl: foto, correcaoSolicitadaEm: new Date().toISOString() });
     registrarHistorico('videos_producao', id, 'Pedido de ajuste enviado pro editor', motivo);
     const vSnap = await getDoc(doc(db,'videos_producao', id));
     if(vSnap.exists()){
@@ -1734,7 +1752,7 @@
     for(const d of postSnap.docs){ if(d.data().videoId === id) await deleteDoc(doc(db,'postagens', d.id)); }
     await updateDoc(doc(db,'videos_producao', id), {
       status:'correcao', correcao: '[Cliente pediu depois de já aprovado] ' + motivo,
-      clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:''
+      clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:'', correcaoSolicitadaEm: new Date().toISOString()
     });
     registrarHistorico('videos_producao', id, 'Cliente pediu ajuste após já ter aprovado', motivo);
     const vSnap = await getDoc(doc(db,'videos_producao', id));
@@ -4926,9 +4944,18 @@
   }
 
   function calcularPrazoEdicaoVideo(v){
-    if(!v.criadoEm?.seconds) return null;
-    const criado = new Date(v.criadoEm.seconds * 1000);
-    let prazo = new Date(criado);
+    // Vídeo em correção conta o prazo a partir de quando a correção foi
+    // PEDIDA, não de quando o vídeo nasceu — senão ele já nasce "atrasado"
+    // no segundo em que volta pro editor.
+    let base;
+    if(v.status === 'correcao' && v.correcaoSolicitadaEm){
+      base = new Date(v.correcaoSolicitadaEm);
+    } else if(v.criadoEm?.seconds){
+      base = new Date(v.criadoEm.seconds * 1000);
+    } else {
+      return null;
+    }
+    let prazo = new Date(base);
     prazo.setDate(prazo.getDate() + 1);
     prazo = proximoDiaUtilApartirDe(prazo); // pula fim de semana/feriado
     prazo.setHours(19, 0, 0, 0);
@@ -4992,7 +5019,7 @@
         await addDoc(collection(db,'demandas'), {
           titulo: '⚠️ Vídeo atrasado — ' + esc(v.titulo),
           descricao: 'Esse vídeo passou do prazo de 1 dia útil pra edição (até às 19h). Prioriza ele.',
-          origem: 'sistema', clienteNome: v.clienteNome,
+          origem: 'sistema', clienteNome: v.clienteNome, videoId: id,
           destinatario: v.editorAtribuido, prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
           status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
@@ -5043,6 +5070,7 @@
     if(botaoNovaDemanda) botaoNovaDemanda.style.display = 'flex';
     await carregarTodasDemandas();
     await corrigirDemandasAvisoAntigas(); // roda na hora, sem esperar o motor — resolve os registros antigos já
+    await limparAlertasVideoFantasma(); // roda na hora — limpa alertas de vídeo já entregue/corrigido/excluído
     await semearEmailsEquipeIniciais(); // roda na hora — cadastra os e-mails que o Chris passou, sem sobrescrever nada manual
     iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
     iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui (assinado antes de renderizar Meu Dia)
@@ -5332,7 +5360,7 @@
     try{
       const snap = await getDocs(collection(db,'anotacoes_pessoais'));
       let pendentes = 0;
-      snap.forEach(d => { const a = d.data(); if(a.autor === usuarioAtual && !a.feita) pendentes++; });
+      snap.forEach(d => { const a = d.data(); if(a.autor === usuarioAtual && !a.feita && !a.excluido) pendentes++; });
       if(pendentes){ badge.style.display='flex'; badge.textContent = pendentes; }
       else { badge.style.display='none'; }
     }catch(e){ badge.style.display='none'; }
@@ -5365,7 +5393,7 @@
     const cont = document.getElementById('listaAnotacoesPessoais');
     if(!usuarioAtual){ cont.innerHTML = ''; return; }
     const snap = await getDocs(collection(db,'anotacoes_pessoais'));
-    const minhas = []; snap.forEach(d => { if(d.data().autor === usuarioAtual) minhas.push({id:d.id, ...d.data()}); });
+    const minhas = []; snap.forEach(d => { const a = d.data(); if(a.autor === usuarioAtual && !a.excluido) minhas.push({id:d.id, ...a}); });
 
     const ordem = { vermelho:0, laranja:1, amarelo:2, verde:3 };
     minhas.sort((a,b) => (ordem[a.prioridade]??9) - (ordem[b.prioridade]??9) || (a.data||'').localeCompare(b.data||''));
@@ -5396,7 +5424,9 @@
 
   window.excluirAnotacaoPessoal = async function(id){
     if(!confirm('Excluir essa anotação?')) return;
-    await deleteDoc(doc(db,'anotacoes_pessoais', id));
+    // Soft-delete: anotação de ideia é o coração do site — um clique errado
+    // não pode apagar pra sempre. Fica recuperável no banco (excluido:true).
+    await updateDoc(doc(db,'anotacoes_pessoais', id), { excluido: true, excluidoEm: new Date().toISOString() });
     mostrarToast('Anotação excluída.');
     renderAnotacoesPessoais();
     atualizarBadgeMinhas();
@@ -5521,6 +5551,10 @@
   window.enviarProva = async function(id){
     const texto = document.getElementById('provaTextoInput').value.trim();
     const link = document.getElementById('provaLinkInput').value.trim();
+    if(!texto && !link){
+      mostrarToast('Anexa uma prova: escreve o que foi feito ou cola um link/print.', 'erro');
+      return;
+    }
     const btn = document.getElementById('btnEnviarProva');
     btn.disabled = true; btn.textContent = 'Enviando...';
     try {
@@ -6181,8 +6215,11 @@
       }
       const email = emailSnap.data().email;
 
-      // Throttle — no máximo 1 e-mail por item a cada 2h
-      const chaveThrottle = (dados.colecao||'geral') + '_' + (dados.itemId||'x') + '_' + tipo;
+      // Throttle — no máximo 1 e-mail por PESSOA + item a cada 2h
+      // (antes a chave não incluía o destinatário: mandar pra Amanda e
+      // depois pro Chris sobre o mesmo item fazia o segundo ser bloqueado
+      // pelo throttle do primeiro — corrigido aqui.)
+      const chaveThrottle = destinatarioNome + '_' + (dados.colecao||'geral') + '_' + (dados.itemId||'x') + '_' + tipo;
       const throttleRef = doc(db, 'email_throttle', chaveThrottle);
       const throttleSnap = await getDoc(throttleRef);
       if(throttleSnap.exists()){
@@ -6293,13 +6330,16 @@
     const verificacoes = [
       { nome: 'sementeEmailsEquipe', fn: semearEmailsEquipeIniciais },
       { nome: 'correcaoAvisosAntigos', fn: corrigirDemandasAvisoAntigas },
+      { nome: 'limpezaAlertasFantasma', fn: limparAlertasVideoFantasma },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'digestSemanal', fn: verificarDigestSemanal },
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
-      { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje }
+      { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
+      { nome: 'gravacoesFantasma', fn: verificarGravacoesFantasma },
+      { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira }
     ];
 
     for(const v of verificacoes){
@@ -6478,28 +6518,197 @@
     }
   }
 
+  /* ===== CORREÇÃO 1 — BAIXA AUTOMÁTICA DO ALERTA "VÍDEO ATRASADO" =====
+     Antes, a demanda de alerta nunca guardava o videoId, e entregar o
+     vídeo nunca fechava o alerta — ficava pendente pra sempre (fantasma),
+     e o escalonamento tratava isso como atraso real, gerando ruído e
+     e-mail falso pra Amanda/Chris. Agora a entrega fecha o alerta sozinha. */
+  async function darBaixaAlertaVideoAtrasado(videoId, tituloVideo, editor){
+    try{
+      const q1 = query(collection(db,'demandas'), where('videoId','==', videoId), where('status','==','pendente'));
+      const snap1 = await getDocs(q1);
+      for(const d of snap1.docs){
+        await updateDoc(doc(db,'demandas', d.id), {
+          status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
+          notaConclusao: 'Concluída automaticamente — o vídeo foi entregue.'
+        });
+        registrarHistorico('demandas', d.id, 'Concluída automaticamente — vídeo entregue');
+      }
+      // Fallback pros alertas antigos, criados antes de existir o campo videoId
+      const q2 = query(collection(db,'demandas'),
+        where('titulo','==', '⚠️ Vídeo atrasado — ' + tituloVideo),
+        where('destinatario','==', editor), where('status','==','pendente'));
+      const snap2 = await getDocs(q2);
+      for(const d of snap2.docs){
+        await updateDoc(doc(db,'demandas', d.id), {
+          status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
+          notaConclusao: 'Concluída automaticamente — o vídeo foi entregue.'
+        });
+        registrarHistorico('demandas', d.id, 'Concluída automaticamente — vídeo entregue (alerta antigo)');
+      }
+    }catch(e){ console.error('Falha ao dar baixa no alerta de vídeo atrasado:', e); }
+  }
+
+  /* ===== CORREÇÃO 1 (parte 2) — LIMPEZA DOS FANTASMAS JÁ EXISTENTES =====
+     Migração: varre alertas "Vídeo atrasado" pendentes cujo vídeo já foi
+     entregue, corrigido, excluído ou não existe mais, e arquiva. Roda no
+     motor e também 1x direto no login pra efeito imediato. */
+  async function limparAlertasVideoFantasma(){
+    const snap = await getDocs(query(collection(db,'demandas'), where('status','==','pendente')));
+    const videosSnap = await getDocs(collection(db,'videos_producao'));
+    const videosPorTitulo = {};
+    videosSnap.forEach(d => { const v = d.data(); videosPorTitulo[v.titulo] = { ...v, id: d.id }; });
+
+    let limpos = 0;
+    for(const docSnap of snap.docs){
+      const d = docSnap.data();
+      if(!d.titulo || !d.titulo.startsWith('⚠️ Vídeo atrasado — ')) continue;
+      const tituloVideo = d.titulo.slice('⚠️ Vídeo atrasado — '.length);
+      const video = d.videoId ? (videosSnap.docs.find(v=>v.id===d.videoId)?.data()) : videosPorTitulo[tituloVideo];
+      const fantasma = !video || video.excluido || !['aguardando_edicao','correcao'].includes(video.status);
+      if(fantasma){
+        await updateDoc(doc(db,'demandas', docSnap.id), {
+          status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
+          notaConclusao: 'Arquivada automaticamente — o vídeo já não está mais em edição/correção (alerta fantasma).'
+        });
+        registrarHistorico('demandas', docSnap.id, 'Alerta fantasma arquivado');
+        registrarLogAutomacao('alerta_video_fantasma_limpo', docSnap.id, 'Vídeo "' + tituloVideo + '" não está mais atrasado');
+        limpos++;
+      }
+    }
+    return limpos;
+  }
+
+  /* ===== REDE DE SEGURANÇA COMPLETA DO CICLO DE POSTAGEM =====
+     Cobre as 3 etapas onde algo pode ser esquecido:
+     1. LEGENDA esquecida (aguardando_legenda parada 1+ dia) → demanda pra Gabrielle
+     2. AGENDAMENTO esquecido (legenda pronta 1+ dia sem agendar) → demanda pra Cecília
+     3. PUBLICAÇÃO sem confirmação (data agendada já passou) → demanda pra Cecília
+        confirmar que realmente foi ao ar — fecha o ciclo, que antes
+        terminava em "agendado" e ninguém nunca verificava se postou. */
   async function verificarPostagensEsquecidas(){
     const snap = await getDocs(collection(db,'postagens'));
+    const hojeStr = new Date().toISOString().slice(0,10);
     let novasDemandas = 0;
     for(const docSnap of snap.docs){
       const p = docSnap.data();
-      if(p.status !== 'aguardando_agendamento') continue;
-      if(p.demandaAgendamentoCriada) continue; // caminho normal já cuidou disso na hora
-      const diasEsperando = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime()) / 86400000) : 0;
-      if(diasEsperando >= 1){
+
+      // Etapa 1 — legenda esquecida
+      if(p.status === 'aguardando_legenda' && !p.demandaLegendaCriada){
+        const dias = p.criadoEm?.seconds ? Math.floor((Date.now() - p.criadoEm.seconds*1000) / 86400000) : 0;
+        if(dias >= 1){
+          await addDoc(collection(db,'demandas'), {
+            titulo: '✍️ Legenda pendente há ' + dias + ' dia(s) — ' + (p.clienteNome||''),
+            descricao: `O conteúdo "${p.titulo}" foi aprovado pelo cliente e está esperando legenda desde então. Escreve hoje pra não travar o agendamento.`,
+            origem: 'sistema', clienteNome: p.clienteNome || '', destinatario: 'Gabrielle', postagemId: docSnap.id,
+            prazoData: hojeStr, prazoHora: '18:00',
+            status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+          });
+          await updateDoc(doc(db,'postagens', docSnap.id), { demandaLegendaCriada: true });
+          registrarLogAutomacao('legenda_esquecida', docSnap.id, dias + ' dia(s) sem legenda');
+          novasDemandas++;
+        }
+      }
+
+      // Etapa 2 — agendamento esquecido (comportamento original, mantido)
+      if(p.status === 'aguardando_agendamento' && !p.demandaAgendamentoCriada){
+        const diasEsperando = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime()) / 86400000) : 0;
+        if(diasEsperando >= 1){
+          await addDoc(collection(db,'demandas'), {
+            titulo: '⚠️ Postagem sem agendar — ' + p.clienteNome,
+            descricao: `O conteúdo "${p.titulo}" está com legenda pronta há ${diasEsperando} dia(s) e ainda não foi agendado (rede de segurança — a demanda automática não chegou a ser criada). Agenda ainda hoje!`,
+            origem: 'sistema', clienteNome: p.clienteNome || '', destinatario: 'Cecília', postagemId: docSnap.id,
+            prazoData: hojeStr, prazoHora: '12:00',
+            status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+          });
+          await updateDoc(doc(db,'postagens', docSnap.id), { demandaAgendamentoCriada: true });
+          registrarLogAutomacao('postagem_esquecida_rede_seguranca', docSnap.id, 'Demanda automática não existia — criada pela rede de segurança');
+          novasDemandas++;
+        }
+      }
+
+      // Etapa 3 — agendada, mas a data já passou: foi realmente postada?
+      if(p.status === 'agendado' && !p.confirmacaoPostagemCriada && p.dataAgendada && p.dataAgendada < hojeStr){
         await addDoc(collection(db,'demandas'), {
-          titulo: '⚠️ Postagem sem agendar — ' + p.clienteNome,
-          descricao: `O conteúdo "${p.titulo}" está com legenda pronta há ${diasEsperando} dia(s) e ainda não foi agendado (rede de segurança — a demanda automática não chegou a ser criada). Agenda ainda hoje!`,
+          titulo: '📲 Confirmar publicação — ' + (p.clienteNome||'') + ': ' + (p.titulo||''),
+          descricao: `Essa postagem estava agendada pra ${formatarDataBR(p.dataAgendada)} às ${p.horaAgendada||'?'} e a data já passou. Confirma que foi ao ar (marca como feita com um print de prova). Se não foi, reagenda agora.`,
           origem: 'sistema', clienteNome: p.clienteNome || '', destinatario: 'Cecília', postagemId: docSnap.id,
-          prazoData: new Date().toISOString().slice(0,10), prazoHora: '12:00',
+          prazoData: hojeStr, prazoHora: '18:00',
           status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
-        await updateDoc(doc(db,'postagens', docSnap.id), { demandaAgendamentoCriada: true });
-        registrarLogAutomacao('postagem_esquecida_rede_seguranca', docSnap.id, 'Demanda automática não existia — criada pela rede de segurança');
+        await updateDoc(doc(db,'postagens', docSnap.id), { confirmacaoPostagemCriada: true });
+        registrarLogAutomacao('confirmacao_publicacao', docSnap.id, 'Data agendada passou — pedida confirmação de publicação');
         novasDemandas++;
       }
     }
-    if(novasDemandas > 0) mostrarToast(novasDemandas + ' postagem(ns) esquecida(s) detectada(s) — demanda urgente criada pra Cecília!', 'erro');
+    if(novasDemandas > 0) mostrarToast(novasDemandas + ' pendência(s) de postagem detectada(s) — demanda(s) automática(s) criada(s)!', 'erro');
+  }
+
+  /* ===== GRAVAÇÃO FANTASMA =====
+     Se uma gravação agendada tem data passada e ninguém registrou como
+     'realizada' (via Lançar Gravação), o sistema acha que o cliente NÃO
+     gravou — e dispara Cápsula falsa, suja a Saúde do Cliente e trava a
+     distribuição dos vídeos. Esse é um erro de dado que contamina outras
+     automações. Aqui, detecta e cobra a regularização. */
+  async function verificarGravacoesFantasma(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const snap = await getDocs(collection(db,'agendamentos'));
+    for(const docSnap of snap.docs){
+      const a = docSnap.data();
+      if(a.excluido || a.status !== 'agendado' || a.aprovado === false) continue;
+      if(!a.data || a.data >= hojeStr) continue; // ainda não passou
+      if(a.alertaGravacaoFantasmaCriado) continue;
+      await addDoc(collection(db,'demandas'), {
+        titulo: '🎥 Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''),
+        descricao: 'Essa gravação estava agendada e a data já passou, mas ninguém registrou como realizada (Agendamento → Lançar Gravação). Se aconteceu, registra os vídeos captados HOJE — sem isso o sistema acha que o cliente não gravou e pode disparar Cápsula falsa. Se não aconteceu, cancela ou reagenda.',
+        origem: 'sistema', clienteNome: a.clienteNome || '', destinatario: 'Cecília', agendamentoRefId: docSnap.id,
+        prazoData: hojeStr, prazoHora: '18:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+      await updateDoc(doc(db,'agendamentos', docSnap.id), { alertaGravacaoFantasmaCriado: true });
+      registrarLogAutomacao('gravacao_fantasma', docSnap.id, 'Data ' + a.data + ' passou sem registro de realização');
+    }
+  }
+
+  /* ===== VÍDEOS PARADOS NA ESTEIRA DE APROVAÇÃO =====
+     Vídeo esperando aprovação interna (Amanda/Chris) há 1+ dia útil, ou
+     esperando confirmação do cliente há 2+ dias úteis, sem ninguém ser
+     avisado — podia ficar semanas parado em silêncio. E-mail direto pra
+     Amanda (sem criar demanda — aviso de gestão fica fora das listas
+     pessoais, lição aprendida). Dedup por dia. */
+  async function verificarVideosParadosNaEsteira(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const agora = new Date();
+    const snap = await getDocs(collection(db,'videos_producao'));
+    for(const docSnap of snap.docs){
+      const v = docSnap.data();
+      if(v.excluido) continue;
+
+      if(v.status === 'aguardando_aprovacao' && v.alertaAprovacaoParadaEm !== hojeStr){
+        // referencia de tempo: quando entrou nesse status não é gravado — usa criadoEm como piso
+        const base = v.criadoEm?.seconds ? new Date(v.criadoEm.seconds*1000) : null;
+        if(base && horasUteisDesde(base, agora) >= 48){ // 2 dias úteis desde a criação = com folga já passou 1 dia útil parado na aprovação
+          await dispararEmailIndividual('Amanda', 'video_parado_aprovacao', {
+            titulo: '🕐 Parado esperando aprovação interna: ' + (v.titulo||'') + ' (' + (v.clienteNome||'') + ')',
+            itemId: docSnap.id, colecao: 'videos_producao'
+          });
+          await updateDoc(doc(db,'videos_producao', docSnap.id), { alertaAprovacaoParadaEm: hojeStr });
+          registrarLogAutomacao('video_parado_aprovacao', docSnap.id, 'Aguardando aprovação interna há tempo demais');
+        }
+      }
+
+      if(v.status === 'aguardando_cliente' && v.alertaClienteParadoEm !== hojeStr){
+        const base = v.aprovadoInternoEm ? new Date(v.aprovadoInternoEm) : null;
+        if(base && horasUteisDesde(base, agora) >= 48){ // 2 dias úteis sem o cliente confirmar
+          await dispararEmailIndividual('Amanda', 'video_parado_cliente', {
+            titulo: '🕐 Cliente ainda não confirmou: ' + (v.titulo||'') + ' (' + (v.clienteNome||'') + ') — vale cobrar no grupo',
+            itemId: docSnap.id, colecao: 'videos_producao'
+          });
+          await updateDoc(doc(db,'videos_producao', docSnap.id), { alertaClienteParadoEm: hojeStr });
+          registrarLogAutomacao('video_parado_cliente', docSnap.id, 'Aguardando confirmação do cliente há 2+ dias úteis');
+        }
+      }
+    }
   }
 
   async function verificarClientesParaCapsulaAutomatico(){
@@ -7264,6 +7473,43 @@
     };
   }
 
+  /* ===== BACKUP COMPLETO EM 1 CLIQUE =====
+     Baixa um JSON com todas as coleções principais. Proteção contra perda
+     de dados — especialmente importante enquanto as regras do Firestore
+     estiverem abertas (Fase 9B pendente). */
+  window.fazerBackupCompleto = async function(){
+    const btn = document.getElementById('btnBackupCompleto');
+    if(btn){ btn.disabled = true; btn.textContent = 'Gerando backup...'; }
+    try{
+      const colecoes = ['demandas','videos_producao','agendamentos','postagens','clientes_extras',
+        'avaliacoes_clientes','pagamentos_extra','anotacoes_pessoais','atas_reuniao','referencias',
+        'referencias_cliente','campanhas','emails_equipe','checklist_execucoes','ausencias',
+        'observacoes_funcionarios','rfv_clientes','onboarding_processos','clientes_encerrados',
+        'stories_semanais','cadastros_clientes','editores_afinidade','log_automacoes'];
+      const backup = { geradoEm: new Date().toISOString(), geradoPor: usuarioAtual||'?', dados: {} };
+      for(const nome of colecoes){
+        try{
+          const snap = await getDocs(collection(db, nome));
+          backup.dados[nome] = [];
+          snap.forEach(d => backup.dados[nome].push({ _id: d.id, ...d.data() }));
+        }catch(e){ backup.dados[nome] = { erro: String(e?.message||e) }; }
+      }
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'backup-getstarted-' + new Date().toISOString().slice(0,10) + '.json';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      registrarLogAutomacao('backup_manual', '', 'Backup completo baixado por ' + (usuarioAtual||'?'));
+      mostrarToast('Backup baixado! Guarda no Drive da agência.');
+    }catch(e){
+      mostrarToast('Erro ao gerar backup: ' + e.message, 'erro');
+    }finally{
+      if(btn){ btn.disabled = false; btn.textContent = '💾 Baixar backup agora'; }
+    }
+  };
+
   async function renderGerenciaChris(){
     const cont = document.getElementById('gerenciaChris');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando cockpit...</div></div>';
@@ -7335,6 +7581,11 @@
         </div>
       </div>
       <div class="desc" style="text-align:center;margin-top:14px;opacity:.7;">Clica em qualquer card pra ver o detalhe. Números em tempo real também na <b>Central de Comando</b>, ao lado.</div>
+      <div class="card" style="margin-top:14px;">
+        <h2>💾 Backup completo</h2>
+        <div class="desc">Baixa um arquivo com TODOS os dados do sistema (demandas, vídeos, agendamentos, postagens, anotações, clientes, pagamentos...). Guarda no Drive da agência de tempos em tempos — é o seguro contra qualquer perda.</div>
+        <button class="btn secondary" style="margin-top:10px;width:auto;padding:10px 20px;" onclick="fazerBackupCompleto()" id="btnBackupCompleto">💾 Baixar backup agora</button>
+      </div>
     `;
   }
 

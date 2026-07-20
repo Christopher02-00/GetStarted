@@ -303,6 +303,13 @@
   const VIDEO_STATUS_LABEL = { aguardando_edicao:'Em edição', correcao:'Em ajuste', aguardando_aprovacao:'Em revisão interna', aguardando_cliente:'Esperando sua aprovação', aprovado:'Aprovado' };
   const VIDEO_STATUS_COR = { aguardando_edicao:'roteiro', correcao:'gravacao', aguardando_aprovacao:'edicao', aguardando_cliente:'gravacao', aprovado:'publicado' };
 
+  const POSTAGEM_STATUS_LABEL = { aguardando_legenda:'Preparando legenda', aguardando_agendamento:'Definindo a melhor data' };
+  let calendarioPubOffset = 0; // 0 = mês atual, -1 = mês anterior, +1 = próximo
+  window.navegarCalendarioPub = function(delta){
+    calendarioPubOffset += delta;
+    carregarVideos();
+  };
+
   async function carregarVideos(){
     const cont = document.getElementById('painelVideos');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
@@ -310,11 +317,35 @@
       getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
     ]);
     const meusVideos = []; videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido && v.status!=='aprovado') meusVideos.push(v); });
-    const minhasPostagens = []; postagensSnap.forEach(d => { const p=d.data(); if(p.cliente===clienteAtual.slug) minhasPostagens.push(p); });
-    const agendadas = minhasPostagens.filter(p=>p.status==='agendado').sort((a,b)=>(a.dataAgendada||'').localeCompare(b.dataAgendada||''));
+    const minhasPostagens = []; postagensSnap.forEach(d => { const p=d.data(); if(p.cliente===clienteAtual.slug) minhasPostagens.push({id:d.id, ...p}); });
     const aguardandoVoce = meusVideos.filter(v=>v.status==='aguardando_cliente');
 
-    let html = `<div class="card"><h2><svg class="ic"><use href="#i-activity"/></svg>Status dos Vídeos</h2><div class="sub" style="margin-bottom:0;">Direto da nossa produção — atualiza sozinho, sem ninguém precisar digitar nada aqui.</div></div>`;
+    // ===== MELHORIA 8B — Seu conteúdo em números =====
+    const hoje = new Date();
+    const mesAtualStr = hoje.toISOString().slice(0,7);
+    const publicadas = minhasPostagens.filter(p => p.status==='postado');
+    const publicadasEsteMes = publicadas.filter(p => (p.postadoEm||'').slice(0,7) === mesAtualStr);
+    const prontosAguardandoData = minhasPostagens.filter(p => p.status==='aguardando_legenda' || p.status==='aguardando_agendamento').length;
+    const emProducaoAgora = meusVideos.filter(v => ['aguardando_edicao','correcao','aguardando_aprovacao'].includes(v.status)).length;
+
+    let html = `<div class="card"><h2><svg class="ic"><use href="#i-activity"/></svg>Seu conteúdo em números</h2>
+      <div class="sub" style="margin-bottom:10px;">Direto da nossa produção — atualiza sozinho, sem ninguém precisar digitar nada aqui.</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+        <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;">${publicadasEsteMes.length}</div><div style="font-size:11px;color:var(--muted);">Publicados este mês</div>
+        </div>
+        <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;">${publicadas.length}</div><div style="font-size:11px;color:var(--muted);">Publicados no total</div>
+        </div>
+        <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;">${prontosAguardandoData}</div><div style="font-size:11px;color:var(--muted);">Prontos aguardando data</div>
+        </div>
+        <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+          <div style="font-size:22px;font-weight:800;">${emProducaoAgora}</div><div style="font-size:11px;color:var(--muted);">Em produção agora</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">O histórico de publicações passa a contar a partir da ativação desse recurso — conteúdos publicados antes disso não têm confirmação registrada.</div>
+    </div>`;
 
     if(aguardandoVoce.length){
       html += `<div class="card" style="border-color:var(--yellow);"><h2 style="font-size:14px;">Esperando sua aprovação</h2>` +
@@ -327,13 +358,90 @@
     `).join('') : '<div class="empty">Nenhum vídeo em produção agora.</div>';
     html += `</div>`;
 
-    html += `<div class="card"><h2 style="font-size:14px;">Próximas postagens agendadas</h2>`;
-    html += agendadas.length ? agendadas.map(p => `
-      <div class="item"><div class="nome">${esc(p.titulo||'Postagem')}</div><div class="meta">${p.dataAgendada ? new Date(p.dataAgendada).toLocaleDateString('pt-BR') : ''} ${p.horaAgendada||''}</div></div>
-    `).join('') : '<div class="empty">Nada agendado ainda.</div>';
+    // ===== MELHORIA 8A — Aprovados, em preparação pra publicação
+    // (absorve a antiga "Próximas postagens agendadas", sem duplicar) =====
+    const emPreparacao = minhasPostagens.filter(p => ['aguardando_legenda','aguardando_agendamento','agendado'].includes(p.status))
+      .sort((a,b) => (a.dataAgendada||'9999').localeCompare(b.dataAgendada||'9999'));
+    html += `<div class="card"><h2 style="font-size:14px;">Aprovados — em preparação pra publicação</h2>`;
+    html += emPreparacao.length ? emPreparacao.map(p => {
+      const rotulo = p.status==='agendado'
+        ? 'Agendado: ' + (p.dataAgendada?new Date(p.dataAgendada).toLocaleDateString('pt-BR'):'') + ' ' + (p.horaAgendada||'')
+        : (POSTAGEM_STATUS_LABEL[p.status]||p.status);
+      return `<div class="item"><div class="nome">${esc(p.titulo||'Postagem')}</div><span class="selo ${p.status==='agendado'?'gravacao':'roteiro'}">${rotulo}</span></div>`;
+    }).join('') : '<div class="empty">Nada em preparação agora.</div>';
+    html += `</div>`;
+
+    // ===== MELHORIA 8C — Calendário de Publicações =====
+    html += renderCalendarioPublicacoesHtml(minhasPostagens);
+
+    // ===== MELHORIA 8D — Últimos publicados =====
+    const ultimosPublicados = [...publicadas].sort((a,b) => (b.postadoEm||'').localeCompare(a.postadoEm||'')).slice(0,10);
+    html += `<div class="card"><h2 style="font-size:14px;">Últimos publicados</h2>`;
+    html += ultimosPublicados.length ? ultimosPublicados.map(p => `
+      <div class="item"><div class="nome">${esc(p.titulo||'Postagem')}</div><div class="meta">${p.postadoEm ? new Date(p.postadoEm).toLocaleDateString('pt-BR') : ''}</div></div>
+    `).join('') : '<div class="empty">Nenhuma publicação confirmada ainda.</div>';
     html += `</div>`;
 
     cont.innerHTML = html;
+  }
+
+  /* Calendário mensal simples em JS puro — bolinha amarela = agendado
+     naquele dia, bolinha verde = já postado. Navegação por mês. Cada
+     cliente só vê o próprio conteúdo (minhasPostagens já vem filtrado
+     por clienteAtual.slug em carregarVideos). */
+  function renderCalendarioPublicacoesHtml(minhasPostagens){
+    const base = new Date();
+    base.setMonth(base.getMonth() + calendarioPubOffset);
+    const ano = base.getFullYear(), mes = base.getMonth();
+    const nomeMes = base.toLocaleDateString('pt-BR', { month:'long', year:'numeric' });
+    const primeiroDiaSemana = new Date(ano, mes, 1).getDay();
+    const totalDias = new Date(ano, mes+1, 0).getDate();
+
+    const porDia = {};
+    minhasPostagens.forEach(p => {
+      if(p.status==='agendado' && p.dataAgendada){
+        const d = new Date(p.dataAgendada+'T00:00:00');
+        if(d.getFullYear()===ano && d.getMonth()===mes){
+          const dia = d.getDate();
+          porDia[dia] = porDia[dia] || []; porDia[dia].push({tipo:'agendado', titulo:p.titulo});
+        }
+      }
+      if(p.status==='postado'){
+        const dataRef = p.postadoEm || p.dataAgendada;
+        if(!dataRef) return;
+        const d = new Date(dataRef.length>10 ? dataRef : dataRef+'T00:00:00');
+        if(d.getFullYear()===ano && d.getMonth()===mes){
+          const dia = d.getDate();
+          porDia[dia] = porDia[dia] || []; porDia[dia].push({tipo:'postado', titulo:p.titulo});
+        }
+      }
+    });
+
+    let grade = '';
+    for(let i=0;i<primeiroDiaSemana;i++) grade += '<div></div>';
+    for(let dia=1; dia<=totalDias; dia++){
+      const eventos = porDia[dia] || [];
+      const bolinhas = eventos.map(e => `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${e.tipo==='postado'?'#2e9e4f':'var(--yellow)'};margin:1px;" title="${esc(e.titulo||'')}"></span>`).join('');
+      grade += `<div style="text-align:center;padding:6px 2px;border-radius:6px;${eventos.length?'background:var(--paper);':''}">
+        <div style="font-size:11px;">${dia}</div><div>${bolinhas}</div>
+      </div>`;
+    }
+
+    return `<div class="card">
+      <h2 style="font-size:14px;display:flex;justify-content:space-between;align-items:center;">
+        <span>📅 Calendário de Publicações</span>
+        <span>
+          <button class="btn secondary" style="padding:4px 10px;font-size:12px;" onclick="navegarCalendarioPub(-1)">‹</button>
+          <button class="btn secondary" style="padding:4px 10px;font-size:12px;" onclick="navegarCalendarioPub(1)">›</button>
+        </span>
+      </h2>
+      <div class="sub" style="text-transform:capitalize;margin-bottom:8px;">${nomeMes}</div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-size:11px;">${grade}</div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--yellow);margin-right:4px;"></span>Agendado
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2e9e4f;margin:0 4px 0 12px;"></span>Publicado
+      </div>
+    </div>`;
   }
 
   const IDEIA_STATUS_LABEL = { recebida:'Recebida', analise:'Em análise', aprovada:'Aprovada', adaptando:'Adaptando', gravando:'Gravando', publicada:'Publicada', naoUsada:'Não será utilizada' };

@@ -1115,6 +1115,12 @@
       ]
     },
     "Amanda": {
+      "Diário": [
+        { bloco: "Distribuição da Manhã", itens: [
+          { id:"a_d_1", texto:"Distribuir os vídeos gravados ontem/hoje pros editores certos", critico:true },
+          { id:"a_d_2", texto:"Conferir se algum editor está sobrecarregado antes de distribuir" }
+        ]}
+      ],
       "Semanal (Sexta)": [
         { bloco: "Revisão Geral", itens: [
           { id:"a_s_1", texto:"Revisar todos os pedidos dos clientes" },
@@ -1987,68 +1993,134 @@
     const snap = await getDocs(collection(db,'videos_producao'));
     const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
     const abertos = todos.filter(v => ['aguardando_edicao','correcao'].includes(v.status));
-    const concluidos = todos.filter(v => v.status === 'aprovado');
+    const semEditor = abertos.filter(v => !v.editorAtribuido);
+    const concluidosRecentes = todos.filter(v => v.status === 'aprovado' && v.clienteAprovouEm)
+      .sort((a,b) => new Date(b.clienteAprovouEm) - new Date(a.clienteAprovouEm)).slice(0, 15);
+    const concluidosTotal = todos.filter(v => v.status === 'aprovado').length;
 
     window.__filtroVideosGerencia = window.__filtroVideosGerencia || 'todos';
     const filtro = window.__filtroVideosGerencia;
     const hojeStr = new Date().toISOString().slice(0,10);
     const amanhaStr = new Date(Date.now()+86400000).toISOString().slice(0,10);
 
-    let abertosFiltrados = abertos;
-    if(filtro === 'hoje') abertosFiltrados = abertos.filter(v => v.data === hojeStr);
-    else if(filtro === 'amanha') abertosFiltrados = abertos.filter(v => v.prazoEntrega === amanhaStr);
-    else if(filtro === 'atrasados') abertosFiltrados = abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr);
-    else if(EDITORES_GERAL.includes(filtro)) abertosFiltrados = abertos.filter(v => v.editorAtribuido === filtro);
+    let html = '';
 
-    const qtdAtrasados = abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr).length;
+    // ===== SEÇÃO 1 — DISTRIBUIÇÃO PENDENTE, SEMPRE NO TOPO =====
+    // Essa é a tarefa diária da Amanda — nunca escondida embaixo de nada.
+    if(semEditor.length){
+      html += `<div class="card" style="border:2px solid var(--red);">
+        <h2>🆕 Sem editor — distribuir agora (${semEditor.length})</h2>
+        <div class="desc">Vídeos gravados esperando alguém decidir pra qual editor vão. Isso é rotina diária — o quanto antes, melhor.</div>
+      </div>`;
+      html += semEditor.map(v => `
+        <div class="item" style="border:2px solid var(--red);">
+          <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
+          ${v.editorSugerido ? '<div class="meta" style="margin-top:4px;">💡 Sugestão do filmmaker: <b>'+esc(v.editorSugerido)+'</b></div>' : ''}
+          <div style="margin-top:10px;">
+            <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${v.cliente}', this.value)" style="width:100%;">
+              <option value="">Escolher editor...</option>
+              ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}" ${e===v.editorSugerido?'selected':''}>${e}${e===v.editorSugerido?' (sugerido)':''}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `).join('');
+    }
 
-    let html = `<div class="painelResumo">`;
+    // ===== SEÇÃO 2 — CARDS-FILTRO, com afordance visível mesmo sem hover
+    // (celular não tem hover) — seta e "toque pra filtrar" sempre visíveis =====
+    html += `<div class="desc" style="margin:14px 0 6px;">👆 Toque num card pra filtrar a lista abaixo por aquilo especificamente:</div>`;
+    html += `<div class="painelResumo">`;
     EDITORES_GERAL.forEach(ed => {
       const dele = abertos.filter(v => v.editorAtribuido === ed);
-      html += `<div class="resumoCard clicavel ${filtro===ed?'yellow':''}" onclick="window.__filtroVideosGerencia='${ed}';renderGerenciaVideos();"><div class="num">${dele.length}</div><div class="lbl">${esc(ed)} · aberto <span class="videoCapacidade">(alvo ${EDITORES_CONFIG[ed].capacidade})</span></div></div>`;
+      html += `<div class="resumoCard clicavel ${filtro===ed?'yellow':''}" onclick="window.__filtroVideosGerencia='${ed}';renderGerenciaVideos();">
+        <div class="num">${dele.length}</div>
+        <div class="lbl">${esc(ed)} · aberto <span class="videoCapacidade">(alvo ${EDITORES_CONFIG[ed].capacidade})</span></div>
+        <div style="font-size:10px;color:var(--yellow);margin-top:4px;">Ver os dela →</div>
+      </div>`;
     });
-    html += `<div class="resumoCard green"><div class="num">${concluidos.length}</div><div class="lbl">Concluídos (histórico)</div></div></div>`;
+    html += `<div class="resumoCard clicavel green ${filtro==='concluidos'?'yellow':''}" onclick="window.__filtroVideosGerencia='concluidos';renderGerenciaVideos();">
+      <div class="num">${concluidosTotal}</div>
+      <div class="lbl">Concluídos (histórico)</div>
+      <div style="font-size:10px;color:var(--yellow);margin-top:4px;">Ver últimos 15 →</div>
+    </div></div>`;
 
     html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
       <button class="btn ${filtro==='todos'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='todos';renderGerenciaVideos();">Todos (${abertos.length})</button>
       <button class="btn ${filtro==='hoje'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='hoje';renderGerenciaVideos();">Gravados hoje</button>
       <button class="btn ${filtro==='amanha'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='amanha';renderGerenciaVideos();">Prazo amanhã</button>
-      <button class="btn ${filtro==='atrasados'?'red':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='atrasados';renderGerenciaVideos();">⚠️ Atrasados (${qtdAtrasados})</button>
-    </div>
+      <button class="btn ${filtro==='atrasados'?'red':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='atrasados';renderGerenciaVideos();">⚠️ Atrasados (${abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr).length})</button>
+    </div>`;
 
-    <div class="grupoFuncionario"><h3>🎬 Vídeos em aberto${filtro!=='todos' ? ' — filtrado' : ''} — reatribuir, definir prazo e prioridade</h3>`;
-    if(!abertosFiltrados.length) html += `<div class="empty">Nenhum vídeo aqui com esse filtro.</div>`;
-    abertosFiltrados.forEach(v => {
-      const prio = v.prioridade || 'amarelo';
-      html += `<div class="item">
-        <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
-          <span class="editorPill">🎞️ ${esc(v.editorAtribuido)}</span>
-          <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${v.cliente}', this.value)">
-            <option value="">Mudar pra...</option>
-            ${EDITORES_SELECIONAVEIS.filter(e=>e!==v.editorAtribuido).map(e=>`<option value="${e}">${e}</option>`).join('')}
-          </select>
-          ${v.status==='aprovado' ? '<span class="selo aprovada">Aprovado</span>' : v.status==='aguardando_aprovacao' ? '<span class="selo aguardando">Aguardando aprovação</span>' : v.status==='aguardando_cliente' ? '<span class="selo hoje">Aguardando cliente</span>' : v.status==='correcao' ? '<span class="selo atrasado">Precisa ajuste</span>' : '<span class="selo pendente">Em edição</span>'}
+    // ===== SEÇÃO 3 — LISTA, organizada de acordo com o filtro =====
+    if(filtro === 'concluidos'){
+      html += `<div class="grupoFuncionario"><h3>✅ Concluídos recentemente (últimos 15)</h3>`;
+      html += concluidosRecentes.length ? concluidosRecentes.map(v => `
+        <div class="item">
+          <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.clienteNome||'')}</div></div>
+          <div class="meta" style="margin-top:4px;">Editor: <b>${esc(v.editorAtribuido||'—')}</b> · Cliente aprovou em ${v.clienteAprovouEm ? new Date(v.clienteAprovouEm).toLocaleDateString('pt-BR') : '—'}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
-          <span class="meta" style="font-weight:700;">📅 Prazo:</span>
-          <span class="prioTag ${v.prazoEntrega ? (v.prazoEntrega<hojeStr ? 'vermelho' : v.prazoEntrega===hojeStr ? 'amarelo' : 'verde') : 'verde'}">${v.prazoEntrega && v.prazoEntrega<hojeStr ? '⚠️ ATRASADO — ' : ''}${v.prazoEntregaLabel || 'Não definido ainda'}</span>
-          <input type="date" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:5px 8px;border-radius:6px;font-size:11px;" value="${v.prazoEntrega||''}" onchange="definirPrazoVideoData('${v.id}', this.value)">
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
-          <span class="meta" style="font-weight:700;">Prioridade:</span>
-          <span class="prioTag ${prio}">${PRIO_LABEL[prio]}</span>
-          <select onchange="definirPrioridadeVideo('${v.id}', this.value)" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:5px 8px;border-radius:6px;font-size:11px;">
-            <option value="vermelho" ${prio==='vermelho'?'selected':''}>Urgente</option>
-            <option value="laranja" ${prio==='laranja'?'selected':''}>Alta</option>
-            <option value="amarelo" ${prio==='amarelo'?'selected':''}>Normal</option>
-            <option value="verde" ${prio==='verde'?'selected':''}>Sem pressa</option>
-          </select>
-        </div>
-        <button class="btn red" style="width:auto;margin-top:10px;padding:5px 12px;font-size:11px;" onclick="excluirVideoGerencia('${v.id}','${esc(v.titulo)}')">✕ Excluir esse vídeo (foi enviado errado)</button>
-      </div>`;
-    });
-    html += `</div>`;
+      `).join('') : '<div class="empty">Nenhum concluído recente.</div>';
+      html += `</div>`;
+    } else {
+      let abertosFiltrados = abertos;
+      if(filtro === 'hoje') abertosFiltrados = abertos.filter(v => v.data === hojeStr);
+      else if(filtro === 'amanha') abertosFiltrados = abertos.filter(v => v.prazoEntrega === amanhaStr);
+      else if(filtro === 'atrasados') abertosFiltrados = abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr);
+      else if(EDITORES_GERAL.includes(filtro)) abertosFiltrados = abertos.filter(v => v.editorAtribuido === filtro);
+      abertosFiltrados = abertosFiltrados.filter(v => v.editorAtribuido); // os sem editor já apareceram na Seção 1
+
+      function itemVideoHtml(v){
+        const prio = v.prioridade || 'amarelo';
+        return `<div class="item">
+          <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+            <span class="editorPill">🎞️ ${esc(v.editorAtribuido)}</span>
+            <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${v.cliente}', this.value)">
+              <option value="">Mudar pra...</option>
+              ${EDITORES_SELECIONAVEIS.filter(e=>e!==v.editorAtribuido).map(e=>`<option value="${e}">${e}</option>`).join('')}
+            </select>
+            ${v.status==='aprovado' ? '<span class="selo aprovada">Aprovado</span>' : v.status==='aguardando_aprovacao' ? '<span class="selo aguardando">Aguardando aprovação</span>' : v.status==='aguardando_cliente' ? '<span class="selo hoje">Aguardando cliente</span>' : v.status==='correcao' ? '<span class="selo atrasado">Precisa ajuste</span>' : '<span class="selo pendente">Em edição</span>'}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+            <span class="meta" style="font-weight:700;">📅 Prazo:</span>
+            <span class="prioTag ${v.prazoEntrega ? (v.prazoEntrega<hojeStr ? 'vermelho' : v.prazoEntrega===hojeStr ? 'amarelo' : 'verde') : 'verde'}">${v.prazoEntrega && v.prazoEntrega<hojeStr ? '⚠️ ATRASADO — ' : ''}${v.prazoEntregaLabel || 'Não definido ainda'}</span>
+            <input type="date" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:5px 8px;border-radius:6px;font-size:11px;" value="${v.prazoEntrega||''}" onchange="definirPrazoVideoData('${v.id}', this.value)">
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+            <span class="meta" style="font-weight:700;">Prioridade:</span>
+            <span class="prioTag ${prio}">${PRIO_LABEL[prio]}</span>
+            <select onchange="definirPrioridadeVideo('${v.id}', this.value)" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:5px 8px;border-radius:6px;font-size:11px;">
+              <option value="vermelho" ${prio==='vermelho'?'selected':''}>Urgente</option>
+              <option value="laranja" ${prio==='laranja'?'selected':''}>Alta</option>
+              <option value="amarelo" ${prio==='amarelo'?'selected':''}>Normal</option>
+              <option value="verde" ${prio==='verde'?'selected':''}>Sem pressa</option>
+            </select>
+          </div>
+          <button class="btn red" style="width:auto;margin-top:10px;padding:5px 12px;font-size:11px;" onclick="excluirVideoGerencia('${v.id}','${esc(v.titulo)}')">✕ Excluir esse vídeo (foi enviado errado)</button>
+        </div>`;
+      }
+
+      if(filtro === 'todos'){
+        // Agrupado por editor — é isso que estava "tudo largado, um embaixo
+        // do outro, sem organização nenhuma". Cada editor vira uma seção
+        // própria, com cabeçalho e contagem — só quando não tem filtro
+        // aplicado (com filtro, já está naturalmente estreito).
+        html += `<div class="grupoFuncionario"><h3>🎬 Vídeos em aberto — por editor</h3>`;
+        if(!abertosFiltrados.length) html += `<div class="empty">Nada em aberto com editor definido agora.</div>`;
+        EDITORES_GERAL.forEach(ed => {
+          const dele = abertosFiltrados.filter(v => v.editorAtribuido === ed);
+          if(!dele.length) return;
+          html += `<div style="margin-top:14px;margin-bottom:4px;"><b style="font-size:12.5px;color:var(--yellow);">🎞️ ${esc(ed)} (${dele.length})</b></div>`;
+          html += dele.map(itemVideoHtml).join('');
+        });
+        html += `</div>`;
+      } else {
+        html += `<div class="grupoFuncionario"><h3>🎬 Vídeos em aberto — filtrado</h3>`;
+        html += abertosFiltrados.length ? abertosFiltrados.map(itemVideoHtml).join('') : `<div class="empty">Nenhum vídeo aqui com esse filtro.</div>`;
+        html += `</div>`;
+      }
+    }
+
     cont.innerHTML = html;
   }
 
@@ -2750,8 +2822,8 @@
 
         <div class="field"><label>Outros vídeos / Bastidores (um por linha, não precisam estar no calendário)</label><textarea id="extras_${a.id}" placeholder="Ex: Bastidores She.joias&#10;Bastidores Hitech"></textarea></div>
 
-        <div class="field"><label>Pra qual editor esses vídeos devem ir?</label><select id="editorEscolhido_${a.id}">
-          <option value="">Automático (o sistema escolhe o editor com mais espaço)</option>
+        <div class="field"><label>Sugestão de editor (opcional — a Amanda confirma de manhã)</label><select id="editorEscolhido_${a.id}">
+          <option value="">Sem sugestão — deixa a Amanda decidir</option>
           ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}">${e}</option>`).join('')}
         </select></div>
 
@@ -4604,15 +4676,18 @@
     }
 
     if(qtdRealizada > 0){
-      const editorManual = document.getElementById('editorEscolhido_'+agId).value;
-      const editor = editorManual || await decidirEditor(clienteSlug);
+      // Não atribui editor automaticamente mais — isso virou responsabilidade
+      // exclusiva da Amanda, todo dia de manhã (checklist diário dela).
+      // O filmmaker pode sugerir um editor (campo editorEscolhido), mas isso
+      // fica só como sugestão (editorSugerido) — não confirma sozinho.
+      const editorSugeridoPeloFilmmaker = document.getElementById('editorEscolhido_'+agId).value;
       const hoje = new Date().toISOString().slice(0,10);
       for(const v of todosVideosParaCriar){
         await addDoc(collection(db,'videos_producao'), {
           cliente: clienteSlug, clienteNome, data: hoje,
           titulo: clienteNome + ' — ' + v.nome,
           calendarItemIdx: v.calendarItemIdx, calendarClienteSlug: v.calendarItemIdx !== null ? clienteSlug : null,
-          observacao: '', editorSugerido: editor, editorAtribuido: editor,
+          observacao: '', editorSugerido: editorSugeridoPeloFilmmaker, editorAtribuido: '',
           status: 'aguardando_edicao', linkFinalizado: '', criadoEm: serverTimestamp()
         });
       }
@@ -7083,6 +7158,31 @@
      atrasado. Agora avisa também no próprio dia do prazo — antes de virar
      atraso — pra pessoa conseguir se organizar. Manda 1 vez por dia (usa
      a data de hoje como controle, não repete se o motor rodar de novo). */
+  /* ===== DISTRIBUIÇÃO DIÁRIA DE VÍDEOS — RESPONSABILIDADE ÚNICA DA AMANDA =====
+     Antes o sistema distribuía sozinho, na hora, sem ninguém decidir. Agora
+     os vídeos nascem sem editor (registrarGravacaoRealizada) e ficam
+     esperando a Amanda, todo dia de manhã. Essa verificação cria 1 demanda
+     por dia (não repete se já criou hoje) só se houver vídeo pendente. */
+  async function verificarDistribuicaoDiariaAmanda(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const marcador = await getDoc(doc(db,'sistema', 'distribuicao_diaria_amanda'));
+    if(marcador.exists() && marcador.data().ultimaData === hojeStr) return; // já criou hoje
+
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const semEditor = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && !v.editorAtribuido && v.status==='aguardando_edicao') semEditor.push(v); });
+    if(!semEditor.length) return;
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '🎬 Distribuir ' + semEditor.length + ' vídeo(s) pros editores',
+      descricao: 'Vídeos gravados esperando distribuição: ' + semEditor.map(v=>v.titulo).join(', ') + '. Faz isso em Gerência → Distribuição de Vídeos.',
+      origem: 'sistema', clienteNome: '', destinatario: 'Amanda',
+      prazoData: hojeStr, prazoHora: '11:00',
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+    await setDoc(doc(db,'sistema', 'distribuicao_diaria_amanda'), { ultimaData: hojeStr });
+    registrarLogAutomacao('distribuicao_diaria_amanda', '', semEditor.length + ' vídeo(s) esperando distribuição');
+  }
+
   async function verificarLembretesPrazoHoje(){
     const hojeStr = new Date().toISOString().slice(0,10);
     const snap = await getDocs(collection(db,'demandas'));
@@ -7158,6 +7258,7 @@
       { nome: 'gravacoesFantasma', fn: verificarGravacoesFantasma },
       { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
+      { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
       { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
     ];
 

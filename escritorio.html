@@ -5772,6 +5772,21 @@
     await carregarAusencias();
   }
 
+  /* ===== VARREDURA URGENTE — BLINDAGEM DO LOGIN =====
+     Bug real encontrado: essa função fazia uma cadeia de ~9 chamadas ao
+     banco, uma atrás da outra, SEM nenhuma proteção contra falha. Com a
+     instabilidade de rede (erros QUIC), qualquer uma dessas chamadas podia
+     falhar e travar TUDO que vinha depois — motor nunca iniciava, listeners
+     nunca conectavam, Meu Dia nunca renderizava, badges ficavam desatualizados
+     — de forma imprevisível, dependendo de onde a rede falhasse naquele
+     instante. Isso explica sintomas "aleatórios" como o botão de Nova
+     Demanda sumindo. Cada etapa agora roda isolada — uma falhar não impede
+     as outras de rodar. */
+  async function etapaSegura(nome, fn){
+    try{ await fn(); }
+    catch(e){ console.error('mudarUsuarioGlobal: falha isolada em "' + nome + '" — resto do login continua normal:', e); }
+  }
+
   window.mudarUsuarioGlobal = async function(){
     usuarioAtual = document.getElementById('euSouGlobal').value;
     ultimoRegistroAtividade = 0;
@@ -5786,24 +5801,34 @@
       return;
     }
     if(botaoNovaDemanda) botaoNovaDemanda.style.display = 'flex';
-    await carregarTodasDemandas();
-    await corrigirDemandasAvisoAntigas(); // roda na hora, sem esperar o motor — resolve os registros antigos já
-    await limparAlertasVideoFantasma(); // roda na hora — limpa alertas de vídeo já entregue/corrigido/excluído
-    const qtdConciliadas = await conciliarPostagensOrfas(); // roda na hora — recupera vídeos já aprovados sem postagem
-    if(qtdConciliadas > 0) mostrarToast(qtdConciliadas + ' postagem(ns) recuperada(s) de vídeos já aprovados — caíram na fila de legenda.');
-    await semearEmailsEquipeIniciais(); // roda na hora — cadastra os e-mails que o Chris passou, sem sobrescrever nada manual
-    iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
-    iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui (assinado antes de renderizar Meu Dia)
-    pedirPermissaoNotificacao(); // Fase 5 — pede permissão de notificação do navegador
-    await carregarTodasDemandas(); // recarrega já com a correção aplicada
-    renderAvisoInicio();
-    renderMeuDia();
-    renderCalendarioVisualHome();
-    renderMinhasDemandasAtribuidas();
-    atualizarBadgeMinhas();
-    atualizarBadgePostagens();
-    renderSetorAtalhos();
-    if(usuarioAtual === 'Cecília') verificarPostagensEsquecidas().then(()=>{ atualizarBadgePostagens(); });
+
+    await etapaSegura('carregar demandas', carregarTodasDemandas);
+    await etapaSegura('corrigir avisos antigos', corrigirDemandasAvisoAntigas);
+    await etapaSegura('limpar alertas fantasma', limparAlertasVideoFantasma);
+    await etapaSegura('conciliar postagens órfãs', async () => {
+      const qtdConciliadas = await conciliarPostagensOrfas();
+      if(qtdConciliadas > 0) mostrarToast(qtdConciliadas + ' postagem(ns) recuperada(s) de vídeos já aprovados — caíram na fila de legenda.');
+    });
+    await etapaSegura('semear e-mails da equipe', semearEmailsEquipeIniciais);
+
+    // Essas duas não são async/aguardadas — mas também protegidas, porque
+    // se o próprio disparo inicial dentro delas falhar, não pode quebrar
+    // o resto do login que vem depois.
+    try{ iniciarMotorAutomacoes(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao iniciar motor:', e); } // Fase 1
+    try{ iniciarListenersTempoReal(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao iniciar listeners:', e); } // Fase 2
+    try{ pedirPermissaoNotificacao(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao pedir permissão de notificação:', e); } // Fase 5
+
+    await etapaSegura('recarregar demandas', carregarTodasDemandas);
+    await etapaSegura('aviso início', async () => renderAvisoInicio());
+    await etapaSegura('meu dia', async () => renderMeuDia());
+    await etapaSegura('calendário visual', async () => renderCalendarioVisualHome());
+    await etapaSegura('minhas demandas atribuídas', async () => renderMinhasDemandasAtribuidas());
+    await etapaSegura('badge minhas', async () => atualizarBadgeMinhas());
+    await etapaSegura('badge postagens', async () => atualizarBadgePostagens());
+    await etapaSegura('atalhos do setor', async () => renderSetorAtalhos());
+    if(usuarioAtual === 'Cecília'){
+      await etapaSegura('postagens esquecidas (Cecília)', async () => { await verificarPostagensEsquecidas(); atualizarBadgePostagens(); });
+    }
   };
 
   // Cada pessoa so ve os itens do menu que fazem parte do trabalho dela.

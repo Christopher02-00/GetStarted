@@ -603,6 +603,11 @@
             <div class="field"><label>Vídeos planejados</label><input type="number" id="agQtdPlanejada" min="1" value="2"></div>
           </div>
           <div class="field"><label>Local</label><input type="text" id="agLocal" placeholder="Endereço ou referência do local"></div>
+          <div class="field"><label>Qual filmmaker vai gravar?</label><select id="agFilmmaker">
+            <option value="">A definir</option>
+            <option value="Nathan">Nathan</option>
+            <option value="Luís">Luís</option>
+          </select></div>
           <button class="btn" onclick="agendarGravacao()" id="btnAgendar">Agendar</button>
         </div>
         <div id="listaAgendamentos"></div>
@@ -612,10 +617,15 @@
 
       <div id="agendamentoCalendarioMes" style="display:none;">
         <div class="card">
-          <div class="row2">
+          <div class="row3">
             <div class="field"><label>Mês</label><input type="month" id="calMesFiltro" onchange="renderCalendarioMesFilmmaker()"></div>
             <div class="field"><label>Ver de</label><select id="calFiltroTodos" onchange="renderCalendarioMesFilmmaker()">
               <option value="todos">Todos os clientes</option>
+            </select></div>
+            <div class="field" id="calFiltroFilmmakerBox"><label>Filmmaker</label><select id="calFiltroFilmmaker" onchange="renderCalendarioMesFilmmaker()">
+              <option value="todos">Todos</option>
+              <option value="Nathan">Nathan</option>
+              <option value="Luís">Luís</option>
             </select></div>
           </div>
         </div>
@@ -2511,6 +2521,9 @@
       const hoje = new Date();
       document.getElementById('calMesFiltro').value = hoje.toISOString().slice(0,7);
       popularFiltroClientesCalendario();
+      const boxFiltroFilmmaker = document.getElementById('calFiltroFilmmakerBox');
+      const ehFilmmaker = ['Nathan','Luís'].includes(usuarioAtual);
+      if(boxFiltroFilmmaker) boxFiltroFilmmaker.style.display = ehFilmmaker ? 'none' : 'block'; // trava automática, sem escolha, pro filmmaker
       renderCalendarioMesFilmmaker();
     }
     if(qual==='capsula'){ popularClientesAgendamento(); renderListaCapsulas(); }
@@ -2600,6 +2613,7 @@
     const data = document.getElementById('agData').value;
     const hora = document.getElementById('agHora').value;
     const local = document.getElementById('agLocal').value.trim();
+    const filmmaker = document.getElementById('agFilmmaker').value;
     const tipo = document.getElementById('agTipo').value;
     const qtdPlanejada = parseInt(document.getElementById('agQtdPlanejada').value) || 1;
     if(!clienteSlug || !data){ mostrarToast('Preenche cliente e data.', 'erro'); return; }
@@ -2613,7 +2627,7 @@
     btn.disabled = true; btn.textContent = 'Agendando...';
     try {
       const agRef = await addDoc(collection(db,'agendamentos'), {
-        cliente: clienteSlug, clienteNome, data, hora, local, tipo,
+        cliente: clienteSlug, clienteNome, data, hora, local, tipo, filmmaker,
         qtdVideosPlanejados: qtdPlanejada, qtdVideosRealizados: 0,
         status: 'agendado', precisaAprovacao, aprovado: !precisaAprovacao,
         criadoEm: serverTimestamp()
@@ -2647,6 +2661,13 @@
       <div class="item">
         <div class="top"><div class="nome">${esc(a.clienteNome)}</div><div class="meta">${a.data} · ${a.hora}</div></div>
         <div class="meta">${esc(a.local || 'local não informado')} · ${a.tipo==='avulso'?'Avulso':'Fixo'} · ${a.qtdVideosPlanejados} vídeo(s) planejado(s)</div>
+        <div class="row2" style="margin-top:8px;">
+          <label style="font-size:11px;color:var(--muted);">Filmmaker: <select onchange="trocarFilmmakerAgendamento('${a.id}', this.value)" style="margin-top:4px;">
+            <option value="" ${!a.filmmaker?'selected':''}>A definir</option>
+            <option value="Nathan" ${a.filmmaker==='Nathan'?'selected':''}>Nathan</option>
+            <option value="Luís" ${a.filmmaker==='Luís'?'selected':''}>Luís</option>
+          </select></label>
+        </div>
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
           ${a.precisaAprovacao ? '<span class="selo atrasado">Precisa aprovação Chris</span>' : ''}
           <span class="selo pendente">${esc(a.status)}</span>
@@ -2655,6 +2676,11 @@
       </div>
     `).join('');
   }
+
+  window.trocarFilmmakerAgendamento = async function(id, filmmaker){
+    await updateDoc(doc(db,'agendamentos', id), { filmmaker });
+    mostrarToast(filmmaker ? 'Gravação atribuída a ' + filmmaker + '!' : 'Filmmaker removido — fica "a definir".');
+  };
 
   window.cancelarAgendamento = async function(id){
     await updateDoc(doc(db,'agendamentos', id), { status: 'cancelado' });
@@ -2665,7 +2691,11 @@
   async function renderMinhaAgendaFilmmaker(){
     const cont = document.getElementById('agendamentoMinhaAgenda');
     const snap = await getDocs(collection(db,'agendamentos'));
-    const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
+    let todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
+    // Nathan e Luís só veem a própria agenda — Cecília/Chris veem tudo (panorama)
+    if(['Nathan','Luís'].includes(usuarioAtual)){
+      todos = todos.filter(a => a.filmmaker === usuarioAtual);
+    }
     const aguardandoAprovacao = todos.filter(a => a.status === 'agendado' && a.aprovado === false);
     const pendentes = todos.filter(a => a.status === 'agendado' && a.aprovado !== false).sort((a,b)=>a.data.localeCompare(b.data));
 
@@ -2725,10 +2755,15 @@
   async function renderCalendarioMesFilmmaker(){
     const mesFiltro = document.getElementById('calMesFiltro').value || new Date().toISOString().slice(0,7);
     const clienteFiltro = document.getElementById('calFiltroTodos')?.value || 'todos';
+    // Nathan e Luís só enxergam a própria agenda (panorama de todos os
+    // clientes, mas só das gravações deles) — Cecília/Chris veem geral.
+    const ehFilmmaker = ['Nathan','Luís'].includes(usuarioAtual);
+    const filmmakerFiltro = ehFilmmaker ? usuarioAtual : (document.getElementById('calFiltroFilmmaker')?.value || 'todos');
     const snap = await getDocs(collection(db,'agendamentos'));
     const todos = []; snap.forEach(d => todos.push(d.data()));
     let doMes = todos.filter(a => a.data && a.data.startsWith(mesFiltro) && a.status !== 'cancelado');
     if(clienteFiltro !== 'todos') doMes = doMes.filter(a => a.cliente === clienteFiltro);
+    if(filmmakerFiltro !== 'todos') doMes = doMes.filter(a => a.filmmaker === filmmakerFiltro);
 
     const [ano, mes] = mesFiltro.split('-').map(Number);
     const primeiroDia = new Date(ano, mes-1, 1);
@@ -2743,7 +2778,7 @@
       html += `<div class="calCell"><div class="cdnum">${d}</div>`;
       its.forEach(it => {
         const pendCls = it.aprovado === false ? 'pendente' : '';
-        html += `<div class="calChip ${pendCls}">${it.hora} · ${esc(it.clienteNome)}${it.aprovado===false?' ⏳':''}</div>`;
+        html += `<div class="calChip ${pendCls}">${it.hora} · ${esc(it.clienteNome)}${it.filmmaker ? ' · '+esc(it.filmmaker) : ' · a definir'}${it.aprovado===false?' ⏳':''}</div>`;
       });
       html += `</div>`;
     }

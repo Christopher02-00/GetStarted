@@ -5924,6 +5924,54 @@
     carregarMinhasDemandas();
   };
 
+  /* ===== SINCRONIZAÇÃO DE STATUS COM O PORTAL DO CLIENTE =====
+     Bug real encontrado: demanda enviada pelo cliente criava um registro
+     interno + um "espelho" pro cliente ver — mas o espelho nunca era
+     atualizado depois. Pro cliente, a demanda ficava "Pendente" pra
+     sempre, mesmo já resolvida há meses. Agora sincroniza nos 3 momentos
+     em que o status realmente muda. */
+  async function sincronizarStatusDemandaCliente(demandaId, statusCliente){
+    try{
+      const demSnap = await getDoc(doc(db,'demandas', demandaId));
+      if(!demSnap.exists()) return;
+      const demandaClienteId = demSnap.data().demandaClienteId;
+      if(!demandaClienteId) return; // demanda antiga, criada antes do vínculo existir
+      await updateDoc(doc(db,'demandas_cliente', demandaClienteId), { status: statusCliente });
+    }catch(e){ console.error('Falha ao sincronizar status com o portal do cliente:', e); }
+  }
+
+  /* ===== MIGRAÇÃO CONSERVADORA — LIGAR DEMANDAS ANTIGAS DE CLIENTE =====
+     Demandas criadas antes do vínculo demandaClienteId existir não têm como
+     sincronizar. Aqui, tenta ligar por correspondência EXATA (mesmo cliente
+     + mesmo texto) só quando existe exatamente 1 candidato de cada lado —
+     em caso de ambiguidade, não faz nada (prefere deixar sem sincronizar a
+     arriscar ligar errado). */
+  async function vincularDemandasClienteAntigas(){
+    const [demSnap, demClienteSnap] = await Promise.all([
+      getDocs(query(collection(db,'demandas'), where('origem','==','cliente'))),
+      getDocs(collection(db,'demandas_cliente'))
+    ]);
+    const semVinculo = []; demSnap.forEach(d => { const x=d.data(); if(!x.demandaClienteId) semVinculo.push({id:d.id, ...x}); });
+    const espelhos = []; demClienteSnap.forEach(d => espelhos.push({id:d.id, ...d.data()}));
+    const espelhosJaUsados = new Set();
+    demSnap.forEach(d => { if(d.data().demandaClienteId) espelhosJaUsados.add(d.data().demandaClienteId); });
+
+    let vinculadas = 0;
+    for(const d of semVinculo){
+      const textoOriginal = (d.descricao||'').trim();
+      const candidatos = espelhos.filter(e => !espelhosJaUsados.has(e.id) && e.clienteNome === d.clienteNome && (e.texto||'').trim() === textoOriginal);
+      if(candidatos.length === 1){
+        await updateDoc(doc(db,'demandas', d.id), { demandaClienteId: candidatos[0].id });
+        espelhosJaUsados.add(candidatos[0].id);
+        // já sincroniza o status atual também, pra pegar as que já estavam resolvidas
+        const statusCliente = d.status === 'aprovada' ? 'concluida' : d.status === 'concluida_aguardando_aprovacao' ? 'andamento' : 'pendente';
+        await updateDoc(doc(db,'demandas_cliente', candidatos[0].id), { status: statusCliente });
+        vinculadas++;
+      }
+    }
+    return vinculadas;
+  }
+
   window.enviarProva = async function(id){
     const texto = document.getElementById('provaTextoInput').value.trim();
     const link = document.getElementById('provaLinkInput').value.trim();
@@ -5942,6 +5990,7 @@
         dadosExtras.prazoHora = campoHoraReal.value;
       }
       await updateDoc(doc(db,'demandas', id), dadosExtras);
+      sincronizarStatusDemandaCliente(id, 'andamento').catch(()=>{});
       mostrarToast('Enviado! Aguardando aprovação da gerência.');
       fecharModal();
       carregarMinhasDemandas();
@@ -6772,7 +6821,8 @@
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
       { nome: 'gravacoesFantasma', fn: verificarGravacoesFantasma },
       { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
-      { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas }
+      { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
+      { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
     ];
 
     for(const v of verificacoes){
@@ -8295,6 +8345,7 @@
     const d = todasDemandas.find(x=>x.id===id);
     await updateDoc(doc(db,'demandas', id), { status: 'aprovada', aprovadoEm: new Date().toISOString() });
     registrarHistorico('demandas', id, 'Aprovada');
+    sincronizarStatusDemandaCliente(id, 'concluida').catch(()=>{});
     if(d?.agendamentoId){
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado: true });
       mostrarToast('Aprovado — gravação já liberada pro filmmaker!');
@@ -8307,6 +8358,7 @@
     const d = todasDemandas.find(x=>x.id===id);
     await updateDoc(doc(db,'demandas', id), { status: 'pendente', provaTexto: '', provaImagemUrl: '', rejeitadoEm: new Date().toISOString() });
     registrarHistorico('demandas', id, 'Rejeitada — pedido pra refazer');
+    sincronizarStatusDemandaCliente(id, 'pendente').catch(()=>{});
     if(d?.agendamentoId){
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { status: 'cancelado' });
       mostrarToast('Rejeitado — a gravação extra foi cancelada.');

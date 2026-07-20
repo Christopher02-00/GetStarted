@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -121,6 +120,7 @@
   .resumoCard.cockpit .num{font-size:26px;}
   .resumoCard.cockpit .lbl{font-size:11px;text-transform:none;letter-spacing:0;margin-top:4px;line-height:1.4;color:var(--muted);}
   .resumoCard.cockpit.alerta{border-color:var(--red);background:var(--redbg);}
+  .resumoCard.cockpit.cartaoEsteiraAtivo{border-color:var(--yellow);box-shadow:0 0 0 1px var(--yellow) inset;}
 
   .grupoFuncionario{margin-bottom:20px;}
   .grupoFuncionario h3{font-size:13px;font-weight:800;margin-bottom:8px;}
@@ -644,10 +644,11 @@
     <div class="view" id="view-postagens">
       <h1>Ciclo de <span class="y">Postagens</span></h1>
       <div class="sub">Vídeo aprovado → legenda (Gabi) → agendamento (Cecília) → controle final.</div>
+      <div id="esteiraConteudoBox"></div>
       <div class="subtabs">
         <div class="subtab active" id="subtabEscreverLegenda" onclick="setPostagensSub('legenda', this)">✍️ Escrever Legenda</div>
         <div class="subtab" id="subtabLegendasCalendario" onclick="setPostagensSub('legendasCalendario', this)">📖 Legendas do Calendário (por cliente)</div>
-        <div class="subtab" id="subtabAgendarPostagem" onclick="setPostagensSub('agendar', this)">📅 Agendar Postagem</div>
+        <div class="subtab" id="subtabAgendarPostagem" onclick="setPostagensSub('agendar', this)">📲 Central de Agendamento de Postagens</div>
         <div class="subtab" onclick="setPostagensSub('todas', this)">📋 Todas as Postagens</div>
         <div class="subtab" onclick="setPostagensSub('statusCompleto', this)">🔍 Status Completo (do início ao fim)</div>
       </div>
@@ -877,6 +878,7 @@
             <div class="subtab" onclick="setGerenciaSub('painelTV', this)">Painel de TV</div>
             <div class="subtab" onclick="setGerenciaSub('digest', this)">📱 Digest WhatsApp</div>
             <div class="subtab" onclick="setGerenciaSub('emailsEquipe', this)">📧 E-mails da Equipe</div>
+            <div class="subtab" onclick="setGerenciaSub('configAprovacao', this)">⚙️ Aprovação por Cliente</div>
             <div class="labelInterno">Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
             <div class="subtab" onclick="setGerenciaSub('aprovarVideos', this)">Aprovar Vídeos</div>
@@ -926,6 +928,7 @@
             <div id="gerenciaChris" style="display:none;"></div>
             <div id="gerenciaDigest" style="display:none;"></div>
             <div id="gerenciaEmailsEquipe" style="display:none;"></div>
+            <div id="gerenciaConfigAprovacao" style="display:none;"></div>
           </div>
         </div>
       </div>
@@ -1670,12 +1673,18 @@
     }
 
     if(usuarioAtual !== 'Chris'){
-      html += `<div class="card" style="border:2px solid var(--yellow);"><h2>👤 Aguardando confirmação do CLIENTE</h2><div class="desc">Aprovado internamente — só falta confirmar que o cliente aprovou de verdade. Enquanto isso não for marcado, o vídeo NÃO segue pra legenda nem postagem.</div></div>`;
+      html += `<div class="card" style="border:2px solid var(--yellow);"><h2>👤 Aguardando confirmação do CLIENTE</h2><div class="desc">Aprovado internamente — só falta confirmar que o cliente aprovou de verdade. Enquanto isso não for marcado, o vídeo NÃO segue pra legenda nem postagem.</div>
+        ${aguardandoCliente.length > 1 ? '<button class="btn" style="margin-top:10px;" onclick="confirmarClienteAprovouLote()">✓✓ Cliente aprovou — em lote</button>' : ''}
+      </div>`;
       if(!aguardandoCliente.length){
         html += '<div class="empty">Nenhum vídeo nessa fila agora.</div>';
       } else {
         aguardandoCliente.forEach(v => {
           html += `<div class="item" style="${v.enviadoParaCliente?'opacity:.65;border-left:3px solid var(--yellow2);':''}">
+          <label style="display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;">
+            <input type="checkbox" class="checkClienteAprovouLote" data-id="${v.id}">
+            <span style="font-size:11px;color:var(--muted);">Selecionar pra confirmação em lote</span>
+          </label>
           <div class="top"><div class="nome">${v.enviadoParaCliente?'✉️ ':''}${esc(v.titulo)}</div><div class="meta">Aprovado por ${esc(v.aprovadoPor)}</div></div>
           <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
           <label style="display:flex;align-items:center;gap:7px;margin-top:10px;background:var(--deep);border-radius:7px;padding:8px 10px;cursor:pointer;">
@@ -1684,6 +1693,7 @@
           </label>
           <div class="btnrow" style="margin-top:10px;">
             <button class="btn secondary" onclick="desfazerAprovacaoInterna('${v.id}')">↩ Desfazer aprovação</button>
+            <button class="btn secondary" onclick="cobrarClienteWhatsApp('${v.id}', ${JSON.stringify(v.titulo||'')}, '${v.cliente||''}')">📲 Cobrar no WhatsApp</button>
             <button class="btn" onclick="marcarClienteAprovouVideo('${v.id}')">✓ Cliente aprovou — liberar</button>
           </div>
         </div>`;
@@ -1772,7 +1782,16 @@
     }
     await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', aprovadoInternoEm: new Date().toISOString(), aprovadoPor: usuarioAtual, clienteAprovou: false });
     registrarHistorico('videos_producao', id, 'Aprovado internamente');
-    mostrarToast('Aprovado por ' + usuarioAtual + '! Agora só falta a Amanda confirmar que o CLIENTE aprovou, pra seguir pra postagem.');
+    // Melhoria 1 — modo automático: aprovação interna já libera o cliente,
+    // sem esperar confirmação nenhuma (cliente sem config = nada muda aqui)
+    const vSnap = await getDoc(doc(db,'videos_producao', id));
+    const config = vSnap.exists() ? await obterConfigCliente(vSnap.data().cliente) : null;
+    if(config && config.modoAprovacaoCliente === 'automatica'){
+      await confirmarAprovacaoClienteCore(id, 'sistema (aprovação automática do cliente)');
+      mostrarToast('Aprovado por ' + usuarioAtual + '! Cliente é modo automático — já foi direto pra fila de legenda.');
+    } else {
+      mostrarToast('Aprovado por ' + usuarioAtual + '! Agora só falta a Amanda confirmar que o CLIENTE aprovou, pra seguir pra postagem.');
+    }
     renderAprovacaoVideos();
   };
 
@@ -1790,32 +1809,108 @@
     for(const id of ids){
       await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', aprovadoInternoEm: new Date().toISOString(), aprovadoPor: usuarioAtual, clienteAprovou: false });
       registrarHistorico('videos_producao', id, 'Aprovado internamente (em lote)');
+      const vSnap = await getDoc(doc(db,'videos_producao', id));
+      const config = vSnap.exists() ? await obterConfigCliente(vSnap.data().cliente) : null;
+      if(config && config.modoAprovacaoCliente === 'automatica'){
+        await confirmarAprovacaoClienteCore(id, 'sistema (aprovação automática do cliente)');
+      }
     }
     mostrarToast(ids.length + ' vídeo(s) aprovado(s) de uma vez!');
     renderAprovacaoVideos();
   };
+
+  /* ===== CONFIG DE APROVAÇÃO POR CLIENTE (Melhoria 1) =====
+     Sem doc em 'clientes_config' = modo 'manual' (comportamento de sempre,
+     zero mudança pra quem não configurar nada). */
+  async function obterConfigCliente(slug){
+    try{
+      const snap = await getDoc(doc(db,'clientes_config', slug));
+      if(snap.exists()) return { modoAprovacaoCliente: 'manual', prazoTacitaHorasUteis: 24, whatsappCobranca: '', ...snap.data() };
+    }catch(e){ console.error('Falha ao ler config do cliente '+slug+':', e); }
+    return { modoAprovacaoCliente: 'manual', prazoTacitaHorasUteis: 24, whatsappCobranca: '' };
+  }
+
+  /* ===== NÚCLEO DA APROVAÇÃO DO CLIENTE (Melhoria 1) =====
+     Usado por: clique manual (Chris/Amanda), modo automático (na aprovação
+     interna), modo tácita (motor, sem objeção em X horas úteis), e
+     confirmação em lote. Sempre o mesmo resultado: vídeo aprovado, postagem
+     criada, demanda de legenda pra Gabrielle na hora (Melhoria 2) — nunca
+     mais assimetria entre o que a Cecília recebe e o que a Gabi recebe. */
+  async function confirmarAprovacaoClienteCore(videoId, confirmadoPor){
+    const videoSnap = await getDoc(doc(db,'videos_producao', videoId));
+    if(!videoSnap.exists()) return null;
+    const v = videoSnap.data();
+    await updateDoc(doc(db,'videos_producao', videoId), { status:'aprovado', clienteAprovou: true, clienteAprovouEm: new Date().toISOString(), clienteAprovouPor: confirmadoPor });
+    registrarHistorico('videos_producao', videoId, 'Cliente confirmou aprovação — liberado pra postagem', 'Confirmado por: ' + confirmadoPor);
+
+    const postagemRef = await addDoc(collection(db,'postagens'), {
+      videoId, cliente: v.cliente, clienteNome: v.clienteNome, titulo: v.titulo,
+      linkVideo: v.linkFinalizado, legenda: '', legendaPor: '', legendaEm: '',
+      dataAgendada: '', horaAgendada: '', agendadoPor: '', agendadoEm: '',
+      aprovadoPor: v.aprovadoPor, aprovadoEm: v.aprovadoInternoEm,
+      status: 'aguardando_legenda', demandaLegendaCriada: true, criadoEm: serverTimestamp()
+    });
+
+    // Melhoria 2 — demanda de legenda NA HORA pra Gabrielle (antes só a
+    // rede de segurança criava isso, até 1 dia depois)
+    const agora = new Date();
+    const antesDas15h = agora.getHours() < 15;
+    let prazoLegenda = antesDas15h ? new Date() : proximoDiaUtilApartirDe(new Date(Date.now()+86400000));
+    await addDoc(collection(db,'demandas'), {
+      titulo: '✍️ Escrever legenda — ' + (v.clienteNome||'') + ': ' + (v.titulo||''),
+      descricao: 'Vídeo aprovado pelo cliente, esperando legenda pra seguir pro agendamento. Link: ' + (v.linkFinalizado||''),
+      origem: 'sistema', clienteNome: v.clienteNome || '', destinatario: 'Gabrielle', postagemId: postagemRef.id,
+      prazoData: prazoLegenda.toISOString().slice(0,10), prazoHora: antesDas15h ? '18:00' : '12:00',
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+
+    return postagemRef.id;
+  }
 
   window.marcarClienteAprovouVideo = async function(id){
     if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
       mostrarToast('Só o Chris ou a Amanda podem confirmar isso.', 'erro');
       return;
     }
-    const videoSnap = await getDoc(doc(db,'videos_producao', id));
-    const v = videoSnap.data();
-    await updateDoc(doc(db,'videos_producao', id), { status:'aprovado', clienteAprovou: true, clienteAprovouEm: new Date().toISOString(), clienteAprovouPor: usuarioAtual });
-    registrarHistorico('videos_producao', id, 'Cliente confirmou aprovação — liberado pra postagem');
-    await addDoc(collection(db,'postagens'), {
-      videoId: id, cliente: v.cliente, clienteNome: v.clienteNome, titulo: v.titulo,
-      linkVideo: v.linkFinalizado, legenda: '', legendaPor: '', legendaEm: '',
-      dataAgendada: '', horaAgendada: '', agendadoPor: '', agendadoEm: '',
-      aprovadoPor: v.aprovadoPor, aprovadoEm: v.aprovadoInternoEm,
-      status: 'aguardando_legenda', criadoEm: serverTimestamp()
-    });
+    await confirmarAprovacaoClienteCore(id, usuarioAtual);
     mostrarToast('Cliente aprovou! Vídeo liberado — já caiu na fila de legenda da Gabi.');
     renderAprovacaoVideos();
   };
 
-  
+  /* ===== MELHORIA 4 — CONFIRMAÇÃO EM LOTE =====
+     Marca vários vídeos "aguardando_cliente" como aprovados pelo cliente
+     de uma vez, com um toast só no final — mesmo padrão da Fase 8. */
+  window.confirmarClienteAprovouLote = async function(){
+    if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
+      mostrarToast('Só o Chris ou a Amanda podem confirmar isso.', 'erro');
+      return;
+    }
+    const checkboxes = document.querySelectorAll('.checkClienteAprovouLote:checked');
+    if(!checkboxes.length){ mostrarToast('Marca pelo menos um vídeo antes.', 'erro'); return; }
+    const ids = Array.from(checkboxes).map(c => c.dataset.id);
+    for(const id of ids){ await confirmarAprovacaoClienteCore(id, usuarioAtual); }
+    mostrarToast(ids.length + ' vídeo(s) confirmado(s) de uma vez!');
+    renderAprovacaoVideos();
+  };
+
+  /* ===== MELHORIA 4 — COBRANÇA NO WHATSAPP COM 1 CLIQUE ===== */
+  window.cobrarClienteWhatsApp = async function(id, titulo, clienteSlug){
+    const msg = 'Oi! O vídeo "' + titulo + '" está aprovado internamente e pronto — só falta o seu ok pra gente agendar a publicação. Pode confirmar? 🙌';
+    const config = await obterConfigCliente(clienteSlug);
+    if(config.whatsappCobranca){
+      const numeroLimpo = config.whatsappCobranca.replace(/\D/g,'');
+      window.open('https://wa.me/' + numeroLimpo + '?text=' + encodeURIComponent(msg), '_blank');
+    } else {
+      try{
+        await navigator.clipboard.writeText(msg);
+        mostrarToast('Mensagem copiada — cola no grupo do cliente.');
+      }catch(e){
+        mostrarToast('Não consegui copiar automático. Mensagem: ' + msg, 'erro');
+      }
+    }
+  };
+
+
   async function renderGerenciaVideos(){
     const cont = document.getElementById('gerenciaVideos');
     const snap = await getDocs(collection(db,'videos_producao'));
@@ -2927,6 +3022,7 @@
     const legenda = document.getElementById('legenda_'+id).value.trim();
     if(!legenda){ mostrarToast('Escreve a legenda antes de salvar.', 'erro'); return; }
     await updateDoc(doc(db,'postagens', id), { legenda, legendaPor: usuarioAtual||'Gabrielle', legendaEm: new Date().toISOString(), status: 'aguardando_agendamento' });
+    darBaixaDemandaLegenda(id).catch(e => console.error('Melhoria 2: falha ao dar baixa na demanda de legenda', e));
     criarDemandaAgendamentoAutomatica(id).catch(e => console.error('Fase 6: falha ao criar demanda automática de agendamento', e));
     mostrarToast('Legenda salva! Já caiu na fila da Cecília.');
     renderLegendasPendentes();
@@ -2938,7 +3034,12 @@
       getDocs(collection(db,'postagens')),
       getDocs(collection(db,'agendamentos'))
     ]);
-    const pendentes = []; postSnap.forEach(d => { if(d.data().status==='aguardando_agendamento') pendentes.push({id:d.id, ...d.data()}); });
+    const pendentes = []; const agendadasParaConfirmar = [];
+    postSnap.forEach(d => {
+      const p = d.data();
+      if(p.status==='aguardando_agendamento') pendentes.push({id:d.id, ...p});
+      if(p.status==='agendado') agendadasParaConfirmar.push({id:d.id, ...p});
+    });
 
     const hoje = new Date().toISOString().slice(0,10);
     let gravacoesHoje = 0;
@@ -2950,6 +3051,20 @@
       <div class="resumoCard ${pendentes.length ? 'yellow' : ''}"><div class="num">${pendentes.length}</div><div class="lbl">Postagens pra agendar</div></div>
       <div class="resumoCard ${atrasadasCount ? 'red' : ''}"><div class="num">${atrasadasCount}</div><div class="lbl">Atrasadas — priorize</div></div>
     </div>`;
+
+    // Melhoria 6A — postagens já agendadas com data igual/passada, esperando
+    // 1 clique confirmando que realmente foram ao ar
+    const jaPassaramOuHoje = agendadasParaConfirmar.filter(p => p.dataAgendada && p.dataAgendada <= hoje);
+    if(jaPassaramOuHoje.length){
+      jaPassaramOuHoje.sort((a,b) => (a.dataAgendada||'').localeCompare(b.dataAgendada||''));
+      resumo += `<div class="card" style="border:2px solid var(--yellow);"><h2>✔ Confirmar publicação</h2><div class="desc">Essas já passaram da data agendada — confirma que foram ao ar de verdade.</div></div>`;
+      resumo += jaPassaramOuHoje.map(p => `
+        <div class="item">
+          <div class="top"><div class="nome">${esc(p.clienteNome)} — ${esc(p.titulo)}</div><div class="meta">${formatarDataBR(p.dataAgendada)} ${p.horaAgendada||''}</div></div>
+          <button class="btn" style="margin-top:8px;width:auto;padding:8px 16px;" onclick="confirmarPostagemPublicada('${p.id}')">✔ Confirmar que foi publicado</button>
+        </div>
+      `).join('');
+    }
 
     if(!pendentes.length){ cont.innerHTML = resumo + '<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'; return; }
 
@@ -2971,6 +3086,35 @@
     `;
     }).join('');
   }
+
+  /* ===== MELHORIA 6A — FECHAR A CADEIA: STATUS "POSTADO" =====
+     1 clique, sem modal. Fecha o elo final que antes ficava solto em
+     "agendado" pra sempre — a única confirmação existente era reativa
+     (demanda criada DEPOIS da data passar sem ninguém confirmar). */
+  window.confirmarPostagemPublicada = async function(id){
+    await updateDoc(doc(db,'postagens', id), { status: 'postado', postadoEm: new Date().toISOString(), postadoPor: usuarioAtual||'?' });
+    registrarHistorico('postagens', id, 'Publicação confirmada por ' + (usuarioAtual||'?'));
+
+    // Dá baixa na demanda de confirmação de publicação, se a rede de
+    // segurança já tiver criado uma (data passou sem ninguém confirmar)
+    try{
+      const q = query(collection(db,'demandas'), where('postagemId','==', id), where('status','==','pendente'));
+      const snap = await getDocs(q);
+      for(const d of snap.docs){
+        const dem = d.data();
+        if(!(dem.titulo||'').startsWith('📲 Confirmar publicação')) continue;
+        await updateDoc(doc(db,'demandas', d.id), {
+          status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(),
+          notaConclusao: 'Concluída automaticamente — publicação confirmada.'
+        });
+        registrarHistorico('demandas', d.id, 'Concluída automaticamente — publicação confirmada');
+      }
+    }catch(e){ console.error('Falha ao dar baixa na demanda de confirmação de publicação:', e); }
+
+    mostrarToast('Publicação confirmada! ✔');
+    if(document.getElementById('subtabAgendarPostagem')?.classList.contains('active')) renderAgendarPostagens();
+    else renderTodasPostagens();
+  };
 
   window.salvarAgendamentoPostagem = async function(id){
     const data = document.getElementById('dataPost_'+id).value;
@@ -3005,6 +3149,87 @@
     }
     renderAgendarPostagens();
   };
+
+  /* ===== MELHORIA 3 — ESTEIRA DE CONTEÚDO =====
+     Painel-resumo sempre visível no topo da tela Postagens, com 6 cartões
+     de contagem em tempo real — usa só os caches da Fase 2, zero busca
+     extra. Mata o "praticamente perdido" de saber quantos vídeos cada
+     cliente tem e onde eles estão. */
+  function renderEsteiraConteudo(){
+    const box = document.getElementById('esteiraConteudoBox');
+    if(!box) return;
+
+    const videos = cacheVideosProducao.filter(v => !v.excluido);
+    const postagens = cachePostagens;
+    const hojeMais7 = new Date(); hojeMais7.setDate(hojeMais7.getDate()+7);
+    const hojeStr = new Date().toISOString().slice(0,10);
+
+    const emEdicao = videos.filter(v => ['aguardando_edicao','correcao'].includes(v.status));
+    const aguardandoAprovacaoInterna = videos.filter(v => v.status === 'aguardando_aprovacao');
+    const aguardandoCliente = videos.filter(v => v.status === 'aguardando_cliente');
+    const aguardandoLegenda = postagens.filter(p => p.status === 'aguardando_legenda');
+    const prontoAgendar = postagens.filter(p => p.status === 'aguardando_agendamento');
+    const agendadoProx7 = postagens.filter(p => p.status === 'agendado' && p.dataAgendada && p.dataAgendada >= hojeStr && p.dataAgendada <= hojeMais7.toISOString().slice(0,10));
+
+    function idadeMaisAntigo(lista, campoData){
+      if(!lista.length) return '';
+      let maisAntigo = null;
+      lista.forEach(item => {
+        const base = campoData==='criadoEm' ? (item.criadoEm?.seconds ? item.criadoEm.seconds*1000 : null) : (item[campoData] ? new Date(item[campoData]).getTime() : null);
+        if(base && (!maisAntigo || base < maisAntigo)) maisAntigo = base;
+      });
+      if(!maisAntigo) return '';
+      const dias = Math.floor((Date.now()-maisAntigo)/86400000);
+      return dias > 0 ? ' · mais antigo: ' + dias + 'd' : '';
+    }
+
+    const cartoes = [
+      { label:'Em edição/correção', qtd: emEdicao.length, idade: idadeMaisAntigo(emEdicao,'criadoEm'), ativo:false },
+      { label:'Aguardando aprovação interna', qtd: aguardandoAprovacaoInterna.length, idade: idadeMaisAntigo(aguardandoAprovacaoInterna,'criadoEm'), ativo:false },
+      { label:'Aguardando cliente', qtd: aguardandoCliente.length, idade: idadeMaisAntigo(aguardandoCliente,'aprovadoInternoEm'), ativo:false },
+      { label:'Aguardando legenda', qtd: aguardandoLegenda.length, idade: idadeMaisAntigo(aguardandoLegenda,'criadoEm'), ativo:false },
+      { label:'Pronto pra agendar', qtd: prontoAgendar.length, idade: idadeMaisAntigo(prontoAgendar,'legendaEm'), ativo:true },
+      { label:'Agendado (próx. 7 dias)', qtd: agendadoProx7.length, idade:'', ativo:false }
+    ];
+
+    let html = '<div class="painelResumo">' + cartoes.map(c => `
+      <div class="resumoCard cockpit ${c.ativo && c.qtd>0 ? 'cartaoEsteiraAtivo' : ''}">
+        <div class="num">${c.qtd}</div>
+        <div class="lbl">${c.label}${c.idade}</div>
+      </div>`).join('') + '</div>';
+
+    // Linha por cliente — junta tudo que está "em produção" (não postado/agendado ainda)
+    const porCliente = {};
+    videos.forEach(v => {
+      if(!['aguardando_edicao','correcao','aguardando_aprovacao','aguardando_cliente'].includes(v.status)) return;
+      const nome = v.clienteNome || '—';
+      porCliente[nome] = porCliente[nome] || { emEdicao:0, aguardando:0 };
+      if(['aguardando_edicao','correcao'].includes(v.status)) porCliente[nome].emEdicao++;
+      else porCliente[nome].aguardando++;
+    });
+    postagens.forEach(p => {
+      if(p.status !== 'aguardando_agendamento') return;
+      const nome = p.clienteNome || '—';
+      porCliente[nome] = porCliente[nome] || { emEdicao:0, aguardando:0, paraAgendar:0 };
+      porCliente[nome].paraAgendar = (porCliente[nome].paraAgendar||0) + 1;
+    });
+    const nomesClientes = Object.keys(porCliente).sort();
+    if(nomesClientes.length){
+      html += `<div class="card" style="margin-top:6px;padding:12px 14px;">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Por cliente, em produção agora:</div>
+        <div style="font-size:12px;line-height:1.8;">${nomesClientes.map(nome => {
+          const c = porCliente[nome];
+          const partes = [];
+          if(c.emEdicao) partes.push(c.emEdicao + ' em edição');
+          if(c.aguardando) partes.push(c.aguardando + ' aguardando aprovação/cliente');
+          if(c.paraAgendar) partes.push(c.paraAgendar + ' pra agendar');
+          return '<b>'+esc(nome)+'</b>: ' + partes.join(' · ');
+        }).join('<br>')}</div>
+      </div>`;
+    }
+
+    box.innerHTML = html;
+  }
 
   async function renderStatusCompletoPipeline(){
     const cont = document.getElementById('postagensConteudo');
@@ -3076,7 +3301,8 @@
     todas.sort((a,b) => (a.dataAgendada||'9999').localeCompare(b.dataAgendada||'9999'));
     if(!todas.length){ cont.innerHTML = '<div class="empty">Nenhuma postagem no ciclo ainda.</div>'; return; }
     cont.innerHTML = todas.map(p => {
-      const selo = p.status==='agendado' ? '<span class="selo aprovada">Agendado: '+p.dataAgendada+' '+p.horaAgendada+'</span>' :
+      const selo = p.status==='postado' ? '<span class="selo aprovado">✔ Publicado em '+formatarDataBR(p.postadoEm?p.postadoEm.slice(0,10):'')+'</span>' :
+                   p.status==='agendado' ? '<span class="selo aprovada">Agendado: '+p.dataAgendada+' '+p.horaAgendada+'</span>' :
                    p.status==='aguardando_agendamento' ? '<span class="selo hoje">Aguardando agendamento</span>' :
                    '<span class="selo pendente">Aguardando legenda</span>';
       return `<div class="item">
@@ -3084,6 +3310,7 @@
         <div style="margin-top:6px;">${selo}</div>
         <div class="meta" style="margin-top:4px;">✅ Aprovado por <b>${esc(p.aprovadoPor||'—')}</b></div>
         ${p.legenda ? '<div class="meta" style="margin-top:6px;">"'+esc(p.legenda)+'"</div>' : ''}
+        ${p.status==='agendado' ? '<button class="btn secondary" style="margin-top:8px;width:auto;padding:8px 16px;" onclick="confirmarPostagemPublicada(\''+p.id+'\')">✔ Confirmar que foi publicado</button>' : ''}
       </div>`;
     }).join('');
   }
@@ -4742,6 +4969,7 @@
     }
     if(nome === 'funcoesFixas') abrirFuncoesFixas();
     if(nome === 'postagens'){
+      renderEsteiraConteudo();
       const ehGabi = ['Chris','Gabrielle'].includes(usuarioAtual);
       const ehCecilia = ['Chris','Amanda','Cecília'].includes(usuarioAtual);
       document.getElementById('subtabEscreverLegenda').style.display = ehGabi ? 'block' : 'none';
@@ -4853,6 +5081,7 @@
     document.getElementById('gerenciaChris').style.display = qual==='chris' ? 'block' : 'none';
     document.getElementById('gerenciaDigest').style.display = qual==='digest' ? 'block' : 'none';
     document.getElementById('gerenciaEmailsEquipe').style.display = qual==='emailsEquipe' ? 'block' : 'none';
+    document.getElementById('gerenciaConfigAprovacao').style.display = qual==='configAprovacao' ? 'block' : 'none';
     if(qual==='painelTV'){
       const iframe = document.getElementById('iframePainelTVInterno');
       if(!iframe.dataset.carregado){
@@ -4886,6 +5115,7 @@
     if(qual==='funcionarioMes') renderFuncionarioMesPainel();
     if(qual==='digest') renderDigest();
     if(qual==='emailsEquipe') renderEmailsEquipe();
+    if(qual==='configAprovacao') renderConfigAprovacao();
   };
 
   let todasAusencias = [];
@@ -5072,6 +5302,8 @@
     await carregarTodasDemandas();
     await corrigirDemandasAvisoAntigas(); // roda na hora, sem esperar o motor — resolve os registros antigos já
     await limparAlertasVideoFantasma(); // roda na hora — limpa alertas de vídeo já entregue/corrigido/excluído
+    const qtdConciliadas = await conciliarPostagensOrfas(); // roda na hora — recupera vídeos já aprovados sem postagem
+    if(qtdConciliadas > 0) mostrarToast(qtdConciliadas + ' postagem(ns) recuperada(s) de vídeos já aprovados — caíram na fila de legenda.');
     await semearEmailsEquipeIniciais(); // roda na hora — cadastra os e-mails que o Chris passou, sem sobrescrever nada manual
     iniciarMotorAutomacoes(); // Fase 1 — passa a rodar sozinho a partir daqui, sem precisar abrir a Gerência
     iniciarListenersTempoReal(); // Fase 2 — caches ao vivo a partir daqui (assinado antes de renderizar Meu Dia)
@@ -5605,7 +5837,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -5919,7 +6151,7 @@
      direto no WhatsApp. Usa só os caches já carregados pelas Fases 2/3 —
      não faz nenhuma busca nova no banco. */
 
-  function gerarDigestGerencial(){
+  async function gerarDigestGerencial(){
     const hoje = new Date();
     const hojeStr = hoje.toISOString().slice(0,10);
     const amanhaStr = dataParaStr(addDias(hoje, 1));
@@ -5937,6 +6169,8 @@
 
     const gravacoesAmanha = cacheAgendamentos.filter(a => !a.excluido && a.status==='agendado' && a.aprovado!==false && a.data===amanhaStr);
 
+    const perdasDigest = await calcularRadarPerdas();
+
     let txt = `📊 *Resumo Get Started — ${formatarDataBR(hojeStr)}*\n\n`;
     txt += `*Demandas atrasadas:* ${atrasadas.length}\n`;
     if(atrasadas.length){
@@ -5945,6 +6179,7 @@
       txt += `  Nenhuma — time em dia! 🎉\n`;
     }
     txt += `\n*Vídeos:*\n  Em edição: ${emEdicao}\n  Em correção: ${emCorrecao}\n  Aguardando aprovação interna: ${aguardApr}\n  Aguardando aprovação do cliente: ${aguardCliente}\n`;
+    txt += `\n*Radar de Perdas:* ${perdasDigest.length ? perdasDigest.length + ' item(ns) precisando de atenção (ver Gerência)' : '0 — funil limpo 🎉'}\n`;
     txt += `\n*Gravações amanhã (${formatarDataBR(amanhaStr)}):* ${gravacoesAmanha.length}\n`;
     gravacoesAmanha.forEach(a => { txt += `  • ${a.clienteNome||'?'} às ${a.hora||'?'}\n`; });
     return txt;
@@ -5968,9 +6203,9 @@
     return txt;
   }
 
-  window.gerarDigestNaTela = function(tipo){
+  window.gerarDigestNaTela = async function(tipo){
     const nomeSel = document.getElementById('digestFuncionarioSel');
-    const texto = tipo === 'gerencial' ? gerarDigestGerencial() : gerarDigestFuncionario(nomeSel.value);
+    const texto = tipo === 'gerencial' ? await gerarDigestGerencial() : gerarDigestFuncionario(nomeSel.value);
     document.getElementById('digestTextoArea').value = texto;
   };
 
@@ -6077,6 +6312,58 @@
     if(!email || !email.includes('@')){ mostrarToast('Escreve um e-mail válido.', 'erro'); return; }
     await setDoc(doc(db,'emails_equipe', nome), { nome, email, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() });
     mostrarToast('E-mail de ' + nome + ' salvo!');
+  };
+
+  /* ===== MELHORIA 1 — TELA DE CONFIGURAÇÃO DE APROVAÇÃO POR CLIENTE ===== */
+  async function renderConfigAprovacao(){
+    const cont = document.getElementById('gerenciaConfigAprovacao');
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+    const snap = await getDocs(collection(db,'clientes_config'));
+    const configs = {};
+    snap.forEach(d => { configs[d.id] = d.data(); });
+
+    let html = `<div class="card">
+      <h2>⚙️ Aprovação por Cliente</h2>
+      <div class="desc" style="margin-bottom:6px;">Define como cada cliente aprova conteúdo antes de virar postagem. <b>Padrão de todo cliente é Manual. Só mude quando o contrato/relacionamento permitir.</b></div>
+      <div class="desc" style="opacity:.8;">
+        <b>Manual</b> — espera clique de Chris/Amanda confirmando o cliente. <b>Tácita</b> — se ninguém registrar objeção em X horas úteis, confirma sozinho. <b>Automática</b> — aprovação interna já libera direto, sem esperar o cliente.
+      </div>
+    </div>`;
+
+    CLIENTES_LISTA.forEach(c => {
+      const cfg = configs[c.slug] || { modoAprovacaoCliente:'manual', prazoTacitaHorasUteis:24, whatsappCobranca:'' };
+      html += `<div class="item">
+        <div class="top"><div class="nome">${esc(c.nome)}</div></div>
+        <div class="row2" style="margin-top:8px;">
+          <select id="modoAprov_${c.slug}" onchange="document.getElementById('prazoTacitaBox_${c.slug}').style.display = this.value==='tacita' ? 'block' : 'none';">
+            <option value="manual" ${cfg.modoAprovacaoCliente==='manual'?'selected':''}>Manual</option>
+            <option value="tacita" ${cfg.modoAprovacaoCliente==='tacita'?'selected':''}>Tácita</option>
+            <option value="automatica" ${cfg.modoAprovacaoCliente==='automatica'?'selected':''}>Automática</option>
+          </select>
+        </div>
+        <div id="prazoTacitaBox_${c.slug}" style="display:${cfg.modoAprovacaoCliente==='tacita'?'block':'none'};margin-top:8px;">
+          <label style="font-size:11px;color:var(--muted);">Prazo tácito (horas úteis)</label>
+          <input type="number" id="prazoTacita_${c.slug}" value="${cfg.prazoTacitaHorasUteis||24}" min="1" style="width:100%;">
+        </div>
+        <div style="margin-top:8px;">
+          <label style="font-size:11px;color:var(--muted);">WhatsApp de cobrança (opcional — com DDI+DDD, só números)</label>
+          <input type="text" id="whatsappCobranca_${c.slug}" value="${esc(cfg.whatsappCobranca||'')}" placeholder="5541999999999">
+        </div>
+        <button class="btn secondary" style="margin-top:8px;width:auto;padding:8px 16px;" onclick="salvarConfigAprovacao('${c.slug}')">Salvar</button>
+      </div>`;
+    });
+    cont.innerHTML = html;
+  }
+
+  window.salvarConfigAprovacao = async function(slug){
+    const modoAprovacaoCliente = document.getElementById('modoAprov_'+slug).value;
+    const prazoTacitaHorasUteis = parseInt(document.getElementById('prazoTacita_'+slug).value) || 24;
+    const whatsappCobranca = document.getElementById('whatsappCobranca_'+slug).value.trim();
+    await setDoc(doc(db,'clientes_config', slug), {
+      modoAprovacaoCliente, prazoTacitaHorasUteis, whatsappCobranca,
+      atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp()
+    }, { merge: true });
+    mostrarToast('Configuração salva!');
   };
 
 
@@ -6332,6 +6619,7 @@
       { nome: 'sementeEmailsEquipe', fn: semearEmailsEquipeIniciais },
       { nome: 'correcaoAvisosAntigos', fn: corrigirDemandasAvisoAntigas },
       { nome: 'limpezaAlertasFantasma', fn: limparAlertasVideoFantasma },
+      { nome: 'conciliacaoPostagensOrfas', fn: conciliarPostagensOrfas },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
@@ -6340,7 +6628,8 @@
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
       { nome: 'gravacoesFantasma', fn: verificarGravacoesFantasma },
-      { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira }
+      { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
+      { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas }
     ];
 
     for(const v of verificacoes){
@@ -6464,6 +6753,9 @@
     if(colecao === 'demandas' && viewAtiva === 'minhasDemandasAtribuidas'){
       renderMinhasDemandasAtribuidas();
     }
+    if(viewAtiva === 'postagens' && ['videos_producao','postagens'].includes(colecao)){
+      renderEsteiraConteudo();
+    }
     if(viewAtiva === 'inicio' && ['demandas','videos_producao','postagens','agendamentos'].includes(colecao)){
       renderMeuDia();
     }
@@ -6511,11 +6803,33 @@
     const q = query(collection(db,'demandas'), where('postagemId','==', postagemId), where('status','==','pendente'));
     const snap = await getDocs(q);
     for(const d of snap.docs){
+      const dem = d.data();
+      // A Melhoria 2 usa o mesmo campo postagemId pra demanda de legenda
+      // (Gabrielle) — não fechar essa aqui por engano, só a de agendamento.
+      if(dem.destinatario === 'Gabrielle' || (dem.titulo||'').startsWith('✍️ Escrever legenda')) continue;
       await updateDoc(doc(db,'demandas', d.id), {
         status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
         notaConclusao: 'Concluída automaticamente pelo sistema — postagem foi agendada.'
       });
       registrarHistorico('demandas', d.id, 'Concluída automaticamente — postagem foi agendada');
+    }
+  }
+
+  /* ===== MELHORIA 2 — BAIXA DA DEMANDA DE LEGENDA =====
+     Fecha só a demanda da Gabrielle (destinatario==='Gabrielle' e título
+     começando com o prefixo da legenda) — nunca a de agendamento da
+     Cecília, mesmo as duas compartilhando o campo postagemId. */
+  async function darBaixaDemandaLegenda(postagemId){
+    const q = query(collection(db,'demandas'), where('postagemId','==', postagemId), where('status','==','pendente'));
+    const snap = await getDocs(q);
+    for(const d of snap.docs){
+      const dem = d.data();
+      if(dem.destinatario !== 'Gabrielle' || !(dem.titulo||'').startsWith('✍️ Escrever legenda')) continue;
+      await updateDoc(doc(db,'demandas', d.id), {
+        status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
+        notaConclusao: 'Concluída automaticamente pelo sistema — legenda foi escrita.'
+      });
+      registrarHistorico('demandas', d.id, 'Concluída automaticamente — legenda escrita');
     }
   }
 
@@ -6711,6 +7025,73 @@
       }
     }
   }
+
+  /* ===== CORREÇÃO 0 — CONCILIADOR DE POSTAGENS ÓRFÃS =====
+     Princípio: nenhum vídeo cliente-aprovado pode existir sem postagem —
+     nunca, por nenhum caminho. Existiam vídeos aprovados antes da Fase 6
+     existir, sem postagem correspondente — invisíveis pra Gabrielle e
+     Cecília pra sempre. Esta verificação é permanente e idempotente: repara
+     qualquer órfão de qualquer época, sempre que rodar. */
+  async function conciliarPostagensOrfas(){
+    const postSnap = await getDocs(collection(db,'postagens'));
+    const videoIdsComPostagem = new Set();
+    postSnap.forEach(d => { const p = d.data(); if(p.videoId) videoIdsComPostagem.add(p.videoId); });
+
+    const videoSnap = await getDocs(collection(db,'videos_producao'));
+    let conciliadas = 0;
+    for(const docSnap of videoSnap.docs){
+      const v = docSnap.data();
+      if(v.excluido) continue;
+      if(v.status !== 'aprovado' && v.clienteAprovou !== true) continue;
+      if(videoIdsComPostagem.has(docSnap.id)) continue;
+
+      const postagemRef = await addDoc(collection(db,'postagens'), {
+        videoId: docSnap.id, cliente: v.cliente, clienteNome: v.clienteNome, titulo: v.titulo,
+        linkVideo: v.linkFinalizado, legenda: '', legendaPor: '', legendaEm: '',
+        dataAgendada: '', horaAgendada: '', agendadoPor: '', agendadoEm: '',
+        aprovadoPor: v.aprovadoPor || '—', aprovadoEm: v.aprovadoInternoEm || v.clienteAprovouEm || '',
+        status: 'aguardando_legenda', demandaLegendaCriada: true,
+        conciliadaRetroativamente: true, criadoEm: serverTimestamp()
+      });
+      registrarHistorico('videos_producao', docSnap.id, 'Postagem criada retroativamente pelo conciliador — vídeo estava aprovado sem postagem');
+      registrarLogAutomacao('postagem_orfa_conciliada', docSnap.id, v.titulo || '');
+
+      // Mesma demanda de legenda da Melhoria 2, pra Gabrielle não perder essas também
+      const agoraLeg = new Date();
+      const antesDas15h = agoraLeg.getHours() < 15;
+      let prazoLegenda = antesDas15h ? new Date() : proximoDiaUtilApartirDe(new Date(Date.now()+86400000));
+      await addDoc(collection(db,'demandas'), {
+        titulo: '✍️ Escrever legenda — ' + (v.clienteNome||'') + ': ' + (v.titulo||''),
+        descricao: 'Vídeo aprovado pelo cliente (recuperado pelo conciliador), esperando legenda. Link: ' + (v.linkFinalizado||''),
+        origem: 'sistema', clienteNome: v.clienteNome || '', destinatario: 'Gabrielle', postagemId: postagemRef.id,
+        prazoData: prazoLegenda.toISOString().slice(0,10), prazoHora: antesDas15h ? '18:00' : '12:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+      conciliadas++;
+    }
+    return conciliadas;
+  }
+
+  /* ===== MELHORIA 1 — APROVAÇÃO TÁCITA AUTOMÁTICA =====
+     Cliente configurado como 'tacita': se ninguém registrar objeção em X
+     horas úteis (padrão 24h) depois da aprovação interna, o sistema confirma
+     sozinho — "sem objeção do cliente" é a regra combinada com esse cliente. */
+  async function confirmarAprovacoesTacitas(){
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const agoraT = new Date();
+    for(const docSnap of snap.docs){
+      const v = docSnap.data();
+      if(v.excluido || v.status !== 'aguardando_cliente' || !v.aprovadoInternoEm) continue;
+      const config = await obterConfigCliente(v.cliente);
+      if(config.modoAprovacaoCliente !== 'tacita') continue;
+      const prazo = config.prazoTacitaHorasUteis || 24;
+      if(horasUteisDesde(new Date(v.aprovadoInternoEm), agoraT) >= prazo){
+        await confirmarAprovacaoClienteCore(docSnap.id, 'sistema (aprovação tácita — sem objeção do cliente em ' + prazo + 'h úteis)');
+        registrarLogAutomacao('aprovacao_tacita', docSnap.id, v.titulo || '');
+      }
+    }
+  }
+
 
   async function verificarClientesParaCapsulaAutomatico(){
     const agSnap = await getDocs(collection(db,'agendamentos'));
@@ -7323,6 +7704,8 @@
     const pedidosPrazo = todasDemandas.filter(d => d.prazoSolicitado);
 
     let html = '';
+    const perdasAmanda = await calcularRadarPerdas();
+    html += renderRadarPerdasHtml(perdasAmanda, 'radarPerdasAmanda');
 
     /* ===== FASE 8 — TORRE DE CONTROLE DE PRODUÇÃO =====
        Carga de cada editor (aberto vs capacidade) e reatribuição rápida
@@ -7511,6 +7894,105 @@
     }
   };
 
+  /* ===== MELHORIA 6B — RADAR DE PERDAS =====
+     A contabilidade de conteúdo: gravado × lançado × aprovado × legendado
+     × agendado × publicado, elo por elo, por cliente. Qualquer diferença
+     vira um item de perda com localização exata. Só PAINEL de auditoria —
+     não cria demanda nem e-mail novo (cada elo já tem sua cobrança própria;
+     aprendemos com o bug das demandas-sombra que painel e automação não
+     podem se misturar). */
+  async function calcularRadarPerdas(){
+    const [agSnap, storiesSnap] = await Promise.all([
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'stories_semanais'))
+    ]);
+    const videos = cacheVideosProducao.filter(v => !v.excluido);
+    const postagens = cachePostagens;
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const perdas = [];
+
+    // Elo A — gravado × lançado, por cliente (só informativo, não é erro fatal)
+    const realizadoPorCliente = {};
+    agSnap.forEach(d => {
+      const a = d.data();
+      if(a.status === 'realizado' && (a.qtdVideosRealizados||0) > 0){
+        realizadoPorCliente[a.cliente] = (realizadoPorCliente[a.cliente]||0) + a.qtdVideosRealizados;
+      }
+    });
+    const lancadoPorCliente = {};
+    videos.forEach(v => { lancadoPorCliente[v.cliente] = (lancadoPorCliente[v.cliente]||0) + 1; });
+    Object.keys(realizadoPorCliente).forEach(slug => {
+      const diferenca = realizadoPorCliente[slug] - (lancadoPorCliente[slug]||0);
+      if(diferenca > 0){
+        const nomeCliente = videos.find(v=>v.cliente===slug)?.clienteNome || slug;
+        perdas.push({ elo:'A. Gravado → Lançado', cliente: nomeCliente, titulo: diferenca + ' vídeo(s) gravado(s) a mais do que lançado(s) pra edição', dias: null });
+      }
+    });
+
+    // Elo B — aprovado sem postagem (deve ser sempre 0, o conciliador já resolve)
+    const videoIdsComPostagem = new Set(postagens.map(p=>p.videoId).filter(Boolean));
+    videos.forEach(v => {
+      if((v.status==='aprovado' || v.clienteAprovou===true) && !videoIdsComPostagem.has(v.id)){
+        perdas.push({ elo:'B. Aprovado → Postagem', cliente: v.clienteNome||'—', titulo: v.titulo||'', dias: null });
+      }
+    });
+
+    // Elo C — legenda travada 2+ dias
+    postagens.forEach(p => {
+      if(p.status !== 'aguardando_legenda') return;
+      const dias = p.criadoEm?.seconds ? Math.floor((Date.now()-p.criadoEm.seconds*1000)/86400000) : 0;
+      if(dias >= 2) perdas.push({ elo:'C. Postagem → Legenda', cliente: p.clienteNome||'—', titulo: p.titulo||'', dias });
+    });
+
+    // Elo D — agendamento travado 2+ dias (desde a legenda)
+    postagens.forEach(p => {
+      if(p.status !== 'aguardando_agendamento') return;
+      const dias = p.legendaEm ? Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) : 0;
+      if(dias >= 2) perdas.push({ elo:'D. Legenda → Agendamento', cliente: p.clienteNome||'—', titulo: p.titulo||'', dias });
+    });
+
+    // Elo E — agendado, data já passou, sem confirmação de publicação
+    postagens.forEach(p => {
+      if(p.status !== 'agendado' || !p.dataAgendada || p.dataAgendada >= hojeStr) return;
+      const dias = Math.floor((Date.now()-new Date(p.dataAgendada).getTime())/86400000);
+      perdas.push({ elo:'E. Agendado → Publicado', cliente: p.clienteNome||'—', titulo: p.titulo||'', dias });
+    });
+
+    // Elo F — story esquecido (cliente não respondeu em 3+ dias)
+    storiesSnap.forEach(d => {
+      const s = d.data();
+      if(s.status !== 'pendente') return;
+      const dias = s.criadoEm?.seconds ? Math.floor((Date.now()-s.criadoEm.seconds*1000)/86400000) : 0;
+      if(dias >= 3) perdas.push({ elo:'F. Stories', cliente: s.clienteNome||'—', titulo: s.titulo||'', dias });
+    });
+
+    return perdas;
+  }
+
+  function renderRadarPerdasHtml(perdas, idExpandir){
+    const cor = perdas.length ? 'var(--red)' : 'var(--green)';
+    const texto = perdas.length ? perdas.length + ' item(ns) precisando de atenção' : '0 perdas — funil limpo';
+    let html = `<div class="card" style="border:2px solid ${cor};">
+      <h2 style="cursor:pointer;" onclick="document.getElementById('${idExpandir}').style.display = document.getElementById('${idExpandir}').style.display==='none' ? 'block' : 'none';">📡 Radar de Perdas — ${texto}</h2>
+      <div id="${idExpandir}" style="display:none;margin-top:10px;">`;
+    if(!perdas.length){
+      html += '<div class="empty">Nada parado além do esperado. 🎉</div>';
+    } else {
+      const porElo = {};
+      perdas.forEach(p => { porElo[p.elo] = porElo[p.elo] || []; porElo[p.elo].push(p); });
+      Object.keys(porElo).sort().forEach(elo => {
+        html += `<div style="margin-top:10px;"><b style="font-size:12px;">${esc(elo)}</b></div>`;
+        porElo[elo].forEach(p => {
+          html += `<div class="item" style="padding:8px 10px;margin-top:4px;">
+            <b>${esc(p.cliente)}</b> — ${esc(p.titulo)}${p.dias!==null ? ' · há '+p.dias+' dia(s)' : ''}
+          </div>`;
+        });
+      });
+    }
+    html += '</div></div>';
+    return html;
+  }
+
   async function renderGerenciaChris(){
     const cont = document.getElementById('gerenciaChris');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando cockpit...</div></div>';
@@ -7553,6 +8035,7 @@
     const ausentesHoje = todasAusencias.filter(a => a.dataInicio <= hojeStr && a.dataFim >= hojeStr);
 
     const semaforo = calcularSemaforoAgencia();
+    const perdasChris = await calcularRadarPerdas();
 
     cont.innerHTML = `
       <div class="card">
@@ -7582,6 +8065,7 @@
         </div>
       </div>
       <div class="desc" style="text-align:center;margin-top:14px;opacity:.7;">Clica em qualquer card pra ver o detalhe. Números em tempo real também na <b>Central de Comando</b>, ao lado.</div>
+      ${renderRadarPerdasHtml(perdasChris, 'radarPerdasChris')}
       <div class="card" style="margin-top:14px;">
         <h2>💾 Backup completo</h2>
         <div class="desc">Baixa um arquivo com TODOS os dados do sistema (demandas, vídeos, agendamentos, postagens, anotações, clientes, pagamentos...). Guarda no Drive da agência de tempos em tempos — é o seguro contra qualquer perda.</div>

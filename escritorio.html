@@ -1911,6 +1911,7 @@
     const postagemRef = await addDoc(collection(db,'postagens'), {
       videoId, cliente: v.cliente, clienteNome: v.clienteNome, titulo: v.titulo,
       linkVideo: v.linkFinalizado, legenda: '', legendaPor: '', legendaEm: '',
+      calendarItemIdx: v.calendarItemIdx ?? null, calendarClienteSlug: v.calendarClienteSlug || null,
       dataAgendada: '', horaAgendada: '', agendadoPor: '', agendadoEm: '',
       aprovadoPor: v.aprovadoPor, aprovadoEm: v.aprovadoInternoEm,
       status: 'aguardando_legenda', demandaLegendaCriada: true, criadoEm: serverTimestamp()
@@ -3085,9 +3086,10 @@
     const multiPlataforma = ehClienteMultiPlataforma(slug);
     let html = '';
     items.forEach((it, i) => {
+      const seloUsada = it.legendaUsadaEm ? `<span class="selo aprovado" style="margin-left:6px;">✅ Já usada num vídeo — ${new Date(it.legendaUsadaEm).toLocaleDateString('pt-BR')}</span>` : '';
       if(multiPlataforma){
         html += `<div class="item">
-          <div class="top"><div class="nome">Dia ${it.day} — ${esc(it.name)}</div><div class="meta">${it.apr ? '✅ Aprovado' : '⏳ Não aprovado ainda'}</div></div>
+          <div class="top"><div class="nome">Dia ${it.day} — ${esc(it.name)}</div><div class="meta">${it.apr ? '✅ Aprovado' : '⏳ Não aprovado ainda'}${seloUsada}</div></div>
           <div class="desc" style="margin:6px 0;">Cliente com legenda separada por plataforma:</div>
           ${PLATAFORMAS_LEGENDA.map(p => `
             <div class="field" style="margin-top:8px;">
@@ -3101,7 +3103,7 @@
       } else {
         const temLegenda = (it.legenda||'').trim().length > 0;
         html += `<div class="item" style="${!temLegenda ? 'border:2px solid var(--red);' : ''}">
-          <div class="top"><div class="nome">Dia ${it.day} — ${esc(it.name)}</div><div class="meta">${it.apr ? '✅ Aprovado' : '⏳ Não aprovado ainda'}</div></div>
+          <div class="top"><div class="nome">Dia ${it.day} — ${esc(it.name)}</div><div class="meta">${it.apr ? '✅ Aprovado' : '⏳ Não aprovado ainda'}${seloUsada}</div></div>
           <div class="field" style="margin-top:8px;"><textarea id="legCal_${i}_legenda" placeholder="Escreve a legenda desse conteúdo...">${esc(it.legenda||'')}</textarea></div>
           <div class="btnrow" style="margin-top:8px;">
             <button class="btn" onclick="salvarLegendaItemCalendario(${i},'${slug}')">Salvar legenda</button>
@@ -3161,25 +3163,40 @@
     await Promise.all(clientesUnicos.map(async slug => {
       const calSnap = await getDoc(doc(db,'calendarios', slug));
       const todosItems = calSnap.exists() ? (calSnap.data().items||[]) : [];
+      // idxOriginal preservado — é ele que aponta pro lugar certo dentro de
+      // items[] quando formos marcar "já usada" depois (Prevenção de reuso).
+      const comIndice = todosItems.map((it, idxOriginal) => ({ ...it, idxOriginal }));
+      const semUsadas = comIndice.filter(it => !it.legendaUsadaEm);
       calendariosPorCliente[slug] = ehClienteMultiPlataforma(slug)
-        ? todosItems.filter(it => PLATAFORMAS_LEGENDA.some(p => (it[p.campo]||'').trim()))
-        : todosItems.filter(it => (it.legenda||'').trim());
+        ? semUsadas.filter(it => PLATAFORMAS_LEGENDA.some(p => (it[p.campo]||'').trim()))
+        : semUsadas.filter(it => (it.legenda||'').trim());
     }));
     window.__legendasCalendarioPorItem = calendariosPorCliente; // usado pelo puxador abaixo
 
     cont.innerHTML = pendentes.map(p => {
       const legendasDisponiveis = calendariosPorCliente[p.cliente] || [];
+      // Vínculo direto e real (por ID, não por nome parecido) — quando o
+      // vídeo veio de um item marcado no "Lançar Gravação", o sistema já
+      // sabe exatamente qual planejamento é esse, sem a Gabi ter que adivinhar.
+      const vinculoDireto = p.calendarItemIdx !== null && p.calendarItemIdx !== undefined
+        ? legendasDisponiveis.find(it => it.idxOriginal === p.calendarItemIdx) : null;
       const multiPlataforma = ehClienteMultiPlataforma(p.cliente);
       return `
       <div class="card">
         <h2>${esc(p.clienteNome)} — ${esc(p.titulo)}</h2>
         <div class="desc">🔗 <a href="${esc(p.linkVideo)}" target="_blank" style="color:var(--yellow);">Ver vídeo aprovado ↗</a></div>
-        ${legendasDisponiveis.length ? `
+        ${vinculoDireto ? `
+          <div class="field" style="background:var(--deep);border:2px solid var(--yellow);border-radius:8px;padding:10px;">
+            <label>🎯 Esse vídeo veio exatamente do planejamento do dia ${vinculoDireto.day} — ${esc(vinculoDireto.name)}</label>
+            <button class="btn secondary" style="width:auto;padding:6px 14px;margin-top:6px;" onclick="preencherLegendaDoCalendario('${p.id}', '${p.cliente}', ${legendasDisponiveis.indexOf(vinculoDireto)})">Usar a legenda planejada pra esse dia</button>
+          </div>
+        ` : ''}
+        ${legendasDisponiveis.filter(it=>it!==vinculoDireto).length ? `
           <div class="field">
-            <label>📖 Puxar legenda já planejada no calendário desse cliente (opcional)</label>
+            <label>📖 Ou puxar de outro dia planejado no calendário desse cliente (opcional)</label>
             <select onchange="preencherLegendaDoCalendario('${p.id}', '${p.cliente}', this.value)">
               <option value="">— escolher e preencher automático —</option>
-              ${legendasDisponiveis.map((it,i) => `<option value="${i}">Dia ${it.day} — ${esc(it.name)}</option>`).join('')}
+              ${legendasDisponiveis.map((it,i) => it===vinculoDireto ? '' : `<option value="${i}">Dia ${it.day} — ${esc(it.name)}</option>`).join('')}
             </select>
           </div>
         ` : ''}
@@ -3258,6 +3275,11 @@
     } else {
       document.getElementById('legenda_'+postagemId).value = item.legenda;
     }
+    // Guarda qual item foi usado — quando a legenda for salva de vez,
+    // marcamos esse item do calendário como "já usado" (não pode ser
+    // puxado de novo pra outro vídeo por engano).
+    window.__legendaCalendarioEscolhida = window.__legendaCalendarioEscolhida || {};
+    window.__legendaCalendarioEscolhida[postagemId] = { clienteSlug, idxOriginal: item.idxOriginal };
     mostrarToast('Legenda puxada do calendário — revisa e salva.');
   };
 
@@ -3283,6 +3305,27 @@
     }
 
     await updateDoc(doc(db,'postagens', id), dadosLegenda);
+
+    // Prevenção de reuso: se essa legenda veio de um item do calendário
+    // (vínculo direto ou puxada manualmente), marca esse item como usado —
+    // ele some das opções pra qualquer outro vídeo daqui pra frente.
+    const escolha = window.__legendaCalendarioEscolhida?.[id];
+    if(escolha){
+      try{
+        const calRef = doc(db,'calendarios', escolha.clienteSlug);
+        const calSnap = await getDoc(calRef);
+        if(calSnap.exists()){
+          const dadosCal = calSnap.data();
+          if(dadosCal.items && dadosCal.items[escolha.idxOriginal]){
+            dadosCal.items[escolha.idxOriginal].legendaUsadaEm = new Date().toISOString();
+            dadosCal.items[escolha.idxOriginal].legendaUsadaPostagemId = id;
+            await setDoc(calRef, dadosCal);
+          }
+        }
+      }catch(e){ console.error('Falha ao marcar legenda do calendário como usada:', e); }
+      delete window.__legendaCalendarioEscolhida[id];
+    }
+
     darBaixaDemandaLegenda(id).catch(e => console.error('Melhoria 2: falha ao dar baixa na demanda de legenda', e));
     criarDemandaAgendamentoAutomatica(id).catch(e => console.error('Fase 6: falha ao criar demanda automática de agendamento', e));
     mostrarToast('Legenda salva! Já caiu na fila da Cecília.');
@@ -4522,13 +4565,17 @@
     // Coleta os itens do calendario marcados + os extras digitados em texto livre
     const checkboxesMarcados = Array.from(document.querySelectorAll('.chkVideoCalendario_'+agId+':checked'));
     const idxsGravados = checkboxesMarcados.map(c => parseInt(c.dataset.idx));
-    const nomesDoCalendario = checkboxesMarcados.map(c => c.dataset.nome);
+    // Guarda o par {nome, idx} pra cada vídeo do calendário — é esse índice
+    // que vira o VÍNCULO REAL entre vídeo e item do calendário, em vez de
+    // depender só do nome bater (frágil: nomes parecidos, edições, etc).
+    const videosDoCalendario = checkboxesMarcados.map(c => ({ nome: c.dataset.nome, calendarItemIdx: parseInt(c.dataset.idx) }));
 
     const textoExtras = document.getElementById('extras_'+agId).value.trim();
     const nomesExtras = textoExtras ? textoExtras.split('\n').map(s=>s.trim()).filter(Boolean) : [];
+    const videosExtras = nomesExtras.map(nome => ({ nome, calendarItemIdx: null }));
 
-    const nomesVideos = [...nomesDoCalendario, ...nomesExtras];
-    const qtdRealizada = nomesVideos.length;
+    const todosVideosParaCriar = [...videosDoCalendario, ...videosExtras];
+    const qtdRealizada = todosVideosParaCriar.length;
 
     const temUber = document.getElementById('uber_'+agId).checked;
     const uberLink = temUber ? document.getElementById('uberInput_'+agId).value.trim() : '';
@@ -4555,10 +4602,11 @@
       const editorManual = document.getElementById('editorEscolhido_'+agId).value;
       const editor = editorManual || await decidirEditor(clienteSlug);
       const hoje = new Date().toISOString().slice(0,10);
-      for(const nomeVideo of nomesVideos){
+      for(const v of todosVideosParaCriar){
         await addDoc(collection(db,'videos_producao'), {
           cliente: clienteSlug, clienteNome, data: hoje,
-          titulo: clienteNome + ' — ' + nomeVideo,
+          titulo: clienteNome + ' — ' + v.nome,
+          calendarItemIdx: v.calendarItemIdx, calendarClienteSlug: v.calendarItemIdx !== null ? clienteSlug : null,
           observacao: '', editorSugerido: editor, editorAtribuido: editor,
           status: 'aguardando_edicao', linkFinalizado: '', criadoEm: serverTimestamp()
         });

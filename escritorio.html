@@ -1490,11 +1490,12 @@
       const snapV = await getDocs(collection(db,'videos_producao'));
       let sem = 0; snapV.forEach(dd => { const v = dd.data(); if(!v.excluido && v.status === 'aguardando_edicao' && !v.editorAtribuido) sem++; });
       return sem === 0; } },
-    'g_d_9': { desc: '5+ referências novas adicionadas hoje no Hub', fn: async () => {
+    'g_d_9': { desc: 'referências novas do dia adicionadas no Hub', fn: async () => {
       const hojeR = new Date().toISOString().slice(0,10);
+      const metaRef = (await obterConfigPainel()).refDiariaGabi || 5;
       const snapR = await getDocs(collection(db,'referencias'));
       let hj = 0; snapR.forEach(dd => { if(tsParaDia(dd.data().criadoEm) === hojeR) hj++; });
-      return hj >= 5; } }
+      return hj >= metaRef; } }
   };
 
   async function autoVerificarChecklist(){
@@ -5142,8 +5143,40 @@
   const FUNCIONARIOS_ELEGIVEIS = ["Cecília","Gabrielle","Amanda","Helo","João Victor","Yas","Nathan","Luís"];
   const FUNCIONARIOS_RANKING_MES = ["Cecília","Gabrielle","Helo","João Victor","Yas","Nathan","Luís"];
 
+  /* ===== CONFIG DO PAINEL — 100% NA MÃO DA AMANDA (21/07/2026) =====
+     Pesos da pontuação e a meta diária de referências da Gabi deixaram de
+     ser fixos no código: ficam num doc do banco que a Amanda edita pelo
+     próprio painel. O site só faz a automação (soma, cobra, notifica) —
+     as REGRAS são dela. Defaults = exatamente os valores antigos, então
+     nada muda até ela decidir mudar. */
+  const CONFIG_PAINEL_DEFAULT = { pesoAprovada:10, pesoAtraso:15, pesoVideo:8, pesoChecklistMax:50, refDiariaGabi:5 };
+  let CONFIG_PAINEL_CACHE = null;
+  async function obterConfigPainel(forcar){
+    if(CONFIG_PAINEL_CACHE && !forcar) return CONFIG_PAINEL_CACHE;
+    try{
+      const snap = await getDoc(doc(db,'config_painel','geral'));
+      CONFIG_PAINEL_CACHE = snap.exists() ? { ...CONFIG_PAINEL_DEFAULT, ...snap.data() } : { ...CONFIG_PAINEL_DEFAULT };
+    }catch(e){ CONFIG_PAINEL_CACHE = { ...CONFIG_PAINEL_DEFAULT }; }
+    return CONFIG_PAINEL_CACHE;
+  }
+  window.salvarConfigPainel = async function(){
+    const cfg = {
+      pesoAprovada: parseInt(document.getElementById('cfgPesoAprovada').value)||0,
+      pesoAtraso: parseInt(document.getElementById('cfgPesoAtraso').value)||0,
+      pesoVideo: parseInt(document.getElementById('cfgPesoVideo').value)||0,
+      pesoChecklistMax: parseInt(document.getElementById('cfgPesoChecklist').value)||0,
+      refDiariaGabi: parseInt(document.getElementById('cfgRefDiaria').value)||0,
+      atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp()
+    };
+    await setDoc(doc(db,'config_painel','geral'), cfg, { merge:true });
+    CONFIG_PAINEL_CACHE = null;
+    mostrarToast('Regras do painel salvas! O ranking já recalcula com os novos valores.');
+    renderFuncionarioMesPainel();
+  };
+
   async function calcularRankingMes(){
     const mesAtual = new Date().toISOString().slice(0,7);
+    const pesos = await obterConfigPainel();
     const [demandasSnap, videosSnap, checklistSnap] = await Promise.all([
       getDocs(collection(db,'demandas')),
       getDocs(collection(db,'videos_producao')),
@@ -5179,7 +5212,7 @@
         checklistPct = diasComDados ? Math.round((somaPct/diasComDados)*100) : 0;
       }
 
-      const pontos = (aprovadas*10) - (atrasadasAtual*15) + (videosConcluidos*8) + ((checklistPct||0)*0.5);
+      const pontos = (aprovadas*pesos.pesoAprovada) - (atrasadasAtual*pesos.pesoAtraso) + (videosConcluidos*pesos.pesoVideo) + ((checklistPct||0)*(pesos.pesoChecklistMax/100));
       ranking.push({ nome, aprovadas, atrasadasAtual, videosConcluidos, checklistPct, pontos: Math.round(pontos) });
     }
     return ranking.sort((a,b)=>b.pontos-a.pontos);
@@ -5270,6 +5303,7 @@
     salvarSnapshotRankingMes(ranking).catch(()=>{});
     const anterior = await obterRankingMesAnteriorMap();
     const metas = await obterMetasMes();
+    const cfgP = await obterConfigPainel();
 
     const obsSnap = await getDocs(collection(db,'observacoes_funcionarios'));
     const observacoes = {};
@@ -5348,6 +5382,24 @@
         <div class="field"><label>📋 Checklist diário (%)</label><input type="number" id="metaChecklistInput" min="0" max="100" value="${metas.metaChecklistPct}"></div>
       </div>
       <button class="btn" onclick="salvarMetasEquipe()">Salvar metas do mês</button>
+    </div>`;
+
+    // ===== REGRAS DO PAINEL — TUDO NA MÃO DA AMANDA =====
+    html += `<div class="card metaSec"><div class="metaSecTit">⚙️ Regras do painel — você controla tudo</div>
+      <div class="desc" style="margin:-4px 0 8px;">O site só faz a conta e cobra sozinho; <b>as regras são suas</b>. Aqui você muda o peso de cada critério na pontuação e a meta diária de referências da Gabi. Alterou e salvou, o ranking já recalcula na hora com os novos valores.</div>
+      <div style="font-size:11px;color:var(--muted);font-weight:800;margin:6px 0 4px;text-transform:uppercase;letter-spacing:.03em;">Pesos da pontuação</div>
+      <div class="metaConfigGrid">
+        <div class="field"><label>✅ Demanda aprovada (+)</label><input type="number" id="cfgPesoAprovada" min="0" value="${cfgP.pesoAprovada}"></div>
+        <div class="field"><label>⚠️ Atraso atual (−)</label><input type="number" id="cfgPesoAtraso" min="0" value="${cfgP.pesoAtraso}"></div>
+        <div class="field"><label>🎬 Vídeo concluído (+)</label><input type="number" id="cfgPesoVideo" min="0" value="${cfgP.pesoVideo}"></div>
+        <div class="field"><label>📋 Checklist 100% vale até (+)</label><input type="number" id="cfgPesoChecklist" min="0" value="${cfgP.pesoChecklistMax}"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);font-weight:800;margin:10px 0 4px;text-transform:uppercase;letter-spacing:.03em;">Função diária da Gabi</div>
+      <div class="metaConfigGrid">
+        <div class="field"><label>🔗 Referências novas por dia</label><input type="number" id="cfgRefDiaria" min="0" value="${cfgP.refDiariaGabi}"></div>
+      </div>
+      <div class="desc" style="margin:2px 0 8px;font-size:10.5px;">Todo dia o sistema cria pra Gabi uma demanda "Subir X referências novas hoje" (prazo 17h) que fecha sozinha quando ela bate essa meta — e cobra por e-mail se não bater.</div>
+      <button class="btn" onclick="salvarConfigPainel()">Salvar regras do painel</button>
     </div>`;
 
     // ===== DATA DE REVELAÇÃO (mantido) =====
@@ -8041,6 +8093,52 @@
     registrarLogAutomacao('distribuicao_diaria_amanda', '', semEditor.length + ' vídeo(s) esperando distribuição');
   }
 
+  /* ===== REFERÊNCIAS DIÁRIAS DA GABI — demanda que força (21/07/2026) =====
+     A meta de referências/dia existia só como item enterrado no checklist
+     (g_d_9) e passava batido. Agora vira uma DEMANDA de verdade, todo dia,
+     com prazo às 17h — aparece na lista dela, dispara e-mail e, se passar
+     das 17h sem cumprir, escala igual qualquer atraso. Fecha SOZINHA no
+     instante em que ela bate a meta do dia (mesma contagem do checklist),
+     então só incomoda enquanto não fez. A quantidade é a que a Amanda
+     definir no painel (config_painel.refDiariaGabi, padrão 5).
+     ⏸️ Ligação com o CALENDÁRIO (levar as refs pro calendário do cliente)
+     fica pra quando os calendários existirem dentro do site — NÃO ESQUECER. */
+  async function verificarDemandaReferenciasDiariaGabi(){
+    if(estaAusente('Gabrielle')) return; // de folga não cobra
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const metaRef = (await obterConfigPainel()).refDiariaGabi || 5;
+
+    const refSnap = await getDocs(collection(db,'referencias'));
+    let feitasHoje = 0; refSnap.forEach(dd => { const r = dd.data(); if(!r.excluido && tsParaDia(r.criadoEm) === hojeStr) feitasHoje++; });
+
+    // acha a demanda diária de hoje (se já existir)
+    const demSnap = await getDocs(collection(db,'demandas'));
+    let demandaHoje = null;
+    demSnap.forEach(dd => { const d = dd.data(); if(d.tipoEspecial === 'ref_diaria' && d.prazoData === hojeStr && d.destinatario === 'Gabrielle' && !['aprovada','cancelada'].includes(d.status)) demandaHoje = { id: dd.id, ...d }; });
+
+    if(feitasHoje >= metaRef){
+      // bateu a meta — fecha a demanda do dia se ainda estiver aberta
+      if(demandaHoje){
+        await updateDoc(doc(db,'demandas', demandaHoje.id), { status:'aprovada', concluidoPor:'sistema (meta de referências batida)', concluidoEm: serverTimestamp(), notaConclusao: feitasHoje + ' referência(s) adicionada(s) hoje — meta de ' + metaRef + ' cumprida.' });
+        registrarLogAutomacao('ref_diaria_gabi_ok', demandaHoje.id, feitasHoje + '/' + metaRef + ' referências');
+      }
+      return;
+    }
+
+    // ainda não bateu — garante que existe a demanda cobrando (cria 1x por dia)
+    if(!demandaHoje){
+      await addDoc(collection(db,'demandas'), {
+        titulo: '🔗 Subir ' + metaRef + ' referências novas hoje no Hub',
+        descricao: 'Função diária sua: adicionar pelo menos ' + metaRef + ' referências novas no Hub de Referências (Menu → Referências), colando o link, o nicho e uma descrição curta de cada uma. Essa demanda fecha sozinha assim que você bate a meta do dia — então é só fazer. Feitas até agora hoje: ' + feitasHoje + '/' + metaRef + '.',
+        origem: 'sistema', clienteNome: '', destinatario: 'Gabrielle',
+        tipoEspecial: 'ref_diaria',
+        prazoData: hojeStr, prazoHora: '17:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+      registrarLogAutomacao('ref_diaria_gabi_criada', hojeStr, 'meta ' + metaRef + ', feitas ' + feitasHoje);
+    }
+  }
+
   async function verificarLembretesPrazoHoje(){
     const hojeStr = new Date().toISOString().slice(0,10);
     const snap = await getDocs(collection(db,'demandas'));
@@ -8526,6 +8624,7 @@
       { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
       { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
+      { nome: 'refDiariaGabi', fn: verificarDemandaReferenciasDiariaGabi },
       { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
     ];
 

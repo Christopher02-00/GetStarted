@@ -1489,6 +1489,18 @@
   }
   carregarClientesExtras();
 
+  /* ===== CLIENTE "SÓ EDIÇÃO" (plano do Rodrigo) =====
+     Plano em que a agência APENAS edita os vídeos que o cliente envia.
+     Sem calendário editorial, sem agendamento de gravação, sem legenda,
+     sem postagem: aprovou = entregue (entrega direta automática).
+     Efeitos na cadeia: fora do Protocolo Cápsula e do alerta preditivo,
+     fora das funções fixas de reunião/calendário, fora dos selects de
+     gravação e calendário, card próprio na Visão Completa (medido por
+     vídeos entregues, não por gravações). O lançamento de vídeos pra
+     edição continua normal — é exatamente o serviço dele. */
+  const CLIENTES_SO_EDICAO = ['rodrigo'];
+  function ehClienteSoEdicao(slug){ return CLIENTES_SO_EDICAO.includes(slug); }
+
   const EDITORES_GERAL = ["Helo","Cecília","João Victor"];
   const EDITORES_SELECIONAVEIS = ["Helo","Cecília","João Victor","Nathan"];
   const EDITORES_CONFIG = {
@@ -2042,10 +2054,10 @@
        modos de aprovacao (manual, tacita e automatica), porque todos
        convergem aqui. O video vai morar na aba "📦 Entregas Finalizadas". */
     const configEntrega = await obterConfigCliente(v.cliente);
-    if(configEntrega.tipoEntrega === 'entrega_direta'){
+    if(configEntrega.tipoEntrega === 'entrega_direta' || ehClienteSoEdicao(v.cliente)){
       await updateDoc(doc(db,'videos_producao', videoId), {
         status: 'finalizado', clienteAprovou: true, clienteAprovouEm: new Date().toISOString(),
-        clienteAprovouPor: confirmadoPor, finalizadoEm: new Date().toISOString(), finalizadoVia: 'entrega_direta'
+        clienteAprovouPor: confirmadoPor, finalizadoEm: new Date().toISOString(), finalizadoVia: ehClienteSoEdicao(v.cliente) ? 'so_edicao' : 'entrega_direta'
       });
       registrarHistorico('videos_producao', videoId, 'Cliente é entrega direta — vídeo 100% aprovado e FINALIZADO (sem legenda/agendamento)', 'Confirmado por: ' + confirmadoPor);
       registrarLogAutomacao('entrega_direta_finalizado', videoId, v.titulo || '');
@@ -2764,7 +2776,8 @@
   function popularClientesAgendamento(){
     const sel1 = document.getElementById('agCliente');
     const sel2 = document.getElementById('capsulaCliente');
-    const opts = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
+    // Clientes só-edição ficam fora: ninguém agenda gravação nem aciona Cápsula pra quem não grava conosco
+    const opts = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug)).map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
     if(sel1) sel1.innerHTML = opts + '<option value="__novo__">+ Cliente novo (não está na lista)</option>';
     if(sel2) sel2.innerHTML = opts;
   }
@@ -2981,7 +2994,7 @@
   function popularFiltroClientesCalendario(){
     const sel = document.getElementById('calFiltroTodos');
     if(!sel) return;
-    sel.innerHTML = '<option value="todos">Todos os clientes</option>' + CLIENTES_LISTA.map(c => `<option value="${c.slug}">${esc(c.nome)}</option>`).join('');
+    sel.innerHTML = '<option value="todos">Todos os clientes</option>' + CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug)).map(c => `<option value="${c.slug}">${esc(c.nome)}</option>`).join('');
   }
 
   async function renderCalendarioMesFilmmaker(){
@@ -3141,11 +3154,14 @@
     const dataLimiteGabi = new Date(ano, mes-1, Math.max(1, ultimoDiaMes-10));
     const uteisAntesLimite = uteis.filter(d => new Date(d) <= dataLimiteGabi);
 
-    const diasCecilia = uteis.slice(0, Math.ceil(CLIENTES_LISTA.length/2));
-    const diasGabi = uteisAntesLimite.slice(diasCecilia.length, diasCecilia.length + Math.ceil(CLIENTES_LISTA.length/2));
+    // Clientes só-edição ficam fora das funções fixas: não têm reunião de
+    // calendário nem entrega de calendário mensal por contrato.
+    const clientesFixos = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug));
+    const diasCecilia = uteis.slice(0, Math.ceil(clientesFixos.length/2));
+    const diasGabi = uteisAntesLimite.slice(diasCecilia.length, diasCecilia.length + Math.ceil(clientesFixos.length/2));
 
     let idxC = 0;
-    for(const cliente of CLIENTES_LISTA){
+    for(const cliente of clientesFixos){
       const dataAlvo = diasCecilia[Math.floor(idxC/2)] || diasCecilia[diasCecilia.length-1];
       await addDoc(collection(db,'demandas'), {
         titulo: 'Agendar reunião mensal — ' + cliente.nome,
@@ -3158,7 +3174,7 @@
     }
 
     let idxG = 0;
-    for(const cliente of CLIENTES_LISTA){
+    for(const cliente of clientesFixos){
       const dataAlvo = diasGabi[Math.floor(idxG/2)] || diasGabi[diasGabi.length-1] || dataParaStr(dataLimiteGabi);
       await addDoc(collection(db,'demandas'), {
         titulo: 'Entregar calendário do próximo mês — ' + cliente.nome,
@@ -4595,7 +4611,7 @@
     const postagens = []; postSnap.forEach(d => postagens.push(d.data()));
 
     const hoje = new Date().toISOString().slice(0,10);
-    const linhas = CLIENTES_LISTA.map(c => {
+    const linhas = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug)).map(c => {
       const dele = postagens.filter(p => p.cliente === c.slug && p.status === 'agendado' && p.dataAgendada);
       let ultimaData = null;
       dele.forEach(p => { if(!ultimaData || p.dataAgendada > ultimaData) ultimaData = p.dataAgendada; });
@@ -4688,21 +4704,46 @@
     const cont = document.getElementById('gerenciaSaudeClientes');
     cont.innerHTML = '<div class="card"><div class="desc">Calculando saúde de cada cliente...</div></div>';
 
-    const [agSnap, demSnap, avalSnap, rfvSnap, ...calSnaps] = await Promise.all([
+    const [agSnap, demSnap, avalSnap, rfvSnap, vidSnap, ...calSnaps] = await Promise.all([
       getDocs(collection(db,'agendamentos')),
       getDocs(collection(db,'demandas')),
       getDocs(collection(db,'avaliacoes_clientes')),
       getDocs(collection(db,'rfv_clientes')),
+      getDocs(collection(db,'videos_producao')),
       ...CLIENTES_LISTA.map(c => getDoc(doc(db,'calendarios', c.slug)))
     ]);
 
+    const listaVideos = []; vidSnap.forEach(d => { const v = d.data(); if(!v.excluido) listaVideos.push(v); });
     const listaAgendamentos = []; agSnap.forEach(d => listaAgendamentos.push(d.data()));
     const listaDemandas = []; demSnap.forEach(d => listaDemandas.push(d.data()));
     const listaAvaliacoes = []; avalSnap.forEach(d => listaAvaliacoes.push({id:d.id, ...d.data()}));
     const rfvDados = {}; rfvSnap.forEach(d => { rfvDados[d.id] = d.data(); });
 
+    const mesAtualVisao = new Date().toISOString().slice(0,7);
     const resultados = CLIENTES_LISTA.map((c, i) => {
-      const saude = calcularSaudeCliente(c.slug, c.nome, calSnaps[i], listaAgendamentos, listaDemandas, listaAvaliacoes);
+      let saude;
+      if(ehClienteSoEdicao(c.slug)){
+        /* Card próprio "✂️ Só edição" — régua por VÍDEOS (o serviço real
+           dele), não por gravações/calendário que ele não tem por contrato. */
+        const meusVid = listaVideos.filter(v => v.cliente === c.slug);
+        const entreguesMes = meusVid.filter(v => ['aprovado','finalizado'].includes(v.status) && (v.clienteAprovouEm||'').startsWith(mesAtualVisao)).length;
+        const emEdicaoAgora = meusVid.filter(v => ['aguardando_edicao','correcao','aguardando_aprovacao','aguardando_cliente'].includes(v.status)).length;
+        const atrasadosAgora = meusVid.filter(v => videoEstaAtrasado(v)).length;
+        const semMovimento = !entreguesMes && !emEdicaoAgora;
+        saude = {
+          clienteNome: c.nome,
+          cor: atrasadosAgora ? 'vermelho' : (semMovimento ? 'amarelo' : 'verde'),
+          motivos: [
+            'Plano só edição — sem calendário/gravação por contrato',
+            entreguesMes + ' vídeo(s) entregue(s) no mês',
+            emEdicaoAgora + ' em edição agora' + (atrasadosAgora ? ' — ' + atrasadosAgora + ' ATRASADO(S)' : ''),
+            ...(semMovimento ? ['⚠️ Nenhum vídeo em movimento — cliente parado, vale checar'] : [])
+          ],
+          soEdicao: true
+        };
+      } else {
+        saude = calcularSaudeCliente(c.slug, c.nome, calSnaps[i], listaAgendamentos, listaDemandas, listaAvaliacoes);
+      }
       const rfv = rfvDados[c.slug] || {};
       let recenciaDias = null, rfvAlerta = false;
       if(rfv.ultimaContratacao){
@@ -4730,7 +4771,7 @@
         <div style="display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="toggleExpandirClienteVisao('${r.slug}')">
           <div class="bolaGrande semaforo ${r.cor}" style="margin:0;"></div>
           <div class="infoCliente" style="flex:1;">
-            <div class="nomeCliente">${esc(r.clienteNome)}</div>
+            <div class="nomeCliente">${esc(r.clienteNome)}${r.soEdicao ? ' <span class="prioTag amarelo" style="font-size:9px;vertical-align:middle;">✂️ SÓ EDIÇÃO</span>' : ''}</div>
             <div class="motivos">${esc(r.motivos.join(' · '))}</div>
           </div>
           <div style="text-align:right;">
@@ -6954,6 +6995,7 @@
   let calendarioClienteAbertoSlug = null;
 
   function renderListaCalendariosFerramentas(lista){
+    lista = (lista || []).filter(c => !ehClienteSoEdicao(c.slug)); // só edição não tem calendário
     const cont = document.getElementById('listaCalendariosFerramentas');
     if(!lista.length){ cont.innerHTML = '<div class="empty">Nenhum cliente encontrado.</div>'; return; }
     cont.innerHTML = lista.map(c => `
@@ -7011,6 +7053,7 @@
   };
 
   function renderListaCalendariosClientes(lista){
+    lista = (lista || []).filter(c => !ehClienteSoEdicao(c.slug)); // só edição não tem calendário
     const cont = document.getElementById('listaCalendariosClientes');
     if(!lista.length){ cont.innerHTML = '<div class="empty">Nenhum cliente encontrado.</div>'; return; }
     cont.innerHTML = lista.map(c => `
@@ -7282,7 +7325,8 @@
     CLIENTES_LISTA.forEach(c => {
       const cfg = configs[c.slug] || { modoAprovacaoCliente:'manual', prazoTacitaHorasUteis:24, whatsappCobranca:'', tipoEntrega:'postagem_completa' };
       html += `<div class="item">
-        <div class="top"><div class="nome">${esc(c.nome)}</div></div>
+        <div class="top"><div class="nome">${esc(c.nome)}${ehClienteSoEdicao(c.slug) ? ' <span class="prioTag amarelo" style="font-size:9px;">✂️ SÓ EDIÇÃO</span>' : ''}</div></div>
+        ${ehClienteSoEdicao(c.slug) ? '<div class="meta" style="color:var(--yellow2);font-weight:700;margin-top:4px;">Cliente de plano Só Edição — a entrega direta já é automática pra ele, não precisa configurar tipo de entrega aqui.</div>' : ''}
         <div class="row2" style="margin-top:8px;">
           <select id="modoAprov_${c.slug}" onchange="document.getElementById('prazoTacitaBox_${c.slug}').style.display = this.value==='tacita' ? 'block' : 'none';">
             <option value="manual" ${cfg.modoAprovacaoCliente==='manual'?'selected':''}>Manual</option>
@@ -8048,7 +8092,7 @@
       // FRENTE B6 — cliente entrega direta: video aprovado sem postagem NAO
       // e orfao, e o estado final correto. Finaliza em vez de recriar o lixo.
       const cfgEntregaConc = await obterConfigCliente(v.cliente);
-      if(cfgEntregaConc.tipoEntrega === 'entrega_direta'){
+      if(cfgEntregaConc.tipoEntrega === 'entrega_direta' || ehClienteSoEdicao(v.cliente)){
         await updateDoc(doc(db,'videos_producao', docSnap.id), { status:'finalizado', finalizadoEm: new Date().toISOString(), finalizadoVia: 'entrega_direta (conciliador)' });
         registrarHistorico('videos_producao', docSnap.id, 'Conciliador: cliente é entrega direta — vídeo finalizado, sem criar postagem');
         registrarLogAutomacao('entrega_direta_conciliada', docSnap.id, v.titulo || '');
@@ -8115,6 +8159,7 @@
     let novasCapsulas = 0;
     let novasPreditivas = 0;
     for(const cliente of CLIENTES_LISTA){
+      if(ehClienteSoEdicao(cliente.slug)) continue; // só edição — não grava conosco, Cápsula não se aplica
       const realizadas = todosAg.filter(a => a.cliente === cliente.slug && a.status === 'realizado').sort((a,b)=>b.data.localeCompare(a.data));
       const ultima = realizadas[0];
       const diasSemGravar = ultima ? Math.floor((hoje - new Date(ultima.data+'T00:00:00')) / 86400000) : 999;
@@ -8444,6 +8489,7 @@
     const hoje = new Date();
     const resultado = [];
     for(const cliente of CLIENTES_LISTA){
+      if(ehClienteSoEdicao(cliente.slug)) continue; // só edição — não grava conosco, Cápsula não se aplica
       const realizadas = todosAg.filter(a => a.cliente === cliente.slug && a.status === 'realizado').sort((a,b)=>b.data.localeCompare(a.data));
       const ultima = realizadas[0];
       const diasSemGravar = ultima ? Math.floor((hoje - new Date(ultima.data+'T00:00:00')) / 86400000) : 999;

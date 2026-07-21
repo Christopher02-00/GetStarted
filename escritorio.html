@@ -520,6 +520,7 @@
       </div>
       <div id="setorAtalhos"></div>
       <div id="avisoInicio"></div>
+      <div id="resumoDiarioBox"></div>
       <div id="meuDiaBox"></div>
       <div id="calendarioVisualHomeBox"></div>
       <div id="funcionarioMesInicioBox"></div>
@@ -6035,6 +6036,7 @@
     await etapaSegura('recarregar demandas', carregarTodasDemandas);
     await etapaSegura('aviso início', async () => renderAvisoInicio());
     await etapaSegura('meu dia', async () => renderMeuDia());
+    await etapaSegura('resumo diário', async () => renderResumoDiarioHome());
     await etapaSegura('calendário visual', async () => renderCalendarioVisualHome());
     await etapaSegura('minhas demandas atribuídas', async () => renderMinhasDemandasAtribuidas());
     await etapaSegura('badge minhas', async () => atualizarBadgeMinhas());
@@ -7644,33 +7646,351 @@
 
   const MOTOR_INTERVALO_MIN = 8; // janela mínima entre execuções (minutos)
 
-  // FASE 5 (parte 3) — lembrete automático de segunda-feira: cria uma
-  // demanda pro Chris avisando que o digest da semana já está pronto pra
-  // gerar e mandar. Usa um marcador em 'sistema' (mesmo padrão do lock da
-  // Fase 1) pra garantir que dispara só 1 vez por segunda, mesmo com o
-  // motor rodando a cada 10 minutos o dia inteiro.
-  async function verificarDigestSemanal(){
-    const hoje = new Date();
-    if(hoje.getDay() !== 1) return; // só segunda-feira
-    const hojeStr = hoje.toISOString().slice(0,10);
-    const marcadorRef = doc(db, 'sistema', 'digest_semanal');
-    const marcadorSnap = await getDoc(marcadorRef);
-    if(marcadorSnap.exists() && marcadorSnap.data().ultimaSegunda === hojeStr) return; // já criou hoje
+  /* ===== CENTRAL DE INTELIGÊNCIA DIÁRIA — "RESUMO DO DIA" =====
+     Substitui de vez o lembrete-demanda de segunda-feira (que ficava
+     eternamente atrasado). Agora: todo dia, 1 snapshot do dia anterior é
+     gravado em 'resumos_diarios' e vira um card fixo no topo do Início do
+     Chris e da Amanda, com: situações críticas, quem cobrar hoje (com há
+     quantos dias), o que ficou sem resolver de ontem, REINCIDÊNCIAS
+     (comparando os snapshots dos últimos dias — o que aparece 3+ dias
+     seguidos), quem mandou bem, números de ontem, movimento de clientes,
+     panorama da semana às sextas, e mensagem pronta de "foco do dia" pra
+     copiar e mandar no grupo do WhatsApp da equipe. */
 
-    // Antes de criar o lembrete novo, fecha qualquer antigo ainda aberto —
-    // o lembrete é da SEMANA, não pode virar pilha de atraso.
-    await fecharLembretesDigestAbertos('Substituído pelo lembrete da nova segunda-feira.');
+  function dataStrDiasAtras(n){ const d = new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
+  const tsParaDia = t => t?.seconds ? new Date(t.seconds*1000).toISOString().slice(0,10) : '';
 
-    await addDoc(collection(db,'demandas'), {
-      titulo: '📱 Digest semanal pronto — abrir Gerência → Digest',
-      descricao: 'Começo de semana! O resumo gerencial completo já está pronto pra gerar e mandar no grupo da equipe.',
-      origem: 'sistema', clienteNome: '', destinatario: 'Chris',
-      prazoData: hojeStr, prazoHora: '09:00',
-      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+  async function coletarResumoDiario(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const ontemStr = dataStrDiasAtras(1);
+    await carregarTodasDemandas(); // também carrega ausências (pro estaAusente)
+
+    const [vidSnap, postSnap, agSnap, cadSnap, extrasSnap, storiesSnap, demCliSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens')),
+      getDocs(collection(db,'agendamentos')), getDocs(collection(db,'cadastros_clientes')),
+      getDocs(collection(db,'clientes_extras')), getDocs(collection(db,'stories_semanais')),
+      getDocs(collection(db,'demandas_cliente'))
+    ]);
+    const videos = []; vidSnap.forEach(d => { const v = d.data(); if(!v.excluido) videos.push({id:d.id, ...v}); });
+    const postagens = []; postSnap.forEach(d => postagens.push({id:d.id, ...d.data()}));
+    const agends = []; agSnap.forEach(d => { const a = d.data(); if(!a.excluido) agends.push({id:d.id, ...a}); });
+    const cadastros = []; cadSnap.forEach(d => cadastros.push(d.data()));
+    const extras = []; extrasSnap.forEach(d => { const e = d.data(); if(!e.excluido) extras.push(e); });
+    const stories = []; storiesSnap.forEach(d => stories.push(d.data()));
+    const demandasCli = []; demCliSnap.forEach(d => demandasCli.push(d.data()));
+
+    /* ---------- NÚMEROS DE ONTEM ---------- */
+    const numeros = {
+      demandasCriadas: todasDemandas.filter(d => tsParaDia(d.criadoEm) === ontemStr).length,
+      demandasConcluidas: todasDemandas.filter(d => d.status === 'aprovada' && tsParaDia(d.concluidoEm) === ontemStr).length,
+      demandasAbertas: todasDemandas.filter(d => d.status === 'pendente').length,
+      demandasAtrasadas: todasDemandas.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado').length,
+      videosLancados: videos.filter(v => tsParaDia(v.criadoEm) === ontemStr).length,
+      videosAprovadosInterno: videos.filter(v => (v.aprovadoInternoEm||'').slice(0,10) === ontemStr).length,
+      videosEntregues: videos.filter(v => (v.clienteAprovouEm||'').slice(0,10) === ontemStr).length,
+      videosEmCorrecao: videos.filter(v => v.status === 'correcao').length,
+      videosAtrasados: videos.filter(v => videoEstaAtrasado(v)).length,
+      legendasEscritas: postagens.filter(p => (p.legendaEm||'').slice(0,10) === ontemStr).length,
+      postagensAgendadas: postagens.filter(p => (p.agendadoEm||'').slice(0,10) === ontemStr).length,
+      postagensPublicadas: postagens.filter(p => (p.postadoEm||'').slice(0,10) === ontemStr).length,
+      gravacoesPlanejadasOntem: agends.filter(a => a.data === ontemStr && a.status !== 'cancelado').length,
+      gravacoesRealizadasOntem: agends.filter(a => a.data === ontemStr && a.status === 'realizado').length,
+      gravacoesHoje: agends.filter(a => a.data === hojeStr && a.status === 'agendado' && a.aprovado !== false).length
+    };
+
+    /* ---------- QUEM COBRAR HOJE (estado atual, com chave estável pra
+       cruzar entre dias e detectar reincidência) ---------- */
+    const quemCobrar = [];
+    const diasAtrasoDem = d => Math.max(0, Math.floor((Date.now() - new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime()) / 86400000));
+    todasDemandas.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado' && !estaAusente(d.destinatario)).forEach(d => {
+      quemCobrar.push({ chave: 'dem_' + d.id, pessoa: d.destinatario || '?', motivo: 'Demanda atrasada: ' + (d.titulo||''), dias: diasAtrasoDem(d) });
     });
-    await setDoc(marcadorRef, { ultimaSegunda: hojeStr });
-    registrarLogAutomacao('digest_semanal_lembrete', '', 'Lembrete de segunda-feira criado pro Chris');
+    videos.filter(v => videoEstaAtrasado(v)).forEach(v => {
+      const prazo = calcularPrazoEdicaoVideo(v);
+      const diasV = prazo ? Math.max(1, Math.floor((Date.now() - prazo.getTime()) / 86400000)) : 1;
+      quemCobrar.push({ chave: 'vid_' + v.id, pessoa: v.editorAtribuido || '?', motivo: 'Vídeo atrasado (' + (v.clienteNome||'') + '): ' + (v.titulo||''), dias: diasV, nivel: v.nivelEscalonamento || 0 });
+    });
+    postagens.filter(p => p.status === 'aguardando_legenda').forEach(p => {
+      const diasL = p.criadoEm?.seconds ? Math.floor((Date.now() - p.criadoEm.seconds*1000)/86400000) : 0;
+      if(diasL >= 1) quemCobrar.push({ chave: 'leg_' + p.id, pessoa: 'Gabrielle', motivo: 'Legenda parada (' + (p.clienteNome||'') + '): ' + (p.titulo||''), dias: diasL });
+    });
+    postagens.filter(p => p.status === 'aguardando_agendamento').forEach(p => {
+      const diasA = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime())/86400000) : 0;
+      if(diasA >= 1) quemCobrar.push({ chave: 'ag_' + p.id, pessoa: 'Cecília', motivo: 'Postagem sem agendar (' + (p.clienteNome||'') + '): ' + (p.titulo||''), dias: diasA });
+    });
+    agends.filter(a => a.data === ontemStr && a.status === 'agendado').forEach(a => {
+      quemCobrar.push({ chave: 'grav_' + a.id, pessoa: a.filmmaker || 'Cecília', motivo: 'Gravação de ontem sem baixa (' + (a.clienteNome||'') + ') — confirmar se rolou', dias: 1 });
+    });
+    demandasCli.filter(dc => dc.status === 'pendente' && dc.criadoEm?.seconds && Math.floor((Date.now() - dc.criadoEm.seconds*1000)/86400000) >= 2).forEach(dc => {
+      quemCobrar.push({ chave: 'dcli_' + (dc.clienteNome||'') + '_' + tsParaDia(dc.criadoEm), pessoa: 'Amanda', motivo: 'Pedido de cliente sem resposta (' + (dc.clienteNome||'') + '): ' + (dc.texto||'').slice(0,60), dias: Math.floor((Date.now() - dc.criadoEm.seconds*1000)/86400000) });
+    });
+    quemCobrar.sort((a,b) => (b.dias||0) - (a.dias||0));
+
+    /* ---------- CRÍTICOS ---------- */
+    const criticos = [];
+    videos.filter(v => (v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status)).forEach(v => {
+      criticos.push({ chave: 'esc_' + v.id, texto: '🚨 Vídeo escalado nível ' + v.nivelEscalonamento + ' — ' + (v.clienteNome||'') + ': ' + (v.titulo||'') + ' (editor: ' + (v.editorAtribuido||'?') + ')' });
+    });
+    try{
+      const capsulas = await calcularClientesEmCapsula();
+      capsulas.forEach(c => criticos.push({ chave: 'cap_' + c.slug, texto: '🥶 ' + c.nome + ' há ' + (c.diasSemGravar >= 999 ? 'muito tempo' : c.diasSemGravar + ' dias') + ' sem gravar (zona Cápsula)' }));
+    }catch(e){}
+    quemCobrar.filter(q => q.dias >= 4 && q.chave.startsWith('dem_')).slice(0,5).forEach(q => {
+      criticos.push({ chave: 'cron_' + q.chave, texto: '⏰ ' + q.pessoa + ' — ' + q.motivo + ' (' + q.dias + ' dias)' });
+    });
+
+    /* ---------- CLIENTES: entradas, reclamações/ajustes, pedidos ---------- */
+    const entradas = [
+      ...cadastros.filter(c => tsParaDia(c.criadoEm) === ontemStr).map(c => c.nome),
+      ...extras.filter(c => tsParaDia(c.criadoEm) === ontemStr).map(c => c.nome + ' (avulso)')
+    ];
+    const ajustes = [
+      ...videos.filter(v => v.status === 'correcao').map(v => ({ cliente: v.clienteNome||'', texto: 'Vídeo em ajuste: ' + (v.titulo||'') })),
+      ...stories.filter(st => st.status === 'ajuste' && tsParaDia(st.respondidoEm) === ontemStr).map(st => ({ cliente: st.clienteNome||'', texto: 'Pediu ajuste em story: ' + (st.ajusteTexto||'') }))
+    ];
+    const clientesInfo = { entradas, ajustes: ajustes.slice(0,10), pedidosPendentes: demandasCli.filter(dc => dc.status === 'pendente').length };
+
+    /* ---------- QUEM MANDOU BEM (sem nenhuma pendência atrasada + produção de ontem) ---------- */
+    const pessoasComCobranca = new Set(quemCobrar.map(q => q.pessoa));
+    const producaoOntem = {};
+    todasDemandas.filter(d => d.status === 'aprovada' && tsParaDia(d.concluidoEm) === ontemStr).forEach(d => { producaoOntem[d.destinatario] = (producaoOntem[d.destinatario]||0) + 1; });
+    videos.filter(v => (v.aprovadoInternoEm||'').slice(0,10) === ontemStr).forEach(v => { producaoOntem[v.editorAtribuido] = (producaoOntem[v.editorAtribuido]||0) + 1; });
+    postagens.filter(p => (p.legendaEm||'').slice(0,10) === ontemStr && p.legendaPor).forEach(p => { producaoOntem[p.legendaPor] = (producaoOntem[p.legendaPor]||0) + 1; });
+    postagens.filter(p => (p.agendadoEm||'').slice(0,10) === ontemStr && p.agendadoPor).forEach(p => { producaoOntem[p.agendadoPor] = (producaoOntem[p.agendadoPor]||0) + 1; });
+    agends.filter(a => a.data === ontemStr && a.status === 'realizado' && a.filmmaker).forEach(a => { producaoOntem[a.filmmaker] = (producaoOntem[a.filmmaker]||0) + 1; });
+    const emDia = FUNCIONARIOS.filter(f => !pessoasComCobranca.has(f) && !estaAusente(f)).map(f => ({ pessoa: f, producao: producaoOntem[f]||0 }));
+
+    return {
+      data: ontemStr, geradoEm: new Date().toISOString(),
+      numeros, quemCobrar: quemCobrar.slice(0,40), criticos: criticos.slice(0,15),
+      clientes: clientesInfo, emDia, producaoOntem
+    };
   }
+
+  /* Gera 1x por dia (marcador em 'sistema/resumo_diario'), no primeiro
+     acesso/ciclo do motor do dia. Compara com os snapshots anteriores pra
+     calcular reincidência e "não resolvido de ontem". */
+  async function gerarResumoDiarioSeNecessario(forcar){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const marcadorRef = doc(db, 'sistema', 'resumo_diario');
+    if(!forcar){
+      const marcadorSnap = await getDoc(marcadorRef);
+      if(marcadorSnap.exists() && marcadorSnap.data().ultimaData === hojeStr) return;
+    }
+    const resumo = await coletarResumoDiario();
+
+    // Snapshots anteriores (até 8) pra reincidência e comparação
+    const antSnap = await getDocs(collection(db,'resumos_diarios'));
+    const anteriores = []; antSnap.forEach(d => { if(d.id < hojeStr) anteriores.push({id:d.id, ...d.data()}); });
+    anteriores.sort((a,b) => b.id.localeCompare(a.id));
+    const ultimos = anteriores.slice(0, 8);
+
+    // Reincidência por ITEM: chave presente hoje + em N snapshots consecutivos
+    const reincidencias = [];
+    resumo.quemCobrar.forEach(q => {
+      let streak = 1;
+      for(const ant of ultimos){
+        if((ant.quemCobrar||[]).some(x => x.chave === q.chave)) streak++;
+        else break;
+      }
+      if(streak >= 3) reincidencias.push({ chave: q.chave, texto: q.pessoa + ' — ' + q.motivo, dias: streak });
+    });
+    // Reincidência por PESSOA: aparece na lista de cobrança N dias seguidos
+    const pessoasHoje = [...new Set(resumo.quemCobrar.map(q => q.pessoa))];
+    pessoasHoje.forEach(pessoa => {
+      let streak = 1;
+      for(const ant of ultimos){
+        if((ant.quemCobrar||[]).some(x => x.pessoa === pessoa)) streak++;
+        else break;
+      }
+      if(streak >= 3) reincidencias.push({ chave: 'pessoa_' + pessoa, texto: pessoa + ' aparece na lista de cobrança há ' + streak + ' dias seguidos — conversa direta resolve mais que demanda', dias: streak });
+    });
+    reincidencias.sort((a,b) => b.dias - a.dias);
+    resumo.reincidencias = reincidencias.slice(0,12);
+
+    // Não resolvido de ontem: estava na cobrança do snapshot anterior e continua hoje
+    const snapAnterior = ultimos[0];
+    resumo.naoResolvidoOntem = snapAnterior
+      ? resumo.quemCobrar.filter(q => (snapAnterior.quemCobrar||[]).some(x => x.chave === q.chave)).map(q => q.pessoa + ' — ' + q.motivo + ' (' + q.dias + ' dias)').slice(0,15)
+      : [];
+
+    await setDoc(doc(db,'resumos_diarios', hojeStr), resumo);
+    await setDoc(marcadorRef, { ultimaData: hojeStr });
+    registrarLogAutomacao('resumo_diario_gerado', hojeStr, resumo.quemCobrar.length + ' cobrança(s), ' + resumo.criticos.length + ' crítico(s)');
+    return resumo;
+  }
+
+  window.atualizarResumoDiarioAgora = async function(){
+    mostrarToast('Atualizando o resumo com os dados de agora...');
+    await gerarResumoDiarioSeNecessario(true);
+    await renderResumoDiarioHome();
+    mostrarToast('Resumo do Dia atualizado! ✔');
+  };
+
+  function secaoResumoHtml(chave, titulo, itensHtml, qtd, abertaPadrao){
+    return `<div class="faixaDem ${abertaPadrao ? 'aberta' : ''}" data-faixa="res_${chave}">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${qtd})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${itensHtml || '<div class="empty" style="font-size:11px;padding:8px;">Nada aqui. 🎉</div>'}</div>
+    </div>`;
+  }
+
+  async function renderResumoDiarioHome(){
+    const box = document.getElementById('resumoDiarioBox');
+    if(!box) return;
+    if(!['Chris','Amanda'].includes(usuarioAtual)){ box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="card"><div class="desc">☀️ Montando seu Resumo do Dia...</div></div>';
+
+    const hojeStr = new Date().toISOString().slice(0,10);
+    let resumo = null;
+    try{
+      const snap = await getDoc(doc(db,'resumos_diarios', hojeStr));
+      if(snap.exists()) resumo = snap.data();
+      else resumo = await gerarResumoDiarioSeNecessario(true); // primeiro acesso do dia gera na hora
+    }catch(e){ console.error('Resumo do Dia: falha ao carregar/gerar', e); box.innerHTML = ''; return; }
+    if(!resumo){ box.innerHTML = ''; return; }
+
+    const n = resumo.numeros || {};
+    const cobrar = resumo.quemCobrar || [];
+    const criticos = resumo.criticos || [];
+    const reinc = resumo.reincidencias || [];
+    const naoRes = resumo.naoResolvidoOntem || [];
+    const emDia = resumo.emDia || [];
+    const cli = resumo.clientes || {};
+
+    const htmlCriticos = criticos.map(c => `<div class="item" style="border-left:3px solid var(--red);padding:8px 12px;"><div class="nome" style="font-size:12px;">${esc(c.texto)}</div></div>`).join('');
+    const htmlCobrar = cobrar.slice(0,20).map(q => `<div class="item demCompacta" style="border-left:3px solid ${q.dias >= 3 ? 'var(--red)' : 'var(--yellow2)'};">
+      <div class="nome"><b>${esc(q.pessoa)}</b> — ${esc(q.motivo)}</div>
+      <span class="prioTag ${q.dias >= 3 ? 'vermelho' : 'amarelo'}">${q.dias}d</span>
+    </div>`).join('') + (cobrar.length > 20 ? '<div class="empty" style="font-size:11px;">+ ' + (cobrar.length-20) + ' item(ns) — ver Gerência → Demandas Atrasadas</div>' : '');
+    const htmlReinc = reinc.map(r => `<div class="item" style="border-left:3px solid var(--red);padding:8px 12px;"><div class="nome" style="font-size:12px;">🔁 ${esc(r.texto)}</div><div class="meta">${r.dias} dias seguidos no resumo — isso virou padrão, precisa de decisão, não de lembrete</div></div>`).join('');
+    const htmlNaoRes = naoRes.map(t => `<div class="item" style="padding:8px 12px;"><div class="nome" style="font-size:12px;">⏳ ${esc(t)}</div></div>`).join('');
+    const htmlEmDia = emDia.length ? '<div class="item" style="border-left:3px solid var(--green);padding:10px 12px;"><div class="nome" style="font-size:12px;">' + emDia.map(e => esc(e.pessoa) + (e.producao ? ' (' + e.producao + ' entrega(s) ontem)' : '')).join(' · ') + '</div><div class="meta">Sem nenhuma pendência atrasada — vale o elogio no grupo.</div></div>' : '';
+    const htmlClientes = [
+      (cli.entradas||[]).length ? '<div class="item" style="border-left:3px solid var(--green);padding:8px 12px;"><div class="nome" style="font-size:12px;">🟢 Entrou: ' + cli.entradas.map(esc).join(', ') + '</div></div>' : '',
+      ...(cli.ajustes||[]).map(a => '<div class="item" style="padding:8px 12px;"><div class="nome" style="font-size:12px;">🔧 ' + esc(a.cliente) + ' — ' + esc(a.texto) + '</div></div>'),
+      cli.pedidosPendentes ? '<div class="item" style="padding:8px 12px;"><div class="nome" style="font-size:12px;">📨 ' + cli.pedidosPendentes + ' pedido(s) de cliente ainda pendente(s) no portal</div></div>' : ''
+    ].join('');
+    const htmlNumeros = `<div class="painelResumo" style="margin:4px 0 2px;">
+      <div class="resumoCard ${n.demandasAtrasadas ? 'red' : 'green'}"><div class="num">${n.demandasAtrasadas||0}</div><div class="lbl">Demandas atrasadas</div></div>
+      <div class="resumoCard green"><div class="num">${n.demandasConcluidas||0}</div><div class="lbl">Concluídas ontem</div></div>
+      <div class="resumoCard ${n.videosAtrasados ? 'red' : ''}"><div class="num">${n.videosAtrasados||0}</div><div class="lbl">Vídeos atrasados</div></div>
+      <div class="resumoCard green"><div class="num">${n.videosEntregues||0}</div><div class="lbl">Entregues ontem</div></div>
+      <div class="resumoCard"><div class="num">${n.postagensPublicadas||0}</div><div class="lbl">Publicadas ontem</div></div>
+      <div class="resumoCard"><div class="num">${n.gravacoesRealizadasOntem||0}/${n.gravacoesPlanejadasOntem||0}</div><div class="lbl">Gravações ontem</div></div>
+      <div class="resumoCard ${n.gravacoesHoje ? 'yellow' : ''}"><div class="num">${n.gravacoesHoje||0}</div><div class="lbl">Gravações hoje</div></div>
+    </div>`;
+
+    /* Panorama da semana — só sexta/sábado/domingo, agregando os snapshots da semana */
+    let htmlSemana = '';
+    const diaSemana = new Date().getDay();
+    if(diaSemana === 5 || diaSemana === 6 || diaSemana === 0){
+      try{
+        const todosSnap = await getDocs(collection(db,'resumos_diarios'));
+        const inicioSemana = dataStrDiasAtras(diaSemana === 0 ? 6 : diaSemana - 1);
+        const daSemana = []; todosSnap.forEach(d => { if(d.id >= inicioSemana && d.id <= hojeStr) daSemana.push(d.data()); });
+        if(daSemana.length >= 2){
+          const soma = c => daSemana.reduce((t,r) => t + ((r.numeros||{})[c]||0), 0);
+          const freqCobranca = {};
+          daSemana.forEach(r => [...new Set((r.quemCobrar||[]).map(q => q.pessoa))].forEach(pe => { freqCobranca[pe] = (freqCobranca[pe]||0) + 1; }));
+          const maisCobrado = Object.entries(freqCobranca).sort((a,b) => b[1]-a[1])[0];
+          const freqEmDia = {};
+          daSemana.forEach(r => (r.emDia||[]).forEach(e => { freqEmDia[e.pessoa] = (freqEmDia[e.pessoa]||0) + 1; }));
+          const heroi = Object.entries(freqEmDia).sort((a,b) => b[1]-a[1])[0];
+          htmlSemana = secaoResumoHtml('semana', '📆 Panorama da Semana', `
+            <div class="item" style="padding:10px 12px;"><div class="nome" style="font-size:12px;">
+              Concluídas: <b>${soma('demandasConcluidas')}</b> demandas · <b>${soma('videosEntregues')}</b> vídeos entregues · <b>${soma('postagensPublicadas')}</b> publicações · <b>${soma('gravacoesRealizadasOntem')}</b> gravações<br>
+              ${maisCobrado ? '📞 Mais cobrado da semana: <b>' + esc(maisCobrado[0]) + '</b> (' + maisCobrado[1] + ' dia(s) na lista)' : ''}<br>
+              ${heroi ? '🏆 Mais consistente: <b>' + esc(heroi[0]) + '</b> (' + heroi[1] + ' dia(s) 100% em dia)' : ''}
+            </div></div>`, daSemana.length + ' dias', true);
+        }
+      }catch(e){}
+    }
+
+    box.innerHTML = `<div class="card" style="border:2px solid var(--yellow);">
+      <h2 style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <span>☀️ Resumo do Dia <span style="font-size:11px;color:var(--muted);font-weight:600;">— o que aconteceu ${formatarDataBR(resumo.data)} + estado de agora</span></span>
+        <span style="display:flex;gap:6px;">
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="atualizarResumoDiarioAgora()">🔄 Atualizar</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;border-color:var(--yellow);" onclick="copiarFocoEquipe()">📲 Foco do dia (grupo)</button>
+        </span>
+      </h2>
+      ${htmlSemana}
+      ${secaoResumoHtml('criticos', '🚨 Crítico agora', htmlCriticos, criticos.length, criticos.length > 0)}
+      ${secaoResumoHtml('cobrar', '📞 Quem cobrar hoje', htmlCobrar, cobrar.length, cobrar.length > 0)}
+      ${secaoResumoHtml('naores', '⏳ Já estava no resumo de ontem e continua', htmlNaoRes, naoRes.length, false)}
+      ${secaoResumoHtml('reinc', '🔁 Reincidências (3+ dias seguidos)', htmlReinc, reinc.length, reinc.length > 0)}
+      ${secaoResumoHtml('emdia', '✅ Quem mandou bem', htmlEmDia, emDia.length, false)}
+      ${secaoResumoHtml('numeros', '📊 Números', htmlNumeros, '', false)}
+      ${secaoResumoHtml('clientes', '👥 Clientes', htmlClientes, (cli.entradas||[]).length + (cli.ajustes||[]).length, ((cli.entradas||[]).length + (cli.ajustes||[]).length) > 0)}
+    </div>`;
+  }
+
+  /* ===== FOCO DO DIA — mensagem pronta pro grupo do WhatsApp =====
+     Focada nos FUNCIONÁRIOS: o que cada um precisa fazer hoje, com dados
+     ao vivo (não do snapshot). Copia ou abre direto no WhatsApp. */
+  async function gerarMensagemFocoEquipe(){
+    await carregarTodasDemandas();
+    const [vidSnap, postSnap, agSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens')), getDocs(collection(db,'agendamentos'))
+    ]);
+    const videos = []; vidSnap.forEach(d => { const v = d.data(); if(!v.excluido) videos.push(v); });
+    const postagens = []; postSnap.forEach(d => postagens.push(d.data()));
+    const agends = []; agSnap.forEach(d => { const a = d.data(); if(!a.excluido) agends.push(a); });
+    const hojeStr = new Date().toISOString().slice(0,10);
+
+    let txt = '☀️ *Foco do dia — ' + formatarDataBR(hojeStr) + '*\n\n';
+    const emDiaLista = [];
+    for(const nome of FUNCIONARIOS){
+      if(estaAusente(nome)) continue;
+      const linhas = [];
+      const minhasDem = todasDemandas.filter(d => d.destinatario === nome && d.status === 'pendente');
+      const atras = minhasDem.filter(d => calcularUrgencia(d) === 'atrasado');
+      const praHojeD = minhasDem.filter(d => calcularUrgencia(d) === 'hoje');
+      if(atras.length) linhas.push('🔴 ' + atras.length + ' demanda(s) ATRASADA(S)' + (atras[0] ? ' — pior: "' + (atras[0].titulo||'').slice(0,50) + '"' : ''));
+      if(praHojeD.length) linhas.push('🟡 ' + praHojeD.length + ' demanda(s) pra hoje');
+      const meusVid = videos.filter(v => v.editorAtribuido === nome);
+      const corrigir = meusVid.filter(v => v.status === 'correcao').length;
+      const editar = meusVid.filter(v => v.status === 'aguardando_edicao').length;
+      if(corrigir) linhas.push('🔁 ' + corrigir + ' correção(ões) pendente(s)');
+      if(editar) linhas.push('🎬 ' + editar + ' vídeo(s) na fila de edição');
+      if(nome === 'Gabrielle'){
+        const leg = postagens.filter(pp => pp.status === 'aguardando_legenda').length;
+        if(leg) linhas.push('✍️ ' + leg + ' legenda(s) esperando');
+      }
+      if(nome === 'Cecília'){
+        const agd = postagens.filter(pp => pp.status === 'aguardando_agendamento').length;
+        if(agd) linhas.push('📲 ' + agd + ' postagem(ns) pra agendar');
+        const gravHoje = agends.filter(a => a.data === hojeStr && a.status === 'agendado' && a.aprovado !== false).length;
+        if(gravHoje) linhas.push('🎥 ' + gravHoje + ' gravação(ões) hoje pra coordenar');
+      }
+      if(['Nathan','Luís'].includes(nome)){
+        const minhasGrav = agends.filter(a => a.data === hojeStr && a.filmmaker === nome && a.status === 'agendado' && a.aprovado !== false);
+        minhasGrav.forEach(g => linhas.push('🎥 Gravação hoje: ' + (g.clienteNome||'') + ' às ' + (g.hora||'')));
+      }
+      if(linhas.length) txt += '*' + nome + '*\n' + linhas.map(l => '  • ' + l).join('\n') + '\n\n';
+      else emDiaLista.push(nome);
+    }
+    if(emDiaLista.length) txt += '✅ *Em dia:* ' + emDiaLista.join(', ') + '\n\n';
+    txt += 'Bora fechar o dia no verde! 💛';
+    return txt;
+  }
+
+  window.copiarFocoEquipe = async function(){
+    mostrarToast('Montando o foco do dia...');
+    try{
+      const txt = await gerarMensagemFocoEquipe();
+      try{
+        await navigator.clipboard.writeText(txt);
+        mostrarToast('Foco do dia copiado! Cola no grupo do WhatsApp. 📲');
+      }catch(e){
+        // fallback: abre direto no WhatsApp
+        window.open('https://wa.me/?text=' + encodeURIComponent(txt), '_blank');
+      }
+    }catch(e){
+      console.error('Falha ao gerar foco do dia:', e);
+      mostrarToast('Não consegui montar agora — tenta de novo.', 'erro');
+    }
+  };
 
   async function motorAutomacoes(origem){
     const lockRef = doc(db, 'sistema', 'motor_lock');
@@ -7698,7 +8018,7 @@
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
-      { nome: 'digestSemanal', fn: verificarDigestSemanal },
+      { nome: 'resumoDiario', fn: gerarResumoDiarioSeNecessario },
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
       { nome: 'gravacoesFantasma', fn: verificarGravacoesFantasma },

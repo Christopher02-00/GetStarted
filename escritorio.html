@@ -535,6 +535,7 @@
       <div class="label" id="labelNavApoio">Apoio</div>
       <div class="navitem" id="navRoteiros" onclick="irPara('roteiros', this)"><span class="ico"><svg><use href="#i-pen"/></svg></span> Central de Roteiros</div>
       <div class="navitem" id="navReferencias" onclick="irPara('referencias', this)"><span class="ico"><svg><use href="#i-link"/></svg></span> Referências</div>
+      <div class="navitem" id="navBriefings" onclick="irPara('briefings', this)"><span class="ico">📋</span> Briefings</div>
       <div class="navitem" id="navRelatorio" onclick="irPara('relatorioMensal', this)"><span class="ico"><svg><use href="#i-chart"/></svg></span> Relatório Mensal</div>
       <div class="navitem" id="navCalendarios" onclick="irPara('calendarios', this)"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Calendários</div>
       <div class="navitem" id="navConteudoAteQuando" onclick="irPara('conteudoAteQuando', this)"><span class="ico">📅</span> Conteúdo Até Quando</div>
@@ -832,6 +833,21 @@
         <option value="disponiveis">Só as disponíveis (ainda não usadas no calendário)</option>
       </select></div>
       <div id="listaReferencias"></div>
+    </div>
+
+    <div class="view" id="view-briefings">
+      <h1>Briefings dos <span class="y">Clientes</span></h1>
+      <div class="sub">O briefing de cada cliente num lugar só — cola o texto ou o link do formulário. Quem precisa consulta aqui, sem caçar no WhatsApp.</div>
+      <div class="card">
+        <div class="field"><label>Cliente</label><select id="briefingCliente" onchange="carregarBriefing()"><option value="">Selecione o cliente...</option></select></div>
+        <div id="briefingEditor" style="display:none;">
+          <div class="field"><label>🔗 Link do briefing (formulário / Drive) — opcional</label><input type="text" id="briefingLink" placeholder="Cola o link do formulário ou doc do briefing"></div>
+          <div class="field"><label>📋 Briefing (cola o conteúdo aqui)</label><textarea id="briefingTexto" style="min-height:220px;" placeholder="Público-alvo, objetivos, tom de voz, temas, o que pode e o que não pode, diferenciais, concorrentes..."></textarea></div>
+          <div class="meta" id="briefingInfo" style="margin-bottom:8px;"></div>
+          <button class="btn" onclick="salvarBriefing()">Salvar briefing</button>
+        </div>
+      </div>
+      <div id="briefingStatusLista"></div>
     </div>
 
     <div class="view" id="view-relatorioMensal">
@@ -5089,6 +5105,73 @@
     sel.innerHTML = '<option value="">Nenhum — só por nicho</option>' + CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
   }
 
+  /* ===== BRIEFINGS POR CLIENTE (21/07/2026) =====
+     Antes o briefing do cliente vivia fora do site (formulário/WhatsApp) e
+     a Gabi não achava. Agora tem um lugar próprio: 1 briefing por cliente
+     (texto colado + link do formulário), visível pra quem cria conteúdo
+     (Gabi, Amanda, Cecília). Coleção briefings_cliente/<slug>. */
+  function popularClientesBriefing(){
+    const sel = document.getElementById('briefingCliente');
+    if(!sel) return;
+    const atual = sel.value;
+    sel.innerHTML = '<option value="">Selecione o cliente...</option>' + CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
+    if(atual) sel.value = atual;
+  }
+  window.carregarBriefing = async function(){
+    const sel = document.getElementById('briefingCliente');
+    const slug = sel.value;
+    const ed = document.getElementById('briefingEditor');
+    if(!slug){ ed.style.display = 'none'; return; }
+    ed.style.display = 'block';
+    const snap = await getDoc(doc(db,'briefings_cliente', slug));
+    const d = snap.exists() ? snap.data() : {};
+    document.getElementById('briefingLink').value = d.link || '';
+    document.getElementById('briefingTexto').value = d.texto || '';
+    const info = document.getElementById('briefingInfo');
+    if(d.atualizadoEm){
+      const quando = d.atualizadoEm.seconds ? new Date(d.atualizadoEm.seconds*1000).toLocaleDateString('pt-BR') : '';
+      info.innerHTML = '<span class="selo aprovada">Salvo</span> Última atualização por ' + esc(d.atualizadoPor||'?') + (quando?' em '+quando:'');
+    } else {
+      info.innerHTML = '<span class="selo pendente">Ainda sem briefing</span> Cola o conteúdo (ou o link do formulário) e salva.';
+    }
+  };
+  window.salvarBriefing = async function(){
+    const sel = document.getElementById('briefingCliente');
+    const slug = sel.value;
+    if(!slug){ mostrarToast('Escolhe o cliente primeiro.', 'erro'); return; }
+    const texto = document.getElementById('briefingTexto').value.trim();
+    const link = document.getElementById('briefingLink').value.trim();
+    if(!texto && !link){ mostrarToast('Cola o briefing ou o link antes de salvar.', 'erro'); return; }
+    await setDoc(doc(db,'briefings_cliente', slug), {
+      cliente: slug, clienteNome: sel.selectedOptions[0].dataset.nome || slug,
+      texto, link, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp()
+    }, { merge:true });
+    mostrarToast('Briefing salvo!');
+    carregarBriefing();
+    renderBriefings();
+  };
+  async function renderBriefings(){
+    const cont = document.getElementById('briefingStatusLista');
+    if(!cont) return;
+    await carregarClientesExtras();
+    const snap = await getDocs(collection(db,'briefings_cliente'));
+    const tem = {}; snap.forEach(d => { const v=d.data(); tem[d.id] = !!((v.texto&&v.texto.trim())||(v.link&&v.link.trim())); });
+    const comB = CLIENTES_LISTA.filter(c => tem[c.slug]);
+    const semB = CLIENTES_LISTA.filter(c => !tem[c.slug]);
+    let html = `<div class="card"><h2>📊 Cobertura de briefings</h2><div class="desc">${comB.length} de ${CLIENTES_LISTA.length} cliente(s) com briefing salvo. Clica num cliente pra abrir/editar.</div></div>`;
+    if(comB.length){
+      html += '<div class="grupoFuncionario"><h3>✅ Com briefing (' + comB.length + ')</h3>' + comB.map(c => `<div class="item" style="cursor:pointer;" onclick="abrirBriefingCliente('${c.slug}')"><div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo aprovada">tem</span></div></div>`).join('') + '</div>';
+    }
+    if(semB.length){
+      html += '<div class="grupoFuncionario"><h3>⚠️ Faltando (' + semB.length + ')</h3>' + semB.map(c => `<div class="item" style="cursor:pointer;" onclick="abrirBriefingCliente('${c.slug}')"><div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">falta</span></div></div>`).join('') + '</div>';
+    }
+    cont.innerHTML = html;
+  }
+  window.abrirBriefingCliente = function(slug){
+    const sel = document.getElementById('briefingCliente');
+    if(sel){ sel.value = slug; carregarBriefing(); sel.scrollIntoView({behavior:'smooth', block:'center'}); }
+  };
+
   window.adicionarReferencia = async function(){
     const link = document.getElementById('refLinkInput').value.trim();
     const nicho = document.getElementById('refNicho').value;
@@ -6077,6 +6160,7 @@
     }
     if(nome === 'conteudoAteQuando') renderConteudoAteQuando();
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
+    if(nome === 'briefings'){ carregarClientesExtras().then(()=>popularClientesBriefing()); renderBriefings(); }
     if(nome === 'relatorioMensal') popularClientesRelatorio();
   };
 
@@ -6459,16 +6543,16 @@
      usuario selecionado a sidebar mostra SO o Inicio. */
   const VISIBILIDADE_POR_FUNCAO = {
     'Chris': 'todos',
-    'Amanda': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
-    'Cecília': ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCalendarios','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
-    'Gabrielle': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit'],
+    'Amanda': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
+    'Cecília': ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
+    'Gabrielle': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'João Victor': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'Nathan': ['navVideos','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'Luís': ['navChecklist','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'Yas': ['navGetAcademy','navManualFuncao','navDuvidasBit'],
   };
-  const ITENS_CONTROLADOS = ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navRelatorio','navCalendarios','navCadastro','navConteudoAteQuando','navManualFuncao','navDuvidasBit'];
+  const ITENS_CONTROLADOS = ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navRelatorio','navCalendarios','navCadastro','navConteudoAteQuando','navManualFuncao','navDuvidasBit'];
   const ITENS_UNIVERSAIS = ['navMinhasDemandasAtribuidas','navMinhasDemandas'];
 
   /* ===== FRENTE C2 — SIDEBAR POR FREQUENCIA DE USO =====
@@ -6595,7 +6679,7 @@
       inicio:'navInicio', minhasDemandasAtribuidas:'navMinhasDemandasAtribuidas', minhasDemandas:'navMinhasDemandas', checklist:'navChecklist',
       videos:'navVideos', agendamento:'navAgendamento', funcoesFixas:'navFuncoesFixas',
       postagens:'navPostagens', stories:'navStories', campanhas:'navCampanhas', roteiros:'navRoteiros',
-      referencias:'navReferencias', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
+      referencias:'navReferencias', briefings:'navBriefings', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
       cadastro:'navCadastro', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit'
     };
     const el = document.getElementById(idParaId[nomeView]);

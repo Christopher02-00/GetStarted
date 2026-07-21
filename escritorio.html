@@ -1033,7 +1033,7 @@
             <div class="gGrupo" data-grupo="equipe">
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">🧑‍🤝‍🧑 Equipe <span class="seta">▾</span></div>
               <div class="gGrupoItens">
-                <div class="subtab" data-sub="funcionarioMes" onclick="setGerenciaSub('funcionarioMes', this)">Funcionário do Mês</div>
+                <div class="subtab" data-sub="funcionarioMes" onclick="setGerenciaSub('funcionarioMes', this)">🎯 Metas da Equipe & Funcionário do Mês</div>
                 <div class="subtab" data-sub="ausencias" onclick="setGerenciaSub('ausencias', this)">Modo Ausência</div>
                 <div class="subtab" data-sub="editarChecklist" onclick="setGerenciaSub('editarChecklist', this)">Editar Checklists</div>
                 <div class="subtab" data-sub="editarFuncoesFixas" onclick="setGerenciaSub('editarFuncoesFixas', this)">Editar Funções Fixas</div>
@@ -1184,8 +1184,8 @@
       {ico:"📌",nome:"Minhas Demandas",view:"minhasDemandasAtribuidas"}] },
     "Amanda": { setor: "Coordenação Geral", atalhos: [
       {ico:"🔒",nome:"Painel Gerência",view:"gerencia"},
+      {ico:"🎯",nome:"Metas da Equipe",acao:"atalhoGerenciaSub('funcionarioMes')"},
       {ico:"🎬",nome:"Distribuir Vídeos",acao:"atalhoGerenciaSub('videos')"},
-      {ico:"💡",nome:"Campanhas",view:"campanhas"},
       {ico:"📋",nome:"Meu Checklist",view:"checklist"}] },
     "Cecília": { setor: "Produção & Agendamento", atalhos: [
       {ico:"🎥",nome:"Agendar Gravação",view:"agendamento"},
@@ -8225,6 +8225,37 @@
     }
   }
 
+  /* ===== LEMBRETE DE FIM DE DIA — 17h pras meninas (21/07/2026) =====
+     Todo dia a partir das 17h, quem ainda tiver demanda em aberto recebe
+     um empurrão por e-mail (e notificação no navegador se estiver logada)
+     pra fechar tudo até o fim do expediente — foco em terminar a alimentação
+     do site. Manda 1 vez por dia por pessoa, e só pra quem realmente tem
+     coisa pendente (não incomoda quem já zerou). */
+  async function verificarLembreteFimDoDia17h(){
+    const agora = new Date();
+    if(agora.getHours() < 17) return;
+    const hojeStr = agora.toISOString().slice(0,10);
+    const marc = await getDoc(doc(db,'sistema','lembrete_fim_dia'));
+    if(marc.exists() && marc.data().ultimaData === hojeStr) return;
+    const MENINAS = ['Amanda','Cecília','Gabrielle','Yas'];
+    const snap = await getDocs(collection(db,'demandas'));
+    const pend = {};
+    snap.forEach(d => { const v=d.data(); if(v.status!=='pendente' || !v.destinatario) return; if(!MENINAS.includes(v.destinatario)) return; if(estaAusente(v.destinatario)) return; (pend[v.destinatario]=pend[v.destinatario]||[]).push(v); });
+    let notificadas = 0;
+    for(const nome of MENINAS){
+      const lista = pend[nome]; if(!lista || !lista.length) continue;
+      const titulos = lista.slice(0,6).map(d=>d.titulo).join(' · ');
+      await dispararEmailIndividual(nome, 'fim_do_dia', {
+        titulo: '⏰ Reta final do dia (17h) — finalize hoje: você tem ' + lista.length + ' demanda(s) em aberto pra fechar até o fim do expediente. ' + titulos + (lista.length>6?' …e mais.':''),
+        itemId: 'fimdia_'+hojeStr, colecao: 'demandas'
+      });
+      if(nome === usuarioAtual){ try{ dispararNotificacaoNavegador('⏰ Reta final do dia', 'Você ainda tem ' + lista.length + ' demanda(s) pra fechar hoje.'); }catch(e){} }
+      notificadas++;
+    }
+    await setDoc(doc(db,'sistema','lembrete_fim_dia'), { ultimaData: hojeStr });
+    registrarLogAutomacao('lembrete_fim_dia_17h', hojeStr, notificadas + ' pessoa(s) notificada(s)');
+  }
+
   async function verificarLembretesPrazoHoje(){
     const hojeStr = new Date().toISOString().slice(0,10);
     const snap = await getDocs(collection(db,'demandas'));
@@ -8711,6 +8742,7 @@
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
       { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
       { nome: 'refDiariaGabi', fn: verificarDemandaReferenciasDiariaGabi },
+      { nome: 'lembreteFimDoDia17h', fn: verificarLembreteFimDoDia17h },
       { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
     ];
 

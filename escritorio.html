@@ -7215,7 +7215,37 @@
     window.open('https://wa.me/?text=' + encodeURIComponent(texto), '_blank');
   };
 
+  /* ===== LEMBRETE DE DIGEST SE FECHA SOZINHO =====
+     Correção de incômodo real do Chris: o lembrete de segunda era uma
+     demanda comum — exigia prova + aprovação da gerência pra fechar, o que
+     ninguém fazia, então ficava "atrasada" pra sempre e acumulava uma nova
+     a cada segunda. Lembrete de sistema não tem burocracia: abriu o Digest,
+     ele fecha sozinho; chegou segunda nova, a antiga é substituída. */
+  async function fecharLembretesDigestAbertos(motivo){
+    try{
+      const snap = await getDocs(collection(db,'demandas'));
+      let fechadas = 0;
+      for(const dSnap of snap.docs){
+        const dem = dSnap.data();
+        if(dem.destinatario === 'Chris' && (dem.titulo||'').includes('Digest semanal pronto') && dem.status !== 'aprovada'){
+          await updateDoc(doc(db,'demandas', dSnap.id), { status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(), notaConclusao: motivo });
+          registrarHistorico('demandas', dSnap.id, 'Fechada automaticamente', motivo);
+          fechadas++;
+        }
+      }
+      return fechadas;
+    }catch(e){ console.error('Falha ao fechar lembretes de digest:', e); return 0; }
+  }
+
   function renderDigest(){
+    // Você abriu o Digest — o lembrete cumpriu o papel e morre aqui, sem
+    // prova nem aprovação. Badge e listas atualizam em seguida.
+    fecharLembretesDigestAbertos('Fechado automaticamente — o Chris abriu o Digest.').then(n => {
+      if(n > 0){
+        mostrarToast('Lembrete de digest fechado sozinho — missão cumprida. ✔');
+        carregarTodasDemandas().then(() => { renderMinhasDemandasAtribuidas(); }).catch(()=>{});
+      }
+    });
     const cont = document.getElementById('gerenciaDigest');
     cont.innerHTML = `
       <div class="card">
@@ -7626,6 +7656,10 @@
     const marcadorRef = doc(db, 'sistema', 'digest_semanal');
     const marcadorSnap = await getDoc(marcadorRef);
     if(marcadorSnap.exists() && marcadorSnap.data().ultimaSegunda === hojeStr) return; // já criou hoje
+
+    // Antes de criar o lembrete novo, fecha qualquer antigo ainda aberto —
+    // o lembrete é da SEMANA, não pode virar pilha de atraso.
+    await fecharLembretesDigestAbertos('Substituído pelo lembrete da nova segunda-feira.');
 
     await addDoc(collection(db,'demandas'), {
       titulo: '📱 Digest semanal pronto — abrir Gerência → Digest',

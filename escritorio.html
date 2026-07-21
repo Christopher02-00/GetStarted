@@ -283,6 +283,17 @@
   .faixaDem.aberta .faixaHead .seta{transform:rotate(180deg);}
   .faixaDem .faixaItens{display:none;padding:10px 10px 4px;}
   .faixaDem.aberta .faixaItens{display:block;}
+  /* Card-grupo: junta demandas em massa (reuniões, legendas, etc) numa
+     linha só colapsável — some a poluição de N cards iguais empilhados. */
+  .grupoDem{border:1px dashed var(--line);border-radius:9px;margin:6px 0;overflow:hidden;background:rgba(255,255,255,.02);}
+  .grupoDem .grupoHead{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;user-select:none;font-size:12px;font-weight:800;}
+  .grupoDem .grupoHead .gic{font-size:14px;}
+  .grupoDem .grupoHead .gqtd{background:var(--yellow);color:#2b2b2b;border-radius:20px;padding:1px 8px;font-size:11px;font-weight:800;}
+  .grupoDem .grupoHead .gseta{margin-left:auto;transition:transform .2s;font-size:11px;color:var(--muted);}
+  .grupoDem.aberto .grupoHead .gseta{transform:rotate(180deg);}
+  .grupoDem .grupoItens{display:none;padding:2px 8px 6px;}
+  .grupoDem.aberto .grupoItens{display:block;}
+  .grupoDem .grupoDica{font-size:10.5px;color:var(--muted);padding:1px 2px 8px;}
   .item.demCompacta{display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;}
   .item.demCompacta .nome{font-size:12px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .item.demCompacta .metaLinha{font-size:10.5px;color:var(--muted);white-space:nowrap;}
@@ -6711,11 +6722,60 @@
     </div>`;
   }
 
+  /* ===== FAMÍLIAS DE DEMANDA EM MASSA (varredura 21/07/2026) =====
+     Funções fixas mensais (reunião por cliente, calendário por cliente),
+     legendas por conteúdo, postagens a agendar, vídeos atrasados e tarefas
+     fixas customizadas entram DEZENAS de uma vez e empilhavam como N cards
+     iguais — poluindo a tela e escondendo o que é único. Cada família vira
+     UM card colapsável, com rótulo sob medida pra função da pessoa. O que
+     não é família (demanda única/pessoal) continua card normal, visível. */
+  function familiaDemanda(d){
+    const t = d.titulo || '';
+    if(d.tipoFuncaoFixa === 'reuniao') return { chave:'fam_reunioes', icone:'📅', rotulo:'Reuniões mensais a agendar', dica:'Uma por cliente. Abra, agende cada uma e dê baixa individual.' };
+    if(d.tipoFuncaoFixa === 'calendario') return { chave:'fam_calendarios', icone:'🗓️', rotulo:'Calendários do próximo mês', dica:'Um por cliente. Entregue/aprove e dê baixa individual.' };
+    if(typeof d.tipoFuncaoFixa === 'string' && d.tipoFuncaoFixa.startsWith('custom_')) return { chave:'fam_'+d.tipoFuncaoFixa, icone:'🔁', rotulo:(d.tipoFuncaoFixaNome || 'Tarefa fixa recorrente'), dica:'Tarefa fixa recorrente distribuída por cliente.' };
+    if(/^✍️\s*(Escrever legenda|Legenda pendente)/.test(t)) return { chave:'fam_legendas', icone:'✍️', rotulo:'Legendas a escrever', dica:'Uma por conteúdo aprovado. Escreva e dê baixa em cada uma.' };
+    if(t.startsWith('📅 Agendar') || t.startsWith('⚠️ Postagem sem agendar')) return { chave:'fam_agendarPost', icone:'📅', rotulo:'Postagens a agendar', dica:'Legenda pronta esperando você agendar a data.' };
+    if(t.startsWith('⚠️ Vídeo atrasado')) return { chave:'fam_videosAtrasados', icone:'⚠️', rotulo:'Vídeos atrasados pra editar', dica:'Passaram do prazo de edição — priorize.' };
+    return null;
+  }
+  window.toggleGrupoDemanda = function(head){
+    const g = head.closest('.grupoDem');
+    if(g) g.classList.toggle('aberto');
+  };
+  const MIN_AGRUPAR_DEMANDAS = 3; // só agrupa quando há volume de verdade
+
   function faixaDemandasHtml(chave, titulo, lista, abertaPadrao, estadoSalvo){
     const aberta = (estadoSalvo && chave in estadoSalvo) ? estadoSalvo[chave] : abertaPadrao;
+    let corpo;
+    if(!lista.length){
+      corpo = '<div class="empty" style="font-size:11px;padding:8px;">Nada aqui. 🎉</div>';
+    } else {
+      const grupos = {}; const soltas = [];
+      lista.forEach(d => {
+        const fam = familiaDemanda(d);
+        if(fam){ (grupos[fam.chave] = grupos[fam.chave] || { fam, itens:[] }).itens.push(d); }
+        else soltas.push(d);
+      });
+      // demandas únicas/pessoais primeiro (é o que precisa de atenção real)
+      corpo = soltas.map(cardDemandaCompacto).join('');
+      Object.values(grupos).forEach(g => {
+        if(g.itens.length >= MIN_AGRUPAR_DEMANDAS){
+          corpo += `<div class="grupoDem ${abertaPadrao?'aberto':''}">
+            <div class="grupoHead" onclick="toggleGrupoDemanda(this)">
+              <span class="gic">${g.fam.icone}</span><span class="grot">${esc(g.fam.rotulo)}</span>
+              <span class="gqtd">${g.itens.length}</span><span class="gseta">▾</span>
+            </div>
+            <div class="grupoItens"><div class="grupoDica">${esc(g.fam.dica||'')}</div>${g.itens.map(cardDemandaCompacto).join('')}</div>
+          </div>`;
+        } else {
+          corpo += g.itens.map(cardDemandaCompacto).join('');
+        }
+      });
+    }
     return `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="${chave}">
       <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
-      <div class="faixaItens">${lista.length ? lista.map(cardDemandaCompacto).join('') : '<div class="empty" style="font-size:11px;padding:8px;">Nada aqui. 🎉</div>'}</div>
+      <div class="faixaItens">${corpo}</div>
     </div>`;
   }
 
@@ -6753,7 +6813,17 @@
     const porData = l => [...l].sort((a,b) => ((a.prazoData||'') + (a.prazoHora||'')).localeCompare((b.prazoData||'') + (b.prazoHora||'')));
     const atrasadas = porData(pendentes.filter(d => calcularUrgencia(d) === 'atrasado'));
     const praHoje = porData(pendentes.filter(d => calcularUrgencia(d) === 'hoje'));
-    const proximas = porData(pendentes.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d))));
+    // CORRIGIDO 21/07/2026: uma demanda marcada URGENTE mas com prazo pra
+    // frente (ex: sexta) caía em "Próximas", que vem fechada por padrão —
+    // e sumia da vista. Agora tudo que está marcado urgente (🔴 ou a
+    // palavra URGENTE no título) sobe pra um bloco próprio no topo, sempre
+    // aberto, sem depender da data. Só sai daqui quando vira atrasado/hoje
+    // (aí já aparece nas faixas de cima, também abertas).
+    const ehDemandaUrgente = d => { const t = (d.titulo||''); return t.startsWith('🔴') || /urgente/i.test(t); };
+    const naoUrgentesFuturas = pendentes.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && !ehDemandaUrgente(d));
+    const urgentesFuturas = pendentes.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && ehDemandaUrgente(d));
+    const proximas = porData(naoUrgentesFuturas);
+    const urgentes = porData(urgentesFuturas);
 
     let estadoSalvo = null;
     try{ estadoSalvo = JSON.parse(localStorage.getItem('faixasDemandas_' + usuarioAtual) || 'null'); }catch(e){}
@@ -6774,6 +6844,7 @@
     }
 
     lista.innerHTML = chips +
+      (urgentes.length ? faixaDemandasHtml('urgentes', '🔥 Urgente — não pode esperar', urgentes, true, estadoSalvo) : '') +
       faixaDemandasHtml('atrasadas', '🔴 Atrasadas', atrasadas, true, estadoSalvo) +
       faixaDemandasHtml('hoje', '🟡 Pra hoje', praHoje, true, estadoSalvo) +
       faixaDemandasHtml('proximas', '⚪ Próximas', proximas, false, estadoSalvo) +

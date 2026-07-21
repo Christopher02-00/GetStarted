@@ -112,6 +112,7 @@
 
     <div class="tabs">
       <div class="tab active" data-tab="calendario" onclick="setTab('calendario', this)"><svg class="ic"><use href="#i-calendar"/></svg>Calendário</div>
+      <div class="tab" data-tab="acompanhamento" onclick="setTab('acompanhamento', this)"><svg class="ic"><use href="#i-activity"/></svg>Acompanhamento</div>
       <div class="tab" data-tab="demandas" onclick="setTab('demandas', this)"><svg class="ic"><use href="#i-clipboard"/></svg>Demandas<span class="badge" id="badgeDemandas" style="display:none;">0</span></div>
       <div class="tab" data-tab="drive" onclick="setTab('drive', this)"><svg class="ic"><use href="#i-folder"/></svg>Drive</div>
       <div class="tab" onclick="toggleMenuMais()" id="tabMais">⋯ Mais</div>
@@ -126,6 +127,7 @@
     </div>
 
     <div id="painelCalendario"></div>
+    <div id="painelAcompanhamento" style="display:none;"></div>
     <div id="painelDemandas" style="display:none;"></div>
     <div id="painelDrive" style="display:none;"></div>
     <div id="painelVideos" style="display:none;"></div>
@@ -154,6 +156,12 @@
 
   const STAGE_LABEL = { planejamento:'Planejamento', roteiro:'Roteiro', gravacao:'Gravação', edicao:'Edição', revisao:'Revisão', programado:'Programado', publicado:'Publicado' };
   const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+  /* Espelha exatamente a lista de etapas do escritorio.html (Acompanhamento
+     de Processos) — serve só pra calcular "etapa X de 13" na barra de
+     progresso. Quem edita e escolhe a etapa é sempre a equipe, do lado de
+     lá; aqui é somente leitura. */
+  const ETAPAS_PROCESSO = ['Briefing recebido','Planejamento em andamento','Calendário editorial em desenvolvimento','Calendário enviado para aprovação','Conteúdos em produção','Vídeos em edição','Artes em criação','Conteúdo aguardando aprovação','Conteúdo aprovado','Conteúdo agendado','Relatório do perfil em elaboração','Estratégia do perfil sendo atualizada','Projeto concluído'];
 
   let CLIENTES_LISTA = [];
   let clienteAtual = null;
@@ -223,6 +231,7 @@
     carregarVideos();
     carregarAtas();
     carregarInfo();
+    carregarAcompanhamento();
   };
 
   window.sairPortal = function(){
@@ -240,7 +249,7 @@
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
     if(['videos','minhaAgenda','ideias','stories','atas','info'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
-    ['Calendario','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info'].forEach(p => {
+    ['Calendario','Acompanhamento','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info'].forEach(p => {
       document.getElementById('painel'+p).style.display = (p.toLowerCase()===nome.toLowerCase()) ? 'block' : 'none';
     });
     if(nome==='minhaAgenda') carregarMinhaAgenda();
@@ -272,6 +281,63 @@
         <div class="item"><div class="nome">${a.tipo==='reuniao'?'📅 Reunião':'🎥 Gravação'} — ${new Date(a.data+'T00:00:00').toLocaleDateString('pt-BR')}</div></div>
       `).join('') + `</div>`;
     }
+    cont.innerHTML = html;
+  }
+
+  /* ===== ACOMPANHAMENTO DE PROCESSOS (21/07/2026) =====
+     Pedido da Amanda: dar transparência real ao cliente sobre o que está
+     rolando nos bastidores. A Cecília e a Gabi atualizam isso do lado do
+     escritorio.html (etapa atual + melhorias feitas no perfil); aqui é só
+     leitura, em tempo real, sem o cliente precisar perguntar nada. */
+  async function carregarAcompanhamento(){
+    const cont = document.getElementById('painelAcompanhamento');
+    cont.innerHTML = '<div class="empty">Carregando...</div>';
+    const snap = await getDoc(doc(db,'processos_cliente', clienteAtual.slug));
+    const dados = snap.exists() ? snap.data() : null;
+
+    if(!dados || !(dados.timeline||[]).length){
+      cont.innerHTML = `<div class="card">
+        <h2><svg class="ic"><use href="#i-activity"/></svg>Acompanhamento do Processo</h2>
+        <div class="sub" style="margin-bottom:0;">Assim que a equipe começar a atualizar o andamento do seu projeto, tudo aparece aqui em tempo real.</div>
+      </div>`;
+      return;
+    }
+
+    const idxAtual = ETAPAS_PROCESSO.indexOf(dados.etapaAtual);
+    const pct = idxAtual >= 0 ? Math.round(((idxAtual+1)/ETAPAS_PROCESSO.length)*100) : 0;
+    const timeline = (dados.timeline||[]).slice().reverse();
+    const melhorias = (dados.melhorias||[]).slice().reverse();
+
+    let html = `<div class="card">
+      <h2><svg class="ic"><use href="#i-activity"/></svg>Onde seu projeto está agora</h2>
+      <div class="nome" style="font-size:16px;margin:10px 0 8px;">${esc(dados.etapaAtual||'Em andamento')}</div>
+      ${idxAtual>=0 ? `
+        <div style="background:var(--deep);border-radius:20px;height:8px;overflow:hidden;margin-bottom:6px;">
+          <div style="background:var(--yellow);height:100%;width:${pct}%;border-radius:20px;"></div>
+        </div>
+        <div class="meta">Etapa ${idxAtual+1} de ${ETAPAS_PROCESSO.length}</div>
+      ` : ''}
+    </div>`;
+
+    html += `<div class="card"><h2 style="font-size:14px;"><svg class="ic"><use href="#i-clock"/></svg>Linha do tempo</h2>`;
+    html += timeline.map(t => `
+      <div class="item" style="border-left:3px solid var(--yellow);">
+        <div class="nome">${esc(t.status||'')}</div>
+        <div class="meta">${t.data ? new Date(t.data).toLocaleDateString('pt-BR') : ''}${t.responsavel ? ' · equipe '+esc(t.responsavel) : ''}</div>
+        ${t.obs ? '<div class="meta" style="margin-top:4px;">'+esc(t.obs)+'</div>' : ''}
+      </div>
+    `).join('');
+    html += `</div>`;
+
+    html += `<div class="card"><h2 style="font-size:14px;"><svg class="ic"><use href="#i-star"/></svg>Melhorias realizadas no seu perfil</h2>`;
+    html += melhorias.length ? melhorias.map(m => `
+      <div class="item" style="border-left:3px solid var(--green);">
+        <div class="nome">✓ ${esc(m.descricao||'')}</div>
+        <div class="meta">${m.data ? new Date(m.data).toLocaleDateString('pt-BR') : ''}${m.responsavel ? ' · equipe '+esc(m.responsavel) : ''}</div>
+      </div>
+    `).join('') : '<div class="empty">Nenhuma melhoria registrada ainda.</div>';
+    html += `</div>`;
+
     cont.innerHTML = html;
   }
 

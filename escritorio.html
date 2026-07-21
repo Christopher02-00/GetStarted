@@ -3525,8 +3525,13 @@
     if(!postSnap.exists()) return;
     const p = postSnap.data();
     await addDoc(collection(db,'demandas'), {
-      titulo: '⏭️ Pedido pra pular legenda — ' + (p.clienteNome||'') + ': ' + (p.titulo||''),
-      descricao: 'A Gabi está pedindo pra pular a etapa de legenda desse conteúdo — provavelmente já tem uma pronta em outro lugar (ex: combinado no WhatsApp do cliente). Confere se é viável e decide.',
+      // CORRIGIDO 21/07/2026: título antigo começava com "Pedido pra pular
+      // legenda" — a Amanda via isso na lista dela e achava que era uma
+      // notificação de ESCREVER legenda (trabalho exclusivo da Gabi), quando
+      // na real é uma DECISÃO só dela (aprovar ou não pular a etapa). Título
+      // reescrito pra deixar isso óbvio de cara, sem mudar nada da lógica.
+      titulo: '🙋 Decisão sua: liberar pular a legenda? — ' + (p.clienteNome||'') + ': ' + (p.titulo||''),
+      descricao: 'A Gabi está pedindo pra pular a etapa de legenda desse conteúdo — provavelmente já tem uma pronta em outro lugar (ex: combinado no WhatsApp do cliente). Confere se é viável e decide. (Isso não é uma tarefa de escrever legenda — é uma aprovação sua.)',
       origem: 'gabrielle', clienteNome: p.clienteNome || '', destinatario: 'Amanda',
       tipoEspecial: 'pular_legenda', postagemId,
       prazoData: new Date().toISOString().slice(0,10), prazoHora: '18:00',
@@ -4915,12 +4920,23 @@
     });
 
     if(temUber || valorExtra){
-      await addDoc(collection(db,'pagamentos_extra'), {
+      const refPagExtra = await addDoc(collection(db,'pagamentos_extra'), {
         cliente: clienteSlug, clienteNome, agendamentoId: agId,
         temUber, uberLink, valorExtra,
         mes: new Date().toISOString().slice(0,7),
         criadoEm: serverTimestamp()
       });
+      // NOVO 21/07/2026 — antes esse pagamento pendente só aparecia se
+      // alguém abrisse Gerência → Pagamentos por conta própria; podia ficar
+      // semanas sem ninguém saber que tinha reembolso pendente. Agora avisa
+      // a Amanda na hora, com o valor e quem gravou.
+      const partesPagK = [];
+      if(temUber) partesPagK.push('Uber' + (uberLink ? ' (recibo anexado)' : ''));
+      if(valorExtra) partesPagK.push('R$ ' + valorExtra);
+      dispararEmailIndividual('Amanda', 'pagamento_extra_novo', {
+        titulo: '💰 Novo pagamento extra pendente — ' + (clienteNome||'') + ': ' + partesPagK.join(' + ') + ' (registrado por ' + (usuarioAtual||'?') + ')',
+        itemId: refPagExtra.id, colecao: 'pagamentos_extra'
+      }).catch(()=>{});
     }
 
     if(qtdRealizada > 0){
@@ -8769,6 +8785,14 @@
       if(horasUteisDesde(new Date(v.aprovadoInternoEm), agoraT) >= prazo){
         await confirmarAprovacaoClienteCore(docSnap.id, 'sistema (aprovação tácita — sem objeção do cliente em ' + prazo + 'h úteis)');
         registrarLogAutomacao('aprovacao_tacita', docSnap.id, v.titulo || '');
+        // NOVO 21/07/2026 — antes isso só ficava no log de automações, sem
+        // avisar ninguém. Agora a Amanda recebe um e-mail toda vez que um
+        // cliente "tácita" passa sozinho, pra ela saber que não teve
+        // confirmação humana nenhuma dessa vez.
+        dispararEmailIndividual('Amanda', 'aprovacao_tacita', {
+          titulo: '🕓 Aprovação tácita automática — ' + (v.clienteNome||'') + ': ' + (v.titulo||'') + ' (sem objeção em ' + prazo + 'h úteis)',
+          itemId: docSnap.id, colecao: 'videos_producao'
+        }).catch(()=>{});
       }
     }
   }

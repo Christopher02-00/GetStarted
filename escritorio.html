@@ -5134,7 +5134,10 @@
           ${usada ? '<span class="selo aprovada">✅ Já no calendário</span>' : '<span class="selo hoje">🟢 Disponível</span>'}
         </div>
         ${r.descricao ? '<div class="meta" style="margin-top:6px;">'+esc(r.descricao)+'</div>' : ''}
-        <button class="btn red" style="width:auto;margin-top:8px;padding:4px 10px;font-size:10.5px;" onclick="excluirReferencia('${r.id}')">✕ Excluir</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+          ${(!usada && r.cliente) ? `<button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="abrirUsarNoCalendario('${r.id}')">📅 Usar no calendário</button>` : ''}
+          <button class="btn red" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="excluirReferencia('${r.id}')">✕ Excluir</button>
+        </div>
       </div>`;
     };
 
@@ -5169,6 +5172,58 @@
     await updateDoc(doc(db,'referencias', id), { excluido: true });
     mostrarToast('Excluída.');
     renderReferencias();
+  };
+
+  /* ===== PONTE REFERÊNCIA → CALENDÁRIO (21/07/2026) =====
+     A referência arquivada por cliente é jogada direto num dia do calendário
+     editorial daquele cliente (coleção calendarios/<slug>.items[].ref). Só
+     preenche o LINK de referência do conteúdo — nunca mexe no roteiro, nome
+     ou legenda que a Gabi já escreveu. Assim ela para de caçar referência no
+     Instagram: puxa do banco que já tem, direto pro calendário. */
+  window.abrirUsarNoCalendario = async function(refId){
+    const refSnap = await getDoc(doc(db,'referencias', refId));
+    if(!refSnap.exists()) return;
+    const r = refSnap.data();
+    const modal = document.getElementById('modalConteudo');
+    if(!r.cliente){ mostrarToast('Essa referência não tem cliente destino — edita e escolhe o cliente primeiro.', 'erro'); return; }
+    const calSnap = await getDoc(doc(db,'calendarios', r.cliente));
+    if(!calSnap.exists()){
+      modal.innerHTML = `<h2>📅 Cliente ainda sem calendário</h2><div class="desc" style="margin:8px 0;">${esc(r.clienteNome||r.cliente)} ainda não tem calendário editorial criado. Cria o calendário dele primeiro (aba Calendários) e depois volta aqui pra aplicar a referência.</div><button class="btn secondary" onclick="fecharModal()">Fechar</button>`;
+      document.getElementById('overlayView').classList.add('show'); return;
+    }
+    const cal = calSnap.data(); const its = cal.items || [];
+    const linkAtual = String(r.link||'').trim();
+    const lista = its.map((it,idx)=>{
+      const temRef = it.ref && String(it.ref).trim();
+      const jaEssa = temRef && String(it.ref).trim() === linkAtual;
+      const selo = jaEssa ? '<span class="selo aprovada">Já é essa ref</span>' : (temRef ? '<span class="selo pendente">Já tem outra ref</span>' : '<span class="selo hoje">🟢 Sem referência</span>');
+      return `<div class="item" style="border-left:3px solid ${temRef?'var(--line)':'var(--yellow)'};${jaEssa?'':'cursor:pointer;'}" ${jaEssa?'':`onclick="aplicarRefNoDia('${refId}','${r.cliente}',${idx})"`}>
+        <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div>${selo}</div>
+        ${it.fmt ? '<div class="meta" style="margin-top:3px;">'+esc(it.fmt)+'</div>' : ''}
+      </div>`;
+    }).join('');
+    modal.innerHTML = `<h2>📅 Jogar referência no calendário</h2>
+      <div class="desc" style="margin-bottom:8px;">Cliente: <b>${esc(r.clienteNome||r.cliente)}</b>${cal.month?' · '+esc(cal.month):''}. Clica no dia onde quer usar essa referência — preenche só o link, sem mexer no roteiro nem na legenda que já estiver lá.</div>
+      <div style="max-height:52vh;overflow-y:auto;">${lista || '<div class="empty">Esse calendário ainda não tem conteúdos pra receber a referência.</div>'}</div>
+      <button class="btn secondary" style="margin-top:10px;" onclick="fecharModal()">Fechar</button>`;
+    document.getElementById('overlayView').classList.add('show');
+  };
+  window.aplicarRefNoDia = async function(refId, slug, idx){
+    try{
+      const refSnap = await getDoc(doc(db,'referencias', refId));
+      const calRef = doc(db,'calendarios', slug);
+      const calSnap = await getDoc(calRef);
+      if(!refSnap.exists() || !calSnap.exists()) return;
+      const link = String(refSnap.data().link||'').trim();
+      const its = (calSnap.data().items || []).slice();
+      if(!its[idx]){ mostrarToast('Esse dia não existe mais no calendário.', 'erro'); return; }
+      its[idx] = { ...its[idx], ref: link };
+      await updateDoc(calRef, { items: its });
+      registrarHistorico('calendarios', slug, 'Referência aplicada no dia ' + (its[idx].day||'') + ' via Hub de Referências');
+      mostrarToast('✅ Referência aplicada no dia ' + (its[idx].day||'') + ' do calendário!');
+      fecharModal();
+      renderReferencias();
+    }catch(e){ mostrarToast('Erro ao aplicar: ' + e.message, 'erro'); }
   };
 
   const FUNCIONARIOS_ELEGIVEIS = ["Cecília","Gabrielle","Amanda","Helo","João Victor","Yas","Nathan","Luís"];

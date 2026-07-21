@@ -108,7 +108,7 @@
     <button class="backBtn" onclick="sairPortal()">← Trocar de empresa</button>
     <div class="rule"></div>
     <h1 id="nomeClientePortal">Cliente</h1>
-    <div class="sub">Seu painel de acompanhamento — tudo em um lugar só.</div>
+    <div class="sub" id="subPortal">Seu painel de acompanhamento — tudo em um lugar só.</div>
 
     <div class="tabs">
       <div class="tab active" data-tab="calendario" onclick="setTab('calendario', this)"><svg class="ic"><use href="#i-calendar"/></svg>Calendário</div>
@@ -158,6 +158,14 @@
   let CLIENTES_LISTA = [];
   let clienteAtual = null;
 
+  /* ===== CLIENTE "SÓ EDIÇÃO" (plano do Rodrigo) =====
+     Espelho da regra do escritório: a agência APENAS edita os vídeos que
+     ele envia. O portal dele esconde Calendário, Minha Agenda, Stories e
+     Banco de Ideias (não existem no plano), a aba principal vira "Meus
+     Vídeos", e os números mostram ENTREGA (não publicação). */
+  const CLIENTES_SO_EDICAO = ['rodrigo'];
+  function ehSoEdicao(){ return !!clienteAtual && CLIENTES_SO_EDICAO.includes(clienteAtual.slug); }
+
   function esc(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
   async function carregarClientes(){
@@ -183,12 +191,36 @@
     document.getElementById('telaSelecao').style.display = 'none';
     document.getElementById('telaPortal').style.display = 'block';
     document.getElementById('nomeClientePortal').innerHTML = esc(clienteAtual.nome);
-    carregarCalendario();
+
+    if(ehSoEdicao()){
+      // Esconde o que não existe no plano só-edição
+      const tabCal = document.querySelector('.tabs .tab[data-tab="calendario"]');
+      if(tabCal) tabCal.style.display = 'none';
+      ['minhaAgenda','stories','ideias'].forEach(t => {
+        const el = document.querySelector('#menuMais .tab[data-tab="'+t+'"]');
+        if(el) el.style.display = 'none';
+      });
+      // "Meus Vídeos" sobe pra barra principal e vira a aba inicial
+      let tabVid = document.getElementById('tabVideosPrincipal');
+      if(!tabVid){
+        tabVid = document.createElement('div');
+        tabVid.className = 'tab'; tabVid.id = 'tabVideosPrincipal'; tabVid.dataset.tab = 'videos';
+        tabVid.innerHTML = '<svg class="ic"><use href="#i-film"/></svg>Meus Vídeos';
+        tabVid.onclick = function(){ setTab('videos', tabVid); };
+        const tabsBarra = document.querySelector('.tabs');
+        tabsBarra.insertBefore(tabVid, tabsBarra.firstChild);
+      }
+      const subEl = document.getElementById('subPortal');
+      if(subEl) subEl.textContent = 'Seu painel de edição — acompanhe seus vídeos do envio à entrega.';
+      setTab('videos', tabVid);
+    } else {
+      carregarCalendario();
+      carregarIdeias();
+      carregarStories();
+    }
     carregarDemandas();
     carregarDrive();
     carregarVideos();
-    carregarIdeias();
-    carregarStories();
     carregarAtas();
     carregarInfo();
   };
@@ -207,7 +239,7 @@
   window.setTab = function(nome, el){
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    if(['videos','minhaAgenda','ideias','stories','atas','info'].includes(nome)) document.getElementById('tabMais').classList.add('active');
+    if(['videos','minhaAgenda','ideias','stories','atas','info'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
     ['Calendario','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info'].forEach(p => {
       document.getElementById('painel'+p).style.display = (p.toLowerCase()===nome.toLowerCase()) ? 'block' : 'none';
     });
@@ -336,8 +368,8 @@
     </div>`;
   }
 
-  const VIDEO_STATUS_LABEL = { aguardando_edicao:'Em edição', correcao:'Em ajuste', aguardando_aprovacao:'Em revisão interna', aguardando_cliente:'Esperando sua aprovação', aprovado:'Aprovado' };
-  const VIDEO_STATUS_COR = { aguardando_edicao:'roteiro', correcao:'gravacao', aguardando_aprovacao:'edicao', aguardando_cliente:'gravacao', aprovado:'publicado' };
+  const VIDEO_STATUS_LABEL = { aguardando_edicao:'Em edição', correcao:'Em ajuste', aguardando_aprovacao:'Em revisão interna', aguardando_cliente:'Esperando sua aprovação', aprovado:'Aprovado', finalizado:'Entregue ✔' };
+  const VIDEO_STATUS_COR = { aguardando_edicao:'roteiro', correcao:'gravacao', aguardando_aprovacao:'edicao', aguardando_cliente:'gravacao', aprovado:'publicado', finalizado:'publicado' };
 
   const POSTAGEM_STATUS_LABEL = { aguardando_legenda:'Preparando legenda', aguardando_agendamento:'Definindo a melhor data' };
   let calendarioPubOffset = 0; // 0 = mês atual, -1 = mês anterior, +1 = próximo
@@ -352,13 +384,66 @@
     const [videosSnap, postagensSnap] = await Promise.all([
       getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
     ]);
-    const meusVideos = []; videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido && v.status!=='aprovado') meusVideos.push(v); });
+    const meusVideos = []; videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido && v.status!=='aprovado' && v.status!=='finalizado') meusVideos.push(v); });
+    const entregues = []; videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido && (v.status==='finalizado' || (v.status==='aprovado' && v.clienteAprovouEm))) entregues.push(v); });
     const minhasPostagens = []; postagensSnap.forEach(d => { const p=d.data(); if(p.cliente===clienteAtual.slug) minhasPostagens.push({id:d.id, ...p}); });
     const aguardandoVoce = meusVideos.filter(v=>v.status==='aguardando_cliente');
 
-    // ===== MELHORIA 8B — Seu conteúdo em números =====
     const hoje = new Date();
     const mesAtualStr = hoje.toISOString().slice(0,7);
+
+    /* ===== SÓ EDIÇÃO — painel de vídeos próprio =====
+       Números de ENTREGA (não de publicação): o serviço desse plano termina
+       quando o vídeo é aprovado e entregue. Com link pra assistir/baixar. */
+    if(ehSoEdicao()){
+      const entreguesEsteMes = entregues.filter(v => (v.clienteAprovouEm||'').slice(0,7) === mesAtualStr);
+      const emProducaoAgoraSE = meusVideos.filter(v => ['aguardando_edicao','correcao','aguardando_aprovacao'].includes(v.status)).length;
+
+      let html = `<div class="card"><h2><svg class="ic"><use href="#i-activity"/></svg>Seus vídeos em números</h2>
+        <div class="sub" style="margin-bottom:10px;">Direto da nossa produção — atualiza sozinho.</div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+          <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+            <div style="font-size:22px;font-weight:800;">${entreguesEsteMes.length}</div><div style="font-size:11px;color:var(--muted);">Entregues este mês</div>
+          </div>
+          <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+            <div style="font-size:22px;font-weight:800;">${entregues.length}</div><div style="font-size:11px;color:var(--muted);">Entregues no total</div>
+          </div>
+          <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+            <div style="font-size:22px;font-weight:800;">${emProducaoAgoraSE}</div><div style="font-size:11px;color:var(--muted);">Em produção agora</div>
+          </div>
+          <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
+            <div style="font-size:22px;font-weight:800;">${aguardandoVoce.length}</div><div style="font-size:11px;color:var(--muted);">Esperando sua aprovação</div>
+          </div>
+        </div>
+      </div>`;
+
+      if(aguardandoVoce.length){
+        html += `<div class="card" style="border-color:var(--yellow);"><h2 style="font-size:14px;">Esperando sua aprovação</h2>` +
+          aguardandoVoce.map(v => `<div class="item"><div class="nome">${esc(v.titulo)}</div></div>`).join('') + `</div>`;
+      }
+
+      html += `<div class="card"><h2 style="font-size:14px;">Em produção agora</h2>`;
+      html += meusVideos.length ? meusVideos.map(v => `
+        <div class="item"><div class="nome">${esc(v.titulo)}</div><span class="selo ${VIDEO_STATUS_COR[v.status]||'roteiro'}">${VIDEO_STATUS_LABEL[v.status]||v.status}</span></div>
+      `).join('') : '<div class="empty">Nenhum vídeo em produção agora.</div>';
+      html += `</div>`;
+
+      const ultimosEntregues = [...entregues].sort((a,b) => (b.clienteAprovouEm||'').localeCompare(a.clienteAprovouEm||'')).slice(0,15);
+      html += `<div class="card"><h2 style="font-size:14px;">✔ Últimos entregues</h2>`;
+      html += ultimosEntregues.length ? ultimosEntregues.map(v => `
+        <div class="item">
+          <div class="nome">${esc(v.titulo||'')}</div>
+          <div class="meta">${v.clienteAprovouEm ? new Date(v.clienteAprovouEm).toLocaleDateString('pt-BR') : ''}</div>
+          ${v.linkFinalizado ? '<a href="'+esc(v.linkFinalizado)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;padding:9px;">▶ Assistir / baixar ↗</a>' : ''}
+        </div>
+      `).join('') : '<div class="empty">Nenhum vídeo entregue ainda.</div>';
+      html += `</div>`;
+
+      cont.innerHTML = html;
+      return;
+    }
+
+    // ===== MELHORIA 8B — Seu conteúdo em números =====
     const publicadas = minhasPostagens.filter(p => p.status==='postado');
     const publicadasEsteMes = publicadas.filter(p => (p.postadoEm||'').slice(0,7) === mesAtualStr);
     const prontosAguardandoData = minhasPostagens.filter(p => p.status==='aguardando_legenda' || p.status==='aguardando_agendamento').length;

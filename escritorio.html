@@ -298,6 +298,11 @@
   #cardQuemSouEu.compacto .field{margin-bottom:0;}
   #cardQuemSouEu.compacto label{font-size:10px;margin-bottom:2px;}
   .meuDiaResumo{font-size:12px;font-weight:700;margin-bottom:12px;color:var(--muted);}
+  .proximoTrabalho{border:2px solid var(--yellow);background:var(--yellowbg);border-radius:12px;padding:14px 16px;margin-bottom:12px;cursor:pointer;}
+  .proximoTrabalho:hover{filter:brightness(1.08);}
+  .proximoTrabalho .ptLabel{font-size:10px;letter-spacing:.12em;font-weight:800;color:var(--yellow2);}
+  .proximoTrabalho .ptTitulo{font-size:14.5px;font-weight:800;margin-top:5px;}
+  .proximoTrabalho .ptMeta{font-size:11px;color:var(--muted);margin-top:3px;}
   .sidebarOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:150;}
   .sidebarOverlay.show{display:block;}
 
@@ -1407,7 +1412,62 @@
     </div>`;
   }
 
+  /* ===== IDEIA 4 (aprovada pelo Chris) — CHECKLIST QUE SE MARCA SOZINHO =====
+     Itens do checklist diário que o PRÓPRIO SISTEMA consegue confirmar são
+     marcados automaticamente, com a prova "verificado pelo sistema". Só
+     entram aqui verificações de certeza absoluta — o resto continua manual
+     (o que acontece fora do site: WhatsApp, Drive, gravação física). */
+  const CHECKLIST_AUTOVERIFICAVEL = {
+    'c_d_14': { desc: 'nenhuma postagem pendente de agendamento', fn: async () => {
+      const snapP = await getDocs(collection(db,'postagens'));
+      let pend = 0; snapP.forEach(dd => { if(dd.data().status === 'aguardando_agendamento') pend++; });
+      return pend === 0; } },
+    'c_d_15': { desc: 'todas as gravações de ontem receberam baixa na agenda', fn: async () => {
+      const ontem = dataStrDiasAtras(1);
+      const snapA = await getDocs(collection(db,'agendamentos'));
+      let pend = 0; snapA.forEach(dd => { const a = dd.data(); if(!a.excluido && a.data === ontem && a.status === 'agendado') pend++; });
+      return pend === 0; } },
+    'a_d_1': { desc: 'nenhum vídeo lançado sem editor atribuído', fn: async () => {
+      const snapV = await getDocs(collection(db,'videos_producao'));
+      let sem = 0; snapV.forEach(dd => { const v = dd.data(); if(!v.excluido && v.status === 'aguardando_edicao' && !v.editorAtribuido) sem++; });
+      return sem === 0; } },
+    'g_d_9': { desc: '5+ referências novas adicionadas hoje no Hub', fn: async () => {
+      const hojeR = new Date().toISOString().slice(0,10);
+      const snapR = await getDocs(collection(db,'referencias'));
+      let hj = 0; snapR.forEach(dd => { if(tsParaDia(dd.data().criadoEm) === hojeR) hj++; });
+      return hj >= 5; } }
+  };
+
+  async function autoVerificarChecklist(){
+    try{
+      if(!usuarioAtual) return 0;
+      const templatesAV = await obterTemplatesEfetivos(usuarioAtual);
+      const diario = templatesAV?.['Diário']; if(!diario) return 0;
+      const idsVerificaveis = diario.flatMap(b => b.itens.map(it => it.id)).filter(id => CHECKLIST_AUTOVERIFICAVEL[id]);
+      if(!idsVerificaveis.length) return 0;
+      const chaveAV = usuarioAtual + '_diario_' + new Date().toISOString().slice(0,10);
+      const refAV = doc(db,'checklist_execucoes', chaveAV);
+      const snapAV = await getDoc(refAV);
+      const execAV = snapAV.exists() ? snapAV.data() : { itensFeitos: {} };
+      execAV.itensFeitos = execAV.itensFeitos || {};
+      let marcados = 0;
+      for(const idItem of idsVerificaveis){
+        if(execAV.itensFeitos[idItem]?.feito) continue;
+        try{
+          if(await CHECKLIST_AUTOVERIFICAVEL[idItem].fn()){
+            execAV.itensFeitos[idItem] = { feito: true, prova: '✔ Verificado automaticamente pelo sistema — ' + CHECKLIST_AUTOVERIFICAVEL[idItem].desc, em: new Date().toISOString(), automatico: true };
+            marcados++;
+          }
+        }catch(e){}
+      }
+      if(marcados) await setDoc(refAV, execAV, { merge: true });
+      return marcados;
+    }catch(e){ console.error('Auto-verificação do checklist falhou:', e); return 0; }
+  }
+
   window.abrirChecklist = async function(){
+    const marcadosAuto = await autoVerificarChecklist();
+    if(marcadosAuto > 0) mostrarToast('✔ ' + marcadosAuto + ' item(ns) do checklist confirmado(s) pelo próprio sistema — já marcados.');
     const sub = document.getElementById('checklistSub');
     const cont = document.getElementById('checklistConteudo');
     if(!usuarioAtual){ sub.textContent = 'Selecione seu nome na tela de Início primeiro.'; cont.innerHTML=''; return; }
@@ -4966,6 +5026,7 @@
     try {
       await addDoc(collection(db,'referencias'), {
         link, nicho, cliente, clienteNome, descricao: desc,
+        criadoPor: usuarioAtual || '?',
         criadoEm: serverTimestamp()
       });
       mostrarToast('Referência adicionada!');
@@ -6360,6 +6421,7 @@
       itens.push({
         icone: '✅', titulo: d.titulo, meta: formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''),
         desc: d.descricao || '', urgencia: calcularUrgencia(d),
+        ordem: (d.prazoData||'9999') + 'T' + (d.prazoHora||'19:00'),
         acao: `abrirDemandaMinha('${d.id}')`
       });
     });
@@ -6375,7 +6437,7 @@
           icone: v.status === 'correcao' ? '🔁' : '🎬',
           titulo: (v.status === 'correcao' ? 'Corrigir: ' : 'Editar: ') + (v.titulo||''),
           meta: esc(v.clienteNome||''), desc: v.status === 'correcao' ? 'Vídeo voltou pra ajuste.' : 'Aguardando edição.',
-          urgencia, acao: `meuDiaAbrirVideos()`
+          urgencia, ordem: prazo ? prazo.toISOString() : '9999', acao: `meuDiaAbrirVideos()`
         });
       });
     }
@@ -6422,7 +6484,7 @@
       });
     }
 
-    itens.sort((a,b) => (MEUDIA_PESO_URGENCIA[a.urgencia]??2) - (MEUDIA_PESO_URGENCIA[b.urgencia]??2));
+    itens.sort((a,b) => ((MEUDIA_PESO_URGENCIA[a.urgencia]??2) - (MEUDIA_PESO_URGENCIA[b.urgencia]??2)) || (a.ordem||'9999').localeCompare(b.ordem||'9999'));
 
     const atrasadosCount = itens.filter(i=>i.urgencia==='atrasado').length;
 
@@ -6447,9 +6509,21 @@
     if(atrasadosCount) resumoPartes.push('<b style="color:var(--red);">' + atrasadosCount + ' atrasada(s)</b>');
     if(hojeCount) resumoPartes.push(hojeCount + ' pra hoje');
     resumoPartes.push(itens.length + ' no total');
+    /* IDEIA 1 (aprovada pelo Chris) — FILA DO DIA: o site decide a ordem e
+       entrega o próximo trabalho num destaque com botão único. Terminou um,
+       o tempo-real recalcula e o próximo assume o lugar sozinho. */
+    const proximo = itens[0];
+    const restoLista = visiveis.slice(1);
     box.innerHTML = `<div class="card"><h2>☀️ Meu Dia</h2>
-      <div class="meuDiaResumo">🔔 ${resumoPartes.join(' · ')} — em ordem de urgência</div>
-      ${visiveis.map(meuDiaItemHtml).join('')}
+      <div class="meuDiaResumo">🔔 ${resumoPartes.join(' · ')} — o site já ordenou pra você</div>
+      <div class="proximoTrabalho" onclick="${proximo.acao}">
+        <div class="ptLabel">▶ SEU PRÓXIMO TRABALHO</div>
+        <div class="ptTitulo">${proximo.icone} ${esc(proximo.titulo)}</div>
+        <div class="ptMeta">${esc(proximo.desc||'')} ${proximo.meta ? '· ' + esc(proximo.meta) : ''}</div>
+        <button class="btn" style="margin-top:10px;width:auto;padding:9px 22px;">▶ Começar agora</button>
+      </div>
+      ${restoLista.length ? '<div class="meta" style="margin:2px 0 8px;color:var(--muted);font-size:11px;">Depois vem:</div>' : ''}
+      ${restoLista.map(meuDiaItemHtml).join('')}
       ${resto > 0 ? `<button class="btn secondary" style="margin-top:8px;" onclick="window.irParaAtalho('minhasDemandasAtribuidas')">Ver tudo (+${resto} item${resto>1?'s':''}) →</button>` : ''}
     </div>`;
   }
@@ -7684,6 +7758,77 @@
     }
   }
 
+  /* ===== IDEIA 5 (aprovada) — KIT DE GRAVAÇÃO AUTOMÁTICO =====
+     Todo dia a partir das 15h, o site monta e envia sozinho o kit do dia
+     seguinte: 1 e-mail por filmmaker com cliente, hora, local e nº de
+     vídeos planejados, + resumo consolidado pra Cecília coordenar.
+     ⏸️ STANDBY REGISTRADO (pedido do Chris, 20/07/2026): quando os
+     CALENDÁRIOS forem criados dentro do site, evoluir este kit pra incluir
+     os conteúdos planejados + referências de cada item. No mesmo gatilho,
+     destravar também: IDEIA 2 (rascunho automático de legenda pra Gabi),
+     IDEIA 3 (agendamento sugerido com 1 clique pra Ceci) e IDEIA 9
+     (aprovação do cliente com 1 clique no portal). NÃO ESQUECER. */
+  async function enviarKitsGravacaoAmanha(){
+    const agoraK = new Date();
+    if(agoraK.getHours() < 15) return; // kit é da véspera, fim de tarde
+    const hojeK = agoraK.toISOString().slice(0,10);
+    const marcadorK = doc(db,'sistema','kits_gravacao');
+    const mSnapK = await getDoc(marcadorK);
+    if(mSnapK.exists() && mSnapK.data().ultimaData === hojeK) return;
+    const amanhaK = dataStrDiasAtras(-1);
+    const snapAgK = await getDocs(collection(db,'agendamentos'));
+    const deAmanha = []; snapAgK.forEach(dd => { const a = dd.data(); if(!a.excluido && a.data === amanhaK && a.status === 'agendado' && a.aprovado !== false) deAmanha.push(a); });
+    if(deAmanha.length){
+      const porFilmmakerK = {};
+      deAmanha.forEach(a => { const f = a.filmmaker || ''; if(f) (porFilmmakerK[f] = porFilmmakerK[f]||[]).push(a); });
+      for(const [film, listaK] of Object.entries(porFilmmakerK)){
+        if(!FUNCIONARIOS.includes(film) && film !== 'Chris') continue;
+        const corpoK = listaK.map(a => '🎥 ' + (a.clienteNome||'') + ' às ' + (a.hora||'?') + (a.local ? ' — ' + a.local : '') + ' · ' + (a.qtdPlanejada||'?') + ' vídeo(s)').join(' | ');
+        dispararEmailIndividual(film, 'kit_gravacao', { titulo: '🎬 Seu kit de amanhã (' + formatarDataBR(amanhaK) + '): ' + corpoK, itemId: '', colecao: 'agendamentos' }).catch(()=>{});
+      }
+      const corpoGeralK = deAmanha.map(a => (a.clienteNome||'') + ' ' + (a.hora||'') + ' (' + (a.filmmaker||'a definir') + ')').join(' · ');
+      dispararEmailIndividual('Cecília', 'kit_gravacao', { titulo: '📋 Gravações de amanhã (' + deAmanha.length + '): ' + corpoGeralK + ' — confirma modelos, locais e lembretes.', itemId: '', colecao: 'agendamentos' }).catch(()=>{});
+      registrarLogAutomacao('kit_gravacao_enviado', amanhaK, deAmanha.length + ' gravação(ões), ' + Object.keys(porFilmmakerK).length + ' filmmaker(s)');
+    }
+    await setDoc(marcadorK, { ultimaData: hojeK });
+  }
+
+  /* ===== IDEIA 8 (aprovada) — AVISO PREVENTIVO, NÃO PUNITIVO =====
+     O "prazo é hoje" (manhã) já existia. Agora tem a RETA FINAL: ~2h antes
+     do prazo da demanda (e das 17h às 19h pra vídeo com entrega hoje), a
+     pessoa recebe e-mail + notificação do navegador ANTES de atrasar —
+     1 aviso só por dia por item, e nunca pra quem está de ausência. */
+  async function verificarRetaFinalPrazos(){
+    const agoraRF = new Date();
+    const hojeRF = agoraRF.toISOString().slice(0,10);
+    const snapDRF = await getDocs(query(collection(db,'demandas'), where('status','==','pendente')));
+    for(const ddRF of snapDRF.docs){
+      const d = ddRF.data();
+      if(d.prazoData !== hojeRF || d.avisoRetaFinalEm === hojeRF) continue;
+      if(!d.destinatario || estaAusente(d.destinatario)) continue;
+      const prazoMs = new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime();
+      const diffMin = (prazoMs - agoraRF.getTime()) / 60000;
+      if(diffMin <= 120 && diffMin > 0){
+        dispararEmailIndividual(d.destinatario, 'reta_final', { titulo: '⏳ Reta final — falta(m) ~' + Math.max(1, Math.round(diffMin/60)) + 'h: ' + (d.titulo||''), itemId: ddRF.id, colecao: 'demandas' }).catch(()=>{});
+        if(d.destinatario === usuarioAtual) dispararNotificacaoNavegador('⏳ Reta final', 'Faltam menos de 2h: ' + (d.titulo||''));
+        await updateDoc(doc(db,'demandas', ddRF.id), { avisoRetaFinalEm: hojeRF });
+      }
+    }
+    if(agoraRF.getHours() >= 17 && agoraRF.getHours() < 19){
+      const snapVRF = await getDocs(collection(db,'videos_producao'));
+      for(const dvRF of snapVRF.docs){
+        const v = dvRF.data();
+        if(v.excluido || !['aguardando_edicao','correcao'].includes(v.status)) continue;
+        if(v.avisoRetaFinalEm === hojeRF || !v.editorAtribuido || estaAusente(v.editorAtribuido)) continue;
+        const prazoV = calcularPrazoEdicaoVideo(v);
+        if(!prazoV || prazoV.toISOString().slice(0,10) !== hojeRF || agoraRF > prazoV) continue;
+        dispararEmailIndividual(v.editorAtribuido, 'reta_final', { titulo: '⏳ Reta final de edição (entrega até 19h): ' + (v.clienteNome||'') + ' — ' + (v.titulo||''), itemId: dvRF.id, colecao: 'videos_producao' }).catch(()=>{});
+        if(v.editorAtribuido === usuarioAtual) dispararNotificacaoNavegador('⏳ Reta final de edição', (v.titulo||'') + ' — entrega até 19h');
+        await updateDoc(doc(db,'videos_producao', dvRF.id), { avisoRetaFinalEm: hojeRF });
+      }
+    }
+  }
+
   const MOTOR_INTERVALO_MIN = 8; // janela mínima entre execuções (minutos)
 
   /* ===== CENTRAL DE INTELIGÊNCIA DIÁRIA — "RESUMO DO DIA" =====
@@ -8071,6 +8216,9 @@
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
+      { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
+      { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
+      { nome: 'checklistAutoVerificado', fn: autoVerificarChecklist },
       { nome: 'resumoDiario', fn: gerarResumoDiarioSeNecessario },
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },

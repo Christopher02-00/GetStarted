@@ -8070,6 +8070,7 @@
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
+      { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
       { nome: 'resumoDiario', fn: gerarResumoDiarioSeNecessario },
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
@@ -8273,13 +8274,59 @@
     const snap = await getDocs(q);
     for(const d of snap.docs){
       const dem = d.data();
-      if(dem.destinatario !== 'Gabrielle' || !(dem.titulo||'').startsWith('✍️ Escrever legenda')) continue;
+      // BUG CORRIGIDO (auditoria do Chris): a rede de segurança cria a mesma
+      // cobrança com OUTRO prefixo ("✍️ Legenda pendente há...") — e esse
+      // título escapava do filtro, deixando a demanda fantasma pra sempre.
+      const tituloDem = dem.titulo || '';
+      const ehDemandaLegenda = tituloDem.startsWith('✍️ Escrever legenda') || tituloDem.startsWith('✍️ Legenda pendente');
+      if(dem.destinatario !== 'Gabrielle' || !ehDemandaLegenda) continue;
       await updateDoc(doc(db,'demandas', d.id), {
         status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
         notaConclusao: 'Concluída automaticamente pelo sistema — legenda foi escrita.'
       });
       registrarHistorico('demandas', d.id, 'Concluída automaticamente — legenda escrita');
     }
+  }
+
+  /* ===== VARREDURA ANTIFANTASMA DO PIPELINE =====
+     Nascida da auditoria do Chris (20/07/2026): 2 demandas de legenda já
+     feitas continuavam abertas por causa do bug de prefixo acima. Essa
+     varredura roda no motor e fecha QUALQUER demanda pendente cujo alvo
+     já avançou — legenda escrita, agendamento resolvido, vídeo que seguiu
+     ou foi excluído — por qualquer caminho, hoje e no futuro. */
+  async function limparDemandasFantasmaPipeline(){
+    const [demSnapF, vidSnapF, postSnapF] = await Promise.all([
+      getDocs(query(collection(db,'demandas'), where('status','==','pendente'))),
+      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
+    ]);
+    const vids = {}; vidSnapF.forEach(d => vids[d.id] = d.data());
+    const psts = {}; postSnapF.forEach(d => psts[d.id] = d.data());
+    let limpas = 0;
+    for(const dSnapF of demSnapF.docs){
+      const dem = dSnapF.data(); const t = dem.titulo || '';
+      if(t.startsWith('Vídeo excluído')) continue; // aviso proposital sobre exclusão — não é fantasma
+      let motivo = '';
+      if(dem.videoId){
+        const v = vids[dem.videoId];
+        if(!v) motivo = 'o vídeo não existe mais';
+        else if(v.excluido) motivo = 'o vídeo foi excluído (está na Lixeira)';
+        else if(!['aguardando_edicao','correcao'].includes(v.status)) motivo = 'o vídeo já avançou (status: ' + v.status + ')';
+      } else if(dem.postagemId && dem.tipoEspecial !== 'pular_legenda'){
+        const pAlvo = psts[dem.postagemId];
+        const ehLegF = dem.destinatario === 'Gabrielle' && t.startsWith('✍️');
+        const ehAgdF = dem.destinatario === 'Cecília' && /agendar|agendamento/i.test(t);
+        if(!pAlvo) motivo = 'a postagem não existe mais';
+        else if(ehLegF && pAlvo.status !== 'aguardando_legenda') motivo = 'a legenda já foi escrita (postagem: ' + pAlvo.status + ')';
+        else if(ehAgdF && pAlvo.status !== 'aguardando_agendamento') motivo = 'o agendamento já foi resolvido (postagem: ' + pAlvo.status + ')';
+      }
+      if(motivo){
+        await updateDoc(doc(db,'demandas', dSnapF.id), { status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(), notaConclusao: 'Baixa automática (antifantasma): ' + motivo + '.' });
+        registrarHistorico('demandas', dSnapF.id, 'Baixa automática — antifantasma', motivo);
+        registrarLogAutomacao('demanda_fantasma_limpa', dSnapF.id, t.slice(0,60) + ' — ' + motivo);
+        limpas++;
+      }
+    }
+    return limpas;
   }
 
   /* ===== CORREÇÃO 1 — BAIXA AUTOMÁTICA DO ALERTA "VÍDEO ATRASADO" =====

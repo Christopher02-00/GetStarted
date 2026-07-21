@@ -811,7 +811,7 @@
 
     <div class="view" id="view-referencias">
       <h1>Hub de <span class="y">Referências</span></h1>
-      <div class="sub">Links organizados por nicho e por cliente — sugeridos automaticamente na criação do roteiro.</div>
+      <div class="sub">Arquive por cliente — o site cruza com os calendários e mostra o que já virou conteúdo e o que ainda está disponível pra usar.</div>
       <div class="card">
         <h2>Adicionar referência</h2>
         <div class="row2">
@@ -822,14 +822,14 @@
           </select></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Cliente específico (opcional)</label><select id="refCliente"><option value="">Nenhum — só por nicho</option></select></div>
+          <div class="field"><label>Cliente destino (manda pro calendário dele)</label><select id="refCliente"><option value="">Nenhum — só por nicho</option></select></div>
           <div class="field"><label>Observação</label><input type="text" id="refDesc" placeholder="Por que essa referência é boa"></div>
         </div>
         <button class="btn" onclick="adicionarReferencia()" id="btnAddRef">Adicionar</button>
       </div>
       <div class="field"><label>Filtrar</label><select id="refFiltro" onchange="renderReferencias()">
         <option value="todos">Todas as referências</option>
-        <option value="cliente">Só com cliente vinculado</option>
+        <option value="disponiveis">Só as disponíveis (ainda não usadas no calendário)</option>
       </select></div>
       <div id="listaReferencias"></div>
     </div>
@@ -5115,22 +5115,53 @@
 
   window.renderReferencias = async function(){
     const cont = document.getElementById('listaReferencias');
-    const filtro = document.getElementById('refFiltro')?.value || 'todos';
-    const snap = await getDocs(collection(db,'referencias'));
-    let refs = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) refs.push({id:d.id, ...v}); });
-    if(filtro === 'cliente') refs = refs.filter(r => r.cliente);
-    if(!refs.length){ cont.innerHTML = '<div class="empty">Nenhuma referência ainda.</div>'; return; }
-    cont.innerHTML = refs.map(r => `
-      <div class="item">
-        <div class="top"><a href="${esc(r.link)}" target="_blank" style="color:var(--yellow);font-weight:700;">${esc(r.link)}</a></div>
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando referências e cruzando com os calendários...</div></div>';
+    const soDisp = (document.getElementById('refFiltro')?.value || 'todos') === 'disponiveis';
+    const [refSnap, calSnap] = await Promise.all([getDocs(collection(db,'referencias')), getDocs(collection(db,'calendarios'))]);
+    let refs = []; refSnap.forEach(d => { const v=d.data(); if(!v.excluido) refs.push({id:d.id, ...v}); });
+    // mapa slug do cliente -> conjunto de links de referência já usados no calendário dele
+    const usados = {};
+    calSnap.forEach(d => { const its = d.data().items||[]; const set = new Set(); its.forEach(it=>{ if(it.ref && String(it.ref).trim()) set.add(String(it.ref).trim()); }); usados[d.id] = set; });
+    const foiUsada = r => { const s = usados[r.cliente]; return !!(s && r.link && s.has(String(r.link).trim())); };
+    if(!refs.length){ cont.innerHTML = '<div class="empty">Nenhuma referência arquivada ainda. Adiciona acima — de preferência já escolhendo o cliente destino, pra ela ir pro calendário dele.</div>'; return; }
+
+    const cardRef = (r) => {
+      const usada = foiUsada(r);
+      return `<div class="item" style="border-left:3px solid ${usada?'var(--green)':'var(--yellow)'};">
+        <div class="top"><a href="${esc(r.link)}" target="_blank" style="color:var(--yellow);font-weight:700;word-break:break-all;">${esc(r.link)}</a></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
-          <span class="selo pendente">${esc(r.nicho)}</span>
-          ${r.clienteNome ? '<span class="selo cliente">'+esc(r.clienteNome)+'</span>' : ''}
+          <span class="selo pendente">${esc(r.nicho||'—')}</span>
+          ${usada ? '<span class="selo aprovada">✅ Já no calendário</span>' : '<span class="selo hoje">🟢 Disponível</span>'}
         </div>
         ${r.descricao ? '<div class="meta" style="margin-top:6px;">'+esc(r.descricao)+'</div>' : ''}
         <button class="btn red" style="width:auto;margin-top:8px;padding:4px 10px;font-size:10.5px;" onclick="excluirReferencia('${r.id}')">✕ Excluir</button>
-      </div>
-    `).join('');
+      </div>`;
+    };
+
+    const porCliente = {}; const porNicho = [];
+    refs.forEach(r => { if(r.cliente){ (porCliente[r.cliente]=porCliente[r.cliente]||{nome:r.clienteNome||r.cliente, itens:[]}).itens.push(r); } else porNicho.push(r); });
+
+    let html = '';
+    const slugs = Object.keys(porCliente).sort((a,b)=>porCliente[a].nome.localeCompare(porCliente[b].nome,'pt-BR'));
+    slugs.forEach(slug => {
+      const grupo = porCliente[slug];
+      const disp = grupo.itens.filter(r=>!foiUsada(r)).length; const usadas = grupo.itens.length - disp;
+      let itens = soDisp ? grupo.itens.filter(r=>!foiUsada(r)) : grupo.itens;
+      if(!itens.length) return;
+      html += `<div class="card metaSec" style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <div style="font-size:14px;font-weight:800;">📁 ${esc(grupo.nome)}</div>
+          <div style="font-size:11px;color:var(--muted);">🟢 ${disp} disponível(is) · ✅ ${usadas} no calendário</div>
+        </div>${itens.map(cardRef).join('')}</div>`;
+    });
+    let nicho = soDisp ? porNicho.filter(r=>!foiUsada(r)) : porNicho;
+    if(nicho.length){
+      html += `<div class="card metaSec" style="margin-bottom:12px;border:1px dashed var(--line);">
+        <div style="font-size:14px;font-weight:800;margin-bottom:4px;">🗂️ Por nicho — sem cliente definido</div>
+        <div class="desc" style="margin:-2px 0 8px;">Essas ainda não têm cliente destino, então não têm pra qual calendário ir. Quando puder, arquive já escolhendo o cliente.</div>
+        ${nicho.map(cardRef).join('')}</div>`;
+    }
+    cont.innerHTML = html || '<div class="empty">Nada com esse filtro. 🎉</div>';
   };
 
   window.excluirReferencia = async function(id){
@@ -8129,7 +8160,7 @@
     if(!demandaHoje){
       await addDoc(collection(db,'demandas'), {
         titulo: '🔗 Subir ' + metaRef + ' referências novas hoje no Hub',
-        descricao: 'Função diária sua: adicionar pelo menos ' + metaRef + ' referências novas no Hub de Referências (Menu → Referências), colando o link, o nicho e uma descrição curta de cada uma. Essa demanda fecha sozinha assim que você bate a meta do dia — então é só fazer. Feitas até agora hoje: ' + feitasHoje + '/' + metaRef + '.',
+        descricao: 'Função diária sua: adicionar pelo menos ' + metaRef + ' referências novas no Hub de Referências (Menu → Referências). Pra cada uma, cola o link, o nicho, uma descrição curta e — importante — JÁ ESCOLHE O CLIENTE DESTINO, pra a referência ir direto pro calendário dele como sugestão de conteúdo. Essa demanda fecha sozinha assim que você bate a meta do dia. Feitas até agora hoje: ' + feitasHoje + '/' + metaRef + '.',
         origem: 'sistema', clienteNome: '', destinatario: 'Gabrielle',
         tipoEspecial: 'ref_diaria',
         prazoData: hojeStr, prazoHora: '17:00',

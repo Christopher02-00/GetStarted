@@ -536,6 +536,7 @@
       <div class="navitem" id="navRoteiros" onclick="irPara('roteiros', this)"><span class="ico"><svg><use href="#i-pen"/></svg></span> Central de Roteiros</div>
       <div class="navitem" id="navReferencias" onclick="irPara('referencias', this)"><span class="ico"><svg><use href="#i-link"/></svg></span> Referências</div>
       <div class="navitem" id="navBriefings" onclick="irPara('briefings', this)"><span class="ico">📋</span> Briefings</div>
+      <div class="navitem" id="navAcompanhamento" onclick="irPara('acompanhamento', this)"><span class="ico">🔄</span> Acompanhamento</div>
       <div class="navitem" id="navRelatorio" onclick="irPara('relatorioMensal', this)"><span class="ico"><svg><use href="#i-chart"/></svg></span> Relatório Mensal</div>
       <div class="navitem" id="navCalendarios" onclick="irPara('calendarios', this)"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Calendários</div>
       <div class="navitem" id="navConteudoAteQuando" onclick="irPara('conteudoAteQuando', this)"><span class="ico">📅</span> Conteúdo Até Quando</div>
@@ -848,6 +849,31 @@
         </div>
       </div>
       <div id="briefingStatusLista"></div>
+    </div>
+
+    <div class="view" id="view-acompanhamento">
+      <h1>Acompanhamento do <span class="y">Cliente</span></h1>
+      <div class="sub">Atualize a etapa do processo e registre as melhorias feitas no perfil — o cliente vê tudo em tempo real no portal dele.</div>
+      <div class="card">
+        <div class="field"><label>Cliente</label><select id="acompCliente" onchange="carregarAcompanhamento()"><option value="">Selecione o cliente...</option></select></div>
+      </div>
+      <div id="acompPainel" style="display:none;">
+        <div class="card">
+          <h2>📍 Etapa atual</h2>
+          <div class="meta" id="acompEtapaAtual" style="margin-bottom:10px;"></div>
+          <div class="field"><label>Mudar etapa para</label><select id="acompNovaEtapa"></select></div>
+          <div class="field"><label>Observação para o cliente (opcional)</label><input type="text" id="acompEtapaObs" placeholder="Um detalhe a mais, se precisar"></div>
+          <button class="btn" onclick="salvarEtapaAcomp()">Atualizar etapa</button>
+        </div>
+        <div class="card">
+          <h2>✨ Registrar melhoria no perfil</h2>
+          <div class="field"><label>Melhoria comum (atalho)</label><select id="acompMelhoriaRapida" onchange="if(this.value){document.getElementById('acompMelhoriaDesc').value=this.value;}"><option value="">Escolhe uma comum, ou escreve abaixo...</option></select></div>
+          <div class="field"><label>Descrição da melhoria</label><input type="text" id="acompMelhoriaDesc" placeholder="O que foi melhorado no perfil do cliente"></div>
+          <button class="btn" onclick="salvarMelhoriaAcomp()">Registrar melhoria</button>
+        </div>
+        <div class="card"><h2>🕓 Linha do tempo</h2><div id="acompTimeline"></div></div>
+        <div class="card"><h2>✅ Melhorias registradas</h2><div id="acompMelhorias"></div></div>
+      </div>
     </div>
 
     <div class="view" id="view-relatorioMensal">
@@ -5172,6 +5198,71 @@
     if(sel){ sel.value = slug; carregarBriefing(); sel.scrollIntoView({behavior:'smooth', block:'center'}); }
   };
 
+  /* ===== ACOMPANHAMENTO DE PROCESSOS DO CLIENTE (21/07/2026) =====
+     Pedido da Amanda: dar transparência ao cliente. A equipe (Cecília/Gabi)
+     atualiza a etapa do processo e registra melhorias no perfil; tudo é
+     gravado em processos_cliente/<slug> e aparece no Portal do Cliente numa
+     timeline. Só grava histórico (nunca apaga) — cada mudança vira um
+     registro com data e responsável. */
+  const ETAPAS_PROCESSO = ['Briefing recebido','Planejamento em andamento','Calendário editorial em desenvolvimento','Calendário enviado para aprovação','Conteúdos em produção','Vídeos em edição','Artes em criação','Conteúdo aguardando aprovação','Conteúdo aprovado','Conteúdo agendado','Relatório do perfil em elaboração','Estratégia do perfil sendo atualizada','Projeto concluído'];
+  const MELHORIAS_SUGERIDAS = ['Bio atualizada','Destaques reorganizados','Feed reorganizado','Posts fixados atualizados','Identidade visual ajustada','Estratégia de conteúdo revisada','CTA atualizado','Link da bio alterado','Organização do perfil realizada','Ajustes na comunicação da marca'];
+
+  function popularClientesAcomp(){
+    const sel = document.getElementById('acompCliente');
+    if(sel){ const atual=sel.value; sel.innerHTML = '<option value="">Selecione o cliente...</option>' + CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join(''); if(atual) sel.value=atual; }
+    const selE = document.getElementById('acompNovaEtapa');
+    if(selE) selE.innerHTML = ETAPAS_PROCESSO.map(e=>`<option value="${esc(e)}">${esc(e)}</option>`).join('');
+    const selM = document.getElementById('acompMelhoriaRapida');
+    if(selM) selM.innerHTML = '<option value="">Escolhe uma comum, ou escreve abaixo...</option>' + MELHORIAS_SUGERIDAS.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  }
+  window.carregarAcompanhamento = async function(){
+    const sel = document.getElementById('acompCliente'); const slug = sel.value;
+    const painel = document.getElementById('acompPainel');
+    if(!slug){ painel.style.display='none'; return; }
+    painel.style.display='block';
+    popularClientesAcomp();
+    const snap = await getDoc(doc(db,'processos_cliente', slug));
+    const d = snap.exists() ? snap.data() : {};
+    const etapa = d.etapaAtual || '—';
+    const info = document.getElementById('acompEtapaAtual');
+    info.innerHTML = d.etapaAtual ? '<span class="selo aprovada">'+esc(etapa)+'</span>' : '<span class="selo pendente">Ainda sem etapa definida</span>';
+    if(d.etapaAtual){ const selE=document.getElementById('acompNovaEtapa'); if(selE) selE.value = d.etapaAtual; }
+    // timeline (mais recente primeiro)
+    const tl = (d.timeline||[]).slice().reverse();
+    document.getElementById('acompTimeline').innerHTML = tl.length ? tl.map(t=>`<div class="item" style="border-left:3px solid var(--yellow);"><div class="top"><div class="nome">${esc(t.status||'')}</div><span class="meta">${t.data?formatarDataBR(String(t.data).slice(0,10)):''}</span></div><div class="meta" style="margin-top:3px;">por ${esc(t.responsavel||'?')}${t.obs?' · '+esc(t.obs):''}</div></div>`).join('') : '<div class="empty">Nenhuma atualização de etapa ainda.</div>';
+    const mel = (d.melhorias||[]).slice().reverse();
+    document.getElementById('acompMelhorias').innerHTML = mel.length ? mel.map(m=>`<div class="item" style="border-left:3px solid var(--green);"><div class="top"><div class="nome">✨ ${esc(m.descricao||'')}</div><span class="meta">${m.data?formatarDataBR(String(m.data).slice(0,10)):''}</span></div><div class="meta" style="margin-top:3px;">por ${esc(m.responsavel||'?')}</div></div>`).join('') : '<div class="empty">Nenhuma melhoria registrada ainda.</div>';
+  };
+  window.salvarEtapaAcomp = async function(){
+    const sel = document.getElementById('acompCliente'); const slug = sel.value;
+    if(!slug){ mostrarToast('Escolhe o cliente.', 'erro'); return; }
+    const etapa = document.getElementById('acompNovaEtapa').value;
+    const obs = document.getElementById('acompEtapaObs').value.trim();
+    const snap = await getDoc(doc(db,'processos_cliente', slug));
+    const d = snap.exists() ? snap.data() : {};
+    const timeline = (d.timeline||[]).slice();
+    timeline.push({ status: etapa, data: new Date().toISOString(), responsavel: usuarioAtual||'?', obs });
+    await setDoc(doc(db,'processos_cliente', slug), { cliente:slug, clienteNome: sel.selectedOptions[0].dataset.nome||slug, etapaAtual: etapa, timeline, atualizadoEm: serverTimestamp() }, { merge:true });
+    document.getElementById('acompEtapaObs').value='';
+    mostrarToast('Etapa atualizada — o cliente já vê no portal.');
+    carregarAcompanhamento();
+  };
+  window.salvarMelhoriaAcomp = async function(){
+    const sel = document.getElementById('acompCliente'); const slug = sel.value;
+    if(!slug){ mostrarToast('Escolhe o cliente.', 'erro'); return; }
+    const desc = document.getElementById('acompMelhoriaDesc').value.trim();
+    if(!desc){ mostrarToast('Descreve a melhoria antes.', 'erro'); return; }
+    const snap = await getDoc(doc(db,'processos_cliente', slug));
+    const d = snap.exists() ? snap.data() : {};
+    const melhorias = (d.melhorias||[]).slice();
+    melhorias.push({ descricao: desc, data: new Date().toISOString(), responsavel: usuarioAtual||'?' });
+    await setDoc(doc(db,'processos_cliente', slug), { cliente:slug, clienteNome: sel.selectedOptions[0].dataset.nome||slug, melhorias, atualizadoEm: serverTimestamp() }, { merge:true });
+    document.getElementById('acompMelhoriaDesc').value='';
+    document.getElementById('acompMelhoriaRapida').value='';
+    mostrarToast('Melhoria registrada — aparece no portal do cliente.');
+    carregarAcompanhamento();
+  };
+
   window.adicionarReferencia = async function(){
     const link = document.getElementById('refLinkInput').value.trim();
     const nicho = document.getElementById('refNicho').value;
@@ -6161,6 +6252,7 @@
     if(nome === 'conteudoAteQuando') renderConteudoAteQuando();
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
     if(nome === 'briefings'){ carregarClientesExtras().then(()=>popularClientesBriefing()); renderBriefings(); }
+    if(nome === 'acompanhamento'){ carregarClientesExtras().then(()=>popularClientesAcomp()); }
     if(nome === 'relatorioMensal') popularClientesRelatorio();
   };
 
@@ -6543,16 +6635,16 @@
      usuario selecionado a sidebar mostra SO o Inicio. */
   const VISIBILIDADE_POR_FUNCAO = {
     'Chris': 'todos',
-    'Amanda': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
-    'Cecília': ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
-    'Gabrielle': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit'],
+    'Amanda': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
+    'Cecília': ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navConteudoAteQuando','navManualFuncao','navDuvidasBit'],
+    'Gabrielle': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'João Victor': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'Nathan': ['navVideos','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'Luís': ['navChecklist','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit'],
     'Yas': ['navGetAcademy','navManualFuncao','navDuvidasBit'],
   };
-  const ITENS_CONTROLADOS = ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navRelatorio','navCalendarios','navCadastro','navConteudoAteQuando','navManualFuncao','navDuvidasBit'];
+  const ITENS_CONTROLADOS = ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navCadastro','navConteudoAteQuando','navManualFuncao','navDuvidasBit'];
   const ITENS_UNIVERSAIS = ['navMinhasDemandasAtribuidas','navMinhasDemandas'];
 
   /* ===== FRENTE C2 — SIDEBAR POR FREQUENCIA DE USO =====
@@ -6679,7 +6771,7 @@
       inicio:'navInicio', minhasDemandasAtribuidas:'navMinhasDemandasAtribuidas', minhasDemandas:'navMinhasDemandas', checklist:'navChecklist',
       videos:'navVideos', agendamento:'navAgendamento', funcoesFixas:'navFuncoesFixas',
       postagens:'navPostagens', stories:'navStories', campanhas:'navCampanhas', roteiros:'navRoteiros',
-      referencias:'navReferencias', briefings:'navBriefings', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
+      referencias:'navReferencias', briefings:'navBriefings', acompanhamento:'navAcompanhamento', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
       cadastro:'navCadastro', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit'
     };
     const el = document.getElementById(idParaId[nomeView]);

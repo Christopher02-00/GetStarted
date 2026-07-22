@@ -7510,10 +7510,16 @@
       <div class="field"><label>Data real da reunião marcada com o cliente</label><input type="date" id="reuniaoDataReal" value="${d.prazoData}"></div>
       <div class="field"><label>Hora real da reunião</label><input type="time" id="reuniaoHoraReal" value="${d.prazoHora==='19:00'?'10:00':d.prazoHora}"></div>
       ` : ''}
+      ${ehTituloDemandaLegenda(d.titulo) && d.postagemId ? `
+      <div class="linha" style="color:var(--yellow2);">✍️ Essa é uma demanda de legenda — escreve o texto completo abaixo. Não precisa de aprovação da Amanda: assim que você salvar, já cai direto na fila da Cecília.</div>
+      <div class="field"><label>Texto da legenda</label><textarea id="provaTextoInput" placeholder="Cola ou escreve aqui a legenda completa (pronta pra ir pro ar)..."></textarea></div>
+      <div class="field"><label>Link de referência (opcional)</label><input type="text" id="provaLinkInput" placeholder="Opcional — link do Drive/WhatsApp se precisar"></div>
+      <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Salvar legenda e mandar pra Cecília</button>
+      ` : `
       <div class="field"><label>Descreva o que foi feito</label><textarea id="provaTextoInput" placeholder="O que você fez pra concluir..."></textarea></div>
       <div class="field"><label>Link do print/foto como prova (opcional)</label><input type="text" id="provaLinkInput" placeholder="Cola aqui o link do Drive/WhatsApp com o print"></div>
       <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Marcar como feita</button>
-      `}
+      `}`}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
       ${renderLinhaDoTempo(d.historico)}
     `;
@@ -7659,6 +7665,11 @@
     return vinculadas;
   }
 
+  function ehTituloDemandaLegenda(titulo){
+    const t = titulo || '';
+    return t.startsWith('✍️ Escrever legenda') || t.startsWith('✍️ Legenda pendente');
+  }
+
   window.enviarProva = async function(id){
     const texto = document.getElementById('provaTextoInput').value.trim();
     const link = document.getElementById('provaLinkInput').value.trim();
@@ -7669,6 +7680,40 @@
     const btn = document.getElementById('btnEnviarProva');
     btn.disabled = true; btn.textContent = 'Enviando...';
     try {
+      const d = todasDemandas.find(x=>x.id===id);
+      const ehLegenda = !!(d && d.postagemId) && ehTituloDemandaLegenda(d.titulo);
+
+      /* ===== ATALHO DIRETO DE LEGENDA — pedido do Chris (22/07/2026) =====
+         Legenda não passa mais pela aprovação da Amanda. A Amanda não
+         precisa decidir nada aqui — não é um julgamento de qualidade, é só
+         dado que precisa chegar na Cecília. Assim que a Gabi marca essa
+         demanda específica como feita COM o texto da legenda, sincroniza
+         direto na postagem e já cai na fila da Cecília, sem ninguém no
+         meio. Se ela só colar um link/print sem escrever o texto aqui,
+         cai no fluxo antigo (não dá pra popular a legenda sem o texto). */
+      if(ehLegenda && texto){
+        const postRef = doc(db,'postagens', d.postagemId);
+        const postSnap = await getDoc(postRef);
+        if(postSnap.exists() && !(postSnap.data().legenda||'').trim()){
+          await updateDoc(postRef, {
+            legenda: texto, status: 'aguardando_agendamento',
+            legendaPor: (usuarioAtual||'Gabrielle'), legendaEm: new Date().toISOString()
+          });
+        }
+        await updateDoc(doc(db,'demandas', id), {
+          status: 'aprovada', provaTexto: texto, provaImagemUrl: link,
+          concluidaEm: serverTimestamp(), concluidoPor: usuarioAtual||'Gabrielle',
+          notaConclusao: 'Legenda sincronizada direto pra Cecília — sem aprovação da Amanda.'
+        });
+        darBaixaDemandaLegenda(d.postagemId).catch(()=>{});
+        criarDemandaAgendamentoAutomatica(d.postagemId).catch(e => console.error('Falha ao criar demanda automática de agendamento', e));
+        mostrarToast('Legenda salva! Já caiu direto na fila da Cecília.');
+        fecharModal();
+        carregarMinhasDemandas();
+        mudarUsuarioGlobal();
+        return;
+      }
+
       const dadosExtras = { status: 'concluida_aguardando_aprovacao', provaTexto: texto, provaImagemUrl: link, concluidaEm: serverTimestamp() };
       const campoDataReal = document.getElementById('reuniaoDataReal');
       const campoHoraReal = document.getElementById('reuniaoHoraReal');
@@ -10182,7 +10227,7 @@
         🎉 <b>Evento: ${esc(l.eventoNome||'sem nome')}</b>
         ${(l.eventoLocais||[]).length ? '<div style="margin-top:6px;">' + l.eventoLocais.map(loc => '📍 <b>'+esc(loc.nome)+'</b> — '+formatarDataBR(loc.data||'')+' · '+esc(loc.inicio||'?')+' às '+esc(loc.fim||'?')).join('<br>') + '</div>' : ''}
         ${(l.eventoMomentos||[]).length ? '<div style="margin-top:6px;"><b>Momentos importantes:</b><br>' + l.eventoMomentos.map(m => '⏱️ '+esc(m.horario||'?')+' — '+esc(m.descricao)).join('<br>') + '</div>' : ''}
-        <div style="margin-top:6px;">🎬 Vídeos desejados no evento (aprox.): ${l.eventoQtdVideos||'—'}</div>
+        <div style="margin-top:6px;">🎬 Vídeos desejados no evento (aprox.): ${l.eventoQtdVideos||'—'} · 🚁 Drone: ${l.eventoDrone==='sim'?'Sim':'Não'}</div>
         ${(l.eventoFoco||[]).length ? '<div style="margin-top:4px;">📢 Foco: '+l.eventoFoco.map(esc).join(', ')+'</div>' : ''}
       </div>` : ''}
       <div class="linha"><b>Referências:</b><div style="margin-top:4px;">${refsHtml}</div></div>
@@ -10228,7 +10273,7 @@
 EVENTO: ${l.eventoNome||'sem nome'}
 Locais: ${(l.eventoLocais||[]).length ? l.eventoLocais.map(loc=>loc.nome+' ('+formatarDataBR(loc.data||'')+' '+(loc.inicio||'?')+'-'+(loc.fim||'?')+')').join(' | ') : 'não informado'}
 Momentos importantes: ${(l.eventoMomentos||[]).length ? l.eventoMomentos.map(m=>(m.horario||'?')+' - '+m.descricao).join(' | ') : '—'}
-Vídeos desejados no evento (aprox.): ${l.eventoQtdVideos||'—'}
+Vídeos desejados no evento (aprox.): ${l.eventoQtdVideos||'—'} · Drone: ${l.eventoDrone==='sim'?'sim':'não'}
 Foco de publicação: ${(l.eventoFoco||[]).join(', ')||'—'}
 ` : '';
     const texto = `LEAD ${l.eventoAtivo?'EVENTO':'AVULSO'} — ${l.nome}
@@ -11371,6 +11416,23 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(d?.agendamentoId){
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado: true });
       mostrarToast('Aprovado — gravação já liberada pro filmmaker!');
+    }
+    /* ===== REDE DE SEGURANÇA — pedido do Chris (22/07/2026) =====
+       Legenda não deveria mais chegar aqui pra aprovação manual (já vai
+       direto pra Cecília assim que a Gabi marca como feita em enviarProva).
+       Mas se por algum motivo uma demanda de legenda antiga ainda estiver
+       esperando aprovação, sincroniza aqui também — nunca deixa a legenda
+       perdida no campo de prova. */
+    if(d?.postagemId && d?.provaTexto && ehTituloDemandaLegenda(d.titulo)){
+      try{
+        const postRef = doc(db,'postagens', d.postagemId);
+        const postSnap = await getDoc(postRef);
+        if(postSnap.exists() && !(postSnap.data().legenda||'').trim()){
+          await updateDoc(postRef, { legenda: d.provaTexto, status:'aguardando_agendamento', legendaPor:(d.destinatario||'Gabrielle')+' (recuperado)', legendaEm: new Date().toISOString() });
+        }
+        darBaixaDemandaLegenda(d.postagemId).catch(()=>{});
+        criarDemandaAgendamentoAutomatica(d.postagemId).catch(()=>{});
+      }catch(e){ console.error('Falha na rede de segurança de legenda em aprovarDemanda', e); }
     }
     fecharModal();
     carregarGerencia();

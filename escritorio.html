@@ -587,7 +587,6 @@
       </div>
       <div id="setorAtalhos"></div>
       <div id="avisoInicio"></div>
-      <div id="resumoDiarioBox"></div>
       <div id="meuDiaBox"></div>
       <div id="calendarioVisualHomeBox"></div>
       <div id="funcionarioMesInicioBox"></div>
@@ -6715,7 +6714,14 @@
     await etapaSegura('recarregar demandas', carregarTodasDemandas);
     await etapaSegura('aviso início', async () => renderAvisoInicio());
     await etapaSegura('meu dia', async () => renderMeuDia());
-    await etapaSegura('resumo diário', async () => renderResumoDiarioHome());
+    /* ===== REMOVIDO 22/07/2026 — pedido do Chris =====
+       "Resumo do Dia" e "Atrasadas" eram quase duplicatas, e o Resumo do
+       Dia lia um SNAPSHOT gravado 1x por dia (resumos_diarios) — por isso
+       ficava desatualizado o dia inteiro (ex: legendas já corrigidas
+       continuavam aparecendo como "paradas" até alguém clicar Atualizar).
+       Tudo que ele tinha de útil e realmente urgente (quem cobrar, crítico
+       agora, postagem sem agendar) agora mora só em Atrasadas, sempre ao
+       vivo, nunca em snapshot. */
     await etapaSegura('calendário visual', async () => renderCalendarioVisualHome());
     await etapaSegura('minhas demandas atribuídas', async () => renderMinhasDemandasAtribuidas());
     await etapaSegura('badge minhas', async () => atualizarBadgeMinhas());
@@ -10060,7 +10066,9 @@
     const cont = document.getElementById('atrasadasConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Montando o painel de atrasos da equipe...</div></div>';
     await carregarTodasDemandas();
-    const vSnap = await getDocs(collection(db,'videos_producao'));
+    const [vSnap, postSnapEq] = await Promise.all([
+      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
+    ]);
     const diasAtraso = d => Math.floor((Date.now() - new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime()) / 86400000);
 
     const itens = [];
@@ -10076,6 +10084,17 @@
       const dias = prazo ? Math.max(0, Math.floor((Date.now() - prazo.getTime())/86400000)) : 0;
       itens.push({ tipo:'Vídeo', pessoa:v.editorAtribuido||'—', titulo:v.titulo, dias, id:sn.id, colecao:'videos_producao', cliente:v.clienteNome||'', status:v.status });
     });
+    /* ===== ABSORVIDO DO "RESUMO DO DIA" (removido 22/07/2026) =====
+       Postagem com legenda pronta esperando a Cecília agendar, parada há
+       1+ dia — igual o "Postagem sem agendar" que só existia no snapshot
+       velho. Agora ao vivo, direto na mesma lista de atrasos. */
+    postSnapEq.forEach(sn => {
+      const p = sn.data();
+      if(p.status !== 'aguardando_agendamento') return;
+      const dias = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime())/86400000) : 0;
+      if(dias < 1) return;
+      itens.push({ tipo:'Postagem', pessoa:'Cecília', titulo:p.titulo, dias, id:sn.id, colecao:'postagens', cliente:p.clienteNome||'' });
+    });
 
     const totalAtras = itens.length;
     const porPessoa = {};
@@ -10085,7 +10104,10 @@
     const nVideos = itens.filter(it => it.tipo === 'Vídeo').length;
 
     let html = `<div class="card">
-      <h2><svg class="ic"><use href="#i-alert"/></svg>Atrasos da equipe — visão de comando</h2>
+      <h2 style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <span><svg class="ic"><use href="#i-alert"/></svg>Atrasos da equipe — visão de comando</span>
+        ${['Chris','Amanda'].includes(usuarioAtual) ? '<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;border-color:var(--yellow);" onclick="copiarFocoEquipe()">📲 Foco do dia (grupo)</button>' : ''}
+      </h2>
       <div class="desc">Demandas e vídeos que passaram do prazo agora, em tempo real. Assim que o item é concluído, ele some daqui sozinho. Clica em qualquer linha pra abrir; o 🗑️ apaga demanda-bug de teste (só você e a Amanda enxergam).</div>
       <div class="painelResumo" style="margin-top:10px;">
         <div class="resumoCard ${totalAtras?'red':'green'}"><div class="num">${totalAtras}</div><div class="lbl">Atrasos no total</div></div>
@@ -10094,6 +10116,23 @@
         <div class="resumoCard ${nVideos?'red':'green'}"><div class="num">${nVideos}</div><div class="lbl">Vídeo(s) atrasado(s)</div></div>
       </div>
     </div>`;
+
+    /* ===== ABSORVIDO DO "RESUMO DO DIA" (removido 22/07/2026) =====
+       "Crítico agora" — vídeos já escalados nível 2+, ao vivo (antes só
+       existia no snapshot velho do Resumo do Dia). */
+    const criticosEq = [];
+    vSnap.forEach(sn => {
+      const v = sn.data();
+      if(v.excluido) return;
+      if((v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status)){
+        criticosEq.push('🚨 Vídeo escalado nível ' + v.nivelEscalonamento + ' — ' + (v.clienteNome||'') + ': ' + (v.titulo||'') + ' (editor: ' + (v.editorAtribuido||'?') + ')');
+      }
+    });
+    if(criticosEq.length){
+      html += `<div class="card metaSec" style="border-color:var(--red);"><div class="metaSecTit">🚨 Crítico agora</div>` +
+        criticosEq.map(t => `<div class="item" style="border-left:3px solid var(--red);padding:8px 12px;"><div class="nome" style="font-size:12px;">${esc(t)}</div></div>`).join('') +
+        `</div>`;
+    }
 
     if(!totalAtras){
       html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Equipe 100% em dia — nada atrasado agora. 🎉</div></div>';

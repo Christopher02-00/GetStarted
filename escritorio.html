@@ -1683,6 +1683,23 @@
   const CLIENTES_SO_EDICAO = ['rodrigo'];
   function ehClienteSoEdicao(slug){ return CLIENTES_SO_EDICAO.includes(slug); }
 
+  /* ===== VÍDEO DE TRÁFEGO (22/07/2026, pedido do Chris) =====
+     Achado real: 3 vídeos da Dra. Monique com "tráfego" no título ficaram
+     travados na fila da Cecília com legenda-placeholder tipo "não sei
+     qual vídeo é, manda no wpp" — porque vídeo de tráfego a agência NÃO
+     posta (o cliente usa por conta própria pra anúncio). É aprovação de
+     CLIENTE mas comportamento de ENTREGA DIRETA — não é config de cliente
+     inteiro (a Monique tem vídeo normal também), é por VÍDEO, pelo título.
+     Detecta "tráfego"/"trafego" (com ou sem acento, qualquer posição) no
+     título — se bater, o vídeo pula legenda/postagem/agendamento igual
+     entrega direta, some da fila da Cecília e da Gabrielle, e vai direto
+     pra aba de Entregas Finalizadas do cliente. */
+  function ehVideoDeTrafego(titulo){
+    if(!titulo) return false;
+    const norm = titulo.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    return norm.includes('trafego');
+  }
+
   const EDITORES_GERAL = ["Helo","Cecília","João Victor"];
   const EDITORES_SELECIONAVEIS = ["Helo","Cecília","João Victor","Nathan"];
   const EDITORES_CONFIG = {
@@ -2281,13 +2298,15 @@
        modos de aprovacao (manual, tacita e automatica), porque todos
        convergem aqui. O video vai morar na aba "📦 Entregas Finalizadas". */
     const configEntrega = await obterConfigCliente(v.cliente);
-    if(configEntrega.tipoEntrega === 'entrega_direta' || ehClienteSoEdicao(v.cliente)){
+    const ehTrafego = ehVideoDeTrafego(v.titulo);
+    if(configEntrega.tipoEntrega === 'entrega_direta' || ehClienteSoEdicao(v.cliente) || ehTrafego){
       await updateDoc(doc(db,'videos_producao', videoId), {
         status: 'finalizado', clienteAprovou: true, clienteAprovouEm: new Date().toISOString(),
-        clienteAprovouPor: confirmadoPor, finalizadoEm: new Date().toISOString(), finalizadoVia: ehClienteSoEdicao(v.cliente) ? 'so_edicao' : 'entrega_direta'
+        clienteAprovouPor: confirmadoPor, finalizadoEm: new Date().toISOString(),
+        finalizadoVia: ehClienteSoEdicao(v.cliente) ? 'so_edicao' : (ehTrafego ? 'video_trafego' : 'entrega_direta')
       });
-      registrarHistorico('videos_producao', videoId, 'Cliente é entrega direta — vídeo 100% aprovado e FINALIZADO (sem legenda/agendamento)', 'Confirmado por: ' + confirmadoPor);
-      registrarLogAutomacao('entrega_direta_finalizado', videoId, v.titulo || '');
+      registrarHistorico('videos_producao', videoId, ehTrafego ? 'Vídeo de tráfego — aprovado e FINALIZADO direto pro cliente (agência não posta vídeo de tráfego)' : 'Cliente é entrega direta — vídeo 100% aprovado e FINALIZADO (sem legenda/agendamento)', 'Confirmado por: ' + confirmadoPor);
+      registrarLogAutomacao(ehTrafego ? 'video_trafego_finalizado' : 'entrega_direta_finalizado', videoId, v.titulo || '');
       return 'finalizado';
     }
 
@@ -3919,11 +3938,65 @@
           <div class="field"><label>Data da postagem</label><input type="date" id="dataPost_${p.id}"></div>
           <div class="field"><label>Hora</label><input type="time" id="horaPost_${p.id}" value="12:00"></div>
         </div>
-        <button class="btn" onclick="salvarAgendamentoPostagem('${p.id}')">Agendar postagem</button>
+        <div class="row2" style="margin-top:8px;">
+          <button class="btn" onclick="salvarAgendamentoPostagem('${p.id}')">Agendar postagem</button>
+          <button class="btn secondary" style="border:2px solid var(--yellow2);" onclick="marcarPostagemSemAgendamento('${p.id}')">🚫 Não precisa agendar</button>
+        </div>
       </div>
     `;
     }).join('');
   }
+
+  /* ===== MARCAR MANUALMENTE "NÃO PRECISA AGENDAR" (22/07/2026, pedido do Chris) =====
+     Complementa (não substitui) a detecção automática de vídeo de tráfego:
+     aquela cobre o caso conhecido por título ("tráfego" no nome). Esse
+     botão cobre QUALQUER outro motivo pontual pra um vídeo específico não
+     precisar ir ao ar pela agência — a Cecília decide na hora, com o link
+     e a legenda já visíveis no card, sem depender de convenção de nome.
+     Mesmo destino final do vídeo de tráfego: sai da fila, video vira
+     'finalizado' e aparece em Entregas Finalizadas do cliente. */
+  window.marcarPostagemSemAgendamento = async function(id){
+    const motivo = prompt('Por que esse vídeo não precisa de agendamento? (opcional, fica registrado pro time)') || '';
+    if(!confirm('Confirma? Esse vídeo sai da fila de agendamento e vai direto pra Entregas Finalizadas do cliente — a agência não vai postar ele.')) return;
+
+    const postSnap = await getDoc(doc(db,'postagens', id));
+    if(!postSnap.exists()) return;
+    const p = postSnap.data();
+
+    await updateDoc(doc(db,'postagens', id), {
+      status: 'cancelada_manual', canceladaPor: usuarioAtual||'Cecília', canceladaEm: new Date().toISOString(),
+      notaCorrecao: motivo || '(sem motivo informado)'
+    });
+    registrarHistorico('postagens', id, 'Marcada manualmente como "não precisa agendar" por ' + (usuarioAtual||'Cecília') + (motivo ? ' — Motivo: ' + motivo : ''));
+
+    try{
+      const demQ = query(collection(db,'demandas'), where('postagemId','==', id), where('status','==','pendente'));
+      const demSnap = await getDocs(demQ);
+      for(const dSnap of demSnap.docs){
+        const dem = dSnap.data();
+        if(dem.destinatario === 'Gabrielle' || (dem.titulo||'').startsWith('✍️ Escrever legenda')) continue;
+        await updateDoc(doc(db,'demandas', dSnap.id), {
+          status:'aprovada', concluidoPor: usuarioAtual||'Cecília', concluidoEm: serverTimestamp(),
+          notaConclusao: 'Marcado manualmente como "não precisa agendar"' + (motivo ? ' — Motivo: ' + motivo : '') + '.'
+        });
+        registrarHistorico('demandas', dSnap.id, 'Concluída — marcada manualmente como "não precisa agendar"');
+      }
+    }catch(e){ console.error('Falha ao fechar demanda de agendamento (marcação manual):', e); }
+
+    if(p.videoId){
+      try{
+        const vidSnap = await getDoc(doc(db,'videos_producao', p.videoId));
+        if(vidSnap.exists() && vidSnap.data().status !== 'finalizado'){
+          await updateDoc(doc(db,'videos_producao', p.videoId), { status:'finalizado', clienteAprovou:true, finalizadoEm: new Date().toISOString(), finalizadoVia:'marcado_manual_sem_agendamento' });
+          registrarHistorico('videos_producao', p.videoId, 'Marcado manualmente por ' + (usuarioAtual||'Cecília') + ' como "não precisa agendar" — foi direto pra Entregas Finalizadas');
+        }
+      }catch(e){ console.error('Falha ao finalizar vídeo (marcação manual):', e); }
+    }
+
+    registrarLogAutomacao('postagem_marcada_sem_agendamento', id, (p.clienteNome||'') + ' — ' + (p.titulo||'') + (motivo ? ' — ' + motivo : ''));
+    mostrarToast('Marcado — esse vídeo saiu da fila e foi pra Entregas Finalizadas.');
+    renderAgendarPostagens();
+  };
 
   /* ===== MELHORIA 6A — FECHAR A CADEIA: STATUS "POSTADO" =====
      1 clique, sem modal. Fecha o elo final que antes ficava solto em
@@ -6810,6 +6883,18 @@
       const qtdConciliadas = await conciliarPostagensOrfas();
       if(qtdConciliadas > 0) mostrarToast(qtdConciliadas + ' postagem(ns) recuperada(s) de vídeos já aprovados — caíram na fila de legenda.');
     });
+    await etapaSegura('conciliar vídeos de tráfego presos', async () => {
+      const qtdTrafego = await conciliarVideosDeTrafegoRetroativo();
+      if(qtdTrafego > 0) mostrarToast(qtdTrafego + ' vídeo(s) de tráfego corrigido(s) — saíram da fila de legenda/agendamento e foram direto pra Entregas Finalizadas.');
+    });
+    await etapaSegura('conciliar clientes que viraram entrega direta', async () => {
+      // ACHADO 22/07/2026: essa função existia desde a Frente B6 mas nunca
+      // tinha sido chamada em lugar nenhum — ficou escrita e morta. Achado
+      // ao investigar o mesmo tipo de problema do vídeo de tráfego (postagem
+      // presa numa fila que não devia mais se aplicar). Ligando agora.
+      const qtdRecicladas = await conciliarPostagensClienteVirouEntregaDireta();
+      if(qtdRecicladas > 0) mostrarToast(qtdRecicladas + ' postagem(ns) reciclada(s) — cliente virou entrega direta depois de já estarem na fila.');
+    });
     await etapaSegura('semear e-mails da equipe', semearEmailsEquipeIniciais);
 
     // Essas duas não são async/aguardadas — mas também protegidas, porque
@@ -9472,9 +9557,20 @@
       prazoHora = '12:00';
     }
 
+    /* CORREÇÃO 22/07/2026 (achado real: Stokki) — a descrição nunca incluía
+       o link do vídeo, só título + cliente. Quando o mesmo cliente tem
+       vários vídeos com nome genérico repetido (ex: "vídeo 1", "vídeo 2"
+       em datas diferentes), a Cecília não tinha como saber qual arquivo
+       era qual — igual aconteceu com a Gabrielle, que já tinha o mesmo
+       problema e resolvia escrevendo "não sei qual vídeo é" na legenda em
+       vez de uma legenda de verdade. Agora a demanda carrega link + legenda. */
+    const descricaoPartes = ['Legenda pronta, precisa agendar a postagem.'];
+    descricaoPartes.push(p.linkVideo ? ('Link do vídeo: ' + p.linkVideo) : '⚠️ Sem link registrado nessa postagem — confirme com o time antes de agendar.');
+    if(p.legenda) descricaoPartes.push('Legenda: "' + p.legenda + '"');
+
     await addDoc(collection(db,'demandas'), {
       titulo: '📅 Agendar — ' + (p.clienteNome||'') + ': ' + (p.titulo||''),
-      descricao: 'Legenda pronta, precisa agendar a postagem.',
+      descricao: descricaoPartes.join('\n\n'),
       origem: 'sistema', clienteNome: p.clienteNome || '',
       destinatario: 'Cecília', prazoData, prazoHora, postagemId,
       status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
@@ -9778,11 +9874,13 @@
 
       // FRENTE B6 — cliente entrega direta: video aprovado sem postagem NAO
       // e orfao, e o estado final correto. Finaliza em vez de recriar o lixo.
+      // Vídeo de tráfego (22/07/2026) entra na mesma trava — por título, não por cliente.
       const cfgEntregaConc = await obterConfigCliente(v.cliente);
-      if(cfgEntregaConc.tipoEntrega === 'entrega_direta' || ehClienteSoEdicao(v.cliente)){
-        await updateDoc(doc(db,'videos_producao', docSnap.id), { status:'finalizado', finalizadoEm: new Date().toISOString(), finalizadoVia: 'entrega_direta (conciliador)' });
-        registrarHistorico('videos_producao', docSnap.id, 'Conciliador: cliente é entrega direta — vídeo finalizado, sem criar postagem');
-        registrarLogAutomacao('entrega_direta_conciliada', docSnap.id, v.titulo || '');
+      const ehTrafegoConc = ehVideoDeTrafego(v.titulo);
+      if(cfgEntregaConc.tipoEntrega === 'entrega_direta' || ehClienteSoEdicao(v.cliente) || ehTrafegoConc){
+        await updateDoc(doc(db,'videos_producao', docSnap.id), { status:'finalizado', finalizadoEm: new Date().toISOString(), finalizadoVia: ehTrafegoConc ? 'video_trafego (conciliador)' : 'entrega_direta (conciliador)' });
+        registrarHistorico('videos_producao', docSnap.id, ehTrafegoConc ? 'Conciliador: vídeo de tráfego — finalizado direto, sem criar postagem' : 'Conciliador: cliente é entrega direta — vídeo finalizado, sem criar postagem');
+        registrarLogAutomacao(ehTrafegoConc ? 'video_trafego_conciliado' : 'entrega_direta_conciliada', docSnap.id, v.titulo || '');
         continue;
       }
 
@@ -9853,6 +9951,54 @@
       recicladas++;
     }
     return recicladas;
+  }
+
+  /* ===== CONCILIADOR 3 — VÍDEO DE TRÁFEGO PRESO NA FILA ERRADA (22/07/2026) =====
+     Achado real na auditoria pedida pelo Chris: 3 vídeos da Dra. Monique
+     com "tráfego" no título ficaram travados esperando a Cecília agendar
+     — postagem que a agência nunca ia publicar mesmo, porque vídeo de
+     tráfego é só pro cliente rodar como anúncio por conta própria. A
+     Gabrielle nem conseguia escrever legenda de verdade (não tinha como
+     saber qual vídeo era), e escreveu "não sei qual vídeo é, manda no wpp"
+     nas 3 — sinal de que o problema já existia bem antes da Cecília notar.
+     Esse conciliador é permanente e idempotente: roda no login de todo
+     mundo (junto dos outros 2 conciliadores), então cobre casos antigos
+     E qualquer recorrência futura, mesmo se por algum motivo o vídeo
+     passar pela aprovação sem cair no bloqueio de confirmarAprovacaoClienteCore. */
+  async function conciliarVideosDeTrafegoRetroativo(){
+    const postSnap = await getDocs(collection(db,'postagens'));
+    const presasTrafego = [];
+    postSnap.forEach(d => {
+      const p = d.data();
+      if(['aguardando_legenda','aguardando_agendamento'].includes(p.status) && ehVideoDeTrafego(p.titulo)) presasTrafego.push({id:d.id, ...p});
+    });
+    let corrigidas = 0;
+    for(const p of presasTrafego){
+      await updateDoc(doc(db,'postagens', p.id), {
+        status: 'cancelada_video_trafego', arquivadaPor: 'sistema (conciliador — vídeo de tráfego)', arquivadaEm: new Date().toISOString(),
+        notaCorrecao: 'Vídeo de tráfego — a agência não posta, só entrega pro cliente usar como anúncio. Cancelado da fila de legenda/agendamento automaticamente.'
+      });
+      registrarHistorico('postagens', p.id, 'Cancelada automaticamente — vídeo de tráfego não é postado pela agência');
+
+      // fecha qualquer demanda pendente de legenda (Gabrielle) ou agendamento (Cecília) ligada a essa postagem
+      const demQ = query(collection(db,'demandas'), where('postagemId','==', p.id), where('status','==','pendente'));
+      const demSnapT = await getDocs(demQ);
+      for(const dSnap of demSnapT.docs){
+        await updateDoc(doc(db,'demandas', dSnap.id), { status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(), notaConclusao: 'Vídeo de tráfego — a agência não posta esse tipo de vídeo, só entrega direto pro cliente. Demanda encerrada automaticamente.' });
+        registrarHistorico('demandas', dSnap.id, 'Concluída automaticamente — vídeo de tráfego não precisa de legenda/agendamento');
+      }
+
+      if(p.videoId){
+        const vidSnapT = await getDoc(doc(db,'videos_producao', p.videoId));
+        if(vidSnapT.exists() && vidSnapT.data().status !== 'finalizado'){
+          await updateDoc(doc(db,'videos_producao', p.videoId), { status:'finalizado', clienteAprovou:true, finalizadoEm: new Date().toISOString(), finalizadoVia:'video_trafego (conciliador retroativo)' });
+          registrarHistorico('videos_producao', p.videoId, 'Conciliador: vídeo de tráfego finalizado direto — some da fila, vai pra Entregas Finalizadas do cliente');
+        }
+      }
+      registrarLogAutomacao('video_trafego_reciclado', p.id, p.clienteNome || '');
+      corrigidas++;
+    }
+    return corrigidas;
   }
 
   /* ===== MELHORIA 1 — APROVAÇÃO TÁCITA AUTOMÁTICA =====

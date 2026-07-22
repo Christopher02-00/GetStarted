@@ -10106,6 +10106,7 @@
     const emAnalise = __leadsAvulsosCache.filter(l => l.status === 'em_analise');
     const convertidos = __leadsAvulsosCache.filter(l => l.status === 'convertido');
     const perdidos = __leadsAvulsosCache.filter(l => l.status === 'perdido');
+    const finalizados = __leadsAvulsosCache.filter(l => l.status === 'finalizado');
     const badge = document.getElementById('badgeLeadsAvulsos');
     if(badge){ if(novos.length){ badge.textContent = novos.length; badge.style.display='inline-block'; } else badge.style.display='none'; }
 
@@ -10117,6 +10118,7 @@
         <div class="resumoCard"><div class="num">${emAnalise.length}</div><div class="lbl">Em análise</div></div>
         <div class="resumoCard green"><div class="num">${convertidos.length}</div><div class="lbl">Convertido(s)</div></div>
         <div class="resumoCard"><div class="num">${perdidos.length}</div><div class="lbl">Perdido(s)</div></div>
+        <div class="resumoCard green"><div class="num">${finalizados.length}</div><div class="lbl">Finalizado(s)</div></div>
       </div>
     </div>`;
 
@@ -10136,6 +10138,21 @@
     };
 
     html += `<div class="card">` + [...novos, ...emAnalise, ...convertidos, ...perdidos].map(cardLead).join('') + `</div>`;
+
+    if(finalizados.length){
+      const cardFinal = l => {
+        const dataFim = l.dataFinalizacao && l.dataFinalizacao.toDate ? l.dataFinalizacao.toDate().toLocaleDateString('pt-BR') : '';
+        return `<div class="item" style="cursor:pointer;border-left:3px solid var(--green);" onclick="abrirLeadAvulso('${l.id}')">
+          <div class="top"><div class="nome">${esc(l.nome)}</div><span class="selo aprovada">✅ Finalizado</span></div>
+          <div class="meta" style="margin-top:4px;">${(l.videosFinalizados||[]).length} vídeo(s) entregue(s) · ${esc(l.pacoteNome||'')}${dataFim?' · concluído em '+dataFim:''}</div>
+        </div>`;
+      };
+      html += `<div class="faixaDem" data-faixa="avulsosFinalizados">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">✅ Avulsos Finalizados — arquivo <span class="qtd">${finalizados.length}</span><span class="seta">▾</span></div>
+        <div class="faixaItens">` + finalizados.map(cardFinal).join('') + `</div>
+      </div>`;
+    }
+
     cont.innerHTML = html;
   }
 
@@ -10156,6 +10173,18 @@
       <div class="linha"><b>Data desejada:</b> ${l.dataDesejada ? formatarDataBR(l.dataDesejada) : 'não informou'} ${l.urgencia==='urgente' ? '<span style="color:var(--red);font-weight:800;"> · URGENTE</span>' : ''}</div>
       <div class="linha"><b>Orçamento mencionado:</b> ${esc(l.orcamento||'não informou')}</div>
       <div class="linha"><b>Observações:</b> ${linkifyDescricao(l.observacoes||'—')}</div>
+      ${l.status === 'finalizado' ? `
+      <div class="linha" style="background:var(--deep);border-left:3px solid var(--green);padding:8px 10px;border-radius:6px;">
+        ✅ <b>Projeto finalizado</b>${l.dataFinalizacao && l.dataFinalizacao.toDate ? ' em '+l.dataFinalizacao.toDate().toLocaleDateString('pt-BR') : ''}${l.duracaoDias!=null ? ' · levou '+l.duracaoDias+' dia(s) do primeiro contato até a entrega' : ''}
+      </div>
+      <div class="linha"><b>Vídeo(s) entregue(s):</b><div style="margin-top:4px;">
+        ${(l.videosFinalizados||[]).length ? l.videosFinalizados.map(v => '<a href="'+esc(v.linkFinalizado)+'" target="_blank" style="display:block;color:var(--yellow);margin-top:4px;">🎬 '+esc(v.titulo)+' ↗</a>').join('') : '<span style="color:var(--muted);">nenhum vídeo aprovado encontrado no sistema pra esse cliente</span>'}
+      </div></div>
+      <div class="btnrow" style="margin-top:12px;">
+        <button class="btn secondary" onclick="copiarMensagemEntregaLead('${l.id}')">📋 Copiar mensagem de entrega</button>
+        <button class="btn red" onclick="reabrirLeadAvulso('${l.id}')">↩️ Reabrir (desfazer finalização)</button>
+      </div>
+      ` : `
       <div class="linha"><b>Status:</b>
         <select id="statusLead_${l.id}" onchange="mudarStatusLead('${l.id}', this.value)">
           <option value="novo" ${l.status==='novo'||!l.status?'selected':''}>🆕 Novo</option>
@@ -10169,6 +10198,8 @@
         <button class="btn" onclick="abrirAtribuirFilmmakerLead('${l.id}')">🎬 Atribuir filmmaker + agendar</button>
       </div>
       <div id="atribuirLeadArea_${l.id}"></div>
+      ${l.status === 'convertido' ? '<button class="btn green" style="margin-top:8px;" onclick="finalizarLeadAvulso(\''+l.id+'\')">✅ Finalizar projeto (arquivar)</button>' : ''}
+      `}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
     `;
     document.getElementById('overlayView').classList.add('show');
@@ -10246,6 +10277,81 @@ Observações do cliente: ${l.observacoes||'—'}`;
       fecharModal();
       renderLeadsAvulsos();
     }catch(e){ mostrarToast('Erro ao agendar: ' + e.message, 'erro'); }
+  };
+
+  /* ===== FINALIZAR PROJETO AVULSO — arquiva com os vídeos aprovados =====
+     Não duplicamos link de vídeo em lugar nenhum: no momento de finalizar,
+     buscamos em videos_producao todos os vídeos com esse slug e status
+     'aprovado', e congelamos essa lista (título + link + data) dentro do
+     próprio lead. Também tiramos o cliente da lista ativa (clientes_extras
+     excluido:true) pra não acumular gente que não vai gravar mais nada nos
+     menus de agendar/legenda — sem apagar nada, só deixa de aparecer. */
+
+  function slugDeNomeLead(nome){
+    return nome.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  }
+
+  window.finalizarLeadAvulso = async function(id){
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(!l) return;
+    if(!confirm('Finalizar o projeto de "'+l.nome+'"? Isso arquiva o cliente e tira ele da lista ativa de Clientes Avulsos/Extras (dá pra reabrir depois se precisar).')) return;
+
+    const slug = slugDeNomeLead(l.nome);
+    const vSnap = await getDocs(collection(db,'videos_producao'));
+    const videosFinalizados = [];
+    vSnap.forEach(d => {
+      const v = d.data();
+      if(v.cliente === slug && v.status === 'aprovado' && !v.excluido){
+        videosFinalizados.push({ titulo: v.titulo||'Vídeo', linkFinalizado: v.linkFinalizado||'', aprovadoEm: v.aprovadoInternoEm||'' });
+      }
+    });
+
+    const criadoEmMs = l.criadoEm && l.criadoEm.toDate ? l.criadoEm.toDate().getTime() : Date.now();
+    const duracaoDias = Math.max(0, Math.round((Date.now() - criadoEmMs) / 86400000));
+
+    await updateDoc(doc(db,'leads_avulsos', id), {
+      status: 'finalizado', videosFinalizados, dataFinalizacao: serverTimestamp(), duracaoDias
+    });
+
+    // Arquiva o cliente (sai da lista ativa, sem apagar histórico)
+    const cliSnap = await getDocs(collection(db,'clientes_extras'));
+    cliSnap.forEach(async d => { if(d.data().slug === slug) await updateDoc(doc(db,'clientes_extras', d.id), { excluido: true }); });
+
+    mostrarToast('Projeto finalizado! ' + videosFinalizados.length + ' vídeo(s) arquivado(s) com o cliente.');
+    fecharModal();
+    renderLeadsAvulsos();
+  };
+
+  window.reabrirLeadAvulso = async function(id){
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(!l) return;
+    if(!confirm('Reabrir "'+l.nome+'"? Ele volta pra lista ativa como Convertido.')) return;
+    await updateDoc(doc(db,'leads_avulsos', id), { status: 'convertido' });
+    const slug = slugDeNomeLead(l.nome);
+    const cliSnap = await getDocs(collection(db,'clientes_extras'));
+    cliSnap.forEach(async d => { if(d.data().slug === slug) await updateDoc(doc(db,'clientes_extras', d.id), { excluido: false }); });
+    mostrarToast('Reaberto — voltou pra lista ativa.');
+    fecharModal();
+    renderLeadsAvulsos();
+  };
+
+  window.copiarMensagemEntregaLead = function(id){
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(!l) return;
+    const linhas = (l.videosFinalizados||[]).map(v => '🎬 ' + v.titulo + (v.linkFinalizado ? '\n' + v.linkFinalizado : ''));
+    const texto = `Oi, ${l.nome}! Tudo certo por aqui 🎉
+
+Seu vídeo${(l.videosFinalizados||[]).length>1?'s estão':' está'} pronto${(l.videosFinalizados||[]).length>1?'s':''}:
+
+${linhas.join('\n\n') || '(link será enviado em seguida)'}
+
+Foi um prazer trabalhar com você! Qualquer coisa é só chamar. 🙌
+— Equipe Get Started`;
+    navigator.clipboard.writeText(texto).then(()=>{
+      mostrarToast('Mensagem de entrega copiada! Já pode colar no WhatsApp do cliente.');
+    }).catch(()=>{
+      mostrarToast('Não deu pra copiar automático — seleciona e copia manualmente.', 'erro');
+    });
   };
 
   async function renderDemandasAguardandoDetalhe(){

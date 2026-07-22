@@ -522,6 +522,7 @@
       <div class="label" id="labelNavDia">Meu dia a dia</div>
       <div class="navitem active" id="navInicio" onclick="irPara('inicio', this)"><span class="ico"><svg><use href="#i-home"/></svg></span> Início</div>
       <div class="navitem" id="navMinhasDemandasAtribuidas" onclick="irPara('minhasDemandasAtribuidas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Demandas<span class="navbadge" id="badgeMinhasDemandasAtribuidas" style="display:none;">0</span></div>
+      <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico">🚨</span> Atrasadas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
       <div class="navitem" id="navChecklist" onclick="irPara('checklist', this)"><span class="ico"><svg><use href="#i-clipboard"/></svg></span> Meu Checklist</div>
       <div class="navitem" id="navVideos" onclick="irPara('videos', this)"><span class="ico"><svg><use href="#i-video"/></svg></span> Vídeos em Edição</div>
@@ -598,6 +599,13 @@
       <div class="sub">Suas tarefas em aberto — exclusivas suas, ninguém mais vê isso. O que for de outra pessoa, aparece só pra ela.</div>
       <div id="listaMinhasDemandasAtribuidas"></div>
       <div class="empty" id="emptyMinhasDemandasAtribuidas" style="display:none;">Selecione seu nome na tela de Início primeiro.</div>
+    </div>
+
+    <div class="view" id="view-atrasadas">
+      <h1>🚨 <span class="y">Atrasadas</span></h1>
+      <div class="sub">Tudo que passou do prazo, num lugar só. Resolve daqui.</div>
+      <div id="atrasadasToggle"></div>
+      <div id="atrasadasConteudo"></div>
     </div>
 
     <div class="view" id="view-minhasDemandas">
@@ -1046,8 +1054,6 @@
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">🎛️ Agora <span class="seta">▾</span></div>
               <div class="gGrupoItens">
                 <div class="subtab active" data-sub="comando" onclick="setGerenciaSub('comando', this)">Central de Comando (tempo real)</div>
-                <div class="subtab" data-sub="demandasAtrasadas" onclick="setGerenciaSub('demandasAtrasadas', this)">⚠️ Demandas Atrasadas</div>
-                <div class="subtab" data-sub="atrasosEquipe" onclick="setGerenciaSub('atrasosEquipe', this)">⏰ Atrasos da Equipe (2+ dias)</div>
                 <div class="subtab" data-sub="demandasAguardando" onclick="setGerenciaSub('demandasAguardando', this)">🕓 Aguardando Aprovação</div>
                 <div class="subtab" data-sub="gravacoesDoDia" onclick="setGerenciaSub('gravacoesDoDia', this)">🎥 Gravações do Dia</div>
               </div>
@@ -6242,6 +6248,7 @@
     document.getElementById('view-'+nome).classList.add('active');
     if(nome !== 'gerencia') pararCentralComando();
     if(nome === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas();
+    if(nome === 'atrasadas') renderPainelAtrasos();
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
     if(nome === 'checklist') abrirChecklist();
     if(nome === 'videos'){
@@ -6719,7 +6726,7 @@
     'Luís': ['navAgendamento','navCalendarios'],
     'Yas': [],
   };
-  const ORDEM_BASE_SIDEBAR = ['navInicio','navMinhasDemandasAtribuidas','navMinhasDemandas','navChecklist'];
+  const ORDEM_BASE_SIDEBAR = ['navInicio','navMinhasDemandasAtribuidas','navAtrasadas','navMinhasDemandas','navChecklist'];
 
   function reorganizarSidebarPorPapel(){
     const gDia = document.getElementById('navgroupDia');
@@ -6854,6 +6861,7 @@
     }
     const minhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial);
     const atrasadas = minhas.filter(d => calcularUrgencia(d) === 'atrasado');
+    atualizarBadgeAtrasadas(atrasadas.length);
     if(window.mascoteAtualizarEstado){
       const template = templatesEfetivos[usuarioAtual]?.["Diário"];
       let pct = null;
@@ -9879,6 +9887,192 @@
     cont.innerHTML = html;
   }
 
+  /* ===== PAINEL ÚNICO DE ATRASADAS =====
+     Consolidação pedida pelo Chris: o atraso vivia espalhado em 3 lugares
+     (topo da home + 2 subtabs da Gerência, uma delas mostrando item já
+     concluído). Agora é UMA aba só, pra todo mundo:
+       • todo funcionário vê as PRÓPRIAS atrasadas, organizadas por família;
+       • Chris e Amanda ganham no MESMO lugar a visão de EQUIPE, com donut
+         de quem mais atrasa, barras de gravidade, tabela por pessoa e
+         exclusão de demanda-bug.
+     Tudo lê status AO VIVO (calcularUrgencia / videoEstaAtrasado) — por
+     isso item concluído nunca mais aparece como atrasado (fim do bug do
+     nivelEscalonamento que ficava grudado no vídeo). */
+
+  function atualizarBadgeAtrasadas(n){
+    const b = document.getElementById('badgeAtrasadas');
+    if(!b) return;
+    if(n > 0){ b.textContent = n; b.style.display = 'inline-block'; }
+    else b.style.display = 'none';
+  }
+
+  window.abrirPainelAtrasos = function(){
+    const el = document.getElementById('navAtrasadas');
+    window.irPara('atrasadas', el);
+  };
+
+  window.__atrasadasSub = null;
+  window.setAtrasadasSub = function(qual){
+    window.__atrasadasSub = qual;
+    document.querySelectorAll('#atrasadasToggle .subtab').forEach(sb => sb.classList.toggle('active', sb.dataset.sub === qual));
+    if(qual === 'equipe') renderEquipeAtrasadas(); else renderMinhasAtrasadas();
+  };
+
+  async function renderPainelAtrasos(){
+    const toggle = document.getElementById('atrasadasToggle');
+    const cont = document.getElementById('atrasadasConteudo');
+    if(!cont) return;
+    if(!usuarioAtual){
+      if(toggle) toggle.innerHTML = '';
+      cont.innerHTML = '<div class="card"><div class="desc">Selecione seu nome no Início pra ver suas demandas atrasadas.</div></div>';
+      return;
+    }
+    const ehGestor = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
+    if(ehGestor){
+      const sub = window.__atrasadasSub || 'equipe';
+      window.__atrasadasSub = sub;
+      toggle.innerHTML = `<div class="subtabs" style="margin-bottom:14px;">
+        <div class="subtab ${sub==='equipe'?'active':''}" data-sub="equipe" onclick="setAtrasadasSub('equipe')">👥 Equipe inteira</div>
+        <div class="subtab ${sub==='minhas'?'active':''}" data-sub="minhas" onclick="setAtrasadasSub('minhas')">👤 Só as minhas</div>
+      </div>`;
+      if(sub === 'equipe') renderEquipeAtrasadas(); else renderMinhasAtrasadas();
+    } else {
+      toggle.innerHTML = '';
+      renderMinhasAtrasadas();
+    }
+  }
+
+  async function renderMinhasAtrasadas(){
+    const cont = document.getElementById('atrasadasConteudo');
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+    await carregarTodasDemandas();
+    const minhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente');
+    const atrasadas = minhas.filter(d => calcularUrgencia(d) === 'atrasado');
+    const hoje = minhas.filter(d => calcularUrgencia(d) === 'hoje');
+    const diasAtraso = d => Math.floor((Date.now() - new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime()) / 86400000);
+    atualizarBadgeAtrasadas(atrasadas.length);
+
+    let html = `<div class="card">
+      <h2><svg class="ic"><use href="#i-alert"/></svg>Suas demandas atrasadas</h2>
+      <div class="desc">O que passou do prazo e ainda está aberto no seu nome. Ataca de cima pra baixo — as mais atrasadas primeiro.</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${atrasadas.length?'red':'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">Atrasada(s)</div></div>
+        <div class="resumoCard ${hoje.length?'yellow':'green'}"><div class="num">${hoje.length}</div><div class="lbl">Vencem hoje</div></div>
+      </div>
+    </div>`;
+
+    if(!atrasadas.length){
+      html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Você está em dia — nenhuma demanda atrasada. Manda ver! 🎉</div></div>';
+    } else {
+      const cardAtras = d => `<div class="item" style="border-left:3px solid var(--red);cursor:pointer;" onclick="abrirDemandaMinha('${d.id}')">
+        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag vermelho">${diasAtraso(d)} dia(s)</span></div>
+        <div class="meta" style="margin-top:4px;">Prazo era ${formatarDataBR(d.prazoData)} às ${d.prazoHora}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
+        ${d.bloqueio ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">🕓 Você marcou: aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
+      </div>`;
+      html += `<div class="card">` + agruparEmFamiliasHtml(atrasadas.sort((a,b)=>diasAtraso(b)-diasAtraso(a)), cardAtras, true) + `</div>`;
+    }
+    cont.innerHTML = html;
+  }
+
+  async function renderEquipeAtrasadas(){
+    const cont = document.getElementById('atrasadasConteudo');
+    cont.innerHTML = '<div class="card"><div class="desc">Montando o painel de atrasos da equipe...</div></div>';
+    await carregarTodasDemandas();
+    const vSnap = await getDocs(collection(db,'videos_producao'));
+    const diasAtraso = d => Math.floor((Date.now() - new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime()) / 86400000);
+
+    const itens = [];
+    todasDemandas.forEach(d => {
+      if(d.status !== 'pendente') return;
+      if(calcularUrgencia(d) !== 'atrasado') return;
+      itens.push({ tipo:'Demanda', pessoa:d.destinatario||'—', titulo:d.titulo, dias:diasAtraso(d), id:d.id, colecao:'demandas', cliente:d.clienteNome||'' });
+    });
+    vSnap.forEach(sn => {
+      const v = sn.data(); if(v.excluido) return;
+      if(!videoEstaAtrasado(v)) return;
+      const prazo = calcularPrazoEdicaoVideo(v);
+      const dias = prazo ? Math.max(0, Math.floor((Date.now() - prazo.getTime())/86400000)) : 0;
+      itens.push({ tipo:'Vídeo', pessoa:v.editorAtribuido||'—', titulo:v.titulo, dias, id:sn.id, colecao:'videos_producao', cliente:v.clienteNome||'', status:v.status });
+    });
+
+    const totalAtras = itens.length;
+    const porPessoa = {};
+    itens.forEach(it => (porPessoa[it.pessoa] = porPessoa[it.pessoa] || []).push(it));
+    const nomes = Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length - porPessoa[a].length);
+    const pior = itens.reduce((m,it)=>Math.max(m, it.dias), 0);
+    const nVideos = itens.filter(it => it.tipo === 'Vídeo').length;
+
+    let html = `<div class="card">
+      <h2><svg class="ic"><use href="#i-alert"/></svg>Atrasos da equipe — visão de comando</h2>
+      <div class="desc">Demandas e vídeos que passaram do prazo agora, em tempo real. Assim que o item é concluído, ele some daqui sozinho. Clica em qualquer linha pra abrir; o 🗑️ apaga demanda-bug de teste (só você e a Amanda enxergam).</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${totalAtras?'red':'green'}"><div class="num">${totalAtras}</div><div class="lbl">Atrasos no total</div></div>
+        <div class="resumoCard ${nomes.length?'yellow':'green'}"><div class="num">${nomes.length}</div><div class="lbl">Pessoa(s) com atraso</div></div>
+        <div class="resumoCard ${pior>=3?'red':(pior?'yellow':'green')}"><div class="num">${pior}</div><div class="lbl">Pior atraso (dias)</div></div>
+        <div class="resumoCard ${nVideos?'red':'green'}"><div class="num">${nVideos}</div><div class="lbl">Vídeo(s) atrasado(s)</div></div>
+      </div>
+    </div>`;
+
+    if(!totalAtras){
+      html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Equipe 100% em dia — nada atrasado agora. 🎉</div></div>';
+      cont.innerHTML = html; return;
+    }
+
+    // Donut — quem mais atrasa
+    let stops = [], acc = 0, leg = '';
+    nomes.forEach((nome,i) => {
+      const val = porPessoa[nome].length; const pct = val/totalAtras*100; const cor = CORES_DASH[i%CORES_DASH.length];
+      stops.push(cor + ' ' + acc.toFixed(2) + '% ' + (acc+pct).toFixed(2) + '%'); acc += pct;
+      leg += `<div class="donutLegItem"><span class="bolinha" style="background:${cor};"></span>${esc(nome)}<span class="lpts">${val}</span></div>`;
+    });
+    html += `<div class="card metaSec"><div class="metaSecTit">📊 Quem está com mais atraso</div>
+      <div class="donutWrap"><div class="donut" style="background:conic-gradient(${stops.join(',')});"><div class="donutCentro"><b>${totalAtras}</b><span>atrasos</span></div></div><div class="donutLeg">${leg}</div></div></div>`;
+
+    // Barras — gravidade
+    const faixa = (min,max) => itens.filter(it => it.dias >= min && (max ? it.dias <= max : true)).length;
+    const f12 = faixa(1,2), f35 = faixa(3,5), f6 = faixa(6,null), maxF = Math.max(f12,f35,f6,1);
+    const barra = (lbl,val,cor) => `<div class="metaBar"><div class="metaBarTop"><span>${lbl}</span><b>${val}</b></div><div class="metaBarTrack"><div class="metaBarFill" style="width:${Math.round(val/maxF*100)}%;background:${cor};"></div></div></div>`;
+    html += `<div class="card metaSec"><div class="metaSecTit">⏳ Gravidade do atraso</div>
+      ${barra('🟡 1 a 2 dias', f12, 'var(--yellow2)')}
+      ${barra('🟠 3 a 5 dias', f35, 'var(--yellow)')}
+      ${barra('🔴 6 dias ou mais', f6, 'var(--red)')}
+    </div>`;
+
+    // Tabela por pessoa
+    html += `<div class="card metaSec"><div class="metaSecTit">👥 Detalhe por pessoa</div>`;
+    nomes.forEach((nome,idx) => {
+      const lista = porPessoa[nome].sort((a,b)=>b.dias - a.dias);
+      const piorP = lista[0].dias;
+      html += `<div class="faixaDem ${idx===0?'aberta':''}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">${lista.length} atraso(s) · pior: ${piorP} dia(s)</span><span class="seta">▾</span></div>
+        <div class="faixaItens">` +
+        lista.map(it => {
+          const abrir = it.colecao === 'demandas' ? `abrirDemandaGerencia('${it.id}')` : '';
+          const lixo = it.colecao === 'demandas' ? `<button class="btn red" style="width:auto;padding:3px 8px;font-size:10px;opacity:.7;" onclick="event.stopPropagation();excluirDemandaDoPainel('${it.id}')">🗑️</button>` : '';
+          return `<div class="item" style="border-left:3px solid ${it.dias>=3?'var(--red)':'var(--yellow2)'};${abrir?'cursor:pointer;':''}" ${abrir?`onclick="${abrir}"`:''}>
+            <div class="top"><div class="nome">${it.tipo==='Vídeo'?'🎬 ':'📌 '}${esc(it.titulo)}</div><div style="display:flex;align-items:center;gap:6px;flex-shrink:0;"><span class="prioTag ${it.dias>=3?'vermelho':'amarelo'}">${it.dias} dia(s)</span>${lixo}</div></div>
+            <div class="meta" style="margin-top:4px;">${esc(it.tipo)}${it.cliente?' · '+esc(it.cliente):''}${it.status?' · '+esc(it.status):''}</div>
+          </div>`;
+        }).join('') +
+        `</div></div>`;
+    });
+    html += `</div>`;
+    cont.innerHTML = html;
+  }
+
+  window.excluirDemandaDoPainel = async function(id){
+    if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
+    const d = todasDemandas.find(x=>x.id===id);
+    const titulo = d ? d.titulo : id;
+    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito — use só pra limpar bug/teste, nunca pra demanda real de cliente ou produção.')) return;
+    try{
+      await deleteDoc(doc(db,'demandas', id));
+      registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída (painel de atrasos) por ' + usuarioAtual + ' — "' + titulo + '"');
+      mostrarToast('Demanda excluída.');
+      renderEquipeAtrasadas();
+    }catch(e){ mostrarToast('Erro ao excluir: ' + e.message, 'erro'); }
+  };
+
   async function renderDemandasAguardandoDetalhe(){
     const cont = document.getElementById('gerenciaDemandasAguardando');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
@@ -10174,7 +10368,7 @@
       <div class="desc">Clica em qualquer número ou barra pra ver o detalhe e agir na hora, sem sair da tela. Atualiza sozinho a cada 25 segundos.</div>
     </div>
     <div class="painelResumo">
-      <div class="resumoCard clicavel ${atrasadas.length ? 'red' : ''}" onclick="navegarGerenciaSub('demandasAtrasadas')"><div class="num">${atrasadas.length}</div><div class="lbl">Demandas atrasadas →</div></div>
+      <div class="resumoCard clicavel ${atrasadas.length ? 'red' : ''}" onclick="abrirPainelAtrasos()"><div class="num">${atrasadas.length}</div><div class="lbl">Demandas atrasadas →</div></div>
       <div class="resumoCard clicavel yellow" onclick="navegarGerenciaSub('demandasAguardando')"><div class="num">${aguardandoAprovacaoDemanda.length}</div><div class="lbl">Demandas aguardando aprovação →</div></div>
       <div class="resumoCard clicavel ${aguardApr.length ? 'yellow' : ''}" onclick="navegarGerenciaSub('aprovarVideos')"><div class="num">${aguardApr.length}</div><div class="lbl">🎬 Vídeos aguardando aprovação →</div></div>
       <div class="resumoCard clicavel" onclick="navegarGerenciaSub('gravacoesDoDia')"><div class="num">${gravacoesHoje.length}</div><div class="lbl">Gravações hoje →</div></div>
@@ -10335,7 +10529,7 @@
     html += await gerarHtmlVideosPorCliente();
 
     html += `<div class="painelResumo">
-      <div class="resumoCard clicavel ${atrasadas.length?'red':''}" onclick="navegarGerenciaSub('demandasAtrasadas')"><div class="num">${atrasadas.length}</div><div class="lbl">Atrasadas →</div></div>
+      <div class="resumoCard clicavel ${atrasadas.length?'red':''}" onclick="abrirPainelAtrasos()"><div class="num">${atrasadas.length}</div><div class="lbl">Atrasadas →</div></div>
       <div class="resumoCard clicavel yellow" onclick="navegarGerenciaSub('demandasAguardando')"><div class="num">${aguardando.length}</div><div class="lbl">Aguardando aprovação →</div></div>
       <div class="resumoCard clicavel" onclick="navegarGerenciaSub('minhasDemandasEnviadas')"><div class="num">${pendentes.length}</div><div class="lbl">Em aberto no total →</div></div>
     </div>`;
@@ -10623,7 +10817,7 @@
           <div class="num">${videosAtrasados.length}</div>
           <div class="lbl">vídeo(s) atrasado(s) · ${postagensTravadas.length} postagem(ns) travada(s) →</div>
         </div>
-        <div class="resumoCard cockpit clicavel ${totalAtrasadasTime?'alerta':''}" onclick="navegarGerenciaSub('demandasAtrasadas')">
+        <div class="resumoCard cockpit clicavel ${totalAtrasadasTime?'alerta':''}" onclick="abrirPainelAtrasos()">
           <div class="icone">👥</div>
           <div class="num">${totalAtrasadasTime}</div>
           <div class="lbl">atrasada(s) no time${ausentesHoje.length ? ' · '+ausentesHoje.length+' ausente(s) hoje' : ''} →</div>

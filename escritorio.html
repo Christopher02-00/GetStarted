@@ -1799,6 +1799,26 @@
     document.getElementById('campoClienteNovoBox').style.display = sel.value === '__novo__' ? 'block' : 'none';
   };
 
+  /* ===== RAIZ DO PROBLEMA — CORRIGIDO 22/07/2026 (pedido do Chris) =====
+     She Joias e Dra. Júlia caíram na fila de legenda/agendamento por
+     engano porque, quando um cliente avulso/extra nasce (direto num
+     lançamento de vídeo, num agendamento, ou no cadastro dedicado), NADA
+     perguntava se ele precisa desse processo completo ou se é entrega
+     única (cliente posta sozinho). O padrão viraava sempre "postagem
+     completa" — o mais arriscado dos dois, porque some silenciosamente na
+     Central de Legendas até alguém notar. Essa função fecha esse buraco
+     na origem: toda vez que um cliente novo é criado, grava JUNTO o
+     tipoEntrega — sem depender de ninguém lembrar de configurar depois. */
+  async function definirTipoEntregaClienteNovo(slug, tipoEntrega, quemDefiniu){
+    try{
+      await setDoc(doc(db,'clientes_config', slug), { tipoEntrega, atualizadoPor: quemDefiniu + ' (definido na criação do cliente)', atualizadoEm: serverTimestamp() }, { merge: true });
+    }catch(e){ console.error('Falha ao gravar tipoEntrega do cliente novo '+slug+':', e); }
+  }
+  function perguntarTipoEntregaClienteNovo(nomeCliente){
+    const ehAvulso = !confirm('Cliente novo "' + nomeCliente + '":\n\nOK = a Get Started vai escrever legenda e agendar as postagens dele (cliente de gerenciamento de redes — mensalista ou avulso que a gente posta).\n\nCancelar = ele é entrega única / avulso e posta sozinho — não precisa de legenda nem agendamento, vai direto pra "Entregas Finalizadas" assim que aprovar.');
+    return ehAvulso ? 'entrega_direta' : 'postagem_completa';
+  }
+
   window.lancarVideos = async function(){
     const sel = document.getElementById('videoCliente');
     let clienteSlug = sel.value;
@@ -1814,6 +1834,8 @@
         await addDoc(collection(db,'clientes_extras'), { nome: clienteNome, slug: clienteSlug, criadoPor: usuarioAtual+' (direto no lançamento de vídeo)', criadoEm: serverTimestamp() });
         CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
         CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+        const tipoEntregaNovo = perguntarTipoEntregaClienteNovo(clienteNome);
+        await definirTipoEntregaClienteNovo(clienteSlug, tipoEntregaNovo, usuarioAtual||'?');
       }
     } else {
       clienteNome = sel.selectedOptions[0].dataset.nome;
@@ -2983,6 +3005,8 @@
       await addDoc(collection(db,'clientes_extras'), { nome: clienteNome, slug: clienteSlug, criadoPor: (usuarioAtual||'?')+' (cadastro rápido)', criadoEm: serverTimestamp() });
       CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
       CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      const tipoEntregaNovo2 = perguntarTipoEntregaClienteNovo(clienteNome);
+      await definirTipoEntregaClienteNovo(clienteSlug, tipoEntregaNovo2, usuarioAtual||'?');
     } else if(jaExisteExcluido){
       await updateDoc(doc(db,'clientes_extras', jaExisteId), { excluido: false });
       if(!CLIENTES_LISTA.some(c=>c.slug===clienteSlug)) CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
@@ -4907,6 +4931,12 @@
       <h2>Cadastrar cliente avulso/extra</h2>
       <div class="desc">Pra clientes fora do banco fixo (trabalho pontual, "frio") que precisam aparecer nos formulários de gravação, vídeo e agendamento.</div>
       <div class="field"><label>Nome do cliente</label><input type="text" id="extraNome" placeholder="Ex: Escolinha do Bairro"></div>
+      <div class="field"><label>Esse cliente precisa de legenda e agendamento pela nossa equipe?</label>
+        <select id="extraTipoEntrega">
+          <option value="entrega_direta" selected>📦 Não — é entrega única/avulso, ele posta sozinho (padrão daqui)</option>
+          <option value="postagem_completa">📲 Sim — vamos escrever legenda e agendar as postagens dele</option>
+        </select>
+      </div>
       <button class="btn" onclick="adicionarClienteExtra()">Cadastrar cliente extra</button>
     </div>
     <div class="grupoFuncionario"><h3>Clientes extras cadastrados</h3>`;
@@ -4927,10 +4957,12 @@
     if(!nome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
     const slug = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
     if(CLIENTES_LISTA.some(c=>c.slug===slug)){ mostrarToast('Já existe um cliente com esse nome.', 'erro'); return; }
+    const tipoEntregaExtra = document.getElementById('extraTipoEntrega')?.value || 'entrega_direta';
     await addDoc(collection(db,'clientes_extras'), { nome, slug, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp() });
     CLIENTES_LISTA.push({nome, slug, extra:true});
     CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
-    mostrarToast(nome + ' cadastrado! Já aparece nos formulários de gravação e vídeo.');
+    await definirTipoEntregaClienteNovo(slug, tipoEntregaExtra, usuarioAtual||'Amanda');
+    mostrarToast(nome + ' cadastrado! Já aparece nos formulários de gravação e vídeo.' + (tipoEntregaExtra==='entrega_direta' ? ' Configurado como entrega direta — sem legenda/agendamento.' : ''));
     document.getElementById('extraNome').value = '';
     renderClientesExtras();
   };
@@ -10419,7 +10451,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(!data){ mostrarToast('Escolhe uma data primeiro.', 'erro'); return; }
 
     const slug = slugDeNomeLead(l.nome);
-    if(!CLIENTES_LISTA.some(c=>c.slug===slug)) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
+    const clienteNovoNesseAgendamento = !CLIENTES_LISTA.some(c=>c.slug===slug);
+    if(clienteNovoNesseAgendamento) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
 
     try{
       const agRef = await addDoc(collection(db,'agendamentos'), {
@@ -10429,6 +10462,11 @@ Observações do cliente: ${l.observacoes||'—'}`;
         origemLeadId: id, criadoEm: serverTimestamp()
       });
       await updateDoc(doc(db,'leads_avulsos', id), { status: 'convertido', agendamentoId: agRef.id });
+      /* ===== RAIZ DO PROBLEMA (22/07/2026) — lead avulso = entrega direta
+         por padrão, sem precisar perguntar (já veio do link de vídeo
+         avulso). Fecha o mesmo buraco que pegou She Joias/Dra. Júlia,
+         automaticamente, pra todo lead que vira cliente por aqui. */
+      if(clienteNovoNesseAgendamento) await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead avulso convertido)');
       mostrarToast('Gravação agendada e lead marcado como convertido!');
       fecharModal();
       renderLeadsAvulsos();
@@ -10439,7 +10477,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const l = __leadsAvulsosCache.find(x=>x.id===id);
     if(!l) return;
     const slug = slugDeNomeLead(l.nome);
-    if(!CLIENTES_LISTA.some(c=>c.slug===slug)) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
+    const clienteNovoNesseAgendamentoML = !CLIENTES_LISTA.some(c=>c.slug===slug);
+    if(clienteNovoNesseAgendamentoML) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
 
     const idsAgendados = [];
     try{
@@ -10458,6 +10497,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         idsAgendados.push(agRef.id);
       }
       await updateDoc(doc(db,'leads_avulsos', id), { status: 'convertido', agendamentoIds: idsAgendados });
+      if(clienteNovoNesseAgendamentoML) await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead avulso convertido)');
       mostrarToast(idsAgendados.length + ' agendamento(s) criado(s) e lead marcado como convertido!');
       fecharModal();
       renderLeadsAvulsos();

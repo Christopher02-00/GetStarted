@@ -1762,7 +1762,7 @@
       html += `<div class="grupoFuncionario"><h3>${esc(nome)} <span class="qtd">${porCliente[nome].length} vídeo(s)</span></h3>`;
       html += porCliente[nome].map(v => `<div class="item">
         <div class="top"><div class="nome">📦 ${esc(v.titulo||'')}</div><div class="meta">${v.finalizadoEm ? formatarDataBR(v.finalizadoEm.slice(0,10)) : ''}</div></div>
-        <div style="margin-top:6px;"><span class="selo aprovado">✔ Finalizado — entrega direta</span>${v.editorAtribuido ? ' <span class="selo pendente">Editor: '+esc(v.editorAtribuido)+'</span>' : ''}</div>
+        <div style="margin-top:6px;"><span class="selo aprovado">✔ Finalizado — ${v.finalizadoVia==='arquivado_sem_legenda' ? 'entrega avulsa (sem legenda/agendamento)' : v.finalizadoVia==='so_edicao' ? 'só edição' : 'entrega direta'}</span>${v.editorAtribuido ? ' <span class="selo pendente">Editor: '+esc(v.editorAtribuido)+'</span>' : ''}</div>
         ${v.linkFinalizado ? '<a href="'+esc(v.linkFinalizado)+'" target="_blank" class="btn secondary" style="display:inline-block;width:auto;padding:6px 14px;font-size:11px;margin-top:8px;text-decoration:none;border:1px solid var(--line);">🔗 Ver vídeo</a>' : ''}
       </div>`).join('');
       html += `</div>`;
@@ -3489,7 +3489,8 @@
   const PLATAFORMAS_LEGENDA = [
     { campo: 'legendaYoutube', label: 'YouTube', icone: '▶️' },
     { campo: 'legendaLinkedin', label: 'LinkedIn', icone: '💼' },
-    { campo: 'legendaInstagram', label: 'Instagram', icone: '📷' }
+    { campo: 'legendaInstagram', label: 'Instagram', icone: '📷' },
+    { campo: 'legendaTiktok', label: 'TikTok', icone: '🎵' }
   ];
 
   window.carregarLegendasCliente = async function(){
@@ -3660,7 +3661,33 @@
       status: 'arquivada_sem_postagem', arquivadaPor: usuarioAtual || '?', arquivadaEm: new Date().toISOString()
     });
     registrarHistorico('postagens', postagemId, 'Arquivada sem legenda/postagem — vídeo entregue, mas não vai ao ar', 'Por: ' + (usuarioAtual||'?'));
-    mostrarToast('Arquivado — some da sua fila e da fila da Cecília também.');
+
+    /* ===== CORRIGIDO 22/07/2026 — pedido do Chris =====
+       Faltavam 2 elos aqui: (1) a demanda "✍️ Escrever legenda" da Gabi
+       pra esse postagemId continuava aberta pra sempre — demanda fantasma,
+       igual o bug que a Amanda reportou; (2) o vídeo nunca aparecia em
+       lugar nenhum como "entregue pro cliente" — ficava só arquivado no
+       limbo, sem rastro na aba por cliente. Agora fecha a demanda da Gabi
+       igual o pipeline normal já faz, e finaliza o vídeo vinculado, que
+       passa a aparecer em "📦 Entregas Finalizadas", agrupado por cliente —
+       exatamente como um vídeo avulso que o cliente vai postar sozinho. */
+    darBaixaDemandaLegenda(postagemId).catch(e => console.error('Falha ao dar baixa na demanda de legenda ao arquivar sem postagem:', e));
+    try{
+      const postSnap2 = await getDoc(doc(db,'postagens', postagemId));
+      const videoIdVinculado = postSnap2.exists() ? postSnap2.data().videoId : null;
+      if(videoIdVinculado){
+        const vidSnap = await getDoc(doc(db,'videos_producao', videoIdVinculado));
+        if(vidSnap.exists() && vidSnap.data().status !== 'finalizado'){
+          await updateDoc(doc(db,'videos_producao', videoIdVinculado), {
+            status: 'finalizado', clienteAprovou: true, finalizadoEm: new Date().toISOString(),
+            finalizadoVia: 'arquivado_sem_legenda'
+          });
+          registrarHistorico('videos_producao', videoIdVinculado, 'Finalizado — arquivado sem legenda (entrega avulsa pro cliente)', 'Por: ' + (usuarioAtual||'?'));
+        }
+      }
+    }catch(e){ console.error('Falha ao finalizar vídeo vinculado ao arquivar sem postagem:', e); }
+
+    mostrarToast('Arquivado — some da sua fila e da fila da Cecília também, e já entra em Entregas Finalizadas.');
     renderLegendasPendentes();
   };
 
@@ -3746,7 +3773,7 @@
       });
       if(!preenchidas){ mostrarToast('Escreve pelo menos uma das 3 legendas antes de salvar.', 'erro'); return; }
       // legenda "geral" (usada em telas antigas) recebe a do Instagram como referência principal
-      dadosLegenda.legenda = dadosLegenda.legendaInstagram || dadosLegenda.legendaYoutube || dadosLegenda.legendaLinkedin;
+      dadosLegenda.legenda = dadosLegenda.legendaInstagram || dadosLegenda.legendaTiktok || dadosLegenda.legendaYoutube || dadosLegenda.legendaLinkedin;
     } else {
       const legenda = document.getElementById('legenda_'+id).value.trim();
       if(!legenda){ mostrarToast('Escreve a legenda antes de salvar.', 'erro'); return; }
@@ -3798,12 +3825,14 @@
     let gravacoesHoje = 0;
     agSnap.forEach(d => { const a=d.data(); if(a.data===hoje && a.status!=='cancelado') gravacoesHoje++; });
     const atrasadasCount = pendentes.filter(p => p.legendaEm && Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) >= 1).length;
+    const recuperadasCount = pendentes.filter(p => p.recuperadoDoDemandaId).length;
 
     let resumo = `<div class="painelResumo">
       <div class="resumoCard"><div class="num">${gravacoesHoje}</div><div class="lbl">Gravações hoje</div></div>
       <div class="resumoCard ${pendentes.length ? 'yellow' : ''}"><div class="num">${pendentes.length}</div><div class="lbl">Postagens pra agendar</div></div>
       <div class="resumoCard ${atrasadasCount ? 'red' : ''}"><div class="num">${atrasadasCount}</div><div class="lbl">Atrasadas — priorize</div></div>
     </div>
+    ${recuperadasCount ? `<div class="card" style="border:2px solid var(--yellow);"><h2>🆕 ${recuperadasCount} legenda(s) recuperada(s) agora</h2><div class="desc">A Gabi já tinha escrito essas legendas, mas ficaram presas por um bug de sincronização (corrigido em 22/07/2026) e nunca chegaram até você. Recuperamos o texto original de cada uma — estão marcadas abaixo, revisa e agenda normalmente.</div></div>` : ''}
     <div class="desc" style="margin:-8px 0 14px;">💡 Vídeo de cliente avulso/extra que não vai virar postagem nem aparece aqui — a Gabi já arquiva esses direto na etapa de legenda, então essa lista é só o que realmente precisa da sua data.</div>`;
 
     // Melhoria 6A — postagens já agendadas com data igual/passada, esperando
@@ -3829,7 +3858,7 @@
       const urgente = diasEsperando >= 1;
       return `
       <div class="card" style="${urgente ? 'border:2px solid var(--red);' : ''}">
-        <h2>${urgente ? '⚠️ ' : ''}${esc(p.clienteNome)} — ${esc(p.titulo)}</h2>
+        <h2>${urgente ? '⚠️ ' : ''}${esc(p.clienteNome)} — ${esc(p.titulo)} ${p.recuperadoDoDemandaId ? '<span class="selo hoje">🆕 Legenda recuperada — a Gabi já tinha escrito, só não tinha chegado até aqui</span>' : ''}</h2>
         <div class="desc">${urgente ? '<b style="color:var(--red);">Esperando agendamento há '+diasEsperando+' dia(s) — priorize esse!</b><br>' : ''}🔗 <a href="${esc(p.linkVideo)}" target="_blank" style="color:var(--yellow);">Ver vídeo</a> · Legenda: "${esc(p.legenda)}"</div>
         <div class="row2">
           <div class="field"><label>Data da postagem</label><input type="date" id="dataPost_${p.id}"></div>

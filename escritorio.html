@@ -51,6 +51,7 @@
 
   .field{margin-bottom:14px;}
   .field label{display:block;font-size:11px;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;}
+  input:not([type="checkbox"]):not([type="radio"]),textarea,select{width:100%;background:var(--deep);border:1px solid var(--line);border-radius:9px;color:#fff;padding:11px 12px;font-size:14.5px;font-family:inherit;}
   .field input,.field textarea,.field select{width:100%;background:var(--deep);border:1px solid var(--line);border-radius:9px;color:#fff;padding:11px 12px;font-size:14.5px;font-family:inherit;}
   .field input:focus,.field textarea:focus,.field select:focus{outline:none;border-color:var(--yellow);}
   .field textarea{resize:vertical;min-height:60px;}
@@ -848,7 +849,7 @@
 
     <div class="view" id="view-briefings">
       <h1>Briefings dos <span class="y">Clientes</span></h1>
-      <div class="sub">O briefing de cada cliente num lugar só — cola o texto ou o link do formulário. Quem precisa consulta aqui, sem caçar no WhatsApp.</div>
+      <div class="sub">O briefing de cada cliente num lugar só — cola o texto ou o link do formulário. Quem precisa consulta aqui, sem caçar no WhatsApp. <b>Não é pra criar um briefing do zero</b>: é pra transcrever aqui o que já foi coletado (formulário, reunião, WhatsApp) — a lista de "faltando" abaixo é fila de trabalho da Amanda, não indicação de que o cliente nunca passou por briefing.</div>
       <div class="card">
         <div class="field"><label>Cliente</label><select id="briefingCliente" onchange="carregarBriefing()"><option value="">Selecione o cliente...</option></select></div>
         <div id="briefingEditor" style="display:none;">
@@ -863,7 +864,8 @@
 
     <div class="view" id="view-acompanhamento">
       <h1>Acompanhamento do <span class="y">Cliente</span></h1>
-      <div class="sub">Atualize a etapa do processo e registre as melhorias feitas no perfil — o cliente vê tudo em tempo real no portal dele.</div>
+      <div class="sub">Vale pra qualquer cliente — do plano mensal completo ou avulso/entrega direta — sempre que a equipe quiser deixar visível pro cliente em que pé o processo está. Atualize a etapa e registre as melhorias feitas no perfil aqui; o cliente vê tudo em tempo real no portal dele. Ninguém aparece com dado aqui até alguém da equipe (Cecília/Gabi) registrar a primeira atualização — é normal estar vazio se ainda não começou a ser usado.</div>
+      <div id="acompVisaoGeral"></div>
       <div class="card">
         <div class="field"><label>Cliente</label><select id="acompCliente" onchange="carregarAcompanhamento()"><option value="">Selecione o cliente...</option></select></div>
       </div>
@@ -5326,14 +5328,26 @@
     await carregarClientesExtras();
     const snap = await getDocs(collection(db,'briefings_cliente'));
     const tem = {}; snap.forEach(d => { const v=d.data(); tem[d.id] = !!((v.texto&&v.texto.trim())||(v.link&&v.link.trim())); });
-    const comB = CLIENTES_LISTA.filter(c => tem[c.slug]);
-    const semB = CLIENTES_LISTA.filter(c => !tem[c.slug]);
-    let html = `<div class="card"><h2>📊 Cobertura de briefings</h2><div class="desc">${comB.length} de ${CLIENTES_LISTA.length} cliente(s) com briefing salvo. Clica num cliente pra abrir/editar.</div></div>`;
+    // Cliente avulso/entrega direta não passa pelo mesmo processo de briefing
+    // completo do plano mensal — separar pra não inflar a lista de "faltando"
+    // com urgência que não existe pra esse tipo de cliente.
+    const slugsEntregaDireta = await obterSlugsEntregaDireta();
+    const mensalistas = CLIENTES_LISTA.filter(c => !slugsEntregaDireta.has(c.slug));
+    const avulsos = CLIENTES_LISTA.filter(c => slugsEntregaDireta.has(c.slug));
+    const comB = mensalistas.filter(c => tem[c.slug]);
+    const semB = mensalistas.filter(c => !tem[c.slug]);
+    const avulsosComB = avulsos.filter(c => tem[c.slug]);
+    const avulsosSemB = avulsos.filter(c => !tem[c.slug]);
+    let html = `<div class="card"><h2>📊 Cobertura de briefings — clientes do plano mensal</h2><div class="desc">${comB.length} de ${mensalistas.length} cliente(s) com briefing transcrito no sistema. Clica num cliente pra abrir/editar.</div></div>`;
     if(comB.length){
       html += '<div class="grupoFuncionario"><h3>✅ Com briefing (' + comB.length + ')</h3>' + comB.map(c => `<div class="item" style="cursor:pointer;" onclick="abrirBriefingCliente('${c.slug}')"><div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo aprovada">tem</span></div></div>`).join('') + '</div>';
     }
     if(semB.length){
-      html += '<div class="grupoFuncionario"><h3>⚠️ Faltando (' + semB.length + ')</h3>' + semB.map(c => `<div class="item" style="cursor:pointer;" onclick="abrirBriefingCliente('${c.slug}')"><div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">falta</span></div></div>`).join('') + '</div>';
+      html += '<div class="grupoFuncionario"><h3>⚠️ Faltando transcrever (' + semB.length + ')</h3>' + semB.map(c => `<div class="item" style="cursor:pointer;" onclick="abrirBriefingCliente('${c.slug}')"><div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">falta</span></div></div>`).join('') + '</div>';
+    }
+    if(avulsos.length){
+      html += `<div class="card" style="margin-top:14px;"><h2>🎬 Clientes avulsos / entrega direta</h2><div class="desc">Não seguem o briefing completo do plano mensal — geralmente já vêm com a ideia pronta no pedido avulso. Registra aqui só se der algo relevante pra guardar.</div></div>`;
+      html += '<div class="grupoFuncionario">' + avulsos.map(c => `<div class="item" style="cursor:pointer;" onclick="abrirBriefingCliente('${c.slug}')"><div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo ${tem[c.slug]?'aprovada':'pendente'}">${tem[c.slug]?'tem':'opcional'}</span></div></div>`).join('') + '</div>';
     }
     cont.innerHTML = html;
   }
@@ -5350,6 +5364,34 @@
      registro com data e responsável. */
   const ETAPAS_PROCESSO = ['Briefing recebido','Planejamento em andamento','Calendário editorial em desenvolvimento','Calendário enviado para aprovação','Conteúdos em produção','Vídeos em edição','Artes em criação','Conteúdo aguardando aprovação','Conteúdo aprovado','Conteúdo agendado','Relatório do perfil em elaboração','Estratégia do perfil sendo atualizada','Projeto concluído'];
   const MELHORIAS_SUGERIDAS = ['Bio atualizada','Destaques reorganizados','Feed reorganizado','Posts fixados atualizados','Identidade visual ajustada','Estratégia de conteúdo revisada','CTA atualizado','Link da bio alterado','Organização do perfil realizada','Ajustes na comunicação da marca'];
+
+  /* ===== VISÃO GERAL DO ACOMPANHAMENTO (22/07/2026) =====
+     Pedido do Chris: a aba só mostrava um editor por-cliente vazio, sem
+     nenhum resumo — dava a impressão de "não serve pra nada" quando na
+     verdade só ainda não tinha sido usada. Agora mostra de cara quantos
+     clientes já têm etapa registrada, quantos têm melhoria registrada, e
+     quantos ainda não têm nada — pra ficar claro o que é realmente vazio
+     (uso) vs o que é bug. */
+  async function renderAcompanhamentoVisaoGeral(){
+    const cont = document.getElementById('acompVisaoGeral');
+    if(!cont) return;
+    await carregarClientesExtras();
+    const snap = await getDocs(collection(db,'processos_cliente'));
+    const dados = {}; snap.forEach(d => dados[d.id] = d.data());
+    const slugsEntregaDireta = await obterSlugsEntregaDireta();
+    const comEtapa = CLIENTES_LISTA.filter(c => dados[c.slug]?.etapaAtual);
+    const comMelhoria = CLIENTES_LISTA.filter(c => (dados[c.slug]?.melhorias||[]).length);
+    const semNada = CLIENTES_LISTA.filter(c => !dados[c.slug]?.etapaAtual && !(dados[c.slug]?.melhorias||[]).length);
+    cont.innerHTML = `<div class="card">
+      <h2>📊 Visão geral</h2>
+      <div class="painelResumo" style="margin-top:8px;">
+        <div class="resumoCard green"><div class="num">${comEtapa.length}</div><div class="lbl">com etapa registrada</div></div>
+        <div class="resumoCard yellow"><div class="num">${comMelhoria.length}</div><div class="lbl">com melhoria registrada</div></div>
+        <div class="resumoCard"><div class="num">${semNada.length}</div><div class="lbl">ainda sem nenhum registro</div></div>
+      </div>
+      <div class="desc" style="margin-top:10px;">${semNada.length === CLIENTES_LISTA.length ? 'Nenhum cliente foi registrado ainda — normal se a equipe ainda não começou a usar essa aba no dia a dia.' : 'Clica em um cliente abaixo pra ver ou atualizar o processo dele.'}</div>
+    </div>`;
+  }
 
   function popularClientesAcomp(){
     const sel = document.getElementById('acompCliente');
@@ -5390,6 +5432,7 @@
     document.getElementById('acompEtapaObs').value='';
     mostrarToast('Etapa atualizada — o cliente já vê no portal.');
     carregarAcompanhamento();
+    renderAcompanhamentoVisaoGeral();
   };
   window.salvarMelhoriaAcomp = async function(){
     const sel = document.getElementById('acompCliente'); const slug = sel.value;
@@ -5405,6 +5448,7 @@
     document.getElementById('acompMelhoriaRapida').value='';
     mostrarToast('Melhoria registrada — aparece no portal do cliente.');
     carregarAcompanhamento();
+    renderAcompanhamentoVisaoGeral();
   };
 
   window.adicionarReferencia = async function(){
@@ -6406,7 +6450,7 @@
     if(nome === 'conteudoAteQuando') renderConteudoAteQuando();
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
     if(nome === 'briefings'){ carregarClientesExtras().then(()=>popularClientesBriefing()); renderBriefings(); }
-    if(nome === 'acompanhamento'){ carregarClientesExtras().then(()=>popularClientesAcomp()); }
+    if(nome === 'acompanhamento'){ carregarClientesExtras().then(()=>popularClientesAcomp()); renderAcompanhamentoVisaoGeral(); }
     if(nome === 'relatorioMensal') popularClientesRelatorio();
   };
 
@@ -7616,10 +7660,31 @@
       <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Marcar como feita</button>
       `}`}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
+      ${(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda') ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Excluir esta demanda</button>` : ''}
       ${renderLinhaDoTempo(d.historico)}
     `;
     document.getElementById('overlayView').classList.add('show');
     if(d.grupoId) carregarStatusGrupo(d.grupoId, d.id);
+  };
+
+  /* ===== EXCLUSÃO DE DEMANDA A PARTIR DE 'MINHAS DEMANDAS' (22/07/2026) =====
+     Pedido recorrente do Chris: tanto ele quanto a Amanda precisam poder
+     excluir qualquer demanda errada/duplicada/desnecessária — não só via
+     Gerência, mas direto de onde eles realmente olham no dia a dia
+     ('Minhas Demandas'). Mesma trava de segurança de sempre (só Chris ou
+     Amanda), mesmo registro em log_automacoes. */
+  window.excluirDemandaMinha = async function(id){
+    if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
+    const d = todasDemandas.find(x=>x.id===id);
+    const titulo = d ? d.titulo : id;
+    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso não pode ser desfeito.')) return;
+    try{
+      await deleteDoc(doc(db,'demandas', id));
+      registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída (Minhas Demandas) por ' + usuarioAtual + ' — "' + titulo + '"');
+      mostrarToast('Demanda excluída.');
+      fecharModal();
+      renderMinhasDemandasAtribuidas();
+    }catch(e){ mostrarToast('Erro ao excluir: ' + e.message, 'erro'); }
   };
 
   /* ===== STATUS AO VIVO DA DEMANDA EM GRUPO =====
@@ -10298,7 +10363,7 @@
     if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
-    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito — use só pra limpar bug/teste, nunca pra demanda real de cliente ou produção.')) return;
+    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito.')) return;
     try{
       await deleteDoc(doc(db,'demandas', id));
       registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída (painel de atrasos) por ' + usuarioAtual + ' — "' + titulo + '"');
@@ -10317,11 +10382,18 @@
   let __leadsAvulsosCache = [];
 
   function nomeEstiloLead(k){
+    // Mantido sincronizado com GRUPOS_ESTILOS do avulso.html (22/07/2026) —
+    // qualquer estilo novo adicionado lá também precisa entrar aqui, senão
+    // aparece com a chave crua (ex: 'droneSobrevoo') em vez do nome bonito.
     const MAPA = { institucional:'Institucional', bastidores:'Bastidores / Dia a dia', produto:'Produto em destaque',
       depoimento:'Depoimento de cliente', drone:'Aéreo com drone', vertical:'Vertical (Reels/Stories)',
       trafego:'Vídeo para tráfego pago', pov:'POV / Meta Glasses', evento:'Cobertura de evento',
       stillmotion:'Still motion', roteirizado:'Roteirizado com atores', tour:'Tour do espaço',
-      recrutamento:'Recrutamento / Vagas', motion:'Motion graphics' };
+      recrutamento:'Recrutamento / Vagas', motion:'Motion graphics',
+      droneSobrevoo:'Sobrevoo do local (drone)', droneAbertura:'Abertura aérea cinematográfica (drone)',
+      droneEventoAr:'Cobertura aérea do evento (drone)', droneSequencia:'Sequência aérea dinâmica (drone)',
+      aftermovie:'After Movie', minishorts:'Mini Shorts', palestra:'Cobertura de palestra/entrevistas',
+      liveTransmissao:'Transmissão ao vivo (live)', sazonal:'Vídeo sazonal / data comemorativa' };
     return MAPA[k] || k;
   }
 
@@ -10765,7 +10837,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cont = document.getElementById('gerenciaDemandasAguardando');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     await carregarTodasDemandas();
-    const aguardando = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao');
+    // Nunca mostra a própria demanda do gestor logado na fila de aprovação dele mesmo.
+    const aguardando = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
 
     let html = `<div class="card">
       <h2><svg class="ic"><use href="#i-clock"/></svg>Demandas Aguardando Sua Aprovação</h2>
@@ -10980,7 +11053,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     const pendentes = demandas.filter(d=>d.status==='pendente');
     const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
-    const aguardandoAprovacaoDemanda = demandas.filter(d=>d.status==='concluida_aguardando_aprovacao');
+    const aguardandoAprovacaoDemanda = demandas.filter(d=>d.status==='concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
     const gravacoesHoje = agendamentos.filter(a => a.data === hoje && a.status !== 'cancelado');
     const postagensSemana = postagens.filter(p => {
       if(!p.dataAgendada) return false;
@@ -11124,7 +11197,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cont = document.getElementById('gerenciaAmanda');
     const pendentes = todasDemandas.filter(d => d.status === 'pendente');
     const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
-    const aguardando = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao');
+    // Nunca mostra a própria demanda do gestor logado na fila de aprovação dele mesmo.
+    const aguardando = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
     const pedidosPrazo = todasDemandas.filter(d => d.prazoSolicitado);
     const pedidosPularLegenda = todasDemandas.filter(d => d.tipoEspecial === 'pular_legenda' && d.status === 'pendente');
 
@@ -11539,7 +11613,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
     const modal = document.getElementById('modalConteudo');
-    const podeAprovar = d.status === 'concluida_aguardando_aprovacao';
+    /* ===== CORREÇÃO 22/07/2026 (pedido do Chris) =====
+       Bug: a demanda da própria Amanda (ou do próprio Chris, se algum dia
+       tiver demanda pra ele) aparecia na fila de aprovação PARA ELA MESMA
+       clicar em 'Aprovar' — não fazia sentido nenhum aprovar o próprio
+       trabalho. Agora o botão Aprovar só aparece se quem está vendo NÃO é
+       o destinatário da demanda. */
+    const podeAprovar = d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual;
+    const ehAutoAprovacao = d.status === 'concluida_aguardando_aprovacao' && d.destinatario === usuarioAtual;
     const podeExcluir = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
     modal.innerHTML = `
       <h2>${d.grupoId?'🤝 ':''}${esc(d.titulo)}</h2>
@@ -11555,8 +11636,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
         <button class="btn red" onclick="rejeitarDemanda('${d.id}')">Pedir pra refazer</button>
         <button class="btn green" onclick="aprovarDemanda('${d.id}')">Aprovar</button>
       </div>` : ''}
+      ${ehAutoAprovacao ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">🕓 Essa é a sua própria demanda — está esperando aprovação de outro gestor, não sua.</div>' : ''}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
-      ${podeExcluir ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaGerencia('${d.id}')">🗑️ Excluir de vez (só pra testes)</button>` : ''}
+      ${podeExcluir ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaGerencia('${d.id}')">🗑️ Excluir esta demanda</button>` : ''}
       ${renderLinhaDoTempo(d.historico)}
     `;
     document.getElementById('overlayView').classList.add('show');
@@ -11578,10 +11660,11 @@ Observações do cliente: ${l.observacoes||'—'}`;
   }
 
   /* ===== EXCLUSÃO DE DEMANDA — RESTRITA A CHRIS/AMANDA =====
-     Pedido explícito: eles fazem testes no sistema e precisam limpar
-     demandas de teste, sem deixar isso acessível pra mais ninguém. Exclui
-     de verdade (não soft-delete) — é pra lixo de teste, não pra dado real
-     de cliente/produção. Fica um registro em log_automacoes pra rastro. */
+     Pedido explícito e recorrente do Chris: ele e a Amanda precisam poder
+     excluir qualquer demanda errada, duplicada ou que não faz mais sentido
+     — de verdade, sem deixar isso acessível pra mais ninguém da equipe.
+     Exclui de verdade (não soft-delete). Fica um registro em
+     log_automacoes pra rastro de quem excluiu o quê e quando. */
   window.excluirDemandaGerencia = async function(id){
     if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
       mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro');
@@ -11589,7 +11672,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
-    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito — use só pra limpar teste, nunca pra demanda de cliente ou produção de verdade.')) return;
+    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito.')) return;
     try{
       await deleteDoc(doc(db,'demandas', id));
       registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída por ' + usuarioAtual + ' — "' + titulo + '"');

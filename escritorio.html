@@ -1692,11 +1692,26 @@
     "divina-cantina": "Helo"
   };
 
+  /* ===== CORRIGIDO 22/07/2026 — engano do Chris com a Dra. Júlia =====
+     O flag "extra" em CLIENTES_LISTA só diz que o cliente não estava na
+     lista fixa original — não diz se ele é avulso/entrega-direta de
+     verdade. A Dra. Júlia é "extra" (cadastro dinâmico) mas é cliente do
+     plano normal. Rótulo "(avulso)" nesse flag induzia a esse erro. Daqui
+     pra frente, "avulso"/"entrega direta" só aparece quando é a verdade
+     real: tipoEntrega==='entrega_direta' em clientes_config. */
+  async function obterSlugsEntregaDireta(){
+    const snap = await getDocs(collection(db,'clientes_config'));
+    const s = new Set();
+    snap.forEach(d => { if(d.data().tipoEntrega === 'entrega_direta') s.add(d.id); });
+    return s;
+  }
+
   async function popularClientesVideo(){
     await carregarClientesExtras();
     const sel = document.getElementById('videoCliente');
     if(!sel) return;
-    sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}${c.extra?' (avulso)':''}</option>`).join('') + '<option value="__novo__">+ Cliente novo (não está na lista)</option>';
+    const entregaDiretaSlugsPCV = await obterSlugsEntregaDireta();
+    sel.innerHTML = CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}${entregaDiretaSlugsPCV.has(c.slug)?' (avulso — entrega direta)':''}</option>`).join('') + '<option value="__novo__">+ Cliente novo (não está na lista)</option>';
 
     const selEditor = document.getElementById('videoEditorEscolhido');
     if(selEditor){
@@ -3617,6 +3632,18 @@
     }));
     window.__legendasCalendarioPorItem = calendariosPorCliente; // usado pelo puxador abaixo
 
+    /* ===== CORRIGIDO 22/07/2026 =====
+       Antes o selo usava o flag "extra" (só diz que o cliente não estava
+       na lista fixa original) e chamava isso de "avulso" — foi essa
+       ambiguidade que confundiu o Chris com a Dra. Júlia, que é "extra"
+       mas é cliente do plano normal. Todo mundo nessa tela já precisa de
+       legenda de verdade (é por isso que está aqui), então o selo agora
+       só descreve COMO o cliente foi cadastrado, sem usar a palavra
+       "avulso" — essa palavra fica reservada só pra quando o cliente é
+       realmente entrega direta (o que nunca aparece nessa lista, já que
+       esse tipo de cliente nem chega a precisar de legenda). */
+    const entregaDiretaSlugsLeg = await obterSlugsEntregaDireta();
+
     cont.innerHTML = pendentes.map(p => {
       const legendasDisponiveis = calendariosPorCliente[p.cliente] || [];
       // Vínculo direto e real (por ID, não por nome parecido) — quando o
@@ -3626,7 +3653,8 @@
         ? legendasDisponiveis.find(it => it.idxOriginal === p.calendarItemIdx) : null;
       const multiPlataforma = ehClienteMultiPlataforma(p.cliente);
       const infoCliente = CLIENTES_LISTA.find(c => c.slug === p.cliente);
-      const badgeTipo = infoCliente?.extra ? '<span class="selo pendente">Cliente avulso/extra</span>' : '<span class="selo aprovada">Mensalista</span>';
+      const badgeTipo = entregaDiretaSlugsLeg.has(p.cliente) ? '<span class="selo pendente">⚠️ Marcado como entrega direta — confirma se precisa mesmo de legenda</span>' :
+        infoCliente?.extra ? '<span class="selo pendente">Cadastro dinâmico</span>' : '<span class="selo aprovada">Cadastro fixo</span>';
       return `
       <div class="card">
         <h2>${esc(p.clienteNome)} — ${esc(p.titulo)} ${badgeTipo}</h2>
@@ -9750,6 +9778,15 @@
     const demSnap = await getDocs(collection(db,'demandas'));
     const capsulas = []; demSnap.forEach(d => { if(d.data().titulo?.includes('Protocolo Cápsula')) capsulas.push(d.data()); });
     const alertasPreditivos = []; demSnap.forEach(d => { if(d.data().titulo?.includes('🟡 Alerta Cápsula Preditiva')) alertasPreditivos.push(d.data()); });
+    /* ===== FURO ENCONTRADO NA VARREDURA (22/07/2026) =====
+       Cliente avulso/entrega-direta (ex: Dra. Júlia, She Joias) nunca vai
+       ter uma NOVA gravação — é entrega única por definição. Sem essa
+       checagem, depois de 14 dias ele virava "Protocolo Cápsula" sozinho,
+       gerando trabalho falso pra Amanda escalar um editor à toa. Mesma
+       lógica do "só edição" abaixo, agora cobrindo entrega direta também. */
+    const cfgCapsulaSnap = await getDocs(collection(db,'clientes_config'));
+    const entregaDiretaSlugs = new Set();
+    cfgCapsulaSnap.forEach(d => { if(d.data().tipoEntrega === 'entrega_direta') entregaDiretaSlugs.add(d.id); });
 
     const hoje = new Date();
     const hojeStr = hoje.toISOString().slice(0,10);
@@ -9757,6 +9794,7 @@
     let novasPreditivas = 0;
     for(const cliente of CLIENTES_LISTA){
       if(ehClienteSoEdicao(cliente.slug)) continue; // só edição — não grava conosco, Cápsula não se aplica
+      if(entregaDiretaSlugs.has(cliente.slug)) continue; // avulso/entrega direta — não tem gravação recorrente, Cápsula não se aplica
       const realizadas = todosAg.filter(a => a.cliente === cliente.slug && a.status === 'realizado').sort((a,b)=>b.data.localeCompare(a.data));
       const ultima = realizadas[0];
       const diasSemGravar = ultima ? Math.floor((hoje - new Date(ultima.data+'T00:00:00')) / 86400000) : 999;
@@ -10758,10 +10796,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
   async function calcularClientesEmCapsula(){
     const agSnap = await getDocs(collection(db,'agendamentos'));
     const todosAg = []; agSnap.forEach(d => todosAg.push(d.data()));
+    const cfgCapsulaSnap2 = await getDocs(collection(db,'clientes_config'));
+    const entregaDiretaSlugs2 = new Set();
+    cfgCapsulaSnap2.forEach(d => { if(d.data().tipoEntrega === 'entrega_direta') entregaDiretaSlugs2.add(d.id); });
     const hoje = new Date();
     const resultado = [];
     for(const cliente of CLIENTES_LISTA){
       if(ehClienteSoEdicao(cliente.slug)) continue; // só edição — não grava conosco, Cápsula não se aplica
+      if(entregaDiretaSlugs2.has(cliente.slug)) continue; // avulso/entrega direta — Cápsula não se aplica
       const realizadas = todosAg.filter(a => a.cliente === cliente.slug && a.status === 'realizado').sort((a,b)=>b.data.localeCompare(a.data));
       const ultima = realizadas[0];
       const diasSemGravar = ultima ? Math.floor((hoje - new Date(ultima.data+'T00:00:00')) / 86400000) : 999;

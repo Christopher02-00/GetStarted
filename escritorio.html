@@ -1072,6 +1072,7 @@
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">👥 Clientes <span class="seta">▾</span></div>
               <div class="gGrupoItens">
                 <div class="subtab" data-sub="saudeClientes" onclick="setGerenciaSub('saudeClientes', this)">📋 Visão Completa (saúde + RFV)</div>
+                <div class="subtab" data-sub="leadsAvulsos" onclick="setGerenciaSub('leadsAvulsos', this)">🆕 Leads Avulsos<span class="navbadge" id="badgeLeadsAvulsos" style="display:none;background:var(--red);">0</span></div>
                 <div class="subtab" data-sub="configAprovacao" onclick="setGerenciaSub('configAprovacao', this)">⚙️ Config por Cliente</div>
                 <div class="subtab" data-sub="pagamentos" onclick="setGerenciaSub('pagamentos', this)">Pagamentos Extras</div>
                 <div class="subtab" data-sub="clientesExtras" onclick="setGerenciaSub('clientesExtras', this)">Clientes Avulsos/Extras</div>
@@ -1115,6 +1116,7 @@
             <div id="gerenciaPagamentos" style="display:none;"></div>
             <div id="gerenciaAvaliacoes" style="display:none;"></div>
             <div id="gerenciaSaudeClientes" style="display:none;"></div>
+            <div id="gerenciaLeadsAvulsos" style="display:none;"></div>
             <div id="gerenciaClientesExtras" style="display:none;"></div>
             <div id="gerenciaRfv" style="display:none;"></div>
             <div id="gerenciaExClientes" style="display:none;"></div>
@@ -6395,6 +6397,7 @@
     document.getElementById('gerenciaPagamentos').style.display = qual==='pagamentos' ? 'block' : 'none';
     document.getElementById('gerenciaAvaliacoes').style.display = qual==='avaliacoes' ? 'block' : 'none';
     document.getElementById('gerenciaSaudeClientes').style.display = qual==='saudeClientes' ? 'block' : 'none';
+    document.getElementById('gerenciaLeadsAvulsos').style.display = qual==='leadsAvulsos' ? 'block' : 'none';
     document.getElementById('gerenciaClientesExtras').style.display = qual==='clientesExtras' ? 'block' : 'none';
     document.getElementById('gerenciaRfv').style.display = qual==='rfv' ? 'block' : 'none';
     document.getElementById('gerenciaExClientes').style.display = qual==='exClientes' ? 'block' : 'none';
@@ -6428,6 +6431,7 @@
     else pararCentralComando();
     if(qual==='demandasAtrasadas') renderDemandasAtrasadasDetalhe();
     if(qual==='atrasosEquipe') renderAtrasosEquipe();
+    if(qual==='leadsAvulsos') renderLeadsAvulsos();
     if(qual==='demandasAguardando') renderDemandasAguardandoDetalhe();
     if(qual==='minhasDemandasEnviadas') renderMinhasDemandasEnviadas();
     if(qual==='gravacoesDoDia') renderGravacoesDoDiaDetalhe();
@@ -7707,7 +7711,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -10073,6 +10077,177 @@
     }catch(e){ mostrarToast('Erro ao excluir: ' + e.message, 'erro'); }
   };
 
+  /* ===== LEADS AVULSOS — novo link de captação (avulso.html) =====
+     Todo lead que preenche o microsite público avulso.html cai direto
+     aqui, com tudo que ele escolheu: estilos de vídeo, referências,
+     pacote, data desejada, orçamento. Chris/Amanda leem, copiam o resumo
+     pronto pra colar na conversa de Proposta Comercial, e — se quiser —
+     já atribuem filmmaker + data com um clique, sem sair da tela. */
+
+  let __leadsAvulsosCache = [];
+
+  function nomeEstiloLead(k){
+    const MAPA = { institucional:'Institucional', bastidores:'Bastidores / Dia a dia', produto:'Produto em destaque',
+      depoimento:'Depoimento de cliente', drone:'Aéreo com drone', vertical:'Vertical (Reels/Stories)',
+      trafego:'Vídeo para tráfego pago', pov:'POV / Meta Glasses', evento:'Cobertura de evento',
+      stillmotion:'Still motion', roteirizado:'Roteirizado com atores', tour:'Tour do espaço',
+      recrutamento:'Recrutamento / Vagas', motion:'Motion graphics' };
+    return MAPA[k] || k;
+  }
+
+  async function renderLeadsAvulsos(){
+    const cont = document.getElementById('gerenciaLeadsAvulsos');
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando leads...</div></div>';
+    const snap = await getDocs(query(collection(db,'leads_avulsos'), orderBy('criadoEm','desc')));
+    __leadsAvulsosCache = [];
+    snap.forEach(d => __leadsAvulsosCache.push({id:d.id, ...d.data()}));
+
+    const novos = __leadsAvulsosCache.filter(l => (l.status||'novo') === 'novo');
+    const emAnalise = __leadsAvulsosCache.filter(l => l.status === 'em_analise');
+    const convertidos = __leadsAvulsosCache.filter(l => l.status === 'convertido');
+    const perdidos = __leadsAvulsosCache.filter(l => l.status === 'perdido');
+    const badge = document.getElementById('badgeLeadsAvulsos');
+    if(badge){ if(novos.length){ badge.textContent = novos.length; badge.style.display='inline-block'; } else badge.style.display='none'; }
+
+    let html = `<div class="card">
+      <h2><svg class="ic"><use href="#i-external"/></svg>🆕 Leads Avulsos</h2>
+      <div class="desc">Todo mundo que preencheu o link <b>avulso.html</b> pedindo vídeo sem plano mensal. Clica no card pra ver tudo, copiar o resumo pra proposta, ou já atribuir filmmaker + data.</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${novos.length?'yellow':''}"><div class="num">${novos.length}</div><div class="lbl">Novo(s)</div></div>
+        <div class="resumoCard"><div class="num">${emAnalise.length}</div><div class="lbl">Em análise</div></div>
+        <div class="resumoCard green"><div class="num">${convertidos.length}</div><div class="lbl">Convertido(s)</div></div>
+        <div class="resumoCard"><div class="num">${perdidos.length}</div><div class="lbl">Perdido(s)</div></div>
+      </div>
+    </div>`;
+
+    if(!__leadsAvulsosCache.length){
+      html += '<div class="empty">Nenhum lead recebido ainda pelo link avulso.</div>';
+      cont.innerHTML = html; return;
+    }
+
+    const cardLead = l => {
+      const data = l.criadoEm && l.criadoEm.toDate ? l.criadoEm.toDate().toLocaleDateString('pt-BR') : '';
+      const seloStatus = l.status==='convertido' ? '<span class="selo aprovada">✅ Convertido</span>' : l.status==='perdido' ? '<span class="selo atrasado">Perdido</span>' : l.status==='em_analise' ? '<span class="selo hoje">Em análise</span>' : '<span class="selo pendente">🆕 Novo</span>';
+      return `<div class="item" style="cursor:pointer;" onclick="abrirLeadAvulso('${l.id}')">
+        <div class="top"><div class="nome">${esc(l.nome)}</div>${seloStatus}</div>
+        <div class="meta" style="margin-top:4px;">${esc(l.pacoteNome||'Sem pacote')} · ${(l.estilosNomes||[]).length} estilo(s) escolhido(s)${l.urgencia==='urgente'?' · <b style="color:var(--red);">URGENTE</b>':''}</div>
+        <div class="meta" style="margin-top:2px;">${data ? 'Recebido em '+data : ''}${l.dataDesejada ? ' · Quer pra '+formatarDataBR(l.dataDesejada) : ''}</div>
+      </div>`;
+    };
+
+    html += `<div class="card">` + [...novos, ...emAnalise, ...convertidos, ...perdidos].map(cardLead).join('') + `</div>`;
+    cont.innerHTML = html;
+  }
+
+  window.abrirLeadAvulso = function(id){
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(!l) return;
+    const modal = document.getElementById('modalConteudo');
+    const refsHtml = (l.referencias||[]).length
+      ? (l.referencias||[]).map(r => '<a href="'+esc(r)+'" target="_blank" style="display:block;color:var(--yellow);word-break:break-all;margin-top:3px;">'+esc(r)+' ↗</a>').join('')
+      : '<span style="color:var(--muted);">nenhuma enviada</span>';
+    modal.innerHTML = `
+      <h2>🆕 ${esc(l.nome)}</h2>
+      <div class="linha"><b>WhatsApp:</b> ${esc(l.whatsapp||'—')} ${l.instagram ? ' · <b>Instagram:</b> '+esc(l.instagram) : ''}</div>
+      <div class="linha"><b>Ramo:</b> ${esc(l.segmento||'—')}</div>
+      <div class="linha"><b>Estilos desejados:</b> ${(l.estilosNomes||[]).map(esc).join(', ') || '—'}</div>
+      <div class="linha"><b>Pacote:</b> ${esc(l.pacoteNome||'—')}</div>
+      <div class="linha"><b>Referências:</b><div style="margin-top:4px;">${refsHtml}</div></div>
+      <div class="linha"><b>Data desejada:</b> ${l.dataDesejada ? formatarDataBR(l.dataDesejada) : 'não informou'} ${l.urgencia==='urgente' ? '<span style="color:var(--red);font-weight:800;"> · URGENTE</span>' : ''}</div>
+      <div class="linha"><b>Orçamento mencionado:</b> ${esc(l.orcamento||'não informou')}</div>
+      <div class="linha"><b>Observações:</b> ${linkifyDescricao(l.observacoes||'—')}</div>
+      <div class="linha"><b>Status:</b>
+        <select id="statusLead_${l.id}" onchange="mudarStatusLead('${l.id}', this.value)">
+          <option value="novo" ${l.status==='novo'||!l.status?'selected':''}>🆕 Novo</option>
+          <option value="em_analise" ${l.status==='em_analise'?'selected':''}>🕓 Em análise</option>
+          <option value="convertido" ${l.status==='convertido'?'selected':''}>✅ Convertido</option>
+          <option value="perdido" ${l.status==='perdido'?'selected':''}>❌ Perdido</option>
+        </select>
+      </div>
+      <div class="btnrow" style="margin-top:12px;">
+        <button class="btn secondary" onclick="copiarResumoLead('${l.id}')">📋 Copiar resumo pra proposta</button>
+        <button class="btn" onclick="abrirAtribuirFilmmakerLead('${l.id}')">🎬 Atribuir filmmaker + agendar</button>
+      </div>
+      <div id="atribuirLeadArea_${l.id}"></div>
+      <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
+    `;
+    document.getElementById('overlayView').classList.add('show');
+  };
+
+  window.copiarResumoLead = function(id){
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(!l) return;
+    const texto = `LEAD AVULSO — ${l.nome}
+Contato: ${l.whatsapp||'—'}${l.instagram ? ' · '+l.instagram : ''}
+Segmento: ${l.segmento||'—'}
+Quer: ${l.pacoteNome||'—'}
+Estilos desejados: ${(l.estilosNomes||[]).join(', ')||'—'}
+Referências enviadas:
+${(l.referencias||[]).length ? l.referencias.map(r=>' - '+r).join('\n') : ' - nenhuma'}
+Data desejada: ${l.dataDesejada ? formatarDataBR(l.dataDesejada) : 'não informou'} (urgente: ${l.urgencia==='urgente'?'sim':'não'})
+Orçamento mencionado: ${l.orcamento||'não informou'}
+Observações do cliente: ${l.observacoes||'—'}`;
+    navigator.clipboard.writeText(texto).then(()=>{
+      mostrarToast('Resumo copiado! Já pode colar na conversa da Proposta Comercial 2.');
+    }).catch(()=>{
+      mostrarToast('Não deu pra copiar automático — seleciona e copia manualmente.', 'erro');
+    });
+  };
+
+  window.mudarStatusLead = async function(id, novoStatus){
+    await updateDoc(doc(db,'leads_avulsos', id), { status: novoStatus });
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(l) l.status = novoStatus;
+    mostrarToast('Status atualizado.');
+    renderLeadsAvulsos();
+  };
+
+  window.abrirAtribuirFilmmakerLead = function(id){
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(!l) return;
+    const area = document.getElementById('atribuirLeadArea_'+id);
+    if(!area) return;
+    area.innerHTML = `<div class="card" style="margin-top:10px;background:var(--deep);">
+      <h2 style="font-size:13px;">🎬 Agendar gravação pra esse lead</h2>
+      <div class="desc">Já vem com a data que ${esc(l.nome)} pediu — só confirma o filmmaker.</div>
+      <div class="field"><label>Filmmaker</label>
+        <select id="leadFilmmaker_${id}">
+          <option value="">A definir</option>
+          <option value="Nathan">Nathan</option>
+          <option value="Luís">Luís</option>
+        </select>
+      </div>
+      <div class="field"><label>Data</label><input type="date" id="leadData_${id}" value="${l.dataDesejada||''}"></div>
+      <div class="field"><label>Hora</label><input type="time" id="leadHora_${id}" value="10:00"></div>
+      <button class="btn" onclick="confirmarAgendarLead('${id}')">Confirmar agendamento</button>
+    </div>`;
+  };
+
+  window.confirmarAgendarLead = async function(id){
+    const l = __leadsAvulsosCache.find(x=>x.id===id);
+    if(!l) return;
+    const filmmaker = document.getElementById('leadFilmmaker_'+id).value;
+    const data = document.getElementById('leadData_'+id).value;
+    const hora = document.getElementById('leadHora_'+id).value;
+    if(!data){ mostrarToast('Escolhe uma data primeiro.', 'erro'); return; }
+
+    const slug = l.nome.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    if(!CLIENTES_LISTA.some(c=>c.slug===slug)) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
+
+    try{
+      const agRef = await addDoc(collection(db,'agendamentos'), {
+        cliente: slug, clienteNome: l.nome, data, hora, local: '', tipo: 'avulso', filmmaker,
+        qtdVideosPlanejados: 1, qtdVideosRealizados: 0,
+        status: 'agendado', precisaAprovacao: false, aprovado: true,
+        origemLeadId: id, criadoEm: serverTimestamp()
+      });
+      await updateDoc(doc(db,'leads_avulsos', id), { status: 'convertido', agendamentoId: agRef.id });
+      mostrarToast('Gravação agendada e lead marcado como convertido!');
+      fecharModal();
+      renderLeadsAvulsos();
+    }catch(e){ mostrarToast('Erro ao agendar: ' + e.message, 'erro'); }
+  };
+
   async function renderDemandasAguardandoDetalhe(){
     const cont = document.getElementById('gerenciaDemandasAguardando');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
@@ -10769,6 +10944,11 @@
     // 🩺 Clientes
     const saude = await calcularResumoSaudeClientes();
 
+    // 🆕 Leads avulsos (novo link de captação)
+    const leadsSnapCockpit = await getDocs(collection(db,'leads_avulsos'));
+    let leadsNovosCount = 0;
+    leadsSnapCockpit.forEach(d => { if((d.data().status||'novo') === 'novo') leadsNovosCount++; });
+
     // 🎬 Produção — já vem dos caches da Fase 2, zero busca nova
     const videosAtivos = cacheVideosProducao.filter(v => !v.excluido);
     const videosAtrasados = videosAtivos.filter(v => videoEstaAtrasado(v) || (v.nivelEscalonamento||0) >= 2);
@@ -10821,6 +11001,11 @@
           <div class="icone">👥</div>
           <div class="num">${totalAtrasadasTime}</div>
           <div class="lbl">atrasada(s) no time${ausentesHoje.length ? ' · '+ausentesHoje.length+' ausente(s) hoje' : ''} →</div>
+        </div>
+        <div class="resumoCard cockpit clicavel ${leadsNovosCount?'alerta':''}" onclick="navegarGerenciaSub('leadsAvulsos')">
+          <div class="icone">🆕</div>
+          <div class="num">${leadsNovosCount}</div>
+          <div class="lbl">lead(s) avulso(s) novo(s) →</div>
         </div>
       </div>
       <div class="desc" style="text-align:center;margin-top:14px;opacity:.7;">Clica em qualquer card pra ver o detalhe. Números em tempo real também na <b>Central de Comando</b>, ao lado.</div>

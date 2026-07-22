@@ -3565,7 +3565,7 @@
     const cont = document.getElementById('postagensConteudo');
     const snap = await getDocs(collection(db,'postagens'));
     const pendentes = []; snap.forEach(d => { if(d.data().status==='aguardando_legenda') pendentes.push({id:d.id, ...d.data()}); });
-    if(!pendentes.length){ cont.innerHTML = '<div class="empty">Nenhum vídeo aguardando legenda. 🎉</div>'; return; }
+    if(!pendentes.length){ cont.innerHTML = '<div class="card"><div class="desc" style="margin-bottom:0;">📥 Todo vídeo aprovado — de cliente mensalista, avulso, extra ou vindo do Protocolo Cápsula — cai aqui automaticamente, sem exceção.</div></div><div class="empty">Nenhum vídeo aguardando legenda agora. 🎉</div>'; return; }
 
     // Busca o calendário de cada cliente envolvido, 1 vez só por cliente
     const clientesUnicos = [...new Set(pendentes.map(p => p.cliente))];
@@ -3591,9 +3591,11 @@
       const vinculoDireto = p.calendarItemIdx !== null && p.calendarItemIdx !== undefined
         ? legendasDisponiveis.find(it => it.idxOriginal === p.calendarItemIdx) : null;
       const multiPlataforma = ehClienteMultiPlataforma(p.cliente);
+      const infoCliente = CLIENTES_LISTA.find(c => c.slug === p.cliente);
+      const badgeTipo = infoCliente?.extra ? '<span class="selo pendente">Cliente avulso/extra</span>' : '<span class="selo aprovada">Mensalista</span>';
       return `
       <div class="card">
-        <h2>${esc(p.clienteNome)} — ${esc(p.titulo)}</h2>
+        <h2>${esc(p.clienteNome)} — ${esc(p.titulo)} ${badgeTipo}</h2>
         <div class="desc">🔗 <a href="${esc(p.linkVideo)}" target="_blank" style="color:var(--yellow);">Ver vídeo aprovado ↗</a></div>
         ${vinculoDireto ? `
           <div class="field" style="background:var(--deep);border:2px solid var(--yellow);border-radius:8px;padding:10px;">
@@ -3625,10 +3627,32 @@
           <div class="desc" style="margin-bottom:6px;">Esse conteúdo já tem legenda pronta em outro lugar (ex: mudou pelo WhatsApp)? Pede pra Amanda liberar direto pro agendamento, sem passar por aqui de novo.</div>
           ${p.pedidoPularLegendaEm ? '<span class="selo hoje">⏳ Já pedido — esperando a Amanda decidir</span>' : '<button class="btn secondary" style="width:auto;padding:8px 16px;" onclick="pedirPularLegenda(\''+p.id+'\')">⏭️ Pedir pra pular legenda</button>'}
         </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
+          <div class="desc" style="margin-bottom:6px;">Esse vídeo NÃO vai ser postado em nenhum lugar (ex: entrega avulsa pro cliente, cápsula só de arquivo)? Não precisa de legenda nem agendamento.</div>
+          <button class="btn secondary" style="width:auto;padding:8px 16px;" onclick="arquivarSemLegenda('${p.id}')">📦 Arquivar — não vai ser postado</button>
+        </div>
       </div>
     `;
     }).join('');
   }
+
+  /* ===== ARQUIVAR SEM LEGENDA (22/07/2026) =====
+     Pedido do Chris/Gabi: nem todo vídeo aprovado vira postagem — tem
+     entrega avulsa, extra fora do calendário, conteúdo de cápsula que é só
+     pra arquivo. Antes, a única saída pra tirar isso da fila era pedir
+     legenda "pulada" (que ainda manda pra Cecília agendar). Essa aqui é
+     diferente: fecha o ciclo de vez, sem virar postagem nenhuma — self
+     service, sem precisar da aprovação da Amanda, porque não tem risco de
+     postar errado (não vai postar nada). */
+  window.arquivarSemLegenda = async function(postagemId){
+    if(!confirm('Esse conteúdo NÃO vai virar postagem — sem legenda, sem agendamento, só fica arquivado como entregue. Confirma?')) return;
+    await updateDoc(doc(db,'postagens', postagemId), {
+      status: 'arquivada_sem_postagem', arquivadaPor: usuarioAtual || '?', arquivadaEm: new Date().toISOString()
+    });
+    registrarHistorico('postagens', postagemId, 'Arquivada sem legenda/postagem — vídeo entregue, mas não vai ao ar', 'Por: ' + (usuarioAtual||'?'));
+    mostrarToast('Arquivado — some da sua fila e da fila da Cecília também.');
+    renderLegendasPendentes();
+  };
 
   /* ===== PULAR LEGENDA — pedido da Gabi, aprovação da Amanda =====
      Pra conteúdo que já tem legenda pronta em outro lugar (ex: mudou pelo
@@ -3769,7 +3793,8 @@
       <div class="resumoCard"><div class="num">${gravacoesHoje}</div><div class="lbl">Gravações hoje</div></div>
       <div class="resumoCard ${pendentes.length ? 'yellow' : ''}"><div class="num">${pendentes.length}</div><div class="lbl">Postagens pra agendar</div></div>
       <div class="resumoCard ${atrasadasCount ? 'red' : ''}"><div class="num">${atrasadasCount}</div><div class="lbl">Atrasadas — priorize</div></div>
-    </div>`;
+    </div>
+    <div class="desc" style="margin:-8px 0 14px;">💡 Vídeo de cliente avulso/extra que não vai virar postagem nem aparece aqui — a Gabi já arquiva esses direto na etapa de legenda, então essa lista é só o que realmente precisa da sua data.</div>`;
 
     // Melhoria 6A — postagens já agendadas com data igual/passada, esperando
     // 1 clique confirmando que realmente foram ao ar
@@ -4005,6 +4030,10 @@
           etapaTexto = '6/6 — Agendado pra postar em ' + postagem.dataAgendada + ' às ' + postagem.horaAgendada;
           etapaCor = 'aprovada';
           detalhe = 'Legenda: "' + esc(postagem.legenda) + '" · Agendado por ' + esc(postagem.agendadoPor||'—');
+        } else if(postagem.status === 'arquivada_sem_postagem'){
+          etapaTexto = '📦 Arquivado — entregue, mas não vai virar postagem';
+          etapaCor = 'aprovado';
+          detalhe = 'Arquivado por ' + esc(postagem.arquivadaPor||'—');
         }
       }
 
@@ -4028,6 +4057,7 @@
       const selo = p.status==='postado' ? '<span class="selo aprovado">✔ Publicado em '+formatarDataBR(p.postadoEm?p.postadoEm.slice(0,10):'')+'</span>' :
                    p.status==='agendado' ? '<span class="selo aprovada">Agendado: '+p.dataAgendada+' '+p.horaAgendada+'</span>' :
                    p.status==='aguardando_agendamento' ? '<span class="selo hoje">Aguardando agendamento</span>' :
+                   p.status==='arquivada_sem_postagem' ? '<span class="selo aprovado">📦 Arquivado — não vai postar</span>' :
                    '<span class="selo pendente">Aguardando legenda</span>';
       return `<div class="item">
         <div class="top"><div class="nome">${esc(p.clienteNome)} — ${esc(p.titulo)}</div></div>
@@ -7223,8 +7253,9 @@
                  urg==='hoje' ? '<span class="selo hoje">Hoje</span>' : '<span class="selo pendente">Pendente</span>';
     const cli = d.origem==='cliente' && d.clienteNome ? ' · ' + esc(d.clienteNome) : '';
     return `<div class="item demCompacta" style="border-left:3px solid ${borda};" onclick="abrirDemandaMinha('${d.id}')">
-      <div class="nome">${esc(d.titulo)}</div>
+      <div class="nome">${d.grupoId?'🤝 ':''}${esc(d.titulo)}</div>
       <div class="metaLinha">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${cli}</div>
+      ${d.bloqueio ? '<div class="metaLinha" style="color:var(--yellow2);margin-top:2px;">🕓 Aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
       ${selo}
     </div>`;
   }
@@ -7426,12 +7457,31 @@
     const modal = document.getElementById('modalConteudo');
     const jaTemProva = d.status === 'concluida_aguardando_aprovacao';
     modal.innerHTML = `
-      <h2>${esc(d.titulo)}</h2>
+      <h2>${d.grupoId?'🤝 ':''}${esc(d.titulo)}</h2>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
+      ${d.grupoId ? '<div class="linha" id="grupoStatus_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando quem mais está nela...</div>' : ''}
+      ${d.bloqueio ? `
+        <div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">
+          🕓 <b>Aguardando ${esc(d.bloqueio.pessoa)}:</b> ${esc(d.bloqueio.texto)}
+          <div style="margin-top:6px;"><button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="removerBloqueioDemanda('${d.id}')">✓ Já resolveu — remover aviso</button></div>
+        </div>
+      ` : `
+        <div id="bloqueioForm_${d.id}" style="display:none;margin-top:8px;background:var(--deep);padding:10px;border-radius:8px;">
+          <div class="field"><label>Esperando o quê, de quem?</label>
+            <select id="bloqueioPessoa_${d.id}">
+              ${FUNCIONARIOS.filter(f=>f!==usuarioAtual).map(f=>'<option value="'+f+'">'+f+'</option>').join('')}
+              <option value="Cliente">Cliente</option>
+            </select>
+          </div>
+          <div class="field" style="margin-top:6px;"><textarea id="bloqueioTexto_${d.id}" placeholder="Ex: enviar os prints, aprovar o texto, confirmar a data..."></textarea></div>
+          <button class="btn secondary" style="margin-top:6px;" onclick="salvarBloqueioDemanda('${d.id}')">Salvar aviso</button>
+        </div>
+        <button class="btn secondary" style="margin-top:8px;width:auto;padding:8px 14px;" onclick="document.getElementById('bloqueioForm_${d.id}').style.display='block';this.style.display='none';">🕓 Estou esperando alguém pra continuar</button>
+      `}
       ${!d.prazoSolicitado ? `
       <div class="field" style="margin-top:10px;"><label>Precisa de mais prazo? Pede aqui (a Amanda autoriza)</label>
         <div class="row2">
@@ -7452,6 +7502,63 @@
       ${renderLinhaDoTempo(d.historico)}
     `;
     document.getElementById('overlayView').classList.add('show');
+    if(d.grupoId) carregarStatusGrupo(d.grupoId, d.id);
+  };
+
+  /* ===== STATUS AO VIVO DA DEMANDA EM GRUPO =====
+     Busca os documentos-irmãos (mesmo grupoId) e mostra o status real de
+     cada parte — se já concluiu ou não, não só a lista estática de quem
+     participa. */
+  async function carregarStatusGrupo(grupoId, idAtual){
+    const el = document.getElementById('grupoStatus_'+idAtual);
+    if(!el) return;
+    try{
+      const q = query(collection(db,'demandas'), where('grupoId','==', grupoId));
+      const snap = await getDocs(q);
+      const linhas = [];
+      snap.forEach(s => { const x = s.data(); linhas.push({ pessoa: x.destinatario, tarefa: x.descricao, status: x.status }); });
+      const rotuloStatus = st => st==='aprovada' ? '✅ Concluída' : st==='concluida_aguardando_aprovacao' ? '⏳ Feita, em aprovação' : '⬜ Pendente';
+      el.innerHTML = '🤝 <b>Demanda em grupo</b> — cada um com sua parte:' +
+        linhas.map(l => '<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);"><b>'+esc(l.pessoa)+(l.pessoa===usuarioAtual?' (você)':'')+':</b> '+esc(l.tarefa)+'<div class="meta" style="margin-top:2px;">'+rotuloStatus(l.status)+'</div></div>').join('');
+    }catch(e){ console.error('Falha ao carregar status do grupo:', e); }
+  }
+
+  /* ===== "AGUARDANDO ALGUÉM" (22/07/2026) =====
+     Pedido da Gabi, generalizado pra todo mundo: quando uma demanda não
+     pode avançar porque depende de outra pessoa (funcionário ou cliente),
+     em vez de ficar "atrasada" silenciosamente, marca aqui o que falta e
+     de quem. Se for alguém da equipe, essa pessoa recebe uma demanda-aviso
+     própria — fecha o loop, ninguém fica só "sabendo" sem ser cobrado. */
+  window.salvarBloqueioDemanda = async function(id){
+    const pessoa = document.getElementById('bloqueioPessoa_'+id).value;
+    const texto = document.getElementById('bloqueioTexto_'+id).value.trim();
+    if(!texto){ mostrarToast('Escreve o que você está esperando.', 'erro'); return; }
+    const dOrig = todasDemandas.find(x=>x.id===id);
+    const bloqueio = { pessoa, texto, desde: new Date().toISOString(), por: usuarioAtual };
+    await updateDoc(doc(db,'demandas', id), { bloqueio });
+    registrarHistorico('demandas', id, 'Marcada como aguardando ' + pessoa, texto);
+    if(pessoa !== 'Cliente'){
+      const refAviso = await addDoc(collection(db,'demandas'), {
+        titulo: '🔔 ' + (usuarioAtual||'Alguém') + ' está esperando você — ' + texto.slice(0,60),
+        descricao: (usuarioAtual||'Alguém') + ' não consegue concluir a demanda "' + (dOrig?.titulo||'') + '" até você resolver isso: ' + texto,
+        origem: (usuarioAtual||'').toLowerCase(), clienteNome: dOrig?.clienteNome || '', destinatario: pessoa,
+        demandaOrigemId: id, tipoEspecial: 'aguardando_resposta',
+        prazoData: new Date().toISOString().slice(0,10), prazoHora: '18:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+      dispararEmailIndividual(pessoa, 'aguardando_resposta', { titulo: '🔔 ' + (usuarioAtual||'Alguém') + ' está esperando você: ' + texto.slice(0,80), itemId: refAviso.id, colecao:'demandas' }).catch(()=>{});
+    }
+    mostrarToast('Marcado' + (pessoa!=='Cliente' ? ' — ' + pessoa + ' foi avisado(a).' : '.'));
+    await carregarTodasDemandas();
+    abrirDemandaMinha(id);
+  };
+
+  window.removerBloqueioDemanda = async function(id){
+    await updateDoc(doc(db,'demandas', id), { bloqueio: null });
+    registrarHistorico('demandas', id, 'Aviso de "aguardando" removido — já foi resolvido');
+    mostrarToast('Removido!');
+    await carregarTodasDemandas();
+    abrirDemandaMinha(id);
   };
 
   window.autorizarNovoPrazo = async function(id){
@@ -10539,10 +10646,12 @@
     const podeAprovar = d.status === 'concluida_aguardando_aprovacao';
     const podeExcluir = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
     modal.innerHTML = `
-      <h2>${esc(d.titulo)}</h2>
+      <h2>${d.grupoId?'🤝 ':''}${esc(d.titulo)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(d.destinatario)}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
+      ${d.grupoId ? '<div class="linha" id="grupoStatusGer_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando...</div>' : ''}
+      ${d.bloqueio ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">🕓 <b>'+esc(d.destinatario)+' está aguardando '+esc(d.bloqueio.pessoa)+':</b> '+esc(d.bloqueio.texto)+'</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
       ${d.provaTexto ? '<div class="linha"><b>Relato:</b> '+linkifyDescricao(d.provaTexto)+'</div>' : ''}
       ${d.provaImagemUrl ? '<div class="linha"><b>Prova:</b> <a href="'+esc(d.provaImagemUrl)+'" target="_blank" style="color:var(--yellow);">Abrir link ↗</a></div>' : ''}
@@ -10555,7 +10664,22 @@
       ${renderLinhaDoTempo(d.historico)}
     `;
     document.getElementById('overlayView').classList.add('show');
+    if(d.grupoId) carregarStatusGrupoGerencia(d.grupoId, d.id);
   };
+
+  async function carregarStatusGrupoGerencia(grupoId, idAtual){
+    const el = document.getElementById('grupoStatusGer_'+idAtual);
+    if(!el) return;
+    try{
+      const q = query(collection(db,'demandas'), where('grupoId','==', grupoId));
+      const snap = await getDocs(q);
+      const linhas = [];
+      snap.forEach(s => { const x = s.data(); linhas.push({ pessoa: x.destinatario, tarefa: x.descricao, status: x.status }); });
+      const rotuloStatus = st => st==='aprovada' ? '✅ Concluída' : st==='concluida_aguardando_aprovacao' ? '⏳ Feita, em aprovação' : '⬜ Pendente';
+      el.innerHTML = '🤝 <b>Demanda em grupo</b> — cada um com sua parte:' +
+        linhas.map(l => '<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);"><b>'+esc(l.pessoa)+':</b> '+esc(l.tarefa)+'<div class="meta" style="margin-top:2px;">'+rotuloStatus(l.status)+'</div></div>').join('');
+    }catch(e){ console.error('Falha ao carregar status do grupo (gerência):', e); }
+  }
 
   /* ===== EXCLUSÃO DE DEMANDA — RESTRITA A CHRIS/AMANDA =====
      Pedido explícito: eles fazem testes no sistema e precisam limpar
@@ -10616,24 +10740,59 @@
   window.abrirModalNovaDemanda = function(){
     if(!usuarioAtual){ mostrarToast('Seleciona seu nome na tela de Início primeiro.', 'erro'); return; }
     const modal = document.getElementById('modalConteudo');
-    const outrosFuncionarios = FUNCIONARIOS.filter(f => f !== usuarioAtual);
+    // CORRIGIDO 22/07/2026 — pedido da Gabi: antes não dava pra criar uma
+    // demanda pra si mesma (o próprio nome ficava fora da lista). Agora o
+    // seu nome aparece primeiro, marcado "(você)".
+    const opcoesDestino = [usuarioAtual, ...FUNCIONARIOS.filter(f => f !== usuarioAtual)];
     modal.innerHTML = `
       <h2>📌 Nova demanda pra equipe</h2>
       <div class="desc" style="margin-bottom:10px;">Pedido por: <b>${esc(usuarioAtual)}</b></div>
       <div class="field"><label>Título</label><input type="text" id="novoTituloModal" placeholder="Ex: Enviar briefing atualizado"></div>
       <div class="field"><label>Descrição</label><textarea id="novaDescModal"></textarea></div>
-      <div class="field"><label>Pra quem</label><select id="novoDestinatarioModal">${outrosFuncionarios.map(f=>'<option value="'+f+'">'+f+'</option>').join('')}</select></div>
+      <div class="field"><label>Pra quem (essa é a tarefa principal)</label><select id="novoDestinatarioModal">${opcoesDestino.map(f=>'<option value="'+f+'">'+f+(f===usuarioAtual?' (você)':'')+'</option>').join('')}</select></div>
       <div class="row2">
         <div class="field"><label>Data prazo</label><input type="date" id="novoDataModal"></div>
         <div class="field"><label>Hora prazo</label><input type="time" id="novoHoraModal" value="19:00"></div>
       </div>
       <div class="field"><label>🔗 Link de anexo (opcional)</label><input type="text" id="novoLinkAnexoModal" placeholder="Link de material de apoio — Canva, Drive, planejamento externo, etc"></div>
-      <button class="btn" onclick="criarDemandaModal()" id="btnCriarModal">Criar demanda</button>
+      <div class="field" style="margin-top:6px;border-top:1px dashed var(--line);padding-top:10px;">
+        <label>🤝 Demanda em colaboração? (opcional)</label>
+        <div class="desc" style="margin-bottom:6px;">Adicione outras pessoas, cada uma com a própria parte — cada um recebe a tarefa dele separadinha, mas todos veem quem mais está no time dessa demanda.</div>
+        <div id="colabRows_modal"></div>
+        <button class="btn secondary" style="width:auto;padding:6px 14px;margin-top:4px;" onclick="adicionarColabRow('modal')">+ Adicionar pessoa com uma parte específica</button>
+      </div>
+      <button class="btn" onclick="criarDemandaModal()" id="btnCriarModal" style="margin-top:12px;">Criar demanda</button>
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Cancelar</button>
     `;
     document.getElementById('overlayView').classList.add('show');
     const inputData = document.getElementById('novoDataModal');
     if(inputData) inputData.value = new Date().toISOString().slice(0,10);
+  };
+
+  /* ===== DEMANDA EM COLABORAÇÃO (22/07/2026) =====
+     Pedido do Chris: em vez de só 1 destinatário por demanda, dá pra somar
+     mais gente, cada um com a própria tarefa. Por baixo dos panos isso vira
+     UMA demanda por pessoa (pra cada um ver só a parte dele na lista
+     pessoal, sem se confundir com a tarefa do outro), todas linkadas por um
+     grupoId comum — e cada card mostra quem mais faz parte do grupo. */
+  window.adicionarColabRow = function(sufixo){
+    const cont = document.getElementById('colabRows_'+sufixo);
+    if(!cont) return;
+    const row = document.createElement('div');
+    row.className = 'row2';
+    row.style.cssText = 'margin-top:6px;align-items:center;';
+    const opcoes = FUNCIONARIOS.filter(f => f !== usuarioAtual).map(f=>'<option value="'+f+'">'+f+'</option>').join('');
+    row.innerHTML = `
+      <select class="colabPessoa_${sufixo}">${opcoes}</select>
+      <input type="text" class="colabTarefa_${sufixo}" placeholder="A parte específica dessa pessoa...">
+    `;
+    const btnRemover = document.createElement('button');
+    btnRemover.className = 'btn secondary';
+    btnRemover.style.cssText = 'width:auto;padding:4px 10px;font-size:11px;margin-top:4px;';
+    btnRemover.textContent = '✕ remover essa pessoa';
+    btnRemover.onclick = function(){ row.remove(); };
+    row.appendChild(btnRemover);
+    cont.appendChild(row);
   };
 
   window.criarDemandaModal = async function(){
@@ -10655,7 +10814,33 @@
         criadoEm: serverTimestamp()
       });
       registrarHistorico('demandas', novaRef.id, 'Demanda criada por ' + usuarioAtual + ' pra ' + destinatario);
-      mostrarToast('Demanda criada para ' + destinatario + '!');
+
+      // Colaboradores — cada linha vira uma demanda própria, linkada por grupoId
+      const colabRows = Array.from(document.querySelectorAll('#colabRows_modal > div'));
+      const colaboradores = colabRows.map(row => ({
+        pessoa: row.querySelector('.colabPessoa_modal').value,
+        tarefa: row.querySelector('.colabTarefa_modal').value.trim()
+      })).filter(c => c.pessoa && c.tarefa);
+
+      if(colaboradores.length){
+        const grupoId = 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+        const participantes = [{ pessoa: destinatario, tarefa: desc || titulo }, ...colaboradores];
+        await updateDoc(doc(db,'demandas', novaRef.id), { grupoId, grupoParticipantes: participantes });
+        for(const c of colaboradores){
+          const refColab = await addDoc(collection(db,'demandas'), {
+            titulo: '🤝 ' + titulo, descricao: c.tarefa,
+            origem, clienteNome: '', destinatario: c.pessoa, linkAnexo,
+            grupoId, grupoParticipantes: participantes,
+            prazoData, prazoHora,
+            status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+          });
+          registrarHistorico('demandas', refColab.id, 'Demanda em grupo criada por ' + usuarioAtual + ' — parte de "' + titulo + '"');
+          dispararEmailIndividual(c.pessoa, 'demanda', { titulo: '🤝 ' + titulo + ' — sua parte: ' + c.tarefa.slice(0,70), itemId: refColab.id, colecao:'demandas' }).catch(()=>{});
+        }
+        mostrarToast('Demanda criada em grupo — ' + (colaboradores.length+1) + ' pessoa(s) envolvida(s)!');
+      } else {
+        mostrarToast('Demanda criada para ' + destinatario + '!');
+      }
       fecharModal();
     } catch(err){
       mostrarToast('Erro: ' + err.message, 'erro');

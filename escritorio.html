@@ -9225,6 +9225,7 @@
       { nome: 'correcaoAvisosAntigos', fn: corrigirDemandasAvisoAntigas },
       { nome: 'limpezaAlertasFantasma', fn: limparAlertasVideoFantasma },
       { nome: 'conciliacaoPostagensOrfas', fn: conciliarPostagensOrfas },
+      { nome: 'conciliacaoClienteEntregaDireta', fn: conciliarPostagensClienteVirouEntregaDireta },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
@@ -9741,6 +9742,48 @@
       conciliadas++;
     }
     return conciliadas;
+  }
+
+  /* ===== CONCILIADOR 2 — CLIENTE VIROU ENTREGA DIRETA DEPOIS =====
+     Achado na varredura (22/07/2026, caso ELLIZ NOIVAS): a Amanda configura
+     um cliente como entrega direta, mas se ele JÁ TINHA postagens no meio
+     do processo de legenda/agendamento (criadas antes dessa configuração
+     existir), essas postagens ficam presas pra sempre — o conciliador de
+     órfãos só resolve vídeo SEM postagem nenhuma, não esse caso. Esse
+     conciliador cobre exatamente essa lacuna: roda junto no motor, sozinho,
+     sem precisar de reparo manual toda vez que alguém configurar um
+     cliente como entrega direta depois do fato. */
+  async function conciliarPostagensClienteVirouEntregaDireta(){
+    const postSnap = await getDocs(collection(db,'postagens'));
+    const presas = []; postSnap.forEach(d => { const p = d.data(); if(['aguardando_legenda','aguardando_agendamento'].includes(p.status)) presas.push({id:d.id, ...p}); });
+    let recicladas = 0;
+    for(const p of presas){
+      const cfg = await obterConfigCliente(p.cliente);
+      if(cfg.tipoEntrega !== 'entrega_direta') continue;
+
+      await updateDoc(doc(db,'postagens', p.id), {
+        status: 'arquivada_sem_postagem', arquivadaPor: 'sistema (conciliador — cliente virou entrega direta)', arquivadaEm: new Date().toISOString(),
+        notaCorrecao: 'Cliente configurado como entrega direta depois dessa postagem já existir — reciclado automaticamente, sem precisar de legenda/agendamento.'
+      });
+      registrarHistorico('postagens', p.id, 'Reciclada automaticamente — cliente virou entrega direta');
+
+      // fecha qualquer demanda pendente de legenda (Gabrielle) ou agendamento (Cecília) ligada a essa postagem
+      const demQ = query(collection(db,'demandas'), where('postagemId','==', p.id), where('status','==','pendente'));
+      const demSnapC = await getDocs(demQ);
+      for(const dSnap of demSnapC.docs){
+        await updateDoc(doc(db,'demandas', dSnap.id), { status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(), notaConclusao: 'Cliente é entrega direta — não precisa mais dessa etapa.' });
+      }
+
+      if(p.videoId){
+        const vidSnap = await getDoc(doc(db,'videos_producao', p.videoId));
+        if(vidSnap.exists() && vidSnap.data().status !== 'finalizado'){
+          await updateDoc(doc(db,'videos_producao', p.videoId), { status:'finalizado', clienteAprovou:true, finalizadoEm: new Date().toISOString(), finalizadoVia:'entrega_direta (conciliador retroativo)' });
+        }
+      }
+      registrarLogAutomacao('postagem_reciclada_entrega_direta', p.id, p.clienteNome || '');
+      recicladas++;
+    }
+    return recicladas;
   }
 
   /* ===== MELHORIA 1 — APROVAÇÃO TÁCITA AUTOMÁTICA =====

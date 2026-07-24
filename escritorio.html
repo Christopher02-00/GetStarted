@@ -95,7 +95,7 @@
   .selo.hoje{background:var(--yellowbg);color:var(--yellow2);}
   .selo.atrasado{background:var(--redbg);color:var(--red);}
   .selo.aguardando{background:#2a2f3a;color:#8ab4f8;}
-  .selo.aprovada{background:var(--greenbg);color:var(--green);}
+  .selo.aprovada,.selo.aprovado{background:var(--greenbg);color:var(--green);}
   .selo.cliente{background:#3a2f1a;color:#e0a86a;}
 
   .empty{text-align:center;color:var(--muted);font-size:13px;padding:34px 0;}
@@ -726,7 +726,13 @@
       <div id="agendamentoCalendarioMes" style="display:none;">
         <div class="card">
           <div class="row3">
-            <div class="field"><label>Mês</label><input type="month" id="calMesFiltro" onchange="renderCalendarioMesFilmmaker()"></div>
+            <div class="field"><label>Mês</label>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <button type="button" class="btn secondary" style="width:auto;padding:6px 10px;" onclick="mudarMesCalendario(-1)">‹</button>
+                <input type="month" id="calMesFiltro" onchange="renderCalendarioMesFilmmaker()" style="flex:1;">
+                <button type="button" class="btn secondary" style="width:auto;padding:6px 10px;" onclick="mudarMesCalendario(1)">›</button>
+              </div>
+            </div>
             <div class="field"><label>Ver de</label><select id="calFiltroTodos" onchange="renderCalendarioMesFilmmaker()">
               <option value="todos">Todos os clientes</option>
             </select></div>
@@ -3139,6 +3145,14 @@
       document.getElementById('agLocal').value = '';
       renderListaAgendamentos();
       verificarQtdHoje();
+      /* ===== CORRIGIDO (Prompt Mestre 2 - P6, 23/07/2026) =====
+         Salvar nunca re-renderizava a grade do calendario do mes — o dado
+         ia pro banco na hora, mas quem estivesse com "Ver Calendario"
+         aberto (outra aba/janela, ou volta depois) so via a novidade
+         recarregando a pagina na mao. Agora, se essa view estiver visivel,
+         atualiza a grade sozinha, sem precisar de reload. */
+      const gradeCalendarioVisivel = document.getElementById('agendamentoCalendarioMes');
+      if(gradeCalendarioVisivel && gradeCalendarioVisivel.style.display !== 'none') renderCalendarioMesFilmmaker();
     } catch(err){ mostrarToast('Erro: ' + err.message, 'erro'); }
     btn.disabled = false; btn.textContent = 'Agendar';
   };
@@ -3244,6 +3258,20 @@
     if(!sel) return;
     sel.innerHTML = '<option value="todos">Todos os clientes</option>' + CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug)).map(c => `<option value="${c.slug}">${esc(c.nome)}</option>`).join('');
   }
+
+  /* ===== NAVEGACAO DE MES (Prompt Mestre 2 - P4, 23/07/2026) =====
+     Antes so dava pra trocar de mes pelo seletor nativo <input type="month">
+     (chato no celular) e o valor voltava pro mes atual toda vez que a
+     Cecilia saia e voltava pra essa sub-aba. Agora tem botoes de anterior/
+     proximo, e ela pode adiantar gravacoes pra qualquer mes futuro. */
+  window.mudarMesCalendario = function(delta){
+    const campo = document.getElementById('calMesFiltro');
+    if(!campo || !campo.value) return;
+    const [ano, mes] = campo.value.split('-').map(Number);
+    const d = new Date(ano, mes - 1 + delta, 1);
+    campo.value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    renderCalendarioMesFilmmaker();
+  };
 
   async function renderCalendarioMesFilmmaker(){
     const mesFiltro = document.getElementById('calMesFiltro').value || new Date().toISOString().slice(0,7);
@@ -4044,7 +4072,7 @@
       const diaDoMes = parseInt(data.split('-')[2]);
       const novoItem = {
         day: diaDoMes, name: p.titulo, desc: p.legenda || '', ref: p.linkVideo || '',
-        stage: 'meio', fmt: 'Reel', apr: true, posted: true
+        stage: 'programado', fmt: 'Reel', apr: true, posted: true
       };
       if(calSnap.exists()){
         const dados = calSnap.data();
@@ -4059,6 +4087,15 @@
       mostrarToast('Postagem agendada, mas não consegui sincronizar com o calendário do cliente.', 'erro');
     }
     renderAgendarPostagens();
+    /* ===== CORRIGIDO (Prompt Mestre 2 - P8.1, 23/07/2026) =====
+       "Conteúdo Até Quando" já lia os dados certos (postagens com
+       status:'agendado' + dataAgendada) numa consulta fresca sempre que
+       era aberta — o buraco era não existir NENHUM gatilho que a
+       atualizasse depois de um agendamento novo, então quem já estivesse
+       com essa sub-aba da Gerência aberta via informação velha até sair e
+       voltar. Agora, se ela estiver visível na tela, atualiza sozinha. */
+    const conteudoAteQuandoVisivel = document.getElementById('gerenciaConteudoAteQuando');
+    if(conteudoAteQuandoVisivel && conteudoAteQuandoVisivel.offsetParent !== null) renderConteudoAteQuando();
   };
 
   /* ===== MELHORIA 3 — ESTEIRA DE CONTEÚDO =====
@@ -4991,8 +5028,16 @@
     const postSnap = await getDocs(collection(db,'postagens'));
     const postagens = []; postSnap.forEach(d => postagens.push(d.data()));
 
+    /* ===== CORRIGIDO (Prompt Mestre 2 - P8.3, 23/07/2026) =====
+       Essa planilha rodava sobre CLIENTES_LISTA inteira — misturava
+       mensalistas com avulsos/entrega-direta, que por definição não têm
+       (nem deveriam ter) postagem agendada pela nossa equipe. Reusa o
+       mesmo helper obterSlugsEntregaDireta() que o resto do site já usa
+       pra separar mensal de avulso de verdade (não o flag "extra", que já
+       causou confusão antes — ver comentário em obterSlugsEntregaDireta). */
+    const entregaDiretaSlugsCAQ = await obterSlugsEntregaDireta();
     const hoje = new Date().toISOString().slice(0,10);
-    const linhas = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug)).map(c => {
+    const linhas = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDiretaSlugsCAQ.has(c.slug)).map(c => {
       const dele = postagens.filter(p => p.cliente === c.slug && p.status === 'agendado' && p.dataAgendada);
       let ultimaData = null;
       dele.forEach(p => { if(!ultimaData || p.dataAgendada > ultimaData) ultimaData = p.dataAgendada; });
@@ -6693,6 +6738,33 @@
     return 'normal';
   }
 
+
+  /* ===== JANELA DE URGENCIA PRO BADGE DA BARRA LATERAL (23/07/2026) =====
+     Varredura de design pedida pelo Chris: o badge vermelho ao lado do
+     nome de cada pessoa mostrava o volume TOTAL de demandas em aberto -
+     ex: Cecilia com "17" quando so 1 vencia perto, o resto era agenda
+     distante no calendario. Isso comunicava "olha o tanto que acumulou"
+     em vez de "o que precisa da sua atencao agora", gerando ansiedade
+     sem necessidade real. Regra confirmada com o Chris: o badge conta
+     so atrasado + vence hoje + vence em ate 1 dia (amanha). O resto do
+     backlog nao desaparece - continua 100% visivel dentro da propria
+     aba, so nao pesa mais no numero vermelho de alerta da lateral. Vale
+     pra QUALQUER pessoa, nao so a Cecilia. */
+  const JANELA_URGENCIA_BADGE_DIAS = 1;
+  function ehUrgenteParaBadge(demanda, diasJanela){
+    if(demanda.status !== 'pendente') return false;
+    if(estaAusente(demanda.destinatario)) return false;
+    const janela = (diasJanela == null) ? JANELA_URGENCIA_BADGE_DIAS : diasJanela;
+    const agora = new Date();
+    const prazo = new Date(demanda.prazoData + 'T' + (demanda.prazoHora || '19:00'));
+    const limite = new Date(agora);
+    limite.setDate(limite.getDate() + janela);
+    limite.setHours(23,59,59,999);
+    return prazo <= limite;
+  }
+  function contarUrgentesBadge(lista, diasJanela){
+    return lista.filter(d => ehUrgenteParaBadge(d, diasJanela)).length;
+  }
   // ===== PRAZO DE EDICAO — 1 dia util, ate as 19h =====
   // ===== FASE 4 — PRAZOS EM DIAS ÚTEIS =====
   // Antes, o prazo somava 1 dia corrido — vídeo lançado sexta vencia sábado
@@ -7061,6 +7133,14 @@
 
   window.abrirAgendarNoDia = function(diaStr){
     irParaAtalho('agendamento');
+    /* ===== CORRIGIDO (Prompt Mestre 2 - P6, 23/07/2026) =====
+       Antes so trocava de VIEW (agendamento), mas nao trocava de SUB-ABA —
+       se a Cecilia estava em "Ver Calendario" e clicava num dia, o
+       formulario "Marcar Nova Gravacao" continuava com display:none, e ela
+       via o campo de data sendo preenchido escondido, sem nada acontecer
+       na tela. Agora forca a sub-aba certa antes de rolar ate o campo. */
+    const abaAgendar = document.querySelector('#view-agendamento .subtab');
+    if(abaAgendar) setAgendamentoSub('agendar', abaAgendar);
     const campoData = document.getElementById('agData');
     if(campoData){
       campoData.value = diaStr;
@@ -7489,6 +7569,14 @@
     }catch(e){}
   };
 
+  /* ===== CARTAO GRANDE, PADRAO "ATRASADAS" (varredura de design 23/07/2026) =====
+     Antes usava .item.demCompacta (icone/titulo pequenos - reclamacao
+     literal do Chris). O volume alto ja e resolvido por outro caminho
+     (agrupamento por familia, ver familiaDemanda/agruparEmFamiliasHtml)
+     - entao nao precisa mais encolher o cartao individual pra caber
+     mais coisa na tela. Agora usa o MESMO .item (com .top/.nome/.meta)
+     que a aba Atrasadas usa - mesma hierarquia, mesmo tamanho de fonte,
+     mesmo selo de status. Minhas Demandas passa a parecer Atrasadas. */
   function cardDemandaCompacto(d){
     const urg = calcularUrgencia(d);
     const borda = d.status==='concluida_aguardando_aprovacao' ? 'var(--line)' : urg==='atrasado' ? 'var(--red)' : (urg==='hoje' ? 'var(--yellow2)' : 'var(--line)');
@@ -7496,11 +7584,10 @@
                  urg==='atrasado' ? '<span class="selo atrasado">Atrasado</span>' :
                  urg==='hoje' ? '<span class="selo hoje">Hoje</span>' : '<span class="selo pendente">Pendente</span>';
     const cli = d.origem==='cliente' && d.clienteNome ? ' · ' + esc(d.clienteNome) : '';
-    return `<div class="item demCompacta" style="border-left:3px solid ${borda};" onclick="abrirDemandaMinha('${d.id}')">
-      <div class="nome">${d.grupoId?'🤝 ':''}${esc(d.titulo)}</div>
-      <div class="metaLinha">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${cli}</div>
-      ${d.bloqueio ? '<div class="metaLinha" style="color:var(--yellow2);margin-top:2px;">🕓 Aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
-      ${selo}
+    return `<div class="item" style="border-left:3px solid ${borda};" onclick="abrirDemandaMinha('${d.id}')">
+      <div class="top"><div class="nome">${d.grupoId?'🤝 ':''}${esc(d.titulo)}</div>${selo}</div>
+      <div class="meta" style="margin-top:4px;">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${cli}</div>
+      ${d.bloqueio ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">🕓 Aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
     </div>`;
   }
 
@@ -7510,10 +7597,9 @@
     const borda = aguardandoAprov ? 'var(--green)' : urg==='atrasado' ? 'var(--red)' : (urg==='hoje' ? 'var(--yellow2)' : 'var(--line)');
     const selo = aguardandoAprov ? '<span class="selo aprovado">Feita — em aprovação</span>' :
                  urg==='atrasado' ? '<span class="selo atrasado">Atrasada lá</span>' : '<span class="selo pendente">Em aberto</span>';
-    return `<div class="item demCompacta" style="border-left:3px solid ${borda};cursor:default;">
-      <div class="nome">→ <b>${esc(d.destinatario||'?')}</b>: ${esc(d.titulo)}</div>
-      <div class="metaLinha">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}</div>
-      ${selo}
+    return `<div class="item" style="border-left:3px solid ${borda};cursor:default;">
+      <div class="top"><div class="nome">→ <b>${esc(d.destinatario||'?')}</b>: ${esc(d.titulo)}</div>${selo}</div>
+      <div class="meta" style="margin-top:4px;">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}</div>
     </div>`;
   }
 
@@ -7601,7 +7687,7 @@
     empty.style.display='none';
     if(soRefiltrar !== true) await carregarTodasDemandas();
     const todasMinhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial);
-    atualizarBadgeMinhasDemandasAtribuidas(todasMinhas.filter(d => d.status !== 'concluida_aguardando_aprovacao').length);
+    atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(todasMinhas));
 
     const clientes = [...new Set(todasMinhas.map(d => d.clienteNome).filter(Boolean))].sort((a,b) => a.localeCompare(b,'pt-BR'));
     const clienteSel = document.getElementById('filtroClienteMinhasDemandas')?.value || '';
@@ -7679,7 +7765,20 @@
       }
     }
 
-    lista.innerHTML = chips +
+    /* ===== PAINEL RESUMO NO TOPO (varredura de design 23/07/2026) =====
+       Mesmo componente .painelResumo/.resumoCard que a aba Atrasadas usa
+       no topo - da o "raio-x" da tela num olhar so, antes de descer pras
+       faixas. Fecha a diferenca visual que o Chris apontou entre essa
+       aba e a Atrasadas. */
+    const resumoHtml = `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard ${urgentes.length ? 'red' : ''}"><div class="num">${urgentes.length}</div><div class="lbl">🔥 Urgente</div></div>
+      <div class="resumoCard ${atrasadas.length ? 'red' : 'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">Atrasadas</div></div>
+      <div class="resumoCard ${praHoje.length ? 'yellow' : 'green'}"><div class="num">${praHoje.length}</div><div class="lbl">Pra hoje</div></div>
+      <div class="resumoCard ${proximas.length ? '' : 'green'}"><div class="num">${proximas.length}</div><div class="lbl">Próximas</div></div>
+      <div class="resumoCard ${aguardando.length ? 'yellow' : ''}"><div class="num">${aguardando.length}</div><div class="lbl">Aguardando aprovação</div></div>
+    </div>`;
+
+    lista.innerHTML = resumoHtml + chips +
       (urgentes.length ? faixaDemandasHtml('urgentes', '🔥 Urgente — não pode esperar', urgentes, true, estadoSalvo) : '') +
       faixaDemandasHtml('atrasadas', '🔴 Atrasadas', atrasadas, true, estadoSalvo) +
       faixaDemandasHtml('hoje', '🟡 Pra hoje', praHoje, true, estadoSalvo) +

@@ -1264,6 +1264,15 @@
 
   const SENHA_GERENCIA = "Cg@102030";
   const FUNCIONARIOS = ["Amanda","Cecília","Gabrielle","Yas","Helo","Luís","Nathan","João Victor"];
+  /* ===== DESTINATARIOS DE DEMANDA (24/07/2026 — pedido da Amanda) =====
+     A Amanda pediu pra poder mandar demanda pro Chris tambem — ele nao
+     aparecia em nenhum seletor de "pra quem", porque nao esta em
+     FUNCIONARIOS. E ele NAO deve entrar em FUNCIONARIOS: essa lista
+     tambem alimenta ranking do mes, checklist diario, "status da equipe"
+     e "quem esta em dia" — lugares onde o CEO nao entra como funcionario
+     avaliado. Entao a lista de quem pode RECEBER demanda e sua propria
+     coisa, e inclui o Chris. */
+  const DESTINATARIOS_DEMANDA = ["Chris", ...FUNCIONARIOS];
 
   /* ===== FRENTE C3 — ATALHOS DA HOME =====
      Antes duplicavam a sidebar inteira (Cecilia: 9 atalhos + 9 itens
@@ -3224,6 +3233,52 @@
     renderListaAgendamentos();
   };
 
+  /* ===== "MINHA AGENDA" REDESENHADA (24/07/2026) =====
+     Pedido do Chris: essa aba estava "bem ruim de se organizar, com as
+     informacoes enfileiradas frustrando qualquer um que a tenta ler".
+     Causa: cada gravacao pendente renderizava o FORMULARIO INTEIRO aberto
+     (checkboxes do calendario + extras + editor + uber + botoes). Com 4-5
+     gravacoes viravam 5 paredoes de formulario empilhados, sem hierarquia
+     nenhuma, sem saber o que era urgente.
+     Agora segue o padrao da Atrasadas: cockpit no topo, agrupamento por
+     urgencia (atrasadas / hoje / proximas) em faixas colapsaveis, e cada
+     gravacao vira um cartao .item compacto que só ABRE o formulario quando
+     voce clica nela. Os IDs dos campos continuam identicos — o
+     registrarGravacaoRealizada nao precisou mudar nada. */
+  window.toggleFormGravacao = function(agId){
+    const form = document.getElementById('formGrav_' + agId);
+    const seta = document.getElementById('setaGrav_' + agId);
+    if(!form) return;
+    const abrindo = form.style.display === 'none';
+    form.style.display = abrindo ? 'block' : 'none';
+    if(seta) seta.textContent = abrindo ? '▴' : '▾';
+  };
+
+  /* Contador ao vivo de quantos videos estao sendo lancados (pedido do
+     Chris 24/07/2026: "nao existe uma quantidade que o videomaker possa
+     escolher que esta subindo pra termos o controle de quantos videos
+     foram feitos"). Conta os itens marcados do calendario + as linhas de
+     extras, e compara com o planejado — atualiza a cada clique/digitacao.
+     Deliberadamente NAO e um numero digitado a mao: assim o contador
+     nunca discorda da lista real de videos que vai ser criada. */
+  window.atualizarContadorVideos = function(agId, qtdPlanejada){
+    const box = document.getElementById('contadorVideos_' + agId);
+    if(!box) return;
+    const marcados = document.querySelectorAll('.chkVideoCalendario_' + agId + ':checked').length;
+    const campoExtras = document.getElementById('extras_' + agId);
+    const extras = campoExtras && campoExtras.value.trim()
+      ? campoExtras.value.trim().split('\n').map(s=>s.trim()).filter(Boolean).length : 0;
+    const total = marcados + extras;
+    const plan = Number(qtdPlanejada) || 0;
+    let cor = 'var(--muted)', aviso = '';
+    if(total === 0){ cor = 'var(--red)'; aviso = ' — marca ou escreve pelo menos um'; }
+    else if(plan && total < plan){ cor = 'var(--yellow2)'; aviso = ' — ' + (plan-total) + ' a menos que o planejado'; }
+    else if(plan && total > plan){ cor = 'var(--green)'; aviso = ' — ' + (total-plan) + ' a mais que o planejado'; }
+    else if(plan){ cor = 'var(--green)'; aviso = ' — bateu o planejado'; }
+    box.innerHTML = '<b style="color:' + cor + ';">' + total + ' vídeo(s) vão ser lançados</b>' +
+      (plan ? '<span style="color:var(--muted);"> (planejado: ' + plan + ')' + aviso + '</span>' : '');
+  };
+
   async function renderMinhaAgendaFilmmaker(){
     const cont = document.getElementById('agendamentoMinhaAgenda');
     const snap = await getDocs(collection(db,'agendamentos'));
@@ -3235,50 +3290,91 @@
     const aguardandoAprovacao = todos.filter(a => a.status === 'agendado' && a.aprovado === false);
     const pendentes = todos.filter(a => a.status === 'agendado' && a.aprovado !== false).sort((a,b)=>a.data.localeCompare(b.data));
 
-    let html = '';
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const atrasadas = pendentes.filter(a => a.data < hojeStr);
+    const deHoje = pendentes.filter(a => a.data === hojeStr);
+    const futuras = pendentes.filter(a => a.data > hojeStr);
+
+    let html = `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard ${atrasadas.length ? 'red' : 'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">🔴 Atrasadas — registra já</div></div>
+      <div class="resumoCard ${deHoje.length ? 'yellow' : 'green'}"><div class="num">${deHoje.length}</div><div class="lbl">🟡 De hoje</div></div>
+      <div class="resumoCard"><div class="num">${futuras.length}</div><div class="lbl">⚪ Próximas</div></div>
+      <div class="resumoCard ${aguardandoAprovacao.length ? 'yellow' : ''}"><div class="num">${aguardandoAprovacao.length}</div><div class="lbl">⏳ Aguardando Chris</div></div>
+    </div>`;
+
     if(aguardandoAprovacao.length){
       html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardandoAprovacao.length} gravação(ões) aguardando aprovação do Chris<span>Ainda não liberadas pra registrar.</span></div></div>`;
     }
-    if(!pendentes.length && !aguardandoAprovacao.length){ cont.innerHTML = '<div class="empty">Nenhuma gravação pendente de registro.</div>'; return; }
+    if(!pendentes.length && !aguardandoAprovacao.length){
+      cont.innerHTML = html + '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhuma gravação pendente de registro. Tudo em dia! 🎉</div></div>';
+      return;
+    }
 
-    for(const a of pendentes){
+    // Monta o cartao de UMA gravacao: cabecalho compacto sempre visivel +
+    // formulario completo escondido, que abre no clique.
+    const cardGravacao = async (a, urgencia) => {
       const calSnap = await getDoc(doc(db,'calendarios', a.cliente));
       const itensCalendario = calSnap.exists() ? (calSnap.data().items||[]).map((it,idx)=>({...it, idx})).filter(it=>!it.gravado) : [];
-      const hojeStr = new Date().toISOString().slice(0,10);
       const estaAtrasado = a.data < hojeStr;
+      const borda = urgencia === 'atrasado' ? 'var(--red)' : urgencia === 'hoje' ? 'var(--yellow2)' : 'var(--line)';
+      const selo = urgencia === 'atrasado' ? '<span class="selo atrasado">Atrasada</span>' :
+                   urgencia === 'hoje' ? '<span class="selo hoje">Hoje</span>' : '<span class="selo pendente">Agendada</span>';
+      const qtdPlan = a.qtdVideosPlanejados || 0;
+      return `<div class="item" id="ag_${a.id}" style="border-left:3px solid ${borda};cursor:pointer;padding:0;overflow:hidden;">
+        <div style="padding:14px 16px;" onclick="toggleFormGravacao('${a.id}')">
+          <div class="top"><div class="nome">${esc(a.clienteNome)}</div>${selo}</div>
+          <div class="meta" style="margin-top:4px;">${formatarDataBR(a.data)} · ${a.hora||'?'}${a.local ? ' · '+esc(a.local) : ''} · Planejado: ${qtdPlan} vídeo(s)</div>
+          <div class="meta" style="margin-top:4px;color:var(--yellow);font-weight:700;">Toque pra registrar <span id="setaGrav_${a.id}">▾</span></div>
+        </div>
+        <div id="formGrav_${a.id}" style="display:none;padding:0 16px 16px;border-top:1px solid var(--line);" onclick="event.stopPropagation();">
+          ${estaAtrasado ? `<div class="meta" style="color:var(--red);font-weight:800;margin:10px 0;">⚠️ Essa gravação foi no dia ${formatarDataBR(a.data)}, e você está registrando só hoje. Registra sempre no MESMO DIA a partir de agora — isso atrasa toda a fila de edição e aprovação.</div>` : ''}
 
-      html += `<div class="card" id="ag_${a.id}" ${estaAtrasado ? 'style="border:2px solid var(--red);"' : ''}>
-        <h2>${esc(a.clienteNome)} — ${a.data} ${a.hora}</h2>
-        ${estaAtrasado ? `<div class="meta" style="color:var(--red);font-weight:800;margin-bottom:6px;">⚠️ Essa gravação foi no dia ${a.data}, e você está registrando só hoje. Registra sempre no MESMO DIA a partir de agora — isso atrasa toda a fila de edição e aprovação.</div>` : ''}
-        <div class="desc">${esc(a.local || '')} · Planejado: ${a.qtdVideosPlanejados} vídeo(s) · ${a.tipo==='avulso'?'Cliente avulso':'Cliente fixo'}</div>
+          ${itensCalendario.length ? `
+          <div class="field" style="margin-top:10px;"><label>Marca os que você gravou hoje (vindo do calendário editorial)</label></div>
+          ${itensCalendario.map(it => `
+            <label style="display:flex;align-items:center;gap:8px;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:5px;cursor:pointer;">
+              <input type="checkbox" class="chkVideoCalendario_${a.id}" data-idx="${it.idx}" data-nome="${esc(it.name)}" onchange="atualizarContadorVideos('${a.id}', ${qtdPlan})">
+              <span style="font-size:12px;">${esc(it.name)}</span>
+            </label>
+          `).join('')}
+          ` : `<div class="meta" style="margin-top:10px;">Esse cliente não tem itens pendentes no calendário editorial ainda.</div>`}
 
-        ${itensCalendario.length ? `
-        <div class="field"><label>Marca os que você gravou hoje (vindo do calendário editorial)</label></div>
-        ${itensCalendario.map(it => `
-          <label style="display:flex;align-items:center;gap:8px;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:5px;cursor:pointer;">
-            <input type="checkbox" class="chkVideoCalendario_${a.id}" data-idx="${it.idx}" data-nome="${esc(it.name)}">
-            <span style="font-size:12px;">${esc(it.name)}</span>
-          </label>
-        `).join('')}
-        ` : `<div class="meta">Esse cliente não tem itens pendentes no calendário editorial ainda.</div>`}
+          <div class="field"><label>Outros vídeos / Bastidores (um por linha, não precisam estar no calendário)</label><textarea id="extras_${a.id}" placeholder="Ex: Bastidores She.joias&#10;Bastidores Hitech" oninput="atualizarContadorVideos('${a.id}', ${qtdPlan})"></textarea></div>
 
-        <div class="field"><label>Outros vídeos / Bastidores (um por linha, não precisam estar no calendário)</label><textarea id="extras_${a.id}" placeholder="Ex: Bastidores She.joias&#10;Bastidores Hitech"></textarea></div>
+          <div class="avisoBanner" style="margin:10px 0;"><div class="icone">🎬</div><div class="texto" id="contadorVideos_${a.id}"><b style="color:var(--red);">0 vídeo(s) vão ser lançados</b><span style="color:var(--muted);"> (planejado: ${qtdPlan})</span></div></div>
 
-        <div class="field"><label>Sugestão de editor (opcional — a Amanda confirma de manhã)</label><select id="editorEscolhido_${a.id}">
-          <option value="">Sem sugestão — deixa a Amanda decidir</option>
-          ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}">${e}</option>`).join('')}
-        </select></div>
+          <div class="field"><label>Sugestão de editor (opcional — a Amanda confirma de manhã)</label><select id="editorEscolhido_${a.id}">
+            <option value="">Sem sugestão — deixa a Amanda decidir</option>
+            ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}">${e}</option>`).join('')}
+          </select></div>
 
-        <div class="field"><label><input type="checkbox" id="uber_${a.id}" onchange="document.getElementById('uberLink_${a.id}').style.display=this.checked?'block':'none'"> Gravação a mais de 30km da cidade (Uber pago pela agência)</label></div>
-        <div id="uberLink_${a.id}" style="display:none;" class="field"><label>Link do recibo do Uber</label><input type="text" id="uberInput_${a.id}" placeholder="Link do print do recibo"></div>
-        ${a.tipo==='avulso' ? `<div class="field"><label>Valor extra a receber (cliente fora do banco)</label><input type="text" id="valorExtra_${a.id}" placeholder="Ex: R$ 150,00"></div>` : ''}
-        <div class="btnrow">
-          <button class="btn secondary" onclick="reagendarGravacao('${a.id}')">Reagendar</button>
-          <button class="btn red" onclick="cancelarGravacaoAgendada('${a.id}')">✕ Cancelar</button>
-          <button class="btn green" onclick="registrarGravacaoRealizada('${a.id}','${a.cliente}','${esc(a.clienteNome)}')">Confirmar gravação</button>
+          <div class="field"><label><input type="checkbox" id="uber_${a.id}" onchange="document.getElementById('uberLink_${a.id}').style.display=this.checked?'block':'none'"> Gravação a mais de 30km da cidade (Uber pago pela agência)</label></div>
+          <div id="uberLink_${a.id}" style="display:none;" class="field"><label>Link do recibo do Uber</label><input type="text" id="uberInput_${a.id}" placeholder="Link do print do recibo"></div>
+          ${a.tipo==='avulso' ? `<div class="field"><label>Valor extra a receber (cliente fora do banco)</label><input type="text" id="valorExtra_${a.id}" placeholder="Ex: R$ 150,00"></div>` : ''}
+          <div class="btnrow">
+            <button class="btn secondary" onclick="reagendarGravacao('${a.id}')">Reagendar</button>
+            <button class="btn red" onclick="cancelarGravacaoAgendada('${a.id}')">✕ Cancelar</button>
+            <button class="btn green" onclick="registrarGravacaoRealizada('${a.id}','${a.cliente}','${esc(a.clienteNome)}')">Confirmar gravação</button>
+          </div>
         </div>
       </div>`;
-    }
+    };
+
+    const montarFaixa = async (chave, titulo, lista, aberta) => {
+      if(!lista.length) return '';
+      const urg = chave === 'atrasadas' ? 'atrasado' : chave === 'hoje' ? 'hoje' : 'normal';
+      const cards = [];
+      for(const a of lista) cards.push(await cardGravacao(a, urg));
+      return `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="magenda_${chave}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${cards.join('')}</div>
+      </div>`;
+    };
+
+    html += await montarFaixa('atrasadas', '🔴 Atrasadas — registra já', atrasadas, true);
+    html += await montarFaixa('hoje', '🟡 De hoje', deHoje, true);
+    html += await montarFaixa('futuras', '⚪ Próximas', futuras, false);
+
     cont.innerHTML = html;
   }
 
@@ -8080,7 +8176,7 @@
         <div id="bloqueioForm_${d.id}" style="display:none;margin-top:8px;background:var(--deep);padding:10px;border-radius:8px;">
           <div class="field"><label>Esperando o quê, de quem?</label>
             <select id="bloqueioPessoa_${d.id}">
-              ${FUNCIONARIOS.filter(f=>f!==usuarioAtual).map(f=>'<option value="'+f+'">'+f+'</option>').join('')}
+              ${DESTINATARIOS_DEMANDA.filter(f=>f!==usuarioAtual).map(f=>'<option value="'+f+'">'+f+'</option>').join('')}
               <option value="Cliente">Cliente</option>
             </select>
           </div>
@@ -12115,7 +12211,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       <div id="gramNovaDesc" style="display:none;margin-top:8px;margin-bottom:8px;"></div>
       <div class="row2">
         <div class="field"><label>Quem pede</label><select id="novoOrigem"><option value="chris">Chris</option><option value="amanda">Amanda</option></select></div>
-        <div class="field"><label>Pra quem</label><select id="novoDestinatario">${FUNCIONARIOS.map(f=>'<option value="'+f+'">'+f+'</option>').join('')}</select></div>
+        <div class="field"><label>Pra quem</label><select id="novoDestinatario">${DESTINATARIOS_DEMANDA.map(f=>'<option value="'+f+'">'+f+'</option>').join('')}</select></div>
       </div>
       <div class="row2">
         <div class="field"><label>Data prazo</label><input type="date" id="novoData"></div>
@@ -12545,7 +12641,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     // CORRIGIDO 22/07/2026 — pedido da Gabi: antes não dava pra criar uma
     // demanda pra si mesma (o próprio nome ficava fora da lista). Agora o
     // seu nome aparece primeiro, marcado "(você)".
-    const opcoesDestino = [usuarioAtual, ...FUNCIONARIOS.filter(f => f !== usuarioAtual)];
+    const opcoesDestino = [usuarioAtual, ...DESTINATARIOS_DEMANDA.filter(f => f !== usuarioAtual)];
     modal.innerHTML = `
       <h2>📌 Nova demanda pra equipe</h2>
       <div class="desc" style="margin-bottom:10px;">Pedido por: <b>${esc(usuarioAtual)}</b></div>
@@ -12583,7 +12679,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const row = document.createElement('div');
     row.className = 'row2';
     row.style.cssText = 'margin-top:6px;align-items:center;';
-    const opcoes = FUNCIONARIOS.filter(f => f !== usuarioAtual).map(f=>'<option value="'+f+'">'+f+'</option>').join('');
+    const opcoes = DESTINATARIOS_DEMANDA.filter(f => f !== usuarioAtual).map(f=>'<option value="'+f+'">'+f+'</option>').join('');
     row.innerHTML = `
       <select class="colabPessoa_${sufixo}">${opcoes}</select>
       <input type="text" class="colabTarefa_${sufixo}" placeholder="A parte específica dessa pessoa...">

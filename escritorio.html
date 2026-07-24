@@ -5007,12 +5007,36 @@
     }
 
     if(sub === 'info'){
+      /* ===== INFO EXTRAS AGORA EDITAVEL PELA EQUIPE (Onda 1 — 24/07/2026) =====
+         Pedido da Amanda: essa area so podia ser editada pelo cliente, no
+         portal dele — mas na pratica quem alimenta essas informacoes e a
+         equipe. Aqui era so leitura, entao a Amanda/Gabi liam e nao podiam
+         corrigir nada. Agora da pra editar direto, gravando na MESMA
+         chave que o portal do cliente le (info_extras_cliente/{slug}) —
+         mesma fonte dos dois lados, sem copia e sem divergencia. */
+      if(!apenasLeitura){
+        html += `<div class="card">
+          <h2>✏️ Editar informações de um cliente</h2>
+          <div class="desc">Escolhe o cliente, edita e salva. O cliente vê a mesma informação no portal dele na hora — e ele também continua podendo editar do lado dele.</div>
+          <div class="field"><label>Cliente</label><select id="infoExtraCliente" onchange="carregarInfoExtraAdmin()">
+            <option value="">Selecione o cliente...</option>
+            ${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}
+          </select></div>
+          <div id="infoExtraEditor" style="display:none;">
+            <div class="field"><label>Informações extras</label><textarea id="infoExtraTexto" style="min-height:180px;" placeholder="Horário de funcionamento, responsáveis, senhas de acesso que o cliente compartilhou, particularidades da operação, o que não pode aparecer em vídeo..."></textarea></div>
+            <div class="meta" id="infoExtraStatus" style="margin-bottom:8px;"></div>
+            <button class="btn" onclick="salvarInfoExtraAdmin()">Salvar informações</button>
+          </div>
+        </div>`;
+      }
       const clientesComInfo = [];
       for(const c of CLIENTES_LISTA){
         const s = await getDoc(doc(db,'info_extras_cliente', c.slug));
-        if(s.exists() && s.data().texto) clientesComInfo.push({nome:c.nome, texto:s.data().texto});
+        if(s.exists() && s.data().texto) clientesComInfo.push({nome:c.nome, texto:s.data().texto, porQuem:s.data().atualizadoPor||''});
       }
-      html += clientesComInfo.length ? clientesComInfo.map(c => `<div class="item"><div class="nome">${esc(c.nome)}</div><div class="meta" style="margin-top:6px;white-space:pre-wrap;">${esc(c.texto)}</div></div>`).join('') : '<div class="empty">Nenhum cliente preencheu informações extras ainda.</div>';
+      html += `<div class="grupoFuncionario"><h3>Informações já registradas</h3>`;
+      html += clientesComInfo.length ? clientesComInfo.map(c => `<div class="item"><div class="nome">${esc(c.nome)}</div><div class="meta" style="margin-top:6px;white-space:pre-wrap;">${esc(c.texto)}</div>${c.porQuem ? '<div class="meta" style="margin-top:6px;opacity:.7;">Última edição: '+esc(c.porQuem)+'</div>' : ''}</div>`).join('') : '<div class="empty">Nenhuma informação extra registrada ainda.</div>';
+      html += `</div>`;
     }
 
     if(sub === 'drive' && !apenasLeitura){
@@ -5035,6 +5059,23 @@
           tokensExistentes[c.slug] = novoToken;
         }
       }
+      /* ===== SELETOR PRA EQUIPE ABRIR O PORTAL (Onda 1 — 24/07/2026) =====
+         Pedido: "hoje a equipe acessa apenas por tarefas, o que dificulta
+         localizar rapidamente as informacoes de um cliente especifico".
+         Antes essa tela so listava links pra COPIAR e mandar pro cliente.
+         Agora tem um seletor no topo que abre o portal daquele cliente
+         direto, em outra aba — mesmo link com token, so que num atalho. */
+      html += `<div class="card" style="border:2px solid var(--yellow);">
+        <h2>🚪 Abrir o portal de um cliente</h2>
+        <div class="desc">Pra equipe consultar rápido: escolhe o cliente e abre o portal dele exatamente como ele vê. Não precisa caçar por tarefa.</div>
+        <div class="row2">
+          <div class="field"><label>Cliente</label><select id="abrirPortalCliente">
+            <option value="">Selecione...</option>
+            ${CLIENTES_LISTA.map(c=>`<option value="${c.slug}|${tokensExistentes[c.slug]}">${esc(c.nome)}</option>`).join('')}
+          </select></div>
+          <button class="btn" onclick="abrirPortalDoCliente()">Abrir portal ↗</button>
+        </div>
+      </div>`;
       html += `<div class="card"><h2><svg class="ic"><use href="#i-link"/></svg>Link direto por cliente</h2><div class="desc">Cada link só funciona pra aquela empresa — ninguém consegue ver dados de outro cliente, mesmo tentando adivinhar. Se algum link vazar, dá pra gerar um novo aqui embaixo.</div></div>`;
       html += CLIENTES_LISTA.map(c => {
         const link = `https://get-started.agency/portal-cliente.html?c=${c.slug}&t=${tokensExistentes[c.slug]}`;
@@ -5051,6 +5092,44 @@
 
     cont.innerHTML = html;
   }
+
+  window.abrirPortalDoCliente = function(){
+    const sel = document.getElementById('abrirPortalCliente');
+    if(!sel || !sel.value){ mostrarToast('Escolhe o cliente primeiro.', 'erro'); return; }
+    const [slug, token] = sel.value.split('|');
+    window.open('https://get-started.agency/portal-cliente.html?c=' + slug + '&t=' + token, '_blank');
+  };
+
+  window.carregarInfoExtraAdmin = async function(){
+    const sel = document.getElementById('infoExtraCliente');
+    const ed = document.getElementById('infoExtraEditor');
+    if(!sel || !ed) return;
+    if(!sel.value){ ed.style.display = 'none'; return; }
+    ed.style.display = 'block';
+    const snap = await getDoc(doc(db,'info_extras_cliente', sel.value));
+    const d = snap.exists() ? snap.data() : {};
+    document.getElementById('infoExtraTexto').value = d.texto || '';
+    const st = document.getElementById('infoExtraStatus');
+    if(d.atualizadoEm){
+      const quando = d.atualizadoEm.seconds ? new Date(d.atualizadoEm.seconds*1000).toLocaleDateString('pt-BR') : '';
+      st.innerHTML = '<span class="selo aprovada">Já preenchido</span> Última edição por ' + esc(d.atualizadoPor || 'cliente') + (quando ? ' em ' + quando : '');
+    } else {
+      st.innerHTML = '<span class="selo pendente">Ainda vazio</span> Nada registrado pra esse cliente ainda.';
+    }
+  };
+
+  window.salvarInfoExtraAdmin = async function(){
+    const sel = document.getElementById('infoExtraCliente');
+    if(!sel || !sel.value){ mostrarToast('Escolhe o cliente primeiro.', 'erro'); return; }
+    const texto = document.getElementById('infoExtraTexto').value.trim();
+    const nome = sel.selectedOptions[0]?.dataset.nome || sel.value;
+    // merge:true — nao apaga campos que o portal do cliente possa gravar
+    await setDoc(doc(db,'info_extras_cliente', sel.value), {
+      texto, clienteNome: nome, atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
+    }, { merge: true });
+    mostrarToast('Informações salvas! O cliente já vê no portal dele.');
+    renderPortalClienteAdmin();
+  };
 
   window.atualizarStatusIdeia = async function(id, status){
     await updateDoc(doc(db,'referencias_cliente', id), { status });

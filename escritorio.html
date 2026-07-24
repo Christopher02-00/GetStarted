@@ -545,6 +545,7 @@
       <div class="navitem" id="navRelatorio" onclick="irPara('relatorioMensal', this)"><span class="ico"><svg><use href="#i-chart"/></svg></span> Relatório Mensal</div>
       <div class="navitem" id="navCalendarios" onclick="irPara('calendarios', this)"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Calendários</div>
       <div class="navitem" id="navConteudoAteQuando" onclick="irPara('conteudoAteQuando', this)"><span class="ico">📅</span> Conteúdo Até Quando</div>
+      <div class="navitem" id="navArquivoEntregas" onclick="irPara('arquivoEntregas', this)"><span class="ico">📦</span> Arquivo de Entregas</div>
       <div class="navitem" id="navCadastro" onclick="irPara('cadastro', this)"><span class="ico"><svg><use href="#i-userplus"/></svg></span> Cliente Novo</div>
       <div class="navitem" id="navManualFuncao" onclick="irPara('manualFuncao', this)"><span class="ico"><svg><use href="#i-file"/></svg></span> Manual de Função</div>
       <div class="navitem" id="navDuvidasBit" onclick="irPara('duvidasBit', this)"><span class="ico">🤖</span> Tirar Dúvidas com o Bit</div>
@@ -939,6 +940,34 @@
     <!-- CONTEUDO ATE QUANDO -->
     <div class="view" id="view-conteudoAteQuando">
       <div id="gerenciaConteudoAteQuando"></div>
+    </div>
+
+    <!-- ARQUIVO DE ENTREGAS (Prompt Mestre 2 - P3, 23/07/2026) -->
+    <div class="view" id="view-arquivoEntregas">
+      <h1>📦 <span class="y">Arquivo de Entregas</span></h1>
+      <div class="sub">Todo vídeo já aprovado, agendado, postado ou entregue direto — num lugar só, por cliente, com link e data. Pensado pra "deu problema com cliente, preciso achar isso agora".</div>
+      <div class="card">
+        <div class="row3">
+          <div class="field"><label>Cliente</label><select id="arqEntClienteFiltro" onchange="renderArquivoEntregas()">
+            <option value="todos">Todos os clientes</option>
+          </select></div>
+          <div class="field"><label>Status</label><select id="arqEntStatusFiltro" onchange="renderArquivoEntregas()">
+            <option value="todos">Todos</option>
+            <option value="postado">Postado</option>
+            <option value="agendado">Agendado (ainda vai postar)</option>
+            <option value="arquivada_sem_postagem">Arquivado — não postou</option>
+            <option value="entrega_direta">Entrega direta / tráfego</option>
+          </select></div>
+          <div class="field"><label>Período</label><select id="arqEntPeriodoFiltro" onchange="renderArquivoEntregas()">
+            <option value="todos">Tudo</option>
+            <option value="7">Últimos 7 dias</option>
+            <option value="30">Últimos 30 dias</option>
+            <option value="90">Últimos 90 dias</option>
+          </select></div>
+        </div>
+        <input type="text" id="arqEntBusca" placeholder="🔍 Buscar por título..." oninput="renderArquivoEntregas()" style="width:100%;background:var(--deep);border:1px solid var(--line);border-radius:9px;color:#fff;padding:11px 13px;font-size:14px;margin-top:10px;">
+      </div>
+      <div id="arquivoEntregasBox"></div>
     </div>
 
     <!-- CADASTRO -->
@@ -5020,6 +5049,16 @@
   };
 
   // ===== CONTEUDO ATE QUANDO — planilha de controle pra Cecilia =====
+  /* ===== REFORMULADA (Prompt Mestre 2 - P8.3, 23/07/2026) =====
+     Antes: lista chapada, um item embaixo do outro, nada clicável nem
+     editável, rodando sobre TODOS os clientes (mensal + avulso misturado).
+     Agora: só mensais de verdade (ver filtro acima), cockpit no topo no
+     padrão da Atrasadas, agrupado por risco (vermelho/amarelo/verde) em
+     faixas colapsáveis, e cada linha abre um editor rápido — dá pra
+     editar, remover ou reposicionar o conteúdo do cliente sem sair da
+     tela (ver abrirDetalheConteudoCliente). */
+  let __conteudoAteQuandoCache = [];
+
   async function renderConteudoAteQuando(){
     const cont = document.getElementById('gerenciaConteudoAteQuando');
     await carregarClientesExtras();
@@ -5055,24 +5094,248 @@
 
     const ordem = { vermelho:0, amarelo:1, verde:2 };
     linhas.sort((a,b) => ordem[a.cor]-ordem[b.cor] || (a.diasRestantes??-999)-(b.diasRestantes??-999));
+    __conteudoAteQuandoCache = linhas;
 
-    const emRisco = linhas.filter(l => l.cor === 'vermelho').length;
+    const vermelhos = linhas.filter(l => l.cor === 'vermelho');
+    const amarelos = linhas.filter(l => l.cor === 'amarelo');
+    const verdes = linhas.filter(l => l.cor === 'verde');
 
     let html = `<div class="card">
-      <h2>📅 Conteúdo Até Quando — planilha de controle</h2>
-      <div class="desc">Até que dia cada cliente já tem postagem agendada. Vermelho = risco de ficar sem conteúdo, precisa agendar urgente.</div>
-      ${emRisco ? '<div class="meta" style="color:var(--red);font-weight:800;margin-top:8px;">⚠️ '+emRisco+' cliente(s) em risco agora</div>' : '<div class="meta" style="color:var(--green);margin-top:8px;">✅ Todo mundo com conteúdo agendado com folga</div>'}
+      <h2>📅 Conteúdo Até Quando — só mensais</h2>
+      <div class="desc">Até que dia cada cliente mensal já tem postagem agendada. Clica no cliente pra editar, remover ou reposicionar o conteúdo dele direto daqui.</div>
+    </div>
+    <div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard ${vermelhos.length ? 'red' : 'green'}"><div class="num">${vermelhos.length}</div><div class="lbl">🔴 Risco agora</div></div>
+      <div class="resumoCard ${amarelos.length ? 'yellow' : 'green'}"><div class="num">${amarelos.length}</div><div class="lbl">🟡 Atenção (≤7 dias)</div></div>
+      <div class="resumoCard green"><div class="num">${verdes.length}</div><div class="lbl">🟢 Com folga</div></div>
     </div>`;
 
-    html += linhas.map(l => {
+    const cardCliente = (l) => {
       const textoData = l.ultimaData ? formatarDataBR(l.ultimaData) : 'Sem nada agendado';
       const textoDias = l.diasRestantes === null ? '' : l.diasRestantes < 0 ? ` (${Math.abs(l.diasRestantes)} dia(s) atrás — JÁ VENCEU)` : ` (faltam ${l.diasRestantes} dia(s))`;
-      return `<div class="item" style="${l.cor==='vermelho'?'border:2px solid var(--red);':l.cor==='amarelo'?'border:2px solid var(--yellow2);':''}">
+      return `<div class="item" style="border-left:3px solid ${l.cor==='vermelho'?'var(--red)':l.cor==='amarelo'?'var(--yellow2)':'var(--line)'};" onclick="abrirDetalheConteudoCliente('${l.slug}')">
         <div class="top"><div class="nome">${esc(l.nome)}</div><span class="prioTag ${l.cor}">${textoData}${textoDias}</span></div>
+        <div class="meta" style="margin-top:4px;">Toque pra ver/editar o conteúdo agendado dele →</div>
+      </div>`;
+    };
+
+    const faixa = (chave, titulo, lista, aberta) => lista.length ? `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="${chave}">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${lista.map(cardCliente).join('')}</div>
+    </div>` : '';
+
+    html += faixa('vermelho', '🔴 Risco agora', vermelhos, true) +
+            faixa('amarelo', '🟡 Atenção', amarelos, true) +
+            faixa('verde', '🟢 Com folga', verdes, false);
+
+    if(!linhas.length) html += '<div class="empty">Nenhum cliente mensal encontrado.</div>';
+
+    cont.innerHTML = html;
+  }
+
+  /* ===== EDITOR RAPIDO POR CLIENTE (Prompt Mestre 2 - P8.3, 23/07/2026) =====
+     Abre o calendario daquele cliente (colecao `calendarios/{slug}`) e
+     deixa editar titulo/legenda, remover ou reposicionar (mudar o dia) de
+     qualquer item ainda nao postado - sem sair da tela de Conteudo Ate
+     Quando. */
+  window.abrirDetalheConteudoCliente = async function(slug){
+    const modal = document.getElementById('modalConteudo');
+    const info = __conteudoAteQuandoCache.find(l => l.slug === slug);
+    modal.innerHTML = '<h2>Carregando...</h2>';
+    document.getElementById('overlayView').classList.add('show');
+    const calRef = doc(db,'calendarios', slug);
+    const calSnap = await getDoc(calRef);
+    const items = calSnap.exists() ? (calSnap.data().items || []) : [];
+    const pendentes = items.map((it,i) => ({...it, __idx:i})).filter(it => !it.posted).sort((a,b)=>(a.day||0)-(b.day||0));
+    modal.innerHTML = `
+      <h2>${esc(info?.nome || slug)}</h2>
+      <div class="linha"><b>Conteúdo ainda não postado</b> — clica em editar, remover ou mudar o dia de qualquer item.</div>
+      ${!pendentes.length ? '<div class="empty" style="margin-top:10px;">Nada pendente no calendário desse cliente.</div>' : pendentes.map(it => `
+        <div class="item" style="margin-top:8px;">
+          <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div></div>
+          ${it.desc ? '<div class="meta" style="margin-top:4px;">'+esc(it.desc)+'</div>' : ''}
+          <div class="btnrow" style="margin-top:8px;">
+            <button class="btn secondary" style="font-size:11px;" onclick="editarItemConteudoCliente('${slug}', ${it.__idx})">✏️ Editar</button>
+            <button class="btn secondary" style="font-size:11px;" onclick="reposicionarItemConteudoCliente('${slug}', ${it.__idx})">📆 Mudar dia</button>
+            <button class="btn red" style="font-size:11px;" onclick="removerItemConteudoCliente('${slug}', ${it.__idx})">🗑️ Remover</button>
+          </div>
+        </div>
+      `).join('')}
+      <button class="btn secondary" style="margin-top:12px;" onclick="fecharModal()">Fechar</button>
+    `;
+  };
+
+  window.editarItemConteudoCliente = async function(slug, idx){
+    const calRef = doc(db,'calendarios', slug);
+    const calSnap = await getDoc(calRef);
+    if(!calSnap.exists()) return;
+    const dados = calSnap.data();
+    const items = dados.items || [];
+    const atual = items[idx];
+    if(!atual) return;
+    const novoNome = prompt('Título:', atual.name || '');
+    if(novoNome === null) return;
+    const novaDesc = prompt('Legenda/descrição:', atual.desc || '');
+    if(novaDesc === null) return;
+    items[idx] = { ...atual, name: novoNome.trim() || atual.name, desc: novaDesc };
+    await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+    mostrarToast('Conteúdo atualizado!');
+    abrirDetalheConteudoCliente(slug);
+  };
+
+  window.reposicionarItemConteudoCliente = async function(slug, idx){
+    const calRef = doc(db,'calendarios', slug);
+    const calSnap = await getDoc(calRef);
+    if(!calSnap.exists()) return;
+    const dados = calSnap.data();
+    const items = dados.items || [];
+    const atual = items[idx];
+    if(!atual) return;
+    const novoDiaStr = prompt('Novo dia do mês (1-31):', atual.day || '');
+    if(novoDiaStr === null) return;
+    const novoDia = parseInt(novoDiaStr, 10);
+    if(!novoDia || novoDia < 1 || novoDia > 31){ mostrarToast('Dia inválido.', 'erro'); return; }
+    items[idx] = { ...atual, day: novoDia };
+    await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+    mostrarToast('Conteúdo reposicionado pro dia ' + novoDia + '!');
+    abrirDetalheConteudoCliente(slug);
+  };
+
+  window.removerItemConteudoCliente = async function(slug, idx){
+    if(!confirm('Remover esse conteúdo do calendário desse cliente? Isso não pode ser desfeito.')) return;
+    const calRef = doc(db,'calendarios', slug);
+    const calSnap = await getDoc(calRef);
+    if(!calSnap.exists()) return;
+    const dados = calSnap.data();
+    const items = (dados.items || []).filter((_,i) => i !== idx);
+    await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+    mostrarToast('Conteúdo removido.');
+    abrirDetalheConteudoCliente(slug);
+  };
+
+
+  /* ===== ARQUIVO DE ENTREGAS (Prompt Mestre 2 - P3, 23/07/2026) — URGENTE =====
+     Antes, um vídeo já entregue existia mas ficava espalhado por status
+     entre as coleções `postagens` e `videos_producao` — não havia um
+     lugar único, por cliente, com data/link/status completos, pra quando
+     der problema com o cliente ("cadê aquele vídeo? quando foi postado?").
+     Junta os três destinos possíveis: postagem normal (postado/agendado/
+     arquivada_sem_postagem em `postagens`) e entrega direta/tráfego/só-
+     edição (`finalizado` em `videos_producao`) — cobrindo os mesmos
+     caminhos que o Portal do Cliente já usa, então nada que chega ao
+     cliente fica de fora daqui. */
+  async function popularClientesArquivoEntregas(){
+    await carregarClientesExtras();
+    const sel = document.getElementById('arqEntClienteFiltro');
+    if(!sel) return;
+    const valorAtual = sel.value;
+    sel.innerHTML = '<option value="todos">Todos os clientes</option>' +
+      CLIENTES_LISTA.map(c => `<option value="${c.slug}">${esc(c.nome)}</option>`).join('');
+    if(valorAtual) sel.value = valorAtual;
+  }
+
+  function seloArquivoEntrega(registro){
+    if(registro.status === 'postado') return '<span class="selo aprovado">✔ Publicado</span>';
+    if(registro.status === 'agendado') return '<span class="selo hoje">📅 Agendado</span>';
+    if(registro.status === 'arquivada_sem_postagem') return '<span class="selo pendente">📦 Arquivado — não postou</span>';
+    return '<span class="selo cliente">📦 Entrega direta</span>';
+  }
+
+  async function renderArquivoEntregas(){
+    const box = document.getElementById('arquivoEntregasBox');
+    if(!box) return;
+    box.innerHTML = '<div class="card"><div class="desc">Montando o arquivo de entregas...</div></div>';
+
+    const clienteFiltro = document.getElementById('arqEntClienteFiltro')?.value || 'todos';
+    const statusFiltro = document.getElementById('arqEntStatusFiltro')?.value || 'todos';
+    const periodoFiltro = document.getElementById('arqEntPeriodoFiltro')?.value || 'todos';
+    const busca = (document.getElementById('arqEntBusca')?.value || '').trim().toLowerCase();
+
+    const [postSnap, videoSnap] = await Promise.all([
+      getDocs(collection(db,'postagens')), getDocs(collection(db,'videos_producao'))
+    ]);
+
+    const registros = [];
+    postSnap.forEach(d => {
+      const p = d.data();
+      if(!['postado','agendado','arquivada_sem_postagem'].includes(p.status)) return;
+      const dataChave = p.postadoEm ? p.postadoEm.slice(0,10) : (p.dataAgendada || (p.arquivadaEm ? p.arquivadaEm.slice(0,10) : ''));
+      registros.push({
+        id: d.id, tipo: 'Postagem', cliente: p.cliente, clienteNome: p.clienteNome || p.cliente,
+        titulo: p.titulo || '(sem título)', status: p.status, dataChave,
+        dataAgendada: p.dataAgendada || '', dataPostagem: p.postadoEm ? p.postadoEm.slice(0,10) : '',
+        link: p.linkVideo || '', quem: p.postadoPor || p.agendadoPor || p.arquivadaPor || ''
+      });
+    });
+    videoSnap.forEach(d => {
+      const v = d.data();
+      if(v.excluido) return;
+      if(v.status !== 'finalizado') return;
+      const dataChave = v.finalizadoEm ? v.finalizadoEm.slice(0,10) : '';
+      registros.push({
+        id: d.id, tipo: 'Entrega direta', cliente: v.cliente, clienteNome: v.clienteNome || v.cliente,
+        titulo: v.titulo || '(sem título)', status: 'entrega_direta', dataChave,
+        dataAgendada: '', dataPostagem: dataChave,
+        link: v.linkFinalizado || '', quem: v.editorAtribuido || ''
+      });
+    });
+
+    let filtrados = registros;
+    if(clienteFiltro !== 'todos') filtrados = filtrados.filter(r => r.cliente === clienteFiltro);
+    if(statusFiltro !== 'todos') filtrados = filtrados.filter(r => r.status === statusFiltro);
+    if(periodoFiltro !== 'todos'){
+      const limite = new Date(); limite.setDate(limite.getDate() - parseInt(periodoFiltro,10));
+      const limiteStr = limite.toISOString().slice(0,10);
+      filtrados = filtrados.filter(r => r.dataChave && r.dataChave >= limiteStr);
+    }
+    if(busca) filtrados = filtrados.filter(r => (r.titulo||'').toLowerCase().includes(busca) || (r.clienteNome||'').toLowerCase().includes(busca));
+
+    filtrados.sort((a,b) => (b.dataChave||'').localeCompare(a.dataChave||''));
+
+    const total = filtrados.length;
+    const postados = filtrados.filter(r => r.status==='postado').length;
+    const agendados = filtrados.filter(r => r.status==='agendado').length;
+    const entregaDireta = filtrados.filter(r => r.status==='entrega_direta').length;
+    const clientesUnicos = new Set(filtrados.map(r => r.cliente)).size;
+
+    let html = `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard"><div class="num">${total}</div><div class="lbl">Total encontrado</div></div>
+      <div class="resumoCard green"><div class="num">${postados}</div><div class="lbl">Postados</div></div>
+      <div class="resumoCard yellow"><div class="num">${agendados}</div><div class="lbl">Agendados</div></div>
+      <div class="resumoCard"><div class="num">${entregaDireta}</div><div class="lbl">Entrega direta</div></div>
+      <div class="resumoCard"><div class="num">${clientesUnicos}</div><div class="lbl">Cliente(s)</div></div>
+    </div>
+    <div class="meta" style="margin-bottom:12px;opacity:.75;">📦 Arquivo completo — nada some daqui, mesmo o que já foi postado há meses continua encontrável com os filtros acima.</div>`;
+
+    if(!total){
+      box.innerHTML = html + '<div class="empty">Nada encontrado com esses filtros.</div>';
+      return;
+    }
+
+    const porCliente = {};
+    filtrados.forEach(r => (porCliente[r.clienteNome] = porCliente[r.clienteNome] || []).push(r));
+    const nomesClientes = Object.keys(porCliente).sort((a,b) => porCliente[b].length - porCliente[a].length);
+
+    html += nomesClientes.map((nome, idx) => {
+      const itens = porCliente[nome];
+      const corpo = itens.map(r => {
+        const dataLabel = r.status==='postado' ? ('Postado em ' + (r.dataPostagem?formatarDataBR(r.dataPostagem):'—')) :
+                           r.status==='agendado' ? ('Agendado pra ' + (r.dataAgendada?formatarDataBR(r.dataAgendada):'—')) :
+                           r.status==='entrega_direta' ? ('Entregue em ' + (r.dataPostagem?formatarDataBR(r.dataPostagem):'—')) :
+                           ('Arquivado em ' + (r.dataChave?formatarDataBR(r.dataChave):'—'));
+        return `<div class="item">
+          <div class="top"><div class="nome">${r.tipo==='Entrega direta'?'📦 ':'📲 '}${esc(r.titulo)}</div>${seloArquivoEntrega(r)}</div>
+          <div class="meta" style="margin-top:4px;">${esc(dataLabel)}${r.quem ? ' · '+esc(r.quem) : ''}</div>
+          ${r.link ? '<div class="meta" style="margin-top:4px;">🔗 <a href="'+esc(r.link)+'" target="_blank" style="color:var(--yellow);">Abrir link ↗</a></div>' : '<div class="meta" style="margin-top:4px;opacity:.6;">Sem link registrado</div>'}
+        </div>`;
+      }).join('');
+      return `<div class="faixaDem ${idx<3?'aberta':''}" data-faixa="arq_${idx}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">👤 ${esc(nome)} <span class="qtd">(${itens.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${corpo}</div>
       </div>`;
     }).join('');
 
-    cont.innerHTML = html;
+    box.innerHTML = html;
   }
 
   async function renderClientesExtras(){
@@ -6568,6 +6831,7 @@
       renderListaCalendariosFerramentas(CLIENTES_LISTA);
     }
     if(nome === 'conteudoAteQuando') renderConteudoAteQuando();
+    if(nome === 'arquivoEntregas'){ popularClientesArquivoEntregas(); renderArquivoEntregas(); }
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
     if(nome === 'briefings'){ carregarClientesExtras().then(()=>popularClientesBriefing()); renderBriefings(); }
     if(nome === 'acompanhamento'){ carregarClientesExtras().then(()=>popularClientesAcomp()); renderAcompanhamentoVisaoGeral(); }
@@ -12062,6 +12326,15 @@ Observações do cliente: ${l.observacoes||'—'}`;
     let leadsPessoalNovosCount = 0;
     leadsPessoalSnapCockpit.forEach(d => { if((d.data().status||'novo') === 'novo') leadsPessoalNovosCount++; });
 
+    /* ===== CORRIGIDO (Prompt Mestre 2 - P1, 23/07/2026) =====
+       Esse cockpit lia leads_avulsos e leads_pessoa_fisica, mas faltava a
+       terceira coleção — leads_mensalista (interesse em plano mensal
+       vindo do link). Ficava invisível aqui, mesmo estando arquivada no
+       banco. Agora as 3 coleções aparecem. */
+    const leadsMensalSnapCockpit = await getDocs(collection(db,'leads_mensalista'));
+    let leadsMensalNovosCount = 0;
+    leadsMensalSnapCockpit.forEach(d => { if((d.data().status||'novo') === 'novo') leadsMensalNovosCount++; });
+
     // 🎬 Produção — já vem dos caches da Fase 2, zero busca nova
     const videosAtivos = cacheVideosProducao.filter(v => !v.excluido);
     const videosAtrasados = videosAtivos.filter(v => videoEstaAtrasado(v) || (v.nivelEscalonamento||0) >= 2);
@@ -12125,8 +12398,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <div class="num">${leadsPessoalNovosCount}</div>
           <div class="lbl">lead(s) pessoa física novo(s) →</div>
         </div>
+        <div class="resumoCard cockpit clicavel ${leadsMensalNovosCount?'alerta':''}" onclick="navegarGerenciaSub('leadsMensal')">
+          <div class="icone">📅</div>
+          <div class="num">${leadsMensalNovosCount}</div>
+          <div class="lbl">lead(s) plano mensal novo(s) →</div>
+        </div>
       </div>
       <div class="desc" style="text-align:center;margin-top:14px;opacity:.7;">Clica em qualquer card pra ver o detalhe. Números em tempo real também na <b>Central de Comando</b>, ao lado.</div>
+      <div class="desc" style="text-align:center;margin-top:4px;opacity:.7;">📦 Arquivo completo: todos os pedidos que já chegaram pelo link ficam aqui pra sempre, mesmo os já fechados — nada some.</div>
       ${renderRadarPerdasHtml(perdasChris, 'radarPerdasChris')}
       <div class="card" style="margin-top:14px;">
         <h2>💾 Backup completo</h2>

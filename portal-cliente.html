@@ -123,6 +123,7 @@
       <div class="tab" data-tab="ideias" onclick="setTab('ideias', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-bulb"/></svg>Banco de Ideias</div>
       <div class="tab" data-tab="stories" onclick="setTab('stories', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-image"/></svg>Stories</div>
       <div class="tab" data-tab="atas" onclick="setTab('atas', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-pen"/></svg>Atas de Reunião</div>
+      <div class="tab" data-tab="referencias" onclick="setTab('referencias', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-link"/></svg>Referências</div>
       <div class="tab" data-tab="briefing" onclick="setTab('briefing', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-clipboard"/></svg>Briefing</div>
       <div class="tab" data-tab="info" onclick="setTab('info', this); toggleMenuMais();" style="width:100%;"><svg class="ic"><use href="#i-file"/></svg>Informações Extras</div>
     </div>
@@ -138,6 +139,7 @@
     <div id="painelAtas" style="display:none;"></div>
     <div id="painelInfo" style="display:none;"></div>
     <div id="painelBriefing" style="display:none;"></div>
+    <div id="painelReferencias" style="display:none;"></div>
   </div>
 </div>
 
@@ -250,12 +252,13 @@
   window.setTab = function(nome, el){
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    if(['videos','minhaAgenda','ideias','stories','atas','info','briefing'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
-    ['Calendario','Acompanhamento','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info','Briefing'].forEach(p => {
+    if(['videos','minhaAgenda','ideias','stories','atas','info','briefing','referencias'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
+    ['Calendario','Acompanhamento','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info','Briefing','Referencias'].forEach(p => {
       document.getElementById('painel'+p).style.display = (p.toLowerCase()===nome.toLowerCase()) ? 'block' : 'none';
     });
     if(nome==='minhaAgenda') carregarMinhaAgenda();
     if(nome==='briefing') carregarBriefingCliente();
+    if(nome==='referencias') carregarReferenciasCliente();
   };
 
   /* ===== BRIEFING NO PORTAL (Onda 1 — 24/07/2026) =====
@@ -673,34 +676,126 @@
     </div>`;
   }
 
-  const IDEIA_STATUS_LABEL = { recebida:'Recebida', analise:'Em análise', aprovada:'Aprovada', adaptando:'Adaptando', gravando:'Gravando', publicada:'Publicada', naoUsada:'Não será utilizada' };
-  const IDEIA_STATUS_COR = { recebida:'roteiro', analise:'edicao', aprovada:'publicado', adaptando:'edicao', gravando:'gravacao', publicada:'publicado', naoUsada:'roteiro' };
+  /* ===== ONDA 2 (24/07/2026) — IDEIAS E REFERENCIAS SEPARADAS =====
+     Ate aqui, "Banco de Ideias" gravava na colecao referencias_cliente —
+     ou seja, ideia e referencia eram a mesma coisa no banco. Com a aba
+     Referencias virando area propria, isso ia misturar os dois conteudos
+     na tela. Decisao do Chris: separar mantendo o historico — o que ja
+     estava gravado continua aparecendo em REFERENCIAS (era majoritariamente
+     link de inspiracao mesmo), e ideia nova nasce na colecao propria
+     ideias_cliente. Nada foi apagado nem migrado. */
+  const IDEIA_STATUS_LABEL = { pendente:'Pendente', no_calendario:'Inserida no calendário', concluida:'Concluída' };
+  const IDEIA_STATUS_COR = { pendente:'roteiro', no_calendario:'edicao', concluida:'publicado' };
+  // Referencias: 3 status novos + os antigos, pra nao quebrar o que ja existe
+  const REF_STATUS_LABEL = { nao_utilizada:'Não utilizada', no_calendario:'Inserida no calendário', concluida:'Concluída',
+    recebida:'Recebida', analise:'Em análise', aprovada:'Aprovada', adaptando:'Adaptando', gravando:'Gravando', publicada:'Publicada', naoUsada:'Não será utilizada' };
+  const REF_STATUS_COR = { nao_utilizada:'roteiro', no_calendario:'edicao', concluida:'publicado',
+    recebida:'roteiro', analise:'edicao', aprovada:'publicado', adaptando:'edicao', gravando:'gravacao', publicada:'publicado', naoUsada:'roteiro' };
 
+  function dataBR(ts){
+    if(!ts) return '';
+    if(ts.seconds) return new Date(ts.seconds*1000).toLocaleDateString('pt-BR');
+    try{ return new Date(ts).toLocaleDateString('pt-BR'); }catch(e){ return ''; }
+  }
+
+  /* ===== BANCO DE IDEIAS (Onda 2 — 24/07/2026) =====
+     Agora e uma ideia de verdade, nao so um link: titulo, descricao, data,
+     quem criou, status e observacoes. Cliente e Gabi criam dos dois lados
+     (o campo criadoPor registra quem foi). Quando a Gabi marca como
+     "Concluida", a ideia entra na fila de aprovacao final da Amanda, que
+     encerra oficialmente a sugestao. */
   async function carregarIdeias(){
     const cont = document.getElementById('painelIdeias');
+    cont.innerHTML = '<div class="empty">Carregando...</div>';
+    const snap = await getDocs(collection(db,'ideias_cliente'));
+    const minhas = []; snap.forEach(d => { if(d.data().cliente===clienteAtual.slug) minhas.push({id:d.id, ...d.data()}); });
+    minhas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+
+    let html = `<div class="card">
+      <h2><svg class="ic"><use href="#i-bulb"/></svg>Nova ideia</h2>
+      <div class="sub" style="margin-bottom:10px;">Surgiu um insight, uma oportunidade, uma ideia de conteúdo? Registra aqui na hora — não precisa esperar a reunião de alinhamento.</div>
+      <div class="field"><label>Título</label><input type="text" id="novaIdeiaTitulo" placeholder="Ex: Série de bastidores da produção"></div>
+      <div class="field" style="margin-top:8px;"><label>Descrição</label><textarea id="novaIdeiaDesc" placeholder="Conta a ideia com suas palavras..."></textarea></div>
+      <div class="field" style="margin-top:8px;"><label>Observações (opcional)</label><textarea id="novaIdeiaObs" placeholder="Alguma referência, prazo ideal, detalhe importante..."></textarea></div>
+      <button class="btn" onclick="enviarIdeiaCliente()">Registrar ideia</button>
+    </div>
+    <div class="card"><h2>Ideias registradas</h2><div class="sub" style="margin-bottom:10px;">As suas e as que nossa equipe registrou pra você.</div>`;
+    html += minhas.length ? minhas.map(r => `
+      <div class="item">
+        <div class="nome">${esc(r.titulo || r.link || '(sem título)')}</div>
+        ${r.descricao ? '<div class="meta" style="margin-top:4px;white-space:pre-wrap;">'+esc(r.descricao)+'</div>' : ''}
+        ${r.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(r.observacoes)+'</div>' : ''}
+        <div class="meta" style="margin-top:6px;opacity:.7;">Criada por ${esc(r.criadoPor||'—')}${r.criadoEm ? ' · '+dataBR(r.criadoEm) : ''}</div>
+        <div style="margin-top:8px;">
+          <span class="selo ${IDEIA_STATUS_COR[r.status]||'roteiro'}">${IDEIA_STATUS_LABEL[r.status]||'Pendente'}</span>
+          ${r.aprovadaAmanda ? '<span class="selo publicado" style="margin-left:6px;">✔ Encerrada pela equipe</span>' : ''}
+        </div>
+      </div>
+    `).join('') : '<div class="empty">Nenhuma ideia registrada ainda.</div>';
+    html += '</div>';
+    cont.innerHTML = html;
+  }
+
+  /* ===== BANCO DE REFERENCIAS (Onda 2 — 24/07/2026) =====
+     Area nova: inspiracoes do Instagram e de outras plataformas que podem
+     virar estrategia depois. Le a colecao referencias_cliente — que e onde
+     o antigo "Banco de Ideias" ja gravava, entao todo o historico de links
+     que os clientes mandaram ate hoje aparece aqui, sem perder nada. */
+  async function carregarReferenciasCliente(){
+    const cont = document.getElementById('painelReferencias');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
     const snap = await getDocs(collection(db,'referencias_cliente'));
     const minhas = []; snap.forEach(d => { if(d.data().cliente===clienteAtual.slug) minhas.push({id:d.id, ...d.data()}); });
     minhas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
 
     let html = `<div class="card">
-      <h2>Nova referência</h2>
-      <div class="sub" style="margin-bottom:10px;">Manda um link do Instagram, TikTok, Pinterest, YouTube ou uma imagem que você curtiu.</div>
-      <div class="field"><label>Link ou descrição</label><input type="text" id="novaIdeiaLink" placeholder="Cola o link aqui..."></div>
-      <div class="field" style="margin-top:8px;"><label>Observação (opcional)</label><textarea id="novaIdeiaObs" placeholder="Por que você gostou dessa ideia..."></textarea></div>
-      <button class="btn" onclick="enviarIdeiaCliente()">Adicionar ideia</button>
+      <h2><svg class="ic"><use href="#i-link"/></svg>Nova referência</h2>
+      <div class="sub" style="margin-bottom:10px;">Viu algo no Instagram ou em outra plataforma que combina com a sua marca? Guarda aqui — a gente usa como inspiração na estratégia.</div>
+      <div class="field"><label>Link da publicação</label><input type="text" id="novaRefLink" placeholder="https://instagram.com/p/..."></div>
+      <div class="field" style="margin-top:8px;"><label>Link da imagem de capa (opcional)</label><input type="text" id="novaRefCapa" placeholder="Cola o link de uma imagem, se tiver"></div>
+      <div class="field" style="margin-top:8px;"><label>Descrição da ideia</label><textarea id="novaRefDesc" placeholder="O que te chamou atenção nessa referência..."></textarea></div>
+      <div class="field" style="margin-top:8px;"><label>Observações (opcional)</label><textarea id="novaRefObs"></textarea></div>
+      <button class="btn" onclick="enviarReferenciaCliente()">Adicionar referência</button>
     </div>
-    <div class="card"><h2>Suas ideias enviadas</h2>`;
+    <div class="card"><h2>Suas referências</h2>`;
     html += minhas.length ? minhas.map(r => `
       <div class="item">
-        <a href="${esc(r.link)}" target="_blank" class="nome" style="color:var(--yellow);text-decoration:none;">${esc(r.link)}</a>
-        ${r.observacao ? '<div class="meta">'+esc(r.observacao)+'</div>' : ''}
-        <span class="selo ${IDEIA_STATUS_COR[r.status]||'roteiro'}">${IDEIA_STATUS_LABEL[r.status]||'Recebida'}</span>
+        ${r.imagemCapa ? '<img src="'+esc(r.imagemCapa)+'" alt="" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px;margin-bottom:8px;" onerror="this.style.display=\'none\'">' : ''}
+        ${r.link ? '<a href="'+esc(r.link)+'" target="_blank" class="nome" style="color:var(--yellow);text-decoration:none;word-break:break-all;">'+esc(r.link)+'</a>' : '<div class="nome">(sem link)</div>'}
+        ${r.descricao ? '<div class="meta" style="margin-top:4px;white-space:pre-wrap;">'+esc(r.descricao)+'</div>' : ''}
+        ${r.observacao || r.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(r.observacoes || r.observacao)+'</div>' : ''}
+        <div class="meta" style="margin-top:6px;opacity:.7;">${r.criadoEm ? dataBR(r.criadoEm) : ''}${r.criadoPor ? ' · '+esc(r.criadoPor) : ''}</div>
+        <div style="margin-top:8px;">
+          <span class="selo ${REF_STATUS_COR[r.status]||'roteiro'}">${REF_STATUS_LABEL[r.status]||'Não utilizada'}</span>
+          ${r.aprovadaCliente ? '<span class="selo publicado" style="margin-left:6px;">👍 Você aprovou</span>' : ''}
+        </div>
+        ${!r.aprovadaCliente ? '<div class="btn secondary" style="margin-top:10px;padding:9px;text-align:center;" onclick="aprovarReferenciaCliente(\''+r.id+'\')">👍 Aprovar essa referência</div>' : ''}
       </div>
-    `).join('') : '<div class="empty">Nenhuma ideia enviada ainda.</div>';
+    `).join('') : '<div class="empty">Nenhuma referência guardada ainda.</div>';
     html += '</div>';
     cont.innerHTML = html;
   }
+
+  window.enviarReferenciaCliente = async function(){
+    const link = document.getElementById('novaRefLink').value.trim();
+    const descricao = document.getElementById('novaRefDesc').value.trim();
+    if(!link && !descricao){ alert('Cola o link ou escreve a descrição.'); return; }
+    await addDoc(collection(db,'referencias_cliente'), {
+      cliente: clienteAtual.slug, clienteNome: clienteAtual.nome,
+      link, imagemCapa: document.getElementById('novaRefCapa').value.trim(),
+      descricao, observacoes: document.getElementById('novaRefObs').value.trim(),
+      status: 'nao_utilizada', aprovadaCliente: false,
+      criadoPor: clienteAtual.nome, criadoPorTipo: 'cliente', criadoEm: serverTimestamp()
+    });
+    await alertarEquipe('🔗 ' + clienteAtual.nome + ' mandou uma referência nova', link || descricao);
+    ['novaRefLink','novaRefCapa','novaRefDesc','novaRefObs'].forEach(id => document.getElementById(id).value = '');
+    carregarReferenciasCliente();
+  };
+
+  window.aprovarReferenciaCliente = async function(id){
+    await updateDoc(doc(db,'referencias_cliente', id), { aprovadaCliente: true, aprovadaClienteEm: new Date().toISOString() });
+    carregarReferenciasCliente();
+  };
 
   async function alertarEquipe(titulo, descricao){
     await addDoc(collection(db,'demandas'), {
@@ -711,16 +806,17 @@
   }
 
   window.enviarIdeiaCliente = async function(){
-    const link = document.getElementById('novaIdeiaLink').value.trim();
-    if(!link){ alert('Cola o link primeiro.'); return; }
-    const observacao = document.getElementById('novaIdeiaObs').value.trim();
-    await addDoc(collection(db,'referencias_cliente'), {
-      cliente: clienteAtual.slug, clienteNome: clienteAtual.nome, link, observacao,
-      status: 'recebida', criadoEm: serverTimestamp()
+    const titulo = document.getElementById('novaIdeiaTitulo').value.trim();
+    const descricao = document.getElementById('novaIdeiaDesc').value.trim();
+    if(!titulo){ alert('Escreve pelo menos um título pra ideia.'); return; }
+    await addDoc(collection(db,'ideias_cliente'), {
+      cliente: clienteAtual.slug, clienteNome: clienteAtual.nome,
+      titulo, descricao, observacoes: document.getElementById('novaIdeiaObs').value.trim(),
+      status: 'pendente', aprovadaAmanda: false,
+      criadoPor: clienteAtual.nome, criadoPorTipo: 'cliente', criadoEm: serverTimestamp()
     });
-    await alertarEquipe('💡 ' + clienteAtual.nome + ' mandou uma ideia nova', link);
-    document.getElementById('novaIdeiaLink').value = '';
-    document.getElementById('novaIdeiaObs').value = '';
+    await alertarEquipe('💡 ' + clienteAtual.nome + ' registrou uma ideia nova', titulo + (descricao ? ' — ' + descricao : ''));
+    ['novaIdeiaTitulo','novaIdeiaDesc','novaIdeiaObs'].forEach(id => document.getElementById(id).value = '');
     carregarIdeias();
   };
 

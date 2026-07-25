@@ -933,6 +933,7 @@
           <div><b id="nomeClienteFerramentasAberto"></b></div>
           <button class="btn" style="width:auto;" id="btnCopiarCalFerramentas" onclick="copiarLinkCalendarioFerramentasAtual()">⧉ Copiar link deste cliente</button>
         </div>
+        <div id="refsPerfilCliente"></div>
         <div class="iframeWrap" style="height:65vh;"><iframe id="iframeCalendarioFerramentas" src=""></iframe></div>
       </div>
     </div>
@@ -1091,17 +1092,13 @@
               <div class="gGrupoItens">
                 <div class="subtab active" data-sub="comando" onclick="setGerenciaSub('comando', this)">Central de Comando (tempo real)</div>
                 <div class="subtab" data-sub="demandasAguardando" onclick="setGerenciaSub('demandasAguardando', this)">🕓 Aguardando Aprovação</div>
-                <div class="subtab" data-sub="gravacoesDoDia" onclick="setGerenciaSub('gravacoesDoDia', this)">🎥 Gravações do Dia</div>
               </div>
             </div>
             <div class="gGrupo" data-grupo="producao">
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">🎬 Produção <span class="seta">▾</span></div>
               <div class="gGrupoItens">
-                <div class="subtab" data-sub="videos" onclick="setGerenciaSub('videos', this)">Distribuição de Vídeos</div>
-                <div class="subtab" data-sub="aprovarVideos" onclick="setGerenciaSub('aprovarVideos', this)">Aprovar Vídeos</div>
-                <div class="subtab" data-sub="lixeiraVideos" onclick="setGerenciaSub('lixeiraVideos', this)">🗑️ Lixeira de Vídeos</div>
+                <div class="subtab" data-sub="videosHub" onclick="setGerenciaSub('videosHub', this)">🎬 Vídeos (distribuir · aprovar · lixeira)</div>
                 <div class="subtab" data-sub="capsulaDetalhe" onclick="setGerenciaSub('capsulaDetalhe', this)">🥶 Protocolo Cápsula</div>
-                <div class="subtab" data-sub="minhasDemandasEnviadas" onclick="setGerenciaSub('minhasDemandasEnviadas', this)">📤 Demandas que Eu Enviei</div>
               </div>
             </div>
             <div class="gGrupo" data-grupo="clientes">
@@ -1153,6 +1150,7 @@
             </div>
           </div>
           <div class="gerenciaConteudo">
+            <div id="gerenciaVideosHub" style="display:none;"></div>
             <div id="gerenciaEquipeVisao" style="display:none;"></div>
             <div id="gerenciaDisciplinaDia" style="display:none;"></div>
             <div id="gerenciaDemandasAtrasadas" style="display:none;"></div>
@@ -1381,7 +1379,7 @@
           { id:"g_d_8", texto:"Sinalizar ajustes estratégicos necessários" }
         ]},
         { bloco: "Referências do Dia", itens: [
-          { id:"g_d_9", texto:"Adicionar pelo menos 5 referências novas do grupo do Instagram no Hub de Referências (cole os links aqui como prova)", critico:true }
+          { id:"g_d_9", texto:"Referências: manter cada cliente com pelo menos 2 dos 3 perfis da semana preenchidos (Calendários → calendário do cliente) e arquivar no Hub o que achar de bom", critico:true }
         ]}
       ]
     },
@@ -1609,12 +1607,23 @@
       const snapV = await getDocs(collection(db,'videos_producao'));
       let sem = 0; snapV.forEach(dd => { const v = dd.data(); if(!v.excluido && v.status === 'aguardando_edicao' && !v.editorAtribuido) sem++; });
       return sem === 0; } },
-    'g_d_9': { desc: 'referências novas do dia adicionadas no Hub', fn: async () => {
-      const hojeR = new Date().toISOString().slice(0,10);
-      const metaRef = (await obterConfigPainel()).refDiariaGabi || 5;
-      const snapR = await getDocs(collection(db,'referencias'));
-      let hj = 0; snapR.forEach(dd => { if(tsParaDia(dd.data().criadoEm) === hojeR) hj++; });
-      return hj >= metaRef; } }
+    'g_d_9': { desc: 'todos os clientes com pelo menos 2 perfis de referência nesta semana', fn: async () => {
+      // Antes media volume do dia (5 links quaisquer). Agora mede COBERTURA:
+      // só marca quando nenhum cliente está descoberto na semana.
+      const dRef = new Date();
+      dRef.setDate(dRef.getDate() - (dRef.getDay() === 0 ? 6 : dRef.getDay() - 1));
+      const semanaR = dRef.toISOString().slice(0,10);
+      const entregaDiretaR = await obterSlugsEntregaDireta();
+      const alvoR = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDiretaR.has(c.slug));
+      if(!alvoR.length) return false;
+      const snapP = await getDocs(collection(db,'refs_perfil_semana'));
+      const cobertosR = new Set();
+      snapP.forEach(dd => {
+        const r = dd.data();
+        if(r.semana !== semanaR) return;
+        if((r.slots||[]).filter(s => s && s.link && String(s.link).trim()).length >= 2) cobertosR.add(r.cliente);
+      });
+      return alvoR.every(c => cobertosR.has(c.slug)); } }
   };
 
   async function autoVerificarChecklist(){
@@ -7381,8 +7390,10 @@
 
   window.setGerenciaSub = function(qual, el){
     document.querySelectorAll('#conteudoGerencia .subtab').forEach(t=>t.classList.remove('active'));
-    el.classList.add('active');
-    const grupoPai = el.closest ? el.closest('.gGrupo') : null;
+    // el pode vir null: telas que saíram do menu (mas continuam existindo e
+    // acessíveis pelos atalhos do cockpit) não têm .subtab pra destacar.
+    if(el && el.classList) el.classList.add('active');
+    const grupoPai = (el && el.closest) ? el.closest('.gGrupo') : null;
     if(grupoPai && !grupoPai.classList.contains('aberto')) grupoPai.classList.add('aberto');
     document.getElementById('gerenciaAmanda').style.display = qual==='amanda' ? 'block' : 'none';
     document.getElementById('gerenciaVideos').style.display = qual==='videos' ? 'block' : 'none';
@@ -7406,6 +7417,7 @@
     document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaPainelTV').style.display = qual==='painelTV' ? 'block' : 'none';
     document.getElementById('gerenciaComando').style.display = qual==='comando' ? 'block' : 'none';
+    document.getElementById('gerenciaVideosHub').style.display = qual==='videosHub' ? 'block' : 'none';
     document.getElementById('gerenciaEquipeVisao').style.display = qual==='equipeVisao' ? 'block' : 'none';
     document.getElementById('gerenciaDisciplinaDia').style.display = qual==='disciplinaDia' ? 'block' : 'none';
     document.getElementById('gerenciaDemandasAtrasadas').style.display = qual==='demandasAtrasadas' ? 'block' : 'none';
@@ -7427,6 +7439,7 @@
     }
     if(qual==='comando') iniciarCentralComando();
     else pararCentralComando();
+    if(qual==='videosHub') renderVideosHub();
     if(qual==='equipeVisao') renderEquipeVisao();
     if(qual==='disciplinaDia') renderDisciplinaDia();
     if(qual==='demandasAtrasadas') renderDemandasAtrasadasDetalhe();
@@ -8853,7 +8866,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['videosHub','equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -9050,6 +9063,114 @@
     document.getElementById('nomeClienteFerramentasAberto').textContent = nome;
     document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + slug;
     document.getElementById('calendarioFerramentasAberto').style.display = 'block';
+    renderRefsPerfilCliente(slug, nome);
+  };
+
+  /* ===== REFERENCIAS DE PERFIL POR CLIENTE, POR SEMANA (24/07/2026) =====
+     DIAGNOSTICO que originou isso: a Gabi era cobrada todo dia por "5
+     referencias novas" — demanda automatica, item critico no checklist,
+     e-mail, escalonamento. Mesmo assim o sistema inteiro tinha 6
+     referencias no total, 4 delas SEM cliente definido, e NENHUMA jamais
+     usada num calendario. O lado que cobra existia; o lado que consome
+     nunca foi construido (ha ate um comentario no codigo admitindo que a
+     ligacao com o calendario ficou pra depois e nunca voltou).
+     Pedir volume solto pra um banco que nada esvazia nao se sustenta.
+
+     O que muda: a referencia deixa de ser cota diaria avulsa e passa a ser
+     COBERTURA POR CLIENTE, POR SEMANA — 3 espacos, pelo menos 2
+     preenchidos, e eles aparecem exatamente onde o trabalho acontece:
+     dentro do calendario daquele cliente, junto do banco de referencias
+     que ela ja arquivou pra ele no Hub. */
+  const SLOTS_REF_PERFIL = 3;
+  const MIN_REF_PERFIL = 2;
+
+  function semanaRefAtual(){
+    const d = new Date();
+    const dow = d.getDay();
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    return d.toISOString().slice(0,10);
+  }
+
+  window.renderRefsPerfilCliente = async function(slug, nome){
+    const cont = document.getElementById('refsPerfilCliente');
+    if(!cont) return;
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando referências desse cliente...</div></div>';
+    const semana = semanaRefAtual();
+
+    const [perfSnap, hubSnap, calSnap] = await Promise.all([
+      getDoc(doc(db,'refs_perfil_semana', slug + '_' + semana)),
+      getDocs(collection(db,'referencias')),
+      getDoc(doc(db,'calendarios', slug))
+    ]);
+
+    const slots = perfSnap.exists() ? (perfSnap.data().slots || []) : [];
+    const preenchidos = slots.filter(s => s && s.link && s.link.trim()).length;
+    const ok = preenchidos >= MIN_REF_PERFIL;
+
+    // banco do Hub desse cliente, marcando o que ja foi pro calendario
+    const usadas = new Set();
+    if(calSnap.exists()) (calSnap.data().items||[]).forEach(it => { if(it.ref) usadas.add(String(it.ref).trim()); });
+    const doCliente = [];
+    hubSnap.forEach(d => { const r = d.data(); if(!r.excluido && r.cliente === slug) doCliente.push({id:d.id, ...r}); });
+    const disponiveis = doCliente.filter(r => !usadas.has(String(r.link||'').trim()));
+
+    let html = `<div class="card" style="border:2px solid ${ok ? 'var(--green)' : 'var(--red)'};">
+      <h2>🔗 Perfis de referência da semana</h2>
+      <div class="desc">Pelo menos <b>${MIN_REF_PERFIL} dos ${SLOTS_REF_PERFIL}</b> precisam estar preenchidos pra esse cliente, toda semana. É daqui que sai a inspiração do calendário dele.</div>
+      <div class="meta" style="margin-top:6px;">Semana de ${formatarDataBR(semana)} · <b style="color:${ok?'var(--green)':'var(--red)'};">${preenchidos}/${SLOTS_REF_PERFIL} preenchido(s)${ok ? ' — ok' : ' — falta ' + (MIN_REF_PERFIL - preenchidos)}</b></div>`;
+
+    for(let i = 0; i < SLOTS_REF_PERFIL; i++){
+      const s = slots[i] || {};
+      const obrigatorio = i < MIN_REF_PERFIL;
+      html += `<div class="field" style="margin-top:10px;">
+        <label>Perfil ${i+1} ${obrigatorio ? '<span style="color:var(--red);">• obrigatório</span>' : '<span style="color:var(--muted);">(opcional)</span>'}</label>
+        <input type="text" id="refPerfilLink_${i}" value="${esc(s.link||'')}" placeholder="https://instagram.com/perfil">
+        <input type="text" id="refPerfilNota_${i}" value="${esc(s.nota||'')}" placeholder="O que aproveitar desse perfil..." style="margin-top:6px;">
+        ${s.link ? '<a href="'+esc(s.link)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:6px;padding:8px;font-size:11px;">↗ Abrir perfil</a>' : ''}
+      </div>`;
+    }
+    html += `<button class="btn" style="margin-top:12px;" onclick="salvarRefsPerfilCliente('${slug}', ${JSON.stringify(nome)})">Salvar perfis da semana</button>
+    </div>`;
+
+    // O LADO QUE FALTAVA: o banco pronto, na hora de montar o calendario
+    html += `<div class="card">
+      <h2>📚 Banco de referências desse cliente</h2>
+      <div class="desc">O que já foi arquivado no Hub pra ${esc(nome)} e ainda não entrou no calendário — é daqui que você puxa ideia de conteúdo.</div>`;
+    if(!doCliente.length){
+      html += '<div class="empty" style="margin-top:8px;">Nenhuma referência arquivada pra esse cliente ainda. Adiciona no Hub (menu → Referências) já escolhendo ele como destino.</div>';
+    } else {
+      html += `<div class="meta" style="margin-top:6px;">🟢 ${disponiveis.length} disponível(is) · ✅ ${doCliente.length - disponiveis.length} já no calendário</div>`;
+      html += (disponiveis.length ? disponiveis : doCliente).map(r => `<div class="item" style="margin-top:8px;border-left:3px solid ${usadas.has(String(r.link||'').trim())?'var(--green)':'var(--yellow)'};">
+        <a href="${esc(r.link)}" target="_blank" style="color:var(--yellow);font-weight:700;word-break:break-all;">${esc(r.link)}</a>
+        ${r.descricao ? '<div class="meta" style="margin-top:4px;">'+esc(r.descricao)+'</div>' : ''}
+        <div class="meta" style="margin-top:4px;">${esc(r.nicho||'—')}</div>
+      </div>`).join('');
+    }
+    html += `</div>`;
+
+    cont.innerHTML = html;
+  };
+
+  window.salvarRefsPerfilCliente = async function(slug, nome){
+    const semana = semanaRefAtual();
+    const slots = [];
+    for(let i = 0; i < SLOTS_REF_PERFIL; i++){
+      slots.push({
+        link: (document.getElementById('refPerfilLink_'+i)?.value || '').trim(),
+        nota: (document.getElementById('refPerfilNota_'+i)?.value || '').trim()
+      });
+    }
+    const preenchidos = slots.filter(s => s.link).length;
+    if(preenchidos < MIN_REF_PERFIL){
+      mostrarToast('Precisa de pelo menos ' + MIN_REF_PERFIL + ' perfis preenchidos — faltou ' + (MIN_REF_PERFIL - preenchidos) + '.', 'erro');
+      return;
+    }
+    await setDoc(doc(db,'refs_perfil_semana', slug + '_' + semana), {
+      cliente: slug, clienteNome: nome, semana, slots,
+      preenchidos, atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
+    }, { merge: true });
+    mostrarToast('Perfis da semana salvos pra ' + nome + '!');
+    renderRefsPerfilCliente(slug, nome);
   };
 
   window.copiarLinkCalendarioFerramentasAtual = function(){
@@ -9676,50 +9797,83 @@
     registrarLogAutomacao('distribuicao_diaria_amanda', '', semEditor.length + ' vídeo(s) esperando distribuição');
   }
 
-  /* ===== REFERÊNCIAS DIÁRIAS DA GABI — demanda que força (21/07/2026) =====
-     A meta de referências/dia existia só como item enterrado no checklist
-     (g_d_9) e passava batido. Agora vira uma DEMANDA de verdade, todo dia,
-     com prazo às 17h — aparece na lista dela, dispara e-mail e, se passar
-     das 17h sem cumprir, escala igual qualquer atraso. Fecha SOZINHA no
-     instante em que ela bate a meta do dia (mesma contagem do checklist),
-     então só incomoda enquanto não fez. A quantidade é a que a Amanda
-     definir no painel (config_painel.refDiariaGabi, padrão 5).
-     ⏸️ Ligação com o CALENDÁRIO (levar as refs pro calendário do cliente)
-     fica pra quando os calendários existirem dentro do site — NÃO ESQUECER. */
-  async function verificarDemandaReferenciasDiariaGabi(){
-    if(estaAusente('Gabrielle')) return; // de folga não cobra
-    const hojeStr = new Date().toISOString().slice(0,10);
-    const metaRef = (await obterConfigPainel()).refDiariaGabi || 5;
+  /* ===== COBERTURA SEMANAL DE REFERÊNCIAS POR CLIENTE (24/07/2026) =====
+     SUBSTITUI a antiga demanda de "5 referências por dia".
 
-    const refSnap = await getDocs(collection(db,'referencias'));
-    let feitasHoje = 0; refSnap.forEach(dd => { const r = dd.data(); if(!r.excluido && tsParaDia(r.criadoEm) === hojeStr) feitasHoje++; });
+     Por que trocamos: a regra antiga cobrava volume solto — 5 links por
+     dia, de qualquer cliente. Ela existia, estava ligada, criava demanda
+     todo dia, era item crítico do checklist, mandava e-mail e escalava.
+     Mesmo assim, o sistema inteiro acumulou 6 referências no total, 4 sem
+     cliente definido, e NENHUMA chegou a um calendário. Cobrar mais forte
+     a mesma coisa não ia mudar isso: o problema era a referência não ter
+     destino — e a meta poder ser batida sem cobrir cliente nenhum.
 
-    // acha a demanda diária de hoje (se já existir)
+     A regra nova mede o que a operação realmente usa: cada cliente com
+     calendário precisa ter, POR SEMANA, pelo menos 2 dos 3 perfis de
+     referência preenchidos (coleção refs_perfil_semana). A demanda lista
+     exatamente quais clientes estão descobertos, e fecha sozinha quando
+     todos estiverem cobertos. */
+  async function verificarCoberturaReferenciasSemanal(){
+    if(estaAusente('Gabrielle')) return;
+    const agora = new Date();
+    const d = new Date(agora);
+    d.setDate(d.getDate() - (d.getDay() === 0 ? 6 : d.getDay() - 1));
+    const semana = d.toISOString().slice(0,10);
+    const hojeStr = agora.toISOString().slice(0,10);
+
+    // só cobra clientes mensais de verdade (avulso/entrega direta não tem calendário nosso)
+    const entregaDireta = await obterSlugsEntregaDireta();
+    const alvo = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDireta.has(c.slug));
+    if(!alvo.length) return;
+
+    const snap = await getDocs(collection(db,'refs_perfil_semana'));
+    const cobertos = new Set();
+    snap.forEach(dd => {
+      const r = dd.data();
+      if(r.semana !== semana) return;
+      const n = (r.slots || []).filter(s => s && s.link && String(s.link).trim()).length;
+      if(n >= 2) cobertos.add(r.cliente);
+    });
+    const faltando = alvo.filter(c => !cobertos.has(c.slug));
+
     const demSnap = await getDocs(collection(db,'demandas'));
-    let demandaHoje = null;
-    demSnap.forEach(dd => { const d = dd.data(); if(d.tipoEspecial === 'ref_diaria' && d.prazoData === hojeStr && d.destinatario === 'Gabrielle' && !['aprovada','cancelada'].includes(d.status)) demandaHoje = { id: dd.id, ...d }; });
+    let demandaSemana = null;
+    demSnap.forEach(dd => {
+      const dem = dd.data();
+      if(dem.tipoEspecial === 'ref_semana' && dem.semanaRef === semana && dem.destinatario === 'Gabrielle' && !['aprovada','cancelada'].includes(dem.status)) demandaSemana = { id: dd.id, ...dem };
+    });
 
-    if(feitasHoje >= metaRef){
-      // bateu a meta — fecha a demanda do dia se ainda estiver aberta
-      if(demandaHoje){
-        await updateDoc(doc(db,'demandas', demandaHoje.id), { status:'aprovada', concluidoPor:'sistema (meta de referências batida)', concluidoEm: serverTimestamp(), notaConclusao: feitasHoje + ' referência(s) adicionada(s) hoje — meta de ' + metaRef + ' cumprida.' });
-        registrarLogAutomacao('ref_diaria_gabi_ok', demandaHoje.id, feitasHoje + '/' + metaRef + ' referências');
+    if(!faltando.length){
+      if(demandaSemana){
+        await updateDoc(doc(db,'demandas', demandaSemana.id), {
+          status:'aprovada', concluidoPor:'sistema (todos os clientes cobertos)', concluidoEm: serverTimestamp(),
+          notaConclusao: 'Todos os ' + alvo.length + ' clientes com pelo menos 2 perfis de referência nesta semana.'
+        });
+        registrarLogAutomacao('ref_semana_ok', demandaSemana.id, alvo.length + ' cliente(s) cobertos');
       }
       return;
     }
 
-    // ainda não bateu — garante que existe a demanda cobrando (cria 1x por dia)
-    if(!demandaHoje){
-      await addDoc(collection(db,'demandas'), {
-        titulo: '🔗 Subir ' + metaRef + ' referências novas hoje no Hub',
-        descricao: 'Função diária sua: adicionar pelo menos ' + metaRef + ' referências novas no Hub de Referências (Menu → Referências). Pra cada uma, cola o link, o nicho, uma descrição curta e — importante — JÁ ESCOLHE O CLIENTE DESTINO, pra a referência ir direto pro calendário dele como sugestão de conteúdo. Essa demanda fecha sozinha assim que você bate a meta do dia. Feitas até agora hoje: ' + feitasHoje + '/' + metaRef + '.',
-        origem: 'sistema', clienteNome: '', destinatario: 'Gabrielle',
-        tipoEspecial: 'ref_diaria',
-        prazoData: hojeStr, prazoHora: '17:00',
-        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-      });
-      registrarLogAutomacao('ref_diaria_gabi_criada', hojeStr, 'meta ' + metaRef + ', feitas ' + feitasHoje);
+    const nomes = faltando.map(c => c.nome).join(', ');
+    const descricao = 'Cada cliente precisa de pelo menos 2 dos 3 perfis de referência preenchidos por semana. Você preenche em Calendários → abrir o calendário do cliente → "Perfis de referência da semana". É de lá que sai a inspiração do calendário dele.\n\nFalta esta semana (' + faltando.length + '): ' + nomes + '.\n\nEssa demanda fecha sozinha quando todos estiverem cobertos.';
+
+    if(demandaSemana){
+      // atualiza a lista conforme ela vai cobrindo, em vez de criar outra
+      if(demandaSemana.descricao !== descricao){
+        await updateDoc(doc(db,'demandas', demandaSemana.id), { descricao, titulo: '🔗 Perfis de referência da semana — faltam ' + faltando.length + ' cliente(s)' });
+      }
+      return;
     }
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '🔗 Perfis de referência da semana — faltam ' + faltando.length + ' cliente(s)',
+      descricao,
+      origem: 'sistema', clienteNome: '', destinatario: 'Gabrielle',
+      tipoEspecial: 'ref_semana', semanaRef: semana,
+      prazoData: hojeStr, prazoHora: '17:00',
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+    registrarLogAutomacao('ref_semana_criada', semana, faltando.length + ' cliente(s) sem cobertura');
   }
 
   /* ===== LEMBRETE DE FIM DE DIA — 17h pras meninas (21/07/2026) =====
@@ -10239,7 +10393,7 @@
       { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
       { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
-      { nome: 'refDiariaGabi', fn: verificarDemandaReferenciasDiariaGabi },
+      { nome: 'coberturaRefsSemanal', fn: verificarCoberturaReferenciasSemanal },
       { nome: 'lembreteFimDoDia17h', fn: verificarLembreteFimDoDia17h },
       { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
     ];
@@ -11109,6 +11263,44 @@
      seria trair a promessa que a propria tela faz. Se a gestao precisar
      desse dado algum dia, o certo e mudar a promessa na cara do time,
      nao burlar por aqui. */
+  /* ===== HUB DE VIDEOS (faxina da Gerência — 24/07/2026) =====
+     "Distribuição de Vídeos", "Aprovar Vídeos" e "Lixeira" eram três
+     entradas de menu pro mesmo objeto em três estados. Viraram uma só,
+     com um seletor interno. As três telas continuam existindo intactas —
+     inclusive acessíveis direto pelos cartões do cockpit, que apontam pra
+     elas por nome (navegarGerenciaSub). */
+  window.setVideosHubSub = function(qual){
+    window.__videosHubSub = qual;
+    renderVideosHub();
+  };
+
+  window.renderVideosHub = function(){
+    const cont = document.getElementById('gerenciaVideosHub');
+    if(!cont) return;
+    const sub = window.__videosHubSub || 'videos';
+    const btn = (chave, rotulo) => `<button class="btn ${sub===chave?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setVideosHubSub('${chave}')">${rotulo}</button>`;
+    cont.innerHTML = `<div class="card">
+      <h2>🎬 Vídeos</h2>
+      <div class="desc">O mesmo vídeo em três momentos: distribuir pro editor, aprovar, e o que foi descartado.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        ${btn('videos','📦 Distribuição')}${btn('aprovarVideos','✅ Aprovar')}${btn('lixeiraVideos','🗑️ Lixeira')}
+      </div>
+    </div>`;
+    /* IMPORTANTE: as três telas NÃO são movidas de lugar no DOM — só têm a
+       visibilidade alternada onde já estão. Mover os elementos pra dentro
+       do hub faria os atalhos diretos do cockpit (que abrem 'videos',
+       'aprovarVideos' e 'lixeiraVideos' sem passar por aqui) mostrarem uma
+       tela dentro de um container escondido — ou seja, clique sem efeito. */
+    const mapa = { videos:'gerenciaVideos', aprovarVideos:'gerenciaAprovarVideos', lixeiraVideos:'gerenciaLixeiraVideos' };
+    Object.entries(mapa).forEach(([chave, id]) => {
+      const el = document.getElementById(id);
+      if(el) el.style.display = (chave === sub) ? 'block' : 'none';
+    });
+    if(sub==='videos') renderGerenciaVideos();
+    if(sub==='aprovarVideos') renderAprovacaoVideos();
+    if(sub==='lixeiraVideos') renderLixeiraVideos();
+  };
+
   window.renderEquipeVisao = async function(){
     const cont = document.getElementById('gerenciaEquipeVisao');
     if(!cont) return;
@@ -12451,7 +12643,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
   window.navegarGerenciaSub = function(chave){
     const el = document.querySelector('#conteudoGerencia .subtab[data-sub="' + chave + '"]');
-    if(el) setGerenciaSub(chave, el);
+    // Se a aba não está mais no menu (foi enxugada), abre assim mesmo —
+    // antes isso simplesmente não fazia nada, sem erro nenhum na tela.
+    setGerenciaSub(chave, el || null);
   };
 
   window.toggleComandoSecao = function(chave){

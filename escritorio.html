@@ -9693,10 +9693,88 @@
      conteúdo com os 3 elementos obrigatórios (o quê, prazo, link direto) e
      dispara via EmailJS. Tem throttle de 2h por item — se a mesma pessoa
      já recebeu e-mail sobre o MESMO item recentemente, não manda de novo. */
+  /* ===== DIGEST DE E-MAILS (24/07/2026) =====
+     DIAGNOSTICO que originou isso: em 7 dias o sistema tentou 674 envios —
+     604 entregues e 70 falhados. A causa das falhas nao era bug: era a
+     COTA MENSAL do EmailJS estourada ("Monthly request quota exceeded").
+     86 e-mails por dia pra uma equipe de 9 pessoas — quase 10 por pessoa,
+     todo dia. Alem do custo, isso e ruido: quem recebe 10 e-mails/dia do
+     sistema para de ler todos, e a cobranca automatica perde efeito (foi
+     exatamente o que aconteceu com as referencias da Gabi).
+
+     Solucao: quase tudo passa a ser ENFILEIRADO e sai como UM e-mail por
+     pessoa a cada janela de horas, com tudo junto. Só o que perde valor se
+     atrasar continua saindo na hora (ver EMAILS_IMEDIATOS).
+
+     Os ~20 pontos do codigo que chamam dispararEmailIndividual nao mudaram:
+     o nome antigo agora e o despachante, e a funcao de envio real virou
+     dispararEmailAgora. */
+  const EMAILS_IMEDIATOS = ['video_correcao', 'pagamento_extra_novo'];
+  const DIGEST_JANELA_HORAS = 3;
+
   async function dispararEmailIndividual(destinatarioNome, tipo, dados){
+    if(EMAILS_IMEDIATOS.includes(tipo)) return dispararEmailAgora(destinatarioNome, tipo, dados);
+    return enfileirarEmailDigest(destinatarioNome, tipo, dados);
+  }
+
+  /* Enfileira um aviso pra sair no proximo digest da pessoa. Mantem o mesmo
+     throttle por item que ja existia — nao adianta a mesma pendencia entrar
+     tres vezes na mesma fila. */
+  async function enfileirarEmailDigest(destinatarioNome, tipo, dados){
+    try{
+      const chaveThrottle = destinatarioNome + '_' + (dados.colecao||'geral') + '_' + (dados.itemId||'x') + '_' + tipo;
+      const throttleRef = doc(db, 'email_throttle', chaveThrottle);
+      const throttleSnap = await getDoc(throttleRef);
+      if(throttleSnap.exists()){
+        const ultimaMs = throttleSnap.data().enviadoEm?.seconds ? throttleSnap.data().enviadoEm.seconds * 1000 : 0;
+        if(Date.now() - ultimaMs < 2 * 60 * 60000) return;
+      }
+      await setDoc(throttleRef, { enviadoEm: serverTimestamp() });
+      await addDoc(collection(db, 'fila_emails'), {
+        destinatario: destinatarioNome, tipo,
+        titulo: dados.titulo || '', prazoData: dados.prazoData || '', prazoHora: dados.prazoHora || '',
+        itemId: dados.itemId || '', colecao: dados.colecao || '',
+        criadoEm: serverTimestamp(), enviado: false
+      });
+    }catch(e){ console.error('Falha ao enfileirar e-mail:', e); }
+  }
+
+  /* Junta a fila de cada pessoa num e-mail so. Roda no motor. */
+  async function enviarDigestsPendentes(){
+    try{
+      const snap = await getDocs(collection(db,'fila_emails'));
+      const porPessoa = {};
+      snap.forEach(d => {
+        const f = d.data();
+        if(f.enviado) return;
+        (porPessoa[f.destinatario] = porPessoa[f.destinatario] || []).push({ id: d.id, ...f });
+      });
+      for(const pessoa of Object.keys(porPessoa)){
+        const itens = porPessoa[pessoa];
+        if(!itens.length) continue;
+        const marcaRef = doc(db,'email_digest_controle', pessoa);
+        const marcaSnap = await getDoc(marcaRef);
+        if(marcaSnap.exists()){
+          const ultimaMs = marcaSnap.data().enviadoEm?.seconds ? marcaSnap.data().enviadoEm.seconds*1000 : 0;
+          if(Date.now() - ultimaMs < DIGEST_JANELA_HORAS * 3600000) continue; // ainda dentro da janela
+        }
+        const linhas = itens.slice(0, 25).map(i => '• ' + (i.titulo || i.tipo) + (i.prazoData ? ' (prazo ' + formatarDataBR(i.prazoData) + ')' : ''));
+        const resto = itens.length > 25 ? '\n…e mais ' + (itens.length - 25) + ' item(ns).' : '';
+        const corpo = itens.length + ' aviso(s) do sistema pra você:\n\n' + linhas.join('\n') + resto;
+        const ok = await dispararEmailAgora(pessoa, 'digest', { titulo: corpo, itemId: 'digest_' + Date.now(), colecao: 'fila_emails' }, true);
+        if(ok){
+          await setDoc(marcaRef, { enviadoEm: serverTimestamp(), quantidade: itens.length });
+          for(const i of itens){ await updateDoc(doc(db,'fila_emails', i.id), { enviado: true, enviadoEm: new Date().toISOString() }); }
+          registrarLogAutomacao('digest_enviado', pessoa, itens.length + ' aviso(s) num e-mail só');
+        }
+      }
+    }catch(e){ console.error('Falha ao enviar digests:', e); }
+  }
+
+  async function dispararEmailAgora(destinatarioNome, tipo, dados, pularThrottle){
     if(!EMAILJS_CONFIGURADO){
       console.warn('Fase 11: EmailJS ainda não configurado — e-mail não enviado (ver Gerência → E-mails da Equipe). Destinatário seria: ' + destinatarioNome);
-      return;
+      return false;
     }
     // Inicialização sob demanda — se o CDN principal foi bloqueado no
     // carregamento da página, o CDN alternativo pode ter terminado de
@@ -9707,7 +9785,7 @@
     if(!emailjsInicializado){
       if(typeof emailjs === 'undefined'){
         console.warn('Fase 11: SDK do EmailJS ainda não carregou (CDN bloqueado ou lento) — e-mail não enviado dessa vez. Vai tentar de novo na próxima automação.');
-        return;
+        return false;
       }
       emailjs.init(EMAILJS_PUBLIC_KEY);
       emailjsInicializado = true;
@@ -9715,7 +9793,7 @@
     try{
       const emailSnap = await getDoc(doc(db, 'emails_equipe', destinatarioNome));
       if(!emailSnap.exists() || !emailSnap.data().email){
-        return; // sem e-mail cadastrado pra essa pessoa, não tem como enviar
+        return false; // sem e-mail cadastrado pra essa pessoa, não tem como enviar
       }
       const email = emailSnap.data().email;
 
@@ -9725,10 +9803,12 @@
       // pelo throttle do primeiro — corrigido aqui.)
       const chaveThrottle = destinatarioNome + '_' + (dados.colecao||'geral') + '_' + (dados.itemId||'x') + '_' + tipo;
       const throttleRef = doc(db, 'email_throttle', chaveThrottle);
-      const throttleSnap = await getDoc(throttleRef);
-      if(throttleSnap.exists()){
-        const ultimaMs = throttleSnap.data().enviadoEm?.seconds ? throttleSnap.data().enviadoEm.seconds * 1000 : 0;
-        if(Date.now() - ultimaMs < 2 * 60 * 60000) return; // já mandou sobre isso há pouco
+      if(!pularThrottle){
+        const throttleSnap = await getDoc(throttleRef);
+        if(throttleSnap.exists()){
+          const ultimaMs = throttleSnap.data().enviadoEm?.seconds ? throttleSnap.data().enviadoEm.seconds * 1000 : 0;
+          if(Date.now() - ultimaMs < 2 * 60 * 60000) return false; // já mandou sobre isso há pouco
+        }
       }
 
       const prazoTexto = dados.prazoData ? formatarDataBR(dados.prazoData) + ' às ' + (dados.prazoHora||'19:00') : 'sem prazo definido';
@@ -9739,8 +9819,9 @@
         titulo: dados.titulo || '', prazo: prazoTexto, link: linkView, tipo_aviso: tipo
       });
 
-      await setDoc(throttleRef, { enviadoEm: serverTimestamp() });
+      if(!pularThrottle) await setDoc(throttleRef, { enviadoEm: serverTimestamp() });
       registrarLogAutomacao('email_enviado', dados.itemId || '', tipo + ' pra ' + destinatarioNome);
+      return true;
     }catch(e){
       console.error('Fase 11: falha ao disparar e-mail individual pra ' + destinatarioNome + ':', e);
       // DIAGNÓSTICO 20/07/2026: descobrimos que TODO envio falhava com
@@ -9748,6 +9829,7 @@
       // console. Agora toda falha vira registro no log de automações — se
       // e-mail parar de sair de novo, aparece na cara, com o erro exato.
       try{ registrarLogAutomacao('email_FALHOU', dados.itemId || '', tipo + ' pra ' + destinatarioNome + ' — ' + ((e && (e.text || e.message)) || 'erro desconhecido').slice(0,140)); }catch(e2){}
+      return false;
     }
   }
 
@@ -10398,6 +10480,7 @@
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
       { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
       { nome: 'coberturaRefsSemanal', fn: verificarCoberturaReferenciasSemanal },
+      { nome: 'digestsDeEmail', fn: enviarDigestsPendentes },
       { nome: 'lembreteFimDoDia17h', fn: verificarLembreteFimDoDia17h },
       { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
     ];

@@ -5854,9 +5854,68 @@
     box.innerHTML = html;
   }
 
+  /* ===== VARREDURA DE CLIENTES SEM TIPO DEFINIDO (25/07/2026) =====
+     Enquanto o formulario publico nao gravava o tipo de entrega, todo lead
+     que preencheu virou "cliente" sem tipo — e o sistema trata ausencia de
+     tipo como MENSALISTA. Consequencia: Protocolo Capsula, Conteudo Ate
+     Quando, cobertura de referencias e saude de clientes passaram a cobrar
+     coisas de quem nunca fechou contrato.
+     A origem ja foi corrigida. Isto aqui limpa o que ficou pra tras: lista
+     quem esta sem tipo e deixa VOCE decidir um a um. Nao decide sozinho de
+     proposito — "avulso" e "mensalista" e uma informacao comercial que so
+     quem negociou sabe. */
+  window.corrigirTipoCliente = async function(slug, nome, tipo){
+    const rotulo = tipo === 'entrega_direta' ? 'avulso / entrega direta' : 'mensalista (postagem completa)';
+    if(!confirm('Marcar "' + nome + '" como ' + rotulo + '?')) return;
+    await setDoc(doc(db,'clientes_config', slug), {
+      tipoEntrega: tipo, atualizadoPor: (usuarioAtual||'?') + ' (varredura de clientes sem tipo)', atualizadoEm: serverTimestamp()
+    }, { merge: true });
+    registrarLogAutomacao('tipo_cliente_definido', slug, nome + ' → ' + tipo);
+    mostrarToast(nome + ' agora é ' + rotulo + '.');
+    renderClientesExtras();
+  };
+
   async function renderClientesExtras(){
     const cont = document.getElementById('gerenciaClientesExtras');
-    let html = `<div class="card">
+    cont.innerHTML = '<div class="card"><div class="desc">Conferindo os clientes...</div></div>';
+
+    // quem esta em CLIENTES_LISTA mas nao tem tipo definido em clientes_config
+    const cfgSnap = await getDocs(collection(db,'clientes_config'));
+    const comTipo = new Set();
+    cfgSnap.forEach(d => { if(d.data().tipoEntrega) comTipo.add(d.id); });
+    const semTipo = CLIENTES_LISTA.filter(cl => !comTipo.has(cl.slug));
+
+    // cruza com os leads pra dar contexto na hora de decidir
+    const leadSnap = await getDocs(collection(db,'leads_avulsos'));
+    const slugsDeLead = {};
+    leadSnap.forEach(d => {
+      const l = d.data();
+      const s = (l.nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+      if(s) slugsDeLead[s] = l.status || 'novo';
+    });
+
+    let html = '';
+    if(semTipo.length){
+      html += `<div class="card" style="border:2px solid var(--red);">
+        <h2>⚠️ ${semTipo.length} cliente(s) sem tipo definido</h2>
+        <div class="desc">Sem tipo, o sistema trata como <b>mensalista</b> — e passa a cobrar Protocolo Cápsula, conteúdo agendado e referências de quem talvez nunca tenha fechado contrato. Define cada um abaixo. Quem veio do formulário do site quase sempre é avulso.</div>
+      </div>`;
+      html += semTipo.map(cl => {
+        const statusLead = slugsDeLead[cl.slug];
+        return `<div class="item" style="border-left:3px solid var(--red);">
+          <div class="top"><div class="nome">${esc(cl.nome)}</div>${statusLead ? '<span class="selo cliente">veio do site · lead ' + esc(statusLead) + '</span>' : '<span class="selo pendente">origem manual</span>'}</div>
+          <div class="meta" style="margin-top:4px;">Hoje o sistema o trata como mensalista, por falta de definição.</div>
+          <div class="btnrow" style="margin-top:8px;">
+            <button class="btn secondary" style="font-size:11px;" onclick="corrigirTipoCliente('${cl.slug}', ${JSON.stringify(cl.nome)}, 'entrega_direta')">📦 É avulso / entrega direta</button>
+            <button class="btn" style="font-size:11px;" onclick="corrigirTipoCliente('${cl.slug}', ${JSON.stringify(cl.nome)}, 'postagem_completa')">📲 É mensalista</button>
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      html += `<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Todo cliente tem tipo definido — nenhuma automação cobrando quem não deve.</div></div>`;
+    }
+
+    html += `<div class="card">
       <h2>Cadastrar cliente avulso/extra</h2>
       <div class="desc">Pra clientes fora do banco fixo (trabalho pontual, "frio") que precisam aparecer nos formulários de gravação, vídeo e agendamento.</div>
       <div class="field"><label>Nome do cliente</label><input type="text" id="extraNome" placeholder="Ex: Escolinha do Bairro"></div>
@@ -12131,6 +12190,27 @@
     document.getElementById('overlayView').classList.add('show');
   };
 
+  /* ===== RESUMO PRA PROPOSTA (25/07/2026) =====
+     Antes o resumo listava so o NOME do pacote — por isso "pacote de foto
+     escolhido" chegava sem especificar nada. As specs sempre existiram no
+     catalogo do formulario; nunca eram carregadas junto. Agora o lead
+     guarda pacotesDetalhe (nome + descricao + specs) e o resumo abre tudo.
+     Leads antigos, sem esse campo, caem no nome como antes. */
+  function blocoPacotesLead(l){
+    const det = l.pacotesDetalhe;
+    if(det && det.length){
+      return det.map(p => '• ' + p.nome + (p.desc ? '\n     ' + p.desc : '') +
+        ((p.specs && p.specs.length) ? '\n' + p.specs.map(s=>'     - '+s).join('\n') : '')).join('\n');
+    }
+    const nomes = (l.pacotesNomes && l.pacotesNomes.length) ? l.pacotesNomes : (l.pacoteNome ? [l.pacoteNome] : []);
+    return nomes.length ? nomes.map(n=>'• '+n).join('\n') + '\n     (pedido antigo — sem detalhamento gravado)' : '• Nenhum pacote selecionado';
+  }
+
+  function blocoFaltaPerguntar(pares){
+    const faltando = pares.filter(([,v]) => !v || (Array.isArray(v) && !v.length) || String(v).trim()==='' || String(v).trim()==='—').map(([r])=>r);
+    return faltando.length ? faltando.map(f=>'• '+f).join('\n') : 'Nada — o cliente preencheu tudo.';
+  }
+
   window.copiarResumoLead = function(id){
     const l = __leadsAvulsosCache.find(x=>x.id===id);
     if(!l) return;
@@ -12141,17 +12221,33 @@ Momentos importantes: ${(l.eventoMomentos||[]).length ? l.eventoMomentos.map(m=>
 Vídeos desejados no evento (aprox.): ${l.eventoQtdVideos||'—'} · Drone: ${l.eventoDrone==='sim'?'sim':'não'}
 Foco de publicação: ${(l.eventoFoco||[]).join(', ')||'—'}
 ` : '';
-    const texto = `LEAD ${l.eventoAtivo?'EVENTO':'AVULSO'} — ${l.nome}
-Contato: ${l.whatsapp||'—'}${l.instagram ? ' · '+l.instagram : ''}
-Segmento: ${l.segmento||'—'}
-${blocoEvento}Ideia livre: ${l.ideiaLivre||'—'}
-Quer: ${(l.pacotesNomes&&l.pacotesNomes.length)?l.pacotesNomes.join(' + '):(l.pacoteNome||'—')}
-Estilos e quantidades: ${(l.estilosDetalhe&&l.estilosDetalhe.length)?l.estilosDetalhe.map(e=>e.nome+' x'+e.qtd).join(', '):((l.estilosNomes||[]).join(', ')||'—')}${l.totalVideos!=null?' (total '+l.totalVideos+' vídeo(s), '+(l.descontoAplicado||0)+'% OFF automático)':''}
-Referências enviadas:
-${(l.referencias||[]).length ? l.referencias.map(r=>' - '+r).join('\n') : ' - nenhuma'}
-Data desejada: ${l.dataDesejada ? formatarDataBR(l.dataDesejada) : 'não informou'} (urgente: ${l.urgencia==='urgente'?'sim':'não'})
+    const texto = `═══ PEDIDO ${l.eventoAtivo?'DE EVENTO':'AVULSO'} ═══
+Cliente: ${l.nome}
+WhatsApp: ${l.whatsapp||'não informado'}
+Instagram: ${l.instagram||'não informado'}
+Segmento: ${l.segmento||'não informado'}
+${blocoEvento}
+─── VÍDEOS PEDIDOS ───
+${(l.estilosDetalhe&&l.estilosDetalhe.length)?l.estilosDetalhe.map(e=>'• '+e.nome+' — '+e.qtd+' vídeo(s)').join('\n'):((l.estilosNomes||[]).map(n=>'• '+n).join('\n')||'• Nenhum estilo avulso selecionado')}
+TOTAL: ${l.totalVideos!=null? l.totalVideos+' vídeo(s)'+(l.descontoAplicado?'  |  desconto automático de '+l.descontoAplicado+'%':'  |  sem faixa de desconto') : 'não informado'}
+
+─── PACOTES ESCOLHIDOS ───
+${blocoPacotesLead(l)}
+
+─── PRAZO ───
+Data desejada: ${l.dataDesejada ? formatarDataBR(l.dataDesejada) : 'não informada'}
+Urgência: ${l.urgencia==='urgente'?'⚠️ URGENTE':'sem pressa'}
 Orçamento mencionado: ${l.orcamento||'não informou'}
-Observações do cliente: ${l.observacoes||'—'}`;
+
+─── NAS PALAVRAS DO CLIENTE ───
+Ideia livre: ${l.ideiaLivre||'(não escreveu)'}
+Observações: ${l.observacoes||'(não escreveu)'}
+
+─── REFERÊNCIAS ───
+${(l.referencias||[]).length ? l.referencias.map(r=>'• '+r).join('\n') : '• Nenhuma enviada'}
+
+─── ⚠️ FALTA PERGUNTAR ───
+${blocoFaltaPerguntar([['Instagram',l.instagram],['Segmento do negócio',l.segmento],['Data desejada',l.dataDesejada],['Referências visuais',l.referencias],['Ideia do que quer',l.ideiaLivre],['Observações',l.observacoes],['Estilos de vídeo',l.estilosDetalhe],['Pacotes',l.pacotesNomes]])}`;
     navigator.clipboard.writeText(texto).then(()=>{
       mostrarToast('Resumo copiado! Já pode colar na conversa da Proposta Comercial 2.');
     }).catch(()=>{

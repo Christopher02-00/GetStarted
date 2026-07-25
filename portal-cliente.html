@@ -970,7 +970,7 @@
       producao:'Serviço em andamento', entregue:'Serviço entregue', perdido:'Pedido encerrado' };
 
     let html = '';
-    negocios.forEach(n => {
+    for(const n of negocios){
       const est = n.estagio || 'recebido';
       const venceu = n.propostaValidade && n.propostaValidade < new Date().toISOString().slice(0,10);
       html += `<div class="card">
@@ -1001,8 +1001,20 @@
           <div class="meta" style="margin-top:10px;opacity:.8;">Assim que a gente conferir o pagamento, seu serviço entra em produção e você acompanha por aqui.</div>`;
       }
       else if(est === 'producao'){
-        html += `<div class="sub" style="margin-bottom:10px;">Pagamento confirmado e produção rolando. Acompanha o andamento nas abas de <b>Calendário</b>, <b>Status dos Vídeos</b> e <b>Minha Agenda</b>.</div>
-          <div class="item"><div class="nome">🎬 Em produção</div><div class="meta" style="margin-top:4px;">Nossa equipe já está trabalhando no seu material.</div></div>`;
+        /* ===== ANDAMENTO POR ETAPAS (Onda 5 — 25/07/2026) =====
+           As etapas nao sao digitadas por ninguem: sao deduzidas do que ja
+           existe na producao (agendamentos e videos_producao). Assim o
+           cliente ve a verdade do sistema, e nao um status que alguem
+           precisa lembrar de atualizar — que seria mais um buraco de
+           automacao dos que viemos fechando. */
+        const etapas = await calcularEtapasProducao();
+        html += `<div class="sub" style="margin-bottom:12px;">Pagamento confirmado e produção rolando. Aqui em que pé está:</div>`;
+        html += etapas.map(e => `
+          <div class="item" style="border-left:3px solid ${e.estado==='feito'?'var(--green)':e.estado==='agora'?'var(--yellow)':'var(--line)'};${e.estado==='futuro'?'opacity:.5;':''}">
+            <div class="nome">${e.estado==='feito'?'✅':e.estado==='agora'?e.icone:'⬜'} ${esc(e.nome)}</div>
+            <div class="meta" style="margin-top:4px;">${esc(e.detalhe)}</div>
+          </div>`).join('');
+        html += `<div class="meta" style="margin-top:12px;opacity:.8;">O detalhe de cada vídeo está em <b>Status dos Vídeos</b>, e as datas em <b>Calendário</b> e <b>Minha Agenda</b>.</div>`;
       }
       else if(est === 'entregue'){
         html += `<div class="sub" style="margin-bottom:0;">Serviço concluído! Tudo que produzimos pra você fica guardado nas outras abas do portal.</div>`;
@@ -1011,8 +1023,42 @@
         html += `<div class="sub" style="margin-bottom:0;">Esse pedido foi encerrado. Se quiser retomar, é só chamar a gente.</div>`;
       }
       html += `</div>`;
-    });
+    }
     cont.innerHTML = html;
+  }
+
+  /* Le a producao real do cliente e devolve as 5 etapas com o estado de
+     cada uma. Nenhum campo novo, nenhum passo manual: se a gravacao foi
+     agendada, a etapa acende; se o video existe, a proxima acende. */
+  async function calcularEtapasProducao(){
+    const [agSnap, vidSnap, postSnap] = await Promise.all([
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'videos_producao')),
+      getDocs(collection(db,'postagens'))
+    ]);
+    const meusAg = []; agSnap.forEach(d => { const a=d.data(); if(a.cliente===clienteAtual.slug && a.status!=='cancelado') meusAg.push(a); });
+    const meusVid = []; vidSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido) meusVid.push(v); });
+    const minhasPost = []; postSnap.forEach(d => { const p=d.data(); if(p.cliente===clienteAtual.slug) minhasPost.push(p); });
+
+    const gravadas = meusAg.filter(a => a.status === 'realizado');
+    const emEdicao = meusVid.filter(v => ['aguardando_edicao','correcao'].includes(v.status));
+    const aguardandoVoce = meusVid.filter(v => v.status === 'aguardando_cliente');
+    const entregues = meusVid.filter(v => ['aprovado','finalizado'].includes(v.status));
+    const postados = minhasPost.filter(p => p.status === 'postado');
+
+    const st = (feito, agora) => feito ? 'feito' : (agora ? 'agora' : 'futuro');
+    return [
+      { nome:'Gravação agendada', icone:'📅', estado: st(meusAg.length>0, false),
+        detalhe: meusAg.length ? meusAg.length + ' gravação(ões) na agenda' : 'Ainda vamos marcar com você' },
+      { nome:'Gravado', icone:'🎥', estado: st(gravadas.length>0, meusAg.length>0 && !gravadas.length),
+        detalhe: gravadas.length ? gravadas.length + ' gravação(ões) já realizada(s)' : 'Aguardando o dia da gravação' },
+      { nome:'Em edição', icone:'✂️', estado: st(meusVid.length>0 && !emEdicao.length, emEdicao.length>0),
+        detalhe: emEdicao.length ? emEdicao.length + ' vídeo(s) sendo editado(s) agora' : (meusVid.length ? 'Edição concluída' : 'Começa depois da gravação') },
+      { nome:'Sua aprovação', icone:'👀', estado: st(entregues.length>0 && !aguardandoVoce.length, aguardandoVoce.length>0),
+        detalhe: aguardandoVoce.length ? aguardandoVoce.length + ' vídeo(s) esperando você aprovar' : (entregues.length ? 'Tudo aprovado' : 'Assim que a edição terminar') },
+      { nome:'Entregue', icone:'📦', estado: st(entregues.length>0 && !emEdicao.length && !aguardandoVoce.length, entregues.length>0),
+        detalhe: entregues.length ? entregues.length + ' vídeo(s) entregue(s)' + (postados.length ? ' · ' + postados.length + ' já publicado(s)' : '') : 'Última etapa' }
+    ];
   }
 
   window.responderProposta = async function(id, resposta){

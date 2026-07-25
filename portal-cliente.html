@@ -123,6 +123,7 @@
       <div class="tab" data-tab="ideias" onclick="setTab('ideias', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-bulb"/></svg>Banco de Ideias</div>
       <div class="tab" data-tab="stories" onclick="setTab('stories', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-image"/></svg>Stories</div>
       <div class="tab" data-tab="atas" onclick="setTab('atas', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-pen"/></svg>Atas de Reunião</div>
+      <div class="tab" data-tab="pagamento" onclick="setTab('pagamento', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;">💳 Pagamento</div>
       <div class="tab" data-tab="proposta" onclick="setTab('proposta', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;">📄 Sua Proposta</div>
       <div class="tab" data-tab="referencias" onclick="setTab('referencias', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-link"/></svg>Referências</div>
       <div class="tab" data-tab="briefing" onclick="setTab('briefing', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-clipboard"/></svg>Briefing</div>
@@ -142,6 +143,7 @@
     <div id="painelBriefing" style="display:none;"></div>
     <div id="painelReferencias" style="display:none;"></div>
     <div id="painelProposta" style="display:none;"></div>
+    <div id="painelPagamento" style="display:none;"></div>
   </div>
 </div>
 
@@ -205,6 +207,7 @@
     document.getElementById('telaSelecao').style.display = 'none';
     document.getElementById('telaPortal').style.display = 'block';
     document.getElementById('nomeClientePortal').innerHTML = esc(clienteAtual.nome);
+    mostrarLembretePagamento();   // faixa suave, so a partir de 1 dia antes do vencimento
 
     if(ehSoEdicao()){
       // Esconde o que não existe no plano só-edição
@@ -254,14 +257,15 @@
   window.setTab = function(nome, el){
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    if(['videos','minhaAgenda','ideias','stories','atas','info','briefing','referencias','proposta'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
-    ['Calendario','Acompanhamento','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info','Briefing','Referencias','Proposta'].forEach(p => {
+    if(['videos','minhaAgenda','ideias','stories','atas','info','briefing','referencias','proposta','pagamento'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
+    ['Calendario','Acompanhamento','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info','Briefing','Referencias','Proposta','Pagamento'].forEach(p => {
       document.getElementById('painel'+p).style.display = (p.toLowerCase()===nome.toLowerCase()) ? 'block' : 'none';
     });
     if(nome==='minhaAgenda') carregarMinhaAgenda();
     if(nome==='briefing') carregarBriefingCliente();
     if(nome==='referencias') carregarReferenciasCliente();
     if(nome==='proposta') carregarPropostaCliente();
+    if(nome==='pagamento') carregarPagamentoCliente();
   };
 
   /* ===== BRIEFING NO PORTAL (Onda 1 — 24/07/2026) =====
@@ -1072,6 +1076,147 @@
       { nome:'Entregue', icone:'📦', estado: st(entregues.length>0 && !emEdicao.length && !aguardandoVoce.length, entregues.length>0),
         detalhe: entregues.length ? entregues.length + ' vídeo(s) entregue(s)' + (postados.length ? ' · ' + postados.length + ' já publicado(s)' : '') : 'Última etapa' }
     ];
+  }
+
+  /* ===== PAGAMENTO NO PORTAL (25/07/2026) =====
+     Le `contratos_cliente` (o combinado) e `pagamentos_mensais` (o mes a
+     mes) — as mesmas colecoes que o Chris usa no escritorio. Nao ha
+     duplicacao: o que ele marca la, o cliente ve aqui.
+
+     O lembrete e DELIBERADAMENTE suave: uma faixa discreta a partir de um
+     dia antes do vencimento, que some sozinha quando o pagamento e
+     conferido. Cobranca no proprio painel do cliente e um lugar de
+     relacao, nao de pressao — o tom firme mora no WhatsApp, quando o
+     Chris decide usar. */
+  const PIX_GET = { chave:'56.062.119.0001-43', tipo:'CNPJ', banco:'Banco C6', titular:'Christopher Brito' };
+  const brlPortal = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
+
+  async function dadosPagamentoCliente(){
+    const [ctSnap, pgSnap] = await Promise.all([
+      getDoc(doc(db,'contratos_cliente', clienteAtual.slug)),
+      getDocs(collection(db,'pagamentos_mensais'))
+    ]);
+    const contrato = ctSnap.exists() ? ctSnap.data() : null;
+    const meus = []; pgSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug) meus.push({id:d.id, ...v}); });
+    meus.sort((a,b)=>(b.competencia||'').localeCompare(a.competencia||''));
+    return { contrato, pagamentos: meus };
+  }
+
+  function diasParaVencer(p){
+    if(!p) return null;
+    const [ano, mes] = (p.competencia||'').split('-').map(Number);
+    if(!ano) return null;
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    const venc = new Date(ano, mes-1, Math.min(p.diaVencimento||10, ultimoDia));
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    return Math.round((venc - hoje)/86400000);
+  }
+
+  window.copiarPix = async function(){
+    try{
+      await navigator.clipboard.writeText(PIX_GET.chave);
+      mostrarAvisoPix('✅ Chave PIX copiada! É só colar no app do seu banco.');
+    }catch(e){
+      mostrarAvisoPix('Não consegui copiar automático — a chave é ' + PIX_GET.chave);
+    }
+  };
+  function mostrarAvisoPix(txt){
+    const el = document.getElementById('avisoPix');
+    if(el){ el.textContent = txt; el.style.display='block'; setTimeout(()=>{ el.style.display='none'; }, 4000); }
+  }
+
+  window.enviarComprovanteMensal = async function(id){
+    const link = (document.getElementById('compMensal_'+id)?.value||'').trim();
+    if(!link){ alert('Cola o link do comprovante, ou usa o botão do WhatsApp abaixo.'); return; }
+    await updateDoc(doc(db,'pagamentos_mensais', id), {
+      comprovante: link, comprovanteEnviadoEm: new Date().toISOString()
+    });
+    await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante da mensalidade', link);
+    alert('Comprovante enviado! Assim que a gente conferir, aparece como pago aqui.');
+    carregarPagamentoCliente();
+  };
+
+  window.comprovantePeloWhats = function(competencia, valor){
+    const msg = 'Oi! Sou ' + clienteAtual.nome + '. Estou enviando o comprovante da mensalidade de ' + competencia + ' (' + brlPortal(valor) + ').';
+    window.open('https://wa.me/5541996443046?text=' + encodeURIComponent(msg), '_blank');
+  };
+
+  async function carregarPagamentoCliente(){
+    const cont = document.getElementById('painelPagamento');
+    cont.innerHTML = '<div class="empty">Carregando...</div>';
+    const { contrato, pagamentos } = await dadosPagamentoCliente();
+
+    if(!contrato){
+      cont.innerHTML = `<div class="card"><h2>💳 Pagamento</h2><div class="sub" style="margin-bottom:0;">Seu plano ainda não tem cobrança configurada por aqui. Qualquer dúvida sobre valores, é só chamar a gente no WhatsApp.</div></div>`;
+      return;
+    }
+
+    const abertos = pagamentos.filter(p => p.status !== 'pago' && p.status !== 'isento');
+    const atual = abertos.length ? abertos[abertos.length-1] : null;  // o mais antigo em aberto
+    const dias = atual ? diasParaVencer(atual) : null;
+
+    let html = `<div class="card">
+      <h2>💳 Pagamento</h2>
+      <div class="sub" style="margin-bottom:10px;">Seu plano <b>${esc(contrato.plano||'')}</b> · ${brlPortal(contrato.valorVigente)} por mês · vence todo dia ${contrato.diaVencimento}.</div>
+    </div>`;
+
+    if(atual){
+      const situacao = dias > 1 ? { txt:'Vence em ' + dias + ' dias', cor:'var(--line)' }
+        : dias === 1 ? { txt:'Vence amanhã', cor:'var(--yellow)' }
+        : dias === 0 ? { txt:'Vence hoje', cor:'var(--yellow)' }
+        : { txt:'Venceu há ' + Math.abs(dias) + ' dia(s)', cor:'var(--red)' };
+      html += `<div class="card" style="border:2px solid ${situacao.cor};">
+        <div class="nome" style="font-size:20px;">${brlPortal(atual.valorDevido)}</div>
+        <div class="meta" style="margin-top:4px;">Referente a ${esc(atual.competencia||'')} · ${situacao.txt}</div>
+        ${atual.comprovante ? '<div class="meta" style="margin-top:10px;color:var(--yellow);">📎 Comprovante enviado — estamos conferindo. Obrigado!</div>' : `
+        <div style="background:var(--deep);border-radius:10px;padding:12px;margin-top:12px;">
+          <div class="meta" style="margin-bottom:6px;">Chave PIX (${PIX_GET.tipo})</div>
+          <div class="nome" style="font-size:16px;word-break:break-all;">${PIX_GET.chave}</div>
+          <div class="meta" style="margin-top:4px;">${PIX_GET.banco} · ${PIX_GET.titular}</div>
+          <div class="btn" style="margin-top:10px;padding:12px;text-align:center;cursor:pointer;" onclick="copiarPix()">📋 Copiar chave PIX</div>
+          <div id="avisoPix" class="meta" style="display:none;margin-top:8px;color:var(--green);"></div>
+        </div>
+        <div class="field" style="margin-top:12px;"><label>Já pagou? Cola o link do comprovante</label><input type="text" id="compMensal_${atual.id}" placeholder="Link do comprovante"></div>
+        <div class="btn secondary" style="margin-top:8px;padding:11px;text-align:center;cursor:pointer;" onclick="enviarComprovanteMensal('${atual.id}')">Enviar comprovante</div>
+        <div class="btn secondary" style="margin-top:8px;padding:11px;text-align:center;cursor:pointer;" onclick="comprovantePeloWhats('${esc(atual.competencia)}', ${atual.valorDevido||0})">💬 Prefiro mandar pelo WhatsApp</div>`}
+      </div>`;
+    } else {
+      html += `<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Tudo em dia por aqui. Obrigado!</div></div>`;
+    }
+
+    const historico = pagamentos.filter(p => p.status === 'pago' || p.status === 'isento').slice(0,12);
+    if(historico.length){
+      html += `<div class="card"><h2 style="font-size:14px;">Histórico</h2>` +
+        historico.map(p => `<div class="item">
+          <div class="top"><div class="nome">${esc(p.competencia||'')}</div><span class="selo ${p.status==='isento'?'roteiro':'publicado'}">${p.status==='isento'?'Cortesia':'Pago'}</span></div>
+          <div class="meta" style="margin-top:4px;">${brlPortal(p.valorDevido)}${p.pagoEm?' · em '+new Date(p.pagoEm+'T12:00:00').toLocaleDateString('pt-BR'):''}</div>
+        </div>`).join('') + `</div>`;
+    }
+    cont.innerHTML = html;
+  }
+
+  /* Faixa suave no topo do portal — so a partir de 1 dia antes, e some
+     sozinha quando o pagamento e conferido. */
+  async function mostrarLembretePagamento(){
+    try{
+      const { contrato, pagamentos } = await dadosPagamentoCliente();
+      if(!contrato) return;
+      const abertos = pagamentos.filter(p => p.status !== 'pago' && p.status !== 'isento' && !p.comprovante);
+      if(!abertos.length) return;
+      const p = abertos[abertos.length-1];
+      const dias = diasParaVencer(p);
+      if(dias === null || dias > 1) return;
+      const texto = dias === 1 ? 'Sua mensalidade vence amanhã 🙂'
+        : dias === 0 ? 'Sua mensalidade vence hoje 🙂'
+        : 'Sua mensalidade venceu há ' + Math.abs(dias) + ' dia(s).';
+      const faixa = document.createElement('div');
+      faixa.style.cssText = 'background:var(--paper);border:1px solid var(--yellow);border-left:4px solid var(--yellow);border-radius:10px;padding:11px 14px;margin-bottom:14px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+      faixa.innerHTML = `<span>💛 ${texto} ${brlPortal(p.valorDevido)}</span>
+        <span style="color:var(--yellow);cursor:pointer;font-weight:700;" onclick="setTab('pagamento', document.querySelector('[data-tab=\'pagamento\']'))">Ver como pagar →</span>`;
+      const wrap = document.querySelector('.wrap');
+      const tabs = document.querySelector('.tabs');
+      if(wrap && tabs) wrap.insertBefore(faixa, tabs);
+    }catch(e){ console.error('Lembrete de pagamento:', e); }
   }
 
   window.responderProposta = async function(id, resposta){

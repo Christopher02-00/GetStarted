@@ -4965,6 +4965,7 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <button class="btn ${sub==='ideias'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('ideias','${containerId}',${apenasLeitura})">💡 Banco de Ideias</button>
       <button class="btn ${sub==='atas'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('atas','${containerId}',${apenasLeitura})">📝 Atas</button>
+      <button class="btn ${sub==='referencias'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('referencias','${containerId}',${apenasLeitura})">🔗 Referências</button>
       <button class="btn ${sub==='info'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('info','${containerId}',${apenasLeitura})">ℹ️ Info Extras</button>
       ${!apenasLeitura ? `
       <button class="btn ${sub==='drive'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('drive','${containerId}',${apenasLeitura})">📁 Configurar Drive</button>
@@ -4972,22 +4973,102 @@
       ` : ''}
     </div>`;
 
+    /* ===== BANCO DE IDEIAS (Onda 2 — 24/07/2026) =====
+       Colecao propria (ideias_cliente), separada das referencias. A Gabi
+       tambem cria ideia daqui — antes so o cliente conseguia criar, pelo
+       portal. Quando o status vira "Concluida", a ideia cai na fila de
+       aprovacao final da Amanda, que encerra oficialmente a sugestao. */
     if(sub === 'ideias'){
+      const podeMexer = !apenasLeitura;
+      const snap = await getDocs(collection(db,'ideias_cliente'));
+      const todas = []; snap.forEach(d => todas.push({id:d.id, ...d.data()}));
+      todas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+
+      const LBL = { pendente:'Pendente', no_calendario:'Inserida no calendário', concluida:'Concluída' };
+      const dataIdeia = ts => ts?.seconds ? new Date(ts.seconds*1000).toLocaleDateString('pt-BR') : '';
+
+      if(podeMexer){
+        html += `<div class="card">
+          <h2>💡 Registrar ideia</h2>
+          <div class="desc">Surgiu um insight numa conversa, numa reunião, no WhatsApp? Registra aqui na hora — o cliente vê no portal dele.</div>
+          <div class="field"><label>Cliente</label><select id="ideiaCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
+          <div class="field"><label>Título</label><input type="text" id="ideiaTitulo" placeholder="Ex: Série de bastidores da produção"></div>
+          <div class="field"><label>Descrição</label><textarea id="ideiaDescricao"></textarea></div>
+          <div class="field"><label>Observações (opcional)</label><textarea id="ideiaObservacoes"></textarea></div>
+          <button class="btn" onclick="criarIdeiaEquipe()">Registrar ideia</button>
+        </div>`;
+      }
+
+      const aguardandoAmanda = todas.filter(r => r.status === 'concluida' && !r.aprovadaAmanda);
+      if(aguardandoAmanda.length && podeMexer){
+        html += `<div class="painelResumo" style="margin-bottom:14px;">
+          <div class="resumoCard yellow"><div class="num">${aguardandoAmanda.length}</div><div class="lbl">Concluída(s) esperando encerramento</div></div>
+        </div>`;
+      }
+
+      html += `<div class="grupoFuncionario"><h3>Ideias registradas</h3>`;
+      html += todas.length ? todas.map(r => `
+        <div class="item" style="border-left:3px solid ${r.aprovadaAmanda ? 'var(--green)' : r.status==='concluida' ? 'var(--yellow2)' : 'var(--line)'};">
+          <div class="top"><div class="nome">${esc(r.titulo || '(sem título)')}</div><span class="selo ${r.status==='concluida'?'aprovada':'pendente'}">${LBL[r.status]||'Pendente'}</span></div>
+          <div class="meta" style="margin-top:4px;">${esc(r.clienteNome||'')} · criada por ${esc(r.criadoPor||'—')}${r.criadoEm ? ' em '+dataIdeia(r.criadoEm) : ''}</div>
+          ${r.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(r.descricao)+'</div>' : ''}
+          ${r.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(r.observacoes)+'</div>' : ''}
+          ${r.aprovadaAmanda ? '<div class="meta" style="margin-top:6px;color:var(--green);font-weight:700;">✔ Encerrada por '+esc(r.aprovadaAmandaPor||'—')+'</div>' : ''}
+          ${podeMexer ? `
+          <div class="row2" style="margin-top:8px;align-items:center;">
+            <select onchange="atualizarStatusIdeia('${r.id}', this.value)" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:6px;border-radius:6px;font-size:11px;">
+              ${['pendente','no_calendario','concluida'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${LBL[s]}</option>`).join('')}
+            </select>
+            ${r.status==='concluida' && !r.aprovadaAmanda ? `<button class="btn green" style="padding:6px 12px;font-size:11px;" onclick="aprovarIdeiaFinal('${r.id}')">✔ Encerrar oficialmente</button>` : '<span></span>'}
+          </div>
+          <button class="btn secondary" style="margin-top:6px;width:auto;padding:5px 12px;font-size:11px;" onclick="editarObsIdeia('${r.id}')">📝 Editar observações</button>` : ''}
+        </div>
+      `).join('') : '<div class="empty">Nenhuma ideia registrada ainda.</div>';
+      html += `</div>`;
+    }
+
+    /* ===== BANCO DE REFERENCIAS (Onda 2 — 24/07/2026) =====
+       Continua na colecao referencias_cliente — que e onde o antigo "Banco
+       de Ideias" ja gravava. Por isso todo o historico de links que os
+       clientes mandaram ate hoje aparece aqui, e nao nas ideias. Nada foi
+       apagado nem migrado (decisao do Chris). */
+    if(sub === 'referencias'){
+      const podeMexer = !apenasLeitura;
       const snap = await getDocs(collection(db,'referencias_cliente'));
       const todas = []; snap.forEach(d => todas.push({id:d.id, ...d.data()}));
       todas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
-      const STATUS_LABEL_IDEIA = {recebida:'Recebida',analise:'Em análise',aprovada:'Aprovada',adaptando:'Adaptando',gravando:'Gravando',publicada:'Publicada',naoUsada:'Não será utilizada'};
+      const LBLR = { nao_utilizada:'Não utilizada', no_calendario:'Inserida no calendário', concluida:'Concluída',
+        recebida:'Recebida (antigo)', analise:'Em análise (antigo)', aprovada:'Aprovada (antigo)', adaptando:'Adaptando (antigo)', gravando:'Gravando (antigo)', publicada:'Publicada (antigo)', naoUsada:'Não utilizada (antigo)' };
+      const dataRef = ts => ts?.seconds ? new Date(ts.seconds*1000).toLocaleDateString('pt-BR') : '';
+
+      if(podeMexer){
+        html += `<div class="card">
+          <h2>🔗 Guardar referência</h2>
+          <div class="desc">Inspiração do Instagram ou de outra plataforma pra usar na estratégia desse cliente depois.</div>
+          <div class="field"><label>Cliente</label><select id="refCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
+          <div class="field"><label>Link da publicação</label><input type="text" id="refLink" placeholder="https://instagram.com/p/..."></div>
+          <div class="field"><label>Link da imagem de capa (opcional)</label><input type="text" id="refCapa" placeholder="Cola o link de uma imagem, se tiver"></div>
+          <div class="field"><label>Descrição da ideia</label><textarea id="refDescricao"></textarea></div>
+          <div class="field"><label>Observações (opcional)</label><textarea id="refObservacoes"></textarea></div>
+          <button class="btn" onclick="criarReferenciaEquipe()">Guardar referência</button>
+        </div>`;
+      }
+
+      html += `<div class="grupoFuncionario"><h3>Referências guardadas</h3>`;
       html += todas.length ? todas.map(r => `
         <div class="item">
-          <div class="top"><div class="nome">${esc(r.clienteNome)}</div></div>
-          <a href="${esc(r.link)}" target="_blank" style="color:var(--yellow);font-size:12px;">${esc(r.link)}</a>
-          ${r.observacao ? '<div class="meta">'+esc(r.observacao)+'</div>' : ''}
-          ${apenasLeitura ? `<span class="selo roteiro" style="margin-top:8px;display:inline-block;">${STATUS_LABEL_IDEIA[r.status]||'Recebida'}</span>` : `
-          <select onchange="atualizarStatusIdeia('${r.id}', this.value)" style="margin-top:8px;background:var(--deep);border:1px solid var(--line);color:#fff;padding:6px;border-radius:6px;font-size:11px;">
-            ${['recebida','analise','aprovada','adaptando','gravando','publicada','naoUsada'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${s}</option>`).join('')}
-          </select>`}
+          <div class="top"><div class="nome">${esc(r.clienteNome||'')}</div><span class="selo ${r.status==='concluida'?'aprovada':'pendente'}">${LBLR[r.status]||'Não utilizada'}</span></div>
+          ${r.link ? '<a href="'+esc(r.link)+'" target="_blank" style="color:var(--yellow);font-size:12px;word-break:break-all;">'+esc(r.link)+'</a>' : ''}
+          ${r.descricao ? '<div class="meta" style="margin-top:4px;white-space:pre-wrap;">'+esc(r.descricao)+'</div>' : ''}
+          ${(r.observacoes || r.observacao) ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(r.observacoes || r.observacao)+'</div>' : ''}
+          <div class="meta" style="margin-top:6px;opacity:.7;">${r.criadoEm ? dataRef(r.criadoEm) : ''}${r.criadoPor ? ' · '+esc(r.criadoPor) : ''}${r.aprovadaCliente ? ' · 👍 cliente aprovou' : ''}</div>
+          ${podeMexer ? `
+          <select onchange="atualizarStatusReferencia('${r.id}', this.value)" style="margin-top:8px;background:var(--deep);border:1px solid var(--line);color:#fff;padding:6px;border-radius:6px;font-size:11px;">
+            ${['nao_utilizada','no_calendario','concluida'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${LBLR[s]}</option>`).join('')}
+          </select>` : ''}
         </div>
-      `).join('') : '<div class="empty">Nenhuma ideia enviada por clientes ainda.</div>';
+      `).join('') : '<div class="empty">Nenhuma referência guardada ainda.</div>';
+      html += `</div>`;
     }
 
     if(sub === 'atas'){
@@ -5132,8 +5213,66 @@
   };
 
   window.atualizarStatusIdeia = async function(id, status){
+    await updateDoc(doc(db,'ideias_cliente', id), { status });
+    mostrarToast(status === 'concluida' ? 'Marcada como concluída — agora é só encerrar oficialmente.' : 'Status atualizado!');
+    renderPortalClienteAdmin();
+  };
+
+  window.atualizarStatusReferencia = async function(id, status){
     await updateDoc(doc(db,'referencias_cliente', id), { status });
     mostrarToast('Status atualizado!');
+  };
+
+  window.criarIdeiaEquipe = async function(){
+    const sel = document.getElementById('ideiaCliente');
+    const titulo = document.getElementById('ideiaTitulo').value.trim();
+    if(!titulo){ mostrarToast('Escreve o título da ideia.', 'erro'); return; }
+    await addDoc(collection(db,'ideias_cliente'), {
+      cliente: sel.value, clienteNome: sel.selectedOptions[0]?.dataset.nome || sel.value,
+      titulo, descricao: document.getElementById('ideiaDescricao').value.trim(),
+      observacoes: document.getElementById('ideiaObservacoes').value.trim(),
+      status: 'pendente', aprovadaAmanda: false,
+      criadoPor: usuarioAtual || '?', criadoPorTipo: 'equipe', criadoEm: serverTimestamp()
+    });
+    mostrarToast('Ideia registrada! O cliente já vê no portal dele.');
+    renderPortalClienteAdmin();
+  };
+
+  window.criarReferenciaEquipe = async function(){
+    const sel = document.getElementById('refCliente');
+    const link = document.getElementById('refLink').value.trim();
+    const descricao = document.getElementById('refDescricao').value.trim();
+    if(!link && !descricao){ mostrarToast('Cola o link ou escreve a descrição.', 'erro'); return; }
+    await addDoc(collection(db,'referencias_cliente'), {
+      cliente: sel.value, clienteNome: sel.selectedOptions[0]?.dataset.nome || sel.value,
+      link, imagemCapa: document.getElementById('refCapa').value.trim(),
+      descricao, observacoes: document.getElementById('refObservacoes').value.trim(),
+      status: 'nao_utilizada', aprovadaCliente: false,
+      criadoPor: usuarioAtual || '?', criadoPorTipo: 'equipe', criadoEm: serverTimestamp()
+    });
+    mostrarToast('Referência guardada!');
+    renderPortalClienteAdmin();
+  };
+
+  /* Encerramento oficial da sugestao — so faz sentido depois que a ideia
+     ja foi marcada como concluida (o botao so aparece nesse caso). */
+  window.aprovarIdeiaFinal = async function(id){
+    if(!confirm('Encerrar oficialmente essa ideia? Ela fica registrada como finalizada pro cliente.')) return;
+    await updateDoc(doc(db,'ideias_cliente', id), {
+      aprovadaAmanda: true, aprovadaAmandaPor: usuarioAtual || '?', aprovadaAmandaEm: new Date().toISOString()
+    });
+    mostrarToast('Ideia encerrada oficialmente.');
+    renderPortalClienteAdmin();
+  };
+
+  window.editarObsIdeia = async function(id){
+    const snap = await getDoc(doc(db,'ideias_cliente', id));
+    const atual = snap.exists() ? (snap.data().observacoes || '') : '';
+    const nova = prompt('Observações da ideia:', atual);
+    if(nova === null) return;
+    await updateDoc(doc(db,'ideias_cliente', id), { observacoes: nova });
+    mostrarToast('Observações atualizadas!');
+    renderPortalClienteAdmin();
   };
 
   window.criarStoryCliente = async function(){

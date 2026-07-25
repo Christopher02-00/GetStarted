@@ -1145,11 +1145,13 @@
                 <div class="subtab" data-sub="amanda" onclick="setGerenciaSub('amanda', this)">Painel Operacional (Amanda)</div>
                 <div class="subtab" data-sub="chris" onclick="setGerenciaSub('chris', this)">Resumo Executivo</div>
                 <div class="subtab" data-sub="digest" onclick="setGerenciaSub('digest', this)">📱 Digest WhatsApp</div>
+                <div class="subtab" data-sub="saudeAutomacoes" onclick="setGerenciaSub('saudeAutomacoes', this)">🩺 Saúde das Automações<span class="navbadge" id="badgeSaudeAuto" style="display:none;background:var(--red);">0</span></div>
                 <div class="subtab" data-sub="painelTV" onclick="setGerenciaSub('painelTV', this)">Painel de TV</div>
               </div>
             </div>
           </div>
           <div class="gerenciaConteudo">
+            <div id="gerenciaSaudeAutomacoes" style="display:none;"></div>
             <div id="gerenciaVideosHub" style="display:none;"></div>
             <div id="gerenciaEquipeVisao" style="display:none;"></div>
             <div id="gerenciaDisciplinaDia" style="display:none;"></div>
@@ -7417,6 +7419,7 @@
     document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaPainelTV').style.display = qual==='painelTV' ? 'block' : 'none';
     document.getElementById('gerenciaComando').style.display = qual==='comando' ? 'block' : 'none';
+    document.getElementById('gerenciaSaudeAutomacoes').style.display = qual==='saudeAutomacoes' ? 'block' : 'none';
     document.getElementById('gerenciaVideosHub').style.display = qual==='videosHub' ? 'block' : 'none';
     document.getElementById('gerenciaEquipeVisao').style.display = qual==='equipeVisao' ? 'block' : 'none';
     document.getElementById('gerenciaDisciplinaDia').style.display = qual==='disciplinaDia' ? 'block' : 'none';
@@ -7439,6 +7442,7 @@
     }
     if(qual==='comando') iniciarCentralComando();
     else pararCentralComando();
+    if(qual==='saudeAutomacoes') renderSaudeAutomacoes();
     if(qual==='videosHub') renderVideosHub();
     if(qual==='equipeVisao') renderEquipeVisao();
     if(qual==='disciplinaDia') renderDisciplinaDia();
@@ -8866,7 +8870,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['videosHub','equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['saudeAutomacoes','videosHub','equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -11273,6 +11277,121 @@
     window.__videosHubSub = qual;
     renderVideosHub();
   };
+
+  /* ===== SAÚDE DAS AUTOMAÇÕES (24/07/2026) =====
+     Por que essa tela existe: em julho, TODOS os e-mails do sistema
+     falharam por meses com "template ID not found" e ninguém percebeu —
+     o erro morria no console. A correção da época passou a gravar as
+     falhas em log_automacoes, mas nunca se criou onde LER esse log. Ou
+     seja: o sistema registrava que estava quebrado e ninguém via.
+     Aqui é onde se vê. Foco no que falhou, não no que deu certo. */
+  window.renderSaudeAutomacoes = async function(){
+    const cont = document.getElementById('gerenciaSaudeAutomacoes');
+    if(!cont) return;
+    cont.innerHTML = '<div class="card"><div class="desc">Lendo o log de automações...</div></div>';
+
+    const snap = await getDocs(collection(db,'log_automacoes'));
+    const logs = [];
+    snap.forEach(d => { const v = d.data(); logs.push({ id:d.id, ...v, ts: v.executadoEm?.seconds ? v.executadoEm.seconds*1000 : 0 }); });
+    logs.sort((a,b) => b.ts - a.ts);
+
+    const agora = Date.now();
+    const h24 = agora - 24*3600*1000;
+    const d7 = agora - 7*24*3600*1000;
+
+    const falhasEmail = logs.filter(l => l.tipo === 'email_FALHOU');
+    const errosVerif = logs.filter(l => l.tipo === 'erro_verificacao');
+    const emailsOk = logs.filter(l => l.tipo === 'email_enviado');
+    const motor = logs.filter(l => l.tipo === 'motor_executado');
+
+    const falhasEmail7 = falhasEmail.filter(l => l.ts >= d7).length;
+    const emailsOk7 = emailsOk.filter(l => l.ts >= d7).length;
+    const erros24 = errosVerif.filter(l => l.ts >= h24).length;
+    const ultimoMotor = motor[0];
+    const horasSemMotor = ultimoMotor && ultimoMotor.ts ? Math.floor((agora - ultimoMotor.ts)/3600000) : null;
+
+    const qtdProblemas = falhasEmail7 + erros24 + ((horasSemMotor === null || horasSemMotor > 24) ? 1 : 0);
+    atualizarBadgeSaudeAuto(qtdProblemas);
+
+    const fmt = ts => ts ? new Date(ts).toLocaleString('pt-BR') : '—';
+
+    // Diagnostico do e-mail: o ponto que ja falhou calado antes
+    let diagEmail, corEmail;
+    if(falhasEmail7 > 0 && emailsOk7 === 0){
+      corEmail = 'red'; diagEmail = '🔴 Nenhum e-mail saiu nos últimos 7 dias e houve ' + falhasEmail7 + ' falha(s). O envio está quebrado — é o mesmo sintoma de julho.';
+    } else if(falhasEmail7 > 0){
+      corEmail = 'yellow'; diagEmail = '🟡 ' + emailsOk7 + ' e-mail(s) enviados e ' + falhasEmail7 + ' falha(s) nos últimos 7 dias. Está saindo, mas com erro em parte deles.';
+    } else if(emailsOk7 > 0){
+      corEmail = 'green'; diagEmail = '🟢 ' + emailsOk7 + ' e-mail(s) enviados nos últimos 7 dias, nenhuma falha registrada.';
+    } else {
+      corEmail = 'yellow'; diagEmail = '🟡 Nenhum e-mail enviado nem falha nos últimos 7 dias. Pode ser que simplesmente não houve o que notificar — ou que o disparo parou de ser chamado.';
+    }
+
+    let html = `<div class="card">
+      <h2>🩺 Saúde das Automações</h2>
+      <div class="desc">O que o sistema faz sozinho — e o que falhou tentando. Esta tela existe porque falha silenciosa já passou meses despercebida aqui.</div>
+    </div>
+    <div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard ${falhasEmail7 ? 'red' : 'green'}"><div class="num">${falhasEmail7}</div><div class="lbl">E-mails que falharam (7d)</div></div>
+      <div class="resumoCard ${emailsOk7 ? 'green' : 'yellow'}"><div class="num">${emailsOk7}</div><div class="lbl">E-mails enviados (7d)</div></div>
+      <div class="resumoCard ${erros24 ? 'red' : 'green'}"><div class="num">${erros24}</div><div class="lbl">Erros de automação (24h)</div></div>
+      <div class="resumoCard ${(horasSemMotor === null || horasSemMotor > 24) ? 'red' : 'green'}"><div class="num">${horasSemMotor === null ? '—' : horasSemMotor + 'h'}</div><div class="lbl">Desde a última rodada</div></div>
+    </div>
+
+    <div class="card" style="border:2px solid var(--${corEmail === 'red' ? 'red' : corEmail === 'yellow' ? 'yellow' : 'green'});">
+      <h2 style="font-size:15px;">📧 Envio de e-mails</h2>
+      <div class="desc">${diagEmail}</div>
+      <div class="meta" style="margin-top:8px;">Dependem disso: o resumo de checklist das 19h, o aviso pro editor quando o cliente pede ajuste, as demandas automáticas e os lembretes de prazo.</div>
+    </div>`;
+
+    if(falhasEmail.length){
+      html += `<div class="faixaDem aberta" data-faixa="sa_falhas">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🔴 Falhas de e-mail <span class="qtd">(${falhasEmail.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${falhasEmail.slice(0,25).map(l => `<div class="item" style="border-left:3px solid var(--red);">
+          <div class="nome" style="font-size:12px;">${esc(l.detalhe||'sem detalhe')}</div>
+          <div class="meta" style="margin-top:4px;">${fmt(l.ts)}</div>
+        </div>`).join('')}</div>
+      </div>`;
+    }
+    if(errosVerif.length){
+      html += `<div class="faixaDem ${erros24?'aberta':''}" data-faixa="sa_erros">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">⚠️ Automações que deram erro <span class="qtd">(${errosVerif.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${errosVerif.slice(0,25).map(l => `<div class="item" style="border-left:3px solid var(--yellow2);">
+          <div class="top"><div class="nome" style="font-size:12px;">${esc(l.alvo||'?')}</div></div>
+          <div class="meta" style="margin-top:4px;">${esc(l.detalhe||'')}</div>
+          <div class="meta">${fmt(l.ts)}</div>
+        </div>`).join('')}</div>
+      </div>`;
+    }
+
+    // o que rodou, agrupado por tipo
+    const porTipo = {};
+    logs.filter(l => l.ts >= d7).forEach(l => { porTipo[l.tipo] = (porTipo[l.tipo]||0)+1; });
+    const tipos = Object.keys(porTipo).sort((a,b)=>porTipo[b]-porTipo[a]);
+    html += `<div class="faixaDem" data-faixa="sa_tipos">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">📊 O que rodou nos últimos 7 dias <span class="qtd">(${tipos.length} tipo(s))</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${tipos.length ? tipos.map(t => `<div class="item" style="padding:8px 12px;">
+        <div class="top"><div class="nome" style="font-size:12px;">${esc(t)}</div><span class="selo ${t.includes('FALHOU')||t.includes('erro')?'atrasado':'pendente'}">${porTipo[t]}</span></div>
+      </div>`).join('') : '<div class="empty" style="font-size:11px;padding:8px;">Nada registrado nos últimos 7 dias.</div>'}</div>
+    </div>`;
+
+    html += `<div class="faixaDem" data-faixa="sa_recentes">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🕓 Últimos registros <span class="qtd">(${Math.min(logs.length,40)})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${logs.slice(0,40).map(l => `<div class="item" style="padding:8px 12px;">
+        <div class="top"><div class="nome" style="font-size:12px;">${esc(l.tipo)}</div><div class="meta">${fmt(l.ts)}</div></div>
+        ${l.detalhe ? '<div class="meta" style="margin-top:3px;">'+esc(String(l.detalhe).slice(0,150))+'</div>' : ''}
+      </div>`).join('') || '<div class="empty">Log vazio.</div>'}</div>
+    </div>`;
+
+    html += `<div class="meta" style="text-align:center;margin-top:12px;opacity:.65;">Total no log: ${logs.length} registro(s).</div>`;
+    cont.innerHTML = html;
+  };
+
+  function atualizarBadgeSaudeAuto(n){
+    const b = document.getElementById('badgeSaudeAuto');
+    if(!b) return;
+    if(n > 0){ b.textContent = n; b.style.display = 'flex'; } else b.style.display = 'none';
+  }
 
   window.renderVideosHub = function(){
     const cont = document.getElementById('gerenciaVideosHub');

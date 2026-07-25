@@ -820,27 +820,106 @@
     carregarIdeias();
   };
 
+  /* ===== STORIES POR SEMANA (Onda 3 — 24/07/2026) =====
+     Mesma modelagem do lado do escritorio: cada story pertence a uma
+     semana (a segunda-feira dela) e a um dia (1=segunda ... 5=sexta). A
+     semana reinicia — o cliente abre e ve a semana corrente montada dia a
+     dia. As anteriores ficam acessiveis pelas setas. Stories antigos, sem
+     esses campos, aparecem num bloco separado em vez de sumir. */
+  const DIAS_STORY_PORTAL = [
+    { n:1, nome:'Segunda' }, { n:2, nome:'Terça' }, { n:3, nome:'Quarta' },
+    { n:4, nome:'Quinta' }, { n:5, nome:'Sexta' }
+  ];
+  function segundaDaSemanaPortal(d){
+    const data = new Date(d);
+    const dow = data.getDay();
+    const recuo = dow === 0 ? 6 : dow - 1;
+    data.setDate(data.getDate() - recuo);
+    return data.toISOString().slice(0,10);
+  }
+  function rotuloSemanaPortal(seg){
+    const ini = new Date(seg + 'T12:00:00');
+    const fim = new Date(ini); fim.setDate(fim.getDate() + 4);
+    const f = dt => dt.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+    return f(ini) + ' a ' + f(fim);
+  }
+  window.__semanaStoriesPortal = null;
+  window.mudarSemanaStoriesPortal = function(delta){
+    const base = new Date((window.__semanaStoriesPortal || segundaDaSemanaPortal(new Date())) + 'T12:00:00');
+    base.setDate(base.getDate() + (delta * 7));
+    window.__semanaStoriesPortal = segundaDaSemanaPortal(base);
+    carregarStories();
+  };
+
   async function carregarStories(){
     const cont = document.getElementById('painelStories');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
     const snap = await getDocs(collection(db,'stories_semanais'));
     const meus = []; snap.forEach(d => { if(d.data().cliente===clienteAtual.slug) meus.push({id:d.id, ...d.data()}); });
-    meus.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
 
-    let html = `<div class="card"><h2><svg class="ic"><use href="#i-image"/></svg>Seus Stories</h2><div class="sub" style="margin-bottom:0;">Ideias de stories que a equipe está preparando pra você — acompanha, aprova ou pede ajuste.</div></div>`;
-    if(!meus.length){ html += '<div class="card"><div class="empty">Nenhum story enviado ainda essa semana.</div></div>'; cont.innerHTML = html; return; }
+    const semanaAtual = segundaDaSemanaPortal(new Date());
+    const semana = window.__semanaStoriesPortal || semanaAtual;
+    window.__semanaStoriesPortal = semana;
+    const daSemana = meus.filter(s => s.semana === semana);
+    const semSemana = meus.filter(s => !s.semana);
 
-    html += meus.map(s => `
-      <div class="card">
-        <div class="nome" style="font-size:14px;">${esc(s.titulo)}</div>
-        ${s.descricao ? '<div class="meta" style="margin-top:4px;">'+esc(s.descricao)+'</div>' : ''}
-        <span class="selo ${s.status==='aprovado'?'publicado':s.status==='postado'?'publicado':s.status==='ajuste'?'gravacao':'roteiro'}">${s.status==='aprovado'?'Aprovado':s.status==='postado'?'Já postado':s.status==='ajuste'?'Pediu ajuste':'Aguardando você'}</span>
-        ${s.status!=='postado' ? `<div class="btn secondary" style="margin-top:10px;padding:9px;text-align:center;" onclick="responderStory('${s.id}','aprovado')">✓ Aprovar</div>
-        <div class="btn secondary" style="margin-top:6px;padding:9px;text-align:center;" onclick="pedirAjusteStory('${s.id}')">Pedir ajuste</div>` : ''}
+    let html = `<div class="card">
+      <h2><svg class="ic"><use href="#i-image"/></svg>Seus Stories</h2>
+      <div class="sub" style="margin-bottom:10px;">O que nossa equipe preparou pra você postar essa semana. Aprova, comenta, e marca como publicado depois que subir.</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="btn secondary" style="width:auto;padding:9px 14px;cursor:pointer;" onclick="mudarSemanaStoriesPortal(-1)">‹</div>
+        <div style="flex:1;text-align:center;">
+          <b style="font-size:15px;">${rotuloSemanaPortal(semana)}</b>
+          ${semana === semanaAtual ? '<div class="meta" style="color:var(--yellow);">Semana atual</div>' : '<div class="meta">Outra semana</div>'}
+        </div>
+        <div class="btn secondary" style="width:auto;padding:9px 14px;cursor:pointer;" onclick="mudarSemanaStoriesPortal(1)">›</div>
       </div>
-    `).join('');
+    </div>`;
+
+    const cardStory = s => `
+      <div class="card" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow)':'var(--line)'};">
+        <div class="nome" style="font-size:14px;">${esc(s.titulo)}</div>
+        ${s.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(s.descricao)+'</div>' : ''}
+        ${s.linkReferencia ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(s.linkReferencia)+'" target="_blank" style="color:var(--yellow);">Ver referência ↗</a></div>' : ''}
+        ${s.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.85;">📝 '+esc(s.observacoes)+'</div>' : ''}
+        ${s.comentarioCliente ? '<div class="meta" style="margin-top:6px;color:var(--yellow);">💬 Seu comentário: '+esc(s.comentarioCliente)+'</div>' : ''}
+        <div style="margin-top:8px;">
+          <span class="selo ${s.status==='aprovado'?'publicado':s.status==='postado'?'publicado':s.status==='ajuste'?'gravacao':'roteiro'}">${s.status==='aprovado'?'Aprovado — pode postar':s.status==='postado'?'✔ Publicado':s.status==='ajuste'?'Você pediu ajuste':'Aguardando você'}</span>
+        </div>
+        ${s.status!=='postado' ? `
+        ${s.status!=='aprovado' ? `<div class="btn secondary" style="margin-top:10px;padding:9px;text-align:center;" onclick="responderStory('${s.id}','aprovado')">✓ Aprovar</div>
+        <div class="btn secondary" style="margin-top:6px;padding:9px;text-align:center;" onclick="pedirAjusteStory('${s.id}')">Pedir ajuste</div>` : ''}
+        <div class="btn secondary" style="margin-top:6px;padding:9px;text-align:center;" onclick="comentarStory('${s.id}')">💬 ${s.comentarioCliente ? 'Editar comentário' : 'Deixar um comentário'}</div>
+        <div class="btn" style="margin-top:6px;padding:10px;text-align:center;cursor:pointer;" onclick="marcarStoryPublicado('${s.id}')">✔ Já publiquei esse story</div>
+        ` : ''}
+      </div>`;
+
+    DIAS_STORY_PORTAL.forEach(d => {
+      const doDia = daSemana.filter(s => Number(s.diaSemana) === d.n);
+      html += `<div class="card" style="background:transparent;border:none;padding:6px 0 0;"><h2 style="font-size:14px;">${d.nome}</h2></div>`;
+      html += doDia.length ? doDia.map(cardStory).join('') : '<div class="card"><div class="empty" style="font-size:12px;">Nada pra esse dia.</div></div>';
+    });
+
+    if(semSemana.length){
+      html += `<div class="card" style="background:transparent;border:none;padding:14px 0 0;"><h2 style="font-size:14px;">Stories anteriores</h2></div>`;
+      html += semSemana.map(cardStory).join('');
+    }
+
     cont.innerHTML = html;
   }
+
+  window.comentarStory = async function(id){
+    const texto = prompt('Seu comentário sobre esse story:');
+    if(texto === null) return;
+    await updateDoc(doc(db,'stories_semanais', id), { comentarioCliente: texto.trim(), comentarioClienteEm: new Date().toISOString() });
+    carregarStories();
+  };
+
+  window.marcarStoryPublicado = async function(id){
+    if(!confirm('Confirmar que você já publicou esse story?')) return;
+    await updateDoc(doc(db,'stories_semanais', id), { status: 'postado', postadoEm: new Date().toISOString(), postadoPeloCliente: true });
+    carregarStories();
+  };
 
   window.responderStory = async function(id, status){
     await updateDoc(doc(db,'stories_semanais', id), { status, respondidoEm: serverTimestamp() });

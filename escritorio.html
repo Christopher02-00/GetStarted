@@ -4914,39 +4914,115 @@
      tela dedicada, sem precisar de senha da Gerência. O story criado aqui
      já vai direto pro portal do cliente específico aprovar — isso já
      funcionava antes, só a TELA de criar é que estava trancada. */
-  async function renderStoriesCliente(){
+  /* ===== STORIES POR SEMANA (Onda 3 — 24/07/2026) =====
+     Pedido da Gabi: organizar os stories por dia da semana (segunda a
+     sexta), com roteiro, link de referencia, observacoes, comentario do
+     cliente e o cliente marcando como publicado. Regra confirmada com o
+     Chris: a semana REINICIA — cada semana comeca vazia. As anteriores
+     nao somem: viram historico navegavel pelos botoes de semana.
+     Cada story guarda `semana` (a segunda-feira daquela semana, em ISO) e
+     `diaSemana` (1=segunda ... 5=sexta). Stories antigos, criados antes
+     dessa mudanca, nao tem esses campos — aparecem num bloco separado de
+     "sem semana definida" em vez de sumirem da tela. */
+  const DIAS_STORY = [
+    { n:1, nome:'Segunda' }, { n:2, nome:'Terça' }, { n:3, nome:'Quarta' },
+    { n:4, nome:'Quinta' }, { n:5, nome:'Sexta' }
+  ];
+
+  function segundaDaSemana(d){
+    const data = new Date(d);
+    const dow = data.getDay();               // 0=dom, 1=seg ... 6=sab
+    const recuo = dow === 0 ? 6 : dow - 1;   // domingo pertence a semana que acabou
+    data.setDate(data.getDate() - recuo);
+    return data.toISOString().slice(0,10);
+  }
+  function rotuloSemana(seg){
+    const ini = new Date(seg + 'T12:00:00');
+    const fim = new Date(ini); fim.setDate(fim.getDate() + 4); // segunda -> sexta
+    const f = dt => dt.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+    return f(ini) + ' a ' + f(fim);
+  }
+
+  window.__semanaStories = null;
+  window.mudarSemanaStories = function(delta){
+    const base = new Date((window.__semanaStories || segundaDaSemana(new Date())) + 'T12:00:00');
+    base.setDate(base.getDate() + (delta * 7));
+    window.__semanaStories = segundaDaSemana(base);
+    renderStoriesCliente();
+  };
+
+  window.renderStoriesCliente = async function(){
     const cont = document.getElementById('storiesConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
 
+    const semanaAtual = segundaDaSemana(new Date());
+    const semana = window.__semanaStories || semanaAtual;
+    window.__semanaStories = semana;
+
     let html = `<div class="card">
-      <h2>Novo story pra aprovar</h2>
-      <div class="field"><label>Cliente</label><select id="storyCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
-      <div class="field"><label>Título</label><input type="text" id="storyTitulo" placeholder="Ex: Story de bastidores da semana"></div>
-      <div class="field"><label>Descrição</label><textarea id="storyDescricao"></textarea></div>
+      <h2>📸 Stories da semana</h2>
+      <div class="desc">Cada semana começa do zero. As anteriores continuam guardadas — navega com as setas.</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+        <button class="btn secondary" style="width:auto;padding:8px 14px;" onclick="mudarSemanaStories(-1)">‹</button>
+        <div style="flex:1;text-align:center;">
+          <b style="font-size:15px;">${rotuloSemana(semana)}</b>
+          ${semana === semanaAtual ? '<div class="meta" style="color:var(--yellow);">Semana atual</div>' : '<div class="meta">' + (semana < semanaAtual ? 'Semana passada' : 'Semana futura') + '</div>'}
+        </div>
+        <button class="btn secondary" style="width:auto;padding:8px 14px;" onclick="mudarSemanaStories(1)">›</button>
+      </div>
+      ${semana !== semanaAtual ? '<button class="btn secondary" style="margin-top:8px;" onclick="window.__semanaStories=null;renderStoriesCliente();">Voltar pra semana atual</button>' : ''}
+    </div>`;
+
+    html += `<div class="card">
+      <h2>➕ Novo story</h2>
+      <div class="row2">
+        <div class="field"><label>Cliente</label><select id="storyCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
+        <div class="field"><label>Dia da semana</label><select id="storyDia">${DIAS_STORY.map(d=>`<option value="${d.n}">${d.nome}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Título</label><input type="text" id="storyTitulo" placeholder="Ex: Bastidores da produção"></div>
+      <div class="field"><label>Roteiro / sugestão</label><textarea id="storyDescricao" placeholder="O roteiro do story, o que falar, a ordem das telas..."></textarea></div>
+      <div class="field"><label>🔗 Link de referência (opcional)</label><input type="text" id="storyLinkRef" placeholder="Link de uma referência pro cliente ver"></div>
+      <div class="field"><label>Observações (opcional)</label><textarea id="storyObs"></textarea></div>
       <button class="btn" onclick="criarStoryCliente()">Enviar pro cliente aprovar</button>
     </div>`;
 
     const snap = await getDocs(collection(db,'stories_semanais'));
     const todos = []; snap.forEach(d => todos.push({id:d.id, ...d.data()}));
-    todos.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+    const daSemana = todos.filter(s => s.semana === semana);
+    const semSemana = todos.filter(s => !s.semana);
 
-    const aguardando = todos.filter(s => s.status === 'pendente' || !s.status);
-    const aprovados = todos.filter(s => s.status === 'aprovado');
-    const ajuste = todos.filter(s => s.status === 'ajuste');
-    const postados = todos.filter(s => s.status === 'postado');
+    const rotuloStatus = s => s.status==='aprovado' ? 'Aprovado pelo cliente' :
+                              s.status==='ajuste' ? 'Cliente pediu ajuste: ' + esc(s.ajusteTexto||'') :
+                              s.status==='postado' ? '✔ Publicado pelo cliente' : 'Aguardando cliente';
+    const corStatus = s => s.status==='aprovado' ? 'aprovada' : s.status==='ajuste' ? 'atrasado' : s.status==='postado' ? 'aprovada' : 'pendente';
 
     function itemStory(s){
-      return `<div class="item">
-        <div class="top"><div class="nome">${esc(s.clienteNome)} — ${esc(s.titulo)}</div></div>
-        <span class="selo ${s.status==='aprovado'?'publicado':s.status==='ajuste'?'gravacao':'roteiro'}">${s.status==='aprovado'?'Aprovado pelo cliente':s.status==='ajuste'?'Cliente pediu ajuste: '+esc(s.ajusteTexto||''):s.status==='postado'?'Já postado':'Aguardando cliente'}</span>
-        ${s.status==='aprovado' ? `<button class="btn secondary" style="margin-top:8px;padding:5px 10px;font-size:10.5px;" onclick="marcarStoryPostado('${s.id}')">Marcar como já postado</button>` : ''}
+      return `<div class="item" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow2)':'var(--line)'};">
+        <div class="top"><div class="nome">${esc(s.clienteNome)} — ${esc(s.titulo)}</div><span class="selo ${corStatus(s)}">${rotuloStatus(s)}</span></div>
+        ${s.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(s.descricao)+'</div>' : ''}
+        ${s.linkReferencia ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(s.linkReferencia)+'" target="_blank" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
+        ${s.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(s.observacoes)+'</div>' : ''}
+        ${s.comentarioCliente ? '<div class="meta" style="margin-top:6px;color:var(--yellow2);">💬 Cliente: '+esc(s.comentarioCliente)+'</div>' : ''}
+        ${s.status==='aprovado' ? `<button class="btn secondary" style="margin-top:8px;width:auto;padding:5px 10px;font-size:10.5px;" onclick="marcarStoryPostado('${s.id}')">Marcar como já postado</button>` : ''}
       </div>`;
     }
 
-    html += `<div class="grupoFuncionario"><h3>⏳ Aguardando o cliente (${aguardando.length})</h3>` + (aguardando.length ? aguardando.map(itemStory).join('') : '<div class="empty">Nada esperando resposta agora.</div>') + `</div>`;
-    if(ajuste.length) html += `<div class="grupoFuncionario"><h3>🔁 Cliente pediu ajuste (${ajuste.length})</h3>` + ajuste.map(itemStory).join('') + `</div>`;
-    html += `<div class="grupoFuncionario"><h3>✅ Aprovados, prontos pra postar (${aprovados.length})</h3>` + (aprovados.length ? aprovados.map(itemStory).join('') : '<div class="empty">Nenhum aprovado esperando postar.</div>') + `</div>`;
-    if(postados.length) html += `<div class="grupoFuncionario"><h3>📮 Já postados recentemente</h3>` + postados.slice(0,10).map(itemStory).join('') + `</div>`;
+    // Um bloco por dia da semana — e esse o pedido: enxergar a semana montada.
+    DIAS_STORY.forEach(d => {
+      const doDia = daSemana.filter(s => Number(s.diaSemana) === d.n);
+      const postadosDia = doDia.filter(s => s.status === 'postado').length;
+      html += `<div class="faixaDem aberta" data-faixa="story_${d.n}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${d.nome} <span class="qtd">(${doDia.length}${doDia.length ? ' · ' + postadosDia + ' publicado(s)' : ''})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${doDia.length ? doDia.map(itemStory).join('') : '<div class="empty" style="font-size:11px;padding:8px;">Nada pra esse dia ainda.</div>'}</div>
+      </div>`;
+    });
+
+    if(semSemana.length){
+      html += `<div class="faixaDem" data-faixa="story_antigos">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">📦 Sem semana definida (criados antes) <span class="qtd">(${semSemana.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${semSemana.map(itemStory).join('')}</div>
+      </div>`;
+    }
 
     cont.innerHTML = html;
   }
@@ -5282,15 +5358,22 @@
     if(!titulo){ mostrarToast('Escreve o título.', 'erro'); return; }
     await addDoc(collection(db,'stories_semanais'), {
       cliente: sel.value, clienteNome: sel.selectedOptions[0].dataset.nome,
-      titulo, descricao, status: 'pendente', criadoEm: serverTimestamp()
+      titulo, descricao,
+      semana: window.__semanaStories || segundaDaSemana(new Date()),
+      diaSemana: Number(document.getElementById('storyDia').value) || 1,
+      linkReferencia: document.getElementById('storyLinkRef')?.value.trim() || '',
+      observacoes: document.getElementById('storyObs')?.value.trim() || '',
+      comentarioCliente: '',
+      status: 'pendente', criadoPor: usuarioAtual || '?', criadoEm: serverTimestamp()
     });
     mostrarToast('Enviado pro cliente aprovar!');
-    renderPortalClienteAdmin();
+    ['storyTitulo','storyDescricao','storyLinkRef','storyObs'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+    renderStoriesCliente();
   };
 
   window.marcarStoryPostado = async function(id){
-    await updateDoc(doc(db,'stories_semanais', id), { status: 'postado' });
-    renderPortalClienteAdmin();
+    await updateDoc(doc(db,'stories_semanais', id), { status: 'postado', postadoEm: new Date().toISOString() });
+    renderStoriesCliente();
   };
 
   window.criarAtaCliente = async function(){

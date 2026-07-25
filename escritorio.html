@@ -712,11 +712,11 @@
             <div class="field"><label>Vídeos planejados</label><input type="number" id="agQtdPlanejada" min="1" value="2"></div>
           </div>
           <div class="field"><label>Local</label><input type="text" id="agLocal" placeholder="Endereço ou referência do local"></div>
-          <div class="field"><label>Qual filmmaker vai gravar?</label><select id="agFilmmaker">
-            <option value="">A definir</option>
-            <option value="Nathan">Nathan</option>
-            <option value="Luís">Luís</option>
-          </select></div>
+          <div class="field"><label>Quem vai nessa gravação?</label>
+            <div class="desc" style="margin:-2px 0 8px;">Monta a equipe livremente — mais de um filmmaker, fotógrafo, drone, quem precisar. O primeiro da lista é o responsável.</div>
+            <div id="agEquipeLinhas"></div>
+            <button type="button" class="btn secondary" style="width:auto;padding:7px 14px;font-size:12px;margin-top:6px;" onclick="adicionarLinhaEquipe()">+ Adicionar pessoa</button>
+          </div>
           <button class="btn" onclick="agendarGravacao()" id="btnAgendar">Agendar</button>
         </div>
         <div id="listaAgendamentos"></div>
@@ -3143,7 +3143,7 @@
     document.getElementById('agendamentoMinhaAgenda').style.display = qual==='minhaAgenda' ? 'block' : 'none';
     document.getElementById('agendamentoCalendarioMes').style.display = qual==='calendarioMes' ? 'block' : 'none';
     document.getElementById('agendamentoCapsula').style.display = qual==='capsula' ? 'block' : 'none';
-    if(qual==='agendar'){ popularClientesAgendamento(); renderListaAgendamentos(); verificarQtdHoje(); }
+    if(qual==='agendar'){ popularClientesAgendamento(); renderListaAgendamentos(); verificarQtdHoje(); garantirLinhaEquipe(); }
     if(qual==='minhaAgenda') renderMinhaAgendaFilmmaker();
     if(qual==='calendarioMes'){
       const hoje = new Date();
@@ -3231,6 +3231,71 @@
     }
   };
 
+  /* ===== EQUIPE DE GRAVACAO (Onda 2 — 25/07/2026) =====
+     Antes o agendamento tinha UM campo `filmmaker`, texto simples, lido em
+     14 lugares. Agora existe `equipe: [{nome, papel}]`, livre — mais de um
+     filmmaker, fotografo, drone, assistente.
+     COMPATIBILIDADE: `filmmaker` continua sendo gravado com o primeiro da
+     lista. Assim as telas antigas que leem esse campo (calendario, kits de
+     gravacao, relatorios) seguem funcionando sem alteracao. E as telas de
+     "e minha gravacao?" passaram a olhar a equipe INTEIRA — antes um
+     segundo filmmaker escalado simplesmente nao via a gravacao na agenda
+     dele. */
+  const PAPEIS_EQUIPE = ['Filmmaker','2º Filmmaker','Fotógrafo','Drone','Assistente','Produção'];
+  const PESSOAS_EQUIPE = ['Nathan','Luís','Cecília','Gabrielle','Yas','Helo','João Victor','Amanda','Chris'];
+
+  function equipeDoAgendamento(a){
+    if(a && Array.isArray(a.equipe) && a.equipe.length) return a.equipe;
+    if(a && a.filmmaker) return [{ nome: a.filmmaker, papel: 'Filmmaker' }];
+    return [];
+  }
+  function pessoaNaEquipe(a, nome){
+    return equipeDoAgendamento(a).some(p => p.nome === nome);
+  }
+  function rotuloEquipe(a){
+    const e = equipeDoAgendamento(a);
+    if(!e.length) return 'a definir';
+    return e.map(p => p.nome + (p.papel && p.papel !== 'Filmmaker' ? ' (' + p.papel + ')' : '')).join(' + ');
+  }
+
+  function garantirLinhaEquipe(){
+    const cont = document.getElementById('agEquipeLinhas');
+    if(cont && !cont.children.length) adicionarLinhaEquipe();
+  }
+
+  window.adicionarLinhaEquipe = function(){
+    const cont = document.getElementById('agEquipeLinhas');
+    if(!cont) return;
+    const i = cont.children.length;
+    const div = document.createElement('div');
+    div.className = 'row2';
+    div.style.cssText = 'margin-top:6px;align-items:center;';
+    div.innerHTML = `
+      <select class="agEquipePessoa">
+        <option value="">A definir</option>
+        ${PESSOAS_EQUIPE.map(p=>`<option value="${p}">${p}</option>`).join('')}
+      </select>
+      <select class="agEquipePapel">
+        ${PAPEIS_EQUIPE.map((p,idx)=>`<option value="${p}" ${idx===(i===0?0:1)?'selected':''}>${p}</option>`).join('')}
+      </select>`;
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'btn red';
+    btn.style.cssText = 'width:auto;padding:5px 10px;font-size:11px;margin-top:4px;';
+    btn.textContent = '✕ tirar';
+    btn.onclick = () => div.remove();
+    div.appendChild(btn);
+    cont.appendChild(div);
+  };
+
+  function lerEquipeDoFormulario(){
+    const cont = document.getElementById('agEquipeLinhas');
+    if(!cont) return [];
+    return [...cont.children].map(l => ({
+      nome: l.querySelector('.agEquipePessoa')?.value || '',
+      papel: l.querySelector('.agEquipePapel')?.value || 'Filmmaker'
+    })).filter(p => p.nome);
+  }
+
   window.agendarGravacao = async function(){
     const sel = document.getElementById('agCliente');
     let clienteSlug = sel.value;
@@ -3244,7 +3309,8 @@
     const data = document.getElementById('agData').value;
     const hora = document.getElementById('agHora').value;
     const local = document.getElementById('agLocal').value.trim();
-    const filmmaker = document.getElementById('agFilmmaker').value;
+    const equipe = lerEquipeDoFormulario();
+    const filmmaker = equipe.length ? equipe[0].nome : '';  // compatibilidade com as telas antigas
     const tipo = document.getElementById('agTipo').value;
     const qtdPlanejada = parseInt(document.getElementById('agQtdPlanejada').value) || 1;
     if(!clienteSlug || !data){ mostrarToast('Preenche cliente e data.', 'erro'); return; }
@@ -3258,7 +3324,7 @@
     btn.disabled = true; btn.textContent = 'Agendando...';
     try {
       const agRef = await addDoc(collection(db,'agendamentos'), {
-        cliente: clienteSlug, clienteNome, data, hora, local, tipo, filmmaker,
+        cliente: clienteSlug, clienteNome, data, hora, local, tipo, filmmaker, equipe,
         qtdVideosPlanejados: qtdPlanejada, qtdVideosRealizados: 0,
         status: 'agendado', precisaAprovacao, aprovado: !precisaAprovacao,
         criadoEm: serverTimestamp()
@@ -3275,6 +3341,8 @@
       }
       mostrarToast('Gravação agendada!' + (precisaAprovacao ? ' Demanda de aprovação criada pro Chris — só libera pro filmmaker depois de aprovado.' : ''));
       document.getElementById('agLocal').value = '';
+      const contEq = document.getElementById('agEquipeLinhas');
+      if(contEq){ contEq.innerHTML = ''; adicionarLinhaEquipe(); }
       renderListaAgendamentos();
       verificarQtdHoje();
       /* ===== CORRIGIDO (Prompt Mestre 2 - P6, 23/07/2026) =====
@@ -3300,11 +3368,11 @@
       <div class="item">
         <div class="top"><div class="nome">${esc(a.clienteNome)}</div><div class="meta">${a.data} · ${a.hora}</div></div>
         <div class="meta">${esc(a.local || 'local não informado')} · ${a.tipo==='avulso'?'Avulso':'Fixo'} · ${a.qtdVideosPlanejados} vídeo(s) planejado(s)</div>
-        <div class="row2" style="margin-top:8px;">
-          <label style="font-size:11px;color:var(--muted);">Filmmaker: <select onchange="trocarFilmmakerAgendamento('${a.id}', this.value)" style="margin-top:4px;">
+        <div class="meta" style="margin-top:8px;">👥 Equipe: <b>${esc(rotuloEquipe(a))}</b></div>
+        <div class="row2" style="margin-top:6px;">
+          <label style="font-size:11px;color:var(--muted);">Responsável: <select onchange="trocarFilmmakerAgendamento('${a.id}', this.value)" style="margin-top:4px;">
             <option value="" ${!a.filmmaker?'selected':''}>A definir</option>
-            <option value="Nathan" ${a.filmmaker==='Nathan'?'selected':''}>Nathan</option>
-            <option value="Luís" ${a.filmmaker==='Luís'?'selected':''}>Luís</option>
+            ${['Nathan','Luís','Cecília','Gabrielle','Yas','Helo','João Victor'].map(p=>`<option value="${p}" ${a.filmmaker===p?'selected':''}>${p}</option>`).join('')}
           </select></label>
         </div>
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">

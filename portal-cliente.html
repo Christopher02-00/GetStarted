@@ -123,6 +123,7 @@
       <div class="tab" data-tab="ideias" onclick="setTab('ideias', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-bulb"/></svg>Banco de Ideias</div>
       <div class="tab" data-tab="stories" onclick="setTab('stories', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-image"/></svg>Stories</div>
       <div class="tab" data-tab="atas" onclick="setTab('atas', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-pen"/></svg>Atas de Reunião</div>
+      <div class="tab" data-tab="proposta" onclick="setTab('proposta', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;">📄 Sua Proposta</div>
       <div class="tab" data-tab="referencias" onclick="setTab('referencias', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-link"/></svg>Referências</div>
       <div class="tab" data-tab="briefing" onclick="setTab('briefing', this); toggleMenuMais();" style="width:100%;margin-bottom:6px;"><svg class="ic"><use href="#i-clipboard"/></svg>Briefing</div>
       <div class="tab" data-tab="info" onclick="setTab('info', this); toggleMenuMais();" style="width:100%;"><svg class="ic"><use href="#i-file"/></svg>Informações Extras</div>
@@ -140,6 +141,7 @@
     <div id="painelInfo" style="display:none;"></div>
     <div id="painelBriefing" style="display:none;"></div>
     <div id="painelReferencias" style="display:none;"></div>
+    <div id="painelProposta" style="display:none;"></div>
   </div>
 </div>
 
@@ -252,13 +254,14 @@
   window.setTab = function(nome, el){
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    if(['videos','minhaAgenda','ideias','stories','atas','info','briefing','referencias'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
-    ['Calendario','Acompanhamento','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info','Briefing','Referencias'].forEach(p => {
+    if(['videos','minhaAgenda','ideias','stories','atas','info','briefing','referencias','proposta'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
+    ['Calendario','Acompanhamento','Demandas','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info','Briefing','Referencias','Proposta'].forEach(p => {
       document.getElementById('painel'+p).style.display = (p.toLowerCase()===nome.toLowerCase()) ? 'block' : 'none';
     });
     if(nome==='minhaAgenda') carregarMinhaAgenda();
     if(nome==='briefing') carregarBriefingCliente();
     if(nome==='referencias') carregarReferenciasCliente();
+    if(nome==='proposta') carregarPropostaCliente();
   };
 
   /* ===== BRIEFING NO PORTAL (Onda 1 — 24/07/2026) =====
@@ -907,6 +910,148 @@
 
     cont.innerHTML = html;
   }
+
+  /* ===== SUA PROPOSTA (Onda 4 — 25/07/2026) =====
+     A proposta comercial tem VALOR — diferente de calendario e videos. Se
+     o link do portal for repassado, outra pessoa veria quanto o cliente
+     esta pagando. Por isso essa aba (e so ela) pede uma confirmacao: os
+     4 ultimos digitos do WhatsApp que ele deixou no pedido.
+     Nao e senha nem autenticacao forte — e uma tranca leve, proporcional:
+     impede o repasse por descuido sem criar atrito de login. A confirmacao
+     vale so pra sessao aberta no navegador. */
+  let __propostaLiberada = false;
+
+  function so4Digitos(s){ return (s||'').replace(/\D/g,'').slice(-4); }
+
+  async function buscarNegociosDoCliente(){
+    const snap = await getDocs(collection(db,'negocios'));
+    const meus = [];
+    const nomeAlvo = (clienteAtual.nome||'').trim().toLowerCase();
+    snap.forEach(d => {
+      const n = d.data();
+      if(n.clienteSlug === clienteAtual.slug || (n.clienteNome||'').trim().toLowerCase() === nomeAlvo) meus.push({ id:d.id, ...n });
+    });
+    meus.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+    return meus;
+  }
+
+  window.liberarProposta = async function(){
+    const digitado = so4Digitos(document.getElementById('propDigitos')?.value);
+    if(digitado.length < 4){ alert('Digita os 4 últimos números do seu WhatsApp.'); return; }
+    const negocios = await buscarNegociosDoCliente();
+    const bate = negocios.some(n => so4Digitos(n.whatsapp) === digitado);
+    if(!bate){ alert('Esses números não batem com o WhatsApp do seu pedido. Confere com a gente se precisar.'); return; }
+    __propostaLiberada = true;
+    carregarPropostaCliente();
+  };
+
+  async function carregarPropostaCliente(){
+    const cont = document.getElementById('painelProposta');
+    cont.innerHTML = '<div class="empty">Carregando...</div>';
+    const negocios = await buscarNegociosDoCliente();
+
+    if(!negocios.length){
+      cont.innerHTML = `<div class="card"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">Nenhuma proposta por aqui ainda. Assim que a gente montar a sua, ela aparece nesta aba.</div></div>`;
+      return;
+    }
+
+    if(!__propostaLiberada){
+      cont.innerHTML = `<div class="card">
+        <h2>📄 Sua Proposta</h2>
+        <div class="sub" style="margin-bottom:10px;">Como aqui tem valores, confirma rapidinho que é você: digita os <b>4 últimos números do WhatsApp</b> que você deixou no pedido.</div>
+        <div class="field"><label>4 últimos dígitos</label><input type="text" id="propDigitos" inputmode="numeric" maxlength="4" placeholder="0000"></div>
+        <div class="btn" style="margin-top:10px;padding:12px;text-align:center;cursor:pointer;" onclick="liberarProposta()">Ver minha proposta</div>
+      </div>`;
+      return;
+    }
+
+    const LBL = { recebido:'Recebemos seu pedido', negociando:'Estamos montando sua proposta', proposta:'Sua proposta está pronta',
+      analise:'Sua proposta está pronta', ajuste:'Estamos ajustando sua proposta', aceita:'Proposta aceita — falta o pagamento',
+      producao:'Serviço em andamento', entregue:'Serviço entregue', perdido:'Pedido encerrado' };
+
+    let html = '';
+    negocios.forEach(n => {
+      const est = n.estagio || 'recebido';
+      const venceu = n.propostaValidade && n.propostaValidade < new Date().toISOString().slice(0,10);
+      html += `<div class="card">
+        <h2>📄 ${esc(LBL[est] || 'Seu pedido')}</h2>`;
+
+      if(['recebido','negociando'].includes(est)){
+        html += `<div class="sub" style="margin-bottom:0;">Nossa equipe está preparando tudo. Assim que a proposta estiver pronta, ela aparece aqui e a gente te avisa.</div>`;
+      }
+      else if(['proposta','analise','ajuste'].includes(est)){
+        html += `<div class="sub" style="margin-bottom:10px;">Dá uma olhada com calma. Qualquer coisa que quiser diferente, é só pedir ajuste — sem compromisso.</div>`;
+        if(n.propostaValor) html += `<div class="item"><div class="nome" style="font-size:16px;">${esc(n.propostaValor)}</div>${n.propostaValidade ? '<div class="meta" style="margin-top:4px;">Válida até ' + esc(n.propostaValidade.split('-').reverse().join('/')) + (venceu ? ' — <b style="color:var(--red);">vencida</b>' : '') + '</div>' : ''}</div>`;
+        if(n.propostaLink) html += `<a href="${esc(n.propostaLink)}" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:10px;padding:12px;">📄 Abrir a proposta completa ↗</a>`;
+        if(n.respostaTexto) html += `<div class="meta" style="margin-top:10px;color:var(--yellow);">Você pediu: ${esc(n.respostaTexto)}</div>`;
+        if(venceu){
+          html += `<div class="meta" style="margin-top:12px;color:var(--red);">Essa proposta passou da validade. Fala com a gente que a gente atualiza pra você.</div>`;
+        } else {
+          html += `<div class="btn" style="margin-top:12px;padding:13px;text-align:center;cursor:pointer;" onclick="responderProposta('${n.id}','aceita')">✅ Aceitar proposta</div>
+          <div class="btn secondary" style="margin-top:8px;padding:12px;text-align:center;cursor:pointer;" onclick="responderProposta('${n.id}','ajuste')">🔄 Pedir ajuste</div>
+          <div class="btn secondary" style="margin-top:8px;padding:12px;text-align:center;cursor:pointer;" onclick="responderProposta('${n.id}','perdido')">❌ Não vou seguir</div>`;
+        }
+      }
+      else if(est === 'aceita'){
+        html += `<div class="sub" style="margin-bottom:10px;">Que bom que fechou! Agora é só o pagamento pra gente começar.</div>
+          ${n.propostaValor ? '<div class="item"><div class="nome" style="font-size:16px;">'+esc(n.propostaValor)+'</div></div>' : ''}
+          <div class="field" style="margin-top:10px;"><label>Link do comprovante (opcional)</label><input type="text" id="compLink_${n.id}" value="${esc(n.pagamentoComprovante||'')}" placeholder="Cola aqui o link do comprovante"></div>
+          <div class="btn secondary" style="margin-top:8px;padding:12px;text-align:center;cursor:pointer;" onclick="salvarComprovante('${n.id}')">Salvar comprovante</div>
+          <div class="btn" style="margin-top:8px;padding:13px;text-align:center;cursor:pointer;" onclick="enviarComprovanteWhats('${n.id}')">💬 Mandar comprovante no WhatsApp</div>
+          <div class="meta" style="margin-top:10px;opacity:.8;">Assim que a gente conferir o pagamento, seu serviço entra em produção e você acompanha por aqui.</div>`;
+      }
+      else if(est === 'producao'){
+        html += `<div class="sub" style="margin-bottom:10px;">Pagamento confirmado e produção rolando. Acompanha o andamento nas abas de <b>Calendário</b>, <b>Status dos Vídeos</b> e <b>Minha Agenda</b>.</div>
+          <div class="item"><div class="nome">🎬 Em produção</div><div class="meta" style="margin-top:4px;">Nossa equipe já está trabalhando no seu material.</div></div>`;
+      }
+      else if(est === 'entregue'){
+        html += `<div class="sub" style="margin-bottom:0;">Serviço concluído! Tudo que produzimos pra você fica guardado nas outras abas do portal.</div>`;
+      }
+      else {
+        html += `<div class="sub" style="margin-bottom:0;">Esse pedido foi encerrado. Se quiser retomar, é só chamar a gente.</div>`;
+      }
+      html += `</div>`;
+    });
+    cont.innerHTML = html;
+  }
+
+  window.responderProposta = async function(id, resposta){
+    let texto = '';
+    if(resposta === 'ajuste'){
+      texto = prompt('O que você gostaria de mudar na proposta?') || '';
+      if(!texto.trim()){ alert('Escreve o que quer mudar pra gente entender.'); return; }
+    } else if(resposta === 'perdido'){
+      texto = prompt('Pode contar o motivo? (opcional)') || '';
+      if(!confirm('Confirmar que você não vai seguir com essa proposta?')) return;
+    } else {
+      if(!confirm('Confirmar que você ACEITA essa proposta?')) return;
+    }
+    const ref = doc(db,'negocios', id);
+    const snap = await getDoc(ref);
+    const n = snap.exists() ? snap.data() : {};
+    const hist = Array.isArray(n.historico) ? n.historico : [];
+    hist.push({ estagio: resposta, em: new Date().toISOString(), por: clienteAtual.nome + ' (cliente)' });
+    await updateDoc(ref, { estagio: resposta, respostaCliente: resposta, respostaTexto: texto.trim(), historico: hist, atualizadoEm: serverTimestamp() });
+    const aviso = resposta === 'aceita' ? '✅ ' + clienteAtual.nome + ' ACEITOU a proposta' :
+                  resposta === 'ajuste' ? '🔄 ' + clienteAtual.nome + ' pediu ajuste na proposta' :
+                  '❌ ' + clienteAtual.nome + ' não vai seguir com a proposta';
+    await alertarEquipe(aviso, texto || 'sem observação');
+    carregarPropostaCliente();
+  };
+
+  window.salvarComprovante = async function(id){
+    const link = (document.getElementById('compLink_'+id)?.value||'').trim();
+    if(!link){ alert('Cola o link do comprovante primeiro.'); return; }
+    await updateDoc(doc(db,'negocios', id), { pagamentoComprovante: link, pagamentoEnviadoEm: new Date().toISOString(), atualizadoEm: serverTimestamp() });
+    await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante de pagamento', link);
+    alert('Comprovante enviado! Assim que a gente conferir, seu serviço entra em produção.');
+    carregarPropostaCliente();
+  };
+
+  window.enviarComprovanteWhats = function(id){
+    const msg = 'Oi! Sou ' + clienteAtual.nome + '. Estou mandando o comprovante do pagamento da proposta.';
+    window.open('https://wa.me/5541996443046?text=' + encodeURIComponent(msg), '_blank');
+  };
 
   window.comentarStory = async function(id){
     const texto = prompt('Seu comentário sobre esse story:');

@@ -1105,6 +1105,7 @@
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">👥 Clientes <span class="seta">▾</span></div>
               <div class="gGrupoItens">
                 <div class="subtab" data-sub="saudeClientes" onclick="setGerenciaSub('saudeClientes', this)">📋 Visão Completa (saúde + RFV)</div>
+                <div class="subtab" data-sub="funilNegocios" onclick="setGerenciaSub('funilNegocios', this)">🎯 Funil de Negócios<span class="navbadge" id="badgeFunil" style="display:none;background:var(--yellow);color:var(--graphite);">0</span></div>
                 <div class="subtab" data-sub="leadsAvulsos" onclick="setGerenciaSub('leadsAvulsos', this)">🆕 Leads Avulsos<span class="navbadge" id="badgeLeadsAvulsos" style="display:none;background:var(--red);">0</span></div>
                 <div class="subtab" data-sub="leadsPessoal" onclick="setGerenciaSub('leadsPessoal', this)">🎉 Leads Pessoa Física<span class="navbadge" id="badgeLeadsPessoal" style="display:none;background:var(--red);">0</span></div>
                 <div class="subtab" data-sub="leadsMensal" onclick="setGerenciaSub('leadsMensal', this)">📅 Leads Plano Mensal<span class="navbadge" id="badgeLeadsMensal" style="display:none;background:var(--red);">0</span></div>
@@ -1151,6 +1152,7 @@
             </div>
           </div>
           <div class="gerenciaConteudo">
+            <div id="gerenciaFunilNegocios" style="display:none;"></div>
             <div id="gerenciaSaudeAutomacoes" style="display:none;"></div>
             <div id="gerenciaVideosHub" style="display:none;"></div>
             <div id="gerenciaEquipeVisao" style="display:none;"></div>
@@ -7580,6 +7582,7 @@
     document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaPainelTV').style.display = qual==='painelTV' ? 'block' : 'none';
     document.getElementById('gerenciaComando').style.display = qual==='comando' ? 'block' : 'none';
+    document.getElementById('gerenciaFunilNegocios').style.display = qual==='funilNegocios' ? 'block' : 'none';
     document.getElementById('gerenciaSaudeAutomacoes').style.display = qual==='saudeAutomacoes' ? 'block' : 'none';
     document.getElementById('gerenciaVideosHub').style.display = qual==='videosHub' ? 'block' : 'none';
     document.getElementById('gerenciaEquipeVisao').style.display = qual==='equipeVisao' ? 'block' : 'none';
@@ -7603,6 +7606,7 @@
     }
     if(qual==='comando') iniciarCentralComando();
     else pararCentralComando();
+    if(qual==='funilNegocios') renderFunilNegocios();
     if(qual==='saudeAutomacoes') renderSaudeAutomacoes();
     if(qual==='videosHub') renderVideosHub();
     if(qual==='equipeVisao') renderEquipeVisao();
@@ -9031,7 +9035,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['saudeAutomacoes','videosHub','equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['funilNegocios','saudeAutomacoes','videosHub','equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -11530,6 +11534,197 @@
      falhas em log_automacoes, mas nunca se criou onde LER esse log. Ou
      seja: o sistema registrava que estava quebrado e ninguém via.
      Aqui é onde se vê. Foco no que falhou, não no que deu certo. */
+  /* ===== FUNIL DE NEGOCIOS (Onda 3 — 25/07/2026) =====
+     Por que existe: o sistema so sabia "e cliente" ou "nao existe". Nao
+     havia estagio entre receber o pedido e o servico rodando — e por isso
+     um lead que preencheu o formulario ja era tratado como cliente
+     mensalista por cinco automacoes (foi o caso do IKN Brasil).
+
+     A unidade aqui e o NEGOCIO, nao o cliente: o mesmo cliente pode voltar
+     varias vezes com trabalhos pontuais diferentes, cada um com seu
+     estagio, sua proposta e seu pagamento. Um cliente, varios negocios.
+
+     REGRA QUE FECHA O BURACO: o negocio so vira cliente de verdade (com
+     tipoEntrega gravado) quando chega em "Pago — em producao". Antes disso
+     nenhuma automacao o enxerga.
+
+     Movimentacao e manual e so do Chris — de proposito. Estagio comercial
+     e leitura de negociacao, nao dado que o sistema consiga inferir. */
+  const ESTAGIOS_FUNIL = [
+    { k:'recebido',   nome:'Pedido recebido',        icone:'📥', cor:'var(--line)',    ajuda:'Chegou pelo formulário. Ainda não olhou.' },
+    { k:'negociando', nome:'Em negociação',          icone:'💬', cor:'var(--yellow2)', ajuda:'Conversando, montando a proposta.' },
+    { k:'proposta',   nome:'Proposta enviada',       icone:'📄', cor:'var(--yellow)',  ajuda:'Disponível pro cliente no portal.' },
+    { k:'analise',    nome:'Cliente analisando',     icone:'👀', cor:'var(--yellow)',  ajuda:'Ele abriu e está decidindo.' },
+    { k:'ajuste',     nome:'Pediu ajuste',           icone:'🔄', cor:'var(--red)',     ajuda:'Quer outra versão da proposta.' },
+    { k:'aceita',     nome:'Aceitou — aguardando pagamento', icone:'✅', cor:'var(--green)', ajuda:'Fechou. Falta o pagamento.' },
+    { k:'producao',   nome:'Pago — em produção',     icone:'🎬', cor:'var(--green)',   ajuda:'Vira cliente de verdade aqui.' },
+    { k:'entregue',   nome:'Entregue',               icone:'📦', cor:'var(--green)',   ajuda:'Serviço concluído.' },
+    { k:'perdido',    nome:'Recusada / Perdido',     icone:'❌', cor:'var(--muted)',   ajuda:'Não fechou.' }
+  ];
+  const estagioInfo = k => ESTAGIOS_FUNIL.find(e => e.k === k) || ESTAGIOS_FUNIL[0];
+
+  window.__funilFiltro = null;
+
+  /* Traz leads que ainda nao viraram negocio, pra nada se perder no caminho */
+  async function sincronizarLeadsParaFunil(){
+    const [negSnap, leadSnap, leadPfSnap] = await Promise.all([
+      getDocs(collection(db,'negocios')),
+      getDocs(collection(db,'leads_avulsos')),
+      getDocs(collection(db,'leads_pessoa_fisica'))
+    ]);
+    const jaTem = new Set();
+    negSnap.forEach(d => { const n = d.data(); if(n.leadId) jaTem.add(n.leadId); });
+    let criados = 0;
+    const criarDoLead = async (id, l, origem) => {
+      if(jaTem.has(id)) return;
+      await addDoc(collection(db,'negocios'), {
+        leadId: id, origemLead: origem,
+        clienteNome: l.nome || 'sem nome',
+        whatsapp: l.whatsapp || '', instagram: l.instagram || '',
+        estagio: 'recebido',
+        historico: [{ estagio:'recebido', em: new Date().toISOString(), por: 'sistema (veio do formulário)' }],
+        propostaLink: '', propostaValor: '', propostaValidade: '',
+        respostaCliente: '', respostaTexto: '',
+        pagamentoComprovante: '', pagamentoConferidoPor: '',
+        criadoEm: serverTimestamp(), atualizadoEm: serverTimestamp()
+      });
+      criados++;
+    };
+    for(const d of leadSnap.docs) await criarDoLead(d.id, d.data(), 'avulso');
+    for(const d of leadPfSnap.docs) await criarDoLead(d.id, d.data(), 'pessoa_fisica');
+    return criados;
+  }
+
+  window.moverNegocio = async function(id, novoEstagio){
+    const info = estagioInfo(novoEstagio);
+    if(!confirm('Mover pra "' + info.nome + '"?')) return;
+    const ref = doc(db,'negocios', id);
+    const snap = await getDoc(ref);
+    if(!snap.exists()) return;
+    const n = snap.data();
+    const hist = Array.isArray(n.historico) ? n.historico : [];
+    hist.push({ estagio: novoEstagio, em: new Date().toISOString(), por: usuarioAtual || '?' });
+    await updateDoc(ref, { estagio: novoEstagio, historico: hist, atualizadoEm: serverTimestamp() });
+
+    /* AQUI o negocio vira cliente — e so aqui. Grava tipoEntrega junto,
+       que e o que impede o problema do cliente-fantasma se repetir. */
+    if(novoEstagio === 'producao'){
+      const slug = (n.clienteNome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+      if(slug){
+        const exSnap = await getDocs(collection(db,'clientes_extras'));
+        let existe = false; exSnap.forEach(d => { if(d.data().slug === slug) existe = true; });
+        if(!existe){
+          await addDoc(collection(db,'clientes_extras'), { nome: n.clienteNome, slug, criadoPor: 'funil (negócio fechado)', criadoEm: serverTimestamp() });
+          if(!CLIENTES_LISTA.some(c=>c.slug===slug)) CLIENTES_LISTA.push({ nome: n.clienteNome, slug, extra:true });
+        }
+        await setDoc(doc(db,'clientes_config', slug), { tipoEntrega: 'entrega_direta', atualizadoPor: 'funil (negócio virou produção)', atualizadoEm: serverTimestamp() }, { merge:true });
+        await updateDoc(ref, { clienteSlug: slug });
+      }
+      mostrarToast('Em produção! ' + n.clienteNome + ' virou cliente avulso no sistema.');
+    } else {
+      mostrarToast('Movido pra ' + info.nome + '.');
+    }
+    registrarLogAutomacao('negocio_movido', id, (n.clienteNome||'') + ' → ' + novoEstagio);
+    renderFunilNegocios();
+  };
+
+  window.editarPropostaNegocio = async function(id){
+    const ref = doc(db,'negocios', id);
+    const snap = await getDoc(ref);
+    if(!snap.exists()) return;
+    const n = snap.data();
+    const link = prompt('Link do PDF da proposta (Drive):', n.propostaLink || '');
+    if(link === null) return;
+    const valor = prompt('Valor da proposta:', n.propostaValor || '');
+    if(valor === null) return;
+    const validade = prompt('Válida até (AAAA-MM-DD):', n.propostaValidade || '');
+    if(validade === null) return;
+    await updateDoc(ref, { propostaLink: link.trim(), propostaValor: valor.trim(), propostaValidade: validade.trim(), atualizadoEm: serverTimestamp() });
+    mostrarToast('Proposta salva.');
+    renderFunilNegocios();
+  };
+
+  window.setFunilFiltro = function(k){ window.__funilFiltro = (window.__funilFiltro === k) ? null : k; renderFunilNegocios(); };
+
+  window.renderFunilNegocios = async function(){
+    const cont = document.getElementById('gerenciaFunilNegocios');
+    if(!cont) return;
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando o funil...</div></div>';
+    const novos = await sincronizarLeadsParaFunil();
+
+    const snap = await getDocs(collection(db,'negocios'));
+    const negocios = []; snap.forEach(d => negocios.push({ id:d.id, ...d.data() }));
+    negocios.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+
+    const porEstagio = {};
+    ESTAGIOS_FUNIL.forEach(e => porEstagio[e.k] = []);
+    negocios.forEach(n => { (porEstagio[n.estagio] = porEstagio[n.estagio] || []).push(n); });
+
+    const emAberto = negocios.filter(n => !['producao','entregue','perdido'].includes(n.estagio)).length;
+    atualizarBadgeFunil(emAberto);
+
+    const diasParado = n => {
+      const ts = n.atualizadoEm?.seconds ? n.atualizadoEm.seconds*1000 : (n.criadoEm?.seconds ? n.criadoEm.seconds*1000 : 0);
+      return ts ? Math.floor((Date.now()-ts)/86400000) : null;
+    };
+
+    let html = `<div class="card">
+      <h2>🎯 Funil de Negócios</h2>
+      <div class="desc">Cada pedido avulso, do formulário até a entrega. A unidade aqui é o <b>negócio</b>, não o cliente — o mesmo cliente pode voltar com outro trabalho e ter outro cartão.</div>
+      <div class="meta" style="margin-top:6px;">Só você move os cartões. O negócio vira cliente de verdade no sistema quando chega em <b>Pago — em produção</b>.</div>
+      ${novos ? '<div class="meta" style="margin-top:6px;color:var(--yellow);">+ ' + novos + ' pedido(s) novo(s) trazido(s) do formulário agora.</div>' : ''}
+    </div>
+    <div class="painelResumo" style="margin-bottom:16px;">
+      ${ESTAGIOS_FUNIL.filter(e=>!['entregue','perdido'].includes(e.k)).map(e => `
+        <div class="resumoCard clicavel ${window.__funilFiltro===e.k?'yellow':''}" onclick="setFunilFiltro('${e.k}')">
+          <div class="num">${(porEstagio[e.k]||[]).length}</div><div class="lbl">${e.icone} ${e.nome}</div>
+        </div>`).join('')}
+    </div>`;
+
+    const cartao = n => {
+      const info = estagioInfo(n.estagio);
+      const d = diasParado(n);
+      const proximos = ESTAGIOS_FUNIL.filter(e => e.k !== n.estagio);
+      return `<div class="item" style="border-left:3px solid ${info.cor};">
+        <div class="top"><div class="nome">${esc(n.clienteNome||'sem nome')}</div><span class="selo ${n.estagio==='perdido'?'pendente':n.estagio==='producao'||n.estagio==='entregue'?'aprovada':'hoje'}">${info.icone} ${info.nome}</span></div>
+        <div class="meta" style="margin-top:4px;">${esc(n.whatsapp||'sem WhatsApp')}${n.instagram?' · '+esc(n.instagram):''}${d!==null?' · parado há '+d+' dia(s)':''}</div>
+        ${n.propostaValor ? '<div class="meta" style="margin-top:4px;">💰 '+esc(n.propostaValor)+(n.propostaValidade?' · válida até '+formatarDataBR(n.propostaValidade):'')+'</div>' : ''}
+        ${n.propostaLink ? '<div class="meta" style="margin-top:4px;">📄 <a href="'+esc(n.propostaLink)+'" target="_blank" style="color:var(--yellow);">Abrir proposta ↗</a></div>' : ''}
+        ${n.respostaTexto ? '<div class="meta" style="margin-top:4px;color:var(--yellow2);">💬 Cliente: '+esc(n.respostaTexto)+'</div>' : ''}
+        <div class="row2" style="margin-top:8px;align-items:center;">
+          <select onchange="moverNegocio('${n.id}', this.value)" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:6px;border-radius:6px;font-size:11px;">
+            <option value="">Mover para...</option>
+            ${proximos.map(e=>`<option value="${e.k}">${e.icone} ${e.nome}</option>`).join('')}
+          </select>
+          <button class="btn secondary" style="padding:6px 12px;font-size:11px;" onclick="editarPropostaNegocio('${n.id}')">📄 Proposta</button>
+        </div>
+      </div>`;
+    };
+
+    const visiveis = window.__funilFiltro ? [window.__funilFiltro] : ESTAGIOS_FUNIL.map(e=>e.k);
+    ESTAGIOS_FUNIL.forEach(e => {
+      if(!visiveis.includes(e.k)) return;
+      const lista = porEstagio[e.k] || [];
+      if(!lista.length && ['entregue','perdido'].includes(e.k)) return;
+      html += `<div class="faixaDem ${['recebido','negociando','proposta','analise','ajuste','aceita'].includes(e.k)?'aberta':''}" data-faixa="funil_${e.k}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${e.icone} ${e.nome} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">
+          <div class="meta" style="padding:6px 2px;opacity:.7;">${e.ajuda}</div>
+          ${lista.length ? lista.map(cartao).join('') : '<div class="empty" style="font-size:11px;padding:8px;">Nada aqui.</div>'}
+        </div>
+      </div>`;
+    });
+
+    if(!negocios.length) html += '<div class="empty">Nenhum pedido ainda. Assim que alguém preencher o formulário do site, aparece aqui.</div>';
+    cont.innerHTML = html;
+  };
+
+  function atualizarBadgeFunil(n){
+    const b = document.getElementById('badgeFunil');
+    if(!b) return;
+    if(n > 0){ b.textContent = n; b.style.display = 'flex'; } else b.style.display = 'none';
+  }
+
   window.renderSaudeAutomacoes = async function(){
     const cont = document.getElementById('gerenciaSaudeAutomacoes');
     if(!cont) return;

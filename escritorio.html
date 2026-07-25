@@ -3488,9 +3488,9 @@
         <div style="padding:14px 16px;" onclick="toggleFormGravacao('${a.id}')">
           <div class="top"><div class="nome">${esc(a.clienteNome)}</div>${selo}</div>
           <div class="meta" style="margin-top:4px;">${formatarDataBR(a.data)} · ${a.hora||'?'}${a.local ? ' · '+esc(a.local) : ''} · Planejado: ${qtdPlan} vídeo(s)</div>
-          <div class="meta" style="margin-top:4px;color:var(--yellow);font-weight:700;">Toque pra registrar <span id="setaGrav_${a.id}">▾</span></div>
+          <div class="btn ${urgencia==='normal'?'secondary':''}" style="margin-top:8px;padding:11px;text-align:center;font-size:13px;">📹 ${urgencia==='normal'?'Abrir pra registrar os vídeos':'Registrar os vídeos dessa gravação'} <span id="setaGrav_${a.id}">${urgencia==='normal'?'▾':'▴'}</span></div>
         </div>
-        <div id="formGrav_${a.id}" style="display:none;padding:0 16px 16px;border-top:1px solid var(--line);" onclick="event.stopPropagation();">
+        <div id="formGrav_${a.id}" style="display:${urgencia==='normal'?'none':'block'};padding:0 16px 16px;border-top:1px solid var(--line);" onclick="event.stopPropagation();">
           ${estaAtrasado ? `<div class="meta" style="color:var(--red);font-weight:800;margin:10px 0;">⚠️ Essa gravação foi no dia ${formatarDataBR(a.data)}, e você está registrando só hoje. Registra sempre no MESMO DIA a partir de agora — isso atrasa toda a fila de edição e aprovação.</div>` : ''}
 
           ${itensCalendario.length ? `
@@ -3529,7 +3529,7 @@
       const urg = chave === 'atrasadas' ? 'atrasado' : chave === 'hoje' ? 'hoje' : 'normal';
       const cards = [];
       for(const a of lista) cards.push(await cardGravacao(a, urg));
-      return `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="magenda_${chave}">
+      return `<div class="faixaDem aberta" data-faixa="magenda_${chave}">
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
         <div class="faixaItens">${cards.join('')}</div>
       </div>`;
@@ -4235,7 +4235,10 @@
       resumo += jaPassaramOuHoje.map(p => `
         <div class="item">
           <div class="top"><div class="nome">${esc(p.clienteNome)} — ${esc(p.titulo)}</div><div class="meta">${formatarDataBR(p.dataAgendada)} ${p.horaAgendada||''}</div></div>
-          <button class="btn" style="margin-top:8px;width:auto;padding:8px 16px;" onclick="confirmarPostagemPublicada('${p.id}')">✔ Confirmar que foi publicado</button>
+          <div class="btnrow" style="margin-top:8px;">
+            <button class="btn" style="width:auto;padding:8px 16px;" onclick="confirmarPostagemPublicada('${p.id}')">✔ Confirmar que foi publicado</button>
+            <button class="btn secondary" style="width:auto;padding:8px 16px;font-size:11px;" onclick="desfazerAgendamentoPostagem('${p.id}')">↩ Não foi agendado — desfazer</button>
+          </div>
         </div>
       `).join('');
     }
@@ -4272,6 +4275,62 @@
      e a legenda já visíveis no card, sem depender de convenção de nome.
      Mesmo destino final do vídeo de tráfego: sai da fila, video vira
      'finalizado' e aparece em Entregas Finalizadas do cliente. */
+  /* ===== DESFAZER AGENDAMENTO DE POSTAGEM (25/07/2026) =====
+     Caso real: a Cecilia marcou um conteudo da Hitech como agendado, mas
+     o video 1 ainda nao tinha sido agendado de verdade. Nao existia
+     NENHUM caminho de volta — nem pra ela, nem pra Amanda. O agendamento
+     mexe em tres lugares (postagem, calendario do cliente e a demanda que
+     e fechada automaticamente), entao desfazer na mao era inviavel.
+     Esta funcao reverte os tres de uma vez. */
+  window.desfazerAgendamentoPostagem = async function(id){
+    if(!confirm('Desfazer o agendamento dessa postagem?\n\nEla volta pra sua fila de agendar, o item sai do calendário do cliente e a demanda reabre.')) return;
+    const snap = await getDoc(doc(db,'postagens', id));
+    if(!snap.exists()){ mostrarToast('Postagem não encontrada.', 'erro'); return; }
+    const p = snap.data();
+
+    // 1. tira o item que tinha sido criado no calendario do cliente
+    let saiuDoCalendario = false;
+    try{
+      const calRef = doc(db,'calendarios', p.cliente);
+      const calSnap = await getDoc(calRef);
+      if(calSnap.exists()){
+        const dados = calSnap.data();
+        const items = dados.items || [];
+        const diaEsperado = p.dataAgendada ? parseInt(p.dataAgendada.split('-')[2]) : null;
+        // casa pelo titulo + dia — que e como o item foi criado
+        const idx = items.findIndex(it => it && it.name === p.titulo && (diaEsperado === null || Number(it.day) === diaEsperado));
+        if(idx >= 0){
+          items.splice(idx, 1);
+          await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+          saiuDoCalendario = true;
+        }
+      }
+    }catch(e){ console.error('Falha ao remover item do calendário:', e); }
+
+    // 2. devolve a postagem pra fila de agendamento
+    await updateDoc(doc(db,'postagens', id), {
+      status: 'aguardando_agendamento',
+      dataAgendada: '', horaAgendada: '',
+      desfeitoPor: usuarioAtual || '?', desfeitoEm: new Date().toISOString()
+    });
+
+    // 3. reabre a demanda de agendamento (a antiga foi fechada sozinha ao agendar)
+    try{
+      await addDoc(collection(db,'demandas'), {
+        titulo: '📅 Agendar postagem — ' + (p.clienteNome || ''),
+        descricao: 'Reaberta porque o agendamento anterior foi desfeito por ' + (usuarioAtual||'?') + '.\n\nVídeo: ' + (p.titulo||'') + (p.linkVideo ? '\nLink: ' + p.linkVideo : '') + (p.legenda ? '\n\nLegenda: ' + p.legenda : ''),
+        origem: 'sistema', clienteNome: p.clienteNome || '', destinatario: 'Cecília',
+        postagemId: id,
+        prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+    }catch(e){ console.error('Falha ao reabrir demanda:', e); }
+
+    registrarLogAutomacao('agendamento_postagem_desfeito', id, (p.clienteNome||'') + ' — ' + (p.titulo||'') + ' (por ' + (usuarioAtual||'?') + ')');
+    mostrarToast('Agendamento desfeito.' + (saiuDoCalendario ? ' Item removido do calendário do cliente.' : ' (não achei o item no calendário — confere lá.)'));
+    renderAgendarPostagens();
+  };
+
   window.marcarPostagemSemAgendamento = async function(id){
     const motivo = prompt('Por que esse vídeo não precisa de agendamento? (opcional, fica registrado pro time)') || '';
     if(!confirm('Confirma? Esse vídeo sai da fila de agendamento e vai direto pra Entregas Finalizadas do cliente — a agência não vai postar ele.')) return;

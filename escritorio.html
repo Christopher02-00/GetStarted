@@ -1121,6 +1121,8 @@
             <div class="gGrupo" data-grupo="equipe">
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">🧑‍🤝‍🧑 Equipe <span class="seta">▾</span></div>
               <div class="gGrupoItens">
+                <div class="subtab" data-sub="equipeVisao" onclick="setGerenciaSub('equipeVisao', this)">👁️ Ver ambiente de cada um</div>
+                <div class="subtab" data-sub="disciplinaDia" onclick="setGerenciaSub('disciplinaDia', this)">📋 Checklists do dia</div>
                 <div class="subtab" data-sub="funcionarioMes" onclick="setGerenciaSub('funcionarioMes', this)">🎯 Metas da Equipe & Funcionário do Mês</div>
               </div>
             </div>
@@ -1151,6 +1153,8 @@
             </div>
           </div>
           <div class="gerenciaConteudo">
+            <div id="gerenciaEquipeVisao" style="display:none;"></div>
+            <div id="gerenciaDisciplinaDia" style="display:none;"></div>
             <div id="gerenciaDemandasAtrasadas" style="display:none;"></div>
             <div id="gerenciaAtrasosEquipe" style="display:none;"></div>
             <div id="gerenciaDemandasAguardando" style="display:none;"></div>
@@ -2173,13 +2177,18 @@
       if(!aguardandoCliente.length){
         html += '<div class="empty">Nenhum vídeo nessa fila agora.</div>';
       } else {
-        aguardandoCliente.forEach(v => {
-          html += `<div class="item" style="${v.enviadoParaCliente?'opacity:.65;border-left:3px solid var(--yellow2);':''}">
+        /* ===== PEDIDO DA AMANDA — ITENS 4 e 5 (24/07/2026) =====
+           Antes essa fila vinha embaralhada: cliente A, C, A, B, C... e sem
+           distinguir o que ainda precisa ser MANDADO do que ja foi e so
+           espera resposta. Agora agrupa por cliente e, dentro e fora do
+           grupo, quem ainda nao foi enviado vem primeiro — que e o que
+           exige acao dela. */
+        const cardVideoCliente = v => `<div class="item" style="${v.enviadoParaCliente?'opacity:.65;border-left:3px solid var(--yellow2);':'border-left:3px solid var(--yellow);'}">
           <label style="display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;">
             <input type="checkbox" class="checkClienteAprovouLote" data-id="${v.id}">
             <span style="font-size:11px;color:var(--muted);">Selecionar pra confirmação em lote</span>
           </label>
-          <div class="top"><div class="nome">${v.enviadoParaCliente?'✉️ ':''}${esc(v.titulo)}</div><div class="meta">Aprovado por ${esc(v.aprovadoPor)}</div></div>
+          <div class="top"><div class="nome">${v.enviadoParaCliente?'✉️ ':'🔔 '}${esc(v.titulo)}</div><div class="meta">Aprovado por ${esc(v.aprovadoPor)}</div></div>
           <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Abrir vídeo no Drive ↗</a></div>
           <label style="display:flex;align-items:center;gap:7px;margin-top:10px;background:var(--deep);border-radius:7px;padding:8px 10px;cursor:pointer;">
             <input type="checkbox" ${v.enviadoParaCliente?'checked':''} onchange="marcarEnviadoParaCliente('${v.id}', this.checked)">
@@ -2188,9 +2197,32 @@
           <div class="btnrow" style="margin-top:10px;">
             <button class="btn secondary" onclick="desfazerAprovacaoInterna('${v.id}')">↩ Desfazer aprovação</button>
             <button class="btn secondary" onclick="cobrarClienteWhatsApp('${v.id}', ${JSON.stringify(v.titulo||'')}, '${v.cliente||''}')">📲 Cobrar no WhatsApp</button>
+            <button class="btn red" onclick="abrirAjustePedidoCliente('${v.id}')">🔄 Cliente pediu ajuste</button>
             <button class="btn" onclick="marcarClienteAprovouVideo('${v.id}')">✓ Cliente aprovou — liberar</button>
           </div>
+          <div id="formAjusteCli_${v.id}" style="display:none;margin-top:10px;background:var(--deep);padding:12px;border-radius:8px;border-left:3px solid var(--red);">
+            <div class="field"><label>O que o cliente pediu pra ajustar?</label><textarea id="motivoAjusteCli_${v.id}" placeholder="Descreve o ajuste que o cliente pediu..."></textarea></div>
+            <div class="field"><label>📎 Links de apoio (opcional — um por linha)</label><textarea id="anexosAjusteCli_${v.id}" placeholder="Print do trecho, referência que o cliente mandou, vídeo de inspiração..." style="min-height:60px;"></textarea></div>
+            <div class="meta" style="margin-bottom:8px;">O vídeo volta pro editor como <b>aguardando ajustes</b> — a aprovação interna não precisa ser desfeita.</div>
+            <button class="btn red" onclick="confirmarAjustePedidoCliente('${v.id}')">Enviar de volta pro editor</button>
+          </div>
         </div>`;
+
+        const porClienteAg = {};
+        aguardandoCliente.forEach(v => { const k = v.clienteNome || v.cliente || '—'; (porClienteAg[k] = porClienteAg[k] || []).push(v); });
+        // cliente com algo ainda nao enviado vem primeiro
+        const nomesAg = Object.keys(porClienteAg).sort((a,b) => {
+          const pa = porClienteAg[a].some(v => !v.enviadoParaCliente) ? 0 : 1;
+          const pb = porClienteAg[b].some(v => !v.enviadoParaCliente) ? 0 : 1;
+          return pa - pb || a.localeCompare(b,'pt-BR');
+        });
+        nomesAg.forEach(nome => {
+          const lista = porClienteAg[nome].sort((a,b) => (a.enviadoParaCliente?1:0) - (b.enviadoParaCliente?1:0));
+          const faltaEnviar = lista.filter(v => !v.enviadoParaCliente).length;
+          html += `<div class="faixaDem aberta" data-faixa="agcli_${esc(nome)}">
+            <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${lista.length}${faltaEnviar ? ' · ' + faltaEnviar + ' a enviar' : ' · todos enviados'})</span><span class="seta">▾</span></div>
+            <div class="faixaItens">${lista.map(cardVideoCliente).join('')}</div>
+          </div>`;
         });
       }
     }
@@ -2254,6 +2286,43 @@
     await updateDoc(doc(db,'videos_producao', id), { status:'aguardando_cliente', clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:'' });
     registrarHistorico('videos_producao', id, 'Confirmação do cliente desfeita — postagem removida');
     mostrarToast('Confirmação desfeita — postagem removida também.');
+    renderAprovacaoVideos();
+  };
+
+  /* ===== PEDIDO DA AMANDA — ITEM 2 e 3 (24/07/2026) =====
+     Existia "Cliente pediu ajuste" so DEPOIS do cliente ter confirmado
+     (clienteQuerAjustePosAprovado, logo abaixo). Na fila "Aguardando
+     confirmacao do CLIENTE" nao existia — entao, quando o cliente pedia
+     mudanca antes de aprovar, o unico caminho era desfazer a aprovacao
+     interna inteira e refazer tudo depois. Agora vai direto pro editor,
+     mantendo o fluxo, com campo pra colar os links de apoio (prints,
+     referencias) no mesmo lugar em vez de mandar por WhatsApp. */
+  window.abrirAjustePedidoCliente = function(id){
+    const box = document.getElementById('formAjusteCli_' + id);
+    if(box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+  };
+
+  window.confirmarAjustePedidoCliente = async function(id){
+    const motivo = document.getElementById('motivoAjusteCli_'+id).value.trim();
+    if(!motivo){ mostrarToast('Escreve o que o cliente pediu.', 'erro'); return; }
+    const anexosRaw = document.getElementById('anexosAjusteCli_'+id).value.trim();
+    const anexos = anexosRaw ? anexosRaw.split('\n').map(s=>s.trim()).filter(Boolean) : [];
+    const textoCompleto = '[Cliente pediu ajuste] ' + motivo + (anexos.length ? '\n\nApoio:\n' + anexos.join('\n') : '');
+    await updateDoc(doc(db,'videos_producao', id), {
+      status: 'correcao',
+      correcao: textoCompleto,
+      correcaoAnexos: anexos,
+      correcaoImagemUrl: anexos[0] || '',
+      correcaoSolicitadaEm: new Date().toISOString(),
+      enviadoParaCliente: false
+    });
+    registrarHistorico('videos_producao', id, 'Cliente pediu ajuste (antes de aprovar)', textoCompleto);
+    const vSnap = await getDoc(doc(db,'videos_producao', id));
+    if(vSnap.exists()){
+      const v = vSnap.data();
+      dispararEmailIndividual(v.editorAtribuido, 'video_correcao', { titulo: v.titulo, itemId: id, colecao: 'videos_producao' }).catch(()=>{});
+    }
+    mostrarToast('Voltou pro editor como "aguardando ajustes" — a aprovação interna foi mantida.');
     renderAprovacaoVideos();
   };
 
@@ -7337,6 +7406,8 @@
     document.getElementById('gerenciaFuncionarioMes').style.display = qual==='funcionarioMes' ? 'block' : 'none';
     document.getElementById('gerenciaPainelTV').style.display = qual==='painelTV' ? 'block' : 'none';
     document.getElementById('gerenciaComando').style.display = qual==='comando' ? 'block' : 'none';
+    document.getElementById('gerenciaEquipeVisao').style.display = qual==='equipeVisao' ? 'block' : 'none';
+    document.getElementById('gerenciaDisciplinaDia').style.display = qual==='disciplinaDia' ? 'block' : 'none';
     document.getElementById('gerenciaDemandasAtrasadas').style.display = qual==='demandasAtrasadas' ? 'block' : 'none';
     document.getElementById('gerenciaAtrasosEquipe').style.display = qual==='atrasosEquipe' ? 'block' : 'none';
     document.getElementById('gerenciaDemandasAguardando').style.display = qual==='demandasAguardando' ? 'block' : 'none';
@@ -7356,6 +7427,8 @@
     }
     if(qual==='comando') iniciarCentralComando();
     else pararCentralComando();
+    if(qual==='equipeVisao') renderEquipeVisao();
+    if(qual==='disciplinaDia') renderDisciplinaDia();
     if(qual==='demandasAtrasadas') renderDemandasAtrasadasDetalhe();
     if(qual==='atrasosEquipe') renderAtrasosEquipe();
     if(qual==='leadsAvulsos') renderLeadsAvulsos();
@@ -7638,6 +7711,7 @@
       const qtdRecicladas = await conciliarPostagensClienteVirouEntregaDireta();
       if(qtdRecicladas > 0) mostrarToast(qtdRecicladas + ' postagem(ns) reciclada(s) — cliente virou entrega direta depois de já estarem na fila.');
     });
+    await etapaSegura('resumo de checklist das 19h', enviarResumoChecklist19h);
     await etapaSegura('semear e-mails da equipe', semearEmailsEquipeIniciais);
 
     // Essas duas não são async/aguardadas — mas também protegidas, porque
@@ -8779,7 +8853,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -11020,6 +11094,201 @@
       });
     }
     cont.innerHTML = html;
+  }
+
+  /* ===== VER O AMBIENTE DE CADA UM (pedido da Amanda — 24/07/2026) =====
+     Antes, pra saber como estava o trabalho de alguem, so dava pra olhar
+     as demandas atrasadas ou LOGAR na conta da pessoa — o que gera acesso
+     no nome dela e suja o "ultimo acesso". Aqui e uma tela de LEITURA:
+     monta o panorama da pessoa escolhida lendo as mesmas colecoes que a
+     tela dela le, sem trocar o usuario logado e sem escrever nada. Por
+     isso nao ha um botao sequer de acao aqui — de proposito.
+
+     O que NAO entra: "Minhas Anotacoes". O sistema promete pra equipe que
+     aquilo e agenda pessoal e "so voce ve" — quebrar isso pelas costas
+     seria trair a promessa que a propria tela faz. Se a gestao precisar
+     desse dado algum dia, o certo e mudar a promessa na cara do time,
+     nao burlar por aqui. */
+  window.renderEquipeVisao = async function(){
+    const cont = document.getElementById('gerenciaEquipeVisao');
+    if(!cont) return;
+    const escolhido = window.__equipeVisaoPessoa || '';
+
+    let html = `<div class="card">
+      <h2>👁️ Ver ambiente de cada um</h2>
+      <div class="desc">O dia de qualquer pessoa do time, do jeito que ela vê — sem entrar na conta dela e sem mexer no "último acesso". Só leitura.</div>
+      <div class="field" style="margin-top:10px;"><label>Colaborador</label><select id="equipeVisaoSel" onchange="window.__equipeVisaoPessoa=this.value;renderEquipeVisao();">
+        <option value="">Selecione...</option>
+        ${FUNCIONARIOS.map(f=>`<option value="${f}" ${f===escolhido?'selected':''}>${f}</option>`).join('')}
+      </select></div>
+    </div>`;
+
+    if(!escolhido){ cont.innerHTML = html + '<div class="empty">Escolhe alguém pra ver o ambiente dessa pessoa.</div>'; return; }
+
+    cont.innerHTML = html + '<div class="card"><div class="desc">Carregando o ambiente de ' + esc(escolhido) + '...</div></div>';
+
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const [template, execSnap] = await Promise.all([
+      obterTemplatesEfetivos(escolhido),
+      getDoc(doc(db,'checklist_execucoes', escolhido + '_diario_' + hojeStr))
+    ]);
+    await carregarTodasDemandas();
+
+    const feitosMap = execSnap.exists() ? (execSnap.data().itensFeitos || {}) : {};
+    const blocos = template?.['Diário'] || [];
+    const totalItens = blocos.reduce((s,b)=>s+b.itens.length, 0);
+    const feitosCount = blocos.reduce((s,b)=> s + b.itens.filter(it => feitosMap[it.id]?.feito).length, 0);
+
+    const minhas = todasDemandas.filter(d => d.destinatario === escolhido && d.status !== 'aprovada' && !d.escalacaoGerencial);
+    const pendentes = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao');
+    const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
+    const praHoje = pendentes.filter(d => calcularUrgencia(d) === 'hoje');
+    const aguardandoAprov = minhas.filter(d => d.status === 'concluida_aguardando_aprovacao');
+    const bloqueadas = pendentes.filter(d => d.bloqueio);
+
+    const videos = (cacheVideosProducao||[]).filter(v => !v.excluido && v.editorAtribuido === escolhido && ['aguardando_edicao','correcao','aguardando_aprovacao'].includes(v.status));
+    const gravacoes = (cacheAgendamentos||[]).filter(a => a.filmmaker === escolhido && a.status === 'agendado' && a.data >= hojeStr);
+    const ausente = estaAusente(escolhido);
+
+    html += `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard ${totalItens ? (feitosCount>=totalItens ? 'green' : 'yellow') : ''}"><div class="num">${totalItens ? feitosCount+'/'+totalItens : '—'}</div><div class="lbl">Checklist de hoje</div></div>
+      <div class="resumoCard ${atrasadas.length ? 'red' : 'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">Atrasadas</div></div>
+      <div class="resumoCard ${praHoje.length ? 'yellow' : 'green'}"><div class="num">${praHoje.length}</div><div class="lbl">Pra hoje</div></div>
+      <div class="resumoCard"><div class="num">${pendentes.length}</div><div class="lbl">Em aberto no total</div></div>
+      <div class="resumoCard ${aguardandoAprov.length ? 'yellow' : ''}"><div class="num">${aguardandoAprov.length}</div><div class="lbl">Esperando sua aprovação</div></div>
+    </div>`;
+
+    if(ausente) html += `<div class="avisoBanner"><div class="icone">🏖️</div><div class="texto">${esc(escolhido)} está em modo ausência<span>As demandas dessa pessoa não contam atraso nesse período.</span></div></div>`;
+
+    // ----- checklist do dia, item a item -----
+    html += `<div class="faixaDem aberta" data-faixa="ev_check">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">📋 Checklist de hoje <span class="qtd">(${totalItens ? feitosCount+' de '+totalItens : 'sem checklist configurado'})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">`;
+    if(!blocos.length){
+      html += '<div class="empty" style="font-size:11px;padding:8px;">Essa função não tem checklist diário configurado.</div>';
+    } else {
+      blocos.forEach(b => {
+        html += `<div class="meta" style="margin:8px 0 4px;font-weight:800;color:var(--yellow);">${esc(b.bloco)}</div>`;
+        b.itens.forEach(it => {
+          const ok = !!feitosMap[it.id]?.feito;
+          html += `<div class="item" style="padding:8px 12px;margin-bottom:4px;border-left:3px solid ${ok?'var(--green)':'var(--line)'};">
+            <div class="nome" style="font-size:12px;${ok?'opacity:.6;text-decoration:line-through;':''}">${ok?'✅ ':'⬜ '}${esc(it.texto)}${it.critico?' <span class="criticoTag">Crítico</span>':''}</div>
+          </div>`;
+        });
+      });
+    }
+    html += `</div></div>`;
+
+    // ----- demandas -----
+    const cardDem = d => {
+      const urg = calcularUrgencia(d);
+      return `<div class="item" style="border-left:3px solid ${urg==='atrasado'?'var(--red)':urg==='hoje'?'var(--yellow2)':'var(--line)'};">
+        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="selo ${urg==='atrasado'?'atrasado':urg==='hoje'?'hoje':'pendente'}">${urg==='atrasado'?'Atrasada':urg==='hoje'?'Hoje':'Em aberto'}</span></div>
+        <div class="meta" style="margin-top:4px;">Prazo ${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
+        ${d.bloqueio ? '<div class="meta" style="margin-top:4px;color:var(--yellow2);">🕓 Aguardando '+esc(d.bloqueio.pessoa)+': '+esc(d.bloqueio.texto||'')+'</div>' : ''}
+      </div>`;
+    };
+    const faixaEV = (chave, titulo, lista, aberta) => `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="${chave}">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${lista.length ? lista.map(cardDem).join('') : '<div class="empty" style="font-size:11px;padding:8px;">Nada aqui.</div>'}</div>
+    </div>`;
+
+    html += faixaEV('ev_atras', '🔴 Demandas atrasadas', atrasadas, true);
+    html += faixaEV('ev_hoje', '🟡 Pra hoje', praHoje, true);
+    html += faixaEV('ev_bloq', '🕓 Travadas esperando alguém', bloqueadas, bloqueadas.length > 0);
+    html += faixaEV('ev_aguard', '✋ Feitas — esperando sua aprovação', aguardandoAprov, false);
+    html += faixaEV('ev_todas', '📋 Todas em aberto', pendentes, false);
+
+    // ----- producao, conforme a funcao da pessoa -----
+    if(videos.length){
+      html += `<div class="faixaDem aberta" data-faixa="ev_videos">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🎬 Vídeos na mão dela <span class="qtd">(${videos.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${videos.map(v => `<div class="item"><div class="top"><div class="nome">${esc(v.titulo)}</div><span class="selo pendente">${esc(v.status)}</span></div><div class="meta" style="margin-top:4px;">${esc(v.clienteNome||'')} · lançado em ${esc(v.data||'—')}</div></div>`).join('')}</div>
+      </div>`;
+    }
+    if(gravacoes.length){
+      html += `<div class="faixaDem aberta" data-faixa="ev_grav">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🎥 Gravações agendadas <span class="qtd">(${gravacoes.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${gravacoes.sort((a,b)=>(a.data||'').localeCompare(b.data||'')).map(a => `<div class="item"><div class="top"><div class="nome">${esc(a.clienteNome||'')}</div><span class="selo hoje">${formatarDataBR(a.data)} ${a.hora||''}</span></div><div class="meta" style="margin-top:4px;">${esc(a.local||'local não informado')} · ${a.qtdVideosPlanejados||'?'} vídeo(s) planejado(s)</div></div>`).join('')}</div>
+      </div>`;
+    }
+
+    html += `<div class="meta" style="text-align:center;margin-top:14px;opacity:.65;">Tela de leitura — nada aqui altera o ambiente de ${esc(escolhido)} nem registra acesso no nome dela.<br>Anotações pessoais não aparecem aqui: o sistema promete pra equipe que aquilo é privado.</div>`;
+
+    cont.innerHTML = html;
+  };
+
+  /* ===== CHECKLISTS DO DIA + AVISO DAS 19H (pedido da Amanda — 24/07/2026) =====
+     Reaproveita calcularDisciplinaHoje(), que ja existia e ja sabe ler o
+     checklist de qualquer pessoa. Aqui vira tela propria, com o detalhe de
+     quem entregou, quem nao entregou e quem deixou item em aberto.
+     Sobre o horario: o site nao tem servidor — so roda quando alguem esta
+     com ele aberto. Entao nao existe disparo automatico as 19:00 no vazio.
+     O que existe: a partir das 19h, o primeiro acesso de Chris/Amanda
+     dispara o e-mail do resumo, uma vez por dia (marcado em
+     log_automacoes pra nao repetir). */
+  window.renderDisciplinaDia = async function(){
+    const cont = document.getElementById('gerenciaDisciplinaDia');
+    if(!cont) return;
+    cont.innerHTML = '<div class="card"><div class="desc">Conferindo os checklists de hoje...</div></div>';
+    const resultados = await calcularDisciplinaHoje();
+    const concluidos = resultados.filter(r => r.concluido);
+    const naoComecou = resultados.filter(r => !r.concluido && r.feitos === 0);
+    const parcial = resultados.filter(r => !r.concluido && r.feitos > 0);
+
+    let html = `<div class="card">
+      <h2>📋 Checklists do dia</h2>
+      <div class="desc">Quem entregou, quem começou e parou, e quem ainda não abriu. Atualiza a cada vez que você entra aqui.</div>
+    </div>
+    <div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard green"><div class="num">${concluidos.length}</div><div class="lbl">Entregaram</div></div>
+      <div class="resumoCard ${parcial.length?'yellow':''}"><div class="num">${parcial.length}</div><div class="lbl">Deixaram item em aberto</div></div>
+      <div class="resumoCard ${naoComecou.length?'red':'green'}"><div class="num">${naoComecou.length}</div><div class="lbl">Não começaram</div></div>
+    </div>`;
+
+    const linha = r => `<div class="item" style="border-left:3px solid ${r.concluido?'var(--green)':r.feitos?'var(--yellow2)':'var(--red)'};">
+      <div class="top"><div class="nome">${esc(r.nome)}</div><span class="selo ${r.concluido?'aprovada':r.feitos?'hoje':'atrasado'}">${r.feitos}/${r.total}</span></div>
+      <div class="meta" style="margin-top:4px;">${r.concluido ? '✅ Checklist do dia entregue' : r.feitos ? '🟡 Faltam ' + (r.total - r.feitos) + ' item(ns)' : '🔴 Ainda não começou o checklist de hoje'}</div>
+    </div>`;
+
+    const bloco = (titulo, lista, aberta) => lista.length ? `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="disc_${titulo}">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${lista.map(linha).join('')}</div>
+    </div>` : '';
+
+    html += bloco('🔴 Não começaram', naoComecou, true);
+    html += bloco('🟡 Com item em aberto', parcial, true);
+    html += bloco('✅ Entregaram', concluidos, false);
+    if(!resultados.length) html += '<div class="empty">Ninguém com checklist diário configurado.</div>';
+    cont.innerHTML = html;
+  };
+
+  /* Resumo das 19h por e-mail — so pra Chris/Amanda, uma vez por dia. */
+  async function enviarResumoChecklist19h(){
+    if(!['Chris','Amanda'].includes(usuarioAtual)) return;
+    const agora = new Date();
+    if(agora.getHours() < 19) return;
+    const hojeStr = agora.toISOString().slice(0,10);
+    const chave = 'resumo_checklist_' + hojeStr;
+    try{
+      const jaFoi = await getDoc(doc(db,'log_automacoes', chave));
+      if(jaFoi.exists()) return;   // ja disparou hoje
+      const resultados = await calcularDisciplinaHoje();
+      if(!resultados.length) return;
+      const concluidos = resultados.filter(r => r.concluido);
+      const faltando = resultados.filter(r => !r.concluido);
+      const resumo = faltando.length
+        ? faltando.map(r => r.nome + ' (' + r.feitos + '/' + r.total + ')').join(', ')
+        : 'todo mundo entregou';
+      await setDoc(doc(db,'log_automacoes', chave), {
+        tipo: 'resumo_checklist_19h', quando: agora.toISOString(),
+        entregaram: concluidos.length, total: resultados.length, faltando: resumo
+      });
+      dispararEmailIndividual('Amanda', 'resumo_checklist', {
+        titulo: '📋 Checklists de hoje — ' + concluidos.length + '/' + resultados.length + ' entregues' + (faltando.length ? ' · pendente: ' + resumo : ' · todo mundo em dia'),
+        itemId: chave, colecao: 'log_automacoes'
+      }).catch(()=>{});
+    }catch(e){ console.error('Resumo de checklist 19h:', e); }
   }
 
   async function renderDemandasAtrasadasDetalhe(){

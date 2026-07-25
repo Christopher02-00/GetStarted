@@ -551,6 +551,12 @@
       <div class="navitem" id="navDuvidasBit" onclick="irPara('duvidasBit', this)"><span class="ico">🤖</span> Tirar Dúvidas com o Bit</div>
     </div>
 
+    <div class="navgroup" id="navgroupVendas">
+      <div class="label" id="labelNavVendas">💼 Vendas</div>
+      <div class="navitem" id="navMensalidades" onclick="irPara('mensalidades', this)"><span class="ico">📆</span> Mensalidades<span class="navbadge" id="badgeMensalidades" style="display:none;background:var(--red);">0</span></div>
+      <div class="navitem" id="navContratos" onclick="irPara('contratos', this)"><span class="ico">📄</span> Contratos</div>
+    </div>
+
     <div class="navgroup">
       <div class="navitem" onclick="irPara('gerencia', this)" id="navitemGerencia" style="display:none;"><span class="ico"><svg><use href="#i-lock"/></svg></span> Gerência</div>
     </div>
@@ -941,6 +947,36 @@
     <!-- CONTEUDO ATE QUANDO -->
     <div class="view" id="view-conteudoAteQuando">
       <div id="gerenciaConteudoAteQuando"></div>
+    </div>
+
+    <!-- VENDAS — MENSALIDADES E CONTRATOS -->
+    <div class="view" id="view-mensalidades">
+      <h1>📆 <span class="y">Mensalidades</span></h1>
+      <div class="sub">O mês inteiro em grade, cada cliente no seu dia de vencimento. Só você vê esta área.</div>
+      <div class="card">
+        <div class="row3">
+          <div class="field"><label>Mês</label>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button type="button" class="btn secondary" style="width:auto;padding:6px 10px;" onclick="mudarMesMensalidades(-1)">‹</button>
+              <input type="month" id="mensMes" onchange="renderMensalidades()" style="flex:1;">
+              <button type="button" class="btn secondary" style="width:auto;padding:6px 10px;" onclick="mudarMesMensalidades(1)">›</button>
+            </div>
+          </div>
+          <div class="field"><label>Mostrar</label><select id="mensFiltro" onchange="renderMensalidades()">
+            <option value="todos">Todos</option>
+            <option value="aberto">Só em aberto</option>
+            <option value="atrasado">Só atrasados</option>
+            <option value="pago">Só pagos</option>
+          </select></div>
+        </div>
+      </div>
+      <div id="mensalidadesBox"></div>
+    </div>
+
+    <div class="view" id="view-contratos">
+      <h1>📄 <span class="y">Contratos</span></h1>
+      <div class="sub">Valor, dia de vencimento e condições de cada cliente mensal. É a base de tudo em Mensalidades.</div>
+      <div id="contratosBox"></div>
     </div>
 
     <!-- ARQUIVO DE ENTREGAS (Prompt Mestre 2 - P3, 23/07/2026) -->
@@ -7541,6 +7577,8 @@
     }
     if(nome === 'conteudoAteQuando') renderConteudoAteQuando();
     if(nome === 'arquivoEntregas'){ popularClientesArquivoEntregas(); renderArquivoEntregas(); }
+    if(nome === 'mensalidades'){ const mm = document.getElementById('mensMes'); if(mm && !mm.value) mm.value = new Date().toISOString().slice(0,7); renderMensalidades(); }
+    if(nome === 'contratos') renderContratos();
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
     if(nome === 'briefings'){ carregarClientesExtras().then(()=>popularClientesBriefing()); renderBriefings(); }
     if(nome === 'acompanhamento'){ carregarClientesExtras().then(()=>popularClientesAcomp()); renderAcompanhamentoVisaoGeral(); }
@@ -8148,7 +8186,8 @@
       videos:'navVideos', agendamento:'navAgendamento', funcoesFixas:'navFuncoesFixas',
       postagens:'navPostagens', stories:'navStories', campanhas:'navCampanhas', roteiros:'navRoteiros',
       referencias:'navReferencias', briefings:'navBriefings', acompanhamento:'navAcompanhamento', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
-      cadastro:'navCadastro', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit'
+      cadastro:'navCadastro', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit',
+      mensalidades:'navMensalidades', contratos:'navContratos'
     };
     const el = document.getElementById(idParaId[nomeView]);
     if(el) irPara(nomeView, el);
@@ -11717,6 +11756,333 @@
   };
 
   window.setFunilFiltro = function(k){ window.__funilFiltro = (window.__funilFiltro === k) ? null : k; renderFunilNegocios(); };
+
+  /* ===== VENDAS — CONTRATOS E MENSALIDADES (25/07/2026) =====
+     DIAGNOSTICO: o sistema nao sabia quanto nenhum cliente pagava nem
+     quando vencia. So existia `pagamentos_extra` (Uber e avulso). Os
+     campos "plano"/"contrato" do cadastro eram texto livre, pra ler, nao
+     pra calcular. Sem isso, cobranca automatica era impossivel — o
+     sistema nao teria como saber quem esta devendo.
+
+     Duas colecoes resolvem: `contratos_cliente` (o combinado) e
+     `pagamentos_mensais` (o que aconteceu em cada mes).
+
+     O VENCIMENTO E UM DIA DO MES, nao uma data. Os clientes do Chris
+     vencem em dias diferentes (5, 10, 12, 14, 15, 19, 20), entao guardar
+     data cheia obrigaria a reescrever tudo todo mes.
+
+     VALOR VIGENTE x VALOR CHEIO: varios contratos tem condicao temporaria
+     ("vai pagar 1500 ate abril, em maio volta a 2500") e mes gratis
+     ("ganhou agosto"). Um campo `valor` sozinho nao representa isso —
+     por isso existem `valorVigente`, `voltaAoCheioEm` e a isencao por mes. */
+
+  const PLANOS_CONTRATO = ['Premium','Intermediário','Outros'];
+
+  /* Dados da planilha do Chris (25/07/2026) — servem so pra importacao
+     inicial, uma vez. Depois disso a fonte da verdade e o sistema. */
+  const CONTRATOS_INICIAIS = [
+    { nome:'Bluefit',            plano:'Premium',       valor:2500, dia:10 },
+    { nome:"Camargo's",          plano:'Intermediário', valor:1500, dia:20 },
+    { nome:'Juliane Nerone',     plano:'Intermediário', valor:1700, dia:10 },
+    { nome:'Dra. Monique',       plano:'Premium',       valor:2200, dia:10 },
+    { nome:'Hitech',             plano:'Premium',       valor:2500, dia:15 },
+    { nome:'Joaquin Assados',    plano:'Intermediário', valor:3350, dia:15, obs:'Vai pagar 1500 até abril; em maio volta a pagar 2500.' },
+    { nome:'Mochi',              plano:'Premium',       valor:2200, dia:10 },
+    { nome:'Vitalle Odonto',     plano:'Intermediário', valor:1500, dia:10 },
+    { nome:'Place',              plano:'Intermediário', valor:1500, dia:5 },
+    { nome:'Stokki',             plano:'Intermediário', valor:2600, dia:12 },
+    { nome:'Vip',                plano:'Intermediário', valor:1800, dia:15 },
+    { nome:'Vital Seg',          plano:'Premium',       valor:1700, dia:10 },
+    { nome:'Divina Cantina',     plano:'Premium',       valor:3190, dia:10 },
+    { nome:'Helo arquiteta',     plano:'Intermediário', valor:1000, dia:10, obs:'Entra normalmente no plano intermediário.' },
+    { nome:'Rodrigo',            plano:'Outros',        valor:870,  dia:15 },
+    { nome:'Fior restaurante',   plano:'Intermediário', valor:1700, dia:19, obs:'Participou da promoção do mês grátis em julho.' },
+    { nome:'Master Chefe',       plano:'Intermediário', valor:1700, dia:14, obs:'Ganhou o mês de agosto grátis; volta a pagar em setembro.' },
+    { nome:'Cookiery',           plano:'Intermediário', valor:1700, dia:10, obs:'Ganhou o mês de agosto grátis; volta a pagar em setembro.' },
+    { nome:'Emanuelle',          plano:'Intermediário', valor:1700, dia:10, obs:'Ganhou o mês de agosto grátis; volta a pagar em setembro.' },
+    { nome:'Zeens',             plano:'Intermediário', valor:1700, dia:10, obs:'Ganhou o mês de agosto grátis; volta a pagar em setembro.' }
+  ];
+
+  function slugContrato(nome){
+    return (nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  }
+  const brl = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
+
+  window.importarContratosIniciais = async function(){
+    if(!confirm('Importar os ' + CONTRATOS_INICIAIS.length + ' contratos da sua planilha?\n\nQuem já estiver cadastrado NÃO será sobrescrito.')) return;
+    const snap = await getDocs(collection(db,'contratos_cliente'));
+    const existentes = new Set(); snap.forEach(d => existentes.add(d.id));
+    let criados = 0, pulados = 0;
+    for(const ct of CONTRATOS_INICIAIS){
+      const slug = slugContrato(ct.nome);
+      if(existentes.has(slug)){ pulados++; continue; }
+      await setDoc(doc(db,'contratos_cliente', slug), {
+        clienteNome: ct.nome, plano: ct.plano,
+        valorCheio: ct.valor, valorVigente: ct.valor, voltaAoCheioEm: '',
+        diaVencimento: ct.dia, status: 'ativo',
+        observacao: ct.obs || '',
+        criadoPor: usuarioAtual || 'Chris', criadoEm: serverTimestamp()
+      });
+      criados++;
+    }
+    registrarLogAutomacao('contratos_importados', '', criados + ' criado(s), ' + pulados + ' já existia(m)');
+    mostrarToast(criados + ' contrato(s) importado(s).' + (pulados ? ' ' + pulados + ' já existia(m) e foram mantidos.' : ''));
+    renderContratos();
+  };
+
+  window.salvarContrato = async function(slug){
+    const g = id => document.getElementById(id + '_' + slug)?.value || '';
+    const nome = g('ctNome').trim();
+    if(!nome){ mostrarToast('O nome do cliente é obrigatório.', 'erro'); return; }
+    const dia = parseInt(g('ctDia'),10);
+    if(!dia || dia < 1 || dia > 31){ mostrarToast('Dia de vencimento inválido (1 a 31).', 'erro'); return; }
+    await setDoc(doc(db,'contratos_cliente', slug), {
+      clienteNome: nome, plano: g('ctPlano'),
+      valorCheio: Number(g('ctValorCheio')) || 0,
+      valorVigente: Number(g('ctValorVigente')) || Number(g('ctValorCheio')) || 0,
+      voltaAoCheioEm: g('ctVolta'),
+      diaVencimento: dia, status: g('ctStatus'),
+      observacao: g('ctObs').trim(),
+      atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
+    }, { merge: true });
+    mostrarToast('Contrato de ' + nome + ' salvo.');
+    renderContratos();
+  };
+
+  window.novoContrato = async function(){
+    const nome = prompt('Nome do cliente:');
+    if(!nome || !nome.trim()) return;
+    const slug = slugContrato(nome);
+    const snap = await getDoc(doc(db,'contratos_cliente', slug));
+    if(snap.exists()){ mostrarToast('Esse cliente já tem contrato.', 'erro'); return; }
+    await setDoc(doc(db,'contratos_cliente', slug), {
+      clienteNome: nome.trim(), plano:'Intermediário', valorCheio:0, valorVigente:0,
+      voltaAoCheioEm:'', diaVencimento:10, status:'ativo', observacao:'',
+      criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()
+    });
+    mostrarToast('Contrato criado — preenche os dados abaixo.');
+    renderContratos();
+  };
+
+  /* ===== MENSALIDADES DO MES =====
+     Um registro por cliente por mes em `pagamentos_mensais`, com id
+     previsivel (slug_2026-07). Eles nascem sozinhos ao abrir o mes, a
+     partir dos contratos ativos — assim voce nunca precisa "criar a
+     cobranca", so marcar o que aconteceu.
+     A regra de atraso respeita a carencia de 5 dias definida pelo Chris. */
+  const CARENCIA_DIAS = 5;
+
+  window.mudarMesMensalidades = function(delta){
+    const campo = document.getElementById('mensMes');
+    if(!campo || !campo.value) return;
+    const [a,m] = campo.value.split('-').map(Number);
+    const d = new Date(a, m-1+delta, 1);
+    campo.value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    renderMensalidades();
+  };
+
+  function situacaoMensalidade(p, competencia){
+    if(p.status === 'pago') return { k:'pago', rotulo:'Pago', cor:'var(--green)', selo:'aprovada' };
+    if(p.status === 'isento') return { k:'isento', rotulo:'Isento/cortesia', cor:'var(--line)', selo:'pendente' };
+    const [ano, mes] = competencia.split('-').map(Number);
+    const venc = new Date(ano, mes-1, Math.min(p.diaVencimento||10, new Date(ano, mes, 0).getDate()));
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    const diasDesde = Math.floor((hoje - venc)/86400000);
+    if(diasDesde > CARENCIA_DIAS) return { k:'atrasado', rotulo:'Atrasado há ' + diasDesde + ' dia(s)', cor:'var(--red)', selo:'atrasado', dias:diasDesde };
+    if(diasDesde > 0) return { k:'carencia', rotulo:'Venceu há ' + diasDesde + ' dia(s) — dentro da carência', cor:'var(--yellow)', selo:'hoje', dias:diasDesde };
+    if(diasDesde === 0) return { k:'hoje', rotulo:'Vence hoje', cor:'var(--yellow)', selo:'hoje' };
+    return { k:'aVencer', rotulo:'Vence dia ' + (p.diaVencimento||10), cor:'var(--line)', selo:'pendente' };
+  }
+
+  window.marcarMensalidade = async function(id, status){
+    const rot = status==='pago' ? 'PAGO' : status==='isento' ? 'ISENTO/cortesia' : 'em aberto';
+    if(!confirm('Marcar como ' + rot + '?')) return;
+    const dados = { status, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() };
+    if(status === 'pago') dados.pagoEm = new Date().toISOString().slice(0,10);
+    else { dados.pagoEm = ''; }
+    await updateDoc(doc(db,'pagamentos_mensais', id), dados);
+    registrarLogAutomacao('mensalidade_' + status, id, 'por ' + (usuarioAtual||'?'));
+    mostrarToast('Marcado como ' + rot + '.');
+    renderMensalidades();
+  };
+
+  window.renderMensalidades = async function(){
+    const box = document.getElementById('mensalidadesBox');
+    if(!box) return;
+    const competencia = document.getElementById('mensMes')?.value || new Date().toISOString().slice(0,7);
+    const filtro = document.getElementById('mensFiltro')?.value || 'todos';
+    box.innerHTML = '<div class="card"><div class="desc">Montando o mês...</div></div>';
+
+    const ctSnap = await getDocs(collection(db,'contratos_cliente'));
+    const contratos = []; ctSnap.forEach(d => { const v=d.data(); if(v.status==='ativo') contratos.push({slug:d.id, ...v}); });
+    if(!contratos.length){
+      box.innerHTML = '<div class="card"><div class="empty">Nenhum contrato ativo ainda. Cadastra em <b>Contratos</b> primeiro — é de lá que este mês é montado.</div></div>';
+      return;
+    }
+
+    // cria os registros do mes que ainda nao existem
+    const pgSnap = await getDocs(collection(db,'pagamentos_mensais'));
+    const existentes = {}; pgSnap.forEach(d => { const v=d.data(); if(v.competencia===competencia) existentes[d.id] = { id:d.id, ...v }; });
+    let criados = 0;
+    for(const ct of contratos){
+      const id = ct.slug + '_' + competencia;
+      if(existentes[id]) continue;
+      const registro = {
+        cliente: ct.slug, clienteNome: ct.clienteNome, competencia,
+        valorDevido: Number(ct.valorVigente)||0, diaVencimento: ct.diaVencimento||10,
+        status: 'aberto', pagoEm: '', comprovante: '',
+        criadoEm: serverTimestamp()
+      };
+      await setDoc(doc(db,'pagamentos_mensais', id), registro);
+      existentes[id] = { id, ...registro };
+      criados++;
+    }
+
+    let linhas = Object.values(existentes).map(p => ({ ...p, sit: situacaoMensalidade(p, competencia) }));
+    if(filtro === 'aberto') linhas = linhas.filter(l => !['pago','isento'].includes(l.sit.k));
+    if(filtro === 'atrasado') linhas = linhas.filter(l => l.sit.k === 'atrasado');
+    if(filtro === 'pago') linhas = linhas.filter(l => l.sit.k === 'pago');
+    linhas.sort((a,b) => (a.diaVencimento||0)-(b.diaVencimento||0) || (a.clienteNome||'').localeCompare(b.clienteNome||'','pt-BR'));
+
+    const todas = Object.values(existentes).map(p => ({ ...p, sit: situacaoMensalidade(p, competencia) }));
+    const previsto = todas.filter(l=>l.sit.k!=='isento').reduce((s,l)=>s+(Number(l.valorDevido)||0),0);
+    const recebido = todas.filter(l=>l.sit.k==='pago').reduce((s,l)=>s+(Number(l.valorDevido)||0),0);
+    const atrasados = todas.filter(l=>l.sit.k==='atrasado');
+    const emAberto = previsto - recebido;
+    atualizarBadgeMensalidades(atrasados.length);
+
+    let html = `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(previsto)}</div><div class="lbl">Previsto no mês</div></div>
+      <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(recebido)}</div><div class="lbl">Já recebido</div></div>
+      <div class="resumoCard ${emAberto>0?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(emAberto)}</div><div class="lbl">Em aberto</div></div>
+      <div class="resumoCard ${atrasados.length?'red':'green'}"><div class="num">${atrasados.length}</div><div class="lbl">Atrasado(s)</div></div>
+    </div>
+    ${criados ? '<div class="meta" style="margin-bottom:10px;color:var(--yellow);">+ ' + criados + ' cobrança(s) do mês criada(s) agora a partir dos contratos.</div>' : ''}`;
+
+    // agrupa por dia de vencimento — e a "grade" do mes
+    const porDia = {};
+    linhas.forEach(l => { (porDia[l.diaVencimento] = porDia[l.diaVencimento] || []).push(l); });
+    const dias = Object.keys(porDia).map(Number).sort((a,b)=>a-b);
+
+    if(!dias.length){ box.innerHTML = html + '<div class="empty">Nada com esse filtro.</div>'; return; }
+
+    dias.forEach(dia => {
+      const doDia = porDia[dia];
+      const abertos = doDia.filter(l => !['pago','isento'].includes(l.sit.k)).length;
+      html += `<div class="faixaDem aberta" data-faixa="mens_${dia}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${doDia.length}${abertos?' · '+abertos+' em aberto':' · tudo resolvido'})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${doDia.map(l => `
+          <div class="item" style="border-left:3px solid ${l.sit.cor};">
+            <div class="top"><div class="nome">${esc(l.clienteNome)}</div><span class="selo ${l.sit.selo}">${l.sit.rotulo}</span></div>
+            <div class="meta" style="margin-top:4px;">${brl(l.valorDevido)}${l.pagoEm ? ' · pago em ' + formatarDataBR(l.pagoEm) : ''}</div>
+            ${l.comprovante ? '<div class="meta" style="margin-top:4px;">📎 <a href="'+esc(l.comprovante)+'" target="_blank" style="color:var(--yellow);">Ver comprovante ↗</a></div>' : ''}
+            <div class="btnrow" style="margin-top:8px;">
+              ${l.sit.k!=='pago' ? `<button class="btn green" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${l.id}','pago')">✔ Recebi</button>` : `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${l.id}','aberto')">↩ Desfazer</button>`}
+              ${l.sit.k!=='isento' ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${l.id}','isento')">🎁 Cortesia</button>` : ''}
+              ${['atrasado','carencia','hoje'].includes(l.sit.k) ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;border-color:var(--yellow);" onclick="cobrarMensalidade('${l.id}')">📲 Cobrar</button>` : ''}
+            </div>
+          </div>`).join('')}</div>
+      </div>`;
+    });
+
+    box.innerHTML = html;
+  };
+
+  function atualizarBadgeMensalidades(n){
+    const b = document.getElementById('badgeMensalidades');
+    if(!b) return;
+    if(n>0){ b.textContent = n; b.style.display='flex'; } else b.style.display='none';
+  }
+
+  /* Cobranca semiautomatica: o sistema escreve, voce da um toque.
+     Envio realmente automatico exigiria a API oficial do WhatsApp
+     Business (provedor pago + aprovacao da Meta + servidor) — o site
+     sozinho nao consegue disparar por um numero comum. */
+  const PIX_AGENCIA = { chave:'56.062.119.0001-43', tipo:'CNPJ', banco:'Banco C6', titular:'Christopher Brito' };
+
+  window.cobrarMensalidade = async function(id){
+    const snap = await getDoc(doc(db,'pagamentos_mensais', id));
+    if(!snap.exists()) return;
+    const p = snap.data();
+    const sit = situacaoMensalidade(p, p.competencia);
+    const cfg = await obterConfigCliente(p.cliente);
+    const primeiro = (p.clienteNome||'').split(' ')[0];
+    let msg;
+    if(sit.k === 'hoje'){
+      msg = 'Oi, ' + primeiro + '! Passando pra avisar que a mensalidade vence hoje 🙂\n\nValor: ' + brl(p.valorDevido) + '\nPIX (' + PIX_AGENCIA.tipo + '): ' + PIX_AGENCIA.chave + '\n' + PIX_AGENCIA.banco + ' · ' + PIX_AGENCIA.titular + '\n\nQualquer coisa é só chamar!';
+    } else if(sit.k === 'carencia'){
+      msg = 'Oi, ' + primeiro + '! Tudo bem? Vi que a mensalidade venceu há ' + sit.dias + ' dia(s) e ainda não caiu por aqui.\n\nValor: ' + brl(p.valorDevido) + '\nPIX (' + PIX_AGENCIA.tipo + '): ' + PIX_AGENCIA.chave + '\n\nSe precisar de outra forma de pagamento, me fala que a gente ajeita 🙂';
+    } else {
+      msg = 'Oi, ' + primeiro + '! Estou passando sobre a mensalidade de ' + p.competencia + ', que está em aberto há ' + sit.dias + ' dias.\n\nValor: ' + brl(p.valorDevido) + '\nPIX (' + PIX_AGENCIA.tipo + '): ' + PIX_AGENCIA.chave + '\n' + PIX_AGENCIA.banco + ' · ' + PIX_AGENCIA.titular + '\n\nConsegue dar uma olhada? Se tiver acontecido alguma coisa, me avisa que a gente encontra uma solução juntos.';
+    }
+    const numero = (cfg.whatsappCobranca||'').replace(/\D/g,'');
+    if(numero){
+      window.open('https://wa.me/' + numero + '?text=' + encodeURIComponent(msg), '_blank');
+      mostrarToast('WhatsApp aberto com a mensagem pronta — é só enviar.');
+    } else {
+      try{ await navigator.clipboard.writeText(msg); mostrarToast('Cliente sem WhatsApp cadastrado. Mensagem copiada — cola no chat dele.'); }
+      catch(e){ mostrarToast('Cliente sem WhatsApp cadastrado (Gerência → Config por Cliente).', 'erro'); }
+    }
+    await updateDoc(doc(db,'pagamentos_mensais', id), { ultimaCobranca: new Date().toISOString(), cobrancasFeitas: (p.cobrancasFeitas||0)+1 });
+  };
+
+  window.renderContratos = async function(){
+    const cont = document.getElementById('contratosBox');
+    if(!cont) return;
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando contratos...</div></div>';
+    const snap = await getDocs(collection(db,'contratos_cliente'));
+    const lista = []; snap.forEach(d => lista.push({ slug:d.id, ...d.data() }));
+    lista.sort((a,b)=>(a.clienteNome||'').localeCompare(b.clienteNome||'','pt-BR'));
+
+    const ativos = lista.filter(c => c.status === 'ativo');
+    const mrr = ativos.reduce((s,c)=>s+(Number(c.valorVigente)||0),0);
+    const mrrCheio = ativos.reduce((s,c)=>s+(Number(c.valorCheio)||0),0);
+
+    let html = `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard green"><div class="num">${ativos.length}</div><div class="lbl">Contratos ativos</div></div>
+      <div class="resumoCard"><div class="num" style="font-size:18px;">${brl(mrr)}</div><div class="lbl">Receita recorrente</div></div>
+      ${mrrCheio > mrr ? `<div class="resumoCard yellow"><div class="num" style="font-size:18px;">${brl(mrrCheio-mrr)}</div><div class="lbl">Em desconto temporário</div></div>` : ''}
+      <div class="resumoCard"><div class="num">${lista.length - ativos.length}</div><div class="lbl">Pausados/encerrados</div></div>
+    </div>
+    <div class="card">
+      <div class="btnrow">
+        <button class="btn" style="width:auto;padding:9px 16px;" onclick="novoContrato()">+ Novo contrato</button>
+        ${lista.length < CONTRATOS_INICIAIS.length ? `<button class="btn secondary" style="width:auto;padding:9px 16px;" onclick="importarContratosIniciais()">📥 Importar da planilha (${CONTRATOS_INICIAIS.length})</button>` : ''}
+      </div>
+    </div>`;
+
+    if(!lista.length){
+      html += '<div class="empty">Nenhum contrato ainda. Importa da planilha pra começar.</div>';
+      cont.innerHTML = html; return;
+    }
+
+    html += lista.map(ct => `<div class="faixaDem" data-faixa="ct_${ct.slug}">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">
+        ${esc(ct.clienteNome)} <span class="qtd">${brl(ct.valorVigente)} · dia ${ct.diaVencimento}${ct.status!=='ativo'?' · '+esc(ct.status):''}${(Number(ct.valorCheio)>Number(ct.valorVigente))?' · desconto':''}</span><span class="seta">▾</span>
+      </div>
+      <div class="faixaItens">
+        <div class="row2">
+          <div class="field"><label>Cliente</label><input type="text" id="ctNome_${ct.slug}" value="${esc(ct.clienteNome||'')}"></div>
+          <div class="field"><label>Plano</label><select id="ctPlano_${ct.slug}">${PLANOS_CONTRATO.map(p=>`<option value="${p}" ${ct.plano===p?'selected':''}>${p}</option>`).join('')}</select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Valor cheio do contrato</label><input type="number" step="0.01" id="ctValorCheio_${ct.slug}" value="${ct.valorCheio||0}"></div>
+          <div class="field"><label>Valor que paga hoje</label><input type="number" step="0.01" id="ctValorVigente_${ct.slug}" value="${ct.valorVigente||0}"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Dia de vencimento</label><input type="number" min="1" max="31" id="ctDia_${ct.slug}" value="${ct.diaVencimento||10}"></div>
+          <div class="field"><label>Volta ao valor cheio em</label><input type="month" id="ctVolta_${ct.slug}" value="${esc(ct.voltaAoCheioEm||'')}"></div>
+        </div>
+        <div class="field"><label>Situação</label><select id="ctStatus_${ct.slug}">
+          ${['ativo','pausado','encerrado'].map(s=>`<option value="${s}" ${ct.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>Observação comercial</label><textarea id="ctObs_${ct.slug}" style="min-height:60px;">${esc(ct.observacao||'')}</textarea></div>
+        <button class="btn" onclick="salvarContrato('${ct.slug}')">Salvar contrato</button>
+      </div>
+    </div>`).join('');
+
+    cont.innerHTML = html;
+  };
 
   window.renderFunilNegocios = async function(){
     const cont = document.getElementById('gerenciaFunilNegocios');

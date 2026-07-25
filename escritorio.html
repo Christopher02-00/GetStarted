@@ -555,6 +555,7 @@
       <div class="label" id="labelNavVendas">💼 Vendas</div>
       <div class="navitem" id="navMensalidades" onclick="irPara('mensalidades', this)"><span class="ico">📆</span> Mensalidades<span class="navbadge" id="badgeMensalidades" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navContratos" onclick="irPara('contratos', this)"><span class="ico">📄</span> Contratos</div>
+      <div class="navitem" id="navFinanceiro" onclick="irPara('financeiro', this)"><span class="ico">📊</span> Financeiro</div>
     </div>
 
     <div class="navgroup">
@@ -971,6 +972,21 @@
         </div>
       </div>
       <div id="mensalidadesBox"></div>
+    </div>
+
+    <div class="view" id="view-financeiro">
+      <h1>📊 <span class="y">Financeiro</span></h1>
+      <div class="sub">O que entrou, o que saiu e de onde veio — mês a mês. Só você vê esta área.</div>
+      <div class="card">
+        <div class="field"><label>Mês</label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button type="button" class="btn secondary" style="width:auto;padding:6px 10px;" onclick="mudarMesFinanceiro(-1)">‹</button>
+            <input type="month" id="finMes" onchange="renderFinanceiro()" style="flex:1;">
+            <button type="button" class="btn secondary" style="width:auto;padding:6px 10px;" onclick="mudarMesFinanceiro(1)">›</button>
+          </div>
+        </div>
+      </div>
+      <div id="financeiroBox"></div>
     </div>
 
     <div class="view" id="view-contratos">
@@ -4956,7 +4972,10 @@
       <div class="field"><label>Nome do cliente</label><input type="text" id="exNome" placeholder="Nome da empresa"></div>
       <div class="field"><label>Data de saída</label><input type="date" id="exData"></div>
       <div class="field"><label>Serviços que contratava</label><input type="text" id="exServicos" placeholder="Ex: Social media + drone"></div>
-      <div class="field"><label>Tempo que permaneceu</label><input type="text" id="exTempo" placeholder="Ex: 8 meses"></div>
+      <div class="row2">
+        <div class="field"><label>Tempo que permaneceu</label><input type="text" id="exTempo" placeholder="Ex: 8 meses"></div>
+        <div class="field"><label>Quanto pagava por mês (R$)</label><input type="number" step="0.01" id="exValor" placeholder="0.00"></div>
+      </div>
       <div class="field"><label>Reclamações que fez</label><textarea id="exReclamacoes" placeholder="Se houve..."></textarea></div>
       <div class="row2">
         <div class="field"><label>Teve atraso nas entregas?</label><select id="exAtraso"><option value="nao">Não</option><option value="sim">Sim</option></select></div>
@@ -4990,6 +5009,7 @@
       nome, dataSaida: document.getElementById('exData').value,
       servicos: document.getElementById('exServicos').value.trim(),
       tempoPermaneceu: document.getElementById('exTempo').value.trim(),
+      valorMensal: Number(document.getElementById('exValor')?.value) || 0,
       reclamacoes: document.getElementById('exReclamacoes').value.trim(),
       atraso: document.getElementById('exAtraso').value,
       participacao: document.getElementById('exParticipacao').value,
@@ -7579,6 +7599,7 @@
     if(nome === 'arquivoEntregas'){ popularClientesArquivoEntregas(); renderArquivoEntregas(); }
     if(nome === 'mensalidades'){ const mm = document.getElementById('mensMes'); if(mm && !mm.value) mm.value = new Date().toISOString().slice(0,7); renderMensalidades(); }
     if(nome === 'contratos') renderContratos();
+    if(nome === 'financeiro'){ const fm = document.getElementById('finMes'); if(fm && !fm.value) fm.value = new Date().toISOString().slice(0,7); renderFinanceiro(); }
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
     if(nome === 'briefings'){ carregarClientesExtras().then(()=>popularClientesBriefing()); renderBriefings(); }
     if(nome === 'acompanhamento'){ carregarClientesExtras().then(()=>popularClientesAcomp()); renderAcompanhamentoVisaoGeral(); }
@@ -8187,7 +8208,7 @@
       postagens:'navPostagens', stories:'navStories', campanhas:'navCampanhas', roteiros:'navRoteiros',
       referencias:'navReferencias', briefings:'navBriefings', acompanhamento:'navAcompanhamento', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
       cadastro:'navCadastro', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit',
-      mensalidades:'navMensalidades', contratos:'navContratos'
+      mensalidades:'navMensalidades', contratos:'navContratos', financeiro:'navFinanceiro'
     };
     const el = document.getElementById(idParaId[nomeView]);
     if(el) irPara(nomeView, el);
@@ -11904,6 +11925,201 @@
     registrarLogAutomacao('mensalidade_' + status, id, 'por ' + (usuarioAtual||'?'));
     mostrarToast('Marcado como ' + rot + '.');
     renderMensalidades();
+  };
+
+  /* ===== PAINEL FINANCEIRO (25/07/2026) =====
+     O pedido foi "um grafico do ganho do mes que se atualiza sozinho". O
+     que o negocio realmente precisa e um pouco mais: nao basta saber
+     QUANTO entrou — precisa saber DE ONDE veio, o que MUDOU em relacao ao
+     mes passado, e o que esta em RISCO.
+
+     Por isso este painel tem quatro camadas:
+     1. Quanto entrou no mes, por origem (mensalidade, avulso, extras)
+     2. O MOVIMENTO da receita recorrente: entrou cliente, saiu cliente,
+        mudou de valor. E o numero que explica por que o mes foi melhor ou
+        pior que o anterior — e o que o Chris descreveu como "perdas ou
+        saidas, ou ate entradas".
+     3. Evolucao dos ultimos 6 meses, pra ver tendencia e nao so foto
+     4. Concentracao de receita — quanto do faturamento depende de poucos
+        clientes. E o risco que ninguem ve ate perder um deles.
+
+     Tudo lido do que ja existe: contratos, pagamentos do mes, negocios do
+     funil, pagamentos extras e clientes encerrados. Nenhum lancamento
+     manual novo. */
+
+  window.mudarMesFinanceiro = function(delta){
+    const campo = document.getElementById('finMes');
+    if(!campo || !campo.value) return;
+    const [a,m] = campo.value.split('-').map(Number);
+    const d = new Date(a, m-1+delta, 1);
+    campo.value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    renderFinanceiro();
+  };
+
+  function mesAnterior(comp){
+    const [a,m] = comp.split('-').map(Number);
+    const d = new Date(a, m-2, 1);
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+  }
+  function nomeMes(comp){
+    const [a,m] = comp.split('-').map(Number);
+    return new Date(a, m-1, 1).toLocaleDateString('pt-BR',{month:'long', year:'numeric'});
+  }
+  // valores de proposta sao texto livre ("R$ 2.500,00") — extrai o numero
+  function valorDeTexto(t){
+    if(t == null) return 0;
+    if(typeof t === 'number') return t;
+    const limpo = String(t).replace(/[^\d,.-]/g,'').replace(/\.(?=\d{3}\b)/g,'').replace(',', '.');
+    const n = parseFloat(limpo);
+    return isNaN(n) ? 0 : n;
+  }
+  function barraFin(rotulo, valor, maximo, cor){
+    const pct = maximo > 0 ? Math.round((valor/maximo)*100) : 0;
+    return `<div class="metaBar"><div class="metaBarTop"><span>${rotulo}</span><b>${brl(valor)}</b></div>
+      <div class="metaBarTrack"><div class="metaBarFill" style="width:${pct}%;background:${cor};"></div></div></div>`;
+  }
+
+  window.renderFinanceiro = async function(){
+    const box = document.getElementById('financeiroBox');
+    if(!box) return;
+    const comp = document.getElementById('finMes')?.value || new Date().toISOString().slice(0,7);
+    box.innerHTML = '<div class="card"><div class="desc">Fechando as contas do mês...</div></div>';
+
+    const [ctSnap, pgSnap, negSnap, extraSnap, exSnap] = await Promise.all([
+      getDocs(collection(db,'contratos_cliente')),
+      getDocs(collection(db,'pagamentos_mensais')),
+      getDocs(collection(db,'negocios')),
+      getDocs(collection(db,'pagamentos_extra')),
+      getDocs(collection(db,'clientes_encerrados'))
+    ]);
+    const contratos = []; ctSnap.forEach(d => contratos.push({slug:d.id, ...d.data()}));
+    const pagamentos = []; pgSnap.forEach(d => pagamentos.push({id:d.id, ...d.data()}));
+    const negocios = []; negSnap.forEach(d => negocios.push({id:d.id, ...d.data()}));
+    const extras = []; extraSnap.forEach(d => { const v=d.data(); if(!v.excluido) extras.push({id:d.id, ...v}); });
+    const encerrados = []; exSnap.forEach(d => { const v=d.data(); if(!v.excluido) encerrados.push({id:d.id, ...v}); });
+
+    // ---- 1. o que entrou no mes ----
+    const doMes = pagamentos.filter(p => p.competencia === comp);
+    const recebidoMensal = doMes.filter(p => p.status==='pago').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const previstoMensal = doMes.filter(p => p.status!=='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const cortesias = doMes.filter(p => p.status==='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+
+    // avulso: negocio que entrou em producao/entregue nesse mes
+    const avulsosDoMes = negocios.filter(n => {
+      if(!['producao','entregue'].includes(n.estagio)) return false;
+      const hist = Array.isArray(n.historico) ? n.historico : [];
+      const virada = hist.filter(h => h.estagio === 'producao').pop();
+      const quando = virada?.em || n.atualizadoEm?.seconds && new Date(n.atualizadoEm.seconds*1000).toISOString();
+      return quando && String(quando).slice(0,7) === comp;
+    });
+    const receitaAvulsa = avulsosDoMes.reduce((s,n)=>s+valorDeTexto(n.propostaValor),0);
+
+    const extrasDoMes = extras.filter(e => e.mes === comp);
+    const receitaExtras = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
+
+    const totalMes = recebidoMensal + receitaAvulsa + receitaExtras;
+    const emAberto = previstoMensal - recebidoMensal;
+
+    // ---- 2. movimento da receita recorrente ----
+    const compAnterior = mesAnterior(comp);
+    const doMesAnterior = pagamentos.filter(p => p.competencia === compAnterior);
+    const baseAnterior = doMesAnterior.filter(p=>p.status!=='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const clientesAnterior = new Set(doMesAnterior.map(p=>p.cliente));
+    const clientesAgora = new Set(doMes.map(p=>p.cliente));
+    const entraram = [...clientesAgora].filter(c => !clientesAnterior.has(c));
+    const sairam = [...clientesAnterior].filter(c => !clientesAgora.has(c));
+    const valorEntraram = doMes.filter(p=>entraram.includes(p.cliente)).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const valorSairam = doMesAnterior.filter(p=>sairam.includes(p.cliente)).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const saidasRegistradas = encerrados.filter(e => (e.dataSaida||'').slice(0,7) === comp);
+    const perdaRegistrada = saidasRegistradas.reduce((s,e)=>s+(Number(e.valorMensal)||0),0);
+    const variacao = previstoMensal - baseAnterior;
+
+    // ---- 3. por tipo de servico ----
+    const porPlano = {};
+    doMes.filter(p=>p.status==='pago').forEach(p => {
+      const ct = contratos.find(c=>c.slug===p.cliente);
+      const plano = ct?.plano || 'Sem plano';
+      porPlano[plano] = (porPlano[plano]||0) + (Number(p.valorDevido)||0);
+    });
+    if(receitaAvulsa) porPlano['Avulso / projeto'] = receitaAvulsa;
+    if(receitaExtras) porPlano['Extras (Uber, adicionais)'] = receitaExtras;
+    const maxPlano = Math.max(...Object.values(porPlano), 1);
+
+    // ---- 4. evolucao 6 meses ----
+    const evolucao = [];
+    let cursor = comp;
+    for(let i=0;i<6;i++){
+      const c2 = cursor;
+      const pagos = pagamentos.filter(p=>p.competencia===c2 && p.status==='pago').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+      evolucao.unshift({ comp:c2, valor: pagos });
+      cursor = mesAnterior(cursor);
+    }
+    const maxEvo = Math.max(...evolucao.map(e=>e.valor), 1);
+
+    // ---- 5. concentracao ----
+    const porCliente = doMes.filter(p=>p.status!=='isento').map(p=>({ nome:p.clienteNome, valor:Number(p.valorDevido)||0 }))
+      .sort((a,b)=>b.valor-a.valor);
+    const top5 = porCliente.slice(0,5);
+    const pctTop5 = previstoMensal>0 ? Math.round(top5.reduce((s,c)=>s+c.valor,0)/previstoMensal*100) : 0;
+
+    let html = `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(totalMes)}</div><div class="lbl">Entrou em ${nomeMes(comp)}</div></div>
+      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(recebidoMensal)}</div><div class="lbl">Mensalidades</div></div>
+      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(receitaAvulsa)}</div><div class="lbl">Avulsos / projetos</div></div>
+      <div class="resumoCard ${emAberto>0?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(emAberto)}</div><div class="lbl">Ainda a receber</div></div>
+      <div class="resumoCard ${variacao<0?'red':variacao>0?'green':''}"><div class="num" style="font-size:17px;">${variacao>=0?'+':''}${brl(variacao)}</div><div class="lbl">vs. ${nomeMes(compAnterior)}</div></div>
+    </div>`;
+
+    // movimento
+    html += `<div class="card metaSec">
+      <div class="metaSecTit">🔄 O que mudou em relação ao mês passado</div>
+      <div class="desc" style="margin-bottom:10px;">É isto que explica o mês ter sido melhor ou pior — não o total sozinho.</div>
+      <div class="item" style="border-left:3px solid var(--line);"><div class="top"><div class="nome">Base de ${nomeMes(compAnterior)}</div><b>${brl(baseAnterior)}</b></div></div>
+      <div class="item" style="border-left:3px solid var(--green);"><div class="top"><div class="nome">➕ Entraram (${entraram.length} cliente(s))</div><b style="color:var(--green);">+${brl(valorEntraram)}</b></div>
+        ${entraram.length ? '<div class="meta" style="margin-top:4px;">'+entraram.map(slug=>esc((doMes.find(p=>p.cliente===slug)||{}).clienteNome||slug)).join(', ')+'</div>' : ''}</div>
+      <div class="item" style="border-left:3px solid var(--red);"><div class="top"><div class="nome">➖ Saíram (${sairam.length} cliente(s))</div><b style="color:var(--red);">−${brl(valorSairam)}</b></div>
+        ${sairam.length ? '<div class="meta" style="margin-top:4px;">'+sairam.map(slug=>esc((doMesAnterior.find(p=>p.cliente===slug)||{}).clienteNome||slug)).join(', ')+'</div>' : ''}</div>
+      ${cortesias ? '<div class="item" style="border-left:3px solid var(--yellow2);"><div class="top"><div class="nome">🎁 Em cortesia este mês</div><b style="color:var(--yellow2);">'+brl(cortesias)+'</b></div><div class="meta" style="margin-top:4px;">Não entra como perda — foi combinado.</div></div>' : ''}
+      <div class="item" style="border-left:3px solid var(--yellow);"><div class="top"><div class="nome"><b>Base de ${nomeMes(comp)}</b></div><b>${brl(previstoMensal)}</b></div></div>
+    </div>`;
+
+    // por tipo de servico
+    html += `<div class="card metaSec"><div class="metaSecTit">🧾 De onde veio o dinheiro</div>`;
+    const cores = ['var(--yellow)','var(--green)','#8ab4f8','#e0a86a','#b98ae0','#8a8a8d'];
+    Object.entries(porPlano).sort((a,b)=>b[1]-a[1]).forEach(([k,v],i) => { html += barraFin(k, v, maxPlano, cores[i%cores.length]); });
+    if(!Object.keys(porPlano).length) html += '<div class="empty" style="font-size:11px;">Nada recebido ainda neste mês.</div>';
+    html += `</div>`;
+
+    // evolucao
+    html += `<div class="card metaSec"><div class="metaSecTit">📈 Últimos 6 meses (recebido)</div>`;
+    evolucao.forEach(e => { html += barraFin(nomeMes(e.comp), e.valor, maxEvo, e.comp===comp ? 'var(--yellow)' : '#4a4a4d'); });
+    html += `</div>`;
+
+    // concentracao — o risco que ninguem ve
+    if(top5.length){
+      html += `<div class="card metaSec" style="${pctTop5>=60?'border-color:var(--red);':''}">
+        <div class="metaSecTit">⚠️ Concentração de receita</div>
+        <div class="desc" style="margin-bottom:10px;">Seus 5 maiores clientes representam <b style="color:${pctTop5>=60?'var(--red)':'var(--yellow)'};">${pctTop5}%</b> do faturamento do mês. ${pctTop5>=60?'Isso é risco alto: perder um deles dói muito.':'Quanto mais espalhado, mais seguro.'}</div>`;
+      top5.forEach((cl,i) => { html += barraFin(cl.nome + ' (' + Math.round(cl.valor/previstoMensal*100) + '%)', cl.valor, top5[0].valor, cores[i%cores.length]); });
+      html += `</div>`;
+    }
+
+    // saidas do mes — a aba de ex-clientes integrada aqui
+    html += `<div class="card metaSec" style="${saidasRegistradas.length?'border-color:var(--red);':''}">
+      <div class="metaSecTit">📉 Quem saiu em ${nomeMes(comp)}</div>`;
+    if(saidasRegistradas.length){
+      html += `<div class="desc" style="margin-bottom:10px;">Perda de <b style="color:var(--red);">${brl(perdaRegistrada)}/mês</b> recorrente — ou ${brl(perdaRegistrada*12)} no ano se não repuser.</div>`;
+      html += saidasRegistradas.map(e => `<div class="item" style="border-left:3px solid var(--red);">
+        <div class="top"><div class="nome">${esc(e.nome||'')}</div><span class="selo atrasado">${esc(e.motivo||'sem motivo')}</span></div>
+        <div class="meta" style="margin-top:4px;">${e.valorMensal?brl(e.valorMensal)+'/mês · ':''}${esc(e.tempoPermaneceu||'tempo não informado')}${e.servicos?' · '+esc(e.servicos):''}</div>
+        ${e.reclamacoes ? '<div class="meta" style="margin-top:4px;opacity:.85;">💬 '+esc(e.reclamacoes)+'</div>' : ''}
+      </div>`).join('');
+    } else {
+      html += '<div class="empty" style="font-size:12px;color:var(--green);">Ninguém saiu neste mês. 🎉</div>';
+    }
+    html += `<div class="meta" style="margin-top:10px;opacity:.75;">Registra as saídas em Gerência → Clientes que Saíram — o valor mensal alimenta este cálculo.</div></div>`;
+
+    box.innerHTML = html;
   };
 
   window.renderMensalidades = async function(){

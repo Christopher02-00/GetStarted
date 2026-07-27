@@ -923,10 +923,17 @@
       <h1>Calendários <span class="y">Editoriais</span></h1>
       <div class="sub">Duas coisas separadas: acompanhar os calendários por dentro, e o link que vai pro cliente.</div>
 
+      <!-- CORRIGIDO 27/07/2026 — este card prometia uma pagina que nao existe.
+           O botao copiava get-started.agency/calendarios.html, SEM o parametro
+           do cliente, e o texto dizia que o cliente "busca o nome da propria
+           empresa". Essa busca nunca existiu: a pagina nao tem seletor nenhum.
+           Quem recebesse esse link cairia num calendario vazio. Ninguem chegou
+           a clicar (nao ha calendario 'exemplo' no banco). O link que funciona
+           e o de cada cliente, logo abaixo. -->
       <div class="card" style="border:2px solid var(--yellow);">
         <h2>🔗 Link para o cliente</h2>
-        <div class="desc">Esse é o link que os clientes usam — eles buscam o nome da própria empresa e só veem o calendário deles. Sem acesso aos outros.</div>
-        <button class="btn" onclick="copiarLinkBuscaCliente(this)">⧉ Copiar link de busca pro cliente</button>
+        <div class="desc">Cada cliente tem o <b>link próprio</b> — ele abre direto no calendário dele, sem precisar buscar nem escolher nada, e não dá acesso aos outros.</div>
+        <div class="desc" style="margin-bottom:0;">Pra pegar: acha o cliente na busca abaixo e clica em <b>⧉ Copiar link</b>. Já vai pronto pro WhatsApp.</div>
       </div>
 
       <div class="card">
@@ -4246,6 +4253,14 @@
             dadosCal.items[escolha.idxOriginal].legendaUsadaEm = new Date().toISOString();
             dadosCal.items[escolha.idxOriginal].legendaUsadaPostagemId = id;
             await setDoc(calRef, dadosCal);
+            /* ===== 27/07/2026 — o vinculo agora fica GRAVADO na postagem =====
+               Antes ele so existia em window.__legendaCalendarioEscolhida, ou
+               seja, na memoria da aba: fechou o navegador, perdeu. E era
+               justamente esse vinculo que faltava pro agendamento saber que
+               aquele video JA tem um lugar no calendario da Gabi. */
+            await updateDoc(doc(db,'postagens', id), {
+              calendarioSlug: escolha.clienteSlug, calendarioIdx: escolha.idxOriginal
+            });
           }
         }
       }catch(e){ console.error('Falha ao marcar legenda do calendário como usada:', e); }
@@ -4356,12 +4371,29 @@
         const dados = calSnap.data();
         const items = dados.items || [];
         const diaEsperado = p.dataAgendada ? parseInt(p.dataAgendada.split('-')[2]) : null;
-        // casa pelo titulo + dia — que e como o item foi criado
-        const idx = items.findIndex(it => it && it.name === p.titulo && (diaEsperado === null || Number(it.day) === diaEsperado));
-        if(idx >= 0){
-          items.splice(idx, 1);
+        /* ===== 27/07/2026 — desfazer nao pode apagar o que a Gabi planejou =====
+           Antes isso dava splice() no item, sempre. Funcionava enquanto todo
+           item do calendario nascia da automacao. Agora que o agendamento
+           ATUALIZA o item planejado pela Gabi, apagar aqui destruiria o
+           planejamento dela por causa de um desagendamento. Entao:
+           - item planejado (tem postagemId dessa postagem): so volta os flags
+           - item criado pela automacao: continua sendo removido */
+        const idxPlanejado = items.findIndex(it => it && it.postagemId === id);
+        if(idxPlanejado >= 0){
+          const it = { ...items[idxPlanejado] };
+          delete it.postagemId;
+          it.agendado = false; it.posted = false;
+          items[idxPlanejado] = it;
           await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
           saiuDoCalendario = true;
+        } else {
+          // casa pelo titulo + dia — que e como o item da automacao foi criado
+          const idx = items.findIndex(it => it && it.name === p.titulo && (diaEsperado === null || Number(it.day) === diaEsperado));
+          if(idx >= 0){
+            items.splice(idx, 1);
+            await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+            saiuDoCalendario = true;
+          }
         }
       }
     }catch(e){ console.error('Falha ao remover item do calendário:', e); }
@@ -4471,9 +4503,15 @@
           const dados = calSnap.data();
           const items = dados.items || [];
           const dia = p.dataAgendada ? parseInt(p.dataAgendada.split('-')[2]) : null;
-          const idx = items.findIndex(it => it && it.name === p.titulo && (dia === null || Number(it.day) === dia));
+          /* 27/07/2026 — casa primeiro pelo vinculo direto. Num item que a
+             Gabi planejou, o titulo e o DELA, nao o da postagem, entao a
+             busca por titulo falharia e o conteudo nunca viraria "Publicado"
+             no portal do cliente. */
+          let idx = items.findIndex(it => it && it.postagemId === id);
+          if(idx < 0) idx = items.findIndex(it => it && it.name === p.titulo && (dia === null || Number(it.day) === dia));
           if(idx >= 0 && !items[idx].posted){
             items[idx].posted = true;
+            items[idx].agendado = false;
             await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
           }
         }
@@ -4525,7 +4563,28 @@
       if(calSnap.exists()){
         const dados = calSnap.data();
         const items = dados.items || [];
-        items.push(novoItem);
+        /* ===== 27/07/2026 — ANTES DUPLICAVA O CALENDARIO DA GABI =====
+           Aqui sempre se fazia items.push(): a Gabi planejava "Bastidor da
+           consulta" no dia 10, o video era produzido, a Cecilia agendava, e
+           nascia um SEGUNDO item ("Dra. Monique — video 3") no mesmo dia.
+           O cliente veria o mes em dobro e a barra de aprovacao contaria o
+           dobro. Nenhum cliente tinha os dois tipos ainda, entao isso nunca
+           apareceu — a Monique seria a primeira.
+           Agora, se a legenda veio de um item planejado, esse item e
+           ATUALIZADO no lugar. Sem vinculo (legenda escrita na mao), cai no
+           comportamento antigo e cria um item novo, que e o certo. */
+        const idxPlanejado = (p.calendarioSlug === p.cliente && Number.isInteger(p.calendarioIdx) && items[p.calendarioIdx]) ? p.calendarioIdx : -1;
+        if(idxPlanejado >= 0){
+          items[idxPlanejado] = {
+            ...items[idxPlanejado],
+            day: diaDoMes,
+            ref: p.linkVideo || items[idxPlanejado].ref || '',
+            agendado: true, posted: false,
+            postagemId: id
+          };
+        } else {
+          items.push(novoItem);
+        }
         await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
       } else {
         await setDoc(calRef, { client: p.clienteNome, month: '', items: [novoItem], comments: [], updatedAt: new Date().toISOString() });
@@ -9532,7 +9591,6 @@
   };
 
   const LINKS_CLIENTE_MAPA = {
-    calendarios: { url: "https://get-started.agency/calendarios.html", nome: "Portal do Cliente (calendário)" },
     cadastro: { url: "https://get-started.agency/cadastro.html", nome: "Cadastro de Cliente Novo" },
     pedido: { url: "https://get-started.agency/pedido-cliente.html", nome: "Enviar Pedido (cliente)" }
   };
@@ -9682,18 +9740,6 @@
   window.copiarLinkCalendarioFerramentasAtual = function(){
     if(!calendarioFerramentasAbertoSlug) return;
     copiarLinkCalendarioDireto(calendarioFerramentasAbertoSlug, document.getElementById('btnCopiarCalFerramentas'));
-  };
-
-  window.copiarLinkBuscaCliente = function(btn){
-    const link = 'https://get-started.agency/calendarios.html';
-    navigator.clipboard.writeText(link).then(()=>{
-      const original = btn.textContent;
-      btn.textContent = '✓ Copiado!';
-      mostrarToast('Link copiado! Esse é o link que os clientes usam pra buscar o calendário deles.');
-      setTimeout(()=>{ btn.textContent = original; }, 2200);
-    }).catch(()=>{
-      mostrarToast('Não consegui copiar — copia manualmente o link.', 'erro');
-    });
   };
 
   window.abrirCalendariosPorCliente = function(){

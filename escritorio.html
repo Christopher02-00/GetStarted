@@ -556,6 +556,7 @@
       <div class="navitem" id="navMensalidades" onclick="irPara('mensalidades', this)"><span class="ico">📆</span> Mensalidades<span class="navbadge" id="badgeMensalidades" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navContratos" onclick="irPara('contratos', this)"><span class="ico">📄</span> Contratos</div>
       <div class="navitem" id="navFinanceiro" onclick="irPara('financeiro', this)"><span class="ico">📊</span> Financeiro</div>
+      <div class="navitem" id="navCobranca" onclick="irPara('cobranca', this)"><span class="ico">🔔</span> Régua de Cobrança<span class="navbadge" id="badgeCobranca" style="display:none;background:var(--red);">0</span></div>
     </div>
 
     <div class="navgroup">
@@ -972,6 +973,12 @@
         </div>
       </div>
       <div id="mensalidadesBox"></div>
+    </div>
+
+    <div class="view" id="view-cobranca">
+      <h1>🔔 <span class="y">Régua de Cobrança</span></h1>
+      <div class="sub">A fila do dia: quem cobrar, em que tom, com a mensagem já escrita. Você dá um toque por cliente.</div>
+      <div id="cobrancaBox"></div>
     </div>
 
     <div class="view" id="view-financeiro">
@@ -7600,6 +7607,7 @@
     if(nome === 'mensalidades'){ const mm = document.getElementById('mensMes'); if(mm && !mm.value) mm.value = new Date().toISOString().slice(0,7); renderMensalidades(); }
     if(nome === 'contratos') renderContratos();
     if(nome === 'financeiro'){ const fm = document.getElementById('finMes'); if(fm && !fm.value) fm.value = new Date().toISOString().slice(0,7); renderFinanceiro(); }
+    if(nome === 'cobranca') renderCobranca();
     if(nome === 'referencias'){ popularClientesReferencia(); renderReferencias(); }
     if(nome === 'briefings'){ carregarClientesExtras().then(()=>popularClientesBriefing()); renderBriefings(); }
     if(nome === 'acompanhamento'){ carregarClientesExtras().then(()=>popularClientesAcomp()); renderAcompanhamentoVisaoGeral(); }
@@ -8208,7 +8216,7 @@
       postagens:'navPostagens', stories:'navStories', campanhas:'navCampanhas', roteiros:'navRoteiros',
       referencias:'navReferencias', briefings:'navBriefings', acompanhamento:'navAcompanhamento', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
       cadastro:'navCadastro', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit',
-      mensalidades:'navMensalidades', contratos:'navContratos', financeiro:'navFinanceiro'
+      mensalidades:'navMensalidades', contratos:'navContratos', financeiro:'navFinanceiro', cobranca:'navCobranca'
     };
     const el = document.getElementById(idParaId[nomeView]);
     if(el) irPara(nomeView, el);
@@ -12331,6 +12339,159 @@
      Business (provedor pago + aprovacao da Meta + servidor) — o site
      sozinho nao consegue disparar por um numero comum. */
   const PIX_AGENCIA = { chave:'56.062.119.0001-43', tipo:'CNPJ', banco:'Banco C6', titular:'Christopher Brito' };
+
+  /* ===== REGUA DE COBRANCA (25/07/2026) =====
+     Cinco fases, com o tom mudando conforme o tempo. A ideia nao e ter
+     mensagem "mais dura" — e ter a mensagem CERTA: lembrete antes de
+     vencer nao pode soar cobranca, e cobranca de 15 dias nao pode soar
+     lembrete.
+
+     LIMITE TECNICO, dito com todas as letras: o site NAO dispara WhatsApp
+     sozinho pelo numero da agencia. Isso exigiria a API oficial do
+     WhatsApp Business (provedor pago, aprovacao previa das mensagens pela
+     Meta e um servidor rodando) — um site estatico nao consegue. O que
+     ele faz e montar a fila e escrever a mensagem; o envio e um toque.
+     Isso ja resolve a parte cara do problema, que e lembrar e redigir.
+
+     O sistema registra cada cobranca feita pra nao repetir no mesmo dia —
+     cobrar duas vezes no mesmo dia e o jeito mais rapido de irritar quem
+     ja ia pagar. */
+  const FASES_COBRANCA = [
+    { k:'antes',   dias:[-1,-1],     titulo:'💛 Vence amanhã',            tom:'lembrete gentil',        cor:'var(--line)' },
+    { k:'hoje',    dias:[0,0],       titulo:'🟡 Vence hoje',              tom:'informativo',            cor:'var(--yellow)' },
+    { k:'d3',      dias:[1,4],       titulo:'🟠 Venceu há pouco',         tom:'atencioso',              cor:'var(--yellow2)' },
+    { k:'d7',      dias:[5,14],      titulo:'🔴 Atrasado',                tom:'firme e claro',          cor:'var(--red)' },
+    { k:'d15',     dias:[15,9999],   titulo:'⛔ Atraso longo',            tom:'precisa da sua decisão', cor:'var(--red)' }
+  ];
+
+  function faseDaCobranca(diasAtraso){
+    return FASES_COBRANCA.find(f => diasAtraso >= f.dias[0] && diasAtraso <= f.dias[1]) || null;
+  }
+
+  function mensagemCobranca(fase, primeiro, valor, competencia, dias){
+    const pix = '\n\n💳 PIX (' + PIX_AGENCIA.tipo + '): ' + PIX_AGENCIA.chave + '\n' + PIX_AGENCIA.banco + ' · ' + PIX_AGENCIA.titular;
+    switch(fase){
+      case 'antes':
+        return 'Oi, ' + primeiro + '! Tudo bem? 🙂\n\nPassando só pra lembrar que a mensalidade vence amanhã — ' + brl(valor) + '.' + pix + '\n\nQualquer coisa, é só chamar!';
+      case 'hoje':
+        return 'Oi, ' + primeiro + '! A mensalidade vence hoje — ' + brl(valor) + '.\n\nDeixo o PIX aqui pra facilitar:' + pix + '\n\nAssim que pagar, pode mandar o comprovante por aqui mesmo 🙂';
+      case 'd3':
+        return 'Oi, ' + primeiro + '! Tudo certo por aí?\n\nVi que a mensalidade de ' + competencia + ' (' + brl(valor) + ') ainda não caiu — venceu há ' + dias + ' dia(s).' + pix + '\n\nSe precisar de outra forma de pagamento ou de mais uns dias, me fala que a gente ajeita.';
+      case 'd7':
+        return 'Oi, ' + primeiro + '! Preciso falar sobre a mensalidade de ' + competencia + ', que está em aberto há ' + dias + ' dias — ' + brl(valor) + '.' + pix + '\n\nConsegue resolver essa semana? Se tiver acontecido alguma coisa, me avisa que a gente encontra um caminho juntos.';
+      default:
+        return 'Oi, ' + primeiro + '! A mensalidade de ' + competencia + ' está em aberto há ' + dias + ' dias (' + brl(valor) + ') e eu queria entender o que aconteceu.' + pix + '\n\nMe chama pra gente conversar? Prefiro resolver falando do que deixar acumular.';
+    }
+  }
+
+  window.abrirCobranca = async function(id){
+    const snap = await getDoc(doc(db,'pagamentos_mensais', id));
+    if(!snap.exists()) return;
+    const p = snap.data();
+    const [ano, mes] = (p.competencia||'').split('-').map(Number);
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    const venc = new Date(ano, mes-1, Math.min(p.diaVencimento||10, ultimoDia));
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    const dias = Math.floor((hoje - venc)/86400000);
+    const fase = faseDaCobranca(dias);
+    if(!fase){ mostrarToast('Esse ainda não entrou na régua.', 'erro'); return; }
+
+    const primeiro = (p.clienteNome||'').split(' ')[0];
+    const msg = mensagemCobranca(fase.k, primeiro, p.valorDevido, p.competencia, Math.abs(dias));
+    const cfg = await obterConfigCliente(p.cliente);
+    const numero = (cfg.whatsappCobranca||'').replace(/\D/g,'');
+
+    if(numero){
+      window.open('https://wa.me/' + numero + '?text=' + encodeURIComponent(msg), '_blank');
+      mostrarToast('WhatsApp aberto — é só enviar.');
+    } else {
+      try{ await navigator.clipboard.writeText(msg); mostrarToast('Sem WhatsApp cadastrado pra esse cliente. Mensagem copiada.'); }
+      catch(e){ mostrarToast('Sem WhatsApp cadastrado (Gerência → Config por Cliente).', 'erro'); }
+    }
+    await updateDoc(doc(db,'pagamentos_mensais', id), {
+      ultimaCobranca: new Date().toISOString(),
+      cobrancasFeitas: (p.cobrancasFeitas||0) + 1,
+      ultimaFaseCobrada: fase.k
+    });
+    registrarLogAutomacao('cobranca_feita', id, (p.clienteNome||'') + ' — fase ' + fase.k);
+    renderCobranca();
+  };
+
+  window.renderCobranca = async function(){
+    const box = document.getElementById('cobrancaBox');
+    if(!box) return;
+    box.innerHTML = '<div class="card"><div class="desc">Montando a fila do dia...</div></div>';
+
+    const [pgSnap, cfgSnap] = await Promise.all([
+      getDocs(collection(db,'pagamentos_mensais')),
+      getDocs(collection(db,'clientes_config'))
+    ]);
+    const semWhats = new Set();
+    cfgSnap.forEach(d => { if(!d.data().whatsappCobranca) semWhats.add(d.id); });
+
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    const hojeStr = hoje.toISOString().slice(0,10);
+    const fila = [];
+    pgSnap.forEach(d => {
+      const p = d.data();
+      if(p.status === 'pago' || p.status === 'isento') return;
+      if(p.comprovante) return;   // mandou comprovante — nao cobra ate conferir
+      const [ano, mes] = (p.competencia||'').split('-').map(Number);
+      if(!ano) return;
+      const ultimoDia = new Date(ano, mes, 0).getDate();
+      const venc = new Date(ano, mes-1, Math.min(p.diaVencimento||10, ultimoDia));
+      const dias = Math.floor((hoje - venc)/86400000);
+      const fase = faseDaCobranca(dias);
+      if(!fase) return;   // ainda longe do vencimento
+      fila.push({ id:d.id, ...p, dias, fase, jaCobradoHoje: (p.ultimaCobranca||'').slice(0,10) === hojeStr });
+    });
+
+    const aCobrar = fila.filter(f => !f.jaCobradoHoje);
+    atualizarBadgeCobranca(aCobrar.length);
+
+    let html = `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard ${aCobrar.length?'red':'green'}"><div class="num">${aCobrar.length}</div><div class="lbl">Pra cobrar hoje</div></div>
+      <div class="resumoCard"><div class="num">${fila.filter(f=>f.jaCobradoHoje).length}</div><div class="lbl">Já cobrado hoje</div></div>
+      <div class="resumoCard ${fila.filter(f=>f.fase.k==='d15').length?'red':''}"><div class="num">${fila.filter(f=>f.fase.k==='d15').length}</div><div class="lbl">Atraso longo</div></div>
+      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(fila.reduce((s,f)=>s+(Number(f.valorDevido)||0),0))}</div><div class="lbl">Total em aberto</div></div>
+    </div>
+    <div class="card">
+      <div class="desc">O sistema escreve a mensagem no tom certo pra cada fase e abre o WhatsApp do cliente. <b>O envio é seu</b> — o site não dispara sozinho pelo número da agência (isso exigiria a API paga do WhatsApp Business).</div>
+      <div class="meta" style="margin-top:6px;">Quem já mandou comprovante sai da fila automaticamente, mesmo antes de você conferir.</div>
+    </div>`;
+
+    if(!fila.length){
+      box.innerHTML = html + '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Ninguém pra cobrar hoje. 🎉</div></div>';
+      return;
+    }
+
+    FASES_COBRANCA.forEach(f => {
+      const doGrupo = fila.filter(x => x.fase.k === f.k).sort((a,b)=>b.dias-a.dias);
+      if(!doGrupo.length) return;
+      html += `<div class="faixaDem aberta" data-faixa="cob_${f.k}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${f.titulo} <span class="qtd">(${doGrupo.length}) · tom ${f.tom}</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${doGrupo.map(x => `
+          <div class="item" style="border-left:3px solid ${f.cor};${x.jaCobradoHoje?'opacity:.55;':''}">
+            <div class="top"><div class="nome">${esc(x.clienteNome)}</div><span class="selo ${x.jaCobradoHoje?'aprovada':x.fase.k==='antes'?'pendente':'atrasado'}">${x.jaCobradoHoje?'✔ Cobrado hoje':(x.dias<0?'vence amanhã':x.dias===0?'vence hoje':x.dias+' dia(s) de atraso')}</span></div>
+            <div class="meta" style="margin-top:4px;">${brl(x.valorDevido)} · ${esc(x.competencia||'')}${x.cobrancasFeitas?' · já cobrado '+x.cobrancasFeitas+'x':''}${semWhats.has(x.cliente)?' · <b style="color:var(--yellow2);">sem WhatsApp cadastrado</b>':''}</div>
+            <div class="btnrow" style="margin-top:8px;">
+              ${x.jaCobradoHoje
+                ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="abrirCobranca('${x.id}')">Cobrar de novo</button>`
+                : `<button class="btn" style="width:auto;padding:6px 14px;font-size:11px;" onclick="abrirCobranca('${x.id}')">📲 Cobrar</button>`}
+              <button class="btn green" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${x.id}','pago')">✔ Já recebi</button>
+            </div>
+          </div>`).join('')}</div>
+      </div>`;
+    });
+
+    box.innerHTML = html;
+  };
+
+  function atualizarBadgeCobranca(n){
+    const b = document.getElementById('badgeCobranca');
+    if(!b) return;
+    if(n>0){ b.textContent = n; b.style.display='flex'; } else b.style.display='none';
+  }
 
   window.cobrarMensalidade = async function(id){
     const snap = await getDoc(doc(db,'pagamentos_mensais', id));

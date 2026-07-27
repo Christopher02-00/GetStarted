@@ -889,6 +889,10 @@
           <h2>📍 Etapa atual</h2>
           <div class="meta" id="acompEtapaAtual" style="margin-bottom:10px;"></div>
           <div class="field"><label>Mudar etapa para</label><select id="acompNovaEtapa"></select></div>
+          <div class="field"><label>Quem fez esse trabalho</label>
+            <select id="acompResponsavel"></select>
+            <div class="desc" style="margin:4px 0 0;">Vem preenchido com você. Se quem fez foi outra pessoa — a Gabi montando o calendário, por exemplo — troca aqui: é o nome dela que o cliente vai ver.</div>
+          </div>
           <div class="field"><label>Observação para o cliente (opcional)</label><input type="text" id="acompEtapaObs" placeholder="Um detalhe a mais, se precisar"></div>
           <button class="btn" onclick="salvarEtapaAcomp()">Atualizar etapa</button>
         </div>
@@ -896,6 +900,7 @@
           <h2>✨ Registrar melhoria no perfil</h2>
           <div class="field"><label>Melhoria comum (atalho)</label><select id="acompMelhoriaRapida" onchange="if(this.value){document.getElementById('acompMelhoriaDesc').value=this.value;}"><option value="">Escolhe uma comum, ou escreve abaixo...</option></select></div>
           <div class="field"><label>Descrição da melhoria</label><input type="text" id="acompMelhoriaDesc" placeholder="O que foi melhorado no perfil do cliente"></div>
+          <div class="field"><label>Quem fez</label><select id="acompRespMelhoria"></select></div>
           <button class="btn" onclick="salvarMelhoriaAcomp()">Registrar melhoria</button>
         </div>
         <div class="card"><h2>🕓 Linha do tempo</h2><div id="acompTimeline"></div></div>
@@ -6803,8 +6808,14 @@
     info.innerHTML = d.etapaAtual ? '<span class="selo aprovada">'+esc(etapa)+'</span>' : '<span class="selo pendente">Ainda sem etapa definida</span>';
     if(d.etapaAtual){ const selE=document.getElementById('acompNovaEtapa'); if(selE) selE.value = d.etapaAtual; }
     // timeline (mais recente primeiro)
+    // popula os dois seletores de "quem fez", ja marcando quem esta logado
+    ['acompResponsavel','acompRespMelhoria'].forEach(id => {
+      const el = document.getElementById(id);
+      if(!el) return;
+      el.innerHTML = FUNCIONARIOS.map(f=>`<option value="${f}" ${f===usuarioAtual?'selected':''}>${f}</option>`).join('');
+    });
     const tl = (d.timeline||[]).slice().reverse();
-    document.getElementById('acompTimeline').innerHTML = tl.length ? tl.map(t=>`<div class="item" style="border-left:3px solid var(--yellow);"><div class="top"><div class="nome">${esc(t.status||'')}</div><span class="meta">${t.data?formatarDataBR(String(t.data).slice(0,10)):''}</span></div><div class="meta" style="margin-top:3px;">por ${esc(t.responsavel||'?')}${t.obs?' · '+esc(t.obs):''}</div></div>`).join('') : '<div class="empty">Nenhuma atualização de etapa ainda.</div>';
+    document.getElementById('acompTimeline').innerHTML = tl.length ? tl.map(t=>`<div class="item" style="border-left:3px solid var(--yellow);"><div class="top"><div class="nome">${esc(t.status||'')}</div><span class="meta">${t.data?formatarDataBR(String(t.data).slice(0,10)):''}</span></div><div class="meta" style="margin-top:3px;">por ${esc(t.responsavel||'?')}${t.registradoPor?' <span style="opacity:.6;">(registrado por '+esc(t.registradoPor)+')</span>':''}${t.obs?' · '+esc(t.obs):''}</div></div>`).join('') : '<div class="empty">Nenhuma atualização de etapa ainda.</div>';
     const mel = (d.melhorias||[]).slice().reverse();
     document.getElementById('acompMelhorias').innerHTML = mel.length ? mel.map(m=>`<div class="item" style="border-left:3px solid var(--green);"><div class="top"><div class="nome">✨ ${esc(m.descricao||'')}</div><span class="meta">${m.data?formatarDataBR(String(m.data).slice(0,10)):''}</span></div><div class="meta" style="margin-top:3px;">por ${esc(m.responsavel||'?')}</div></div>`).join('') : '<div class="empty">Nenhuma melhoria registrada ainda.</div>';
   };
@@ -6816,7 +6827,15 @@
     const snap = await getDoc(doc(db,'processos_cliente', slug));
     const d = snap.exists() ? snap.data() : {};
     const timeline = (d.timeline||[]).slice();
-    timeline.push({ status: etapa, data: new Date().toISOString(), responsavel: usuarioAtual||'?', obs });
+    /* ===== 27/07/2026 — quem FEZ deixou de ser quem DIGITOU =====
+       Antes gravava sempre `usuarioAtual`. Como quem atualiza costuma ser a
+       Amanda, o portal mostrava "Calendário editorial · por Amanda" mesmo
+       quando quem montou o calendário foi a Gabi. O cliente lia o nome
+       errado, e o histórico interno tambem. Agora o responsavel e escolhido;
+       fica registrado à parte quem digitou. */
+    const respEscolhido = document.getElementById('acompResponsavel')?.value || usuarioAtual || '?';
+    timeline.push({ status: etapa, data: new Date().toISOString(), responsavel: respEscolhido,
+      registradoPor: (respEscolhido !== usuarioAtual ? (usuarioAtual||'?') : ''), obs });
     await setDoc(doc(db,'processos_cliente', slug), { cliente:slug, clienteNome: sel.selectedOptions[0].dataset.nome||slug, etapaAtual: etapa, timeline, atualizadoEm: serverTimestamp() }, { merge:true });
     document.getElementById('acompEtapaObs').value='';
     mostrarToast('Etapa atualizada — o cliente já vê no portal.');
@@ -6831,7 +6850,9 @@
     const snap = await getDoc(doc(db,'processos_cliente', slug));
     const d = snap.exists() ? snap.data() : {};
     const melhorias = (d.melhorias||[]).slice();
-    melhorias.push({ descricao: desc, data: new Date().toISOString(), responsavel: usuarioAtual||'?' });
+    const respMelhoria = document.getElementById('acompRespMelhoria')?.value || usuarioAtual || '?';
+    melhorias.push({ descricao: desc, data: new Date().toISOString(), responsavel: respMelhoria,
+      registradoPor: (respMelhoria !== usuarioAtual ? (usuarioAtual||'?') : '') });
     await setDoc(doc(db,'processos_cliente', slug), { cliente:slug, clienteNome: sel.selectedOptions[0].dataset.nome||slug, melhorias, atualizadoEm: serverTimestamp() }, { merge:true });
     document.getElementById('acompMelhoriaDesc').value='';
     document.getElementById('acompMelhoriaRapida').value='';

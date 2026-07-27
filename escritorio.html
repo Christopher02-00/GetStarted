@@ -850,7 +850,7 @@
           </select></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Cliente destino (manda pro calendário dele)</label><select id="refCliente"><option value="">Nenhum — só por nicho</option></select></div>
+          <div class="field"><label>Cliente destino (manda pro calendário dele)</label><select id="refCliente"><option value="">Escolhe o cliente…</option><option value="__nicho__">Sem cliente — guardar só por nicho</option></select></div>
           <div class="field"><label>Observação</label><input type="text" id="refDesc" placeholder="Por que essa referência é boa"></div>
         </div>
         <button class="btn" onclick="adicionarReferencia()" id="btnAddRef">Adicionar</button>
@@ -5460,7 +5460,7 @@
         html += `<div class="card">
           <h2>🔗 Guardar referência</h2>
           <div class="desc">Inspiração do Instagram ou de outra plataforma pra usar na estratégia desse cliente depois.</div>
-          <div class="field"><label>Cliente</label><select id="refCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
+          <div class="field"><label>Cliente</label><select id="refClientePortal">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
           <div class="field"><label>Link da publicação</label><input type="text" id="refLink" placeholder="https://instagram.com/p/..."></div>
           <div class="field"><label>Link da imagem de capa (opcional)</label><input type="text" id="refCapa" placeholder="Cola o link de uma imagem, se tiver"></div>
           <div class="field"><label>Descrição da ideia</label><textarea id="refDescricao"></textarea></div>
@@ -5671,7 +5671,10 @@
   };
 
   window.criarReferenciaEquipe = async function(){
-    const sel = document.getElementById('refCliente');
+    /* Era 'refCliente' — mesmo id do select do Hub, que vive no DOM o tempo
+       todo. getElementById devolvia o do Hub e a referencia nascia com o
+       cliente errado (ou vazio). Renomeado pra refClientePortal. */
+    const sel = document.getElementById('refClientePortal');
     const link = document.getElementById('refLink').value.trim();
     const descricao = document.getElementById('refDescricao').value.trim();
     if(!link && !descricao){ mostrarToast('Cola o link ou escreve a descrição.', 'erro'); return; }
@@ -6470,7 +6473,7 @@
   function popularClientesReferencia(){
     const sel = document.getElementById('refCliente');
     if(!sel) return;
-    sel.innerHTML = '<option value="">Nenhum — só por nicho</option>' + CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
+    sel.innerHTML = '<option value="">Escolhe o cliente…</option><option value="__nicho__">Sem cliente — guardar só por nicho</option>' + CLIENTES_LISTA.map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
   }
 
   /* ===== BRIEFINGS POR CLIENTE (21/07/2026) =====
@@ -6651,10 +6654,15 @@
     const link = document.getElementById('refLinkInput').value.trim();
     const nicho = document.getElementById('refNicho').value;
     const clienteSel = document.getElementById('refCliente');
-    const cliente = clienteSel.value;
+    /* 27/07/2026 — antes o padrao do select era "nenhum cliente", entao dava
+       pra arquivar referencia sem destino sem perceber: 4 das 6 primeiras da
+       Gabi nasceram assim e nao podiam ir pro calendario de ninguem. Agora a
+       escolha e explicita — cliente OU "guardar so por nicho". */
+    const cliente = clienteSel.value === '__nicho__' ? '' : clienteSel.value;
     const clienteNome = cliente ? clienteSel.selectedOptions[0].dataset.nome : '';
     const desc = document.getElementById('refDesc').value.trim();
     if(!link){ mostrarToast('Cola o link antes de adicionar.', 'erro'); return; }
+    if(clienteSel.value === ''){ mostrarToast('Escolhe o cliente destino — ou marca "sem cliente" se for só pro banco por nicho.', 'erro'); return; }
     const btn = document.getElementById('btnAddRef');
     btn.disabled = true; btn.textContent = 'Adicionando...';
     try {
@@ -6675,8 +6683,25 @@
     const cont = document.getElementById('listaReferencias');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando referências e cruzando com os calendários...</div></div>';
     const soDisp = (document.getElementById('refFiltro')?.value || 'todos') === 'disponiveis';
-    const [refSnap, calSnap] = await Promise.all([getDocs(collection(db,'referencias')), getDocs(collection(db,'calendarios'))]);
-    let refs = []; refSnap.forEach(d => { const v=d.data(); if(!v.excluido) refs.push({id:d.id, ...v}); });
+    /* ===== 27/07/2026 — a referencia do cliente chegava e morria =====
+       O cliente manda referencia pelo portal (colecao referencias_cliente) e
+       a Gabi monta o calendario aqui, lendo so a colecao 'referencias'. As
+       duas nunca se viam: o cliente mandava e ninguem deste lado tinha
+       motivo pra abrir. As colecoes continuam separadas (sao fluxos
+       diferentes) — o que muda e que este Hub agora LE as duas. */
+    const [refSnap, cliSnap, calSnap] = await Promise.all([
+      getDocs(collection(db,'referencias')),
+      getDocs(collection(db,'referencias_cliente')),
+      getDocs(collection(db,'calendarios'))
+    ]);
+    let refs = [];
+    refSnap.forEach(d => { const v=d.data(); if(!v.excluido) refs.push({id:d.id, origem:'hub', ...v}); });
+    cliSnap.forEach(d => { const v=d.data(); if(v.excluido) return;
+      refs.push({ id:d.id, origem:'portal', doCliente: v.criadoPorTipo === 'cliente',
+        link: v.link||'', nicho: v.nicho||'', cliente: v.cliente||'', clienteNome: v.clienteNome||v.cliente||'',
+        descricao: v.descricao||'', observacoes: v.observacoes||v.observacao||'',
+        criadoPor: v.criadoPor||'?', criadoEm: v.criadoEm });
+    });
     // mapa slug do cliente -> conjunto de links de referência já usados no calendário dele
     const usados = {};
     calSnap.forEach(d => { const its = d.data().items||[]; const set = new Set(); its.forEach(it=>{ if(it.ref && String(it.ref).trim()) set.add(String(it.ref).trim()); }); usados[d.id] = set; });
@@ -6688,13 +6713,15 @@
       return `<div class="item" style="border-left:3px solid ${usada?'var(--green)':'var(--yellow)'};">
         <div class="top"><a href="${esc(r.link)}" target="_blank" style="color:var(--yellow);font-weight:700;word-break:break-all;">${esc(r.link)}</a></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
-          <span class="selo pendente">${esc(r.nicho||'—')}</span>
+          ${r.nicho ? '<span class="selo pendente">'+esc(r.nicho)+'</span>' : ''}
+          ${r.doCliente ? '<span class="selo hoje" style="background:var(--yellow);color:#222;">💬 O cliente mandou</span>' : (r.origem==='portal' ? '<span class="selo pendente">🔗 Banco do portal</span>' : '')}
           ${usada ? '<span class="selo aprovada">✅ Já no calendário</span>' : '<span class="selo hoje">🟢 Disponível</span>'}
         </div>
         ${r.descricao ? '<div class="meta" style="margin-top:6px;">'+esc(r.descricao)+'</div>' : ''}
+        ${r.observacoes ? '<div class="meta" style="margin-top:4px;opacity:.8;">📝 '+esc(r.observacoes)+'</div>' : ''}
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-          ${(!usada && r.cliente) ? `<button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="abrirUsarNoCalendario('${r.id}')">📅 Usar no calendário</button>` : ''}
-          <button class="btn red" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="excluirReferencia('${r.id}')">✕ Excluir</button>
+          ${(!usada && r.cliente) ? `<button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="abrirUsarNoCalendario('${r.id}','${r.origem}')">📅 Usar no calendário</button>` : ''}
+          <button class="btn red" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="excluirReferencia('${r.id}','${r.origem}')">✕ Excluir</button>
         </div>
       </div>`;
     };
@@ -6725,9 +6752,10 @@
     cont.innerHTML = html || '<div class="empty">Nada com esse filtro. 🎉</div>';
   };
 
-  window.excluirReferencia = async function(id){
+  window.excluirReferencia = async function(id, origem){
     if(!confirm('Excluir essa referência?')) return;
-    await updateDoc(doc(db,'referencias', id), { excluido: true });
+    const col = origem === 'portal' ? 'referencias_cliente' : 'referencias';
+    await updateDoc(doc(db, col, id), { excluido: true, excluidoPor: usuarioAtual || '?', excluidoEm: new Date().toISOString() });
     mostrarToast('Excluída.');
     renderReferencias();
   };
@@ -6738,8 +6766,9 @@
      preenche o LINK de referência do conteúdo — nunca mexe no roteiro, nome
      ou legenda que a Gabi já escreveu. Assim ela para de caçar referência no
      Instagram: puxa do banco que já tem, direto pro calendário. */
-  window.abrirUsarNoCalendario = async function(refId){
-    const refSnap = await getDoc(doc(db,'referencias', refId));
+  window.abrirUsarNoCalendario = async function(refId, origem){
+    const col = origem === 'portal' ? 'referencias_cliente' : 'referencias';
+    const refSnap = await getDoc(doc(db, col, refId));
     if(!refSnap.exists()) return;
     const r = refSnap.data();
     const modal = document.getElementById('modalConteudo');
@@ -6755,7 +6784,7 @@
       const temRef = it.ref && String(it.ref).trim();
       const jaEssa = temRef && String(it.ref).trim() === linkAtual;
       const selo = jaEssa ? '<span class="selo aprovada">Já é essa ref</span>' : (temRef ? '<span class="selo pendente">Já tem outra ref</span>' : '<span class="selo hoje">🟢 Sem referência</span>');
-      return `<div class="item" style="border-left:3px solid ${temRef?'var(--line)':'var(--yellow)'};${jaEssa?'':'cursor:pointer;'}" ${jaEssa?'':`onclick="aplicarRefNoDia('${refId}','${r.cliente}',${idx})"`}>
+      return `<div class="item" style="border-left:3px solid ${temRef?'var(--line)':'var(--yellow)'};${jaEssa?'':'cursor:pointer;'}" ${jaEssa?'':`onclick="aplicarRefNoDia('${refId}','${r.cliente}',${idx},'${origem||'hub'}')"`}>
         <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div>${selo}</div>
         ${it.fmt ? '<div class="meta" style="margin-top:3px;">'+esc(it.fmt)+'</div>' : ''}
       </div>`;
@@ -6766,9 +6795,10 @@
       <button class="btn secondary" style="margin-top:10px;" onclick="fecharModal()">Fechar</button>`;
     document.getElementById('overlayView').classList.add('show');
   };
-  window.aplicarRefNoDia = async function(refId, slug, idx){
+  window.aplicarRefNoDia = async function(refId, slug, idx, origem){
     try{
-      const refSnap = await getDoc(doc(db,'referencias', refId));
+      const col = origem === 'portal' ? 'referencias_cliente' : 'referencias';
+      const refSnap = await getDoc(doc(db, col, refId));
       const calRef = doc(db,'calendarios', slug);
       const calSnap = await getDoc(calRef);
       if(!refSnap.exists() || !calSnap.exists()) return;
@@ -6777,7 +6807,14 @@
       if(!its[idx]){ mostrarToast('Esse dia não existe mais no calendário.', 'erro'); return; }
       its[idx] = { ...its[idx], ref: link };
       await updateDoc(calRef, { items: its });
-      registrarHistorico('calendarios', slug, 'Referência aplicada no dia ' + (its[idx].day||'') + ' via Hub de Referências');
+      registrarHistorico('calendarios', slug, 'Referência aplicada no dia ' + (its[idx].day||'') + ' via Hub de Referências' + (origem === 'portal' ? ' (referência vinda do portal do cliente)' : ''));
+      /* Se veio do banco do portal, marca como utilizada la tambem — senao
+         o cliente continua vendo como "nao utilizada" a referencia que ja
+         foi pro calendario dele. */
+      if(origem === 'portal'){
+        try{ await updateDoc(doc(db,'referencias_cliente', refId), { status:'utilizada', utilizadaEm: new Date().toISOString(), utilizadaNoDia: its[idx].day||null }); }
+        catch(e){ console.error('Falha ao marcar referência do portal como utilizada:', e); }
+      }
       mostrarToast('✅ Referência aplicada no dia ' + (its[idx].day||'') + ' do calendário!');
       fecharModal();
       renderReferencias();

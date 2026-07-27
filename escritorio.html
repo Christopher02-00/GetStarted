@@ -2979,6 +2979,15 @@
     renderOnboarding();
   };
 
+  /* Quem pode receber extra: so quem vai a campo gravar. */
+  const FILMMAKERS_PAGAMENTO = ['Luís','Nathan','João Victor','Chris'];
+  window.definirFilmmakerPagamento = async function(id, nome){
+    if(!nome) return;
+    await updateDoc(doc(db,'pagamentos_extra', id), { filmmaker: nome, filmmakerDefinidoPor: usuarioAtual||'?', filmmakerDefinidoEm: new Date().toISOString() });
+    mostrarToast('Valor atribuído a ' + nome + '.');
+    renderGerenciaPagamentos();
+  };
+
   async function renderGerenciaPagamentos(){
     const cont = document.getElementById('gerenciaPagamentos');
     const mesAtual = new Date().toISOString().slice(0,7);
@@ -2987,32 +2996,70 @@
     const doMes = pagamentos.filter(p => p.mes === mesAtual);
 
     let html = `<div class="card">
-      <h2>💰 Pagamentos Extras — ${mesAtual}</h2>
-      <div class="desc">Uber (>30km) e valores de clientes avulsos. Alguns entram sozinhos quando o filmmaker registra a gravação — mas você também pode adicionar ou editar aqui na mão.</div>
+      <h2>💰 Extras a pagar aos filmmakers — ${mesAtual}</h2>
+      <div class="desc"><b>Estes valores entram no pagamento do dia 15</b>, somados ao salário de cada filmmaker. São reembolso de Uber (>30km) e adicionais de gravação avulsa. Alguns entram sozinhos quando o filmmaker registra a gravação; você também pode lançar na mão.</div>
       <div class="row2">
-        <div class="field"><label>Cliente</label><input type="text" id="pagCliente" placeholder="Nome do cliente"></div>
+        <div class="field"><label>Filmmaker que vai receber</label>
+          <select id="pagFilmmaker">${FILMMAKERS_PAGAMENTO.map(f=>`<option value="${f}">${f}</option>`).join('')}</select>
+        </div>
+        <div class="field"><label>Cliente da gravação</label><input type="text" id="pagCliente" placeholder="Nome do cliente"></div>
+      </div>
+      <div class="row2">
         <div class="field"><label>Valor extra (R$)</label><input type="number" id="pagValor" placeholder="0.00" step="0.01"></div>
+        <div class="field"><label>&nbsp;</label><div class="meta" style="padding-top:9px;">Some no pagamento do dia 15.</div></div>
       </div>
       <div class="row2">
         <div class="field"><label>Teve Uber?</label><select id="pagTemUber"><option value="nao">Não</option><option value="sim">Sim</option></select></div>
         <div class="field"><label>Link do recibo (opcional)</label><input type="text" id="pagUberLink" placeholder="Link do Drive/print"></div>
       </div>
-      <button class="btn" onclick="adicionarPagamentoExtra()">+ Adicionar pagamento extra</button>
+      <button class="btn" onclick="adicionarPagamentoExtra()">+ Adicionar extra pro filmmaker</button>
     </div>`;
 
     if(!doMes.length){
       html += '<div class="empty">Nenhum registro esse mês ainda — adicione acima, ou espere o filmmaker registrar uma gravação com Uber.</div>';
     } else {
-      doMes.forEach(p => {
-        html += `<div class="item">
-          <div class="top"><div class="nome">${esc(p.clienteNome)}</div><div class="meta">${p.pago ? '✅ Pago' : '⏳ Pendente'}</div></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
-            ${p.temUber ? '<span class="selo pendente">🚗 Uber' + (p.uberLink ? ': <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a>' : '') + '</span>' : ''}
-            ${p.valorExtra ? '<span class="selo cliente">💰 R$ '+esc(String(p.valorExtra))+'</span>' : ''}
-          </div>
-          <div style="display:flex;gap:6px;margin-top:8px;">
-            <button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="marcarPagamentoExtra('${p.id}', ${!p.pago})">${p.pago ? 'Marcar como pendente' : '✓ Marcar como pago'}</button>
-            <button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="excluirPagamentoExtra('${p.id}')">Excluir</button>
+      /* ===== AGRUPADO POR FILMMAKER — 27/07/2026 =====
+         A tela listava so o nome do CLIENTE, entao no dia 15 ninguem sabia
+         de quem era cada valor. O dinheiro e do filmmaker; o cliente e so o
+         contexto da gravacao. Agora cada faixa e uma pessoa, com o total
+         que ela tem a receber. */
+      const porFilm = {};
+      doMes.forEach(p => { const k = p.filmmaker || '⚠️ Sem filmmaker definido'; (porFilm[k] = porFilm[k] || []).push(p); });
+      const chaves = Object.keys(porFilm).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+      const totalGeral = doMes.filter(p=>!p.pago).reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
+
+      html += `<div class="painelResumo">
+        <div class="resumoCard ${totalGeral?'yellow':''}"><div class="num" style="font-size:17px;">${brl(totalGeral)}</div><div class="lbl">A pagar dia 15</div></div>
+        <div class="resumoCard"><div class="num">${chaves.length}</div><div class="lbl">Filmmaker(s)</div></div>
+      </div>`;
+
+      chaves.forEach(nome => {
+        const lista = porFilm[nome];
+        const aberto = lista.filter(p=>!p.pago).reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
+        const pendentes = lista.filter(p=>!p.pago).length;
+        const semDono = nome.startsWith('⚠️');
+        html += `<div class="faixaDem aberta" data-faixa="pag_${esc(nome)}">
+          <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${brl(aberto)} a receber · ${pendentes} em aberto)</span><span class="seta">▾</span></div>
+          <div class="faixaItens">
+          ${semDono ? '<div class="desc" style="color:var(--yellow2);padding:8px;">Estes vieram antes do campo de filmmaker existir, ou foram lançados sem escolher a pessoa. Define abaixo pra quem é cada um.</div>' : ''}
+          ${lista.map(p => `<div class="item" style="border-left:3px solid ${p.pago?'var(--green)':'var(--yellow)'};">
+            <div class="top"><div class="nome">${esc(p.clienteNome)}</div><div class="meta">${p.pago ? '✅ Pago' : '⏳ Pendente'}</div></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+              ${p.temUber ? '<span class="selo pendente">🚗 Uber' + (p.uberLink ? ': <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a>' : '') + '</span>' : ''}
+              ${p.valorExtra ? '<span class="selo cliente">💰 R$ '+esc(String(p.valorExtra))+'</span>' : ''}
+            </div>
+            <div class="field" style="margin-top:8px;">
+              <label>Quem recebe</label>
+              <select onchange="definirFilmmakerPagamento('${p.id}', this.value)" style="width:100%;background:var(--deep);border:1px solid var(--line);color:#fff;padding:7px;border-radius:7px;font-size:12px;">
+                <option value="">— escolher —</option>
+                ${FILMMAKERS_PAGAMENTO.map(f=>`<option value="${f}" ${p.filmmaker===f?'selected':''}>${f}</option>`).join('')}
+              </select>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+              <button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="marcarPagamentoExtra('${p.id}', ${!p.pago})">${p.pago ? 'Marcar como pendente' : '✓ Marcar como pago'}</button>
+              <button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="excluirPagamentoExtra('${p.id}')">Excluir</button>
+            </div>
+          </div>`).join('')}
           </div>
         </div>`;
       });
@@ -3025,10 +3072,12 @@
     const valorExtra = document.getElementById('pagValor').value;
     const temUber = document.getElementById('pagTemUber').value === 'sim';
     const uberLink = document.getElementById('pagUberLink').value.trim();
+    const filmmaker = document.getElementById('pagFilmmaker')?.value || '';
+    if(!filmmaker){ mostrarToast('Escolhe qual filmmaker vai receber.', 'erro'); return; }
     if(!clienteNome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
     const mesAtual = new Date().toISOString().slice(0,7);
     await addDoc(collection(db,'pagamentos_extra'), {
-      clienteNome, valorExtra: valorExtra ? parseFloat(valorExtra) : 0, temUber, uberLink, pago: false,
+      clienteNome, filmmaker, valorExtra: valorExtra ? parseFloat(valorExtra) : 0, temUber, uberLink, pago: false,
       mes: mesAtual, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp()
     });
     mostrarToast('Pagamento extra adicionado!');
@@ -6497,6 +6546,11 @@
       const refPagExtra = await addDoc(collection(db,'pagamentos_extra'), {
         cliente: clienteSlug, clienteNome, agendamentoId: agId,
         temUber, uberLink, valorExtra,
+        /* 27/07/2026 — o valor e do FILMMAKER, nao do cliente. Antes so o
+           nome do cliente era guardado, entao na hora de pagar dia 15
+           ninguem sabia de quem era o reembolso. Quem registra a gravacao
+           e quem gravou, entao e ele quem recebe. */
+        filmmaker: usuarioAtual || '',
         mes: new Date().toISOString().slice(0,7),
         criadoEm: serverTimestamp()
       });
@@ -8387,6 +8441,12 @@
   // no carregamento da pagina: antes disso, a sidebar nascia com as 24 abas
   // ate alguem selecionar o nome, porque a visibilidade so rodava no login.
   atualizarVisibilidadeMenuPorFuncao();
+  /* 27/07/2026 — faltava esta. Sao DUAS funcoes de visibilidade: a de cima
+     cuida dos itens por funcao, esta cuida dos blocos exclusivos (Gerencia,
+     Links de Cliente e Vendas). So a primeira rodava no carregamento, entao
+     o grupo VENDAS aparecia inteiro na tela de "Selecione seu nome", antes
+     de qualquer login. */
+  atualizarVisibilidadeSidebarExclusiva();
 
   function renderSetorAtalhos(){
     const box = document.getElementById('setorAtalhos');
@@ -11171,6 +11231,45 @@
     }
   };
 
+  /* ===== LEMBRETE DO DIA 15 — EXTRAS DOS FILMMAKERS (27/07/2026) =====
+     Esses valores entram no pagamento do dia 15 junto com o salario. Ate
+     agora nada lembrava disso: ficavam parados na tela de Pagamentos
+     Extras esperando alguem passar por la. Dispara no dia 13, dois dias
+     antes, com o total de cada pessoa — tempo de conferir e pagar. */
+  async function lembrarExtrasDosFilmmakers(){
+    const hoje = new Date();
+    if(hoje.getDate() !== 13) return;
+    const mes = hoje.toISOString().slice(0,7);
+    const snap = await getDocs(collection(db,'pagamentos_extra'));
+    const abertos = [];
+    snap.forEach(d => { const v=d.data(); if(!v.excluido && !v.pago && v.mes === mes) abertos.push(v); });
+    if(!abertos.length) return;
+
+    // nao repete se ja avisou neste mes
+    const q = query(collection(db,'demandas'), where('tipoEspecial','==','extras_dia15'), where('mesRef','==', mes));
+    const ja = await getDocs(q);
+    if(!ja.empty) return;
+
+    const porFilm = {};
+    abertos.forEach(p => { const k = p.filmmaker || 'sem filmmaker definido'; porFilm[k] = (porFilm[k]||0) + (Number(p.valorExtra)||0); });
+    const linhas = Object.entries(porFilm).map(([n,v]) => '• ' + n + ': ' + brl(v)).join('\n');
+    const total = Object.values(porFilm).reduce((a,b)=>a+b,0);
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '💰 Extras dos filmmakers pro pagamento do dia 15',
+      descricao: 'Estes valores entram no pagamento do dia 15, somados ao salário de cada um:\n\n' + linhas
+        + '\n\nTotal: ' + brl(total)
+        + '\n\nOnde conferir: Gerência → Clientes → Pagamentos Extras. Cada faixa é um filmmaker, com o que ele tem a receber.\n'
+        + 'Depois de pagar, marca cada um como pago — é isso que tira o valor da conta do mês que vem.'
+        + (porFilm['sem filmmaker definido'] ? '\n\n⚠️ Tem valor sem dono definido. Abre a tela e escolhe de quem é antes de pagar.' : ''),
+      origem: 'sistema', clienteNome: '', destinatario: 'Chris',
+      tipoEspecial: 'extras_dia15', mesRef: mes,
+      prazoData: mes + '-15', prazoHora: '12:00',
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+    registrarLogAutomacao('extras_dia15_criada', mes, Object.keys(porFilm).length + ' filmmaker(s), ' + brl(total));
+  }
+
   async function motorAutomacoes(origem){
     const lockRef = doc(db, 'sistema', 'motor_lock');
     try{
@@ -11199,6 +11298,7 @@
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
+      { nome: 'extrasDoDia15', fn: lembrarExtrasDosFilmmakers },
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
       { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
       { nome: 'checklistAutoVerificado', fn: autoVerificarChecklist },

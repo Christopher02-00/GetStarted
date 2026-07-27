@@ -5436,6 +5436,31 @@
     renderStoriesCliente();
   };
 
+  window.criarSemanaStories = async function(){
+    const sel = document.getElementById('storyCliente');
+    const slug = sel.value, nome = sel.selectedOptions[0]?.dataset.nome || slug;
+    const semana = window.__semanaStories || segundaDaSemana(new Date());
+    const criar = [];
+    DIAS_STORY.forEach(d => {
+      const tit = (document.getElementById('stTit_'+d.n)?.value||'').trim();
+      const desc = (document.getElementById('stDesc_'+d.n)?.value||'').trim();
+      const ref = (document.getElementById('stRef_'+d.n)?.value||'').trim();
+      if(tit || desc) criar.push({ dia:d.n, diaNome:d.nome, titulo: tit || ('Story de ' + d.nome), descricao: desc, linkRef: ref });
+    });
+    if(!criar.length){ mostrarToast('Preenche pelo menos um dia da semana.', 'erro'); return; }
+    for(const st of criar){
+      await addDoc(collection(db,'stories_semanais'), {
+        cliente: slug, clienteNome: nome, semana,
+        dia: st.dia, diaNome: st.diaNome, titulo: st.titulo, descricao: st.descricao,
+        linkRef: st.linkRef, observacoes: '',
+        status: 'aguardando', criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()
+      });
+    }
+    DIAS_STORY.forEach(d => { ['stTit_','stDesc_','stRef_'].forEach(pre => { const el=document.getElementById(pre+d.n); if(el) el.value=''; }); });
+    mostrarToast(criar.length + ' story(s) da semana enviados pra ' + nome + ' aprovar!');
+    renderStoriesCliente();
+  };
+
   window.renderStoriesCliente = async function(){
     const cont = document.getElementById('storiesConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
@@ -5458,17 +5483,26 @@
       ${semana !== semanaAtual ? '<button class="btn secondary" style="margin-top:8px;" onclick="window.__semanaStories=null;renderStoriesCliente();">Voltar pra semana atual</button>' : ''}
     </div>`;
 
-    html += `<div class="card">
-      <h2>➕ Novo story</h2>
-      <div class="row2">
-        <div class="field"><label>Cliente</label><select id="storyCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
-        <div class="field"><label>Dia da semana</label><select id="storyDia">${DIAS_STORY.map(d=>`<option value="${d.n}">${d.nome}</option>`).join('')}</select></div>
+    /* ===== 27/07/2026 — STORY É TRABALHO DE SEMANA, NÃO DE DIA =====
+       O Chris corrigiu o modelo: story se monta uma vez por semana, numa
+       sentada (segunda ou sexta), com a semana inteira dividida por dia —
+       segunda a sexta, sem fim de semana. A tela pedia um story por vez,
+       o que obrigava a repetir cliente e contexto cinco vezes e fazia
+       ninguém montar a semana completa. Agora é um formulário só. */
+    html += `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>📅 Montar a semana inteira</h2>
+      <div class="desc">Escolhe o cliente e preenche os dias de uma vez. Vai tudo junto pro portal dele aprovar, organizado por dia. Deixa em branco o dia que não tem story.</div>
+      <div class="field" style="margin-top:10px;"><label>Cliente</label>
+        <select id="storyCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select>
       </div>
-      <div class="field"><label>Título</label><input type="text" id="storyTitulo" placeholder="Ex: Bastidores da produção"></div>
-      <div class="field"><label>Roteiro / sugestão</label><textarea id="storyDescricao" placeholder="O roteiro do story, o que falar, a ordem das telas..."></textarea></div>
-      <div class="field"><label>🔗 Link de referência (opcional)</label><input type="text" id="storyLinkRef" placeholder="Link de uma referência pro cliente ver"></div>
-      <div class="field"><label>Observações (opcional)</label><textarea id="storyObs"></textarea></div>
-      <button class="btn" onclick="criarStoryCliente()">Enviar pro cliente aprovar</button>
+      ${DIAS_STORY.map(d => `
+        <div class="card metaSec" style="margin-top:10px;">
+          <div class="metaSecTit">${d.nome}</div>
+          <div class="field"><label>Título</label><input type="text" id="stTit_${d.n}" placeholder="Ex: Bastidores da produção"></div>
+          <div class="field" style="margin-top:8px;"><label>Roteiro / sugestão</label><textarea id="stDesc_${d.n}" placeholder="O que falar, a ordem das telas..." style="min-height:60px;"></textarea></div>
+          <div class="field" style="margin-top:8px;"><label>🔗 Referência (opcional)</label><input type="text" id="stRef_${d.n}" placeholder="Link pro cliente ver"></div>
+        </div>`).join('')}
+      <button class="btn" style="margin-top:12px;" onclick="criarSemanaStories()">Enviar a semana pro cliente aprovar</button>
     </div>`;
 
     const snap = await getDocs(collection(db,'stories_semanais'));
@@ -11367,6 +11401,64 @@
      agora nada lembrava disso: ficavam parados na tela de Pagamentos
      Extras esperando alguem passar por la. Dispara no dia 13, dois dias
      antes, com o total de cada pessoa — tempo de conferir e pagar. */
+  /* ===== COBRANÇA SEMANAL DOS STORIES — 27/07/2026 =====
+     Modelo confirmado pelo Chris: story se monta uma vez por semana, de
+     segunda a sexta, sem fim de semana. Até agora nada cobrava isso e o
+     resultado foi zero story criado desde que a funcionalidade existe.
+     Dispara toda SEGUNDA, com a lista de quem ainda não tem semana montada.
+     Fecha sozinha quando todos os clientes estiverem cobertos. */
+  async function cobrarStoriesDaSemana(){
+    const hoje = new Date();
+    if(hoje.getDay() !== 1) return;                  // só segunda
+    const semana = segundaDaSemana(hoje);
+
+    const [stSnap, demSnap] = await Promise.all([
+      getDocs(collection(db,'stories_semanais')),
+      getDocs(collection(db,'demandas'))
+    ]);
+    const cobertos = new Set();
+    stSnap.forEach(d => { const v=d.data(); if(v.semana === semana && v.cliente) cobertos.add(v.cliente); });
+
+    const alvo = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && c.slug !== 'get-started');
+    const faltando = alvo.filter(c => !cobertos.has(c.slug));
+
+    let demanda = null;
+    demSnap.forEach(d => { const v=d.data();
+      if(v.tipoEspecial === 'stories_semana' && v.semanaRef === semana && !['aprovada','cancelada'].includes(v.status)) demanda = { id:d.id, ...v }; });
+
+    if(!faltando.length){
+      if(demanda){
+        await updateDoc(doc(db,'demandas', demanda.id), { status:'aprovada', concluidoPor:'sistema (todos cobertos)', concluidoEm: serverTimestamp(),
+          notaConclusao:'Todos os ' + alvo.length + ' clientes com stories montados nesta semana.' });
+      }
+      return;
+    }
+
+    const descricao = 'Story se monta UMA VEZ POR SEMANA, com os cinco dias de uma vez — segunda a sexta, sem fim de semana.\n\n'
+      + 'COMO FAZER\n'
+      + '1. Menu lateral → 📸 Stories\n'
+      + '2. No card "📅 Montar a semana inteira", escolhe o cliente\n'
+      + '3. Preenche título e roteiro de cada dia. Dia sem story, deixa em branco\n'
+      + '4. "Enviar a semana pro cliente aprovar" — vai tudo junto, organizado por dia, pro portal dele\n\n'
+      + 'Falta montar esta semana (' + faltando.length + '): ' + faltando.map(c=>c.nome).join(', ') + '.\n\n'
+      + 'Essa demanda fecha sozinha quando todos estiverem cobertos.';
+
+    if(demanda){
+      if(demanda.descricao !== descricao){
+        await updateDoc(doc(db,'demandas', demanda.id), { descricao, titulo:'📸 Stories da semana — faltam ' + faltando.length + ' cliente(s)' });
+      }
+      return;
+    }
+    await addDoc(collection(db,'demandas'), {
+      titulo: '📸 Stories da semana — faltam ' + faltando.length + ' cliente(s)',
+      descricao, origem:'sistema', clienteNome:'', destinatario:'Gabrielle',
+      tipoEspecial:'stories_semana', semanaRef: semana,
+      prazoData: hoje.toISOString().slice(0,10), prazoHora:'17:00',
+      status:'pendente', provaTexto:'', provaImagemUrl:'', criadoEm: serverTimestamp()
+    });
+    registrarLogAutomacao('stories_semana_criada', semana, faltando.length + ' cliente(s) sem stories');
+  }
+
   async function lembrarExtrasDosFilmmakers(){
     const hoje = new Date();
     if(hoje.getDate() !== 13) return;
@@ -11429,6 +11521,7 @@
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
+      { nome: 'storiesDaSemana', fn: cobrarStoriesDaSemana },
       { nome: 'extrasDoDia15', fn: lembrarExtrasDosFilmmakers },
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
       { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },

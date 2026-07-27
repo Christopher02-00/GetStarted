@@ -6385,22 +6385,43 @@
     const contagem = {};
     extras.forEach(e => { const k = normaliza(e.nome).slice(0,7); contagem[k] = (contagem[k]||0)+1; });
 
+    /* ===== 27/07/2026 — SEPARADO POR NATUREZA =====
+       O Chris: "o único cliente avulso que existe aqui de verdade é a IKN,
+       não entendi por que os mensalistas estão ali". Ele tem razão. Esta
+       coleção nunca foi de avulsos — é um cadastro TÉCNICO de todo cliente
+       que não está na base fixa do código, e a maioria é mensalista que
+       entrou por aqui sem querer. Não dá pra remover ninguém (esta lista
+       alimenta a lista de clientes do sistema inteiro), mas dá pra parar
+       de fingir que são todos a mesma coisa: agora vêm em três blocos. */
     if(!extras.length){ html += '<div class="empty">Nenhum cliente extra cadastrado ainda.</div>'; }
-    extras.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR')).forEach(e => {
-      const ehMensal  = comContrato.has(e.slug);
-      const ehAvulso  = nomesAvulso.has((e.nome||'').toLowerCase().trim());
-      const saiu      = nomesSaidos.has((e.nome||'').toLowerCase().trim());
-      const duplicado = contagem[normaliza(e.nome).slice(0,7)] > 1;
-      const selo = saiu     ? '<span class="selo pendente">📄 Saiu da agência</span>'
-                 : ehMensal ? '<span class="selo aprovada">📆 Mensalista — não é avulso</span>'
-                 : ehAvulso ? '<span class="selo hoje">🎬 Avulso de verdade</span>'
-                 : '<span class="selo atrasado">❓ Sem contrato e sem receita</span>';
-      html += `<div class="item" style="border-left:3px solid ${saiu?'var(--muted)':ehMensal?'var(--green)':ehAvulso?'var(--yellow)':'var(--red)'};">
-        <div class="top"><div class="nome">${esc(e.nome)}</div>${selo}</div>
-        <div class="meta" style="margin-top:4px;">${esc(e.slug||'')} · entrou por: ${esc(e.criadoPor||'—')}</div>
-        ${duplicado ? '<div class="meta" style="margin-top:4px;color:var(--red);font-weight:700;">⚠️ Existe outro cadastro com nome parecido — provável duplicata. Conferir antes de remover qualquer um.</div>' : ''}
-        <div style="margin-top:8px;"><button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="removerClienteExtra('${e.id}','${e.slug}')">Remover</button></div>
-      </div>`;
+    const grupos = { avulso:[], mensal:[], saiu:[], indefinido:[] };
+    extras.forEach(e => {
+      const ehMensal = comContrato.has(e.slug);
+      const ehAvulso = nomesAvulso.has((e.nome||'').toLowerCase().trim());
+      const saiu = nomesSaidos.has((e.nome||'').toLowerCase().trim());
+      grupos[saiu?'saiu':ehAvulso?'avulso':ehMensal?'mensal':'indefinido'].push(e);
+    });
+    const BLOCOS = [
+      { k:'avulso', tit:'🎬 Avulsos de verdade', desc:'Fecharam trabalho pontual. É a gestão deles que fica em Clientes Avulsos.' },
+      { k:'mensal', tit:'📆 Mensalistas', desc:'Têm contrato ativo. Estão aqui só porque foram cadastrados por fora da base fixa — não é erro, é registro técnico.' },
+      { k:'saiu',   tit:'🗄️ Já saíram', desc:'Encerrados. O histórico completo está no Arquivo de Clientes.' },
+      { k:'indefinido', tit:'❓ Sem contrato e sem receita', desc:'Não tem contrato mensal nem trabalho avulso lançado. Ou falta cadastrar, ou não deveria estar no sistema.' }
+    ];
+    BLOCOS.forEach(b => {
+      const lista = grupos[b.k];
+      if(!lista.length) return;
+      html += `<div class="faixaDem ${b.k==='indefinido'||b.k==='avulso'?'aberta':''}" data-faixa="ext_${b.k}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${b.tit} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens"><div class="desc" style="padding:6px 2px 10px;">${b.desc}</div>`;
+      lista.sort((a,b2)=>(a.nome||'').localeCompare(b2.nome||'','pt-BR')).forEach(e => {
+        const duplicado = contagem[normaliza(e.nome).slice(0,7)] > 1;
+        html += `<div class="item" style="border-left:3px solid ${b.k==='saiu'?'var(--muted)':b.k==='mensal'?'var(--green)':b.k==='avulso'?'var(--yellow)':'var(--red)'};">
+          <div class="top"><div class="nome">${esc(e.nome)}</div><button class="btn red" style="width:auto;padding:4px 10px;font-size:10.5px;opacity:.7;" onclick="event.stopPropagation();removerClienteExtra('${e.id}','${e.slug}')">Remover</button></div>
+          <div class="meta" style="margin-top:4px;">${esc(e.slug||'')} · ${esc(e.criadoPor||'—')}</div>
+          ${duplicado ? '<div class="meta" style="margin-top:4px;color:var(--red);font-weight:700;">⚠️ Provável duplicata — confere antes de remover.</div>' : ''}
+        </div>`;
+      });
+      html += `</div></div>`;
     });
     html += `</div>`;
     cont.innerHTML = html;
@@ -12327,6 +12348,14 @@
      direto o dado original (nivelEscalonamento/nivelEscalonamentoDemanda),
      sem criar nenhum registro novo — não tem como isso vazar pra tela
      pessoal de ninguém porque não existe "demanda" nenhuma sendo criada. */
+  window.abrirVideoDeAtraso = function(id){
+    // leva pro Hub de Vídeos com o item em foco
+    fecharModal();
+    irParaAtalho('gerencia');
+    setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('videosHub'); }, 250);
+    mostrarToast('Abrindo o hub de vídeos — o item está lá.');
+  };
+
   window.renderAtrasosEquipe = async function(){
     const cont = document.getElementById('gerenciaAtrasosEquipe');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
@@ -14284,27 +14313,34 @@
       </h2>
       <div class="desc">Demandas e vídeos que passaram do prazo agora, em tempo real. Assim que o item é concluído, ele some daqui sozinho. Clica em qualquer linha pra abrir; o 🗑️ apaga demanda-bug de teste (só você e a Amanda enxergam).</div>
       <div class="painelResumo" style="margin-top:10px;">
-        <div class="resumoCard ${totalAtras?'red':'green'}"><div class="num">${totalAtras}</div><div class="lbl">Atrasos no total</div></div>
-        <div class="resumoCard ${nomes.length?'yellow':'green'}"><div class="num">${nomes.length}</div><div class="lbl">Pessoa(s) com atraso</div></div>
-        <div class="resumoCard ${pior>=3?'red':(pior?'yellow':'green')}"><div class="num">${pior}</div><div class="lbl">Pior atraso (dias)</div></div>
-        <div class="resumoCard ${nVideos?'red':'green'}"><div class="num">${nVideos}</div><div class="lbl">Vídeo(s) atrasado(s)</div></div>
+        <div class="resumoCard ${totalAtras?'red':'green'}"><div class="num">${totalAtras}</div><div class="lbl">itens atrasados</div></div>
+        <div class="resumoCard ${nomes.length?'yellow':'green'}"><div class="num">${nomes.length}</div><div class="lbl">pessoas envolvidas</div></div>
+        <div class="resumoCard ${pior>=3?'red':(pior?'yellow':'green')}"><div class="num">${pior}</div><div class="lbl">dias do pior atraso</div></div>
+        <div class="resumoCard ${nVideos?'red':'green'}"><div class="num">${nVideos}</div><div class="lbl">desses, são vídeos</div></div>
       </div>
     </div>`;
 
     /* ===== ABSORVIDO DO "RESUMO DO DIA" (removido 22/07/2026) =====
        "Crítico agora" — vídeos já escalados nível 2+, ao vivo (antes só
        existia no snapshot velho do Resumo do Dia). */
+    /* 27/07/2026 — estes cartões eram TEXTO PURO: a lista guardava uma
+       frase montada, sem id, então não havia como clicar em nada. O Chris
+       reportou exatamente isso. Agora cada linha carrega o vídeo e abre. */
     const criticosEq = [];
     vSnap.forEach(sn => {
       const v = sn.data();
       if(v.excluido) return;
       if((v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status)){
-        criticosEq.push('🚨 Vídeo escalado nível ' + v.nivelEscalonamento + ' — ' + (v.clienteNome||'') + ': ' + (v.titulo||'') + ' (editor: ' + (v.editorAtribuido||'?') + ')');
+        criticosEq.push({ id: sn.id, nivel: v.nivelEscalonamento, cliente: v.clienteNome||'', titulo: v.titulo||'', editor: v.editorAtribuido||'?', status: v.status });
       }
     });
     if(criticosEq.length){
-      html += `<div class="card metaSec" style="border-color:var(--red);"><div class="metaSecTit">🚨 Crítico agora</div>` +
-        criticosEq.map(t => `<div class="item" style="border-left:3px solid var(--red);padding:8px 12px;"><div class="nome" style="font-size:12px;">${esc(t)}</div></div>`).join('') +
+      html += `<div class="card metaSec" style="border-color:var(--red);"><div class="metaSecTit">🚨 Crítico agora</div>
+        <div class="desc" style="margin:-4px 0 8px;">Vídeo que já passou de dois níveis de escalonamento. Clica pra abrir.</div>` +
+        criticosEq.map(v => `<div class="item" style="border-left:3px solid var(--red);cursor:pointer;" onclick="abrirVideoDeAtraso('${v.id}')">
+          <div class="top"><div class="nome">${esc(v.titulo)}</div><span class="selo atrasado">nível ${v.nivel}</span></div>
+          <div class="meta" style="margin-top:4px;">${esc(v.cliente)} · editor: ${esc(v.editor)} · ${esc(v.status==='correcao'?'em correção':'aguardando edição')}</div>
+        </div>`).join('') +
         `</div>`;
     }
 

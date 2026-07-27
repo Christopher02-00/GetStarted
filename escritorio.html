@@ -4457,6 +4457,29 @@
       }
     }catch(e){ console.error('Falha ao dar baixa na demanda de confirmação de publicação:', e); }
 
+    /* CORRIGIDO 27/07/2026 — o outro lado do bug do `posted`.
+       Confirmar a publicacao nao tocava no calendario do cliente. O item
+       so virava "publicado" la porque o agendamento ja nascia errado com
+       posted:true. Agora a chave vira aqui, no momento certo. */
+    try{
+      const pSnap = await getDoc(doc(db,'postagens', id));
+      const p = pSnap.exists() ? pSnap.data() : null;
+      if(p && p.cliente){
+        const calRef = doc(db,'calendarios', p.cliente);
+        const calSnap = await getDoc(calRef);
+        if(calSnap.exists()){
+          const dados = calSnap.data();
+          const items = dados.items || [];
+          const dia = p.dataAgendada ? parseInt(p.dataAgendada.split('-')[2]) : null;
+          const idx = items.findIndex(it => it && it.name === p.titulo && (dia === null || Number(it.day) === dia));
+          if(idx >= 0 && !items[idx].posted){
+            items[idx].posted = true;
+            await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+          }
+        }
+      }
+    }catch(e){ console.error('Falha ao marcar item do calendário como publicado:', e); }
+
     mostrarToast('Publicação confirmada! ✔');
     if(document.getElementById('subtabAgendarPostagem')?.classList.contains('active')) renderAgendarPostagens();
     else renderTodasPostagens();
@@ -4477,9 +4500,24 @@
       const calRef = doc(db,'calendarios', p.cliente);
       const calSnap = await getDoc(calRef);
       const diaDoMes = parseInt(data.split('-')[2]);
+      /* ===== REVERTIDO 25/07/2026 — erro meu de diagnostico =====
+         Em 23/07 troquei 'meio' por 'programado' achando que `stage` era
+         status de fluxo, porque o portal tem um mapa proprio
+         (planejamento/roteiro/gravacao/programado/publicado) sem a chave
+         'meio'. Estava errado: no calendario, `stage` e ETAPA DE FUNIL —
+         'topo' (atração), 'meio' (conexão) e 'fundo' (conversão). Sao dois
+         vocabularios diferentes com o mesmo nome de campo.
+         'meio' e o padrao certo pra conteudo agendado: a maior parte do
+         conteudo de rotina e de conexao. A Gabi ajusta no proprio
+         calendario quando for topo ou fundo. */
       const novoItem = {
         day: diaDoMes, name: p.titulo, desc: p.legenda || '', ref: p.linkVideo || '',
-        stage: 'programado', fmt: 'Reel', apr: true, posted: true
+        /* posted: false — CORRIGIDO 27/07/2026.
+           Antes era `true`: no instante em que a Cecilia AGENDAVA, o item
+           ja nascia "publicado" no calendario do cliente. O Camargo's tinha
+           video marcado como publicado com data 29/07 (dois dias no futuro).
+           Agora quem vira a chave e confirmarPostagemPublicada(). */
+        stage: 'meio', fmt: 'Reel', apr: true, posted: false
       };
       if(calSnap.exists()){
         const dados = calSnap.data();

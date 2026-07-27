@@ -6255,6 +6255,7 @@
 
     html += `<div class="card">
       <h2>Cadastrar cliente avulso/extra</h2>
+      <div class="desc" style="margin-bottom:10px;">Atenção: esta lista não é só de avulsos. Ela junta todo cliente que não está na base fixa — inclusive mensalista que entrou por aqui sem querer. O selo de cada linha abaixo diz o que a pessoa é de verdade.</div>
       <div class="desc">Pra clientes fora do banco fixo (trabalho pontual, "frio") que precisam aparecer nos formulários de gravação, vídeo e agendamento.</div>
       <div class="field"><label>Nome do cliente</label><input type="text" id="extraNome" placeholder="Ex: Escolinha do Bairro"></div>
       <div class="field"><label>Esse cliente precisa de legenda e agendamento pela nossa equipe?</label>
@@ -6268,11 +6269,43 @@
     <div class="grupoFuncionario"><h3>Clientes extras cadastrados</h3>`;
     const snap = await getDocs(collection(db,'clientes_extras'));
     const extras = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) extras.push({id:d.id, ...v}); });
+
+    /* ===== 27/07/2026 — a lista dizia "avulsos" e nao era =====
+       Esta colecao e um pega-tudo: entra cliente adicionado na mao, cliente
+       criado automaticamente quando alguem lanca um video com nome novo, e
+       lead avulso do site. Mensalista de verdade (Dra Júlia, Suellen, Zeens,
+       Cookiery) acabava aqui do lado de avulso de verdade, sem nenhuma
+       distincao visual — e olhando a tela era impossivel saber qual e qual.
+       Agora cada linha diz o que a pessoa E, cruzando com contrato mensal e
+       com receita avulsa. E aponta os cadastros duplicados. */
+    const [ctSnapX, avSnapX, encSnapX] = await Promise.all([
+      getDocs(collection(db,'contratos_cliente')),
+      getDocs(collection(db,'receitas_avulsas')),
+      getDocs(collection(db,'clientes_encerrados'))
+    ]);
+    const comContrato = new Set(); ctSnapX.forEach(d => { if((d.data().status||'ativo')!=='encerrado') comContrato.add(d.id); });
+    const nomesAvulso = new Set(); avSnapX.forEach(d => nomesAvulso.add((d.data().clienteNome||'').toLowerCase().trim()));
+    const nomesSaidos = new Set(); encSnapX.forEach(d => { const v=d.data(); if(!v.excluido) nomesSaidos.add((v.nome||'').toLowerCase().trim()); });
+    const normaliza = t => (t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+    const contagem = {};
+    extras.forEach(e => { const k = normaliza(e.nome).slice(0,7); contagem[k] = (contagem[k]||0)+1; });
+
     if(!extras.length){ html += '<div class="empty">Nenhum cliente extra cadastrado ainda.</div>'; }
-    extras.forEach(e => {
-      html += `<div class="item"><div class="top"><div class="nome">${esc(e.nome)}</div>
-        <button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="removerClienteExtra('${e.id}','${e.slug}')">Remover</button>
-      </div></div>`;
+    extras.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR')).forEach(e => {
+      const ehMensal  = comContrato.has(e.slug);
+      const ehAvulso  = nomesAvulso.has((e.nome||'').toLowerCase().trim());
+      const saiu      = nomesSaidos.has((e.nome||'').toLowerCase().trim());
+      const duplicado = contagem[normaliza(e.nome).slice(0,7)] > 1;
+      const selo = saiu     ? '<span class="selo pendente">📄 Saiu da agência</span>'
+                 : ehMensal ? '<span class="selo aprovada">📆 Mensalista — não é avulso</span>'
+                 : ehAvulso ? '<span class="selo hoje">🎬 Avulso de verdade</span>'
+                 : '<span class="selo atrasado">❓ Sem contrato e sem receita</span>';
+      html += `<div class="item" style="border-left:3px solid ${saiu?'var(--muted)':ehMensal?'var(--green)':ehAvulso?'var(--yellow)':'var(--red)'};">
+        <div class="top"><div class="nome">${esc(e.nome)}</div>${selo}</div>
+        <div class="meta" style="margin-top:4px;">${esc(e.slug||'')} · entrou por: ${esc(e.criadoPor||'—')}</div>
+        ${duplicado ? '<div class="meta" style="margin-top:4px;color:var(--red);font-weight:700;">⚠️ Existe outro cadastro com nome parecido — provável duplicata. Conferir antes de remover qualquer um.</div>' : ''}
+        <div style="margin-top:8px;"><button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="removerClienteExtra('${e.id}','${e.slug}')">Remover</button></div>
+      </div>`;
     });
     html += `</div>`;
     cont.innerHTML = html;
@@ -12398,6 +12431,53 @@
      a informacao que o Chris mais mexe aqui — esconder atras de um dialogo
      de 3 passos tornava a tarefa mais lenta que a planilha que ela veio
      substituir. */
+  /* ===== ETAPA DO TRABALHO AVULSO — 27/07/2026 =====
+     O Financeiro so sabia dizer QUANTO entrou. Faltava o basico: em que pe
+     esta o trabalho que foi pago. Isso vivia so no Funil, numa aba separada,
+     e na pratica ninguem cruzava as duas. Agora a etapa aparece e se edita
+     aqui — e, quando o avulso veio do funil, o proprio negocio anda junto. */
+  const ETAPAS_AVULSO = [
+    { k:'aceita',   nome:'✅ Fechado — aguardando pagamento' },
+    { k:'producao', nome:'🎬 Pago — em produção' },
+    { k:'entregue', nome:'📦 Entregue' }
+  ];
+  function etapaDoAvulso(r, negociosMapa){
+    if(r.etapa) return r.etapa;
+    const n = r.negocioId ? negociosMapa[r.negocioId] : null;
+    if(n && n.estagio) return n.estagio;
+    return r.recebido ? 'producao' : 'aceita';
+  }
+  window.salvarEtapaAvulso = async function(id, etapa){
+    const snap = await getDoc(doc(db,'receitas_avulsas', id));
+    if(!snap.exists()) return;
+    const r = snap.data();
+    await updateDoc(doc(db,'receitas_avulsas', id), { etapa, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() });
+    // se veio do funil, o negocio anda junto — senao as duas telas divergem
+    if(r.negocioId){
+      try{ await updateDoc(doc(db,'negocios', r.negocioId), { estagio: etapa }); }
+      catch(e){ console.error('Falha ao sincronizar o funil:', e); }
+    }
+    const lbl = (ETAPAS_AVULSO.find(e=>e.k===etapa)||{}).nome || etapa;
+    mostrarToast('Etapa: ' + lbl + (r.negocioId ? ' — funil atualizado junto.' : '.'));
+    renderFinanceiro();
+  };
+
+  /* ===== 27/07/2026 — cadastrar o WhatsApp onde a falta aparece =====
+     O campo existia so em Gerência → Configurações → Config por Cliente,
+     tres niveis de distancia de onde o problema e percebido. Quem estava
+     cobrando via "sem WhatsApp cadastrado" e nao tinha como resolver ali.
+     Agora resolve na hora, no mesmo lugar. */
+  window.salvarWhatsRapido = async function(slug){
+    const el = document.getElementById('whatsRapido_'+slug);
+    const numero = (el?.value||'').replace(/\D/g,'');
+    if(numero.length < 10){ mostrarToast('Número curto demais — usa o formato 5541999999999.', 'erro'); return; }
+    await setDoc(doc(db,'clientes_config', slug), {
+      whatsappCobranca: numero, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp()
+    }, { merge: true });
+    mostrarToast('Número salvo — já dá pra cobrar por aqui.');
+    renderCobranca();
+  };
+
   window.novaReceitaAvulsa = async function(){
     const comp = document.getElementById('finMes')?.value || new Date().toISOString().slice(0,7);
     const cliente = (document.getElementById('avNovoCliente')?.value||'').trim();
@@ -12459,6 +12539,7 @@
     const contratos = []; ctSnap.forEach(d => contratos.push({slug:d.id, ...d.data()}));
     const pagamentos = []; pgSnap.forEach(d => pagamentos.push({id:d.id, ...d.data()}));
     const negocios = []; negSnap.forEach(d => negocios.push({id:d.id, ...d.data()}));
+    const negociosMapa = {}; negocios.forEach(n => { negociosMapa[n.id] = n; });
     const extras = []; extraSnap.forEach(d => { const v=d.data(); if(!v.excluido) extras.push({id:d.id, ...v}); });
     const encerrados = []; exSnap.forEach(d => { const v=d.data(); if(!v.excluido) encerrados.push({id:d.id, ...v}); });
 
@@ -12588,6 +12669,12 @@
             <div class="field"><label>Conta no mês de</label>
               <input type="month" value="${esc(r.competencia||comp)}" onchange="salvarCampoAvulso('${r.id}','competencia',this.value)">
             </div>
+          </div>
+          <div class="field" style="margin-top:8px;">
+            <label>Em que etapa está o trabalho</label>
+            <select onchange="salvarEtapaAvulso('${r.id}', this.value)" style="width:100%;background:var(--deep);border:1px solid var(--line);color:#fff;padding:8px;border-radius:8px;">
+              ${ETAPAS_AVULSO.map(e=>`<option value="${e.k}" ${etapaDoAvulso(r, negociosMapa)===e.k?'selected':''}>${e.nome}</option>`).join('')}
+            </select>
           </div>
           <div class="btnrow" style="margin-top:8px;">
             ${r.recebido
@@ -12860,6 +12947,10 @@
           <div class="item" style="border-left:3px solid ${f.cor};${x.jaCobradoHoje?'opacity:.55;':''}">
             <div class="top"><div class="nome">${esc(x.clienteNome)}</div><span class="selo ${x.jaCobradoHoje?'aprovada':x.fase.k==='antes'?'pendente':'atrasado'}">${x.jaCobradoHoje?'✔ Cobrado hoje':(x.dias<0?'vence amanhã':x.dias===0?'vence hoje':x.dias+' dia(s) de atraso')}</span></div>
             <div class="meta" style="margin-top:4px;">${brl(x.valorDevido)} · ${esc(x.competencia||'')}${x.cobrancasFeitas?' · já cobrado '+x.cobrancasFeitas+'x':''}${semWhats.has(x.cliente)?' · <b style="color:var(--yellow2);">sem WhatsApp cadastrado</b>':''}</div>
+            ${semWhats.has(x.cliente) ? `<div style="display:flex;gap:6px;align-items:center;margin-top:6px;background:var(--deep);padding:8px;border-radius:8px;">
+              <input type="text" id="whatsRapido_${x.cliente}" placeholder="5541999999999" style="flex:1;background:var(--bg);border:1px solid var(--line);color:#fff;padding:7px 9px;border-radius:7px;font-size:12px;">
+              <button class="btn" style="width:auto;padding:7px 12px;font-size:11px;" onclick="salvarWhatsRapido('${x.cliente}')">Salvar número</button>
+            </div>` : ''}
             <div class="btnrow" style="margin-top:8px;">
               ${x.jaCobradoHoje
                 ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="abrirCobranca('${x.id}')">Cobrar de novo</button>`

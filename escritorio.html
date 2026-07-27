@@ -3793,31 +3793,57 @@
     const diasCecilia = uteis.slice(0, Math.ceil(clientesFixos.length/2));
     const diasGabi = uteisAntesLimite.slice(diasCecilia.length, diasCecilia.length + Math.ceil(clientesFixos.length/2));
 
-    let idxC = 0;
-    for(const cliente of clientesFixos){
-      const dataAlvo = diasCecilia[Math.floor(idxC/2)] || diasCecilia[diasCecilia.length-1];
-      await addDoc(collection(db,'demandas'), {
-        titulo: 'Agendar reunião mensal — ' + cliente.nome,
-        descricao: 'Função fixa da Cecília — agendar reunião com o cliente pra alinhar o próximo calendário.',
-        origem: 'amanda', clienteNome: '', destinatario: 'Cecília',
-        prazoData: dataAlvo, prazoHora: '19:00', status: 'pendente',
-        provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'reuniao', criadoEm: serverTimestamp()
-      });
-      idxC++;
-    }
+    /* ===== REESTRUTURADO 27/07/2026 (pedido do Chris) =====
+       ANTES: uma demanda POR CLIENTE, por mes, pra cada funcao fixa. Com ~20
+       clientes isso enchia a fila com 40 demandas mensais — e as reunioes
+       ainda caiam nos PRIMEIROS dias uteis, quando na pratica elas acontecem
+       na ultima semana do mes. Resultado: 16 demandas de reuniao acumuladas,
+       nenhuma concluida. Ninguem consegue trabalhar assim.
 
-    let idxG = 0;
-    for(const cliente of clientesFixos){
-      const dataAlvo = diasGabi[Math.floor(idxG/2)] || diasGabi[diasGabi.length-1] || dataParaStr(dataLimiteGabi);
-      await addDoc(collection(db,'demandas'), {
-        titulo: 'Entregar calendário do próximo mês — ' + cliente.nome,
-        descricao: 'Função fixa da Gabrielle — calendário do próximo mês precisa estar pronto e aprovado.',
-        origem: 'amanda', clienteNome: '', destinatario: 'Gabrielle',
-        prazoData: dataAlvo, prazoHora: '19:00', status: 'pendente',
-        provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'calendario', criadoEm: serverTimestamp()
-      });
-      idxG++;
-    }
+       AGORA: uma demanda UNICA por funcao, com a lista de clientes dentro
+       em forma de checklist. Ela fecha sozinha quando todos forem marcados.
+       E a reuniao passou da Cecilia pra Gabi — quem faz a reuniao com o
+       cliente e ela. */
+    const listaChecklist = clientesFixos.map(c => ({ slug: c.slug, nome: c.nome, feito: false, data: '', obs: '' }));
+
+    // Reunioes: prazo no ultimo dia util do mes, porque acontecem na ultima semana
+    const uteisUltimaSemana = uteis.filter(d => Number(d.split('-')[2]) > ultimoDiaMes - 7);
+    const prazoReuniao = uteisUltimaSemana[uteisUltimaSemana.length-1] || uteis[uteis.length-1];
+    const inicioUltimaSemana = uteisUltimaSemana[0] || prazoReuniao;
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '🤝 Reuniões mensais com os clientes — ' + mesChave,
+      descricao: 'Função fixa da Gabrielle. Agendar e fazer a reunião mensal de alinhamento do próximo calendário com CADA cliente da lista.\n\n'
+        + 'Acontece na última semana do mês — a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
+        + 'COMO FAZER\n'
+        + '1. Abre esta demanda — a lista de clientes está aqui dentro\n'
+        + '2. Combina a reunião com o cliente pelo WhatsApp\n'
+        + '3. Marca o cliente na lista assim que a reunião estiver agendada\n'
+        + '4. Depois da reunião, registra o combinado em Atas de Reunião\n\n'
+        + 'São ' + clientesFixos.length + ' clientes. Esta demanda fecha sozinha quando todos estiverem marcados — é uma só, não uma por cliente.',
+      origem: 'amanda', clienteNome: '', destinatario: 'Gabrielle',
+      prazoData: prazoReuniao, prazoHora: '19:00', status: 'pendente',
+      provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'reuniao',
+      checklistClientes: listaChecklist, mesRef: mesChave,
+      criadoEm: serverTimestamp()
+    });
+
+    // Calendarios do proximo mes: continuam com folga antes do fim do mes
+    const prazoCalendario = diasGabi[diasGabi.length-1] || dataParaStr(dataLimiteGabi);
+    await addDoc(collection(db,'demandas'), {
+      titulo: '📅 Calendários do próximo mês — ' + mesChave,
+      descricao: 'Função fixa da Gabrielle. O calendário do mês que vem precisa estar pronto e aprovado para CADA cliente da lista.\n\n'
+        + 'COMO FAZER\n'
+        + '1. Menu lateral → Calendários\n'
+        + '2. Busca o cliente e monta o calendário ali dentro\n'
+        + '3. Volta aqui e marca o cliente na lista\n\n'
+        + 'São ' + clientesFixos.length + ' clientes. Uma demanda só — fecha sozinha quando todos estiverem marcados.',
+      origem: 'amanda', clienteNome: '', destinatario: 'Gabrielle',
+      prazoData: prazoCalendario, prazoHora: '19:00', status: 'pendente',
+      provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'calendario',
+      checklistClientes: listaChecklist.map(c => ({...c})), mesRef: mesChave,
+      criadoEm: serverTimestamp()
+    });
 
     // Tipos de tarefa fixa customizados (criados pela Amanda)
     const tiposSnap = await getDocs(collection(db,'tipos_tarefa_fixa'));
@@ -3864,14 +3890,26 @@
     const snap = await getDocs(collection(db,'demandas'));
     const tarefas = []; snap.forEach(d => { const v=d.data(); if(v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push(v); });
 
-    const ceciliaCount = tarefas.filter(t=>t.tipoFuncaoFixa==='reuniao').length;
-    const ceciliaFeitas = tarefas.filter(t=>t.tipoFuncaoFixa==='reuniao' && t.status==='aprovada').length;
-    const gabiCount = tarefas.filter(t=>t.tipoFuncaoFixa==='calendario').length;
-    const gabiFeitas = tarefas.filter(t=>t.tipoFuncaoFixa==='calendario' && t.status==='aprovada').length;
+    /* 27/07/2026 — agora e UMA demanda por funcao, com checklist de clientes
+       dentro. O progresso sai do checklist, nao mais da contagem de demandas.
+       Mantem compatibilidade com o formato antigo (uma por cliente), que
+       ainda existe nos meses ja gerados. */
+    const progresso = (tipo) => {
+      const doTipo = tarefas.filter(t => t.tipoFuncaoFixa === tipo);
+      const comChecklist = doTipo.filter(t => Array.isArray(t.checklistClientes) && t.checklistClientes.length);
+      if(comChecklist.length){
+        let tot=0, ok=0;
+        comChecklist.forEach(t => { tot += t.checklistClientes.length; ok += t.checklistClientes.filter(c=>c.feito).length; });
+        return { ok, tot };
+      }
+      return { ok: doTipo.filter(t=>t.status==='aprovada').length, tot: doTipo.length };
+    };
+    const pReuniao = progresso('reuniao');
+    const pCalend  = progresso('calendario');
 
     resumoBox.innerHTML = `<div class="painelResumo">
-      <div class="resumoCard"><div class="num">${ceciliaFeitas}/${ceciliaCount}</div><div class="lbl">Reuniões agendadas (Cecília)</div></div>
-      <div class="resumoCard"><div class="num">${gabiFeitas}/${gabiCount}</div><div class="lbl">Calendários entregues (Gabrielle)</div></div>
+      <div class="resumoCard"><div class="num">${pReuniao.ok}/${pReuniao.tot}</div><div class="lbl">Reuniões agendadas (Gabrielle)</div></div>
+      <div class="resumoCard"><div class="num">${pCalend.ok}/${pCalend.tot}</div><div class="lbl">Calendários entregues (Gabrielle)</div></div>
     </div>`;
 
     const [ano2, mes2] = mesChave.split('-').map(Number);
@@ -7916,9 +7954,16 @@
     todasAusencias = []; snap.forEach(d => todasAusencias.push({id:d.id, ...d.data()}));
   }
 
+  /* ===== URGENCIA MANUAL — 27/07/2026 (pedido da Amanda) =====
+     A urgencia sempre foi 100% derivada do prazo. Isso cobre o caso comum,
+     mas nao cobre o real: uma demanda que vence semana que vem e virou
+     prioridade hoje, ou uma atrasada que ja foi acordada com o cliente e
+     nao e mais urgente. Agora a gerencia pode fixar a urgencia na mao —
+     e enquanto estiver fixada, o prazo nao manda mais nela. */
   function calcularUrgencia(demanda){
     if(demanda.status !== 'pendente') return 'normal';
     if(estaAusente(demanda.destinatario)) return 'normal';
+    if(demanda.urgenciaManual && ['atrasado','hoje','normal'].includes(demanda.urgenciaManual)) return demanda.urgenciaManual;
     const agora = new Date();
     const prazo = new Date(demanda.prazoData + 'T' + (demanda.prazoHora || '19:00'));
     if (agora > prazo) return 'atrasado';
@@ -9047,6 +9092,65 @@
     else { badge.style.display='none'; }
   }
 
+  /* ===== CHECKLIST DE CLIENTES DENTRO DA DEMANDA (27/07/2026) =====
+     E o que faz a demanda unica funcionar: em vez de 20 demandas soltas,
+     uma so com a lista dentro. Quem marca e quem executa; a Amanda ve o
+     mesmo painel e o progresso. Quando o ultimo cliente e marcado, a
+     demanda se fecha sozinha. */
+  window.htmlChecklistClientes = function(d){
+    const lista = d.checklistClientes;
+    if(!Array.isArray(lista) || !lista.length) return '';
+    const feitos = lista.filter(c=>c.feito).length;
+    const pct = Math.round(feitos/lista.length*100);
+    const podeMarcar = (usuarioAtual === d.destinatario) || usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
+    return `<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:10px 12px;border-radius:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <b>Clientes — ${feitos} de ${lista.length}</b>
+        <span class="selo ${feitos===lista.length?'aprovada':'pendente'}">${pct}%</span>
+      </div>
+      <div style="max-height:46vh;overflow-y:auto;">
+        ${lista.map((c,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:4px;border-radius:6px;background:${c.feito?'rgba(80,180,120,.10)':'transparent'};border:1px solid var(--line);${podeMarcar?'cursor:pointer;':''}">
+          <input type="checkbox" ${c.feito?'checked':''} ${podeMarcar?'':'disabled'} onchange="marcarClienteChecklist('${d.id}', ${i}, this.checked)">
+          <span style="flex:1;font-size:12px;${c.feito?'opacity:.6;text-decoration:line-through;':''}">${esc(c.nome||c.slug)}</span>
+          ${c.feito && c.data ? '<span class="meta" style="font-size:10px;">'+formatarDataBR(c.data)+'</span>' : ''}
+        </label>`).join('')}
+      </div>
+      ${podeMarcar ? '' : '<div class="desc" style="margin:6px 0 0;">Só ' + esc(d.destinatario) + ' e a gerência marcam aqui.</div>'}
+    </div>`;
+  };
+
+  window.marcarClienteChecklist = async function(id, idx, marcado){
+    const d = todasDemandas.find(x=>x.id===id);
+    if(!d || !Array.isArray(d.checklistClientes)) return;
+    const podeMarcar = (usuarioAtual === d.destinatario) || usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
+    if(!podeMarcar){ mostrarToast('Essa lista não é sua pra marcar.', 'erro'); return; }
+    const lista = d.checklistClientes.map(c=>({...c}));
+    if(!lista[idx]) return;
+    lista[idx].feito = !!marcado;
+    lista[idx].data = marcado ? new Date().toISOString().slice(0,10) : '';
+    lista[idx].por  = marcado ? (usuarioAtual||'?') : '';
+
+    const feitos = lista.filter(c=>c.feito).length;
+    const dados = { checklistClientes: lista };
+    let fechou = false;
+    if(feitos === lista.length){
+      dados.status = 'concluida_aguardando_aprovacao';
+      dados.concluidoPor = usuarioAtual || '?';
+      dados.provaTexto = 'Todos os ' + lista.length + ' clientes marcados.';
+      fechou = true;
+    } else if(d.status === 'concluida_aguardando_aprovacao'){
+      dados.status = 'pendente';  // desmarcou algum: volta pra pendente
+    }
+    await updateDoc(doc(db,'demandas', id), dados);
+    registrarHistorico('demandas', id, (marcado?'Marcou ':'Desmarcou ') + (lista[idx].nome||''), feitos + ' de ' + lista.length + ' clientes');
+    d.checklistClientes = lista; if(dados.status) d.status = dados.status;
+    mostrarToast(fechou ? '✅ Todos os clientes marcados — demanda concluída!' : (feitos + ' de ' + lista.length + ' clientes.'));
+    const modal = document.getElementById('modalConteudo');
+    if(modal && modal.innerHTML.includes('marcarClienteChecklist')){
+      if(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda') abrirDemandaGerencia(id); else abrirDemandaMinha(id);
+    }
+  };
+
   window.abrirDemandaMinha = function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
@@ -9058,6 +9162,7 @@
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
+      ${htmlChecklistClientes(d)}
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
       ${d.grupoId ? '<div class="linha" id="grupoStatus_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando quem mais está nela...</div>' : ''}
       ${d.bloqueio ? `
@@ -9208,6 +9313,26 @@
      retrabalho, e ainda sujava a metrica de presenca, porque entrar no
      painel do colaborador registra ELE como online.
      Poder restrito a Chris e Amanda, confirmado por ele em 27/07. */
+  window.alterarUrgenciaDireto = async function(id, valor){
+    if(!(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')){
+      mostrarToast('Só a Amanda e o Chris podem mexer na urgência.', 'erro'); return;
+    }
+    const d = todasDemandas.find(x=>x.id===id) || {};
+    const LBL = { atrasado:'🔴 Atrasada', hoje:'🟡 Pra hoje', normal:'⚪ Em aberto' };
+    if(!valor){
+      await updateDoc(doc(db,'demandas', id), { urgenciaManual: '', urgenciaFixadaPor: '', urgenciaFixadaEm: '' });
+      registrarHistorico('demandas', id, 'Urgência voltou a ser automática', 'Solta por ' + (usuarioAtual||'?') + ' — volta a seguir o prazo');
+      mostrarToast('Urgência voltou a seguir o prazo.');
+    } else {
+      await updateDoc(doc(db,'demandas', id), {
+        urgenciaManual: valor, urgenciaFixadaPor: usuarioAtual||'?', urgenciaFixadaEm: new Date().toISOString()
+      });
+      registrarHistorico('demandas', id, 'Urgência fixada em ' + (LBL[valor]||valor), 'Por ' + (usuarioAtual||'?') + ' — o prazo não manda mais nela até ser solta');
+      mostrarToast('Urgência fixada em ' + (LBL[valor]||valor) + '.');
+    }
+    carregarGerencia();
+  };
+
   window.alterarPrazoDireto = async function(id){
     if(!(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')){
       mostrarToast('Só a Amanda e o Chris podem alterar prazo.', 'erro'); return;
@@ -13059,7 +13184,7 @@
     let html = `<div class="card">
       <h2>👁️ Ver ambiente de cada um</h2>
       <div class="desc">O dia de qualquer pessoa do time, do jeito que ela vê — sem entrar na conta dela e sem mexer no "último acesso".</div>
-      <div class="desc" style="margin-top:-2px;">${(usuarioAtual==='Chris'||usuarioAtual==='Amanda') ? 'Clica em qualquer demanda pra <b>mudar o prazo</b> ou <b>excluir</b>. Mudar o prazo é o que muda a urgência — ela é calculada da data, não é um campo separado.' : 'Só leitura.'}</div>
+      <div class="desc" style="margin-top:-2px;">${(usuarioAtual==='Chris'||usuarioAtual==='Amanda') ? 'Clica em qualquer demanda pra <b>mudar o prazo</b>, <b>fixar a urgência</b> ou <b>excluir</b>.' : 'Só leitura.'}</div>
       <div class="field" style="margin-top:10px;"><label>Colaborador</label><select id="equipeVisaoSel" onchange="window.__equipeVisaoPessoa=this.value;renderEquipeVisao();">
         <option value="">Selecione...</option>
         ${FUNCIONARIOS.map(f=>`<option value="${f}" ${f===escolhido?'selected':''}>${f}</option>`).join('')}
@@ -15161,8 +15286,19 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <input type="time" id="prazoGerHora_${d.id}" value="${d.prazoHora||'19:00'}" style="width:auto;">
           <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;" onclick="alterarPrazoDireto('${d.id}')">Salvar novo prazo</button>
         </div>
-        <div class="desc" style="margin:6px 0 0;">${esc(d.destinatario)} é avisado e fica registrado no histórico. A urgência (Atrasada / Hoje / Em aberto) sai desta data — não existe campo separado.</div>
+        <div class="desc" style="margin:6px 0 0;">${esc(d.destinatario)} é avisado e fica registrado no histórico.</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">
+          <span style="font-size:11px;color:var(--muted);">Urgência:</span>
+          <select id="urgGer_${d.id}" onchange="alterarUrgenciaDireto('${d.id}', this.value)" style="width:auto;background:var(--deep);border:1px solid var(--line);color:#fff;padding:5px 8px;border-radius:6px;font-size:11px;">
+            <option value="" ${!d.urgenciaManual?'selected':''}>Automática (pelo prazo)</option>
+            <option value="atrasado" ${d.urgenciaManual==='atrasado'?'selected':''}>🔴 Atrasada</option>
+            <option value="hoje" ${d.urgenciaManual==='hoje'?'selected':''}>🟡 Pra hoje</option>
+            <option value="normal" ${d.urgenciaManual==='normal'?'selected':''}>⚪ Em aberto</option>
+          </select>
+          ${d.urgenciaManual ? '<span class="selo pendente">fixada na mão por '+esc(d.urgenciaFixadaPor||'?')+'</span>' : ''}
+        </div>
       </div>` : `<div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>`}
+      ${htmlChecklistClientes(d)}
       ${d.grupoId ? '<div class="linha" id="grupoStatusGer_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando...</div>' : ''}
       ${d.bloqueio ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">🕓 <b>'+esc(d.destinatario)+' está aguardando '+esc(d.bloqueio.pessoa)+':</b> '+esc(d.bloqueio.texto)+'</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}

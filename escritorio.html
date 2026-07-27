@@ -9478,12 +9478,19 @@
        equipe estavam paradas esperando ele. Gargalo invisivel e gargalo
        que nao anda. Agora aparece aqui, no topo, com o nome de quem
        entregou. */
+    /* ===== 27/07/2026 — DUPLICAÇÃO REMOVIDA =====
+       Esta faixa mostrava exatamente a mesma fila de Gerência → Aguardando
+       Aprovação. Eu tinha criado ela porque o Chris não achava as
+       aprovações; agora a aba da Gerência está boa e tem badge própria, e
+       manter as duas só criava confusão sobre onde aprovar. Minhas Demandas
+       volta a ser só o trabalho da pessoa. As badges continuam sendo
+       calculadas aqui — é o que avisa que tem coisa esperando. */
     let faixaAprovar = '';
     if(['Chris','Amanda'].includes(usuarioAtual)){
       const paraAprovar = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
       atualizarBadgeAprovar(paraAprovar.length);
       atualizarBadgeGerencia();
-      if(paraAprovar.length){
+      if(false){
         const porQuem = {};
         paraAprovar.forEach(d => { (porQuem[d.destinatario||'?'] = porQuem[d.destinatario||'?'] || []).push(d); });
         const corpo = Object.keys(porQuem).sort((a,b)=>porQuem[b].length-porQuem[a].length).map(nome => `
@@ -9794,6 +9801,54 @@
      retrabalho, e ainda sujava a metrica de presenca, porque entrar no
      painel do colaborador registra ELE como online.
      Poder restrito a Chris e Amanda, confirmado por ele em 27/07. */
+  /* ===== ALERTA IMEDIATO SOBRE UM ITEM — 27/07/2026 =====
+     Escolha do Chris: selecionar uma pessoa e mandar um alerta na hora
+     sobre um item específico. Faz as três coisas de uma vez — cria o aviso
+     no painel dela, dispara o e-mail, e copia a mensagem pronta pro
+     WhatsApp. Nada é enviado sem ele revisar: o WhatsApp fica na área de
+     transferência, ele cola e manda. */
+  window.alertarPessoaSobreItem = async function(id){
+    const pessoa = document.getElementById('alertaPessoa_'+id)?.value;
+    if(!pessoa){ mostrarToast('Escolhe quem alertar.', 'erro'); return; }
+    const d = todasDemandas.find(x=>x.id===id) || {};
+    const titulo = (d.titulo||'').replace(/^[🔴🎥📅📸🔗💰⚠️📲🤝📋✍️🎬🧩✅]+\s*/,'');
+    const prazo = d.prazoData ? formatarDataBR(d.prazoData) + (d.prazoHora ? ' às ' + d.prazoHora : '') : 'sem prazo definido';
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '🔔 ' + (usuarioAtual||'?') + ' te alertou: ' + titulo,
+      descricao: (usuarioAtual||'?') + ' marcou este item como prioridade agora.\n\n'
+        + 'Item: ' + titulo + '\n'
+        + 'Responsável: ' + (d.destinatario||'—') + '\n'
+        + 'Prazo: ' + prazo
+        + (d.descricao ? '\n\nDescrição original:\n' + d.descricao : ''),
+      destinatario: pessoa, origem: usuarioAtual === 'Amanda' ? 'amanda' : 'chris',
+      clienteNome: d.clienteNome || '', ehAviso: true, alertaSobre: id,
+      prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+    });
+
+    Promise.resolve(dispararEmailIndividual(pessoa, 'alerta_item', {
+      titulo: '🔔 Alerta: ' + titulo, prazoData: d.prazoData, prazoHora: d.prazoHora,
+      colecao:'demandas', itemId:id
+    })).catch(e => console.error('Falha no e-mail do alerta:', e));
+
+    registrarHistorico('demandas', id, 'Alerta enviado pra ' + pessoa + ' por ' + (usuarioAtual||'?'));
+
+    const msg = 'Oi ' + pessoa + ', preciso que você olhe isso agora:\n\n'
+      + '📌 ' + titulo + '\n'
+      + (d.destinatario && d.destinatario !== pessoa ? 'Responsável: ' + d.destinatario + '\n' : '')
+      + 'Prazo: ' + prazo + '\n\n'
+      + 'Já está no seu painel do site também. Se não for dar, me fala pra gente remarcar.';
+    try{
+      await navigator.clipboard.writeText(msg);
+      mostrarToast('Alerta criado pra ' + pessoa + ' — mensagem copiada pro WhatsApp. 📲');
+    }catch(e){
+      window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+      mostrarToast('Alerta criado pra ' + pessoa + '.');
+    }
+    carregarGerencia();
+  };
+
   window.alterarUrgenciaDireto = async function(id, valor){
     if(!(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')){
       mostrarToast('Só a Amanda e o Chris podem mexer na urgência.', 'erro'); return;
@@ -15553,8 +15608,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
     await carregarTodasDemandas();
 
     const todas = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
-    const minhaOrigem = usuarioAtual === 'Chris' ? 'chris' : usuarioAtual === 'Amanda' ? 'amanda' : null;
-    const minhas = minhaOrigem ? todas.filter(d => (d.origem||'') === minhaOrigem) : [];
+    /* 27/07/2026 — quem aprova o quê: o que você mandou é seu, o que a
+       Amanda mandou é dela, e o que o SISTEMA criou cai pro Chris. Sem essa
+       última regra a demanda automática não aparecia pra ninguém e ficava
+       órfã na fila pra sempre. */
+    const daPessoa = d => {
+      const o = (d.origem||'').toLowerCase();
+      if(usuarioAtual === 'Amanda') return o === 'amanda';
+      if(usuarioAtual === 'Chris')  return o !== 'amanda';   // chris, sistema, cliente e sem origem
+      return false;
+    };
+    const minhas = ['Chris','Amanda'].includes(usuarioAtual) ? todas.filter(daPessoa) : [];
     const dosOutros = todas.filter(d => !minhas.includes(d));
     const lista = window.__aguardVerTudo ? todas : minhas;
 
@@ -15580,7 +15644,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length-porPessoa[a].length).forEach(nome => {
       const itens = porPessoa[nome];
-      const dono = minhaOrigem && itens.every(d => (d.origem||'') === minhaOrigem);
+      const dono = itens.every(daPessoa);
       html += `<div class="faixaDem aberta" data-faixa="aprov_${esc(nome)}">
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${itens.length})</span>${dono?'':'<span class="qtd" style="opacity:.6;"> · não é sua</span>'}<span class="seta">▾</span></div>
         <div class="faixaItens">${itens.map(d => `
@@ -16485,6 +16549,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
         <button class="btn green" onclick="aprovarDemanda('${d.id}')">Aprovar</button>
       </div>` : ''}
       ${ehAutoAprovacao ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">🕓 Essa é a sua própria demanda — está esperando aprovação de outro gestor, não sua.</div>' : ''}
+      ${podeMexerNoPrazo ? `
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
+        <div class="meta" style="font-weight:800;margin-bottom:6px;">🔔 Alertar alguém sobre isto</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <select id="alertaPessoa_${d.id}" style="flex:1;min-width:140px;background:var(--deep);border:1px solid var(--line);color:#fff;padding:7px 9px;border-radius:7px;font-size:12px;">
+            ${FUNCIONARIOS.map(f=>`<option value="${f}" ${f===d.destinatario?'selected':''}>${f}</option>`).join('')}
+          </select>
+          <button class="btn" style="width:auto;padding:7px 14px;font-size:11px;" onclick="alertarPessoaSobreItem('${d.id}')">Alertar agora</button>
+        </div>
+        <div class="desc" style="margin:6px 0 0;">Aparece no painel dela na hora e copia a mensagem pronta pro WhatsApp.</div>
+      </div>` : ''}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
       ${podeExcluir ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaGerencia('${d.id}')">🗑️ Excluir esta demanda</button>` : ''}
       ${renderLinhaDoTempo(d.historico)}

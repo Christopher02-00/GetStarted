@@ -5217,11 +5217,20 @@
     const snap = await getDocs(collection(db,'clientes_encerrados'));
     const lista = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) lista.push({id:d.id, ...v}); });
     lista.sort((a,b) => (b.dataSaida||'').localeCompare(a.dataSaida||''));
+    // guarda quem ja saiu pro seletor nao oferecer de novo
+    window.__jaEncerrados = lista.map(x => x.slug).filter(Boolean);
+    popularClientesSaida();
 
     let html = `<div class="card">
       <h2>📉 Clientes que Saíram</h2>
       <div class="desc">Histórico de quem cancelou — pra aprender o padrão e evitar repetir.</div>
-      <div class="field"><label>Nome do cliente</label><input type="text" id="exNome" placeholder="Nome da empresa"></div>
+      <!-- 27/07/2026 — era campo de texto livre: o nome digitado não batia
+           com o cliente do sistema, então a saída não propagava pra lugar
+           nenhum. Agora escolhe da lista, e o registro carrega o slug. -->
+      <div class="field"><label>Qual cliente saiu</label>
+        <select id="exNome" onchange="preencherSaidaCliente(this.value)"><option value="">Escolhe o cliente...</option></select>
+      </div>
+      <div id="exAvisoCadeia" class="desc" style="margin:-4px 0 8px;"></div>
       <div class="field"><label>Data de saída</label><input type="date" id="exData"></div>
       <div class="field"><label>Serviços que contratava</label><input type="text" id="exServicos" placeholder="Ex: Social media + drone"></div>
       <div class="row2">
@@ -5254,11 +5263,59 @@
     cont.innerHTML = html;
   }
 
+  window.popularClientesSaida = function(){
+    const sel = document.getElementById('exNome');
+    if(!sel) return;
+    const jaSairam = new Set(window.__jaEncerrados||[]);
+    sel.innerHTML = '<option value="">Escolhe o cliente...</option>' +
+      CLIENTES_LISTA.filter(c => c.slug !== 'get-started' && !jaSairam.has(c.slug))
+        .sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'))
+        .map(c => `<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
+  };
+
+  /* Mostra o que a saída vai mexer, antes de registrar — pra ele saber o
+     tamanho do que está encerrando. */
+  window.preencherSaidaCliente = async function(slug){
+    const box = document.getElementById('exAvisoCadeia');
+    if(!box) return;
+    if(!slug){ box.innerHTML = ''; return; }
+    box.innerHTML = 'Conferindo o que esse cliente tem em aberto...';
+    try{
+      const [ctr, vids, posts, cal] = await Promise.all([
+        getDoc(doc(db,'contratos_cliente', slug)),
+        getDocs(collection(db,'videos_producao')),
+        getDocs(collection(db,'postagens')),
+        getDoc(doc(db,'calendarios', slug))
+      ]);
+      let nv=0, np=0;
+      vids.forEach(d=>{const v=d.data(); if(v.cliente===slug && !['finalizado','arquivado'].includes(v.status) && !v.excluido) nv++;});
+      posts.forEach(d=>{const v=d.data(); if(v.cliente===slug && !['postado','cancelada_manual'].includes(v.status)) np++;});
+      const itensCal = cal.exists() ? (cal.data().items||[]).length : 0;
+      const partes = [];
+      if(ctr.exists()) partes.push('contrato ativo de ' + brl(Number(ctr.data().valorVigente)||0));
+      if(nv) partes.push(nv + ' vídeo(s) em produção');
+      if(np) partes.push(np + ' postagem(ns) não publicada(s)');
+      if(itensCal) partes.push(itensCal + ' conteúdo(s) no calendário');
+      box.innerHTML = partes.length
+        ? '⚠️ <b>Esse cliente ainda tem:</b> ' + partes.join(' · ') + '.<br>Registrar a saída não apaga nada disso — só marca ele como encerrado e tira das cobranças. O que já foi produzido continua pra entregar.'
+        : '✅ Sem nada em aberto — pode encerrar tranquilo.';
+    }catch(e){ box.innerHTML = ''; console.error(e); }
+  };
+
   window.registrarExCliente = async function(){
-    const nome = document.getElementById('exNome').value.trim();
-    if(!nome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
+    const sel = document.getElementById('exNome');
+    const slug = sel.value;
+    const nome = sel.selectedOptions[0]?.dataset.nome || '';
+    if(!slug){ mostrarToast('Escolhe o cliente que saiu.', 'erro'); return; }
+    /* A saída agora propaga: marca inativo na config, o que tira ele das
+       automações de cobrança, cápsula e conteúdo. Nada é apagado. */
+    await setDoc(doc(db,'clientes_config', slug), {
+      clienteInativo: true, inativoDesde: document.getElementById('exData').value || new Date().toISOString().slice(0,10),
+      inativoMotivo: document.getElementById('exMotivo').value, inativoPor: usuarioAtual||'?'
+    }, { merge:true });
+    try{ await updateDoc(doc(db,'contratos_cliente', slug), { status:'encerrado', encerradoEm: new Date().toISOString() }); }catch(e){}
     await addDoc(collection(db,'clientes_encerrados'), {
-      nome, dataSaida: document.getElementById('exData').value,
+      nome, slug, dataSaida: document.getElementById('exData').value,
       servicos: document.getElementById('exServicos').value.trim(),
       tempoPermaneceu: document.getElementById('exTempo').value.trim(),
       valorMensal: Number(document.getElementById('exValor')?.value) || 0,
@@ -8161,7 +8218,7 @@
     if(qual==='saudeClientes') renderGerenciaSaudeClientes();
     if(qual==='clientesExtras') renderClientesExtras();
     if(qual==='rfv') renderRfv();
-    if(qual==='exClientes') renderExClientes();
+    if(qual==='exClientes'){ renderExClientes(); popularClientesSaida(); }
     if(qual==='cofreSenhas') renderCofreSenhas();
     if(qual==='calendariosEnviados') renderCalendariosEnviados();
     if(qual==='portalCliente') renderPortalClienteAdmin();
@@ -15397,36 +15454,66 @@ Observações do cliente: ${l.observacoes||'—'}`;
     });
   };
 
+  /* ===== FILA DE APROVAÇÃO REFEITA — 27/07/2026 =====
+     Três problemas que o Chris apontou, todos reais:
+     1. A tela mostrava TUDO que a equipe entregou, de qualquer origem —
+        então ele via a fila da Amanda misturada com a dele e não sabia o
+        que era dele pra aprovar.
+     2. Aprovar não tirava o item da tela: `aprovarDemanda` chamava
+        carregarGerencia(), que não re-renderiza esta subaba.
+     3. Layout enfileirado, sem hierarquia.
+     Agora: cada um vê só o que ELE mandou (pela origem da demanda),
+     agrupado por pessoa em faixas, com aprovar e refazer no próprio
+     cartão — e quem entregou é avisado na hora. */
+  window.__aguardVerTudo = false;
   async function renderDemandasAguardandoDetalhe(){
     const cont = document.getElementById('gerenciaDemandasAguardando');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     await carregarTodasDemandas();
-    // Nunca mostra a própria demanda do gestor logado na fila de aprovação dele mesmo.
-    const aguardando = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
+
+    const todas = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
+    const minhaOrigem = usuarioAtual === 'Chris' ? 'chris' : usuarioAtual === 'Amanda' ? 'amanda' : null;
+    const minhas = minhaOrigem ? todas.filter(d => (d.origem||'') === minhaOrigem) : [];
+    const dosOutros = todas.filter(d => !minhas.includes(d));
+    const lista = window.__aguardVerTudo ? todas : minhas;
 
     let html = `<div class="card">
-      <h2><svg class="ic"><use href="#i-clock"/></svg>Demandas Aguardando Sua Aprovação</h2>
-      <div class="desc">Tudo que sua equipe já entregou, com a prova, esperando você revisar e aprovar.</div>
-      <div class="painelResumo" style="margin-top:10px;"><div class="resumoCard yellow"><div class="num">${aguardando.length}</div><div class="lbl">Esperando revisão</div></div></div>
+      <h2><svg class="ic"><use href="#i-clock"/></svg>Esperando você aprovar</h2>
+      <div class="desc">Demanda que <b>você mandou</b> e a pessoa já entregou. Aprovar tira da lista dela e avisa na hora.</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${minhas.length?'yellow':'green'}"><div class="num">${minhas.length}</div><div class="lbl">esperando você</div></div>
+        <div class="resumoCard"><div class="num">${dosOutros.length}</div><div class="lbl">com outra pessoa</div></div>
+      </div>
+      ${dosOutros.length ? `<button class="btn secondary" style="margin-top:10px;" onclick="window.__aguardVerTudo=!window.__aguardVerTudo;renderDemandasAguardandoDetalhe();">
+        ${window.__aguardVerTudo ? '← Ver só o que é meu' : 'Ver também o que está com outros (' + dosOutros.length + ') →'}
+      </button>` : ''}
     </div>`;
 
-    if(!aguardando.length){
-      html += '<div class="empty">Nada esperando sua aprovação agora. 🎉</div>';
-    } else {
-      const porFuncionario = {};
-      aguardando.forEach(d => { (porFuncionario[d.destinatario] = porFuncionario[d.destinatario]||[]).push(d); });
-      const cardAguardandoGer = d => `<div class="item" onclick="abrirDemandaGerencia('${d.id}')">
-          <div class="top"><div class="nome">${esc(d.titulo)}</div></div>
-          ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:8px;border-radius:6px;">"'+esc(d.provaTexto)+'"</div>' : ''}
-          ${d.provaImagemUrl ? '<div class="meta" style="margin-top:4px;">🔗 tem prova em link</div>' : ''}
-          <div class="meta" style="margin-top:4px;">Clica pra ver completo e aprovar/pedir refazer</div>
-        </div>`;
-      Object.keys(porFuncionario).forEach(nome => {
-        html += `<div class="grupoFuncionario"><h3>${esc(nome)} <span class="qtd">${porFuncionario[nome].length}</span></h3>`;
-        html += agruparEmFamiliasHtml(porFuncionario[nome], cardAguardandoGer, false);
-        html += `</div>`;
-      });
+    if(!lista.length){
+      html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nada esperando você agora.</div></div>';
+      cont.innerHTML = html; return;
     }
+
+    const porPessoa = {};
+    lista.forEach(d => { (porPessoa[d.destinatario] = porPessoa[d.destinatario]||[]).push(d); });
+
+    Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length-porPessoa[a].length).forEach(nome => {
+      const itens = porPessoa[nome];
+      const dono = minhaOrigem && itens.every(d => (d.origem||'') === minhaOrigem);
+      html += `<div class="faixaDem aberta" data-faixa="aprov_${esc(nome)}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${itens.length})</span>${dono?'':'<span class="qtd" style="opacity:.6;"> · não é sua</span>'}<span class="seta">▾</span></div>
+        <div class="faixaItens">${itens.map(d => `
+          <div class="item" style="border-left:3px solid var(--yellow);">
+            <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${esc(d.titulo)}</div><span class="selo pendente">entregue</span></div>
+            ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:9px 11px;border-radius:7px;">"'+esc(d.provaTexto)+'"</div>' : '<div class="meta" style="margin-top:6px;opacity:.7;">Sem relato — abre pra ver.</div>'}
+            ${d.provaImagemUrl ? '<a href="'+esc(d.provaImagemUrl)+'" target="_blank" class="meta" style="display:inline-block;margin-top:6px;color:var(--yellow);">🔗 Abrir a prova ↗</a>' : ''}
+            <div class="btnrow" style="margin-top:10px;">
+              <button class="btn red" style="width:auto;padding:6px 14px;font-size:11px;" onclick="rejeitarDemanda('${d.id}')">Pedir pra refazer</button>
+              <button class="btn green" style="width:auto;padding:6px 18px;font-size:11px;" onclick="aprovarDemanda('${d.id}')">✔ Aprovar</button>
+            </div>
+          </div>`).join('')}</div>
+      </div>`;
+    });
     cont.innerHTML = html;
   }
 
@@ -16366,8 +16453,15 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
   window.aprovarDemanda = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
-    await updateDoc(doc(db,'demandas', id), { status: 'aprovada', aprovadoEm: new Date().toISOString() });
-    registrarHistorico('demandas', id, 'Aprovada');
+    await updateDoc(doc(db,'demandas', id), { status: 'aprovada', aprovadoEm: new Date().toISOString(), aprovadoPor: usuarioAtual||'?' });
+    registrarHistorico('demandas', id, 'Aprovada por ' + (usuarioAtual||'?'));
+    /* 27/07/2026 — quem entregou nunca sabia que tinha sido aprovado. */
+    if(d?.destinatario && d.destinatario !== usuarioAtual){
+      Promise.resolve(dispararEmailIndividual(d.destinatario, 'demanda_aprovada', {
+        titulo: '✅ Aprovado: ' + (d.titulo||''), prazoData: d.prazoData, prazoHora: d.prazoHora,
+        colecao:'demandas', itemId:id
+      })).catch(e => console.error('Falha ao avisar da aprovação:', e));
+    }
     sincronizarStatusDemandaCliente(id, 'concluida').catch(()=>{});
     if(d?.agendamentoId){
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado: true });
@@ -16392,7 +16486,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }
     fecharModal();
     carregarGerencia();
+    atualizarFilaAprovacao();
   };
+
+  /* 27/07/2026 — sem isto o item aprovado continuava na tela: carregarGerencia()
+     re-renderiza os painéis do Chris e da Amanda, mas não esta subaba. */
+  function atualizarFilaAprovacao(){
+    try{
+      const el = document.getElementById('gerenciaDemandasAguardando');
+      if(el && el.offsetParent !== null) renderDemandasAguardandoDetalhe();
+    }catch(e){}
+  }
 
   window.rejeitarDemanda = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
@@ -16403,8 +16507,15 @@ Observações do cliente: ${l.observacoes||'—'}`;
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { status: 'cancelado' });
       mostrarToast('Rejeitado — a gravação extra foi cancelada.');
     }
+    if(d?.destinatario && d.destinatario !== usuarioAtual){
+      Promise.resolve(dispararEmailIndividual(d.destinatario, 'demanda_refazer', {
+        titulo: '🔄 Pedido pra refazer: ' + (d.titulo||''), prazoData: d.prazoData, prazoHora: d.prazoHora,
+        colecao:'demandas', itemId:id
+      })).catch(e => console.error('Falha ao avisar do pedido de refazer:', e));
+    }
     fecharModal();
     carregarGerencia();
+    atualizarFilaAprovacao();
   };
 
   /* ===== Botão "+ Nova Demanda" — sempre visível, qualquer subtab da Gerência =====

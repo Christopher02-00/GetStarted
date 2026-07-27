@@ -2991,6 +2991,12 @@
      dela e isso entra no pagamento do dia 15. Editor que fez arte, social
      media que cobriu um evento, filmmaker que pegou Uber — tudo aqui. */
   const FILMMAKERS_PAGAMENTO = ["Chris","Amanda","Cecília","Gabrielle","Helo","João Victor","Yas","Nathan","Luís"];
+  window.aprovarExtra = async function(id){
+    await updateDoc(doc(db,'pagamentos_extra', id), { aprovadoPeloChris:true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString() });
+    mostrarToast('Aprovado — entrou no total do mês.');
+    renderGerenciaPagamentos();
+  };
+
   window.definirFilmmakerPagamento = async function(id, nome){
     if(!nome) return;
     await updateDoc(doc(db,'pagamentos_extra', id), { filmmaker: nome, filmmakerDefinidoPor: usuarioAtual||'?', filmmakerDefinidoEm: new Date().toISOString() });
@@ -3006,7 +3012,7 @@
     const doMes = pagamentos.filter(p => p.mes === mesAtual);
 
     let html = `<div class="card">
-      <h2>💰 Extras a pagar à equipe — ${mesAtual}</h2>
+      <h2>💸 Extras da equipe — ${mesAtual}</h2>
       <div class="desc"><b>Estes valores entram no pagamento do dia 15</b>, somados ao salário de cada um. Qualquer pessoa da equipe pode ter extra: serviço fora do escopo da função, cobertura avulsa, reembolso de Uber (>30km). Alguns entram sozinhos quando o filmmaker registra a gravação; a própria pessoa também informa pelo painel dela, e você lança aqui na mão.</div>
       <div class="row2">
         <div class="field"><label>Quem vai receber</label>
@@ -3025,8 +3031,30 @@
       <button class="btn" onclick="adicionarPagamentoExtra()">+ Adicionar extra pro filmmaker</button>
     </div>`;
 
+    /* ===== PAINEL DO CHRIS — 27/07/2026 =====
+       A tela era ambígua: parecia dos funcionários e era dele. Agora tem
+       cara de controle de gasto — total do mês, onde saiu mais, e uma fila
+       de aprovação separada pro que a própria pessoa informou. O que ela
+       preenche não entra no total até ele aprovar. */
+    const informados = doMes.filter(p => p.informadoPelaPessoa && !p.aprovadoPeloChris);
+    if(informados.length){
+      html += `<div class="card" style="border:2px solid var(--yellow);">
+        <div class="metaSecTit">🔔 Esperando sua aprovação (${informados.length})</div>
+        <div class="desc" style="margin-bottom:10px;">A pessoa informou, você confere. Só entra no total do mês depois que você aprovar.</div>
+        ${informados.map(p => `<div class="item" style="border-left:3px solid var(--yellow);">
+          <div class="top"><div class="nome">${esc(p.filmmaker||'?')}</div><b style="color:var(--yellow);">${p.valorExtra?brl(Number(p.valorExtra)):'sem valor'}</b></div>
+          <div class="meta" style="margin-top:4px;">${esc(p.servico||'sem descrição')}${p.clienteNome?' · '+esc(p.clienteNome):''}</div>
+          ${!p.valorExtra||!p.servico ? '<div class="meta" style="margin-top:4px;color:var(--red);">⚠️ Faltou '+[!p.servico?'a descrição do serviço':'',!p.valorExtra?'o valor':''].filter(Boolean).join(' e ')+' — pede antes de aprovar.</div>' : ''}
+          <div class="btnrow" style="margin-top:8px;">
+            <button class="btn green" style="width:auto;padding:6px 12px;font-size:11px;" onclick="aprovarExtra('${p.id}')">✔ Aprovar</button>
+            <button class="btn red" style="width:auto;padding:6px 12px;font-size:11px;opacity:.75;" onclick="excluirPagamentoExtra('${p.id}')">Recusar</button>
+          </div>
+        </div>`).join('')}
+      </div>`;
+    }
+
     if(!doMes.length){
-      html += '<div class="empty">Nenhum registro esse mês ainda — adicione acima, ou espere o filmmaker registrar uma gravação com Uber.</div>';
+      html += '<div class="empty">Nenhum registro esse mês ainda — adicione acima, ou espere alguém informar pelo painel dela.</div>';
     } else {
       /* ===== AGRUPADO POR FILMMAKER — 27/07/2026 =====
          A tela listava so o nome do CLIENTE, entao no dia 15 ninguem sabia
@@ -3038,9 +3066,27 @@
       const chaves = Object.keys(porFilm).sort((a,b)=>a.localeCompare(b,'pt-BR'));
       const totalGeral = doMes.filter(p=>!p.pago).reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
 
+      const validos = doMes.filter(p => !p.informadoPelaPessoa || p.aprovadoPeloChris);
+      const totalMesExtras = validos.reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
+      const pagos = validos.filter(p=>p.pago).reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
+      const porPessoaVal = {}; validos.forEach(p => { const k=p.filmmaker||'sem dono'; porPessoaVal[k]=(porPessoaVal[k]||0)+(Number(p.valorExtra)||0); });
+      const porTipo = { 'Uber / deslocamento':0, 'Serviço extra':0 };
+      validos.forEach(p => { porTipo[p.temUber?'Uber / deslocamento':'Serviço extra'] += (Number(p.valorExtra)||0); });
+      const maior = Object.entries(porPessoaVal).sort((a,b)=>b[1]-a[1])[0];
+
       html += `<div class="painelResumo">
-        <div class="resumoCard ${totalGeral?'yellow':''}"><div class="num" style="font-size:17px;">${brl(totalGeral)}</div><div class="lbl">A pagar dia 15</div></div>
-        <div class="resumoCard"><div class="num">${chaves.length}</div><div class="lbl">Filmmaker(s)</div></div>
+        <div class="resumoCard red"><div class="num" style="font-size:17px;">${brl(totalMesExtras)}</div><div class="lbl">gasto no mês</div></div>
+        <div class="resumoCard ${totalGeral?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(totalGeral)}</div><div class="lbl">falta pagar (dia 15)</div></div>
+        <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(pagos)}</div><div class="lbl">já pago</div></div>
+        <div class="resumoCard"><div class="num" style="font-size:14px;">${maior?esc(maior[0]):'—'}</div><div class="lbl">quem mais custou</div></div>
+      </div>`;
+
+      const maxP = Math.max(...Object.values(porPessoaVal), 1);
+      html += `<div class="card metaSec"><div class="metaSecTit">📊 Onde o dinheiro saiu</div>
+        <div class="desc" style="margin-bottom:8px;">Por pessoa</div>
+        ${Object.entries(porPessoaVal).sort((a,b)=>b[1]-a[1]).map(([n,v])=>barraFin(n,v,maxP,'var(--red)')).join('')}
+        <div class="desc" style="margin:12px 0 8px;">Por tipo de gasto</div>
+        ${Object.entries(porTipo).filter(([k,v])=>v>0).map(([n,v])=>barraFin(n,v,Math.max(...Object.values(porTipo),1),'var(--yellow2)')).join('') || '<div class="empty" style="font-size:11px;">—</div>'}
       </div>`;
 
       chaves.forEach(nome => {
@@ -12348,6 +12394,127 @@
      direto o dado original (nivelEscalonamento/nivelEscalonamentoDemanda),
      sem criar nenhum registro novo — não tem como isso vazar pra tela
      pessoal de ninguém porque não existe "demanda" nenhuma sendo criada. */
+  /* ===== RESUMO DO DIA — 27/07/2026 =====
+     Pedido do Chris: a partir das 17h, um retrato do dia na propria tela de
+     Atrasadas — quanto melhorou ou piorou desde ontem, o que cada pessoa
+     deve, e a mensagem pronta pra cobrar cada uma no WhatsApp dela.
+     A foto de cada dia fica gravada em `foto_do_dia`, e e a comparacao
+     entre duas fotos que da o "melhorou/piorou". */
+  async function salvarFotoDoDia(totalAtras, porPessoa, nVideos){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const contagem = {}; Object.keys(porPessoa).forEach(n => contagem[n] = porPessoa[n].length);
+    try{
+      await setDoc(doc(db,'foto_do_dia', hojeStr), {
+        data: hojeStr, total: totalAtras, videos: nVideos, porPessoa: contagem,
+        registradoEm: serverTimestamp()
+      }, { merge:true });
+    }catch(e){ console.error('Falha ao salvar a foto do dia:', e); }
+  }
+
+  async function htmlResumoDoDia(totalAtras, porPessoa, nVideos){
+    const agora = new Date();
+    const hojeStr = agora.toISOString().slice(0,10);
+    const ontem = new Date(agora); ontem.setDate(ontem.getDate()-1);
+    const ontemStr = ontem.toISOString().slice(0,10);
+
+    await salvarFotoDoDia(totalAtras, porPessoa, nVideos);
+    const snapOntem = await getDoc(doc(db,'foto_do_dia', ontemStr));
+    const ant = snapOntem.exists() ? snapOntem.data() : null;
+
+    const passouDas17 = agora.getHours() >= 17;
+    const delta = ant ? totalAtras - (ant.total||0) : null;
+
+    // quem melhorou e quem piorou, pessoa a pessoa
+    const linhas = [];
+    const nomesTodos = new Set([...Object.keys(porPessoa), ...(ant ? Object.keys(ant.porPessoa||{}) : [])]);
+    nomesTodos.forEach(n => {
+      const hoje = (porPessoa[n]||[]).length;
+      const antes = ant ? (ant.porPessoa||{})[n]||0 : null;
+      const d = antes === null ? null : hoje - antes;
+      linhas.push({ nome:n, hoje, antes, d });
+    });
+    linhas.sort((a,b)=> b.hoje - a.hoje);
+
+    const seta = d => d === null ? '<span class="meta">novo</span>'
+      : d < 0 ? '<span class="selo aprovada">▼ '+Math.abs(d)+' resolvido(s)</span>'
+      : d > 0 ? '<span class="selo atrasado">▲ '+d+' a mais</span>'
+      : '<span class="selo pendente">= igual</span>';
+
+    const maxL = Math.max(...linhas.map(l=>l.hoje), 1);
+
+    return `<div class="card metaSec" style="border-color:${passouDas17?'var(--yellow)':'var(--line)'};">
+      <div class="metaSecTit">📊 Resumo do dia — ${formatarDataBR(hojeStr)}</div>
+      <div class="desc" style="margin-bottom:10px;">${passouDas17
+        ? 'Fechamento do dia: como a equipe está agora comparado a ontem.'
+        : 'Parcial — o fechamento do dia aparece a partir das 17h. Os números já são de agora.'}</div>
+
+      <div class="painelResumo" style="margin-bottom:12px;">
+        <div class="resumoCard ${totalAtras?'red':'green'}"><div class="num">${totalAtras}</div><div class="lbl">atrasados agora</div></div>
+        ${ant ? `<div class="resumoCard ${delta<0?'green':delta>0?'red':''}"><div class="num">${delta>0?'+':''}${delta}</div><div class="lbl">vs. ontem (${ant.total})</div></div>` : '<div class="resumoCard"><div class="num">—</div><div class="lbl">sem foto de ontem</div></div>'}
+        <div class="resumoCard ${nVideos?'red':'green'}"><div class="num">${nVideos}</div><div class="lbl">são vídeos</div></div>
+      </div>
+
+      ${ant && delta !== null ? `<div class="linha" style="background:var(--deep);border-left:3px solid ${delta<0?'var(--green)':delta>0?'var(--red)':'var(--line)'};padding:10px 12px;border-radius:8px;margin-bottom:12px;">
+        ${delta < 0 ? '✅ <b>Melhorou.</b> ' + Math.abs(delta) + ' item(ns) a menos que ontem.'
+          : delta > 0 ? '⚠️ <b>Piorou.</b> ' + delta + ' item(ns) a mais que ontem — o que entrou hoje passou o que saiu.'
+          : '➖ <b>Empatou.</b> Mesmo número de ontem: o que foi resolvido foi reposto.'}
+      </div>` : ''}
+
+      <div class="desc" style="margin-bottom:8px;">Por pessoa — e o que mudou desde ontem</div>
+      ${linhas.filter(l=>l.hoje>0 || (l.antes||0)>0).map(l => `
+        <div style="margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;">
+            <b style="font-size:12.5px;">${esc(l.nome)}</b>
+            <div style="display:flex;gap:6px;align-items:center;">
+              ${seta(l.d)}
+              ${l.hoje ? `<button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10.5px;border-color:var(--yellow);" onclick="cobrarPessoaWhats('${esc(l.nome)}')">📲 Cobrar</button>` : ''}
+            </div>
+          </div>
+          <div style="height:8px;background:var(--deep);border-radius:5px;overflow:hidden;">
+            <div style="height:100%;width:${Math.round(l.hoje/maxL*100)}%;background:${l.hoje>=5?'var(--red)':l.hoje>=3?'var(--yellow2)':'var(--yellow)'};"></div>
+          </div>
+          <div class="meta" style="margin-top:3px;">${l.hoje} atrasado(s)${l.antes!==null?' · ontem eram '+l.antes:''}</div>
+        </div>`).join('') || '<div class="empty" style="font-size:11px;">Ninguém com atraso. 🎉</div>'}
+    </div>`;
+  }
+
+  /* Mensagem individual, pronta pro WhatsApp da pessoa. Ele revisa antes de
+     mandar — nada sai sozinho. */
+  window.cobrarPessoaWhats = async function(nome){
+    try{
+      const [demSnap, vidSnap] = await Promise.all([
+        getDocs(collection(db,'demandas')), getDocs(collection(db,'videos_producao'))
+      ]);
+      const agora = new Date();
+      const itens = [];
+      demSnap.forEach(d => { const v=d.data();
+        if(v.status!=='pendente' || v.destinatario!==nome) return;
+        const prazo = new Date(v.prazoData+'T'+(v.prazoHora||'19:00'));
+        const dias = Math.floor((agora-prazo)/86400000);
+        if(dias>=0) itens.push({ txt:(v.titulo||'').replace(/^[🔴🎥📅📸🔗💰⚠️📲🤝📋✍️🎬]+\s*/,''), dias });
+      });
+      vidSnap.forEach(d => { const v=d.data();
+        if(v.excluido || ['finalizado','arquivado'].includes(v.status)) return;
+        if((v.editorAtribuido||v.editor) !== nome) return;
+        if((v.nivelEscalonamento||0) >= 1) itens.push({ txt:'Vídeo: ' + (v.clienteNome||'') + ' — ' + (v.titulo||''), dias:null });
+      });
+      if(!itens.length){ mostrarToast(nome + ' não tem nada atrasado agora.'); return; }
+      itens.sort((a,b)=>(b.dias||0)-(a.dias||0));
+
+      const txt = 'Oi ' + nome + ', passando o que está em aberto pra hoje:\n\n'
+        + itens.map((i,n) => (n+1) + '. ' + i.txt + (i.dias!==null ? (i.dias===0?' — vence hoje':' — ' + i.dias + ' dia(s) de atraso') : ' — em atraso')).join('\n')
+        + '\n\nSão ' + itens.length + ' item(ns). Se algum já foi feito, marca no site que ele sai da lista sozinho.\n'
+        + 'Se algum não vai dar, me fala qual e a gente remarca — melhor saber antes.';
+
+      try{
+        await navigator.clipboard.writeText(txt);
+        mostrarToast('Mensagem pra ' + nome + ' copiada — cola no WhatsApp dela. 📲');
+      }catch(e){
+        window.open('https://wa.me/?text=' + encodeURIComponent(txt), '_blank');
+      }
+    }catch(e){ console.error('Falha ao montar a cobrança:', e); mostrarToast('Não consegui montar agora.', 'erro'); }
+  };
+
   window.abrirVideoDeAtraso = function(id){
     // leva pro Hub de Vídeos com o item em foco
     fecharModal();
@@ -13914,12 +14081,70 @@
     if(n > 0){ b.textContent = n; b.style.display = 'flex'; } else b.style.display = 'none';
   }
 
-  window.renderVideosHub = function(){
+  /* ===== O DIA DOS VÍDEOS — 27/07/2026 =====
+     Pedido do Chris: um retrato do dia — o que foi editado, em que processo
+     está, aprovado ou não — com gráfico e sem informação jogada. Isso vivia
+     escondido dentro de "Vídeos em Edição", misturado com o resto. Agora
+     abre no topo do hub, que é onde ele já entra pra falar de vídeo. */
+  window.htmlDiaDosVideos = async function(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const snap = await getDocs(collection(db,'videos_producao'));
+    const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
+
+    const doDia = t => (t||'').slice(0,10) === hojeStr;
+    const entregues  = todos.filter(v => doDia(v.entregueEm) || (v.status==='aguardando_aprovacao' && doDia(v.atualizadoEm)));
+    const aprovados  = todos.filter(v => doDia(v.aprovadoEm) || (v.status==='aprovado' && doDia(v.atualizadoEm)));
+    const correcao   = todos.filter(v => v.status === 'correcao');
+    const emEdicao   = todos.filter(v => v.status === 'aguardando_edicao');
+    const aguardando = todos.filter(v => v.status === 'aguardando_aprovacao');
+    const atrasados  = todos.filter(v => (v.nivelEscalonamento||0) >= 1 && !['finalizado','arquivado'].includes(v.status));
+
+    // desempenho do dia: entregue sem volta = bom; volta pra correção = custo
+    const base = entregues.length + correcao.length;
+    const nota = base ? Math.round(entregues.length / base * 100) : null;
+    const humor = nota === null ? { cor:'var(--line)', txt:'Sem entrega hoje ainda' }
+      : nota >= 80 ? { cor:'var(--green)', txt:'Dia bom — quase tudo passou de primeira' }
+      : nota >= 50 ? { cor:'var(--yellow2)', txt:'Dia mediano — voltou correção demais' }
+      : { cor:'var(--red)', txt:'Dia ruim — mais correção do que entrega limpa' };
+
+    const porEditor = {};
+    todos.filter(v => !['finalizado','arquivado'].includes(v.status)).forEach(v => {
+      const e = v.editorAtribuido || v.editor || 'sem editor';
+      porEditor[e] = porEditor[e] || { fila:0, correcao:0 };
+      porEditor[e].fila++;
+      if(v.status === 'correcao') porEditor[e].correcao++;
+    });
+    const maxFila = Math.max(...Object.values(porEditor).map(x=>x.fila), 1);
+
+    return `<div class="card metaSec" style="border-color:${humor.cor};">
+      <div class="metaSecTit">📹 O dia dos vídeos — ${formatarDataBR(hojeStr)}</div>
+      <div class="desc" style="margin-bottom:10px;">${humor.txt}${nota!==null?' · '+nota+'% das entregas de hoje passaram sem voltar':''}</div>
+      <div class="painelResumo" style="margin-bottom:12px;">
+        <div class="resumoCard green"><div class="num">${entregues.length}</div><div class="lbl">entregues hoje</div></div>
+        <div class="resumoCard ${aprovados.length?'green':''}"><div class="num">${aprovados.length}</div><div class="lbl">aprovados hoje</div></div>
+        <div class="resumoCard ${correcao.length?'red':'green'}"><div class="num">${correcao.length}</div><div class="lbl">voltaram pra correção</div></div>
+        <div class="resumoCard ${atrasados.length?'red':'green'}"><div class="num">${atrasados.length}</div><div class="lbl">atrasados</div></div>
+      </div>
+      <div class="desc" style="margin-bottom:8px;">Onde a fila está parada agora</div>
+      ${[['Em edição', emEdicao.length, 'var(--yellow)'],['Esperando sua aprovação', aguardando.length, 'var(--yellow2)'],['Em correção', correcao.length, 'var(--red)']]
+        .map(([n,v,c]) => barraFin(n, v, Math.max(emEdicao.length, aguardando.length, correcao.length, 1), c)).join('')}
+      <div class="desc" style="margin:14px 0 8px;">Carga por editor</div>
+      ${Object.entries(porEditor).sort((a,b)=>b[1].fila-a[1].fila).map(([n,x]) =>
+        `<div style="margin-bottom:9px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;"><b>${esc(n)}</b><span class="meta">${x.fila} na fila${x.correcao?' · '+x.correcao+' em correção':''}</span></div>
+          <div style="height:8px;background:var(--deep);border-radius:5px;overflow:hidden;"><div style="height:100%;width:${Math.round(x.fila/maxFila*100)}%;background:${x.correcao?'var(--red)':'var(--yellow)'};"></div></div>
+        </div>`).join('') || '<div class="empty" style="font-size:11px;">Nenhum vídeo em aberto.</div>'}
+    </div>`;
+  };
+
+  window.renderVideosHub = async function(){
     const cont = document.getElementById('gerenciaVideosHub');
     if(!cont) return;
     const sub = window.__videosHubSub || 'videos';
     const btn = (chave, rotulo) => `<button class="btn ${sub===chave?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setVideosHubSub('${chave}')">${rotulo}</button>`;
-    cont.innerHTML = `<div class="card">
+    let topo = '';
+    try{ topo = await htmlDiaDosVideos(); }catch(e){ console.error('Falha no dia dos vídeos:', e); }
+    cont.innerHTML = topo + `<div class="card">
       <h2>🎬 Vídeos</h2>
       <div class="desc">O mesmo vídeo em três momentos: distribuir pro editor, aprovar, e o que foi descartado.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
@@ -14334,6 +14559,8 @@
         criticosEq.push({ id: sn.id, nivel: v.nivelEscalonamento, cliente: v.clienteNome||'', titulo: v.titulo||'', editor: v.editorAtribuido||'?', status: v.status });
       }
     });
+    html += await htmlResumoDoDia(totalAtras, porPessoa, nVideos);
+
     if(criticosEq.length){
       html += `<div class="card metaSec" style="border-color:var(--red);"><div class="metaSecTit">🚨 Crítico agora</div>
         <div class="desc" style="margin:-4px 0 8px;">Vídeo que já passou de dois níveis de escalonamento. Clica pra abrir.</div>` +

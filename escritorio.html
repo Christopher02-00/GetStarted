@@ -2653,6 +2653,17 @@
     </div></div>`;
 
     html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
+      <!-- 27/07/2026 — os cartões de editor acima funcionavam, mas não
+           pareciam clicáveis. Um seletor explícito resolve a dúvida: você
+           escolhe de quem quer ver e a lista abaixo só mostra os dele. -->
+      <div class="field" style="width:100%;margin-bottom:10px;">
+        <label>Ver os vídeos de</label>
+        <select onchange="window.__filtroVideosGerencia=this.value;renderGerenciaVideos();" style="width:100%;">
+          <option value="todos" ${filtro==='todos'?'selected':''}>Todos os editores (${abertos.length} vídeos)</option>
+          ${EDITORES_GERAL.map(ed => { const q = abertos.filter(v=>v.editorAtribuido===ed).length;
+            return `<option value="${ed}" ${filtro===ed?'selected':''}>${ed} — ${q} vídeo(s)</option>`; }).join('')}
+        </select>
+      </div>
       <button class="btn ${filtro==='todos'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='todos';renderGerenciaVideos();">Todos (${abertos.length})</button>
       <button class="btn ${filtro==='hoje'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='hoje';renderGerenciaVideos();">Gravados hoje</button>
       <button class="btn ${filtro==='amanha'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='amanha';renderGerenciaVideos();">Prazo amanhã</button>
@@ -2677,11 +2688,25 @@
       else if(EDITORES_GERAL.includes(filtro)) abertosFiltrados = abertos.filter(v => v.editorAtribuido === filtro);
       abertosFiltrados = abertosFiltrados.filter(v => v.editorAtribuido); // os sem editor já apareceram na Seção 1
 
+      /* 27/07/2026 — o cartão trazia editor, prazo, prioridade e excluir
+         empilhados, todos abertos ao mesmo tempo. Agora o resumo é uma
+         linha; os campos continuam os mesmos, só ficam atrás do clique. */
       function itemVideoHtml(v){
         const prio = v.prioridade || 'amarelo';
-        return `<div class="item">
-          <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        const atrasado = v.prazoEntrega && v.prazoEntrega < hojeStr;
+        const selo = v.status==='finalizado' ? ['aprovada','Finalizado'] : v.status==='aprovado' ? ['aprovada','Aprovado']
+          : v.status==='aguardando_aprovacao' ? ['pendente','Aguardando aprovação'] : v.status==='aguardando_cliente' ? ['hoje','Aguardando cliente']
+          : v.status==='correcao' ? ['atrasado','Precisa ajuste'] : ['pendente','Em edição'];
+        return `<div class="item" style="border-left:3px solid ${atrasado?'var(--red)':v.status==='correcao'?'var(--red)':'var(--line)'};">
+          <div class="top" style="cursor:pointer;" onclick="const d=this.parentElement.querySelector('.detVideo');d.style.display=d.style.display==='none'?'block':'none';">
+            <div class="nome">${esc(v.titulo)}</div><span class="selo ${selo[0]}">${selo[1]}</span>
+          </div>
+          <div class="meta" style="margin-top:4px;display:flex;justify-content:space-between;gap:8px;">
+            <span>${esc(v.clienteNome||'')} · ${esc(v.editorAtribuido||'sem editor')}</span>
+            <span style="${atrasado?'color:var(--red);font-weight:700;':''}">${atrasado?'⚠️ atrasado':(v.prazoEntregaLabel||'sem prazo')}</span>
+          </div>
+          <div class="detVideo" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="editorPill">🎞️ ${esc(v.editorAtribuido)}</span>
             <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${v.cliente}', this.value)">
               <option value="">Mudar pra...</option>
@@ -2705,6 +2730,7 @@
             </select>
           </div>
           <button class="btn red" style="width:auto;margin-top:10px;padding:5px 12px;font-size:11px;" onclick="excluirVideoGerencia('${v.id}','${esc(v.titulo)}')">✕ Excluir esse vídeo (foi enviado errado)</button>
+          </div>
         </div>`;
       }
 
@@ -4794,11 +4820,56 @@
       { label:'📦 Finalizados (entrega direta)', qtd: finalizadosDireto.length, idade:'', ativo:false }
     ];
 
-    let html = '<div class="painelResumo">' + cartoes.map(c => `
-      <div class="resumoCard cockpit ${c.ativo && c.qtd>0 ? 'cartaoEsteiraAtivo' : ''}">
+    /* ===== REFEITO 27/07/2026 =====
+       O Chris: "não consigo ter acesso a nenhuma informação, é o layout
+       antigo, nada clicável". Era um mural de números mortos. Agora cada
+       cartão FILTRA a lista abaixo, e entram três leituras que não existiam:
+       onde a esteira está entupida, quanto tempo cada etapa está segurando,
+       e quais clientes estão parados. */
+    window.__filtroEsteira = window.__filtroEsteira || null;
+    const fEs = window.__filtroEsteira;
+
+    let html = '<div class="painelResumo">' + cartoes.map((c,i) => `
+      <div class="resumoCard cockpit clicavel ${fEs===i?'yellow':''} ${c.ativo && c.qtd>0 ? 'cartaoEsteiraAtivo' : ''}" onclick="window.__filtroEsteira=(window.__filtroEsteira===${i}?null:${i});renderEsteiraConteudo();">
         <div class="num">${c.qtd}</div>
         <div class="lbl">${c.label}${c.idade}</div>
       </div>`).join('') + '</div>';
+
+    // ---- GRÁFICO 1: onde a esteira está entupida ----
+    const etapas = [
+      ['Em edição / correção', emEdicao.length, 'var(--yellow)'],
+      ['Aguardando você aprovar', aguardandoAprovacaoInterna.length, 'var(--yellow2)'],
+      ['Aguardando o cliente', aguardandoCliente.length, '#8ab4f8'],
+      ['Aguardando legenda', aguardandoLegenda.length, '#b98ae0'],
+      ['Pronto pra agendar', prontoAgendar.length, 'var(--green)']
+    ];
+    const maxEt = Math.max(...etapas.map(e=>e[1]), 1);
+    const gargalo = etapas.slice().sort((a,b)=>b[1]-a[1])[0];
+    html += `<div class="card metaSec"><div class="metaSecTit">🚧 Onde a esteira está parada</div>
+      <div class="desc" style="margin-bottom:10px;">${gargalo[1] ? 'O maior acúmulo está em <b>' + gargalo[0].toLowerCase() + '</b> — ' + gargalo[1] + ' item(ns).' : 'Nada acumulado. Esteira limpa.'}</div>
+      ${etapas.map(([n,v,c]) => barraFin(n, v, maxEt, c)).join('')}
+    </div>`;
+
+    // ---- GRÁFICO 2: há quanto tempo cada etapa está segurando ----
+    const idadeMedia = (lista, campo) => {
+      const ds = lista.map(x => { const d = x[campo] || x.data || x.criadoEm; if(!d) return null;
+        const dt = typeof d === 'string' ? new Date(d) : (d.seconds ? new Date(d.seconds*1000) : null);
+        return dt ? Math.floor((Date.now()-dt.getTime())/86400000) : null; }).filter(x=>x!==null);
+      return ds.length ? Math.round(ds.reduce((a,b)=>a+b,0)/ds.length) : 0;
+    };
+    const idades = [
+      ['Em edição', idadeMedia(emEdicao,'data')],
+      ['Aguardando você', idadeMedia(aguardandoAprovacaoInterna,'data')],
+      ['Aguardando cliente', idadeMedia(aguardandoCliente,'data')],
+      ['Aguardando legenda', idadeMedia(aguardandoLegenda,'criadoEm')]
+    ].filter(x=>x[1]>0);
+    if(idades.length){
+      const maxId = Math.max(...idades.map(i=>i[1]), 1);
+      html += `<div class="card metaSec"><div class="metaSecTit">⏳ Há quanto tempo está parado (média, em dias)</div>
+        <div class="desc" style="margin-bottom:10px;">Fila comprida não é problema; fila <b>velha</b> é. Barra vermelha passou de uma semana.</div>
+        ${idades.map(([n,v]) => barraFin(n + ' — ' + v + 'd', v, maxId, v>=7?'var(--red)':v>=3?'var(--yellow2)':'var(--green)')).join('')}
+      </div>`;
+    }
 
     // Linha por cliente — junta tudo que está "em produção" (não postado/agendado ainda)
     const porCliente = {};
@@ -4818,15 +4889,25 @@
     const nomesClientes = Object.keys(porCliente).sort();
     if(nomesClientes.length){
       html += `<div class="card" style="margin-top:6px;padding:12px 14px;">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Por cliente, em produção agora:</div>
-        <div style="font-size:12px;line-height:1.8;">${nomesClientes.map(nome => {
-          const c = porCliente[nome];
-          const partes = [];
-          if(c.emEdicao) partes.push(c.emEdicao + ' em edição');
-          if(c.aguardando) partes.push(c.aguardando + ' aguardando aprovação/cliente');
-          if(c.paraAgendar) partes.push(c.paraAgendar + ' pra agendar');
-          return '<b>'+esc(nome)+'</b>: ' + partes.join(' · ');
-        }).join('<br>')}</div>
+        <div class="metaSecTit">👥 Por cliente — quanto cada um tem em produção</div>
+        <div class="desc" style="margin-bottom:10px;">Barra cheia é quem está com mais coisa parada. Clica pra ver o que é.</div>
+        ${(() => {
+          const totalCli = n => { const c = porCliente[n]; return (c.emEdicao||0)+(c.aguardando||0)+(c.paraAgendar||0); };
+          const maxCli = Math.max(...nomesClientes.map(totalCli), 1);
+          return nomesClientes.sort((a,b)=>totalCli(b)-totalCli(a)).map(nome => {
+            const c = porCliente[nome]; const t = totalCli(nome);
+            const partes = [];
+            if(c.emEdicao) partes.push(c.emEdicao + ' em edição');
+            if(c.aguardando) partes.push(c.aguardando + ' aguardando aprovação');
+            if(c.paraAgendar) partes.push(c.paraAgendar + ' pra agendar');
+            const slugCli = (CLIENTES_LISTA.find(x => x.nome === nome)||{}).slug || '';
+            return `<div style="margin-bottom:11px;${slugCli?'cursor:pointer;':''}" ${slugCli?`onclick="abrirDetalheConteudoCliente('${slugCli}')"`:''}>
+              <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px;"><b>${esc(nome)}</b><span class="meta">${t} item(ns)</span></div>
+              <div style="height:9px;background:var(--deep);border-radius:5px;overflow:hidden;"><div style="height:100%;width:${Math.round(t/maxCli*100)}%;background:${t>=6?'var(--red)':t>=3?'var(--yellow2)':'var(--yellow)'};"></div></div>
+              <div class="meta" style="margin-top:3px;">${partes.join(' · ')}</div>
+            </div>`;
+          }).join('');
+        })()}
       </div>`;
     }
 

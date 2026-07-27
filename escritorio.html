@@ -522,6 +522,10 @@
     <div class="navgroup" id="navgroupDia">
       <div class="label" id="labelNavDia">Meu dia a dia</div>
       <div class="navitem active" id="navInicio" onclick="irPara('inicio', this)"><span class="ico"><svg><use href="#i-home"/></svg></span> Início</div>
+      <!-- 27/07/2026 — a Gerência ficava lá embaixo, depois de Vendas, e o
+           Chris relatou que esquecia de olhar. Subiu pro topo, logo abaixo
+           do Início, com badge do que está esperando decisão. -->
+      <div class="navitem" onclick="irPara('gerencia', this)" id="navitemGerencia" style="display:none;"><span class="ico"><svg><use href="#i-lock"/></svg></span> Gerência<span class="navbadge" id="badgeGerencia" style="display:none;background:var(--yellow);color:var(--graphite);" title="Esperando decisão">0</span></div>
       <div class="navitem" id="navMinhasDemandasAtribuidas" onclick="irPara('minhasDemandasAtribuidas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Demandas<span class="navbadge" id="badgeMinhasDemandasAtribuidas" style="display:none;">0</span><span class="navbadge" id="badgeAprovar" style="display:none;background:var(--yellow);color:var(--graphite);" title="Esperando sua aprovação">0</span></div>
       <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico">🚨</span> Atrasadas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
@@ -557,10 +561,6 @@
       <div class="navitem" id="navContratos" onclick="irPara('contratos', this)"><span class="ico">📄</span> Contratos</div>
       <div class="navitem" id="navFinanceiro" onclick="irPara('financeiro', this)"><span class="ico">📊</span> Financeiro</div>
       <div class="navitem" id="navCobranca" onclick="irPara('cobranca', this)"><span class="ico">🔔</span> Régua de Cobrança<span class="navbadge" id="badgeCobranca" style="display:none;background:var(--red);">0</span></div>
-    </div>
-
-    <div class="navgroup">
-      <div class="navitem" onclick="irPara('gerencia', this)" id="navitemGerencia" style="display:none;"><span class="ico"><svg><use href="#i-lock"/></svg></span> Gerência</div>
     </div>
 
     <div class="navgroup" id="navgroupLinksClientes" style="display:none;">
@@ -9240,6 +9240,7 @@
     if(['Chris','Amanda'].includes(usuarioAtual)){
       const paraAprovar = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
       atualizarBadgeAprovar(paraAprovar.length);
+      atualizarBadgeGerencia();
       if(paraAprovar.length){
         const porQuem = {};
         paraAprovar.forEach(d => { (porQuem[d.destinatario||'?'] = porQuem[d.destinatario||'?'] || []).push(d); });
@@ -9275,6 +9276,26 @@
 
   /* Badge separado: o numero de "esperando sua aprovacao" nao pode se
      misturar com o de "coisas pra voce fazer" — sao acoes diferentes. */
+  /* ===== 27/07/2026 — a Gerência não avisava nada =====
+     O Chris relatou que abria a Gerência e nao sabia se tinha algo esperando
+     ele, e que a aba fica longe demais na barra pra ele lembrar de olhar.
+     Agora ela tem badge propria, com o que esta parado esperando decisao —
+     pedido de prazo, demanda concluida aguardando aprovacao e pedido de
+     pular legenda. Se o numero esta la, tem coisa parada. */
+  async function atualizarBadgeGerencia(){
+    const badge = document.getElementById('badgeGerencia');
+    if(!badge || !['Chris','Amanda'].includes(usuarioAtual)){ if(badge) badge.style.display='none'; return; }
+    try{
+      const snap = await getDocs(collection(db,'demandas'));
+      let n = 0;
+      snap.forEach(d => { const v=d.data();
+        if(v.prazoSolicitado) n++;
+        else if(v.status === 'concluida_aguardando_aprovacao' && v.destinatario !== usuarioAtual) n++;
+      });
+      if(n>0){ badge.textContent = n; badge.style.display='flex'; } else badge.style.display='none';
+    }catch(e){ console.error('Falha na badge da Gerência:', e); }
+  }
+
   function atualizarBadgeAprovar(n){
     const badge = document.getElementById('badgeAprovar');
     if(!badge) return;
@@ -12777,10 +12798,20 @@
     const receitaAvulsa = avulsosDoMes.filter(r=>r.recebido).reduce((s,r)=>s+(Number(r.valor)||0),0);
     const avulsoAReceber = avulsosDoMes.filter(r=>!r.recebido).reduce((s,r)=>s+(Number(r.valor)||0),0);
 
+    /* ===== CORRIGIDO 27/07/2026 — ISTO É SAÍDA, NÃO ENTRADA =====
+       Os "pagamentos extras" (Uber, adicionais de gravação) eram somados na
+       RECEITA do mês e apareciam em "De onde veio o dinheiro". Estava
+       invertido: esse é dinheiro que SAI — é o que o Chris paga aos
+       filmmakers e à equipe no dia 15. Entrava no faturamento inflando o
+       total e escondendo um custo. Agora é despesa, e o total do mês passa
+       a ser líquido. */
     const extrasDoMes = extras.filter(e => e.mes === comp);
-    const receitaExtras = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
+    const despesaExtras = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
+    const despesaExtrasPagas = extrasDoMes.filter(e=>e.pago).reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
+    const despesaExtrasAPagar = despesaExtras - despesaExtrasPagas;
 
-    const totalMes = recebidoMensal + receitaAvulsa + receitaExtras;
+    const totalEntrou = recebidoMensal + receitaAvulsa;
+    const totalMes = totalEntrou - despesaExtras;
     const emAberto = previstoMensal - recebidoMensal;
 
     // ---- 2. movimento da receita recorrente ----
@@ -12805,7 +12836,7 @@
       porPlano[plano] = (porPlano[plano]||0) + (Number(p.valorDevido)||0);
     });
     if(receitaAvulsa) porPlano['Avulso / projeto'] = receitaAvulsa;
-    if(receitaExtras) porPlano['Extras (Uber, adicionais)'] = receitaExtras;
+    // extras NAO entram aqui: este bloco e so de receita. Eles tem secao propria de saida.
     const maxPlano = Math.max(...Object.values(porPlano), 1);
 
     // ---- 4. evolucao 6 meses ----
@@ -12826,12 +12857,30 @@
     const pctTop5 = previstoMensal>0 ? Math.round(top5.reduce((s,c)=>s+c.valor,0)/previstoMensal*100) : 0;
 
     let html = `<div class="painelResumo" style="margin-bottom:16px;">
-      <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(totalMes)}</div><div class="lbl">Entrou em ${nomeMes(comp)}</div></div>
+      <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(totalEntrou)}</div><div class="lbl">Entrou em ${nomeMes(comp)}</div></div>
+      <div class="resumoCard ${despesaExtras?'red':''}"><div class="num" style="font-size:17px;">${despesaExtras?'−':''}${brl(despesaExtras)}</div><div class="lbl">Saiu (extras da equipe)</div></div>
+      <div class="resumoCard ${totalMes>=0?'green':'red'}" style="border-width:2px;"><div class="num" style="font-size:17px;">${brl(totalMes)}</div><div class="lbl">Sobrou no mês</div></div>
       <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(recebidoMensal)}</div><div class="lbl">Mensalidades</div></div>
       <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(receitaAvulsa)}</div><div class="lbl">Avulsos / projetos</div></div>
       <div class="resumoCard ${(emAberto+avulsoAReceber)>0?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(emAberto+avulsoAReceber)}</div><div class="lbl">Ainda a receber</div></div>
       <div class="resumoCard ${variacao<0?'red':variacao>0?'green':''}"><div class="num" style="font-size:17px;">${variacao>=0?'+':''}${brl(variacao)}</div><div class="lbl">vs. ${nomeMes(compAnterior)}</div></div>
     </div>`;
+
+    /* Seção própria de saída — antes esse dinheiro estava escondido dentro
+       da receita, então o custo com a equipe simplesmente não aparecia. */
+    if(despesaExtras){
+      const porPessoa = {};
+      extrasDoMes.forEach(e => { const k = e.filmmaker || 'sem dono definido'; porPessoa[k] = (porPessoa[k]||0) + valorDeTexto(e.valorExtra); });
+      html += `<div class="card metaSec" style="border-color:var(--red);">
+        <div class="metaSecTit">💸 O que sai — extras da equipe em ${nomeMes(comp)}</div>
+        <div class="desc" style="margin-bottom:10px;">Uber e adicionais que você paga à equipe <b>no dia 15</b>, junto com o salário. É saída, não entrada — por isso está fora de "de onde veio o dinheiro".</div>
+        <div class="painelResumo" style="margin-bottom:10px;">
+          <div class="resumoCard ${despesaExtrasAPagar?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(despesaExtrasAPagar)}</div><div class="lbl">Ainda a pagar</div></div>
+          <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(despesaExtrasPagas)}</div><div class="lbl">Já pago</div></div>
+        </div>
+        ${Object.entries(porPessoa).sort((a,b)=>b[1]-a[1]).map(([n,v]) => barraFin(n, v, Math.max(...Object.values(porPessoa)), 'var(--red)')).join('')}
+      </div>`;
+    }
 
     // movimento
     html += `<div class="card metaSec">
@@ -15158,7 +15207,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(pedidosPrazo.length || aguardando.length || pedidosPularLegenda.length){
       html += `<div class="card" style="border:2px solid var(--yellow);">
         <h2>🔔 Aprovações Pendentes — ${pedidosPrazo.length + aguardando.length + pedidosPularLegenda.length}</h2>
-        <div class="desc">Tudo que está esperando uma decisão sua, num lugar só.</div>
+        <div class="desc">Tudo que está esperando decisão, num lugar só. <b>Pedido de prazo e autorização de mudança são da Amanda</b> — o Chris só entra se ela estiver ausente.</div>
       </div>`;
       if(pedidosPularLegenda.length){
         html += `<div class="grupoFuncionario"><h3>⏭️ Pedidos pra pular legenda (${pedidosPularLegenda.length})</h3>`;

@@ -13422,33 +13422,34 @@
     });
     html += `</div>`;
 
+    /* ===== LAYOUT REFEITO 27/07/2026 =====
+       A primeira versao empilhava tudo num cartao comprido: dado bruto,
+       campos de edicao e tres botoes lado a lado. O Chris recusou, com
+       razao. Regras agora: cartao fechado mostra DUAS informacoes (nome +
+       uma linha de contexto) e o estado pela cor; edicao e trilha de fases
+       vivem dentro da ficha, que abre no clique. */
+    window.__fichasAvulso = {};
+    fichas.forEach(f => { window.__fichasAvulso[f.id] = f; });
+
     const cartao = f => {
       const fase = faseAvulso(f.fase);
       const valor = f.receita ? Number(f.receita.valor)||0 : 0;
-      return `<div class="item" style="border-left:3px solid ${fase.cor};">
-        <div class="top"><div class="nome">${esc(f.nome)}</div><span class="selo ${f.fase==='arquivado'?'pendente':'hoje'}">${fase.icone} ${esc(fase.nome)}</span></div>
-        <div class="meta" style="margin-top:4px;">
-          ${f.evento ? '🎪 ' + esc(f.evento) : ''}${f.dataEvento ? ' · ' + formatarDataBR(f.dataEvento) : ''}
-          ${f.pacote ? ' · ' + esc(f.pacote) : ''}${f.dataSaida ? '📄 saiu em ' + formatarDataBR(f.dataSaida) : ''}
-          ${f.servicos ? ' · ' + esc(f.servicos) : ''}
+      const contexto = [
+        f.evento ? esc(f.evento) : '',
+        f.dataEvento ? formatarDataBR(f.dataEvento) : '',
+        f.pacote ? esc(f.pacote) : '',
+        f.dataSaida ? 'saiu em ' + formatarDataBR(f.dataSaida) : '',
+        f.servicos ? esc(f.servicos) : ''
+      ].filter(Boolean).join(' · ');
+      return `<div class="item" style="border-left:3px solid ${fase.cor};cursor:pointer;margin-bottom:8px;" onclick="abrirFichaAvulso('${f.id}')">
+        <div class="top">
+          <div class="nome">${esc(f.nome)}</div>
+          <span class="selo ${f.fase==='arquivado'||f.fase==='perdido'?'pendente':'hoje'}">${fase.icone} ${esc(fase.nome)}</span>
         </div>
-        ${f.motivoDetalhe ? '<div class="meta" style="margin-top:4px;">' + esc(f.motivoDetalhe) + '</div>' : ''}
-        ${f.respostaTexto ? '<div class="meta" style="margin-top:4px;color:var(--yellow2);">💬 ' + esc(f.respostaTexto) + '</div>' : ''}
-        ${f.receita ? '<div class="meta" style="margin-top:4px;">💰 <b>' + brl(valor) + '</b> · ' + (f.receita.recebido ? 'recebido' : 'a receber') + ' · conta em ' + esc(f.receita.competencia||'') + '</div>' : ''}
-        ${f.tipo==='negocio' ? `
-        <div class="row2" style="margin-top:8px;">
-          <div class="field"><label>Fase</label>
-            <select onchange="moverFaseAvulso('${f.id}', this.value)" style="width:100%;background:var(--deep);border:1px solid var(--line);color:#fff;padding:8px;border-radius:8px;">
-              ${FASES_AVULSO.map(x=>`<option value="${x.k}" ${f.fase===x.k?'selected':''}>${x.icone} ${x.nome}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field"><label>Link da proposta / material</label>
-            <input type="text" value="${esc(f.propostaLink||'')}" placeholder="Cole o link do PDF ou do Drive" onchange="salvarCampoAvulsoFicha('${f.id}','propostaLink',this.value)">
-          </div>
+        <div class="meta" style="margin-top:5px;display:flex;justify-content:space-between;gap:10px;">
+          <span>${contexto || 'sem detalhes ainda'}</span>
+          ${valor ? '<b style="color:var(--yellow);white-space:nowrap;">'+brl(valor)+'</b>' : ''}
         </div>
-        <div class="meta" style="margin-top:4px;opacity:.7;">${esc(faseAvulso(f.fase).ajuda)}</div>
-        ${f.whatsapp ? '<a href="https://wa.me/55' + esc(String(f.whatsapp).replace(/\D/g,'')) + '" target="_blank" class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;margin-top:8px;display:inline-block;text-decoration:none;">📲 Falar no WhatsApp</a>' : ''}
-        ` : '<div class="meta" style="margin-top:6px;opacity:.7;">Cliente mensal encerrado — guardado aqui pra recontato.</div>'}
       </div>`;
     };
 
@@ -13462,11 +13463,84 @@
     cont.innerHTML = html;
   };
 
+  /* A ficha: trilha de fases no topo, conteudo em abas internas. Nenhum
+     campo de edicao vive na lista — tudo acontece aqui dentro. */
+  window.__abaFicha = 'proposta';
+  window.abrirFichaAvulso = function(id, aba){
+    const f = (window.__fichasAvulso||{})[id];
+    if(!f) return;
+    if(aba) window.__abaFicha = aba;
+    const abaAtual = window.__abaFicha || 'proposta';
+    const idxAtual = FASES_AVULSO.findIndex(x => x.k === f.fase);
+    const trilha = FASES_AVULSO.filter(x => x.k !== 'perdido');
+
+    const passo = (x, i) => {
+      const passou = i <= idxAtual && idxAtual >= 0;
+      const aqui = x.k === f.fase;
+      return `<div style="flex:1;min-width:64px;text-align:center;${f.tipo==='negocio'?'cursor:pointer;':''}" ${f.tipo==='negocio'?`onclick="moverFaseAvulso('${f.id}','${x.k}')"`:''}>
+        <div style="height:3px;background:${passou?'var(--yellow)':'var(--line)'};margin-bottom:7px;border-radius:2px;"></div>
+        <div style="font-size:16px;opacity:${passou?1:.35};">${x.icone}</div>
+        <div style="font-size:9.5px;line-height:1.25;margin-top:3px;color:${aqui?'var(--yellow)':'var(--muted)'};font-weight:${aqui?800:500};">${esc(x.nome.split('—')[0].trim())}</div>
+      </div>`;
+    };
+
+    const abaBtn = (k, rot) => `<button class="btn ${abaAtual===k?'':'secondary'}" style="width:auto;padding:7px 14px;font-size:11.5px;" onclick="abrirFichaAvulso('${f.id}','${k}')">${rot}</button>`;
+
+    let corpo = '';
+    if(abaAtual === 'proposta'){
+      corpo = f.tipo === 'negocio' ? `
+        <div class="field"><label>Link da proposta ou material enviado</label>
+          <input type="text" value="${esc(f.propostaLink||'')}" placeholder="Cole o link do PDF, Drive ou Canva" onchange="salvarCampoAvulsoFicha('${f.id}','propostaLink',this.value)">
+        </div>
+        <div class="field" style="margin-top:10px;"><label>Valor proposto</label>
+          <input type="text" value="${esc(f.propostaValor||'')}" placeholder="R$ 0,00" onchange="salvarCampoAvulsoFicha('${f.id}','propostaValor',this.value)">
+        </div>
+        ${f.respostaTexto ? '<div class="linha" style="margin-top:10px;background:var(--deep);border-left:3px solid var(--yellow2);padding:9px 11px;border-radius:7px;">💬 <b>O cliente respondeu:</b><br>'+esc(f.respostaTexto)+'</div>' : ''}
+        ${f.whatsapp ? '<a href="https://wa.me/55'+esc(String(f.whatsapp).replace(/\D/g,''))+'" target="_blank" class="btn secondary" style="margin-top:12px;text-decoration:none;text-align:center;">📲 Falar no WhatsApp</a>' : ''}
+      ` : '<div class="empty">Cliente mensal encerrado — a proposta dele não passou por aqui.</div>';
+    } else if(abaAtual === 'producao'){
+      corpo = `
+        <div class="linha"><b>Evento:</b> ${esc(f.evento||'—')}</div>
+        <div class="linha"><b>Data:</b> ${f.dataEvento ? formatarDataBR(f.dataEvento) : '—'}</div>
+        <div class="linha"><b>Pacote:</b> ${esc(f.pacote||'—')}</div>
+        ${f.servicos ? '<div class="linha"><b>Serviços:</b> '+esc(f.servicos)+'</div>' : ''}
+        ${f.slug ? '<div class="linha"><b>No sistema como:</b> '+esc(f.slug)+'</div>' : '<div class="linha" style="color:var(--yellow2);">Ainda não virou cliente no sistema — acontece ao chegar em "Pago — em produção".</div>'}`;
+    } else if(abaAtual === 'financeiro'){
+      corpo = f.receita ? `
+        <div class="painelResumo" style="margin-bottom:12px;">
+          <div class="resumoCard ${f.receita.recebido?'green':'yellow'}"><div class="num" style="font-size:17px;">${brl(Number(f.receita.valor)||0)}</div><div class="lbl">${f.receita.recebido?'Recebido':'A receber'}</div></div>
+          <div class="resumoCard"><div class="num" style="font-size:15px;">${esc(f.receita.competencia||'—')}</div><div class="lbl">Conta no mês de</div></div>
+        </div>
+        <div class="desc">O valor se edita no Financeiro, na seção de avulsos do mês — é lá que ele entra no caixa.</div>
+        <button class="btn secondary" style="margin-top:10px;" onclick="fecharModal();irParaAtalho('financeiro');">Abrir no Financeiro →</button>
+      ` : '<div class="empty">Nenhum lançamento ainda. Ele nasce quando a fase chega em "Pago — em produção".</div>';
+    } else {
+      const h = (f.historico||[]).slice().reverse();
+      corpo = h.length ? h.map(x => `<div class="item" style="border-left:3px solid var(--line);">
+        <div class="top"><div class="nome">${esc(faseAvulso(x.estagio).nome)}</div><span class="meta">${(x.em||'').slice(0,10).split('-').reverse().join('/')}</span></div>
+        <div class="meta" style="margin-top:3px;">por ${esc(x.por||'?')}</div>
+      </div>`).join('') : '<div class="empty">Sem movimentações registradas.</div>';
+    }
+
+    document.getElementById('modalConteudo').innerHTML = `
+      <h2>${esc(f.nome)}</h2>
+      <div class="meta" style="margin-bottom:14px;">${esc(faseAvulso(f.fase).ajuda)}</div>
+      <div style="display:flex;gap:4px;align-items:flex-end;margin-bottom:16px;">${trilha.map(passo).join('')}</div>
+      ${f.tipo==='negocio' ? '<div class="desc" style="margin:-8px 0 14px;">Clica numa etapa acima pra mover o trabalho.</div>' : ''}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+        ${abaBtn('proposta','Proposta')}${abaBtn('producao','Produção')}${abaBtn('financeiro','Financeiro')}${abaBtn('historico','Histórico')}
+      </div>
+      ${corpo}
+      <button class="btn secondary" style="margin-top:16px;" onclick="fecharModal()">Fechar</button>`;
+    document.getElementById('overlayView').classList.add('show');
+  };
+
   window.moverFaseAvulso = async function(id, fase){
     // reaproveita o motor do funil, que ja cria cliente e receita em "producao"
     const orig = window.confirm; window.confirm = () => true;
     try{ await moverNegocio(id, fase); } finally { window.confirm = orig; }
-    renderClientesAvulsos();
+    await renderClientesAvulsos();
+    if(document.getElementById('overlayView').classList.contains('show')) abrirFichaAvulso(id);
   };
 
   window.salvarCampoAvulsoFicha = async function(id, campo, valor){

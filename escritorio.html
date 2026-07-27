@@ -12425,6 +12425,11 @@
       try{
         const jaSnap = await getDocs(collection(db,'receitas_avulsas'));
         let jaTem = false; jaSnap.forEach(d => { if(d.data().negocioId === id) jaTem = true; });
+        if(!jaTem && !valorDeTexto(n.propostaValor)){
+          // avisa em vez de deixar nascer R$ 0 em silencio, que foi o que
+          // aconteceu com a IKN e obrigou o Chris a lembrar o numero de cabeca
+          mostrarToast('Atenção: esse negócio não tem valor proposto. O lançamento vai nascer zerado — preenche o valor na ficha do cliente.', 'erro');
+        }
         if(!jaTem){
           await addDoc(collection(db,'receitas_avulsas'), {
             negocioId: id, clienteNome: n.clienteNome || '',
@@ -13563,8 +13568,35 @@
     if(document.getElementById('overlayView').classList.contains('show')) abrirFichaAvulso(id);
   };
 
+  /* ===== 27/07/2026 — O VALOR SÓ EXISTIA NA CABEÇA DO CHRIS =====
+     Rastreando por que a receita da IKN nasceu zerada: o formulário de
+     avulso (avulso.html) NÃO captura preço nenhum — nem uma menção a R$ no
+     arquivo inteiro. Ele guarda o que o cliente quer (pacotes, quantidade
+     de vídeos, percentual de desconto), mas o valor é negociado por fora,
+     no WhatsApp, e nunca era escrito em lugar nenhum do sistema.
+     Resultado: `propostaValor` do negócio ficava vazio, a receita nascia
+     R$ 0 e alguém tinha que digitar o número de memória no Financeiro.
+     Agora o valor proposto é o ponto único de entrada: digitou aqui, o
+     lançamento do Financeiro acompanha. */
   window.salvarCampoAvulsoFicha = async function(id, campo, valor){
     await updateDoc(doc(db,'negocios', id), { [campo]: valor, atualizadoPor: usuarioAtual||'?', atualizadoEm: new Date().toISOString() });
+
+    if(campo === 'propostaValor'){
+      const novo = valorDeTexto(valor);
+      const snap = await getDocs(collection(db,'receitas_avulsas'));
+      let alvo = null;
+      snap.forEach(d => { if(d.data().negocioId === id) alvo = { id:d.id, ...d.data() }; });
+      if(alvo && novo && !alvo.recebido && (Number(alvo.valor)||0) !== novo){
+        await updateDoc(doc(db,'receitas_avulsas', alvo.id), { valor: novo, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() });
+        mostrarToast('Valor salvo — o lançamento do Financeiro foi junto: ' + brl(novo));
+        renderClientesAvulsos();
+        return;
+      }
+      if(alvo && alvo.recebido){
+        mostrarToast('Valor da proposta salvo. O lançamento já está marcado como recebido, então não mexi nele — se precisar corrigir, é no Financeiro.');
+        return;
+      }
+    }
     mostrarToast('Salvo.');
   };
 

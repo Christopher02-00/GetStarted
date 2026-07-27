@@ -126,7 +126,7 @@
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -143,7 +143,7 @@
   const clienteId = params.get('cliente') || 'exemplo';
   const docRef = doc(db, 'calendarios', clienteId);
 
-  window.__fb = { docRef, setDoc, onSnapshot };
+  window.__fb = { docRef, setDoc, onSnapshot, db, collection, getDocs, addDoc, serverTimestamp };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
 </script>
 </head>
@@ -198,7 +198,21 @@
     <div class="field"><label>Título do conteúdo</label><input id="mName"></div>
     <div class="field"><label>Roteiro do conteúdo (cole o roteiro completo em blocos)</label><textarea id="mDesc" style="min-height:150px;font-size:11.5px;line-height:1.5;"></textarea></div>
     <div class="field"><label>📝 Legenda pra postagem (separado do roteiro — isso é o texto que vai no post)</label><textarea id="mLegenda" style="min-height:80px;font-size:11.5px;line-height:1.5;" placeholder="Escreve aqui a legenda que vai acompanhar o post no Instagram..."></textarea></div>
-    <div class="field"><label>Link de referência</label><input id="mRef" placeholder="cole o link do vídeo de referência (opcional)" oninput="updateRefLink()"><a id="mRefLink" class="reflink hidden" href="#" target="_blank" rel="noopener">🔗 Abrir referência ↗</a></div>
+    <!-- 27/07/2026 — antes era só um campo de colar link, e pra usar uma
+         referência já arquivada a Gabi tinha que sair do calendário, abrir o
+         Hub e voltar. Agora as referências daquele cliente vêm aqui dentro. -->
+    <div class="field"><label>Referência</label>
+      <select id="mRefSelect" onchange="usarRefDoBanco()"><option value="">Escolher do banco de referências…</option></select>
+      <input id="mRef" placeholder="ou cole o link aqui" oninput="updateRefLink()" style="margin-top:6px;">
+      <a id="mRefLink" class="reflink hidden" href="#" target="_blank" rel="noopener">🔗 Abrir referência ↗</a>
+    </div>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="mFlex" style="width:auto;margin:0;">
+        <span>Data flexível — o dia é sugestão, pode andar</span>
+      </label>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Pra cliente em obra, reforma ou agenda instável. O conteúdo continua no dia, só fica marcado que a data não está travada.</div>
+    </div>
     <div class="field"><label>Etapa do funil</label>
       <select id="mStage"><option value="topo">Topo — atração</option><option value="meio">Meio — conexão</option><option value="fundo">Fundo — conversão</option></select>
     </div>
@@ -270,6 +284,52 @@ function offsetDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes,1).getDay():
 function diasDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes+1,0).getDate():31;}
 
 let saveTimer=null;let pendingWrite=false;
+/* ===== BANCO DE REFERÊNCIAS DENTRO DO CALENDÁRIO — 27/07/2026 =====
+   Junta as duas fontes: o Hub (referencias) e o que o cliente mandou pelo
+   portal (referencias_cliente). Carrega uma vez e alimenta o seletor. */
+let refsDoCliente = [];
+async function carregarRefsDoCliente(){
+  if(!window.__fb) return;
+  const { db, collection, getDocs } = window.__fb;
+  const slug = window.__clienteId;
+  try{
+    const [hub, portal] = await Promise.all([
+      getDocs(collection(db,'referencias')),
+      getDocs(collection(db,'referencias_cliente'))
+    ]);
+    const lista = [];
+    hub.forEach(d => { const v=d.data();
+      if(v.excluido || v.cliente !== slug || !v.link) return;
+      lista.push({ link:v.link, txt:(v.descricao||v.nicho||'sem descrição'), origem:'hub' }); });
+    portal.forEach(d => { const v=d.data();
+      if(v.excluido || v.cliente !== slug || !v.link) return;
+      lista.push({ link:v.link, txt:(v.descricao||'sem descrição'), origem: v.criadoPorTipo==='cliente' ? 'cliente' : 'portal' }); });
+    refsDoCliente = lista;
+  }catch(e){ console.error('Falha ao carregar referências:', e); }
+  preencherSeletorRefs();
+}
+function preencherSeletorRefs(){
+  const sel = document.getElementById('mRefSelect');
+  if(!sel) return;
+  if(!refsDoCliente.length){
+    sel.innerHTML = '<option value="">Nenhuma referência arquivada pra este cliente ainda</option>';
+    sel.disabled = true; return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = '<option value="">Escolher do banco de referências…</option>' +
+    refsDoCliente.map((r,i) => {
+      const marca = r.origem==='cliente' ? '💬 o cliente mandou · ' : '';
+      return `<option value="${i}">${marca}${esc(r.txt.slice(0,58))}</option>`;
+    }).join('');
+}
+window.usarRefDoBanco = function(){
+  const sel = document.getElementById('mRefSelect');
+  const r = refsDoCliente[Number(sel.value)];
+  if(!r) return;
+  document.getElementById('mRef').value = r.link;
+  updateRefLink();
+};
+
 function load(){
   if(!window.__fb){
     document.getElementById('viewGrid').innerHTML='<div style="padding:30px;text-align:center;color:#e07a7a;">Não foi possível conectar ao banco de dados. Recarregue a página (se persistir, avise a Get).</div>';
@@ -288,6 +348,7 @@ function load(){
     document.getElementById('clientName').value=data.client||nomeDoSlug(window.__clienteId);
     document.getElementById('monthName').value=data.month||mesAtualTexto();
     renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderFeedback();
+    carregarRefsDoCliente();
   },(err)=>{
     console.error('Erro de conexão:',err);
     document.getElementById('viewGrid').innerHTML='<div style="padding:30px;text-align:center;color:#e07a7a;">Erro de conexão com o banco de dados: '+err.message+'</div>';
@@ -402,7 +463,7 @@ function renderGrid(){
     const its=data.items.filter(i=>i.day===d);
     html+='<div class="cell" onclick="openModal('+d+')"><div class="dnum">'+d+'</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
-      html+='<div class="chip '+it.stage+'" onclick="event.stopPropagation();openEdit('+idx+')">'+(it.apr?'✅ ':'')+esc(it.name.slice(0,22))+(it.name.length>22?'…':'')+'</div>';});
+      html+='<div class="chip '+it.stage+'" onclick="event.stopPropagation();openEdit('+idx+')">'+(it.apr?'✅ ':'')+(it.dataFlexivel?'🔄 ':'')+esc(it.name.slice(0,20))+(it.name.length>20?'…':'')+'</div>';});
     html+='</div>';
   }
   html+='</div>';
@@ -463,6 +524,8 @@ function openModal(day){editIdx=null;document.getElementById('mTitle').textConte
   document.getElementById('mRef').value='';
   document.getElementById('mLegenda').value='';
   document.getElementById('mStage').value='topo';document.getElementById('mFmt').value='';
+  document.getElementById('mFlex').checked=false;
+  const selN=document.getElementById('mRefSelect'); if(selN) selN.value='';
   document.getElementById('aprBtn').style.display='none';
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
@@ -471,6 +534,8 @@ function openEdit(i){editIdx=i;const it=data.items[i];document.getElementById('m
   document.getElementById('mLegenda').value=it.legenda||'';
   document.getElementById('mRef').value=it.ref||'';
   document.getElementById('mStage').value=it.stage;document.getElementById('mFmt').value=it.fmt;
+  document.getElementById('mFlex').checked=!!it.dataFlexivel;
+  const selE=document.getElementById('mRefSelect'); if(selE) selE.value='';
   const b=document.getElementById('aprBtn');b.style.display='block';
   b.textContent=it.apr?'✕ Remover aprovação':'✓ Aprovar conteúdo';
   b.className='btn '+(it.apr?'btn-o':'btn-g');
@@ -483,7 +548,9 @@ function saveItem(){
     stage:document.getElementById('mStage').value,fmt:document.getElementById('mFmt').value||'Reel',
     apr:editIdx!==null?(data.items[editIdx].apr||false):false,posted:editIdx!==null?(data.items[editIdx].posted||false):false,
     gravado:editIdx!==null?(data.items[editIdx].gravado||false):false,
-    agendado:editIdx!==null?(data.items[editIdx].agendado||false):false};
+    agendado:editIdx!==null?(data.items[editIdx].agendado||false):false,
+    postagemId:editIdx!==null?(data.items[editIdx].postagemId||''):'',
+    dataFlexivel:document.getElementById('mFlex').checked};
   if(editIdx!==null)data.items[editIdx]=it;else data.items.push(it);
   closeModal();renderAll();}
 function delItem(){if(editIdx!==null){data.items.splice(editIdx,1);}closeModal();renderAll();}

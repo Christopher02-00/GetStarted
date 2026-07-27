@@ -1952,10 +1952,19 @@
 
   async function contarAbertosPorEditor(){
     const snap = await getDocs(collection(db,'videos_producao'));
+    /* ===== CORRIGIDO 27/07/2026 =====
+       A conta incluía vídeo "aguardando aprovação" e "aguardando cliente" —
+       coisas que NÃO estão na mão do editor: ele já entregou e está esperando
+       outra pessoa. Isso inflava a carga de todo mundo (a Cecília aparecia
+       com 19 vídeos tendo 2 pra editar) e fazia a distribuição achar que
+       todos estavam estourados. Agora conta só o que ele tem pra fazer:
+       aguardando edição e correção. */
     const contagem = {}; EDITORES_GERAL.forEach(e => contagem[e]=0);
     snap.forEach(d => {
       const v = d.data();
-      if(!v.excluido && v.status !== 'aprovado' && v.status !== 'finalizado' && contagem[v.editorAtribuido] !== undefined) contagem[v.editorAtribuido]++;
+      if(v.excluido) return;
+      if(!['aguardando_edicao','correcao'].includes(v.status)) return;
+      if(contagem[v.editorAtribuido] !== undefined) contagem[v.editorAtribuido]++;
     });
     return contagem;
   }
@@ -2680,11 +2689,19 @@
     html += `<div class="desc" style="margin:14px 0 6px;">👆 Toque num card pra filtrar a lista abaixo por aquilo especificamente:</div>`;
     html += `<div class="painelResumo">`;
     EDITORES_GERAL.forEach(ed => {
+      /* 27/07/2026 — o cartão mostrava o TOTAL, incluindo vídeo já entregue
+         esperando cliente ou aprovação. A Cecília via "19" tendo 2 pra
+         editar, e concluiu que estava sobrecarregada. Agora o número grande
+         é o que está na mão dela; o resto vai embaixo, em cinza. */
       const dele = abertos.filter(v => v.editorAtribuido === ed);
-      html += `<div class="resumoCard clicavel ${filtro===ed?'yellow':''}" onclick="window.__filtroVideosGerencia='${ed}';renderGerenciaVideos();">
-        <div class="num">${dele.length}</div>
-        <div class="lbl">${esc(ed)} · aberto <span class="videoCapacidade">(alvo ${EDITORES_CONFIG[ed].capacidade})</span></div>
-        <div style="font-size:10px;color:var(--yellow);margin-top:4px;">Ver os dela →</div>
+      const naMao = dele.filter(v => ['aguardando_edicao','correcao'].includes(v.status)).length;
+      const esperando = dele.length - naMao;
+      const alvo = EDITORES_CONFIG[ed].capacidade;
+      html += `<div class="resumoCard clicavel ${filtro===ed?'yellow':''} ${naMao>alvo?'red':''}" onclick="window.__filtroVideosGerencia='${ed}';renderGerenciaVideos();">
+        <div class="num">${naMao}</div>
+        <div class="lbl">${esc(ed)} · pra editar <span class="videoCapacidade">(alvo ${alvo})</span></div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;">${esperando} esperando outros</div>
+        <div style="font-size:10px;color:var(--yellow);margin-top:3px;">Ver tudo →</div>
       </div>`;
     });
     html += `<div class="resumoCard clicavel green ${filtro==='concluidos'?'yellow':''}" onclick="window.__filtroVideosGerencia='concluidos';renderGerenciaVideos();">
@@ -11710,6 +11727,73 @@
      resultado foi zero story criado desde que a funcionalidade existe.
      Dispara toda SEGUNDA, com a lista de quem ainda não tem semana montada.
      Fecha sozinha quando todos os clientes estiverem cobertos. */
+  /* ===== CALENDÁRIO PRONTO → PRODUÇÃO (27/07/2026) =====
+     O elo que faltava. A Gabi montava o calendário e ninguém ficava sabendo:
+     eu tive que criar a demanda da Monique na mão. Com 20 clientes vindo,
+     isso ia depender de ela lembrar de avisar toda vez.
+     Agora: assim que um calendário tem 3 ou mais conteúdos planejados por
+     ela (item escrito à mão, não vindo da automação de postagem) e o cliente
+     não tem gravação marcada pra frente, o sistema abre a demanda pra
+     Cecília — uma por cliente, sem repetir. */
+  async function avisarCalendarioPronto(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const [calSnap, agSnap, demSnap, postSnap] = await Promise.all([
+      getDocs(collection(db,'calendarios')),
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'demandas')),
+      getDocs(collection(db,'postagens'))
+    ]);
+    // títulos que vieram da automação de postagem não contam como planejamento
+    const titulosAuto = new Set();
+    postSnap.forEach(d => { const v=d.data(); if(v.cliente && v.titulo) titulosAuto.add(v.cliente+'|'+v.titulo); });
+    // quem já tem gravação futura marcada
+    const comGravacao = new Set();
+    agSnap.forEach(d => { const a=d.data(); if(a.cliente && a.status !== 'cancelado' && a.data >= hojeStr) comGravacao.add(a.cliente); });
+    // quem já foi avisado
+    const jaAvisado = new Set();
+    demSnap.forEach(d => { const v=d.data(); if(v.tipoEspecial === 'calendario_pronto' && v.clienteSlugRef) jaAvisado.add(v.clienteSlugRef); });
+
+    for(const d of calSnap.docs){
+      const cal = d.data();
+      const slug = d.id;
+      if(jaAvisado.has(slug) || comGravacao.has(slug)) continue;
+      const cfg = (await getDoc(doc(db,'clientes_config', slug))).data() || {};
+      if(cfg.clienteInativo) continue;
+      const planejados = (cal.items||[]).filter(i => !i.posted && !i.agendado && !titulosAuto.has(slug+'|'+i.name));
+      if(planejados.length < 3) continue;
+
+      const dias = planejados.map(i=>i.day).sort((a,b)=>a-b);
+      await addDoc(collection(db,'demandas'), {
+        titulo: '📆 Calendário pronto — marcar a gravação da ' + (cal.client || slug),
+        descricao: 'A Gabi terminou o calendário de ' + (cal.month||'') + ' para ' + (cal.client||slug) + ': '
+          + planejados.length + ' conteúdos planejados, do dia ' + dias[0] + ' ao dia ' + dias[dias.length-1] + '.\n\n'
+          + 'Sem gravação marcada, esse calendário não sai do papel.\n\n'
+          + 'COMO FAZER\n'
+          + '1. Menu lateral → Agendamento → "Marcar Nova Gravação"\n'
+          + '2. Cliente: ' + (cal.client||slug) + '\n'
+          + '3. Preenche data, filmmaker e a QUANTIDADE de vídeos planejados\n'
+          + '4. Salvar\n\n'
+          + 'A quantidade importa: é ela que o sistema compara com o que foi realmente gravado. Se gravar menos, ele empurra o que faltou pra próxima e avisa a Amanda.\n\n'
+          + 'Essa demanda some sozinha quando a gravação for marcada.',
+        origem: 'sistema', clienteNome: cal.client || '', destinatario: 'Cecília',
+        tipoEspecial: 'calendario_pronto', clienteSlugRef: slug,
+        prazoData: hojeStr, prazoHora: '19:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+      registrarLogAutomacao('calendario_pronto', slug, planejados.length + ' conteúdos sem gravação marcada');
+    }
+
+    // fecha sozinha quando a gravação for marcada
+    for(const d of demSnap.docs){
+      const v = d.data();
+      if(v.tipoEspecial !== 'calendario_pronto' || ['aprovada','cancelada'].includes(v.status)) continue;
+      if(comGravacao.has(v.clienteSlugRef)){
+        await updateDoc(doc(db,'demandas', d.id), { status:'aprovada', concluidoPor:'sistema (gravação marcada)', concluidoEm: serverTimestamp(),
+          notaConclusao:'Gravação marcada — o calendário já tem como ser executado.' });
+      }
+    }
+  }
+
   async function cobrarStoriesDaSemana(){
     const hoje = new Date();
     if(hoje.getDay() !== 1) return;                  // só segunda
@@ -11722,7 +11806,21 @@
     const cobertos = new Set();
     stSnap.forEach(d => { const v=d.data(); if(v.semana === semana && v.cliente) cobertos.add(v.cliente); });
 
-    const alvo = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && c.slug !== 'get-started');
+    /* ===== CORRIGIDO 27/07/2026 =====
+       A cobrança pegava TODOS os clientes e dizia "faltam 24" — mas story
+       não é de todo mundo: só quem contratou. O Chris confirmou: Juliane,
+       Vitalle, Divina Cantina e Joaquin. Agora o alvo sai da configuração
+       de dias de story de cada cliente (stories_diarios_config). Cliente
+       sem configuração simplesmente não é cobrado. */
+    const cfgSnap = await getDocs(collection(db,'stories_diarios_config'));
+    const comStory = new Set();
+    cfgSnap.forEach(d => { const v=d.data();
+      if(!(v.dias||[]).length) return;
+      const slug = v.cliente || (CLIENTES_LISTA.find(c => c.nome === v.clienteNome)||{}).slug;
+      if(slug) comStory.add(slug);
+    });
+    if(!comStory.size) return;   // ninguém configurado ainda: não cobra ninguém
+    const alvo = CLIENTES_LISTA.filter(c => comStory.has(c.slug));
     const faltando = alvo.filter(c => !cobertos.has(c.slug));
 
     let demanda = null;
@@ -11743,7 +11841,8 @@
       + '2. No card "📅 Montar a semana inteira", escolhe o cliente\n'
       + '3. Preenche título e roteiro de cada dia. Dia sem story, deixa em branco\n'
       + '4. "Enviar a semana pro cliente aprovar" — vai tudo junto, organizado por dia, pro portal dele\n\n'
-      + 'Falta montar esta semana (' + faltando.length + '): ' + faltando.map(c=>c.nome).join(', ') + '.\n\n'
+      + 'Story é só pros clientes que contrataram — quem não tem não aparece aqui.\n'
+      + 'Falta montar esta semana (' + faltando.length + ' de ' + alvo.length + '): ' + faltando.map(c=>c.nome).join(', ') + '.\n\n'
       + 'Essa demanda fecha sozinha quando todos estiverem cobertos.';
 
     if(demanda){
@@ -11824,6 +11923,7 @@
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
+      { nome: 'calendarioNovoParaProducao', fn: avisarCalendarioPronto },
       { nome: 'storiesDaSemana', fn: cobrarStoriesDaSemana },
       { nome: 'extrasDoDia15', fn: lembrarExtrasDosFilmmakers },
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },

@@ -144,6 +144,7 @@
   const docRef = doc(db, 'calendarios', clienteId);
 
   window.__fb = { docRef, setDoc, onSnapshot };
+  window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
 </script>
 </head>
 <body>
@@ -152,9 +153,9 @@
     <div class="brand"><span class="dot"></span><div>Get Started<small>Calendário Editorial</small></div></div>
     <div class="clientbox">
       <div class="lbl">Cliente</div>
-      <input id="clientName" value="Nome do Cliente" oninput="save()">
+      <input id="clientName" value="" placeholder="Carregando…" oninput="save()">
       <div class="lbl" style="margin-top:6px;">Mês</div>
-      <input id="monthName" value="Agosto 2026" oninput="renderAll()">
+      <input id="monthName" value="" placeholder="Carregando…" oninput="renderAll()">
     </div>
   </header>
 
@@ -236,20 +237,37 @@
 
 <script type="module">
 const KEY='get_calendar_v1';
-let data={client:'Nome do Cliente',month:'Agosto 2026',items:[],comments:[],updatedAt:null};
+let data={client:'',month:'',items:[],comments:[],updatedAt:null};
 let view='grid';
 let editIdx=null;
 
-const seed=[
-  {day:4,name:'Um dia produzindo o mês do cliente',desc:'🟦 BLOCO 1 — POV óculos Meta\n🎥 FILMAR: chegada no cliente, equipamento na mão, montagem do set.\n🎤 FALA: sem fala (música trending).\n\n✂ MONTAGEM: cortes no ritmo da música, texto na tela contando o volume ("3 gravações · 12 conteúdos · 1 dia"), loop no fim.',ref:'',stage:'topo',fmt:'POV óculos Meta',apr:false,posted:false},
-  {day:6,name:'3 erros que fazem o perfil parecer amador',desc:'Ensinativo. Gancho: "3 erros que fazem seu perfil parecer amador". Cada erro com o conserto rápido. Lettering numerando 1·2·3.',ref:'',stage:'meio',fmt:'Ensinativo',apr:false,posted:false},
-  {day:8,name:'Bastidor real da gravação',desc:'Bastidor com som ambiente, cru, mostra o processo interno. Edição simples proposital.',ref:'',stage:'topo',fmt:'Bastidor c/ fala',apr:false,posted:false},
-  {day:12,name:'Antes e depois do cliente',desc:'Prova social. Antes/depois do perfil em 30 dias. Número em lettering. CTA leve → direct.',ref:'',stage:'fundo',fmt:'Resultado',apr:false,posted:false},
-  {day:14,name:'A parte que ninguém te conta',desc:'Low-fi falado, conexão, esqueleto+alma. Gancho de curiosidade específica.',ref:'',stage:'meio',fmt:'Low-fi falado',apr:false,posted:false},
-  {day:18,name:'Vem comigo pra um dia de produção',desc:'POV vlog mudo, estética do dia de trabalho. Micro-textos de hora/local.',ref:'',stage:'topo',fmt:'POV óculos Meta',apr:false,posted:false},
-  {day:20,name:'Depoimento espontâneo do cliente',desc:'Prova social emocional, depoimento real, CTA leve.',ref:'',stage:'fundo',fmt:'Resultado',apr:false,posted:false},
-  {day:26,name:'Um dia de paz (cinematográfico)',desc:'Narrado, imagem bonita, vende sem parecer venda. Trilha cinematográfica.',ref:'',stage:'topo',fmt:'Cinematográfico',apr:false,posted:false}
-];
+// Nome do cliente derivado do slug da URL — nunca mais "Nome do Cliente" no ar.
+const NOMES_ESPECIAIS={"camargos":"Camargo's","vip":"VIP","hitech":"Hitech","ikn-brasil":"IKN Brasil","bluefit":"Bluefit"};
+const MINUSCULAS=['de','da','do','das','dos','e'];
+function nomeDoSlug(slug){
+  if(!slug||slug==='exemplo')return '';
+  if(NOMES_ESPECIAIS[slug])return NOMES_ESPECIAIS[slug];
+  return slug.split('-').map(function(p,i){
+    if(p==='dra')return 'Dra.';
+    if(p==='dr')return 'Dr.';
+    if(i>0&&MINUSCULAS.indexOf(p)>=0)return p;
+    return p.charAt(0).toUpperCase()+p.slice(1);
+  }).join(' ');
+}
+const MESES_PT=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function mesAtualTexto(){var h=new Date();return MESES_PT[h.getMonth()]+' '+h.getFullYear();}
+// Le o campo "Mês" (texto livre, ex.: "Julho 2026") e devolve o mes real.
+function mesRef(){
+  var t=(data.month||'').trim().toLowerCase();
+  var i=MESES_PT.findIndex(function(x){return t.indexOf(x.toLowerCase())===0;});
+  var a=t.match(/(\d{4})/);
+  if(i<0||!a)return null;
+  return {mes:i, ano:parseInt(a[1],10)};
+}
+// Em que coluna cai o dia 1 (0=Dom). Antes era fixo em 5 ("agosto 2026").
+function offsetDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes,1).getDay():0;}
+// Quantos dias o mes tem de verdade. Antes era sempre 31.
+function diasDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes+1,0).getDate():31;}
 
 let saveTimer=null;let pendingWrite=false;
 function load(){
@@ -263,11 +281,12 @@ function load(){
       data=snap.data();
       if(!data.comments)data.comments=[];
     } else {
-      data={client:'Nome do Cliente',month:'Agosto 2026',items:seed,comments:[],updatedAt:null};
-      save();
+      // Calendario ainda nao existe: abre VAZIO e NAO grava nada.
+      // (Antes gravava 8 posts de exemplo + "Nome do Cliente" no banco.)
+      data={client:nomeDoSlug(window.__clienteId),month:mesAtualTexto(),items:[],comments:[],updatedAt:null};
     }
-    document.getElementById('clientName').value=data.client||'Nome do Cliente';
-    document.getElementById('monthName').value=data.month||'Agosto 2026';
+    document.getElementById('clientName').value=data.client||nomeDoSlug(window.__clienteId);
+    document.getElementById('monthName').value=data.month||mesAtualTexto();
     renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderFeedback();
   },(err)=>{
     console.error('Erro de conexão:',err);
@@ -352,10 +371,15 @@ function renderProgress(){
 function renderGrid(){
   const wrap=document.getElementById('viewGrid');
   let html='<div class="weekdays"><div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sáb</div></div><div class="grid">';
-  // simplificação: mês de 31 dias começando numa posição fixa (offset editável mentalmente)
-  const offset=5; // agosto 2026 começa no sábado; ajuste visual
+  /* CORRIGIDO 27/07/2026 — a grade era fixa: offset 5 e sempre 31 dias,
+     congelados em "agosto 2026". Em julho/2026 o dia 1 aparecia na sexta
+     quando na verdade e quarta: TODAS as datas ficavam sob o dia da semana
+     errado, e meses de 28/29/30 dias ganhavam dias que nao existem.
+     Agora offset e total saem do proprio campo "Mês". */
+  const offset=offsetDoMes();
+  const totalDias=diasDoMes();
   for(let i=0;i<offset;i++) html+='<div class="cell empty"></div>';
-  for(let d=1;d<=31;d++){
+  for(let d=1;d<=totalDias;d++){
     const its=data.items.filter(i=>i.day===d);
     html+='<div class="cell" onclick="openModal('+d+')"><div class="dnum">'+d+'</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
@@ -368,7 +392,8 @@ function renderGrid(){
 
 function renderWeek(){
   const wrap=document.getElementById('viewWeek');
-  const weeks=[[1,7],[8,14],[15,21],[22,31]];
+  const ultimo=diasDoMes();
+  const weeks=[[1,7],[8,14],[15,21],[22,ultimo]];
   const wl=['Semana 1','Semana 2','Semana 3','Semana 4'];
   let html='';
   weeks.forEach((w,wi)=>{

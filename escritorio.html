@@ -11895,6 +11895,110 @@
     registrarLogAutomacao('extras_dia15_criada', mes, Object.keys(porFilm).length + ' filmmaker(s), ' + brl(total));
   }
 
+  /* ===================================================================
+     PREVENÇÃO DE DUPLICATAS — 27/07/2026
+     Pedido do Chris depois de três episódios reais: os vídeos do lote
+     reenviado, a cobrança de referências criada duas vezes e as demandas
+     de gravação repetidas. Em vez de limpar caso a caso, o sistema passa a
+     impedir na origem e a varrer o que escapar.
+     São três camadas:
+       1. `criarDemandaSegura` — recusa demanda idêntica já pendente
+       2. `videoJaExiste`      — recusa vídeo igual do mesmo cliente
+       3. `varrerDuplicatas`   — roda no motor e encerra o que passou
+     A regra de "idêntica": mesmo título, mesmo destinatário, ainda em
+     aberto. Título diferente nunca é bloqueado — dois vídeos do mesmo
+     cliente com nomes diferentes são trabalhos diferentes.
+     =================================================================== */
+  const norm = t => (t||'').toString().trim().toLowerCase().replace(/\s+/g,' ');
+
+  window.criarDemandaSegura = async function(dados, opts){
+    const o = opts || {};
+    try{
+      const q1 = query(collection(db,'demandas'), where('destinatario','==', dados.destinatario||''), where('status','==','pendente'));
+      const snap = await getDocs(q1);
+      let achou = null;
+      snap.forEach(d => { const v=d.data();
+        if(norm(v.titulo) === norm(dados.titulo)) achou = { id:d.id, ...v };
+      });
+      if(achou){
+        registrarLogAutomacao('demanda_duplicada_evitada', achou.id, (dados.titulo||'').slice(0,70) + ' → ' + (dados.destinatario||''));
+        // se o texto mudou (ex.: a lista de clientes que faltam), atualiza em vez de criar outra
+        if(o.atualizarSeMudou && dados.descricao && dados.descricao !== achou.descricao){
+          await updateDoc(doc(db,'demandas', achou.id), { descricao: dados.descricao, titulo: dados.titulo, atualizadoEm: serverTimestamp() });
+        }
+        return { criada:false, id: achou.id };
+      }
+      const ref = await addDoc(collection(db,'demandas'), dados);
+      return { criada:true, id: ref.id };
+    }catch(e){
+      console.error('Falha na criação segura de demanda:', e);
+      const ref = await addDoc(collection(db,'demandas'), dados);   // nunca perde a demanda por causa da trava
+      return { criada:true, id: ref.id };
+    }
+  };
+
+  window.videoJaExiste = async function(clienteSlug, titulo, minutos){
+    try{
+      const janela = Date.now() - (minutos||10)*60*1000;
+      const snap = await getDocs(collection(db,'videos_producao'));
+      let achou = false;
+      snap.forEach(d => { const v=d.data();
+        if(v.excluido || achou) return;
+        if((v.cliente||'') !== clienteSlug) return;
+        if(norm(v.titulo) !== norm(titulo)) return;
+        const ts = v.criadoEm?.seconds ? v.criadoEm.seconds*1000 : 0;
+        if(ts >= janela) achou = true;
+      });
+      return achou;
+    }catch(e){ console.error('Falha ao checar vídeo repetido:', e); return false; }
+  };
+
+  /* A rede embaixo do trapézio: mesmo com as travas, se alguma duplicata
+     escapar (código antigo, dois navegadores ao mesmo tempo), esta varredura
+     encerra a repetida e mantém a mais antiga — que é a que tem histórico. */
+  async function varrerDuplicatas(){
+    // --- demandas pendentes idênticas ---
+    const dSnap = await getDocs(collection(db,'demandas'));
+    const grupos = {};
+    dSnap.forEach(d => { const v=d.data();
+      if(v.status !== 'pendente') return;
+      const k = (v.destinatario||'') + '||' + norm(v.titulo);
+      (grupos[k] = grupos[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
+    });
+    let nD = 0;
+    for(const [k, lista] of Object.entries(grupos)){
+      if(lista.length < 2) continue;
+      lista.sort((a,b)=>a.ts-b.ts);
+      for(const dup of lista.slice(1)){
+        await updateDoc(doc(db,'demandas', dup.id), {
+          status:'cancelada', concluidoPor:'sistema (duplicata)', concluidoEm: serverTimestamp(),
+          notaConclusao:'Demanda idêntica já estava aberta — mantida a original, esta foi encerrada automaticamente.'
+        });
+        nD++;
+      }
+    }
+    // --- vídeos iguais do mesmo cliente ---
+    const vSnap = await getDocs(collection(db,'videos_producao'));
+    const gv = {};
+    vSnap.forEach(d => { const v=d.data();
+      if(v.excluido || ['finalizado','arquivado'].includes(v.status)) return;
+      const k = (v.cliente||'') + '||' + norm(v.titulo);
+      (gv[k] = gv[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
+    });
+    let nV = 0;
+    for(const [k, lista] of Object.entries(gv)){
+      if(lista.length < 2) continue;
+      lista.sort((a,b)=>a.ts-b.ts);
+      for(const dup of lista.slice(1)){
+        await updateDoc(doc(db,'videos_producao', dup.id), {
+          excluido:true, excluidoPor:'sistema (duplicata)', excluidoEm: new Date().toISOString()
+        });
+        nV++;
+      }
+    }
+    if(nD || nV) registrarLogAutomacao('duplicatas_removidas', '', nD + ' demanda(s) e ' + nV + ' vídeo(s)');
+  }
+
   async function motorAutomacoes(origem){
     const lockRef = doc(db, 'sistema', 'motor_lock');
     try{
@@ -11923,6 +12027,7 @@
       { nome: 'clientesCapsula', fn: verificarClientesParaCapsulaAutomatico },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
+      { nome: 'varreduraDuplicatas', fn: varrerDuplicatas },
       { nome: 'calendarioNovoParaProducao', fn: avisarCalendarioPronto },
       { nome: 'storiesDaSemana', fn: cobrarStoriesDaSemana },
       { nome: 'extrasDoDia15', fn: lembrarExtrasDosFilmmakers },

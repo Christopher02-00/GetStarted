@@ -1161,7 +1161,8 @@
             <div class="gGrupo aberto" data-grupo="agora">
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">🎛️ Agora <span class="seta">▾</span></div>
               <div class="gGrupoItens">
-                <div class="subtab active" data-sub="comando" onclick="setGerenciaSub('comando', this)">Central de Comando (tempo real)</div>
+                <div class="subtab active" data-sub="agora" onclick="setGerenciaSub('agora', this)">📍 Agora</div>
+                <div class="subtab" data-sub="comando" onclick="setGerenciaSub('comando', this)">Central de Comando (tempo real)</div>
                 <div class="subtab" data-sub="demandasAguardando" onclick="setGerenciaSub('demandasAguardando', this)">🕓 Aguardando Aprovação</div>
               </div>
             </div>
@@ -1225,6 +1226,7 @@
           <div class="gerenciaConteudo">
             <div id="gerenciaFunilNegocios" style="display:none;"></div>
             <div id="gerenciaAvulsos" style="display:none;"></div>
+            <div id="gerenciaAgora" style="display:none;"></div>
             <div id="gerenciaSaudeAutomacoes" style="display:none;"></div>
             <div id="gerenciaVideosHub" style="display:none;"></div>
             <div id="gerenciaEquipeVisao" style="display:none;"></div>
@@ -8247,6 +8249,7 @@
     document.getElementById('gerenciaComando').style.display = qual==='comando' ? 'block' : 'none';
     document.getElementById('gerenciaFunilNegocios').style.display = qual==='funilNegocios' ? 'block' : 'none';
     document.getElementById('gerenciaAvulsos').style.display = qual==='avulsos' ? 'block' : 'none';
+    document.getElementById('gerenciaAgora').style.display = qual==='agora' ? 'block' : 'none';
     document.getElementById('gerenciaSaudeAutomacoes').style.display = qual==='saudeAutomacoes' ? 'block' : 'none';
     document.getElementById('gerenciaVideosHub').style.display = qual==='videosHub' ? 'block' : 'none';
     document.getElementById('gerenciaEquipeVisao').style.display = qual==='equipeVisao' ? 'block' : 'none';
@@ -8276,6 +8279,7 @@
     if(qual==='chris') renderGerenciaChris();
     if(qual==='comando') iniciarCentralComando();
     else pararCentralComando();
+    if(qual==='agora') renderAgora();
     if(qual==='avulsos') renderClientesAvulsos();
     if(qual==='funilNegocios') renderFunilNegocios();
     if(qual==='saudeAutomacoes') renderSaudeAutomacoes();
@@ -10091,7 +10095,7 @@
     }
   };
 
-  const GERENCIA_SUBTABS = ['avulsos','funilNegocios','saudeAutomacoes','videosHub','equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
+  const GERENCIA_SUBTABS = ['agora','avulsos','funilNegocios','saudeAutomacoes','videosHub','equipeVisao','disciplinaDia','comando','demandasAtrasadas','atrasosEquipe','demandasAguardando','minhasDemandasEnviadas','gravacoesDoDia','capsulaDetalhe','amanda','chris','funcionarioMes','painelTV','digest','emailsEquipe','configAprovacao','videos','aprovarVideos','lixeiraVideos','pagamentos','saudeClientes','leadsAvulsos','leadsPessoal','leadsMensal','clientesExtras','exClientes','cofreSenhas','calendariosEnviados','portalCliente','ausencias','editarChecklist','editarFuncoesFixas'];
 
   const MANUAL_FUNCAO = {
     "Chris": {
@@ -12714,6 +12718,125 @@
     irParaAtalho('gerencia');
     setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('videosHub'); }, 250);
     mostrarToast('Abrindo o hub de vídeos — o item está lá.');
+  };
+
+  /* ===== 📍 AGORA — FASE 1 DA UNIFICAÇÃO (27/07/2026) =====
+     A tela que responde "o que está travado neste minuto". Junta o que hoje
+     está em Central de Comando, Atrasadas, Atrasos da Equipe, Aguardando
+     Aprovação e Protocolo Cápsula — sem apagar nenhuma delas: tudo continua
+     no lugar, isto aqui só lê e organiza por PERGUNTA, não por recorte.
+     Quatro blocos, na ordem em que importam de manhã. */
+  window.renderAgora = async function(){
+    const cont = document.getElementById('gerenciaAgora');
+    if(!cont) return;
+    cont.innerHTML = '<div class="card"><div class="desc">Lendo o dia...</div></div>';
+    await carregarTodasDemandas();
+
+    const agora = new Date();
+    const hojeStr = agora.toISOString().slice(0,10);
+    const [vidSnap, agSnap, postSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')),
+      getDocs(collection(db,'agendamentos')),
+      getDocs(collection(db,'postagens'))
+    ]);
+    const videos = []; vidSnap.forEach(d => { const v=d.data(); if(!v.excluido) videos.push({id:d.id, ...v}); });
+
+    // ---- BLOCO 1: esperando VOCÊ ----
+    const daPessoaAgora = d => {
+      const o = (d.origem||'').toLowerCase();
+      if(usuarioAtual === 'Amanda') return o === 'amanda';
+      if(usuarioAtual === 'Chris')  return o !== 'amanda';
+      return false;
+    };
+    const aprovar = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual && daPessoaAgora(d));
+    const prazos  = (usuarioAtual === 'Amanda' || estaAusente('Amanda')) ? todasDemandas.filter(d => d.prazoSolicitado) : [];
+    const videosAprovar = videos.filter(v => v.status === 'aguardando_aprovacao');
+    const totalVoce = aprovar.length + prazos.length + videosAprovar.length;
+
+    // ---- BLOCO 2: travado agora ----
+    const atrasadas = todasDemandas.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado');
+    const porPessoa = {};
+    atrasadas.forEach(d => { (porPessoa[d.destinatario||'?'] = porPessoa[d.destinatario||'?']||[]).push(d); });
+    videos.filter(v => (v.nivelEscalonamento||0) >= 1 && !['finalizado','arquivado'].includes(v.status))
+      .forEach(v => { const e = v.editorAtribuido||v.editor||'sem editor'; (porPessoa[e] = porPessoa[e]||[]).push({ titulo:'🎬 '+(v.titulo||''), ehVideo:true }); });
+
+    // ---- BLOCO 4: risco ----
+    const riscos = [];
+    agSnap.forEach(d => { const a=d.data();
+      if(a.data < hojeStr && !a.registrado && a.status !== 'cancelado') riscos.push({ txt:'Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''), cor:'var(--red)' }); });
+    postSnap.forEach(d => { const p=d.data();
+      if(p.status === 'agendado' && p.dataAgendada && p.dataAgendada < hojeStr) riscos.push({ txt:'Postagem de ' + formatarDataBR(p.dataAgendada) + ' sem confirmação — ' + (p.clienteNome||''), cor:'var(--yellow2)' }); });
+    videos.filter(v => (v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status))
+      .forEach(v => riscos.push({ txt:'Vídeo escalado nível ' + v.nivelEscalonamento + ' — ' + (v.clienteNome||'') + ': ' + (v.titulo||''), cor:'var(--red)' }));
+
+    let html = `<div class="card">
+      <h2>📍 Agora</h2>
+      <div class="desc">O que está travado neste minuto. Junta numa tela só o que estava espalhado em cinco — as antigas continuam onde estavam.</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${totalVoce?'yellow':'green'}"><div class="num">${totalVoce}</div><div class="lbl">esperando você</div></div>
+        <div class="resumoCard ${atrasadas.length?'red':'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">demandas atrasadas</div></div>
+        <div class="resumoCard ${riscos.length?'red':'green'}"><div class="num">${riscos.length}</div><div class="lbl">pontos de risco</div></div>
+      </div>
+    </div>`;
+
+    // BLOCO 1
+    html += `<div class="card metaSec" style="border-color:${totalVoce?'var(--yellow)':'var(--green)'};">
+      <div class="metaSecTit">✋ Esperando você decidir</div>`;
+    if(!totalVoce){
+      html += '<div class="empty" style="color:var(--green);font-weight:700;">Nada travado em você. 🎉</div>';
+    } else {
+      if(aprovar.length) html += aprovar.map(d => `<div class="item" style="border-left:3px solid var(--yellow);">
+        <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${esc(d.titulo)}</div><span class="selo pendente">${esc(d.destinatario)}</span></div>
+        ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:9px 11px;border-radius:7px;">"'+esc(d.provaTexto)+'"</div>' : ''}
+        <div class="btnrow" style="margin-top:9px;">
+          <button class="btn red" style="width:auto;padding:6px 13px;font-size:11px;" onclick="rejeitarDemanda('${d.id}')">Refazer</button>
+          <button class="btn green" style="width:auto;padding:6px 18px;font-size:11px;" onclick="aprovarDemanda('${d.id}')">✔ Aprovar</button>
+        </div></div>`).join('');
+      if(prazos.length) html += prazos.map(d => `<div class="item" style="border-left:3px solid var(--yellow2);">
+        <div class="top"><div class="nome">🕓 ${esc(d.destinatario)} pediu novo prazo</div></div>
+        <div class="meta" style="margin-top:4px;">${esc(d.titulo)} · de <b>${formatarDataBR(d.prazoData)}</b> pra <b style="color:var(--yellow);">${formatarDataBR(d.prazoSolicitado)}</b></div>
+        <div class="btnrow" style="margin-top:9px;">
+          <button class="btn secondary" style="width:auto;padding:6px 13px;font-size:11px;" onclick="recusarNovoPrazo('${d.id}')">Manter</button>
+          <button class="btn green" style="width:auto;padding:6px 18px;font-size:11px;" onclick="autorizarNovoPrazo('${d.id}')">Autorizar</button>
+        </div></div>`).join('');
+      if(videosAprovar.length) html += `<div class="item" style="border-left:3px solid var(--yellow);cursor:pointer;" onclick="navegarGerenciaSub('videosHub')">
+        <div class="top"><div class="nome">🎬 ${videosAprovar.length} vídeo(s) esperando sua aprovação</div><span class="selo pendente">abrir →</span></div>
+        <div class="meta" style="margin-top:4px;">${videosAprovar.slice(0,3).map(v=>esc(v.titulo||'')).join(' · ')}${videosAprovar.length>3?' e mais '+(videosAprovar.length-3):''}</div>
+      </div>`;
+    }
+    html += `</div>`;
+
+    // BLOCO 2
+    const nomesP = Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length-porPessoa[a].length);
+    html += `<div class="card metaSec" style="border-color:${nomesP.length?'var(--red)':'var(--green)'};">
+      <div class="metaSecTit">🔴 Travado agora — por pessoa</div>
+      ${nomesP.length ? '<div class="desc" style="margin-bottom:10px;">Clica no nome pra abrir a lista. O botão monta a cobrança pronta pro WhatsApp dela.</div>' : ''}
+      ${nomesP.length ? nomesP.map(nome => `
+        <div class="faixaDem" data-faixa="ag_${esc(nome)}">
+          <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${porPessoa[nome].length})</span><span class="seta">▾</span></div>
+          <div class="faixaItens">
+            <button class="btn secondary" style="width:auto;padding:6px 13px;font-size:11px;border-color:var(--yellow);margin:4px 0 8px;" onclick="event.stopPropagation();cobrarPessoaWhats('${esc(nome)}')">📲 Cobrar ${esc(nome)}</button>
+            ${porPessoa[nome].map(d => `<div class="item" ${d.id?`style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"`:''}>
+              <div class="top"><div class="nome">${esc(d.titulo||'')}</div>${d.prazoData?'<span class="selo atrasado">'+formatarDataBR(d.prazoData)+'</span>':''}</div>
+            </div>`).join('')}
+          </div>
+        </div>`).join('') : '<div class="empty" style="color:var(--green);font-weight:700;">Ninguém com atraso. 🎉</div>'}
+    </div>`;
+
+    // BLOCO 3 — reaproveita o resumo comparativo que já existe
+    try{
+      const pp = {}; Object.keys(porPessoa).forEach(n => pp[n] = porPessoa[n]);
+      html += await htmlResumoDoDia(atrasadas.length, pp, videos.filter(v=>(v.nivelEscalonamento||0)>=1 && !['finalizado','arquivado'].includes(v.status)).length);
+    }catch(e){ console.error('Falha no resumo do dia dentro do Agora:', e); }
+
+    // BLOCO 4
+    html += `<div class="card metaSec" style="border-color:${riscos.length?'var(--red)':'var(--green)'};">
+      <div class="metaSecTit">⚠️ Risco — ainda não é problema, mas vai ser</div>
+      ${riscos.length ? riscos.map(r => `<div class="item" style="border-left:3px solid ${r.cor};padding:9px 12px;"><div class="nome" style="font-size:12.5px;">${esc(r.txt)}</div></div>`).join('')
+        : '<div class="empty" style="color:var(--green);font-weight:700;">Nenhum risco aberto agora.</div>'}
+    </div>`;
+
+    cont.innerHTML = html;
   };
 
   window.renderAtrasosEquipe = async function(){

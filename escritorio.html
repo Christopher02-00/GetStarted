@@ -9140,6 +9140,61 @@
     carregarGerencia();
   };
 
+  /* ===== PRAZO EDITAVEL PELA GERENCIA — 27/07/2026 (pedido da Amanda) =====
+     So existia METADE do fluxo: o colaborador PEDIA novo prazo
+     (prazoSolicitado) e a gerencia autorizava ou recusava. Nao havia
+     caminho nenhum pra gerencia simplesmente trocar a data.
+     Pra mudar o prazo da Gabi, a Amanda tinha que entrar no painel da Gabi,
+     pedir a mudanca como se fosse ela e depois aprovar o proprio pedido —
+     retrabalho, e ainda sujava a metrica de presenca, porque entrar no
+     painel do colaborador registra ELE como online.
+     Poder restrito a Chris e Amanda, confirmado por ele em 27/07. */
+  window.alterarPrazoDireto = async function(id){
+    if(!(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')){
+      mostrarToast('Só a Amanda e o Chris podem alterar prazo.', 'erro'); return;
+    }
+    const d = todasDemandas.find(x=>x.id===id);
+    if(!d){ mostrarToast('Demanda não encontrada.', 'erro'); return; }
+    const novaData = document.getElementById('prazoGerData_'+id)?.value;
+    const novaHora = document.getElementById('prazoGerHora_'+id)?.value || '19:00';
+    if(!novaData){ mostrarToast('Escolhe a data.', 'erro'); return; }
+    if(novaData === d.prazoData && novaHora === (d.prazoHora||'19:00')){
+      mostrarToast('Esse já é o prazo atual — nada mudou.'); return;
+    }
+    const antes  = formatarDataBR(d.prazoData) + ' às ' + (d.prazoHora||'19:00');
+    const depois = formatarDataBR(novaData) + ' às ' + novaHora;
+    const tinhaPedido = !!d.prazoSolicitado;
+
+    const patch = {
+      prazoData: novaData, prazoHora: novaHora,
+      prazoAlteradoPor: usuarioAtual || '?', prazoAlteradoEm: new Date().toISOString()
+    };
+    // Pedido pendente do colaborador: a decisao da gerencia encerra ele.
+    if(tinhaPedido){ patch.prazoSolicitado = ''; patch.prazoSolicitadoPor = ''; }
+    await updateDoc(doc(db,'demandas', id), patch);
+
+    registrarHistorico('demandas', id, 'Prazo alterado por ' + (usuarioAtual||'?'),
+      'De ' + antes + ' pra ' + depois + (tinhaPedido ? ' — encerrou o pedido pendente' : ''));
+
+    // O colaborador tem que saber: quando era ELE quem pedia, ele sabia.
+    if(d.destinatario && d.destinatario !== usuarioAtual){
+      Promise.resolve(dispararEmailIndividual(d.destinatario, 'prazo_alterado', {
+        titulo: d.titulo || '', prazoData: novaData, prazoHora: novaHora,
+        colecao: 'demandas', itemId: id
+      })).catch(e => console.error('Falha ao avisar sobre mudança de prazo:', e));
+    }
+
+    mostrarToast('Prazo alterado pra ' + depois + ' — ' + (d.destinatario||'') + ' foi avisado.');
+    fecharModal();
+    carregarGerencia();
+    // carregarGerencia so re-renderiza o painel da Amanda; se ela estiver em
+    // Atrasos da Equipe, atualiza aquele tambem.
+    try{
+      const cx = document.getElementById('gerenciaAtrasosEquipe');
+      if(cx && cx.offsetParent !== null && window.renderAtrasosEquipe) window.renderAtrasosEquipe();
+    }catch(e){}
+  };
+
   window.solicitarNovoPrazo = async function(id){
     const novaData = document.getElementById('novoPrazoInput_'+id).value;
     if(!novaData){ mostrarToast('Escolhe uma data.', 'erro'); return; }
@@ -14984,11 +15039,23 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const podeAprovar = d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual;
     const ehAutoAprovacao = d.status === 'concluida_aguardando_aprovacao' && d.destinatario === usuarioAtual;
     const podeExcluir = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
+    /* Prazo editavel direto — mesma regra do ehGerencia (so Chris e Amanda). */
+    const podeMexerNoPrazo = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
     modal.innerHTML = `
       <h2>${d.grupoId?'🤝 ':''}${esc(d.titulo)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(d.destinatario)}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
-      <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
+      ${podeMexerNoPrazo ? `
+      <div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">
+        <b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}
+        ${d.prazoSolicitado ? '<div style="color:var(--yellow2);margin-top:4px;">🕓 '+esc(d.prazoSolicitadoPor||'')+' pediu '+formatarDataBR(d.prazoSolicitado)+' — salvar aqui encerra o pedido.</div>' : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
+          <input type="date" id="prazoGerData_${d.id}" value="${d.prazoData||''}" style="width:auto;">
+          <input type="time" id="prazoGerHora_${d.id}" value="${d.prazoHora||'19:00'}" style="width:auto;">
+          <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;" onclick="alterarPrazoDireto('${d.id}')">Salvar novo prazo</button>
+        </div>
+        <div class="desc" style="margin:6px 0 0;">${esc(d.destinatario)} é avisado e fica registrado no histórico.</div>
+      </div>` : `<div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>`}
       ${d.grupoId ? '<div class="linha" id="grupoStatusGer_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando...</div>' : ''}
       ${d.bloqueio ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">🕓 <b>'+esc(d.destinatario)+' está aguardando '+esc(d.bloqueio.pessoa)+':</b> '+esc(d.bloqueio.texto)+'</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}

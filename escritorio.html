@@ -13058,7 +13058,8 @@
 
     let html = `<div class="card">
       <h2>👁️ Ver ambiente de cada um</h2>
-      <div class="desc">O dia de qualquer pessoa do time, do jeito que ela vê — sem entrar na conta dela e sem mexer no "último acesso". Só leitura.</div>
+      <div class="desc">O dia de qualquer pessoa do time, do jeito que ela vê — sem entrar na conta dela e sem mexer no "último acesso".</div>
+      <div class="desc" style="margin-top:-2px;">${(usuarioAtual==='Chris'||usuarioAtual==='Amanda') ? 'Clica em qualquer demanda pra <b>mudar o prazo</b> ou <b>excluir</b>. Mudar o prazo é o que muda a urgência — ela é calculada da data, não é um campo separado.' : 'Só leitura.'}</div>
       <div class="field" style="margin-top:10px;"><label>Colaborador</label><select id="equipeVisaoSel" onchange="window.__equipeVisaoPessoa=this.value;renderEquipeVisao();">
         <option value="">Selecione...</option>
         ${FUNCIONARIOS.map(f=>`<option value="${f}" ${f===escolhido?'selected':''}>${f}</option>`).join('')}
@@ -13124,7 +13125,10 @@
     // ----- demandas -----
     const cardDem = d => {
       const urg = calcularUrgencia(d);
-      return `<div class="item" style="border-left:3px solid ${urg==='atrasado'?'var(--red)':urg==='hoje'?'var(--yellow2)':'var(--line)'};">
+      /* 27/07/2026 — pedido da Amanda: o Ver Ambiente era so leitura, entao
+         pra mexer no prazo de alguem ela tinha que sair dali. Agora o cartao
+         abre o mesmo modal da gerencia, onde ela edita prazo e exclui. */
+      return `<div class="item" style="border-left:3px solid ${urg==='atrasado'?'var(--red)':urg==='hoje'?'var(--yellow2)':'var(--line)'};cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')">
         <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="selo ${urg==='atrasado'?'atrasado':urg==='hoje'?'hoje':'pendente'}">${urg==='atrasado'?'Atrasada':urg==='hoje'?'Hoje':'Em aberto'}</span></div>
         <div class="meta" style="margin-top:4px;">Prazo ${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
         ${d.bloqueio ? '<div class="meta" style="margin-top:4px;color:var(--yellow2);">🕓 Aguardando '+esc(d.bloqueio.pessoa)+': '+esc(d.bloqueio.texto||'')+'</div>' : ''}
@@ -14631,6 +14635,62 @@ Observações do cliente: ${l.observacoes||'—'}`;
     renderCentralComando();
   };
 
+  /* ===== REFERENCIA DO CLIENTE — FECHAMENTO COM A AMANDA (27/07/2026) =====
+     Pedido dela: quando o cliente sobe referencia pelo portal, o aviso vai
+     pra Gabi (quem usa a referencia), nao pra ela. A referencia fica
+     guardada com data e status. Quando a Gabi marca como CONCLUIDA, aí sim
+     aparece aqui pra Amanda dar o ok final ou excluir.
+     Os status ja existiam: Não utilizada → Inserida no calendário →
+     Concluída. O que faltava era o ultimo passo chegar ate ela. */
+  async function gerarHtmlRefsConcluidas(){
+    try{
+      const snap = await getDocs(collection(db,'referencias_cliente'));
+      const lista = [];
+      snap.forEach(d => { const v = d.data();
+        if(v.excluido || v.revisadaAmanda) return;
+        if(v.status !== 'concluida') return;
+        lista.push({ id: d.id, ...v });
+      });
+      if(!lista.length) return '';
+      lista.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+      const cartao = r => {
+        const dt = r.criadoEm?.seconds ? formatarDataBR(new Date(r.criadoEm.seconds*1000).toISOString().slice(0,10)) : '—';
+        const quem = r.criadoPorTipo === 'cliente' ? '💬 o cliente mandou' : 'equipe';
+        return `<div class="item">
+          <div class="top"><div class="nome">${esc(r.clienteNome||r.cliente||'—')}</div><span class="selo aprovada">Concluída</span></div>
+          <div class="meta" style="margin-top:4px;">Chegou em ${dt} · ${quem}</div>
+          ${r.descricao ? '<div class="meta" style="margin-top:4px;">'+esc(r.descricao)+'</div>' : ''}
+          ${r.link ? '<a href="'+esc(r.link)+'" target="_blank" style="color:var(--yellow);font-size:11px;word-break:break-all;">'+esc(r.link)+'</a>' : ''}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+            <button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="arquivarRefConcluida('${r.id}')">✅ Dar o ok e arquivar</button>
+            <button class="btn red" style="width:auto;padding:4px 10px;font-size:10.5px;" onclick="excluirRefConcluida('${r.id}')">🗑️ Excluir</button>
+          </div>
+        </div>`;
+      };
+      return `<div class="faixaDem aberta" data-faixa="refs_concl">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🔗 Referências de cliente concluídas pela Gabi <span class="qtd">(${lista.length}) · esperando seu ok</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${lista.map(cartao).join('')}</div>
+      </div>`;
+    }catch(e){ console.error('Falha ao montar referências concluídas:', e); return ''; }
+  }
+
+  window.arquivarRefConcluida = async function(id){
+    await updateDoc(doc(db,'referencias_cliente', id), {
+      revisadaAmanda: true, revisadaPor: usuarioAtual || '?', revisadaEm: new Date().toISOString()
+    });
+    mostrarToast('Arquivada — saiu da sua fila.');
+    renderGerenciaAmanda();
+  };
+
+  window.excluirRefConcluida = async function(id){
+    if(!confirm('Excluir essa referência de vez?')) return;
+    await updateDoc(doc(db,'referencias_cliente', id), {
+      excluido: true, excluidoPor: usuarioAtual || '?', excluidoEm: new Date().toISOString()
+    });
+    mostrarToast('Excluída.');
+    renderGerenciaAmanda();
+  };
+
   window.renderGerenciaAmanda = async function(){
     const cont = document.getElementById('gerenciaAmanda');
     const pendentes = todasDemandas.filter(d => d.status === 'pendente');
@@ -14731,6 +14791,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const ranking = await calcularRankingMes();
     html += gerarHtmlLeaderboard(ranking);
     html += await gerarHtmlVideosPorCliente();
+    html += await gerarHtmlRefsConcluidas();
 
     html += `<div class="painelResumo">
       <div class="resumoCard clicavel ${atrasadas.length?'red':''}" onclick="abrirPainelAtrasos()"><div class="num">${atrasadas.length}</div><div class="lbl">Atrasadas →</div></div>
@@ -15100,7 +15161,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <input type="time" id="prazoGerHora_${d.id}" value="${d.prazoHora||'19:00'}" style="width:auto;">
           <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;" onclick="alterarPrazoDireto('${d.id}')">Salvar novo prazo</button>
         </div>
-        <div class="desc" style="margin:6px 0 0;">${esc(d.destinatario)} é avisado e fica registrado no histórico.</div>
+        <div class="desc" style="margin:6px 0 0;">${esc(d.destinatario)} é avisado e fica registrado no histórico. A urgência (Atrasada / Hoje / Em aberto) sai desta data — não existe campo separado.</div>
       </div>` : `<div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>`}
       ${d.grupoId ? '<div class="linha" id="grupoStatusGer_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando...</div>' : ''}
       ${d.bloqueio ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">🕓 <b>'+esc(d.destinatario)+' está aguardando '+esc(d.bloqueio.pessoa)+':</b> '+esc(d.bloqueio.texto)+'</div>' : ''}

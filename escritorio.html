@@ -2036,6 +2036,41 @@
     const btn = document.getElementById('btnLancarVideos');
     btn.disabled = true; btn.textContent = 'Distribuindo...';
 
+    /* ===== TRAVA DE LOTE REPETIDO — 27/07/2026 =====
+       Amanda reportou vídeos duplicados de Joaquin, Bluefit e VIP. Fui aos
+       dados: os pares entraram com 7 a 24 SEGUNDOS de diferença — não é
+       clique duplo (o botão já bloqueia), é reenvio do mesmo lote.
+       A causa: se o loop de criação falha no meio, o `catch` mostra o erro
+       mas os campos NÃO são limpos (a limpeza só roda depois do loop).
+       A pessoa vê o formulário cheio, acha que não foi, e clica de novo —
+       criando de novo tudo que já tinha entrado.
+       Agora, antes de criar, o site confere se já existe vídeo do mesmo
+       cliente com o mesmo título nos últimos 10 minutos. Se existir, ele
+       pergunta em vez de duplicar em silêncio. */
+    try{
+      const nomesConferir = (document.getElementById('videoNomesPrincipais').value.trim() + '\n' +
+                             document.getElementById('videoNomesBastidores').value.trim())
+        .split('\n').map(x=>x.trim()).filter(Boolean).map(x=>x.toLowerCase());
+      if(nomesConferir.length){
+        const snapDup = await getDocs(collection(db,'videos_producao'));
+        const limite = Date.now() - 10*60*1000;
+        const repetidos = [];
+        snapDup.forEach(d => { const v=d.data();
+          if(v.excluido) return;
+          const ts = v.criadoEm?.seconds ? v.criadoEm.seconds*1000 : 0;
+          if(ts < limite) return;
+          const t = (v.titulo||'').toLowerCase();
+          nomesConferir.forEach(n => { if(t.endsWith('— ' + n) || t === n) repetidos.push(v.titulo); });
+        });
+        if(repetidos.length){
+          const ok = confirm('⚠️ Atenção: ' + repetidos.length + ' desses vídeos já foram lançados nos últimos 10 minutos:\n\n' +
+            [...new Set(repetidos)].slice(0,6).join('\n') +
+            '\n\nIsso costuma ser reenvio sem querer. Lançar de novo mesmo assim?');
+          if(!ok){ btn.disabled = false; btn.textContent = 'Registrar e distribuir'; return; }
+        }
+      }
+    }catch(e){ console.error('Falha na trava de lote repetido:', e); }
+
     try {
       const editor = editorManual || await decidirEditor(clienteSlug);
       for(const nomeVideo of todosNomes){
@@ -2061,7 +2096,11 @@
       await popularClientesVideo();
       await renderLancadosHoje();
     } catch(err){
-      mostrarToast('Erro: ' + err.message, 'erro');
+      /* 27/07/2026 — antes o erro deixava o formulário cheio, e a pessoa
+         reenviava o lote inteiro achando que nada tinha entrado. Agora o
+         aviso diz exatamente o que fazer. */
+      mostrarToast('Erro no meio do lançamento: ' + err.message + ' — parte dos vídeos PODE ter entrado. Confere a lista antes de lançar de novo.', 'erro');
+      try{ await renderLancadosHoje(); }catch(e){}
     }
     btn.disabled = false; btn.textContent = 'Registrar e distribuir';
   };
@@ -12204,8 +12243,18 @@
       if(a.alertaGravacaoFantasmaCriado) continue;
       await addDoc(collection(db,'demandas'), {
         titulo: '🎥 Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''),
-        descricao: 'Essa gravação estava agendada e a data já passou, mas ninguém registrou como realizada (Agendamento → Lançar Gravação). Se aconteceu, registra os vídeos captados HOJE — sem isso o sistema acha que o cliente não gravou e pode disparar Cápsula falsa. Se não aconteceu, cancela ou reagenda.',
-        origem: 'sistema', clienteNome: a.clienteNome || '', destinatario: 'Cecília', agendamentoRefId: docSnap.id,
+        descricao: 'Essa gravação estava agendada e a data já passou, mas ninguém registrou como realizada.\n\n'
+          + 'QUEM FAZ: quem foi a campo gravar' + (a.filmmaker ? ' — no caso, você' : '') + '.\n'
+          + 'ONDE: menu lateral → Minha Agenda → a gravação do dia → marca os conteúdos que foram captados.\n\n'
+          + 'Sem esse registro três coisas não acontecem: os itens do calendário não viram "gravado", os vídeos não são distribuídos pros editores, e o sistema acha que o cliente não gravou — o que pode disparar Protocolo Cápsula à toa.\n\n'
+          + 'Se a gravação NÃO aconteceu, avisa a Cecília pra cancelar ou reagendar.',
+        /* 27/07/2026 — a cobrança ia sempre pra Cecília, mas quem registra
+           a gravação é o FILMMAKER que foi a campo: é ele que abre "Minha
+           Agenda" e marca o que captou. A Amanda perguntou exatamente isso.
+           Agora vai pra quem gravou; se o agendamento não tiver filmmaker
+           definido, aí sim cai pra Cecília, que é quem agenda. */
+        origem: 'sistema', clienteNome: a.clienteNome || '',
+        destinatario: a.filmmaker || 'Cecília', agendamentoRefId: docSnap.id,
         prazoData: hojeStr, prazoHora: '18:00',
         status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
       });

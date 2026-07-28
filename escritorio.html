@@ -1549,6 +1549,87 @@
     document.getElementById('overlayView').classList.add('show');
   };
 
+  /* ===== SENHA PESSOAL DE CHRIS E AMANDA — 28/07/2026 =================
+     O Chris notou o buraco: escolher o nome na tela inicial não é
+     identificar-se. Qualquer pessoa da equipe selecionava "Chris" e
+     passava a ver o financeiro, as mensalidades, os contratos e o cofre —
+     a trava por função existia, mas confiava num seletor que não pergunta
+     nada. Proteger só o painel de gerência não resolvia, porque o
+     Financeiro e as Vendas ficam fora dele.
+
+     Agora Chris e Amanda têm senha própria, exigida no momento de
+     escolher o nome. É separada da senha do escritório de propósito: a
+     do escritório é compartilhada, a pessoal não. Guardada como hash em
+     config_seguranca/pessoas.
+
+     No primeiro acesso, quem escolhe define a senha ali mesmo — e isso
+     fica registrado no log com a marca de "primeira definição", pra ficar
+     visível se alguém definir no lugar de outro. */
+  const PRECISAM_DE_SENHA_PESSOAL = ['Chris','Amanda'];
+
+  async function lerSenhasPessoais(){
+    try{
+      const snap = await getDoc(doc(db,'config_seguranca','pessoas'));
+      return snap.exists() ? (snap.data() || {}) : {};
+    }catch(e){ console.error('Não consegui ler as senhas pessoais:', e); return {}; }
+  }
+
+  window.mostrarStatusSenhasPessoais = async function(){
+    const el = document.getElementById('statusSenhasPessoais');
+    if(!el) return;
+    const p = await lerSenhasPessoais();
+    el.innerHTML = PRECISAM_DE_SENHA_PESSOAL.map(nome => {
+      const tem = !!p[nome];
+      return '<div style="margin-bottom:4px;">' + (tem ? '✅' : '⚠️') + ' <b>' + nome + '</b> — ' +
+        (tem ? 'senha pessoal definida' + (p[nome + '_em'] ? ' em ' + new Date(p[nome + '_em']).toLocaleDateString('pt-BR') : '')
+             : '<span style="color:var(--yellow2);">ainda sem senha — qualquer um entra como ' + nome + '</span>') + '</div>';
+    }).join('');
+  };
+
+  window.definirSenhaPessoal = async function(nome){
+    const p = await lerSenhasPessoais();
+    if(p[nome]){
+      const atual = prompt('Senha pessoal ATUAL de ' + nome + ':');
+      if(atual === null) return;
+      if(await hashSenha(atual) !== p[nome]){ mostrarToast('Senha atual não confere.', 'erro'); return; }
+    }
+    const nova = prompt((p[nome] ? 'Nova senha pessoal de ' : 'Criar a senha pessoal de ') + nome + ' (mínimo 8 caracteres):');
+    if(nova === null) return;
+    if(String(nova).length < 8){ mostrarToast('Curta demais — pelo menos 8 caracteres.', 'erro'); return; }
+    if(String(nova).toLowerCase().includes('cg@102030') || String(nova).toLowerCase().includes('cofre-v1')){
+      alert('Essa senha aparece escrita no código do site. Escolhe outra, sem relação com o sistema.'); return;
+    }
+    const conf = prompt('Digita de novo pra confirmar:');
+    if(conf !== nova){ mostrarToast('As duas não bateram. Nada foi alterado.', 'erro'); return; }
+    await setDoc(doc(db,'config_seguranca','pessoas'), {
+      [nome]: await hashSenha(nova), [nome + '_em']: new Date().toISOString(), [nome + '_por']: usuarioAtual || 'primeiro acesso'
+    }, { merge:true });
+    registrarAcessoGerencia('senha pessoal de ' + nome + ' definida por ' + (usuarioAtual || 'primeiro acesso'));
+    mostrarToast('Senha pessoal de ' + nome + ' salva.');
+    mostrarStatusSenhasPessoais();
+  };
+
+  /* Chamado no momento em que a pessoa escolhe o nome. Devolve true se
+     pode entrar. Em caso de erro de rede devolve FALSE — porta fechada é
+     o padrão seguro; porta aberta por falha é como buracos nascem. */
+  window.conferirSenhaPessoal = async function(nome){
+    if(!PRECISAM_DE_SENHA_PESSOAL.includes(nome)) return true;
+    const p = await lerSenhasPessoais();
+    if(!p[nome]){
+      alert('Primeiro acesso de ' + nome + '.\n\nVocê vai definir agora a senha pessoal de ' + nome +
+        '. Ela é separada da senha do escritório e serve pra ninguém entrar no seu lugar.\n\n' +
+        'Quem definir primeiro fica com ela — então faz isso agora, e não deixa pra depois.');
+      await definirSenhaPessoal(nome);
+      const p2 = await lerSenhasPessoais();
+      return !!p2[nome];
+    }
+    const tentativa = prompt('Senha pessoal de ' + nome + ':');
+    if(tentativa === null) return false;
+    const ok = (await hashSenha(tentativa)) === p[nome];
+    if(!ok) alert('Senha incorreta.');
+    return ok;
+  };
+
   window.trocarSenhaEscritorio = async function(){
     const atual = prompt('Senha ATUAL (a que você usou pra entrar):');
     if(atual === null) return;
@@ -5975,7 +6056,41 @@
     const snap = await getDocs(collection(db,'cofre_senhas'));
     const lista = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) lista.push({id:d.id, ...v}); });
 
-    let html = `<div class="card">
+    /* ===== O PAINEL DE SEGURANÇA — 28/07/2026 =========================
+       Eu descrevi "Gerência → Cofre → trocar senha" e nunca coloquei o
+       botão. O Chris procurou e não achou, com razão: não existia.
+       Agora existe, e junto dele o resto do que faltava — senha pessoal
+       de cada gestor e o registro de quem entrou. */
+    let htmlSeg = `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>🔒 Segurança do escritório</h2>
+      <div class="desc">Três travas, da mais geral pra mais pessoal. A senha do escritório abre a gerência; a senha pessoal protege o que é só seu.</div>
+
+      <div class="card metaSec" style="margin-top:12px;">
+        <div class="metaSecTit">1. Senha do escritório</div>
+        <div class="desc">Uma só, usada por quem entra na gerência. Fica no banco como hash — não existe em texto em lugar nenhum.</div>
+        <button class="btn" style="margin-top:10px;padding:12px;" onclick="trocarSenhaEscritorio()">🔑 Trocar a senha do escritório</button>
+      </div>
+
+      <div class="card metaSec">
+        <div class="metaSecTit">2. Senha pessoal — Chris e Amanda</div>
+        <div class="desc">Escolher o nome na tela inicial não é identificar-se: qualquer pessoa selecionava "Chris" e via o financeiro inteiro. Agora, pra entrar como Chris ou como Amanda, o sistema pede uma senha pessoal — diferente da senha do escritório e diferente entre vocês dois.</div>
+        <div id="statusSenhasPessoais" class="meta" style="margin:10px 0;">conferindo...</div>
+        <div class="btnrow" style="margin-top:8px;">
+          <button class="btn secondary" style="font-size:12px;" onclick="definirSenhaPessoal('Chris')">Definir/trocar a do Chris</button>
+          <button class="btn secondary" style="font-size:12px;" onclick="definirSenhaPessoal('Amanda')">Definir/trocar a da Amanda</button>
+        </div>
+      </div>
+
+      <div class="card metaSec">
+        <div class="metaSecTit">3. Quem entrou</div>
+        <div class="desc">Registro de cada entrada na gerência: pessoa, hora e navegador. Sem isso, se algo vazar, não há como saber por onde.</div>
+        <button class="btn secondary" style="margin-top:10px;" onclick="renderLogAcessos()">Ver os últimos acessos</button>
+        <div id="boxLogAcessos" style="margin-top:10px;"></div>
+      </div>
+    </div>`;
+    setTimeout(() => { try{ mostrarStatusSenhasPessoais(); }catch(e){} }, 60);
+
+    let html = htmlSeg + `<div class="card">
       <h2>🔐 Cofre de Senhas dos Clientes</h2>
       <div class="desc">As senhas ficam criptografadas de verdade no banco (AES-256) — mesmo quem acessar o banco direto não lê a senha sem essa chave. Só aparece em texto quando você clica em "Revelar".</div>
       <div class="row2">
@@ -9216,7 +9331,29 @@
   }
 
   window.mudarUsuarioGlobal = async function(){
-    usuarioAtual = document.getElementById('euSouGlobal').value;
+    const escolhido = document.getElementById('euSouGlobal').value;
+
+    /* A porta pessoal. Antes daqui, escolher o nome já dava acesso — e
+       o financeiro, as mensalidades e os contratos vivem FORA do painel
+       de gerência, então a senha da gerência não cobria nada disso. */
+    if(escolhido && PRECISAM_DE_SENHA_PESSOAL.includes(escolhido) && window.__pessoaLiberada !== escolhido){
+      let liberado = false;
+      try{ liberado = await conferirSenhaPessoal(escolhido); }
+      catch(e){ console.error('Falha ao conferir a senha pessoal:', e); liberado = false; }
+      if(!liberado){
+        document.getElementById('euSouGlobal').value = '';
+        usuarioAtual = '';
+        window.__pessoaLiberada = null;
+        atualizarVisibilidadeSidebarExclusiva();
+        atualizarVisibilidadeMenuPorFuncao();
+        mostrarToast('Entrada não liberada.', 'erro');
+        return;
+      }
+      window.__pessoaLiberada = escolhido;
+      registrarAcessoGerencia(escolhido + ' (entrada com senha pessoal)');
+    }
+
+    usuarioAtual = escolhido;
     ultimoRegistroAtividade = 0;
     registrarAtividadeUsuario();
     const cardQuem = document.getElementById('cardQuemSouEu');

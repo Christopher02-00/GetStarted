@@ -6040,50 +6040,130 @@
     renderGerenciaAusencias();
   };
 
+  /* ===== O RFV PASSOU A SE PREENCHER SOZINHO — 28/07/2026 =============
+     A demanda pedia 3 campos × 21 clientes = 63 preenchimentos na mão, e
+     dois deles o sistema já sabe:
+
+       VALOR TOTAL  → soma das mensalidades pagas + receitas avulsas
+                      registradas. É conta, não memória.
+       FREQUÊNCIA   → quantos meses distintos esse cliente pagou. Também
+                      é conta.
+
+     Fui conferir o banco: só existe registro de julho/2026 — foi quando
+     montamos o financeiro. Então os totais calculados são do que o
+     sistema viu, não da vida inteira do cliente. Isso está escrito na
+     tela, em vez de fingir precisão que não existe.
+
+     Sobra UM campo por cliente: a data da última contratação/renovação.
+     Essa só você sabe, e é justamente a que dispara o alerta de risco.
+     De 63 preenchimentos pra 21. */
   async function renderRfv(){
     const cont = document.getElementById('gerenciaRfv');
-    const snap = await getDocs(collection(db,'rfv_clientes'));
+    const [snap, pagSnap, avSnap, ctSnap] = await Promise.all([
+      getDocs(collection(db,'rfv_clientes')),
+      getDocs(collection(db,'pagamentos_mensais')),
+      getDocs(collection(db,'receitas_avulsas')),
+      getDocs(collection(db,'contratos_cliente'))
+    ]);
     const dados = {}; snap.forEach(d => { dados[d.id] = d.data(); });
 
-    let html = `<div class="card">
+    /* O que o sistema consegue calcular sozinho */
+    const calc = {};
+    const garantir = k => (calc[k] = calc[k] || { valor:0, meses:new Set(), primeiroRegistro:null });
+    pagSnap.forEach(d => { const v = d.data();
+      if(!v.cliente || v.status !== 'pago') return;
+      const c = garantir(v.cliente);
+      c.valor += Number(v.valorDevido) || 0;
+      if(v.competencia) c.meses.add(v.competencia);
+    });
+    avSnap.forEach(d => { const v = d.data();
+      const achado = CLIENTES_LISTA.find(x => (x.nome||'').toLowerCase() === String(v.clienteNome||'').toLowerCase());
+      if(!achado || !v.recebido) return;
+      garantir(achado.slug).valor += Number(v.valor) || 0;
+    });
+    ctSnap.forEach(d => { const v = d.data();
+      const c = garantir(d.id);
+      if(v.criadoEm?.seconds) c.primeiroRegistro = new Date(v.criadoEm.seconds*1000).toISOString().slice(0,10);
+    });
+
+    const semData = CLIENTES_LISTA.filter(c => !(dados[c.slug]||{}).ultimaContratacao).length;
+
+    let html = `<div class="card" style="border:2px solid ${semData?'var(--yellow)':'var(--green)'};">
       <h2>📊 RFV — Recência, Frequência, Valor</h2>
-      <div class="desc">Recência: dias desde a última contratação/renovação. Frequência: quantas vezes já contratou. Valor: quanto já gastou com a agência. Preencha por cliente — o sistema calcula a recência sozinho a partir da data.</div>
+      <div class="desc">A tabela que avisa qual cliente está em risco de sair. Cruza há quanto tempo ele não renova, quantas vezes já fechou, e quanto já pagou.</div>
+      <div class="desc" style="background:var(--deep);border-left:3px solid var(--green);padding:11px 13px;border-radius:8px;margin-top:10px;">
+        ✅ <b>Valor e frequência o sistema já calcula sozinho</b>, a partir das mensalidades pagas e das receitas avulsas. Você não precisa digitar nem conferir esses dois.
+      </div>
+      <div class="desc" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:11px 13px;border-radius:8px;margin-top:8px;">
+        ⚠️ <b>O sistema só tem registro a partir de julho/2026</b> — foi quando montamos o financeiro. Então o "valor total" é o que ele viu, não a vida inteira do cliente. Se você souber o número real de algum, dá pra sobrescrever no campo.
+      </div>
+      ${semData ? '<div class="desc" style="margin-top:10px;"><b>Falta preencher a data em ' + semData + ' cliente(s).</b> É o único campo que só você sabe — e é o que dispara o alerta de risco. Se não lembrar a data exata, o mês já resolve.</div>' : '<div class="desc" style="margin-top:10px;color:var(--green);"><b>Todos os clientes com data preenchida.</b> 🎉</div>'}
     </div>`;
 
     const linhas = CLIENTES_LISTA.map(c => {
       const d = dados[c.slug] || {};
+      const auto = calc[c.slug] || { valor:0, meses:new Set(), primeiroRegistro:null };
       let recenciaDias = null, alerta = false;
       if(d.ultimaContratacao){
         recenciaDias = Math.floor((Date.now() - new Date(d.ultimaContratacao).getTime()) / 86400000);
         alerta = recenciaDias > 60;
       }
-      return { ...c, ...d, recenciaDias, alerta };
+      return { ...c, ...d, recenciaDias, alerta,
+        autoValor: auto.valor, autoMeses: auto.meses.size, sugestaoData: auto.primeiroRegistro,
+        faltaData: !d.ultimaContratacao };
     });
-    linhas.sort((a,b) => (b.recenciaDias??-1) - (a.recenciaDias??-1));
+    // quem falta preencher vem primeiro; depois, quem está há mais tempo sem renovar
+    linhas.sort((a,b) => (b.faltaData?1:0) - (a.faltaData?1:0) || (b.recenciaDias??-1) - (a.recenciaDias??-1));
 
     linhas.forEach(l => {
-      html += `<div class="item" style="${l.alerta?'border:2px solid var(--red);':''}">
-        <div class="top"><div class="nome">${l.alerta?'⚠️ ':''}${esc(l.nome)}</div><div class="meta">${l.recenciaDias!==null ? l.recenciaDias+' dias sem renovar' : 'sem dado'}</div></div>
-        <div class="row2" style="margin-top:8px;">
-          <div class="field"><label>Última contratação/renovação</label><input type="date" id="rfvData_${l.slug}" value="${l.ultimaContratacao||''}"></div>
-          <div class="field"><label>Qtd. de contratações históricas</label><input type="number" id="rfvQtd_${l.slug}" value="${l.qtdContratacoes||0}"></div>
+      const valorMostrar = (l.valorTotal && l.valorTotal > l.autoValor) ? l.valorTotal : l.autoValor;
+      const qtdMostrar   = Math.max(Number(l.qtdContratacoes)||0, l.autoMeses, 1);
+      html += `<div class="item" style="padding:16px 18px;margin-bottom:16px;${l.alerta?'border:2px solid var(--red);':l.faltaData?'border-left:4px solid var(--yellow);':''}">
+        <div class="top">
+          <div class="nome">${l.alerta?'⚠️ ':''}${esc(l.nome)}</div>
+          <div class="meta">${l.recenciaDias!==null ? l.recenciaDias+' dias sem renovar' : '<span style="color:var(--yellow2);">falta a data</span>'}</div>
         </div>
-        <div class="field"><label>Valor total gasto (R$)</label><input type="number" id="rfvValor_${l.slug}" value="${l.valorTotal||0}"></div>
-        <button class="btn secondary" style="margin-top:8px;" onclick="salvarRfv('${l.slug}','${escJs(l.nome)}')">Salvar</button>
-        ${l.alerta ? '<div class="meta" style="margin-top:8px;color:var(--red);">💡 Mais de 60 dias sem renovar — considera oferecer algo pra reativar.</div>' : ''}
+        <div class="meta" style="margin-top:6px;">💰 ${brl(valorMostrar)} registrado${l.autoMeses ? ' · 📅 ' + l.autoMeses + ' mês(es) pago(s)' : ''} — calculado pelo sistema</div>
+
+        <div class="field" style="margin-top:12px;">
+          <label>Última contratação ou renovação ${l.faltaData ? '<span style="color:var(--yellow2);">— falta esta</span>' : ''}</label>
+          <input type="date" id="rfvData_${l.slug}" value="${l.ultimaContratacao||''}" onchange="salvarRfv('${l.slug}','${escJs(l.nome)}')">
+          ${l.faltaData && l.sugestaoData ? '<button class="btn secondary" style="margin-top:8px;padding:9px;font-size:11.5px;" onclick="usarSugestaoRfv(\''+l.slug+'\',\''+l.sugestaoData+'\',\''+escJs(l.nome)+'\')">Usar ' + formatarDataBR(l.sugestaoData) + ' (quando o contrato entrou no sistema)</button>' : ''}
+        </div>
+
+        <details style="margin-top:10px;">
+          <summary class="meta" style="cursor:pointer;">Corrigir valor ou frequência na mão</summary>
+          <div class="row2" style="margin-top:10px;">
+            <div class="field"><label>Valor total gasto (R$)</label><input type="number" id="rfvValor_${l.slug}" value="${valorMostrar||0}" step="0.01"></div>
+            <div class="field"><label>Qtd. de contratações</label><input type="number" id="rfvQtd_${l.slug}" value="${qtdMostrar}"></div>
+          </div>
+          <button class="btn secondary" style="margin-top:10px;" onclick="salvarRfv('${l.slug}','${escJs(l.nome)}')">Salvar correção</button>
+        </details>
+
+        ${l.alerta ? '<div class="meta" style="margin-top:10px;color:var(--red);">💡 Mais de 60 dias sem renovar — considera oferecer algo pra reativar antes de perder.</div>' : ''}
       </div>`;
     });
     cont.innerHTML = html;
   }
 
+  window.usarSugestaoRfv = async function(slug, data, nome){
+    const el = document.getElementById('rfvData_'+slug);
+    if(el) el.value = data;
+    await salvarRfv(slug, nome);
+  };
+
   window.salvarRfv = async function(slug, nome){
-    const ultimaContratacao = document.getElementById('rfvData_'+slug).value;
-    const qtdContratacoes = parseInt(document.getElementById('rfvQtd_'+slug).value) || 0;
-    const valorTotal = parseFloat(document.getElementById('rfvValor_'+slug).value) || 0;
-    await setDoc(doc(db,'rfv_clientes', slug), { clienteNome: nome, ultimaContratacao, qtdContratacoes, valorTotal, atualizadoEm: serverTimestamp() });
-    mostrarToast('RFV de ' + nome + ' salvo!');
-    window.__expandidoClienteVisao[slug] = true;
-    renderGerenciaSaudeClientes();
+    const ultimaContratacao = document.getElementById('rfvData_'+slug)?.value || '';
+    /* Os campos de valor e frequência ficam dentro de um <details> fechado.
+       Se não estiverem na tela, não são zerados — mantém o que já existe. */
+    const elQtd = document.getElementById('rfvQtd_'+slug);
+    const elVal = document.getElementById('rfvValor_'+slug);
+    const dados = { clienteNome: nome, ultimaContratacao, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() };
+    if(elQtd && elQtd.value !== '') dados.qtdContratacoes = parseInt(elQtd.value) || 0;
+    if(elVal && elVal.value !== '') dados.valorTotal = parseFloat(elVal.value) || 0;
+    await setDoc(doc(db,'rfv_clientes', slug), dados, { merge:true });
+    mostrarToast(nome + ' salvo.');
+    renderRfv();
   };
 
   window.registrarNovaAvaliacaoRapida = async function(slug, nome){

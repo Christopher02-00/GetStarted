@@ -1104,6 +1104,17 @@
         <input type="text" id="buscaCalCliente" placeholder="🔍 Buscar cliente..." oninput="filtrarCalendariosClientes()" style="width:100%;background:var(--deep);border:1px solid var(--line);border-radius:9px;color:#fff;padding:11px 13px;font-size:14px;">
       </div>
       <div id="listaCalendariosClientes" style="max-height:240px;overflow-y:auto;margin-bottom:16px;"></div>
+      <!-- RESGATE DE CALENDÁRIO — 27/07/2026 -->
+      <div class="card" style="border:2px solid var(--yellow);">
+        <h2>🛟 Resgatar calendário apagado</h2>
+        <div class="desc">Se o calendário de um cliente aparecer vazio ou tiver perdido conteúdo, procura aqui. O sistema guarda todas as versões anteriores e o backup do dia 27/07 — dá pra ver o que tinha em cada uma e devolver com um clique.</div>
+        <div class="field" style="margin-top:10px;"><label>Cliente</label>
+          <select id="resgateCalCliente"></select>
+        </div>
+        <button class="btn" style="margin-top:10px;" onclick="procurarVersoesCalendario()">🔎 Procurar versões guardadas</button>
+        <div id="resgateCalLista" style="margin-top:12px;"></div>
+      </div>
+
       <div id="calendarioClienteAberto" style="display:none;">
         <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
           <div><b id="nomeClienteAberto"></b></div>
@@ -6513,7 +6524,8 @@
     try{
       const calSnap = await getDocs(collection(db,'calendarios'));
       calSnap.forEach(d => {
-        const itens = (d.data() || {}).itens || [];
+        // o campo é `items` (inglês) em todo o sistema — eu tinha escrito `itens` aqui
+        const itens = (d.data() || {}).items || [];
         if(Array.isArray(itens) && itens.some(i => i && i.dataFlexivel)) slugsFlexiveis.add(d.id);
       });
     }catch(e){ console.error('Não consegui ler datas flexíveis:', e); }
@@ -10912,6 +10924,130 @@
     copiarLinkCalendarioDireto(calendarioFerramentasAbertoSlug, document.getElementById('btnCopiarCalFerramentas'));
   };
 
+  /* ===== RESGATE DE CALENDÁRIO (27/07/2026) ==========================
+     O calendário da Dra. Monique — 13 conteúdos e 12 referências que a
+     Gabi montou — foi sobrescrito por um documento vazio. A causa está
+     comentada em calendario.html: `setDoc` sem merge, gravando a cópia
+     em memória da aba, que começa vazia antes de o primeiro snapshot
+     chegar. Bastava tocar no campo do nome ou do mês com a página ainda
+     carregando (ou travada, como travou) pra apagar tudo.
+
+     Isso agora está travado lá. Aqui fica o resgate: varre TODAS as
+     fontes onde uma cópia pode ter sobrado — versões automáticas,
+     backup do dia, e o histórico — mostra quantos conteúdos cada uma
+     tinha e devolve a escolhida. Nada é sobrescrito sem confirmação, e
+     a versão atual é guardada antes de restaurar. */
+  const FONTES_RESGATE = ['calendarios_versoes','calendarios_backup_20260727','calendarios_backup'];
+  let __versoesEncontradas = [];
+
+  window.procurarVersoesCalendario = async function(){
+    const slug = document.getElementById('resgateCalCliente').value;
+    const box = document.getElementById('resgateCalLista');
+    if(!slug){ box.innerHTML = '<div class="empty">Escolhe o cliente primeiro.</div>'; return; }
+    box.innerHTML = '<div class="desc">Procurando em todas as cópias guardadas...</div>';
+
+    const achados = [];
+    // o que está no ar agora
+    try{
+      const atual = await getDoc(doc(db,'calendarios', slug));
+      if(atual.exists()){
+        const d = atual.data();
+        achados.push({ fonte:'agora no ar', id:slug, itens:(d.items||[]).length, mes:d.month||'', quando:d.updatedAt||'', dados:d, atual:true });
+      }
+    }catch(e){ console.error(e); }
+
+    for(const col of FONTES_RESGATE){
+      try{
+        const snap = await getDocs(collection(db, col));
+        snap.forEach(dd => {
+          const d = dd.data();
+          const pertence = dd.id === slug || dd.id.indexOf(slug + '__') === 0 || dd.id.indexOf(slug + '_') === 0 || d.__cliente === slug;
+          if(!pertence) return;
+          const itens = (d.items || d.itens || []).length;
+          if(!itens) return;   // cópia vazia não serve de resgate
+          achados.push({ fonte:col, id:dd.id, itens, mes:d.month||'', quando:d.__salvoEm||d.updatedAt||'', dados:d, atual:false });
+        });
+      }catch(e){ console.error('Fonte ' + col + ' indisponível:', e); }
+    }
+
+    achados.sort((a,b) => b.itens - a.itens || String(b.quando).localeCompare(String(a.quando)));
+    __versoesEncontradas = achados;
+
+    const comConteudo = achados.filter(a => a.itens > 0 && !a.atual);
+    if(!comConteudo.length){
+      box.innerHTML = `<div class="card" style="border-color:var(--red);">
+        <div class="desc" style="color:var(--yellow2);"><b>Nenhuma cópia com conteúdo foi encontrada pra esse cliente.</b></div>
+        <div class="desc" style="margin-top:6px;">As versões automáticas passam a ser guardadas a partir de agora, a cada gravação. Se este calendário foi apagado antes disso, a reconstrução tem que ser manual — e o material não se perdeu de vez: as referências continuam no Hub e no banco do cliente, e as legendas que já viraram postagem estão em Postagens.</div>
+      </div>`;
+      return;
+    }
+
+    box.innerHTML = `<div class="desc" style="margin-bottom:8px;">${comConteudo.length} cópia(s) com conteúdo. A de cima é a mais completa.</div>` +
+      achados.map((a,i) => `<div class="item" style="margin-top:8px;border-left:3px solid ${a.atual?'var(--line)':'var(--yellow)'};">
+        <div class="top">
+          <div class="nome">${a.atual ? '📍 O que está no ar agora' : '💾 ' + esc(a.fonte)}</div>
+          <span class="selo ${a.itens?'aprovada':'atrasado'}">${a.itens} conteúdo(s)</span>
+        </div>
+        <div class="meta" style="margin-top:4px;">${a.mes ? 'Mês: ' + esc(a.mes) + ' · ' : ''}${a.quando ? 'Salvo em ' + new Date(a.quando).toLocaleString('pt-BR') : 'sem data'}</div>
+        <div class="btnrow" style="margin-top:8px;">
+          <button class="btn secondary" style="font-size:11px;" onclick="verVersaoCalendario(${i})">👁️ Ver o que tem dentro</button>
+          ${a.atual ? '' : `<button class="btn green" style="font-size:11px;" onclick="restaurarVersaoCalendario(${i})">↩️ Restaurar esta</button>`}
+        </div>
+      </div>`).join('');
+  };
+
+  window.verVersaoCalendario = function(i){
+    const v = __versoesEncontradas[i];
+    if(!v) return;
+    const itens = (v.dados.items || v.dados.itens || []).slice().sort((a,b)=>(a.day||0)-(b.day||0));
+    const modal = document.getElementById('modalConteudo');
+    modal.innerHTML = `<h2>${esc(v.atual ? 'O que está no ar agora' : v.fonte)}</h2>
+      <div class="linha"><b>${itens.length} conteúdo(s)</b>${v.mes ? ' · ' + esc(v.mes) : ''}${v.quando ? ' · ' + new Date(v.quando).toLocaleString('pt-BR') : ''}</div>
+      ${itens.map(it => `<div class="item" style="margin-top:6px;">
+        <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div>${it.ref?'<span class="selo aprovada">tem referência</span>':''}</div>
+        ${it.legenda ? '<div class="meta" style="margin-top:4px;">'+esc(String(it.legenda).slice(0,140))+'</div>' : ''}
+      </div>`).join('')}
+      <button class="btn secondary" style="margin-top:12px;" onclick="fecharModal()">Fechar</button>`;
+    document.getElementById('overlayView').classList.add('show');
+  };
+
+  window.restaurarVersaoCalendario = async function(i){
+    const v = __versoesEncontradas[i];
+    if(!v) return;
+    const slug = document.getElementById('resgateCalCliente').value;
+    const itens = v.dados.items || v.dados.itens || [];
+    const atualQtd = (__versoesEncontradas.find(x=>x.atual) || {itens:0}).itens;
+    if(!confirm('Restaurar ' + itens.length + ' conteúdo(s) no calendário de ' + slug + '?\n\n' +
+      'O que está no ar agora (' + atualQtd + ' conteúdo) vai ser guardado antes, então dá pra voltar atrás.')) return;
+    try{
+      // guarda o estado atual antes de mexer
+      const atual = await getDoc(doc(db,'calendarios', slug));
+      if(atual.exists()){
+        const carimbo = new Date().toISOString().replace(/[:.]/g,'-');
+        await setDoc(doc(db,'calendarios_versoes', slug + '__antes-do-resgate-' + carimbo),
+          { ...atual.data(), __cliente: slug, __salvoEm: new Date().toISOString(), __itens: atualQtd });
+      }
+      await setDoc(doc(db,'calendarios', slug), {
+        client: v.dados.client || nomeDeSlugSeguro(slug),
+        month: v.dados.month || '',
+        items: itens,
+        comments: v.dados.comments || [],
+        updatedAt: new Date().toISOString(),
+        restauradoPor: usuarioAtual || '?', restauradoDe: v.fonte + '/' + v.id, restauradoEm: new Date().toISOString()
+      });
+      registrarHistorico('calendarios', slug, 'Calendário restaurado de ' + v.fonte + ' — ' + itens.length + ' conteúdo(s)');
+      mostrarToast(itens.length + ' conteúdo(s) restaurados!');
+      procurarVersoesCalendario();
+    }catch(e){
+      console.error('Falha ao restaurar:', e);
+      mostrarToast('Não consegui restaurar. Nada foi alterado.', 'erro');
+    }
+  };
+
+  function nomeDeSlugSeguro(slug){
+    return (CLIENTES_LISTA.find(c => c.slug === slug) || {}).nome || slug;
+  }
+
   window.abrirCalendariosPorCliente = function(){
     document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
     const itens = Array.from(document.querySelectorAll('.navitem'));
@@ -10920,6 +11056,11 @@
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById('view-calendariosClientes').classList.add('active');
     document.getElementById('buscaCalCliente').value = '';
+    const selR = document.getElementById('resgateCalCliente');
+    if(selR && !selR.options.length){
+      selR.innerHTML = '<option value="">Escolhe o cliente...</option>' +
+        CLIENTES_LISTA.map(c => '<option value="'+c.slug+'">'+esc(c.nome)+'</option>').join('');
+    }
     renderListaCalendariosClientes(CLIENTES_LISTA);
   };
 

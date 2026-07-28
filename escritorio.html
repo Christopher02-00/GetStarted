@@ -2085,6 +2085,15 @@
         { bloco: "Referências do Dia", itens: [
           { id:"g_d_9", texto:"Referências: manter cada cliente com pelo menos 2 dos 3 perfis da semana preenchidos (Calendários → calendário do cliente) e arquivar no Hub o que achar de bom", critico:true }
         ]}
+      ],
+      /* 28/07/2026 — pedido da Gabi: as três coisas que ela faz toda
+         sexta e que hoje dependem de ela lembrar. */
+      "Semanal (Sexta)": [
+        { bloco: "Entregas de sexta", itens: [
+          { id:"g_s_1", texto:"Relatório Hitech", critico:true },
+          { id:"g_s_2", texto:"Envio dos links da Place", critico:true },
+          { id:"g_s_3", texto:"Enviar o direcionamento de stories da Juliane e da Vitalle", critico:true }
+        ]}
       ]
     },
     "Amanda": {
@@ -7066,9 +7075,33 @@
     renderStoriesCliente();
   };
 
+  /* Guarda os links por cliente e semana: stories_links/{slug}_{semana} */
+  window.salvarLinkStory = async function(slug, semana, dia){
+    const el = document.getElementById('lkStory_'+slug+'_'+dia);
+    if(!el) return;
+    const link = (el.value||'').trim();
+    const chave = slug + '_' + semana;
+    try{
+      const ref = doc(db,'stories_links', chave);
+      const snap = await getDoc(ref);
+      const dias = snap.exists() ? (snap.data().dias || {}) : {};
+      dias[dia] = { link, por: usuarioAtual || '?', em: new Date().toISOString() };
+      await setDoc(ref, { cliente: slug, semana, dias, atualizadoEm: serverTimestamp() }, { merge:true });
+      window.__linksStorySemana = window.__linksStorySemana || {};
+      window.__linksStorySemana[chave] = dias;
+      el.style.borderColor = link ? 'var(--green)' : 'var(--line)';
+      if(link) mostrarToast('Link salvo.');
+    }catch(e){ console.error('Falha ao salvar o link:', e); mostrarToast('Não consegui salvar o link.', 'erro'); }
+  };
+
   window.renderStoriesCliente = async function(){
     const cont = document.getElementById('storiesConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+    try{
+      const snapL = await getDocs(collection(db,'stories_links'));
+      window.__linksStorySemana = {};
+      snapL.forEach(d => { window.__linksStorySemana[d.id] = d.data().dias || {}; });
+    }catch(e){ console.error('Falha ao ler os links:', e); window.__linksStorySemana = {}; }
 
     const semanaAtual = segundaDaSemana(new Date());
     const semana = window.__semanaStories || semanaAtual;
@@ -7100,7 +7133,24 @@
     const clientesStory = await carregarClientesDeStory();
     const semStory = CLIENTES_LISTA.filter(c => !clientesStory.some(x => x.slug === c.slug));
 
+    /* A Gabi pediu: um botão por cliente no topo, e ao clicar aparece a
+       semana daquele cliente. Antes o cliente ficava num select no meio
+       da tela, embaixo de tudo. */
     html += `<div class="card">
+      <div class="metaSecTit">Escolhe o cliente</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+        ${clientesStory.map(c => {
+          const ativo = (window.__storyClienteSel || clientesStory[0]?.slug) === c.slug;
+          return `<div onclick="window.__storyClienteSel='${escJs(c.slug)}';renderStoriesCliente();"
+            style="cursor:pointer;flex:1;min-width:150px;text-align:center;padding:15px 12px;border-radius:10px;font-weight:800;font-size:14px;
+                   background:${ativo?'var(--yellow)':'var(--deep)'};color:${ativo?'var(--graphite)':'var(--offwhite)'};border:2px solid ${ativo?'var(--yellow)':'var(--line)'};">
+            📸 ${esc(c.nome)}
+          </div>`;
+        }).join('') || '<div class="empty">Nenhum cliente com story ainda.</div>'}
+      </div>
+    </div>
+
+    <div class="card">
       <h2>👥 Quem tem story</h2>
       <div class="desc">Só estes clientes têm story fechado. O que está escrito aqui é o combinado de cada um — edita quando o contrato mudar, e adiciona cliente novo quando fechar.</div>
       ${clientesStory.map(c => {
@@ -7128,7 +7178,43 @@
       </div>` : ''}
     </div>`;
 
+    /* ===== OS LINKS DA SEMANA — pedido da Gabi (28/07/2026) ============
+       Ela não escreve o story dentro do site: prepara um documento por
+       dia e manda o link. Obrigar a preencher um por vez, dia após dia,
+       tornava a tarefa mais lenta que o WhatsApp que ela veio substituir.
+
+       Agora é uma tabela: os dias combinados daquele cliente, um campo de
+       link em cada, e ela cola todos de uma vez, quando quiser. Cada
+       campo salva sozinho ao sair. O que já existia — montar o roteiro
+       dentro do site — continua logo abaixo, pra quando ela preferir. */
     html += `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>🔗 Links da semana — ${esc((clientesStory.find(c=>c.slug===(window.__storyClienteSel||clientesStory[0]?.slug))||{}).nome || 'cliente')}</h2>
+      <div class="desc">Cola aqui o link do documento que você preparou pra cada dia. Pode fazer todos de uma vez — não precisa voltar todo dia. Salva sozinho.</div>
+      <div style="margin-top:14px;">
+        ${(() => {
+          const sel = clientesStory.find(c=>c.slug===(window.__storyClienteSel||clientesStory[0]?.slug));
+          if(!sel) return '<div class="empty">Escolhe o cliente abaixo.</div>';
+          const dias = (Array.isArray(sel.dias) && sel.dias.length) ? sel.dias : [1,2,3,4,5];
+          const salvos = (window.__linksStorySemana||{})[sel.slug + '_' + semana] || {};
+          const seg = new Date(semana + 'T12:00:00');
+          return DIAS_STORY.filter(d => dias.includes(d.n)).map(d => {
+            const dt = new Date(seg); dt.setDate(dt.getDate() + (d.n - 1));
+            const rot = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
+            const v = salvos[d.n] || {};
+            return `<div style="display:flex;gap:10px;align-items:center;padding:11px 0;border-top:1px solid var(--line);flex-wrap:wrap;">
+              <div style="min-width:110px;font-size:12.5px;font-weight:800;">${d.nome} <span class="meta">${rot}</span></div>
+              <input type="text" id="lkStory_${sel.slug}_${d.n}" value="${esc(v.link||'')}" placeholder="Cola o link do documento deste dia"
+                style="flex:1;min-width:200px;background:var(--deep);border:1px solid ${v.link?'var(--green)':'var(--line)'};color:#fff;padding:10px 12px;border-radius:8px;font-size:12.5px;"
+                onblur="salvarLinkStory('${sel.slug}','${semana}',${d.n})">
+              ${v.link ? '<a href="'+esc(v.link)+'" target="_blank" rel="noopener" class="btn secondary" style="width:auto;padding:9px 13px;font-size:11px;text-decoration:none;">abrir ↗</a>' : ''}
+            </div>`;
+          }).join('');
+        })()}
+      </div>
+      <div class="meta" style="margin-top:12px;">Depois de colar os links, o direcionamento é enviado pra cliente postar. Isso está no seu checklist de sexta.</div>
+    </div>
+
+    <div class="card" style="border:2px solid var(--yellow);">
       <h2>📅 Montar a semana inteira</h2>
       <div class="desc">Escolhe o cliente e preenche os dias de uma vez. Vai tudo junto pro portal dele aprovar, organizado por dia. Deixa em branco o dia que não tem story.</div>
       <div class="field" style="margin-top:10px;"><label>Cliente</label>

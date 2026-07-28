@@ -3571,6 +3571,49 @@
      dela e isso entra no pagamento do dia 15. Editor que fez arte, social
      media que cobriu um evento, filmmaker que pegou Uber — tudo aqui. */
   const FILMMAKERS_PAGAMENTO = ["Chris","Amanda","Cecília","Gabrielle","Helo","João Victor","Yas","Nathan","Luís"];
+  /* Conferir e liberar: grava as correções da Amanda E aprova, num
+     clique. Antes eram duas coisas que não conversavam. */
+  window.conferirELiberarExtra = async function(id){
+    const num = el => { const v = document.getElementById(el)?.value; return v === '' || v == null ? 0 : (parseFloat(v) || 0); };
+    const filmagem = num('apFilm_'+id);
+    const ida = num('apIda_'+id), volta = num('apVolta_'+id);
+    const uber = ida + volta;
+    const link = (document.getElementById('apLink_'+id)?.value||'').trim();
+
+    let reg = null;
+    try{ const sn = await getDoc(doc(db,'pagamentos_extra', id)); if(sn.exists()) reg = sn.data(); }
+    catch(e){ console.error(e); mostrarToast('Não consegui ler o lançamento.', 'erro'); return; }
+    if(!reg) return;
+    const tipo = tipoDoExtra(reg);
+
+    if(uber > 0 && !link){
+      alert('Falta o comprovante do Uber.\n\nSem ele ninguém consegue conferir o valor depois — e é o que o Chris vai pagar. Cobra o link do Drive antes de liberar.');
+      return;
+    }
+    if(tipo !== 'mensalista' && !filmagem && !uber){
+      alert('Nenhum valor preenchido.\n\nSe foi só deslocamento, preencha o Uber. Se foi filmagem avulsa, defina o valor dela.');
+      return;
+    }
+    if(tipo !== 'mensalista' && !filmagem && uber > 0){
+      if(!confirm('Sem valor de filmagem — vai entrar como só deslocamento.\n\nÉ isso mesmo? Se houve filmagem avulsa, ela precisa de valor.')) return;
+    }
+    if(filmagem && (filmagem < 50 || filmagem > 500)){
+      if(!confirm('Valor de filmagem fora do normal (' + brl(filmagem) + ').\n\nCostuma ficar entre ' + brl(VALOR_AVULSO_SUGERIDO.min) + ' e ' + brl(VALOR_AVULSO_SUGERIDO.max) + '. Confirma?')) return;
+    }
+
+    try{
+      await updateDoc(doc(db,'pagamentos_extra', id), {
+        valorExtra: filmagem, valorUber: uber, uberIda: ida, uberVolta: volta,
+        temUber: uber > 0, uberLink: link,
+        semCobrancaFilmagem: !filmagem,
+        aprovadoPeloChris: true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString(),
+        conferidoPor: usuarioAtual||'?', conferidoEm: new Date().toISOString()
+      });
+      mostrarToast('Liberado — ' + brl(filmagem + uber) + ' entrou na folha do dia 15.');
+      renderGerenciaPagamentos();
+    }catch(e){ console.error('Falha ao liberar:', e); mostrarToast('Não consegui liberar agora.', 'erro'); }
+  };
+
   window.aprovarExtra = async function(id){
     await updateDoc(doc(db,'pagamentos_extra', id), { aprovadoPeloChris:true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString() });
     mostrarToast('Aprovado — entrou no total do mês.');
@@ -3674,20 +3717,68 @@
        cara de controle de gasto — total do mês, onde saiu mais, e uma fila
        de aprovação separada pro que a própria pessoa informou. O que ela
        preenche não entra no total até ele aprovar. */
+    /* ===== O NÓ DO UBER — DESATADO EM 28/07/2026 ========================
+       A Amanda não conseguia colocar valor no que o Luís mandava, e o
+       valor não chegava no Chris. Os dois sintomas vinham do mesmo nó:
+
+       O que a pessoa registra nasce como `informadoPelaPessoa` sem
+       aprovação, e caía numa fila que tinha SÓ dois botões — aprovar e
+       recusar. Nenhum campo de valor. E a lista onde se define o valor
+       filtrava `!informadoPelaPessoa || aprovadoPeloChris`, ou seja,
+       excluía justamente esses. Pra aprovar era preciso o valor; pro
+       valor aparecer era preciso aprovar. Cada lado esperando o outro.
+
+       Agora a fila é de CONFERÊNCIA, não de carimbo: os campos estão
+       dentro dela. A Amanda vê o que o filmmaker mandou, corrige o Uber
+       se ele digitou errado, põe o valor da filmagem quando é avulso, e
+       só então aprova. Um clique, uma tela.
+
+       E o botão de aprovar checa o que não pode faltar: comprovante
+       quando há Uber, valor quando é filmagem de cliente avulso. */
     const informados = doMes.filter(p => p.informadoPelaPessoa && !p.aprovadoPeloChris);
     if(informados.length){
       html += `<div class="card" style="border:2px solid var(--yellow);">
-        <div class="metaSecTit">🔔 Esperando sua aprovação (${informados.length})</div>
-        <div class="desc" style="margin-bottom:10px;">A pessoa informou, você confere. Só entra no total do mês depois que você aprovar.</div>
-        ${informados.map(p => `<div class="item" style="border-left:3px solid var(--yellow);">
-          <div class="top"><div class="nome">${esc(p.filmmaker||'?')}</div><b style="color:var(--yellow);">${p.valorExtra?brl(Number(p.valorExtra)):'sem valor'}</b></div>
-          <div class="meta" style="margin-top:4px;">${esc(p.servico||'sem descrição')}${p.clienteNome?' · '+esc(p.clienteNome):''}</div>
-          ${!p.valorExtra||!p.servico ? '<div class="meta" style="margin-top:4px;color:var(--red);">⚠️ Faltou '+[!p.servico?'a descrição do serviço':'',!p.valorExtra?'o valor':''].filter(Boolean).join(' e ')+' — pede antes de aprovar.</div>' : ''}
-          <div class="btnrow" style="margin-top:8px;">
-            <button class="btn green" style="width:auto;padding:6px 12px;font-size:11px;" onclick="aprovarExtra('${p.id}')">✔ Aprovar</button>
-            <button class="btn red" style="width:auto;padding:6px 12px;font-size:11px;opacity:.75;" onclick="excluirPagamentoExtra('${p.id}')">Recusar</button>
+        <div class="metaSecTit">🔔 Conferir e liberar (${informados.length})</div>
+        <div class="desc" style="margin-bottom:12px;">O filmmaker registrou, você confere. <b>Só entra na folha do dia 15 depois que você liberar.</b> Dá pra corrigir os valores aqui mesmo antes de liberar.</div>
+        ${informados.map(p => {
+          const tipo = tipoDoExtra(p);
+          const cc = contasDoExtra(p);
+          return `<div class="item" style="border-left:3px solid var(--yellow);padding:16px 18px;margin-bottom:16px;">
+          <div class="top">
+            <div class="nome">${esc(p.filmmaker||'?')} — ${esc(p.clienteNome||'sem cliente')} ${selosDoExtra(p)}</div>
+            <div class="meta">${p.data ? formatarDataBR(p.data) : ''}</div>
           </div>
-        </div>`).join('')}
+          <div class="meta" style="margin-top:5px;">${esc(p.servico||'sem descrição do serviço')}</div>
+
+          <div class="row2" style="margin-top:12px;">
+            <div class="field">
+              <label>🎥 Valor da filmagem ${tipo === 'mensalista' ? '<span style="color:var(--muted);">— mensalista não gera</span>' : '<span style="color:var(--yellow2);">— você define</span>'}</label>
+              <input type="number" step="0.01" id="apFilm_${p.id}" value="${Number(p.valorExtra)||''}" placeholder="${tipo === 'mensalista' ? 'não se aplica' : '0,00'}" list="sugestoesAvulso" ${tipo === 'mensalista' ? 'disabled' : ''}>
+            </div>
+            <div class="field">
+              <label>🚗 Uber — ida e volta</label>
+              <div style="display:flex;gap:6px;">
+                <input type="number" step="0.01" id="apIda_${p.id}" value="${Number(p.uberIda)||''}" placeholder="Ida" style="flex:1;">
+                <input type="number" step="0.01" id="apVolta_${p.id}" value="${Number(p.uberVolta)||''}" placeholder="Volta" style="flex:1;">
+              </div>
+              <div class="meta" style="margin-top:4px;">Ele mandou ${brl(cc.uber)}${p.motivoUber ? ' · ' + (MOTIVO_UBER_LABEL[p.motivoUber]||p.motivoUber) : ''}</div>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:10px;">
+            <label>🔗 Comprovante do Uber</label>
+            <input type="text" id="apLink_${p.id}" value="${esc(p.uberLink||'')}" placeholder="Link do comprovante no Drive">
+            ${String(p.uberLink||'').trim()
+              ? '<div class="meta" style="margin-top:5px;">✓ <a href="'+esc(p.uberLink)+'" target="_blank" rel="noopener" style="color:var(--yellow);">abrir o que ele mandou ↗</a></div>'
+              : (cc.uber ? '<div class="meta" style="margin-top:5px;color:var(--red);">⚠️ Ele não mandou comprovante. Cobra o link antes de liberar.</div>' : '')}
+          </div>
+
+          <div class="btnrow" style="margin-top:14px;">
+            <button class="btn red" style="padding:11px;font-size:12px;opacity:.8;" onclick="excluirPagamentoExtra('${p.id}')">Recusar</button>
+            <button class="btn green" style="padding:11px;font-size:12px;" onclick="conferirELiberarExtra('${p.id}')">✔ Conferir e liberar</button>
+          </div>
+        </div>`;
+        }).join('')}
       </div>`;
     }
 
@@ -5675,7 +5766,7 @@
     const gargalo = etapas.slice().sort((a,b)=>b[1]-a[1])[0];
     html += `<div class="card metaSec"><div class="metaSecTit">🚧 Onde a esteira está parada</div>
       <div class="desc" style="margin-bottom:10px;">${gargalo[1] ? 'O maior acúmulo está em <b>' + gargalo[0].toLowerCase() + '</b> — ' + gargalo[1] + ' item(ns).' : 'Nada acumulado. Esteira limpa.'}</div>
-      ${etapas.map(([n,v,c]) => barraFin(n, v, maxEt, c)).join('')}
+      ${etapas.map(([n,v,c]) => barraFin(n, v, maxEt, c, false)).join('')}
     </div>`;
 
     // ---- GRÁFICO 2: há quanto tempo cada etapa está segurando ----
@@ -5695,7 +5786,7 @@
       const maxId = Math.max(...idades.map(i=>i[1]), 1);
       html += `<div class="card metaSec"><div class="metaSecTit">⏳ Há quanto tempo está parado (média, em dias)</div>
         <div class="desc" style="margin-bottom:10px;">Fila comprida não é problema; fila <b>velha</b> é. Barra vermelha passou de uma semana.</div>
-        ${idades.map(([n,v]) => barraFin(n + ' — ' + v + 'd', v, maxId, v>=7?'var(--red)':v>=3?'var(--yellow2)':'var(--green)')).join('')}
+        ${idades.map(([n,v]) => barraFin(n, v, maxId, v>=7?'var(--red)':v>=3?'var(--yellow2)':'var(--green)', false, v + ' dia(s)')).join('')}
       </div>`;
     }
 
@@ -15748,9 +15839,17 @@
     const n = parseFloat(limpo);
     return isNaN(n) ? 0 : n;
   }
-  function barraFin(rotulo, valor, maximo, cor){
-    const pct = maximo > 0 ? Math.round((valor/maximo)*100) : 0;
-    return `<div class="metaBar"><div class="metaBarTop"><span>${rotulo}</span><b>${brl(valor)}</b></div>
+  /* ===== "R$ 14,00" QUE ERAM 14 VÍDEOS — 28/07/2026 ===================
+     Esta função nasceu no Financeiro, onde tudo é dinheiro, e por isso
+     formatava o valor com brl() sempre. Depois passou a ser reusada no
+     painel de vídeos — e "14 vídeos em edição" virou "R$ 14,00".
+
+     Num painel que fala de dinheiro logo acima, isso não é só feio: é
+     confuso de um jeito perigoso. Agora quem chama diz se é dinheiro. */
+  function barraFin(rotulo, valor, maximo, cor, ehDinheiro, textoValor){
+    const pct = maximo > 0 ? Math.round((Number(valor)/maximo)*100) : 0;
+    const mostrar = textoValor != null ? textoValor : ((ehDinheiro === false) ? String(valor) : brl(valor));
+    return `<div class="metaBar"><div class="metaBarTop"><span>${rotulo}</span><b>${mostrar}</b></div>
       <div class="metaBarTrack"><div class="metaBarFill" style="width:${pct}%;background:${cor};"></div></div></div>`;
   }
 
@@ -15906,6 +16005,11 @@
     const despesaExtrasPagas = extrasDoMes.filter(e=>e.pago).reduce((s,e)=>s+somaExtra(e),0);
     const despesaExtrasAPagar = despesaExtras - despesaExtrasPagas;
     const extrasSemValor = extras.filter(e => e.mes === comp && !e.valorExtra && !e.semCobrancaFilmagem).length;
+    /* O que o filmmaker registrou e a Amanda ainda não conferiu fica FORA
+       do total de propósito — mas precisa ser visível, senão vira dinheiro
+       invisível. Foi o caso do Uber do Luís. */
+    const naoConferidos = extras.filter(e => e.mes === comp && e.informadoPelaPessoa && !e.aprovadoPeloChris);
+    const aguardandoConferencia = { qtd: naoConferidos.length, total: somarExtras(naoConferidos).total };
 
     const totalEntrou = recebidoMensal + receitaAvulsa;
     const totalMes = totalEntrou - despesaExtras;
@@ -15993,6 +16097,7 @@
           <div class="resumoCard"><div class="num" style="font-size:15px;">🎥 ${brl(despesaFilmagem)}</div><div class="lbl">filmagens avulsas</div></div>
           <div class="resumoCard"><div class="num" style="font-size:15px;">🚗 ${brl(despesaUber)}</div><div class="lbl">Uber / deslocamento</div></div>
           ${extrasSemValor ? '<div class="resumoCard yellow clicavel" onclick="navegarGerenciaSub(\'pagamentos\')"><div class="num" style="font-size:17px;">'+extrasSemValor+'</div><div class="lbl">⏳ sem valor — falta a Amanda definir →</div></div>' : ''}
+          ${aguardandoConferencia.qtd ? '<div class="resumoCard red clicavel" onclick="navegarGerenciaSub(\'pagamentos\')"><div class="num" style="font-size:17px;">'+brl(aguardandoConferencia.total)+'</div><div class="lbl">🔔 registrado e não conferido — não está no total acima →</div></div>' : ''}
         </div>
 
         ${ordenadas.map(([nome, lista, aPagar, total]) => {
@@ -17009,7 +17114,7 @@
       </div>
       <div class="desc" style="margin-bottom:8px;">Onde a fila está parada agora</div>
       ${[['Em edição', emEdicao.length, 'var(--yellow)'],['Esperando sua aprovação', aguardando.length, 'var(--yellow2)'],['Em correção', correcao.length, 'var(--red)']]
-        .map(([n,v,c]) => barraFin(n, v, Math.max(emEdicao.length, aguardando.length, correcao.length, 1), c)).join('')}
+        .map(([n,v,c]) => barraFin(n + ' — vídeo(s)', v, Math.max(emEdicao.length, aguardando.length, correcao.length, 1), c, false)).join('')}
       <div class="desc" style="margin:14px 0 8px;">Carga por editor</div>
       ${Object.entries(porEditor).sort((a,b)=>b[1].fila-a[1].fila).map(([n,x]) =>
         `<div style="margin-bottom:9px;">
@@ -19450,6 +19555,20 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <div class="resumoCard"><div class="num" style="font-size:15px;">🚗 ${brl(g.uber)}</div><div class="lbl">${g.qtdUber} Uber(s)</div></div>
           <div class="resumoCard ${aPagar.total?'yellow':'green'}"><div class="num" style="font-size:15px;">${brl(aPagar.total)}</div><div class="lbl">falta pagar</div></div>
         </div>
+        ${(() => {
+          /* 28/07/2026 — o que o filmmaker mandou e ninguém conferiu ficava
+             invisível: não entra no total (certo) e não aparecia em lugar
+             nenhum (errado). Foi assim que o Uber do Luís sumiu. */
+          const aguardando = doMes.filter(p => p.informadoPelaPessoa && !p.aprovadoPeloChris);
+          if(!aguardando.length) return '';
+          const c = somarExtras(aguardando);
+          return `<div style="background:var(--redbg);border-left:3px solid var(--red);padding:12px 14px;border-radius:9px;margin-bottom:12px;">
+            <b style="font-size:13px;">🔔 ${aguardando.length} lançamento(s) esperando você conferir — ${brl(c.total)}</b>
+            <div class="meta" style="margin-top:5px;">${aguardando.map(x=>esc(x.filmmaker||'?')+' · '+esc(x.clienteNome||'sem cliente')).join(' · ')}</div>
+            <div class="meta" style="margin-top:5px;">Enquanto não liberar, <b>não entra na folha do dia 15 e o Chris não vê</b>. É onde você corrige os valores do Uber e define o da filmagem.</div>
+            <button class="btn" style="margin-top:10px;padding:11px;font-size:12px;" onclick="navegarGerenciaSub('pagamentos')">Conferir agora →</button>
+          </div>`;
+        })()}
         ${semValor.length ? `<div style="background:var(--deep);border-left:3px solid var(--yellow2);padding:11px 13px;border-radius:9px;margin-bottom:12px;">
           <b style="font-size:12.5px;color:var(--yellow2);">⏳ ${semValor.length} filmagem(ns) esperando você definir o valor</b>
           <div class="meta" style="margin-top:5px;">${semValor.slice(0,4).map(p=>esc((p.filmmaker||'?')+' — '+(p.clienteNome||'sem cliente'))).join(' · ')}${semValor.length>4?' e mais '+(semValor.length-4):''}</div>

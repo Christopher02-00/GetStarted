@@ -526,6 +526,7 @@
            Chris relatou que esquecia de olhar. Subiu pro topo, logo abaixo
            do Início, com badge do que está esperando decisão. -->
       <div class="navitem" onclick="irPara('gerencia', this)" id="navitemGerencia" style="display:none;"><span class="ico"><svg><use href="#i-lock"/></svg></span> Gerência<span class="navbadge" id="badgeGerencia" style="display:none;background:var(--yellow);color:var(--graphite);" title="Esperando decisão">0</span></div>
+      <div class="navitem" onclick="irPara('equipe', this)" id="navitemEquipe" style="display:none;"><span class="ico">👥</span> Equipe</div>
       <div class="navitem" id="navMinhasDemandasAtribuidas" onclick="irPara('minhasDemandasAtribuidas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Demandas<span class="navbadge" id="badgeMinhasDemandasAtribuidas" style="display:none;">0</span><span class="navbadge" id="badgeAprovar" style="display:none;background:var(--yellow);color:var(--graphite);" title="Esperando sua aprovação">0</span></div>
       <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico">🚨</span> Atrasadas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
@@ -1129,6 +1130,20 @@
     </div>
 
     <!-- DUVIDAS COM O BIT -->
+    <!-- ===== 👥 EQUIPE — 28/07/2026 =========================================
+         Fase 2 da unificação. Avaliar uma pessoa exigia abrir seis telas:
+         Ver Ambiente, Checklists do Dia, Disciplina de Hoje, Metas da
+         Equipe, Modo Ausência e Demandas que Eu Enviei. Nenhuma delas
+         mostrava a pessoa inteira, e a informação de cada uma contradizia
+         um pouco a da outra.
+         Aqui é uma pessoa por vez, com tudo dela num lugar só. -->
+    <div class="view" id="view-equipe">
+      <h1>👥 <span class="y">Equipe</span></h1>
+      <div class="sub">Uma pessoa por vez, inteira. Clica no nome pra abrir a ficha — demandas, checklist, vídeos na mão, extras e presença.</div>
+      <div id="equipeCards"></div>
+      <div id="equipeFicha" style="margin-top:16px;"></div>
+    </div>
+
     <div class="view" id="view-duvidasBit">
       <h1>Tirar Dúvidas com o <span class="y">Bit</span></h1>
       <div class="sub">Digita sua dúvida sobre o site — o Bit procura no banco de respostas dele.</div>
@@ -9086,6 +9101,7 @@
       setPostagensSub(primeiraAba, elPrimeira);
     }
     if(nome === 'stories'){ renderStoriesCliente(); }
+    if(nome === 'equipe') renderEquipe();
     if(nome === 'portalGeral'){
       window.__portalAdminSub = window.__portalAdminSub || 'ideias';
       const podeEditar = ['Amanda','Gabrielle'].includes(usuarioAtual);
@@ -9789,6 +9805,8 @@
        simplesmente nao era verdade. Agora é. */
     const gVendas = document.getElementById('navgroupVendas');
     if(gVendas) gVendas.style.display = (usuarioAtual === 'Chris') ? 'block' : 'none';
+    const itEquipe = document.getElementById('navitemEquipe');
+    if(itEquipe) itEquipe.style.display = ehGerencia ? 'flex' : 'none';
   }
 
   // FRENTE C1 (correcao de teste ao vivo) — aplica o estado "sem login" ja
@@ -18160,6 +18178,199 @@ Observações do cliente: ${l.observacoes||'—'}`;
     mostrarToast('Devolvido pra Gabi com o motivo.');
     renderGerenciaAmanda();
   };
+
+  /* ===== 👥 EQUIPE — FASE 2 DA UNIFICAÇÃO (28/07/2026) =================
+     Substitui seis telas: Ver Ambiente, Checklists do Dia, Disciplina de
+     Hoje, Metas da Equipe, Modo Ausência e Demandas que Eu Enviei.
+
+     Regras de layout que o Chris fixou e que valem aqui:
+       · cartão fechado mostra no máximo duas linhas
+       · um botão por cartão fechado
+       · edição só dentro da ficha aberta
+       · cor comunica estado; o texto não repete a cor
+       · 16px de respiração entre cartões
+       · lista com mais de 8 vem agrupada e recolhida
+
+     Os três números seguem a mesma nomenclatura do resto do sistema, e
+     nunca somados: Travado (venceu), Hoje (vence hoje), Combinado (tem
+     data à frente). O cartão fechado mostra só o primeiro. */
+  let __equipeAberta = null;
+
+  window.renderEquipe = async function(){
+    const box = document.getElementById('equipeCards');
+    if(!box) return;
+    box.innerHTML = '<div class="card"><div class="desc">Carregando a equipe...</div></div>';
+    await carregarTodasDemandas();
+
+    const hoje = new Date().toISOString().slice(0,10);
+    const pessoas = DESTINATARIOS_DEMANDA.filter((v,i,a) => a.indexOf(v) === i);
+
+    let presenca = {};
+    try{
+      const snap = await getDocs(collection(db,'presenca_funcionarios'));
+      snap.forEach(d => { const v = d.data(); presenca[d.id] = v.ultimaAtividade?.seconds ? v.ultimaAtividade.seconds * 1000 : null; });
+    }catch(e){ console.error('Falha ao ler presença:', e); }
+
+    let videos = [];
+    try{
+      const snap = await getDocs(collection(db,'videos_producao'));
+      snap.forEach(d => { const v = d.data(); if(!v.excluido) videos.push(v); });
+    }catch(e){ console.error('Falha ao ler vídeos:', e); }
+
+    let extras = [];
+    try{
+      const snap = await getDocs(collection(db,'pagamentos_extra'));
+      const mes = hoje.slice(0,7);
+      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.mes === mes) extras.push(v); });
+    }catch(e){ console.error('Falha ao ler extras:', e); }
+
+    const dados = pessoas.map(nome => {
+      const minhas = todasDemandas.filter(d => d.destinatario === nome && d.status !== 'aprovada' && !d.escalacaoGerencial);
+      const vivas = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d));
+      return {
+        nome,
+        travado:   vivas.filter(d => calcularUrgencia(d) === 'atrasado').length,
+        hoje:      vivas.filter(d => calcularUrgencia(d) === 'hoje').length,
+        combinado: vivas.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d))).length,
+        encalhadas: minhas.filter(estaEncalhada).length,
+        entregue:  minhas.filter(d => d.status === 'concluida_aguardando_aprovacao').length,
+        videos:    videos.filter(v => v.editorAtribuido === nome && ['aguardando_edicao','correcao'].includes(v.status)).length,
+        extras:    somarExtras(extras.filter(e => e.filmmaker === nome && !e.pago)).total,
+        ausente:   estaAusente(nome),
+        presenca:  presenca[nome] || null,
+        todas: minhas
+      };
+    });
+
+    dados.sort((a,b) => b.travado - a.travado || b.hoje - a.hoje);
+
+    box.innerHTML = dados.map(p => {
+      const cor = p.ausente ? 'var(--muted)' : p.travado > 5 ? 'var(--red)' : p.travado ? 'var(--yellow2)' : 'var(--green)';
+      const visto = p.presenca ? tempoDesde(p.presenca) : 'sem registro';
+      return `<div class="item" style="border-left:4px solid ${cor};padding:16px 18px;margin-bottom:16px;cursor:pointer;" onclick="abrirFichaEquipe('${escJs(p.nome)}')">
+        <div class="top">
+          <div class="nome" style="font-size:15.5px;">${esc(p.nome)}${p.ausente ? ' <span class="selo pendente">ausente</span>' : ''}</div>
+          <div style="font-size:20px;font-weight:800;color:${cor};">${p.travado}</div>
+        </div>
+        <div class="meta" style="margin-top:6px;">${p.travado ? p.travado + ' travado' : 'nada travado'} · ${p.hoje} hoje · ${p.combinado} combinado${p.videos ? ' · ' + p.videos + ' vídeo(s) na mão' : ''} · visto ${visto}</div>
+      </div>`;
+    }).join('');
+
+    if(__equipeAberta) abrirFichaEquipe(__equipeAberta);
+  };
+
+  /* A ficha: tudo da pessoa num lugar só. Só abre sob clique — o cartão
+     fechado continua com duas linhas, como combinado. */
+  window.abrirFichaEquipe = async function(nome){
+    __equipeAberta = nome;
+    const box = document.getElementById('equipeFicha');
+    if(!box) return;
+    box.innerHTML = '<div class="card"><div class="desc">Abrindo a ficha de ' + esc(nome) + '...</div></div>';
+    box.scrollIntoView({ behavior:'smooth', block:'start' });
+
+    const minhas = todasDemandas.filter(d => d.destinatario === nome && d.status !== 'aprovada' && !d.escalacaoGerencial);
+    const porData = l => [...l].sort((a,b) => ((a.prazoData||'')+(a.prazoHora||'')).localeCompare((b.prazoData||'')+(b.prazoHora||'')));
+    const vivas = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d));
+    const travado   = porData(vivas.filter(d => calcularUrgencia(d) === 'atrasado'));
+    const praHoje   = porData(vivas.filter(d => calcularUrgencia(d) === 'hoje'));
+    const combinado = porData(vivas.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d))));
+    const encalhadas = minhas.filter(estaEncalhada);
+    const entregue  = minhas.filter(d => d.status === 'concluida_aguardando_aprovacao');
+    const enviadasPorMim = todasDemandas.filter(d => d.destinatario === nome && (d.origem||'').toLowerCase() === (usuarioAtual||'').toLowerCase() && d.status !== 'aprovada');
+
+    let videos = [], extras = [], checklist = [];
+    try{
+      const snap = await getDocs(collection(db,'videos_producao'));
+      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.editorAtribuido === nome && ['aguardando_edicao','correcao'].includes(v.status)) videos.push({id:d.id, ...v}); });
+    }catch(e){ console.error(e); }
+    try{
+      const mes = new Date().toISOString().slice(0,7);
+      const snap = await getDocs(collection(db,'pagamentos_extra'));
+      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.mes === mes && v.filmmaker === nome) extras.push({id:d.id, ...v}); });
+    }catch(e){ console.error(e); }
+    try{ checklist = await obterTemplatesEfetivos(nome); }catch(e){ console.error(e); }
+
+    const cExtras = somarExtras(extras);
+    const linha = (rot, qtd, cor) => `<div class="resumoCard ${cor||''}"><div class="num">${qtd}</div><div class="lbl">${rot}</div></div>`;
+
+    const bloco = (chave, titulo, lista, aberta) => !lista.length ? '' : `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="eq_${chave}">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${lista.map(d => `<div class="item" style="cursor:pointer;padding:14px 16px;margin-bottom:16px;" onclick="abrirDemandaGerencia('${d.id}')">
+        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="meta">${d.prazoData ? formatarDataBR(d.prazoData) : 'sem prazo'}</span></div>
+        <div class="meta" style="margin-top:5px;">${esc((d.descricao||'').slice(0,90).replace(/\n/g,' ')) || 'sem descrição'}</div>
+      </div>`).join('')}</div>
+    </div>`;
+
+    box.innerHTML = `<div class="card" style="border:2px solid var(--yellow);">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <h2 style="margin:0;">${esc(nome)}</h2>
+        <button class="btn secondary" style="width:auto;padding:10px 16px;font-size:12px;" onclick="fecharFichaEquipe()">Fechar</button>
+      </div>
+      <div class="painelResumo" style="margin-top:16px;">
+        ${linha('🔴 travado', travado.length, travado.length?'red':'green')}
+        ${linha('🟡 hoje', praHoje.length, praHoje.length?'yellow':'')}
+        ${linha('⚪ combinado', combinado.length, '')}
+        ${linha('✋ entregou, espera aprovação', entregue.length, entregue.length?'green':'')}
+      </div>
+      <div class="painelResumo" style="margin-top:12px;">
+        ${linha('🎬 vídeos na mão', videos.length, videos.length>4?'yellow':'')}
+        ${linha('💰 extras a receber', brl(somarExtras(extras.filter(e=>!e.pago)).total), '')}
+        ${encalhadas.length ? linha('⏳ encalhadas (não contam)', encalhadas.length, '') : ''}
+        ${linha('📋 itens de rotina', (checklist||[]).length, '')}
+      </div>
+      <div class="btnrow" style="margin-top:16px;">
+        <button class="btn secondary" style="padding:12px;font-size:12.5px;" onclick="cobrarPessoaWhats('${escJs(nome)}')">📲 Cobrar no WhatsApp</button>
+        <button class="btn secondary" style="padding:12px;font-size:12.5px;" onclick="abrirNovaDemandaPara('${escJs(nome)}')">➕ Mandar demanda</button>
+      </div>
+    </div>
+
+    ${bloco('travado', '🔴 Travado — venceu e não foi feito', travado, true)}
+    ${bloco('hoje', '🟡 Vence hoje', praHoje, true)}
+    ${bloco('combinado', '⚪ Combinado — tem data à frente', combinado, false)}
+    ${bloco('entregue', '✋ Entregou, esperando aprovação', entregue, false)}
+    ${bloco('encalhadas', '⏳ Encalhadas — automáticas e velhas', encalhadas, false)}
+    ${enviadasPorMim.length ? bloco('minhas', '📤 O que VOCÊ mandou pra ' + esc(nome), enviadasPorMim, false) : ''}
+
+    ${videos.length ? `<div class="faixaDem" data-faixa="eq_videos">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🎬 Vídeos na mão de ${esc(nome)} <span class="qtd">(${videos.length})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${videos.map(v => `<div class="item" style="padding:14px 16px;margin-bottom:16px;">
+        <div class="top"><div class="nome">${esc(v.titulo||'sem título')}</div><span class="selo ${v.status==='correcao'?'atrasado':'pendente'}">${v.status==='correcao'?'correção':'editando'}</span></div>
+        <div class="meta" style="margin-top:5px;">${esc(v.clienteNome||v.cliente||'')}</div>
+      </div>`).join('')}</div>
+    </div>` : ''}
+
+    ${extras.length ? `<div class="faixaDem" data-faixa="eq_extras">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">💰 Extras do mês <span class="qtd">(${brl(cExtras.total)})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${extras.map(e => `<div class="item" style="padding:14px 16px;margin-bottom:16px;">
+        <div class="top"><div class="nome">${esc(e.clienteNome||'sem cliente')}</div><span class="selo ${e.pago?'aprovada':'pendente'}">${e.pago?'pago':'a pagar'}</span></div>
+        <div class="meta" style="margin-top:5px;">🎥 ${brl(Number(e.valorExtra)||0)} · 🚗 ${brl(Number(e.valorUber)||0)}${e.servico?' · '+esc(e.servico):''}</div>
+      </div>`).join('')}</div>
+    </div>` : ''}`;
+  };
+
+  window.fecharFichaEquipe = function(){
+    __equipeAberta = null;
+    const box = document.getElementById('equipeFicha');
+    if(box) box.innerHTML = '';
+  };
+
+  window.abrirNovaDemandaPara = function(nome){
+    const btn = document.getElementById('botaoNovaDemandaGlobal');
+    if(btn) btn.click();
+    setTimeout(() => {
+      const sel = document.getElementById('novoDestinatarioModal');
+      if(sel){ sel.value = nome; sel.dispatchEvent(new Event('change')); }
+    }, 250);
+  };
+
+  function tempoDesde(ms){
+    const min = Math.floor((Date.now() - ms) / 60000);
+    if(min < 2) return 'agora';
+    if(min < 60) return 'há ' + min + ' min';
+    const h = Math.floor(min/60);
+    if(h < 24) return 'há ' + h + 'h';
+    return 'há ' + Math.floor(h/24) + ' dia(s)';
+  }
 
   window.htmlResumoExtrasGestao = async function(){
     try{

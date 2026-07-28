@@ -1404,8 +1404,11 @@
 
      Isto NÃO substitui as regras do Firestore. Senha no navegador é
      tranca de porta; as regras são a parede. Precisamos das duas. */
-  const SENHA_GERENCIA_HASH = "";   // preenchido no primeiro uso, guardado em config_seguranca
-  const SENHA_GERENCIA_PADRAO_HASH = "e3e1d3e0b3a5e5b0f3f5c6d1a2b4c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e";
+  /* SHA-256 da senha que já era usada. Não dá pra voltar ao texto a
+     partir daqui — é isso que torna seguro deixar no arquivo público.
+     Serve de referência até alguém trocar a senha pela tela; a partir
+     daí vale o que estiver em config_seguranca/escritorio. */
+  const SENHA_GERENCIA_PADRAO_HASH = "e34d0380d0f5705e6105c6be42c7d7b56fa2f36485353e4053dfaf4da01f59fe";
 
   async function hashSenha(txt){
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(txt)));
@@ -1415,20 +1418,24 @@
   /* Confere a senha contra o hash guardado no banco. Na primeira vez,
      adota a senha atual como referência — assim a troca é transparente
      e ninguém fica de fora. */
+  /* ===== CORRIGIDO NO MESMO DIA — 28/07/2026 =========================
+     A primeira versão disto tinha um buraco meu, e dos graves: quando o
+     documento no banco ainda não existia, ela ACEITAVA QUALQUER SENHA e
+     gravava aquilo como a senha oficial. Ou seja, entre subir o arquivo e
+     alguém logar, a primeira pessoa a digitar qualquer coisa virava dona
+     do escritório.
+
+     Agora a referência é o hash da senha real, que já está no código. Sem
+     documento no banco, confere contra ele; nada é "adotado" por padrão.
+     E o hash é de mão única: quem ler este arquivo não volta ao texto. */
   async function conferirSenhaGerencia(digitada){
     const h = await hashSenha(digitada);
+    let guardado = null;
     try{
-      const ref = doc(db,'config_seguranca','escritorio');
-      const snap = await getDoc(ref);
-      if(!snap.exists() || !snap.data().senhaHash){
-        await setDoc(ref, { senhaHash: h, definidoEm: new Date().toISOString(), definidoPor: 'primeiro acesso' }, { merge:true });
-        return true;
-      }
-      return snap.data().senhaHash === h;
-    }catch(e){
-      console.error('Falha ao conferir senha:', e);
-      return false;
-    }
+      const snap = await getDoc(doc(db,'config_seguranca','escritorio'));
+      if(snap.exists() && snap.data().senhaHash) guardado = snap.data().senhaHash;
+    }catch(e){ console.error('Não consegui ler a senha guardada:', e); }
+    return h === (guardado || SENHA_GERENCIA_PADRAO_HASH);
   }
 
   /* Quem entrou na gerência, quando e de onde. Sem isso, se algo vazar,

@@ -1653,6 +1653,96 @@
     if(fechadas) registrarLogAutomacao('demandas_substituidas', '', fechadas + ' demanda(s) antigas encerradas por terem sido substituídas');
   }
 
+  /* ===== O CADASTRO DE AVULSO DEIXA DE MORRER NA COLEÇÃO — 28/07/2026 ==
+     O maior furo da cadeia, e o Chris já tinha apontado: o cliente
+     preenche o link de cadastro, os dados caem em `leads_avulsos`, e
+     ali param. Ninguém é avisado, nada vira demanda, e a Cecília não
+     fica sabendo que existe alguém pra agendar.
+
+     Agora cada cadastro novo vira um aviso pro Chris com TUDO que o
+     cliente preencheu, e um botão que manda pra Cecília agendar já com
+     os dados. O caminho passa a ser:
+
+       cliente preenche → aviso pro Chris (com os dados)
+       → Chris manda proposta → "mandar pra Cecília agendar"
+       → Cecília agenda com o briefing → filmmaker grava
+
+     Não substitui o WhatsApp: o Chris continua fechando direto com quem
+     ele quiser. Isto cobre quem entra sozinho pelo link, que hoje some. */
+  async function avisarCadastrosNovos(){
+    let snap;
+    try{ snap = await getDocs(collection(db,'leads_avulsos')); }
+    catch(e){ console.error('Não consegui ler os cadastros:', e); return; }
+
+    const novos = [];
+    snap.forEach(d => { const v = d.data();
+      if(v.avisado || v.excluido) return;
+      novos.push({ id:d.id, ...v });
+    });
+    if(!novos.length) return;
+
+    for(const l of novos){
+      try{
+        const linhas = [];
+        if(l.nome)          linhas.push('👤 ' + l.nome);
+        if(l.telefone)      linhas.push('📱 ' + l.telefone);
+        if(l.email)         linhas.push('✉️ ' + l.email);
+        if(l.tipoPessoa)    linhas.push('🏷️ ' + l.tipoPessoa);
+        if(l.pacotesNomes)  linhas.push('📦 Quer: ' + (Array.isArray(l.pacotesNomes) ? l.pacotesNomes.join(', ') : l.pacotesNomes));
+        if(l.dataDesejada)  linhas.push('📅 Data desejada: ' + formatarDataBR(l.dataDesejada));
+        if(l.eventoNome)    linhas.push('🎪 Evento: ' + l.eventoNome);
+        if(l.observacoes)   linhas.push('📝 ' + String(l.observacoes).slice(0,200));
+
+        await criarDemandaSegura({
+          titulo: '🆕 Cadastro novo pelo site — ' + (l.nome || 'sem nome'),
+          descricao: 'Alguém preencheu o cadastro de cliente avulso agora.\n\n'
+            + linhas.join('\n')
+            + '\n\nPRÓXIMO PASSO: manda a proposta. Quando fechar, abre esta demanda e clica em "Mandar pra Cecília agendar" — ela recebe os dados prontos.',
+          destinatario: 'Chris', origem: 'sistema', clienteNome: l.nome || '',
+          ehAviso: true, leadId: l.id, ehCadastroNovo: true,
+          prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00', status: 'pendente'
+        }, { janelaMinutos: 240 });
+
+        await updateDoc(doc(db,'leads_avulsos', l.id), { avisado: true, avisadoEm: new Date().toISOString() });
+      }catch(e){ console.error('Falha ao avisar do cadastro ' + l.id + ':', e); }
+    }
+    registrarLogAutomacao('cadastros_avisados', '', novos.length + ' cadastro(s) novo(s) viraram aviso');
+  }
+
+  /* Do aviso direto pra Cecília, com os dados já preenchidos. */
+  window.mandarParaCeciliaAgendar = async function(demandaId, leadId){
+    let l = null;
+    try{ const sn = await getDoc(doc(db,'leads_avulsos', leadId)); if(sn.exists()) l = sn.data(); }
+    catch(e){ console.error(e); }
+    if(!l){ mostrarToast('Não achei os dados desse cadastro.', 'erro'); return; }
+
+    const complemento = prompt('Quer acrescentar alguma informação pra Cecília?\n\n(local, horário combinado, o que mudou depois da conversa)') || '';
+    await criarDemandaSegura({
+      titulo: '📅 Agendar gravação — ' + (l.nome || 'cliente novo'),
+      descricao: 'O Chris fechou com este cliente. Agenda a gravação.\n\n'
+        + (l.nome ? '👤 ' + l.nome + '\n' : '')
+        + (l.telefone ? '📱 ' + l.telefone + '\n' : '')
+        + (l.pacotesNomes ? '📦 ' + (Array.isArray(l.pacotesNomes) ? l.pacotesNomes.join(', ') : l.pacotesNomes) + '\n' : '')
+        + (l.dataDesejada ? '📅 Data que ele pediu: ' + formatarDataBR(l.dataDesejada) + '\n' : '')
+        + (l.observacoes ? '📝 ' + String(l.observacoes).slice(0,300) + '\n' : '')
+        + (complemento ? '\n💬 Do Chris: ' + complemento + '\n' : '')
+        + '\n👉 Usa o botão amarelo "🎬 Nova gravação" no seu menu. Preenche o estilo e as referências — é o que o filmmaker vai ler antes de sair.',
+      destinatario: 'Cecília', origem: 'chris', clienteNome: l.nome || '',
+      leadId, prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00', status: 'pendente'
+    }, { janelaMinutos: 60 });
+
+    try{
+      await updateDoc(doc(db,'demandas', demandaId), {
+        status:'aprovada', concluidoPor: usuarioAtual||'?', concluidoEm: serverTimestamp(),
+        notaConclusao:'Enviado pra Cecília agendar.'
+      });
+    }catch(e){ console.error(e); }
+    fecharModal();
+    mostrarToast('A Cecília recebeu os dados pra agendar.');
+    await carregarTodasDemandas();
+    renderMinhasDemandasAtribuidas();
+  };
+
   async function converterAvisosDoCliente(){
     /* Duas caixas de entrada, mesma lógica:
        `avisos_do_cliente`  → o que o cliente manda pelo portal
@@ -4687,6 +4777,16 @@
 
           ${htmlPerfis}
           ${itensCalendario.length ? `
+          ${/* ===== GRAVAÇÃO DE CLIENTE NOVO — 28/07/2026 ===============
+                Cliente que acabou de entrar não tem calendário editorial,
+                então a lista de "marca o que você gravou" vem vazia e o
+                filmmaker fica sem saber o que fazer. Pra ele o caminho é
+                mais curto: gravou, escreve o que gravou, finaliza — e o
+                Chris é avisado na hora. */''}
+          ${a.ehClienteNovo ? `<div style="background:var(--yellowbg);border:2px solid var(--yellow);border-radius:10px;padding:13px 15px;margin:10px 0;">
+            <div style="font-weight:800;font-size:13px;color:var(--yellow);">🆕 Cliente novo — primeira gravação</div>
+            <div class="meta" style="margin-top:5px;">Ele ainda não tem calendário editorial. Escreve embaixo o que você gravou, um por linha, e finaliza. O Chris é avisado assim que você terminar.</div>
+          </div>` : ''}
           <div class="field" style="margin-top:10px;"><label>Marca os que você gravou hoje (vindo do calendário editorial)</label></div>
           ${itensCalendario.map(it => `
             <label style="display:flex;align-items:center;gap:8px;background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:5px;cursor:pointer;">
@@ -8172,8 +8272,31 @@
 
     await updateDoc(doc(db,'agendamentos', agId), {
       status: 'realizado', qtdVideosRealizados: qtdRealizada,
+      finalizadoPor: usuarioAtual || '?', finalizadoEm: new Date().toISOString(),
       temUber, uberLink, valorExtra
     });
+
+    /* ===== O CHRIS PRECISA SABER QUE ACABOU — 28/07/2026 ================
+       Gravação de cliente novo é a primeira entrega da agência pra ele —
+       é quando o Chris manda mensagem, cobra o restante, ou fecha a
+       proposta seguinte. Antes ele só descobria olhando o painel.
+       Agora recebe um aviso no instante em que o filmmaker finaliza. */
+    try{
+      const ag = agSnap.data() || {};
+      if(ag.ehClienteNovo){
+        await criarDemandaSegura({
+          titulo: '✅ Primeira gravação de ' + clienteNome + ' está feita',
+          descricao: (usuarioAtual||'O filmmaker') + ' finalizou a gravação de ' + clienteNome + '.\n\n'
+            + '📅 ' + formatarDataBR(ag.data||'') + (ag.hora ? ' às ' + ag.hora : '')
+            + '\n🎞️ ' + qtdRealizada + ' vídeo(s) gravado(s)' + (qtdPlanejada ? ' de ' + qtdPlanejada + ' planejado(s)' : '')
+            + (ag.local ? '\n📍 ' + ag.local : '')
+            + '\n\nÉ a primeira entrega dele. Vale a mensagem de acompanhamento.',
+          destinatario: 'Chris', origem: 'sistema', clienteNome,
+          ehAviso: true, agendamentoId: agId,
+          prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00', status: 'pendente'
+        }, { janelaMinutos: 120 });
+      }
+    }catch(e){ console.error('Falha ao avisar o Chris da gravação:', e); }
 
     if(temUber || valorExtra){
       const refPagExtra = await addDoc(collection(db,'pagamentos_extra'), {
@@ -11843,6 +11966,20 @@
     /* Decisão não é tarefa. Quem recebe não vai executar nada — vai dizer
        sim ou não. Mostrar "descreva o que foi feito" e "pedir mais prazo"
        aqui só confunde, e foi exatamente o que o Chris apontou. */
+    /* Cadastro novo: além de ler, o Chris despacha pra Cecília daqui. */
+    if(d.ehCadastroNovo && d.leadId){
+      modal.innerHTML = `
+        <h2>${esc(d.titulo)}</h2>
+        <div class="linha" style="white-space:pre-wrap;">${linkifyDescricao(d.descricao || '')}</div>
+        <div class="btnrow" style="margin-top:18px;">
+          <button class="btn secondary" style="padding:13px;font-size:12.5px;" onclick="fecharModal()">Depois</button>
+          <button class="btn green" style="padding:13px;font-size:12.5px;" onclick="mandarParaCeciliaAgendar('${d.id}','${escJs(d.leadId)}')">📅 Mandar pra Cecília agendar</button>
+        </div>
+        <button class="btn secondary" style="margin-top:10px;" onclick="aprovarDemanda('${d.id}')">Não vamos seguir — encerrar</button>`;
+      document.getElementById('overlayView').classList.add('show');
+      return;
+    }
+
     if(ehDemandaDeDecisao(d)){
       modal.innerHTML = `
         <h2>${esc(d.titulo)}</h2>
@@ -14500,6 +14637,7 @@
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
       { nome: 'varreduraDuplicatas', fn: varrerDuplicatas },
       { nome: 'avisosDoPortal', fn: converterAvisosDoCliente },
+      { nome: 'cadastrosNovos', fn: avisarCadastrosNovos },
       { nome: 'demandasSubstituidas', fn: encerrarDemandasSubstituidas },
       { nome: 'calendarioNovoParaProducao', fn: avisarCalendarioPronto },
       { nome: 'storiesDaSemana', fn: cobrarStoriesDaSemana },

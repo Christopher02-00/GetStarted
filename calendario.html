@@ -126,7 +126,7 @@
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -143,7 +143,7 @@
   const clienteId = params.get('cliente') || 'exemplo';
   const docRef = doc(db, 'calendarios', clienteId);
 
-  window.__fb = { docRef, setDoc, onSnapshot, db, collection, getDocs, addDoc, serverTimestamp };
+  window.__fb = { docRef, doc, getDoc, setDoc, onSnapshot, db, collection, getDocs, addDoc, serverTimestamp };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
 </script>
 </head>
@@ -284,6 +284,49 @@ function offsetDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes,1).getDay():
 function diasDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes+1,0).getDate():31;}
 
 let saveTimer=null;let pendingWrite=false;
+/* ===== POR QUE O CALENDÁRIO DA MONIQUE ESVAZIOU — 27/07/2026 ==========
+   `save()` faz `setDoc(docRef, data)` SEM merge: o documento inteiro do
+   Firestore vira a cópia que está na memória desta aba. E `data` começa
+   assim, antes de qualquer coisa carregar:
+
+       let data={client:'',month:'',items:[],comments:[],updatedAt:null};
+
+   Ou seja: VAZIO. Enquanto o primeiro snapshot não chega, `data.items`
+   é uma lista vazia. E o campo do nome do cliente tem `oninput="save()"`,
+   o do mês tem `oninput="renderAll()"` (que chama save antes de tudo).
+
+   Então bastava isto: a página abrir devagar (ou travar, como travou
+   ontem), alguém tocar num desses campos, e o `setDoc` gravava um
+   calendário vazio POR CIMA dos 13 conteúdos e das 12 referências. Sem
+   erro, sem confirmação, sem desfazer. O mesmo vale pra qualquer aba
+   aberta há horas com dados velhos.
+
+   Três travas agora:
+   1. `carregado` — nada é gravado antes do primeiro snapshot chegar.
+   2. Guarda de esvaziamento — antes de gravar, relê o documento; se o
+      banco tem conteúdo e esta aba quer gravar vazio (ou perder mais da
+      metade dos itens) sem que ninguém tenha apagado nada de propósito,
+      a gravação é ABORTADA e a tela avisa.
+   3. Versão anterior guardada em `calendarios_versoes` a cada gravação —
+      dá pra voltar atrás sempre. */
+let carregado=false;      // o primeiro snapshot já chegou?
+let itensNoBanco=0;       // quantos itens o banco tinha na última leitura
+let apagouDePropósito=false;  // delItem marca isto; some depois de gravar
+
+function avisarTela(msg, cor){
+  let el=document.getElementById('avisoSalvamento');
+  if(!el){
+    el=document.createElement('div');
+    el.id='avisoSalvamento';
+    el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:200;padding:12px 16px;font-size:13px;font-weight:700;text-align:center;';
+    document.body.appendChild(el);
+  }
+  el.style.background=cor==='erro'?'#7a1f1f':'#1e3428';
+  el.style.color='#fff';
+  el.textContent=msg;
+  el.style.display='block';
+  if(cor!=='erro') setTimeout(()=>{ if(el) el.style.display='none'; }, 4000);
+}
 /* ===== BANCO DE REFERÊNCIAS DENTRO DO CALENDÁRIO — 27/07/2026 =====
    Junta as duas fontes: o Hub (referencias) e o que o cliente mandou pelo
    portal (referencias_cliente). Carrega uma vez e alimenta o seletor. */
@@ -339,12 +382,15 @@ function load(){
   onSnapshot(docRef,(snap)=>{if(pendingWrite)return;
     if(snap.exists()){
       data=snap.data();
+      if(!data.items)data.items=[];
       if(!data.comments)data.comments=[];
     } else {
       // Calendario ainda nao existe: abre VAZIO e NAO grava nada.
       // (Antes gravava 8 posts de exemplo + "Nome do Cliente" no banco.)
       data={client:nomeDoSlug(window.__clienteId),month:mesAtualTexto(),items:[],comments:[],updatedAt:null};
     }
+    carregado=true;                       // a partir daqui pode gravar
+    itensNoBanco=(data.items||[]).length;
     document.getElementById('clientName').value=data.client||nomeDoSlug(window.__clienteId);
     document.getElementById('monthName').value=data.month||mesAtualTexto();
     renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderFeedback();
@@ -355,16 +401,56 @@ function load(){
   });
 }
 function save(){
+  /* TRAVA 1 — nada é gravado antes do primeiro snapshot chegar.
+     Era por aqui que o calendário vazio da memória ia por cima do cheio. */
+  if(!carregado){
+    avisarTela('Ainda carregando o calendário — espera aparecer o conteúdo antes de editar. Nada foi gravado.', 'erro');
+    return;
+  }
   data.client=document.getElementById('clientName').value;
   data.month=document.getElementById('monthName').value;
   data.updatedAt=new Date().toISOString();
   renderMeta();
   pendingWrite=true;clearTimeout(saveTimer);
-  saveTimer=setTimeout(()=>{
-    if(!window.__fb)return;
-    const {docRef,setDoc}=window.__fb;
-    setDoc(docRef,data).then(()=>{pendingWrite=false;}).catch(e=>{console.error('Erro ao salvar:',e);pendingWrite=false;});
-  },400);
+  saveTimer=setTimeout(gravarComSeguranca,400);
+}
+
+async function gravarComSeguranca(){
+  if(!window.__fb){pendingWrite=false;return;}
+  const {docRef,doc,getDoc,setDoc,db}=window.__fb;
+  try{
+    const atual = await getDoc(docRef);
+    const antes = atual.exists() ? (atual.data().items||[]) : [];
+    const depois = data.items||[];
+
+    /* TRAVA 2 — não deixa uma aba desatualizada apagar o trabalho de
+       outra pessoa. Só passa se alguém apagou de propósito nesta aba. */
+    if(!apagouDePropósito && antes.length > 0 && depois.length < antes.length){
+      pendingWrite=false;
+      const perdidos = antes.length - depois.length;
+      avisarTela('⚠️ NÃO gravei: esta aba tem ' + depois.length + ' conteúdo(s) e o banco tem ' + antes.length +
+        '. Ia apagar ' + perdidos + '. Atualiza a página (F5) — o que está no banco está a salvo.', 'erro');
+      return;
+    }
+
+    /* TRAVA 3 — guarda a versão anterior antes de sobrescrever. */
+    if(atual.exists() && antes.length){
+      try{
+        const carimbo = new Date().toISOString().replace(/[:.]/g,'-');
+        await setDoc(doc(db,'calendarios_versoes', window.__clienteId + '__' + carimbo),
+          { ...atual.data(), __cliente: window.__clienteId, __salvoEm: new Date().toISOString(), __itens: antes.length });
+      }catch(e){ console.error('Falha ao guardar versão anterior:', e); }
+    }
+
+    await setDoc(docRef, data);
+    itensNoBanco = depois.length;
+    apagouDePropósito = false;
+    pendingWrite=false;
+  }catch(e){
+    console.error('Erro ao salvar:', e);
+    pendingWrite=false;
+    avisarTela('❌ Não consegui salvar. NÃO feche a página — verifica a internet e edita qualquer campo pra tentar de novo.', 'erro');
+  }
 }
 function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();}
 
@@ -553,7 +639,7 @@ function saveItem(){
     dataFlexivel:document.getElementById('mFlex').checked};
   if(editIdx!==null)data.items[editIdx]=it;else data.items.push(it);
   closeModal();renderAll();}
-function delItem(){if(editIdx!==null){data.items.splice(editIdx,1);}closeModal();renderAll();}
+function delItem(){if(editIdx!==null){apagouDePropósito=true;data.items.splice(editIdx,1);}closeModal();renderAll();}
 function toggleApr(){if(editIdx!==null){data.items[editIdx].apr=!data.items[editIdx].apr;save();openEdit(editIdx);renderAll();}}
 
 function stageLabel(s){return s==='topo'?'Topo':s==='meio'?'Meio':'Fundo';}

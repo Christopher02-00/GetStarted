@@ -1694,11 +1694,13 @@
       const entregaDiretaR = await obterSlugsEntregaDireta();
       const alvoR = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDiretaR.has(c.slug));
       if(!alvoR.length) return false;
+      /* 27/07/2026 — não filtra mais por semana. Perfil é registro
+         permanente; filtrar por semana fazia todo cliente aparecer
+         descoberto toda segunda-feira. */
       const snapP = await getDocs(collection(db,'refs_perfil_semana'));
       const cobertosR = new Set();
       snapP.forEach(dd => {
         const r = dd.data();
-        if(r.semana !== semanaR) return;
         if((r.slots||[]).filter(s => s && s.link && String(s.link).trim()).length >= 2) cobertosR.add(r.cliente);
       });
       return alvoR.every(c => cobertosR.has(c.slug)); } }
@@ -3808,7 +3810,10 @@
       try{
         const pfSnap = await getDocs(collection(db,'refs_perfil_semana'));
         let slots = [];
-        pfSnap.forEach(dd => { const pv=dd.data(); if(pv.cliente === a.cliente && (pv.slots||[]).some(x=>x.link)) slots = pv.slots||[]; });
+        // pega o registro mais completo do cliente, não o último que aparecer
+        pfSnap.forEach(dd => { const pv=dd.data(); if(pv.cliente !== a.cliente) return;
+          const cand = (pv.slots||[]).filter(x=>x&&x.link);
+          if(cand.length > slots.filter(x=>x&&x.link).length) slots = pv.slots||[]; });
         const validos = slots.filter(x=>x.link);
         if(validos.length){
           htmlPerfis = `<div style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;margin:8px 0;">
@@ -5781,6 +5786,78 @@
     return f(ini) + ' a ' + f(fim);
   }
 
+  /* ===== REGISTRO DE CLIENTES DE STORY (27/07/2026) ==================
+     Antes: o seletor listava TODOS os clientes da agência, e a Gabi tinha
+     que lembrar de cabeça quais têm story no contrato e o que foi fechado
+     pra cada um. Nada disso estava escrito em lugar nenhum do sistema.
+
+     Agora existe um registro: quem tem story, quantos por semana, em que
+     dias, e o que foi combinado. Só esses aparecem na tela. A Gabi edita
+     tudo e adiciona cliente novo sem depender de mim. A automação
+     (cobrança de sexta, checklist, painel) lê ESTE registro — então
+     adicionar um cliente aqui já liga a automação pra ele, sem mexer em
+     código. Coleção: `stories_clientes`. */
+  const STORY_CLIENTES_SEED = [
+    { slug:'juliane-nerone', nome:'Juliane Nerone', porSemana:5, dias:[1,2,3,4,5], combinado:'Story todo dia útil, de segunda a sexta.', ativo:true },
+    { slug:'vitalle-odonto', nome:'Vitalle', porSemana:5, dias:[1,2,3,4,5], combinado:'Story todo dia útil, de segunda a sexta.', ativo:true }
+  ];
+  let __storyClientesCache = null;
+
+  window.carregarClientesDeStory = async function(forcar){
+    if(__storyClientesCache && !forcar) return __storyClientesCache;
+    const snap = await getDocs(collection(db,'stories_clientes'));
+    let lista = []; snap.forEach(d => lista.push({ id:d.id, ...d.data() }));
+    if(!lista.length){
+      for(const c of STORY_CLIENTES_SEED){
+        await setDoc(doc(db,'stories_clientes', c.slug), { ...c, criadoPor:'sistema', criadoEm: serverTimestamp() });
+      }
+      lista = STORY_CLIENTES_SEED.map(c => ({ id:c.slug, ...c }));
+    }
+    __storyClientesCache = lista.filter(c => c.ativo !== false).sort((a,b) => (a.nome||'').localeCompare(b.nome||''));
+    return __storyClientesCache;
+  };
+
+  window.salvarClienteDeStory = async function(slug){
+    const nome = (document.getElementById('scNome_'+slug)?.value || '').trim();
+    const porSemana = Number(document.getElementById('scQtd_'+slug)?.value || 0);
+    const combinado = (document.getElementById('scComb_'+slug)?.value || '').trim();
+    const dias = DIAS_STORY.filter(d => document.getElementById('scDia_'+slug+'_'+d.n)?.checked).map(d => d.n);
+    if(!nome){ mostrarToast('O cliente precisa de nome.', 'erro'); return; }
+    await setDoc(doc(db,'stories_clientes', slug), {
+      slug, nome, porSemana, dias, combinado, ativo:true,
+      atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
+    }, { merge:true });
+    mostrarToast('Combinado de ' + nome + ' salvo!');
+    await carregarClientesDeStory(true);
+    renderStoriesCliente();
+  };
+
+  window.adicionarClienteDeStory = async function(){
+    const sel = document.getElementById('novoStoryCliente');
+    if(!sel || !sel.value){ mostrarToast('Escolhe o cliente primeiro.', 'erro'); return; }
+    const slug = sel.value, nome = sel.selectedOptions[0]?.dataset.nome || slug;
+    const jaTem = (await carregarClientesDeStory()).some(c => c.slug === slug);
+    if(jaTem){ mostrarToast(nome + ' já está na lista de story.', 'erro'); return; }
+    await setDoc(doc(db,'stories_clientes', slug), {
+      slug, nome, porSemana:5, dias:[1,2,3,4,5], combinado:'', ativo:true,
+      criadoPor: usuarioAtual || '?', criadoEm: serverTimestamp()
+    }, { merge:true });
+    mostrarToast(nome + ' entrou na lista de story. Preenche o que foi combinado.');
+    await carregarClientesDeStory(true);
+    renderStoriesCliente();
+  };
+
+  window.removerClienteDeStory = async function(slug){
+    const nome = ((__storyClientesCache || []).find(c => c.slug === slug) || {}).nome || slug;
+    if(!confirm('Tirar ' + nome + ' dos clientes de story?\n\nO histórico dele continua guardado — só para de aparecer aqui e de ser cobrado.')) return;
+    await setDoc(doc(db,'stories_clientes', slug), {
+      ativo:false, removidoPor: usuarioAtual || '?', removidoEm: serverTimestamp()
+    }, { merge:true });
+    mostrarToast(nome + ' saiu da lista de story.');
+    await carregarClientesDeStory(true);
+    renderStoriesCliente();
+  };
+
   window.__semanaStories = null;
   window.mudarSemanaStories = function(delta){
     const base = new Date((window.__semanaStories || segundaDaSemana(new Date())) + 'T12:00:00');
@@ -5801,11 +5878,20 @@
       if(tit || desc) criar.push({ dia:d.n, diaNome:d.nome, titulo: tit || ('Story de ' + d.nome), descricao: desc, linkRef: ref });
     });
     if(!criar.length){ mostrarToast('Preenche pelo menos um dia da semana.', 'erro'); return; }
+    /* ===== O BUG QUE FAZIA O STORY SUMIR (achado em 27/07/2026) =========
+       Este formulário gravava `dia` e `linkRef`. A tela logo abaixo lê
+       `diaSemana` e `linkReferencia`. Os nomes nunca bateram: o story era
+       gravado no banco com sucesso, o toast dizia "enviados!", e ele não
+       aparecia em NENHUM bloco de dia — nem no bloco de "sem semana
+       definida", porque semana ele tinha. Sumia por completo.
+       Era isso que a Gabi não estava encontrando.
+       Agora grava os dois nomes e a leitura aceita os dois. */
     for(const st of criar){
       await addDoc(collection(db,'stories_semanais'), {
         cliente: slug, clienteNome: nome, semana,
-        dia: st.dia, diaNome: st.diaNome, titulo: st.titulo, descricao: st.descricao,
-        linkRef: st.linkRef, observacoes: '',
+        dia: st.dia, diaSemana: st.dia, diaNome: st.diaNome,
+        titulo: st.titulo, descricao: st.descricao,
+        linkRef: st.linkRef, linkReferencia: st.linkRef, observacoes: '',
         status: 'aguardando', criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()
       });
     }
@@ -5842,26 +5928,67 @@
        segunda a sexta, sem fim de semana. A tela pedia um story por vez,
        o que obrigava a repetir cliente e contexto cinco vezes e fazia
        ninguém montar a semana completa. Agora é um formulário só. */
+    /* 27/07/2026 — o seletor listava os 20+ clientes da agência, sendo que
+       só dois têm story em contrato. A Gabi tinha que saber de cabeça
+       quem e o quê. Agora vem do registro, com o combinado escrito. */
+    const clientesStory = await carregarClientesDeStory();
+    const semStory = CLIENTES_LISTA.filter(c => !clientesStory.some(x => x.slug === c.slug));
+
+    html += `<div class="card">
+      <h2>👥 Quem tem story</h2>
+      <div class="desc">Só estes clientes têm story fechado. O que está escrito aqui é o combinado de cada um — edita quando o contrato mudar, e adiciona cliente novo quando fechar.</div>
+      ${clientesStory.map(c => {
+        const dias = Array.isArray(c.dias) ? c.dias : [1,2,3,4,5];
+        return `<div class="card metaSec" style="margin-top:10px;">
+          <div class="metaSecTit">${esc(c.nome)}</div>
+          <div class="field"><label>Nome que aparece</label><input type="text" id="scNome_${c.slug}" value="${esc(c.nome||'')}"></div>
+          <div class="field" style="margin-top:8px;"><label>Quantos por semana</label><input type="number" min="0" max="14" id="scQtd_${c.slug}" value="${Number(c.porSemana||0)}"></div>
+          <div class="field" style="margin-top:8px;"><label>Dias combinados</label>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;">
+              ${DIAS_STORY.map(d=>`<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer;"><input type="checkbox" id="scDia_${c.slug}_${d.n}" ${dias.includes(d.n)?'checked':''}> ${d.nome}</label>`).join('')}
+            </div>
+          </div>
+          <div class="field" style="margin-top:8px;"><label>O que foi fechado com esse cliente</label><textarea id="scComb_${c.slug}" placeholder="Formato, tom, o que pode e o que não pode, quem manda o material..." style="min-height:64px;">${esc(c.combinado||'')}</textarea></div>
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+            <button class="btn" style="width:auto;padding:8px 14px;font-size:11.5px;" onclick="salvarClienteDeStory('${c.slug}')">Salvar o combinado</button>
+            <button class="btn secondary" style="width:auto;padding:8px 14px;font-size:11.5px;" onclick="removerClienteDeStory('${c.slug}')">Tirar da lista</button>
+          </div>
+        </div>`;
+      }).join('')}
+      ${semStory.length ? `<div class="field" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);"><label>➕ Fechou story com outro cliente?</label>
+        <select id="novoStoryCliente"><option value="">Escolhe o cliente...</option>${semStory.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select>
+        <button class="btn secondary" style="margin-top:8px;" onclick="adicionarClienteDeStory()">Adicionar aos clientes de story</button>
+        <div class="desc" style="margin-top:6px;">Ele entra já com a cobrança automática de sexta ligada — não precisa avisar ninguém.</div>
+      </div>` : ''}
+    </div>`;
+
     html += `<div class="card" style="border:2px solid var(--yellow);">
       <h2>📅 Montar a semana inteira</h2>
       <div class="desc">Escolhe o cliente e preenche os dias de uma vez. Vai tudo junto pro portal dele aprovar, organizado por dia. Deixa em branco o dia que não tem story.</div>
       <div class="field" style="margin-top:10px;"><label>Cliente</label>
-        <select id="storyCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select>
+        <select id="storyCliente" onchange="window.__storyClienteSel=this.value;renderStoriesCliente();">${clientesStory.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}" ${window.__storyClienteSel===c.slug?'selected':''}>${esc(c.nome)}</option>`).join('')}</select>
       </div>
-      ${DIAS_STORY.map(d => `
+      ${(() => { const sel = clientesStory.find(c=>c.slug===(window.__storyClienteSel||clientesStory[0]?.slug));
+        return sel && sel.combinado ? '<div class="desc" style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;">📋 <b>Combinado com '+esc(sel.nome)+':</b> '+esc(sel.combinado)+'</div>' : ''; })()}
+      ${(() => {
+        const sel = clientesStory.find(c=>c.slug===(window.__storyClienteSel||clientesStory[0]?.slug));
+        const diasDoCliente = (sel && Array.isArray(sel.dias) && sel.dias.length) ? sel.dias : [1,2,3,4,5];
+        return DIAS_STORY.filter(d => diasDoCliente.includes(d.n)).map(d => `
         <div class="card metaSec" style="margin-top:10px;">
           <div class="metaSecTit">${d.nome}</div>
           <div class="field"><label>Título</label><input type="text" id="stTit_${d.n}" placeholder="Ex: Bastidores da produção"></div>
           <div class="field" style="margin-top:8px;"><label>Roteiro / sugestão</label><textarea id="stDesc_${d.n}" placeholder="O que falar, a ordem das telas..." style="min-height:60px;"></textarea></div>
           <div class="field" style="margin-top:8px;"><label>🔗 Referência (opcional)</label><input type="text" id="stRef_${d.n}" placeholder="Link pro cliente ver"></div>
-        </div>`).join('')}
+        </div>`).join('');
+      })()}
       <button class="btn" style="margin-top:12px;" onclick="criarSemanaStories()">Enviar a semana pro cliente aprovar</button>
     </div>`;
 
     const snap = await getDocs(collection(db,'stories_semanais'));
     const todos = []; snap.forEach(d => todos.push({id:d.id, ...d.data()}));
     const daSemana = todos.filter(s => s.semana === semana);
-    const semSemana = todos.filter(s => !s.semana);
+    // órfãos: têm semana mas nenhum dia legível — antes desapareciam da tela
+    const semSemana = todos.filter(s => !s.semana || (s.semana === semana && !Number(s.diaSemana ?? s.dia)));
 
     const rotuloStatus = s => s.status==='aprovado' ? 'Aprovado pelo cliente' :
                               s.status==='ajuste' ? 'Cliente pediu ajuste: ' + esc(s.ajusteTexto||'') :
@@ -5872,7 +5999,7 @@
       return `<div class="item" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow2)':'var(--line)'};">
         <div class="top"><div class="nome">${esc(s.clienteNome)} — ${esc(s.titulo)}</div><span class="selo ${corStatus(s)}">${rotuloStatus(s)}</span></div>
         ${s.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(s.descricao)+'</div>' : ''}
-        ${s.linkReferencia ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(s.linkReferencia)+'" target="_blank" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
+        ${(s.linkReferencia || s.linkRef) ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(s.linkReferencia || s.linkRef)+'" target="_blank" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
         ${s.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(s.observacoes)+'</div>' : ''}
         ${s.comentarioCliente ? '<div class="meta" style="margin-top:6px;color:var(--yellow2);">💬 Cliente: '+esc(s.comentarioCliente)+'</div>' : ''}
         ${s.status==='aprovado' ? `<button class="btn secondary" style="margin-top:8px;width:auto;padding:5px 10px;font-size:10.5px;" onclick="marcarStoryPostado('${s.id}')">Marcar como já postado</button>` : ''}
@@ -5881,7 +6008,7 @@
 
     // Um bloco por dia da semana — e esse o pedido: enxergar a semana montada.
     DIAS_STORY.forEach(d => {
-      const doDia = daSemana.filter(s => Number(s.diaSemana) === d.n);
+      const doDia = daSemana.filter(s => Number(s.diaSemana ?? s.dia) === d.n);
       const postadosDia = doDia.filter(s => s.status === 'postado').length;
       html += `<div class="faixaDem aberta" data-faixa="story_${d.n}">
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${d.nome} <span class="qtd">(${doDia.length}${doDia.length ? ' · ' + postadosDia + ' publicado(s)' : ''})</span><span class="seta">▾</span></div>
@@ -7930,9 +8057,26 @@
     if(!box) return;
     box.innerHTML = '<div class="card"><div class="desc">Carregando stories diários...</div></div>';
 
-    await garantirConfigStoriesDiarios();
-    const configSnap = await getDocs(collection(db,'stories_diarios_config'));
-    const clientes = []; configSnap.forEach(d => clientes.push({id:d.id, ...d.data()}));
+    /* ===== 27/07/2026 — UMA LISTA SÓ DE CLIENTES DE STORY ================
+       Este painel tinha a PRÓPRIA lista (`stories_diarios_config`, com
+       Joaquin e Divina) enquanto a tela de Stories tinha outra. Duas
+       verdades sobre a mesma pergunta — o mesmo erro que já corrigimos no
+       Financeiro. Agora os dois leem `stories_clientes`. A Gabi edita num
+       lugar só e vale pra tudo. A config antiga fica como reserva se o
+       registro estiver vazio. */
+    let clientes = [];
+    try{
+      const reg = await carregarClientesDeStory();
+      clientes = reg.map(c => ({
+        id: c.slug, clienteNome: c.nome, combinado: c.combinado || '',
+        dias: (Array.isArray(c.dias) && c.dias.length ? c.dias : [1,2,3,4,5]).map(n => DIAS_SEMANA_ORDEM[n])
+      }));
+    }catch(e){ console.error('Falha ao ler registro de story:', e); }
+    if(!clientes.length){
+      await garantirConfigStoriesDiarios();
+      const configSnap = await getDocs(collection(db,'stories_diarios_config'));
+      configSnap.forEach(d => clientes.push({id:d.id, ...d.data()}));
+    }
 
     const semanaChave = obterChaveSemanaAtual();
     const hojeIdx = new Date().getDay(); // 0=domingo, 1=segunda...
@@ -7956,7 +8100,7 @@
 
       blocos.push(`<div class="item" style="${todosFeitos?'border:2px solid var(--green);':precisaHoje?'border:2px solid var(--yellow);':''}">
         <div class="top">
-          <div class="nome">${todosFeitos?'🎉 ':precisaHoje?'📌 ':''}${esc(c.clienteNome)}</div>
+          <div class="nome">${todosFeitos?'🎉 ':precisaHoje?'📌 ':''}${esc(c.clienteNome)}${c.combinado ? '<div class="meta" style="font-weight:400;margin-top:3px;">'+esc(c.combinado)+'</div>' : ''}</div>
           ${todosFeitos ? '<span class="selo aprovada">Semana completa!</span>' : `<span class="selo ${precisaHoje?'hoje':'pendente'}">${feitosCount}/${c.dias.length} dias</span>`}
         </div>
         <div style="background:var(--deep);border-radius:6px;height:8px;overflow:hidden;margin:8px 0 10px;">
@@ -7979,6 +8123,7 @@
     let html = `<div class="card">
       <h2>📖 Stories Diários da Semana</h2>
       <div class="desc">Hoje é <b>${nomeDiaHoje}</b>. Clica no dia pra marcar ou desmarcar — sem precisar de checkbox pequeno, é só apertar o botão.</div>
+      <div class="desc" style="margin-top:6px;">Só aparece quem tem story fechado. Pra mudar os dias, o combinado ou adicionar cliente: menu → 📸 Stories.</div>
       <div style="margin-top:10px;">
         <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>Progresso da semana toda</span><b>${totalFeitos}/${totalDias} (${pctGeral}%)</b></div>
         <div style="background:var(--deep);border-radius:7px;height:12px;overflow:hidden;"><div style="background:${pctGeral===100?'#4caf72':'#FBBC19'};height:100%;width:${pctGeral}%;transition:width .3s;"></div></div>
@@ -10549,27 +10694,109 @@
     return d.toISOString().slice(0,10);
   }
 
+  /* ===== CORRIGIDO — PERDA DE DADOS DOS PERFIS (27/07/2026) ============
+     O QUE ACONTECEU: os perfis eram gravados em `refs_perfil_semana/
+     {slug}_{segunda-feira daquela semana}`. Quando eu tirei a cobrança
+     semanal e escrevi na tela "não tem prazo nem cobrança semanal", mudei
+     o texto e ESQUECI a chave. Resultado: toda segunda-feira o sistema
+     passa a ler uma chave nova, vazia, e todo o trabalho da semana
+     anterior some da tela — sem erro, sem aviso, como se nunca tivesse
+     sido salvo. Hoje é segunda. Foi exatamente isso que a Gabi viu.
+
+     Os dados NÃO foram perdidos: estão nos documentos `{slug}_{semana}`
+     antigos. `carregarPerfisDeCliente` procura o documento definitivo e,
+     se não achar, varre as chaves antigas daquele cliente, adota a mais
+     completa e a REGRAVA na chave definitiva. A recuperação acontece
+     sozinha, na primeira vez que alguém abre o cliente.
+
+     A chave agora é só `{slug}` — perfil é registro permanente. */
+  let __perfisLegadoCache = null;   // id -> dados, das chaves antigas
+  let __refsHubCache = null;        // coleção `referencias` inteira
+  let __calCacheRefs = {};          // calendários já lidos, por slug
+
+  async function carregarLegadoPerfis(force){
+    if(__perfisLegadoCache && !force) return __perfisLegadoCache;
+    const mapa = {};
+    const snap = await getDocs(collection(db,'refs_perfil_semana'));
+    snap.forEach(d => { mapa[d.id] = d.data(); });
+    __perfisLegadoCache = mapa;
+    return mapa;
+  }
+
+  function contarLinks(slots){
+    return (slots || []).filter(x => x && x.link && String(x.link).trim()).length;
+  }
+
+  /* Devolve {slots, recuperadoDe} — recuperadoDe preenchido quando veio de chave antiga. */
+  window.carregarPerfisDeCliente = async function(slug, forcar){
+    const mapa = await carregarLegadoPerfis(forcar);
+    if(mapa[slug] && contarLinks(mapa[slug].slots)) return { slots: mapa[slug].slots || [], recuperadoDe: null };
+
+    let melhor = null, melhorId = null;
+    Object.keys(mapa).forEach(id => {
+      if(id === slug || id.indexOf(slug + '_') !== 0) return;
+      const d = mapa[id];
+      if(!contarLinks(d.slots)) return;
+      if(!melhor || contarLinks(d.slots) > contarLinks(melhor.slots) ||
+        (contarLinks(d.slots) === contarLinks(melhor.slots) && (d.semana||'') > (melhor.semana||''))){ melhor = d; melhorId = id; }
+    });
+    if(!melhor) return { slots: (mapa[slug] && mapa[slug].slots) || [], recuperadoDe: null };
+
+    // regrava na chave definitiva pra não depender mais da semana
+    try{
+      await setDoc(doc(db,'refs_perfil_semana', slug), {
+        cliente: slug, clienteNome: melhor.clienteNome || slug, slots: melhor.slots,
+        preenchidos: contarLinks(melhor.slots), recuperadoDe: melhorId,
+        atualizadoPor: melhor.atualizadoPor || 'sistema (recuperação)', atualizadoEm: serverTimestamp()
+      }, { merge: true });
+      mapa[slug] = { ...melhor, slots: melhor.slots };
+    }catch(e){ console.error('Falha ao recuperar perfis de ' + slug + ':', e); }
+    return { slots: melhor.slots || [], recuperadoDe: melhorId };
+  };
+
+  /* Passa em todos os clientes de uma vez — o botão de resgate. */
+  window.recuperarTodosPerfis = async function(btn){
+    if(btn){ btn.disabled = true; btn.textContent = 'Procurando...'; }
+    await carregarLegadoPerfis(true);
+    let achados = 0;
+    for(const c of CLIENTES_LISTA){
+      const r = await carregarPerfisDeCliente(c.slug, false);
+      if(r.recuperadoDe) achados++;
+    }
+    if(btn){ btn.disabled = false; btn.textContent = '🔎 Procurar perfis de semanas anteriores'; }
+    mostrarToast(achados ? achados + ' cliente(s) tiveram os perfis recuperados!' : 'Nada em chave antiga — o que está na tela é tudo que existe.', achados ? 'ok' : 'erro');
+    if(window.__perfisClienteAberto) renderRefsPerfilCliente(window.__perfisClienteAberto.slug, window.__perfisClienteAberto.nome);
+  };
+
   window.renderRefsPerfilCliente = async function(slug, nome){
     const cont = document.getElementById('refsPerfilCliente');
     if(!cont) return;
     cont.innerHTML = '<div class="card"><div class="desc">Carregando referências desse cliente...</div></div>';
-    const semana = semanaRefAtual();
+    window.__perfisClienteAberto = { slug, nome };
 
-    const [perfSnap, hubSnap, calSnap] = await Promise.all([
-      getDoc(doc(db,'refs_perfil_semana', slug + '_' + semana)),
-      getDocs(collection(db,'referencias')),
-      getDoc(doc(db,'calendarios', slug))
-    ]);
+    /* O CONGELAMENTO: isto lia a coleção `referencias` INTEIRA e o
+       calendário do cliente a cada abertura — e a tela reabre depois de
+       cada save. Abrindo 20 clientes em sequência eram 40+ leituras de
+       coleção cheia, e o navegador parava de responder no meio. Agora lê
+       uma vez e reaproveita. */
+    if(!__refsHubCache){
+      const hubSnap = await getDocs(collection(db,'referencias'));
+      __refsHubCache = []; hubSnap.forEach(d => __refsHubCache.push({id:d.id, ...d.data()}));
+    }
+    if(!(slug in __calCacheRefs)){
+      const cs = await getDoc(doc(db,'calendarios', slug));
+      __calCacheRefs[slug] = cs.exists() ? (cs.data().items || []) : [];
+    }
 
-    const slots = perfSnap.exists() ? (perfSnap.data().slots || []) : [];
-    const preenchidos = slots.filter(s => s && s.link && s.link.trim()).length;
+    const recuperado = await carregarPerfisDeCliente(slug, false);
+    const slots = recuperado.slots || [];
+    const preenchidos = contarLinks(slots);
     const ok = preenchidos >= MIN_REF_PERFIL;
 
     // banco do Hub desse cliente, marcando o que ja foi pro calendario
     const usadas = new Set();
-    if(calSnap.exists()) (calSnap.data().items||[]).forEach(it => { if(it.ref) usadas.add(String(it.ref).trim()); });
-    const doCliente = [];
-    hubSnap.forEach(d => { const r = d.data(); if(!r.excluido && r.cliente === slug) doCliente.push({id:d.id, ...r}); });
+    (__calCacheRefs[slug] || []).forEach(it => { if(it.ref) usadas.add(String(it.ref).trim()); });
+    const doCliente = __refsHubCache.filter(r => !r.excluido && r.cliente === slug);
     const disponiveis = doCliente.filter(r => !usadas.has(String(r.link||'').trim()));
 
     let html = `<div class="card" style="border:2px solid ${ok ? 'var(--green)' : 'var(--red)'};">
@@ -10582,19 +10809,23 @@
         No Hub de Referências vão <b>POSTS</b> — o vídeo específico que vira um conteúdo no calendário.<br>
         Resumindo: <b>aqui é quem seguir de inspiração. Lá é o post que vira conteúdo.</b>
       </div>
-      <div class="meta" style="margin-top:6px;"><b style="color:${ok?'var(--green)':'var(--red)'};">${preenchidos}/${SLOTS_REF_PERFIL} preenchido(s)${ok ? ' — esse cliente está coberto' : ' — falta ' + (MIN_REF_PERFIL - preenchidos) + ' pra esse cliente ficar coberto'}</b></div>`;
+      <div class="meta" style="margin-top:6px;"><b style="color:${ok?'var(--green)':'var(--red)'};">${preenchidos}/${SLOTS_REF_PERFIL} preenchido(s)${ok ? ' — esse cliente está coberto' : ' — falta ' + (MIN_REF_PERFIL - preenchidos) + ' pra esse cliente ficar coberto'}</b></div>
+      <div class="desc" style="background:var(--deep);border-left:3px solid var(--green);padding:9px 11px;border-radius:7px;margin-top:8px;">💾 <b>Salva sozinho.</b> Cada campo é gravado assim que você sai dele — não precisa clicar em nada nem terminar os três. Pode fechar a página no meio que não perde.</div>
+      ${recuperado.recuperadoDe ? '<div class="desc" style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;margin-top:8px;">♻️ <b>Recuperado.</b> Estes perfis estavam guardados numa chave antiga (<code>'+esc(recuperado.recuperadoDe)+'</code>) e voltaram sozinhos. Nada foi perdido.</div>' : ''}`;
 
     for(let i = 0; i < SLOTS_REF_PERFIL; i++){
       const s = slots[i] || {};
       const obrigatorio = i < MIN_REF_PERFIL;
       html += `<div class="field" style="margin-top:10px;">
         <label>Perfil ${i+1} ${obrigatorio ? '<span style="color:var(--red);">• obrigatório</span>' : '<span style="color:var(--muted);">(opcional)</span>'}</label>
-        <input type="text" id="refPerfilLink_${i}" value="${esc(s.link||'')}" placeholder="https://instagram.com/perfil">
-        <input type="text" id="refPerfilNota_${i}" value="${esc(s.nota||'')}" placeholder="O que aproveitar desse perfil..." style="margin-top:6px;">
+        <input type="text" id="refPerfilLink_${i}" value="${esc(s.link||'')}" placeholder="https://instagram.com/perfil" onblur="autoSalvarPerfis('${slug}')" onchange="autoSalvarPerfis('${slug}')">
+        <input type="text" id="refPerfilNota_${i}" value="${esc(s.nota||'')}" placeholder="O que aproveitar desse perfil..." style="margin-top:6px;" onblur="autoSalvarPerfis('${slug}')" onchange="autoSalvarPerfis('${slug}')">
         ${s.link ? '<a href="'+esc(s.link)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:6px;padding:8px;font-size:11px;">↗ Abrir perfil</a>' : ''}
       </div>`;
     }
-    html += `<button class="btn" style="margin-top:12px;" onclick="salvarRefsPerfilCliente('${slug}')">Salvar perfis deste cliente</button>
+    html += `<div id="statusSalvoPerfis" class="meta" style="margin-top:10px;min-height:16px;"></div>
+      <button class="btn" style="margin-top:4px;" onclick="salvarRefsPerfilCliente('${slug}')">Salvar agora</button>
+      ${preenchidos ? '' : '<button class="btn secondary" style="margin-top:8px;" onclick="recuperarTodosPerfis(this)">🔎 Procurar perfis de semanas anteriores</button>'}
     </div>`;
 
     // O LADO QUE FALTAVA: o banco pronto, na hora de montar o calendario
@@ -10616,9 +10847,19 @@
     cont.innerHTML = html;
   };
 
-  window.salvarRefsPerfilCliente = async function(slug, nomeArg){
-    const nome = nomeArg || (CLIENTES_LISTA.find(c => c.slug === slug) || {}).nome || slug;
-    const semana = semanaRefAtual();
+  /* ===== AUTO-SAVE (27/07/2026) ============================================
+     A Gabi preencheu mais de dez clientes e perdeu tudo. Duas causas: a
+     chave da semana (corrigida acima) e o fato de o salvamento depender de
+     um clique — e de um clique que só funcionava com 2 links preenchidos.
+     Quem preenchia 1 e seguia adiante não salvava nada e não recebia aviso.
+
+     Agora grava sozinho ao sair de cada campo, aceita salvar PARCIAL (o
+     mínimo de 2 virou indicador de cobertura, não trava de gravação) e
+     mostra na tela o instante em que gravou. E não re-renderiza a tela a
+     cada gravação, que era o que travava o navegador. */
+  let __timerSalvarPerfis = null;
+
+  function lerSlotsDaTela(){
     const slots = [];
     for(let i = 0; i < SLOTS_REF_PERFIL; i++){
       slots.push({
@@ -10626,17 +10867,44 @@
         nota: (document.getElementById('refPerfilNota_'+i)?.value || '').trim()
       });
     }
-    const preenchidos = slots.filter(s => s.link).length;
-    if(preenchidos < MIN_REF_PERFIL){
-      mostrarToast('Precisa de pelo menos ' + MIN_REF_PERFIL + ' perfis preenchidos — faltou ' + (MIN_REF_PERFIL - preenchidos) + '.', 'erro');
-      return;
+    return slots;
+  }
+
+  window.gravarPerfis = async function(slug, nomeArg, silencioso){
+    const nome = nomeArg || (CLIENTES_LISTA.find(c => c.slug === slug) || {}).nome || slug;
+    const slots = lerSlotsDaTela();
+    const preenchidos = contarLinks(slots);
+    const alvo = document.getElementById('statusSalvoPerfis');
+    try{
+      await setDoc(doc(db,'refs_perfil_semana', slug), {
+        cliente: slug, clienteNome: nome, slots, preenchidos,
+        atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
+      }, { merge: true });
+      if(__perfisLegadoCache) __perfisLegadoCache[slug] = { cliente: slug, clienteNome: nome, slots, preenchidos };
+      const hora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+      if(alvo) alvo.innerHTML = '<span style="color:var(--green);">✓ Salvo às ' + hora + ' — ' + preenchidos + ' de ' + SLOTS_REF_PERFIL + (preenchidos < MIN_REF_PERFIL ? ' (ainda falta ' + (MIN_REF_PERFIL-preenchidos) + ' pra ficar coberto)' : '') + '</span>';
+      if(!silencioso) mostrarToast('Perfis de ' + nome + ' salvos!');
+      return true;
+    }catch(e){
+      console.error('Falha ao salvar perfis:', e);
+      if(alvo) alvo.innerHTML = '<span style="color:var(--red);">✕ NÃO salvou. Verifica a internet e clica em "Salvar agora" — não fecha a página.</span>';
+      mostrarToast('Não consegui salvar os perfis. Não fecha a página.', 'erro');
+      return false;
     }
-    await setDoc(doc(db,'refs_perfil_semana', slug + '_' + semana), {
-      cliente: slug, clienteNome: nome, semana, slots,
-      preenchidos, atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
-    }, { merge: true });
-    mostrarToast('Perfis da semana salvos pra ' + nome + '!');
-    renderRefsPerfilCliente(slug, nome);
+  };
+
+  window.autoSalvarPerfis = function(slug){
+    const alvo = document.getElementById('statusSalvoPerfis');
+    if(alvo) alvo.innerHTML = '<span style="color:var(--yellow2);">salvando...</span>';
+    clearTimeout(__timerSalvarPerfis);
+    __timerSalvarPerfis = setTimeout(() => gravarPerfis(slug, null, true), 400);
+  };
+
+  window.salvarRefsPerfilCliente = async function(slug, nomeArg){
+    const nome = nomeArg || (CLIENTES_LISTA.find(c => c.slug === slug) || {}).nome || slug;
+    clearTimeout(__timerSalvarPerfis);
+    const ok = await gravarPerfis(slug, nome, false);
+    if(ok) renderRefsPerfilCliente(slug, nome);
   };
 
   window.copiarLinkCalendarioFerramentasAtual = function(){
@@ -11366,7 +11634,6 @@
     const cobertos = new Set();
     snap.forEach(dd => {
       const r = dd.data();
-      if(r.semana !== semana) return;
       const n = (r.slots || []).filter(s => s && s.link && String(s.link).trim()).length;
       if(n >= 2) cobertos.add(r.cliente);
     });
@@ -11996,7 +12263,15 @@
        como adicional do plano deles. A Gabi monta toda SEXTA, a semana
        inteira de uma vez. Antes o sistema cobrava 24 clientes e cobrava
        toda segunda — errado nos dois eixos. */
-    const alvo = CLIENTES_LISTA.filter(c => CLIENTES_COM_STORY.includes(c.slug));
+    /* ===== 27/07/2026 (final) — O ALVO SAI DO REGISTRO, NÃO DO CÓDIGO ====
+       A lista estava fixa aqui dentro: pra ligar story num cliente novo
+       alguém teria que editar o arquivo. Agora vem de `stories_clientes`,
+       que a Gabi edita pela tela. Ela adiciona o cliente lá e a cobrança
+       de sexta passa a valer pra ele no mesmo instante. A constante fica
+       só como semente, pra primeira vez que o registro estiver vazio. */
+    const registrados = await carregarClientesDeStory(true);
+    const slugsStory = registrados.length ? registrados.map(c => c.slug) : CLIENTES_COM_STORY;
+    const alvo = CLIENTES_LISTA.filter(c => slugsStory.includes(c.slug));
     if(!alvo.length) return;
     const faltando = alvo.filter(c => !cobertos.has(c.slug));
 
@@ -12013,7 +12288,7 @@
     }
 
     const descricao = 'Sexta é o dia de montar os stories da semana que vem — os cinco dias de uma vez, segunda a sexta.\n\n'
-      + 'Story semanal é adicional de plano: hoje só a Juliane Nerone e a Vitalle têm. Ninguém mais é cobrado.\n\n'
+      + 'Story semanal é adicional de plano — hoje é de ' + alvo.map(c=>c.nome).join(' e ') + '. Ninguém mais é cobrado. Se fechar com outro cliente, adiciona ele na própria tela de Stories que a cobrança passa a valer.\n\n'
       + 'COMO FAZER\n'
       + '1. Menu lateral → 📸 Stories\n'
       + '2. No card "📅 Montar a semana inteira", escolhe o cliente\n'

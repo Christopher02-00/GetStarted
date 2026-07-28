@@ -189,6 +189,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -201,7 +202,36 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  const SENHA_APROVAR = "Cg@102030";
+  /* ===== 28/07/2026 — ESTA PÁGINA ESTAVA FORA DA SEGURANÇA ============
+     Ela abre dentro do escritório, num quadro embutido, e por isso passou
+     despercebida nas duas rodadas anteriores. Dois problemas:
+
+     1. Não criava sessão nenhuma. Com as regras novas do Firestore, toda
+        leitura e gravação daqui era recusada — em silêncio. A Central de
+        Roteiros da Gabi simplesmente não funcionava.
+     2. A senha de aprovação estava escrita em texto puro no arquivo.
+        Quem abrisse o código lia a senha do escritório.
+
+     Corrigido: sessão anônima criada antes de qualquer acesso ao banco, e
+     a senha virou comparação de hash contra config_seguranca/escritorio —
+     a mesma senha do escritório, agora sem estar escrita em lugar nenhum. */
+  const authPronta = signInAnonymously(getAuth(app))
+    .catch(e => { console.error('Falha na autenticação:', e); return null; });
+
+  async function hashSenha(txt){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(txt)));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+  const HASH_SENHA_PADRAO = "e34d0380d0f5705e6105c6be42c7d7b56fa2f36485353e4053dfaf4da01f59fe";
+  async function senhaConfere(digitada){
+    const h = await hashSenha(digitada);
+    let guardado = null;
+    try{
+      const snap = await getDoc(doc(db,'config_seguranca','escritorio'));
+      if(snap.exists() && snap.data().senhaHash) guardado = snap.data().senhaHash;
+    }catch(e){ console.error('Não consegui ler a senha guardada:', e); }
+    return h === (guardado || HASH_SENHA_PADRAO);
+  }
 
   const clientes = [
     {nome:"Bluefit", slug:"bluefit"},
@@ -239,6 +269,7 @@
     const box = document.getElementById('referenciasSugeridas');
     if(!clienteSlug){ box.innerHTML = ''; return; }
     try {
+      await authPronta;
       const snap = await getDocs(collection(db,'referencias'));
       const sugeridas = [];
       snap.forEach(d => { if(d.data().cliente === clienteSlug) sugeridas.push(d.data()); });
@@ -438,9 +469,9 @@
     document.getElementById('overlayView').classList.remove('show');
   };
 
-  window.entrarAprovar = function(){
+  window.entrarAprovar = async function(){
     const v = document.getElementById('senhaAprovar').value;
-    if(v === SENHA_APROVAR){
+    if(await senhaConfere(v)){
       document.getElementById('gateAprovar').style.display='none';
       document.getElementById('conteudoAprovar').style.display='block';
       carregarAprovar();
@@ -503,8 +534,11 @@
     carregarAprovar();
   };
 
+  /* Nada toca o banco antes da sessão existir — era isso que fazia a
+     tela abrir vazia sem dizer por quê. */
   popularClientes();
   renderBlocos();
+  authPronta.catch(()=>{});
 </script>
 </body>
 </html>

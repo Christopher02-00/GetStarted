@@ -1447,6 +1447,52 @@
      automações: pega o que ainda não virou demanda, cria a demanda pra
      pessoa certa e marca o aviso como lido. O cliente avisa; nós
      decidimos o que vira tarefa. */
+  /* ===== DEMANDA SUBSTITUÍDA SE APOSENTA SOZINHA — 28/07/2026 =========
+     Erro meu, e dos que mais incomodaram: a cada vez que a gente refinou
+     o modelo de referências no fim de semana, eu criei uma demanda nova
+     explicando o modelo novo e NÃO encerrei a anterior. A Gabi ficou com
+     sete demandas sobre o mesmo assunto, dizendo coisas parecidas e
+     ligeiramente contraditórias. Foi disso que ela reclamou quando falou
+     em duplicidade e em "coisas já feitas que permanecem lá".
+
+     Agora, quando o sistema cria uma demanda automática de um tipo que já
+     existe aberto pra mesma pessoa, a antiga é encerrada com nota. Vale
+     só pra demanda automática: o que humano criou, humano encerra. */
+  async function encerrarDemandasSubstituidas(){
+    let snap;
+    try{ snap = await getDocs(collection(db,'demandas')); }
+    catch(e){ console.error('Não consegui varrer demandas substituídas:', e); return; }
+
+    const porChave = {};
+    snap.forEach(d => {
+      const v = d.data();
+      if(['aprovada','cancelada'].includes(v.status) || v.excluido) return;
+      if(v.origem !== 'sistema' && v.criadoPor !== 'sistema') return;
+      const tipo = v.tipoEspecial || v.tipoFuncaoFixa;
+      if(!tipo) return;
+      const chave = (v.destinatario||'?') + '|' + tipo;
+      (porChave[chave] = porChave[chave] || []).push({ id:d.id, ...v });
+    });
+
+    let fechadas = 0;
+    for(const chave of Object.keys(porChave)){
+      const grupo = porChave[chave];
+      if(grupo.length < 2) continue;
+      // a mais nova sobrevive; as outras são versões antigas do mesmo pedido
+      grupo.sort((a,b) => (b.criadoEm?.seconds||0) - (a.criadoEm?.seconds||0));
+      for(const antiga of grupo.slice(1)){
+        try{
+          await updateDoc(doc(db,'demandas', antiga.id), {
+            status:'aprovada', concluidoPor:'sistema (substituída)', concluidoEm: serverTimestamp(),
+            notaConclusao:'Encerrada automaticamente: existe uma demanda mais recente do mesmo tipo ("' + (grupo[0].titulo||'') + '"). Era versão antiga do mesmo pedido.'
+          });
+          fechadas++;
+        }catch(e){ console.error('Falha ao encerrar substituída ' + antiga.id, e); }
+      }
+    }
+    if(fechadas) registrarLogAutomacao('demandas_substituidas', '', fechadas + ' demanda(s) antigas encerradas por terem sido substituídas');
+  }
+
   async function converterAvisosDoCliente(){
     /* Duas caixas de entrada, mesma lógica:
        `avisos_do_cliente`  → o que o cliente manda pelo portal
@@ -9169,7 +9215,10 @@
     return prazo <= limite;
   }
   function contarUrgentesBadge(lista, diasJanela){
-    return lista.filter(d => ehUrgenteParaBadge(d, diasJanela)).length;
+    /* 28/07/2026 — encalhada não entra no badge. O número no menu existe
+       pra dizer "isto precisa de você agora"; backlog automático de três
+       semanas atrás diz outra coisa, e é essa outra coisa que assusta. */
+    return lista.filter(d => ehUrgenteParaBadge(d, diasJanela) && !estaEncalhada(d)).length;
   }
   // ===== PRAZO DE EDICAO — 1 dia util, ate as 19h =====
   // ===== FASE 4 — PRAZOS EM DIAS ÚTEIS =====
@@ -10248,6 +10297,82 @@
   };
   const MIN_AGRUPAR_DEMANDAS = 3; // só agrupa quando há volume de verdade
 
+  /* ===== AS ENCALHADAS — 28/07/2026 ==================================
+     A varredura mostrou o número real: a Gabi tinha 39 demandas abertas,
+     27 já atrasadas, e 22 das 39 criadas pelo próprio sistema. O corte de
+     "itens futuros" que eu tinha feito não removia uma única — porque
+     nenhuma vencia depois de 7 dias. O problema nunca foi o futuro: era
+     backlog velho que nada aposentava.
+
+     Demanda automática atrasada há mais de 15 dias quase sempre é uma de
+     três coisas: já foi feita e ninguém deu baixa, deixou de fazer
+     sentido, ou foi substituída por outra. Nenhuma delas merece ficar
+     pesando na conta do dia todo santo dia.
+
+     Elas não somem: vão pra uma faixa separada, fechada, com duas
+     perguntas objetivas — reativar com prazo novo, ou encerrar. Backlog
+     velho vira decisão em vez de peso. */
+  const DIAS_PRA_ENCALHAR = 15;
+
+  function estaEncalhada(d){
+    if(d.status === 'concluida_aguardando_aprovacao') return false;
+    const automatica = (d.origem === 'sistema' || d.criadoPor === 'sistema');
+    if(!automatica) return false;
+    if(!d.prazoData) return false;
+    const dias = Math.floor((new Date().setHours(0,0,0,0) - new Date(d.prazoData + 'T00:00:00').getTime()) / 86400000);
+    return dias > DIAS_PRA_ENCALHAR;
+  }
+
+  window.reativarDemandaEncalhada = async function(id){
+    const nova = new Date(); nova.setDate(nova.getDate() + 2);
+    const prazo = nova.toISOString().slice(0,10);
+    await updateDoc(doc(db,'demandas', id), {
+      prazoData: prazo, reativadaEm: new Date().toISOString(), reativadaPor: usuarioAtual || '?', urgenciaManual: ''
+    });
+    registrarHistorico('demandas', id, 'Reativada com prazo novo (' + formatarDataBR(prazo) + ') por ' + (usuarioAtual||'?'));
+    mostrarToast('Reativada pra ' + formatarDataBR(prazo) + '.');
+    renderMinhasDemandasAtribuidas();
+  };
+
+  window.encerrarDemandaEncalhada = async function(id){
+    if(!confirm('Encerrar essa demanda?\n\nUse quando ela já foi feita, foi substituída por outra, ou deixou de fazer sentido. Fica registrado quem encerrou.')) return;
+    await updateDoc(doc(db,'demandas', id), {
+      status: 'aprovada', concluidoPor: (usuarioAtual||'?') + ' (encerrada por encalhe)', concluidoEm: serverTimestamp(),
+      notaConclusao: 'Encerrada na limpeza de encalhadas — atrasada há mais de ' + DIAS_PRA_ENCALHAR + ' dias.'
+    });
+    mostrarToast('Encerrada.');
+    renderMinhasDemandasAtribuidas();
+  };
+
+  window.encerrarTodasEncalhadas = async function(){
+    const alvo = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && estaEncalhada(d));
+    if(!alvo.length){ mostrarToast('Nenhuma encalhada.'); return; }
+    if(!confirm('Encerrar as ' + alvo.length + ' demandas encalhadas de uma vez?\n\nSão todas automáticas e atrasadas há mais de ' +
+      DIAS_PRA_ENCALHAR + ' dias. Se alguma ainda importa, encerra as outras e reativa essa uma pelo botão individual.')) return;
+    for(const d of alvo){
+      try{
+        await updateDoc(doc(db,'demandas', d.id), {
+          status:'aprovada', concluidoPor:(usuarioAtual||'?') + ' (limpeza de encalhadas)', concluidoEm: serverTimestamp(),
+          notaConclusao:'Encerrada em lote — atrasada há mais de ' + DIAS_PRA_ENCALHAR + ' dias.'
+        });
+      }catch(e){ console.error('Falha ao encerrar ' + d.id, e); }
+    }
+    registrarLogAutomacao('encalhadas_limpas', '', alvo.length + ' demanda(s) encerradas por ' + (usuarioAtual||'?'));
+    mostrarToast(alvo.length + ' demanda(s) saíram da sua lista.');
+    renderMinhasDemandasAtribuidas();
+  };
+
+  function cardDemandaEncalhada(d){
+    const dias = Math.floor((new Date().setHours(0,0,0,0) - new Date(d.prazoData + 'T00:00:00').getTime()) / 86400000);
+    return `<div class="item" style="border-left:3px solid var(--muted);opacity:.9;">
+      <div class="top" style="cursor:pointer;" onclick="abrirDemandaMinha('${d.id}')"><div class="nome">${esc(d.titulo)}</div><span class="meta">${dias} dias</span></div>
+      <div class="btnrow" style="margin-top:9px;">
+        <button class="btn secondary" style="width:auto;padding:8px 14px;font-size:11.5px;" onclick="reativarDemandaEncalhada('${d.id}')">Ainda faz sentido — reativar</button>
+        <button class="btn secondary" style="width:auto;padding:8px 14px;font-size:11.5px;opacity:.8;" onclick="encerrarDemandaEncalhada('${d.id}')">Já era — encerrar</button>
+      </div>
+    </div>`;
+  }
+
   function faixaDemandasHtml(chave, titulo, lista, abertaPadrao, estadoSalvo){
     const aberta = (estadoSalvo && chave in estadoSalvo) ? estadoSalvo[chave] : abertaPadrao;
     let corpo;
@@ -10333,8 +10458,11 @@
     const aguardando = minhas.filter(d => d.status === 'concluida_aguardando_aprovacao');
     const pendentes = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao');
     const porData = l => [...l].sort((a,b) => ((a.prazoData||'') + (a.prazoHora||'')).localeCompare((b.prazoData||'') + (b.prazoHora||'')));
-    const atrasadas = porData(pendentes.filter(d => calcularUrgencia(d) === 'atrasado'));
-    const praHoje = porData(pendentes.filter(d => calcularUrgencia(d) === 'hoje'));
+    /* Encalhadas saem da conta do dia — ver comentário em estaEncalhada. */
+    const encalhadas = porData(pendentes.filter(estaEncalhada));
+    const vivas = pendentes.filter(d => !estaEncalhada(d));
+    const atrasadas = porData(vivas.filter(d => calcularUrgencia(d) === 'atrasado'));
+    const praHoje = porData(vivas.filter(d => calcularUrgencia(d) === 'hoje'));
     // CORRIGIDO 21/07/2026: uma demanda marcada URGENTE mas com prazo pra
     // frente (ex: sexta) caía em "Próximas", que vem fechada por padrão —
     // e sumia da vista. Agora tudo que está marcado urgente (🔴 ou a
@@ -10342,8 +10470,8 @@
     // aberto, sem depender da data. Só sai daqui quando vira atrasado/hoje
     // (aí já aparece nas faixas de cima, também abertas).
     const ehDemandaUrgente = d => { const t = (d.titulo||''); return t.startsWith('🔴') || /urgente/i.test(t); };
-    const naoUrgentesFuturas = pendentes.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && !ehDemandaUrgente(d));
-    const urgentesFuturas = pendentes.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && ehDemandaUrgente(d));
+    const naoUrgentesFuturas = vivas.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && !ehDemandaUrgente(d));
+    const urgentesFuturas = vivas.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && ehDemandaUrgente(d));
     /* ===== 27/07/2026 — O ACÚMULO QUE ESTRESSAVA A EQUIPE =====
        "Próximas" juntava tudo que tem prazo à frente, sem limite. A Gabi
        abria a tela e via 45 itens, sendo que a maior parte só vence semana
@@ -10425,6 +10553,7 @@
       </div>
       <div class="resumoCard"><div class="num">${proximas.length}</div><div class="lbl">próximos 7 dias</div></div>
       ${maisAdiante.length ? '<div class="resumoCard" style="opacity:.55;"><div class="num">'+maisAdiante.length+'</div><div class="lbl">mais adiante</div></div>' : ''}
+      ${encalhadas.length ? '<div class="resumoCard" style="opacity:.55;"><div class="num">'+encalhadas.length+'</div><div class="lbl">⏳ encalhadas — não contam</div></div>' : ''}
       <div class="resumoCard ${aguardando.length ? 'green' : ''}"><div class="num">${aguardando.length}</div><div class="lbl">você já entregou — esperando aprovação</div></div>
     </div>
     ${aguardando.length ? `<div class="card" style="border-color:var(--green);margin-bottom:14px;">
@@ -10480,6 +10609,14 @@
       faixaDemandasHtml('proximas', '⚪ Próximos 7 dias', proximas, false, estadoSalvo) +
       (maisAdiante.length ? faixaDemandasHtml('maisAdiante', '🗓️ Mais adiante — nada a fazer agora', maisAdiante, false, estadoSalvo) : '') +
       faixaDemandasHtml('aguardando', '✋ Feitas por mim — aguardando aprovação da gerência', porData(aguardando), false, estadoSalvo) +
+      (encalhadas.length ? `<div class="faixaDem" data-faixa="encalhadas">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">⏳ Encalhadas — decide o que fazer <span class="qtd">(${encalhadas.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">
+          <div class="grupoDica" style="margin-bottom:10px;">Todas foram criadas pelo sistema e estão atrasadas há mais de ${DIAS_PRA_ENCALHAR} dias. Normalmente é uma de três coisas: já foi feita e ninguém deu baixa, deixou de fazer sentido, ou foi substituída por outra. <b>Elas não contam mais no seu número do dia</b> — mas continuam aqui até você decidir.</div>
+          <button class="btn secondary" style="margin-bottom:10px;padding:11px;" onclick="encerrarTodasEncalhadas()">Encerrar todas as ${encalhadas.length} de uma vez</button>
+          ${encalhadas.map(cardDemandaEncalhada).join('')}
+        </div>
+      </div>` : '') +
       faixaEnviadas;
   };
 
@@ -13259,6 +13396,7 @@
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
       { nome: 'varreduraDuplicatas', fn: varrerDuplicatas },
       { nome: 'avisosDoPortal', fn: converterAvisosDoCliente },
+      { nome: 'demandasSubstituidas', fn: encerrarDemandasSubstituidas },
       { nome: 'calendarioNovoParaProducao', fn: avisarCalendarioPronto },
       { nome: 'storiesDaSemana', fn: cobrarStoriesDaSemana },
       { nome: 'extrasDoDia15', fn: lembrarExtrasDosFilmmakers },

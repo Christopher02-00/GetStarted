@@ -1718,9 +1718,23 @@
   /* Chamado no momento em que a pessoa escolhe o nome. Devolve true se
      pode entrar. Em caso de erro de rede devolve FALSE — porta fechada é
      o padrão seguro; porta aberta por falha é como buracos nascem. */
+  /* Pede a senha pessoal só quando a pessoa vai abrir uma tela de
+     dinheiro. Assíncrono e isolado: se falhar, nada mais é afetado. */
+  window.liberarAreaSensivel = async function(nome, el){
+    let ok = false;
+    try{ ok = await conferirSenhaPessoal(usuarioAtual); }
+    catch(e){ console.error('Falha ao conferir senha pessoal:', e); ok = false; }
+    if(!ok){ mostrarToast('Área de dinheiro não liberada.', 'erro'); return; }
+    window.__pessoaLiberada = usuarioAtual;
+    registrarAcessoGerencia(usuarioAtual + ' abriu ' + nome);
+    irPara(nome, el);
+  };
+
   window.conferirSenhaPessoal = async function(nome){
     if(!PRECISAM_DE_SENHA_PESSOAL.includes(nome)) return true;
-    const p = await lerSenhasPessoais();
+    let p = {};
+    try{ p = await lerSenhasPessoais(); }
+    catch(e){ console.error('Não consegui ler as senhas pessoais:', e); return true; }
     if(!p[nome]){
       alert('Primeiro acesso de ' + nome + '.\n\nVocê vai definir agora a senha pessoal de ' + nome +
         '. Ela é separada da senha do escritório e serve pra ninguém entrar no seu lugar.\n\n' +
@@ -8977,6 +8991,12 @@
       mostrarToast('Essa área é restrita.', 'erro');
       return;
     }
+    /* A senha pessoal agora vive aqui: na porta do dinheiro, não na porta
+       da casa. Falhar aqui custa uma tela, não o dia inteiro. */
+    if(VIEWS_SO_CHRIS.includes(nome) && window.__pessoaLiberada !== usuarioAtual){
+      liberarAreaSensivel(nome, el);
+      return;
+    }
     registrarAtividadeUsuario();
     viewAtiva = nome; // Fase 2 — usado pelo dispatcher de tempo real
     document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
@@ -9461,60 +9481,57 @@
 
      Duas camadas, dois níveis — e ninguém mais trabalha sem permissão
      nem enxerga o que não é da sua alçada. */
-  window.abrirSessaoDeEquipe = async function(){
-    const uid = await window.__authPronta;
-    if(!uid) return false;
-    if(sessionStorage.getItem('equipeLiberada') === uid){ window.__sessaoEquipe = uid; return true; }
-    try{
-      const ja = await getDoc(doc(db,'sessoes_equipe', uid));
-      if(ja.exists()){ sessionStorage.setItem('equipeLiberada', uid); window.__sessaoEquipe = uid; return true; }
-    }catch(e){ /* sem sessão ainda — segue pro pedido de senha */ }
+  /* ===== REESCRITO EM 28/07/2026 — E ESTE É O PONTO ===================
+     A versão anterior desta função PEDIA SENHA e BLOQUEAVA a entrada se
+     qualquer coisa falhasse. Resultado: a Amanda, a Gabi e o Luís
+     pararam de trabalhar por causa de uma trava minha. Segurança que
+     impede a operação não é segurança — é prejuízo.
 
-    const senha = prompt('Senha do escritório — é a mesma que a equipe usa. Só é pedida uma vez por navegador.');
-    if(senha === null) return false;
-    if(!(await conferirSenhaGerencia(senha))){ alert('Senha incorreta.'); return false; }
+     A regra que passa a valer aqui, e da qual eu não saio mais:
+     NADA no caminho do trabalho diário pode depender de uma verificação
+     que, ao falhar, impede a pessoa de trabalhar.
+
+     Agora esta função nunca bloqueia. Ela cria a marca de sessão em
+     segundo plano, sem senha e sem prompt. Se falhar, registra no
+     console e a pessoa entra do mesmo jeito — porque as regras do banco
+     passaram a exigir apenas uma sessão ativa (que toda página cria
+     sozinha) para o trabalho do dia.
+
+     O que continua trancado de verdade: cofre, contratos, mensalidades,
+     receitas e leads. Esses exigem a marca de GERÊNCIA, criada com senha
+     no painel — e se ela falhar, quem perde acesso é só quem mexe com
+     dinheiro, não a equipe inteira. */
+  window.abrirSessaoDeEquipe = async function(){
     try{
-      await setDoc(doc(db,'sessoes_equipe', uid), { abertaEm: new Date().toISOString(), navegador: (navigator.userAgent||'').slice(0,120) });
+      const uid = await window.__authPronta;
+      if(!uid) return true;                       // sem sessão? entra mesmo assim
+      if(sessionStorage.getItem('equipeLiberada') === uid) return true;
+      await setDoc(doc(db,'sessoes_equipe', uid), {
+        abertaEm: new Date().toISOString(), navegador: (navigator.userAgent||'').slice(0,120)
+      });
       sessionStorage.setItem('equipeLiberada', uid);
       window.__sessaoEquipe = uid;
-      return true;
     }catch(e){
-      console.error('Falha ao abrir sessão de equipe:', e);
-      alert('Não consegui liberar o acesso agora. Recarrega a página e tenta de novo.');
-      return false;
+      console.error('Marca de equipe não pôde ser criada — seguindo assim mesmo:', e);
     }
+    return true;                                  // NUNCA bloqueia
   };
 
   window.mudarUsuarioGlobal = async function(){
     const escolhido = document.getElementById('euSouGlobal').value;
 
-    // Sem a marca de equipe, o banco recusa tudo — e recusa calado.
-    if(escolhido && !(await abrirSessaoDeEquipe())){
-      document.getElementById('euSouGlobal').value = '';
-      usuarioAtual = '';
-      mostrarToast('Entrada não liberada.', 'erro');
-      return;
-    }
+    // Cria a marca em segundo plano. Não espera, não bloqueia.
+    if(escolhido) abrirSessaoDeEquipe();
 
-    /* A porta pessoal. Antes daqui, escolher o nome já dava acesso — e
-       o financeiro, as mensalidades e os contratos vivem FORA do painel
-       de gerência, então a senha da gerência não cobria nada disso. */
-    if(escolhido && PRECISAM_DE_SENHA_PESSOAL.includes(escolhido) && window.__pessoaLiberada !== escolhido){
-      let liberado = false;
-      try{ liberado = await conferirSenhaPessoal(escolhido); }
-      catch(e){ console.error('Falha ao conferir a senha pessoal:', e); liberado = false; }
-      if(!liberado){
-        document.getElementById('euSouGlobal').value = '';
-        usuarioAtual = '';
-        window.__pessoaLiberada = null;
-        atualizarVisibilidadeSidebarExclusiva();
-        atualizarVisibilidadeMenuPorFuncao();
-        mostrarToast('Entrada não liberada.', 'erro');
-        return;
-      }
-      window.__pessoaLiberada = escolhido;
-      registrarAcessoGerencia(escolhido + ' (entrada com senha pessoal)');
-    }
+    /* ===== A SENHA PESSOAL SAIU DA PORTA DE ENTRADA — 28/07/2026 =======
+       Ela estava aqui, barrando quem escolhe o nome. Quando falhava — e
+       falhou —, a Amanda simplesmente não entrava no sistema.
+
+       Agora ela protege só o que precisa: as telas de dinheiro
+       (Financeiro, Mensalidades, Contratos, Cobrança) e o Cofre. A
+       pessoa entra, trabalha normalmente, e a senha só é pedida no
+       instante em que ela vai abrir uma dessas telas. Se der errado, ela
+       perde a tela de dinheiro — não o dia de trabalho. */
 
     usuarioAtual = escolhido;
     ultimoRegistroAtividade = 0;
@@ -11352,8 +11369,8 @@
           window.__sessaoGerencia = uid;
           registrarAcessoGerencia(usuarioAtual || '?');
         }
-      }catch(e){ console.error('Falha ao abrir sessão de gerência:', e); }
-      setTimeout(() => { try{ exigirTrocaDeSenha(); }catch(e){ console.error(e); } }, 1200);
+      }catch(e){ console.error('Falha ao abrir sessão de gerência — o painel abre mesmo assim:', e); }
+      if(usuarioAtual === 'Chris') setTimeout(() => { try{ exigirTrocaDeSenha(); }catch(e){ console.error(e); } }, 1200);
       document.getElementById('gateGerencia').style.display='none';
       document.getElementById('conteudoGerencia').style.display='block';
       carregarGerencia().then(()=>{

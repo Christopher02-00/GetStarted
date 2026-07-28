@@ -4212,11 +4212,18 @@
         criadoEm: serverTimestamp()
       });
       if(precisaAprovacao){
+        /* ===== ISTO É UMA DECISÃO, NÃO UMA TAREFA — 28/07/2026 =========
+           Chegava pro Chris como demanda comum: "descreva o que foi
+           feito", "marcar como feita", "pedir mais prazo". Nada disso faz
+           sentido — ele não vai EXECUTAR a gravação, ele vai dizer sim ou
+           não. `ehDecisao` marca esse tipo, e o modal passa a mostrar dois
+           botões em vez do formulário de entrega. */
         await addDoc(collection(db,'demandas'), {
-          titulo: 'Aprovar 3ª gravação do dia — ' + clienteNome,
-          descricao: 'Cecília agendou uma gravação extra em ' + data + '. Precisa da sua aprovação antes do filmmaker poder registrar.',
-          origem: 'amanda', clienteNome: '', destinatario: 'Chris',
-          agendamentoId: agRef.id,
+          titulo: '🎥 Liberar 3ª gravação do dia — ' + clienteNome,
+          descricao: 'A Cecília agendou uma gravação extra para ' + formatarDataBR(data) + '.\n\nA regra da casa é 2 gravações por dia. Esta é a terceira, então precisa da sua liberação — o filmmaker não consegue registrar enquanto você não decidir.',
+          origem: 'amanda', clienteNome, destinatario: 'Chris',
+          agendamentoId: agRef.id, ehDecisao: true, ehAviso: true,
+          decisaoSim: 'Liberar a gravação', decisaoNao: 'Não liberar',
           prazoData: data, prazoHora: '12:00', status: 'pendente',
           provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
@@ -9836,6 +9843,36 @@
     }catch(e){ /* mantem o estado da matriz — melhor sobrar aba que faltar */ }
   }
 
+  /* ===== A FAXINA — FASE 4 (28/07/2026) ===============================
+     As três telas novas (📍 Agora, 👥 Equipe, 🎬 Produção) absorveram o
+     conteúdo de vinte outras. Essas vinte continuam existindo e
+     funcionando — o que muda é que saem do menu, pra ele voltar a ser
+     legível.
+
+     Nada é apagado. Cada uma continua alcançável por um botão em
+     "Telas antigas", no rodapé do menu, por tempo indeterminado. Se
+     alguma fizer falta no dia a dia, é só me dizer e ela volta pro menu
+     principal — a lista abaixo é a única coisa que precisa mudar.
+
+     Regra de ouro desta fase: NENHUMA tela é removida do arquivo. Só
+     deixa de aparecer na primeira camada. */
+  const ABSORVIDAS_PELAS_NOVAS = {
+    'navVideos':          '🎬 Produção',
+    'navPostagens':       '🎬 Produção',
+    'navConteudoAteQuando':'🎬 Produção',
+    'navArquivoEntregas': '🎬 Produção',
+    'navChecklist':       '👥 Equipe',
+    'navFuncoesFixas':    '👥 Equipe'
+  };
+
+  window.__mostrarTelasAntigas = false;
+  window.alternarTelasAntigas = function(){
+    window.__mostrarTelasAntigas = !window.__mostrarTelasAntigas;
+    atualizarVisibilidadeMenuPorFuncao();
+    const b = document.getElementById('btnTelasAntigas');
+    if(b) b.textContent = window.__mostrarTelasAntigas ? '▴ Esconder telas antigas' : '▾ Telas antigas';
+  };
+
   function atualizarVisibilidadeMenuPorFuncao(){
     const permitidos = VISIBILIDADE_POR_FUNCAO[usuarioAtual];
     ITENS_UNIVERSAIS.forEach(id => {
@@ -9845,11 +9882,36 @@
     ITENS_CONTROLADOS.forEach(id => {
       const el = document.getElementById(id);
       if(!el) return;
-      const mostrar = !!usuarioAtual && (permitidos === 'todos' || (permitidos||[]).includes(id));
+      let mostrar = !!usuarioAtual && (permitidos === 'todos' || (permitidos||[]).includes(id));
+      /* Absorvida pelas telas novas: some do menu, mas continua acessível
+         pelo botão "Telas antigas". Só vale pra quem tem as novas —
+         a equipe que não vê Produção continua com os itens dela. */
+      const temAsNovas = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda' || usuarioAtual === 'Cecília';
+      if(mostrar && temAsNovas && ABSORVIDAS_PELAS_NOVAS[id] && !window.__mostrarTelasAntigas) mostrar = false;
       el.style.display = mostrar ? 'flex' : 'none';
     });
     ajustarChecklistDinamico();
     reorganizarSidebarPorPapel();
+    montarBotaoTelasAntigas();
+  }
+
+  function montarBotaoTelasAntigas(){
+    const temAsNovas = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda' || usuarioAtual === 'Cecília';
+    let b = document.getElementById('btnTelasAntigas');
+    if(!temAsNovas){ if(b) b.remove(); return; }
+    if(!b){
+      const sidebar = document.getElementById('sidebarEl');
+      if(!sidebar) return;
+      b = document.createElement('div');
+      b.id = 'btnTelasAntigas';
+      b.className = 'navitem';
+      b.style.cssText = 'opacity:.6;font-size:11.5px;margin-top:10px;border-top:1px solid var(--line);padding-top:12px;';
+      b.onclick = () => alternarTelasAntigas();
+      b.textContent = '▾ Telas antigas';
+      b.title = 'As telas que 📍 Agora, 👥 Equipe e 🎬 Produção substituíram. Continuam funcionando.';
+      sidebar.appendChild(b);
+    }
+    b.style.display = 'flex';
   }
 
   function atualizarVisibilidadeSidebarExclusiva(){
@@ -11226,6 +11288,24 @@
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
     const modal = document.getElementById('modalConteudo');
+
+    /* Decisão não é tarefa. Quem recebe não vai executar nada — vai dizer
+       sim ou não. Mostrar "descreva o que foi feito" e "pedir mais prazo"
+       aqui só confunde, e foi exatamente o que o Chris apontou. */
+    if(ehDemandaDeDecisao(d)){
+      modal.innerHTML = `
+        <h2>${esc(d.titulo)}</h2>
+        <div class="linha" style="white-space:pre-wrap;">${linkifyDescricao(d.descricao || '')}</div>
+        <div class="linha"><b>Pedido por:</b> ${esc(d.origem || '?')}${d.clienteNome ? ' · Cliente: ' + esc(d.clienteNome) : ''}</div>
+        <div class="btnrow" style="margin-top:18px;">
+          <button class="btn red" style="padding:14px;font-size:13px;" onclick="responderDecisao('${d.id}', false)">${esc(d.decisaoNao || 'Não autorizar')}</button>
+          <button class="btn green" style="padding:14px;font-size:13px;" onclick="responderDecisao('${d.id}', true)">${esc(d.decisaoSim || 'Autorizar')}</button>
+        </div>
+        <button class="btn secondary" style="margin-top:10px;" onclick="fecharModal()">Decidir depois</button>`;
+      document.getElementById('overlayView').classList.add('show');
+      return;
+    }
+
     const jaTemProva = d.status === 'concluida_aguardando_aprovacao';
     modal.innerHTML = `
       <h2>${d.grupoId?'🤝 ':''}${esc(d.titulo)}</h2>
@@ -14852,7 +14932,8 @@
     const aprovar = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual && daPessoaAgora(d));
     const prazos  = (usuarioAtual === 'Amanda' || estaAusente('Amanda')) ? todasDemandas.filter(d => d.prazoSolicitado) : [];
     const videosAprovar = videos.filter(v => v.status === 'aguardando_aprovacao');
-    const totalVoce = aprovar.length + prazos.length + videosAprovar.length;
+    const decisoesPendentes = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d)).length;
+    const totalVoce = aprovar.length + prazos.length + videosAprovar.length + decisoesPendentes;
 
     // ---- BLOCO 2: travado agora ----
     const atrasadas = todasDemandas.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado');
@@ -14886,6 +14967,16 @@
     if(!totalVoce){
       html += '<div class="empty" style="color:var(--green);font-weight:700;">Nada travado em você. 🎉</div>';
     } else {
+      /* Decisões entram aqui: é aqui que o Chris olha de manhã, e é uma
+         decisão dele, não trabalho dele. */
+      const decisoes = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d));
+      if(decisoes.length) html += decisoes.map(d => `<div class="item" style="border-left:3px solid var(--yellow);">
+        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="selo pendente">decisão</span></div>
+        <div class="meta" style="margin-top:6px;">${esc((d.descricao||'').split('\n')[0].slice(0,110))}</div>
+        <div class="btnrow" style="margin-top:10px;">
+          <button class="btn red" style="width:auto;padding:8px 14px;font-size:11.5px;" onclick="responderDecisao('${d.id}', false)">${esc(d.decisaoNao || 'Não autorizar')}</button>
+          <button class="btn green" style="width:auto;padding:8px 16px;font-size:11.5px;" onclick="responderDecisao('${d.id}', true)">${esc(d.decisaoSim || 'Autorizar')}</button>
+        </div></div>`).join('');
       if(aprovar.length) html += aprovar.map(d => `<div class="item" style="border-left:3px solid var(--yellow);">
         <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${esc(d.titulo)}</div><span class="selo pendente">${esc(d.destinatario)}</span></div>
         ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:9px 11px;border-radius:7px;">"'+esc(d.provaTexto)+'"</div>' : ''}
@@ -19526,6 +19617,50 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }catch(e){
       mostrarToast('Erro ao excluir: ' + e.message, 'erro');
     }
+  };
+
+  /* As decisões criadas antes de hoje não têm o campo `ehDecisao`. Em vez
+     de deixá-las com o formulário errado pra sempre, reconheço pelo que
+     elas são: demanda ligada a um agendamento que pede autorização. */
+  window.ehDemandaDeDecisao = function(d){
+    if(!d) return false;
+    if(d.ehDecisao) return true;
+    return !!d.agendamentoId && /aprovar|liberar|autoriz/i.test(d.titulo || '');
+  };
+
+  window.responderDecisao = async function(id, sim){
+    const d = todasDemandas.find(x=>x.id===id);
+    if(!d) return;
+    try{
+      if(sim){
+        if(d.agendamentoId) await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado:true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString() });
+        await updateDoc(doc(db,'demandas', id), {
+          status:'aprovada', concluidoPor: usuarioAtual||'?', concluidoEm: serverTimestamp(),
+          decisao:'autorizado', notaConclusao:'Autorizado por ' + (usuarioAtual||'?')
+        });
+        mostrarToast('Liberado — o filmmaker já pode registrar.');
+      } else {
+        const motivo = prompt('Por que não? (a pessoa que pediu vê este texto)') || '';
+        if(d.agendamentoId) await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado:false, recusadoPor: usuarioAtual||'?', recusadoEm: new Date().toISOString(), motivoRecusa: motivo });
+        await updateDoc(doc(db,'demandas', id), {
+          status:'aprovada', concluidoPor: usuarioAtual||'?', concluidoEm: serverTimestamp(),
+          decisao:'recusado', notaConclusao:'Não autorizado por ' + (usuarioAtual||'?') + (motivo ? ' — ' + motivo : '')
+        });
+        /* Quem pediu precisa saber, senão fica esperando pra sempre. */
+        await criarDemandaSegura({
+          titulo: '🚫 Gravação extra não liberada — ' + (d.clienteNome || ''),
+          descricao: (usuarioAtual||'O Chris') + ' não liberou a 3ª gravação do dia' + (d.clienteNome ? ' da ' + d.clienteNome : '') + '.' + (motivo ? '\n\nMotivo: ' + motivo : '') + '\n\nReagenda pra outro dia ou fala com ele.',
+          destinatario: d.origem === 'amanda' ? 'Amanda' : 'Cecília',
+          origem:'sistema', ehAviso:true,
+          prazoData: new Date().toISOString().slice(0,10), prazoHora:'19:00', status:'pendente'
+        }, { janelaMinutos: 120 });
+        mostrarToast('Não liberado — quem pediu foi avisado.');
+      }
+      fecharModal();
+      await carregarTodasDemandas();
+      renderMinhasDemandasAtribuidas();
+      atualizarFilaAprovacao();
+    }catch(e){ console.error('Falha ao registrar a decisão:', e); mostrarToast('Não consegui registrar agora.', 'erro'); }
   };
 
   window.aprovarDemanda = async function(id){

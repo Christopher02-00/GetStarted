@@ -1441,30 +1441,39 @@
      pessoa certa e marca o aviso como lido. O cliente avisa; nós
      decidimos o que vira tarefa. */
   async function converterAvisosDoCliente(){
-    let snap;
-    try{ snap = await getDocs(collection(db,'avisos_do_cliente')); }
-    catch(e){ console.error('Não consegui ler os avisos do cliente:', e); return; }
-    const pendentes = [];
-    snap.forEach(d => { const v = d.data(); if(!v.lido && v.viraDemanda !== false) pendentes.push({id:d.id, ...v}); });
-    if(!pendentes.length) return;
+    /* Duas caixas de entrada, mesma lógica:
+       `avisos_do_cliente`  → o que o cliente manda pelo portal
+       `pedidos_publicos`   → o que chega pelo formulário aberto na internet
+       Nenhuma das duas escreve na fila da equipe. Quem cria tarefa aqui
+       dentro somos nós — e é isso que impede alguém de fora encher o
+       painel de todo mundo com um script. */
+    let total = 0;
+    for(const caixa of ['avisos_do_cliente','pedidos_publicos']){
+      let snap;
+      try{ snap = await getDocs(collection(db, caixa)); }
+      catch(e){ console.error('Não consegui ler ' + caixa + ':', e); continue; }
+      const pendentes = [];
+      snap.forEach(d => { const v = d.data(); if(!v.lido && v.viraDemanda !== false) pendentes.push({id:d.id, ...v}); });
 
-    for(const a of pendentes){
-      try{
-        await criarDemandaSegura({
-          titulo: a.titulo || ('Aviso de ' + (a.clienteNome||a.cliente)),
-          descricao: (a.descricao || '') + '\n\n— veio do portal de ' + (a.clienteNome || a.cliente),
-          destinatario: a.paraQuem || 'Amanda',
-          origem: 'cliente', clienteNome: a.clienteNome || a.cliente,
-          ehAviso: true, demandaClienteId: a.demandaClienteId || '',
-          prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-          status: 'pendente'
-        }, { janelaMinutos: 60 });
-        await updateDoc(doc(db,'avisos_do_cliente', a.id), {
-          lido: true, convertidoEm: new Date().toISOString()
-        });
-      }catch(e){ console.error('Falha ao converter aviso ' + a.id + ':', e); }
+      for(const a of pendentes){
+        const deOnde = caixa === 'pedidos_publicos' ? 'formulário de pedidos do site' : 'portal de ' + (a.clienteNome || a.cliente || '?');
+        try{
+          await criarDemandaSegura({
+            titulo: a.titulo || ('Pedido de ' + (a.clienteNome || a.cliente || 'cliente')),
+            descricao: (a.descricao || '') + '\n\n— veio do ' + deOnde,
+            destinatario: a.paraQuem || a.destinatario || 'Amanda',
+            origem: 'cliente', clienteNome: a.clienteNome || a.cliente || '',
+            ehAviso: true, demandaClienteId: a.demandaClienteId || '',
+            prazoData: a.prazoData || new Date().toISOString().slice(0,10),
+            prazoHora: a.prazoHora || '19:00',
+            status: 'pendente'
+          }, { janelaMinutos: 60 });
+          await updateDoc(doc(db, caixa, a.id), { lido: true, convertidoEm: new Date().toISOString() });
+          total++;
+        }catch(e){ console.error('Falha ao converter ' + a.id + ':', e); }
+      }
     }
-    registrarLogAutomacao('avisos_cliente_convertidos', '', pendentes.length + ' aviso(s) do portal viraram demanda');
+    if(total) registrarLogAutomacao('avisos_cliente_convertidos', '', total + ' pedido(s) de fora viraram demanda');
   }
 
   async function registrarAcessoGerencia(pessoa){

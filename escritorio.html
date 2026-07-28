@@ -753,6 +753,22 @@
             <div class="field"><label>Vídeos planejados</label><input type="number" id="agQtdPlanejada" min="1" value="2"></div>
           </div>
           <div class="field"><label>Local</label><input type="text" id="agLocal" placeholder="Endereço ou referência do local"></div>
+
+          <!-- ===== O QUE O FILMMAKER PRECISA SABER — 28/07/2026 ==========
+               Pedido do Chris: a Cecília precisa passar mais que data e
+               hora. Sem estilo e referência, o filmmaker chega no local
+               sem saber o que gravar — e o retrabalho vira gravação nova.
+               Estes campos aparecem direto no aviso dele no Meu Dia. -->
+          <div class="field"><label>🎨 Estilo do vídeo — o que é pra fazer</label>
+            <textarea id="agEstilo" placeholder="Ex: 3 cortes secos, luz natural, sem trilha. Depoimento curto do dono + detalhes do produto." style="min-height:70px;"></textarea>
+            <div class="meta" style="margin-top:4px;">O filmmaker lê isso antes de sair. Quanto mais claro, menos retrabalho.</div>
+          </div>
+          <div class="field"><label>🔗 Referências (uma por linha, opcional)</label>
+            <textarea id="agReferencias" placeholder="Cola os links, um por linha" style="min-height:60px;"></textarea>
+          </div>
+          <div class="field"><label>📝 Observações pro filmmaker (opcional)</label>
+            <input type="text" id="agObsFilmmaker" placeholder="Ex: estacionamento na lateral, falar com a Renata na recepção">
+          </div>
           <div class="field"><label>Quem vai nessa gravação?</label>
             <div class="desc" style="margin:-2px 0 8px;">Monta a equipe livremente — mais de um filmmaker, fotógrafo, drone, quem precisar. O primeiro da lista é o responsável.</div>
             <div id="agEquipeLinhas"></div>
@@ -4361,6 +4377,10 @@
     const data = document.getElementById('agData').value;
     const hora = document.getElementById('agHora').value;
     const local = document.getElementById('agLocal').value.trim();
+    const estilo = (document.getElementById('agEstilo')?.value||'').trim();
+    const referencias = (document.getElementById('agReferencias')?.value||'').split('\n').map(x=>x.trim()).filter(Boolean);
+    const obsFilmmaker = (document.getElementById('agObsFilmmaker')?.value||'').trim();
+    const ehClienteNovo = sel.value === '__novo__';
     const equipe = lerEquipeDoFormulario();
     const filmmaker = equipe.length ? equipe[0].nome : '';  // compatibilidade com as telas antigas
     const tipo = document.getElementById('agTipo').value;
@@ -4370,15 +4390,25 @@
     const snap = await getDocs(collection(db,'agendamentos'));
     let qtdNoDia = 0;
     snap.forEach(d => { const a = d.data(); if(a.data === data && a.status !== 'cancelado') qtdNoDia++; });
-    const precisaAprovacao = qtdNoDia >= 2;
+
+    /* ===== QUANDO O CHRIS PRECISA APROVAR — 28/07/2026 =================
+       Regra confirmada por ele: gravação para CLIENTE NOVO passa por
+       aprovação. Gravação extra para cliente da base vai direto pro
+       calendário — travar isso viraria burocracia, já que ele mesmo
+       fecha vários no WhatsApp.
+       A regra antiga (3ª gravação do dia) continua valendo em paralelo. */
+    const precisaAprovacao = qtdNoDia >= 2 || ehClienteNovo;
+    const motivoAprovacao = ehClienteNovo ? 'cliente novo' : 'terceira gravação do dia';
 
     const btn = document.getElementById('btnAgendar');
     btn.disabled = true; btn.textContent = 'Agendando...';
     try {
       const agRef = await addDoc(collection(db,'agendamentos'), {
         cliente: clienteSlug, clienteNome, data, hora, local, tipo, filmmaker, equipe,
+        estilo, referencias, obsFilmmaker, ehClienteNovo,
         qtdVideosPlanejados: qtdPlanejada, qtdVideosRealizados: 0,
-        status: 'agendado', precisaAprovacao, aprovado: !precisaAprovacao,
+        status: 'agendado', precisaAprovacao, motivoAprovacao, aprovado: !precisaAprovacao,
+        criadoPor: usuarioAtual || '?',
         criadoEm: serverTimestamp()
       });
       if(precisaAprovacao){
@@ -4388,9 +4418,19 @@
            sentido — ele não vai EXECUTAR a gravação, ele vai dizer sim ou
            não. `ehDecisao` marca esse tipo, e o modal passa a mostrar dois
            botões em vez do formulário de entrega. */
+        const corpo = ehClienteNovo
+          ? '🆕 <b>Cliente novo.</b> A ' + (usuarioAtual||'Cecília') + ' agendou a primeira gravação de ' + clienteNome + '.'
+          : 'A regra da casa é 2 gravações por dia. Esta é a terceira do dia.';
         await addDoc(collection(db,'demandas'), {
-          titulo: '🎥 Liberar 3ª gravação do dia — ' + clienteNome,
-          descricao: 'A Cecília agendou uma gravação extra para ' + formatarDataBR(data) + '.\n\nA regra da casa é 2 gravações por dia. Esta é a terceira, então precisa da sua liberação — o filmmaker não consegue registrar enquanto você não decidir.',
+          titulo: (ehClienteNovo ? '🆕 Liberar gravação de cliente novo — ' : '🎥 Liberar 3ª gravação do dia — ') + clienteNome,
+          descricao: corpo.replace(/<[^>]+>/g,'') + '\n\n'
+            + '📅 ' + formatarDataBR(data) + (hora ? ' às ' + hora : '')
+            + (local ? '\n📍 ' + local : '')
+            + (equipe.length ? '\n🎬 ' + equipe.map(e=>e.nome).join(', ') : '')
+            + '\n🎞️ ' + qtdPlanejada + ' vídeo(s) planejado(s)'
+            + (estilo ? '\n\n🎨 Estilo: ' + estilo : '')
+            + (referencias.length ? '\n🔗 ' + referencias.length + ' referência(s)' : '')
+            + '\n\nO filmmaker não consegue registrar enquanto você não decidir.',
           origem: 'amanda', clienteNome, destinatario: 'Chris',
           agendamentoId: agRef.id, ehDecisao: true, ehAviso: true,
           decisaoSim: 'Liberar a gravação', decisaoNao: 'Não liberar',
@@ -4398,7 +4438,10 @@
           provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         });
       }
-      mostrarToast('Gravação agendada!' + (precisaAprovacao ? ' Demanda de aprovação criada pro Chris — só libera pro filmmaker depois de aprovado.' : ''));
+      mostrarToast(precisaAprovacao
+        ? 'Agendado — esperando o Chris liberar (' + motivoAprovacao + '). O filmmaker só vê depois.'
+        : 'Gravação agendada! Já apareceu na agenda do filmmaker.');
+      ['agLocal','agEstilo','agReferencias','agObsFilmmaker'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
       document.getElementById('agLocal').value = '';
       const contEq = document.getElementById('agEquipeLinhas');
       if(contEq){ contEq.innerHTML = ''; adicionarLinhaEquipe(); }
@@ -4628,7 +4671,15 @@
       return `<div class="item" id="ag_${a.id}" style="border-left:3px solid ${borda};cursor:pointer;padding:0;overflow:hidden;">
         <div style="padding:14px 16px;" onclick="toggleFormGravacao('${a.id}')">
           <div class="top"><div class="nome">${esc(a.clienteNome)}</div>${selo}</div>
-          <div class="meta" style="margin-top:4px;">${formatarDataBR(a.data)} · ${a.hora||'?'}${a.local ? ' · '+esc(a.local) : ''} · Planejado: ${qtdPlan} vídeo(s)</div>
+          <div class="meta" style="margin-top:4px;">${formatarDataBR(a.data)} · ${a.hora||'?'}${a.local ? ' · '+esc(a.local) : ''} · Planejado: ${qtdPlan} vídeo(s)${a.ehClienteNovo ? ' · <b style="color:var(--yellow);">🆕 cliente novo</b>' : ''}</div>
+          ${/* ===== O BRIEFING CHEGA JUNTO — 28/07/2026 ==================
+                Antes o filmmaker via data, hora e local. Chegava sem saber
+                o que gravar, e a dúvida virava mensagem no WhatsApp ou,
+                pior, gravação errada. Agora o que a Cecília escreveu vem
+                junto do aviso. */''}
+          ${a.estilo ? '<div style="margin-top:9px;background:var(--deep);border-left:3px solid var(--yellow);padding:10px 12px;border-radius:8px;"><div class="meta" style="font-weight:800;color:var(--yellow);margin-bottom:4px;">🎨 O QUE É PRA FAZER</div><div class="meta" style="white-space:pre-wrap;">'+esc(a.estilo)+'</div></div>' : ''}
+          ${(a.referencias||[]).length ? '<div style="margin-top:8px;">'+(a.referencias||[]).map(r=>'<a href="'+esc(r)+'" target="_blank" rel="noopener" class="meta" style="display:block;color:var(--yellow);margin-bottom:3px;">🔗 '+esc(String(r).slice(0,60))+' ↗</a>').join('')+'</div>' : ''}
+          ${a.obsFilmmaker ? '<div class="meta" style="margin-top:8px;">📝 '+esc(a.obsFilmmaker)+'</div>' : ''}
           <div class="btn ${urgencia==='normal'?'secondary':''}" style="margin-top:8px;padding:11px;text-align:center;font-size:13px;">📹 ${urgencia==='normal'?'Abrir pra registrar os vídeos':'Registrar os vídeos dessa gravação'} <span id="setaGrav_${a.id}">${urgencia==='normal'?'▾':'▴'}</span></div>
         </div>
         <div id="formGrav_${a.id}" style="display:${urgencia==='normal'?'none':'block'};padding:0 16px 16px;border-top:1px solid var(--line);" onclick="event.stopPropagation();">
@@ -10273,6 +10324,60 @@
     ajustarChecklistDinamico();
     reorganizarSidebarPorPapel();
     montarBotaoTelasAntigas();
+    montarAtalhoDestaque();
+  }
+
+  /* ===== ATALHOS EM DESTAQUE — 28/07/2026 =============================
+     Pedido do Chris: as ações que abrem uma cadeia (gravação avulsa,
+     extra do filmmaker) precisam estar visíveis logo na lateral, não
+     escondidas dentro de uma aba com sub-aba.
+
+     Cada pessoa tem o atalho da ação que ELA começa. Em amarelo, no topo
+     do menu, antes de qualquer outra coisa. */
+  const ATALHO_DESTAQUE = {
+    'Cecília':     { rot:'🎬 Nova gravação',        acao:"irParaAgendarGravacao()" },
+    'Luís':        { rot:'💰 Registrar extra/Uber', acao:"irParaMeusExtras()" },
+    'Nathan':      { rot:'💰 Registrar extra/Uber', acao:"irParaMeusExtras()" },
+    'Amanda':      { rot:'💸 Conferir extras',      acao:"irPara('gerencia', document.getElementById('navitemGerencia')); setTimeout(()=>navegarGerenciaSub('pagamentos'), 400);" },
+    'Chris':       { rot:'📆 Postagem até quando',  acao:"irPara('controlePostagem', document.getElementById('navControlePostagem'))" }
+  };
+
+  window.irParaAgendarGravacao = function(){
+    const nav = document.getElementById('navAgendamento');
+    if(nav) irPara('agendamento', nav);
+    setTimeout(() => {
+      const sub = Array.from(document.querySelectorAll('#view-agendamento .subtab')).find(x=>(x.textContent||'').includes('Marcar Nova'));
+      if(sub) sub.click();
+      const c = document.getElementById('agCliente'); if(c) c.focus();
+    }, 250);
+  };
+
+  window.irParaMeusExtras = function(){
+    const nav = document.getElementById('navInicio');
+    if(nav) irPara('inicio', nav);
+    setTimeout(() => {
+      const el = document.getElementById('meuExTipo');
+      if(el) el.scrollIntoView({ behavior:'smooth', block:'center' });
+    }, 900);
+  };
+
+  function montarAtalhoDestaque(){
+    let b = document.getElementById('atalhoDestaque');
+    const cfg = ATALHO_DESTAQUE[usuarioAtual];
+    if(!usuarioAtual || !cfg){ if(b) b.remove(); return; }
+    if(!b){
+      b = document.createElement('div');
+      b.id = 'atalhoDestaque';
+      b.style.cssText = 'background:var(--yellow);color:var(--graphite);font-weight:800;font-size:13px;padding:13px 12px;border-radius:10px;margin:0 0 14px;cursor:pointer;text-align:center;box-shadow:0 2px 10px rgba(251,188,25,.25);';
+      const gDia = document.getElementById('navgroupDia');
+      const lab = document.getElementById('labelNavDia');
+      if(gDia && lab && lab.parentElement === gDia) gDia.insertBefore(b, lab.nextSibling);
+      else if(gDia) gDia.insertBefore(b, gDia.firstChild);
+      else return;
+    }
+    b.textContent = cfg.rot;
+    b.setAttribute('onclick', cfg.acao);
+    b.style.display = 'block';
   }
 
   function montarBotaoTelasAntigas(){

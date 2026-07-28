@@ -6111,6 +6111,50 @@
       if(v.criadoEm?.seconds) c.primeiroRegistro = new Date(v.criadoEm.seconds*1000).toISOString().slice(0,10);
     });
 
+    /* ===== O RISCO DEIXOU DE DEPENDER DE VOCÊ DIGITAR — 28/07/2026 =======
+       O Chris apontou o óbvio que eu tinha deixado passar: "o próprio
+       site nos meses seguintes vai levantar esses dados, sem eu precisar
+       colocar manualmente como se tivéssemos acabado de começar".
+
+       Ele está certo. A tela pedia 21 datas pra descobrir quem está
+       esfriando — mas o sistema já enxerga sinais melhores e ao vivo:
+
+         · mensalidade em atraso
+         · nenhum conteúdo aprovado no calendário
+         · nenhuma gravação marcada
+         · avaliação baixa do próprio cliente
+         · nenhuma postagem agendada pra frente
+
+       Nenhum deles precisa de digitação, e todos dizem mais sobre um
+       cliente prestes a sair do que a data do último contrato.
+
+       A data continua existindo como complemento — quando ela existir,
+       entra na conta. Mas parou de ser condição pra tela funcionar. */
+    let atrasoPagamento = {}, semPostagem = {}, semGravacao = {}, notaBaixa = {};
+    try{
+      const hojeStr = new Date().toISOString().slice(0,10);
+      const [pg, po, ag, av] = await Promise.all([
+        getDocs(collection(db,'pagamentos_mensais')),
+        getDocs(collection(db,'postagens')),
+        getDocs(collection(db,'agendamentos')),
+        getDocs(collection(db,'avaliacoes_clientes'))
+      ]);
+      pg.forEach(d => { const v = d.data(); if(v.status !== 'pago' && v.cliente) atrasoPagamento[v.cliente] = true; });
+      const ultimaPost = {};
+      po.forEach(d => { const v = d.data();
+        if(v.excluido || v.status !== 'agendado' || !v.dataAgendada) return;
+        if(!ultimaPost[v.cliente] || v.dataAgendada > ultimaPost[v.cliente]) ultimaPost[v.cliente] = v.dataAgendada; });
+      CLIENTES_LISTA.forEach(c => { if(!ultimaPost[c.slug] || ultimaPost[c.slug] < hojeStr) semPostagem[c.slug] = true; });
+      const temGrav = {};
+      ag.forEach(d => { const v = d.data(); if(v.status !== 'cancelado' && v.data >= hojeStr) temGrav[v.cliente] = true; });
+      CLIENTES_LISTA.forEach(c => { if(!temGrav[c.slug]) semGravacao[c.slug] = true; });
+      const ultimaNota = {};
+      av.forEach(d => { const v = d.data(); if(v.excluido) return;
+        const q = v.criadoEm?.seconds || 0;
+        if(!ultimaNota[v.cliente] || q > ultimaNota[v.cliente].q) ultimaNota[v.cliente] = { q, nota: v.nota }; });
+      Object.keys(ultimaNota).forEach(k => { if(ultimaNota[k].nota <= 3) notaBaixa[k] = ultimaNota[k].nota; });
+    }catch(e){ console.error('Falha ao ler os sinais de risco:', e); }
+
     const semData = CLIENTES_LISTA.filter(c => !(dados[c.slug]||{}).ultimaContratacao).length;
 
     /* ===== OS NOMES ESTAVAM ERRADOS — 28/07/2026 ========================
@@ -6131,17 +6175,11 @@
       <h2>⚠️ Quem está em risco de sair</h2>
       <div class="desc">Esta tela responde uma pergunta só: <b>qual cliente está esfriando?</b> Ela cruza há quanto tempo ele não renova com quanto ele já pagou — cliente antigo e valioso que está parado há meses é quem você não pode perder sem tentar.</div>
       <div class="desc" style="background:var(--deep);border-left:3px solid var(--green);padding:12px 14px;border-radius:8px;margin-top:12px;">
-        <b>São três informações, e duas o sistema já calcula:</b><br><br>
-        💰 <b>Quanto ele já pagou pra gente</b> — soma das mensalidades e dos trabalhos avulsos. <i>Calculado.</i><br>
-        🔁 <b>Quantas vezes já fechou com a gente</b> — quantos meses ele pagou. <i>Calculado.</i><br>
-        📅 <b>Quando fechou ou renovou pela última vez</b> — <i>essa só você sabe.</i>
+        <b>Você não precisa preencher nada.</b> O sistema olha sozinho cinco sinais de que um cliente está esfriando:<br><br>
+        💸 mensalidade em atraso &nbsp;·&nbsp; 📭 sem postagem agendada pra frente &nbsp;·&nbsp; 🎥 nenhuma gravação marcada &nbsp;·&nbsp; ⭐ avaliação baixa dada por ele &nbsp;·&nbsp; 📅 muito tempo sem renovar
       </div>
-      <div class="desc" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:12px 14px;border-radius:8px;margin-top:8px;">
-        ⚠️ O sistema só tem registro <b>a partir de julho/2026</b>, que foi quando montamos o financeiro. Então o valor mostrado é o que ele viu — não a vida inteira do cliente. Se você souber o número real, dá pra corrigir.
-      </div>
-      ${semData
-        ? '<div class="desc" style="margin-top:12px;"><b>Faltam ' + semData + ' datas.</b> Se não lembrar o dia exato, coloca qualquer dia do mês em que ele fechou — o que importa é o mês.<br><br>Para <b>mensalista que nunca parou</b>, use a data em que ele começou com a gente. Para quem <b>já renovou</b>, use a data da última renovação.</div>'
-        : '<div class="desc" style="margin-top:12px;color:var(--green);"><b>Todos os clientes preenchidos.</b> 🎉</div>'}
+      <div class="desc" style="margin-top:10px;">Quanto mais sinais ao mesmo tempo, mais alto o risco. Tudo isso vem do que já acontece no sistema — <b>e vai ficar mais preciso a cada mês que passa</b>, sem você digitar nada.</div>
+      ${semData ? '<div class="desc" style="margin-top:10px;opacity:.7;">Se quiser, dá pra completar a data da última renovação de ' + semData + ' cliente(s) lá embaixo — ela entra como mais um sinal. Mas a tela funciona sem isso.</div>' : ''}
     </div>`;
 
     const linhas = CLIENTES_LISTA.map(c => {
@@ -6152,40 +6190,61 @@
         recenciaDias = Math.floor((Date.now() - new Date(d.ultimaContratacao).getTime()) / 86400000);
         alerta = recenciaDias > 60;
       }
-      return { ...c, ...d, recenciaDias, alerta,
+      /* O risco vem dos sinais ao vivo. A data, quando existe, entra como
+         mais um — não como o único. */
+      const sinais = [];
+      if(atrasoPagamento[c.slug]) sinais.push({ p:3, t:'💸 mensalidade em atraso' });
+      if(semPostagem[c.slug])     sinais.push({ p:2, t:'📭 sem postagem agendada pra frente' });
+      if(semGravacao[c.slug])     sinais.push({ p:2, t:'🎥 nenhuma gravação marcada' });
+      if(notaBaixa[c.slug])       sinais.push({ p:3, t:'⭐ última avaliação foi ' + notaBaixa[c.slug] + ' de 5' });
+      if(alerta)                  sinais.push({ p:2, t:'📅 ' + recenciaDias + ' dias sem renovar' });
+      const pontos = sinais.reduce((t,x)=>t+x.p, 0);
+      const nivel = pontos >= 5 ? 'alto' : pontos >= 3 ? 'medio' : pontos ? 'baixo' : 'ok';
+
+      return { ...c, ...d, recenciaDias, alerta, sinais, pontos, nivel,
         autoValor: auto.valor, autoMeses: auto.meses.size, sugestaoData: auto.primeiroRegistro,
         faltaData: !d.ultimaContratacao };
     });
-    // quem falta preencher vem primeiro; depois, quem está há mais tempo sem renovar
-    linhas.sort((a,b) => (b.faltaData?1:0) - (a.faltaData?1:0) || (b.recenciaDias??-1) - (a.recenciaDias??-1));
+    // quem tem mais sinais de risco vem primeiro
+    linhas.sort((a,b) => b.pontos - a.pontos || (b.recenciaDias??-1) - (a.recenciaDias??-1));
+
+    const nAlto  = linhas.filter(l=>l.nivel==='alto').length;
+    const nMedio = linhas.filter(l=>l.nivel==='medio').length;
+    const nOk    = linhas.filter(l=>l.nivel==='ok').length;
+    html += `<div class="painelResumo" style="margin-bottom:16px;">
+      <div class="resumoCard ${nAlto?'red':'green'}"><div class="num">${nAlto}</div><div class="lbl">🔴 risco alto</div></div>
+      <div class="resumoCard ${nMedio?'yellow':''}"><div class="num">${nMedio}</div><div class="lbl">🟡 atenção</div></div>
+      <div class="resumoCard green"><div class="num">${nOk}</div><div class="lbl">🟢 sem sinal de risco</div></div>
+    </div>`;
 
     linhas.forEach(l => {
       const valorMostrar = (l.valorTotal && l.valorTotal > l.autoValor) ? l.valorTotal : l.autoValor;
       const qtdMostrar   = Math.max(Number(l.qtdContratacoes)||0, l.autoMeses, 1);
-      html += `<div class="item" style="padding:16px 18px;margin-bottom:16px;${l.alerta?'border:2px solid var(--red);':l.faltaData?'border-left:4px solid var(--yellow);':''}">
+      const corN = l.nivel==='alto'?'var(--red)':l.nivel==='medio'?'var(--yellow2)':l.nivel==='baixo'?'var(--yellow)':'var(--green)';
+      const rotN = l.nivel==='alto'?'risco alto':l.nivel==='medio'?'atenção':l.nivel==='baixo'?'um sinal':'tudo certo';
+      html += `<div class="item" style="padding:16px 18px;margin-bottom:16px;border-left:4px solid ${corN};">
         <div class="top">
-          <div class="nome">${l.alerta?'⚠️ ':''}${esc(l.nome)}</div>
-          <div class="meta">${l.recenciaDias!==null ? l.recenciaDias+' dias sem renovar' : '<span style="color:var(--yellow2);">falta a data</span>'}</div>
+          <div class="nome">${esc(l.nome)}</div>
+          <div class="meta" style="color:${corN};font-weight:800;">${rotN}</div>
         </div>
+        ${l.sinais.length
+          ? '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">' + l.sinais.map(x=>'<span class="selo pendente">'+x.t+'</span>').join('') + '</div>'
+          : '<div class="meta" style="margin-top:8px;color:var(--green);">Nenhum sinal de risco — pagando em dia, com conteúdo e gravação marcados.</div>'}
         <div class="meta" style="margin-top:6px;">💰 já pagou <b>${brl(valorMostrar)}</b> pra gente${l.autoMeses ? ' · 🔁 ' + l.autoMeses + ' mês(es) pago(s)' : ''} <span style="opacity:.6;">— o sistema calculou</span></div>
 
-        <div class="field" style="margin-top:12px;">
-          <label>Quando ele fechou ou renovou pela última vez ${l.faltaData ? '<span style="color:var(--yellow2);">— falta esta</span>' : ''}</label>
-          <input type="date" id="rfvData_${l.slug}" value="${l.ultimaContratacao||''}" onchange="salvarRfv('${l.slug}','${escJs(l.nome)}')">
-          <div class="meta" style="margin-top:5px;">Se não lembrar o dia, qualquer dia do mês certo já serve.</div>
-          ${l.faltaData && l.sugestaoData ? '<button class="btn secondary" style="margin-top:8px;padding:10px;font-size:11.5px;" onclick="usarSugestaoRfv(\''+l.slug+'\',\''+l.sugestaoData+'\',\''+escJs(l.nome)+'\')">Não sei — usa ' + formatarDataBR(l.sugestaoData) + ' por enquanto</button>' : ''}
-        </div>
-
-        <details style="margin-top:10px;">
-          <summary class="meta" style="cursor:pointer;">O número do sistema está errado? Corrige aqui</summary>
+        <details style="margin-top:12px;">
+          <summary class="meta" style="cursor:pointer;">Completar o histórico dele (opcional)</summary>
+          <div class="field" style="margin-top:10px;">
+            <label>Quando fechou ou renovou pela última vez</label>
+            <input type="date" id="rfvData_${l.slug}" value="${l.ultimaContratacao||''}" onchange="salvarRfv('${l.slug}','${escJs(l.nome)}')">
+            <div class="meta" style="margin-top:5px;">Entra como mais um sinal. Daqui pra frente o sistema registra as renovações sozinho.</div>
+          </div>
           <div class="row2" style="margin-top:10px;">
             <div class="field"><label>Quanto ele já pagou pra gente (R$)</label><input type="number" id="rfvValor_${l.slug}" value="${valorMostrar||0}" step="0.01"></div>
             <div class="field"><label>Quantas vezes já fechou com a gente</label><input type="number" id="rfvQtd_${l.slug}" value="${qtdMostrar}"></div>
           </div>
-          <button class="btn secondary" style="margin-top:10px;" onclick="salvarRfv('${l.slug}','${escJs(l.nome)}')">Salvar correção</button>
+          <button class="btn secondary" style="margin-top:10px;" onclick="salvarRfv('${l.slug}','${escJs(l.nome)}')">Salvar</button>
         </details>
-
-        ${l.alerta ? '<div class="meta" style="margin-top:10px;color:var(--red);">⚠️ <b>Mais de 60 dias sem renovar.</b> Cliente nessa faixa costuma estar de saída — vale uma conversa ou uma oferta antes de perder.</div>' : ''}
       </div>`;
     });
     cont.innerHTML = html;

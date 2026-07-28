@@ -3700,6 +3700,64 @@
       (plan ? '<span style="color:var(--muted);"> (planejado: ' + plan + ')' + aviso + '</span>' : '');
   };
 
+  /* ===== AGENDA DE REUNIÕES — 27/07/2026 =====
+     A Gabi abre os horários em que consegue reunião na última semana do mês;
+     a Cecília marca dentro disso. Uma tela, duas leituras: quem é dona da
+     agenda edita, quem marca só consulta. Guardado em agenda_reunioes/<pessoa_mes>. */
+  const FAIXAS_REUNIAO = ['manhã (9h–12h)','tarde (13h–17h)','fim de tarde (17h–19h)'];
+
+  window.htmlAgendaReunioes = async function(pessoa, somenteLeitura){
+    const hoje = new Date();
+    const mesChave = hoje.getFullYear() + '-' + String(hoje.getMonth()+1).padStart(2,'0');
+    const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth()+1, 0).getDate();
+    const dias = [];
+    for(let d = Math.max(1, ultimoDia-6); d <= ultimoDia; d++){
+      const dt = new Date(hoje.getFullYear(), hoje.getMonth(), d);
+      if([0,6].includes(dt.getDay())) continue;
+      dias.push({ d, rot: String(d).padStart(2,'0') + '/' + String(hoje.getMonth()+1).padStart(2,'0'), dow: ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dt.getDay()] });
+    }
+    let marcados = {};
+    try{
+      const snap = await getDoc(doc(db,'agenda_reunioes', pessoa + '_' + mesChave));
+      if(snap.exists()) marcados = snap.data().slots || {};
+    }catch(e){ console.error('Falha ao ler agenda de reuniões:', e); }
+
+    const total = Object.values(marcados).filter(Boolean).length;
+    return `<div class="card metaSec" style="border-color:${total?'var(--green)':'var(--yellow)'};">
+      <div class="metaSecTit">🗓️ Reuniões do mês — ${somenteLeitura ? 'quando a ' + esc(pessoa) + ' pode' : 'quando você pode'}</div>
+      <div class="desc" style="margin-bottom:10px;">${somenteLeitura
+        ? 'Marca as reuniões com os clientes só dentro dos horários abertos aqui. Se não couber todo mundo, fala com ela antes.'
+        : 'Marca as faixas em que você consegue reunião na última semana. A Cecília só marca dentro do que você abrir — ela não vai te perguntar por mensagem.'}</div>
+      ${total ? '' : '<div class="meta" style="color:var(--yellow2);margin-bottom:8px;">Nenhum horário aberto ainda.</div>'}
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+          <tr><th style="text-align:left;padding:6px;color:var(--muted);"></th>${dias.map(x=>`<th style="padding:6px;color:var(--muted);font-weight:700;">${x.dow}<br>${x.rot}</th>`).join('')}</tr>
+          ${FAIXAS_REUNIAO.map(f => `<tr>
+            <td style="padding:6px;color:var(--muted);white-space:nowrap;">${f}</td>
+            ${dias.map(x => { const k = x.d + '|' + f; const on = !!marcados[k];
+              return `<td style="padding:4px;text-align:center;">
+                <div ${somenteLeitura ? '' : `onclick="alternarSlotReuniao('${pessoa}','${mesChave}','${k}')" style="cursor:pointer;"`}
+                     style="${somenteLeitura?'':'cursor:pointer;'}width:26px;height:26px;margin:0 auto;border-radius:6px;border:1px solid var(--line);background:${on?'var(--green)':'var(--deep)'};display:flex;align-items:center;justify-content:center;font-size:12px;">${on?'✓':''}</div>
+              </td>`; }).join('')}
+          </tr>`).join('')}
+        </table>
+      </div>
+      <div class="meta" style="margin-top:8px;">${total} faixa(s) aberta(s)${somenteLeitura?'':' — clica pra abrir ou fechar'}</div>
+    </div>`;
+  };
+
+  window.alternarSlotReuniao = async function(pessoa, mesChave, chave){
+    if(usuarioAtual !== pessoa && !['Chris','Amanda'].includes(usuarioAtual)){
+      mostrarToast('Essa agenda é da ' + pessoa + '.', 'erro'); return;
+    }
+    const ref = doc(db,'agenda_reunioes', pessoa + '_' + mesChave);
+    const snap = await getDoc(ref);
+    const slots = snap.exists() ? (snap.data().slots || {}) : {};
+    slots[chave] = !slots[chave];
+    await setDoc(ref, { pessoa, mes: mesChave, slots, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() }, { merge:true });
+    renderMinhaAgendaFilmmaker();
+  };
+
   async function renderMinhaAgendaFilmmaker(){
     const cont = document.getElementById('agendamentoMinhaAgenda');
     const snap = await getDocs(collection(db,'agendamentos'));
@@ -3726,8 +3784,15 @@
     if(aguardandoAprovacao.length){
       html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardandoAprovacao.length} gravação(ões) aguardando aprovação do Chris<span>Ainda não liberadas pra registrar.</span></div></div>`;
     }
+    /* A Gabi edita a própria agenda de reuniões; Cecília e gerência só veem. */
+    let blocoAgenda = '';
+    try{
+      if(usuarioAtual === 'Gabrielle') blocoAgenda = await htmlAgendaReunioes('Gabrielle', false);
+      else if(['Cecília','Chris','Amanda'].includes(usuarioAtual)) blocoAgenda = await htmlAgendaReunioes('Gabrielle', true);
+    }catch(e){ console.error('Falha na agenda de reuniões:', e); }
+
     if(!pendentes.length && !aguardandoAprovacao.length){
-      cont.innerHTML = html + '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhuma gravação pendente de registro. Tudo em dia! 🎉</div></div>';
+      cont.innerHTML = blocoAgenda + html + '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhuma gravação pendente de registro. Tudo em dia! 🎉</div></div>';
       return;
     }
 
@@ -3736,6 +3801,22 @@
     const cardGravacao = async (a, urgencia) => {
       const calSnap = await getDoc(doc(db,'calendarios', a.cliente));
       const itensCalendario = calSnap.exists() ? (calSnap.data().items||[]).map((it,idx)=>({...it, idx})).filter(it=>!it.gravado) : [];
+      /* 27/07/2026 — o filmmaker precisa saber o ESTILO antes de sair pra
+         gravar. Os perfis de referência do cliente ficavam só na tela da
+         Gabi; agora vêm junto na agenda dele. */
+      let htmlPerfis = '';
+      try{
+        const pfSnap = await getDocs(collection(db,'refs_perfil_semana'));
+        let slots = [];
+        pfSnap.forEach(dd => { const pv=dd.data(); if(pv.cliente === a.cliente && (pv.slots||[]).some(x=>x.link)) slots = pv.slots||[]; });
+        const validos = slots.filter(x=>x.link);
+        if(validos.length){
+          htmlPerfis = `<div style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;margin:8px 0;">
+            <div class="meta" style="font-weight:800;color:var(--yellow);margin-bottom:5px;">🎨 Estilo deste cliente — olha antes de gravar</div>
+            ${validos.map(x=>`<div style="margin-bottom:5px;"><a href="${esc(x.link)}" target="_blank" rel="noopener" style="color:var(--yellow);font-size:11.5px;">${esc(x.link.slice(0,52))}↗</a>${x.nota?'<div class="meta" style="font-size:11px;">'+esc(x.nota)+'</div>':''}</div>`).join('')}
+          </div>`;
+        }
+      }catch(e){ console.error('Falha ao carregar perfis do cliente:', e); }
       const estaAtrasado = a.data < hojeStr;
       const borda = urgencia === 'atrasado' ? 'var(--red)' : urgencia === 'hoje' ? 'var(--yellow2)' : 'var(--line)';
       const selo = urgencia === 'atrasado' ? '<span class="selo atrasado">Atrasada</span>' :
@@ -3750,6 +3831,7 @@
         <div id="formGrav_${a.id}" style="display:${urgencia==='normal'?'none':'block'};padding:0 16px 16px;border-top:1px solid var(--line);" onclick="event.stopPropagation();">
           ${estaAtrasado ? `<div class="meta" style="color:var(--red);font-weight:800;margin:10px 0;">⚠️ Essa gravação foi no dia ${formatarDataBR(a.data)}, e você está registrando só hoje. Registra sempre no MESMO DIA a partir de agora — isso atrasa toda a fila de edição e aprovação.</div>` : ''}
 
+          ${htmlPerfis}
           ${itensCalendario.length ? `
           <div class="field" style="margin-top:10px;"><label>Marca os que você gravou hoje (vindo do calendário editorial)</label></div>
           ${itensCalendario.map(it => `
@@ -3796,7 +3878,7 @@
     html += await montarFaixa('hoje', '🟡 De hoje', deHoje, true);
     html += await montarFaixa('futuras', '⚪ Próximas', futuras, false);
 
-    cont.innerHTML = html;
+    cont.innerHTML = blocoAgenda + html;
   }
 
   function popularFiltroClientesCalendario(){
@@ -4002,20 +4084,49 @@
     const prazoReuniao = uteisUltimaSemana[uteisUltimaSemana.length-1] || uteis[uteis.length-1];
     const inicioUltimaSemana = uteisUltimaSemana[0] || prazoReuniao;
 
+    /* ===== 27/07/2026 — REUNIÃO VOLTA PRA CECÍLIA, MAS COORDENADA =====
+       O Chris devolveu o agendamento pra Cecília, que é quem cuida de
+       agenda. O problema de antes continuava valendo: ela marcava sem saber
+       quando a Gabi podia, e sobrava troca de mensagem.
+       Agora são DUAS demandas que se encaixam:
+         · a Gabi abre a disponibilidade dela pra última semana
+         · a Cecília agenda dentro do que a Gabi abriu, sem perguntar nada
+       A da Cecília nasce com a lista de clientes; a da Gabi vem antes,
+       pra ela ter tempo de marcar os horários. */
+    const abreAgenda = uteis.filter(d => Number(d.split('-')[2]) > ultimoDiaMes - 12)[0] || inicioUltimaSemana;
+
     await addDoc(collection(db,'demandas'), {
-      titulo: '🤝 Reuniões mensais com os clientes — ' + mesChave,
-      descricao: 'Função fixa da Gabrielle. Agendar e fazer a reunião mensal de alinhamento do próximo calendário com CADA cliente da lista.\n\n'
-        + 'Acontece na última semana do mês — a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
+      titulo: '🗓️ Abrir sua agenda de reuniões — ' + mesChave,
+      descricao: 'Antes da Cecília marcar as reuniões do mês com os clientes, ela precisa saber quando você pode.\n\n'
+        + 'Acontecem na última semana, a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
+        + 'COMO FAZER\n'
+        + '1. Menu lateral → Minha Agenda\n'
+        + '2. No bloco "Reuniões do mês", marca os dias e faixas de horário em que você consegue\n'
+        + '3. Salvar\n\n'
+        + 'São ' + clientesFixos.length + ' clientes pra encaixar. Quanto mais horário você abrir, menos remarcação depois.\n'
+        + 'A Cecília só consegue marcar dentro do que você abrir — ela não vai te perguntar por mensagem.',
+      origem: 'amanda', clienteNome: '', destinatario: 'Gabrielle',
+      prazoData: abreAgenda, prazoHora: '19:00', status: 'pendente',
+      provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'agendaReuniao',
+      mesRef: mesChave, criadoEm: serverTimestamp()
+    });
+
+    await addDoc(collection(db,'demandas'), {
+      titulo: '🤝 Marcar as reuniões mensais com os clientes — ' + mesChave,
+      descricao: 'Marcar a reunião mensal de alinhamento do próximo calendário com CADA cliente da lista. Quem conduz a reunião é a Gabi; você marca.\n\n'
+        + 'Acontecem na última semana do mês — a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
         + 'COMO FAZER\n'
         + '1. Abre esta demanda — a lista de clientes está aqui dentro\n'
-        + '2. Combina a reunião com o cliente pelo WhatsApp\n'
-        + '3. Marca o cliente na lista assim que a reunião estiver agendada\n'
-        + '4. Depois da reunião, registra o combinado em Atas de Reunião\n\n'
-        + 'São ' + clientesFixos.length + ' clientes. Esta demanda fecha sozinha quando todos estiverem marcados — é uma só, não uma por cliente.',
-      origem: 'amanda', clienteNome: '', destinatario: 'Gabrielle',
+        + '2. Confere a disponibilidade da Gabi (aparece logo abaixo desta descrição, no bloco de horários)\n'
+        + '3. Combina com o cliente pelo WhatsApp, dentro dos horários que ela abriu\n'
+        + '4. Marca o cliente na lista assim que estiver agendado\n\n'
+        + 'São ' + clientesFixos.length + ' clientes. É uma demanda só, não uma por cliente — fecha sozinha quando todos estiverem marcados.\n'
+        + 'Se a agenda da Gabi não cobrir todos, fala com ela antes de marcar fora do horário dela.',
+      origem: 'amanda', clienteNome: '', destinatario: 'Cecília',
       prazoData: prazoReuniao, prazoHora: '19:00', status: 'pendente',
       provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'reuniao',
       checklistClientes: listaChecklist, mesRef: mesChave,
+      mostrarAgendaDe: 'Gabrielle',
       criadoEm: serverTimestamp()
     });
 
@@ -6265,21 +6376,37 @@
        pra separar mensal de avulso de verdade (não o flag "extra", que já
        causou confusão antes — ver comentário em obterSlugsEntregaDireta). */
     const entregaDiretaSlugsCAQ = await obterSlugsEntregaDireta();
+
+    /* ===== DATA FLEXÍVEL (27/07/2026) =====
+       Cliente que trabalha com dia sugerido (Zeens) não tem data presa.
+       Aqui a data dele é ESTIMATIVA, não promessa: continua vermelho se já
+       venceu de verdade, mas "faltam 3 dias" vira atenção, não risco. Sem
+       isso, o painel gritaria todo dia por um prazo que nunca foi firmado. */
+    const slugsFlexiveis = new Set();
+    try{
+      const calSnap = await getDocs(collection(db,'calendarios'));
+      calSnap.forEach(d => {
+        const itens = (d.data() || {}).itens || [];
+        if(Array.isArray(itens) && itens.some(i => i && i.dataFlexivel)) slugsFlexiveis.add(d.id);
+      });
+    }catch(e){ console.error('Não consegui ler datas flexíveis:', e); }
+
     const hoje = new Date().toISOString().slice(0,10);
     const linhas = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDiretaSlugsCAQ.has(c.slug)).map(c => {
       const dele = postagens.filter(p => p.cliente === c.slug && p.status === 'agendado' && p.dataAgendada);
       let ultimaData = null;
       dele.forEach(p => { if(!ultimaData || p.dataAgendada > ultimaData) ultimaData = p.dataAgendada; });
       let diasRestantes = null, cor = 'verde';
+      const flexivel = slugsFlexiveis.has(c.slug);
       if(ultimaData){
         diasRestantes = Math.floor((new Date(ultimaData) - new Date(hoje)) / 86400000);
         if(diasRestantes < 0) cor = 'vermelho';
-        else if(diasRestantes <= 3) cor = 'vermelho';
+        else if(diasRestantes <= 3) cor = flexivel ? 'amarelo' : 'vermelho';
         else if(diasRestantes <= 7) cor = 'amarelo';
       } else {
         cor = 'vermelho';
       }
-      return { ...c, ultimaData, diasRestantes, cor };
+      return { ...c, ultimaData, diasRestantes, cor, flexivel };
     });
 
     const ordem = { vermelho:0, amarelo:1, verde:2 };
@@ -6301,11 +6428,12 @@
     </div>`;
 
     const cardCliente = (l) => {
-      const textoData = l.ultimaData ? formatarDataBR(l.ultimaData) : 'Sem nada agendado';
+      const textoData = l.ultimaData ? (l.flexivel ? '~' : '') + formatarDataBR(l.ultimaData) : 'Sem nada agendado';
       const textoDias = l.diasRestantes === null ? '' : l.diasRestantes < 0 ? ` (${Math.abs(l.diasRestantes)} dia(s) atrás — JÁ VENCEU)` : ` (faltam ${l.diasRestantes} dia(s))`;
+      const selo = l.flexivel ? '<span class="meta" style="color:var(--yellow2);"> 🔄 datas flexíveis — a data é estimativa</span>' : '';
       return `<div class="item" style="border-left:3px solid ${l.cor==='vermelho'?'var(--red)':l.cor==='amarelo'?'var(--yellow2)':'var(--line)'};" onclick="abrirDetalheConteudoCliente('${l.slug}')">
         <div class="top"><div class="nome">${esc(l.nome)}</div><span class="prioTag ${l.cor}">${textoData}${textoDias}</span></div>
-        <div class="meta" style="margin-top:4px;">Toque pra ver/editar o conteúdo agendado dele →</div>
+        <div class="meta" style="margin-top:4px;">Toque pra ver/editar o conteúdo agendado dele →${selo}</div>
       </div>`;
     };
 
@@ -9476,7 +9604,19 @@
     const ehDemandaUrgente = d => { const t = (d.titulo||''); return t.startsWith('🔴') || /urgente/i.test(t); };
     const naoUrgentesFuturas = pendentes.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && !ehDemandaUrgente(d));
     const urgentesFuturas = pendentes.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && ehDemandaUrgente(d));
-    const proximas = porData(naoUrgentesFuturas);
+    /* ===== 27/07/2026 — O ACÚMULO QUE ESTRESSAVA A EQUIPE =====
+       "Próximas" juntava tudo que tem prazo à frente, sem limite. A Gabi
+       abria a tela e via 45 itens, sendo que a maior parte só vence semana
+       que vem ou depois — e o Chris cobrava ela por coisa que ainda nem era
+       pra estar pronta. Isso vale pra todo mundo, não só pra ela.
+       Agora "Próximas" é só a semana à frente. O que vence depois vai pra
+       uma faixa separada, fechada, que existe pra consultar e não pra
+       cobrar. */
+    const todasFuturas = porData(naoUrgentesFuturas);
+    const limiteSemana = new Date(); limiteSemana.setDate(limiteSemana.getDate()+7);
+    const limiteStr = limiteSemana.toISOString().slice(0,10);
+    const proximas = todasFuturas.filter(d => (d.prazoData||'') <= limiteStr);
+    const maisAdiante = todasFuturas.filter(d => (d.prazoData||'') > limiteStr);
     const urgentes = porData(urgentesFuturas);
 
     let estadoSalvo = null;
@@ -9543,7 +9683,8 @@
         <div class="lbl">pra fazer hoje${paraFazerHoje ? '' : ' — você está em dia 🎉'}</div>
         <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">${[urgentes.length?urgentes.length+' urgente':'', atrasadas.length?atrasadas.length+' atrasada':'', praHoje.length?praHoje.length+' vence hoje':''].filter(Boolean).join(' · ') || 'nada vencendo'}</div>
       </div>
-      <div class="resumoCard"><div class="num">${proximas.length}</div><div class="lbl">próximas, com prazo à frente</div></div>
+      <div class="resumoCard"><div class="num">${proximas.length}</div><div class="lbl">próximos 7 dias</div></div>
+      ${maisAdiante.length ? '<div class="resumoCard" style="opacity:.55;"><div class="num">'+maisAdiante.length+'</div><div class="lbl">mais adiante</div></div>' : ''}
       <div class="resumoCard ${aguardando.length ? 'green' : ''}"><div class="num">${aguardando.length}</div><div class="lbl">você já entregou — esperando aprovação</div></div>
     </div>
     ${aguardando.length ? `<div class="card" style="border-color:var(--green);margin-bottom:14px;">
@@ -9596,7 +9737,8 @@
       (urgentes.length ? faixaDemandasHtml('urgentes', '🔥 Urgente — não pode esperar', urgentes, true, estadoSalvo) : '') +
       faixaDemandasHtml('atrasadas', '🔴 Atrasadas', atrasadas, true, estadoSalvo) +
       faixaDemandasHtml('hoje', '🟡 Pra hoje', praHoje, true, estadoSalvo) +
-      faixaDemandasHtml('proximas', '⚪ Próximas', proximas, false, estadoSalvo) +
+      faixaDemandasHtml('proximas', '⚪ Próximos 7 dias', proximas, false, estadoSalvo) +
+      (maisAdiante.length ? faixaDemandasHtml('maisAdiante', '🗓️ Mais adiante — nada a fazer agora', maisAdiante, false, estadoSalvo) : '') +
       faixaDemandasHtml('aguardando', '✋ Feitas por mim — aguardando aprovação da gerência', porData(aguardando), false, estadoSalvo) +
       faixaEnviadas;
   };
@@ -9685,6 +9827,19 @@
     </div>`;
   };
 
+  /* A demanda da Cecília carrega a agenda da Gabi dentro dela: ela marca
+     as reuniões olhando os horários abertos, sem ter que perguntar. */
+  window.slotAgendaDemanda = function(d){
+    if(!d || !d.mostrarAgendaDe) return '';
+    setTimeout(async () => {
+      const alvo = document.getElementById('agendaSlot_' + d.id);
+      if(!alvo) return;
+      try{ alvo.innerHTML = await htmlAgendaReunioes(d.mostrarAgendaDe, usuarioAtual !== d.mostrarAgendaDe); }
+      catch(e){ alvo.innerHTML = '<div class="desc">Não consegui carregar a agenda da ' + esc(d.mostrarAgendaDe) + '.</div>'; console.error(e); }
+    }, 30);
+    return '<div id="agendaSlot_' + d.id + '"><div class="desc">Carregando a agenda da ' + esc(d.mostrarAgendaDe) + '...</div></div>';
+  };
+
   window.marcarClienteChecklist = async function(id, idx, marcado){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d || !Array.isArray(d.checklistClientes)) return;
@@ -9728,6 +9883,7 @@
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
+      ${slotAgendaDemanda(d)}
       ${htmlChecklistClientes(d)}
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
       ${d.grupoId ? '<div class="linha" id="grupoStatus_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando quem mais está nela...</div>' : ''}
@@ -10417,15 +10573,16 @@
     const disponiveis = doCliente.filter(r => !usadas.has(String(r.link||'').trim()));
 
     let html = `<div class="card" style="border:2px solid ${ok ? 'var(--green)' : 'var(--red)'};">
-      <h2>🔗 Perfis de referência da semana</h2>
-      <div class="desc">Pelo menos <b>${MIN_REF_PERFIL} dos ${SLOTS_REF_PERFIL}</b> precisam estar preenchidos pra esse cliente, toda semana. É daqui que sai a inspiração do calendário dele.</div>
+      <h2>🔗 Perfis de referência deste cliente</h2>
+      <div class="desc">Os perfis que definem o <b>estilo de produção</b> desse cliente. Preenche uma vez e atualiza quando quiser — <b>não tem prazo nem cobrança semanal</b>. Todo cliente precisa ter pelo menos ${MIN_REF_PERFIL} dos ${SLOTS_REF_PERFIL}.</div>
+      <div class="desc" style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;margin-top:8px;">O <b>filmmaker também vê isso</b> na agenda dele, antes de sair pra gravar — é daqui que ele entende o estilo de imagem que esse cliente espera.</div>
       <div class="desc" style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;margin-top:8px;">
         <b>Isto NÃO é a mesma coisa que as referências diárias do Hub.</b><br>
         Aqui vão <b>PERFIS</b> — contas do Instagram que servem de norte pra esse cliente nesta semana: concorrente que está indo bem, perfil de outro nicho com linguagem que combina, referência de estética. São 3 por cliente, trocam toda semana.<br>
         No Hub de Referências vão <b>POSTS</b> — o vídeo específico que vira um conteúdo no calendário.<br>
         Resumindo: <b>aqui é quem seguir de inspiração. Lá é o post que vira conteúdo.</b>
       </div>
-      <div class="meta" style="margin-top:6px;">Semana de ${formatarDataBR(semana)} · <b style="color:${ok?'var(--green)':'var(--red)'};">${preenchidos}/${SLOTS_REF_PERFIL} preenchido(s)${ok ? ' — ok' : ' — falta ' + (MIN_REF_PERFIL - preenchidos)}</b></div>`;
+      <div class="meta" style="margin-top:6px;"><b style="color:${ok?'var(--green)':'var(--red)'};">${preenchidos}/${SLOTS_REF_PERFIL} preenchido(s)${ok ? ' — esse cliente está coberto' : ' — falta ' + (MIN_REF_PERFIL - preenchidos) + ' pra esse cliente ficar coberto'}</b></div>`;
 
     for(let i = 0; i < SLOTS_REF_PERFIL; i++){
       const s = slots[i] || {};
@@ -10437,7 +10594,7 @@
         ${s.link ? '<a href="'+esc(s.link)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:6px;padding:8px;font-size:11px;">↗ Abrir perfil</a>' : ''}
       </div>`;
     }
-    html += `<button class="btn" style="margin-top:12px;" onclick="salvarRefsPerfilCliente('${slug}')">Salvar perfis da semana</button>
+    html += `<button class="btn" style="margin-top:12px;" onclick="salvarRefsPerfilCliente('${slug}')">Salvar perfis deste cliente</button>
     </div>`;
 
     // O LADO QUE FALTAVA: o banco pronto, na hora de montar o calendario
@@ -11812,10 +11969,14 @@
     }
   }
 
+  /* Quem tem story semanal contratado. Mexer aqui é o único lugar. */
+  const CLIENTES_COM_STORY = ['juliane-nerone','vitalle-odonto'];
+
   async function cobrarStoriesDaSemana(){
     const hoje = new Date();
-    if(hoje.getDay() !== 1) return;                  // só segunda
-    const semana = segundaDaSemana(hoje);
+    if(hoje.getDay() !== 5) return;                  // sexta — é quando a Gabi monta
+    const proxSeg = new Date(hoje); proxSeg.setDate(proxSeg.getDate()+3);
+    const semana = segundaDaSemana(proxSeg);         // a semana que começa depois
 
     const [stSnap, demSnap] = await Promise.all([
       getDocs(collection(db,'stories_semanais')),
@@ -11830,15 +11991,13 @@
        Vitalle, Divina Cantina e Joaquin. Agora o alvo sai da configuração
        de dias de story de cada cliente (stories_diarios_config). Cliente
        sem configuração simplesmente não é cobrado. */
-    const cfgSnap = await getDocs(collection(db,'stories_diarios_config'));
-    const comStory = new Set();
-    cfgSnap.forEach(d => { const v=d.data();
-      if(!(v.dias||[]).length) return;
-      const slug = v.cliente || (CLIENTES_LISTA.find(c => c.nome === v.clienteNome)||{}).slug;
-      if(slug) comStory.add(slug);
-    });
-    if(!comStory.size) return;   // ninguém configurado ainda: não cobra ninguém
-    const alvo = CLIENTES_LISTA.filter(c => comStory.has(c.slug));
+    /* ===== 27/07/2026 — STORY É ADITIVO DE PLANO, NÃO É DE TODO MUNDO =====
+       Confirmado pelo Chris: só Juliane Nerone e Vitalle têm story semanal,
+       como adicional do plano deles. A Gabi monta toda SEXTA, a semana
+       inteira de uma vez. Antes o sistema cobrava 24 clientes e cobrava
+       toda segunda — errado nos dois eixos. */
+    const alvo = CLIENTES_LISTA.filter(c => CLIENTES_COM_STORY.includes(c.slug));
+    if(!alvo.length) return;
     const faltando = alvo.filter(c => !cobertos.has(c.slug));
 
     let demanda = null;
@@ -11853,7 +12012,8 @@
       return;
     }
 
-    const descricao = 'Story se monta UMA VEZ POR SEMANA, com os cinco dias de uma vez — segunda a sexta, sem fim de semana.\n\n'
+    const descricao = 'Sexta é o dia de montar os stories da semana que vem — os cinco dias de uma vez, segunda a sexta.\n\n'
+      + 'Story semanal é adicional de plano: hoje só a Juliane Nerone e a Vitalle têm. Ninguém mais é cobrado.\n\n'
       + 'COMO FAZER\n'
       + '1. Menu lateral → 📸 Stories\n'
       + '2. No card "📅 Montar a semana inteira", escolhe o cliente\n'
@@ -11870,7 +12030,7 @@
       return;
     }
     await addDoc(collection(db,'demandas'), {
-      titulo: '📸 Stories da semana — faltam ' + faltando.length + ' cliente(s)',
+      titulo: '📸 Stories da próxima semana — ' + faltando.map(c=>c.nome).join(' e '),
       descricao, origem:'sistema', clienteNome:'', destinatario:'Gabrielle',
       tipoEspecial:'stories_semana', semanaRef: semana,
       prazoData: hoje.toISOString().slice(0,10), prazoHora:'17:00',
@@ -12059,7 +12219,12 @@
       { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
       { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
-      { nome: 'coberturaRefsSemanal', fn: verificarCoberturaReferenciasSemanal },
+      /* 27/07/2026 — REMOVIDO. Perfil de referência não tem prazo: é um
+         cadastro que a Gabi preenche uma vez por cliente e atualiza quando
+         quiser. Cobrar toda semana transformava um cadastro permanente numa
+         tarefa recorrente que nunca fechava, e enchia a fila dela à toa.
+         A obrigatoriedade continua — o que sai é o prazo. */
+      // { nome: 'coberturaRefsSemanal', fn: verificarCoberturaReferenciasSemanal },
       { nome: 'digestsDeEmail', fn: enviarDigestsPendentes },
       { nome: 'lembreteFimDoDia17h', fn: verificarLembreteFimDoDia17h },
       { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
@@ -16933,6 +17098,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           ${d.urgenciaManual ? '<span class="selo pendente">fixada na mão por '+esc(d.urgenciaFixadaPor||'?')+'</span>' : ''}
         </div>
       </div>` : `<div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>`}
+      ${slotAgendaDemanda(d)}
       ${htmlChecklistClientes(d)}
       ${d.grupoId ? '<div class="linha" id="grupoStatusGer_'+d.id+'" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">🤝 <b>Demanda em grupo</b> — carregando...</div>' : ''}
       ${d.bloqueio ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">🕓 <b>'+esc(d.destinatario)+' está aguardando '+esc(d.bloqueio.pessoa)+':</b> '+esc(d.bloqueio.texto)+'</div>' : ''}

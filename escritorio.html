@@ -597,6 +597,10 @@
       </div>
       <div id="setorAtalhos"></div>
       <div id="avisoInicio"></div>
+      <!-- 28/07/2026 — este container não existia. renderResumoDiarioHome()
+           procurava por ele, não achava, e saía calada (if(!box) return).
+           O Resumo do Dia foi construído e nunca apareceu pra ninguém. -->
+      <div id="resumoDiarioBox"></div>
       <div id="meuDiaBox"></div>
       <div id="calendarioVisualHomeBox"></div>
       <div id="funcionarioMesInicioBox"></div>
@@ -1322,7 +1326,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -1349,6 +1353,62 @@
      Login anônimo não identifica pessoa — ele cria uma sessão que as
      regras conseguem enxergar. É em cima dela que a gerência e o cliente
      ganham (ou não) permissão. Sem essa sessão, nada abre. */
+  /* ===== O CARREGAMENTO LENTO — 28/07/2026 ===========================
+     Contei no arquivo: 206 leituras de coleção INTEIRA. `videos_producao`
+     sozinha é lida 37 vezes, `demandas` 24, `agendamentos` 24,
+     `postagens` 22. Abrir uma tela dispara dezenas dessas, muitas
+     idênticas, no mesmo segundo — e cada uma vai até o servidor e volta.
+     Era isso que travava a Gabi na tela de perfis e o que deixa tudo
+     pesado no geral.
+
+     A correção é um cache curto no ponto único por onde tudo passa:
+     leitura da mesma coleção dentro de 10 segundos reaproveita o que já
+     veio. Qualquer gravação limpa o cache na hora, então ninguém lê dado
+     velho depois de mudar alguma coisa. É invisível pra quem usa: o
+     resto do código continua chamando getDocs como sempre chamou. */
+  const __cacheColecoes = new Map();
+  const TTL_CACHE_MS = 10000;
+
+  function __limparCacheColecoes(){ __cacheColecoes.clear(); }
+
+  function __snapshotFalso(itens){
+    const docs = itens.map(x => ({ id: x.__id, data: () => x.__dados, exists: () => true }));
+    return {
+      docs, size: docs.length, empty: docs.length === 0,
+      forEach(cb){ docs.forEach(cb); }
+    };
+  }
+
+  async function getDocs(ref){
+    // só cacheia coleção inteira; consulta com where/orderBy passa direto
+    const nome = (ref && ref.type === 'collection' && ref.path && ref.path.indexOf('/') === -1) ? ref.path : null;
+    if(!nome) return _getDocsFB(ref);
+
+    const agora = Date.now();
+    const guardado = __cacheColecoes.get(nome);
+    if(guardado && (agora - guardado.em) < TTL_CACHE_MS) return __snapshotFalso(guardado.itens);
+    if(guardado && guardado.promessa) return guardado.promessa;   // já tem uma busca em voo
+
+    const promessa = (async () => {
+      const snap = await _getDocsFB(ref);
+      const itens = [];
+      snap.forEach(d => itens.push({ __id: d.id, __dados: d.data() }));
+      __cacheColecoes.set(nome, { em: Date.now(), itens });
+      return __snapshotFalso(itens);
+    })();
+    __cacheColecoes.set(nome, { em: 0, itens: [], promessa });
+    try{ return await promessa; }
+    catch(e){ __cacheColecoes.delete(nome); throw e; }
+  }
+
+  /* Toda gravação invalida o cache — sem isso a tela mostraria o estado
+     anterior por até 10 segundos depois de você mudar algo, que é
+     exatamente o tipo de bug que faz alguém clicar duas vezes. */
+  async function addDoc(...a){ const r = await _addDocFB(...a); __limparCacheColecoes(); return r; }
+  async function setDoc(...a){ const r = await _setDocFB(...a); __limparCacheColecoes(); return r; }
+  async function updateDoc(...a){ const r = await _updateDocFB(...a); __limparCacheColecoes(); return r; }
+  async function deleteDoc(...a){ const r = await _deleteDocFB(...a); __limparCacheColecoes(); return r; }
+
   const auth = getAuth(app);
   window.__authPronta = signInAnonymously(auth)
     .then(cred => { window.__uid = cred.user.uid; return cred.user.uid; })
@@ -3509,8 +3569,13 @@
           <datalist id="sugestoesAvulso"><option value="100"><option value="120"><option value="150"></datalist>
           <div class="meta" style="margin-top:4px;">Deixa em branco se ainda não definiu — fica marcado como pendente.</div>
         </div>
-        <div class="field"><label>🚗 Valor do Uber (R$)</label><input type="number" id="pagUber" placeholder="0,00" step="0.01">
-          <div class="meta" style="margin-top:4px;">O que a pessoa gastou de fato. Some ida e volta.</div>
+        <div class="field"><label>🚗 Uber — ida e volta</label>
+          <div style="display:flex;gap:8px;">
+            <input type="number" id="pagUberIda" placeholder="Ida" step="0.01" oninput="somarUberGestao()" style="flex:1;">
+            <input type="number" id="pagUberVolta" placeholder="Volta" step="0.01" oninput="somarUberGestao()" style="flex:1;">
+          </div>
+          <input type="hidden" id="pagUber" value="">
+          <div id="totalUberGestao" class="meta" style="margin-top:6px;font-weight:800;">🚗 Total do Uber: —</div>
         </div>
       </div>
       <div class="row2" style="margin-top:10px;">
@@ -3617,7 +3682,7 @@
             <div class="top"><div class="nome">${esc(p.clienteNome)}</div><div class="meta">${p.pago ? '✅ Pago' : '⏳ Pendente'}</div></div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center;">
               ${Number(p.valorExtra) ? '<span class="selo cliente">🎥 '+brl(Number(p.valorExtra))+'</span>' : contasDoExtra(p).semValor ? '<span class="selo pendente">🎥 sem valor — a Amanda define</span>' : ''}
-              ${Number(p.valorUber) ? '<span class="selo cliente">🚗 '+brl(Number(p.valorUber))+(p.uberLink ? ' · <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a>' : '')+'</span>'
+              ${Number(p.valorUber) ? '<span class="selo cliente">🚗 '+brl(Number(p.valorUber))+((Number(p.uberIda)||Number(p.uberVolta)) ? ' (ida '+brl(Number(p.uberIda)||0)+' + volta '+brl(Number(p.uberVolta)||0)+')' : '')+(p.uberLink ? ' · <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a>' : '')+'</span>'
                 : p.temUber ? '<span class="selo pendente">🚗 teve Uber, falta o valor</span>' : ''}
               ${contasDoExtra(p).total ? '<b style="font-size:12.5px;">= '+brl(contasDoExtra(p).total)+'</b>' : ''}
             </div>
@@ -3645,7 +3710,9 @@
   window.adicionarPagamentoExtra = async function(){
     const clienteNome = document.getElementById('pagCliente').value.trim();
     const valorExtra = parseFloat(document.getElementById('pagValor').value) || 0;
-    const valorUber  = parseFloat(document.getElementById('pagUber')?.value) || 0;
+    const uberIda    = parseFloat(document.getElementById('pagUberIda')?.value) || 0;
+    const uberVolta  = parseFloat(document.getElementById('pagUberVolta')?.value) || 0;
+    const valorUber  = uberIda + uberVolta;
     const uberLink = (document.getElementById('pagUberLink')?.value||'').trim();
     const filmmaker = document.getElementById('pagFilmmaker')?.value || '';
     const servico = (document.getElementById('pagServico')?.value||'').trim();
@@ -3656,11 +3723,12 @@
     const mesAtual = (data || '').slice(0,7) || new Date().toISOString().slice(0,7);
     await addDoc(collection(db,'pagamentos_extra'), {
       clienteNome, filmmaker, servico, data,
-      valorExtra, valorUber, temUber: valorUber > 0, uberLink,
+      valorExtra, valorUber, uberIda, uberVolta, temUber: valorUber > 0, uberLink,
       pago: false, aprovadoPeloChris: true,          // lançado pela gestão já nasce conferido
       mes: mesAtual, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp()
     });
-    ['pagCliente','pagValor','pagUber','pagUberLink','pagServico'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+    ['pagCliente','pagValor','pagUber','pagUberIda','pagUberVolta','pagUberLink','pagServico'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+    somarUberGestao();
     mostrarToast('Lançado — ' + brl(valorExtra + valorUber) + ' pra ' + filmmaker + ' no dia 15.');
     renderGerenciaPagamentos();
   };
@@ -6905,25 +6973,10 @@
     reRenderPortalAdmin();
   };
 
-  window.criarStoryCliente = async function(){
-    const sel = document.getElementById('storyCliente');
-    const titulo = document.getElementById('storyTitulo').value.trim();
-    const descricao = document.getElementById('storyDescricao').value.trim();
-    if(!titulo){ mostrarToast('Escreve o título.', 'erro'); return; }
-    await addDoc(collection(db,'stories_semanais'), {
-      cliente: sel.value, clienteNome: sel.selectedOptions[0].dataset.nome,
-      titulo, descricao,
-      semana: window.__semanaStories || segundaDaSemana(new Date()),
-      diaSemana: Number(document.getElementById('storyDia').value) || 1,
-      linkReferencia: document.getElementById('storyLinkRef')?.value.trim() || '',
-      observacoes: document.getElementById('storyObs')?.value.trim() || '',
-      comentarioCliente: '',
-      status: 'pendente', criadoPor: usuarioAtual || '?', criadoEm: serverTimestamp()
-    });
-    mostrarToast('Enviado pro cliente aprovar!');
-    ['storyTitulo','storyDescricao','storyLinkRef','storyObs'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-    renderStoriesCliente();
-  };
+  /* 28/07/2026 — criarStoryCliente REMOVIDA. Era o formulário antigo de
+     um story por vez; os campos dela (storyTitulo, storyDia...) já não
+     existiam em lugar nenhum do HTML há tempos. Se alguém a chamasse,
+     quebrava com "null.value". Ficou órfã quando o story virou semanal. */
 
   window.marcarStoryPostado = async function(id){
     await updateDoc(doc(db,'stories_semanais', id), { status: 'postado', postadoEm: new Date().toISOString() });
@@ -10085,8 +10138,14 @@
             <input type="text" id="meuExServico" placeholder="Ex: evento de sábado, 4h de gravação"></div>
 
           <div id="blocoUberExtra" style="display:none;margin-top:10px;background:rgba(251,188,25,.07);border:1px solid var(--line);border-radius:10px;padding:12px;">
-            <div class="field"><label>🚗 Quanto você pagou de Uber (R$)</label>
-              <input type="number" step="0.01" id="meuExUber" placeholder="0,00" style="font-size:17px;font-weight:700;"></div>
+            <div class="row2">
+              <div class="field"><label>🚗 Ida (R$)</label>
+                <input type="number" step="0.01" id="meuExUberIda" placeholder="0,00" style="font-size:16px;font-weight:700;" oninput="somarUberFilmmaker()"></div>
+              <div class="field"><label>🚗 Volta (R$)</label>
+                <input type="number" step="0.01" id="meuExUberVolta" placeholder="0,00" style="font-size:16px;font-weight:700;" oninput="somarUberFilmmaker()"></div>
+            </div>
+            <div id="totalUberFilmmaker" style="margin-top:10px;padding:11px 13px;background:var(--paper);border-radius:9px;font-size:15px;font-weight:800;text-align:center;">Total do Uber: R$ 0,00</div>
+            <input type="hidden" id="meuExUber" value="">
             <div class="field" style="margin-top:8px;"><label>Comprovante (link do print ou do recibo)</label>
               <input type="text" id="meuExUberLink" placeholder="Cola o link aqui"></div>
             <div class="desc" style="margin:6px 0 0;">Esse valor é reembolsado inteiro — não é o preço da filmagem.</div>
@@ -10129,12 +10188,45 @@
     if(film) film.style.display = (tipo === 'filmagem' || tipo === 'ambos') ? 'block' : 'none';
   };
 
+  /* ===== IDA E VOLTA — 28/07/2026 =====================================
+     Nem o Luís nem a Amanda conseguiam lançar as duas pernas do trajeto:
+     o campo era um só, e quem paga Uber paga duas corridas. Somar de
+     cabeça antes de digitar é onde erro de caixa nasce.
+     Agora são dois campos e o sistema soma na hora, na frente da pessoa.
+     Guardo as duas pernas separadas no banco também — se depois alguém
+     questionar o valor, dá pra conferir sem depender de memória. */
+  window.somarUberFilmmaker = function(){
+    const ida = parseFloat(document.getElementById('meuExUberIda')?.value) || 0;
+    const volta = parseFloat(document.getElementById('meuExUberVolta')?.value) || 0;
+    const total = ida + volta;
+    const alvo = document.getElementById('meuExUber'); if(alvo) alvo.value = total ? total.toFixed(2) : '';
+    const box = document.getElementById('totalUberFilmmaker');
+    if(box){
+      box.textContent = 'Total do Uber: ' + brl(total);
+      box.style.color = total ? 'var(--yellow)' : '';
+    }
+  };
+
+  window.somarUberGestao = function(){
+    const ida = parseFloat(document.getElementById('pagUberIda')?.value) || 0;
+    const volta = parseFloat(document.getElementById('pagUberVolta')?.value) || 0;
+    const total = ida + volta;
+    const alvo = document.getElementById('pagUber'); if(alvo) alvo.value = total ? total.toFixed(2) : '';
+    const box = document.getElementById('totalUberGestao');
+    if(box){
+      box.textContent = total ? '🚗 Total do Uber: ' + brl(total) : '🚗 Total do Uber: —';
+      box.style.color = total ? 'var(--yellow)' : '';
+    }
+  };
+
   window.informarMeuExtra = async function(){
     const tipo = document.getElementById('meuExTipo')?.value || 'filmagem';
     const servico = (document.getElementById('meuExServico')?.value||'').trim();
     const clienteNome = (document.getElementById('meuExCliente')?.value||'').trim();
     const data = document.getElementById('meuExData')?.value || new Date().toISOString().slice(0,10);
-    const valorUber = (tipo === 'uber' || tipo === 'ambos') ? (parseFloat(document.getElementById('meuExUber')?.value) || 0) : 0;
+    const uberIda = parseFloat(document.getElementById('meuExUberIda')?.value) || 0;
+    const uberVolta = parseFloat(document.getElementById('meuExUberVolta')?.value) || 0;
+    const valorUber = (tipo === 'uber' || tipo === 'ambos') ? (uberIda + uberVolta) : 0;
     const uberLink = (document.getElementById('meuExUberLink')?.value||'').trim();
     if(!clienteNome){ mostrarToast('Escreve pra qual cliente foi.', 'erro'); return; }
     if((tipo === 'uber' || tipo === 'ambos') && !valorUber){ mostrarToast('Coloca quanto você pagou de Uber.', 'erro'); return; }
@@ -10145,7 +10237,7 @@
     const mes = (data||'').slice(0,7) || new Date().toISOString().slice(0,7);
     await addDoc(collection(db,'pagamentos_extra'), {
       clienteNome, servico, filmmaker: usuarioAtual, valorExtra: valor,
-      valorUber, temUber: valorUber > 0, uberLink, data,
+      valorUber, uberIda, uberVolta, temUber: valorUber > 0, uberLink, data,
       semCobrancaFilmagem: tipo === 'uber',
       pago: false, informadoPelaPessoa: true,
       mes, criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()

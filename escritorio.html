@@ -3542,6 +3542,7 @@
   };
 
   async function renderGerenciaPagamentos(){
+    await mapaTipoCliente();   // classifica antes de desenhar (ver tipoDoExtra)
     const cont = document.getElementById('gerenciaPagamentos');
     const mesAtual = new Date().toISOString().slice(0,7);
     const snap = await getDocs(collection(db,'pagamentos_extra'));
@@ -3590,9 +3591,17 @@
         </select>
       </div>
       <div class="row2" style="margin-top:10px;">
-        <div class="field"><label>Cliente da gravação</label><input type="text" id="pagCliente" placeholder="Nome do cliente"></div>
+        <div class="field"><label>Cliente</label>
+          <select id="pagCliente" onchange="aoTrocarClienteGestao()">
+            <option value="">Escolhe o cliente...</option>
+            ${CLIENTES_LISTA.map(c=>`<option value="${escJs(c.nome)}" data-slug="${c.slug}">${esc(c.nome)}</option>`).join('')}
+            <option value="__outro__">Outro (não está na lista)</option>
+          </select>
+          <input type="text" id="pagClienteOutro" placeholder="Nome do cliente" style="display:none;margin-top:8px;">
+        </div>
         <div class="field"><label>Quando</label><input type="date" id="pagData" value="${new Date().toISOString().slice(0,10)}"></div>
       </div>
+      <div id="pagTipoAviso" class="meta" style="margin-top:8px;"></div>
       <div class="row2" style="margin-top:10px;">
         <div class="field"><label>🎥 Valor da filmagem (R$)</label><input type="number" id="pagValor" placeholder="0,00" step="0.01" list="sugestoesAvulso">
           <datalist id="sugestoesAvulso"><option value="100"><option value="120"><option value="150"></datalist>
@@ -3605,11 +3614,14 @@
           </div>
           <input type="hidden" id="pagUber" value="">
           <div id="totalUberGestao" class="meta" style="margin-top:6px;font-weight:800;">🚗 Total do Uber: —</div>
+          <select id="pagMotivoUber" style="margin-top:8px;">
+            ${MOTIVOS_UBER.map(m=>`<option value="${m.v}">${m.t}</option>`).join('')}
+          </select>
         </div>
       </div>
       <div class="row2" style="margin-top:10px;">
         <div class="field"><label>Que serviço foi</label><input type="text" id="pagServico" placeholder="Ex: cobertura do evento de sábado"></div>
-        <div class="field"><label>Recibo do Uber (link, opcional)</label><input type="text" id="pagUberLink" placeholder="Link do print ou recibo"></div>
+        <div class="field"><label>🔗 Comprovante do Uber <span style="color:var(--red);">(obrigatório quando há Uber)</span></label><input type="text" id="pagUberLink" placeholder="Link do comprovante no Drive"></div>
       </div>
       <button class="btn" style="margin-top:14px;padding:14px;font-size:14px;" onclick="adicionarPagamentoExtra()">+ Lançar extra</button>
     </div>`;
@@ -3736,8 +3748,30 @@
     cont.innerHTML = html;
   }
 
+  window.aoTrocarClienteGestao = async function(){
+    const sel = document.getElementById('pagCliente');
+    const outro = document.getElementById('pagClienteOutro');
+    const aviso = document.getElementById('pagTipoAviso');
+    if(!sel || !aviso) return;
+    if(outro) outro.style.display = sel.value === '__outro__' ? 'block' : 'none';
+    if(!sel.value || sel.value === '__outro__'){ aviso.innerHTML = ''; return; }
+    const slug = sel.selectedOptions[0]?.dataset.slug || '';
+    await mapaTipoCliente();
+    aviso.innerHTML = tipoDoClienteSync(slug) === 'mensalista'
+      ? '<span style="color:var(--yellow2);">📅 <b>Mensalista.</b> A gravação já está no contrato — aqui entra só o Uber. Deixa o valor da filmagem em branco.</span>'
+      : '<span style="color:var(--yellow);">🎬 <b>Avulso.</b> Define o valor da filmagem e o Uber, se houver.</span>';
+  };
+
   window.adicionarPagamentoExtra = async function(){
-    const clienteNome = document.getElementById('pagCliente').value.trim();
+    const selCli = document.getElementById('pagCliente');
+    const ehOutro = selCli && selCli.value === '__outro__';
+    const clienteNome = ehOutro
+      ? (document.getElementById('pagClienteOutro')?.value||'').trim()
+      : (selCli?.value||'').trim();
+    const clienteSlug = ehOutro ? '' : (selCli?.selectedOptions[0]?.dataset.slug || '');
+    await mapaTipoCliente();
+    const tipoCliente = ehOutro ? 'avulso' : tipoDoClienteSync(clienteSlug);
+    const motivoUber = document.getElementById('pagMotivoUber')?.value || 'acima30';
     const valorExtra = parseFloat(document.getElementById('pagValor').value) || 0;
     const uberIda    = parseFloat(document.getElementById('pagUberIda')?.value) || 0;
     const uberVolta  = parseFloat(document.getElementById('pagUberVolta')?.value) || 0;
@@ -3747,16 +3781,26 @@
     const servico = (document.getElementById('pagServico')?.value||'').trim();
     const data = document.getElementById('pagData')?.value || new Date().toISOString().slice(0,10);
     if(!filmmaker){ mostrarToast('Escolhe quem vai receber.', 'erro'); return; }
-    if(!clienteNome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
+    if(!clienteNome){ mostrarToast('Escolhe o cliente.', 'erro'); return; }
+    if(valorUber > 0 && !uberLink){
+      alert('Falta o link do comprovante do Uber.\n\nSem comprovante o reembolso não entra na folha — é o que permite conferir o valor depois.');
+      return;
+    }
+    if(tipoCliente === 'mensalista' && valorExtra > 0){
+      if(!confirm(clienteNome + ' é MENSALISTA.\n\nA gravação dele já está no contrato, então normalmente não gera filmagem avulsa — só o Uber.\n\nTem certeza que quer lançar ' + brl(valorExtra) + ' de filmagem mesmo assim?')) return;
+    }
     if(!valorExtra && !valorUber && !confirm('Nenhum valor preenchido.\n\nQuer lançar assim mesmo? Fica marcado como "esperando a Amanda definir" e não entra no total do mês até ter valor.')) return;
     const mesAtual = (data || '').slice(0,7) || new Date().toISOString().slice(0,7);
     await addDoc(collection(db,'pagamentos_extra'), {
-      clienteNome, filmmaker, servico, data,
+      clienteNome, clienteSlug, tipoCliente, filmmaker, servico, data,
       valorExtra, valorUber, uberIda, uberVolta, temUber: valorUber > 0, uberLink,
+      motivoUber: valorUber > 0 ? motivoUber : '',
+      semCobrancaFilmagem: tipoCliente === 'mensalista' && !valorExtra,
       pago: false, aprovadoPeloChris: true,          // lançado pela gestão já nasce conferido
       mes: mesAtual, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp()
     });
-    ['pagCliente','pagValor','pagUber','pagUberIda','pagUberVolta','pagUberLink','pagServico'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+    ['pagCliente','pagClienteOutro','pagValor','pagUber','pagUberIda','pagUberVolta','pagUberLink','pagServico'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+    const av = document.getElementById('pagTipoAviso'); if(av) av.innerHTML = '';
     somarUberGestao();
     mostrarToast('Lançado — ' + brl(valorExtra + valorUber) + ' pra ' + filmmaker + ' no dia 15.');
     renderGerenciaPagamentos();
@@ -10185,20 +10229,100 @@
      número incompleto e sinalizado do que um número redondo e errado. */
   const VALOR_AVULSO_SUGERIDO = { min: 100, max: 150 };
 
+  /* ===== A CADEIA DOS EXTRAS, REFEITA — 28/07/2026 ====================
+     O painel misturava coisas que são diferentes e isso já causou
+     confusão real: a Stokki apareceu como "filmagem avulsa" quando ela é
+     MENSALISTA e o que a agência custeia ali é só o deslocamento.
+
+     São dois gastos com naturezas distintas, e cada um tem sua regra:
+
+     🎥 FILMAGEM AVULSA — gravação para cliente que NÃO é da base mensal.
+        A Amanda define o valor. Cliente mensalista não gera filmagem
+        avulsa: o trabalho dele já está no contrato.
+
+     🚗 UBER / DESLOCAMENTO — reembolso do que a pessoa pagou. Vale para
+        mensalista OU avulso, e só quando o local justifica: acima de
+        30 km, ou fora de Curitiba. Exige comprovante — o link da pasta
+        do Drive é obrigatório, sem exceção.
+
+     Por isso todo lançamento agora carrega três campos novos:
+       tipoCliente  → 'mensalista' | 'avulso'  (detectado, editável)
+       motivoUber   → por que o deslocamento é custeado
+       uberLink     → o comprovante, obrigatório quando há Uber
+
+     Sem isso, um Uber de mensalista entrava na conta como filmagem
+     avulsa e o valor a pagar saía errado. */
+  const MOTIVOS_UBER = [
+    { v:'acima30',      t:'Acima de 30 km' },
+    { v:'fora-curitiba',t:'Fora de Curitiba' },
+    { v:'outro',        t:'Outro (explico no detalhe)' }
+  ];
+  const MOTIVO_UBER_LABEL = { acima30:'acima de 30 km', 'fora-curitiba':'fora de Curitiba', outro:'motivo especial' };
+
+  /* Mensalista é quem tem contrato ativo e não é entrega direta.
+     O resto é avulso. Guardo o resultado no lançamento pra que uma
+     mudança futura de plano não reescreva o histórico do pagamento. */
+  let __cacheTipoCliente = null;
+  async function mapaTipoCliente(){
+    if(__cacheTipoCliente) return __cacheTipoCliente;
+    const m = {};
+    try{
+      const entregaDireta = await obterSlugsEntregaDireta();
+      const snap = await getDocs(collection(db,'contratos_cliente'));
+      const comContrato = new Set();
+      snap.forEach(d => { const v = d.data(); if(!v.encerrado) comContrato.add(d.id); });
+      CLIENTES_LISTA.forEach(c => {
+        m[c.slug] = (comContrato.has(c.slug) && !entregaDireta.has(c.slug)) ? 'mensalista' : 'avulso';
+      });
+    }catch(e){ console.error('Não consegui classificar os clientes:', e); }
+    __cacheTipoCliente = m;
+    return m;
+  }
+  window.tipoDoClienteSync = function(slug){ return (__cacheTipoCliente || {})[slug] || 'avulso'; };
+
+  /* ===== LANÇAMENTOS ANTIGOS — 28/07/2026 =============================
+     Tudo que foi lançado antes de hoje não tem `tipoCliente` gravado. Se
+     eu simplesmente assumisse "avulso", a Stokki continuaria aparecendo
+     como filmagem avulsa no painel — que é justamente o erro que estamos
+     corrigindo. Então, quando o campo não existe, descubro pelo nome do
+     cliente, na hora de exibir. O registro antigo não é reescrito: só é
+     lido do jeito certo. */
+  function tipoDoExtra(e){
+    if(e.tipoCliente) return e.tipoCliente;
+    if(e.clienteSlug) return tipoDoClienteSync(e.clienteSlug);
+    const nome = String(e.clienteNome||'').trim().toLowerCase();
+    if(!nome) return 'avulso';
+    const achado = CLIENTES_LISTA.find(c => (c.nome||'').trim().toLowerCase() === nome);
+    return achado ? tipoDoClienteSync(achado.slug) : 'avulso';
+  }
+
+  function selosDoExtra(e){
+    const tipo = tipoDoExtra(e);
+    const cor = tipo === 'mensalista' ? 'var(--yellow2)' : 'var(--yellow)';
+    return '<span class="selo" style="border-color:'+cor+';color:'+cor+';">' +
+      (tipo === 'mensalista' ? '📅 mensalista' : '🎬 avulso') + '</span>';
+  }
+
   function contasDoExtra(m){
     const filmagem = Number(m.valorExtra) || 0;
     const uber = Number(m.valorUber) || 0;
-    const semValor = !m.valorExtra && !m.semCobrancaFilmagem;
-    return { filmagem, uber, total: filmagem + uber, semValor };
+    /* Mensalista não gera filmagem avulsa — o trabalho dele está no
+       contrato. Então "sem valor" nunca se aplica a ele: o lançamento
+       dele é só deslocamento e já está completo. */
+    const soDeslocamento = m.semCobrancaFilmagem || tipoDoExtra(m) === 'mensalista';
+    const semValor = !m.valorExtra && !soDeslocamento;
+    const semComprovante = uber > 0 && !String(m.uberLink||'').trim();
+    return { filmagem, uber, total: filmagem + uber, semValor, semComprovante, soDeslocamento };
   }
 
   function somarExtras(lista){
-    const r = { filmagem:0, uber:0, total:0, pendentesSemValor:0, qtdFilmagem:0, qtdUber:0 };
+    const r = { filmagem:0, uber:0, total:0, pendentesSemValor:0, qtdFilmagem:0, qtdUber:0, semComprovante:0 };
     lista.forEach(m => { const c = contasDoExtra(m);
       r.filmagem += c.filmagem; r.uber += c.uber; r.total += c.total;
       if(c.filmagem) r.qtdFilmagem++;
       if(c.uber) r.qtdUber++;
       if(c.semValor) r.pendentesSemValor++;
+      if(c.semComprovante) r.semComprovante++;
     });
     return r;
   }
@@ -10206,6 +10330,7 @@
   window.htmlMeusExtras = async function(){
     if(!usuarioAtual) return '';
     try{
+      await mapaTipoCliente();
       const mes = new Date().toISOString().slice(0,7);
       const snap = await getDocs(collection(db,'pagamentos_extra'));
       const meus = [];
@@ -10240,7 +10365,14 @@
           </div>
 
           <div class="field" style="margin-top:10px;"><label>Cliente</label>
-            <input type="text" id="meuExCliente" placeholder="Pra quem foi a filmagem"></div>
+            <select id="meuExCliente" onchange="aoTrocarClienteExtra()">
+              <option value="">Escolhe o cliente...</option>
+              ${CLIENTES_LISTA.map(c=>`<option value="${escJs(c.nome)}" data-slug="${c.slug}">${esc(c.nome)}</option>`).join('')}
+              <option value="__outro__">Outro (não está na lista)</option>
+            </select>
+            <input type="text" id="meuExClienteOutro" placeholder="Nome do cliente" style="display:none;margin-top:8px;">
+            <div id="meuExTipoAviso" class="meta" style="margin-top:6px;"></div>
+          </div>
 
           <div class="field" style="margin-top:10px;"><label>Quando</label>
             <input type="date" id="meuExData" value="${new Date().toISOString().slice(0,10)}"></div>
@@ -10257,9 +10389,17 @@
             </div>
             <div id="totalUberFilmmaker" style="margin-top:10px;padding:11px 13px;background:var(--paper);border-radius:9px;font-size:15px;font-weight:800;text-align:center;">Total do Uber: R$ 0,00</div>
             <input type="hidden" id="meuExUber" value="">
-            <div class="field" style="margin-top:8px;"><label>Comprovante (link do print ou do recibo)</label>
-              <input type="text" id="meuExUberLink" placeholder="Cola o link aqui"></div>
-            <div class="desc" style="margin:6px 0 0;">Esse valor é reembolsado inteiro — não é o preço da filmagem.</div>
+            <div class="field" style="margin-top:10px;"><label>Por que teve deslocamento custeado</label>
+              <select id="meuExMotivoUber">
+                ${MOTIVOS_UBER.map(m=>`<option value="${m.v}">${m.t}</option>`).join('')}
+              </select>
+              <div class="meta" style="margin-top:4px;">A agência custeia Uber só acima de 30 km ou fora de Curitiba.</div>
+            </div>
+            <div class="field" style="margin-top:10px;"><label>🔗 Comprovante — <span style="color:var(--red);">obrigatório</span></label>
+              <input type="text" id="meuExUberLink" placeholder="Cola aqui o link do comprovante no Drive">
+              <div class="meta" style="margin-top:4px;">Sobe o print na pasta do Drive e cola o link. <b>Sem comprovante o Uber não é reembolsado</b> — não dá pra aprovar no escuro.</div>
+            </div>
+            <div class="desc" style="margin:8px 0 0;">Esse valor é reembolsado inteiro — não é o preço da filmagem.</div>
           </div>
 
           <div id="blocoValorFilmagem" style="margin-top:10px;background:var(--deep);border:1px dashed var(--line);border-radius:10px;padding:11px;">
@@ -10297,6 +10437,34 @@
     const film = document.getElementById('blocoValorFilmagem');
     if(uber) uber.style.display = (tipo === 'uber' || tipo === 'ambos') ? 'block' : 'none';
     if(film) film.style.display = (tipo === 'filmagem' || tipo === 'ambos') ? 'block' : 'none';
+    aoTrocarClienteExtra();
+  };
+
+  /* Mostra na hora o que aquele cliente permite. Mensalista não gera
+     filmagem avulsa — o trabalho dele já está no contrato — então o
+     campo some e a pessoa não lança errado sem perceber. */
+  window.aoTrocarClienteExtra = async function(){
+    const sel = document.getElementById('meuExCliente');
+    const outro = document.getElementById('meuExClienteOutro');
+    const aviso = document.getElementById('meuExTipoAviso');
+    const tipoSel = document.getElementById('meuExTipo');
+    const film = document.getElementById('blocoValorFilmagem');
+    if(!sel) return;
+    if(outro) outro.style.display = sel.value === '__outro__' ? 'block' : 'none';
+    if(!aviso) return;
+    if(!sel.value || sel.value === '__outro__'){ aviso.innerHTML = ''; return; }
+
+    const slug = sel.selectedOptions[0]?.dataset.slug || '';
+    await mapaTipoCliente();
+    const tipo = tipoDoClienteSync(slug);
+    if(tipo === 'mensalista'){
+      aviso.innerHTML = '<span style="color:var(--yellow2);">📅 <b>Cliente mensalista.</b> A gravação dele já está no contrato — aqui só entra o <b>Uber</b>, se o local passar de 30 km ou for fora de Curitiba.</span>';
+      if(tipoSel && tipoSel.value === 'filmagem'){ tipoSel.value = 'uber'; alternarCamposExtra(); return; }
+      if(film) film.style.display = 'none';
+      const bu = document.getElementById('blocoUberExtra'); if(bu) bu.style.display = 'block';
+    } else {
+      aviso.innerHTML = '<span style="color:var(--yellow);">🎬 <b>Cliente avulso.</b> Pode lançar a filmagem (a Amanda define o valor) e o Uber, se houver.</span>';
+    }
   };
 
   /* ===== IDA E VOLTA — 28/07/2026 =====================================
@@ -10333,14 +10501,32 @@
   window.informarMeuExtra = async function(){
     const tipo = document.getElementById('meuExTipo')?.value || 'filmagem';
     const servico = (document.getElementById('meuExServico')?.value||'').trim();
-    const clienteNome = (document.getElementById('meuExCliente')?.value||'').trim();
+    const selCli = document.getElementById('meuExCliente');
+    const ehOutro = selCli && selCli.value === '__outro__';
+    const clienteNome = ehOutro
+      ? (document.getElementById('meuExClienteOutro')?.value||'').trim()
+      : (selCli?.value||'').trim();
+    const clienteSlug = ehOutro ? '' : (selCli?.selectedOptions[0]?.dataset.slug || '');
+    await mapaTipoCliente();
+    const tipoCliente = ehOutro ? 'avulso' : tipoDoClienteSync(clienteSlug);
+    const motivoUber = document.getElementById('meuExMotivoUber')?.value || 'acima30';
     const data = document.getElementById('meuExData')?.value || new Date().toISOString().slice(0,10);
     const uberIda = parseFloat(document.getElementById('meuExUberIda')?.value) || 0;
     const uberVolta = parseFloat(document.getElementById('meuExUberVolta')?.value) || 0;
     const valorUber = (tipo === 'uber' || tipo === 'ambos') ? (uberIda + uberVolta) : 0;
     const uberLink = (document.getElementById('meuExUberLink')?.value||'').trim();
-    if(!clienteNome){ mostrarToast('Escreve pra qual cliente foi.', 'erro'); return; }
+    if(!clienteNome){ mostrarToast('Escolhe pra qual cliente foi.', 'erro'); return; }
     if((tipo === 'uber' || tipo === 'ambos') && !valorUber){ mostrarToast('Coloca quanto você pagou de Uber.', 'erro'); return; }
+    /* Comprovante é condição, não sugestão: sem ele ninguém consegue
+       conferir o valor e o reembolso trava na aprovação. */
+    if(valorUber > 0 && !uberLink){
+      alert('Falta o link do comprovante do Uber.\n\nSobe o print na pasta do Drive e cola o link aqui. Sem comprovante o reembolso não é aprovado.');
+      return;
+    }
+    if(tipoCliente === 'mensalista' && tipo === 'filmagem'){
+      alert('Esse cliente é mensalista.\n\nA gravação dele já está no contrato, então não gera filmagem avulsa. Se houve deslocamento custeado, troca o tipo para "Uber".');
+      return;
+    }
     /* A pessoa NÃO define o valor da filmagem — quem define é a Amanda.
        Por isso `valorExtra` sai zerado e `semCobrancaFilmagem` só é true
        quando o lançamento é puramente deslocamento. */
@@ -10349,7 +10535,8 @@
     await addDoc(collection(db,'pagamentos_extra'), {
       clienteNome, servico, filmmaker: usuarioAtual, valorExtra: valor,
       valorUber, uberIda, uberVolta, temUber: valorUber > 0, uberLink, data,
-      semCobrancaFilmagem: tipo === 'uber',
+      clienteSlug, tipoCliente, motivoUber: valorUber > 0 ? motivoUber : '',
+      semCobrancaFilmagem: tipo === 'uber' || tipoCliente === 'mensalista',
       pago: false, informadoPelaPessoa: true,
       mes, criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()
     });
@@ -15274,6 +15461,9 @@
   };
 
   window.renderFinanceiro = async function(){
+    /* Sem isto, o painel desenharia antes de saber quem é mensalista e
+       todo lançamento antigo apareceria como avulso — o erro da Stokki. */
+    await mapaTipoCliente();
     const box = document.getElementById('financeiroBox');
     if(!box) return;
     const comp = document.getElementById('finMes')?.value || new Date().toISOString().slice(0,7);
@@ -15430,27 +15620,57 @@
             </div>
             <div class="meta" style="margin-top:6px;">🎥 ${brl(c.filmagem)} em ${c.qtdFilmagem} filmagem(ns) · 🚗 ${brl(c.uber)} em ${c.qtdUber} corrida(s)${pagos ? ' · ' + pagos + ' já pago(s)' : ''}</div>
 
-            <div style="margin-top:12px;">
-              ${lista.sort((a,b)=>String(a.data||'').localeCompare(String(b.data||''))).map(e => {
+            ${(() => {
+              /* Separado por natureza — foi exatamente isso que confundiu:
+                 a Stokki é mensalista e aparecia como filmagem avulsa. */
+              const ordenar = l => l.slice().sort((a,b)=>String(a.data||'').localeCompare(String(b.data||'')));
+              const filmagens = ordenar(lista.filter(e => Number(e.valorExtra) || contasDoExtra(e).semValor));
+              const ubers     = ordenar(lista.filter(e => Number(e.valorUber)));
+
+              const linha = (e, modo) => {
                 const cc = contasDoExtra(e);
-                return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:9px 0;border-top:1px solid var(--line);">
+                const valor = modo === 'uber' ? cc.uber : cc.filmagem;
+                return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:11px 0;border-top:1px solid var(--line);">
                   <div style="flex:1;min-width:0;">
-                    <div style="font-size:12.5px;font-weight:700;">${esc(e.clienteNome || 'sem cliente')}${e.data ? ' <span class="meta">· '+formatarDataBR(e.data)+'</span>' : ''}</div>
-                    <div class="meta" style="margin-top:3px;">
-                      ${Number(e.valorExtra) ? '🎥 '+brl(Number(e.valorExtra)) : cc.semValor ? '<span style="color:var(--yellow2);">🎥 sem valor definido</span>' : ''}
-                      ${Number(e.valorUber) ? ' · 🚗 '+brl(Number(e.valorUber)) + ((Number(e.uberIda)||Number(e.uberVolta)) ? ' (ida '+brl(Number(e.uberIda)||0)+' + volta '+brl(Number(e.uberVolta)||0)+')' : '') : ''}
-                      ${e.servico ? ' · ' + esc(String(e.servico).slice(0,50)) : ''}
+                    <div style="font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+                      ${esc(e.clienteNome || 'sem cliente')} ${selosDoExtra(e)}
+                      ${e.data ? '<span class="meta">'+formatarDataBR(e.data)+'</span>' : ''}
+                    </div>
+                    <div class="meta" style="margin-top:4px;">
+                      ${modo === 'uber'
+                        ? 'ida ' + brl(Number(e.uberIda)||0) + ' + volta ' + brl(Number(e.uberVolta)||0) +
+                          (e.motivoUber ? ' · ' + (MOTIVO_UBER_LABEL[e.motivoUber]||e.motivoUber) : '') +
+                          (String(e.uberLink||'').trim()
+                            ? ' · <a href="'+esc(e.uberLink)+'" target="_blank" rel="noopener" style="color:var(--yellow);">ver comprovante ↗</a>'
+                            : ' · <span style="color:var(--red);font-weight:700;">⚠️ sem comprovante</span>')
+                        : (cc.semValor ? '<span style="color:var(--yellow2);">esperando a Amanda definir o valor</span>' : (esc(String(e.servico||'').slice(0,60)) || 'filmagem avulsa'))}
                     </div>
                   </div>
                   <div style="text-align:right;white-space:nowrap;">
-                    <div style="font-size:13px;font-weight:800;">${brl(cc.total)}</div>
-                    <div class="meta" style="color:${e.pago?'var(--green)':'var(--yellow2)'};">${e.pago ? 'pago' : 'a pagar'}</div>
+                    <div style="font-size:13.5px;font-weight:800;">${brl(valor)}</div>
+                    <button class="btn secondary" style="width:auto;margin-top:5px;padding:6px 11px;font-size:10.5px;${e.pago?'border-color:var(--green);color:var(--green);':''}"
+                      onclick="marcarPagoNaFolha('${e.id}', ${!e.pago})">${e.pago ? '✓ pago' : 'marcar pago'}</button>
                   </div>
                 </div>`;
-              }).join('')}
-            </div>
+              };
 
-            <button class="btn secondary" style="margin-top:14px;padding:11px;font-size:12px;" onclick="copiarFolhaDaPessoa('${escJs(nome)}')">⧉ Copiar o resumo de ${esc(nome)}</button>
+              return `
+              ${filmagens.length ? `<div style="margin-top:14px;">
+                <div class="meta" style="font-weight:800;color:var(--yellow);">🎥 FILMAGENS AVULSAS — ${brl(c.filmagem)}</div>
+                ${filmagens.map(e=>linha(e,'filmagem')).join('')}
+              </div>` : ''}
+              ${ubers.length ? `<div style="margin-top:18px;">
+                <div class="meta" style="font-weight:800;color:var(--yellow2);">🚗 UBER / DESLOCAMENTO — ${brl(c.uber)}</div>
+                ${ubers.map(e=>linha(e,'uber')).join('')}
+              </div>` : ''}`;
+            })()}
+
+            ${c.semComprovante ? '<div class="desc" style="margin-top:12px;background:var(--redbg);border-left:3px solid var(--red);padding:10px 12px;border-radius:8px;">⚠️ <b>'+c.semComprovante+' corrida sem comprovante.</b> Cobra o link do Drive antes de pagar — sem ele não há como conferir o valor depois.</div>' : ''}
+
+            <div class="btnrow" style="margin-top:16px;">
+              <button class="btn secondary" style="padding:11px;font-size:12px;" onclick="copiarFolhaDaPessoa('${escJs(nome)}')">⧉ Copiar resumo</button>
+              ${aPagar ? `<button class="btn green" style="padding:11px;font-size:12px;" onclick="pagarTudoDaPessoa('${escJs(nome)}')">✓ Paguei tudo (${brl(aPagar)})</button>` : ''}
+            </div>
           </div>`;
         }).join('')}
       </div>`;
@@ -18249,6 +18469,39 @@ Observações do cliente: ${l.observacoes||'—'}`;
   let __equipeAberta = null;
 
   /* Pra mandar no WhatsApp da pessoa no dia 15, sem digitar nada. */
+  /* Marcar pago direto da folha — era só isso que faltava pro Chris
+     fechar o dia 15 sem sair da tela. */
+  window.marcarPagoNaFolha = async function(id, pago){
+    try{
+      await updateDoc(doc(db,'pagamentos_extra', id), {
+        pago, pagoPor: pago ? (usuarioAtual||'?') : '', pagoEm: pago ? new Date().toISOString() : ''
+      });
+      mostrarToast(pago ? 'Marcado como pago.' : 'Voltou pra "a pagar".');
+      renderFinanceiro();
+    }catch(e){ console.error('Falha ao marcar pago:', e); mostrarToast('Não consegui marcar agora.', 'erro'); }
+  };
+
+  window.pagarTudoDaPessoa = async function(nome){
+    const mes = new Date().toISOString().slice(0,7);
+    let lista = [];
+    try{
+      const snap = await getDocs(collection(db,'pagamentos_extra'));
+      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.mes === mes && (v.filmmaker||'') === nome && !v.pago) lista.push({id:d.id, ...v}); });
+    }catch(e){ console.error(e); mostrarToast('Não consegui ler os lançamentos.', 'erro'); return; }
+    if(!lista.length){ mostrarToast('Nada em aberto pra ' + nome + '.'); return; }
+    const c = somarExtras(lista);
+    if(c.semComprovante && !confirm(c.semComprovante + ' corrida(s) de Uber estão SEM COMPROVANTE.\n\nMarcar como pago assim mesmo? Depois não vai ter como conferir esses valores.')) return;
+    if(!confirm('Marcar como pago tudo de ' + nome + '?\n\n' + lista.length + ' lançamento(s) · ' + brl(c.total) +
+      '\n🎥 ' + brl(c.filmagem) + ' em filmagens\n🚗 ' + brl(c.uber) + ' em deslocamento')) return;
+    for(const e of lista){
+      try{ await updateDoc(doc(db,'pagamentos_extra', e.id), { pago:true, pagoPor: usuarioAtual||'?', pagoEm: new Date().toISOString() }); }
+      catch(err){ console.error('Falha em ' + e.id, err); }
+    }
+    registrarLogAutomacao('folha_paga', '', nome + ' — ' + brl(c.total) + ' em ' + lista.length + ' lançamento(s)');
+    mostrarToast(brl(c.total) + ' marcados como pagos pra ' + nome + '.');
+    renderFinanceiro();
+  };
+
   window.copiarFolhaDaPessoa = async function(nome){
     try{
       const mes = new Date().toISOString().slice(0,7);
@@ -18265,8 +18518,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
           const partes = [];
           if(Number(e.valorExtra)) partes.push('filmagem ' + brl(Number(e.valorExtra)));
           else if(cc.semValor) partes.push('filmagem sem valor definido');
-          if(Number(e.valorUber)) partes.push('Uber ' + brl(Number(e.valorUber)));
+          if(Number(e.valorUber)) partes.push('Uber ' + brl(Number(e.valorUber)) + ' (ida ' + brl(Number(e.uberIda)||0) + ' + volta ' + brl(Number(e.uberVolta)||0) + ')');
           return '• ' + (e.data ? formatarDataBR(e.data) + ' — ' : '') + (e.clienteNome||'sem cliente') +
+                 ' [' + (tipoDoExtra(e) === 'mensalista' ? 'mensalista' : 'avulso') + ']' +
                  ': ' + partes.join(' + ') + ' = ' + brl(cc.total) + (e.pago ? ' (já pago)' : '');
         }).join('\n');
       const txt = '*Extras de ' + nome + ' — ' + nomeMes(mes) + '*\n\n' + linhas +
@@ -18455,6 +18709,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
   window.htmlResumoExtrasGestao = async function(){
     try{
+      await mapaTipoCliente();
       const mes = new Date().toISOString().slice(0,7);
       const snap = await getDocs(collection(db,'pagamentos_extra'));
       const doMes = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.mes === mes) doMes.push({id:d.id, ...v}); });

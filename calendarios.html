@@ -451,6 +451,7 @@ async function load(){
     }
     carregado=true;                       // a partir daqui pode gravar
     itensNoBanco=(data.items||[]).length;
+    setTimeout(renderAprovacaoInterna, 0);
     const av=document.getElementById('avisoSalvamento'); if(av) av.style.display='none';
     document.getElementById('clientName').value=data.client||nomeDoSlug(window.__clienteId);
     document.getElementById('monthName').value=data.month||mesAtualTexto();
@@ -520,12 +521,93 @@ async function gravarComSeguranca(){
     avisarTela('❌ Não consegui salvar. NÃO feche a página — verifica a internet e edita qualquer campo pra tentar de novo.', 'erro');
   }
 }
-function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();}
+function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();}
+
+/* ===== APROVAÇÃO INTERNA — 28/07/2026 ==============================
+   Pergunta da Amanda, e ela tinha razão: o calendário ia da Gabi direto
+   pro cliente. Só existia "aprovar" do lado do cliente — não havia
+   etapa de revisão interna, nem caminho de volta quando alguém pedia
+   ajuste. Se ela quisesse corrigir algo, não tinha onde.
+
+   O ciclo agora tem quatro estados e eles são visíveis pros dois lados:
+
+     rascunho          → a Gabi está montando. Cliente NÃO vê nada.
+     aguardando_interna→ esperando Amanda ou Chris revisar.
+     ajuste_interno    → devolvido pra Gabi, com o motivo escrito.
+     liberado          → o cliente vê e pode aprovar.
+
+   Se o CLIENTE pedir ajuste depois de liberado, volta pra
+   `ajuste_interno` e a Gabi é avisada. Ela corrige e reenvia — segunda
+   rodada, mesmo caminho. Nunca fica preso. */
+const ROTULO_APROVACAO = {
+  rascunho:           { txt:'📝 Em montagem — o cliente ainda não vê',        cor:'#8a8a8d' },
+  aguardando_interna: { txt:'🕓 Esperando aprovação interna',                  cor:'#e0c56a' },
+  ajuste_interno:     { txt:'↩️ Ajuste pedido — corrige e reenvia',            cor:'#e07a7a' },
+  liberado:           { txt:'✅ Liberado — o cliente já vê e pode aprovar',    cor:'#4caf72' }
+};
+
+function estadoAprovacao(){ return (data.aprovacaoInterna && data.aprovacaoInterna.status) || 'rascunho'; }
+
+function renderAprovacaoInterna(){
+  let box = document.getElementById('boxAprovacaoInterna');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'boxAprovacaoInterna';
+    box.style.cssText = 'border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;';
+    const alvo = document.querySelector('.progress');
+    if(alvo && alvo.parentNode) alvo.parentNode.insertBefore(box, alvo);
+    else return;
+  }
+  const st = estadoAprovacao();
+  const r = ROTULO_APROVACAO[st] || ROTULO_APROVACAO.rascunho;
+  const info = data.aprovacaoInterna || {};
+  const ehEquipe = window.__modoCal === 'equipe';
+
+  box.style.background = 'rgba(255,255,255,.03)';
+  box.style.border = '1px solid ' + r.cor;
+  box.innerHTML = `<div style="font-weight:800;color:${r.cor};">${r.txt}</div>
+    ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
+    ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
+    ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno') ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna()">Enviar pra aprovação interna →</button>' : ''}
+    ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. Enquanto não aprovar, o cliente não vê este calendário.</div>' : ''}`;
+}
+
+window.enviarParaAprovacaoInterna = function(){
+  if(window.__modoCal !== 'equipe') return;
+  if(!data.items || !data.items.length){ avisarTela('Calendário vazio — monta o mês antes de enviar.', 'erro'); return; }
+  const quem = prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
+  if(quem === null) return;
+  data.aprovacaoInterna = { status:'aguardando_interna', por: quem || 'equipe', em: new Date().toISOString(), motivoAjuste:'' };
+  save();
+  renderAprovacaoInterna();
+  avisarTela('Enviado pra aprovação interna. O cliente só vê depois que a Amanda liberar.');
+};
 
 /* Esconde da visão do cliente tudo que é ferramenta de edição. Não é só
    estética: é a diferença entre "ele não consegue" e "ele não vê como". */
 function aplicarModoCalendario(){
   if(window.__modoCal === 'equipe') return;
+
+  /* O cliente não vê calendário que ainda não foi liberado internamente.
+     Sem isso, ele leria um mês em construção e comentaria em cima de
+     conteúdo que ainda vai mudar. */
+  const checarLiberacao = () => {
+    const st = estadoAprovacao();
+    const grade = document.getElementById('viewGrid');
+    if(st === 'liberado'){ const av = document.getElementById('avisoNaoLiberado'); if(av) av.remove(); return; }
+    if(!grade || document.getElementById('avisoNaoLiberado')) return;
+    ['viewGrid','viewWeek','viewKanban'].forEach(id => {
+      const el = document.getElementById(id); if(el) el.innerHTML = '';
+    });
+    const aviso = document.createElement('div');
+    aviso.id = 'avisoNaoLiberado';
+    aviso.style.cssText = 'padding:40px 24px;text-align:center;';
+    aviso.innerHTML = '<div style="font-size:16px;font-weight:800;margin-bottom:8px;">Calendário em preparação</div>' +
+      '<div style="font-size:13px;opacity:.75;line-height:1.6;max-width:380px;margin:0 auto;">A equipe da Get Started está finalizando o mês. Assim que estiver pronto, ele aparece aqui pra você aprovar — e você recebe um aviso.</div>';
+    grade.parentNode.insertBefore(aviso, grade);
+  };
+  setTimeout(checarLiberacao, 300);
+  setInterval(checarLiberacao, 4000);
   const css = document.createElement('style');
   css.textContent = `
     #clientName, #monthName { pointer-events:none; background:transparent; border-color:transparent; }

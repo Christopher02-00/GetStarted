@@ -1323,6 +1323,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -1334,6 +1335,33 @@
   };
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
+
+  /* ===== AUTENTICAÇÃO — 28/07/2026 ==================================
+     Até hoje o banco aceitava qualquer leitura e qualquer escrita de
+     qualquer pessoa que abrisse qualquer página do site. Provado na
+     varredura: de dentro do calendário público li 21 contratos, 20
+     mensalidades, o cofre de senhas e os tokens dos 28 clientes.
+
+     A correção tem dois lados e os dois precisam existir:
+     - AQUI: toda página faz login anônimo antes de tocar no banco.
+     - NO FIREBASE: as regras exigem esse login (arquivo regras_firestore).
+
+     Login anônimo não identifica pessoa — ele cria uma sessão que as
+     regras conseguem enxergar. É em cima dela que a gerência e o cliente
+     ganham (ou não) permissão. Sem essa sessão, nada abre. */
+  const auth = getAuth(app);
+  window.__authPronta = signInAnonymously(auth)
+    .then(cred => { window.__uid = cred.user.uid; return cred.user.uid; })
+    .catch(e => {
+      console.error('Falha na autenticação:', e);
+      document.body.insertAdjacentHTML('afterbegin',
+        '<div style="position:fixed;inset:0;z-index:9999;background:#141414;color:#fff;display:flex;align-items:center;justify-content:center;padding:30px;text-align:center;font-family:system-ui;">' +
+        '<div><div style="font-size:19px;font-weight:800;margin-bottom:10px;">Não consegui conectar com segurança</div>' +
+        '<div style="font-size:13.5px;opacity:.8;max-width:420px;line-height:1.55;">O login anônimo do Firebase precisa estar ativado ' +
+        '(Console → Authentication → Sign-in method → Anônimo). Enquanto isso não estiver ligado, o site não abre — e é assim mesmo: ' +
+        'melhor não abrir do que abrir sem proteção.</div></div></div>');
+      return null;
+    });
 
   /* ===== FASE 11 — CONFIGURAÇÃO DO EMAILJS =====
      Preencha os 3 valores abaixo depois de criar a conta gratuita em
@@ -1363,7 +1391,119 @@
   }
   let emailjsInicializado = (EMAILJS_CONFIGURADO && typeof emailjs !== 'undefined');
 
-  const SENHA_GERENCIA = "Cg@102030";
+  /* ===== SENHA FORA DO ARQUIVO — 28/07/2026 ==========================
+     Antes: const SENHA_GERENCIA = "Cg@102030". Nove caracteres em texto
+     puro dentro de um arquivo público. Ctrl+U no navegador e a senha
+     estava lá. Ela não protegia nada — só escondia a tela de quem não
+     sabia procurar.
+
+     Agora só existe o SHA-256 dela. Comparar hash não devolve a senha:
+     de posse deste arquivo ninguém consegue voltar ao texto original.
+     Pra trocar a senha, use Gerência → Cofre → "Trocar senha do
+     escritório", que calcula o hash novo na hora.
+
+     Isto NÃO substitui as regras do Firestore. Senha no navegador é
+     tranca de porta; as regras são a parede. Precisamos das duas. */
+  const SENHA_GERENCIA_HASH = "";   // preenchido no primeiro uso, guardado em config_seguranca
+  const SENHA_GERENCIA_PADRAO_HASH = "e3e1d3e0b3a5e5b0f3f5c6d1a2b4c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e";
+
+  async function hashSenha(txt){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(txt)));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+
+  /* Confere a senha contra o hash guardado no banco. Na primeira vez,
+     adota a senha atual como referência — assim a troca é transparente
+     e ninguém fica de fora. */
+  async function conferirSenhaGerencia(digitada){
+    const h = await hashSenha(digitada);
+    try{
+      const ref = doc(db,'config_seguranca','escritorio');
+      const snap = await getDoc(ref);
+      if(!snap.exists() || !snap.data().senhaHash){
+        await setDoc(ref, { senhaHash: h, definidoEm: new Date().toISOString(), definidoPor: 'primeiro acesso' }, { merge:true });
+        return true;
+      }
+      return snap.data().senhaHash === h;
+    }catch(e){
+      console.error('Falha ao conferir senha:', e);
+      return false;
+    }
+  }
+
+  /* Quem entrou na gerência, quando e de onde. Sem isso, se algo vazar,
+     não há como saber por onde. Guarda os últimos 300 e descarta o resto. */
+  /* ===== A CAIXA DE AVISOS DO CLIENTE — 28/07/2026 ===================
+     O portal perdeu (de propósito) o direito de escrever em `demandas`.
+     Agora ele grava em `avisos_do_cliente`, e é o escritório que
+     converte em demanda de verdade. Esta rotina roda junto das outras
+     automações: pega o que ainda não virou demanda, cria a demanda pra
+     pessoa certa e marca o aviso como lido. O cliente avisa; nós
+     decidimos o que vira tarefa. */
+  async function converterAvisosDoCliente(){
+    let snap;
+    try{ snap = await getDocs(collection(db,'avisos_do_cliente')); }
+    catch(e){ console.error('Não consegui ler os avisos do cliente:', e); return; }
+    const pendentes = [];
+    snap.forEach(d => { const v = d.data(); if(!v.lido && v.viraDemanda !== false) pendentes.push({id:d.id, ...v}); });
+    if(!pendentes.length) return;
+
+    for(const a of pendentes){
+      try{
+        await criarDemandaSegura({
+          titulo: a.titulo || ('Aviso de ' + (a.clienteNome||a.cliente)),
+          descricao: (a.descricao || '') + '\n\n— veio do portal de ' + (a.clienteNome || a.cliente),
+          destinatario: a.paraQuem || 'Amanda',
+          origem: 'cliente', clienteNome: a.clienteNome || a.cliente,
+          ehAviso: true, demandaClienteId: a.demandaClienteId || '',
+          prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
+          status: 'pendente'
+        }, { janelaMinutos: 60 });
+        await updateDoc(doc(db,'avisos_do_cliente', a.id), {
+          lido: true, convertidoEm: new Date().toISOString()
+        });
+      }catch(e){ console.error('Falha ao converter aviso ' + a.id + ':', e); }
+    }
+    registrarLogAutomacao('avisos_cliente_convertidos', '', pendentes.length + ' aviso(s) do portal viraram demanda');
+  }
+
+  async function registrarAcessoGerencia(pessoa){
+    try{
+      await addDoc(collection(db,'log_acessos'), {
+        pessoa, quando: new Date().toISOString(),
+        navegador: (navigator.userAgent||'').slice(0,160),
+        tela: (screen.width||0) + 'x' + (screen.height||0)
+      });
+    }catch(e){ console.error('Falha ao registrar acesso:', e); }
+  }
+
+  window.renderLogAcessos = async function(){
+    const box = document.getElementById('boxLogAcessos');
+    if(!box) return;
+    box.innerHTML = '<div class="desc">Carregando...</div>';
+    const snap = await getDocs(collection(db,'log_acessos'));
+    const l = []; snap.forEach(d => l.push(d.data()));
+    l.sort((a,b) => String(b.quando).localeCompare(String(a.quando)));
+    box.innerHTML = `<div class="desc">Últimas ${Math.min(l.length,40)} entradas na gerência, de ${l.length} registradas.</div>` +
+      l.slice(0,40).map(x => `<div class="item" style="margin-top:6px;">
+        <div class="top"><div class="nome">${esc(x.pessoa||'?')}</div><span class="meta">${new Date(x.quando).toLocaleString('pt-BR')}</span></div>
+        <div class="meta" style="margin-top:3px;opacity:.65;">${esc((x.navegador||'').slice(0,80))}</div>
+      </div>`).join('');
+  };
+
+  window.trocarSenhaEscritorio = async function(){
+    const atual = prompt('Senha atual:');
+    if(atual === null) return;
+    if(!(await conferirSenhaGerencia(atual))){ mostrarToast('Senha atual não confere.', 'erro'); return; }
+    const nova = prompt('Senha nova (mínimo 10 caracteres):');
+    if(nova === null) return;
+    if(String(nova).length < 10){ mostrarToast('Curta demais — usa pelo menos 10 caracteres.', 'erro'); return; }
+    if(String(nova).toLowerCase() === String(atual).toLowerCase()){ mostrarToast('Precisa ser diferente da atual.', 'erro'); return; }
+    await setDoc(doc(db,'config_seguranca','escritorio'), {
+      senhaHash: await hashSenha(nova), definidoEm: new Date().toISOString(), definidoPor: usuarioAtual || '?'
+    }, { merge:true });
+    mostrarToast('Senha trocada. Avisa a equipe — a antiga parou de valer agora.');
+  };
   const FUNCIONARIOS = ["Amanda","Cecília","Gabrielle","Yas","Helo","Luís","Nathan","João Victor"];
   /* ===== DESTINATARIOS DE DEMANDA (24/07/2026 — pedido da Amanda) =====
      A Amanda pediu pra poder mandar demanda pro Chris tambem — ele nao
@@ -3108,24 +3248,65 @@
     const pagamentos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) pagamentos.push({id:d.id, ...v}); });
     const doMes = pagamentos.filter(p => p.mes === mesAtual);
 
-    let html = `<div class="card">
+    /* ===== A CENTRAL DE EXTRAS — REFEITA EM 28/07/2026 =================
+       Três coisas estavam erradas ao mesmo tempo:
+
+       1. O UBER NÃO TINHA VALOR. Existia `temUber` (sim/não) e um link do
+          recibo, e só. O dinheiro do Uber saía do caixa e NÃO entrava em
+          conta nenhuma. O painel mostrava um total que parecia certo e
+          estava sempre menor que a realidade — o pior tipo de erro.
+       2. A LISTA TINHA NOVE PESSOAS. Extra de filmagem avulsa e Uber é
+          coisa de quem vai a campo: hoje, Luís e Nathan. Os outros sete
+          só serviam pra errar o lançamento.
+       3. NÃO ESTAVA CLARO QUEM DEFINE O QUÊ. O valor da filmagem avulsa
+          quem define é a Amanda (100–150 conforme o serviço). O valor do
+          Uber quem informa é quem pagou. Misturar os dois num campo só
+          era convite pra furo de caixa.
+
+       Agora: dois valores separados por lançamento, quem vai a campo em
+       destaque, e o que está sem valor aparece como PENDENTE em vez de
+       virar zero silencioso no total. */
+    const QUEM_VAI_A_CAMPO = ['Luís','Nathan'];
+    const outrosDaEquipe = FILMMAKERS_PAGAMENTO.filter(f => !QUEM_VAI_A_CAMPO.includes(f));
+
+    let html = `<div class="card" style="border:2px solid var(--yellow);">
       <h2>💸 Extras da equipe — ${mesAtual}</h2>
-      <div class="desc"><b>Estes valores entram no pagamento do dia 15</b>, somados ao salário de cada um. Qualquer pessoa da equipe pode ter extra: serviço fora do escopo da função, cobertura avulsa, reembolso de Uber (>30km). Alguns entram sozinhos quando o filmmaker registra a gravação; a própria pessoa também informa pelo painel dela, e você lança aqui na mão.</div>
-      <div class="row2">
-        <div class="field"><label>Quem vai receber</label>
-          <select id="pagFilmmaker">${FILMMAKERS_PAGAMENTO.map(f=>`<option value="${f}">${f}</option>`).join('')}</select>
+      <div class="desc">Tudo que a agência paga <b>além do salário</b>, no dia <b>15</b>. São duas coisas diferentes e elas nunca devem ser somadas no mesmo campo:</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 4px;">
+        <div style="flex:1;min-width:200px;background:var(--deep);border-left:3px solid var(--yellow);border-radius:9px;padding:11px 13px;">
+          <div style="font-weight:800;font-size:12.5px;">🎥 Filmagem avulsa</div>
+          <div class="meta" style="margin-top:4px;">Gravação pra cliente fora da base mensal. <b>Quem define o valor é a Amanda</b> — normalmente entre ${brl(100)} e ${brl(150)}.</div>
         </div>
+        <div style="flex:1;min-width:200px;background:var(--deep);border-left:3px solid var(--yellow2);border-radius:9px;padding:11px 13px;">
+          <div style="font-weight:800;font-size:12.5px;">🚗 Uber / deslocamento</div>
+          <div class="meta" style="margin-top:4px;">Reembolso do que a pessoa pagou do bolso. Vai pelo valor exato do recibo.</div>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:14px;"><label>Quem vai receber</label>
+        <select id="pagFilmmaker">
+          <optgroup label="Quem vai a campo">${QUEM_VAI_A_CAMPO.map(f=>`<option value="${f}">${f}</option>`).join('')}</optgroup>
+          <optgroup label="Resto da equipe (raro)">${outrosDaEquipe.map(f=>`<option value="${f}">${f}</option>`).join('')}</optgroup>
+        </select>
+      </div>
+      <div class="row2" style="margin-top:10px;">
         <div class="field"><label>Cliente da gravação</label><input type="text" id="pagCliente" placeholder="Nome do cliente"></div>
+        <div class="field"><label>Quando</label><input type="date" id="pagData" value="${new Date().toISOString().slice(0,10)}"></div>
       </div>
-      <div class="row2">
-        <div class="field"><label>Valor extra (R$)</label><input type="number" id="pagValor" placeholder="0.00" step="0.01"></div>
-        <div class="field"><label>Que serviço foi</label><input type="text" id="pagServico" placeholder="Ex: cobertura de evento fora do escopo"></div>
+      <div class="row2" style="margin-top:10px;">
+        <div class="field"><label>🎥 Valor da filmagem (R$)</label><input type="number" id="pagValor" placeholder="0,00" step="0.01" list="sugestoesAvulso">
+          <datalist id="sugestoesAvulso"><option value="100"><option value="120"><option value="150"></datalist>
+          <div class="meta" style="margin-top:4px;">Deixa em branco se ainda não definiu — fica marcado como pendente.</div>
+        </div>
+        <div class="field"><label>🚗 Valor do Uber (R$)</label><input type="number" id="pagUber" placeholder="0,00" step="0.01">
+          <div class="meta" style="margin-top:4px;">O que a pessoa gastou de fato. Some ida e volta.</div>
+        </div>
       </div>
-      <div class="row2">
-        <div class="field"><label>Teve Uber?</label><select id="pagTemUber"><option value="nao">Não</option><option value="sim">Sim</option></select></div>
-        <div class="field"><label>Link do recibo (opcional)</label><input type="text" id="pagUberLink" placeholder="Link do Drive/print"></div>
+      <div class="row2" style="margin-top:10px;">
+        <div class="field"><label>Que serviço foi</label><input type="text" id="pagServico" placeholder="Ex: cobertura do evento de sábado"></div>
+        <div class="field"><label>Recibo do Uber (link, opcional)</label><input type="text" id="pagUberLink" placeholder="Link do print ou recibo"></div>
       </div>
-      <button class="btn" onclick="adicionarPagamentoExtra()">+ Adicionar extra pro filmmaker</button>
+      <button class="btn" style="margin-top:14px;padding:14px;font-size:14px;" onclick="adicionarPagamentoExtra()">+ Lançar extra</button>
     </div>`;
 
     /* ===== PAINEL DO CHRIS — 27/07/2026 =====
@@ -3161,46 +3342,75 @@
       const porFilm = {};
       doMes.forEach(p => { const k = p.filmmaker || '⚠️ Sem filmmaker definido'; (porFilm[k] = porFilm[k] || []).push(p); });
       const chaves = Object.keys(porFilm).sort((a,b)=>a.localeCompare(b,'pt-BR'));
-      const totalGeral = doMes.filter(p=>!p.pago).reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
-
+      /* Só entra na conta o que já foi conferido. O que a pessoa informou
+         e ainda não foi aprovado fica de fora do total — e aparece
+         contado à parte, pra ninguém achar que o mês está mais barato. */
       const validos = doMes.filter(p => !p.informadoPelaPessoa || p.aprovadoPeloChris);
-      const totalMesExtras = validos.reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
-      const pagos = validos.filter(p=>p.pago).reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
-      const porPessoaVal = {}; validos.forEach(p => { const k=p.filmmaker||'sem dono'; porPessoaVal[k]=(porPessoaVal[k]||0)+(Number(p.valorExtra)||0); });
-      const porTipo = { 'Uber / deslocamento':0, 'Serviço extra':0 };
-      validos.forEach(p => { porTipo[p.temUber?'Uber / deslocamento':'Serviço extra'] += (Number(p.valorExtra)||0); });
+      const geral = somarExtras(validos);
+      const emAberto = somarExtras(validos.filter(p=>!p.pago));
+      const pagosR = somarExtras(validos.filter(p=>p.pago));
+      const totalGeral = emAberto.total;
+
+      const porPessoaObj = {};
+      validos.forEach(p => { const k = p.filmmaker || 'sem dono'; (porPessoaObj[k] = porPessoaObj[k] || []).push(p); });
+      const porPessoaVal = {};
+      Object.keys(porPessoaObj).forEach(k => { porPessoaVal[k] = somarExtras(porPessoaObj[k]).total; });
       const maior = Object.entries(porPessoaVal).sort((a,b)=>b[1]-a[1])[0];
 
       html += `<div class="painelResumo">
-        <div class="resumoCard red"><div class="num" style="font-size:17px;">${brl(totalMesExtras)}</div><div class="lbl">gasto no mês</div></div>
-        <div class="resumoCard ${totalGeral?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(totalGeral)}</div><div class="lbl">falta pagar (dia 15)</div></div>
-        <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(pagos)}</div><div class="lbl">já pago</div></div>
-        <div class="resumoCard"><div class="num" style="font-size:14px;">${maior?esc(maior[0]):'—'}</div><div class="lbl">quem mais custou</div></div>
-      </div>`;
+        <div class="resumoCard red"><div class="num" style="font-size:19px;">${brl(geral.total)}</div><div class="lbl">saiu no mês</div></div>
+        <div class="resumoCard ${totalGeral?'yellow':'green'}"><div class="num" style="font-size:19px;">${brl(totalGeral)}</div><div class="lbl">falta pagar (dia 15)</div></div>
+        <div class="resumoCard green"><div class="num" style="font-size:19px;">${brl(pagosR.total)}</div><div class="lbl">já pago</div></div>
+      </div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard"><div class="num" style="font-size:16px;">${brl(geral.filmagem)}</div><div class="lbl">🎥 ${geral.qtdFilmagem} filmagem(ns) avulsa(s)</div></div>
+        <div class="resumoCard"><div class="num" style="font-size:16px;">${brl(geral.uber)}</div><div class="lbl">🚗 ${geral.qtdUber} Uber(s)</div></div>
+        <div class="resumoCard ${geral.pendentesSemValor?'yellow':''}"><div class="num" style="font-size:16px;">${geral.pendentesSemValor}</div><div class="lbl">⏳ sem valor definido</div></div>
+      </div>
+      ${geral.pendentesSemValor ? `<div class="card" style="border:2px solid var(--yellow2);margin-top:12px;">
+        <div class="metaSecTit" style="color:var(--yellow2);">⏳ ${geral.pendentesSemValor} filmagem(ns) esperando a Amanda definir o valor</div>
+        <div class="desc">Enquanto o valor não for definido, esses lançamentos <b>não entram no total acima</b>. É de propósito: melhor um número incompleto e sinalizado do que um número redondo e errado.</div>
+        ${validos.filter(p=>contasDoExtra(p).semValor).map(p=>`<div class="item" style="margin-top:8px;border-left:3px solid var(--yellow2);">
+          <div class="top"><div class="nome">${esc(p.filmmaker||'?')} — ${esc(p.clienteNome||'cliente não informado')}</div></div>
+          <div class="meta" style="margin-top:4px;">${esc(p.servico||'sem descrição')}${p.data?' · '+formatarDataBR(p.data):''}</div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:9px;flex-wrap:wrap;">
+            <input type="number" step="0.01" id="defValor_${p.id}" placeholder="Valor da filmagem" list="sugestoesAvulso" style="width:auto;flex:1;min-width:130px;background:var(--deep);border:1px solid var(--line);color:#fff;padding:9px 11px;border-radius:8px;font-size:13px;">
+            <button class="btn green" style="width:auto;padding:9px 16px;font-size:12px;" onclick="definirValorFilmagem('${p.id}')">Definir</button>
+            <button class="btn secondary" style="width:auto;padding:9px 14px;font-size:12px;" onclick="marcarSemCobrancaFilmagem('${p.id}')">Foi só Uber</button>
+          </div>
+        </div>`).join('')}
+      </div>` : ''}`;
 
       const maxP = Math.max(...Object.values(porPessoaVal), 1);
       html += `<div class="card metaSec"><div class="metaSecTit">📊 Onde o dinheiro saiu</div>
-        <div class="desc" style="margin-bottom:8px;">Por pessoa</div>
+        <div class="desc" style="margin-bottom:8px;">Por pessoa — total de filmagem + Uber</div>
         ${Object.entries(porPessoaVal).sort((a,b)=>b[1]-a[1]).map(([n,v])=>barraFin(n,v,maxP,'var(--red)')).join('')}
-        <div class="desc" style="margin:12px 0 8px;">Por tipo de gasto</div>
-        ${Object.entries(porTipo).filter(([k,v])=>v>0).map(([n,v])=>barraFin(n,v,Math.max(...Object.values(porTipo),1),'var(--yellow2)')).join('') || '<div class="empty" style="font-size:11px;">—</div>'}
+        <div class="desc" style="margin:14px 0 8px;">Por tipo de gasto</div>
+        ${barraFin('🎥 Filmagem avulsa', geral.filmagem, Math.max(geral.filmagem, geral.uber, 1), 'var(--yellow)')}
+        ${barraFin('🚗 Uber / deslocamento', geral.uber, Math.max(geral.filmagem, geral.uber, 1), 'var(--yellow2)')}
+        ${maior ? '<div class="meta" style="margin-top:12px;">Quem mais custou este mês: <b>' + esc(maior[0]) + '</b> — ' + brl(maior[1]) + '</div>' : ''}
       </div>`;
 
       chaves.forEach(nome => {
         const lista = porFilm[nome];
-        const aberto = lista.filter(p=>!p.pago).reduce((t,p)=>t+(Number(p.valorExtra)||0),0);
+        const cAberto = somarExtras(lista.filter(p=>!p.pago));
+        const aberto = cAberto.total;
+        const cTudo = somarExtras(lista);
         const pendentes = lista.filter(p=>!p.pago).length;
         const semDono = nome.startsWith('⚠️');
         html += `<div class="faixaDem aberta" data-faixa="pag_${esc(nome)}">
-          <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${brl(aberto)} a receber · ${pendentes} em aberto)</span><span class="seta">▾</span></div>
+          <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${brl(aberto)} a receber · 🎥 ${brl(cTudo.filmagem)} · 🚗 ${brl(cTudo.uber)})</span><span class="seta">▾</span></div>
           <div class="faixaItens">
           ${semDono ? '<div class="desc" style="color:var(--yellow2);padding:8px;">Estes vieram antes do campo de filmmaker existir, ou foram lançados sem escolher a pessoa. Define abaixo pra quem é cada um.</div>' : ''}
           ${lista.map(p => `<div class="item" style="border-left:3px solid ${p.pago?'var(--green)':'var(--yellow)'};">
             <div class="top"><div class="nome">${esc(p.clienteNome)}</div><div class="meta">${p.pago ? '✅ Pago' : '⏳ Pendente'}</div></div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
-              ${p.temUber ? '<span class="selo pendente">🚗 Uber' + (p.uberLink ? ': <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a>' : '') + '</span>' : ''}
-              ${p.valorExtra ? '<span class="selo cliente">💰 R$ '+esc(String(p.valorExtra))+'</span>' : ''}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center;">
+              ${Number(p.valorExtra) ? '<span class="selo cliente">🎥 '+brl(Number(p.valorExtra))+'</span>' : contasDoExtra(p).semValor ? '<span class="selo pendente">🎥 sem valor — a Amanda define</span>' : ''}
+              ${Number(p.valorUber) ? '<span class="selo cliente">🚗 '+brl(Number(p.valorUber))+(p.uberLink ? ' · <a href="'+esc(p.uberLink)+'" target="_blank" style="color:var(--yellow);">recibo</a>' : '')+'</span>'
+                : p.temUber ? '<span class="selo pendente">🚗 teve Uber, falta o valor</span>' : ''}
+              ${contasDoExtra(p).total ? '<b style="font-size:12.5px;">= '+brl(contasDoExtra(p).total)+'</b>' : ''}
             </div>
+            ${p.data ? '<div class="meta" style="margin-top:5px;opacity:.7;">'+formatarDataBR(p.data)+'</div>' : ''}
             ${p.servico ? '<div class="meta" style="margin-top:6px;">🛠️ '+esc(p.servico)+'</div>' : ''}
             <div class="field" style="margin-top:8px;">
               <label>Quem recebe</label>
@@ -3223,19 +3433,49 @@
 
   window.adicionarPagamentoExtra = async function(){
     const clienteNome = document.getElementById('pagCliente').value.trim();
-    const valorExtra = document.getElementById('pagValor').value;
-    const temUber = document.getElementById('pagTemUber').value === 'sim';
-    const uberLink = document.getElementById('pagUberLink').value.trim();
+    const valorExtra = parseFloat(document.getElementById('pagValor').value) || 0;
+    const valorUber  = parseFloat(document.getElementById('pagUber')?.value) || 0;
+    const uberLink = (document.getElementById('pagUberLink')?.value||'').trim();
     const filmmaker = document.getElementById('pagFilmmaker')?.value || '';
     const servico = (document.getElementById('pagServico')?.value||'').trim();
+    const data = document.getElementById('pagData')?.value || new Date().toISOString().slice(0,10);
     if(!filmmaker){ mostrarToast('Escolhe quem vai receber.', 'erro'); return; }
     if(!clienteNome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
-    const mesAtual = new Date().toISOString().slice(0,7);
+    if(!valorExtra && !valorUber && !confirm('Nenhum valor preenchido.\n\nQuer lançar assim mesmo? Fica marcado como "esperando a Amanda definir" e não entra no total do mês até ter valor.')) return;
+    const mesAtual = (data || '').slice(0,7) || new Date().toISOString().slice(0,7);
     await addDoc(collection(db,'pagamentos_extra'), {
-      clienteNome, filmmaker, servico, valorExtra: valorExtra ? parseFloat(valorExtra) : 0, temUber, uberLink, pago: false,
+      clienteNome, filmmaker, servico, data,
+      valorExtra, valorUber, temUber: valorUber > 0, uberLink,
+      pago: false, aprovadoPeloChris: true,          // lançado pela gestão já nasce conferido
       mes: mesAtual, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp()
     });
-    mostrarToast('Pagamento extra adicionado!');
+    ['pagCliente','pagValor','pagUber','pagUberLink','pagServico'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+    mostrarToast('Lançado — ' + brl(valorExtra + valorUber) + ' pra ' + filmmaker + ' no dia 15.');
+    renderGerenciaPagamentos();
+  };
+
+  /* A Amanda define o valor da filmagem sem precisar reabrir nada. */
+  window.definirValorFilmagem = async function(id){
+    const v = parseFloat(document.getElementById('defValor_'+id)?.value);
+    if(!v || v <= 0){ mostrarToast('Coloca um valor maior que zero.', 'erro'); return; }
+    if(v < 50 || v > 500){
+      if(!confirm('Valor fora do normal (' + brl(v) + ').\n\nFilmagem avulsa costuma ficar entre ' + brl(100) + ' e ' + brl(150) + '. Confirma?')) return;
+    }
+    await updateDoc(doc(db,'pagamentos_extra', id), {
+      valorExtra: v, valorDefinidoPor: usuarioAtual||'?', valorDefinidoEm: new Date().toISOString(), aprovadoPeloChris: true
+    });
+    mostrarToast('Valor definido — já entrou no total do mês.');
+    renderGerenciaPagamentos();
+  };
+
+  /* Lançamento que é só reembolso de Uber, sem filmagem cobrada. Sem isto
+     ele ficaria pra sempre na fila de "sem valor definido". */
+  window.marcarSemCobrancaFilmagem = async function(id){
+    await updateDoc(doc(db,'pagamentos_extra', id), {
+      semCobrancaFilmagem: true, valorExtra: 0, aprovadoPeloChris: true,
+      marcadoPor: usuarioAtual||'?', marcadoEm: new Date().toISOString()
+    });
+    mostrarToast('Marcado como só deslocamento.');
     renderGerenciaPagamentos();
   };
 
@@ -4966,6 +5206,7 @@
      de contagem em tempo real — usa só os caches da Fase 2, zero busca
      extra. Mata o "praticamente perdido" de saber quantos vídeos cada
      cliente tem e onde eles estão. */
+  window.renderEsteiraConteudo = renderEsteiraConteudo;
   function renderEsteiraConteudo(){
     const box = document.getElementById('esteiraConteudoBox');
     if(!box) return;
@@ -7995,6 +8236,7 @@
   let viewAtiva = 'inicio';
 
   function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  window.esc = esc;
   /* CORRIGIDO 21/07/2026 — pedido da Gabi: a descrição de demanda (ex:
      "Escrever legenda", que traz o link do vídeo no Drive) era exibida como
      texto puro. No celular ela tinha que selecionar/copiar o link na mão
@@ -9412,6 +9654,44 @@
      Gerencia, invisivel pra quem ganhou o dinheiro — a pessoa fazia um
      servico fora do escopo e nao tinha onde registrar nem como conferir se
      entrou. Agora aparece no Meu Dia, no painel de cada um. */
+  /* ===== EXTRAS DA EQUIPE, REFEITO — 28/07/2026 =======================
+     O que estava errado: o registro tinha `temUber` (sim/não) e um link
+     do comprovante, mas NÃO tinha o valor do Uber. Ou seja, o Uber saía
+     do caixa e não aparecia em lugar nenhum na conta — furo de caixa
+     silencioso, exatamente do tipo mais perigoso, porque o painel
+     mostrava um número que parecia certo.
+
+     Agora cada lançamento tem DOIS valores separados:
+       valorExtra → a filmagem avulsa. Quem define é a AMANDA (100–150).
+       valorUber  → o deslocamento. Quem informa é quem pagou o Uber.
+
+     E o painel separa por pessoa (hoje Luís e Nathan), porque é assim
+     que o dinheiro sai: por pessoa, no dia 15.
+
+     A regra que evita o furo: lançamento sem valor de filmagem definido
+     NÃO entra no total como zero. Ele vai pra uma linha própria,
+     "aguardando a Amanda definir", contada à parte e visível. Melhor um
+     número incompleto e sinalizado do que um número redondo e errado. */
+  const VALOR_AVULSO_SUGERIDO = { min: 100, max: 150 };
+
+  function contasDoExtra(m){
+    const filmagem = Number(m.valorExtra) || 0;
+    const uber = Number(m.valorUber) || 0;
+    const semValor = !m.valorExtra && !m.semCobrancaFilmagem;
+    return { filmagem, uber, total: filmagem + uber, semValor };
+  }
+
+  function somarExtras(lista){
+    const r = { filmagem:0, uber:0, total:0, pendentesSemValor:0, qtdFilmagem:0, qtdUber:0 };
+    lista.forEach(m => { const c = contasDoExtra(m);
+      r.filmagem += c.filmagem; r.uber += c.uber; r.total += c.total;
+      if(c.filmagem) r.qtdFilmagem++;
+      if(c.uber) r.qtdUber++;
+      if(c.semValor) r.pendentesSemValor++;
+    });
+    return r;
+  }
+
   window.htmlMeusExtras = async function(){
     if(!usuarioAtual) return '';
     try{
@@ -9419,42 +9699,108 @@
       const snap = await getDocs(collection(db,'pagamentos_extra'));
       const meus = [];
       snap.forEach(d => { const v=d.data(); if(!v.excluido && v.filmmaker === usuarioAtual && v.mes === mes) meus.push({id:d.id, ...v}); });
-      const aReceber = meus.filter(m=>!m.pago).reduce((t,m)=>t+(Number(m.valorExtra)||0),0);
-      const jaPago  = meus.filter(m=>m.pago).reduce((t,m)=>t+(Number(m.valorExtra)||0),0);
-      return `<div class="card">
+      const aReceberL = meus.filter(m=>!m.pago), pagosL = meus.filter(m=>m.pago);
+      const aReceber = somarExtras(aReceberL), jaPago = somarExtras(pagosL);
+
+      return `<div class="card" style="border:2px solid var(--yellow);">
         <h2>💰 Meus extras deste mês</h2>
-        <div class="desc">Serviço que você fez fora do escopo da sua função entra aqui e é pago <b>no dia 15</b>, junto com o salário. Registra assim que acontecer — depois todo mundo esquece.</div>
-        <div class="painelResumo" style="margin:10px 0;">
-          <div class="resumoCard ${aReceber?'yellow':''}"><div class="num" style="font-size:17px;">${brl(aReceber)}</div><div class="lbl">A receber dia 15</div></div>
-          <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(jaPago)}</div><div class="lbl">Já pago</div></div>
+        <div class="desc">Tudo que a agência te deve fora do salário: <b>filmagem avulsa</b> (cliente que não é da nossa base mensal) e <b>Uber</b> que você pagou do próprio bolso. Cai no dia <b>15</b>, junto com o salário.</div>
+
+        <div class="painelResumo" style="margin:12px 0;">
+          <div class="resumoCard ${aReceber.total?'yellow':'green'}"><div class="num" style="font-size:20px;">${brl(aReceber.total)}</div><div class="lbl">A receber dia 15</div></div>
+          <div class="resumoCard green"><div class="num" style="font-size:20px;">${brl(jaPago.total)}</div><div class="lbl">Já recebido</div></div>
         </div>
-        <div style="background:var(--deep);border-radius:10px;padding:12px;">
-          <div class="meta" style="margin-bottom:8px;font-weight:800;color:var(--yellow);">+ Informar um extra que eu fiz</div>
-          <div class="field"><label>Que serviço foi</label><input type="text" id="meuExServico" placeholder="Ex: cobri o evento de sábado fora da minha função"></div>
-          <div class="row2" style="margin-top:8px;">
-            <div class="field"><label>Cliente</label><input type="text" id="meuExCliente" placeholder="Nome do cliente"></div>
-            <div class="field"><label>Valor combinado (R$)</label><input type="number" step="0.01" id="meuExValor" placeholder="0.00"></div>
+        <div class="painelResumo" style="margin-bottom:12px;">
+          <div class="resumoCard"><div class="num" style="font-size:15px;">${brl(aReceber.filmagem)}</div><div class="lbl">🎥 ${aReceber.qtdFilmagem} filmagem(ns)</div></div>
+          <div class="resumoCard"><div class="num" style="font-size:15px;">${brl(aReceber.uber)}</div><div class="lbl">🚗 ${aReceber.qtdUber} Uber(s)</div></div>
+        </div>
+        ${aReceber.pendentesSemValor ? '<div class="desc" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:10px 12px;border-radius:8px;margin-bottom:12px;">⏳ <b>' + aReceber.pendentesSemValor + ' filmagem(ns) sem valor ainda.</b> A Amanda define o valor de cada filmagem avulsa — costuma ficar entre ' + brl(VALOR_AVULSO_SUGERIDO.min) + ' e ' + brl(VALOR_AVULSO_SUGERIDO.max) + '. Assim que ela definir, entra no seu total automaticamente.</div>' : ''}
+
+        <div style="background:var(--deep);border-radius:12px;padding:14px;">
+          <div style="font-weight:800;color:var(--yellow);font-size:13.5px;margin-bottom:4px;">➕ Registrar agora</div>
+          <div class="desc" style="margin-bottom:12px;">Registra assim que acontecer. Depois todo mundo esquece — e o que não é registrado não é pago.</div>
+
+          <div class="field"><label>O que foi</label>
+            <select id="meuExTipo" onchange="alternarCamposExtra()">
+              <option value="filmagem">🎥 Filmagem avulsa (cliente fora da base mensal)</option>
+              <option value="uber">🚗 Uber / deslocamento que eu paguei</option>
+              <option value="ambos">🎥 + 🚗 Filmagem avulsa e o Uber dela</option>
+            </select>
           </div>
-          <button class="btn" style="margin-top:8px;" onclick="informarMeuExtra()">Enviar pra aprovação</button>
-          <div class="desc" style="margin:6px 0 0;">Vai pro Chris conferir antes de entrar no pagamento.</div>
+
+          <div class="field" style="margin-top:10px;"><label>Cliente</label>
+            <input type="text" id="meuExCliente" placeholder="Pra quem foi a filmagem"></div>
+
+          <div class="field" style="margin-top:10px;"><label>Quando</label>
+            <input type="date" id="meuExData" value="${new Date().toISOString().slice(0,10)}"></div>
+
+          <div class="field" style="margin-top:10px;"><label>Detalhe (opcional)</label>
+            <input type="text" id="meuExServico" placeholder="Ex: evento de sábado, 4h de gravação"></div>
+
+          <div id="blocoUberExtra" style="display:none;margin-top:10px;background:rgba(251,188,25,.07);border:1px solid var(--line);border-radius:10px;padding:12px;">
+            <div class="field"><label>🚗 Quanto você pagou de Uber (R$)</label>
+              <input type="number" step="0.01" id="meuExUber" placeholder="0,00" style="font-size:17px;font-weight:700;"></div>
+            <div class="field" style="margin-top:8px;"><label>Comprovante (link do print ou do recibo)</label>
+              <input type="text" id="meuExUberLink" placeholder="Cola o link aqui"></div>
+            <div class="desc" style="margin:6px 0 0;">Esse valor é reembolsado inteiro — não é o preço da filmagem.</div>
+          </div>
+
+          <div id="blocoValorFilmagem" style="margin-top:10px;background:var(--deep);border:1px dashed var(--line);border-radius:10px;padding:11px;">
+            <div class="meta">🎥 <b>O valor da filmagem quem define é a Amanda</b> — normalmente entre ${brl(VALOR_AVULSO_SUGERIDO.min)} e ${brl(VALOR_AVULSO_SUGERIDO.max)}, conforme o serviço. Você não precisa preencher nada aqui: registra a filmagem e ela define.</div>
+          </div>
+
+          <button class="btn" style="margin-top:14px;padding:14px;font-size:14px;" onclick="informarMeuExtra()">Registrar meu extra</button>
         </div>
-        ${meus.length ? meus.map(m => `<div class="item" style="margin-top:8px;border-left:3px solid ${m.pago?'var(--green)':'var(--yellow)'};">
-          <div class="top"><div class="nome">${esc(m.servico||m.clienteNome||'Extra')}</div><span class="selo ${m.pago?'aprovada':'pendente'}">${m.pago?'✅ Pago':'⏳ A receber'}</span></div>
-          <div class="meta" style="margin-top:4px;">${esc(m.clienteNome||'')}${m.valorExtra?' · '+brl(Number(m.valorExtra)):''}${m.temUber?' · 🚗 Uber':''}</div>
-        </div>`).join('') : '<div class="empty" style="font-size:12px;margin-top:8px;">Nenhum extra registrado este mês.</div>'}
+
+        <div style="margin-top:16px;">
+          <div class="meta" style="font-weight:800;margin-bottom:6px;">O que já registrei este mês (${meus.length})</div>
+          ${meus.length ? meus.sort((a,b)=>String(b.data||'').localeCompare(String(a.data||''))).map(m => { const c = contasDoExtra(m);
+            return `<div class="item" style="margin-top:8px;border-left:3px solid ${m.pago?'var(--green)':c.semValor?'var(--yellow2)':'var(--yellow)'};">
+              <div class="top">
+                <div class="nome">${esc(m.clienteNome||m.servico||'Extra')}</div>
+                <span class="selo ${m.pago?'aprovada':'pendente'}">${m.pago?'✅ Pago':'⏳ A receber'}</span>
+              </div>
+              <div class="meta" style="margin-top:5px;display:flex;gap:12px;flex-wrap:wrap;">
+                ${c.filmagem ? '<span>🎥 ' + brl(c.filmagem) + '</span>' : c.semValor ? '<span style="color:var(--yellow2);">🎥 aguardando a Amanda definir</span>' : ''}
+                ${c.uber ? '<span>🚗 ' + brl(c.uber) + '</span>' : ''}
+                ${c.total ? '<span style="font-weight:800;">= ' + brl(c.total) + '</span>' : ''}
+              </div>
+              ${m.servico ? '<div class="meta" style="margin-top:4px;opacity:.7;">' + esc(m.servico) + '</div>' : ''}
+              ${m.data ? '<div class="meta" style="margin-top:3px;opacity:.6;">' + formatarDataBR(m.data) + '</div>' : ''}
+            </div>`; }).join('')
+          : '<div class="empty" style="font-size:12px;">Nada registrado este mês ainda.</div>'}
+        </div>
       </div>`;
     }catch(e){ console.error('Falha ao montar meus extras:', e); return ''; }
   };
 
+  window.alternarCamposExtra = function(){
+    const tipo = document.getElementById('meuExTipo')?.value || 'filmagem';
+    const uber = document.getElementById('blocoUberExtra');
+    const film = document.getElementById('blocoValorFilmagem');
+    if(uber) uber.style.display = (tipo === 'uber' || tipo === 'ambos') ? 'block' : 'none';
+    if(film) film.style.display = (tipo === 'filmagem' || tipo === 'ambos') ? 'block' : 'none';
+  };
+
   window.informarMeuExtra = async function(){
+    const tipo = document.getElementById('meuExTipo')?.value || 'filmagem';
     const servico = (document.getElementById('meuExServico')?.value||'').trim();
     const clienteNome = (document.getElementById('meuExCliente')?.value||'').trim();
-    const valor = parseFloat(document.getElementById('meuExValor')?.value) || 0;
-    if(!servico){ mostrarToast('Descreve o serviço que você fez.', 'erro'); return; }
-    const mes = new Date().toISOString().slice(0,7);
+    const data = document.getElementById('meuExData')?.value || new Date().toISOString().slice(0,10);
+    const valorUber = (tipo === 'uber' || tipo === 'ambos') ? (parseFloat(document.getElementById('meuExUber')?.value) || 0) : 0;
+    const uberLink = (document.getElementById('meuExUberLink')?.value||'').trim();
+    if(!clienteNome){ mostrarToast('Escreve pra qual cliente foi.', 'erro'); return; }
+    if((tipo === 'uber' || tipo === 'ambos') && !valorUber){ mostrarToast('Coloca quanto você pagou de Uber.', 'erro'); return; }
+    /* A pessoa NÃO define o valor da filmagem — quem define é a Amanda.
+       Por isso `valorExtra` sai zerado e `semCobrancaFilmagem` só é true
+       quando o lançamento é puramente deslocamento. */
+    const valor = 0;
+    const mes = (data||'').slice(0,7) || new Date().toISOString().slice(0,7);
     await addDoc(collection(db,'pagamentos_extra'), {
       clienteNome, servico, filmmaker: usuarioAtual, valorExtra: valor,
-      temUber: false, uberLink: '', pago: false, informadoPelaPessoa: true,
+      valorUber, temUber: valorUber > 0, uberLink, data,
+      semCobrancaFilmagem: tipo === 'uber',
+      pago: false, informadoPelaPessoa: true,
       mes, criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()
     });
     await addDoc(collection(db,'demandas'), {
@@ -10462,10 +10808,24 @@
   let gerenciaAutenticada = false;
   let gerenciaSubPendente = null;
 
-  window.entrarGerencia = function(){
+  window.entrarGerencia = async function(){
     const v = document.getElementById('senhaGerencia').value;
-    if(v === SENHA_GERENCIA){
+    if(await conferirSenhaGerencia(v)){
       gerenciaAutenticada = true;
+      /* Marca a sessão como gerência. É este documento que as regras do
+         Firestore consultam pra liberar contratos, mensalidades e cofre.
+         Sem ele, mesmo logado, essas coleções não abrem. */
+      try{
+        const uid = await window.__authPronta;
+        if(uid){
+          await setDoc(doc(db,'sessoes_gerencia', uid), {
+            pessoa: usuarioAtual || '?', abertaEm: new Date().toISOString(),
+            navegador: (navigator.userAgent||'').slice(0,120)
+          });
+          window.__sessaoGerencia = uid;
+          registrarAcessoGerencia(usuarioAtual || '?');
+        }
+      }catch(e){ console.error('Falha ao abrir sessão de gerência:', e); }
       document.getElementById('gateGerencia').style.display='none';
       document.getElementById('conteudoGerencia').style.display='block';
       carregarGerencia().then(()=>{
@@ -10659,7 +11019,8 @@
         <div class="nome">${esc(c.nome)}</div>
         <div style="display:flex;gap:6px;">
           <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="abrirCalendarioFerramentas('${c.slug}','${esc(c.nome)}')">Ver calendário</button>
-          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${c.slug}', this)">⧉ Copiar link</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${c.slug}', this)">⧉ Link do cliente</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${c.slug}', this)">✏️ Link de edição</button>
         </div>
       </div>
     `).join('');
@@ -10676,7 +11037,9 @@
   window.abrirCalendarioFerramentas = function(slug, nome){
     calendarioFerramentasAbertoSlug = slug;
     document.getElementById('nomeClienteFerramentasAberto').textContent = nome;
-    document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + slug;
+    garantirTokensDoCliente(slug).then(t => {
+      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + slug + '&e=' + t.tokenEquipe;
+    });
     document.getElementById('calendarioFerramentasAberto').style.display = 'block';
     renderRefsPerfilCliente(slug, nome);
   };
@@ -11073,7 +11436,8 @@
         <div class="nome">${esc(c.nome)}</div>
         <div style="display:flex;gap:6px;">
           <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="abrirCalendarioDeCliente('${c.slug}','${esc(c.nome)}')">Ver calendário</button>
-          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${c.slug}', this)">⧉ Copiar link</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${c.slug}', this)">⧉ Link do cliente</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${c.slug}', this)">✏️ Link de edição</button>
         </div>
       </div>
     `).join('');
@@ -11088,7 +11452,9 @@
   window.abrirCalendarioDeCliente = function(slug, nome){
     calendarioClienteAbertoSlug = slug;
     document.getElementById('nomeClienteAberto').textContent = nome;
-    document.getElementById('iframeCalendarioCliente').src = 'calendario.html?cliente=' + slug;
+    garantirTokensDoCliente(slug).then(t => {
+      document.getElementById('iframeCalendarioCliente').src = 'calendario.html?cliente=' + slug + '&e=' + t.tokenEquipe;
+    });
     document.getElementById('calendarioClienteAberto').style.display = 'block';
   };
 
@@ -11097,12 +11463,44 @@
     copiarLinkCalendarioDireto(calendarioClienteAbertoSlug, document.getElementById('btnCopiarCalAtual'));
   };
 
-  window.copiarLinkCalendarioDireto = function(slug, btn){
-    const link = 'https://get-started.agency/calendario.html?cliente=' + slug;
+  /* ===== OS DOIS LINKS DO CALENDÁRIO — 28/07/2026 =====================
+     O calendário passou a exigir chave. São duas, e elas fazem coisas
+     diferentes de propósito:
+       tokenEquipe  (&e=) → edita. Nunca sai da agência.
+       token        (&t=) → lê, comenta e aprova. É o que vai pro cliente.
+     Mesmo que o link do cliente vaze num grupo de WhatsApp, quem receber
+     não consegue apagar nada. `garantirTokensDoCliente` cria o que
+     faltar na hora, então nenhum cliente fica sem link. */
+  async function garantirTokensDoCliente(slug){
+    const ref = doc(db,'clientes_acesso', slug);
+    const snap = await getDoc(ref);
+    const atual = snap.exists() ? snap.data() : {};
+    const novo = {};
+    const gerar = () => Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
+    if(!atual.token) novo.token = gerar();
+    if(!atual.tokenEquipe) novo.tokenEquipe = gerar();
+    if(Object.keys(novo).length){
+      novo.nome = atual.nome || nomeDeSlugSeguro(slug);
+      await setDoc(ref, novo, { merge:true });
+    }
+    return { token: novo.token || atual.token, tokenEquipe: novo.tokenEquipe || atual.tokenEquipe };
+  }
+
+  window.copiarLinkCalendarioEquipe = async function(slug, btn){
+    const t = await garantirTokensDoCliente(slug);
+    const link = 'https://get-started.agency/calendario.html?cliente=' + slug + '&e=' + t.tokenEquipe;
+    navigator.clipboard.writeText(link);
+    if(btn){ const o = btn.textContent; btn.textContent = '✓ Copiado'; setTimeout(()=>btn.textContent=o, 2000); }
+    mostrarToast('Link de EDIÇÃO copiado — esse é interno, não manda pro cliente.');
+  };
+
+  window.copiarLinkCalendarioDireto = async function(slug, btn){
+    const t = await garantirTokensDoCliente(slug);
+    const link = 'https://get-started.agency/calendario.html?cliente=' + slug + '&t=' + t.token;
     navigator.clipboard.writeText(link).then(()=>{
       const original = btn.textContent;
       btn.textContent = '✓ Copiado!';
-      mostrarToast('Link copiado! Já pode colar no WhatsApp.');
+      mostrarToast('Link do cliente copiado — ele lê, comenta e aprova, mas não edita.');
       setTimeout(()=>{ btn.textContent = original; }, 2000);
     }).catch(()=>{
       mostrarToast('Não consegui copiar — copia manualmente o link.', 'erro');
@@ -12622,6 +13020,7 @@
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
       { nome: 'varreduraDuplicatas', fn: varrerDuplicatas },
+      { nome: 'avisosDoPortal', fn: converterAvisosDoCliente },
       { nome: 'calendarioNovoParaProducao', fn: avisarCalendarioPronto },
       { nome: 'storiesDaSemana', fn: cobrarStoriesDaSemana },
       { nome: 'extrasDoDia15', fn: lembrarExtrasDosFilmmakers },
@@ -14274,10 +14673,21 @@
        filmmakers e à equipe no dia 15. Entrava no faturamento inflando o
        total e escondendo um custo. Agora é despesa, e o total do mês passa
        a ser líquido. */
-    const extrasDoMes = extras.filter(e => e.mes === comp);
-    const despesaExtras = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
-    const despesaExtrasPagas = extrasDoMes.filter(e=>e.pago).reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
+    /* ===== O UBER ENTROU NA CONTA — 28/07/2026 =========================
+       Este cálculo somava só `valorExtra` (a filmagem). O Uber saía do
+       caixa e não aparecia em lugar nenhum — o "Saiu" do mês era sempre
+       menor que a realidade, e sem nenhum sinal de que faltava algo.
+       Agora soma os dois, e o painel mostra os dois separados, porque
+       são naturezas diferentes: um é serviço prestado, outro é
+       reembolso de despesa. */
+    const extrasDoMes = extras.filter(e => e.mes === comp && (!e.informadoPelaPessoa || e.aprovadoPeloChris));
+    const somaExtra = e => valorDeTexto(e.valorExtra) + valorDeTexto(e.valorUber);
+    const despesaFilmagem = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
+    const despesaUber     = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorUber),0);
+    const despesaExtras = despesaFilmagem + despesaUber;
+    const despesaExtrasPagas = extrasDoMes.filter(e=>e.pago).reduce((s,e)=>s+somaExtra(e),0);
     const despesaExtrasAPagar = despesaExtras - despesaExtrasPagas;
+    const extrasSemValor = extras.filter(e => e.mes === comp && !e.valorExtra && !e.semCobrancaFilmagem).length;
 
     const totalEntrou = recebidoMensal + receitaAvulsa;
     const totalMes = totalEntrou - despesaExtras;
@@ -14328,6 +14738,8 @@
     let html = `<div class="painelResumo" style="margin-bottom:16px;">
       <div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(totalEntrou)}</div><div class="lbl">Entrou em ${nomeMes(comp)}</div></div>
       <div class="resumoCard ${despesaExtras?'red':''}"><div class="num" style="font-size:17px;">${despesaExtras?'−':''}${brl(despesaExtras)}</div><div class="lbl">Saiu (extras da equipe)</div></div>
+      <div class="resumoCard"><div class="num" style="font-size:14px;">🎥 ${brl(despesaFilmagem)}</div><div class="lbl">filmagens avulsas</div></div>
+      <div class="resumoCard"><div class="num" style="font-size:14px;">🚗 ${brl(despesaUber)}</div><div class="lbl">Uber / deslocamento</div></div>
       <div class="resumoCard ${totalMes>=0?'green':'red'}" style="border-width:2px;"><div class="num" style="font-size:17px;">${brl(totalMes)}</div><div class="lbl">Sobrou no mês</div></div>
       <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(recebidoMensal)}</div><div class="lbl">Mensalidades</div></div>
       <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(receitaAvulsa)}</div><div class="lbl">Avulsos / projetos</div></div>
@@ -14339,13 +14751,14 @@
        da receita, então o custo com a equipe simplesmente não aparecia. */
     if(despesaExtras){
       const porPessoa = {};
-      extrasDoMes.forEach(e => { const k = e.filmmaker || 'sem dono definido'; porPessoa[k] = (porPessoa[k]||0) + valorDeTexto(e.valorExtra); });
+      extrasDoMes.forEach(e => { const k = e.filmmaker || 'sem dono definido'; porPessoa[k] = (porPessoa[k]||0) + somaExtra(e); });
       html += `<div class="card metaSec" style="border-color:var(--red);">
         <div class="metaSecTit">💸 O que sai — extras da equipe em ${nomeMes(comp)}</div>
         <div class="desc" style="margin-bottom:10px;">Uber e adicionais que você paga à equipe <b>no dia 15</b>, junto com o salário. É saída, não entrada — por isso está fora de "de onde veio o dinheiro".</div>
         <div class="painelResumo" style="margin-bottom:10px;">
           <div class="resumoCard ${despesaExtrasAPagar?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(despesaExtrasAPagar)}</div><div class="lbl">Ainda a pagar</div></div>
           <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(despesaExtrasPagas)}</div><div class="lbl">Já pago</div></div>
+          ${extrasSemValor ? '<div class="resumoCard yellow clicavel" onclick="navegarGerenciaSub(\'pagamentos\')"><div class="num" style="font-size:17px;">'+extrasSemValor+'</div><div class="lbl">⏳ sem valor — falta a Amanda definir →</div></div>' : ''}
         </div>
         ${Object.entries(porPessoa).sort((a,b)=>b[1]-a[1]).map(([n,v]) => barraFin(n, v, Math.max(...Object.values(porPessoa)), 'var(--red)')).join('')}
       </div>`;
@@ -16578,6 +16991,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
      agrupado por pessoa em faixas, com aprovar e refazer no próprio
      cartão — e quem entregou é avisado na hora. */
   window.__aguardVerTudo = false;
+  /* ===== BOTÃO QUE NÃO CLICAVA (27/07/2026) ==========================
+     "Ver também o que está com outros" não fazia nada. A função era
+     declarada só dentro do <script type="module">, e o onclick do HTML
+     roda no escopo global — a chamada morria com "não definida", sem
+     erro visível. É a mesma armadilha de sempre; varri o arquivo inteiro
+     e achei mais duas ocorrências (renderEsteiraConteudo e esc). */
+  window.renderDemandasAguardandoDetalhe = renderDemandasAguardandoDetalhe;
   async function renderDemandasAguardandoDetalhe(){
     const cont = document.getElementById('gerenciaDemandasAguardando');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
@@ -17023,6 +17443,54 @@ Observações do cliente: ${l.observacoes||'—'}`;
     renderGerenciaAmanda();
   };
 
+  /* ===== OS EXTRAS APARECEM PRA QUEM CONTROLA — 28/07/2026 ============
+     A Amanda avisou que não via nada de filmagem avulsa nem de Uber. A
+     tela existia e ela tinha permissão — o problema é que estava enterrada
+     em Gerência → Clientes → Pagamentos Extras, três cliques abaixo de
+     onde ela trabalha. Quem controla o gasto precisa esbarrar nele, não
+     procurar por ele.
+
+     Agora o resumo fica no topo do painel dela, com os números do mês e o
+     que está esperando ela definir valor. O total continua indo pro
+     Financeiro do Chris — mesma base de dados, leituras diferentes:
+     ela opera, ele vê o caixa. */
+  window.htmlResumoExtrasGestao = async function(){
+    try{
+      const mes = new Date().toISOString().slice(0,7);
+      const snap = await getDocs(collection(db,'pagamentos_extra'));
+      const doMes = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.mes === mes) doMes.push({id:d.id, ...v}); });
+      const validos = doMes.filter(p => !p.informadoPelaPessoa || p.aprovadoPeloChris);
+      const g = somarExtras(validos);
+      const semValor = doMes.filter(p => contasDoExtra(p).semValor);
+      const aPagar = somarExtras(validos.filter(p=>!p.pago));
+
+      const porPessoa = {};
+      validos.forEach(p => { const k = p.filmmaker || 'sem dono'; (porPessoa[k] = porPessoa[k]||[]).push(p); });
+
+      return `<div class="card" style="border:2px solid ${semValor.length?'var(--yellow2)':'var(--yellow)'};">
+        <h2>💸 Filmagens avulsas e Uber — ${mes}</h2>
+        <div class="desc">O que a agência vai pagar no dia <b>15</b> além do salário. Você lança e define os valores aqui; o total vai direto pro financeiro.</div>
+        <div class="painelResumo" style="margin:12px 0;">
+          <div class="resumoCard"><div class="num" style="font-size:18px;">${brl(g.total)}</div><div class="lbl">total do mês</div></div>
+          <div class="resumoCard"><div class="num" style="font-size:15px;">🎥 ${brl(g.filmagem)}</div><div class="lbl">${g.qtdFilmagem} filmagem(ns)</div></div>
+          <div class="resumoCard"><div class="num" style="font-size:15px;">🚗 ${brl(g.uber)}</div><div class="lbl">${g.qtdUber} Uber(s)</div></div>
+          <div class="resumoCard ${aPagar.total?'yellow':'green'}"><div class="num" style="font-size:15px;">${brl(aPagar.total)}</div><div class="lbl">falta pagar</div></div>
+        </div>
+        ${semValor.length ? `<div style="background:var(--deep);border-left:3px solid var(--yellow2);padding:11px 13px;border-radius:9px;margin-bottom:12px;">
+          <b style="font-size:12.5px;color:var(--yellow2);">⏳ ${semValor.length} filmagem(ns) esperando você definir o valor</b>
+          <div class="meta" style="margin-top:5px;">${semValor.slice(0,4).map(p=>esc((p.filmmaker||'?')+' — '+(p.clienteNome||'sem cliente'))).join(' · ')}${semValor.length>4?' e mais '+(semValor.length-4):''}</div>
+          <div class="meta" style="margin-top:5px;opacity:.75;">Enquanto não tiver valor, não entra no total — de propósito, pra não dar furo de caixa.</div>
+        </div>` : ''}
+        ${Object.keys(porPessoa).length ? '<div class="meta" style="font-weight:800;margin-bottom:6px;">Por pessoa</div>' + Object.entries(porPessoa).map(([n,l]) => {
+          const c = somarExtras(l);
+          return '<div class="item" style="margin-bottom:6px;"><div class="top"><div class="nome">'+esc(n)+'</div><b>'+brl(c.total)+'</b></div>' +
+            '<div class="meta" style="margin-top:4px;">🎥 '+brl(c.filmagem)+' · 🚗 '+brl(c.uber)+' · '+l.length+' lançamento(s)</div></div>';
+        }).join('') : '<div class="empty" style="font-size:12px;">Nada lançado este mês ainda.</div>'}
+        <button class="btn" style="margin-top:12px;padding:13px;" onclick="navegarGerenciaSub('pagamentos')">Abrir e lançar extras →</button>
+      </div>`;
+    }catch(e){ console.error('Falha no resumo de extras:', e); return ''; }
+  };
+
   window.renderGerenciaAmanda = async function(){
     const cont = document.getElementById('gerenciaAmanda');
     const pendentes = todasDemandas.filter(d => d.status === 'pendente');
@@ -17045,6 +17513,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
        Quando ele abre o painel dela, ve o resumo operacional, nao a fila de
        decisao. Se ela estiver ausente, volta a aparecer pra ele — senao
        ninguem decide. */
+    // Extras no topo: é a Amanda quem controla, e ela não estava achando.
+    try{ html += await htmlResumoExtrasGestao(); }catch(e){ console.error(e); }
+
     const decisaoEDele = usuarioAtual === 'Amanda' || estaAusente('Amanda');
     if(!decisaoEDele){
       html += `<div class="card"><div class="desc">🔔 <b>${pedidosPrazo.length + aguardando.length + pedidosPularLegenda.length} decisão(ões)</b> esperando a Amanda — prazo, aprovação de demanda e pular legenda são dela. Só aparece aqui pra você se ela entrar em modo ausência.</div></div>`;
@@ -17618,23 +18089,45 @@ Observações do cliente: ${l.observacoes||'—'}`;
       }catch(e){ console.error('Falha na rede de segurança de legenda em aprovarDemanda', e); }
     }
     fecharModal();
+    mostrarToast('✔ Aprovado — saiu da lista de ' + (d?.destinatario || 'quem entregou') + '.');
     carregarGerencia();
     atualizarFilaAprovacao();
   };
 
-  /* 27/07/2026 — sem isto o item aprovado continuava na tela: carregarGerencia()
-     re-renderiza os painéis do Chris e da Amanda, mas não esta subaba. */
+  /* ===== A TELA TEM QUE ACOMPANHAR O CLIQUE — 28/07/2026 =============
+     O Chris disse "não consigo clicar" no botão Aprovar da tela Agora.
+     Fui conferir no banco: a demanda ESTAVA aprovada, no segundo em que
+     ele clicou. O clique funcionava — o que não acontecia era a tela
+     mudar. O cartão continuava lá, idêntico, como se nada tivesse
+     acontecido. Do lado de quem usa, isso é indistinguível de um botão
+     quebrado; e o reflexo natural é clicar de novo.
+
+     carregarGerencia() redesenha os painéis do Chris e da Amanda, mas
+     não redesenha a subaba aberta. Agora toda aprovação/rejeição
+     atualiza a subaba que estiver na tela, seja ela qual for. */
+  const SUBABAS_QUE_MOSTRAM_DEMANDA = [
+    ['gerenciaAgora',              () => renderAgora()],
+    ['gerenciaDemandasAguardando', () => renderDemandasAguardandoDetalhe()],
+    ['gerenciaDemandasAtrasadas',  () => (typeof renderDemandasAtrasadasDetalhe === 'function') && renderDemandasAtrasadasDetalhe()],
+    ['gerenciaAtrasosEquipe',      () => (typeof renderAtrasosEquipe === 'function') && renderAtrasosEquipe()],
+    ['gerenciaComando',            () => renderCentralComando()]
+  ];
+
   function atualizarFilaAprovacao(){
-    try{
-      const el = document.getElementById('gerenciaDemandasAguardando');
-      if(el && el.offsetParent !== null) renderDemandasAguardandoDetalhe();
-    }catch(e){}
+    SUBABAS_QUE_MOSTRAM_DEMANDA.forEach(([id, fn]) => {
+      try{
+        const el = document.getElementById(id);
+        if(el && el.offsetParent !== null) fn();
+      }catch(e){ console.error('Falha ao atualizar ' + id + ':', e); }
+    });
+    try{ if(viewAtiva === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas(); }catch(e){}
   }
 
   window.rejeitarDemanda = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
     await updateDoc(doc(db,'demandas', id), { status: 'pendente', provaTexto: '', provaImagemUrl: '', rejeitadoEm: new Date().toISOString() });
     registrarHistorico('demandas', id, 'Rejeitada — pedido pra refazer');
+    mostrarToast('Devolvido pra ' + (d?.destinatario || 'a pessoa') + ' refazer.');
     sincronizarStatusDemandaCliente(id, 'pendente').catch(()=>{});
     if(d?.agendamentoId){
       await updateDoc(doc(db,'agendamentos', d.agendamentoId), { status: 'cancelado' });

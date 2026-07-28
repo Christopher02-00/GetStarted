@@ -527,6 +527,7 @@
            do Início, com badge do que está esperando decisão. -->
       <div class="navitem" onclick="irPara('gerencia', this)" id="navitemGerencia" style="display:none;"><span class="ico"><svg><use href="#i-lock"/></svg></span> Gerência<span class="navbadge" id="badgeGerencia" style="display:none;background:var(--yellow);color:var(--graphite);" title="Esperando decisão">0</span></div>
       <div class="navitem" onclick="irPara('equipe', this)" id="navitemEquipe" style="display:none;"><span class="ico">👥</span> Equipe</div>
+      <div class="navitem" onclick="irPara('producao', this)" id="navitemProducao" style="display:none;"><span class="ico">🎬</span> Produção</div>
       <div class="navitem" id="navMinhasDemandasAtribuidas" onclick="irPara('minhasDemandasAtribuidas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Demandas<span class="navbadge" id="badgeMinhasDemandasAtribuidas" style="display:none;">0</span><span class="navbadge" id="badgeAprovar" style="display:none;background:var(--yellow);color:var(--graphite);" title="Esperando sua aprovação">0</span></div>
       <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico">🚨</span> Atrasadas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
@@ -1142,6 +1143,23 @@
       <div class="sub">Uma pessoa por vez, inteira. Clica no nome pra abrir a ficha — demandas, checklist, vídeos na mão, extras e presença.</div>
       <div id="equipeCards"></div>
       <div id="equipeFicha" style="margin-top:16px;"></div>
+    </div>
+
+    <!-- ===== 🎬 PRODUÇÃO — 28/07/2026 ======================================
+         Fase 3 da unificação. O caminho de um vídeo estava repartido em
+         doze telas: Vídeos (3 sub-abas), Postagens (5), Conteúdo Até
+         Quando e Arquivo de Entregas. Pra saber onde um vídeo estava era
+         preciso adivinhar em qual delas ele tinha parado.
+         Aqui é uma esteira só, da gravação à publicação. Cada vídeo é uma
+         linha; clicar abre a linha do tempo completa dele. -->
+    <div class="view" id="view-producao">
+      <h1>🎬 <span class="y">Produção</span></h1>
+      <div class="sub">Todo vídeo, da gravação à publicação, numa esteira só. Clica na etapa pra filtrar, clica no vídeo pra ver a linha do tempo dele.</div>
+      <div class="card">
+        <input type="text" id="buscaProducao" placeholder="🔍 Buscar por vídeo ou cliente..." oninput="renderProducao(true)" style="width:100%;background:var(--deep);border:1px solid var(--line);border-radius:9px;color:#fff;padding:12px 14px;font-size:14px;">
+      </div>
+      <div id="producaoBox"></div>
+      <div id="producaoFicha" style="margin-top:16px;"></div>
     </div>
 
     <div class="view" id="view-duvidasBit">
@@ -9146,6 +9164,7 @@
     }
     if(nome === 'stories'){ renderStoriesCliente(); }
     if(nome === 'equipe') renderEquipe();
+    if(nome === 'producao') renderProducao();
     if(nome === 'portalGeral'){
       window.__portalAdminSub = window.__portalAdminSub || 'ideias';
       const podeEditar = ['Amanda','Gabrielle'].includes(usuarioAtual);
@@ -9851,6 +9870,9 @@
     if(gVendas) gVendas.style.display = (usuarioAtual === 'Chris') ? 'block' : 'none';
     const itEquipe = document.getElementById('navitemEquipe');
     if(itEquipe) itEquipe.style.display = ehGerencia ? 'flex' : 'none';
+    /* Produção também é da Cecília: é ela quem toca a esteira. */
+    const itProd = document.getElementById('navitemProducao');
+    if(itProd) itProd.style.display = (ehGerencia || usuarioAtual === 'Cecília') ? 'flex' : 'none';
   }
 
   // FRENTE C1 (correcao de teste ao vivo) — aplica o estado "sem login" ja
@@ -18529,6 +18551,201 @@ Observações do cliente: ${l.observacoes||'—'}`;
       await navigator.clipboard.writeText(txt);
       mostrarToast('Resumo de ' + nome + ' copiado — é só colar no WhatsApp.');
     }catch(e){ console.error('Falha ao copiar folha:', e); mostrarToast('Não consegui copiar agora.', 'erro'); }
+  };
+
+  /* ===== 🎬 PRODUÇÃO — FASE 3 (28/07/2026) ============================
+     Substitui doze telas: Vídeos (3 sub-abas), Postagens (5), Conteúdo
+     Até Quando e Arquivo de Entregas. O caminho de um vídeo estava
+     repartido entre elas, e descobrir onde ele parou exigia adivinhar em
+     qual tela procurar.
+
+     Uma esteira só, na ordem real do trabalho:
+       gravado → editando → correção → aprovação interna → cliente →
+       legenda → agendado → publicado
+
+     As etapas são cartões clicáveis que filtram a lista. Cada vídeo é
+     uma linha de duas informações; clicar abre a linha do tempo dele,
+     com as datas de cada passagem e quem fez o quê. */
+  const ETAPAS_PRODUCAO = [
+    { id:'editando',  rot:'✂️ Editando',        cor:'var(--yellow)'  },
+    { id:'correcao',  rot:'↩️ Em correção',      cor:'var(--red)'     },
+    { id:'interna',   rot:'👀 Aprovação interna', cor:'var(--yellow2)' },
+    { id:'cliente',   rot:'🕓 Com o cliente',    cor:'var(--yellow2)' },
+    { id:'legenda',   rot:'✍️ Falta legenda',    cor:'var(--yellow)'  },
+    { id:'agendar',   rot:'📅 Pronto pra agendar', cor:'var(--yellow)' },
+    { id:'agendado',  rot:'🗓️ Agendado',         cor:'var(--green)'   },
+    { id:'publicado', rot:'✅ Publicado',        cor:'var(--green)'   }
+  ];
+  let __filtroProducao = null;
+  let __producaoAberta = null;
+
+  function etapaDoItem(it){
+    if(it.__tipo === 'postagem'){
+      if(it.status === 'postado') return 'publicado';
+      if(it.status === 'agendado') return 'agendado';
+      if(it.status === 'aguardando_agendamento') return 'agendar';
+      if(it.status === 'aguardando_legenda') return 'legenda';
+      return null;
+    }
+    if(it.status === 'correcao') return 'correcao';
+    if(it.status === 'aguardando_edicao') return 'editando';
+    if(it.status === 'aguardando_aprovacao') return 'interna';
+    if(it.status === 'aguardando_cliente') return 'cliente';
+    if(it.status === 'finalizado') return 'publicado';
+    return null;
+  }
+
+  window.renderProducao = async function(soFiltrar){
+    const box = document.getElementById('producaoBox');
+    if(!box) return;
+    if(soFiltrar !== true) box.innerHTML = '<div class="card"><div class="desc">Montando a esteira...</div></div>';
+
+    if(soFiltrar !== true || !window.__prodCache){
+      const itens = [];
+      try{
+        const [vs, ps] = await Promise.all([
+          getDocs(collection(db,'videos_producao')),
+          getDocs(collection(db,'postagens'))
+        ]);
+        vs.forEach(d => { const v = d.data(); if(!v.excluido) itens.push({ id:d.id, __tipo:'video', ...v }); });
+        ps.forEach(d => { const v = d.data(); if(!v.excluido) itens.push({ id:d.id, __tipo:'postagem', ...v }); });
+      }catch(e){ console.error('Falha ao montar a esteira:', e); }
+      window.__prodCache = itens;
+    }
+
+    /* Um vídeo vira postagem quando é aprovado. Se os dois existirem, a
+       postagem manda — é onde ele está agora. Sem isso o mesmo conteúdo
+       apareceria duas vezes na esteira, em etapas diferentes. */
+    const porVideo = {};
+    window.__prodCache.forEach(it => {
+      const chave = it.__tipo === 'postagem' ? (it.videoId || 'p_' + it.id) : it.id;
+      if(!porVideo[chave] || it.__tipo === 'postagem') porVideo[chave] = it;
+    });
+    let todos = Object.values(porVideo).map(it => ({ ...it, __etapa: etapaDoItem(it) })).filter(it => it.__etapa);
+
+    const busca = (document.getElementById('buscaProducao')?.value || '').trim().toLowerCase();
+    if(busca) todos = todos.filter(it =>
+      (it.titulo||'').toLowerCase().includes(busca) ||
+      (it.clienteNome||it.cliente||'').toLowerCase().includes(busca));
+
+    const contagem = {};
+    ETAPAS_PRODUCAO.forEach(e => contagem[e.id] = todos.filter(it => it.__etapa === e.id).length);
+
+    const lista = __filtroProducao ? todos.filter(it => it.__etapa === __filtroProducao) : todos;
+
+    box.innerHTML = `<div class="painelResumo" style="margin-bottom:16px;">
+      ${ETAPAS_PRODUCAO.map(e => `<div class="resumoCard clicavel ${__filtroProducao===e.id?'yellow':''}" onclick="filtrarProducao('${e.id}')">
+        <div class="num" style="color:${contagem[e.id]?e.cor:''};">${contagem[e.id]}</div><div class="lbl">${e.rot}</div>
+      </div>`).join('')}
+      ${__filtroProducao ? '<div class="resumoCard clicavel" onclick="filtrarProducao(null)"><div class="num">↺</div><div class="lbl">ver todos</div></div>' : ''}
+    </div>` + montarListaProducao(lista);
+
+    if(__producaoAberta) abrirFichaProducao(__producaoAberta);
+  };
+
+  function montarListaProducao(lista){
+    if(!lista.length) return '<div class="card"><div class="empty">Nada nesta etapa. 🎉</div></div>';
+    const porCliente = {};
+    lista.forEach(it => { const k = it.clienteNome || it.cliente || 'sem cliente'; (porCliente[k] = porCliente[k]||[]).push(it); });
+    const chaves = Object.keys(porCliente).sort((a,b) => porCliente[b].length - porCliente[a].length);
+    /* Mais de 8 clientes: vem agrupado e recolhido, como combinado. */
+    const abrirTudo = chaves.length <= 3;
+    return chaves.map(cli => `<div class="faixaDem ${abrirTudo?'aberta':''}" data-faixa="prod_${esc(cli)}">
+      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(cli)} <span class="qtd">(${porCliente[cli].length})</span><span class="seta">▾</span></div>
+      <div class="faixaItens">${porCliente[cli].map(it => {
+        const e = ETAPAS_PRODUCAO.find(x => x.id === it.__etapa) || {};
+        return `<div class="item" style="border-left:4px solid ${e.cor||'var(--line)'};padding:15px 17px;margin-bottom:16px;cursor:pointer;" onclick="abrirFichaProducao('${it.id}')">
+          <div class="top"><div class="nome">${esc(it.titulo || 'sem título')}</div><span class="selo pendente">${e.rot||''}</span></div>
+          <div class="meta" style="margin-top:6px;">${esc(quemEstaCom(it))}</div>
+        </div>`;
+      }).join('')}</div>
+    </div>`).join('');
+  }
+
+  function quemEstaCom(it){
+    if(it.__etapa === 'editando' || it.__etapa === 'correcao') return 'com ' + (it.editorAtribuido || 'editor não definido');
+    if(it.__etapa === 'interna') return 'esperando Chris ou Amanda aprovar';
+    if(it.__etapa === 'cliente') return 'esperando o cliente responder';
+    if(it.__etapa === 'legenda') return 'esperando a legenda da Gabi';
+    if(it.__etapa === 'agendar') return 'legenda pronta — falta a Cecília agendar';
+    if(it.__etapa === 'agendado') return it.dataAgendada ? 'publica em ' + formatarDataBR(it.dataAgendada) : 'agendado';
+    if(it.__etapa === 'publicado') return it.dataAgendada ? 'publicado em ' + formatarDataBR(it.dataAgendada) : 'publicado';
+    return '';
+  }
+
+  /* A linha do tempo: onde o vídeo passou, quando, e com quem. É a
+     pergunta que o cliente faz ("cadê aquele vídeo?") e que hoje exigia
+     abrir quatro telas pra responder. */
+  window.abrirFichaProducao = async function(id){
+    __producaoAberta = id;
+    const box = document.getElementById('producaoFicha');
+    if(!box) return;
+    const it = (window.__prodCache || []).find(x => x.id === id);
+    if(!it){ box.innerHTML = ''; return; }
+
+    const e = ETAPAS_PRODUCAO.find(x => x.id === etapaDoItem(it)) || {};
+    const marcos = [
+      { rot:'🎥 Gravado',                q: it.dataGravacao || it.data,          quem: it.filmmaker },
+      { rot:'✂️ Entrou pra edição',       q: it.criadoEm?.seconds ? new Date(it.criadoEm.seconds*1000).toISOString().slice(0,10) : null, quem: it.editorAtribuido },
+      { rot:'📤 Editor entregou',         q: it.entregueEm,                       quem: it.editorAtribuido },
+      { rot:'👀 Aprovado internamente',   q: it.aprovadoInternoEm,                quem: it.aprovadoInternoPor },
+      { rot:'✅ Cliente confirmou',       q: it.clienteAprovouEm,                 quem: it.clienteNome },
+      { rot:'✍️ Legenda escrita',         q: it.legendaEm,                        quem: it.legendaPor },
+      { rot:'🗓️ Agendado',                q: it.dataAgendada,                     quem: it.agendadoPor },
+      { rot:'📣 Publicado',               q: it.status === 'postado' ? (it.postadoEm || it.dataAgendada) : null, quem: '' }
+    ].filter(m => m.q);
+
+    let historico = [];
+    try{
+      const col = it.__tipo === 'postagem' ? 'postagens' : 'videos_producao';
+      const snap = await getDoc(doc(db, col, it.id));
+      if(snap.exists()) historico = snap.data().historico || [];
+    }catch(err){ console.error(err); }
+
+    box.innerHTML = `<div class="card" style="border:2px solid ${e.cor||'var(--yellow)'};">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div>
+          <h2 style="margin:0;">${esc(it.titulo || 'sem título')}</h2>
+          <div class="meta" style="margin-top:5px;">${esc(it.clienteNome || it.cliente || '')} · ${esc(quemEstaCom(it))}</div>
+        </div>
+        <button class="btn secondary" style="width:auto;padding:10px 16px;font-size:12px;" onclick="fecharFichaProducao()">Fechar</button>
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="meta" style="font-weight:800;margin-bottom:10px;">LINHA DO TEMPO</div>
+        ${marcos.length ? marcos.map((m,i) => `<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;${i?'border-top:1px solid var(--line);':''}">
+          <div style="flex:1;">
+            <div style="font-size:12.5px;font-weight:700;">${m.rot}</div>
+            ${m.quem ? '<div class="meta" style="margin-top:3px;">'+esc(m.quem)+'</div>' : ''}
+          </div>
+          <div class="meta" style="white-space:nowrap;">${formatarDataBR(String(m.q).slice(0,10))}</div>
+        </div>`).join('') : '<div class="empty" style="font-size:12px;">Sem marcos registrados ainda.</div>'}
+      </div>
+
+      ${it.linkFinalizado ? '<a href="'+esc(it.linkFinalizado)+'" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:16px;padding:12px;">🎬 Abrir o vídeo finalizado ↗</a>' : ''}
+      ${it.legenda ? '<div class="linha" style="margin-top:16px;"><b>Legenda:</b><div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(String(it.legenda).slice(0,400))+'</div></div>' : ''}
+      ${it.correcao ? '<div class="linha" style="margin-top:16px;background:var(--redbg);border-left:3px solid var(--red);padding:11px 13px;border-radius:8px;"><b>Ajuste pedido:</b> '+esc(it.correcao)+'</div>' : ''}
+
+      ${historico.length ? `<div style="margin-top:18px;">
+        <div class="meta" style="font-weight:800;margin-bottom:8px;">O QUE ACONTECEU (${historico.length})</div>
+        ${historico.slice(-8).reverse().map(h => `<div style="padding:9px 0;border-top:1px solid var(--line);">
+          <div style="font-size:12px;">${esc(h.acao||'')}</div>
+          <div class="meta" style="margin-top:3px;">${esc(h.por||'?')}${h.em ? ' · ' + new Date(h.em).toLocaleString('pt-BR') : ''}</div>
+        </div>`).join('')}
+      </div>` : ''}
+    </div>`;
+    box.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  };
+
+  window.fecharFichaProducao = function(){
+    __producaoAberta = null;
+    const box = document.getElementById('producaoFicha');
+    if(box) box.innerHTML = '';
+  };
+
+  window.filtrarProducao = function(etapa){
+    __filtroProducao = (__filtroProducao === etapa) ? null : etapa;
+    renderProducao(true);
   };
 
   window.renderEquipe = async function(){

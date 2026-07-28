@@ -126,7 +126,8 @@
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, addDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -139,11 +140,62 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  const params = new URLSearchParams(window.location.search);
-  const clienteId = params.get('cliente') || 'exemplo';
-  const docRef = doc(db, 'calendarios', clienteId);
+  /* ===== O CALENDÁRIO GANHOU PORTA — 28/07/2026 =======================
+     Até hoje bastava trocar o nome na URL: ?cliente=qualquer-um abria —
+     e EDITAVA — o calendário de qualquer cliente da agência. Sem token,
+     sem senha, sem nada. O portal do cliente já exigia ?c=slug&t=token;
+     o calendário, que é a página que mais circula por WhatsApp, não
+     exigia coisa nenhuma.
 
-  window.__fb = { docRef, doc, getDoc, setDoc, onSnapshot, db, collection, getDocs, addDoc, serverTimestamp };
+     Agora existem três modos:
+       • ?cliente=X&e=TOKEN_EQUIPE  → equipe, edita tudo
+       • ?cliente=X&t=TOKEN_CLIENTE → cliente, LÊ, comenta e aprova
+       • sem token                  → não abre
+     Os dois tokens são conferidos contra `clientes_acesso/{slug}`.
+     O do cliente é o mesmo do portal; o da equipe é um segundo campo,
+     que o escritório gera. Assim, mesmo que o link do cliente vaze, quem
+     tem ele não consegue apagar o mês. */
+  const auth = getAuth(app);
+  const params = new URLSearchParams(window.location.search);
+  const clienteId = params.get('cliente') || '';
+  const tokenCliente = params.get('t') || '';
+  const tokenEquipe  = params.get('e') || '';
+  const docRef = clienteId ? doc(db, 'calendarios', clienteId) : null;
+
+  function barrar(titulo, texto){
+    document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:30px;font-family:system-ui;background:#141414;color:#F0EEE8;">' +
+      '<div style="max-width:430px;text-align:center;"><div style="font-size:19px;font-weight:800;margin-bottom:10px;">' + titulo + '</div>' +
+      '<div style="font-size:13.5px;line-height:1.6;opacity:.8;">' + texto + '</div></div></div>';
+  }
+
+  window.__modoCal = 'bloqueado';
+  window.__calPronto = (async () => {
+    try{ await signInAnonymously(auth); }
+    catch(e){
+      console.error('Falha na autenticação:', e);
+      barrar('Não consegui conectar com segurança', 'O login anônimo do Firebase precisa estar ativado no console. Avisa a Get Started.');
+      return false;
+    }
+    if(!clienteId){ barrar('Link incompleto', 'Esse link não diz de qual cliente é o calendário. Pede o link certo pra sua agência.'); return false; }
+    if(!tokenCliente && !tokenEquipe){
+      barrar('Link sem permissão', 'Esse calendário agora exige um link com chave de acesso. Os links antigos pararam de valer por segurança — pede o link novo pra Get Started.');
+      return false;
+    }
+    let acesso = null;
+    try{ const sn = await getDoc(doc(db,'clientes_acesso', clienteId)); acesso = sn.exists() ? sn.data() : null; }
+    catch(e){ console.error('Falha ao conferir acesso:', e); }
+    if(!acesso){ barrar('Cliente não encontrado', 'Não achei esse cliente. Confere o link com a Get Started.'); return false; }
+
+    if(tokenEquipe && acesso.tokenEquipe && tokenEquipe === acesso.tokenEquipe) window.__modoCal = 'equipe';
+    else if(tokenCliente && acesso.token && tokenCliente === acesso.token) window.__modoCal = 'cliente';
+    else { barrar('Link inválido ou expirado', 'Essa chave não confere. Pede um link novo pra sua agência.'); return false; }
+
+    try{ await setDoc(doc(db,'sessoes_cliente', auth.currentUser.uid), { cliente: clienteId, abertaEm: new Date().toISOString(), modo: window.__modoCal }); }
+    catch(e){ console.error('Falha ao abrir sessão:', e); }
+    return true;
+  })();
+
+  window.__fb = { docRef, doc, getDoc, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
 </script>
 </head>
@@ -336,16 +388,20 @@ async function carregarRefsDoCliente(){
   const { db, collection, getDocs } = window.__fb;
   const slug = window.__clienteId;
   try{
+    /* Escopado por cliente: antes lia as duas coleções INTEIRAS e
+       filtrava no navegador — as referências de todos os clientes
+       chegavam à máquina de quem abrisse o calendário. */
+    const { query, where } = window.__fb;
     const [hub, portal] = await Promise.all([
-      getDocs(collection(db,'referencias')),
-      getDocs(collection(db,'referencias_cliente'))
+      getDocs(query(collection(db,'referencias'), where('cliente','==',slug))),
+      getDocs(query(collection(db,'referencias_cliente'), where('cliente','==',slug)))
     ]);
     const lista = [];
     hub.forEach(d => { const v=d.data();
-      if(v.excluido || v.cliente !== slug || !v.link) return;
+      if(v.excluido || !v.link) return;
       lista.push({ link:v.link, txt:(v.descricao||v.nicho||'sem descrição'), origem:'hub' }); });
     portal.forEach(d => { const v=d.data();
-      if(v.excluido || v.cliente !== slug || !v.link) return;
+      if(v.excluido || !v.link) return;
       lista.push({ link:v.link, txt:(v.descricao||'sem descrição'), origem: v.criadoPorTipo==='cliente' ? 'cliente' : 'portal' }); });
     refsDoCliente = lista;
   }catch(e){ console.error('Falha ao carregar referências:', e); }
@@ -373,9 +429,12 @@ window.usarRefDoBanco = function(){
   updateRefLink();
 };
 
-function load(){
+async function load(){
   mostrarCarregando();
-  if(!window.__fb){
+  const liberado = await window.__calPronto;
+  if(!liberado) return;                       // a tela de bloqueio já está no ar
+  aplicarModoCalendario();
+  if(!window.__fb || !window.__fb.docRef){
     document.getElementById('viewGrid').innerHTML='<div style="padding:30px;text-align:center;color:#e07a7a;">Não foi possível conectar ao banco de dados. Recarregue a página (se persistir, avise a Get).</div>';
     return;
   }
@@ -403,6 +462,13 @@ function load(){
   });
 }
 function save(){
+  /* TRAVA 0 — cliente não grava calendário. Ele lê, comenta e aprova.
+     Antes era a MESMA página editável pros dois lados: o cliente podia
+     apagar o mês inteiro sem querer, e ninguém saberia por quê. */
+  if(window.__modoCal !== 'equipe'){
+    avisarTela('Este calendário é de leitura. Você pode comentar e aprovar — quem edita é a equipe.', 'erro');
+    return;
+  }
   /* TRAVA 1 — nada é gravado antes do primeiro snapshot chegar.
      Era por aqui que o calendário vazio da memória ia por cima do cheio. */
   if(!carregado){
@@ -455,6 +521,25 @@ async function gravarComSeguranca(){
   }
 }
 function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();}
+
+/* Esconde da visão do cliente tudo que é ferramenta de edição. Não é só
+   estética: é a diferença entre "ele não consegue" e "ele não vê como". */
+function aplicarModoCalendario(){
+  if(window.__modoCal === 'equipe') return;
+  const css = document.createElement('style');
+  css.textContent = `
+    #clientName, #monthName { pointer-events:none; background:transparent; border-color:transparent; }
+    .listitem, .card, .chip { cursor:default !important; }
+    #btnAddItem, .btn-del, #mDelete, .fbBtn.edit { display:none !important; }
+  `;
+  document.head.appendChild(css);
+  ['clientName','monthName'].forEach(id => { const el=document.getElementById(id); if(el) el.readOnly = true; });
+  const faixa = document.createElement('div');
+  faixa.style.cssText = 'background:#1e3428;color:#cfe9d8;padding:9px 14px;border-radius:9px;margin-bottom:12px;font-size:12.5px;';
+  faixa.innerHTML = '👀 <b>Calendário do mês</b> — aqui você acompanha, comenta e aprova. Quem edita é a equipe da Get Started.';
+  const alvo = document.querySelector('.metabar') || document.body.firstElementChild;
+  if(alvo && alvo.parentNode) alvo.parentNode.insertBefore(faixa, alvo);
+}
 
 /* ===== POR QUE PARECIA VAZIO — 27/07/2026 ==========================
    A página desenha a grade do mês na hora, com `data.items` ainda vazio,

@@ -149,7 +149,8 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, serverTimestamp, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, serverTimestamp, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -199,7 +200,47 @@
 
   function esc(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+  /* ===== ISOLAMENTO DO CLIENTE — 28/07/2026 ==========================
+     A varredura encontrou o pior buraco do sistema, e ele estava aqui.
+     O portal lia TREZE coleções INTEIRAS e filtrava o cliente no
+     navegador — inclusive `pagamentos_mensais` (mensalidade de todo
+     mundo), `negocios` (o funil comercial), `videos_producao` (os vídeos
+     de todos os clientes) e `agendamentos`. O filtro escondia da tela,
+     mas os dados dos outros clientes chegavam ao navegador dele. Bastava
+     abrir o console pra ler tudo.
+
+     Agora toda leitura é uma consulta com where('cliente','==',slug).
+     Isso muda duas coisas de uma vez:
+     1. Só os documentos daquele cliente saem do banco.
+     2. As regras do Firestore passam a conseguir barrar o resto — regra
+        não filtra resultado, ela recusa a consulta que não se prova
+        limitada. Ler coleção inteira seria simplesmente NEGADO.
+
+     Ou seja: sem esta mudança, as regras novas quebrariam o portal.
+     Com ela, o cliente vê o que é dele e nada mais. */
+  function meusDocs(colecao, campo){
+    return getDocs(query(collection(db, colecao), where(campo || 'cliente', '==', clienteAtual.slug)));
+  }
+
+  const auth = getAuth(app);
+  window.__authPronta = signInAnonymously(auth)
+    .then(c => c.user.uid)
+    .catch(e => { console.error('Falha na autenticação:', e); return null; });
+
+  /* ===== A LISTA DE CLIENTES SAIU DO PORTAL — 28/07/2026 =============
+     Isto carregava a agência inteira: 16 nomes fixos no arquivo mais
+     todos os `clientes_extras`. Qualquer cliente abria o portal dele e
+     tinha, no navegador, a carteira completa de clientes da Get Started.
+     Isso é informação comercial nossa, não dele.
+
+     Agora o portal não sabe quem mais existe. Ele recebe um slug e um
+     token no link, confirma esse par no banco, e pega o nome de lá.
+     Um cliente, um nome, nada mais. */
   async function carregarClientes(){
+    CLIENTES_LISTA = [];
+  }
+
+  async function carregarClientesLEGADO(){
     const snap = await getDocs(collection(db,'clientes_extras'));
     const extras = []; snap.forEach(d => extras.push({slug:d.data().slug, nome:d.data().nome}));
     // Lista fixa dos clientes principais (mantida em paralelo ao sistema interno)
@@ -331,8 +372,8 @@
   async function carregarMinhaAgenda(){
     const cont = document.getElementById('painelMinhaAgenda');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDocs(collection(db,'agendamentos'));
-    const minhas = []; snap.forEach(d => { const a=d.data(); if(a.cliente===clienteAtual.slug && a.status!=='cancelado') minhas.push(a); });
+    const snap = await meusDocs('agendamentos');
+    const minhas = []; snap.forEach(d => { const a=d.data(); if(a.status!=='cancelado') minhas.push(a); });
     minhas.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
     const hojeStr = new Date().toISOString().slice(0,10);
     const proximas = minhas.filter(a => a.data >= hojeStr);
@@ -483,8 +524,8 @@
   async function carregarDemandas(){
     const cont = document.getElementById('painelDemandas');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDocs(collection(db,'demandas_cliente'));
-    const minhas = []; snap.forEach(d => { if(d.data().cliente===clienteAtual.slug) minhas.push({id:d.id, ...d.data()}); });
+    const snap = await meusDocs('demandas_cliente');
+    const minhas = []; snap.forEach(d => minhas.push({id:d.id, ...d.data()}));
     minhas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
     const badge = document.getElementById('badgeDemandas');
     const abertas = minhas.filter(d=>d.status!=='concluida').length;
@@ -530,12 +571,13 @@
     // certa — e guarda o ID do registro-espelho, pra poder sincronizar o
     // status de volta quando a equipe resolver (antes isso nunca acontecia
     // e o cliente via a demanda "Pendente" pra sempre, mesmo já resolvida).
-    await addDoc(collection(db,'demandas'), {
+    /* Mesma correção do alertarEquipe: o pedido entra na caixa do
+       cliente, não na fila interna. O escritório converte em demanda. */
+    await addDoc(collection(db,'avisos_do_cliente'), {
+      cliente: clienteAtual.slug, clienteNome: clienteAtual.nome,
       titulo: 'Cliente pediu: ' + texto.slice(0,60), descricao: texto,
-      origem: 'cliente', clienteNome: clienteAtual.nome, destinatario,
-      demandaClienteId: refCliente.id,
-      prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      paraQuem: destinatario, demandaClienteId: refCliente.id,
+      lido: false, viraDemanda: true, criadoEm: serverTimestamp()
     });
     document.getElementById('novaDemandaTexto').value = '';
     carregarDemandas();
@@ -579,11 +621,11 @@
     const cont = document.getElementById('painelVideos');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
     const [videosSnap, postagensSnap] = await Promise.all([
-      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
+      meusDocs('videos_producao'), meusDocs('postagens')
     ]);
-    const meusVideos = []; videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido && v.status!=='aprovado' && v.status!=='finalizado') meusVideos.push(v); });
-    const entregues = []; videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido && (v.status==='finalizado' || (v.status==='aprovado' && v.clienteAprovouEm))) entregues.push(v); });
-    const minhasPostagens = []; postagensSnap.forEach(d => { const p=d.data(); if(p.cliente===clienteAtual.slug) minhasPostagens.push({id:d.id, ...p}); });
+    const meusVideos = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido && v.status!=='aprovado' && v.status!=='finalizado') meusVideos.push(v); });
+    const entregues = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido && (v.status==='finalizado' || (v.status==='aprovado' && v.clienteAprovouEm))) entregues.push(v); });
+    const minhasPostagens = []; postagensSnap.forEach(d => minhasPostagens.push({id:d.id, ...d.data()}));
     const aguardandoVoce = meusVideos.filter(v=>v.status==='aguardando_cliente');
 
     const hoje = new Date();
@@ -793,8 +835,8 @@
   async function carregarIdeias(){
     const cont = document.getElementById('painelIdeias');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDocs(collection(db,'ideias_cliente'));
-    const minhas = []; snap.forEach(d => { const v = d.data(); if(v.cliente===clienteAtual.slug && !v.excluido) minhas.push({id:d.id, ...v}); });
+    const snap = await meusDocs('ideias_cliente');
+    const minhas = []; snap.forEach(d => { const v = d.data(); if(!v.excluido) minhas.push({id:d.id, ...v}); });
     minhas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
 
     let html = `<div class="card">
@@ -830,8 +872,8 @@
   async function carregarReferenciasCliente(){
     const cont = document.getElementById('painelReferencias');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDocs(collection(db,'referencias_cliente'));
-    const minhas = []; snap.forEach(d => { const v = d.data(); if(v.cliente===clienteAtual.slug && !v.excluido) minhas.push({id:d.id, ...v}); });
+    const snap = await meusDocs('referencias_cliente');
+    const minhas = []; snap.forEach(d => { const v = d.data(); if(!v.excluido) minhas.push({id:d.id, ...v}); });
     minhas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
 
     let html = `<div class="card">
@@ -902,13 +944,26 @@
      sendo a Amanda, entao nada mais mudou de dono sem querer.
      Continua sendo AVISO (ehAviso), nao tarefa: fecha sozinho quando a
      pessoa abre, sem precisar de aprovacao. */
+  /* ===== O CLIENTE NÃO ESCREVE MAIS NA COLEÇÃO INTERNA — 28/07/2026 ===
+     Isto gravava direto em `demandas`, a fila de trabalho da equipe. Ou
+     seja: o portal do cliente tinha permissão de escrita na operação
+     interna. Um cliente mal-intencionado (ou um script) podia criar
+     demanda pra qualquer pessoa, com qualquer texto e qualquer prazo.
+
+     Agora ele escreve em `avisos_do_cliente`, uma caixa de entrada só
+     dele, sempre carimbada com o slug do próprio cliente. O escritório
+     lê essa caixa e transforma em demanda de verdade — do lado de dentro,
+     onde a permissão existe. O cliente avisa; quem cria a tarefa somos
+     nós. Isso também deixa a regra do Firestore simples: o cliente só
+     grava documento que tenha o `cliente` dele. */
   async function alertarEquipe(titulo, descricao, paraQuem){
-    await addDoc(collection(db,'demandas'), {
-      titulo, descricao, origem: 'cliente', clienteNome: clienteAtual.nome,
-      ehAviso: true,
-      destinatario: paraQuem || 'Amanda', prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-    });
+    try{
+      await addDoc(collection(db,'avisos_do_cliente'), {
+        cliente: clienteAtual.slug, clienteNome: clienteAtual.nome,
+        titulo, descricao, paraQuem: paraQuem || 'Amanda',
+        lido: false, viraDemanda: true, criadoEm: serverTimestamp()
+      });
+    }catch(e){ console.error('Falha ao avisar a equipe:', e); }
   }
 
   window.enviarIdeiaCliente = async function(){
@@ -960,8 +1015,8 @@
   async function carregarStories(){
     const cont = document.getElementById('painelStories');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDocs(collection(db,'stories_semanais'));
-    const meus = []; snap.forEach(d => { if(d.data().cliente===clienteAtual.slug) meus.push({id:d.id, ...d.data()}); });
+    const snap = await meusDocs('stories_semanais');
+    const meus = []; snap.forEach(d => meus.push({id:d.id, ...d.data()}));
 
     const semanaAtual = segundaDaSemanaPortal(new Date());
     const semana = window.__semanaStoriesPortal || semanaAtual;
@@ -1027,7 +1082,11 @@
   function so4Digitos(s){ return (s||'').replace(/\D/g,'').slice(-4); }
 
   async function buscarNegociosDoCliente(){
-    const snap = await getDocs(collection(db,'negocios'));
+    /* O funil comercial inteiro chegava ao navegador do cliente e era
+       filtrado por NOME aqui. Agora só vem o que é dele. Negócio antigo
+       sem o campo `cliente` preenchido deixa de aparecer — é o preço de
+       fechar isto, e é o preço certo. */
+    const snap = await meusDocs('negocios');
     const meus = [];
     const nomeAlvo = (clienteAtual.nome||'').trim().toLowerCase();
     snap.forEach(d => {
@@ -1135,11 +1194,9 @@
      agendada, a etapa acende; se o video existe, a proxima acende. */
   async function calcularEtapasProducao(){
     const [agSnap, vidSnap, postSnap] = await Promise.all([
-      getDocs(collection(db,'agendamentos')),
-      getDocs(collection(db,'videos_producao')),
-      getDocs(collection(db,'postagens'))
+      meusDocs('agendamentos'), meusDocs('videos_producao'), meusDocs('postagens')
     ]);
-    const meusAg = []; agSnap.forEach(d => { const a=d.data(); if(a.cliente===clienteAtual.slug && a.status!=='cancelado') meusAg.push(a); });
+    const meusAg = []; agSnap.forEach(d => { const a=d.data(); if(a.status!=='cancelado') meusAg.push(a); });
     const meusVid = []; vidSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug && !v.excluido) meusVid.push(v); });
     const minhasPost = []; postSnap.forEach(d => { const p=d.data(); if(p.cliente===clienteAtual.slug) minhasPost.push(p); });
 
@@ -1180,10 +1237,10 @@
   async function dadosPagamentoCliente(){
     const [ctSnap, pgSnap] = await Promise.all([
       getDoc(doc(db,'contratos_cliente', clienteAtual.slug)),
-      getDocs(collection(db,'pagamentos_mensais'))
+      meusDocs('pagamentos_mensais')
     ]);
     const contrato = ctSnap.exists() ? ctSnap.data() : null;
-    const meus = []; pgSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteAtual.slug) meus.push({id:d.id, ...v}); });
+    const meus = []; pgSnap.forEach(d => meus.push({id:d.id, ...d.data()}));
     meus.sort((a,b)=>(b.competencia||'').localeCompare(a.competencia||''));
     return { contrato, pagamentos: meus };
   }
@@ -1389,8 +1446,8 @@
   async function carregarAtas(){
     const cont = document.getElementById('painelAtas');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDocs(collection(db,'atas_reuniao'));
-    const minhas = []; snap.forEach(d => { if(d.data().cliente===clienteAtual.slug) minhas.push(d.data()); });
+    const snap = await meusDocs('atas_reuniao');
+    const minhas = []; snap.forEach(d => minhas.push(d.data()));
     minhas.sort((a,b)=>(b.data||'').localeCompare(a.data||''));
 
     let html = `<div class="card"><h2><svg class="ic"><use href="#i-pen"/></svg>Histórico de Reuniões</h2><div class="sub" style="margin-bottom:0;">Tudo que já foi conversado e decidido.</div></div>`;
@@ -1428,6 +1485,7 @@
 
   // Auto-entrada se ja escolheu antes nesse navegador
   window.addEventListener('DOMContentLoaded', async () => {
+    await window.__authPronta;      // nada toca o banco antes de autenticar
     await carregarClientes();
     const params = new URLSearchParams(location.search);
     const slugUrl = params.get('c');
@@ -1446,8 +1504,17 @@
       </div>`;
       return;
     }
-    const c = CLIENTES_LISTA.find(x=>x.slug===slug);
-    window.entrarPortal(slug, c ? c.nome : acessoSnap.data().nome);
+    /* Marca a sessão como sendo DESTE cliente. É este documento que as
+       regras do Firestore consultam pra decidir o que ele pode ler —
+       sem ele, nenhuma consulta do portal passa. */
+    try{
+      const uid = await window.__authPronta;
+      if(uid) await setDoc(doc(db,'sessoes_cliente', uid), {
+        cliente: slug, abertaEm: new Date().toISOString()
+      });
+    }catch(e){ console.error('Falha ao abrir sessão do cliente:', e); }
+
+    window.entrarPortal(slug, acessoSnap.data().nome || slug);
   });
 </script>
 </body>

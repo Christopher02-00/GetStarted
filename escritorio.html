@@ -1392,7 +1392,7 @@
   let emailjsInicializado = (EMAILJS_CONFIGURADO && typeof emailjs !== 'undefined');
 
   /* ===== SENHA FORA DO ARQUIVO — 28/07/2026 ==========================
-     Antes: const SENHA_GERENCIA = "Cg@102030". Nove caracteres em texto
+     Antes a senha estava aqui como texto puro. Nove caracteres em texto
      puro dentro de um arquivo público. Ctrl+U no navegador e a senha
      estava lá. Ela não protegia nada — só escondia a tela de quem não
      sabia procurar.
@@ -1507,8 +1507,50 @@
       </div>`).join('');
   };
 
+  /* ===== A TROCA DEIXOU DE SER OPCIONAL — 28/07/2026 ==================
+     A senha antiga do escritório aparece no arquivo público como parte da
+     chave do cofre. Enquanto ela continuar valendo, quem ler o código
+     entra na gerência. Uma recomendação no rodapé não resolve isso — em
+     uma semana ninguém lembra.
+
+     Então o sistema cobra: a cada login com a senha antiga, aparece esta
+     tela. Dá pra adiar, mas ela volta no login seguinte, e fica uma
+     tarja vermelha no topo enquanto não for resolvido. */
+  window.exigirTrocaDeSenha = async function(){
+    let usandoPadrao = true;
+    try{
+      const snap = await getDoc(doc(db,'config_seguranca','escritorio'));
+      if(snap.exists() && snap.data().senhaHash) usandoPadrao = false;
+    }catch(e){ console.error('Não consegui checar a senha:', e); }
+    if(!usandoPadrao){ const b=document.getElementById('tarjaSenha'); if(b) b.remove(); return; }
+
+    if(!document.getElementById('tarjaSenha')){
+      const tarja = document.createElement('div');
+      tarja.id = 'tarjaSenha';
+      tarja.style.cssText = 'background:#7a1f1f;color:#fff;padding:11px 16px;font-size:12.5px;font-weight:700;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;';
+      tarja.innerHTML = '🔓 A senha do escritório ainda é a antiga, e ela aparece no código do site. ' +
+        '<button class="btn" style="width:auto;padding:7px 16px;font-size:12px;" onclick="trocarSenhaEscritorio()">Trocar agora</button>';
+      const alvo = document.getElementById('conteudoGerencia');
+      if(alvo) alvo.insertBefore(tarja, alvo.firstChild);
+    }
+
+    const modal = document.getElementById('modalConteudo');
+    if(!modal) return;
+    modal.innerHTML = `
+      <h2>🔓 Troca a senha do escritório</h2>
+      <div class="linha">A senha que você acabou de usar é a antiga — e ela consegue ser descoberta por quem abrir o código do site. Não é hipótese: ela está lá dentro, como parte da chave do cofre de senhas, e essa parte não pode ser removida sem tornar o cofre ilegível.</div>
+      <div class="linha">Com as regras novas do banco, saber a senha não abre mais o Firestore direto. Mas abre o escritório — e de dentro dele, o cofre. Por isso a troca é o último passo que falta pra fechar tudo.</div>
+      <div class="linha"><b>Depois de trocar:</b> a senha nova fica só como hash no banco, não existe em lugar nenhum do código, e a string antiga vira uma chave de criptografia sem valor de acesso.</div>
+      <div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:10px 12px;border-radius:7px;">Escolhe uma com <b>10 caracteres ou mais</b>, diferente da antiga, e avisa a equipe — todo mundo usa a mesma pra entrar na gerência.</div>
+      <div class="btnrow" style="margin-top:14px;">
+        <button class="btn secondary" onclick="fecharModal()">Agora não</button>
+        <button class="btn green" onclick="fecharModal();trocarSenhaEscritorio();">Trocar agora</button>
+      </div>`;
+    document.getElementById('overlayView').classList.add('show');
+  };
+
   window.trocarSenhaEscritorio = async function(){
-    const atual = prompt('Senha atual:');
+    const atual = prompt('Senha ATUAL (a que você usou pra entrar):');
     if(atual === null) return;
     if(!(await conferirSenhaGerencia(atual))){ mostrarToast('Senha atual não confere.', 'erro'); return; }
     const nova = prompt('Senha nova (mínimo 10 caracteres):');
@@ -1518,6 +1560,7 @@
     await setDoc(doc(db,'config_seguranca','escritorio'), {
       senhaHash: await hashSenha(nova), definidoEm: new Date().toISOString(), definidoPor: usuarioAtual || '?'
     }, { merge:true });
+    const tarja = document.getElementById('tarjaSenha'); if(tarja) tarja.remove();
     mostrarToast('Senha trocada. Avisa a equipe — a antiga parou de valer agora.');
   };
   const FUNCIONARIOS = ["Amanda","Cecília","Gabrielle","Yas","Helo","Luís","Nathan","João Victor"];
@@ -5868,6 +5911,22 @@
       material, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']
     );
   }
+  /* ===== ATENÇÃO — 28/07/2026 =========================================
+     Esta string é a CHAVE AES do cofre, não uma senha de login. Ela não
+     pode mudar sem tornar ilegível tudo que já foi guardado, por isso
+     continua aqui.
+
+     O problema: ela foi derivada da senha antiga do escritório. Quem ler
+     este arquivo descobre qual era essa senha. Com as regras novas do
+     Firestore isso sozinho não abre o cofre — `cofre_senhas` só é legível
+     por uma sessão de gerência. Mas quem tiver a senha consegue abrir a
+     gerência e aí sim chegar no cofre.
+
+     Por isso a troca da senha do escritório deixou de ser recomendação e
+     virou obrigação: enquanto a senha for a antiga, o sistema cobra a
+     troca a cada login (ver exigirTrocaDeSenha logo abaixo). Depois de
+     trocada, esta string vira só uma chave de criptografia legada, sem
+     nenhum valor de acesso. */
   const SENHA_GERENCIA_COFRE = 'Cg@102030-cofre-v1';
 
   async function criptografarTexto(texto){
@@ -10842,6 +10901,7 @@
           registrarAcessoGerencia(usuarioAtual || '?');
         }
       }catch(e){ console.error('Falha ao abrir sessão de gerência:', e); }
+      setTimeout(() => { try{ exigirTrocaDeSenha(); }catch(e){ console.error(e); } }, 1200);
       document.getElementById('gateGerencia').style.display='none';
       document.getElementById('conteudoGerencia').style.display='block';
       carregarGerencia().then(()=>{

@@ -4666,7 +4666,9 @@
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
           ${a.precisaAprovacao ? '<span class="selo atrasado">Precisa aprovação Chris</span>' : ''}
           <span class="selo pendente">${esc(a.status)}</span>
+          <button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10px;" onclick="reposicionarAgendamento('${a.id}')">📆 Mudar dia</button>
           <button class="btn red" style="width:auto;padding:4px 10px;font-size:10px;" onclick="cancelarAgendamento('${a.id}')">Cancelar</button>
+          <button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10px;opacity:.65;" onclick="apagarAgendamento('${a.id}')" title="Só quando foi criada por engano">🗑️</button>
         </div>
       </div>
     `).join('');
@@ -4677,9 +4679,101 @@
     mostrarToast(filmmaker ? 'Gravação atribuída a ' + filmmaker + '!' : 'Filmmaker removido — fica "a definir".');
   };
 
+  /* ===== A CECÍLIA PRECISA PODER DESFAZER — 28/07/2026 ================
+     Pedido do Chris: gravação marcada errada, ou que mudou de dia, tinha
+     que poder ser corrigida por ela — e a correção precisa percorrer a
+     corrente inteira, senão sobra rastro em três lugares:
+
+       · a demanda de aprovação que foi criada pro Chris fica órfã
+       · o filmmaker continua vendo a gravação na agenda dele
+       · o item do calendário continua marcado como gravado
+
+     Estas três funções fecham tudo isso. Cancelar não apaga: guarda quem
+     cancelou e por quê, porque gravação cancelada perto da data é dado de
+     operação, não lixo. */
+  async function limparRastrosDoAgendamento(id, motivo, acao){
+    /* encerra a demanda de aprovação, se existir */
+    try{
+      const snap = await getDocs(collection(db,'demandas'));
+      const alvo = [];
+      snap.forEach(d => { const v = d.data();
+        if(v.agendamentoId === id && !['aprovada','cancelada'].includes(v.status)) alvo.push(d.id); });
+      for(const dId of alvo){
+        await updateDoc(doc(db,'demandas', dId), {
+          status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(),
+          notaConclusao:'Encerrada porque a gravação foi ' + acao + (motivo ? ' — ' + motivo : '') + '.'
+        });
+      }
+    }catch(e){ console.error('Falha ao encerrar a demanda ligada:', e); }
+  }
+
   window.cancelarAgendamento = async function(id){
-    await updateDoc(doc(db,'agendamentos', id), { status: 'cancelado' });
-    mostrarToast('Agendamento cancelado.');
+    const motivo = prompt('Por que essa gravação está sendo cancelada?\n\n(o filmmaker e o Chris veem este texto)') || '';
+    if(motivo === null) return;
+    const snap = await getDoc(doc(db,'agendamentos', id));
+    const a = snap.exists() ? snap.data() : {};
+    await updateDoc(doc(db,'agendamentos', id), {
+      status: 'cancelado', canceladoPor: usuarioAtual||'?', canceladoEm: new Date().toISOString(), motivoCancelamento: motivo
+    });
+    await limparRastrosDoAgendamento(id, motivo, 'cancelada');
+    /* Se alguém já estava escalado, precisa saber — senão aparece no local. */
+    try{
+      const quem = (a.equipe||[]).map(e=>e.nome).filter(Boolean);
+      for(const n of quem){
+        await criarDemandaSegura({
+          titulo: '🚫 Gravação cancelada — ' + (a.clienteNome||''),
+          descricao: 'A gravação de ' + (a.clienteNome||'') + ' em ' + formatarDataBR(a.data||'') + (a.hora?' às '+a.hora:'') + ' foi cancelada por ' + (usuarioAtual||'?') + '.'
+            + (motivo ? '\n\nMotivo: ' + motivo : '') + '\n\nEla saiu da sua agenda. Não precisa fazer nada.',
+          destinatario: n, origem:'sistema', ehAviso:true, clienteNome: a.clienteNome||'',
+          prazoData: new Date().toISOString().slice(0,10), prazoHora:'19:00', status:'pendente'
+        }, { janelaMinutos: 60 });
+      }
+    }catch(e){ console.error('Falha ao avisar a equipe:', e); }
+    mostrarToast('Cancelada — a equipe foi avisada e a aprovação pendente foi encerrada.');
+    renderListaAgendamentos();
+  };
+
+  window.reposicionarAgendamento = async function(id){
+    const snap = await getDoc(doc(db,'agendamentos', id));
+    if(!snap.exists()) return;
+    const a = snap.data();
+    const novaData = prompt('Nova data (AAAA-MM-DD):', a.data || '');
+    if(novaData === null) return;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(novaData)){ mostrarToast('Data inválida. Usa o formato 2026-08-05.', 'erro'); return; }
+    const novaHora = prompt('Nova hora (HH:MM):', a.hora || '10:00');
+    if(novaHora === null) return;
+    const motivo = prompt('O que mudou? (o filmmaker vê este texto)') || '';
+
+    await updateDoc(doc(db,'agendamentos', id), {
+      data: novaData, hora: novaHora || a.hora || '', status: 'agendado',
+      reagendadoPor: usuarioAtual||'?', reagendadoEm: new Date().toISOString(),
+      dataAnterior: a.data || '', motivoReagendamento: motivo
+    });
+    registrarHistorico('agendamentos', id, 'Reagendada de ' + (a.data||'?') + ' pra ' + novaData + ' por ' + (usuarioAtual||'?'), motivo);
+    try{
+      const quem = (a.equipe||[]).map(e=>e.nome).filter(Boolean);
+      for(const n of quem){
+        await criarDemandaSegura({
+          titulo: '📆 Gravação mudou de dia — ' + (a.clienteNome||''),
+          descricao: (a.clienteNome||'') + ' saiu de ' + formatarDataBR(a.data||'') + ' pra ' + formatarDataBR(novaData) + (novaHora?' às '+novaHora:'') + '.'
+            + (motivo ? '\n\nMotivo: ' + motivo : '') + '\n\nJá está atualizado na sua agenda.',
+          destinatario: n, origem:'sistema', ehAviso:true, clienteNome: a.clienteNome||'',
+          prazoData: novaData, prazoHora:'09:00', status:'pendente'
+        }, { janelaMinutos: 60 });
+      }
+    }catch(e){ console.error('Falha ao avisar do reagendamento:', e); }
+    mostrarToast('Reagendada pra ' + formatarDataBR(novaData) + ' — a equipe foi avisada.');
+    renderListaAgendamentos();
+  };
+
+  window.apagarAgendamento = async function(id){
+    if(!confirm('Apagar essa gravação de vez?\n\nUse só quando ela foi criada por engano. Se ela existiu e não aconteceu, prefira CANCELAR — o motivo fica registrado e vira histórico da operação.')) return;
+    await updateDoc(doc(db,'agendamentos', id), {
+      excluido: true, status: 'cancelado',
+      excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString(), motivoExclusao: 'criada por engano'
+    });
+    await limparRastrosDoAgendamento(id, 'criada por engano', 'apagada');
+    mostrarToast('Apagada. Some de todas as telas.');
     renderListaAgendamentos();
   };
 

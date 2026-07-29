@@ -399,7 +399,16 @@ function textoDoMes(mes){
 /* O mês que está sendo visto agora. Vazio = o mês do próprio documento
    (o comportamento de sempre, pra calendário que ainda não tem meses). */
 let mesVisivel='';
-function mesDoItem(it){ return (it && it.mes) || ''; }
+/* ===== O CONTEÚDO ÓRFÃO — 29/07/2026 ================================
+   Cenário real, medido no banco: a Gabi está com o calendário aberto
+   AGORA. Se o arquivo novo subir e ela continuar salvando na aba antiga,
+   os conteúdos que ela criar nascem sem `mes`. Ao recarregar, eles não
+   pertenceriam a mês nenhum e SUMIRIAM da tela — os dados no banco,
+   intactos, e ela vendo o trabalho desaparecer. Outra vez.
+
+   Então conteúdo sem mês cai no `mesLegado`, que é a âncora estável.
+   Nunca no rótulo do documento, que anda. */
+function mesDoItem(it){ return (it && it.mes) || data.mesLegado || ''; }
 
 /* ===== A ARMADILHA QUE EU QUASE DEIXEI ==============================
    Conteúdo antigo não tem `mes`. Se ele "herdasse" o mês do documento
@@ -827,6 +836,28 @@ async function gravarComSeguranca(){
     const atual = await getDoc(docRef);
     const antes = atual.exists() ? (atual.data().items||[]) : [];
     const depois = data.items||[];
+
+    /* ===== NÃO APAGAR O QUE ESTA ABA NÃO CONHECE — 29/07/2026 =======
+       `setDoc` grava o documento inteiro. Uma aba aberta antes desta
+       versão não tem `mesLegado` nem `aprovacaoMeses` na memória — e
+       gravaria por cima, apagando a âncora dos meses e as aprovações da
+       Amanda. Antes de gravar, o que está no servidor e não está aqui
+       volta pra dentro. */
+    if(atual.exists()){
+      const srv = atual.data();
+      if(srv.mesLegado && !data.mesLegado) data.mesLegado = srv.mesLegado;
+      if(srv.aprovacaoMeses){
+        data.aprovacaoMeses = { ...srv.aprovacaoMeses, ...(data.aprovacaoMeses||{}) };
+      }
+      /* A aprovação da Amanda é dela, não desta aba. Se a do servidor é
+         mais recente que a que esta aba tem na memória, a do servidor
+         ganha — senão uma aba aberta antes dela aprovar desfaria a
+         aprovação sem ninguém perceber. */
+      const srvAp = srv.aprovacaoInterna, meuAp = data.aprovacaoInterna;
+      if(srvAp && srvAp.em && (!meuAp || !meuAp.em || String(srvAp.em) > String(meuAp.em))){
+        data.aprovacaoInterna = srvAp;
+      }
+    }
 
     /* TRAVA 2 — não deixa uma aba desatualizada apagar o trabalho de
        outra pessoa. Só passa se alguém apagou de propósito nesta aba. */

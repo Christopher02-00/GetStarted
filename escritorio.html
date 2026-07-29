@@ -1021,6 +1021,7 @@
         <div class="subtab" data-calsub="editar" onclick="setCalSub('editar', this)">✏️ Montar e editar</div>
         <div class="subtab" data-calsub="refs" onclick="setCalSub('refs', this)">🔗 Perfis de referência</div>
         <div class="subtab" data-calsub="links" onclick="setCalSub('links', this)">📤 Links e envio</div>
+        <div class="subtab" data-calsub="envio" onclick="setCalSub('envio', this)">📤 Prontos pra enviar</div>
         <div class="subtab" data-calsub="resgate" onclick="setCalSub('resgate', this)">🛟 Resgatar</div>
       </div>
 
@@ -1069,6 +1070,14 @@
           <h2>🔗 Os perfis mudaram de lugar</h2>
           <div class="desc">Eles agora ficam junto do resto das referências, em <b>Referências</b> no menu lateral — que é onde a Gabi já trabalha. Aqui virava uma segunda rotina pro mesmo assunto.</div>
           <button class="btn" style="margin-top:12px;" onclick="irPara('referencias', document.getElementById('navReferencias'))">Abrir Referências →</button>
+        </div>
+      </div>
+
+      <div id="calSubEnvio" style="display:none;">
+        <div class="card" style="border:2px solid var(--yellow);">
+          <h2>📤 Prontos pra enviar — o disparo do dia 15</h2>
+          <div class="desc">Calendário que você aprova <b>não vai pro cliente na hora</b>: fica guardado aqui. No dia 15 você manda todos de uma vez, e todo cliente recebe o mês seguinte no mesmo dia.</div>
+          <div id="filaEnvioCalendarios" style="margin-top:12px;"></div>
         </div>
       </div>
 
@@ -14022,10 +14031,12 @@
         let ve, cor, txt;
         if(!cal || !itens){ ve = false; cor = 'var(--red)'; txt = 'não tem calendário montado — o cliente vê "em preparação"'; }
         else if(st === 'liberado'){ ve = true; cor = 'var(--green)'; txt = 'vê os ' + itens + ' conteúdos' + (legado ? ' (montado antes da revisão existir)' : ''); }
+        else if(st === 'aprovado_interno'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — aprovado, guardado pro envio do dia 15'; }
         else if(st === 'aguardando_interna'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — esperando a Amanda liberar'; }
         else if(st === 'ajuste_interno'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — devolvido pra ajuste'; }
         else { ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — ainda marcado como rascunho'; }
-        return { ...c, ve, cor, txt, itens, semAcesso: !temAcesso.has(c.slug), st };
+        const msRec = cal ? (mesesDeCalendario(cal).slice(-1)[0] || '') : '';
+        return { ...c, ve, cor, txt, itens, semAcesso: !temAcesso.has(c.slug), st, mesRecente: msRec };
       });
 
       const veem = linhas.filter(l => l.ve).length;
@@ -14043,8 +14054,8 @@
             <div class="top"><div class="nome">${esc(l.nome)}</div>
               <span class="selo ${l.ve?'aprovada':'atrasado'}">${l.ve ? '✅ vendo' : '🚫 não vê'}</span></div>
             <div class="meta" style="margin-top:4px;">${esc(l.txt)}${l.semAcesso ? ' · <span style="color:var(--red);">sem link de acesso gerado</span>' : ''}</div>
-            ${(!l.ve && l.itens) ? `<div class="btnrow" style="margin-top:8px;">
-              <button class="btn green" style="font-size:11px;" onclick="liberarCalendario('${escJs(l.slug)}')">✅ Liberar pro cliente agora</button>
+            ${(!l.ve && l.itens && l.st === 'aprovado_interno') ? `<div class="btnrow" style="margin-top:8px;">
+              <button class="btn green" style="font-size:11px;" onclick="enviarUmCalendario('${escJs(l.slug)}','${escJs(l.mesRecente||'')}', this)">📤 Enviar pro cliente agora</button>
             </div>` : ''}
           </div>`).join('');
     }catch(e){
@@ -14329,10 +14340,17 @@
 
      campo ausente = calendário anterior a 28/07 = continua liberado. */
   function estadoDoCalendario(cal){
-    const ap = (cal && cal.aprovacaoInterna) || null;
     const itens = ((cal && cal.items) || []).length;
+    if(!itens) return 'vazio';
+    /* Com vários meses no mesmo calendário, "o estado" passa a ser o do
+       mês mais recente — é o que a equipe está tocando e o que interessa
+       nos painéis. `estadoMesCal` é a mesma função que a fila de envio e
+       a fila da Amanda usam; não existe segunda implementação. */
+    const meses = mesesDeCalendario(cal);
+    if(meses.length) return estadoMesCal(cal, meses[meses.length-1]);
+    const ap = (cal && cal.aprovacaoInterna) || null;
     if(ap && ap.status) return ap.status;
-    return itens ? 'liberado' : 'vazio';
+    return 'liberado';
   }
   function ehCalendarioLegado(cal){
     return !((cal && cal.aprovacaoInterna && cal.aprovacaoInterna.status));
@@ -14349,14 +14367,14 @@
   const CAL_SUBS_POR_PESSOA = {
     'Gabrielle': ['visao','editar','refs','resgate'],   // ela mantém o atalho de lá
     'Cecília':   ['visao','editar','resgate'],
-    'Amanda':    ['visao','editar','links','resgate'],
-    'Chris':     ['visao','editar','links','resgate'],
+    'Amanda':    ['visao','editar','envio','links','resgate'],
+    'Chris':     ['visao','editar','envio','links','resgate'],
     'Luís':      ['visao'],
     'Nathan':    ['visao']
   };
 
   window.setCalSub = function(qual, el){
-    ['visao','editar','refs','links','resgate'].forEach(k => {
+    ['visao','editar','refs','envio','links','resgate'].forEach(k => {
       const b = document.getElementById('calSub' + k.charAt(0).toUpperCase() + k.slice(1));
       if(b) b.style.display = (k === qual) ? 'block' : 'none';
     });
@@ -14364,6 +14382,7 @@
     if(el) el.classList.add('active');
     if(qual === 'visao') renderVisaoCalendarios('2');
     if(qual === 'links' || qual === 'editar') filtrarCalendariosFerramentas();
+    if(qual === 'envio') renderFilaEnvioCalendarios();
     if(qual === 'resgate'){
       const sel = document.getElementById('resgateCalCliente2');
       if(sel && !sel.options.length){
@@ -14430,6 +14449,7 @@
           const pct = l.total ? Math.round(l.postados/l.total*100) : 0;
           const estadoTxt = !l.total ? 'sem calendário montado'
             : l.estado === 'liberado' ? (l.legado ? 'o cliente já vê (montado antes da revisão existir)' : 'liberado — o cliente já vê')
+            : l.estado === 'aprovado_interno' ? 'aprovado — guardado pro envio do dia 15'
             : l.estado === 'aguardando_interna' ? 'esperando revisão interna'
             : l.estado === 'ajuste_interno' ? 'devolvido pra ajuste'
             : 'em montagem — o cliente ainda não vê';
@@ -21053,61 +21073,210 @@ Observações do cliente: ${l.observacoes||'—'}`;
       const fila = [];
       snap.forEach(d => {
         const v = d.data() || {};
-        const ap = v.aprovacaoInterna || {};
-        if(ap.status !== 'aguardando_interna') return;
-        fila.push({ slug:d.id, nome:v.client || d.id, mes:v.month||'', itens:(v.items||[]).length,
-                    por:ap.por||'?', em:ap.em||'', refs:(v.items||[]).filter(i=>i&&i.ref).length });
+        const meses = mesesDeCalendario(v);
+        (meses.length ? meses : ['']).forEach(m => {
+          if(estadoMesCal(v, m) !== 'aguardando_interna') return;
+          const doMes = (v.items||[]).filter(i => (((i&&i.mes)||'') === m));
+          if(!doMes.length) return;
+          const ap = ((v.aprovacaoMeses||{})[m]) || v.aprovacaoInterna || {};
+          fila.push({ slug:d.id, mesKey:m, nome:v.client || d.id,
+                      mes: m ? (['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][Number(m.split('-')[1])-1]+' '+m.split('-')[0]) : (v.month||''),
+                      itens: doMes.length, por:ap.por||'?', em:ap.em||'', refs: doMes.filter(i=>i&&i.ref).length });
+        });
       });
       if(!fila.length) return '';
       fila.sort((a,b)=>String(a.em).localeCompare(String(b.em)));
       return `<div class="card" style="border:2px solid var(--yellow2);">
         <h2>🗓️ Calendários esperando sua revisão</h2>
-        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. Confere o mês, e então libera ou devolve com o motivo. Se devolver, a Gabi é avisada e corrige.</div>
+        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. Confere o mês, e então aprova ou devolve com o motivo. <b>Aprovar não envia:</b> o calendário fica guardado em "📤 Prontos pra enviar" e todos vão juntos no dia 15. Se devolver, a Gabi é avisada e corrige.</div>
         ${fila.map(c => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow2);">
           <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">${esc(c.mes||'sem mês')}</span></div>
           <div class="meta" style="margin-top:4px;">${c.itens} conteúdo(s) · ${c.refs} com referência · enviado por ${esc(c.por)}${c.em ? ' em ' + new Date(c.em).toLocaleDateString('pt-BR') : ''}</div>
           <div class="btnrow" style="margin-top:10px;">
             <button class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${c.slug}','${escJs(c.nome)}')">👁️ Abrir e conferir</button>
-            <button class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${c.slug}')">↩️ Pedir ajuste</button>
-            <button class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${c.slug}')">✅ Liberar pro cliente</button>
+            <button class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${c.slug}','${escJs(c.mesKey||'')}')">↩️ Pedir ajuste</button>
+            <button class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${c.slug}','${escJs(c.mesKey||'')}')">✅ Aprovar e guardar pro dia 15</button>
           </div>
         </div>`).join('')}
       </div>`;
     }catch(e){ console.error('Falha na fila de calendários:', e); return ''; }
   };
 
-  window.liberarCalendario = async function(slug){
+  /* ===== O REPRESAMENTO DO DIA 15 — 29/07/2026 ======================
+     Pedido do Chris, e a razão dele é operacional, não técnica: se cada
+     calendário fosse pro cliente assim que a Amanda aprova, um cliente
+     receberia dia 3 e outro dia 12. O combinado da agência é que todo
+     mundo recebe o mês seguinte no MESMO dia.
+
+     Então "aprovar" e "enviar" viraram dois atos. A Amanda aprova no
+     ritmo dela; os aprovados ficam represados aqui; no dia 15 ela
+     dispara todos com um clique.
+
+     Estado do mês:
+       aguardando_interna → esperando a Amanda
+       aprovado_interno   → ela aprovou, ESTÁ REPRESADO (cliente não vê)
+       liberado           → foi enviado, o cliente vê e pode aprovar
+       ajuste_interno     → devolvido pra Gabi */
+  function mesesDeCalendario(cal){
+    const its = (cal && cal.items) || [];
+    const ms = [...new Set(its.map(i => (i&&i.mes)||'').filter(Boolean))];
+    return ms.sort();
+  }
+  function estadoMesCal(cal, mes){
+    const porMes = ((cal&&cal.aprovacaoMeses)||{})[mes];
+    if(porMes && porMes.status) return porMes.status;
+    const usaMeses = ((cal&&cal.items)||[]).some(i=>i&&i.mes) || !!(cal&&cal.aprovacaoMeses) || !!(cal&&cal.mesLegado);
+    const legado = (cal&&cal.mesLegado) || '';
+    const heraldaAntiga = !mes || (legado && mes === legado) || !usaMeses;
+    if(!heraldaAntiga) return 'rascunho';
+    const ap = cal && cal.aprovacaoInterna;
+    if(ap && ap.status) return ap.status;
+    return ((cal&&cal.items)||[]).length ? 'liberado' : 'rascunho';
+  }
+
+  window.renderFilaEnvioCalendarios = async function(){
+    const box = document.getElementById('filaEnvioCalendarios');
+    if(!box) return;
+    box.innerHTML = '<div class="desc">Carregando…</div>';
+    try{
+      const snap = await getDocs(collection(db,'calendarios'));
+      const represados = [], jaEnviados = [], esperando = [];
+      snap.forEach(d => {
+        const cal = d.data();
+        const meses = mesesDeCalendario(cal);
+        (meses.length ? meses : ['']).forEach(m => {
+          const st = estadoMesCal(cal, m);
+          const qtd = (cal.items||[]).filter(i => (((i&&i.mes)||'') === m)).length;
+          if(!qtd) return;
+          const linha = { slug:d.id, nome: cal.client || nomeDeSlugSeguro(d.id), mes:m, qtd,
+                          quando: ((cal.aprovacaoMeses||{})[m]||{}).em || '' };
+          if(st === 'aprovado_interno') represados.push(linha);
+          else if(st === 'liberado') jaEnviados.push(linha);
+          else if(st === 'aguardando_interna') esperando.push(linha);
+        });
+      });
+      represados.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+
+      const hoje = new Date();
+      const ehDia15 = hoje.getDate() >= 15;
+      const rotMes = m => { const n=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+        if(!m) return 'mês único'; const [a,mm]=m.split('-'); return (n[Number(mm)-1]||'')+' '+a; };
+
+      box.innerHTML =
+        (esperando.length ? `<div class="card" style="border-color:var(--yellow2);">
+          <div class="desc"><b>${esperando.length}</b> ainda esperando sua aprovação — aparecem no seu painel, em "Calendários esperando sua revisão".</div>
+        </div>` : '') +
+        (represados.length
+          ? `<div class="card" style="border:2px solid var(--green);">
+              <div class="desc" style="font-weight:800;color:var(--green);">${represados.length} calendário(s) prontos, guardados esperando o dia 15.</div>
+              <div class="desc" style="margin-top:4px;">${ehDia15
+                ? 'Hoje é dia ' + hoje.getDate() + ' — pode disparar.'
+                : 'Hoje é dia ' + hoje.getDate() + '. O combinado é enviar no dia 15, mas o botão não trava: se precisar mandar antes, mande.'}</div>
+              <button class="btn green" style="margin-top:12px;" onclick="enviarTodosOsCalendarios(this)">📤 Enviar os ${represados.length} pros clientes agora</button>
+            </div>` +
+            represados.map(r => `<div class="item" style="margin-top:8px;border-left:3px solid var(--green);">
+              <div class="top"><div class="nome">${esc(r.nome)}</div><span class="selo aprovada">${esc(rotMes(r.mes))} · ${r.qtd} conteúdo(s)</span></div>
+              <div class="meta" style="margin-top:4px;">Aprovado${r.quando ? ' em ' + new Date(r.quando).toLocaleDateString('pt-BR') : ''} · o cliente ainda não vê</div>
+              <div class="btnrow" style="margin-top:8px;">
+                <button class="btn secondary" style="font-size:11px;" onclick="enviarUmCalendario('${escJs(r.slug)}','${escJs(r.mes)}', this)">Enviar só este</button>
+              </div>
+            </div>`).join('')
+          : '<div class="card"><div class="empty">Nenhum calendário represado. Quando você aprovar um, ele aparece aqui esperando o dia 15.</div></div>') +
+        (jaEnviados.length ? `<div class="card" style="margin-top:14px;border-color:var(--line);">
+          <div class="desc"><b>Já enviados (${jaEnviados.length})</b> — o cliente está vendo.</div>
+          <div class="meta" style="margin-top:6px;line-height:1.8;">${jaEnviados.map(r => esc(r.nome)+' · '+esc(rotMes(r.mes))).join('<br>')}</div>
+        </div>` : '');
+    }catch(e){
+      console.error('Falha na fila de envio:', e);
+      box.innerHTML = '<div class="empty">Não consegui carregar. Recarrega a página.</div>';
+    }
+  };
+
+  window.enviarUmCalendario = async function(slug, mes, btn){
+    if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
+    const n = await dispararCalendarios([{slug, mes}]);
+    mostrarToast(n ? 'Enviado — o cliente já vê.' : 'Não consegui enviar.', n ? 'ok' : 'erro');
+    renderFilaEnvioCalendarios();
+  };
+
+  window.enviarTodosOsCalendarios = async function(btn){
+    const box = document.getElementById('filaEnvioCalendarios');
+    const snap = await getDocs(collection(db,'calendarios'));
+    const alvos = [];
+    snap.forEach(d => { const cal = d.data();
+      const meses = mesesDeCalendario(cal);
+      (meses.length ? meses : ['']).forEach(m => {
+        if(estadoMesCal(cal, m) === 'aprovado_interno') alvos.push({ slug:d.id, mes:m });
+      });
+    });
+    if(!alvos.length){ mostrarToast('Nada represado pra enviar.', 'erro'); return; }
+    if(!confirm('Enviar ' + alvos.length + ' calendário(s) pros clientes agora?\n\nCada cliente passa a ver o mês no portal dele e pode aprovar. Dá pra enviar um a um depois, se preferir.')) return;
+    if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
+    const n = await dispararCalendarios(alvos);
+    mostrarToast(n + ' calendário(s) enviados pros clientes!');
+    renderFilaEnvioCalendarios();
+  };
+
+  async function dispararCalendarios(alvos){
+    let n = 0;
+    for(const a of alvos){
+      try{
+        const ref = doc(db,'calendarios', a.slug);
+        const snap = await getDoc(ref);
+        if(!snap.exists()) continue;
+        const cal = snap.data();
+        const mapa = { ...(cal.aprovacaoMeses||{}) };
+        mapa[a.mes] = { ...(mapa[a.mes]||{}), status:'liberado', enviadoPor: usuarioAtual||'?',
+                        enviadoEm: new Date().toISOString(), em: new Date().toISOString(), motivoAjuste:'' };
+        const patch = { aprovacaoMeses: mapa };
+        /* Se é o mês legado, o campo antigo acompanha — senão as telas
+           que ainda leem `aprovacaoInterna` divergiriam. */
+        if(!a.mes || a.mes === (cal.mesLegado||'')) patch.aprovacaoInterna = mapa[a.mes];
+        await updateDoc(ref, patch);
+        registrarHistorico('calendarios', a.slug, 'Calendário de ' + (a.mes||'mês único') + ' enviado pro cliente por ' + (usuarioAtual||'?'));
+        n++;
+      }catch(e){ console.error('Falha ao enviar ' + a.slug + ':', e); }
+    }
+    if(n) registrarLogAutomacao('calendarios_enviados', '', n + ' calendário(s) liberados pros clientes');
+    return n;
+  }
+
+  /* Aprovar NÃO envia mais. Aprovar guarda; o envio é o disparo do dia 15.
+     A demanda pra Gabi "mandar o link" morreu junto: o cliente passou a
+     receber pelo portal dele, não por link no WhatsApp. */
+  window.liberarCalendario = async function(slug, mes){
     const ref = doc(db,'calendarios', slug);
     const snap = await getDoc(ref);
     if(!snap.exists()) return;
-    const nome = snap.data().client || slug;
-    await updateDoc(ref, { aprovacaoInterna: {
-      status:'liberado', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste:''
-    }});
-    registrarHistorico('calendarios', slug, 'Calendário liberado pro cliente por ' + (usuarioAtual||'?'));
-    await criarDemandaSegura({
-      titulo: '📤 Mandar o calendário aprovado pra ' + nome,
-      descricao: 'O calendário de ' + nome + ' passou pela revisão interna e já está visível no portal dela.\n\n'
-        + 'Manda o link pra ela conferir e aprovar. Em Calendários dos Clientes, botão "⧉ Link do cliente".\n\n'
-        + 'Se ela pedir ajuste, o calendário volta automaticamente pra você com o motivo escrito.',
-      destinatario: 'Gabrielle', origem: 'sistema', clienteNome: nome,
-      prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00', status:'pendente'
-    }, { janelaMinutos: 120 });
-    mostrarToast('Liberado — a Gabi foi avisada pra mandar o link.');
+    const cal = snap.data();
+    const nome = cal.client || slug;
+    const alvo = (mes !== undefined && mes !== null) ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    const marca = { status:'aprovado_interno', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste:'' };
+    const mapa = { ...(cal.aprovacaoMeses||{}) };
+    mapa[alvo] = marca;
+    const patch = { aprovacaoMeses: mapa };
+    if(!alvo || alvo === (cal.mesLegado||'')) patch.aprovacaoInterna = marca;
+    await updateDoc(ref, patch);
+    registrarHistorico('calendarios', slug, 'Calendário de ' + (alvo||'mês único') + ' aprovado internamente por ' + (usuarioAtual||'?') + ' — guardado pro envio do dia 15');
+    mostrarToast('Aprovado e guardado. Vai pro cliente no disparo do dia 15 — em Calendários → "Prontos pra enviar".');
     renderGerenciaAmanda();
   };
 
-  window.devolverCalendario = async function(slug){
+  window.devolverCalendario = async function(slug, mes){
     const motivo = prompt('O que precisa ser ajustado? (a Gabi vê exatamente este texto)');
     if(motivo === null) return;
     if(!String(motivo).trim()){ mostrarToast('Escreve o que precisa mudar — sem isso ela não sabe o que fazer.', 'erro'); return; }
     const ref = doc(db,'calendarios', slug);
     const snap = await getDoc(ref);
     if(!snap.exists()) return;
-    const nome = snap.data().client || slug;
-    await updateDoc(ref, { aprovacaoInterna: {
-      status:'ajuste_interno', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste: String(motivo).trim()
-    }});
+    const cal = snap.data();
+    const nome = cal.client || slug;
+    const alvo = (mes !== undefined && mes !== null) ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    const marca = { status:'ajuste_interno', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste: String(motivo).trim() };
+    const mapa = { ...(cal.aprovacaoMeses||{}) }; mapa[alvo] = marca;
+    const patch = { aprovacaoMeses: mapa };
+    if(!alvo || alvo === (cal.mesLegado||'')) patch.aprovacaoInterna = marca;
+    await updateDoc(ref, patch);
     registrarHistorico('calendarios', slug, 'Calendário devolvido pra ajuste por ' + (usuarioAtual||'?'), motivo);
     await criarDemandaSegura({
       titulo: '↩️ Ajustar o calendário de ' + nome,

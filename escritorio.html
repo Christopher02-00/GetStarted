@@ -902,6 +902,11 @@
           </div>
         </div>
         <div id="refsPerfilCliente"></div>
+        <div class="card" style="border-color:var(--line);">
+          <h2>Quem NÃO entra na meta de referências</h2>
+          <div class="desc">A meta de 3 por cliente só faz sentido pra quem tem conteúdo recorrente com a gente. Quem sai da carteira some daqui sozinho; o resto você marca à mão. Vale pro placar, pra cobrança semanal, pra visão de calendários e pro Postagem Até Quando — tudo lê desta lista.</div>
+          <div id="listaForaDaMeta" style="margin-top:12px;"><div class="desc">Carregando…</div></div>
+        </div>
       </div>
       <div id="refSubHub" style="display:none;">
       <div class="sub">Arquive por cliente — o site cruza com os calendários e mostra o que já virou conteúdo e o que ainda está disponível pra usar.</div>
@@ -2442,8 +2447,7 @@
       const dRef = new Date();
       dRef.setDate(dRef.getDate() - (dRef.getDay() === 0 ? 6 : dRef.getDay() - 1));
       const semanaR = dRef.toISOString().slice(0,10);
-      const entregaDiretaR = await obterSlugsEntregaDireta();
-      const alvoR = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDiretaR.has(c.slug));
+      const alvoR = await clientesDeConteudoRecorrente();
       if(!alvoR.length) return false;
       /* 27/07/2026 — não filtra mais por semana. Perfil é registro
          permanente; filtrar por semana fazia todo cliente aparecer
@@ -2580,6 +2584,78 @@
      edição continua normal — é exatamente o serviço dele. */
   const CLIENTES_SO_EDICAO = ['rodrigo'];
   function ehClienteSoEdicao(slug){ return CLIENTES_SO_EDICAO.includes(slug); }
+
+  /* ===== QUEM DEVE APARECER NA META DE REFERÊNCIAS — 29/07/2026 ======
+     Reclamação da Gabi, e ela está certa: a lista de clientes que
+     cobram 3 referências por dia tinha gente que não deveria estar lá.
+     O Rodrigo (o plano dele é só edição), uma cliente avulsa e dois
+     clientes que já saíram da carteira.
+
+     O problema não era a lista — era não existir uma. Seis telas
+     diferentes montavam o próprio recorte com um filtro copiado, e
+     cada uma esquecia um caso. Quem saiu da carteira não era excluído
+     em lugar nenhum.
+
+     Agora existe UMA função, e todas as telas leem dela. Ela tira:
+       • quem é só edição (Rodrigo)
+       • quem é entrega direta (o cliente posta sozinho)
+       • quem já saiu da carteira (registrado em Vendas)
+       • quem for marcado à mão como fora do conteúdo recorrente
+
+     E o Chris marca e desmarca sozinho, na tela de Referências — sem
+     depender de mim pra mexer no código de novo. */
+  function normNomeCliente(x){
+    return String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+  }
+  let __cacheAlvoConteudo = null;
+  window.limparCacheAlvoConteudo = function(){ __cacheAlvoConteudo = null; };
+
+  /* Os três que a Gabi apontou em 29/07. Ficam por NOME e não por slug
+     porque vieram de cadastro extra e o slug varia. É só uma semente:
+     um clique em "voltar pra meta" desfaz e a decisão fica gravada em
+     clientes_config, que tem a última palavra. */
+  const FORA_DA_META_SEMENTE = {
+    'suellen': 'cliente avulso',
+    'elis noivas': 'saiu da carteira',
+    'eliz noivas': 'saiu da carteira',
+    'ikn': 'saiu da carteira'
+  };
+
+  window.clientesForaDoConteudo = async function(){
+    const fora = new Map();   // slug -> motivo
+    const entrega = await obterSlugsEntregaDireta().catch(()=>new Set());
+    CLIENTES_LISTA.forEach(c => {
+      const chave = normNomeCliente(c.nome);
+      if(FORA_DA_META_SEMENTE[chave]) fora.set(c.slug, FORA_DA_META_SEMENTE[chave]);
+    });
+    CLIENTES_LISTA.forEach(c => {
+      if(ehClienteSoEdicao(c.slug)) fora.set(c.slug, 'plano só de edição');
+      else if(entrega.has(c.slug)) fora.set(c.slug, 'entrega direta — posta sozinho');
+    });
+    try{
+      const enc = await getDocs(collection(db,'clientes_encerrados'));
+      const nomesFora = new Set();
+      enc.forEach(d => { const v = d.data(); if(v.excluido) return;
+        if(v.slug) fora.set(v.slug, 'saiu da carteira');
+        if(v.nome) nomesFora.add(normNomeCliente(v.nome)); });
+      CLIENTES_LISTA.forEach(c => { if(nomesFora.has(normNomeCliente(c.nome)) && !fora.has(c.slug)) fora.set(c.slug, 'saiu da carteira'); });
+    }catch(e){ console.error('Não consegui ler quem saiu:', e); }
+    try{
+      const cfg = await getDocs(collection(db,'clientes_config'));
+      cfg.forEach(d => { const v = d.data();
+        if(v.semConteudoRecorrente) fora.set(d.id, v.motivoSemConteudo || 'marcado à mão');
+        else if(v.semConteudoRecorrente === false) fora.delete(d.id); });
+    }catch(e){ console.error('Não consegui ler as configurações de cliente:', e); }
+    return fora;
+  };
+
+  /* A lista que TODA tela de obrigação de conteúdo deve usar. */
+  window.clientesDeConteudoRecorrente = async function(){
+    if(__cacheAlvoConteudo) return __cacheAlvoConteudo;
+    const fora = await clientesForaDoConteudo();
+    __cacheAlvoConteudo = CLIENTES_LISTA.filter(c => !fora.has(c.slug));
+    return __cacheAlvoConteudo;
+  };
 
   /* ===== VÍDEO DE TRÁFEGO (22/07/2026, pedido do Chris) =====
      Achado real: 3 vídeos da Dra. Monique com "tráfego" no título ficaram
@@ -2762,6 +2838,20 @@
     return ehAvulso ? 'entrega_direta' : 'postagem_completa';
   }
 
+  /* Aviso pontual pra gestão, no mesmo formato de demanda que o resto do
+     site usa. Não repete o mesmo aviso no mesmo dia pro mesmo assunto. */
+  async function criarAvisoParaGestao(titulo, descricao, destinatario){
+    try{
+      const hojeStr = new Date().toISOString().slice(0,10);
+      await addDoc(collection(db,'demandas'), {
+        titulo, descricao,
+        origem: 'sistema', clienteNome: '', destinatario: destinatario || 'Amanda',
+        prazoData: hojeStr, prazoHora: '18:00',
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      });
+    }catch(e){ console.error('Não consegui avisar a gestão:', e); }
+  }
+
   window.escolherOrigemMaterial = function(qual){
     const campo = document.getElementById('videoOrigemMaterial');
     if(campo) campo.value = qual;
@@ -2857,7 +2947,20 @@
     }catch(e){ console.error('Falha na trava de lote repetido:', e); }
 
     try {
-      const editor = editorManual || await decidirEditor(clienteSlug);
+      /* ===== QUEM DECIDE O EDITOR — 29/07/2026 ======================
+         O Chris: o videomaker sobe, a AMANDA confirma e realoca.
+
+         Esta tela ainda atribuía editor sozinha (`decidirEditor`),
+         enquanto o caminho pela gravação já deixava em branco pra ela
+         distribuir de manhã. Dois caminhos, duas regras — o vídeo do
+         Luís nascia com dono e nunca aparecia na fila dela.
+
+         Agora vale a regra dela nos dois: quem não é gestão sobe e o
+         vídeo entra em "🆕 Sem editor — distribuir agora". O filmmaker
+         pode sugerir um nome, e a sugestão viaja junto. */
+      const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
+      const editor = ehGestao ? (editorManual || await decidirEditor(clienteSlug)) : '';
+      const sugerido = ehGestao ? editor : (editorManual || '');
       for(const nomeVideo of todosNomes){
         const novoVideoRef = await addDoc(collection(db,'videos_producao'), {
           cliente: clienteSlug, clienteNome, data,
@@ -2867,17 +2970,27 @@
              mandou pronto. É por este campo que a produtividade de campo
              deixa de contar edição avulsa como se fosse filmagem. */
           origemMaterial, soEdicao: origemMaterial === 'recebido',
-          editorSugerido: editor, editorAtribuido: editor,
+          editorSugerido: sugerido, editorAtribuido: editor,
+          enviadoPor: usuarioAtual || '?',
           status: 'aguardando_edicao', linkFinalizado: '',
           criadoEm: serverTimestamp()
         });
-        dispararEmailIndividual(editor, 'video_atribuido', {
-          titulo: clienteNome + ' — ' + nomeVideo, itemId: novoVideoRef.id, colecao: 'videos_producao'
-        }).catch(()=>{});
+        if(editor){
+          dispararEmailIndividual(editor, 'video_atribuido', {
+            titulo: clienteNome + ' — ' + nomeVideo, itemId: novoVideoRef.id, colecao: 'videos_producao'
+          }).catch(()=>{});
+        }
+      }
+      if(!editor){
+        criarAvisoParaGestao('🎬 ' + todosNomes.length + ' vídeo(s) de ' + clienteNome + ' esperando você distribuir',
+          (usuarioAtual||'alguém') + ' subiu ' + (origemMaterial === 'recebido' ? 'edição avulsa (material do cliente, sem gravação)' : 'vídeos gravados') +
+          ': ' + todosNomes.join(', ') + (sugerido ? '. Sugestão de editor: ' + sugerido : '') +
+          '. Confirma e escolhe quem edita em Vídeos → "Sem editor — distribuir agora".', 'Amanda').catch(()=>{});
       }
       const rotOrigem = origemMaterial === 'recebido' ? 'edição avulsa (material do cliente)' : 'gravação nossa';
-      mostrarToast(todosNomes.length + ' vídeo(s) pra ' + editor + ' — ' + rotOrigem + '.');
-      document.getElementById('ultimaDistribuicao').innerHTML = `<div class="avisoBanner"><div class="icone">${origemMaterial === 'recebido' ? '✂️' : '🎬'}</div><div class="texto">${todosNomes.length} vídeo(s) de ${esc(clienteNome)} foram pra <b>${esc(editor)}</b> — ${rotOrigem}<span>${esc(todosNomes.join(', '))}</span></div></div>`;
+      const destino = editor ? 'pra ' + editor : 'pra Amanda distribuir';
+      mostrarToast(todosNomes.length + ' vídeo(s) ' + destino + ' — ' + rotOrigem + '.');
+      document.getElementById('ultimaDistribuicao').innerHTML = `<div class="avisoBanner"><div class="icone">${origemMaterial === 'recebido' ? '✂️' : '🎬'}</div><div class="texto">${todosNomes.length} vídeo(s) de ${esc(clienteNome)} ${editor ? 'foram pra <b>'+esc(editor)+'</b>' : 'estão <b>com a Amanda pra distribuir</b>'} — ${rotOrigem}<span>${esc(todosNomes.join(', '))}</span></div></div>`;
       document.getElementById('videoNomesPrincipais').value = '';
       document.getElementById('videoNomesBastidores').value = '';
       document.getElementById('videoObs').value = '';
@@ -3449,12 +3562,16 @@
     if(semEditor.length){
       html += `<div class="card" style="border:2px solid var(--red);">
         <h2>🆕 Sem editor — distribuir agora (${semEditor.length})</h2>
-        <div class="desc">Vídeos gravados esperando alguém decidir pra qual editor vão. Isso é rotina diária — o quanto antes, melhor.</div>
+        <div class="desc">Vídeos esperando você confirmar e decidir quem edita — tanto o que a equipe gravou quanto edição avulsa que o cliente mandou. Isso é rotina diária: o quanto antes, melhor.</div>
       </div>`;
       html += semEditor.map(v => `
         <div class="item" style="border:2px solid var(--red);">
           <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
-          ${v.editorSugerido ? '<div class="meta" style="margin-top:4px;">💡 Sugestão do filmmaker: <b>'+esc(v.editorSugerido)+'</b></div>' : ''}
+          <div class="meta" style="margin-top:4px;">
+            ${v.soEdicao ? '<span class="selo" style="border-color:var(--yellow2);color:var(--yellow2);">✂️ edição avulsa — sem gravação</span>' : '<span class="selo">🎥 gravação nossa</span>'}
+            ${v.enviadoPor ? ' · subiu: <b>'+esc(v.enviadoPor)+'</b>' : ''}
+          </div>
+          ${v.editorSugerido ? '<div class="meta" style="margin-top:4px;">💡 Sugestão de quem subiu: <b>'+esc(v.editorSugerido)+'</b></div>' : ''}
           <div style="margin-top:10px;">
             <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${escJs(v.cliente)}', this.value)" style="width:100%;">
               <option value="">Escolher editor...</option>
@@ -7977,7 +8094,7 @@
     }catch(e){ console.error('Não consegui ler datas flexíveis:', e); }
 
     const hoje = new Date().toISOString().slice(0,10);
-    const linhas = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDiretaSlugsCAQ.has(c.slug)).map(c => {
+    const linhas = (await clientesDeConteudoRecorrente()).map(c => {
       const dele = postagens.filter(p => p.cliente === c.slug && p.status === 'agendado' && p.dataAgendada);
       let ultimaData = null;
       dele.forEach(p => { if(!ultimaData || p.dataAgendada > ultimaData) ultimaData = p.dataAgendada; });
@@ -10605,7 +10722,7 @@
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'João Victor': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'Nathan': ['navVideos','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
-    'Luís': ['navChecklist','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
+    'Luís': ['navVideos','navChecklist','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Yas': ['navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
   };
   const ITENS_CONTROLADOS = ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navCadastro','navManualFuncao','navDuvidasBit'];
@@ -10627,7 +10744,7 @@
     'Helo': ['navVideos'],
     'João Victor': ['navVideos'],
     'Nathan': ['navVideos','navAgendamento','navCalendarios','navChecklist'],
-    'Luís': ['navAgendamento','navCalendarios'],
+    'Luís': ['navVideos','navAgendamento','navCalendarios'],
     'Yas': [],
   };
   const ORDEM_BASE_SIDEBAR = ['navInicio','navMinhasDemandasAtribuidas','navAtrasadas','navMinhasDemandas','navChecklist'];
@@ -10784,11 +10901,28 @@
 
      Cada pessoa tem o atalho da ação que ELA começa. Em amarelo, no topo
      do menu, antes de qualquer outra coisa. */
+  /* ===== PEDIDO DO LUÍS — 29/07/2026 ================================
+     "Pra subir pros editores eu vou em Gravações, confirmo a gravação e
+     subo os vídeos."
+
+     Ele estava descrevendo um contorno, não um fluxo. A tela de vídeos
+     já sabe registrar edição avulsa sem gravação desde 28/07 — mas o
+     Luís não tinha 'Vídeos' no menu. O único caminho que sobrava pra ele
+     era confirmar uma gravação que às vezes nem existiu, só pra
+     conseguir mandar o material pro editor. Isso suja a conta de
+     filmagens e mente na produtividade dele.
+
+     Agora todo videomaker tem o botão amarelo, e ele cai na tela certa
+     já com "edição avulsa" escolhida. */
   const ATALHO_DESTAQUE = {
-    'Cecília':     { rot:'🎬 Nova gravação',        acao:"irParaAgendarGravacao()" },
-    'Luís':        { rot:'💰 Registrar extra/Uber', acao:"irParaMeusExtras()" },
-    'Nathan':      { rot:'💰 Registrar extra/Uber', acao:"irParaMeusExtras()" },
-    'Amanda':      { rot:'🎛️ Central de Comando',   acao:"irPara('gerencia', document.getElementById('navitemGerencia')); setTimeout(()=>navegarGerenciaSub('comando'), 400);" }
+    'Cecília':     [{ rot:'🎬 Nova gravação',        acao:"irParaAgendarGravacao()" }],
+    'Luís':        [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" },
+                    { rot:'💰 Registrar extra/Uber', acao:"irParaMeusExtras()" }],
+    'Nathan':      [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" },
+                    { rot:'💰 Registrar extra/Uber', acao:"irParaMeusExtras()" }],
+    'Helo':        [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" }],
+    'João Victor': [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" }],
+    'Amanda':      [{ rot:'🎛️ Central de Comando',   acao:"irPara('gerencia', document.getElementById('navitemGerencia')); setTimeout(()=>navegarGerenciaSub('comando'), 400);" }]
     /* 28/07/2026 — o Chris não tem atalho: o painel de gerência dele já
        abre com tudo. O botão amarelo de "postagem até quando" foi tirado
        daqui — essa tela é operação da Cecília, e os números dela agora
@@ -10805,6 +10939,20 @@
     }, 250);
   };
 
+  window.irParaSubirEdicao = function(){
+    const nav = document.getElementById('navVideos');
+    if(nav) irPara('videos', nav);
+    setTimeout(() => {
+      const sub = Array.from(document.querySelectorAll('#view-videos .subtab')).find(x=>(x.textContent||'').includes('Lançar'));
+      if(sub) sub.click();
+      setTimeout(() => {
+        escolherOrigemMaterial('recebido');     // já abre em edição avulsa
+        const box = document.getElementById('opRecebido');
+        if(box) box.scrollIntoView({ behavior:'smooth', block:'center' });
+      }, 200);
+    }, 300);
+  };
+
   window.irParaMeusExtras = function(){
     const nav = document.getElementById('navInicio');
     if(nav) irPara('inicio', nav);
@@ -10815,22 +10963,28 @@
   };
 
   function montarAtalhoDestaque(){
-    let b = document.getElementById('atalhoDestaque');
-    const cfg = ATALHO_DESTAQUE[usuarioAtual];
-    if(!usuarioAtual || !cfg){ if(b) b.remove(); return; }
-    if(!b){
-      b = document.createElement('div');
-      b.id = 'atalhoDestaque';
-      b.style.cssText = 'background:var(--yellow);color:var(--graphite);font-weight:800;font-size:13px;padding:13px 12px;border-radius:10px;margin:0 0 14px;cursor:pointer;text-align:center;box-shadow:0 2px 10px rgba(251,188,25,.25);';
-      const gDia = document.getElementById('navgroupDia');
-      const lab = document.getElementById('labelNavDia');
-      if(gDia && lab && lab.parentElement === gDia) gDia.insertBefore(b, lab.nextSibling);
-      else if(gDia) gDia.insertBefore(b, gDia.firstChild);
-      else return;
-    }
-    b.textContent = cfg.rot;
-    b.setAttribute('onclick', cfg.acao);
-    b.style.display = 'block';
+    const antigo = document.getElementById('atalhoDestaque');
+    if(antigo) antigo.remove();
+    let cfg = ATALHO_DESTAQUE[usuarioAtual];
+    if(!usuarioAtual || !cfg) return;
+    if(!Array.isArray(cfg)) cfg = [cfg];          // formato antigo continua valendo
+    const gDia = document.getElementById('navgroupDia');
+    const lab = document.getElementById('labelNavDia');
+    if(!gDia) return;
+    const caixa = document.createElement('div');
+    caixa.id = 'atalhoDestaque';
+    caixa.style.cssText = 'margin:0 0 14px;';
+    cfg.forEach((a, i) => {
+      const b = document.createElement('div');
+      b.style.cssText = 'background:var(--yellow);color:var(--graphite);font-weight:800;font-size:13px;padding:13px 12px;'+
+        'border-radius:10px;margin-bottom:' + (i < cfg.length-1 ? '8px' : '0') + ';cursor:pointer;text-align:center;'+
+        'box-shadow:0 2px 10px rgba(251,188,25,.25);';
+      b.textContent = a.rot;
+      b.setAttribute('onclick', a.acao);
+      caixa.appendChild(b);
+    });
+    if(lab && lab.parentElement === gDia) gDia.insertBefore(caixa, lab.nextSibling);
+    else gDia.insertBefore(caixa, gDia.firstChild);
   }
 
   function montarBotaoTelasAntigas(){
@@ -13151,7 +13305,7 @@
     if(btn){ btn.disabled = true; btn.textContent = 'Procurando...'; }
     await carregarLegadoPerfis(true);
     let achados = 0;
-    for(const c of CLIENTES_LISTA){
+    for(const c of await clientesDeConteudoRecorrente()){
       const r = await carregarPerfisDeCliente(c.slug, false);
       if(r.recuperadoDe) achados++;
     }
@@ -13166,15 +13320,86 @@
     if(h) h.style.display = qual === 'hub' ? 'block' : 'none';
     document.querySelectorAll('#subtabsRefs .subtab').forEach(t=>t.classList.remove('active'));
     if(el) el.classList.add('active');
-    if(qual === 'perfis') popularSeletorPerfis();
+    if(qual === 'perfis'){ popularSeletorPerfis(); renderForaDaMeta(); }
+  }
+
+  /* ===== O CONTROLE FICA COM O CHRIS — 29/07/2026 ====================
+     A Gabi apontou três clientes que não deveriam estar na meta. Se eu
+     só apagasse os três, na próxima vez que a carteira mudar o problema
+     volta e alguém tem que me chamar. Então isto é uma tela, não uma
+     lista no código. */
+  window.renderForaDaMeta = async function(){
+    const box = document.getElementById('listaForaDaMeta');
+    if(!box) return;
+    box.innerHTML = '<div class="desc">Carregando…</div>';
+    let fora;
+    try{ fora = await clientesForaDoConteudo(); }
+    catch(e){ console.error(e); box.innerHTML = '<div class="empty">Não consegui carregar.</div>'; return; }
+    const dentro = CLIENTES_LISTA.filter(c => !fora.has(c.slug));
+    const linhasFora = CLIENTES_LISTA.filter(c => fora.has(c.slug));
+
+    box.innerHTML =
+      (linhasFora.length
+        ? linhasFora.map(c => {
+            const motivo = fora.get(c.slug) || '';
+            const automatico = motivo === 'plano só de edição' || motivo === 'saiu da carteira' || motivo === 'entrega direta — posta sozinho';
+            return `<div class="item" style="margin-top:6px;border-left:3px solid var(--muted);">
+              <div class="top"><div class="nome" style="color:var(--muted);">${esc(c.nome)}</div>
+                <span class="selo">${esc(motivo)}</span></div>
+              <div class="btnrow" style="margin-top:6px;">
+                <button class="btn secondary" style="font-size:11px;" onclick="marcarForaDaMeta('${escJs(c.slug)}', false, this)">↩️ Voltar pra meta</button>
+                ${automatico ? '<span class="meta" style="align-self:center;">tirado automaticamente</span>' : ''}
+              </div></div>`;
+          }).join('')
+        : '<div class="empty">Todos os clientes estão na meta.</div>') +
+      `<div class="field" style="margin-top:14px;"><label>Tirar alguém da meta</label>
+        <select id="selTirarDaMeta">
+          <option value="">Escolhe o cliente…</option>
+          ${dentro.map(c => `<option value="${esc(c.slug)}">${esc(c.nome)}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Por quê</label>
+        <select id="motivoTirarDaMeta">
+          <option value="cliente avulso">cliente avulso</option>
+          <option value="só edição">só edição</option>
+          <option value="saiu da carteira">saiu da carteira</option>
+          <option value="não faz conteúdo recorrente">não faz conteúdo recorrente</option>
+        </select></div>
+      <button class="btn secondary" style="margin-top:8px;" onclick="tirarDaMetaPeloSelect(this)">Tirar da meta</button>`;
   };
+
+  window.tirarDaMetaPeloSelect = function(btn){
+    const sel = document.getElementById('selTirarDaMeta');
+    if(!sel || !sel.value){ mostrarToast('Escolhe o cliente primeiro.', 'erro'); return; }
+    const motivo = document.getElementById('motivoTirarDaMeta')?.value || 'marcado à mão';
+    marcarForaDaMeta(sel.value, true, btn, motivo);
+  };
+
+  window.marcarForaDaMeta = async function(slug, fora, btn, motivo){
+    if(btn){ btn.disabled = true; }
+    try{
+      await setDoc(doc(db,'clientes_config', slug), {
+        semConteudoRecorrente: !!fora,
+        motivoSemConteudo: fora ? (motivo || 'marcado à mão') : '',
+        alteradoPor: usuarioAtual || '?', alteradoEm: new Date().toISOString()
+      }, { merge: true });
+      limparCacheAlvoConteudo();
+      mostrarToast(fora ? 'Tirado da meta — some do placar e da cobrança.' : 'De volta à meta.');
+      renderForaDaMeta();
+      popularSeletorPerfis();
+    }catch(e){
+      console.error('Falha ao mudar a meta:', e);
+      mostrarToast('Não consegui salvar. Nada mudou.', 'erro');
+    }
+    if(btn){ btn.disabled = false; }
+  };;
 
   function popularSeletorPerfis(){
     const sel = document.getElementById('refPerfilClienteSel');
-    if(!sel || sel.options.length > 1) return;
-    sel.innerHTML = '<option value="">Escolhe o cliente...</option>' +
-      CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug))
-        .map(c => '<option value="'+c.slug+'" data-nome="'+esc(c.nome)+'">'+esc(c.nome)+'</option>').join('');
+    if(!sel) return;
+    clientesDeConteudoRecorrente().then(lista => {
+      sel.innerHTML = '<option value="">Escolhe o cliente...</option>' +
+        lista.map(c => '<option value="'+c.slug+'" data-nome="'+esc(c.nome)+'">'+esc(c.nome)+'</option>').join('');
+    });
   }
 
   window.abrirPerfisDoClienteSelecionado = function(){
@@ -13651,8 +13876,7 @@
       snap.forEach(d => { cals[d.id] = d.data(); });
     }catch(e){ console.error('Falha ao ler calendários:', e); }
 
-    const entrega = await obterSlugsEntregaDireta().catch(()=>new Set());
-    const alvo = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entrega.has(c.slug));
+    const alvo = await clientesDeConteudoRecorrente();
 
     const linhas = alvo.map(c => {
       const cal = cals[c.slug] || {};
@@ -14631,8 +14855,7 @@
     const hojeStr = agora.toISOString().slice(0,10);
 
     // só cobra clientes mensais de verdade (avulso/entrega direta não tem calendário nosso)
-    const entregaDireta = await obterSlugsEntregaDireta();
-    const alvo = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entregaDireta.has(c.slug));
+    const alvo = await clientesDeConteudoRecorrente();
     if(!alvo.length) return;
 
     const snap = await getDocs(collection(db,'refs_perfil_semana'));
@@ -20100,8 +20323,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         if(!i || !i.dataPostagem) return;
         if(!calc[d.id] || i.dataPostagem > calc[d.id]) calc[d.id] = i.dataPostagem; }); });
 
-      const entrega = await obterSlugsEntregaDireta().catch(()=>new Set());
-      const alvo = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entrega.has(c.slug));
+      const alvo = await clientesDeConteudoRecorrente();
       const linhas = alvo.map(c => {
         const ate = (manual[c.slug]||{}).postagemAte || calc[c.slug] || '';
         const dias = ate ? Math.floor((new Date(ate+'T12:00:00') - new Date(hoje+'T12:00:00'))/86400000) : null;
@@ -20136,8 +20358,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         getDocs(collection(db,'calendarios'))
       ]);
 
-      const entrega = await obterSlugsEntregaDireta().catch(()=>new Set());
-      const alvo = CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug) && !entrega.has(c.slug));
+      const alvo = await clientesDeConteudoRecorrente();
 
       // perfis por cliente (a meta de 3)
       const porCliente = {};

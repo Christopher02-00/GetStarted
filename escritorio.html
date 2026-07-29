@@ -14718,13 +14718,28 @@
     renderListaCalendariosClientes(filtrados);
   };
 
+  /* ===== POR QUE "ABRIR E CONFERIR" NÃO ABRIA — 29/07/2026 ===========
+     A Amanda clicava e nada acontecia. E a causa é pior do que parecia.
+
+     Existem DUAS telas de calendário no arquivo: `view-calendarios` (a
+     unificada, com as abas Visão/Montar/Envio/Links/Resgatar) e
+     `view-calendariosClientes` — a antiga. O quadro que esta função
+     abria (`calendarioClienteAberto`) mora na ANTIGA, e o menu lateral
+     não leva mais ninguém pra lá. Ou seja: o calendário abria de
+     verdade, numa tela que ninguém alcança.
+
+     Erro meu, de quando unifiquei as telas: mudei o menu e deixei o
+     quadro atrás. E depois pus um botão novo apontando pra ele.
+
+     A correção não é navegar pra tela órfã — é usar o caminho que
+     funciona. `abrirCalendarioParaEditar` já abre o calendário do
+     cliente dentro da tela unificada, na aba de montar, e é o mesmo
+     caminho que a Gabi e a Cecília usam todo dia. Uma implementação só. */
   window.abrirCalendarioDeCliente = function(slug, nome){
     calendarioClienteAbertoSlug = slug;
-    document.getElementById('nomeClienteAberto').textContent = nome;
-    garantirTokensDoCliente(slug).then(t => {
-      document.getElementById('iframeCalendarioCliente').src = 'calendario.html?cliente=' + slug + '&e=' + t.tokenEquipe;
-    });
-    document.getElementById('calendarioClienteAberto').style.display = 'block';
+    const nav = document.getElementById('navCalendarios');
+    if(nav) irPara('calendarios', nav);
+    setTimeout(() => { abrirCalendarioParaEditar(slug, nome); }, 320);
   };
 
   window.copiarLinkCalendarioAtual = function(){
@@ -21127,7 +21142,12 @@ Observações do cliente: ${l.observacoes||'—'}`;
       fila.sort((a,b)=>String(a.em).localeCompare(String(b.em)));
       return `<div class="card" style="border:2px solid var(--yellow2);">
         <h2>🗓️ Calendários esperando sua revisão</h2>
-        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. Confere o mês, e então aprova ou devolve com o motivo. <b>Aprovar não envia:</b> o calendário fica guardado em "📤 Prontos pra enviar" e todos vão juntos no dia 15. Se devolver, a Gabi é avisada e corrige.</div>
+        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. Confere o mês e escolhe o caminho:</div>
+        <div class="desc" style="margin-top:6px;line-height:1.7;">
+          <b style="color:var(--green);">✅ Guardar pro dia 15</b> — o de sempre: fica represado e vai junto com todos no disparo.<br>
+          <b style="color:var(--yellow);">⚡ Enviar HOJE</b> — pro calendário fora de data, ou quando o cliente precisa ver agora. Vai direto pro portal dele.<br>
+          <b style="color:var(--red);">↩️ Pedir ajuste</b> — volta pra Gabi com o motivo escrito.
+        </div>
         ${fila.map(c => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow2);">
           <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">${esc(c.mes||'sem mês')}</span></div>
           <div class="meta" style="margin-top:4px;">${c.itens} conteúdo(s) · ${c.refs} com referência · enviado por ${esc(c.por)}${c.em ? ' em ' + new Date(c.em).toLocaleDateString('pt-BR') : ''}</div>
@@ -21135,6 +21155,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
             <button class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${c.slug}','${escJs(c.nome)}')">👁️ Abrir e conferir</button>
             <button class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${c.slug}','${escJs(c.mesKey||'')}')">↩️ Pedir ajuste</button>
             <button class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${c.slug}','${escJs(c.mesKey||'')}')">✅ Aprovar e guardar pro dia 15</button>
+            <button class="btn" style="font-size:11.5px;" onclick="aprovarEEnviarAgora('${c.slug}','${escJs(c.mesKey||'')}', this)">⚡ Aprovar e enviar HOJE</button>
           </div>
         </div>`).join('')}
       </div>`;
@@ -21283,6 +21304,39 @@ Observações do cliente: ${l.observacoes||'—'}`;
   /* Aprovar NÃO envia mais. Aprovar guarda; o envio é o disparo do dia 15.
      A demanda pra Gabi "mandar o link" morreu junto: o cliente passou a
      receber pelo portal dele, não por link no WhatsApp. */
+  /* ===== O CAMINHO RÁPIDO — 29/07/2026 ===============================
+     Ponto da Amanda, e é um caso real: existem calendários montados fora
+     da data do ciclo (o Master Chef é um) que precisam ir pro cliente no
+     dia em que ela aprova, não no dia 15.
+
+     Em vez de criar exceção no código, virou escolha na tela: aprovar e
+     guardar, ou aprovar e enviar. Os dois caminhos terminam no MESMO
+     lugar — `dispararCalendarios`, a única função que libera calendário
+     pro cliente. Não existe segundo caminho de liberação, então não há
+     como um divergir do outro. */
+  window.aprovarEEnviarAgora = async function(slug, mes, btn){
+    const snap = await getDoc(doc(db,'calendarios', slug));
+    if(!snap.exists()){ mostrarToast('Não achei esse calendário.', 'erro'); return; }
+    const cal = snap.data();
+    const nome = cal.client || nomeDeSlugSeguro(slug);
+    const alvo = (mes !== undefined && mes !== null && mes !== '') ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    const qtd = (cal.items||[]).filter(i => (((i&&i.mes)||'') === alvo)).length;
+    if(!confirm('Aprovar e ENVIAR AGORA o calendário de ' + nome + '?\n\n' +
+      qtd + ' conteúdo(s). Ela passa a ver no portal dela imediatamente e já pode aprovar.\n\n' +
+      'Se preferir que vá junto com os outros no dia 15, use o botão verde.')) return;
+    if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
+    const n = await dispararCalendarios([{ slug, mes: alvo }]);
+    if(n){
+      registrarHistorico('calendarios', slug, 'Aprovado e enviado no mesmo dia por ' + (usuarioAtual||'?') + ' — fora do disparo do dia 15');
+      mostrarToast(nome + ' já está vendo o calendário no portal dela.');
+    } else {
+      mostrarToast('Não consegui enviar. Nada foi alterado.', 'erro');
+      if(btn){ btn.disabled = false; btn.textContent = '⚡ Aprovar e enviar HOJE'; }
+    }
+    renderGerenciaAmanda();
+    try{ renderFilaEnvioCalendarios(); }catch(e){}
+  };
+
   window.liberarCalendario = async function(slug, mes){
     const ref = doc(db,'calendarios', slug);
     const snap = await getDoc(ref);

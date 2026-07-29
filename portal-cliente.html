@@ -528,7 +528,37 @@
     const cont = document.getElementById('painelCalendario');
     cont.innerHTML = '<div class="empty">Carregando calendário...</div>';
     const snap = await getDoc(doc(db,'calendarios', clienteAtual.slug));
-    const items = snap.exists() ? (snap.data().items||[]) : [];
+    const dadosCal = snap.exists() ? snap.data() : {};
+    /* ===== O PORTAL TAMBÉM PASSA A ENTENDER MESES — 29/07/2026 ======
+       A mesma regra do calendário, escrita igual: o cliente só enxerga
+       mês liberado. Mês que a equipe está montando não chega aqui.
+       Conteúdo sem `mes` (anterior a hoje) continua valendo pelo estado
+       do documento, como sempre foi. */
+    const todosItens = dadosCal.items || [];
+    const aprMeses = dadosCal.aprovacaoMeses || {};
+    const usaMeses = todosItens.some(i => i && i.mes) || !!dadosCal.aprovacaoMeses || !!dadosCal.mesLegado;
+    const legado = dadosCal.mesLegado || '';
+
+    /* A MESMA função do calendário, escrita igual — inclusive o comentário.
+       Se as duas divergirem, o cliente vê uma coisa numa tela e outra na
+       outra, que é o defeito que passei a semana consertando. */
+    function estadoDoMesPortal(mes){
+      const porMes = aprMeses[mes];
+      if(porMes && porMes.status) return porMes.status;
+      const heraldaRegraAntiga = !mes || (legado && mes === legado) || (!usaMeses);
+      if(!heraldaRegraAntiga) return 'rascunho';
+      const ap = dadosCal.aprovacaoInterna;
+      if(ap && ap.status) return ap.status;
+      return todosItens.length ? 'liberado' : 'rascunho';
+    }
+    const mesesDoDoc = [...new Set(todosItens.map(i => (i&&i.mes)||'').filter(Boolean))].sort();
+    const mesesLib = (mesesDoDoc.length ? mesesDoDoc : ['']).filter(m => estadoDoMesPortal(m) === 'liberado');
+    let mesEscolhido = window.__mesPortal;
+    if(!mesEscolhido || !mesesLib.includes(mesEscolhido)) mesEscolhido = mesesLib[mesesLib.length-1];
+    window.__mesPortal = mesEscolhido;
+
+    const items = !usaMeses ? todosItens
+      : todosItens.filter(i => ((i && i.mes) || '') === (mesEscolhido || ''));
 
     /* 28/07/2026 — o portal também respeita a revisão interna. Antes, tudo
        que a Gabi montava aparecia pro cliente na hora, inclusive mês pela
@@ -540,8 +570,17 @@
        respostas diferentes é o próximo bug esperando acontecer — então
        agora as duas dizem a mesma coisa, de propósito e por escrito:
        campo ausente = calendário anterior ao ciclo = continua visível. */
+    /* Se nenhum mês está liberado, o cliente lê "em preparação" — nunca
+       um mês em branco, e nunca um mês que a equipe ainda está montando. */
+    if(usaMeses && !mesEscolhido){
+      cont.innerHTML = `<div class="card"><div style="padding:26px 10px;text-align:center;">
+        <div style="font-size:15px;font-weight:800;margin-bottom:8px;">Calendário em preparação</div>
+        <div class="sub" style="margin-bottom:0;">Nossa equipe está finalizando o conteúdo do mês. Assim que estiver pronto ele aparece aqui pra você aprovar — e avisamos você.</div>
+      </div></div>`;
+      return;
+    }
     const apr = snap.exists() ? (snap.data().aprovacaoInterna || {}) : {};
-    if(items.length && apr.status && apr.status !== 'liberado'){
+    if(!usaMeses && items.length && apr.status && apr.status !== 'liberado'){
       cont.innerHTML = `<div class="card"><div style="padding:26px 10px;text-align:center;">
         <div style="font-size:15px;font-weight:800;margin-bottom:8px;">Calendário em preparação</div>
         <div class="sub" style="margin-bottom:0;">Nossa equipe está finalizando o conteúdo do mês. Assim que estiver pronto ele aparece aqui pra você aprovar — e avisamos você.</div>
@@ -653,6 +692,24 @@
       await setDoc(ref, { ...dados, items, updatedAt: new Date().toISOString() });
       await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou um conteúdo do calendário',
         (items[idx].name||'') + ' — dia ' + (items[idx].day||''), 'Gabrielle');
+
+      /* ===== O GATILHO DA CECÍLIA — 29/07/2026 =======================
+         Decisão do Chris: quando o MÊS inteiro é aprovado, a Cecília
+         recebe um aviso pra marcar as gravações. Não é a cada conteúdo
+         (viraria ruído) e não é agendamento automático — o dia do
+         conteúdo é o dia de POSTAR, não de gravar, e inventar uma regra
+         de "grava tantos dias antes" erraria toda hora. Ela continua
+         decidindo; o sistema só avisa que o mês liberou. */
+      const mesDoItem = (items[idx] && items[idx].mes) || '';
+      const irmaos = items.filter(i => (((i&&i.mes)||'') === mesDoItem));
+      const faltam = irmaos.filter(i => !i.apr && !i.posted).length;
+      if(!faltam && irmaos.length){
+        const nomeMes = mesDoItem
+          ? (['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][Number(mesDoItem.split('-')[1])-1] + ' ' + mesDoItem.split('-')[0])
+          : 'o mês';
+        await alertarEquipe('🎬 ' + clienteAtual.nome + ' aprovou o calendário de ' + nomeMes + ' inteiro',
+          'Os ' + irmaos.length + ' conteúdos estão aprovados. Já dá pra marcar as gravações desse mês.', 'Cecília');
+      }
       carregarCalendario();
     }catch(e){ console.error('Falha ao aprovar conteúdo:', e); alert('Não consegui registrar agora. Tenta de novo em instantes.'); }
   };

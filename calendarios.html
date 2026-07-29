@@ -644,7 +644,11 @@ async function load(){
     } else {
       // Calendario ainda nao existe: abre VAZIO e NAO grava nada.
       // (Antes gravava 8 posts de exemplo + "Nome do Cliente" no banco.)
-      data={client:nomeDoSlug(window.__clienteId),month:mesAtualTexto(),items:[],comments:[],updatedAt:null};
+      /* Nasce com o estado ESCRITO. Assim "campo ausente" continua
+         significando só uma coisa — calendário anterior a 28/07 — e não
+         vira uma ambiguidade que cresce com o tempo. */
+      data={client:nomeDoSlug(window.__clienteId),month:mesAtualTexto(),items:[],comments:[],
+            aprovacaoInterna:{status:'rascunho',por:'',em:new Date().toISOString(),motivoAjuste:''},updatedAt:null};
     }
     carregado=true;                       // a partir daqui pode gravar
     itensNoBanco=(data.items||[]).length;
@@ -772,7 +776,41 @@ const ROTULO_APROVACAO = {
   liberado:           { txt:'✅ Liberado — o cliente já vê e pode aprovar',    cor:'#4caf72' }
 };
 
-function estadoAprovacao(){ return (data.aprovacaoInterna && data.aprovacaoInterna.status) || 'rascunho'; }
+/* ===== POR QUE A MONIQUE NÃO VIU NADA — 29/07/2026 =================
+   Ela abriu o link do calendário e leu "Calendário em preparação", com
+   15 conteúdos montados e intactos no banco.
+
+   Em 28/07 eu criei o ciclo de aprovação interna (rascunho →
+   aguardando_interna → ajuste_interno → liberado) e escrevi esta linha
+   com `|| 'rascunho'` no fim. Parecia o padrão seguro.
+
+   Só que os calendários que JÁ EXISTIAM não têm esse campo — e nunca
+   iam ter, porque foram criados antes do ciclo existir. Todos eles
+   passaram a responder "rascunho", e de uma hora pra outra ficaram
+   invisíveis pra TODOS os clientes. Não foi só a Monique: eram 16 de
+   17 calendários. Só a Emanuelle escapou, porque a Amanda liberou o
+   dela na mão hoje de manhã.
+
+   Eu apliquei uma regra nova a um mundo que já existia, e tratei
+   "campo ausente" como "resposta negativa". Campo ausente não é
+   negativa — é ausência de informação, e a resposta certa aqui é
+   preservar o comportamento anterior.
+
+   A regra que passa a valer:
+     • campo NÃO existe  → calendário antigo, já era enviado ao cliente
+                           antes do ciclo → LIBERADO (se tiver conteúdo)
+     • campo NÃO existe e está vazio → em preparação (nunca mostrar mês
+                           em branco pro cliente, que foi o susto de 27/07)
+     • campo existe      → vale o que ele diz, sem exceção
+
+   E, pra isso não virar herança eterna, todo calendário novo passa a
+   nascer com o campo escrito. */
+function estadoAprovacao(){
+  const ap = data.aprovacaoInterna;
+  if(ap && ap.status) return ap.status;
+  return (data.items && data.items.length) ? 'liberado' : 'rascunho';
+}
+function ehCalendarioLegado(){ return !(data.aprovacaoInterna && data.aprovacaoInterna.status); }
 
 function renderAprovacaoInterna(){
   let box = document.getElementById('boxAprovacaoInterna');
@@ -789,12 +827,14 @@ function renderAprovacaoInterna(){
   const info = data.aprovacaoInterna || {};
   const ehEquipe = window.__modoCal === 'equipe';
 
+  const legado = ehCalendarioLegado();
   box.style.background = 'rgba(255,255,255,.03)';
   box.style.border = '1px solid ' + r.cor;
   box.innerHTML = `<div style="font-weight:800;color:${r.cor};">${r.txt}</div>
+    ${legado && ehEquipe ? '<div style="margin-top:6px;opacity:.75;">Calendário montado antes do ciclo de revisão existir — segue visível pro cliente, como sempre foi. Se quiser passar pela revisão da Amanda, é só enviar.</div>' : ''}
     ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
     ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
-    ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno') ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna()">Enviar pra aprovação interna →</button>' : ''}
+    ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna()">Enviar pra aprovação interna →</button>' : ''}
     ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. Enquanto não aprovar, o cliente não vê este calendário.</div>' : ''}`;
 }
 

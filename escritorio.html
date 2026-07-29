@@ -1060,6 +1060,13 @@
       </div>
 
       <div id="calSubResgate" style="display:none;">
+        <div class="card" style="border:2px solid var(--red);">
+          <h2>🚨 Varredura geral — onde falta conteúdo</h2>
+          <div class="desc">Passa por <b>todos</b> os clientes de uma vez, compara o que está no ar com a cópia mais completa que existe guardada, e mostra onde o calendário perdeu conteúdo. Use isto primeiro — o resgate por cliente, abaixo, é pra casos específicos.</div>
+          <button class="btn" style="margin-top:10px;" onclick="varrerTodosOsCalendarios(this)">🔎 Procurar perdas em todos os clientes</button>
+          <div id="varreduraCalLista" style="margin-top:12px;"></div>
+        </div>
+
         <div class="card" style="border:2px solid var(--yellow);">
           <h2>🛟 Resgatar calendário apagado</h2>
           <div class="desc">Se o calendário de um cliente aparecer vazio ou tiver perdido conteúdo, procura aqui. O sistema guarda as versões anteriores — dá pra ver o que tinha em cada uma e devolver com um clique.</div>
@@ -13335,6 +13342,137 @@
      a versão atual é guardada antes de restaurar. */
   const FONTES_RESGATE = ['calendarios_versoes','calendarios_backup_20260727','calendarios_backup'];
   let __versoesEncontradas = [];
+
+  /* ===== VARREDURA GERAL — 29/07/2026 =================================
+     O resgate por cliente exige saber QUEM perdeu. Quando a Gabi diz
+     "os calendários que subi não salvaram", ninguém sabe quais. Isto
+     passa por todos de uma vez e responde a pergunta certa:
+     onde o que está no ar tem MENOS conteúdo do que alguma cópia
+     guardada? Esse é o sinal de perda, e não depende de ninguém
+     lembrar de nada. */
+  let __varreduraAchados = [];
+  window.varrerTodosOsCalendarios = async function(btn){
+    const box = document.getElementById('varreduraCalLista');
+    if(btn){ btn.disabled = true; btn.textContent = 'Procurando…'; }
+    box.innerHTML = '<div class="desc">Lendo todos os calendários e todas as cópias guardadas…</div>';
+
+    // melhor cópia guardada por cliente
+    const melhorPorCliente = {};
+    for(const col of FONTES_RESGATE){
+      try{
+        const snap = await getDocs(collection(db, col));
+        snap.forEach(dd => {
+          const d = dd.data();
+          const itens = (d.items || d.itens || []).length;
+          if(!itens) return;
+          let slug = d.__cliente || '';
+          if(!slug){ const corte = dd.id.indexOf('__'); slug = corte > 0 ? dd.id.slice(0, corte) : dd.id; }
+          const cand = { fonte: col, id: dd.id, itens, quando: d.__salvoEm || d.updatedAt || '', dados: d, mes: d.month||'' };
+          const atualMelhor = melhorPorCliente[slug];
+          if(!atualMelhor || cand.itens > atualMelhor.itens ||
+             (cand.itens === atualMelhor.itens && String(cand.quando) > String(atualMelhor.quando))){
+            melhorPorCliente[slug] = cand;
+          }
+        });
+      }catch(e){ console.error('Fonte ' + col + ' indisponível:', e); }
+    }
+
+    // o que está no ar
+    const perdas = [], ok = [];
+    try{
+      const vivos = await getDocs(collection(db,'calendarios'));
+      vivos.forEach(dd => {
+        const d = dd.data();
+        const agora = (d.items||[]).length;
+        const guardado = melhorPorCliente[dd.id];
+        const linha = { slug: dd.id, agora, mes: d.month||'', quando: d.updatedAt||'',
+                        guardado: guardado || null, dados: d };
+        if(guardado && guardado.itens > agora) perdas.push(linha); else ok.push(linha);
+      });
+    }catch(e){ console.error(e); box.innerHTML = '<div class="empty">Não consegui ler os calendários.</div>';
+      if(btn){ btn.disabled=false; btn.textContent='🔎 Procurar perdas em todos os clientes'; } return; }
+
+    perdas.sort((a,b) => (b.guardado.itens - b.agora) - (a.guardado.itens - a.agora));
+    __varreduraAchados = perdas;
+
+    if(!perdas.length){
+      box.innerHTML = `<div class="card" style="border-color:var(--green);">
+        <div class="desc"><b>Nenhum calendário está com menos conteúdo do que a cópia guardada.</b></div>
+        <div class="desc" style="margin-top:6px;">Foram conferidos ${ok.length} calendário(s). Isso quer dizer que, do que o sistema guardou, nada se perdeu. Se ainda assim faltar trabalho da Gabi, veja o rodapé desta tela.</div>
+        ${htmlNotaVarredura(ok.length)}</div>`;
+      if(btn){ btn.disabled=false; btn.textContent='🔎 Procurar perdas em todos os clientes'; }
+      return;
+    }
+
+    box.innerHTML = `<div class="card" style="border:2px solid var(--red);">
+      <div class="desc" style="color:var(--red);font-weight:800;">${perdas.length} calendário(s) estão com menos conteúdo do que a cópia guardada.</div>
+      <div class="desc" style="margin-top:4px;">Conferi ${ok.length + perdas.length} calendário(s) no total. Restaurar guarda a versão de agora antes de mexer — dá pra voltar atrás.</div>
+    </div>` + perdas.map((p,i) => `<div class="item" style="margin-top:8px;border-left:3px solid var(--red);">
+      <div class="top">
+        <div class="nome">${esc(nomeDeSlugSeguro(p.slug))}</div>
+        <span class="selo atrasado">faltam ${p.guardado.itens - p.agora}</span>
+      </div>
+      <div class="meta" style="margin-top:4px;">No ar: <b>${p.agora}</b> conteúdo(s)${p.mes ? ' · ' + esc(p.mes) : ''} · guardado: <b>${p.guardado.itens}</b>${p.guardado.quando ? ' de ' + new Date(p.guardado.quando).toLocaleString('pt-BR') : ''}</div>
+      <div class="btnrow" style="margin-top:8px;">
+        <button class="btn secondary" style="font-size:11px;" onclick="verAchadoVarredura(${i})">👁️ Ver o que tem na cópia</button>
+        <button class="btn green" style="font-size:11px;" onclick="restaurarAchadoVarredura(${i}, this)">↩️ Restaurar os ${p.guardado.itens}</button>
+      </div>
+    </div>`).join('') + htmlNotaVarredura(ok.length + perdas.length);
+    if(btn){ btn.disabled=false; btn.textContent='🔎 Procurar de novo'; }
+  };
+
+  function htmlNotaVarredura(total){
+    return `<div class="card" style="margin-top:12px;border-color:var(--line);">
+      <div class="desc" style="font-size:11.5px;line-height:1.6;">
+        <b>O que esta varredura NÃO alcança.</b> Ela compara o que está no ar com as cópias que o sistema guardou.
+        A guarda automática de versões começou em 27/07/2026 — trabalho perdido antes disso não deixou cópia e não aparece aqui.
+        E se o conteúdo nunca chegou a ser gravado no banco (a aba recusou salvar e a pessoa fechou a página), ele nunca existiu do lado de cá:
+        a partir de agora esse caso está coberto pelo rascunho local, que fica no navegador de quem estava editando.
+      </div></div>`;
+  }
+
+  window.verAchadoVarredura = function(i){
+    const p = __varreduraAchados[i]; if(!p) return;
+    const itens = (p.guardado.dados.items || []).slice().sort((a,b)=>(a.day||0)-(b.day||0));
+    const modal = document.getElementById('modalConteudo');
+    modal.innerHTML = `<h2>${esc(nomeDeSlugSeguro(p.slug))} — cópia guardada</h2>
+      <div class="linha"><b>${itens.length} conteúdo(s)</b> · o que está no ar tem ${p.agora}</div>
+      ${itens.map(it => `<div class="item" style="margin-top:6px;">
+        <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div>${it.ref?'<span class="selo aprovada">tem referência</span>':''}</div>
+        ${it.legenda ? '<div class="meta" style="margin-top:4px;">'+esc(String(it.legenda).slice(0,140))+'</div>' : ''}
+      </div>`).join('')}
+      <button class="btn secondary" style="margin-top:12px;" onclick="fecharModal()">Fechar</button>`;
+    document.getElementById('overlayView').classList.add('show');
+  };
+
+  window.restaurarAchadoVarredura = async function(i, btn){
+    const p = __varreduraAchados[i]; if(!p) return;
+    const itens = p.guardado.dados.items || [];
+    if(!confirm('Restaurar ' + itens.length + ' conteúdo(s) no calendário de ' + nomeDeSlugSeguro(p.slug) + '?\n\n' +
+      'O que está no ar agora (' + p.agora + ') vai ser guardado antes, então dá pra voltar atrás.')) return;
+    if(btn){ btn.disabled = true; btn.textContent = 'Restaurando…'; }
+    try{
+      const carimbo = new Date().toISOString().replace(/[:.]/g,'-');
+      await setDoc(doc(db,'calendarios_versoes', p.slug + '__antes-da-varredura-' + carimbo),
+        { ...p.dados, __cliente: p.slug, __salvoEm: new Date().toISOString(), __itens: p.agora });
+      await setDoc(doc(db,'calendarios', p.slug), {
+        client: p.guardado.dados.client || p.dados.client || nomeDeSlugSeguro(p.slug),
+        month: p.guardado.dados.month || p.dados.month || '',
+        items: itens,
+        comments: p.guardado.dados.comments || p.dados.comments || [],
+        aprovacaoInterna: p.dados.aprovacaoInterna || p.guardado.dados.aprovacaoInterna || null,
+        updatedAt: new Date().toISOString(),
+        restauradoPor: usuarioAtual || '?', restauradoDe: p.guardado.fonte + '/' + p.guardado.id, restauradoEm: new Date().toISOString()
+      });
+      registrarHistorico('calendarios', p.slug, 'Restaurado pela varredura geral — ' + itens.length + ' conteúdo(s)');
+      mostrarToast(itens.length + ' conteúdo(s) restaurados em ' + nomeDeSlugSeguro(p.slug) + '!');
+      if(btn){ btn.textContent = '✓ Restaurado'; }
+    }catch(e){
+      console.error('Falha ao restaurar:', e);
+      mostrarToast('Não consegui restaurar. Nada foi alterado.', 'erro');
+      if(btn){ btn.disabled = false; btn.textContent = '↩️ Restaurar'; }
+    }
+  };
 
   window.procurarVersoesCalendario = async function(sufixo){
     sufixo = sufixo || '';

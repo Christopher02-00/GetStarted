@@ -12307,6 +12307,9 @@
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
+      ${d.redirecionamentoPedido
+        ? '<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:11px 13px;border-radius:8px;">↪️ <b>Você pediu pra repassar pra ' + esc(d.redirecionamentoPedido.para) + '</b> — esperando a Amanda decidir. Até lá continua com você.<div class="meta" style="margin-top:4px;">"' + esc(d.redirecionamentoPedido.motivo||'') + '"</div></div>'
+        : '<button class="btn secondary" style="margin-top:10px;font-size:12px;" onclick="pedirRedirecionamento(\'' + d.id + '\')">↪️ Essa demanda não é minha — repassar</button>'}
       ${slotAgendaDemanda(d)}
       ${htmlChecklistClientes(d)}
       <div class="linha"><b>Pedido por:</b> ${d.origem==='cliente' ? 'Cliente ('+esc(d.clienteNome)+')' : esc(d.origem)}</div>
@@ -13428,23 +13431,63 @@
       <div class="resumoCard ${vazios?'red':'green'}"><div class="num">${vazios}</div><div class="lbl">⚠️ sem calendário</div></div>
     </div>
     <div class="card">
-      <div class="metaSecTit">Escolhe o cliente pra ver o mês</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-        ${linhas.sort((a,b)=>b.total-a.total).map(l => {
+      <div class="metaSecTit">Clientes — clica pra ver o mês inteiro</div>
+      <div class="desc" style="margin-bottom:12px;">Quem está sem calendário aparece primeiro: é o que trava o mês.</div>
+      ${linhas
+        .sort((a,b) => (a.total?1:0)-(b.total?1:0) || (b.total-b.postados)-(a.total-a.postados))
+        .map(l => {
           const cor = !l.total ? 'var(--red)' : l.estado === 'liberado' ? 'var(--green)' : 'var(--yellow2)';
           const ativo = __calAbertoSlug === l.slug;
-          return `<div onclick="abrirVisaoCalendario('${escJs(l.slug)}')" style="cursor:pointer;padding:11px 14px;border-radius:9px;font-size:12.5px;font-weight:700;
-              background:${ativo?'var(--yellow)':'var(--deep)'};color:${ativo?'var(--graphite)':'var(--offwhite)'};border:1px solid ${ativo?'var(--yellow)':cor};">
-            ${esc(l.nome)} <span style="opacity:.7;">${l.total ? l.postados + '/' + l.total : 'vazio'}</span>
+          const pct = l.total ? Math.round(l.postados/l.total*100) : 0;
+          const estadoTxt = !l.total ? 'sem calendário montado'
+            : l.estado === 'liberado' ? 'liberado — o cliente já vê'
+            : l.estado === 'aguardando_interna' ? 'esperando revisão interna'
+            : l.estado === 'ajuste_interno' ? 'devolvido pra ajuste'
+            : 'em montagem — o cliente ainda não vê';
+          return `<div class="item" style="border-left:4px solid ${cor};padding:15px 17px;margin-bottom:14px;cursor:pointer;${ativo?'border:2px solid var(--yellow);':''}"
+                onclick="abrirVisaoCalendario('${escJs(l.slug)}')">
+            <div class="top">
+              <div class="nome" style="font-size:14.5px;">${esc(l.nome)}</div>
+              <span class="meta" style="color:${cor};font-weight:800;white-space:nowrap;">${l.total ? l.postados + '/' + l.total + ' publicado' : 'vazio'}</span>
+            </div>
+            <div class="meta" style="margin-top:5px;">${estadoTxt}${l.total ? ' · ' + l.gravados + ' gravado(s)' + (l.comDataPost ? ' · ' + l.comDataPost + ' com dia fechado' : '') : ''}</div>
+            ${l.total ? `<div style="height:6px;background:var(--deep);border-radius:4px;overflow:hidden;margin-top:9px;">
+              <div style="height:100%;width:${pct}%;background:${cor};"></div></div>` : ''}
           </div>`;
         }).join('')}
-      </div>
     </div>
     <div id="calMesRender${sufixo||''}"></div>`;
 
     window.__calDados = {}; linhas.forEach(l => window.__calDados[l.slug] = l);
     if(__calAbertoSlug) abrirVisaoCalendario(__calAbertoSlug);
   };
+
+  /* ===== REFEITA — 28/07/2026 ==========================================
+     A primeira versão era uma grade densa de 31 quadradinhos com letra de
+     9px. O Chris: "muito mal organizado, totalmente fora do layout".
+     Ele estava certo — eu tinha jogado o mês inteiro na tela sem
+     hierarquia, e a informação que importa (o que já foi feito) ficava
+     ilegível dentro do quadradinho.
+
+     Refeita pelas regras que ele fixou: cartão fechado com duas linhas,
+     cor comunicando estado sem o texto repetir, respiração entre blocos,
+     e o que precisa de atenção primeiro.
+
+     A leitura agora é por SEMANA, não por quadradinho de dia. Cada
+     conteúdo é uma linha legível com o dia, o nome, em que pé está e o
+     dia fechado de postagem quando existe. */
+  const ETAPAS_CONTEUDO = [
+    { id:'publicado', rot:'✅ Publicado',    cor:'var(--green)'   },
+    { id:'agendado',  rot:'🗓️ Agendado',     cor:'var(--yellow2)' },
+    { id:'gravado',   rot:'🎥 Gravado',      cor:'var(--yellow)'  },
+    { id:'planejado', rot:'⚪ Só planejado', cor:'var(--muted)'   }
+  ];
+  function etapaDoConteudo(i){
+    if(i.posted) return 'publicado';
+    if(i.agendado) return 'agendado';
+    if(i.gravado) return 'gravado';
+    return 'planejado';
+  }
 
   window.abrirVisaoCalendario = function(slug){
     __calAbertoSlug = slug;
@@ -13453,64 +13496,88 @@
     if(!box) return;
     if(!l){ box.innerHTML = ''; return; }
     if(!l.total){
-      box.innerHTML = `<div class="card" style="border-color:var(--red);"><div class="empty" style="color:var(--red);font-weight:700;">${esc(l.nome)} ainda não tem calendário montado.</div></div>`;
-      renderVisaoCalendarios();
+      box.innerHTML = `<div class="card" style="border:2px solid var(--red);">
+        <h2>${esc(l.nome)}</h2>
+        <div class="empty" style="color:var(--red);font-weight:700;margin-top:8px;">Este cliente ainda não tem calendário montado.</div>
+        <div class="desc" style="margin-top:8px;">Sem calendário o mês não sai do papel — nem gravação, nem postagem. Vale cobrar da Gabi.</div>
+      </div>`;
       return;
     }
 
-    // descobre o mês/ano a partir do texto que a Gabi escreveu ("Agosto 2026")
-    const txt = (l.mes||'').trim();
-    const mi = MESES_CAL.findIndex(m => txt.toLowerCase().startsWith(m.toLowerCase()));
-    const ano = (txt.match(/\d{4}/)||[new Date().getFullYear()])[0];
-    const mesIdx = mi >= 0 ? mi : new Date().getMonth();
-    const primeiro = new Date(ano, mesIdx, 1);
-    const offset = primeiro.getDay();
-    const diasNoMes = new Date(ano, mesIdx+1, 0).getDate();
+    const itens = l.itens.map((i,idx) => ({...i, __idx:idx, __etapa: etapaDoConteudo(i)}));
+    const conta = e => itens.filter(i => i.__etapa === e).length;
+    const semana = d => Math.ceil((Number(d)||1)/7);
+    const porSemana = {1:[],2:[],3:[],4:[],5:[]};
+    itens.forEach(i => porSemana[Math.min(semana(i.day),5)].push(i));
+    const comData = itens.filter(i => i.dataPostagem);
+    const pctFeito = Math.round((conta('publicado')/itens.length)*100);
 
-    const porDia = {};
-    l.itens.forEach(i => { const d = Number(i.day)||0; (porDia[d] = porDia[d]||[]).push(i); });
+    const linhaConteudo = i => {
+      const e = ETAPAS_CONTEUDO.find(x=>x.id===i.__etapa);
+      return `<div class="item" style="border-left:4px solid ${e.cor};padding:13px 15px;margin-bottom:12px;">
+        <div class="top">
+          <div class="nome" style="font-size:13.5px;">Dia ${i.day||'?'} · ${esc(i.name||'sem título')}</div>
+          <span class="meta" style="color:${e.cor};font-weight:800;white-space:nowrap;">${e.rot}</span>
+        </div>
+        <div class="meta" style="margin-top:5px;">
+          ${i.fmt ? esc(i.fmt) : 'Reel'}${i.stage ? ' · ' + (i.stage==='topo'?'topo (atração)':i.stage==='meio'?'meio (conexão)':'fundo (conversão)') : ''}
+          ${i.dataPostagem ? ' · <b style="color:var(--yellow2);">📆 posta em ' + formatarDataBR(i.dataPostagem) + '</b>' : ''}
+          ${i.apr ? ' · <span style="color:var(--green);">cliente aprovou</span>' : ''}
+          ${i.ref ? ' · <a href="'+esc(i.ref)+'" target="_blank" rel="noopener" style="color:var(--yellow);">referência ↗</a>' : ''}
+        </div>
+        ${(i.legenda||'').trim() ? '<div class="meta" style="margin-top:6px;opacity:.75;">' + esc(String(i.legenda).trim().slice(0,120)) + ((i.legenda||'').length>120?'…':'') + '</div>' : ''}
+      </div>`;
+    };
 
-    const cor = i => i.posted ? 'var(--green)' : i.gravado ? 'var(--yellow)' : 'var(--muted)';
-    const celulas = [];
-    for(let k=0;k<offset;k++) celulas.push('<div></div>');
-    for(let d=1; d<=diasNoMes; d++){
-      const its = porDia[d] || [];
-      celulas.push(`<div style="min-height:74px;background:var(--deep);border:1px solid ${its.length?'var(--line)':'transparent'};border-radius:8px;padding:6px;">
-        <div class="meta" style="font-weight:800;opacity:.6;">${d}</div>
-        ${its.map(i => `<div title="${esc(i.name||'')}" style="margin-top:3px;font-size:9.5px;line-height:1.25;padding:3px 5px;border-radius:5px;background:rgba(255,255,255,.05);border-left:3px solid ${cor(i)};${i.dataPostagem?'outline:1px solid var(--yellow2);':''}">
-          ${esc(String(i.name||'').slice(0,26))}
-          ${i.dataPostagem ? '<div style="color:var(--yellow2);font-weight:700;">📆 ' + formatarDataBR(i.dataPostagem) + '</div>' : ''}
-        </div>`).join('')}
-      </div>`);
-    }
-
-    const comData = l.itens.filter(i=>i.dataPostagem).sort((a,b)=>String(a.dataPostagem).localeCompare(String(b.dataPostagem)));
-
-    box.innerHTML = `<div class="card">
+    box.innerHTML = `<div class="card" style="border:2px solid var(--yellow);">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
-        <h2 style="margin:0;">${esc(l.nome)} — ${esc(l.mes||'sem mês')}</h2>
-        <div class="meta">${l.total} conteúdo(s) · ${l.gravados} gravado(s) · ${l.postados} publicado(s) · ${l.aprovados} aprovado(s) pelo cliente</div>
+        <h2 style="margin:0;">${esc(l.nome)}</h2>
+        <div class="meta">${esc(l.mes||'sem mês definido')}</div>
       </div>
-      <div class="meta" style="margin-top:8px;">
-        <span style="color:var(--muted);">▉</span> planejado ·
-        <span style="color:var(--yellow);">▉</span> gravado ·
-        <span style="color:var(--green);">▉</span> publicado ·
-        <span style="outline:1px solid var(--yellow2);padding:0 4px;">contorno</span> tem dia certo de postar
+
+      <div style="margin-top:14px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;">
+          <span>Publicado</span><b>${conta('publicado')} de ${itens.length}</b>
+        </div>
+        <div style="height:10px;background:var(--deep);border-radius:6px;overflow:hidden;">
+          <div style="height:100%;width:${pctFeito}%;background:var(--green);transition:width .3s;"></div>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:14px;">
-        ${['D','S','T','Q','Q','S','S'].map(x=>`<div class="meta" style="text-align:center;font-weight:800;opacity:.5;">${x}</div>`).join('')}
-        ${celulas.join('')}
+
+      <div class="painelResumo" style="margin-top:16px;">
+        ${ETAPAS_CONTEUDO.map(e => `<div class="resumoCard ${e.id==='planejado'&&conta(e.id)?'yellow':''}">
+          <div class="num" style="color:${conta(e.id)?e.cor:''};">${conta(e.id)}</div><div class="lbl">${e.rot}</div>
+        </div>`).join('')}
+      </div>
+
+      <div class="btnrow" style="margin-top:16px;">
+        <button class="btn secondary" style="padding:11px;font-size:12px;" onclick="abrirCalendarioParaEditar('${escJs(slug)}','${escJs(l.nome)}')">✏️ Abrir e editar</button>
+        <button class="btn secondary" style="padding:11px;font-size:12px;" onclick="copiarLinkCalendarioDireto('${escJs(slug)}', this)">⧉ Link do cliente</button>
       </div>
     </div>
 
     ${comData.length ? `<div class="card" style="border:2px solid var(--yellow2);">
-      <div class="metaSecTit">📆 Dias fechados com o cliente — programar nestes dias</div>
-      <div class="desc" style="margin-bottom:10px;">A Gabi definiu data exata pra estes conteúdos. Os outros seguem o dia do calendário normalmente.</div>
-      ${comData.map(i => `<div class="item" style="margin-bottom:10px;border-left:3px solid ${i.posted?'var(--green)':'var(--yellow2)'};">
-        <div class="top"><div class="nome">${esc(i.name||'sem título')}</div><span class="selo ${i.posted?'aprovada':'pendente'}">${i.posted?'publicado':'a postar'}</span></div>
-        <div class="meta" style="margin-top:4px;">📆 ${formatarDataBR(i.dataPostagem)}${i.gravado?' · já gravado':' · ainda não gravado'}</div>
-      </div>`).join('')}
-    </div>` : ''}`;
+      <div class="metaSecTit" style="color:var(--yellow2);">📆 Dias fechados com o cliente</div>
+      <div class="desc" style="margin-bottom:12px;">A Gabi definiu data exata pra estes. É por eles que a gravação precisa ser agendada com antecedência.</div>
+      ${comData.sort((a,b)=>String(a.dataPostagem).localeCompare(String(b.dataPostagem))).map(linhaConteudo).join('')}
+    </div>` : ''}
+
+    ${[1,2,3,4,5].filter(w => porSemana[w].length).map(w => {
+      const l1 = (w-1)*7+1, l2 = Math.min(w*7,31);
+      const feitos = porSemana[w].filter(i=>i.__etapa==='publicado').length;
+      return `<div class="faixaDem aberta" data-faixa="sem_${slug}_${w}">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">Semana ${w} <span class="meta" style="opacity:.6;">(dias ${l1}–${l2})</span>
+          <span class="qtd">${feitos}/${porSemana[w].length} publicado(s)</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${porSemana[w].sort((a,b)=>(a.day||0)-(b.day||0)).map(linhaConteudo).join('')}</div>
+      </div>`;
+    }).join('')}`;
+  };
+
+  /* Abre o calendário real do cliente pra editar, na aba de edição. */
+  window.abrirCalendarioParaEditar = function(slug, nome){
+    const aba = document.querySelector('#subtabsCalendario .subtab[data-calsub="editar"]');
+    if(aba && aba.style.display !== 'none'){ setCalSub('editar', aba); }
+    setTimeout(() => { abrirCalendarioFerramentas(slug, nome); }, 200);
   };
 
   window.abrirCalendariosPorCliente = function(){

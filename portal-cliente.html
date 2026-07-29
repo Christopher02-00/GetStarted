@@ -356,12 +356,14 @@
     const passados = agendados.filter(p => (p.dataAgendada||'') < hoje);
 
     const dataBR = d => { if(!d) return 'sem data'; const [a,m,x]=String(d).split('-'); return x?`${x}/${m}/${a}`:d; };
+    const MES3 = ['','JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+    const mesCurto = d => MES3[Number(String(d||'').slice(5,7))] || '';
     const card = (p, cor, selo) => `
       <div class="card" style="border-left:3px solid ${cor};">
         <div style="display:flex;gap:12px;align-items:flex-start;">
           <div style="text-align:center;min-width:52px;">
             <div style="font-size:19px;font-weight:800;line-height:1;">${String(p.dataAgendada||'').slice(8,10)||'--'}</div>
-            <div class="meta" style="font-size:10px;">${dataBR(p.dataAgendada).slice(3)}</div>
+            <div class="meta" style="font-size:10px;">${mesCurto(p.dataAgendada)}</div>
             ${p.horaAgendada ? '<div class="meta" style="font-size:10px;margin-top:3px;">'+esc(p.horaAgendada)+'</div>' : ''}
           </div>
           <div style="flex:1;">
@@ -1167,7 +1169,7 @@
     </div>`;
 
     const cardStory = s => `
-      <div class="card" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow)':'var(--line)'};">
+      <div class="card" id="story_${s.id}" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow)':'var(--line)'};transition:opacity .2s;">
         <div class="nome" style="font-size:14px;">${esc(tituloLimpo(s.titulo))}</div>
         ${s.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(s.descricao)+'</div>' : ''}
         ${s.linkReferencia ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(s.linkReferencia)+'" target="_blank" style="color:var(--yellow);">Ver referência ↗</a></div>' : ''}
@@ -1591,16 +1593,28 @@
      pode tocar. Antes isto mudava um campo e não avisava ninguém: a
      Gabi só descobria se abrisse a tela por acaso. */
   window.responderStory = async function(id, status){
-    await updateDoc(doc(db,'stories_semanais', id), {
-      status, respondidoEm: serverTimestamp(),
-      aprovadoPeloCliente: status === 'aprovado',
-      aprovadoPeloClienteEm: status === 'aprovado' ? new Date().toISOString() : null
-    });
-    if(status === 'aprovado'){
-      await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou os stories da semana',
-        'Pode seguir — ela já tem o sinal verde pra postar.');
+    /* O teste de 29/07 pegou isto: entre o clique e a tela mudar passam
+       alguns segundos (a lista é relida do banco). Sem nenhum sinal, o
+       cliente acha que não funcionou e clica de novo. Agora a resposta
+       é imediata e o botão trava enquanto grava. */
+    const cartao = document.getElementById('story_' + id);
+    if(cartao) cartao.style.opacity = '.5';
+    try{
+      await updateDoc(doc(db,'stories_semanais', id), {
+        status, respondidoEm: serverTimestamp(),
+        aprovadoPeloCliente: status === 'aprovado',
+        aprovadoPeloClienteEm: status === 'aprovado' ? new Date().toISOString() : null
+      });
+      if(status === 'aprovado'){
+        await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou os stories da semana',
+          'Pode seguir — ela já tem o sinal verde pra postar.');
+      }
+      await carregarStories();
+    }catch(e){
+      console.error('Falha ao responder story:', e);
+      if(cartao) cartao.style.opacity = '1';
+      alert('Não consegui registrar agora. Confere a internet e tenta de novo.');
     }
-    carregarStories();
   };
 
   window.pedirAjusteStory = async function(id){

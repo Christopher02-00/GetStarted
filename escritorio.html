@@ -11016,7 +11016,9 @@
     'Helo':        [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" }],
     'João Victor': [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" }],
     'Gabrielle':   [{ rot:'✍️ Escrever legendas',     acao:"irParaFila('legenda')", contador:'legenda' },
-                    { rot:'📸 Fazer stories do cliente', acao:"irParaStories('montar')" }],
+                    { rot:'📸 Fazer stories do cliente', acao:"irParaStories('montar')" },
+                    { rot:'🔗 Referências dos clientes', acao:"irParaPerfisDeReferencia()", contador:'referencias',
+                      rotNumero: n => ' — faltam ' + n }],
     'Amanda':      [{ rot:'🎬 Distribuir vídeos',     acao:"irParaDistribuirVideos()", contador:'distribuir' },
                     { rot:'📸 Aprovar e enviar stories',  acao:"irParaStories('aprovar')" },
                     { rot:'🎛️ Central de Comando',   acao:"irPara('gerencia', document.getElementById('navitemGerencia')); setTimeout(()=>navegarGerenciaSub('comando'), 400);" }]
@@ -11067,6 +11069,45 @@
       return n;
     }catch(e){ return 0; }
   }
+
+  /* ===== O BOTÃO DE REFERÊNCIAS DA GABI — 29/07/2026 =================
+     Pedido do Chris: o mesmo atalho amarelo, levando direto à tela onde
+     ela preenche os perfis de referência de cada cliente.
+
+     É só dela: `ATALHO_DESTAQUE` é indexado por pessoa, então quem não
+     é a Gabi não vê diferença nenhuma. E a tela de Referências continua
+     no menu lateral, para ela e para todo mundo que já tinha — o atalho
+     é um caminho a mais, não uma troca. Tirar tela do menu foi o que
+     deixou a Cecília sem "Vídeos em Edição" na segunda; não repito.
+
+     O contador diz quantos clientes ainda não estão cobertos, que é a
+     pergunta real dela ao abrir. */
+  async function contarClientesSemReferencia(){
+    try{
+      const [perfis, alvo] = await Promise.all([
+        getDocs(collection(db,'refs_perfil_semana')),
+        clientesDeConteudoRecorrente()
+      ]);
+      const porCliente = {};
+      perfis.forEach(d => { const v = d.data();
+        const n = (v.slots||[]).filter(x => x && x.link && String(x.link).trim()).length;
+        if(!porCliente[v.cliente] || n > porCliente[v.cliente]) porCliente[v.cliente] = n; });
+      return alvo.filter(c => (porCliente[c.slug]||0) < MIN_REF_PERFIL).length;
+    }catch(e){ console.error('Falha ao contar clientes sem referência:', e); return 0; }
+  }
+
+  window.irParaPerfisDeReferencia = function(){
+    const nav = document.getElementById('navReferencias');
+    if(nav) irPara('referencias', nav);
+    setTimeout(() => {
+      const aba = Array.from(document.querySelectorAll('#subtabsRefs .subtab')).find(x => /Perfis/i.test(x.textContent||''));
+      if(aba) aba.click();
+      setTimeout(() => {
+        const sel = document.getElementById('refPerfilClienteSel');
+        if(sel){ sel.scrollIntoView({ behavior:'smooth', block:'center' }); sel.focus(); }
+      }, 350);
+    }, 300);
+  };
 
   window.irParaFila = function(qual){
     const nav = document.getElementById('navPostagens');
@@ -11150,10 +11191,16 @@
       /* O número entra no próprio botão: ela vê quantos estão esperando
          antes de clicar. Zero = fica cinza e não chama atenção à toa. */
       if(a.contador){
-        const conta = a.contador === 'distribuir' ? contarVideosSemEditor() : contarFila(a.contador);
+        const conta = a.contador === 'distribuir' ? contarVideosSemEditor()
+                    : a.contador === 'referencias' ? contarClientesSemReferencia()
+                    : contarFila(a.contador);
         conta.then(n => {
           if(!b.isConnected) return;
-          b.textContent = a.rot + (n ? ' (' + n + ')' : '');
+          /* "(13)" ao lado de "Escrever legendas" se lê sozinho: são 13
+             esperando você. "(21)" ao lado de "Referências" se leria como
+             21 referências, que é o contrário do que o número diz — ali
+             são 21 clientes FALTANDO. Por isso o rótulo é escrito. */
+          b.textContent = a.rot + (n ? (a.rotNumero ? a.rotNumero(n) : ' (' + n + ')') : '');
           if(!n){ b.style.background = 'var(--line)'; b.style.color = 'var(--muted)'; b.style.boxShadow = 'none'; }
         }).catch(()=>{});
       }

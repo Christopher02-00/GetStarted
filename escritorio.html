@@ -11930,11 +11930,123 @@
     const borda = aguardandoAprov ? 'var(--green)' : urg==='atrasado' ? 'var(--red)' : (urg==='hoje' ? 'var(--yellow2)' : 'var(--line)');
     const selo = aguardandoAprov ? '<span class="selo aprovado">Feita — em aprovação</span>' :
                  urg==='atrasado' ? '<span class="selo atrasado">Atrasada lá</span>' : '<span class="selo pendente">Em aberto</span>';
-    return `<div class="item" style="border-left:3px solid ${borda};cursor:default;">
+    /* 29/07/2026 — era `cursor:default` e não abria nada. O Chris via o
+       que delegou e não conseguia fazer NADA com aquilo: nem mudar prazo,
+       nem repassar, nem excluir, nem cobrar. Virou tela morta. Agora abre
+       a ficha completa, igual às demandas dele. */
+    return `<div class="item" style="border-left:3px solid ${borda};cursor:pointer;" onclick="abrirDemandaEnviada('${d.id}')">
       <div class="top"><div class="nome">→ <b>${esc(d.destinatario||'?')}</b>: ${esc(d.titulo)}</div>${selo}</div>
-      <div class="meta" style="margin-top:4px;">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}</div>
+      <div class="meta" style="margin-top:4px;">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${d.prazoSolicitado ? ' · <span style="color:var(--yellow2);">pediu mais prazo</span>' : ''}${d.bloqueio ? ' · <span style="color:var(--yellow2);">travada esperando ' + esc(d.bloqueio.pessoa||'alguém') + '</span>' : ''}</div>
+      <div class="meta" style="margin-top:3px;opacity:.6;">toque pra mudar prazo, repassar, cobrar ou excluir</div>
     </div>`;
   }
+
+  /* ===== A FICHA DO QUE VOCÊ DELEGOU — 29/07/2026 ====================
+     Pedido do Chris: poder clicar em cada demanda que ele enviou e fazer
+     tudo — mudar data, excluir, repassar — e avisar a pessoa no WhatsApp.
+
+     Tudo aqui já existia espalhado (adiar, repassar, excluir, aprovar).
+     O que faltava era o lugar: a lista "Que eu enviei" não abria nada. */
+  window.abrirDemandaEnviada = async function(id){
+    const d = todasDemandas.find(x=>x.id===id);
+    if(!d) return;
+    const modal = document.getElementById('modalConteudo');
+    const urg = calcularUrgencia(d);
+    const pessoa = d.destinatario || '?';
+    const aguardandoAprov = d.status === 'concluida_aguardando_aprovacao';
+    const gestor = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
+    const outros = PESSOAS_EQUIPE.filter(x => x !== pessoa);
+
+    const estado = aguardandoAprov ? '<span class="selo aprovado">Feita — esperando seu ok</span>'
+      : urg === 'atrasado' ? '<span class="selo atrasado">Atrasada com ' + esc(pessoa) + '</span>'
+      : urg === 'hoje' ? '<span class="selo pendente">Vence hoje</span>'
+      : '<span class="selo pendente">Em aberto</span>';
+
+    modal.innerHTML = `
+      <h2>${esc(d.titulo)}</h2>
+      <div class="linha">Com <b>${esc(pessoa)}</b> · ${estado}</div>
+      ${d.descricao ? '<div class="linha" style="white-space:pre-wrap;">' + linkifyDescricao(d.descricao) + '</div>' : ''}
+      ${d.clienteNome ? '<div class="meta">Cliente: ' + esc(d.clienteNome) + '</div>' : ''}
+      ${d.bloqueio ? '<div class="linha" style="color:var(--yellow2);">✋ Ela marcou que está travada esperando <b>' + esc(d.bloqueio.pessoa||'alguém') + '</b>: ' + esc(d.bloqueio.texto||'') + '</div>' : ''}
+      ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Pediu prazo novo pra <b>' + formatarDataBR(d.prazoSolicitado) + '</b>' + (d.motivoPrazo ? ' — ' + esc(d.motivoPrazo) : '') + '</div>' : ''}
+      ${aguardandoAprov ? '<div class="linha" style="color:var(--green);">✅ ' + esc(d.provaTexto || 'Marcou como feita, sem descrição.') + (d.provaImagemUrl ? ' · <a href="' + esc(d.provaImagemUrl) + '" target="_blank">ver prova</a>' : '') + '</div>' : ''}
+
+      <div class="field" style="margin-top:16px;"><label>Prazo</label>
+        <div class="row2">
+          <input type="date" id="envPrazoData_${d.id}" value="${d.prazoData||''}">
+          <input type="time" id="envPrazoHora_${d.id}" value="${d.prazoHora||'19:00'}">
+        </div>
+        <button class="btn secondary" style="margin-top:8px;" onclick="mudarPrazoEnviada('${d.id}')">📅 Salvar prazo novo</button>
+        ${d.prazoSolicitado ? '<button class="btn green" style="margin-top:8px;" onclick="aceitarPrazoPedido(\''+d.id+'\')">✓ Aceitar o prazo que ela pediu ('+formatarDataBR(d.prazoSolicitado)+')</button>' : ''}
+      </div>
+
+      <div class="field" style="margin-top:14px;"><label>Passar pra outra pessoa</label>
+        <select id="envAlvo_${d.id}">
+          <option value="">Escolhe quem assume…</option>
+          ${outros.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('')}
+        </select>
+        <input type="text" id="envMotivo_${d.id}" placeholder="Motivo (opcional — fica no histórico)" style="margin-top:8px;">
+        <button class="btn secondary" style="margin-top:8px;" onclick="repassarEnviada('${d.id}')">↪️ Repassar agora</button>
+      </div>
+
+      <div class="btnrow" style="margin-top:16px;">
+        <button class="btn" style="font-size:12.5px;" onclick="cobrarNoWhats('${d.id}')">💬 Cobrar ${esc(pessoa)} no WhatsApp</button>
+        ${aguardandoAprov ? '<button class="btn green" style="font-size:12.5px;" onclick="aprovarDemanda(\''+d.id+'\')">✅ Aprovar e encerrar</button>' : ''}
+      </div>
+
+      <button class="btn secondary" style="margin-top:10px;" onclick="fecharModal()">Fechar</button>
+      ${gestor ? '<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaMinha(\''+d.id+'\')">🗑️ Excluir esta demanda</button>' : ''}
+      ${renderLinhaDoTempo(d.historico)}
+    `;
+    document.getElementById('overlayView').classList.add('show');
+  };
+
+  window.mudarPrazoEnviada = async function(id){
+    const d = todasDemandas.find(x=>x.id===id) || {};
+    const data = document.getElementById('envPrazoData_'+id)?.value;
+    const hora = document.getElementById('envPrazoHora_'+id)?.value || '19:00';
+    if(!data){ mostrarToast('Escolhe a data.', 'erro'); return; }
+    try{
+      await updateDoc(doc(db,'demandas', id), { prazoData: data, prazoHora: hora,
+        prazoSolicitado: null, motivoPrazo: '',
+        prazoAlteradoPor: usuarioAtual||'?', prazoAlteradoEm: new Date().toISOString() });
+      registrarHistorico('demandas', id, 'Prazo mudado de ' + formatarDataBR(d.prazoData) + ' pra ' + formatarDataBR(data) + ' por ' + (usuarioAtual||'?'));
+      mostrarToast('Prazo novo salvo.');
+      fecharModal(); renderMinhasDemandasAtribuidas(); atualizarTodosOsBadges();
+    }catch(e){ mostrarToast('Não consegui mudar o prazo: ' + e.message, 'erro'); }
+  };
+
+  window.aceitarPrazoPedido = async function(id){
+    const d = todasDemandas.find(x=>x.id===id) || {};
+    if(!d.prazoSolicitado) return;
+    const el = document.getElementById('envPrazoData_'+id); if(el) el.value = d.prazoSolicitado;
+    await mudarPrazoEnviada(id);
+  };
+
+  window.repassarEnviada = async function(id){
+    const alvo = document.getElementById('envAlvo_'+id)?.value;
+    if(!alvo){ mostrarToast('Escolhe quem vai assumir.', 'erro'); return; }
+    const motivo = (document.getElementById('envMotivo_'+id)?.value || '').trim();
+    try{
+      await aplicarRedirecionamento(id, alvo, motivo, usuarioAtual || '?');
+      mostrarToast('Repassada pra ' + alvo + '.');
+      fecharModal(); renderMinhasDemandasAtribuidas(); atualizarTodosOsBadges();
+    }catch(e){ mostrarToast('Não consegui repassar: ' + e.message, 'erro'); }
+  };
+
+  window.cobrarNoWhats = async function(id){
+    const d = todasDemandas.find(x=>x.id===id); if(!d) return;
+    const urg = calcularUrgencia(d);
+    const quando = formatarDataBR(d.prazoData) + (d.prazoHora ? ' às ' + d.prazoHora : '');
+    const msg = 'Oi ' + (d.destinatario||'') + '! Passando pra alinhar: *' + d.titulo + '*' +
+      (d.clienteNome ? ' (' + d.clienteNome + ')' : '') + '\n\n' +
+      (urg === 'atrasado' ? '⚠️ O prazo era ' + quando + ' e ainda está em aberto.' : 'Prazo: ' + quando + '.') +
+      '\n\nConsegue me dizer como está? Se precisar de mais prazo ou estiver travado em alguma coisa, é só falar que a gente ajusta.';
+    const numero = await whatsappDaPessoa(d.destinatario);
+    window.open('https://wa.me/' + (numero || '') + '?text=' + encodeURIComponent(msg), '_blank');
+    registrarHistorico('demandas', id, 'Cobrança enviada no WhatsApp por ' + (usuarioAtual||'?'));
+    if(!numero) mostrarToast('Sem WhatsApp cadastrado pra ' + d.destinatario + ' — escolhe o contato na tela que abriu. Cadastra em Gerência → Contatos da Equipe.', 'erro');
+  };
 
   /* ===== FAMÍLIAS DE DEMANDA EM MASSA (varredura 21/07/2026) =====
      Funções fixas mensais (reunião por cliente, calendário por cliente),
@@ -13575,6 +13687,46 @@
      onde o que está no ar tem MENOS conteúdo do que alguma cópia
      guardada? Esse é o sinal de perda, e não depende de ninguém
      lembrar de nada. */
+  /* ===== O ERRO QUE EU QUASE FIZ VOCÊ CLICAR — 29/07/2026 ===========
+     A varredura ranqueava as cópias por QUANTIDADE de conteúdo. Só que
+     as cópias antigas (backup de 22/07) são, na maioria, os 7 posts de
+     EXEMPLO que o calendário gravava sozinho quando o cliente ainda não
+     tinha calendário — "Um dia produzindo o mês do cliente", "3 erros
+     que fazem o perfil parar", e por aí.
+
+     Resultado: a tela dizia "Camargo's: faltam 8 · restaurar os 10" —
+     e os 10 eram 7 posts falsos + 3 reais. Um clique e o calendário de
+     cliente ficava cheio de conteúdo que ninguém escreveu.
+
+     Agora o exemplo é reconhecido e não conta como conteúdo, nem pra
+     medir perda, nem pra restaurar. E a restauração passou a JUNTAR o
+     que falta em vez de sobrescrever o que está no ar. */
+  /* Os títulos exatos, conferidos no banco em 29/07. A comparação é por
+     PREFIXO sem acento porque nas cópias antigas alguns títulos aparecem
+     cortados — foi assim que a primeira versão desta lista deixou
+     "3 erros que fazem o perfil parecer amador" passar como conteúdo de
+     verdade em 10 clientes. Eu tinha escrito "parar" de cabeça, sem
+     conferir no banco. */
+  const POSTS_DE_EXEMPLO = [
+    'um dia produzindo o mes do cliente',
+    '3 erros que fazem o perfil parec',
+    'bastidor real da gravacao',
+    'antes e depois do cliente',
+    'a parte que ninguem te conta',
+    'vem comigo pra um dia de produ',
+    'depoimento espontaneo do cliente',
+    'um dia de paz'
+  ];
+  function semAcento(t){
+    return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+  }
+  function chaveDoItem(it){ return (it&&it.day||0) + '|' + String((it&&it.name)||'').trim().toLowerCase(); }
+  function ehPostDeExemplo(it){
+    const n = semAcento((it&&it.name)||'');
+    return !!n && POSTS_DE_EXEMPLO.some(pref => n.startsWith(pref));
+  }
+  function itensReais(lista){ return (lista||[]).filter(it => !ehPostDeExemplo(it)); }
+
   let __varreduraAchados = [];
   window.varrerTodosOsCalendarios = async function(btn){
     const box = document.getElementById('varreduraCalLista');
@@ -13588,11 +13740,13 @@
         const snap = await getDocs(collection(db, col));
         snap.forEach(dd => {
           const d = dd.data();
-          const itens = (d.items || d.itens || []).length;
+          const reais = itensReais(d.items || d.itens || []);
+          const itens = reais.length;                    // exemplo não conta
           if(!itens) return;
           let slug = d.__cliente || '';
           if(!slug){ const corte = dd.id.indexOf('__'); slug = corte > 0 ? dd.id.slice(0, corte) : dd.id; }
-          const cand = { fonte: col, id: dd.id, itens, quando: d.__salvoEm || d.updatedAt || '', dados: d, mes: d.month||'' };
+          const cand = { fonte: col, id: dd.id, itens, quando: d.__salvoEm || d.updatedAt || '', dados: d, mes: d.month||'', reais,
+                         exemplos: (d.items || d.itens || []).length - itens };
           const atualMelhor = melhorPorCliente[slug];
           if(!atualMelhor || cand.itens > atualMelhor.itens ||
              (cand.itens === atualMelhor.itens && String(cand.quando) > String(atualMelhor.quando))){
@@ -13608,16 +13762,25 @@
       const vivos = await getDocs(collection(db,'calendarios'));
       vivos.forEach(dd => {
         const d = dd.data();
-        const agora = (d.items||[]).length;
+        const reaisVivos = itensReais(d.items||[]);
+        const agora = reaisVivos.length;
         const guardado = melhorPorCliente[dd.id];
+        /* Só é perda o que a cópia tem e o que está no ar NÃO tem —
+           comparando pelo par (dia + título), não pela contagem. */
+        let faltantes = [];
+        if(guardado){
+          const vivos_ = new Set(reaisVivos.map(chaveDoItem));
+          faltantes = guardado.reais.filter(it => !vivos_.has(chaveDoItem(it)));
+        }
         const linha = { slug: dd.id, agora, mes: d.month||'', quando: d.updatedAt||'',
-                        guardado: guardado || null, dados: d };
-        if(guardado && guardado.itens > agora) perdas.push(linha); else ok.push(linha);
+                        guardado: guardado || null, dados: d, faltantes,
+                        exemplosNoAr: (d.items||[]).length - agora };
+        if(faltantes.length) perdas.push(linha); else ok.push(linha);
       });
     }catch(e){ console.error(e); box.innerHTML = '<div class="empty">Não consegui ler os calendários.</div>';
       if(btn){ btn.disabled=false; btn.textContent='🔎 Procurar perdas em todos os clientes'; } return; }
 
-    perdas.sort((a,b) => (b.guardado.itens - b.agora) - (a.guardado.itens - a.agora));
+    perdas.sort((a,b) => b.faltantes.length - a.faltantes.length);
     __varreduraAchados = perdas;
 
     if(!perdas.length){
@@ -13629,18 +13792,20 @@
       return;
     }
 
-    box.innerHTML = `<div class="card" style="border:2px solid var(--red);">
-      <div class="desc" style="color:var(--red);font-weight:800;">${perdas.length} calendário(s) estão com menos conteúdo do que a cópia guardada.</div>
-      <div class="desc" style="margin-top:4px;">Conferi ${ok.length + perdas.length} calendário(s) no total. Restaurar guarda a versão de agora antes de mexer — dá pra voltar atrás.</div>
-    </div>` + perdas.map((p,i) => `<div class="item" style="margin-top:8px;border-left:3px solid var(--red);">
+    const totalFalta = perdas.reduce((t,p)=>t+p.faltantes.length,0);
+    box.innerHTML = `<div class="card" style="border:2px solid var(--yellow);">
+      <div class="desc" style="color:var(--yellow2);font-weight:800;">${totalFalta} conteúdo(s) existem numa cópia guardada e não estão no ar, em ${perdas.length} cliente(s).</div>
+      <div class="desc" style="margin-top:4px;">Conferi ${ok.length + perdas.length} calendário(s). Devolver <b>acrescenta</b> o que falta — não apaga nem troca o que já está lá. A versão de agora é guardada antes, dá pra voltar atrás.</div>
+    </div>` + perdas.map((p,i) => `<div class="item" style="margin-top:8px;border-left:3px solid var(--yellow);">
       <div class="top">
         <div class="nome">${esc(nomeDeSlugSeguro(p.slug))}</div>
-        <span class="selo atrasado">faltam ${p.guardado.itens - p.agora}</span>
+        <span class="selo atrasado">${p.faltantes.length} pra devolver</span>
       </div>
-      <div class="meta" style="margin-top:4px;">No ar: <b>${p.agora}</b> conteúdo(s)${p.mes ? ' · ' + esc(p.mes) : ''} · guardado: <b>${p.guardado.itens}</b>${p.guardado.quando ? ' de ' + new Date(p.guardado.quando).toLocaleString('pt-BR') : ''}</div>
+      <div class="meta" style="margin-top:4px;">No ar: <b>${p.agora}</b> conteúdo(s)${p.mes ? ' · ' + esc(p.mes) : ''} · cópia de ${p.guardado.quando ? new Date(p.guardado.quando).toLocaleDateString('pt-BR') : 'data desconhecida'}${p.guardado.exemplos ? ' · ' + p.guardado.exemplos + ' post(s) de exemplo ignorados' : ''}</div>
+      <div class="meta" style="margin-top:4px;color:var(--yellow2);">${p.faltantes.slice(0,4).map(it=>'· dia '+(it.day||'?')+' — '+esc(String(it.name||'sem título').slice(0,44))).join('<br>')}${p.faltantes.length>4?'<br>· …e mais '+(p.faltantes.length-4):''}</div>
       <div class="btnrow" style="margin-top:8px;">
-        <button class="btn secondary" style="font-size:11px;" onclick="verAchadoVarredura(${i})">👁️ Ver o que tem na cópia</button>
-        <button class="btn green" style="font-size:11px;" onclick="restaurarAchadoVarredura(${i}, this)">↩️ Restaurar os ${p.guardado.itens}</button>
+        <button class="btn secondary" style="font-size:11px;" onclick="verAchadoVarredura(${i})">👁️ Ver tudo</button>
+        <button class="btn green" style="font-size:11px;" onclick="restaurarAchadoVarredura(${i}, this)">↩️ Devolver os ${p.faltantes.length}</button>
       </div>
     </div>`).join('') + htmlNotaVarredura(ok.length + perdas.length);
     if(btn){ btn.disabled=false; btn.textContent='🔎 Procurar de novo'; }
@@ -13649,6 +13814,7 @@
   function htmlNotaVarredura(total){
     return `<div class="card" style="margin-top:12px;border-color:var(--line);">
       <div class="desc" style="font-size:11.5px;line-height:1.6;">
+        <b>Os posts de exemplo são ignorados.</b> As cópias antigas trazem 7 posts que o sistema gravava sozinho quando o cliente ainda não tinha calendário ("Um dia produzindo o mês do cliente", "3 erros que fazem o perfil parar"…). Eles não contam como conteúdo e nunca são devolvidos.<br><br>
         <b>O que esta varredura NÃO alcança.</b> Ela compara o que está no ar com as cópias que o sistema guardou.
         A guarda automática de versões começou em 27/07/2026 — trabalho perdido antes disso não deixou cópia e não aparece aqui.
         E se o conteúdo nunca chegou a ser gravado no banco (a aba recusou salvar e a pessoa fechou a página), ele nunca existiu do lado de cá:
@@ -13658,10 +13824,10 @@
 
   window.verAchadoVarredura = function(i){
     const p = __varreduraAchados[i]; if(!p) return;
-    const itens = (p.guardado.dados.items || []).slice().sort((a,b)=>(a.day||0)-(b.day||0));
+    const itens = p.faltantes.slice().sort((a,b)=>(a.day||0)-(b.day||0));
     const modal = document.getElementById('modalConteudo');
-    modal.innerHTML = `<h2>${esc(nomeDeSlugSeguro(p.slug))} — cópia guardada</h2>
-      <div class="linha"><b>${itens.length} conteúdo(s)</b> · o que está no ar tem ${p.agora}</div>
+    modal.innerHTML = `<h2>${esc(nomeDeSlugSeguro(p.slug))} — o que dá pra devolver</h2>
+      <div class="linha"><b>${itens.length} conteúdo(s)</b> que estão na cópia e não no ar · hoje no ar: ${p.agora}${p.guardado.exemplos ? ' · ' + p.guardado.exemplos + ' post(s) de exemplo foram ignorados' : ''}</div>
       ${itens.map(it => `<div class="item" style="margin-top:6px;">
         <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div>${it.ref?'<span class="selo aprovada">tem referência</span>':''}</div>
         ${it.legenda ? '<div class="meta" style="margin-top:4px;">'+esc(String(it.legenda).slice(0,140))+'</div>' : ''}
@@ -13672,26 +13838,34 @@
 
   window.restaurarAchadoVarredura = async function(i, btn){
     const p = __varreduraAchados[i]; if(!p) return;
-    const itens = p.guardado.dados.items || [];
-    if(!confirm('Restaurar ' + itens.length + ' conteúdo(s) no calendário de ' + nomeDeSlugSeguro(p.slug) + '?\n\n' +
-      'O que está no ar agora (' + p.agora + ') vai ser guardado antes, então dá pra voltar atrás.')) return;
-    if(btn){ btn.disabled = true; btn.textContent = 'Restaurando…'; }
+    if(!confirm('Devolver ' + p.faltantes.length + ' conteúdo(s) ao calendário de ' + nomeDeSlugSeguro(p.slug) + '?\n\n' +
+      'Eles vão ser ACRESCENTADOS aos ' + p.agora + ' que já estão lá. Nada é apagado nem trocado, e a versão de agora fica guardada.')) return;
+    if(btn){ btn.disabled = true; btn.textContent = 'Devolvendo…'; }
     try{
       const carimbo = new Date().toISOString().replace(/[:.]/g,'-');
       await setDoc(doc(db,'calendarios_versoes', p.slug + '__antes-da-varredura-' + carimbo),
         { ...p.dados, __cliente: p.slug, __salvoEm: new Date().toISOString(), __itens: p.agora });
+      /* Relê agora: entre a varredura e o clique alguém pode ter mexido. */
+      const atualSnap = await getDoc(doc(db,'calendarios', p.slug));
+      const atual = atualSnap.exists() ? atualSnap.data() : p.dados;
+      const jaTem = new Set((atual.items||[]).map(chaveDoItem));
+      const acrescentar = p.faltantes.filter(it => !jaTem.has(chaveDoItem(it)));
+      if(!acrescentar.length){
+        mostrarToast('Nada a devolver — esse conteúdo já está no calendário.');
+        if(btn){ btn.textContent = '✓ Já estava lá'; }
+        return;
+      }
       await setDoc(doc(db,'calendarios', p.slug), {
-        client: p.guardado.dados.client || p.dados.client || nomeDeSlugSeguro(p.slug),
-        month: p.guardado.dados.month || p.dados.month || '',
-        items: itens,
-        comments: p.guardado.dados.comments || p.dados.comments || [],
-        aprovacaoInterna: p.dados.aprovacaoInterna || p.guardado.dados.aprovacaoInterna || null,
+        ...atual,
+        client: atual.client || nomeDeSlugSeguro(p.slug),
+        month: atual.month || p.guardado.dados.month || '',
+        items: [...(atual.items||[]), ...acrescentar],
         updatedAt: new Date().toISOString(),
-        restauradoPor: usuarioAtual || '?', restauradoDe: p.guardado.fonte + '/' + p.guardado.id, restauradoEm: new Date().toISOString()
+        devolvidoPor: usuarioAtual || '?', devolvidoDe: p.guardado.fonte + '/' + p.guardado.id, devolvidoEm: new Date().toISOString()
       });
-      registrarHistorico('calendarios', p.slug, 'Restaurado pela varredura geral — ' + itens.length + ' conteúdo(s)');
-      mostrarToast(itens.length + ' conteúdo(s) restaurados em ' + nomeDeSlugSeguro(p.slug) + '!');
-      if(btn){ btn.textContent = '✓ Restaurado'; }
+      registrarHistorico('calendarios', p.slug, 'Varredura devolveu ' + acrescentar.length + ' conteúdo(s) que faltavam');
+      mostrarToast(acrescentar.length + ' conteúdo(s) devolvidos a ' + nomeDeSlugSeguro(p.slug) + '!');
+      if(btn){ btn.textContent = '✓ Devolvido'; }
     }catch(e){
       console.error('Falha ao restaurar:', e);
       mostrarToast('Não consegui restaurar. Nada foi alterado.', 'erro');
@@ -14402,15 +14576,17 @@
     const todos = ['Chris', ...FUNCIONARIOS];
     const snap = await getDocs(collection(db,'emails_equipe'));
     const emailsAtuais = {};
-    snap.forEach(d => { emailsAtuais[d.id] = d.data().email || ''; });
+    const zapsAtuais = {};
+    snap.forEach(d => { emailsAtuais[d.id] = d.data().email || ''; zapsAtuais[d.id] = d.data().whatsapp || ''; });
 
     const statusConfig = EMAILJS_CONFIGURADO
       ? '<span class="selo aprovado">EmailJS configurado ✓</span>'
       : '<span class="selo atrasado">EmailJS ainda não configurado — ver comentário no topo do arquivo (linha ~985)</span>';
 
     let html = `<div class="card">
-      <h2>📧 E-mails da Equipe</h2>
-      <div class="desc" style="margin-bottom:10px;">Cadastra o e-mail de cada pessoa 1 vez só — é pra onde os avisos importantes (demanda nova, vídeo atribuído, vídeo em correção) vão ser mandados. ${statusConfig}</div>
+      <h2>📧 Contatos da Equipe</h2>
+      <div class="desc" style="margin-bottom:10px;">O e-mail é pra onde os avisos automáticos vão (demanda nova, vídeo atribuído, vídeo em correção). ${statusConfig}</div>
+      <div class="desc">O <b>WhatsApp</b> é pra cobrança na mão: com ele cadastrado, o botão "cobrar no WhatsApp" dentro de cada demanda abre a conversa da pessoa já com o texto pronto. Sem ele, o WhatsApp abre pedindo pra escolher o contato. Formato: 5541999999999.</div>
     </div>`;
 
     todos.forEach(nome => {
@@ -14418,20 +14594,36 @@
         <div class="top"><div class="nome">${esc(nome)}</div></div>
         <div class="row2" style="margin-top:8px;">
           <input type="email" id="emailEquipe_${nome}" value="${esc(emailsAtuais[nome]||'')}" placeholder="email@exemplo.com">
-          <button class="btn secondary" onclick="salvarEmailEquipe('${escJs(nome)}')">Salvar</button>
+          <input type="text" id="zapEquipe_${nome}" value="${esc(zapsAtuais[nome]||'')}" placeholder="WhatsApp — 5541999999999">
         </div>
+        <button class="btn secondary" style="margin-top:8px;" onclick="salvarContatoEquipe('${escJs(nome)}')">Salvar contato</button>
       </div>`;
     });
     cont.innerHTML = html;
   }
 
-  window.salvarEmailEquipe = async function(nome){
-    const input = document.getElementById('emailEquipe_'+nome);
-    const email = input.value.trim();
-    if(!email || !email.includes('@')){ mostrarToast('Escreve um e-mail válido.', 'erro'); return; }
-    await setDoc(doc(db,'emails_equipe', nome), { nome, email, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() });
-    mostrarToast('E-mail de ' + nome + ' salvo!');
+  window.salvarContatoEquipe = async function(nome){
+    const email = (document.getElementById('emailEquipe_'+nome)?.value || '').trim();
+    const zap = (document.getElementById('zapEquipe_'+nome)?.value || '').replace(/\D/g,'');
+    if(email && !email.includes('@')){ mostrarToast('Esse e-mail não parece válido.', 'erro'); return; }
+    if(zap && zap.length < 10){ mostrarToast('O WhatsApp precisa do DDD — ex.: 5541999999999.', 'erro'); return; }
+    if(!email && !zap){ mostrarToast('Preenche pelo menos um dos dois.', 'erro'); return; }
+    await setDoc(doc(db,'emails_equipe', nome), { nome, email, whatsapp: zap, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() }, { merge:true });
+    __cacheZapEquipe = null;
+    mostrarToast('Contato de ' + nome + ' salvo!');
   };
+  window.salvarEmailEquipe = window.salvarContatoEquipe;   // nome antigo continua valendo
+
+  let __cacheZapEquipe = null;
+  async function whatsappDaPessoa(nome){
+    if(!__cacheZapEquipe){
+      __cacheZapEquipe = {};
+      try{ const s = await getDocs(collection(db,'emails_equipe'));
+        s.forEach(d => { __cacheZapEquipe[d.id] = (d.data().whatsapp||'').replace(/\D/g,''); });
+      }catch(e){ console.error('Não consegui ler os WhatsApps da equipe:', e); }
+    }
+    return __cacheZapEquipe[nome] || '';
+  }
 
   /* ===== MELHORIA 1 — TELA DE CONFIGURAÇÃO DE APROVAÇÃO POR CLIENTE =====
      CORRIGIDO 21/07/2026: a explicação de Manual/Tácita/Automática só

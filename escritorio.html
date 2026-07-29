@@ -7395,18 +7395,69 @@
        definida", porque semana ele tinha. Sumia por completo.
        Era isso que a Gabi não estava encontrando.
        Agora grava os dois nomes e a leitura aceita os dois. */
+    /* ===== O STORY PASSA PELA AMANDA ANTES DO CLIENTE — 29/07/2026 ===
+       Antes ia da Gabi direto pro cliente. O Chris pediu o mesmo desenho
+       do calendário: a Gabi monta, a Amanda aprova e envia.
+
+       `revisaoInterna` só existe em story criado a partir de agora.
+       Story antigo não tem o campo — e continua valendo o que valia:
+       visível pro cliente. Mesma lição do calendário da Monique. */
+    const gestor = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
     for(const st of criar){
       await addDoc(collection(db,'stories_semanais'), {
         cliente: slug, clienteNome: nome, semana,
         dia: st.dia, diaSemana: st.dia, diaNome: st.diaNome,
         titulo: st.titulo, descricao: st.descricao,
         linkRef: st.linkRef, linkReferencia: st.linkRef, observacoes: '',
+        revisaoInterna: gestor ? 'liberado' : 'aguardando_interna',
+        enviadoPor: usuarioAtual || '?',
         status: 'aguardando', criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()
       });
     }
     DIAS_STORY.forEach(d => { ['stTit_','stDesc_','stRef_'].forEach(pre => { const el=document.getElementById(pre+d.n); if(el) el.value=''; }); });
-    mostrarToast(criar.length + ' story(s) da semana enviados pra ' + nome + ' aprovar!');
+    if(gestor){
+      mostrarToast('Story da semana de ' + nome + ' já liberado pro cliente aprovar!');
+    }else{
+      await criarAvisoParaGestao('📸 Aprovar os stories de ' + nome + ' — semana de ' + semana,
+        (usuarioAtual||'A Gabi') + ' montou o roteiro de stories da semana pra ' + nome + '.\n\n' +
+        'Confere e libera em 📸 Stories → "Esperando sua aprovação". O cliente só vê depois que você liberar.', 'Amanda');
+      mostrarToast('Story da semana de ' + nome + ' enviado pra Amanda aprovar.');
+    }
     renderStoriesCliente();
+  };
+
+  window.liberarStory = async function(id){
+    try{
+      const snap = await getDoc(doc(db,'stories_semanais', id));
+      const st = snap.exists() ? snap.data() : {};
+      await updateDoc(doc(db,'stories_semanais', id), {
+        revisaoInterna: 'liberado', liberadoPor: usuarioAtual || '?', liberadoEm: new Date().toISOString(),
+        motivoAjusteInterno: '', status: st.status === 'ajuste' ? 'aguardando' : (st.status || 'aguardando')
+      });
+      registrarHistorico('stories_semanais', id, 'Stories liberados pro cliente por ' + (usuarioAtual||'?'));
+      mostrarToast('Liberado — ' + (st.clienteNome||'o cliente') + ' já vê no portal.');
+      renderStoriesCliente();
+    }catch(e){ mostrarToast('Não consegui liberar: ' + e.message, 'erro'); }
+  };
+
+  window.devolverStory = async function(id){
+    const motivo = prompt('O que precisa mudar? (a Gabi recebe isso escrito)');
+    if(motivo === null) return;
+    if(!motivo.trim()){ mostrarToast('Escreve o motivo — sem ele a Gabi não sabe o que corrigir.', 'erro'); return; }
+    try{
+      const snap = await getDoc(doc(db,'stories_semanais', id));
+      const st = snap.exists() ? snap.data() : {};
+      await updateDoc(doc(db,'stories_semanais', id), {
+        revisaoInterna: 'ajuste_interno', motivoAjusteInterno: motivo.trim(),
+        devolvidoPor: usuarioAtual || '?', devolvidoEm: new Date().toISOString()
+      });
+      registrarHistorico('stories_semanais', id, 'Stories devolvidos pra ajuste por ' + (usuarioAtual||'?'), motivo.trim());
+      await criarAvisoParaGestao('📸 Ajustar os stories de ' + (st.clienteNome||st.cliente||'cliente'),
+        (usuarioAtual||'A Amanda') + ' pediu ajuste no roteiro de stories da semana:\n\n"' + motivo.trim() + '"\n\n' +
+        'Corrige em 📸 Stories e reenvia.', st.enviadoPor || st.criadoPor || 'Gabrielle');
+      mostrarToast('Devolvido pra ' + (st.enviadoPor || st.criadoPor || 'Gabrielle') + ' com o motivo.');
+      renderStoriesCliente();
+    }catch(e){ mostrarToast('Não consegui devolver: ' + e.message, 'erro'); }
   };
 
   /* Guarda os links por cliente e semana: stories_links/{slug}_{semana} */
@@ -7586,10 +7637,37 @@
     // órfãos: têm semana mas nenhum dia legível — antes desapareciam da tela
     const semSemana = todos.filter(s => !s.semana || (s.semana === semana && !Number(s.diaSemana ?? s.dia)));
 
-    const rotuloStatus = s => s.status==='aprovado' ? 'Aprovado pelo cliente' :
+    /* Campo ausente = story anterior a 29/07 = já estava com o cliente. */
+    const revisaoStory = s => s.revisaoInterna || 'liberado';
+    const esperandoAmanda = todos.filter(s => revisaoStory(s) === 'aguardando_interna');
+
+    const rotuloStatus = s => revisaoStory(s) === 'aguardando_interna' ? 'Esperando a Amanda liberar' :
+                              revisaoStory(s) === 'ajuste_interno' ? 'A Amanda pediu ajuste: ' + esc(s.motivoAjusteInterno||'') :
+                              s.status==='aprovado' ? 'Aprovado pelo cliente' :
                               s.status==='ajuste' ? 'Cliente pediu ajuste: ' + esc(s.ajusteTexto||'') :
                               s.status==='postado' ? '✔ Publicado pelo cliente' : 'Aguardando cliente';
-    const corStatus = s => s.status==='aprovado' ? 'aprovada' : s.status==='ajuste' ? 'atrasado' : s.status==='postado' ? 'aprovada' : 'pendente';
+    const corStatus = s => revisaoStory(s) !== 'liberado' ? 'pendente' :
+                           s.status==='aprovado' ? 'aprovada' : s.status==='ajuste' ? 'atrasado' : s.status==='postado' ? 'aprovada' : 'pendente';
+
+    /* O bloco de aprovação da Amanda, no topo da tela de Stories. */
+    let blocoAmanda = '';
+    if(esperandoAmanda.length && (usuarioAtual === 'Amanda' || usuarioAtual === 'Chris')){
+      blocoAmanda = `<div class="card" style="border:2px solid var(--yellow2);">
+        <h2>📸 Esperando sua aprovação (${esperandoAmanda.length})</h2>
+        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. Confere o roteiro e libera — ou devolve pra Gabi com o motivo.</div>
+        ${esperandoAmanda.map(st => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow2);">
+          <div class="top"><div class="nome">${esc(st.clienteNome||st.cliente)} — ${esc(st.titulo||'Stories da semana')}</div>
+            <span class="selo pendente">semana de ${esc(st.semana||'?')}</span></div>
+          ${st.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;max-height:190px;overflow:auto;">'+esc(st.descricao)+'</div>' : ''}
+          ${(st.linkReferencia||st.linkRef) ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(st.linkReferencia||st.linkRef)+'" target="_blank" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
+          <div class="meta" style="margin-top:4px;">montado por ${esc(st.enviadoPor||st.criadoPor||'?')}</div>
+          <div class="btnrow" style="margin-top:10px;">
+            <button class="btn red" style="font-size:11.5px;" onclick="devolverStory('${st.id}')">↩️ Pedir ajuste</button>
+            <button class="btn green" style="font-size:11.5px;" onclick="liberarStory('${st.id}')">✅ Liberar pro cliente</button>
+          </div>
+        </div>`).join('')}
+      </div>`;
+    }
 
     function itemStory(s){
       return `<div class="item" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow2)':'var(--line)'};">
@@ -7605,6 +7683,7 @@
     /* 28/07/2026 — um bloco por semana. Os stories antigos, que foram
        criados por dia, continuam aparecendo agrupados abaixo pra não
        sumir histórico. */
+    html = blocoAmanda + html;
     const daSemanaOrdenados = [...daSemana].sort((a,b) => Number(a.diaSemana ?? a.dia ?? 0) - Number(b.diaSemana ?? b.dia ?? 0));
     const postadosSemana = daSemanaOrdenados.filter(s => s.status === 'postado').length;
     html += `<div class="faixaDem aberta" data-faixa="story_semana">
@@ -10745,9 +10824,9 @@
     'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios'],
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
-    'Amanda': ['navVideos','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
+    'Amanda': ['navVideos','navStories','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
     'Cecília': ['navControlePostagem','navAgendamento','navPostagens','navStories','navVideos'],
-    'Gabrielle': ['navRoteiros','navPostagens','navCampanhas','navReferencias'],
+    'Gabrielle': ['navStories','navRoteiros','navPostagens','navCampanhas','navReferencias'],
     'Helo': ['navVideos'],
     'João Victor': ['navVideos'],
     'Nathan': ['navVideos','navAgendamento','navCalendarios','navChecklist'],
@@ -10929,7 +11008,9 @@
                     { rot:'💰 Registrar extra/Uber', acao:"irParaMeusExtras()" }],
     'Helo':        [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" }],
     'João Victor': [{ rot:'📹 Subir vídeo pra edição', acao:"irParaSubirEdicao()" }],
-    'Amanda':      [{ rot:'🎛️ Central de Comando',   acao:"irPara('gerencia', document.getElementById('navitemGerencia')); setTimeout(()=>navegarGerenciaSub('comando'), 400);" }]
+    'Gabrielle':   [{ rot:'📸 Fazer stories do cliente', acao:"irParaStories('montar')" }],
+    'Amanda':      [{ rot:'📸 Aprovar e enviar stories',  acao:"irParaStories('aprovar')" },
+                    { rot:'🎛️ Central de Comando',   acao:"irPara('gerencia', document.getElementById('navitemGerencia')); setTimeout(()=>navegarGerenciaSub('comando'), 400);" }]
     /* 28/07/2026 — o Chris não tem atalho: o painel de gerência dele já
        abre com tudo. O botão amarelo de "postagem até quando" foi tirado
        daqui — essa tela é operação da Cecília, e os números dela agora
@@ -10944,6 +11025,18 @@
       if(sub) sub.click();
       const c = document.getElementById('agCliente'); if(c) c.focus();
     }, 250);
+  };
+
+  window.irParaStories = function(modo){
+    const nav = document.getElementById('navStories');
+    if(nav) irPara('stories', nav);
+    setTimeout(() => {
+      const alvo = modo === 'aprovar'
+        ? document.querySelector('#view-stories .card[style*="var(--yellow2)"]')   // o bloco de aprovação
+        : document.getElementById('stTit_1');                                       // o campo de montar
+      if(alvo) alvo.scrollIntoView({ behavior:'smooth', block:'center' });
+      if(modo !== 'aprovar' && alvo && alvo.focus) alvo.focus();
+    }, 700);
   };
 
   window.irParaSubirEdicao = function(){
@@ -15088,6 +15181,27 @@
      os vídeos nascem sem editor (registrarGravacaoRealizada) e ficam
      esperando a Amanda, todo dia de manhã. Essa verificação cria 1 demanda
      por dia (não repete se já criou hoje) só se houver vídeo pendente. */
+  /* ===== O AVISO DIÁRIO DE STORIES — 29/07/2026 ======================
+     O Chris pediu notificação de demanda "pra que elas sempre fiquem
+     atentas". Sem isso, o story parado na revisão só é descoberto por
+     acaso — que é exatamente como a Juliane ficou uma semana sem ver
+     nada. Uma demanda por dia, e só se houver algo parado. */
+  async function verificarStoriesParadosAmanda(){
+    const hojeStr = new Date().toISOString().slice(0,10);
+    const marcador = await getDoc(doc(db,'sistema','stories_revisao_amanda'));
+    if(marcador.exists() && marcador.data().ultimaData === hojeStr) return;
+    const snap = await getDocs(collection(db,'stories_semanais'));
+    const parados = [];
+    snap.forEach(d => { const v = d.data();
+      if((v.revisaoInterna || 'liberado') === 'aguardando_interna') parados.push(v.clienteNome || v.cliente); });
+    if(!parados.length) return;
+    await criarAvisoParaGestao('📸 Aprovar os stories de ' + parados.join(', '),
+      parados.length + ' roteiro(s) de stories esperando você liberar. O cliente não vê nenhum deles enquanto isso.\n\n'
+      + 'Faz em 📸 Stories → "Esperando sua aprovação", ou pelo botão amarelo no menu.', 'Amanda');
+    await setDoc(doc(db,'sistema','stories_revisao_amanda'), { ultimaData: hojeStr });
+    registrarLogAutomacao('stories_revisao_amanda', '', parados.length + ' story(s) esperando revisão');
+  }
+
   async function verificarDistribuicaoDiariaAmanda(){
     const hojeStr = new Date().toISOString().slice(0,10);
     const marcador = await getDoc(doc(db,'sistema', 'distribuicao_diaria_amanda'));
@@ -16003,6 +16117,7 @@
       { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
       { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
+      { nome: 'storiesEsperandoRevisao', fn: verificarStoriesParadosAmanda },
       /* 27/07/2026 — REMOVIDO. Perfil de referência não tem prazo: é um
          cadastro que a Gabi preenche uma vez por cliente e atualiza quando
          quiser. Cobrar toda semana transformava um cadastro permanente numa

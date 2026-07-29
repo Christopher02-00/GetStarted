@@ -1065,6 +1065,13 @@
       </div>
 
       <div id="calSubResgate" style="display:none;">
+        <div class="card" style="border:2px solid var(--yellow);">
+          <h2>👁️ O que cada cliente está vendo agora</h2>
+          <div class="desc">Responde a pergunta que ninguém conseguia responder: <b>se eu abrir o link como o cliente, aparece o quê?</b> Confere cliente por cliente, do jeito que ele vê. Rode isto sempre que mexer em liberação de calendário.</div>
+          <button class="btn" style="margin-top:10px;" onclick="varrerVisibilidadeClientes(this)">🔎 Conferir todos os clientes</button>
+          <div id="visibilidadeLista" style="margin-top:12px;"></div>
+        </div>
+
         <div class="card" style="border:2px solid var(--red);">
           <h2>🚨 Varredura geral — onde falta conteúdo</h2>
           <div class="desc">Passa por <b>todos</b> os clientes de uma vez, compara o que está no ar com a cópia mais completa que existe guardada, e mostra onde o calendário perdeu conteúdo. Use isto primeiro — o resgate por cliente, abaixo, é pra casos específicos.</div>
@@ -13727,6 +13734,67 @@
   }
   function itensReais(lista){ return (lista||[]).filter(it => !ehPostDeExemplo(it)); }
 
+  /* ===== A VARREDURA QUE TERIA PEGO O ERRO DA MONIQUE ===============
+     29/07/2026. O erro não foi difícil de achar depois que ela reclamou.
+     O problema é que ninguém tinha como saber ANTES: não existia nenhum
+     lugar no site que respondesse "o cliente está vendo o calendário
+     dele?". Só dava pra descobrir quando o cliente falava.
+
+     Isto responde, pra todos, com a mesma regra que o calendário e o
+     portal usam de verdade — não uma cópia dela. */
+  window.varrerVisibilidadeClientes = async function(btn){
+    const box = document.getElementById('visibilidadeLista');
+    if(btn){ btn.disabled = true; btn.textContent = 'Conferindo…'; }
+    box.innerHTML = '<div class="desc">Lendo os calendários e os acessos…</div>';
+    try{
+      const [cals, acessos, alvo] = await Promise.all([
+        getDocs(collection(db,'calendarios')),
+        getDocs(collection(db,'clientes_acesso')),
+        clientesDeConteudoRecorrente()
+      ]);
+      const mapa = {}; cals.forEach(d => mapa[d.id] = d.data());
+      const temAcesso = new Set(); acessos.forEach(d => { if(d.data().token) temAcesso.add(d.id); });
+
+      const linhas = alvo.map(c => {
+        const cal = mapa[c.slug];
+        const itens = ((cal||{}).items||[]).length;
+        const st = cal ? estadoDoCalendario(cal) : 'sem-doc';
+        const legado = cal ? ehCalendarioLegado(cal) : false;
+        let ve, cor, txt;
+        if(!cal || !itens){ ve = false; cor = 'var(--red)'; txt = 'não tem calendário montado — o cliente vê "em preparação"'; }
+        else if(st === 'liberado'){ ve = true; cor = 'var(--green)'; txt = 'vê os ' + itens + ' conteúdos' + (legado ? ' (montado antes da revisão existir)' : ''); }
+        else if(st === 'aguardando_interna'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — esperando a Amanda liberar'; }
+        else if(st === 'ajuste_interno'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — devolvido pra ajuste'; }
+        else { ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — ainda marcado como rascunho'; }
+        return { ...c, ve, cor, txt, itens, semAcesso: !temAcesso.has(c.slug), st };
+      });
+
+      const veem = linhas.filter(l => l.ve).length;
+      const naoVeem = linhas.filter(l => !l.ve);
+      const travados = naoVeem.filter(l => l.itens);   // tem conteúdo mas o cliente não vê
+
+      box.innerHTML = `<div class="card" style="border:2px solid ${travados.length?'var(--red)':'var(--green)'};">
+          <div class="desc" style="font-weight:800;color:${travados.length?'var(--red)':'var(--green)'};">
+            ${travados.length ? travados.length + ' cliente(s) têm calendário montado e NÃO estão vendo.' : 'Todo cliente com calendário montado está vendo o dele.'}
+          </div>
+          <div class="desc" style="margin-top:4px;">${veem} de ${linhas.length} enxergam o calendário agora.</div>
+        </div>` +
+        linhas.sort((a,b)=> (a.ve?1:0)-(b.ve?1:0) || b.itens-a.itens).map(l => `
+          <div class="item" style="margin-top:8px;border-left:3px solid ${l.cor};">
+            <div class="top"><div class="nome">${esc(l.nome)}</div>
+              <span class="selo ${l.ve?'aprovada':'atrasado'}">${l.ve ? '✅ vendo' : '🚫 não vê'}</span></div>
+            <div class="meta" style="margin-top:4px;">${esc(l.txt)}${l.semAcesso ? ' · <span style="color:var(--red);">sem link de acesso gerado</span>' : ''}</div>
+            ${(!l.ve && l.itens) ? `<div class="btnrow" style="margin-top:8px;">
+              <button class="btn green" style="font-size:11px;" onclick="liberarCalendario('${escJs(l.slug)}')">✅ Liberar pro cliente agora</button>
+            </div>` : ''}
+          </div>`).join('');
+    }catch(e){
+      console.error('Falha na varredura de visibilidade:', e);
+      box.innerHTML = '<div class="empty">Não consegui conferir. Recarrega a página e tenta de novo.</div>';
+    }
+    if(btn){ btn.disabled = false; btn.textContent = '🔎 Conferir de novo'; }
+  };
+
   let __varreduraAchados = [];
   window.varrerTodosOsCalendarios = async function(btn){
     const box = document.getElementById('varreduraCalLista');
@@ -13993,6 +14061,25 @@
        verde    → publicado
        borda    → tem dia certo de postar definido
   */
+  /* ===== A MESMA REGRA DO CALENDÁRIO E DO PORTAL — 29/07/2026 =======
+     O que o cliente enxerga tem que ser respondido por UMA função só,
+     senão três telas dão três respostas — foi exatamente o que
+     aconteceu: o portal deixava passar, o link do calendário bloqueava,
+     e o seu placar contava "em montagem" um calendário que o cliente
+     não estava vendo por outro motivo.
+
+     campo ausente = calendário anterior a 28/07 = continua liberado. */
+  function estadoDoCalendario(cal){
+    const ap = (cal && cal.aprovacaoInterna) || null;
+    const itens = ((cal && cal.items) || []).length;
+    if(ap && ap.status) return ap.status;
+    return itens ? 'liberado' : 'vazio';
+  }
+  function ehCalendarioLegado(cal){
+    return !((cal && cal.aprovacaoInterna && cal.aprovacaoInterna.status));
+  }
+  window.estadoDoCalendario = estadoDoCalendario;
+
   const MESES_CAL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
   let __calAbertoSlug = null;
 
@@ -14055,13 +14142,12 @@
     const linhas = alvo.map(c => {
       const cal = cals[c.slug] || {};
       const itens = cal.items || [];
-      const ap = cal.aprovacaoInterna || {};
       return { ...c, mes: cal.month || '', total: itens.length,
         gravados: itens.filter(i=>i.gravado).length,
         postados: itens.filter(i=>i.posted).length,
         aprovados: itens.filter(i=>i.apr).length,
         comDataPost: itens.filter(i=>i.dataPostagem).length,
-        estado: ap.status || (itens.length ? 'rascunho' : 'vazio'), itens };
+        estado: estadoDoCalendario(cal), legado: ehCalendarioLegado(cal), itens };
     });
 
     const prontos = linhas.filter(l => l.estado === 'liberado').length;
@@ -14084,7 +14170,7 @@
           const ativo = __calAbertoSlug === l.slug;
           const pct = l.total ? Math.round(l.postados/l.total*100) : 0;
           const estadoTxt = !l.total ? 'sem calendário montado'
-            : l.estado === 'liberado' ? 'liberado — o cliente já vê'
+            : l.estado === 'liberado' ? (l.legado ? 'o cliente já vê (montado antes da revisão existir)' : 'liberado — o cliente já vê')
             : l.estado === 'aguardando_interna' ? 'esperando revisão interna'
             : l.estado === 'ajuste_interno' ? 'devolvido pra ajuste'
             : 'em montagem — o cliente ainda não vê';
@@ -20581,7 +20667,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       alvo.forEach(c => {
         const cal = mapaCal[c.slug] || {};
         const itens = (cal.items||[]).length;
-        const st = (cal.aprovacaoInterna||{}).status;
+        const st = estadoDoCalendario(cal);
         if(!itens) semCal++;
         else if(st === 'liberado') liberados++;
         else montando++;

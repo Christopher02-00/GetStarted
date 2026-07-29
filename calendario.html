@@ -375,6 +375,73 @@ let carregado=false;      // o primeiro snapshot já chegou?
 let itensNoBanco=0;       // quantos itens o banco tinha na última leitura
 let apagouDePropósito=false;  // delItem marca isto; some depois de gravar
 
+/* ===== O QUE ACONTECEU COM A GABI — 29/07/2026 =======================
+   As travas de 27/07 protegeram o BANCO e sacrificaram o TRABALHO DELA.
+
+   A trava 2 aborta a gravação, e a mensagem mandava "Atualiza a página
+   (F5)". F5 joga fora tudo que estava só na memória da aba — que é
+   exatamente onde o trabalho dela estava, já que a gravação tinha
+   acabado de ser recusada. O sistema deu uma instrução que garante a
+   perda do trabalho.
+
+   E tem o outro lado: `onSnapshot` faz `data=snap.data()` e redesenha.
+   Qualquer eco do banco chegando enquanto havia edição não gravada
+   apagava a edição da tela, sem aviso nenhum.
+
+   Ou seja: ela fez o trabalho, o sistema recusou salvar, mandou
+   atualizar, e a atualização apagou. A conta dela bate com o código.
+
+   O que passa a valer:
+   1. RASCUNHO LOCAL — a cada tecla, uma cópia vai pro navegador. Ela
+      sobrevive a F5, a queda de internet e a fechar o navegador.
+   2. Nenhuma mensagem manda atualizar a página. Conflito virou botão.
+   3. Snapshot NÃO sobrescreve edição não gravada.
+   4. Estado de salvamento sempre visível — "salvo às 14:32" ou
+      "não salvo". Nunca mais dúvida.
+   5. Sair com coisa não salva pede confirmação do navegador. */
+let temNaoSalvo=false;
+let ultimoSalvo=null;
+let bloqueadoPorConflito=false;
+const CHAVE_RASCUNHO = () => 'rascunho_cal_' + (window.__clienteId||'');
+
+function guardarRascunho(){
+  try{
+    localStorage.setItem(CHAVE_RASCUNHO(), JSON.stringify({
+      data: data, em: new Date().toISOString(), itens: (data.items||[]).length
+    }));
+  }catch(e){ /* cota cheia ou aba anônima: não é motivo pra travar nada */ }
+}
+function lerRascunho(){
+  try{ const r = localStorage.getItem(CHAVE_RASCUNHO()); return r ? JSON.parse(r) : null; }
+  catch(e){ return null; }
+}
+function limparRascunho(){ try{ localStorage.removeItem(CHAVE_RASCUNHO()); }catch(e){} }
+
+function pintarEstado(){
+  if(window.__modoCal !== 'equipe') return;
+  let el=document.getElementById('estadoSalvamento');
+  if(!el){
+    el=document.createElement('div');
+    el.id='estadoSalvamento';
+    el.style.cssText='position:fixed;right:12px;bottom:12px;z-index:190;padding:7px 13px;border-radius:20px;'+
+      'font-size:12px;font-weight:700;font-family:system-ui;box-shadow:0 2px 10px rgba(0,0,0,.35);pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  if(temNaoSalvo){
+    el.style.background='#5a4a12'; el.style.color='#ffe9a8';
+    el.textContent='\u25cf alterações ainda não salvas';
+  } else if(ultimoSalvo){
+    el.style.background='#1e3428'; el.style.color='#b8e6c8';
+    el.textContent='\u2713 salvo às ' + ultimoSalvo;
+  } else {
+    el.style.background='#2a2a2a'; el.style.color='#bdbdbd';
+    el.textContent='carregando…';
+  }
+}
+window.addEventListener('beforeunload', function(e){
+  if(temNaoSalvo && window.__modoCal === 'equipe'){ e.preventDefault(); e.returnValue=''; return ''; }
+});
+
 function avisarTela(msg, cor){
   let el=document.getElementById('avisoSalvamento');
   if(!el){
@@ -401,19 +468,44 @@ async function carregarRefsDoCliente(){
     /* Escopado por cliente: antes lia as duas coleções INTEIRAS e
        filtrava no navegador — as referências de todos os clientes
        chegavam à máquina de quem abrisse o calendário. */
-    const { query, where } = window.__fb;
-    const [hub, portal] = await Promise.all([
+    /* ===== A TERCEIRA FONTE, QUE FALTAVA — 29/07/2026 ===============
+       Reclamação da Gabi: ela salva as referências de cada cliente,
+       confere que salvaram, abre o calendário do mesmo cliente e o
+       seletor diz "nenhuma referência arquivada".
+
+       Ela tem razão, e não era erro dela nem do salvamento.
+
+       As referências que ela preenche por cliente — as 3 da meta
+       diária — vão pra coleção `refs_perfil_semana/{slug}`, no campo
+       `slots`. Esta tela lia só `referencias` (o Hub) e
+       `referencias_cliente` (o que o cliente manda pelo portal).
+       Nunca leu a coleção onde o trabalho dela realmente cai.
+
+       Duas telas, dois armários, e o que ela guardava num não aparecia
+       no outro. Agora as três fontes entram no mesmo seletor,
+       identificadas por origem. */
+    const { query, where, doc, getDoc } = window.__fb;
+    const [hub, portal, perfis] = await Promise.all([
       getDocs(query(collection(db,'referencias'), where('cliente','==',slug))),
-      getDocs(query(collection(db,'referencias_cliente'), where('cliente','==',slug)))
+      getDocs(query(collection(db,'referencias_cliente'), where('cliente','==',slug))),
+      getDoc(doc(db,'refs_perfil_semana', slug)).catch(() => null)
     ]);
     const lista = [];
+    if(perfis && perfis.exists()){
+      ((perfis.data().slots)||[]).forEach(sl => {
+        if(!sl || !sl.link || !String(sl.link).trim()) return;
+        lista.push({ link:String(sl.link).trim(), txt:(sl.nota||'referência do cliente'), origem:'perfil' });
+      });
+    }
     hub.forEach(d => { const v=d.data();
       if(v.excluido || !v.link) return;
       lista.push({ link:v.link, txt:(v.descricao||v.nicho||'sem descrição'), origem:'hub' }); });
     portal.forEach(d => { const v=d.data();
       if(v.excluido || !v.link) return;
       lista.push({ link:v.link, txt:(v.descricao||'sem descrição'), origem: v.criadoPorTipo==='cliente' ? 'cliente' : 'portal' }); });
-    refsDoCliente = lista;
+    // mesmo link vindo de duas fontes aparece uma vez só
+    const jaVi = new Set();
+    refsDoCliente = lista.filter(r => { const k=r.link.trim(); if(jaVi.has(k)) return false; jaVi.add(k); return true; });
   }catch(e){ console.error('Falha ao carregar referências:', e); }
   preencherSeletorRefs();
 }
@@ -421,15 +513,13 @@ function preencherSeletorRefs(){
   const sel = document.getElementById('mRefSelect');
   if(!sel) return;
   if(!refsDoCliente.length){
-    sel.innerHTML = '<option value="">Nenhuma referência arquivada pra este cliente ainda</option>';
+    sel.innerHTML = '<option value="">Nenhuma referência salva pra este cliente ainda</option>';
     sel.disabled = true; return;
   }
   sel.disabled = false;
-  sel.innerHTML = '<option value="">Escolher do banco de referências…</option>' +
-    refsDoCliente.map((r,i) => {
-      const marca = r.origem==='cliente' ? '💬 o cliente mandou · ' : '';
-      return `<option value="${i}">${marca}${esc(r.txt.slice(0,58))}</option>`;
-    }).join('');
+  const MARCA = { perfil:'⭐ referência do cliente · ', cliente:'💬 o cliente mandou · ', portal:'💬 pelo portal · ', hub:'🔗 do Hub · ' };
+  sel.innerHTML = '<option value="">Escolher do banco de referências… (' + refsDoCliente.length + ')</option>' +
+    refsDoCliente.map((r,i) => `<option value="${i}">${MARCA[r.origem]||''}${esc(String(r.txt).slice(0,58))}</option>`).join('');
 }
 window.usarRefDoBanco = function(){
   const sel = document.getElementById('mRefSelect');
@@ -439,17 +529,114 @@ window.usarRefDoBanco = function(){
   updateRefLink();
 };
 
+/* Barra de decisão. Fica na tela até alguém escolher — não some sozinha
+   e não manda ninguém atualizar a página. */
+function mostrarBarraDecisao(html){
+  let el=document.getElementById('barraDecisao');
+  if(!el){
+    el=document.createElement('div');
+    el.id='barraDecisao';
+    el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:220;padding:14px 16px;'+
+      'background:#4a2010;border-top:2px solid #e0a06a;color:#ffe0c8;font-family:system-ui;'+
+      'font-size:13px;line-height:1.55;text-align:center;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML=html; el.style.display='block';
+}
+function fecharBarraDecisao(){ const el=document.getElementById('barraDecisao'); if(el) el.style.display='none'; }
+
+function mostrarConflito(meus, doBanco){
+  mostrarBarraDecisao(
+    '<b>Não gravei ainda — e não perdi nada.</b><br>'+
+    'Esta aba tem <b>'+meus+' conteúdo(s)</b> e o banco tem <b>'+doBanco+'</b>. '+
+    'Alguém editou de outro lugar, ou esta aba está aberta há um tempo. Escolhe:'+
+    '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
+    '<button onclick="juntarComOBanco()" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">🔀 Juntar os dois (recomendado)</button>'+
+    '<button onclick="ficarComOBanco()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Descartar o meu e usar o do banco</button>'+
+    '<button onclick="forcarMinhaVersao()" style="padding:8px 14px;border:0;border-radius:6px;background:#7a4a1f;color:#ffe0c8;font-weight:700;cursor:pointer;font-size:12.5px;">Gravar o meu por cima</button>'+
+    '</div>');
+}
+
+/* Junta sem perder nenhum lado: o que está no banco fica, e o que só
+   existe nesta aba entra. Dois conteúdos são "o mesmo" quando têm o
+   mesmo dia e o mesmo título. */
+function chaveItem(it){ return (it.day||0) + '|' + String(it.name||'').trim().toLowerCase(); }
+window.juntarComOBanco = function(){
+  const doBanco = (window.__versaoDoBanco && window.__versaoDoBanco.items) || [];
+  const meus = data.items || [];
+  const vistos = new Set(doBanco.map(chaveItem));
+  const juntos = doBanco.slice();
+  let novos = 0;
+  meus.forEach(it => { if(!vistos.has(chaveItem(it))){ juntos.push(it); vistos.add(chaveItem(it)); novos++; } });
+  data.items = juntos;
+  fecharBarraDecisao();
+  bloqueadoPorConflito=false; apagouDePropósito=true;   // a fusão é intencional
+  avisarTela('Juntei as duas versões: ' + juntos.length + ' conteúdo(s) no total (' + novos + ' vieram desta aba).');
+  renderAll();
+};
+window.ficarComOBanco = function(){
+  if(!confirm('Isso descarta o que você fez nesta aba e mantém o que está no banco. Tem certeza?')) return;
+  fecharBarraDecisao(); bloqueadoPorConflito=false; temNaoSalvo=false; limparRascunho();
+  data = window.__versaoDoBanco || data;
+  carregado=true; itensNoBanco=(data.items||[]).length;
+  document.getElementById('clientName').value=data.client||'';
+  document.getElementById('monthName').value=data.month||'';
+  renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();pintarEstado();
+};
+window.forcarMinhaVersao = function(){
+  const doBanco = ((window.__versaoDoBanco||{}).items||[]).length;
+  if(!confirm('Isso apaga ' + doBanco + ' conteúdo(s) que estão no banco e deixa só os desta aba. A versão do banco fica guardada e dá pra voltar atrás pelo escritório. Continuar?')) return;
+  fecharBarraDecisao(); bloqueadoPorConflito=false; apagouDePropósito=true;
+  save();
+};
+
+/* Rascunho encontrado ao abrir: ela decide. Nunca é aplicado sozinho. */
+function ofereceRascunho(rasc, itensDoBanco){
+  const q = (rasc.data.items||[]).length;
+  const quando = new Date(rasc.em).toLocaleString('pt-BR');
+  mostrarBarraDecisao(
+    '<b>Achei trabalho não salvo neste navegador.</b><br>'+
+    q + ' conteúdo(s), de ' + quando + '. O banco está com ' + itensDoBanco + '.'+
+    '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
+    '<button onclick="restaurarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">↩️ Trazer de volta</button>'+
+    '<button onclick="descartarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Descartar</button>'+
+    '</div>');
+}
+window.restaurarRascunho = function(){
+  const r = lerRascunho(); if(!r) return;
+  data = r.data; carregado=true; apagouDePropósito=true;
+  document.getElementById('clientName').value=data.client||'';
+  document.getElementById('monthName').value=data.month||'';
+  fecharBarraDecisao();
+  renderAll();
+  avisarTela('Trabalho recuperado e sendo salvo no banco agora.');
+};
+window.descartarRascunho = function(){
+  if(!confirm('Descartar de vez esse trabalho não salvo?')) return;
+  limparRascunho(); fecharBarraDecisao();
+};
+
 async function load(){
   mostrarCarregando();
   const liberado = await window.__calPronto;
   if(!liberado) return;                       // a tela de bloqueio já está no ar
   aplicarModoCalendario();
+  pintarEstado();
   if(!window.__fb || !window.__fb.docRef){
     document.getElementById('viewGrid').innerHTML='<div style="padding:30px;text-align:center;color:#e07a7a;">Não foi possível conectar ao banco de dados. Recarregue a página (se persistir, avise a Get).</div>';
     return;
   }
   const {docRef,onSnapshot}=window.__fb;
+  let primeiroSnapshot=true;
   onSnapshot(docRef,(snap)=>{if(pendingWrite)return;
+    /* TRAVA 4 — o eco do banco NÃO apaga edição que ainda não foi
+       gravada. Era assim que o trabalho sumia da tela sem aviso: bastava
+       chegar uma atualização do servidor enquanto havia coisa não salva
+       e `data=snap.data()` levava tudo junto. */
+    if(!primeiroSnapshot && (temNaoSalvo || bloqueadoPorConflito)){
+      itensNoBanco = ((snap.exists() && snap.data().items) || []).length;
+      return;
+    }
     if(snap.exists()){
       data=snap.data();
       if(!data.items)data.items=[];
@@ -467,6 +654,21 @@ async function load(){
     document.getElementById('monthName').value=data.month||mesAtualTexto();
     renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderFeedback();
     carregarRefsDoCliente();
+    if(primeiroSnapshot){
+      primeiroSnapshot=false;
+      pintarEstado();
+      /* Sobrou rascunho de uma sessão anterior? Só oferece se ele tiver
+         algo que o banco não tem — senão é ruído. */
+      if(window.__modoCal === 'equipe'){
+        const r = lerRascunho();
+        if(r && r.data){
+          const noBanco = new Set((data.items||[]).map(chaveItem));
+          const soNoRascunho = (r.data.items||[]).filter(it => !noBanco.has(chaveItem(it))).length;
+          if(soNoRascunho > 0) ofereceRascunho(r, (data.items||[]).length);
+          else limparRascunho();
+        }
+      }
+    }
   },(err)=>{
     console.error('Erro de conexão:',err);
     document.getElementById('viewGrid').innerHTML='<div style="padding:30px;text-align:center;color:#e07a7a;">Erro de conexão com o banco de dados: '+err.message+'</div>';
@@ -489,6 +691,10 @@ function save(){
   data.client=document.getElementById('clientName').value;
   data.month=document.getElementById('monthName').value;
   data.updatedAt=new Date().toISOString();
+  /* O rascunho é gravado ANTES de qualquer tentativa de ir pro banco.
+     Se a gravação for recusada, se a internet cair, se ela fechar a
+     aba ou apertar F5, o trabalho continua guardado aqui. */
+  temNaoSalvo=true; guardarRascunho(); pintarEstado();
   renderMeta();
   pendingWrite=true;clearTimeout(saveTimer);
   saveTimer=setTimeout(gravarComSeguranca,400);
@@ -506,9 +712,12 @@ async function gravarComSeguranca(){
        outra pessoa. Só passa se alguém apagou de propósito nesta aba. */
     if(!apagouDePropósito && antes.length > 0 && depois.length < antes.length){
       pendingWrite=false;
-      const perdidos = antes.length - depois.length;
-      avisarTela('⚠️ NÃO gravei: esta aba tem ' + depois.length + ' conteúdo(s) e o banco tem ' + antes.length +
-        '. Ia apagar ' + perdidos + '. Atualiza a página (F5) — o que está no banco está a salvo.', 'erro');
+      /* NÃO manda mais atualizar a página. O rascunho já está guardado,
+         e a decisão vira botão: juntar as duas versões ou ficar com a
+         do banco. Trabalho nenhum é descartado sem alguém escolher. */
+      bloqueadoPorConflito=true;
+      window.__versaoDoBanco = atual.data();
+      mostrarConflito(depois.length, antes.length);
       return;
     }
 
@@ -525,10 +734,17 @@ async function gravarComSeguranca(){
     itensNoBanco = depois.length;
     apagouDePropósito = false;
     pendingWrite=false;
+    bloqueadoPorConflito=false;
+    temNaoSalvo=false;
+    ultimoSalvo=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    limparRascunho();          // gravou de verdade: o rascunho já não serve
+    pintarEstado();
   }catch(e){
     console.error('Erro ao salvar:', e);
     pendingWrite=false;
-    avisarTela('❌ Não consegui salvar. NÃO feche a página — verifica a internet e edita qualquer campo pra tentar de novo.', 'erro');
+    /* O rascunho continua no navegador. Ela pode fechar tudo e voltar. */
+    guardarRascunho(); pintarEstado();
+    avisarTela('Não consegui salvar agora (internet). Seu trabalho está guardado neste navegador — pode até fechar a página, que ele volta quando você abrir de novo. Tento de novo a cada edição.', 'erro');
   }
 }
 function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();}

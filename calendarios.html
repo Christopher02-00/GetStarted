@@ -208,6 +208,7 @@
       <input id="clientName" value="" placeholder="Carregando…" oninput="save()">
       <div class="lbl" style="margin-top:6px;">Mês</div>
       <input id="monthName" value="" placeholder="Carregando…" oninput="renderAll()">
+      <div id="seletorMes" style="display:none;margin-top:8px;"></div>
     </div>
   </header>
 
@@ -357,6 +358,81 @@ function mesRef(){
 function offsetDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes,1).getDay():0;}
 // Quantos dias o mes tem de verdade. Antes era sempre 31.
 function diasDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes+1,0).getDate():31;}
+
+/* ===== VÁRIOS MESES NO MESMO CALENDÁRIO — 29/07/2026 ================
+   O pedido do Chris: a agência trabalha um mês adiantado. Em agosto a
+   Gabi monta setembro, enquanto agosto ainda está rodando. Hoje o
+   documento guarda UM mês só, num campo de texto livre — tanto que no
+   banco existem "Julho 2026", "Agosto 2026" e "agosto 2026" convivendo.
+
+   COMO EU FIZ, E POR QUE ASSIM.
+
+   Auditei a corrente antes de escrever. O achado que decidiu o desenho:
+   `calendarItemIdx` — as postagens e as legendas apontam pro conteúdo
+   pela POSIÇÃO dentro de `items[]`. Seis lugares no sistema dependem
+   disso. Se eu quebrasse `items` em um documento por mês, esses
+   ponteiros passariam a apontar pro conteúdo errado — legenda de um
+   vídeo indo parar em outro, sem erro nenhum na tela. É o tipo de falha
+   que ninguém vê por semanas.
+
+   Então: continua UM documento por cliente e UM `items[]`. O que muda é
+   que cada conteúdo ganha um campo `mes` ('2026-09'), e a tela filtra
+   por ele. Ponteiro nenhum se mexe, migração nenhuma é necessária, e
+   conteúdo antigo (sem `mes`) continua pertencendo ao mês do documento.
+
+   Uma fonte só, aditivo, reversível. */
+function mesDoTexto(txt){
+  const t=(txt||'').trim().toLowerCase();
+  const nomes=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const semAcento=x=>x.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const i=nomes.findIndex(n=>semAcento(t).startsWith(semAcento(n)));
+  const ano=(t.match(/(20\d{2})/)||[])[1];
+  if(i<0||!ano) return '';
+  return ano+'-'+String(i+1).padStart(2,'0');
+}
+function textoDoMes(mes){
+  if(!mes) return '';
+  const nomes=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const [a,m]=mes.split('-');
+  return (nomes[Number(m)-1]||'') + ' ' + a;
+}
+/* O mês que está sendo visto agora. Vazio = o mês do próprio documento
+   (o comportamento de sempre, pra calendário que ainda não tem meses). */
+let mesVisivel='';
+function mesDoItem(it){ return (it && it.mes) || ''; }
+
+/* ===== A ARMADILHA QUE EU QUASE DEIXEI ==============================
+   Conteúdo antigo não tem `mes`. Se ele "herdasse" o mês do documento
+   na hora de filtrar, bastava a Gabi trocar o rótulo do mês pra
+   setembro e os conteúdos de agosto passariam a se dizer de setembro —
+   sem ninguém tocar neles.
+
+   Então o carimbo acontece UMA vez, na leitura, antes de qualquer
+   troca de mês: cada conteúdo sem `mes` recebe o mês que o documento
+   tinha naquele momento, e nunca mais muda de dono. */
+function carimbarMesDosAntigos(){
+  if(docJaUsaMeses() && data.mesLegado) return false;   // já foi carimbado
+  const doDoc = mesDoTexto(data.month);
+  if(!doDoc) return false;
+  let mexeu = false;
+  (data.items||[]).forEach(it => { if(it && !it.mes){ it.mes = doDoc; mexeu = true; } });
+  /* Grava a âncora junto com o carimbo, no mesmo instante. Depois disto
+     o rótulo do documento pode andar à vontade. */
+  if(mexeu && !data.mesLegado){ data.mesLegado = doDoc; }
+  return mexeu;
+}
+function itensDoMes(mes){
+  const todos=data.items||[];
+  if(!mes) return todos;
+  return todos.filter(it => mesDoItem(it) === mes);
+}
+function mesesExistentes(){
+  const set=new Set();
+  (data.items||[]).forEach(it => { const m=mesDoItem(it); if(m) set.add(m); });
+  const doDoc=mesDoTexto(data.month); if(doDoc) set.add(doDoc);
+  if(mesVisivel) set.add(mesVisivel);
+  return [...set].sort();
+}
 
 let saveTimer=null;let pendingWrite=false;
 /* ===== POR QUE O CALENDÁRIO DA MONIQUE ESVAZIOU — 27/07/2026 ==========
@@ -664,27 +740,54 @@ async function load(){
             aprovacaoInterna:{status:'rascunho',por:'',em:new Date().toISOString(),motivoAjuste:''},updatedAt:null};
     }
     carregado=true;                       // a partir daqui pode gravar
+    const carimbou = carimbarMesDosAntigos();
+    if(!mesVisivel){
+      if(window.__modoCal === 'cliente'){
+        /* O cliente NUNCA abre no mês que a equipe está montando. Ele
+           abre no último mês liberado pra ele — e se não houver nenhum,
+           fica no mês do documento, que cai na tela de "em preparação". */
+        const lib = mesesLiberados();
+        mesVisivel = lib.length ? lib[lib.length-1] : (mesDoTexto(data.month) || '');
+      } else {
+        mesVisivel = mesDoTexto(data.month) || '';
+      }
+    }
     itensNoBanco=(data.items||[]).length;
     setTimeout(renderAprovacaoInterna, 0);
     const av=document.getElementById('avisoSalvamento'); if(av) av.style.display='none';
     document.getElementById('clientName').value=data.client||nomeDoSlug(window.__clienteId);
     document.getElementById('monthName').value=data.month||mesAtualTexto();
+    renderSeletorMes();
     renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderFeedback();
     carregarRefsDoCliente();
+
+    /* ===== A ORDEM AQUI NÃO É DETALHE — 29/07/2026 ==================
+       Na primeira versão eu gravei o carimbo dos meses ANTES de conferir
+       o rascunho. Os testes pegaram: a gravação dá certo, e gravar com
+       sucesso LIMPA o rascunho — então o trabalho não salvo da Gabi era
+       apagado antes de alguém ter a chance de recuperá-lo. Exatamente o
+       que passei o dia consertando, reintroduzido por uma linha fora de
+       ordem.
+
+       Regra: o rascunho é conferido primeiro, sempre. O carimbo só grava
+       quando não há nada pendente pra recuperar. */
+    let ofereceu = false;
     if(primeiroSnapshot){
       primeiroSnapshot=false;
       pintarEstado();
-      /* Sobrou rascunho de uma sessão anterior? Só oferece se ele tiver
-         algo que o banco não tem — senão é ruído. */
       if(window.__modoCal === 'equipe'){
         const r = lerRascunho();
         if(r && r.data){
           const noBanco = new Set((data.items||[]).map(chaveItem));
           const soNoRascunho = (r.data.items||[]).filter(it => !noBanco.has(chaveItem(it))).length;
-          if(soNoRascunho > 0) ofereceRascunho(r, (data.items||[]).length);
+          if(soNoRascunho > 0){ ofereceRascunho(r, (data.items||[]).length); ofereceu = true; }
           else limparRascunho();
         }
       }
+    }
+    /* O carimbo do mês só grava se não há rascunho esperando decisão. */
+    if(carimbou && !ofereceu && window.__modoCal === 'equipe' && !primeiroSnapshotJaTratado){
+      primeiroSnapshotJaTratado = true; save();
     }
   },(err)=>{
     console.error('Erro de conexão:',err);
@@ -764,7 +867,8 @@ async function gravarComSeguranca(){
     avisarTela('Não consegui salvar agora (internet). Seu trabalho está guardado neste navegador — pode até fechar a página, que ele volta quando você abrir de novo. Tento de novo a cada edição.', 'erro');
   }
 }
-function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();}
+function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();renderSeletorMes();}
+let primeiroSnapshotJaTratado=false;
 
 /* ===== APROVAÇÃO INTERNA — 28/07/2026 ==============================
    Pergunta da Amanda, e ela tinha razão: o calendário ia da Gabi direto
@@ -785,6 +889,7 @@ function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgr
 const ROTULO_APROVACAO = {
   rascunho:           { txt:'📝 Em montagem — o cliente ainda não vê',        cor:'#8a8a8d' },
   aguardando_interna: { txt:'🕓 Esperando aprovação interna',                  cor:'#e0c56a' },
+  aprovado_interno:   { txt:'✅ Aprovado — guardado pro envio do dia 15',       cor:'#7fd99f' },
   ajuste_interno:     { txt:'↩️ Ajuste pedido — corrige e reenvia',            cor:'#e07a7a' },
   liberado:           { txt:'✅ Liberado — o cliente já vê e pode aprovar',    cor:'#4caf72' }
 };
@@ -818,12 +923,52 @@ const ROTULO_APROVACAO = {
 
    E, pra isso não virar herança eterna, todo calendário novo passa a
    nascer com o campo escrito. */
-function estadoAprovacao(){
+/* ===== APROVAÇÃO POR MÊS — 29/07/2026 ===============================
+   Com dois meses no mesmo calendário, um estado só não serve: agosto
+   pode estar liberado pro cliente enquanto setembro ainda está sendo
+   montado. Cada mês passa a ter o seu.
+
+   `aprovacaoMeses['2026-09']` é o estado daquele mês. Quando não existe,
+   vale a regra antiga — que é a mesma lição da Monique: campo ausente
+   não é negativa, é ausência de informação, e a resposta é o que valia
+   antes. */
+/* O documento já está no esquema de meses? */
+function docJaUsaMeses(){
+  return (data.items||[]).some(i => i && i.mes) || !!data.aprovacaoMeses || !!data.mesLegado;
+}
+
+function estadoDoMes(mes){
+  const porMes = (data.aprovacaoMeses||{})[mes];
+  if(porMes && porMes.status) return porMes.status;
+
+  /* ===== O FURO QUE O TESTE PEGOU — 29/07/2026 ====================
+     A primeira versão disto perguntava "esse mês é o mês do documento?"
+     pra decidir se valia a regra antiga. Só que o rótulo do documento
+     ANDA: quando a Gabi passa a montar setembro, o rótulo vira
+     setembro. E aí setembro herdava a regra antiga e ficava liberado
+     pro cliente sozinho — o vazamento exato que este pedido existe
+     pra impedir.
+
+     A âncora não pode ser um campo que se move. É `mesLegado`, gravado
+     UMA vez, no momento em que os conteúdos antigos são carimbados, e
+     nunca mais tocado. Só ele herda o comportamento de antes. Qualquer
+     mês novo começa como rascunho — o cliente não vê mês em construção. */
+  const legado = data.mesLegado || (docJaUsaMeses() ? '' : mesDoTexto(data.month));
+  const heraldaRegraAntiga = !mes || (legado && mes === legado);
+  if(!heraldaRegraAntiga) return 'rascunho';
+
   const ap = data.aprovacaoInterna;
   if(ap && ap.status) return ap.status;
   return (data.items && data.items.length) ? 'liberado' : 'rascunho';
 }
-function ehCalendarioLegado(){ return !(data.aprovacaoInterna && data.aprovacaoInterna.status); }
+function estadoAprovacao(){ return estadoDoMes(mesVisivel); }
+function ehCalendarioLegado(){
+  const porMes = (data.aprovacaoMeses||{})[mesVisivel];
+  if(porMes && porMes.status) return false;
+  return !(data.aprovacaoInterna && data.aprovacaoInterna.status);
+}
+/* Os meses que o CLIENTE pode ver: só os liberados. */
+function mesesLiberados(){ return mesesExistentes().filter(m => estadoDoMes(m) === 'liberado'); }
 
 function renderAprovacaoInterna(){
   let box = document.getElementById('boxAprovacaoInterna');
@@ -837,7 +982,7 @@ function renderAprovacaoInterna(){
   }
   const st = estadoAprovacao();
   const r = ROTULO_APROVACAO[st] || ROTULO_APROVACAO.rascunho;
-  const info = data.aprovacaoInterna || {};
+  const info = (data.aprovacaoMeses||{})[mesVisivel] || data.aprovacaoInterna || {};
   const ehEquipe = window.__modoCal === 'equipe';
 
   const legado = ehCalendarioLegado();
@@ -853,10 +998,13 @@ function renderAprovacaoInterna(){
 
 window.enviarParaAprovacaoInterna = function(){
   if(window.__modoCal !== 'equipe') return;
-  if(!data.items || !data.items.length){ avisarTela('Calendário vazio — monta o mês antes de enviar.', 'erro'); return; }
+  if(!itensDoMes(mesVisivel).length){ avisarTela('Este mês está vazio — monta o mês antes de enviar.', 'erro'); return; }
   const quem = prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
   if(quem === null) return;
-  data.aprovacaoInterna = { status:'aguardando_interna', por: quem || 'equipe', em: new Date().toISOString(), motivoAjuste:'' };
+  const alvo = mesVisivel || mesDoTexto(data.month) || '';
+  const marca = { status:'aguardando_interna', por: quem || 'equipe', em: new Date().toISOString(), motivoAjuste:'', mes: alvo };
+  if(alvo){ data.aprovacaoMeses = data.aprovacaoMeses || {}; data.aprovacaoMeses[alvo] = marca; }
+  data.aprovacaoInterna = marca;   // o campo antigo continua valendo, pra nada quebrar
   save();
   renderAprovacaoInterna();
   avisarTela('Enviado pra aprovação interna. O cliente só vê depois que a Amanda liberar.');
@@ -918,6 +1066,50 @@ function mostrarCarregando(){
     if(el) el.innerHTML='<div style="padding:40px 20px;text-align:center;color:#8a8a8a;font-size:13px;">⏳ Carregando o conteúdo do mês…<div style="font-size:11.5px;margin-top:6px;">Se ficar assim mais de alguns segundos, atualiza a página. <b>Não digite nada antes de aparecer</b> — nada é gravado enquanto não carrega.</div></div>';
   });
 }
+
+/* ===== O SELETOR DE MÊS =============================================
+   Só aparece quando existe mais de um mês, ou quando a equipe já criou
+   o próximo. Calendário de um mês só continua exatamente como era —
+   ninguém vê botão novo sem motivo. */
+function renderSeletorMes(){
+  const box=document.getElementById('seletorMes');
+  if(!box) return;
+  const equipe = window.__modoCal === 'equipe';
+  /* O cliente só enxerga os meses que já foram liberados pra ele. */
+  const meses = equipe ? mesesExistentes() : mesesLiberados();
+  if(meses.length<=1 && !equipe){ box.style.display='none'; return; }
+  if(!mesVisivel) mesVisivel = mesDoTexto(data.month) || meses[meses.length-1] || '';
+  box.style.display='block';
+  const proximo = (()=>{
+    const base = mesVisivel || meses[meses.length-1];
+    if(!base) return '';
+    const [a,m]=base.split('-').map(Number);
+    const d=new Date(a, m, 1);
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  })();
+  box.innerHTML =
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' +
+    meses.map(m => {
+      const ativo = m===mesVisivel;
+      const n = itensDoMes(m).length;
+      return '<button onclick="verMes(\''+m+'\')" style="padding:7px 13px;border:0;border-radius:18px;cursor:pointer;font-size:12px;font-weight:'+(ativo?'800':'600')+';'+
+             'background:'+(ativo?'var(--yellow)':'rgba(255,255,255,.07)')+';color:'+(ativo?'#141414':'#cfcfcf')+';">'+
+             textoDoMes(m)+' ('+n+')</button>';
+    }).join('') +
+    (equipe && proximo && !meses.includes(proximo)
+      ? '<button onclick="verMes(\''+proximo+'\')" style="padding:7px 13px;border:1px dashed #6a6a6a;border-radius:18px;cursor:pointer;font-size:12px;background:transparent;color:#9a9a9a;">+ '+textoDoMes(proximo)+'</button>'
+      : '') +
+    '</div>';
+}
+window.verMes = function(m){
+  /* Trocar de mês é só mudar a VISTA. Não reescreve o rótulo do
+     documento nem move conteúdo nenhum de lugar — cada um já está
+     carimbado com o mês dele. */
+  mesVisivel = m;
+  const campo=document.getElementById('monthName');
+  if(campo) campo.value = textoDoMes(m);
+  renderGrid();renderWeek();renderKanban();renderProgress();renderSeletorMes();renderAprovacaoInterna();
+};
 
 function renderMeta(){
   const el=document.getElementById('updatedText');
@@ -983,13 +1175,14 @@ function setView(v,el){
    publicado. O que ja foi ao ar saiu do denominador — aprovar
    retroativamente nao faz sentido. */
 function renderProgress(){
-  const pendentes = data.items.filter(i=>!i.posted);
+  const doMes = itensDoMes(mesVisivel);
+  const pendentes = doMes.filter(i=>!i.posted);
   const tot = pendentes.length;
   const ap  = pendentes.filter(i=>i.apr).length;
   const txt = document.getElementById('progText');
   const rot = document.getElementById('progRotulo');
   if(!tot){
-    txt.textContent = data.items.length ? 'tudo publicado' : '—';
+    txt.textContent = doMes.length ? 'tudo publicado' : '—';
     if(rot) rot.textContent = data.items.length ? 'Conteúdo do mês:' : 'Aprovação do cliente:';
     document.getElementById('barFill').style.width = data.items.length ? '100%' : '0%';
     return;
@@ -1010,8 +1203,9 @@ function renderGrid(){
   const offset=offsetDoMes();
   const totalDias=diasDoMes();
   for(let i=0;i<offset;i++) html+='<div class="cell empty"></div>';
+  const itensVis=itensDoMes(mesVisivel);
   for(let d=1;d<=totalDias;d++){
-    const its=data.items.filter(i=>i.day===d);
+    const its=itensVis.filter(i=>i.day===d);
     html+='<div class="cell" onclick="openModal('+d+')"><div class="dnum">'+d+'</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
       const marcaObs=(it.obs||'').trim()?'📌 ':'';
@@ -1029,7 +1223,7 @@ function renderWeek(){
   const wl=['Semana 1','Semana 2','Semana 3','Semana 4'];
   let html='';
   weeks.forEach((w,wi)=>{
-    const its=data.items.filter(i=>i.day>=w[0]&&i.day<=w[1]).sort((a,b)=>a.day-b.day);
+    const its=itensDoMes(mesVisivel).filter(i=>i.day>=w[0]&&i.day<=w[1]).sort((a,b)=>a.day-b.day);
     html+='<div class="weekblock"><div class="weekhead"><div class="wn">'+wl[wi]+'</div><div class="wl">dias '+w[0]+'–'+w[1]+' · '+its.length+' conteúdo(s)</div></div>';
     if(!its.length) html+='<div style="color:var(--muted);font-size:11px;padding:6px 2px;">Sem conteúdo — clique numa data na grade pra adicionar.</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
@@ -1054,9 +1248,10 @@ function renderWeek(){
 
 function renderKanban(){
   const wrap=document.getElementById('viewKanban');
-  const todo=data.items.filter(i=>!i.apr&&!i.posted);
-  const apr=data.items.filter(i=>i.apr&&!i.posted);
-  const post=data.items.filter(i=>i.posted);
+  const doMes=itensDoMes(mesVisivel);
+  const todo=doMes.filter(i=>!i.apr&&!i.posted);
+  const apr=doMes.filter(i=>i.apr&&!i.posted);
+  const post=doMes.filter(i=>i.posted);
   function card(it){const idx=data.items.indexOf(it);
     const refLine=it.ref?'<a href="'+esc(normalizeUrl(it.ref))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--yellow);text-decoration:none;font-size:9.5px;display:inline-block;margin-bottom:6px;">🔗 referência</a><br>':'';
     const obsLine=(it.obs||'').trim()?'<div style="background:#4a3a12;border-left:3px solid #e0c56a;border-radius:5px;padding:6px 8px;margin:5px 0;font-size:9.5px;line-height:1.45;color:#ffe9a8;white-space:pre-wrap;">📌 '+esc(it.obs.trim())+'</div>':'';
@@ -1107,6 +1302,9 @@ function saveItem(){
   const it={day:parseInt(document.getElementById('mDay').value)||1,name:document.getElementById('mName').value||'Sem título',
     desc:document.getElementById('mDesc').value,legenda:document.getElementById('mLegenda').value,ref:document.getElementById('mRef').value,
     obs:(document.getElementById('mObs')?.value||''),
+    /* Carimba o mês que está aberto. Sem isso, um conteúdo de setembro
+       criado enquanto agosto roda cairia em agosto sem ninguém perceber. */
+    mes: mesVisivel || mesDoTexto(data.month) || '',
     stage:document.getElementById('mStage').value,fmt:document.getElementById('mFmt').value||'Reel',
     apr:editIdx!==null?(data.items[editIdx].apr||false):false,posted:editIdx!==null?(data.items[editIdx].posted||false):false,
     gravado:editIdx!==null?(data.items[editIdx].gravado||false):false,

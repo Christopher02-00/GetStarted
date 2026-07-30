@@ -10427,10 +10427,28 @@
     if(demanda.status !== 'pendente') return 'normal';
     if(estaAusente(demanda.destinatario)) return 'normal';
     if(demanda.urgenciaManual && ['atrasado','hoje','normal'].includes(demanda.urgenciaManual)) return demanda.urgenciaManual;
-    const agora = new Date();
-    const prazo = new Date(demanda.prazoData + 'T' + (demanda.prazoHora || '19:00'));
-    if (agora > prazo) return 'atrasado';
-    const hojeStr = agora.toISOString().slice(0,10);
+    /* ===== A RAIZ DE TUDO — 30/07/2026 ================================
+       Isto comparava o INSTANTE: prazo hoje às 12:00 virava "atrasado"
+       às 12:01. A Helo abria a tela às 11h e via as demandas do próprio
+       dia em vermelho; a gerência via 26 "atrasadas" que na verdade
+       ainda tinham o dia inteiro pra acontecer.
+
+       O efeito é pior do que o número: a pessoa entra, vê tudo vermelho,
+       e conclui que está sempre devendo. Isso não organiza ninguém —
+       desanima.
+
+       Os vídeos já usavam a regra certa (`prazoEntrega < hoje`). Eram
+       duas réguas diferentes no mesmo sistema. Agora é uma só:
+
+         prazo ANTES de hoje  → atrasado (o dia passou, não deu)
+         prazo HOJE           → hoje (tem o dia inteiro, seja qual for a hora)
+         prazo depois         → normal
+
+       A hora não some: continua ordenando a fila e aparecendo escrita
+       ("vence hoje às 12:00"). Ela deixa de decidir a COR. */
+    const hojeStr = new Date().toISOString().slice(0,10);
+    if(!demanda.prazoData) return 'normal';
+    if (demanda.prazoData < hojeStr) return 'atrasado';
     if (demanda.prazoData === hojeStr) return 'hoje';
     return 'normal';
   }
@@ -10447,6 +10465,44 @@
      backlog nao desaparece - continua 100% visivel dentro da propria
      aba, so nao pesa mais no numero vermelho de alerta da lateral. Vale
      pra QUALQUER pessoa, nao so a Cecilia. */
+  /* ===== A MESMA RÉGUA PRO VÍDEO — 30/07/2026 =========================
+     O painel dizia "6 atrasados" e não havia UM vídeo vencido no sistema.
+     Conferi no banco: os 6 vinham de `nivelEscalonamento >= 1`, uma marca
+     gravada quando o vídeo atrasou UMA vez — e que ninguém nunca apagava.
+     Prazo estendido pra hoje, vídeo andando, marca lá.
+
+     Os três vídeos da Helo são o caso exato: prazo 30/07 (hoje), e mesmo
+     assim vermelhos, com demanda de atraso aberta desde 28/07.
+
+     Agora quem decide se um vídeo está atrasado é o PRAZO, não a
+     cicatriz. E a cicatriz é apagada quando o vídeo volta pro prazo. */
+  function videoAtrasado(v){
+    if(!v || v.excluido) return false;
+    if(!['aguardando_edicao','correcao'].includes(v.status)) return false;
+    const prazo = v.prazoEntrega || (typeof calcularPrazoEdicaoVideo === 'function' ? (()=>{ const d=calcularPrazoEdicaoVideo(v); return d ? d.toISOString().slice(0,10) : ''; })() : '');
+    if(!prazo) return false;
+    return prazo < new Date().toISOString().slice(0,10);
+  }
+  window.videoAtrasado = videoAtrasado;
+
+  /* Encerra as demandas-aviso de atraso daquele vídeo. Não apaga: marca
+     como resolvida, com o motivo, pra ninguém achar que sumiu. */
+  async function encerrarAvisosDeVideoAtrasado(videoId, titulo){
+    try{
+      const q = query(collection(db,'demandas'), where('videoId','==', videoId));
+      const snap = await getDocs(q);
+      for(const d of snap.docs){
+        const v = d.data();
+        if(['aprovada','concluida'].includes(v.status)) continue;
+        if(!/^⚠️\s*V[ií]deo atrasado/.test(String(v.titulo||''))) continue;
+        await updateDoc(doc(db,'demandas', d.id), {
+          status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(),
+          notaConclusao:'Encerrada sozinha: o prazo do vídeo foi ajustado e ele não está mais atrasado.'
+        });
+      }
+    }catch(e){ console.error('Falha ao encerrar avisos de vídeo atrasado:', e); }
+  }
+
   const JANELA_URGENCIA_BADGE_DIAS = 1;
   function ehUrgenteParaBadge(demanda, diasJanela){
     if(demanda.status !== 'pendente') return false;
@@ -10560,6 +10616,20 @@
       if(v.excluido) continue;
       if(!['aguardando_edicao','correcao'].includes(v.status)) continue;
       const prazo = calcularPrazoEdicaoVideo(v);
+      /* ===== O VÍDEO VOLTOU PRO PRAZO — 30/07/2026 ====================
+         Faltava exatamente isto: quando alguém estende o prazo, o vídeo
+         deixa de estar atrasado — mas a marca de escalonamento e a
+         demanda "⚠️ Vídeo atrasado" ficavam. A Helo tinha três assim.
+         Agora, voltando pro prazo, a marca é zerada e a demanda-aviso é
+         encerrada sozinha, com a explicação escrita. */
+      if(!videoAtrasado(v)){
+        if((v.nivelEscalonamento||0) > 0){
+          await updateDoc(doc(db,'videos_producao', id), { nivelEscalonamento: 0, alertaAtrasoCriado: false, voltouAoPrazoEm: new Date().toISOString() });
+          registrarHistorico('videos_producao', id, 'Voltou pro prazo — escalonamento zerado');
+        }
+        await encerrarAvisosDeVideoAtrasado(id, v.titulo || '');
+        continue;
+      }
       if(!prazo || agora <= prazo) continue; // ainda no prazo, nada a fazer
 
       const nivelAtual = v.nivelEscalonamento || 0;
@@ -12285,6 +12355,13 @@
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Pediu prazo novo pra <b>' + formatarDataBR(d.prazoSolicitado) + '</b>' + (d.motivoPrazo ? ' — ' + esc(d.motivoPrazo) : '') + '</div>' : ''}
       ${aguardandoAprov ? '<div class="linha" style="color:var(--green);">✅ ' + esc(d.provaTexto || 'Marcou como feita, sem descrição.') + (d.provaImagemUrl ? ' · <a href="' + esc(d.provaImagemUrl) + '" target="_blank">ver prova</a>' : '') + '</div>' : ''}
 
+      ${d.exclusaoPedida ? `<div class="linha" style="background:rgba(224,90,90,.10);border-left:4px solid var(--red);padding:12px 14px;border-radius:8px;">
+        <b style="color:var(--red);">🗑️ ${esc(d.exclusaoPedida.por||'')} pediu pra excluir</b>
+        <div class="meta" style="margin-top:6px;color:var(--fg);white-space:pre-wrap;">"${esc(d.exclusaoPedida.motivo||'')}"</div>
+        <div class="btnrow" style="margin-top:10px;">
+          <button class="btn secondary" style="font-size:11.5px;" onclick="recusarExclusaoDemanda('${d.id}')">Manter a demanda</button>
+          <button class="btn red" style="font-size:11.5px;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Excluir de vez</button>
+        </div></div>` : ''}
       <div class="field" style="margin-top:16px;"><label>Prazo</label>
         <div class="row2">
           <input type="date" id="envPrazoData_${d.id}" value="${d.prazoData||''}">
@@ -12325,8 +12402,22 @@
         prazoSolicitado: null, motivoPrazo: '',
         prazoAlteradoPor: usuarioAtual||'?', prazoAlteradoEm: new Date().toISOString() });
       registrarHistorico('demandas', id, 'Prazo mudado de ' + formatarDataBR(d.prazoData) + ' pra ' + formatarDataBR(data) + ' por ' + (usuarioAtual||'?'));
-      mostrarToast('Prazo novo salvo.');
-      fecharModal(); renderMinhasDemandasAtribuidas(); atualizarTodosOsBadges();
+      /* ===== O PRAZO MUDOU: A PESSOA PRECISA SABER — 30/07/2026 =======
+         O Chris perguntou pra onde vai a demanda quando ele muda o prazo.
+         Antes: pra lugar nenhum — ela sumia da lista dele de atrasadas e
+         a pessoa nunca era avisada, então continuava vendo vermelho até
+         recarregar. Agora ela recebe um aviso curto e claro. */
+      if(d.destinatario && d.destinatario !== usuarioAtual){
+        await criarAvisoParaGestao('📅 Prazo novo — ' + (d.titulo||'sua demanda'),
+          (usuarioAtual||'A gerência') + ' mudou o prazo de "' + (d.titulo||'') + '" de ' +
+          formatarDataBR(d.prazoData) + ' pra ' + formatarDataBR(data) + (hora ? ' às ' + hora : '') +
+          '.\n\nEla saiu das suas atrasadas.', d.destinatario);
+      }
+      mostrarToast('Prazo salvo — ela saiu de atrasadas' + (d.destinatario && d.destinatario!==usuarioAtual ? ' e ' + d.destinatario + ' foi avisada.' : '.'));
+      fecharModal();
+      await carregarTodasDemandas();
+      renderMinhasDemandasAtribuidas(); atualizarTodosOsBadges();
+      try{ renderPainelAtrasos(); }catch(e){}
     }catch(e){ mostrarToast('Não consegui mudar o prazo: ' + e.message, 'erro'); }
   };
 
@@ -12522,7 +12613,9 @@
     empty.style.display='none';
     if(soRefiltrar !== true) await carregarTodasDemandas();
     const todasMinhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial);
-    atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(todasMinhas));
+    /* mesma regra do badge lateral — um número só no site inteiro */
+    atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
+      todasMinhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d))));
 
     const clientes = [...new Set(todasMinhas.map(d => d.clienteNome).filter(Boolean))].sort((a,b) => a.localeCompare(b,'pt-BR'));
     const clienteSel = document.getElementById('filtroClienteMinhasDemandas')?.value || '';
@@ -12836,10 +12929,19 @@
     const zerar = id => { const b = document.getElementById(id); if(b) b.style.display = 'none'; };
     if(!usuarioAtual){ ['badgeMinhasDemandasAtribuidas','badgeAprovar','badgeAtrasadas','badgeMinhas','badgePostagens'].forEach(zerar); return; }
 
+    /* ===== O NÚMERO PRECISA SER O QUE A TELA MOSTRA — 30/07/2026 =====
+       O Chris tinha "6" preso em Minhas Demandas com a tela vazia, e "1"
+       em Atrasadas que sumia ao clicar. A causa: o badge contava uma
+       lista e a tela desenhava outra. `contarUrgentesBadge` incluía o
+       que já foi feito e está esperando aprovação — trabalho que não é
+       mais dela — e o que está encalhado, que a tela esconde.
+
+       Agora os dois números saem da MESMA lista: o que está em aberto,
+       com ela, e não encalhado. Se o número diz 6, tem 6 pra ver. */
     const minhas = (todasDemandas||[]).filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial);
     const vivas  = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d));
 
-    atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(minhas));
+    atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(vivas));
     atualizarBadgeAtrasadas(vivas.filter(d => calcularUrgencia(d) === 'atrasado').length);
 
     /* Fila de aprovação: só quem aprova tem. Pra equipe, sempre escondido. */
@@ -12847,9 +12949,13 @@
     if(b){
       if(!['Chris','Amanda'].includes(usuarioAtual)){ b.style.display = 'none'; }
       else {
+        /* mesma regra da tela — o badge não pode contar diferente */
+        const praSiMesma = d => (d.origem||'').toLowerCase() === String(d.destinatario||'').toLowerCase();
         const daPessoa = d => { const o = (d.origem||'').toLowerCase();
+          if(praSiMesma(d)) return o === String(usuarioAtual||'').toLowerCase();
           return usuarioAtual === 'Amanda' ? o === 'amanda' : o !== 'amanda'; };
-        const n = (todasDemandas||[]).filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual && daPessoa(d)).length;
+        const n = (todasDemandas||[]).filter(d => d.status === 'concluida_aguardando_aprovacao'
+          && (d.destinatario !== usuarioAtual || praSiMesma(d)) && daPessoa(d)).length;
         if(n){ b.style.display = 'flex'; b.textContent = n; } else b.style.display = 'none';
       }
     }
@@ -13027,7 +13133,11 @@
       <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Marcar como feita</button>
       `}`}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
-      ${(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda') ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Excluir esta demanda</button>` : ''}
+      ${(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')
+        ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Excluir esta demanda</button>`
+        : (d.exclusaoPedida
+            ? `<div class="linha" style="margin-top:10px;color:var(--yellow2);">🗑️ Você pediu pra excluir esta demanda — a Amanda vai decidir.<div class="meta" style="margin-top:4px;">"${esc(d.exclusaoPedida.motivo||'')}"</div></div>`
+            : `<button class="btn secondary" style="margin-top:8px;opacity:.8;" onclick="pedirExclusaoDemanda('${d.id}')">🗑️ Pedir pra excluir (com justificativa)</button>`)}
       ${renderLinhaDoTempo(d.historico)}
     `;
     document.getElementById('overlayView').classList.add('show');
@@ -13040,6 +13150,46 @@
      Gerência, mas direto de onde eles realmente olham no dia a dia
      ('Minhas Demandas'). Mesma trava de segurança de sempre (só Chris ou
      Amanda), mesmo registro em log_automacoes. */
+  /* ===== PEDIDO DA GABI — 30/07/2026 =================================
+     "Eu podia ter a opção de excluir a demanda e colocar uma justificativa
+     pra Amanda aprovar. Preciso ficar pedindo pra ela, e isso cansa."
+
+     Vale pra todo mundo. A pessoa pede com o motivo escrito; a Amanda
+     decide num clique. A demanda NÃO some enquanto isso — ela fica
+     marcada, pra ninguém achar que já foi. */
+  window.pedirExclusaoDemanda = async function(id){
+    const motivo = prompt('Por que essa demanda não faz mais sentido?\n(a Amanda lê exatamente este texto)');
+    if(motivo === null) return;
+    if(!String(motivo).trim()){ mostrarToast('Escreve o motivo — sem ele ela não tem como decidir.', 'erro'); return; }
+    const d = todasDemandas.find(x=>x.id===id) || {};
+    try{
+      await updateDoc(doc(db,'demandas', id), {
+        exclusaoPedida: { por: usuarioAtual||'?', motivo: String(motivo).trim(), em: new Date().toISOString() }
+      });
+      registrarHistorico('demandas', id, (usuarioAtual||'?') + ' pediu exclusão', String(motivo).trim());
+      await criarAvisoParaGestao('🗑️ ' + (usuarioAtual||'Alguém') + ' quer excluir: ' + (d.titulo||'uma demanda'),
+        'Motivo: "' + String(motivo).trim() + '"\n\nAbra a demanda em Gerência e decida: excluir de vez ou manter.', 'Amanda');
+      mostrarToast('Pedido enviado pra Amanda.');
+      fecharModal();
+      await carregarTodasDemandas();
+      renderMinhasDemandasAtribuidas();
+    }catch(e){ mostrarToast('Não consegui pedir: ' + e.message, 'erro'); }
+  };
+
+  window.recusarExclusaoDemanda = async function(id){
+    const d = todasDemandas.find(x=>x.id===id) || {};
+    try{
+      await updateDoc(doc(db,'demandas', id), { exclusaoPedida: null });
+      registrarHistorico('demandas', id, 'Pedido de exclusão recusado por ' + (usuarioAtual||'?'));
+      if(d.destinatario){
+        await criarAvisoParaGestao('↩️ Sua demanda continua: ' + (d.titulo||''),
+          (usuarioAtual||'A Amanda') + ' avaliou e decidiu manter esta demanda. Se ainda fizer sentido excluir, fala com ela.', d.destinatario);
+      }
+      mostrarToast('Mantida — a pessoa foi avisada.');
+      fecharModal(); await carregarTodasDemandas(); renderMinhasDemandasAtribuidas();
+    }catch(e){ mostrarToast('Erro: ' + e.message, 'erro'); }
+  };
+
   window.excluirDemandaMinha = async function(id){
     if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id);
@@ -15775,7 +15925,7 @@
 
     /* ---------- CRÍTICOS ---------- */
     const criticos = [];
-    videos.filter(v => (v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status)).forEach(v => {
+    videos.filter(v => (v.nivelEscalonamento||0) >= 2 && videoAtrasado(v)).forEach(v => {
       criticos.push({ chave: 'esc_' + v.id, texto: '🚨 Vídeo escalado nível ' + v.nivelEscalonamento + ' — ' + (v.clienteNome||'') + ': ' + (v.titulo||'') + ' (editor: ' + (v.editorAtribuido||'?') + ')' });
     });
     try{
@@ -17314,12 +17464,106 @@
     }catch(e){ console.error('Falha ao montar a cobrança:', e); mostrarToast('Não consegui montar agora.', 'erro'); }
   };
 
-  window.abrirVideoDeAtraso = function(id){
-    // leva pro Hub de Vídeos com o item em foco
-    fecharModal();
-    irParaAtalho('gerencia');
-    setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('videosHub'); }, 250);
-    mostrarToast('Abrindo o hub de vídeos — o item está lá.');
+  /* ===== A FICHA DO VÍDEO, ONDE ELE ESTIVER — 30/07/2026 =============
+     Antes isto só jogava a pessoa no hub de vídeos e dizia "está lá".
+     O Chris clicava num item com 🎬 e caía numa lista grande, sem saber
+     qual era. Agora abre a ficha do vídeo, com o prazo editável — que é
+     justamente o que resolve o atraso na hora, sem procurar em tela
+     nenhuma. */
+  window.abrirVideoDeAtraso = async function(id){
+    try{
+      const snap = await getDoc(doc(db,'videos_producao', id));
+      if(!snap.exists()){ mostrarToast('Esse vídeo não existe mais.', 'erro'); return; }
+      const v = snap.data();
+      const hoje = new Date().toISOString().slice(0,10);
+      const prazo = v.prazoEntrega || '';
+      const atrasado = videoAtrasado(v);
+      const ROT = { aguardando_edicao:'Em edição', correcao:'Em correção', aguardando_aprovacao:'Esperando aprovação',
+                    aprovado:'Aprovado', finalizado:'Finalizado', arquivado:'Arquivado' };
+      const modal = document.getElementById('modalConteudo');
+      modal.innerHTML = `
+        <h2>🎬 ${esc(v.titulo||'vídeo')}</h2>
+        <div class="linha">${esc(v.clienteNome||'')} · <b>${esc(ROT[v.status]||v.status||'')}</b>
+          ${atrasado ? '<span class="selo atrasado" style="margin-left:6px;">atrasado</span>' : '<span class="selo aprovada" style="margin-left:6px;">no prazo</span>'}</div>
+        <div class="meta" style="margin-top:6px;">Editor: <b>${esc(v.editorAtribuido||'sem editor')}</b>${v.editorSugerido&&!v.editorAtribuido?' · sugerido: '+esc(v.editorSugerido):''}</div>
+        ${v.observacao ? '<div class="linha" style="white-space:pre-wrap;">'+esc(v.observacao)+'</div>' : ''}
+        ${v.notaCorrecao ? '<div class="linha" style="color:var(--yellow2);">↩️ Pedido de ajuste: '+esc(v.notaCorrecao)+'</div>' : ''}
+        ${v.linkFinalizado ? '<div class="linha"><a href="'+esc(v.linkFinalizado)+'" target="_blank" style="color:var(--yellow);">🔗 Abrir o vídeo ↗</a></div>' : ''}
+
+        <div class="field" style="margin-top:16px;"><label>Prazo de entrega</label>
+          <input type="date" id="prazoVid_${id}" value="${esc(prazo)}">
+          <div class="meta" style="margin-top:4px;">Mudou o prazo pra hoje ou pra frente? Ele sai de "atrasado" na hora, aqui e na tela da pessoa.</div>
+          <button class="btn secondary" style="margin-top:8px;" onclick="salvarPrazoVideo('${id}')">📅 Salvar prazo</button>
+        </div>
+
+        <div class="field" style="margin-top:12px;"><label>Quem edita</label>
+          <select id="editorVid_${id}">
+            <option value="">Sem editor — entra na fila de distribuição</option>
+            ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${esc(e)}" ${e===v.editorAtribuido?'selected':''}>${esc(e)}</option>`).join('')}
+          </select>
+          <button class="btn secondary" style="margin-top:8px;" onclick="salvarEditorVideo('${id}','${escJs(v.cliente||'')}')">↪️ Salvar editor</button>
+        </div>
+
+        <button class="btn secondary" style="margin-top:12px;" onclick="fecharModal()">Fechar</button>
+        ${renderLinhaDoTempo(v.historico)}`;
+      document.getElementById('overlayView').classList.add('show');
+    }catch(e){ console.error('Falha ao abrir vídeo:', e); mostrarToast('Não consegui abrir agora.', 'erro'); }
+  };
+
+  window.salvarPrazoVideo = async function(id){
+    const novo = document.getElementById('prazoVid_'+id)?.value;
+    if(!novo){ mostrarToast('Escolhe a data.', 'erro'); return; }
+    try{
+      await updateDoc(doc(db,'videos_producao', id), {
+        prazoEntrega: novo, prazoAlteradoPor: usuarioAtual||'?', prazoAlteradoEm: new Date().toISOString(),
+        nivelEscalonamento: 0, alertaAtrasoCriado: false
+      });
+      registrarHistorico('videos_producao', id, 'Prazo mudado pra ' + formatarDataBR(novo) + ' por ' + (usuarioAtual||'?'));
+      /* Encerra o aviso de atraso na hora — não espera a automação da
+         madrugada. É isso que faz a demanda sair da tela da pessoa já. */
+      const snap = await getDoc(doc(db,'videos_producao', id));
+      if(snap.exists() && !videoAtrasado(snap.data())) await encerrarAvisosDeVideoAtrasado(id, snap.data().titulo||'');
+      mostrarToast('Prazo salvo — saiu de atrasado.');
+      fecharModal();
+      await carregarTodasDemandas();
+      atualizarTodosOsBadges();
+      try{ renderPainelAtrasos(); }catch(e){}
+      try{ renderGerenciaVideos(); }catch(e){}
+    }catch(e){ mostrarToast('Não consegui salvar: ' + e.message, 'erro'); }
+  };
+
+  window.salvarEditorVideo = async function(id, clienteSlug){
+    const novo = document.getElementById('editorVid_'+id)?.value || '';
+    try{
+      if(novo && typeof reatribuirVideo === 'function'){ await reatribuirVideo(id, clienteSlug, novo); }
+      else { await updateDoc(doc(db,'videos_producao', id), { editorAtribuido: novo }); }
+      mostrarToast(novo ? 'Agora é com ' + novo + '.' : 'Voltou pra fila de distribuição.');
+      fecharModal();
+      try{ renderGerenciaVideos(); }catch(e){}
+    }catch(e){ mostrarToast('Não consegui salvar: ' + e.message, 'erro'); }
+  };
+
+  window.abrirPostagemDeAtraso = async function(id){
+    try{
+      const snap = await getDoc(doc(db,'postagens', id));
+      if(!snap.exists()){ mostrarToast('Essa postagem não existe mais.', 'erro'); return; }
+      const p = snap.data();
+      const ROT = { aguardando_legenda:'Esperando legenda', aguardando_agendamento:'Esperando agendamento',
+                    agendado:'Agendada', postado:'Publicada' };
+      const modal = document.getElementById('modalConteudo');
+      modal.innerHTML = `
+        <h2>📲 ${esc(p.titulo||'postagem')}</h2>
+        <div class="linha">${esc(p.clienteNome||'')} · <b>${esc(ROT[p.status]||p.status||'')}</b></div>
+        ${p.dataAgendada ? '<div class="meta" style="margin-top:6px;">Agendada pra ' + formatarDataBR(p.dataAgendada) + (p.horaAgendada?' às '+esc(p.horaAgendada):'') + '</div>' : ''}
+        ${p.legenda ? '<div class="linha" style="white-space:pre-wrap;">'+esc(String(p.legenda).slice(0,400))+'</div>' : '<div class="linha" style="color:var(--yellow2);">Ainda sem legenda escrita.</div>'}
+        ${p.linkVideo ? '<div class="linha"><a href="'+esc(p.linkVideo)+'" target="_blank" style="color:var(--yellow);">🔗 Abrir o vídeo ↗</a></div>' : ''}
+        <div class="btnrow" style="margin-top:16px;">
+          <button class="btn secondary" onclick="fecharModal()">Fechar</button>
+          <button class="btn" onclick="fecharModal();irParaFila('${p.status==='aguardando_legenda'?'legenda':'agendar'}')">▶ Ir pra fila e resolver</button>
+        </div>
+        ${renderLinhaDoTempo(p.historico)}`;
+      document.getElementById('overlayView').classList.add('show');
+    }catch(e){ console.error('Falha ao abrir postagem:', e); mostrarToast('Não consegui abrir agora.', 'erro'); }
   };
 
   /* ===== 📍 AGORA — FASE 1 DA UNIFICAÇÃO (27/07/2026) =====
@@ -19139,7 +19383,7 @@
     const correcao   = todos.filter(v => v.status === 'correcao');
     const emEdicao   = todos.filter(v => v.status === 'aguardando_edicao');
     const aguardando = todos.filter(v => v.status === 'aguardando_aprovacao');
-    const atrasados  = todos.filter(v => (v.nivelEscalonamento||0) >= 1 && !['finalizado','arquivado'].includes(v.status));
+    const atrasados  = todos.filter(videoAtrasado);
 
     // desempenho do dia: entregue sem volta = bom; volta pra correção = custo
     const base = entregues.length + correcao.length;
@@ -19597,7 +19841,7 @@
     vSnap.forEach(sn => {
       const v = sn.data();
       if(v.excluido) return;
-      if((v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status)){
+      if((v.nivelEscalonamento||0) >= 2 && videoAtrasado(v)){
         criticosEq.push({ id: sn.id, nivel: v.nivelEscalonamento, cliente: v.clienteNome||'', titulo: v.titulo||'', editor: v.editorAtribuido||'?', status: v.status });
       }
     });
@@ -19647,7 +19891,12 @@
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">${lista.length} atraso(s) · pior: ${piorP} dia(s)</span><span class="seta">▾</span></div>
         <div class="faixaItens">` +
         lista.map(it => {
-          const abrir = it.colecao === 'demandas' ? `abrirDemandaGerencia('${it.id}')` : '';
+          /* 30/07/2026 — vídeo e postagem eram texto morto aqui: o Chris
+             clicava no item com 🎬 e nada abria. Agora os três tipos
+             abrem a ficha correspondente. */
+          const abrir = it.colecao === 'demandas' ? `abrirDemandaGerencia('${it.id}')`
+                      : it.colecao === 'videos_producao' ? `abrirVideoDeAtraso('${it.id}')`
+                      : it.colecao === 'postagens' ? `abrirPostagemDeAtraso('${it.id}')` : '';
           const lixo = it.colecao === 'demandas' ? `<button class="btn red" style="width:auto;padding:3px 8px;font-size:10px;opacity:.7;" onclick="event.stopPropagation();excluirDemandaDoPainel('${it.id}')">🗑️</button>` : '';
           return `<div class="item" style="border-left:3px solid ${it.dias>=3?'var(--red)':'var(--yellow2)'};${abrir?'cursor:pointer;':''}" ${abrir?`onclick="${abrir}"`:''}>
             <div class="top"><div class="nome">${it.tipo==='Vídeo'?'🎬 ':'📌 '}${esc(it.titulo)}</div><div style="display:flex;align-items:center;gap:6px;flex-shrink:0;"><span class="prioTag ${it.dias>=3?'vermelho':'amarelo'}">${it.dias} dia(s)</span>${lixo}</div></div>
@@ -20463,13 +20712,24 @@ Observações do cliente: ${l.observacoes||'—'}`;
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     await carregarTodasDemandas();
 
-    const todas = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
-    /* 27/07/2026 — quem aprova o quê: o que você mandou é seu, o que a
-       Amanda mandou é dela, e o que o SISTEMA criou cai pro Chris. Sem essa
-       última regra a demanda automática não aparecia pra ninguém e ficava
-       órfã na fila pra sempre. */
+    /* ===== AS 20 ÓRFÃS — 30/07/2026 ==================================
+       Conferi no banco: as 20 esperando aprovação são todas
+       `destinatario: Amanda, origem: amanda` — ela mandou pra si mesma
+       (Protocolo Cápsula). A regra excluía `destinatario === usuarioAtual`
+       pra ninguém aprovar o próprio trabalho, e excluía `origem==='amanda'`
+       pro Chris. Resultado: ninguém podia aprovar, e elas ficaram presas
+       pra sempre. Era isso que o Chris via como "não aparece em lugar
+       nenhum".
+
+       A trava de não aprovar o próprio trabalho existe por um motivo bom
+       — mas só quando OUTRA pessoa mandou. Quando alguém manda pra si
+       mesma, não há terceiro pra conferir: ela mesma encerra. */
+    const mandouPraSiMesma = d => (d.origem||'').toLowerCase() === String(d.destinatario||'').toLowerCase();
+    const todas = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao'
+      && (d.destinatario !== usuarioAtual || mandouPraSiMesma(d)));
     const daPessoa = d => {
       const o = (d.origem||'').toLowerCase();
+      if(mandouPraSiMesma(d)) return o === String(usuarioAtual||'').toLowerCase();
       if(usuarioAtual === 'Amanda') return o === 'amanda';
       if(usuarioAtual === 'Chris')  return o !== 'amanda';   // chris, sistema, cliente e sem origem
       return false;
@@ -21071,14 +21331,32 @@ Observações do cliente: ${l.observacoes||'—'}`;
              O que ele precisa saber é uma frase: quantas a Gabi entregou
              hoje, quantas faltam, e PARA QUEM.
              Agora começa por essa frase, e o resto vem embaixo. */''}
-        <div class="metaSecTit" style="margin-top:16px;">🔗 Referências — o que a Gabi entregou</div>
+        ${/* ===== DUAS COISAS DIFERENTES, DUAS CAIXAS — 30/07/2026 =====
+             O Chris: "não ficou claro o que é referência que a Gabi
+             coloca diariamente e o que é perfil de referência por
+             cliente". Ele tinha razão: a frase de destaque misturava as
+             duas num fôlego só — "3 arquivadas hoje · faltam 12 perfis" —
+             como se fossem a mesma conta. São coisas diferentes:
+
+               PERFIS  = contas do Instagram que definem o estilo do
+                         cliente. 3 por cliente, permanentes, trocam
+                         pouco. É cobertura, não volume.
+               POSTS   = o post específico que ela arquiva no Hub e que
+                         vira conteúdo no calendário. É volume do dia.
+
+             Agora cada uma tem título, explicação e números próprios. */''}
+        <div class="metaSecTit" style="margin-top:16px;">🔗 Referências — as duas coisas, separadas</div>
+        <div class="desc" style="margin:-2px 0 12px;line-height:1.65;">
+          <b style="color:var(--yellow);">⭐ Perfis do cliente</b> — as contas que definem o estilo dele. São 3 por cliente e mudam pouco: é <b>cobertura</b>, não trabalho diário.<br>
+          <b style="color:var(--yellow2);">📥 Posts no Hub</b> — o post específico que vira conteúdo no calendário. Esse sim é o <b>volume do dia a dia</b> dela.
+        </div>
 
         <div style="background:var(--deep);border-left:4px solid ${faltamTotal? 'var(--yellow2)':'var(--green)'};border-radius:10px;padding:16px 18px;margin:12px 0;">
-          <div style="font-size:15px;font-weight:800;">
-            ${hojeQtd ? hojeQtd + ' referência(s) arquivada(s) hoje' : 'Nenhuma referência arquivada hoje'}
-            ${faltamTotal ? ' · <span style="color:var(--yellow2);">faltam ' + faltamTotal + ' perfil(is) pra fechar a meta</span>' : ' · <span style="color:var(--green);">meta de perfis fechada</span>'}
+          <div style="font-size:14px;font-weight:800;color:var(--yellow);">⭐ PERFIS DO CLIENTE — cobertura</div>
+          <div style="font-size:15px;font-weight:800;margin-top:6px;">
+            ${faltamTotal ? '<span style="color:var(--yellow2);">faltam ' + faltamTotal + ' perfil(is) pra fechar</span>' : '<span style="color:var(--green);">todos os clientes cobertos</span>'}
           </div>
-          <div class="meta" style="margin-top:6px;">A meta é 3 perfis por cliente. Hoje ${completos} de ${alvo.length} clientes estão completos.</div>
+          <div class="meta" style="margin-top:6px;">3 por cliente · ${completos} de ${alvo.length} clientes completos. Isto não é meta diária — sobe conforme ela abastece.</div>
         </div>
 
         ${faltando.length ? `<div class="metaSecTit" style="margin-top:6px;">Falta em ${faltando.length} cliente(s)</div>
@@ -21098,8 +21376,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <div class="resumoCard"><div class="num" style="font-size:16px;">${totalPerfis}/${meta}</div><div class="lbl">perfis no total</div></div>
         </div>
 
-        <div class="metaSecTit" style="margin-top:16px;">📥 Posts arquivados no Hub</div>
-        <div class="desc" style="margin-bottom:8px;">Diferente dos perfis: aqui é o post específico que vira conteúdo no calendário.</div>
+        <div class="metaSecTit" style="margin-top:18px;">📥 POSTS NO HUB — o volume do dia</div>
+        <div class="desc" style="margin-bottom:8px;">O post que ela arquiva e que vira conteúdo no calendário. <b>É aqui que você acompanha o dia a dia dela.</b></div>
         <div class="painelResumo" style="margin-bottom:10px;">
           <div class="resumoCard ${hojeQtd?'green':'yellow'}"><div class="num">${hojeQtd}</div><div class="lbl">hoje</div></div>
           <div class="resumoCard"><div class="num">${mesQtd}</div><div class="lbl">no mês</div></div>

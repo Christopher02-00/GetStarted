@@ -4107,16 +4107,38 @@
      executivo. Se eu tivesse copiado o conteúdo, as duas telas
      começariam a divergir no primeiro ajuste — foi assim que o portal e
      o calendário divergiram esta semana. */
+  /* ===== A TELA TRAVAVA — 01/08/2026 =================================
+     Eu montava o cockpit inteiro dentro do Financeiro, junto com o
+     próprio Financeiro. Duas cargas pesadas ao mesmo tempo: o cockpit lê
+     nove coleções completas, e o navegador parava de responder por
+     segundos. Peguei isso testando no ar, antes de você abrir.
+
+     Correção: os extras carregam na hora (são leves e você precisa
+     deles). O Resumo Executivo carrega SOB DEMANDA — um clique. Assim a
+     tela abre instantânea e o peso só vem se você pedir. */
   window.montarFinanceiroCompleto = async function(){
     try{ await renderGerenciaPagamentos('financeiroExtrasBox'); }
     catch(e){ console.error('Falha nos extras do financeiro:', e);
       const b=document.getElementById('financeiroExtrasBox'); if(b) b.innerHTML='<div class="empty">Não consegui carregar os extras agora.</div>'; }
     const boxRe = document.getElementById('financeiroResumoBox');
-    if(boxRe){
-      try{
-        const h = await htmlCockpitCompleto();
-        boxRe.innerHTML = h || '<div class="empty">Sem dados no momento.</div>';
-      }catch(e){ console.error('Falha no resumo do financeiro:', e); boxRe.innerHTML = '<div class="empty">Não consegui carregar o resumo agora.</div>'; }
+    if(boxRe && !boxRe.dataset.carregado){
+      boxRe.innerHTML = '<button class="btn secondary" onclick="carregarResumoNoFinanceiro(this)">📊 Carregar o Resumo Executivo</button>' +
+        '<div class="meta" style="margin-top:6px;">Fica sob demanda porque é pesado — carrega nove painéis. Assim o Financeiro abre na hora.</div>';
+    }
+  };
+
+  window.carregarResumoNoFinanceiro = async function(btn){
+    const boxRe = document.getElementById('financeiroResumoBox');
+    if(!boxRe) return;
+    if(btn){ btn.disabled = true; btn.textContent = 'Carregando…'; }
+    boxRe.innerHTML = '<div class="desc">Montando o resumo…</div>';
+    try{
+      const h = await htmlCockpitCompleto();
+      boxRe.innerHTML = h || '<div class="empty">Sem dados no momento.</div>';
+      boxRe.dataset.carregado = '1';
+    }catch(e){
+      console.error('Falha no resumo do financeiro:', e);
+      boxRe.innerHTML = '<div class="empty">Não consegui carregar o resumo agora.</div>';
     }
   };
 
@@ -10616,7 +10638,7 @@
     const mes  = hoje.slice(0,7);
     const ehGestao = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
 
-    let vids = [], posts = [], cals = [], extras = [], agends = [];
+    let vids = [], posts = [], cals = [], extras = [], agends = [], naLixeira = 0;
     try{
       const [v, p, c, e, a] = await Promise.all([
         getDocs(collection(db,'videos_producao')),
@@ -10625,7 +10647,9 @@
         getDocs(collection(db,'pagamentos_extra')),
         getDocs(collection(db,'agendamentos'))
       ]);
-      v.forEach(d => { const x=d.data(); if(!x.excluido) vids.push({id:d.id, ...x}); });
+      /* Conta a lixeira nesta MESMA passada. Antes eu relia a coleção
+         inteira só pra isso — 252 documentos lidos duas vezes. */
+      v.forEach(d => { const x=d.data(); if(x.excluido){ naLixeira++; return; } vids.push({id:d.id, ...x}); });
       p.forEach(d => { const x=d.data(); if(!x.excluido) posts.push({id:d.id, ...x}); });
       c.forEach(d => cals.push({id:d.id, ...d.data()}));
       e.forEach(d => { const x=d.data(); if(!x.excluido) extras.push({id:d.id, ...x}); });
@@ -10735,9 +10759,6 @@
     }
 
     // ---------- ARQUIVO (nunca alerta) ----------
-    let naLixeira = 0;
-    try{ const v2 = await getDocs(collection(db,'videos_producao'));
-      v2.forEach(d => { if(d.data().excluido) naLixeira++; }); }catch(e){}
     lista.push(I('lixeira', 'Vídeos na lixeira', naLixeira, 'arquivo', "irParaLixeiraVideos()", 'Arquivo. Não é pendência.'));
 
     __cacheIndicadores = { lista, hoje, porChave: Object.fromEntries(lista.map(x=>[x.chave,x])) };
@@ -18012,7 +18033,9 @@
        que qualquer outra tela vai usar. Acabou o "20 aqui, 25 ali". */
     let cabecalhoIndicadores = '';
     try{
-      const ind = await calcularIndicadores(true);
+      /* Sem forçar: o cache de 20s evita reler 6 coleções a cada
+         atualização automática do painel (que roda a cada 25s). */
+      const ind = await calcularIndicadores();
       const ehGestao = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
       cabecalhoIndicadores =
         `<div class="card" style="border:2px solid var(--yellow);">

@@ -3250,8 +3250,11 @@
   };
 
 
-  async function renderAprovacaoVideos(){
-    const cont = document.getElementById('gerenciaAprovarVideos');
+  async function renderAprovacaoVideos(alvoId){
+    /* 01/08/2026 — passou a aceitar destino, pra ser desenhada dentro da
+       central de aprovações sem virar uma segunda implementação. */
+    const cont = document.getElementById(alvoId || 'gerenciaAprovarVideos');
+    if(!cont) return;
     const snap = await getDocs(collection(db,'videos_producao'));
     const pendentes = []; const aguardandoCliente = []; const aprovadosRecentes = [];
     snap.forEach(d => {
@@ -10506,7 +10509,9 @@
     if(qual==='gravacoesDoDia') renderGravacoesDoDiaDetalhe();
     if(qual==='capsulaDetalhe') renderCapsulaDetalhe();
     if(qual==='videos') renderGerenciaVideos();
-    if(qual==='aprovarVideos') renderAprovacaoVideos();
+    /* 01/08/2026 — quem chegar aqui por atalho antigo vai pra central,
+       que é onde vídeo e demanda são aprovados juntos. */
+    if(qual==='aprovarVideos'){ irParaAprovacoes(); return; }
     if(qual==='lixeiraVideos') renderLixeiraVideos();
     if(qual==='pagamentos') renderGerenciaPagamentos();
     if(qual==='avaliacoes') renderGerenciaAvaliacoes();
@@ -11497,10 +11502,12 @@
     /* 30/07/2026 — o Chris pediu Resumo Executivo e Financeiro completo
        no menu principal, em amarelo. Antes os dois estavam a três
        cliques de distância, dentro de abas de Gerência. */
-    'Chris':       [{ rot:'🎛️ Painel de controle',   acao:"irParaPainelDeControle()" },
+    'Chris':       [{ rot:'✅ Aprovar',                acao:"irParaAprovacoes()", contador:'aprovar' },
+                    { rot:'🎛️ Painel de controle',   acao:"irParaPainelDeControle()" },
                     { rot:'💰 Financeiro completo',   acao:"irParaFinanceiroCompleto()" },
                     { rot:'📥 Referências do dia',     acao:"irParaReferenciasDoDia()", contador:'refsHoje', rotNumero: n => ' — ' + n + ' hoje' }],
-    'Amanda':      [{ rot:'🎛️ Painel de controle',   acao:"irParaPainelDeControle()" },
+    'Amanda':      [{ rot:'✅ Aprovar',                acao:"irParaAprovacoes()", contador:'aprovar' },
+                    { rot:'🎛️ Painel de controle',   acao:"irParaPainelDeControle()" },
                     { rot:'🎬 Distribuir vídeos',     acao:"irParaDistribuirVideos()", contador:'distribuir' },
                     { rot:'📸 Aprovar e enviar stories',  acao:"irParaStories('aprovar')" }]
     /* 28/07/2026 — o Chris não tem atalho: o painel de gerência dele já
@@ -11725,30 +11732,10 @@
     irPara('gerencia', document.getElementById('navitemGerencia'));
     setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('agora'); }, 350);
   };
-  /* Reaproveitam as funções que já aprovam e pedem ajuste no hub — não
-     existe segunda implementação. Só o redesenho é desta tela. */
-  window.aprovarDaqui = async function(id){
-    await window.aprovarVideo(id);
-    limparCacheIndicadores();
-    renderDemandasAguardandoDetalhe();
-  };
-  window.pedirAjusteDaqui = async function(id){
-    const motivo = prompt('O que precisa ajustar? (o editor lê exatamente este texto)');
-    if(motivo === null) return;
-    if(!String(motivo).trim()){ mostrarToast('Escreve o que precisa mudar.', 'erro'); return; }
-    try{
-      await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: String(motivo).trim(),
-        correcaoSolicitadaEm: new Date().toISOString(), enviadoParaCliente: false });
-      registrarHistorico('videos_producao', id, 'Pedido de ajuste enviado pro editor', String(motivo).trim());
-      const vs = await getDoc(doc(db,'videos_producao', id));
-      if(vs.exists()) dispararEmailIndividual(vs.data().editorAtribuido, 'video_correcao',
-        { titulo: vs.data().titulo, itemId: id, colecao:'videos_producao' }).catch(()=>{});
-      mostrarToast('Devolvido pro editor com o motivo.');
-      limparCacheIndicadores();
-      renderDemandasAguardandoDetalhe();
-    }catch(e){ mostrarToast('Não consegui: ' + e.message, 'erro'); }
-  };
-
+  /* 01/08/2026 — `aprovarDaqui` e `pedirAjusteDaqui` existiam só pra
+     minha lista simplificada, que foi removida. Sumiram junto: a tela
+     que ficou usa `aprovarVideo` e `abrirFormularioAjuste`, que são as
+     de sempre. Menos código, menos chance de divergir. */
   window.irParaHubVideos = function(){
     irPara('gerencia', document.getElementById('navitemGerencia'));
     setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('videosHub'); }, 350);
@@ -11922,7 +11909,8 @@
       /* O número entra no próprio botão: ela vê quantos estão esperando
          antes de clicar. Zero = fica cinza e não chama atenção à toa. */
       if(a.contador){
-        const conta = a.contador === 'distribuir' ? contarVideosSemEditor()
+        const conta = a.contador === 'aprovar' ? calcularIndicadores().then(i => (i.porChave.aprovar||{}).num||0)
+                    : a.contador === 'distribuir' ? contarVideosSemEditor()
                     : a.contador === 'referencias' ? contarClientesSemReferencia()
                     : a.contador === 'refsHoje' ? contarRefsDeHoje()
                     : contarFila(a.contador);
@@ -20202,7 +20190,8 @@
       <h2>🎬 Vídeos</h2>
       <div class="desc">O mesmo vídeo em três momentos: distribuir pro editor, aprovar, e o que foi descartado.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-        ${btn('videos','📦 Distribuição')}${btn('aprovarVideos','✅ Aprovar')}${btn('lixeiraVideos','🗑️ Lixeira')}
+        ${btn('videos','📦 Distribuição')}${btn('lixeiraVideos','🗑️ Lixeira')}
+        <button class="btn secondary" style="width:auto;padding:8px 16px;" onclick="irParaAprovacoes()">✅ Aprovar → central de aprovações</button>
       </div>
     </div>`;
     /* IMPORTANTE: as três telas NÃO são movidas de lugar no DOM — só têm a
@@ -21480,38 +21469,26 @@ Observações do cliente: ${l.observacoes||'—'}`;
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     await carregarTodasDemandas();
 
-    /* ═══ OS VÍDEOS PRA APROVAR ENTRARAM AQUI — 01/08/2026 ═════════════
-       O Chris: "não encontrei onde aparece quais vídeos eu tenho que
-       aprovar". E depois: "agora achei, mas está muito abaixo".
+    /* ═══ UMA TELA SÓ PRA APROVAR — 01/08/2026 ════════════════════════
+       Na rodada passada eu escrevi aqui uma lista simplificada de vídeos
+       pra aprovar. Era uma SEGUNDA implementação de uma tela que já
+       existia e é melhor que a minha: `renderAprovacaoVideos` tem
+       aprovação em lote, formulário de ajuste com print, "aguardando
+       cliente" e histórico.
 
-       Estavam no hub de vídeos, três cliques longe, enquanto as demandas
-       pra aprovar ficavam em outra tela. Duas coisas que respondem à
-       mesma pergunta — "o que trava esperando MIM?" — em dois lugares.
+       O Chris viu e disse: "isso já existe em outra etapa do site,
+       teríamos uma duplicidade". Ele estava certo — e eu tinha acabado
+       de criar o defeito que passei a semana consertando.
 
-       Agora esta tela responde a pergunta inteira: vídeo primeiro (é o
-       que segura o cliente), demanda depois. */
-    let blocoVideos = '';
-    try{
-      const vs = await getDocs(collection(db,'videos_producao'));
-      const pendentes = [];
-      vs.forEach(d => { const v=d.data(); if(v.excluido) return;
-        if(v.status === 'aguardando_aprovacao') pendentes.push({id:d.id, ...v}); });
-      if(pendentes.length){
-        blocoVideos = `<div class="card" style="border:2px solid var(--yellow);">
-          <h2>🎬 Vídeos esperando seu ok (${pendentes.length})</h2>
-          <div class="desc">O editor entregou e o vídeo para aqui até você aprovar. Enquanto isso o cliente não recebe.</div>
-          ${pendentes.map(v => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow);">
-            <div class="top"><div class="nome">${esc(v.titulo||'')}</div><span class="selo pendente">${esc(v.editorAtribuido||'?')}</span></div>
-            <div class="meta" style="margin-top:4px;">${esc(v.clienteNome||'')}${v.enviadoEm ? ' · entregue ' + new Date(v.enviadoEm).toLocaleString('pt-BR') : ''}</div>
-            ${v.linkFinalizado ? '<a href="'+esc(v.linkFinalizado)+'" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:9px;border:2px solid var(--yellow);">▶ Assistir o vídeo ↗</a>' : '<div class="meta" style="color:var(--red);margin-top:6px;">⚠️ sem link</div>'}
-            <div class="btnrow" style="margin-top:9px;">
-              <button class="btn red" style="font-size:11.5px;" onclick="pedirAjusteDaqui('${v.id}')">↩️ Pedir ajuste</button>
-              <button class="btn green" style="font-size:11.5px;" onclick="aprovarDaqui('${v.id}')">✅ Aprovar</button>
-            </div>
-          </div>`).join('')}
-        </div>`;
-      }
-    }catch(e){ console.error('Falha ao listar vídeos pra aprovar:', e); }
+       Removi a minha. A central de aprovações passa a DESENHAR a tela
+       que já existe, no espaço dela, seguida das demandas. Uma
+       implementação, um lugar. */
+    const cabecalho = `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>✅ Tudo que espera você</h2>
+      <div class="desc">Vídeo que o editor entregou e demanda que alguém marcou como feita. <b>Este é o único lugar</b> — o que você aprovar aqui sai daqui e anda na esteira.</div>
+    </div>
+    <div id="centralAprovVideos"></div>`;
+
 
     /* ===== AS 20 ÓRFÃS — 30/07/2026 ==================================
        Conferi no banco: as 20 esperando aprovação são todas
@@ -21553,7 +21530,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     if(!lista.length){
       html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nada esperando você agora.</div></div>';
-      cont.innerHTML = blocoVideos + html; return;
+      cont.innerHTML = cabecalho + html;
+      renderAprovacaoVideos('centralAprovVideos');
+      return;
     }
 
     const porPessoa = {};
@@ -21576,7 +21555,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
           </div>`).join('')}</div>
       </div>`;
     });
-    cont.innerHTML = blocoVideos + html;
+    cont.innerHTML = cabecalho + html;
+    /* A tela de vídeos é desenhada DEPOIS, no espaço reservado — é
+       assíncrona e não pode segurar o resto da página. */
+    renderAprovacaoVideos('centralAprovVideos');
   }
 
   async function renderMinhasDemandasEnviadas(){

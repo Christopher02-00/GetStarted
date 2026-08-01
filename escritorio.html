@@ -1350,8 +1350,8 @@
          Aqui é uma esteira só, da gravação à publicação. Cada vídeo é uma
          linha; clicar abre a linha do tempo completa dele. -->
     <div class="view" id="view-producao">
-      <h1>🎬 <span class="y">Produção</span></h1>
-      <div class="sub">Todo vídeo, da gravação à publicação, numa esteira só. Clica na etapa pra filtrar, clica no vídeo pra ver a linha do tempo dele.</div>
+      <h1>🎬 <span class="y">Esteira de vídeos</span></h1>
+      <div class="sub">Onde cada vídeo está agora, do momento em que foi gravado até ir ao ar. Clica na etapa pra filtrar; clica no vídeo pra ver tudo que já aconteceu com ele.</div>
       <div class="card">
         <input type="text" id="buscaProducao" placeholder="🔍 Buscar por vídeo ou cliente..." oninput="renderProducao(true)" style="width:100%;background:var(--deep);border:1px solid var(--line);border-radius:9px;color:#fff;padding:12px 14px;font-size:14px;">
       </div>
@@ -4760,7 +4760,10 @@
     const data = document.getElementById('agData').value || new Date().toISOString().slice(0,10);
     const snap = await getDocs(collection(db,'agendamentos'));
     let qtd = 0;
-    snap.forEach(d => { const a = d.data(); if(a.data === data && a.status !== 'cancelado') qtd++; });
+    /* 01/08/2026 — gravação excluída não pode contar pra decidir se o
+       dia está cheio, senão o sistema pede aprovação do Chris por causa
+       de gravação que não existe mais. */
+    snap.forEach(d => { const a = d.data(); if(a.excluido) return; if(a.data === data && a.status !== 'cancelado') qtd++; });
     const box = document.getElementById('avisoQtdHoje');
     if(qtd >= 2){
       box.innerHTML = `<div class="avisoBanner" style="border-color:var(--red);"><div class="icone">⚠️</div><div class="texto">Já tem ${qtd} gravação(ões) nesse dia<span>Essa vai precisar da aprovação do Chris antes de confirmar.</span></div></div>`;
@@ -4859,7 +4862,7 @@
 
     const snap = await getDocs(collection(db,'agendamentos'));
     let qtdNoDia = 0;
-    snap.forEach(d => { const a = d.data(); if(a.data === data && a.status !== 'cancelado') qtdNoDia++; });
+    snap.forEach(d => { const a = d.data(); if(a.excluido) return; if(a.data === data && a.status !== 'cancelado') qtdNoDia++; });
 
     /* ===== QUANDO O CHRIS PRECISA APROVAR — 28/07/2026 =================
        Regra confirmada por ele: gravação para CLIENTE NOVO passa por
@@ -6052,6 +6055,7 @@
     const pendentes = []; const agendadasParaConfirmar = [];
     postSnap.forEach(d => {
       const p = d.data();
+      if(p.excluido) return;
       if(p.status==='aguardando_agendamento') pendentes.push({id:d.id, ...p});
       if(p.status==='agendado') agendadasParaConfirmar.push({id:d.id, ...p});
     });
@@ -11982,11 +11986,41 @@
        simplesmente nao era verdade. Agora é. */
     const gVendas = document.getElementById('navgroupVendas');
     if(gVendas) gVendas.style.display = (usuarioAtual === 'Chris') ? 'block' : 'none';
+    /* ===== A ABA "EQUIPE" SAIU — 01/08/2026 ==========================
+       O Chris: "não consegui ver praticidade nessa aba, esses dados já
+       estão em vários outros lugares, principalmente dentro do painel de
+       gerência".
+       Conferi e ele tem razão: tudo que ela mostra (carga por pessoa,
+       atrasos, presença) já existe em Gerência → Ver ambiente de cada um
+       e no bloco "Travado agora — por pessoa" do Agora.
+       A TELA continua no arquivo e continua funcionando por atalho —
+       só sai do menu. Se fizer falta, é uma linha pra voltar. */
     const itEquipe = document.getElementById('navitemEquipe');
-    if(itEquipe) itEquipe.style.display = ehGerencia ? 'flex' : 'none';
-    /* Produção também é da Cecília: é ela quem toca a esteira. */
+    if(itEquipe) itEquipe.style.display = 'none';
+
+    /* ===== "PRODUÇÃO" MUDOU DE DESTINO — 01/08/2026 ==================
+       O Chris: "essa aba produção poderia estar em destaque na minha aba
+       lateral — estou falando da que fica dentro do painel de gerência,
+       onde tenho o controle das produções de hoje dos editores —
+       substituindo a que temos lá atualmente".
+
+       Então o item continua no menu dele e da Amanda, mas passa a abrir
+       o HUB DE VÍDEOS da gerência: produção de hoje, carga por editor,
+       distribuir, aprovar e lixeira. A tela antiga (esteira vídeo a
+       vídeo) continua existindo e fica com a Cecília, que é quem
+       acompanha item por item. */
     const itProd = document.getElementById('navitemProducao');
-    if(itProd) itProd.style.display = (ehGerencia || usuarioAtual === 'Cecília') ? 'flex' : 'none';
+    if(itProd){
+      itProd.style.display = 'flex';
+      if(ehGerencia){
+        itProd.setAttribute('onclick', 'irParaHubVideos()');
+        itProd.innerHTML = '<span class="ico">🎬</span> Produção de hoje';
+      } else {
+        itProd.setAttribute('onclick', "irPara('producao', this)");
+        itProd.innerHTML = '<span class="ico">🎬</span> Esteira de vídeos';
+        if(usuarioAtual !== 'Cecília') itProd.style.display = 'none';
+      }
+    }
   }
 
   // FRENTE C1 (correcao de teste ao vivo) — aplica o estado "sem login" ja
@@ -18273,8 +18307,14 @@
          Ele estava certo.
          O critério certo é o mesmo que a automação já usava: só é
          fantasma o que continua 'agendado' depois da data passar. */
+      /* E o segundo furo, achado depois: este laço não pulava as
+         EXCLUÍDAS. As duas que sobraram no painel do Chris (Vital Seg
+         31/07 e Mochi 28/07) tinham `excluido: true` — foram apagadas e
+         continuavam sendo cobradas. */
+      if(a.excluido) return;
       if(a.data < hojeStr && a.status === 'agendado') riscos.push({ txt:'Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''), cor:'var(--red)' }); });
     postSnap.forEach(d => { const p=d.data();
+      if(p.excluido) return;
       if(p.status === 'agendado' && p.dataAgendada && p.dataAgendada < hojeStr) riscos.push({ txt:'Postagem de ' + formatarDataBR(p.dataAgendada) + ' sem confirmação — ' + (p.clienteNome||''), cor:'var(--yellow2)' }); });
     videos.filter(v => (v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status))
       .forEach(v => riscos.push({ txt:'Vídeo escalado nível ' + v.nivelEscalonamento + ' — ' + (v.clienteNome||'') + ': ' + (v.titulo||''), cor:'var(--red)' }));
@@ -20067,7 +20107,7 @@
      escondido dentro de "Vídeos em Edição", misturado com o resto. Agora
      abre no topo do hub, que é onde ele já entra pra falar de vídeo. */
   window.htmlDiaDosVideos = async function(){
-    const hojeStr = new Date().toISOString().slice(0,10);
+    const hojeStr = hojeLocal();
     const snap = await getDocs(collection(db,'videos_producao'));
     const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
 
@@ -20102,6 +20142,32 @@
     });
     const maxFila = Math.max(...Object.values(porEditor).map(x=>x.fila), 1);
 
+    /* ===== O DADO QUE O CHRIS PEDIU PRA PRESERVAR — 01/08/2026 =======
+       "a única coisa que eu quero que continue daquela aba são alguns
+       dados que temos nela e não temos nessa que fica dentro do painel
+       de gerência, como esse dado dos vídeos por cada cliente que já foi
+       editado."
+       Aqui está, e ligado ao mês corrente pra ser comparável. */
+    const mesAtual = hojeStr.slice(0,7);
+    const porCliente = {};
+    todos.forEach(v => {
+      const c = v.clienteNome || v.cliente || '—';
+      porCliente[c] = porCliente[c] || { entregues:0, abertos:0 };
+      if(String(v.enviadoEm||'').slice(0,7) === mesAtual || String(v.aprovadoInternoEm||'').slice(0,7) === mesAtual) porCliente[c].entregues++;
+      if(['aguardando_edicao','correcao','aguardando_aprovacao'].includes(v.status)) porCliente[c].abertos++;
+    });
+    const clientesOrdenados = Object.entries(porCliente)
+      .filter(([,x]) => x.entregues || x.abertos)
+      .sort((a,b) => (b[1].entregues+b[1].abertos) - (a[1].entregues+a[1].abertos));
+    const blocoClientes = clientesOrdenados.length ? `
+      <div class="desc" style="margin:16px 0 8px;"><b>Vídeos por cliente</b> — entregues neste mês e o que ainda está em produção</div>
+      ${clientesOrdenados.map(([nome,x]) => `<div class="item" style="padding:9px 12px;margin-bottom:6px;">
+        <div class="top"><div class="nome" style="font-size:12.5px;">${esc(nome)}</div>
+          <div class="meta" style="font-size:11.5px;">
+            <b style="color:var(--green);">${x.entregues}</b> entregue(s)${x.abertos ? ' · <b style="color:var(--yellow2);">'+x.abertos+'</b> em produção' : ''}
+          </div></div>
+      </div>`).join('')}` : '';
+
     return `<div class="card metaSec" style="border-color:${humor.cor};">
       <div class="metaSecTit">📹 Produção de hoje — ${formatarDataBR(hojeStr)}</div>
       <div class="desc" style="margin-bottom:10px;">${humor.txt}${nota!==null?' · '+nota+'% das entregas de hoje passaram sem voltar':''}</div>
@@ -20112,7 +20178,8 @@
         <div class="resumoCard ${atrasados.length?'red':'green'}"><div class="num">${atrasados.length}</div><div class="lbl">atrasados</div></div>
         <div class="resumoCard"><div class="num" style="font-size:16px;">${aguardando.length}</div><div class="lbl">esperando aprovação</div></div>
       </div>
-      <div class="desc" style="margin-bottom:8px;">Onde a fila está parada agora</div>
+      ${blocoClientes}
+      <div class="desc" style="margin:16px 0 8px;">Onde a fila está parada agora</div>
       ${[['Em edição', emEdicao.length, 'var(--yellow)'],['Esperando sua aprovação', aguardando.length, 'var(--yellow2)'],['Em correção', correcao.length, 'var(--red)']]
         .map(([n,v,c]) => barraFin(n + ' — vídeo(s)', v, Math.max(emEdicao.length, aguardando.length, correcao.length, 1), c, false)).join('')}
       <div class="desc" style="margin:14px 0 8px;">Carga por editor</div>

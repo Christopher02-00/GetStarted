@@ -537,7 +537,7 @@
            Regra que passa a valer: UM badge, UM destino. Badge que não
            leva onde se resolve o que ele conta é proibido. -->
       <div class="navitem" id="navMinhasDemandasAtribuidas" onclick="irPara('minhasDemandasAtribuidas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Demandas<span class="navbadge" id="badgeMinhasDemandasAtribuidas" style="display:none;">0</span></div>
-      <div class="navitem" id="navAprovacoes" onclick="irParaAprovacoes()" style="display:none;"><span class="ico">✅</span> Pra você aprovar<span class="navbadge" id="badgeAprovar" style="display:none;background:var(--yellow);color:var(--graphite);">0</span></div>
+      <div class="navitem" id="navAprovacoes" onclick="irParaAprovacoes()" style="display:none;"><span class="ico">✅</span> Vídeos e demandas pra aprovar<span class="navbadge" id="badgeAprovar" style="display:none;background:var(--yellow);color:var(--graphite);">0</span></div>
       <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico">🚨</span> Atrasadas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
       <div class="navitem" id="navChecklist" onclick="irPara('checklist', this)"><span class="ico"><svg><use href="#i-clipboard"/></svg></span> Meu Checklist</div>
@@ -10540,6 +10540,29 @@
      prioridade hoje, ou uma atrasada que ja foi acordada com o cliente e
      nao e mais urgente. Agora a gerencia pode fixar a urgencia na mao —
      e enquanto estiver fixada, o prazo nao manda mais nela. */
+  /* ═══ O FUSO HORÁRIO — 01/08/2026 ═══════════════════════════════════
+     O Chris viu "1 vídeo entregue hoje" às 4h da manhã e estranhou. Fui
+     conferir: o vídeo foi enviado às 00:32 UTC — que é 21:32 do dia
+     ANTERIOR em Curitiba.
+
+     O site inteiro calcula "hoje" com `toISOString()`, que é UTC. São
+     121 lugares. Das 21h à meia-noite, tudo que a equipe faz é contado
+     como se fosse do dia seguinte. Todo dia. Faz meses.
+
+     Isso explica mais do que esse caso: entrega noturna caindo no dia
+     errado, "referências de hoje" zerando às 21h, prazo virando no
+     horário errado.
+
+     `hojeLocal()` devolve a data no fuso de Curitiba. Vai substituindo
+     `toISOString().slice(0,10)` onde a data é lida como "o dia de hoje
+     para a operação" — que é o que importa pra vocês. */
+  function dataLocal(d){
+    const dt = d ? new Date(d) : new Date();
+    return new Date(dt.getTime() - dt.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  }
+  function hojeLocal(){ return dataLocal(); }
+  window.hojeLocal = hojeLocal; window.dataLocal = dataLocal;
+
   function calcularUrgencia(demanda){
     if(demanda.status !== 'pendente') return 'normal';
     if(estaAusente(demanda.destinatario)) return 'normal';
@@ -10563,7 +10586,7 @@
 
        A hora não some: continua ordenando a fila e aparecendo escrita
        ("vence hoje às 12:00"). Ela deixa de decidir a COR. */
-    const hojeStr = new Date().toISOString().slice(0,10);
+    const hojeStr = hojeLocal();
     if(!demanda.prazoData) return 'normal';
     if (demanda.prazoData < hojeStr) return 'atrasado';
     if (demanda.prazoData === hojeStr) return 'hoje';
@@ -10596,9 +10619,9 @@
   function videoAtrasado(v){
     if(!v || v.excluido) return false;
     if(!['aguardando_edicao','correcao'].includes(v.status)) return false;
-    const prazo = v.prazoEntrega || (typeof calcularPrazoEdicaoVideo === 'function' ? (()=>{ const d=calcularPrazoEdicaoVideo(v); return d ? d.toISOString().slice(0,10) : ''; })() : '');
+    const prazo = v.prazoEntrega || (typeof calcularPrazoEdicaoVideo === 'function' ? (()=>{ const d=calcularPrazoEdicaoVideo(v); return d ? dataLocal(d) : ''; })() : '');
     if(!prazo) return false;
-    return prazo < new Date().toISOString().slice(0,10);
+    return prazo < hojeLocal();
   }
   window.videoAtrasado = videoAtrasado;
 
@@ -10650,7 +10673,7 @@
     if(!forcar && __cacheIndicadores && (Date.now() - __cacheIndicadoresEm) < TTL_INDICADORES){
       return __cacheIndicadores;
     }
-    const hoje = new Date().toISOString().slice(0,10);
+    const hoje = hojeLocal();
     const mes  = hoje.slice(0,7);
     const ehGestao = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
 
@@ -10687,9 +10710,10 @@
     const lista = [];
 
     // ---------- O QUE TRAVA AGORA ----------
-    lista.push(I('aprovar', 'Pra você aprovar', aprovarDem.length,
-      aprovarDem.length ? 'alto' : 'ok', "irParaAprovacoes()",
-      'Demandas que alguém marcou como feitas e esperam seu ok.'));
+    const vidAprovar = vids.filter(v => v.status === 'aguardando_aprovacao').length;
+    lista.push(I('aprovar', 'Pra você aprovar', aprovarDem.length + vidAprovar,
+      (aprovarDem.length + vidAprovar) ? 'alto' : 'ok', "irParaAprovacoes()",
+      'Vídeos entregues pelos editores e demandas marcadas como feitas — tudo que espera seu ok.'));
 
     const atrasadas = (ehGestao ? abertas : minhas).filter(d => calcularUrgencia(d) === 'atrasado');
     lista.push(I('atrasadas', ehGestao ? 'Atrasadas na equipe' : 'Suas atrasadas', atrasadas.length,
@@ -10717,10 +10741,17 @@
     const agendadas  = posts.filter(p => p.status === 'agendado');
 
     lista.push(I('semEditor', 'Sem editor', semEditor.length, semEditor.length?'alto':'ok', "irParaDistribuirVideos()", 'Vídeo pronto pra editar sem ninguém designado.'));
-    lista.push(I('emEdicao', 'Em edição', emEdicao.length, 'info', "irParaAtalho('videos')", 'Com o editor agora.'));
-    lista.push(I('emCorrecao', 'Em correção', emCorrecao.length, emCorrecao.length?'medio':'ok', "irParaAtalho('videos')", 'Voltou pra ajuste.'));
-    lista.push(I('aguardInterna', 'Esperando aprovação interna', aguardInterna.length, aguardInterna.length?'medio':'ok', "irParaAtalho('gerencia')", 'O editor entregou e espera o ok de vocês.'));
-    lista.push(I('aguardCliente', 'Esperando o cliente', aguardCliente.length, 'info', "irParaAtalho('videos')", 'Aprovado internamente, na mão do cliente.'));
+    /* ===== OS DESTINOS ESTAVAM GENÉRICOS — 01/08/2026 ===============
+       O Chris: "alguns redirecionam pra páginas nada a ver". Ele estava
+       certo. `irParaAtalho('videos')` leva à tela de LANÇAR gravação, do
+       filmmaker — não onde se vê vídeo em edição. E `irParaAtalho
+       ('gerencia')` passou a cair no próprio Agora, ou seja: clicar num
+       cartão do Agora levava de volta ao Agora.
+       Agora cada um vai onde a coisa realmente se resolve. */
+    lista.push(I('emEdicao', 'Em edição', emEdicao.length, 'info', "irParaHubVideos()", 'Com o editor agora.'));
+    lista.push(I('emCorrecao', 'Em correção', emCorrecao.length, emCorrecao.length?'medio':'ok', "irParaHubVideos()", 'Voltou pra ajuste.'));
+    lista.push(I('aguardInterna', 'Esperando aprovação interna', aguardInterna.length, aguardInterna.length?'medio':'ok', "irParaAprovarVideos()", 'O editor entregou e espera o ok de vocês.'));
+    lista.push(I('aguardCliente', 'Esperando o cliente', aguardCliente.length, 'info', "irParaHubVideos()", 'Aprovado internamente, na mão do cliente.'));
     lista.push(I('semLegenda', 'Esperando legenda', semLegenda.length, semLegenda.length?'medio':'ok', "irParaFila('legenda')", 'Cliente aprovou, falta a legenda.'));
     lista.push(I('semAgendar', 'Esperando agendamento', semAgendar.length, semAgendar.length?'medio':'ok', "irParaFila('agendar')", 'Legenda pronta, falta marcar no Instagram.'));
     lista.push(I('agendadas', 'Agendadas', agendadas.length, 'info', "irParaAtalho('postagens')", 'Na fila do Instagram.'));
@@ -10729,12 +10760,13 @@
     /* `enviadoEm` é o campo que existe de verdade — 134 vídeos têm. O
        painel antigo lia `entregueEm`, que nunca foi gravado em nenhum
        documento, e por isso mostrava 0 todo dia. */
-    const doDia = x => String(x||'').slice(0,10) === hoje;
+    /* Compara pelo dia LOCAL, não pelo carimbo UTC gravado. */
+    const doDia = x => x ? dataLocal(x) === hoje : false;
     const entregHoje = vids.filter(v => doDia(v.enviadoEm));
     const aprovHoje  = vids.filter(v => doDia(v.aprovadoInternoEm) || doDia(v.aprovadoEm));
     const postHoje   = posts.filter(p => p.dataAgendada === hoje);
-    lista.push(I('entregHoje', 'Vídeos entregues hoje', entregHoje.length, entregHoje.length?'bom':'info', "irParaAtalho('gerencia')", 'Editor mandou pra aprovação hoje.'));
-    lista.push(I('aprovHoje', 'Aprovados hoje', aprovHoje.length, aprovHoje.length?'bom':'info', "irParaAtalho('gerencia')", 'Passaram pela aprovação interna hoje.'));
+    lista.push(I('entregHoje', 'Vídeos entregues hoje', entregHoje.length, entregHoje.length?'bom':'info', "irParaHubVideos()", 'Editor mandou pra aprovação hoje.'));
+    lista.push(I('aprovHoje', 'Aprovados hoje', aprovHoje.length, aprovHoje.length?'bom':'info', "irParaHubVideos()", 'Passaram pela aprovação interna hoje.'));
     lista.push(I('postHoje', 'Postagens de hoje', postHoje.length, 'info', "irParaAtalho('postagens')", 'Programadas pra ir ao ar hoje.'));
 
     // ---------- CONTEÚDO ----------
@@ -10762,7 +10794,7 @@
       });
     }catch(e){ console.error('Indicadores: calendários', e); }
     lista.push(I('calLiberados', 'Calendários no ar', liberados, 'bom', "irParaCalendariosLiberados()", 'O cliente já está vendo.'));
-    lista.push(I('calRevisao', 'Esperando sua revisão', espRevisao, espRevisao?'alto':'ok', "irParaAtalho('gerencia')", 'A Gabi enviou, falta você aprovar.'));
+    lista.push(I('calRevisao', 'Esperando sua revisão', espRevisao, espRevisao?'alto':'ok', "irParaRevisaoCalendarios()", 'A Gabi enviou, falta você aprovar.'));
     lista.push(I('calRepresados', 'Guardados pro dia 15', represados, 'info', "irParaEnvioCalendarios()", 'Aprovados, esperando o disparo.'));
     lista.push(I('semCal', 'Sem calendário', semCal, semCal?'alto':'ok', "irParaAtalho('calendarios')", 'Cliente sem nenhum conteúdo montado.'));
 
@@ -10809,14 +10841,27 @@
   window.htmlIndicadores = function(ind, chaves, titulo, dica){
     const itens = chaves.map(k => ind.porChave[k]).filter(Boolean);
     if(!itens.length) return '';
+    /* ===== O CINZA MORTO SAIU — 01/08/2026 ==========================
+       O Chris: "botões retangulares com números em cinza... parece que
+       são dados mortos, retire tudo que estiver nesse padrão".
+       Ele tem razão: eu usei cinza pra "neutro", e cinza numa tela
+       escura lê como desligado. Agora:
+         alto  → vermelho (aja hoje)
+         medio → amarelo  (fila crescendo)
+         bom   → verde    (resultado)
+         ok    → verde    (está zerado e isso é bom)
+         info  → amarelo claro, número branco — vivo, sem alarme
+       Arquivo deixou de ser cartão: virou uma linha de texto no fim. */
     const cor = g => g==='alto' ? 'var(--red)' : g==='medio' ? 'var(--yellow2)' :
-                     g==='bom' ? 'var(--green)' : g==='arquivo' ? 'var(--muted)' : 'var(--line)';
+                     (g==='bom'||g==='ok') ? 'var(--green)' : 'var(--yellow)';
+    const corNum = g => g==='alto' ? 'var(--red)' : g==='medio' ? 'var(--yellow2)' :
+                        (g==='bom'||g==='ok') ? 'var(--green)' : 'var(--fg)';
     return `<div class="metaSecTit" style="margin-top:16px;">${titulo}</div>
       ${dica ? '<div class="desc" style="margin:-2px 0 8px;">'+dica+'</div>' : ''}
       <div class="painelResumo">
         ${itens.map(x => `<div class="resumoCard clicavel" onclick="${x.acao}" title="${esc(x.dica||'')}"
-            style="cursor:pointer;border-color:${cor(x.grav)};${x.grav==='arquivo'?'opacity:.55;':''}">
-          <div class="num" style="color:${x.grav==='ok'?'var(--green)':cor(x.grav)};">${x.dinheiro ? brl(x.num) : x.num}</div>
+            style="cursor:pointer;border-color:${cor(x.grav)};">
+          <div class="num" style="color:${corNum(x.grav)};">${x.dinheiro ? brl(x.num) : x.num}</div>
           <div class="lbl">${esc(x.rot)} →</div>
         </div>`).join('')}
       </div>`;
@@ -11675,6 +11720,50 @@
   window.irParaPainelDeControle = function(){
     irPara('gerencia', document.getElementById('navitemGerencia'));
     setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('agora'); }, 350);
+  };
+  /* Reaproveitam as funções que já aprovam e pedem ajuste no hub — não
+     existe segunda implementação. Só o redesenho é desta tela. */
+  window.aprovarDaqui = async function(id){
+    await window.aprovarVideo(id);
+    limparCacheIndicadores();
+    renderDemandasAguardandoDetalhe();
+  };
+  window.pedirAjusteDaqui = async function(id){
+    const motivo = prompt('O que precisa ajustar? (o editor lê exatamente este texto)');
+    if(motivo === null) return;
+    if(!String(motivo).trim()){ mostrarToast('Escreve o que precisa mudar.', 'erro'); return; }
+    try{
+      await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: String(motivo).trim(),
+        correcaoSolicitadaEm: new Date().toISOString(), enviadoParaCliente: false });
+      registrarHistorico('videos_producao', id, 'Pedido de ajuste enviado pro editor', String(motivo).trim());
+      const vs = await getDoc(doc(db,'videos_producao', id));
+      if(vs.exists()) dispararEmailIndividual(vs.data().editorAtribuido, 'video_correcao',
+        { titulo: vs.data().titulo, itemId: id, colecao:'videos_producao' }).catch(()=>{});
+      mostrarToast('Devolvido pro editor com o motivo.');
+      limparCacheIndicadores();
+      renderDemandasAguardandoDetalhe();
+    }catch(e){ mostrarToast('Não consegui: ' + e.message, 'erro'); }
+  };
+
+  window.irParaHubVideos = function(){
+    irPara('gerencia', document.getElementById('navitemGerencia'));
+    setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('videosHub'); }, 350);
+  };
+  window.irParaAprovarVideos = function(){
+    irPara('gerencia', document.getElementById('navitemGerencia'));
+    setTimeout(()=>{
+      if(window.navegarGerenciaSub) navegarGerenciaSub('videosHub');
+      setTimeout(()=>{ const b=[...document.querySelectorAll('#gerenciaVideosHub .btn, #gerenciaVideosHub .subtab')]
+        .find(x=>/Aprovar/i.test(x.textContent||'')); if(b) b.click(); }, 900);
+    }, 350);
+  };
+  window.irParaRevisaoCalendarios = function(){
+    irPara('gerencia', document.getElementById('navitemGerencia'));
+    setTimeout(()=>{
+      if(window.navegarGerenciaSub) navegarGerenciaSub(usuarioAtual==='Amanda' ? 'amanda' : 'chris');
+      setTimeout(()=>{ const h=[...document.querySelectorAll('h2')].find(x=>/esperando sua revisão/i.test(x.textContent||''));
+        if(h) h.scrollIntoView({behavior:'smooth', block:'center'}); }, 1200);
+    }, 350);
   };
   window.irParaCapsula = function(){
     irPara('gerencia', document.getElementById('navitemGerencia'));
@@ -13458,12 +13547,20 @@
         const daPessoa = d => { const o = (d.origem||'').toLowerCase();
           if(praSiMesma(d)) return o === String(usuarioAtual||'').toLowerCase();
           return usuarioAtual === 'Amanda' ? o === 'amanda' : o !== 'amanda'; };
-        const n = (todasDemandas||[]).filter(d => d.status === 'concluida_aguardando_aprovacao'
+        /* O badge soma demanda + vídeo, porque a tela pra onde ele leva
+           mostra os dois. Número e destino têm que contar a mesma coisa. */
+        const nDem = (todasDemandas||[]).filter(d => d.status === 'concluida_aguardando_aprovacao'
           && (d.destinatario !== usuarioAtual || praSiMesma(d)) && daPessoa(d)).length;
+        const nVid = (cacheVideosProducao||[]).filter(v => !v.excluido && v.status === 'aguardando_aprovacao').length;
+        const n = nDem + nVid;
         if(n){ b.style.display = 'flex'; b.textContent = n; } else b.style.display = 'none';
-        /* O item só existe quando há o que aprovar. Menu sem número é
-           menu que ninguém clica. */
-        if(itemAprov) itemAprov.style.display = n ? 'flex' : 'none';
+        /* ===== O ITEM SUMIU E O CHRIS PROCUROU — 01/08/2026 =========
+           Eu escondia quando não havia nada pra aprovar. Parecia limpo,
+           mas na prática ele abriu o site, viu o item, foi fazer outra
+           coisa, voltou e ele tinha sumido — e ficou procurando.
+           Menu que aparece e some é pior que menu com zero. Fica sempre
+           visível pra quem aprova; o badge é que aparece ou não. */
+        if(itemAprov) itemAprov.style.display = 'flex';
       }
       if(!['Chris','Amanda'].includes(usuarioAtual) && itemAprov) itemAprov.style.display = 'none';
     }
@@ -18123,8 +18220,15 @@
           '🗓️ Calendários', 'Clica em "no ar" pra abrir o calendário de um cliente.') +
         htmlIndicadores(ind, ['gravHoje','prox7','capsula'],
           '📆 Agenda e risco', 'Gravações de hoje, o que vai ao ar na semana, e quem está em risco de sair.') +
-        (usuarioAtual === 'Chris' ? htmlIndicadores(ind, ['extras'], '💰 Dinheiro', 'O que a agência deve à equipe neste mês.') : '') +
-        htmlIndicadores(ind, ['lixeira'], '🗄️ Arquivo', 'Não é pendência — é histórico.') +
+        /* Dinheiro só aparece quando há o que pagar. Zerado, o bloco
+           inteiro some — o Chris pediu, e um cartão em zero permanente
+           só ocupa espaço. */
+        ((usuarioAtual === 'Chris' && (ind.porChave.extras||{}).num)
+          ? htmlIndicadores(ind, ['extras'], '💰 Dinheiro', 'O que a agência deve à equipe neste mês.') : '') +
+        /* A lixeira deixou de ser cartão: virou uma linha discreta. */
+        `<div class="meta" style="margin-top:14px;opacity:.6;cursor:pointer;" onclick="irParaLixeiraVideos()">
+           🗄️ ${(ind.porChave.lixeira||{}).num||0} vídeos na lixeira — arquivo, não é pendência →
+         </div>` +
         `</div>`;
     }catch(e){ console.error('Falha no painel de controle:', e); }
 
@@ -18160,7 +18264,16 @@
     // ---- BLOCO 4: risco ----
     const riscos = [];
     agSnap.forEach(d => { const a=d.data();
-      if(a.data < hojeStr && !a.registrado && a.status !== 'cancelado') riscos.push({ txt:'Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''), cor:'var(--red)' }); });
+      /* ===== ESTE BLOCO MENTIA — 01/08/2026 =========================
+         Usava `!a.registrado`. Esse campo NUNCA é gravado em lugar
+         nenhum do sistema — conferi. Resultado: TODA gravação passada
+         aparecia como "sem registro", inclusive as 16 que estavam com
+         `status: realizado` e 3, 5, 7 vídeos captados.
+         O Chris viu e disse: "todas as gravações tiveram registro sim".
+         Ele estava certo.
+         O critério certo é o mesmo que a automação já usava: só é
+         fantasma o que continua 'agendado' depois da data passar. */
+      if(a.data < hojeStr && a.status === 'agendado') riscos.push({ txt:'Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''), cor:'var(--red)' }); });
     postSnap.forEach(d => { const p=d.data();
       if(p.status === 'agendado' && p.dataAgendada && p.dataAgendada < hojeStr) riscos.push({ txt:'Postagem de ' + formatarDataBR(p.dataAgendada) + ' sem confirmação — ' + (p.clienteNome||''), cor:'var(--yellow2)' }); });
     videos.filter(v => (v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status))
@@ -21300,6 +21413,39 @@ Observações do cliente: ${l.observacoes||'—'}`;
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     await carregarTodasDemandas();
 
+    /* ═══ OS VÍDEOS PRA APROVAR ENTRARAM AQUI — 01/08/2026 ═════════════
+       O Chris: "não encontrei onde aparece quais vídeos eu tenho que
+       aprovar". E depois: "agora achei, mas está muito abaixo".
+
+       Estavam no hub de vídeos, três cliques longe, enquanto as demandas
+       pra aprovar ficavam em outra tela. Duas coisas que respondem à
+       mesma pergunta — "o que trava esperando MIM?" — em dois lugares.
+
+       Agora esta tela responde a pergunta inteira: vídeo primeiro (é o
+       que segura o cliente), demanda depois. */
+    let blocoVideos = '';
+    try{
+      const vs = await getDocs(collection(db,'videos_producao'));
+      const pendentes = [];
+      vs.forEach(d => { const v=d.data(); if(v.excluido) return;
+        if(v.status === 'aguardando_aprovacao') pendentes.push({id:d.id, ...v}); });
+      if(pendentes.length){
+        blocoVideos = `<div class="card" style="border:2px solid var(--yellow);">
+          <h2>🎬 Vídeos esperando seu ok (${pendentes.length})</h2>
+          <div class="desc">O editor entregou e o vídeo para aqui até você aprovar. Enquanto isso o cliente não recebe.</div>
+          ${pendentes.map(v => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow);">
+            <div class="top"><div class="nome">${esc(v.titulo||'')}</div><span class="selo pendente">${esc(v.editorAtribuido||'?')}</span></div>
+            <div class="meta" style="margin-top:4px;">${esc(v.clienteNome||'')}${v.enviadoEm ? ' · entregue ' + new Date(v.enviadoEm).toLocaleString('pt-BR') : ''}</div>
+            ${v.linkFinalizado ? '<a href="'+esc(v.linkFinalizado)+'" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:9px;border:2px solid var(--yellow);">▶ Assistir o vídeo ↗</a>' : '<div class="meta" style="color:var(--red);margin-top:6px;">⚠️ sem link</div>'}
+            <div class="btnrow" style="margin-top:9px;">
+              <button class="btn red" style="font-size:11.5px;" onclick="pedirAjusteDaqui('${v.id}')">↩️ Pedir ajuste</button>
+              <button class="btn green" style="font-size:11.5px;" onclick="aprovarDaqui('${v.id}')">✅ Aprovar</button>
+            </div>
+          </div>`).join('')}
+        </div>`;
+      }
+    }catch(e){ console.error('Falha ao listar vídeos pra aprovar:', e); }
+
     /* ===== AS 20 ÓRFÃS — 30/07/2026 ==================================
        Conferi no banco: as 20 esperando aprovação são todas
        `destinatario: Amanda, origem: amanda` — ela mandou pra si mesma
@@ -21340,7 +21486,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     if(!lista.length){
       html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nada esperando você agora.</div></div>';
-      cont.innerHTML = html; return;
+      cont.innerHTML = blocoVideos + html; return;
     }
 
     const porPessoa = {};
@@ -21363,7 +21509,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           </div>`).join('')}</div>
       </div>`;
     });
-    cont.innerHTML = html;
+    cont.innerHTML = blocoVideos + html;
   }
 
   async function renderMinhasDemandasEnviadas(){

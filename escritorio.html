@@ -558,7 +558,11 @@
            Dois caminhos pra mesma tela, um do lado do outro. É o defeito
            que passei a semana consertando nos outros e cometi aqui.
            Fica só o botão amarelo. O badge foi junto pra ele. -->
-      <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico"><svg><use href="#i-alert"/></svg></span> Atrasadas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
+      <!-- 01/08/2026 — "Atrasadas" virou "Demandas". A tela deixou de ser
+           só a dívida e passou a ser o painel inteiro. O id continua
+           navAtrasadas e a view continua 'atrasadas' de propósito: são
+           identidade, chamada de vários lugares. Rótulo muda, id não. -->
+      <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico"><svg><use href="#i-activity"/></svg></span> Demandas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
       <div class="navitem" id="navChecklist" onclick="irPara('checklist', this)"><span class="ico"><svg><use href="#i-clipboard"/></svg></span> Meu Checklist</div>
       <div class="navitem" id="navVideos" onclick="irPara('videos', this)"><span class="ico"><svg><use href="#i-video"/></svg></span> Vídeos em Edição</div>
@@ -646,8 +650,8 @@
     </div>
 
     <div class="view" id="view-atrasadas">
-      <h1>🚨 <span class="y">Atrasadas</span></h1>
-      <div class="sub">Tudo que passou do prazo, num lugar só. Resolve daqui.</div>
+      <h1>Painel de <span class="y">Demandas</span></h1>
+      <div class="sub">Tudo que está em aberto, na ordem em que dá pra resolver. O que vence hoje vem primeiro; o que passou do prazo logo depois.</div>
       <div id="atrasadasToggle"></div>
       <div id="atrasadasConteudo"></div>
     </div>
@@ -10353,7 +10357,7 @@
     document.getElementById('view-'+nome).classList.add('active');
     if(nome !== 'gerencia') pararCentralComando();
     if(nome === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas();
-    if(nome === 'atrasadas') renderPainelAtrasos();
+    if(nome === 'atrasadas') renderPainelDemandas();
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
     if(nome === 'checklist') abrirChecklist();
     if(nome === 'videos'){
@@ -13100,7 +13104,7 @@
       fecharModal();
       await carregarTodasDemandas();
       renderMinhasDemandasAtribuidas(); atualizarTodosOsBadges();
-      try{ renderPainelAtrasos(); }catch(e){}
+      try{ renderPainelDemandas(); }catch(e){}
     }catch(e){ mostrarToast('Não consegui mudar o prazo: ' + e.message, 'erro'); }
   };
 
@@ -13986,9 +13990,14 @@
      no painel dela, dispara o e-mail, e copia a mensagem pronta pro
      WhatsApp. Nada é enviado sem ele revisar: o WhatsApp fica na área de
      transferência, ele cola e manda. */
-  window.alertarPessoaSobreItem = async function(id){
-    const pessoa = document.getElementById('alertaPessoa_'+id)?.value;
-    if(!pessoa){ mostrarToast('Escolhe quem alertar.', 'erro'); return; }
+  /* 01/08/2026 — ganhou modo lote. Sem isso o painel de demandas teria
+     que copiar a montagem do aviso, e viraria a segunda implementação.
+     No lote não existe o <select> na tela: o destinatário da própria
+     demanda é quem recebe. */
+  window.alertarPessoaSobreItem = async function(id, emLote){
+    const d0 = todasDemandas.find(x=>x.id===id) || {};
+    const pessoa = emLote ? d0.destinatario : document.getElementById('alertaPessoa_'+id)?.value;
+    if(!pessoa){ if(!emLote) mostrarToast('Escolhe quem alertar.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id) || {};
     const titulo = (d.titulo||'').replace(/^[🔴🎥📅📸🔗💰⚠️📲🤝📋✍️🎬🧩✅]+\s*/,'');
     const prazo = d.prazoData ? formatarDataBR(d.prazoData) + (d.prazoHora ? ' às ' + d.prazoHora : '') : 'sem prazo definido';
@@ -14048,17 +14057,25 @@
     carregarGerencia();
   };
 
-  window.alterarPrazoDireto = async function(id){
+  /* ===== 01/08/2026 — O NÚCLEO DA MUDANÇA DE PRAZO ===================
+     Extraído de `alterarPrazoDireto` porque o painel de demandas passou a
+     mudar prazo em LOTE. Copiar essa lógica pro lote seria criar a segunda
+     implementação da mesma pergunta — o defeito que passei a semana
+     consertando. Agora existe um núcleo, e dois jeitos de chamá-lo:
+     a ficha da demanda (lê os campos da tela) e o lote (recebe os valores).
+     Tudo que importa — histórico, aviso pra pessoa, encerrar pedido
+     pendente — mora aqui e vale pros dois. */
+  window.aplicarNovoPrazo = async function(id, novaData, novaHora, silencioso){
     if(!(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')){
-      mostrarToast('Só a Amanda e o Chris podem alterar prazo.', 'erro'); return;
+      if(!silencioso) mostrarToast('Só a Amanda e o Chris podem alterar prazo.', 'erro');
+      return { ok:false, motivo:'sem permissão' };
     }
     const d = todasDemandas.find(x=>x.id===id);
-    if(!d){ mostrarToast('Demanda não encontrada.', 'erro'); return; }
-    const novaData = document.getElementById('prazoGerData_'+id)?.value;
-    const novaHora = document.getElementById('prazoGerHora_'+id)?.value || '19:00';
-    if(!novaData){ mostrarToast('Escolhe a data.', 'erro'); return; }
+    if(!d) return { ok:false, motivo:'demanda não encontrada' };
+    novaHora = novaHora || '19:00';
+    if(!novaData) return { ok:false, motivo:'sem data' };
     if(novaData === d.prazoData && novaHora === (d.prazoHora||'19:00')){
-      mostrarToast('Esse já é o prazo atual — nada mudou.'); return;
+      return { ok:false, motivo:'já era esse prazo' };
     }
     const antes  = formatarDataBR(d.prazoData) + ' às ' + (d.prazoHora||'19:00');
     const depois = formatarDataBR(novaData) + ' às ' + novaHora;
@@ -14083,7 +14100,20 @@
       })).catch(e => console.error('Falha ao avisar sobre mudança de prazo:', e));
     }
 
-    mostrarToast('Prazo alterado pra ' + depois + ' — ' + (d.destinatario||'') + ' foi avisado.');
+    /* o cache em memória tem que acompanhar, senão o lote seguinte lê o
+       prazo velho e conclui "já era esse prazo" */
+    d.prazoData = novaData; d.prazoHora = novaHora;
+    if(tinhaPedido){ d.prazoSolicitado = ''; d.prazoSolicitadoPor = ''; }
+    return { ok:true, antes, depois, pessoa: d.destinatario||'' };
+  };
+
+  window.alterarPrazoDireto = async function(id){
+    const novaData = document.getElementById('prazoGerData_'+id)?.value;
+    const novaHora = document.getElementById('prazoGerHora_'+id)?.value || '19:00';
+    if(!novaData){ mostrarToast('Escolhe a data.', 'erro'); return; }
+    const r = await window.aplicarNovoPrazo(id, novaData, novaHora);
+    if(!r.ok){ mostrarToast(r.motivo === 'já era esse prazo' ? 'Esse já é o prazo atual — nada mudou.' : r.motivo, 'erro'); return; }
+    mostrarToast('Prazo alterado pra ' + r.depois + ' — ' + r.pessoa + ' foi avisado.');
     fecharModal();
     carregarGerencia();
     // carregarGerencia so re-renderiza o painel da Amanda; se ela estiver em
@@ -14092,6 +14122,8 @@
       const cx = document.getElementById('gerenciaAtrasosEquipe');
       if(cx && cx.offsetParent !== null && window.renderAtrasosEquipe) window.renderAtrasosEquipe();
     }catch(e){}
+    if(document.getElementById('view-atrasadas')?.offsetParent && window.renderPainelDemandas) window.renderPainelDemandas();
+
   };
 
   window.solicitarNovoPrazo = async function(id){
@@ -18224,7 +18256,7 @@
       fecharModal();
       await carregarTodasDemandas();
       atualizarTodosOsBadges();
-      try{ renderPainelAtrasos(); }catch(e){}
+      try{ renderPainelDemandas(); }catch(e){}
       try{ renderGerenciaVideos(); }catch(e){}
     }catch(e){ mostrarToast('Não consegui salvar: ' + e.message, 'erro'); }
   };
@@ -20541,21 +20573,371 @@
     const el = document.getElementById('navAtrasadas');
     window.irPara('atrasadas', el);
   };
+  /* nome novo pro mesmo destino — o antigo fica porque é chamado de fora */
+  window.abrirPainelDemandas = window.abrirPainelAtrasos;
 
   window.__atrasadasSub = null;
   window.setAtrasadasSub = function(qual){
     window.__atrasadasSub = qual;
     document.querySelectorAll('#atrasadasToggle .subtab').forEach(sb => sb.classList.toggle('active', sb.dataset.sub === qual));
-    if(qual === 'equipe') renderEquipeAtrasadas(); else renderMinhasAtrasadas();
+    if(qual === 'equipe') renderDemandasDaEquipe(); else renderDemandasDaPessoa();
   };
 
-  async function renderPainelAtrasos(){
+
+  /* ===================================================================
+     PAINEL DE DEMANDAS GERAIS — 01/08/2026
+     Substitui a tela "Atrasadas", que só mostrava dívida.
+
+     O pedido do Chris tinha duas metades opostas, e é isso que define o
+     desenho:
+
+       • pra equipe — "régua de urgência e gráficos simples, sem
+         intimidar". A tela antiga abria com o vermelho. Quem entra e vê
+         só o que deve conclui que está sempre devendo, e isso desanima
+         em vez de organizar. Aqui a ordem de leitura é: primeiro o que dá
+         pra fazer HOJE, depois o atrasado, e sempre o que já foi
+         entregue na semana. Dívida aparece — não abre a conversa.
+
+       • pra Chris e Amanda — visão completa, clicável, com ação em lote.
+         Eles não precisam ser poupados; precisam resolver 12 de uma vez.
+
+     UMA RÉGUA SÓ. As duas versões leem `faixaDaDemanda`, que por sua vez
+     usa `calcularUrgencia` — a mesma função das outras 53 chamadas. Não
+     existe um segundo conceito de "atrasado" nesta tela.
+
+     O ID INTERNO CONTINUA 'atrasadas'. Sei que ficou torto, e é de
+     propósito: `irPara('atrasadas')` é chamado de vários lugares e é o
+     destino de indicadores. Trocar o identificador pra combinar com o
+     rótulo é exatamente o tipo de renomeação que quebrou os seletores
+     por texto na terça. O rótulo mudou; a identidade não.
+     =================================================================== */
+
+  const FAIXAS_DEMANDA = [
+    { chave:'atrasada', rot:'Atrasada',      cor:'var(--red)',     dica:'o dia do prazo já passou' },
+    { chave:'hoje',     rot:'Vence hoje',    cor:'var(--yellow)',  dica:'tem o dia inteiro' },
+    { chave:'proxima',  rot:'Próximos 3 dias',cor:'var(--yellow2)', dica:'dá pra se organizar' },
+    { chave:'adiante',  rot:'Mais pra frente',cor:'var(--line)',   dica:'sem pressa ainda' },
+    { chave:'semprazo', rot:'Sem prazo',     cor:'var(--muted)',   dica:'ninguém definiu quando' }
+  ];
+
+  function faixaDaDemanda(d){
+    const u = calcularUrgencia(d);
+    if(u === 'atrasado') return 'atrasada';
+    if(u === 'hoje') return 'hoje';
+    if(!d.prazoData) return 'semprazo';
+    const hoje = hojeLocal();
+    const limite = new Date(hoje + 'T00:00:00');
+    limite.setDate(limite.getDate() + 3);
+    return d.prazoData <= dataLocal(limite) ? 'proxima' : 'adiante';
+  }
+
+  function diasDeAtraso(d){
+    if(!d.prazoData) return 0;
+    const a = new Date(hojeLocal() + 'T00:00:00');
+    const b = new Date(d.prazoData + 'T00:00:00');
+    return Math.max(0, Math.round((a - b) / 86400000));
+  }
+
+  /* A régua em barra. Serve pras duas versões — a diferença é só o
+     conjunto de demandas que entra. */
+  function htmlRegua(lista, titulo){
+    const cont = {};
+    FAIXAS_DEMANDA.forEach(f => cont[f.chave] = 0);
+    lista.forEach(d => cont[faixaDaDemanda(d)]++);
+    const total = lista.length || 1;
+    const barras = FAIXAS_DEMANDA.filter(f => cont[f.chave] > 0).map(f =>
+      `<div title="${f.rot}: ${cont[f.chave]} — ${f.dica}" style="width:${(cont[f.chave]/total*100).toFixed(1)}%;background:${f.cor};"></div>`
+    ).join('');
+    const legenda = FAIXAS_DEMANDA.map(f =>
+      `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-right:14px;">
+        <i style="width:9px;height:9px;border-radius:2px;background:${f.cor};display:inline-block;"></i>
+        ${f.rot} <b style="color:var(--offwhite);">${cont[f.chave]}</b>
+      </span>`).join('');
+    return `<div class="card">
+      <h2><svg class="ic"><use href="#i-activity"/></svg>${esc(titulo)}</h2>
+      <div class="desc">${lista.length} demanda(s) em aberto. A barra mostra como estão distribuídas.</div>
+      <div style="display:flex;height:12px;border-radius:6px;overflow:hidden;margin:12px 0 10px;background:var(--deep);">${barras}</div>
+      <div style="line-height:1.9;">${legenda}</div>
+    </div>`;
+  }
+
+  /* Entregas dos últimos 7 dias. É o contrapeso do vermelho: a pessoa vê
+     o que produziu, não só o que deve. */
+  function htmlEntregasDaSemana(todas, quem){
+    const dias = [];
+    for(let i = 6; i >= 0; i--){
+      const d = new Date(hojeLocal() + 'T00:00:00');
+      d.setDate(d.getDate() - i);
+      dias.push(dataLocal(d));
+    }
+    const feitas = todas.filter(d =>
+      (!quem || d.destinatario === quem) &&
+      ['aprovada','concluida_aguardando_aprovacao'].includes(d.status) &&
+      d.concluidaEm && dias.includes(String(d.concluidaEm).slice(0,10)));
+    const porDia = {}; dias.forEach(x => porDia[x] = 0);
+    feitas.forEach(d => porDia[String(d.concluidaEm).slice(0,10)]++);
+    const maior = Math.max(1, ...Object.values(porDia));
+    const nomeDia = iso => ['dom','seg','ter','qua','qui','sex','sáb'][new Date(iso+'T12:00:00').getDay()];
+    const barras = dias.map(x => `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
+        <div style="font-size:10px;color:var(--muted);height:12px;">${porDia[x]||''}</div>
+        <div style="width:100%;max-width:26px;height:${Math.max(3, porDia[x]/maior*52)}px;background:${porDia[x]?'var(--yellow)':'var(--line)'};border-radius:3px 3px 0 0;"></div>
+        <div style="font-size:9.5px;color:var(--muted);">${nomeDia(x)}</div>
+      </div>`).join('');
+    return `<div class="card">
+      <h2><svg class="ic"><use href="#i-checkcircle"/></svg>Entregue nos últimos 7 dias</h2>
+      <div class="desc">${feitas.length} demanda(s) concluída(s)${quem?'':' pela equipe'} na semana.</div>
+      <div style="display:flex;align-items:flex-end;gap:6px;margin-top:12px;height:82px;">${barras}</div>
+    </div>`;
+  }
+
+  function cardDemanda(d, comCaixa, aoAbrir){
+    const f = faixaDaDemanda(d);
+    const info = FAIXAS_DEMANDA.find(x=>x.chave===f);
+    const dias = diasDeAtraso(d);
+    const selo = f==='atrasada' ? `<span class="prioTag vermelho">${dias} dia(s)</span>`
+               : f==='hoje'     ? `<span class="prioTag amarelo">hoje${d.prazoHora?' · '+d.prazoHora:''}</span>`
+               : f==='semprazo' ? `<span class="prioTag" style="background:var(--line);color:var(--muted);">sem prazo</span>`
+               : `<span class="meta">${d.prazoData?formatarDataBR(d.prazoData):''}</span>`;
+    return `<div class="item" style="border-left:3px solid ${info.cor};display:flex;gap:10px;align-items:flex-start;">
+      ${comCaixa ? `<input type="checkbox" class="chkDem" value="${d.id}" onclick="event.stopPropagation();atualizarBarraLote();" style="margin-top:4px;width:16px;height:16px;flex-shrink:0;cursor:pointer;">` : ''}
+      <div style="flex:1;min-width:0;cursor:pointer;" onclick="${aoAbrir}('${d.id}')">
+        <div class="top"><div class="nome">${esc(d.titulo)}</div>${selo}</div>
+        <div class="meta" style="margin-top:4px;">${comCaixa?esc(d.destinatario||'?')+' · ':''}${d.prazoData?'prazo '+formatarDataBR(d.prazoData):'sem prazo definido'}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
+        ${d.bloqueio ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">Aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
+        ${d.pedidoExclusao ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">Pediu pra excluir — esperando decisão</div>' : ''}
+      </div>
+    </div>`;
+  }
+
+  /* ---------- A VERSÃO DA EQUIPE ---------- */
+  async function renderDemandasDaPessoa(){
+    const cont = document.getElementById('atrasadasConteudo');
+    cont.innerHTML = '<div class="card"><div class="desc">Carregando suas demandas...</div></div>';
+    await carregarTodasDemandas();
+    const minhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente');
+    const por = {}; FAIXAS_DEMANDA.forEach(f => por[f.chave] = []);
+    minhas.forEach(d => por[faixaDaDemanda(d)].push(d));
+    atualizarBadgeAtrasadas(por.atrasada.length);
+
+    /* A frase de abertura muda com o estado. Nunca abre cobrando. */
+    let recado, corRecado;
+    if(!minhas.length){ recado = 'Nada em aberto no seu nome agora.'; corRecado = 'var(--green)'; }
+    else if(!por.atrasada.length && !por.hoje.length){ recado = 'Nada vence hoje e nada está atrasado. Você está à frente.'; corRecado = 'var(--green)'; }
+    else if(!por.atrasada.length){ recado = por.hoje.length + ' pra hoje, nada atrasado. Dá pra fechar o dia limpo.'; corRecado = 'var(--yellow)'; }
+    else if(por.atrasada.length === 1){ recado = '1 atrasada. Resolve essa e você volta pro verde.'; corRecado = 'var(--yellow2)'; }
+    else { recado = por.atrasada.length + ' atrasadas. Começa pela do topo — está ordenada da mais antiga.'; corRecado = 'var(--yellow2)'; }
+
+    let html = `<div class="card" style="border-color:${corRecado};">
+      <div style="font-size:14px;font-weight:800;color:${corRecado};">${esc(recado)}</div>
+    </div>`;
+    html += htmlRegua(minhas, 'Como suas demandas estão distribuídas');
+
+    const bloco = (chave, titulo, textoVazio) => {
+      const l = por[chave];
+      if(!l.length) return textoVazio ? `<div class="card"><h2>${titulo}</h2><div class="empty" style="color:var(--green);">${textoVazio}</div></div>` : '';
+      const ordem = chave === 'atrasada' ? l.sort((a,b)=>diasDeAtraso(b)-diasDeAtraso(a))
+                                         : l.sort((a,b)=>String(a.prazoData||'9999').localeCompare(String(b.prazoData||'9999')));
+      return `<div class="card"><h2>${titulo} <span class="qtd">(${l.length})</span></h2>
+        ${ordem.map(d => cardDemanda(d, false, 'abrirDemandaMinha')).join('')}</div>`;
+    };
+
+    /* A ORDEM É A MENSAGEM: primeiro o que dá pra fazer, depois a dívida. */
+    html += bloco('hoje', 'Pra hoje', 'Nada vence hoje.');
+    html += bloco('atrasada', 'Passou do prazo', 'Nenhuma atrasada — você está em dia.');
+    html += bloco('proxima', 'Próximos 3 dias', '');
+    html += bloco('adiante', 'Mais pra frente', '');
+    html += bloco('semprazo', 'Sem prazo definido', '');
+    html += htmlEntregasDaSemana(todasDemandas, usuarioAtual);
+    cont.innerHTML = html;
+  }
+
+  /* ===== VÍDEO E POSTAGEM ATRASADOS ==================================
+     ISSO QUASE SE PERDEU E É CULPA MINHA. Ao trocar a tela de "Atrasadas"
+     pelo painel de demandas, eu deixei de fora os vídeos e as postagens
+     atrasadas — que estavam ali porque o Chris reportou, em 30/07, que
+     eram "retângulos que não abriam". Consertei na época e agora quase
+     apaguei o conserto.
+
+     Quem pegou foi o teste de prazos, que continuava exigindo o que já
+     tinha sido combinado. Foi exatamente pra isso que ele foi escrito.
+
+     Uma decisão: eles NÃO entram na régua das demandas. A régua conta
+     demanda, e misturar três tipos de item na mesma barra faria o número
+     não bater com nenhuma outra tela. Vêm num bloco próprio, embaixo,
+     com o mesmo cartão e o mesmo clique de antes. */
+  async function htmlOutrosAtrasados(){
+    const [vSnap, pSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
+    ]);
+    const itens = [];
+    vSnap.forEach(sn => {
+      const v = sn.data();
+      if(v.excluido) return;
+      if(!videoAtrasado(v)) return;
+      const prazo = calcularPrazoEdicaoVideo(v);
+      const dias = prazo ? Math.max(0, Math.floor((Date.now() - prazo.getTime())/86400000)) : 0;
+      itens.push({ tipo:'Vídeo', abrir:'abrirVideoDeAtraso', id:sn.id, titulo:v.titulo||'(sem título)',
+                   pessoa:v.editorAtribuido||'sem editor', dias, cliente:v.clienteNome||'' });
+    });
+    pSnap.forEach(sn => {
+      const x = sn.data();
+      if(x.excluido) return;
+      if(x.status !== 'aguardando_agendamento') return;
+      const dias = x.legendaEm ? Math.floor((Date.now() - new Date(x.legendaEm).getTime())/86400000) : 0;
+      if(dias < 1) return;
+      itens.push({ tipo:'Postagem', abrir:'abrirPostagemDeAtraso', id:sn.id, titulo:x.titulo||'(sem título)',
+                   pessoa:'Cecília', dias, cliente:x.clienteNome||'' });
+    });
+    if(!itens.length) return '';
+    itens.sort((a,b)=>b.dias-a.dias);
+    return `<div class="card" style="border-color:var(--red);">
+      <h2><svg class="ic"><use href="#i-film"/></svg>Também parado: vídeo e postagem</h2>
+      <div class="desc">Não são demandas, então não entram na barra acima — mas travam a esteira do mesmo jeito. Clica pra abrir e resolver ali.</div>
+      ${itens.map(i => `<div class="item" style="border-left:3px solid var(--red);cursor:pointer;" onclick="${i.abrir}('${i.id}')">
+        <div class="top"><div class="nome">${esc(i.titulo)}</div><span class="prioTag vermelho">${i.dias} dia(s)</span></div>
+        <div class="meta" style="margin-top:4px;">${i.tipo} · ${esc(i.pessoa)}${i.cliente?' · '+esc(i.cliente):''}</div>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  /* ---------- A VERSÃO DA GERÊNCIA ---------- */
+  window.__demandasFiltroPessoa = '';
+  window.setFiltroPessoaDemandas = function(v){ window.__demandasFiltroPessoa = v; renderDemandasDaEquipe(); };
+
+  window.marcarTodasDemandas = function(ligar){
+    document.querySelectorAll('#atrasadasConteudo .chkDem').forEach(c => c.checked = ligar);
+    atualizarBarraLote();
+  };
+
+  window.atualizarBarraLote = function(){
+    const n = document.querySelectorAll('#atrasadasConteudo .chkDem:checked').length;
+    const barra = document.getElementById('barraLoteDemandas');
+    if(!barra) return;
+    barra.style.display = n ? 'flex' : 'none';
+    const c = document.getElementById('loteContagem');
+    if(c) c.textContent = n + ' selecionada(s)';
+  };
+
+  const idsSelecionados = () => Array.from(document.querySelectorAll('#atrasadasConteudo .chkDem:checked')).map(c=>c.value);
+
+  window.loteNovoPrazo = async function(){
+    const ids = idsSelecionados();
+    const data = document.getElementById('loteData')?.value;
+    if(!ids.length) return;
+    if(!data){ mostrarToast('Escolhe a data nova.', 'erro'); return; }
+    if(!confirm('Mudar o prazo de ' + ids.length + ' demanda(s) pra ' + formatarDataBR(data) + '?\n\nCada pessoa é avisada e fica no histórico.')) return;
+    let feitos = 0; const falhas = [];
+    for(const id of ids){
+      const r = await window.aplicarNovoPrazo(id, data, '19:00', true);
+      if(r.ok) feitos++; else falhas.push(r.motivo);
+    }
+    mostrarToast(feitos + ' prazo(s) alterado(s)' + (falhas.length ? ' · ' + falhas.length + ' sem mudança (' + falhas[0] + ')' : '') + '.');
+    renderDemandasDaEquipe();
+  };
+
+  window.loteAlertar = async function(){
+    const ids = idsSelecionados();
+    if(!ids.length) return;
+    const pessoas = [...new Set(ids.map(id => (todasDemandas.find(d=>d.id===id)||{}).destinatario).filter(Boolean))];
+    if(!confirm('Avisar ' + pessoas.join(', ') + ' sobre ' + ids.length + ' demanda(s)?')) return;
+    let n = 0;
+    for(const id of ids){ try{ await window.alertarPessoaSobreItem(id, true); n++; }catch(e){ console.error(e); } }
+    mostrarToast(n + ' aviso(s) enviado(s).');
+    renderDemandasDaEquipe();
+  };
+
+  window.loteExcluir = async function(){
+    const ids = idsSelecionados();
+    if(!ids.length) return;
+    if(!confirm('EXCLUIR ' + ids.length + ' demanda(s)?\n\nIsso não volta atrás. Fica registrado quem excluiu.')) return;
+    let n = 0;
+    for(const id of ids){ try{ await window.excluirDemandaGerencia(id, true); n++; }catch(e){ console.error(e); } }
+    mostrarToast(n + ' demanda(s) excluída(s).');
+    await carregarTodasDemandas();
+    renderDemandasDaEquipe();
+  };
+
+  async function renderDemandasDaEquipe(){
+    const cont = document.getElementById('atrasadasConteudo');
+    cont.innerHTML = '<div class="card"><div class="desc">Montando o painel da equipe...</div></div>';
+    await carregarTodasDemandas();
+    const filtro = window.__demandasFiltroPessoa || '';
+    const abertas = todasDemandas.filter(d => d.status === 'pendente' && (!filtro || d.destinatario === filtro));
+    atualizarBadgeAtrasadas(todasDemandas.filter(d => d.status==='pendente' && faixaDaDemanda(d)==='atrasada').length);
+
+    let html = htmlRegua(abertas, filtro ? 'Demandas de ' + filtro : 'Demandas da equipe inteira');
+
+    /* Por pessoa: dá pra ver num relance quem está afogado. */
+    const pessoas = {};
+    abertas.forEach(d => {
+      const q = d.destinatario || '(sem dono)';
+      pessoas[q] = pessoas[q] || { atrasada:0, hoje:0, proxima:0, adiante:0, semprazo:0, total:0 };
+      pessoas[q][faixaDaDemanda(d)]++; pessoas[q].total++;
+    });
+    const ordemPessoas = Object.keys(pessoas).sort((a,b)=>pessoas[b].atrasada-pessoas[a].atrasada || pessoas[b].total-pessoas[a].total);
+    html += `<div class="card">
+      <h2><svg class="ic"><use href="#i-users"/></svg>Quem está com o quê</h2>
+      <div class="desc">Ordenado por quem tem mais atrasado. Clica pra filtrar só essa pessoa.</div>
+      <div style="margin-top:10px;">
+      ${ordemPessoas.map(nome => {
+        const x = pessoas[nome];
+        const seg = FAIXAS_DEMANDA.filter(f=>x[f.chave]>0).map(f=>`<div style="width:${(x[f.chave]/x.total*100).toFixed(1)}%;background:${f.cor};"></div>`).join('');
+        const ativo = filtro === nome;
+        return `<div onclick="setFiltroPessoaDemandas('${ativo?'':escJs(nome)}')" style="cursor:pointer;padding:9px 10px;border-radius:8px;margin-bottom:6px;border:1px solid ${ativo?'var(--yellow)':'var(--line)'};background:${ativo?'var(--deep)':'transparent'};">
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12.5px;">
+            <b>${esc(nome)}</b>
+            <span class="meta">${x.total} aberta(s)${x.atrasada?' · <b style="color:var(--red);">'+x.atrasada+' atrasada(s)</b>':''}</span>
+          </div>
+          <div style="display:flex;height:7px;border-radius:4px;overflow:hidden;margin-top:6px;background:var(--deep);">${seg}</div>
+        </div>`;
+      }).join('') || '<div class="empty">Ninguém com demanda em aberto.</div>'}
+      </div>
+      ${filtro ? '<button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;margin-top:6px;" onclick="setFiltroPessoaDemandas(&quot;&quot;)">Ver a equipe inteira</button>' : ''}
+    </div>`;
+
+    /* A barra de ação em lote. Só aparece quando há seleção. */
+    html += `<div id="barraLoteDemandas" style="display:none;position:sticky;top:8px;z-index:20;gap:8px;flex-wrap:wrap;align-items:center;background:var(--yellow);color:var(--graphite);padding:10px 14px;border-radius:10px;margin-bottom:12px;box-shadow:0 6px 18px rgba(0,0,0,.35);">
+      <b id="loteContagem" style="font-size:12.5px;">0 selecionada(s)</b>
+      <input type="date" id="loteData" style="width:auto;padding:5px 8px;border-radius:6px;border:1px solid var(--graphite);font-size:11.5px;">
+      <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;background:var(--graphite);color:var(--yellow);" onclick="loteNovoPrazo()">Novo prazo</button>
+      <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;background:var(--graphite);color:var(--yellow);" onclick="loteAlertar()">Avisar as pessoas</button>
+      <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;background:var(--red);color:#fff;" onclick="loteExcluir()">Excluir</button>
+      <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;background:transparent;color:var(--graphite);border:1px solid var(--graphite);" onclick="marcarTodasDemandas(false)">Limpar seleção</button>
+    </div>`;
+
+    const por = {}; FAIXAS_DEMANDA.forEach(f => por[f.chave] = []);
+    abertas.forEach(d => por[faixaDaDemanda(d)].push(d));
+    const blocoG = (chave, titulo) => {
+      const l = por[chave]; if(!l.length) return '';
+      const ordem = chave==='atrasada' ? l.sort((a,b)=>diasDeAtraso(b)-diasDeAtraso(a))
+                                       : l.sort((a,b)=>String(a.prazoData||'9999').localeCompare(String(b.prazoData||'9999')));
+      return `<div class="card">
+        <h2>${titulo} <span class="qtd">(${l.length})</span></h2>
+        <div class="desc">Marca as caixas pra agir em várias de uma vez.</div>
+        ${ordem.map(d => cardDemanda(d, true, 'abrirDemandaGerencia')).join('')}
+      </div>`;
+    };
+    html += blocoG('atrasada', 'Passou do prazo');
+    html += blocoG('hoje', 'Vence hoje');
+    html += blocoG('proxima', 'Próximos 3 dias');
+    html += blocoG('adiante', 'Mais pra frente');
+    html += blocoG('semprazo', 'Sem prazo definido');
+    if(!abertas.length) html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">Nenhuma demanda em aberto na equipe.</div></div>';
+    html += `<div class="card"><button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="marcarTodasDemandas(true)">Selecionar todas as visíveis</button></div>`;
+    try{ html += await htmlOutrosAtrasados(); }catch(e){ console.error('Falha nos outros atrasados:', e); }
+    html += htmlEntregasDaSemana(todasDemandas, filtro || null);
+    cont.innerHTML = html;
+    atualizarBarraLote();
+  }
+
+  window.renderPainelDemandas = async function(){
     const toggle = document.getElementById('atrasadasToggle');
     const cont = document.getElementById('atrasadasConteudo');
     if(!cont) return;
     if(!usuarioAtual){
       if(toggle) toggle.innerHTML = '';
-      cont.innerHTML = '<div class="card"><div class="desc">Selecione seu nome no Início pra ver suas demandas atrasadas.</div></div>';
+      cont.innerHTML = '<div class="card"><div class="desc">Selecione seu nome no Início pra ver suas demandas.</div></div>';
       return;
     }
     const ehGestor = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
@@ -20566,177 +20948,12 @@
         <div class="subtab ${sub==='equipe'?'active':''}" data-sub="equipe" onclick="setAtrasadasSub('equipe')">Equipe inteira</div>
         <div class="subtab ${sub==='minhas'?'active':''}" data-sub="minhas" onclick="setAtrasadasSub('minhas')">Só as minhas</div>
       </div>`;
-      if(sub === 'equipe') renderEquipeAtrasadas(); else renderMinhasAtrasadas();
-    } else {
-      toggle.innerHTML = '';
-      renderMinhasAtrasadas();
+      if(sub === 'equipe') return renderDemandasDaEquipe();
+      return renderDemandasDaPessoa();
     }
-  }
-
-  async function renderMinhasAtrasadas(){
-    const cont = document.getElementById('atrasadasConteudo');
-    cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
-    await carregarTodasDemandas();
-    const minhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente');
-    const atrasadas = minhas.filter(d => calcularUrgencia(d) === 'atrasado');
-    const hoje = minhas.filter(d => calcularUrgencia(d) === 'hoje');
-    const diasAtraso = d => Math.floor((Date.now() - new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime()) / 86400000);
-    atualizarBadgeAtrasadas(atrasadas.length);
-
-    let html = `<div class="card">
-      <h2><svg class="ic"><use href="#i-alert"/></svg>Suas demandas atrasadas</h2>
-      <div class="desc">O que passou do prazo e ainda está aberto no seu nome. Ataca de cima pra baixo — as mais atrasadas primeiro.</div>
-      <div class="painelResumo" style="margin-top:10px;">
-        <div class="resumoCard ${atrasadas.length?'red':'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">Atrasada(s)</div></div>
-        <div class="resumoCard ${hoje.length?'yellow':'green'}"><div class="num">${hoje.length}</div><div class="lbl">Vencem hoje</div></div>
-      </div>
-    </div>`;
-
-    if(!atrasadas.length){
-      html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Você está em dia — nenhuma demanda atrasada. Manda ver! 🎉</div></div>';
-    } else {
-      const cardAtras = d => `<div class="item" style="border-left:3px solid var(--red);cursor:pointer;" onclick="abrirDemandaMinha('${d.id}')">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag vermelho">${diasAtraso(d)} dia(s)</span></div>
-        <div class="meta" style="margin-top:4px;">Prazo era ${formatarDataBR(d.prazoData)} às ${d.prazoHora}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
-        ${d.bloqueio ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">🕓 Você marcou: aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
-      </div>`;
-      html += `<div class="card">` + agruparEmFamiliasHtml(atrasadas.sort((a,b)=>diasAtraso(b)-diasAtraso(a)), cardAtras, true) + `</div>`;
-    }
-    cont.innerHTML = html;
-  }
-
-  async function renderEquipeAtrasadas(){
-    const cont = document.getElementById('atrasadasConteudo');
-    cont.innerHTML = '<div class="card"><div class="desc">Montando o painel de atrasos da equipe...</div></div>';
-    await carregarTodasDemandas();
-    const [vSnap, postSnapEq] = await Promise.all([
-      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
-    ]);
-    const diasAtraso = d => Math.floor((Date.now() - new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime()) / 86400000);
-
-    const itens = [];
-    todasDemandas.forEach(d => {
-      if(d.status !== 'pendente') return;
-      if(calcularUrgencia(d) !== 'atrasado') return;
-      itens.push({ tipo:'Demanda', pessoa:d.destinatario||'—', titulo:d.titulo, dias:diasAtraso(d), id:d.id, colecao:'demandas', cliente:d.clienteNome||'' });
-    });
-    vSnap.forEach(sn => {
-      const v = sn.data(); if(v.excluido) return;
-      if(!videoEstaAtrasado(v)) return;
-      const prazo = calcularPrazoEdicaoVideo(v);
-      const dias = prazo ? Math.max(0, Math.floor((Date.now() - prazo.getTime())/86400000)) : 0;
-      itens.push({ tipo:'Vídeo', pessoa:v.editorAtribuido||'—', titulo:v.titulo, dias, id:sn.id, colecao:'videos_producao', cliente:v.clienteNome||'', status:v.status });
-    });
-    /* ===== ABSORVIDO DO "RESUMO DO DIA" (removido 22/07/2026) =====
-       Postagem com legenda pronta esperando a Cecília agendar, parada há
-       1+ dia — igual o "Postagem sem agendar" que só existia no snapshot
-       velho. Agora ao vivo, direto na mesma lista de atrasos. */
-    postSnapEq.forEach(sn => {
-      const p = sn.data();
-      if(p.status !== 'aguardando_agendamento') return;
-      const dias = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime())/86400000) : 0;
-      if(dias < 1) return;
-      itens.push({ tipo:'Postagem', pessoa:'Cecília', titulo:p.titulo, dias, id:sn.id, colecao:'postagens', cliente:p.clienteNome||'' });
-    });
-
-    const totalAtras = itens.length;
-    const porPessoa = {};
-    itens.forEach(it => (porPessoa[it.pessoa] = porPessoa[it.pessoa] || []).push(it));
-    const nomes = Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length - porPessoa[a].length);
-    const pior = itens.reduce((m,it)=>Math.max(m, it.dias), 0);
-    const nVideos = itens.filter(it => it.tipo === 'Vídeo').length;
-
-    let html = `<div class="card">
-      <h2 style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <span><svg class="ic"><use href="#i-alert"/></svg>Atrasos da equipe — visão de comando</span>
-        ${['Chris','Amanda'].includes(usuarioAtual) ? '<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;border-color:var(--yellow);" onclick="copiarFocoEquipe()">📲 Foco do dia (grupo)</button>' : ''}
-      </h2>
-      <div class="desc">Demandas e vídeos que passaram do prazo agora, em tempo real. Assim que o item é concluído, ele some daqui sozinho. Clica em qualquer linha pra abrir; o 🗑️ apaga demanda-bug de teste (só você e a Amanda enxergam).</div>
-      <div class="painelResumo" style="margin-top:10px;">
-        <div class="resumoCard ${totalAtras?'red':'green'}"><div class="num">${totalAtras}</div><div class="lbl">itens atrasados</div></div>
-        <div class="resumoCard ${nomes.length?'yellow':'green'}"><div class="num">${nomes.length}</div><div class="lbl">pessoas envolvidas</div></div>
-        <div class="resumoCard ${pior>=3?'red':(pior?'yellow':'green')}"><div class="num">${pior}</div><div class="lbl">dias do pior atraso</div></div>
-        <div class="resumoCard ${nVideos?'red':'green'}"><div class="num">${nVideos}</div><div class="lbl">desses, são vídeos</div></div>
-      </div>
-    </div>`;
-
-    /* ===== ABSORVIDO DO "RESUMO DO DIA" (removido 22/07/2026) =====
-       "Crítico agora" — vídeos já escalados nível 2+, ao vivo (antes só
-       existia no snapshot velho do Resumo do Dia). */
-    /* 27/07/2026 — estes cartões eram TEXTO PURO: a lista guardava uma
-       frase montada, sem id, então não havia como clicar em nada. O Chris
-       reportou exatamente isso. Agora cada linha carrega o vídeo e abre. */
-    const criticosEq = [];
-    vSnap.forEach(sn => {
-      const v = sn.data();
-      if(v.excluido) return;
-      if((v.nivelEscalonamento||0) >= 2 && videoAtrasado(v)){
-        criticosEq.push({ id: sn.id, nivel: v.nivelEscalonamento, cliente: v.clienteNome||'', titulo: v.titulo||'', editor: v.editorAtribuido||'?', status: v.status });
-      }
-    });
-    html += await htmlResumoDoDia(totalAtras, porPessoa, nVideos);
-
-    if(criticosEq.length){
-      html += `<div class="card metaSec" style="border-color:var(--red);"><div class="metaSecTit">🚨 Crítico agora</div>
-        <div class="desc" style="margin:-4px 0 8px;">Vídeo que já passou de dois níveis de escalonamento. Clica pra abrir.</div>` +
-        criticosEq.map(v => `<div class="item" style="border-left:3px solid var(--red);cursor:pointer;" onclick="abrirVideoDeAtraso('${v.id}')">
-          <div class="top"><div class="nome">${esc(v.titulo)}</div><span class="selo atrasado">nível ${v.nivel}</span></div>
-          <div class="meta" style="margin-top:4px;">${esc(v.cliente)} · editor: ${esc(v.editor)} · ${esc(v.status==='correcao'?'em correção':'aguardando edição')}</div>
-        </div>`).join('') +
-        `</div>`;
-    }
-
-    if(!totalAtras){
-      html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Equipe 100% em dia — nada atrasado agora. 🎉</div></div>';
-      cont.innerHTML = html; return;
-    }
-
-    // Donut — quem mais atrasa
-    let stops = [], acc = 0, leg = '';
-    nomes.forEach((nome,i) => {
-      const val = porPessoa[nome].length; const pct = val/totalAtras*100; const cor = CORES_DASH[i%CORES_DASH.length];
-      stops.push(cor + ' ' + acc.toFixed(2) + '% ' + (acc+pct).toFixed(2) + '%'); acc += pct;
-      leg += `<div class="donutLegItem"><span class="bolinha" style="background:${cor};"></span>${esc(nome)}<span class="lpts">${val}</span></div>`;
-    });
-    html += `<div class="card metaSec"><div class="metaSecTit">📊 Quem está com mais atraso</div>
-      <div class="donutWrap"><div class="donut" style="background:conic-gradient(${stops.join(',')});"><div class="donutCentro"><b>${totalAtras}</b><span>atrasos</span></div></div><div class="donutLeg">${leg}</div></div></div>`;
-
-    // Barras — gravidade
-    const faixa = (min,max) => itens.filter(it => it.dias >= min && (max ? it.dias <= max : true)).length;
-    const f12 = faixa(1,2), f35 = faixa(3,5), f6 = faixa(6,null), maxF = Math.max(f12,f35,f6,1);
-    const barra = (lbl,val,cor) => `<div class="metaBar"><div class="metaBarTop"><span>${lbl}</span><b>${val}</b></div><div class="metaBarTrack"><div class="metaBarFill" style="width:${Math.round(val/maxF*100)}%;background:${cor};"></div></div></div>`;
-    html += `<div class="card metaSec"><div class="metaSecTit">⏳ Gravidade do atraso</div>
-      ${barra('🟡 1 a 2 dias', f12, 'var(--yellow2)')}
-      ${barra('🟠 3 a 5 dias', f35, 'var(--yellow)')}
-      ${barra('🔴 6 dias ou mais', f6, 'var(--red)')}
-    </div>`;
-
-    // Tabela por pessoa
-    html += `<div class="card metaSec"><div class="metaSecTit">👥 Detalhe por pessoa</div>`;
-    nomes.forEach((nome,idx) => {
-      const lista = porPessoa[nome].sort((a,b)=>b.dias - a.dias);
-      const piorP = lista[0].dias;
-      html += `<div class="faixaDem ${idx===0?'aberta':''}">
-        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">${lista.length} atraso(s) · pior: ${piorP} dia(s)</span><span class="seta">▾</span></div>
-        <div class="faixaItens">` +
-        lista.map(it => {
-          /* 30/07/2026 — vídeo e postagem eram texto morto aqui: o Chris
-             clicava no item com 🎬 e nada abria. Agora os três tipos
-             abrem a ficha correspondente. */
-          const abrir = it.colecao === 'demandas' ? `abrirDemandaGerencia('${it.id}')`
-                      : it.colecao === 'videos_producao' ? `abrirVideoDeAtraso('${it.id}')`
-                      : it.colecao === 'postagens' ? `abrirPostagemDeAtraso('${it.id}')` : '';
-          const lixo = it.colecao === 'demandas' ? `<button class="btn red" style="width:auto;padding:3px 8px;font-size:10px;opacity:.7;" onclick="event.stopPropagation();excluirDemandaDoPainel('${it.id}')">🗑️</button>` : '';
-          return `<div class="item" style="border-left:3px solid ${it.dias>=3?'var(--red)':'var(--yellow2)'};${abrir?'cursor:pointer;':''}" ${abrir?`onclick="${abrir}"`:''}>
-            <div class="top"><div class="nome">${it.tipo==='Vídeo'?'🎬 ':'📌 '}${esc(it.titulo)}</div><div style="display:flex;align-items:center;gap:6px;flex-shrink:0;"><span class="prioTag ${it.dias>=3?'vermelho':'amarelo'}">${it.dias} dia(s)</span>${lixo}</div></div>
-            <div class="meta" style="margin-top:4px;">${esc(it.tipo)}${it.cliente?' · '+esc(it.cliente):''}${it.status?' · '+esc(it.status):''}</div>
-          </div>`;
-        }).join('') +
-        `</div></div>`;
-    });
-    html += `</div>`;
-    cont.innerHTML = html;
-  }
+    toggle.innerHTML = '';
+    return renderDemandasDaPessoa();
+  };
 
   window.excluirDemandaDoPainel = async function(id){
     if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
@@ -20747,7 +20964,7 @@
       await deleteDoc(doc(db,'demandas', id));
       registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída (painel de atrasos) por ' + usuarioAtual + ' — "' + titulo + '"');
       mostrarToast('Demanda excluída.');
-      renderEquipeAtrasadas();
+      renderDemandasDaEquipe();
     }catch(e){ mostrarToast('Erro ao excluir: ' + e.message, 'erro'); }
   };
 
@@ -23793,14 +24010,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
      — de verdade, sem deixar isso acessível pra mais ninguém da equipe.
      Exclui de verdade (não soft-delete). Fica um registro em
      log_automacoes pra rastro de quem excluiu o quê e quando. */
-  window.excluirDemandaGerencia = async function(id){
+  /* 01/08/2026 — ganhou modo lote: no lote a confirmação já aconteceu
+     uma vez, pro conjunto. Perguntar 12 vezes seguidas faz a pessoa
+     clicar em "ok" no automático, que é pior que não perguntar. */
+  window.excluirDemandaGerencia = async function(id, emLote){
     if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
-      mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro');
+      if(!emLote) mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro');
       return;
     }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
-    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito.')) return;
+    if(!emLote && !confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito.')) return;
     try{
       await deleteDoc(doc(db,'demandas', id));
       registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída por ' + usuarioAtual + ' — "' + titulo + '"');

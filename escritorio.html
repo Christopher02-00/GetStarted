@@ -5186,9 +5186,12 @@
     const snap = await getDoc(doc(db,'agendamentos', id));
     if(!snap.exists()) return;
     const a = snap.data();
-    const novaData = prompt('Nova data (AAAA-MM-DD):', a.data || '');
+    let novaData = prompt('Nova data (AAAA-MM-DD ou DD/MM/AAAA):', a.data || '');
     if(novaData === null) return;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(novaData)){ mostrarToast('Data inválida. Usa o formato 2026-08-05.', 'erro'); return; }
+    /* 02/08/2026 — aceita os dois jeitos, igual à do filmmaker. Recusar
+       quem digita 05/08/2026 é atrito à toa. */
+    novaData = normalizarDataDigitada(novaData);
+    if(!novaData){ mostrarToast('Não entendi essa data. Escreve 2026-08-05 ou 05/08/2026.', 'erro'); return; }
     const novaHora = prompt('Nova hora (HH:MM):', a.hora || '10:00');
     if(novaHora === null) return;
     const motivo = prompt('O que mudou? (o filmmaker vê este texto)') || '';
@@ -9121,9 +9124,37 @@
     cont.innerHTML = html;
   }
 
+  /* ===== 02/08/2026 — A DATA QUE ENTRAVA TORTA =======================
+     Esta função pedia a data por `prompt` e gravava o que viesse, sem
+     conferir. A outra função de reagendar, na tela da Cecília, confere.
+     Esta é a do FILMMAKER — e foi por aqui que entraram dois agendamentos
+     com a data escrita `28/07/2026` em vez de `2026-07-28`.
+
+     Não é detalhe de formatação. O sistema inteiro compara data como
+     TEXTO: `'28/07/2026' >= '2026-08-02'` dá VERDADEIRO, porque compara
+     caractere por caractere. Uma gravação de 28 de julho passava a ser
+     tratada como futura, pra sempre.
+
+     Conferi as outras coleções: postagens (66), vídeos (162) e demandas
+     (543) estão todas no formato certo. Era só esta porta.
+
+     Em vez de recusar quem digita como brasileiro digita, eu converto. */
+  function normalizarDataDigitada(txt){
+    const t = String(txt||'').trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    const br = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if(br) return br[3] + '-' + br[2] + '-' + br[1];
+    const br2 = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if(br2) return br2[3] + '-' + String(br2[2]).padStart(2,'0') + '-' + String(br2[1]).padStart(2,'0');
+    return '';
+  }
+  window.normalizarDataDigitada = normalizarDataDigitada;
+
   window.reagendarGravacao = async function(agId){
-    const novaData = prompt('Nova data (AAAA-MM-DD):');
-    if(!novaData) return;
+    const digitada = prompt('Nova data (AAAA-MM-DD ou DD/MM/AAAA):');
+    if(!digitada) return;
+    const novaData = normalizarDataDigitada(digitada);
+    if(!novaData){ mostrarToast('Não entendi essa data. Escreve 2026-08-05 ou 05/08/2026.', 'erro'); return; }
     const novaHora = prompt('Nova hora (HH:MM):', '10:00') || '10:00';
     await updateDoc(doc(db,'agendamentos', agId), { data: novaData, hora: novaHora, status: 'agendado' });
     mostrarToast('Gravação reagendada pra ' + novaData + '!');
@@ -17903,6 +17934,240 @@
     if(nD || nV) registrarLogAutomacao('duplicatas_removidas', '', nD + ' demanda(s) e ' + nV + ' vídeo(s)');
   }
 
+
+  /* ===================================================================
+     A CONFERÊNCIA DO SISTEMA — 02/08/2026
+     O conserto do problema mais caro deste sistema, pedido pelo Chris
+     com essas palavras: "corrige esse problema de uma vez por todas".
+
+     QUAL É O PROBLEMA. Nas últimas quatro rodadas, quatro achados
+     diferentes tinham a mesma forma:
+
+       · 4 demandas invisíveis porque o `orderBy` descartava documento
+         sem o campo — uma delas era um cadastro de cliente novo
+       · 2 marcos da linha do tempo lendo campo que não existe no banco
+       · 9 calendários parados em julho, parecendo prontos
+       · 11 itens de esteira de cliente que já tinha saído — incluindo
+         3 postagens AGENDADAS DENTRO DO INSTAGRAM da Suellen, que saiu
+         em 27/07, marcadas pra 06/08, 07/08 e 24/08
+
+     Nenhum era erro de conta. Os quatro eram SILÊNCIO: o dado estava
+     certo no banco e não chegava em tela nenhuma. Não dá erro, não trava,
+     e só aparece quando alguém tropeça — ou quando eu vou lá contar.
+
+     POR QUE INDICADOR NÃO BASTA. Criei dois indicadores pra dois desses
+     casos. Indicador só serve pra quem abre a tela. O que pegou o caso da
+     Suellen não foi ninguém abrir tela nenhuma: fui eu comparar o banco
+     com o que o sistema dizia. Se depender de alguém olhar, volta a ser
+     silêncio no dia em que ninguém olhar.
+
+     O CONSERTO. O sistema passa a fazer sozinho, todo dia, a mesma
+     conferência que eu fazia à mão — e quando acha alguma coisa, ABRE
+     UMA DEMANDA pra Amanda com a lista. Sai do "está lá se alguém olhar"
+     e entra no "chega em alguém".
+
+     REGRAS QUE ESTA FUNÇÃO SEGUE, e que valem pras próximas:
+       1. Ela NUNCA conserta nada sozinha. Só conta e avisa. Decidir o que
+          fazer com uma postagem agendada é de vocês.
+       2. Uma demanda por dia, no máximo — a lista inteira junta. Uma
+          demanda por achado viraria enxurrada, e enxurrada é silêncio
+          outra vez.
+       3. Se não achar nada, não abre nada. Silêncio de quem está em dia
+          é o único silêncio bom.
+       4. Cada linha diz O QUE é, QUANTOS são e QUEM. Número sem nome não
+          faz ninguém agir.
+     =================================================================== */
+  const CONFERENCIA_MARCA = 'conferencia_sistema';
+
+  window.conferenciaDoSistema = async function(opcoes){
+    const o = opcoes || {};
+    const hoje = hojeLocal();
+
+    /* Uma vez por dia, salvo quando alguém pede na mão. */
+    if(!o.forcar){
+      try{
+        const marca = await getDoc(doc(db,'sistema', CONFERENCIA_MARCA));
+        if(marca.exists() && marca.data().dia === hoje) return { pulou:true, motivo:'já rodou hoje' };
+      }catch(e){ console.error('Conferência: falha ao ler a marca do dia', e); }
+    }
+
+    const achados = [];
+    const push = (grav, titulo, detalhe, quantos) => achados.push({ grav, titulo, detalhe, quantos });
+
+    let vids=[], posts=[], agends=[], cals={}, dems=[], enc=[];
+    try{
+      const [v,p,a,c,e,d] = await Promise.all([
+        getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens')),
+        getDocs(collection(db,'agendamentos')),    getDocs(collection(db,'calendarios')),
+        getDocs(collection(db,'clientes_encerrados')), getDocs(collection(db,'demandas'))
+      ]);
+      v.forEach(x=>{ const y=x.data(); if(!y.excluido) vids.push({id:x.id,...y}); });
+      p.forEach(x=>{ const y=x.data(); if(!y.excluido) posts.push({id:x.id,...y}); });
+      a.forEach(x=>{ const y=x.data(); if(!y.excluido) agends.push({id:x.id,...y}); });
+      c.forEach(x=>{ cals[x.id]=x.data(); });
+      e.forEach(x=>{ const y=x.data(); if(!y.excluido) enc.push(y); });
+      d.forEach(x=>{ dems.push({id:x.id,...x.data()}); });
+    }catch(err){
+      console.error('Conferência: falha ao ler o banco', err);
+      return { erro: String(err && err.message || err) };
+    }
+
+    /* --- quem saiu, casando por slug E por nome (os encerrados de julho
+           foram gravados sem slug; casar só por slug daria zero) --- */
+    const slugsFora = new Set(); const nomesFora = new Set();
+    enc.forEach(x => { if(x.slug) slugsFora.add(String(x.slug).toLowerCase());
+                       if(x.nome) nomesFora.add(normNomeCliente(x.nome)); });
+    try{ CLIENTES_LISTA.forEach(c => { if(nomesFora.has(normNomeCliente(c.nome))) slugsFora.add(c.slug); }); }catch(e){}
+    const daSaida = x => { const c = String((x&&x.cliente)||'').toLowerCase();
+      if(!c) return false;
+      if(slugsFora.has(c)) return true;
+      return [...nomesFora].some(n => n && (c === n || c.replace(/-/g,' ') === n)); };
+
+    /* 1. O CASO MAIS GRAVE: postagem AGENDADA de quem já saiu.
+          Agendada não é planejamento — é fila dentro do Instagram. Sobe
+          sozinha no perfil de quem não é mais cliente. */
+    const agendadasDeQuemSaiu = posts.filter(p => daSaida(p) && p.status === 'agendado');
+    if(agendadasDeQuemSaiu.length){
+      push('urgente', 'Postagem agendada no Instagram de cliente que SAIU',
+        agendadasDeQuemSaiu.map(p => (p.clienteNome||p.cliente) + ' — ' + (p.dataAgendada||'sem data') + (p.horaAgendada?' '+p.horaAgendada:'')).join(' · ')
+        + '. Isso sobe sozinho no perfil dele. Tira do agendador hoje.',
+        agendadasDeQuemSaiu.length);
+    }
+
+    /* 2. O resto do trabalho aberto de quem saiu. */
+    const restoDeQuemSaiu = [
+      ...posts.filter(p => daSaida(p) && !['agendado','postado','arquivada_sem_postagem'].includes(p.status)),
+      ...vids.filter(v => daSaida(v) && !['finalizado','arquivado'].includes(v.status)),
+      ...agends.filter(a => daSaida(a) && a.status !== 'cancelado' && String(a.data||'') >= hoje)
+    ];
+    if(restoDeQuemSaiu.length){
+      const porQuem = {}; restoDeQuemSaiu.forEach(x => { const k = x.clienteNome || x.cliente || '?'; porQuem[k]=(porQuem[k]||0)+1; });
+      push('alto', 'Trabalho na esteira de cliente que saiu',
+        Object.entries(porQuem).map(([k,n]) => k+' ('+n+')').join(', ') + '. Legenda e edição disso é trabalho jogado fora.',
+        restoDeQuemSaiu.length);
+    }
+
+    /* 3. Calendário parado no mês passado — parece pronto e não está. */
+    try{
+      const mesAgora = hoje.slice(0,7);
+      const alvo = await clientesDeConteudoRecorrente();
+      const velhos = [];
+      alvo.forEach(c => {
+        const cal = cals[c.slug]; if(!cal || !((cal.items||[]).length)) return;
+        const ms = [...new Set((cal.items||[]).map(i=>(i&&i.mes)||'').filter(Boolean))].sort();
+        const m = ms.length ? ms[ms.length-1] : (mesDoTextoConf((cal.month)||'') || cal.mesLegado || '');
+        if(m && m < mesAgora) velhos.push(c.nome);
+      });
+      if(velhos.length) push('alto', 'Calendário parado no mês passado',
+        velhos.join(', ') + '. O filmmaker recebe conteúdo velho em campo e a divisão das gravações sai errada.', velhos.length);
+    }catch(e){ console.error('Conferência: calendários', e); }
+
+    /* 4. A armadilha do documento invisível: demanda sem data de nascimento
+          some de qualquer consulta ordenada. Já consertei a origem; isto
+          existe pra saber na hora se voltar. */
+    const semNascimento = dems.filter(d => !d.criadoEm);
+    if(semNascimento.length) push('urgente', 'Demanda sem data de criação — some das telas',
+      semNascimento.length + ' demanda(s). Documento sem esse campo desaparece de consulta ordenada, sem dar erro. Me avisa que eu acho a origem.', semNascimento.length);
+
+    /* 5. Postagem viva apontando pra vídeo que foi pra lixeira. */
+    const idsVivos = new Set(vids.map(v=>v.id));
+    const orfas = posts.filter(p => p.videoId && !idsVivos.has(p.videoId) && !['postado','arquivada_sem_postagem'].includes(p.status));
+    if(orfas.length) push('alto', 'Postagem viva com o vídeo na lixeira',
+      orfas.map(p=>(p.clienteNome||p.cliente)+' — '+String(p.titulo||'').slice(0,26)).join(' · ') + '. Vai pra postagem sem arquivo.', orfas.length);
+
+    /* 6. Gravação futura sem saber qual gravação do mês é — o filmmaker
+          abre em campo e recebe a lista do bloco errado. */
+    /* Só os próximos 7 dias. O campo `bloco` nasceu em 01/08, então TODA
+       gravação já marcada está sem ele — 16 no dia em que escrevi isto.
+       Listar as 16 todo dia é ruído de migração, não alarme, e ruído
+       diário vira silêncio porque a pessoa aprende a ignorar. O que exige
+       ação é a gravação que acontece esta semana. */
+    const em7 = (() => { const d = new Date(hoje + 'T00:00:00'); d.setDate(d.getDate() + 7); return dataLocal(d); })();
+    const semBloco = agends.filter(a => a.status !== 'cancelado' && !a.bloco
+      && String(a.data||'') >= hoje && String(a.data||'') <= em7);
+    if(semBloco.length) push('medio', 'Gravação desta semana sem dizer qual do mês é',
+      semBloco.map(a=>(a.clienteNome||a.cliente)+' '+(a.data||'')).join(' · ') + '. Cai na 1ª por padrão, e o filmmaker pode receber a lista errada.', semBloco.length);
+
+    /* 6b. Data escrita no formato errado. Achei duas assim em 02/08, e é
+           veneno silencioso: o sistema compara data como texto, então
+           '28/07/2026' >= '2026-08-02' dá verdadeiro e uma gravação
+           passada vira futura pra sempre. Consertei a porta por onde
+           entravam; isto existe pra saber na hora se voltar. */
+    const dataTorta = [
+      ...agends.filter(a => a.data && !/^\d{4}-\d{2}-\d{2}$/.test(String(a.data))).map(a=>'gravação '+(a.clienteNome||a.cliente)+' ('+a.data+')'),
+      ...posts.filter(p => p.dataAgendada && !/^\d{4}-\d{2}-\d{2}$/.test(String(p.dataAgendada))).map(p=>'postagem '+(p.clienteNome||p.cliente)+' ('+p.dataAgendada+')'),
+      ...vids.filter(v => v.prazoEntrega && !/^\d{4}-\d{2}-\d{2}$/.test(String(v.prazoEntrega))).map(v=>'vídeo '+(v.clienteNome||v.cliente)+' ('+v.prazoEntrega+')')
+    ];
+    if(dataTorta.length) push('urgente', 'Data gravada no formato errado',
+      dataTorta.join(' · ') + '. O sistema compara data como texto: assim, data passada vira futura e a linha do tempo inteira erra.',
+      dataTorta.length);
+
+    /* 7. Cliente com GRAVAÇÃO MARCADA e sem calendário.
+          A primeira versão desta checagem era "cliente recorrente sem
+          calendário nenhum". O teste mostrou que ela dispara todo dia,
+          sobre um estado que não muda — viraria ruído diário, e ruído
+          diário é a mesma coisa que silêncio, porque a pessoa aprende a
+          ignorar. O Chris foi explícito: nada de coisa fútil.
+          O caso que EXIGE ação é outro: tem gravação marcada e não tem o
+          que gravar. Aí o filmmaker chega no cliente sem lista. */
+    try{
+      const futuras = agends.filter(a => a.status !== 'cancelado' && String(a.data||'') >= hoje);
+      const semLista = futuras.filter(a => {
+        const cal = cals[a.cliente || a.clienteSlug || ''];
+        return !cal || !((cal.items||[]).length);
+      });
+      if(semLista.length) push('alto', 'Gravação marcada e o cliente não tem calendário',
+        semLista.map(a => (a.clienteNome||a.cliente) + ' ' + (a.data||'')).join(' · ')
+        + '. O filmmaker chega e não tem lista do que gravar.', semLista.length);
+    }catch(e){ console.error('Conferência: gravação sem calendário', e); }
+
+    const resultado = { dia: hoje, achados, total: achados.reduce((s,a)=>s+a.quantos,0) };
+
+    try{ await setDoc(doc(db,'sistema', CONFERENCIA_MARCA), {
+      dia: hoje, em: new Date().toISOString(), achados: achados.length,
+      total: resultado.total, resumo: achados.map(a=>a.titulo+' ('+a.quantos+')') }); }
+    catch(e){ console.error('Conferência: falha ao gravar a marca', e); }
+
+    /* 8. Silêncio de quem está em dia é o único silêncio bom. */
+    if(!achados.length){
+      registrarLogAutomacao('conferencia_limpa', hoje, 'nenhum achado');
+      return resultado;
+    }
+
+    if(o.soLer) return resultado;
+
+    const ORD = { urgente:0, alto:1, medio:2 };
+    achados.sort((a,b)=>(ORD[a.grav]??9)-(ORD[b.grav]??9));
+    const corpo = achados.map(a =>
+      (a.grav==='urgente'?'🔴 ':a.grav==='alto'?'🟡 ':'⚪ ') + a.titulo + ' — ' + a.quantos + '\n' + a.detalhe
+    ).join('\n\n');
+
+    await criarDemandaSegura({
+      titulo: 'Conferência do sistema — ' + achados.length + ' ponto(s) pra olhar',
+      descricao: 'O sistema conferiu o banco sozinho e achou o seguinte.\n\n' + corpo
+        + '\n\n———\nIsto é uma conferência automática, roda uma vez por dia. Ela NÃO conserta nada: '
+        + 'só conta e avisa. Se algum ponto não fizer sentido, fala comigo que eu ajusto a régua.',
+      destinatario: 'Amanda', origem: 'sistema', clienteNome: '',
+      ehAviso: true, tipoEspecial: CONFERENCIA_MARCA,
+      prazoData: hoje, prazoHora: '19:00', status: 'pendente'
+    }, { janelaMinutos: 20 * 60 });
+
+    registrarLogAutomacao('conferencia_com_achados', hoje, achados.map(a=>a.titulo+':'+a.quantos).join(' | '));
+    return resultado;
+  };
+
+  /* "Julho 2026" → "2026-07". Existe aqui porque a conferência precisa ler
+     calendário antigo, que só tem o mês escrito por extenso. */
+  function mesDoTextoConf(txt){
+    const t = (txt||'').trim().toLowerCase();
+    const nomes = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+    const semAcento = x => x.normalize('NFD').replace(/[̀-ͯ]/g,'');
+    const i = nomes.findIndex(n => semAcento(t).startsWith(semAcento(n)));
+    const ano = (t.match(/(20\d{2})/)||[])[1];
+    if(i < 0 || !ano) return '';
+    return ano + '-' + String(i+1).padStart(2,'0');
+  }
+
   async function motorAutomacoes(origem){
     const lockRef = doc(db, 'sistema', 'motor_lock');
     try{
@@ -17958,7 +18223,12 @@
       // { nome: 'coberturaRefsSemanal', fn: verificarCoberturaReferenciasSemanal },
       { nome: 'digestsDeEmail', fn: enviarDigestsPendentes },
       { nome: 'lembreteFimDoDia17h', fn: verificarLembreteFimDoDia17h },
-      { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas }
+      { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas },
+      /* 02/08/2026 — a conferência do sistema. Entra no motor que já
+         existe em vez de virar um segundo motor: o lock, o isolamento de
+         erro e o intervalo já estão resolvidos aqui. Ela mesma se limita
+         a uma rodada por dia. */
+      { nome: 'conferenciaDoSistema', fn: () => window.conferenciaDoSistema() }
     ];
 
     for(const v of verificacoes){

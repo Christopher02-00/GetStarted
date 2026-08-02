@@ -233,6 +233,9 @@
     <b id="progText">0 / 0</b>
   </div>
 
+  <!-- 01/08/2026 — a divisão das gravações, visível sem abrir item por item -->
+  <div id="painelBlocos"></div>
+
   <div id="viewGrid"></div>
   <div id="viewWeek" style="display:none;"></div>
   <div id="viewKanban" style="display:none;"></div>
@@ -293,6 +296,16 @@
       <select id="mStage"><option value="topo">Topo — atração</option><option value="meio">Meio — conexão</option><option value="fundo">Fundo — conversão</option></select>
     </div>
     <div class="field"><label>Formato</label><input id="mFmt" placeholder="ex: POV óculos Meta, Reel, Story..."></div>
+    <!-- 01/08/2026 — em que gravação este conteúdo vai ser filmado. -->
+    <div class="field"><label>Gravação</label>
+      <select id="mBloco">
+        <option value="">Automático (metade e metade, na ordem)</option>
+        <option value="1">1ª gravação do mês</option>
+        <option value="2">2ª gravação do mês</option>
+        <option value="3">3ª gravação do mês</option>
+      </select>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">É isto que o filmmaker vê no dia da gravação. No automático, o sistema parte a lista no meio.</div>
+    </div>
     <div class="modalbtns">
       <button class="btn btn-r" onclick="delItem()">Excluir</button>
       <div style="display:flex;gap:8px;">
@@ -430,6 +443,84 @@ function carimbarMesDosAntigos(){
   if(mexeu && !data.mesLegado){ data.mesLegado = doDoc; }
   return mexeu;
 }
+  /* ===== BLOCOS DE GRAVAÇÃO — BLOCO ESPELHADO — 01/08/2026 ===========
+     ATENÇÃO: existe IGUAL em `calendario.html` e em `escritorio.html`,
+     copiado caractere por caractere, com teste (t27) que quebra se
+     divergirem. Mexeu aqui, mexe nos dois e roda o teste.
+
+     POR QUE ISTO EXISTE — a reclamação do Luís, estudada na raiz:
+     "o calendário que aparece nas produções pra mim não mostra a
+     quantidade de vídeos que devem ser gravados no dia".
+
+     Ele estava certo, e o defeito é conceitual: o calendário editorial
+     é organizado por DIA DE POSTAGEM. O filmmaker trabalha por DIA DE
+     GRAVAÇÃO. São duas linhas do tempo diferentes, e não havia nada
+     ligando uma na outra — nem no dado, nem na tela.
+
+     A ligação agora é o BLOCO. A Gabi divide os conteúdos do mês em
+     blocos de gravação (2 por padrão, até 3); a Cecília diz qual bloco
+     cada gravação cobre; o filmmaker vê, no dia, quantos e quais.
+
+     A divisão padrão é METADE E METADE NA ORDEM (decisão do Chris em
+     01/08): parte a lista no meio, na ordem em que ela aparece. A sobra
+     vai pro primeiro bloco. A Gabi troca item a item quando quiser. */
+  const BLOCOS_PADRAO = 2;
+  const BLOCOS_MAX = 3;
+
+  /* 17 itens em 2 blocos → [9, 8]. A sobra vai pro primeiro. */
+  function tamanhosDosBlocos(total, quantos){
+    const n = Math.max(1, Math.min(BLOCOS_MAX, Number(quantos) || BLOCOS_PADRAO));
+    const t = Math.max(0, Number(total) || 0);
+    const base = Math.floor(t / n), resto = t % n;
+    const r = [];
+    for(let i = 0; i < n; i++) r.push(base + (i < resto ? 1 : 0));
+    return r;
+  }
+
+  /* Em que bloco cai o item da posição `pos` (0-based), se ninguém
+     escolheu na mão. A ordem é a que a pessoa vê na tela. */
+  function blocoAutomatico(pos, total, quantos){
+    const tam = tamanhosDosBlocos(total, quantos);
+    let acc = 0;
+    for(let i = 0; i < tam.length; i++){
+      acc += tam[i];
+      if(pos < acc) return i + 1;
+    }
+    return tam.length;
+  }
+
+  /* O bloco de um item: o que a Gabi escolheu manda; senão, o automático.
+     Nunca grava nada — só responde. Escrever no dado só quando ela salva
+     é o que evita o acidente do carimbo de mês, que quase apagou um
+     rascunho inteiro em 29/07. */
+  function blocoDoItem(item, pos, total, quantos){
+    const b = Number(item && item.bloco);
+    if(b >= 1 && b <= BLOCOS_MAX) return b;
+    return blocoAutomatico(pos, total, quantos);
+  }
+
+  /* Quantos blocos o mês tem. Guardado por mês, porque um cliente pode
+     ter 2 gravações em agosto e 3 em setembro. */
+  function quantosBlocos(cal, mes){
+    const m = (cal && cal.blocosPorMes) || {};
+    const n = Number(m[mes || '']);
+    return (n >= 1 && n <= BLOCOS_MAX) ? n : BLOCOS_PADRAO;
+  }
+
+  /* A conta que todas as telas usam: quantos conteúdos em cada bloco.
+     `itens` já vem ordenado como a pessoa vê (por dia de postagem). */
+  function contarPorBloco(itens, quantos){
+    const total = (itens || []).length;
+    const n = Math.max(1, Math.min(BLOCOS_MAX, Number(quantos) || BLOCOS_PADRAO));
+    const c = [];
+    for(let i = 0; i < n; i++) c.push(0);
+    (itens || []).forEach((it, pos) => {
+      const b = blocoDoItem(it, pos, total, n);
+      if(c[b-1] !== undefined) c[b-1]++;
+    });
+    return c;
+  }
+
 function itensDoMes(mes){
   const todos=data.items||[];
   if(!mes) return todos;
@@ -898,7 +989,60 @@ async function gravarComSeguranca(){
     avisarTela('Não consegui salvar agora (internet). Seu trabalho está guardado neste navegador — pode até fechar a página, que ele volta quando você abrir de novo. Tento de novo a cada edição.', 'erro');
   }
 }
-function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();renderSeletorMes();}
+function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();renderSeletorMes();renderBlocos();}
+
+/* ===== O PAINEL DE GRAVAÇÕES — 01/08/2026 ==========================
+   A Gabi precisa ver, num relance, quantos conteúdos caem em cada
+   gravação — porque é esse número que o filmmaker vai encontrar quando
+   chegar no cliente. Antes ela montava 17 conteúdos e ninguém sabia
+   quantos eram pra primeira ida e quantos pra segunda.
+
+   O painel NÃO grava nada sozinho. Ele mostra a divisão automática e
+   deixa ela ajustar. Gravar sozinho ao abrir a tela foi o que quase
+   apagou um rascunho em 29/07 — não repito. */
+function renderBlocos(){
+  const box = document.getElementById('painelBlocos');
+  if(!box) return;
+  const itens = itensDoMes(mesVisivel).slice().sort((a,b)=>(a.day||0)-(b.day||0));
+  if(!itens.length){ box.innerHTML=''; return; }
+  const n = quantosBlocos(data, mesVisivel);
+  const cont = contarPorBloco(itens, n);
+  const manuais = itens.filter(i => Number(i.bloco) >= 1).length;
+
+  const ORD = ['1ª gravação','2ª gravação','3ª gravação'];
+  box.innerHTML = `<div style="background:var(--card,#26272a);border:1px solid var(--line,#3A3A3D);border-radius:12px;padding:14px 16px;margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <b style="font-size:13.5px;">Divisão das gravações</b>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${n < BLOCOS_MAX ? `<button class="btn btn-o" style="padding:5px 11px;font-size:11px;" onclick="mudarQtdBlocos(${n+1})">+ abrir ${ORD[n]}</button>` : ''}
+        ${n > 1 ? `<button class="btn btn-o" style="padding:5px 11px;font-size:11px;" onclick="mudarQtdBlocos(${n-1})">− tirar a ${ORD[n-1]}</button>` : ''}
+        ${manuais ? `<button class="btn btn-o" style="padding:5px 11px;font-size:11px;" onclick="voltarDivisaoAutomatica()">↺ voltar ao automático</button>` : ''}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      ${cont.map((q,i)=>`<div style="flex:1;min-width:120px;background:var(--deep,#212123);border:1px solid var(--line,#3A3A3D);border-left:3px solid var(--yellow,#FBBC19);border-radius:9px;padding:10px 12px;">
+        <div style="font-size:19px;font-weight:800;line-height:1;">${q}</div>
+        <div style="font-size:11px;color:var(--muted,#8a8a8d);margin-top:3px;">conteúdo(s) na ${ORD[i]}</div>
+      </div>`).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--muted,#8a8a8d);margin-top:9px;line-height:1.5;">
+      É este número que o filmmaker vê no dia. ${manuais ? '<b>'+manuais+'</b> conteúdo(s) você escolheu na mão; o resto é automático (metade e metade, na ordem).' : 'Divisão automática — metade e metade, na ordem. Pra mudar um conteúdo de gravação, abre ele e escolhe em <b>Gravação</b>.'}
+    </div>
+  </div>`;
+}
+
+window.mudarQtdBlocos = function(n){
+  if(!(n >= 1 && n <= BLOCOS_MAX)) return;
+  data.blocosPorMes = data.blocosPorMes || {};
+  data.blocosPorMes[mesVisivel || ''] = n;
+  renderAll();
+};
+
+window.voltarDivisaoAutomatica = function(){
+  if(!confirm('Voltar todos os conteúdos deste mês pra divisão automática?\n\nO que você escolheu na mão se perde.')) return;
+  itensDoMes(mesVisivel).forEach(it => { if(it) it.bloco = ''; });
+  renderAll();
+};
 let primeiroSnapshotJaTratado=false;
 
 /* ===== APROVAÇÃO INTERNA — 28/07/2026 ==============================
@@ -1348,6 +1492,7 @@ function openEdit(i){editIdx=i;const it=data.items[i];document.getElementById('m
   document.getElementById('mStage').value=it.stage;document.getElementById('mFmt').value=it.fmt;
   document.getElementById('mFlex').checked=!!it.dataFlexivel;
   const mdp=document.getElementById('mDataPost'); if(mdp) mdp.value=it.dataPostagem||'';
+  const mbl=document.getElementById('mBloco'); if(mbl) mbl.value=it.bloco||'';
   const selE=document.getElementById('mRefSelect'); if(selE) selE.value='';
   const b=document.getElementById('aprBtn');b.style.display='block';
   b.textContent=it.apr?'✕ Remover aprovação':'✓ Aprovar conteúdo';
@@ -1368,6 +1513,9 @@ function saveItem(){
     agendado:editIdx!==null?(data.items[editIdx].agendado||false):false,
     postagemId:editIdx!==null?(data.items[editIdx].postagemId||''):'',
     dataFlexivel:document.getElementById('mFlex').checked,
+    /* vazio = automático. Guardo o vazio de propósito: assim a divisão
+       acompanha se a Gabi acrescentar ou tirar conteúdo do mês. */
+    bloco:(document.getElementById('mBloco')?.value||''),
     dataPostagem:document.getElementById('mDataPost')?.value||''};
   if(editIdx!==null)data.items[editIdx]=it;else data.items.push(it);
   closeModal();renderAll();}

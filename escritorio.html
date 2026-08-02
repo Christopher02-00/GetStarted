@@ -806,7 +806,16 @@
           <div class="row3">
             <div class="field"><label>Data</label><input type="date" id="agData" onchange="verificarQtdHoje()"></div>
             <div class="field"><label>Hora</label><input type="time" id="agHora" value="10:00"></div>
-            <div class="field"><label>Vídeos planejados</label><input type="number" id="agQtdPlanejada" min="1" value="2"></div>
+            <!-- 01/08/2026 — qual gravação do mês é esta. É o que liga o
+                 calendário da Gabi ao que o filmmaker vê no dia. -->
+            <div class="field"><label>Qual gravação do mês</label>
+              <select id="agBloco" onchange="sugerirQtdPeloBloco()">
+                <option value="1">1ª gravação</option>
+                <option value="2">2ª gravação</option>
+                <option value="3">3ª gravação</option>
+              </select></div>
+            <div class="field"><label>Vídeos planejados</label><input type="number" id="agQtdPlanejada" min="1" value="2">
+              <div class="desc" id="dicaQtdBloco" style="margin:4px 0 0;"></div></div>
           </div>
           <div class="field"><label>Local</label><input type="text" id="agLocal" placeholder="Endereço ou referência do local"></div>
 
@@ -4850,13 +4859,53 @@
       if(calSnap.exists()){
         const items = calSnap.data().items || [];
         const semPostar = items.filter(i => !i.posted).length;
-        calTxt = semPostar + ' conteúdo(s) no calendário ainda sem postar — use como referência pra quantidade a gravar.';
-        const sugestao = document.getElementById('agQtdPlanejada');
-        if(sugestao && semPostar > 0) sugestao.value = Math.min(semPostar, 4);
+        calTxt = semPostar + ' conteúdo(s) no calendário ainda sem postar.';
       }
     } catch(e){}
+    /* 01/08/2026 — a quantidade parou de ser chute.
+       Era `Math.min(semPostar, 4)` — um número inventado, que não tinha
+       relação nenhuma com o que a Gabi planejou. Medi no banco em 01/08:
+       34 conteúdos marcados em agosto contra 133 vídeos "planejados" nas
+       gravações. Agora vem da conta real do bloco, e ela pode mudar. */
+    try{ await sugerirQtdPeloBloco(); }catch(e){ console.error('Falha ao sugerir a quantidade pelo bloco:', e); }
 
     document.getElementById('historicoClienteMes').innerHTML = `<div class="avisoBanner"><div class="icone">📊</div><div class="texto">Esse cliente já teve ${count} gravação(ões) esse mês<span>${esc(calTxt)}</span></div></div>`;
+  };
+
+  /* Lê o calendário do cliente e conta quantos conteúdos caem na gravação
+     escolhida. Preenche o campo — que continua editável, porque a Cecília
+     sabe de coisa que o calendário não sabe (cliente pediu mais, o local
+     não dá pra dois cenários, etc). */
+  window.sugerirQtdPeloBloco = async function(){
+    const slug = document.getElementById('agCliente')?.value || '';
+    const campo = document.getElementById('agQtdPlanejada');
+    const dica  = document.getElementById('dicaQtdBloco');
+    const bloco = Number(document.getElementById('agBloco')?.value) || 1;
+    if(!campo) return;
+    if(!slug){ if(dica) dica.textContent = ''; return; }
+    try{
+      const snap = await getDoc(doc(db,'calendarios', slug));
+      if(!snap.exists()){ if(dica) dica.textContent = 'Esse cliente ainda não tem calendário — a quantidade é sua.'; return; }
+      const cal = snap.data();
+      const mesRef = (document.getElementById('agData')?.value || hojeLocal()).slice(0,7);
+      const meses = mesesDeCalendario(cal);
+      const mes = meses.includes(mesRef) ? mesRef : (meses.slice(-1)[0] || '');
+      const itens = (cal.items||[])
+        .filter(i => !mes || ((i && i.mes) || '') === mes)
+        .filter(i => !i.posted)
+        .slice().sort((a,b)=>(a.day||0)-(b.day||0));
+      const n = quantosBlocos(cal, mes);
+      const cont = contarPorBloco(itens, n);
+      const qtd = cont[bloco-1] || 0;
+      if(bloco > n){
+        if(dica) dica.innerHTML = '⚠️ A Gabi só dividiu este mês em <b>' + n + '</b> gravação(ões). Confirma com ela antes.';
+        return;
+      }
+      campo.value = qtd || 1;
+      if(dica) dica.innerHTML = qtd
+        ? 'A Gabi separou <b>' + qtd + '</b> conteúdo(s) pra esta gravação. Pode mudar se precisar.'
+        : 'A Gabi não deixou conteúdo nesta gravação. Confere com ela.';
+    }catch(e){ console.error('Falha ao ler o calendário pro bloco:', e); }
   };
 
   window.verificarQtdHoje = async function(){
@@ -4983,6 +5032,9 @@
         cliente: clienteSlug, clienteNome, data, hora, local, tipo, filmmaker, equipe,
         estilo, referencias, obsFilmmaker, ehClienteNovo,
         qtdVideosPlanejados: qtdPlanejada, qtdVideosRealizados: 0,
+        /* 01/08/2026 — qual gravação do mês esta é. Sem isto o filmmaker
+           não tem como saber QUAIS conteúdos são os de hoje. */
+        bloco: Number(document.getElementById('agBloco')?.value) || 1,
         status: 'agendado', precisaAprovacao, motivoAprovacao, aprovado: !precisaAprovacao,
         criadoPor: usuarioAtual || '?',
         criadoEm: serverTimestamp()
@@ -10024,6 +10076,84 @@
   function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   window.esc = esc;
 
+  /* ===== BLOCOS DE GRAVAÇÃO — BLOCO ESPELHADO — 01/08/2026 ===========
+     ATENÇÃO: existe IGUAL em `calendario.html` e em `escritorio.html`,
+     copiado caractere por caractere, com teste (t27) que quebra se
+     divergirem. Mexeu aqui, mexe nos dois e roda o teste.
+
+     POR QUE ISTO EXISTE — a reclamação do Luís, estudada na raiz:
+     "o calendário que aparece nas produções pra mim não mostra a
+     quantidade de vídeos que devem ser gravados no dia".
+
+     Ele estava certo, e o defeito é conceitual: o calendário editorial
+     é organizado por DIA DE POSTAGEM. O filmmaker trabalha por DIA DE
+     GRAVAÇÃO. São duas linhas do tempo diferentes, e não havia nada
+     ligando uma na outra — nem no dado, nem na tela.
+
+     A ligação agora é o BLOCO. A Gabi divide os conteúdos do mês em
+     blocos de gravação (2 por padrão, até 3); a Cecília diz qual bloco
+     cada gravação cobre; o filmmaker vê, no dia, quantos e quais.
+
+     A divisão padrão é METADE E METADE NA ORDEM (decisão do Chris em
+     01/08): parte a lista no meio, na ordem em que ela aparece. A sobra
+     vai pro primeiro bloco. A Gabi troca item a item quando quiser. */
+  const BLOCOS_PADRAO = 2;
+  const BLOCOS_MAX = 3;
+
+  /* 17 itens em 2 blocos → [9, 8]. A sobra vai pro primeiro. */
+  function tamanhosDosBlocos(total, quantos){
+    const n = Math.max(1, Math.min(BLOCOS_MAX, Number(quantos) || BLOCOS_PADRAO));
+    const t = Math.max(0, Number(total) || 0);
+    const base = Math.floor(t / n), resto = t % n;
+    const r = [];
+    for(let i = 0; i < n; i++) r.push(base + (i < resto ? 1 : 0));
+    return r;
+  }
+
+  /* Em que bloco cai o item da posição `pos` (0-based), se ninguém
+     escolheu na mão. A ordem é a que a pessoa vê na tela. */
+  function blocoAutomatico(pos, total, quantos){
+    const tam = tamanhosDosBlocos(total, quantos);
+    let acc = 0;
+    for(let i = 0; i < tam.length; i++){
+      acc += tam[i];
+      if(pos < acc) return i + 1;
+    }
+    return tam.length;
+  }
+
+  /* O bloco de um item: o que a Gabi escolheu manda; senão, o automático.
+     Nunca grava nada — só responde. Escrever no dado só quando ela salva
+     é o que evita o acidente do carimbo de mês, que quase apagou um
+     rascunho inteiro em 29/07. */
+  function blocoDoItem(item, pos, total, quantos){
+    const b = Number(item && item.bloco);
+    if(b >= 1 && b <= BLOCOS_MAX) return b;
+    return blocoAutomatico(pos, total, quantos);
+  }
+
+  /* Quantos blocos o mês tem. Guardado por mês, porque um cliente pode
+     ter 2 gravações em agosto e 3 em setembro. */
+  function quantosBlocos(cal, mes){
+    const m = (cal && cal.blocosPorMes) || {};
+    const n = Number(m[mes || '']);
+    return (n >= 1 && n <= BLOCOS_MAX) ? n : BLOCOS_PADRAO;
+  }
+
+  /* A conta que todas as telas usam: quantos conteúdos em cada bloco.
+     `itens` já vem ordenado como a pessoa vê (por dia de postagem). */
+  function contarPorBloco(itens, quantos){
+    const total = (itens || []).length;
+    const n = Math.max(1, Math.min(BLOCOS_MAX, Number(quantos) || BLOCOS_PADRAO));
+    const c = [];
+    for(let i = 0; i < n; i++) c.push(0);
+    (itens || []).forEach((it, pos) => {
+      const b = blocoDoItem(it, pos, total, n);
+      if(c[b-1] !== undefined) c[b-1]++;
+    });
+    return c;
+  }
+
   /* ===== GRADE DE POSTAGENS — BLOCO ESPELHADO — 01/08/2026 ===========
      ATENÇÃO: este bloco existe IGUAL em `portal-cliente.html` e em
      `escritorio.html`. Ele é copiado caractere por caractere entre os
@@ -12019,6 +12149,7 @@
     box.innerHTML = '<div class="desc">Carregando clientes…</div>';
     try{
       const alvo = await clientesDeConteudoRecorrente();
+      const hoje = await carregarGravacoesDeHoje();
       const snap = await getDocs(collection(db,'calendarios'));
       const comConteudo = {};
       snap.forEach(d => { const v=d.data(); const n=(v.items||[]).length; if(n) comConteudo[d.id]=n; });
@@ -12026,13 +12157,43 @@
       if(!lista.length){ box.innerHTML = '<div class="empty">Nenhum cliente com calendário montado ainda.</div>'; return; }
       /* Cartões grandes: isto é usado com o dedo, no celular, em pé. */
       box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:10px;">' +
-        lista.map(c => `<button onclick="abrirCampoDoCliente('${escJs(c.slug)}','${escJs(c.nome)}')"
-          style="flex:1;min-width:150px;padding:16px 14px;border:2px solid var(--line);border-radius:12px;
+        /* 01/08/2026 — a reclamação do Luís começa aqui: o cartão dizia
+           "17 conteúdo(s)" (o mês inteiro) e ele precisava saber quantos
+           são de HOJE. Cliente com gravação marcada pro dia sobe pro topo,
+           em amarelo, com a conta certa. */
+        lista.sort((a,b) => (hoje[b.slug]?1:0) - (hoje[a.slug]?1:0))
+        .map(c => { const g = hoje[c.slug];
+          return `<button onclick="abrirCampoDoCliente('${escJs(c.slug)}','${escJs(c.nome)}')"
+          style="flex:1;min-width:150px;padding:16px 14px;border:2px solid ${g?'var(--yellow)':'var(--line)'};border-radius:12px;
                  background:var(--deep);color:var(--fg);font-size:14px;font-weight:800;cursor:pointer;text-align:left;">
-          ${esc(c.nome)}<div style="font-size:11px;font-weight:500;opacity:.65;margin-top:4px;">${comConteudo[c.slug]} conteúdo(s)</div>
-        </button>`).join('') + '</div>';
+          ${esc(c.nome)}
+          ${g ? `<div style="font-size:12.5px;font-weight:800;color:var(--yellow);margin-top:5px;">🎥 HOJE${g.hora?' às '+esc(g.hora):''} · ${g.qtd} vídeo(s)</div>` : ''}
+          <div style="font-size:11px;font-weight:500;opacity:.65;margin-top:4px;">${comConteudo[c.slug]} conteúdo(s) no mês</div>
+        </button>`; }).join('') + '</div>';
     }catch(e){ console.error('Falha no modo campo:', e); box.innerHTML = '<div class="empty">Não consegui carregar. Recarrega a página.</div>'; }
   };
+
+  /* ===== A GRAVAÇÃO DE HOJE — 01/08/2026 =============================
+     Guardo as gravações do dia pra não reler o banco a cada cliente que
+     o Luís abrir. Preenchido quando ele entra no modo campo. */
+  window.__gravacoesDeHoje = {};
+  async function carregarGravacoesDeHoje(){
+    const hoje = hojeLocal();
+    const mapa = {};
+    try{
+      const snap = await getDocs(collection(db,'agendamentos'));
+      snap.forEach(d => { const a = d.data();
+        if(a.excluido || a.status === 'cancelado') return;
+        if(String(a.data||'') !== hoje) return;
+        const k = a.cliente || a.clienteSlug || '';
+        if(!k) return;
+        mapa[k] = { id:d.id, bloco: Number(a.bloco) || 1, qtd: Number(a.qtdVideosPlanejados) || 0,
+                    hora: a.hora || '', local: a.local || '', ehClienteNovo: !!a.ehClienteNovo };
+      });
+    }catch(e){ console.error('Falha ao ler as gravações de hoje:', e); }
+    window.__gravacoesDeHoje = mapa;
+    return mapa;
+  }
 
   window.abrirCampoDoCliente = function(slug, nome){
     const cont = document.getElementById('campoConteudo');
@@ -12067,18 +12228,48 @@
           <div class="meta" style="margin-top:8px;opacity:.7;">${i.gravado?'✅ já gravado':'⬜ ainda não gravado'}</div>
         </div>`;
 
-      const deHoje = itens.filter(i => Number(i.day) === hojeDia);
-      const resto  = itens.filter(i => Number(i.day) !== hojeDia);
+      /* ===== O ERRO DE RAIZ, CORRIGIDO — 01/08/2026 ====================
+         Isto era `Number(i.day) === hojeDia` e a seção se chamava
+         "🎥 É PRA HOJE". Mas `day` é o dia de POSTAGEM, não de gravação.
+         O calendário editorial é organizado por quando o conteúdo VAI AO
+         AR; o filmmaker trabalha por quando ele é FILMADO. São duas linhas
+         do tempo diferentes, e o sistema tratava como se fossem a mesma.
+
+         Na prática: o Luís chegava no cliente e a tela mostrava "é pra
+         hoje" só se por coincidência algum conteúdo fosse POSTADO naquele
+         dia. Quase nunca era. E não havia nenhum número dizendo quantos
+         gravar — que foi exatamente a reclamação dele.
+
+         Agora a seção de hoje vem da GRAVAÇÃO agendada pro dia: pega o
+         bloco daquela gravação e mostra os conteúdos daquele bloco. */
+      const grav = (window.__gravacoesDeHoje || {})[slug] || null;
+      const nBlocos = quantosBlocos(cal, mes);
+      const totalItens = itens.length;
+      const blocoDe = (i, pos) => blocoDoItem(i, pos, totalItens, nBlocos);
+
+      let deHoje = [], resto = itens;
+      if(grav){
+        deHoje = itens.filter((i,pos) => blocoDe(i,pos) === grav.bloco && !i.gravado);
+        resto  = itens.filter((i,pos) => !(blocoDe(i,pos) === grav.bloco && !i.gravado));
+      }
 
       cont.innerHTML = `
         <div class="card" style="border:2px solid var(--yellow);">
           <div class="top"><div class="nome" style="font-size:17px;">${esc(nome)}</div>
             <span class="selo aprovada">✓ atualizado ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span></div>
-          <div class="meta" style="margin-top:5px;">${esc(rotMes(mes))} · ${itens.length} conteúdo(s)</div>
+          <div class="meta" style="margin-top:5px;">${esc(rotMes(mes))} · ${itens.length} conteúdo(s) no mês</div>
+          ${grav ? `<div style="margin-top:10px;background:var(--yellow);color:var(--graphite);border-radius:9px;padding:11px 13px;">
+            <div style="font-size:16px;font-weight:900;line-height:1.15;">🎥 Hoje: ${deHoje.length} vídeo${deHoje.length===1?'':'s'} pra gravar</div>
+            <div style="font-size:11.5px;font-weight:700;margin-top:3px;opacity:.85;">
+              ${grav.bloco}ª gravação do mês${grav.hora?' · '+esc(grav.hora):''}${grav.local?' · '+esc(grav.local):''}
+              ${grav.qtd && grav.qtd !== deHoje.length ? ' · a Cecília marcou '+grav.qtd : ''}
+            </div>
+          </div>` : `<div class="desc" style="margin-top:10px;">Sem gravação marcada pra hoje neste cliente. Abaixo está o mês inteiro, pra consulta.</div>`}
           ${st !== 'liberado' ? '<div class="desc" style="margin-top:10px;background:rgba(224,197,106,.12);border-left:3px solid var(--yellow2);padding:10px 12px;border-radius:7px;"><b>⚠️ Este mês ainda não foi aprovado pelo cliente.</b> Pode mudar — confirma com a Cecília antes de gravar algo caro de refazer.</div>' : ''}
         </div>
-        ${deHoje.length ? '<div class="metaSecTit" style="margin-top:14px;">🎥 É PRA HOJE</div>' + deHoje.map(i=>cartao(i,true)).join('') : ''}
-        ${resto.length ? '<div class="metaSecTit" style="margin-top:14px;">O resto do mês</div>' + resto.map(i=>cartao(i,false)).join('') : ''}
+        ${grav && deHoje.length ? '<div class="metaSecTit" style="margin-top:14px;">GRAVAR HOJE — ' + deHoje.length + ' conteúdo(s)</div>' + deHoje.map(i=>cartao(i,true)).join('') : ''}
+        ${grav && !deHoje.length ? '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">Tudo desta gravação já está marcado como gravado.</div></div>' : ''}
+        ${resto.length ? '<div class="metaSecTit" style="margin-top:14px;">' + (grav ? 'O resto do mês (não é de hoje)' : 'O mês inteiro') + '</div>' + resto.map(i=>cartao(i,false)).join('') : ''}
         ${!itens.length ? '<div class="card"><div class="empty">Nada montado neste mês ainda.</div></div>' : ''}`;
       setTimeout(()=>cont.scrollIntoView({behavior:'smooth', block:'start'}), 150);
     }, (err) => {
@@ -14295,8 +14486,11 @@
      transferência, ele cola e manda. */
   /* 01/08/2026 — ganhou modo lote. Sem isso o painel de demandas teria
      que copiar a montagem do aviso, e viraria a segunda implementação.
-     No lote não existe o <select> na tela: o destinatário da própria
-     demanda é quem recebe. */
+     No lote não existe o campo de escolha na tela: o destinatário da
+     própria demanda é quem recebe.
+     (Evito escrever a tag literal aqui: a conferência de estrutura conta
+      tags no arquivo inteiro e um comentário com tag vira falso alarme —
+      perdi tempo com exatamente isso em 01/08.) */
   window.alertarPessoaSobreItem = async function(id, emLote){
     const d0 = todasDemandas.find(x=>x.id===id) || {};
     const pessoa = emLote ? d0.destinatario : document.getElementById('alertaPessoa_'+id)?.value;

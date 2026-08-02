@@ -6477,9 +6477,14 @@
     else renderTodasPostagens();
   };
 
-  window.salvarAgendamentoPostagem = async function(id){
-    const data = document.getElementById('dataPost_'+id).value;
-    const hora = document.getElementById('horaPost_'+id).value || '12:00';
+  /* 01/08/2026 — passou a aceitar os valores por parâmetro. O calendário
+     de postagem precisa salvar a partir da ficha, e ler `dataPost_<id>`
+     de lá criaria dois elementos com o mesmo id na página (a fila e a
+     ficha), com o getElementById pegando o errado. Sem parâmetro,
+     continua funcionando exatamente como antes. */
+  window.salvarAgendamentoPostagem = async function(id, dataArg, horaArg){
+    const data = dataArg !== undefined ? dataArg : document.getElementById('dataPost_'+id).value;
+    const hora = (horaArg !== undefined ? horaArg : document.getElementById('horaPost_'+id).value) || '12:00';
     if(!data){ mostrarToast('Escolhe a data antes de agendar.', 'erro'); return; }
 
     const postSnap = await getDoc(doc(db,'postagens', id));
@@ -6547,7 +6552,11 @@
     } catch(e){
       mostrarToast('Postagem agendada, mas não consegui sincronizar com o calendário do cliente.', 'erro');
     }
-    renderAgendarPostagens();
+    /* 01/08/2026 — antes chamava renderAgendarPostagens() fixo. Quem
+       salvasse a partir do calendário de postagem via a FILA aparecer no
+       lugar do calendário. Agora redesenha o que está aberto. */
+    if(document.getElementById('subtabCalendarioPostagem')?.classList.contains('active')) renderGradeDePostagens();
+    else renderAgendarPostagens();
     /* ===== CORRIGIDO (Prompt Mestre 2 - P8.1, 23/07/2026) =====
        "Conteúdo Até Quando" já lia os dados certos (postagens com
        status:'agendado' + dataAgendada) numa consulta fresca sempre que
@@ -18677,13 +18686,54 @@
         ${p.dataAgendada ? '<div class="meta" style="margin-top:6px;">Agendada pra ' + formatarDataBR(p.dataAgendada) + (p.horaAgendada?' às '+esc(p.horaAgendada):'') + '</div>' : ''}
         ${p.legenda ? '<div class="linha" style="white-space:pre-wrap;">'+esc(String(p.legenda).slice(0,400))+'</div>' : '<div class="linha" style="color:var(--yellow2);">Ainda sem legenda escrita.</div>'}
         ${p.linkVideo ? '<div class="linha"><a href="'+esc(p.linkVideo)+'" target="_blank" style="color:var(--yellow);">🔗 Abrir o vídeo ↗</a></div>' : ''}
+
+        ${/* ===== 01/08/2026 — A FICHA PASSOU A EDITAR =====================
+             O teste no ar pegou isto: eu entreguei o calendário dizendo
+             que a Cecília "clica e edita", e a ficha era SÓ LEITURA. Pior,
+             o botão "Ir pra fila e resolver" era um beco sem saída pra
+             postagem já agendada — a fila só mostra o que está esperando
+             agendamento, então ela clicava e não achava o item lá.
+
+             Agora ela remarca dia e hora aqui mesmo. Não escrevi função
+             nova: `salvarAgendamentoPostagem` já faz tudo (grava, sincroniza
+             o calendário do cliente, dá baixa na demanda). Só passei a
+             poder chamá-la com os valores. */''}
+        ${p.status === 'agendado' || p.status === 'aguardando_agendamento' ? `
+        <div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:10px 12px;border-radius:7px;">
+          <b>${p.status === 'agendado' ? 'Remarcar' : 'Agendar'}</b>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+            <input type="date" id="fichaData_${id}" value="${esc(p.dataAgendada||'')}" style="width:auto;">
+            <input type="time" id="fichaHora_${id}" value="${esc(p.horaAgendada||'12:00')}" style="width:auto;">
+            <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;" onclick="salvarDaFichaPostagem('${id}')">Salvar</button>
+          </div>
+          <div class="desc" style="margin:7px 0 0;">Salvar aqui também atualiza o calendário do cliente.</div>
+        </div>` : ''}
+
         <div class="btnrow" style="margin-top:16px;">
           <button class="btn secondary" onclick="fecharModal()">Fechar</button>
-          <button class="btn" onclick="fecharModal();irParaFila('${p.status==='aguardando_legenda'?'legenda':'agendar'}')">▶ Ir pra fila e resolver</button>
+          ${p.status === 'agendado'
+            ? `<button class="btn green" onclick="publicadaDaFicha('${id}')">✔ Marcar como publicada</button>`
+            : `<button class="btn" onclick="fecharModal();irParaFila('${p.status==='aguardando_legenda'?'legenda':'agendar'}')">▶ Ir pra fila e resolver</button>`}
         </div>
         ${renderLinhaDoTempo(p.historico)}`;
       document.getElementById('overlayView').classList.add('show');
     }catch(e){ console.error('Falha ao abrir postagem:', e); mostrarToast('Não consegui abrir agora.', 'erro'); }
+  };
+
+  /* Os dois atalhos da ficha. São casca fina em cima do que já existia:
+     nenhuma regra nova mora aqui. */
+  window.salvarDaFichaPostagem = async function(id){
+    const d = document.getElementById('fichaData_'+id)?.value;
+    const h = document.getElementById('fichaHora_'+id)?.value || '12:00';
+    if(!d){ mostrarToast('Escolhe a data.', 'erro'); return; }
+    await window.salvarAgendamentoPostagem(id, d, h);
+    fecharModal();
+  };
+  window.publicadaDaFicha = async function(id){
+    if(!confirm('Confirmar que esta postagem já foi publicada?')) return;
+    await window.confirmarPostagemPublicada(id);
+    fecharModal();
+    if(document.getElementById('subtabCalendarioPostagem')?.classList.contains('active')) renderGradeDePostagens();
   };
 
   /* ===== 📍 AGORA — FASE 1 DA UNIFICAÇÃO (27/07/2026) =====
@@ -23414,10 +23464,35 @@ Observações do cliente: ${l.observacoes||'—'}`;
     /* Um vídeo vira postagem quando é aprovado. Se os dois existirem, a
        postagem manda — é onde ele está agora. Sem isso o mesmo conteúdo
        apareceria duas vezes na esteira, em etapas diferentes. */
+    /* ===== 01/08/2026 — A HISTÓRIA DO VÍDEO SUMIA ======================
+       A postagem "ganhava" do vídeo, e certo — é onde o conteúdo está
+       agora. Mas ela SUBSTITUÍA o vídeo, e os campos da fase de edição
+       (enviadoEm, aprovadoInternoEm, aprovadoPor, clienteAprovouEm) só
+       existem no vídeo. Conferi: 0 de 101 postagens têm qualquer um deles.
+
+       Ou seja: assim que o conteúdo virava postagem, a linha do tempo
+       perdia "Editor entregou", "Aprovado internamente" e "Cliente
+       confirmou" — justamente o meio da esteira. Sobrava o começo e o fim.
+
+       Agora a postagem continua mandando no que ela tem, mas o vídeo fica
+       embaixo preenchendo o que falta. As 101 postagens têm `videoId`,
+       então a junção é sempre certa. */
     const porVideo = {};
+    const videosPorId = {};
+    window.__prodCache.forEach(it => { if(it.__tipo === 'video') videosPorId[it.id] = it; });
     window.__prodCache.forEach(it => {
       const chave = it.__tipo === 'postagem' ? (it.videoId || 'p_' + it.id) : it.id;
-      if(!porVideo[chave] || it.__tipo === 'postagem') porVideo[chave] = it;
+      if(!porVideo[chave] || it.__tipo === 'postagem'){
+        if(it.__tipo === 'postagem' && it.videoId && videosPorId[it.videoId]){
+          const v = videosPorId[it.videoId];
+          const juntos = { ...v, ...it };          // a postagem manda
+          juntos.id = it.id; juntos.__tipo = 'postagem';
+          juntos.__idVideo = v.id;
+          porVideo[chave] = juntos;
+        } else {
+          porVideo[chave] = it;
+        }
+      }
     });
     let todos = Object.values(porVideo).map(it => ({ ...it, __etapa: etapaDoItem(it) })).filter(it => it.__etapa);
 
@@ -23483,10 +23558,24 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     const e = ETAPAS_PRODUCAO.find(x => x.id === etapaDoItem(it)) || {};
     const marcos = [
-      { rot:'Gravado',                q: it.dataGravacao || it.data,          quem: it.filmmaker },
+      /* ===== 01/08/2026 — TRÊS CAMPOS QUE NÃO EXISTEM ==================
+         Varredura conferida contra o banco (252 vídeos, 101 postagens):
+
+           entregueEm         → 0 documentos.  O certo é `enviadoEm` (139)
+           aprovadoInternoPor → 0 documentos.  O certo é `aprovadoPor` (136)
+           filmmaker          → 0 documentos.  Não existe campo de filmmaker
+                                no vídeo; quem grava vem do agendamento.
+           dataGravacao       → 0 documentos.  O certo é `data` (252)
+
+         Efeito: "Editor entregou" NUNCA aparecia (o marco é filtrado por
+         `.filter(m => m.q)`), e "Aprovado internamente" aparecia sem nome
+         em 136 vídeos. É o mesmo erro do `entregueEm` que já achei no
+         painel em 31/07 — eu consertei lá e não varri o resto do arquivo.
+         Agora varri: estes eram os que sobravam. */
+      { rot:'Gravado',                q: it.data,                             quem: '' },
       { rot:'Entrou pra edição',       q: it.criadoEm?.seconds ? new Date(it.criadoEm.seconds*1000).toISOString().slice(0,10) : null, quem: it.editorAtribuido },
-      { rot:'Editor entregou',         q: it.entregueEm,                       quem: it.editorAtribuido },
-      { rot:'Aprovado internamente',   q: it.aprovadoInternoEm,                quem: it.aprovadoInternoPor },
+      { rot:'Editor entregou',         q: it.enviadoEm,                        quem: it.editorAtribuido },
+      { rot:'Aprovado internamente',   q: it.aprovadoInternoEm,                quem: it.aprovadoPor },
       { rot:'Cliente confirmou',       q: it.clienteAprovouEm,                 quem: it.clienteNome },
       { rot:'Legenda escrita',         q: it.legendaEm,                        quem: it.legendaPor },
       { rot:'Agendado',                q: it.dataAgendada,                     quem: it.agendadoPor },

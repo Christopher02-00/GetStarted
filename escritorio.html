@@ -3312,17 +3312,10 @@
   };
 
   window.cancelarVideoEnviado = async function(id, titulo){
-    if(!confirm('Excluir "'+titulo+'"? Ele vai pra Lixeira, pode ser recuperado pelo Chris/Amanda se for engano.')) return;
-    await updateDoc(doc(db,'videos_producao', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
-    registrarHistorico('videos_producao', id, 'Excluído (foi pra Lixeira)');
-    await addDoc(collection(db,'demandas'), {
-      titulo: 'Vídeo excluído — ' + titulo, descricao: (usuarioAtual||'Alguém') + ' excluiu esse vídeo. Se foi engano, tem na Lixeira de Vídeos pra restaurar.',
-      origem: 'sistema', clienteNome: '', destinatario: 'Amanda',
-      prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-    });
-    mostrarToast('Excluído — mandado pra Lixeira, dá pra recuperar se precisar.');
-    renderMeusVideos();
+    /* 02/08/2026 — era o segundo caminho de exclusão, com texto próprio e
+       um aviso genérico ("Vídeo excluído — X") que foi exatamente a queixa
+       do Chris. Agora chama o mesmo núcleo da gerência. */
+    await window.excluirVideoComMotivo(id, titulo, renderMeusVideos);
   };
 
   window.marcarEnviadoParaCliente = async function(id, valor){
@@ -3944,12 +3937,60 @@
     renderGerenciaVideos();
   };
 
+  /* ===================================================================
+     EXCLUIR E RECUPERAR VÍDEO — 02/08/2026
+     Pedido do Chris, com a queixa exata: "vem uma demanda totalmente
+     estranha e eu não sei do que se trata".
+
+     Ele estava descrevendo isto, que o sistema mandava:
+         "Vídeo excluído — Camargo's Reel 3"
+     Sem quem excluiu, sem por quê. Chega no painel dele e não dá pra
+     decidir nada — só dá pra ir perguntar.
+
+     Agora: motivo obrigatório na exclusão, e o aviso diz quem, o quê e
+     por quê. Recuperar também exige motivo, e quando quem pede não é da
+     gerência, vira DECISÃO com dois botões — não uma tarefa.
+
+     Havia DOIS caminhos de exclusão (o da gerência e o do editor), cada
+     um com seu texto e seu comportamento. Agora os dois chamam este
+     núcleo. Um lugar, uma regra. */
+  window.excluirVideoComMotivo = async function(id, titulo, aoTerminar){
+    const motivo = (prompt('Por que este vídeo está sendo excluído?\n\n(quem receber o aviso vê este texto — sem motivo eu não excluo)') || '').trim();
+    if(!motivo){ mostrarToast('Sem motivo eu não excluo. É esse texto que explica pros outros.', 'erro'); return false; }
+
+    let v = {};
+    try{ const sn = await getDoc(doc(db,'videos_producao', id)); if(sn.exists()) v = sn.data(); }catch(e){}
+    const nome = titulo || v.titulo || 'vídeo';
+    const cli  = v.clienteNome || v.cliente || '';
+
+    await updateDoc(doc(db,'videos_producao', id), {
+      excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString(),
+      motivoExclusao: motivo
+    });
+    registrarHistorico('videos_producao', id, 'Excluído por ' + (usuarioAtual||'?'), motivo);
+
+    /* O aviso só vai pra Amanda quando não foi ela quem excluiu — avisar
+       alguém do que ela mesma acabou de fazer é ruído. O que ela decide
+       aparece no bloco de supervisão do Chris de qualquer jeito. */
+    if(usuarioAtual !== 'Amanda'){
+      await criarDemandaSegura({
+        titulo: '🗑️ ' + (usuarioAtual||'Alguém') + ' excluiu um vídeo' + (cli ? ' de ' + cli : ''),
+        descricao: 'Vídeo: ' + nome + (cli ? '\nCliente: ' + cli : '')
+          + '\nQuem excluiu: ' + (usuarioAtual||'?')
+          + '\n\nMotivo que a pessoa escreveu:\n"' + motivo + '"'
+          + '\n\nSe foi engano, ele está na Lixeira de Vídeos (Gerência → Vídeos → Lixeira) e dá pra recuperar.',
+        destinatario: 'Amanda', origem: 'sistema', clienteNome: cli,
+        ehAviso: true, videoId: id,
+        prazoData: hojeLocal(), prazoHora: '19:00', status: 'pendente'
+      }, { janelaMinutos: 60 });
+    }
+    mostrarToast('Excluído e mandado pra Lixeira. O motivo foi junto.');
+    if(typeof aoTerminar === 'function'){ try{ aoTerminar(); }catch(e){} }
+    return true;
+  };
+
   window.excluirVideoGerencia = async function(id, titulo){
-    if(!confirm('Excluir "'+titulo+'"? Ele vai pra Lixeira, pode ser recuperado se for engano.')) return;
-    await updateDoc(doc(db,'videos_producao', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
-    registrarHistorico('videos_producao', id, 'Excluído pela Gerência (foi pra Lixeira)');
-    mostrarToast('Excluído — mandado pra Lixeira.');
-    renderGerenciaVideos();
+    await window.excluirVideoComMotivo(id, titulo, renderGerenciaVideos);
   };
 
   async function renderLixeiraVideos(){
@@ -3971,19 +4012,56 @@
         <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data||''}</div></div>
         <div class="meta" style="margin-top:6px;color:var(--red);">🗑️ Excluído por <b>${esc(v.excluidoPor||'?')}</b> em ${v.excluidoEm ? new Date(v.excluidoEm).toLocaleString('pt-BR') : '?'}</div>
         ${v.linkFinalizado ? '<div class="meta" style="margin-top:4px;">🔗 <a href="'+esc(v.linkFinalizado)+'" target="_blank" style="color:var(--yellow);">Link do vídeo</a></div>' : ''}
-        <button class="btn secondary" style="width:auto;margin-top:8px;" onclick="restaurarVideo('${v.id}')">↩ Restaurar esse vídeo</button>
+        ${v.motivoExclusao ? '<div class="meta" style="margin-top:6px;background:var(--deep);border-left:3px solid var(--yellow2);padding:8px 10px;border-radius:6px;">Motivo da exclusão: "'+esc(v.motivoExclusao)+'"</div>' : '<div class="meta" style="margin-top:6px;opacity:.7;">Excluído antes de o motivo virar obrigatório.</div>'}
+        <button class="btn secondary" style="width:auto;margin-top:8px;" onclick="${['Chris','Amanda'].includes(usuarioAtual) ? `restaurarVideo('${v.id}')` : `pedirRecuperacaoDeVideo('${v.id}')`}">${['Chris','Amanda'].includes(usuarioAtual) ? '↩ Recuperar esse vídeo' : '♻️ Pedir pra recuperar'}</button>
         ${renderLinhaDoTempo(v.historico)}
       </div>
     `).join('');
     cont.innerHTML = html;
   }
 
+  /* Recuperar também exige motivo. Quem é da gerência recupera na hora —
+     é ela quem decide. Quem não é, PEDE: vira decisão com dois botões, não
+     tarefa. A diferença importa: tarefa a pessoa "faz"; decisão ela
+     responde sim ou não. */
   window.restaurarVideo = async function(id){
-    if(!confirm('Restaurar esse vídeo? Ele volta pro fluxo normal, no status de antes de ser excluído.')) return;
-    await updateDoc(doc(db,'videos_producao', id), { excluido: false, excluidoPor: '', excluidoEm: '' });
-    registrarHistorico('videos_producao', id, 'Restaurado da Lixeira');
-    mostrarToast('Vídeo restaurado!');
+    const motivo = (prompt('Por que este vídeo deve voltar?\n\n(fica registrado no histórico dele)') || '').trim();
+    if(!motivo){ mostrarToast('Sem motivo eu não recupero — o histórico precisa dizer por quê.', 'erro'); return; }
+    await window.recuperarVideoDeVerdade(id, motivo);
     renderLixeiraVideos();
+  };
+
+  /* O núcleo da recuperação. Usado pelo botão direto da gerência e pela
+     resposta "sim" da decisão — uma implementação, dois caminhos. */
+  window.recuperarVideoDeVerdade = async function(id, motivo){
+    await updateDoc(doc(db,'videos_producao', id), {
+      excluido: false, excluidoPor: '', excluidoEm: '', motivoExclusao: '',
+      recuperadoPor: usuarioAtual||'?', recuperadoEm: new Date().toISOString(), motivoRecuperacao: motivo||''
+    });
+    registrarHistorico('videos_producao', id, 'Recuperado da Lixeira por ' + (usuarioAtual||'?'), motivo||'');
+    mostrarToast('Vídeo recuperado — voltou pro fluxo.');
+  };
+
+  /* Quem não é da gerência pede. */
+  window.pedirRecuperacaoDeVideo = async function(id){
+    const motivo = (prompt('Por que este vídeo deve voltar?\n\n(a Amanda lê este texto pra decidir)') || '').trim();
+    if(!motivo){ mostrarToast('Sem motivo ela não tem como decidir.', 'erro'); return; }
+    let v = {};
+    try{ const sn = await getDoc(doc(db,'videos_producao', id)); if(sn.exists()) v = sn.data(); }catch(e){}
+    const nome = v.titulo || 'vídeo';
+    const cli  = v.clienteNome || v.cliente || '';
+    await criarDemandaSegura({
+      titulo: '♻️ ' + (usuarioAtual||'Alguém') + ' quer recuperar um vídeo' + (cli ? ' de ' + cli : ''),
+      descricao: 'Vídeo: ' + nome + (cli ? '\nCliente: ' + cli : '')
+        + '\nQuem excluiu: ' + (v.excluidoPor||'?') + (v.motivoExclusao ? ' — motivo: "' + v.motivoExclusao + '"' : '')
+        + '\n\nQuem quer de volta: ' + (usuarioAtual||'?')
+        + '\nMotivo:\n"' + motivo + '"',
+      destinatario: 'Amanda', origem: 'sistema', clienteNome: cli,
+      ehDecisao: true, ehAviso: true, videoRecuperarId: id, motivoRecuperacao: motivo,
+      decisaoSim: 'Recuperar o vídeo', decisaoNao: 'Manter excluído',
+      prazoData: hojeLocal(), prazoHora: '19:00', status: 'pendente'
+    }, { janelaMinutos: 60 });
+    mostrarToast('Pedido enviado — a Amanda decide e você é avisado.');
   };
 
   function popularClientesRelatorio(){
@@ -11084,6 +11162,58 @@
   }
   window.aprovacaoEhDe = aprovacaoEhDe;
 
+  /* ===================================================================
+     O NOME DA DEMANDA — 02/08/2026 (item 13 do pedido)
+     "Preciso que uma demanda mantenha o mesmo nome em todos os lugares e
+     o mesmo histórico."
+
+     O QUE ESTAVA ERRADO. O nome já era único — cada demanda é um documento
+     com um `titulo`. O que variava era a DECORAÇÃO: duas telas limpavam o
+     emoji do título com DUAS listas diferentes:
+
+       tela A: [🔴🎥📅📸🔗💰⚠️📲🤝📋✍️🎬🧩✅]
+       tela B: [🔴🎥📅📸🔗💰⚠️📲🤝📋✍️🎬]      ← sem 🧩 e ✅
+
+     E as outras 28 telas mostravam o título cru. Então a mesma demanda
+     aparecia com emoji numa tela, sem emoji noutra, e sem metade dos
+     emojis numa terceira.
+
+     Pior: nenhuma das duas listas conhece o 🗑️ e o ♻️, que nasceram hoje
+     na exclusão de vídeo. Lista de emoji escrita à mão sempre atrasa em
+     relação ao sistema.
+
+     AGORA: uma função. Ela separa o ícone do nome usando a FAIXA de
+     emoji, não uma lista — assim emoji novo funciona sem ninguém lembrar
+     de cadastrar.
+
+     O QUE ELA NÃO FAZ, de propósito: não muda o `titulo` gravado. Cinco
+     lugares do sistema procuram demanda por prefixo do título
+     ("✍️ Escrever legenda", "📲 Confirmar publicação", "⚠️ Vídeo atrasado").
+     Mexer no dado quebraria os cinco. Isto é só apresentação. */
+  /* A faixa precisou ser mais larga do que eu escrevi na primeira versão.
+     O teste pegou: o 🆕 (U+1F195) ficou de fora, porque eu comecei em
+     1F300 e ele mora no bloco de alfanuméricos cercados, mais abaixo.
+     Era o mesmo erro das listas à mão, só que em forma de faixa: escolher
+     a olho o que é emoji. Agora cobre os blocos de verdade — inclusive
+     ♻️ e ⏳, que vivem lá embaixo nos símbolos diversos. */
+  const FAIXA_EMOJI_TITULO = /^(?:[\u{1F000}-\u{1FAFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{25A0}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{20E3}]|\s)+/u;
+
+  function nomeDaDemanda(d){
+    const bruto = String((d && d.titulo) || '').trim();
+    const m = bruto.match(FAIXA_EMOJI_TITULO);
+    const icone = m ? m[0].trim() : '';
+    const nome = bruto.replace(FAIXA_EMOJI_TITULO, '').trim();
+    return {
+      icone,
+      nome: nome || 'Demanda sem título',
+      completo: (icone ? icone + ' ' : '') + (nome || 'Demanda sem título')
+    };
+  }
+  window.nomeDaDemanda = nomeDaDemanda;
+  /* Açúcar pras telas: o nome inteiro, já escapado. */
+  function tituloDemanda(d){ return esc(nomeDaDemanda(d).completo); }
+  window.tituloDemanda = tituloDemanda;
+
   function calcularUrgencia(demanda){
     if(demanda.status !== 'pendente') return 'normal';
     if(estaAusente(demanda.destinatario)) return 'normal';
@@ -13594,7 +13724,7 @@
                  urg==='hoje' ? '<span class="selo hoje">Hoje</span>' : '<span class="selo pendente">Pendente</span>';
     const cli = d.origem==='cliente' && d.clienteNome ? ' · ' + esc(d.clienteNome) : '';
     return `<div class="item" style="border-left:3px solid ${borda};" onclick="abrirDemandaMinha('${d.id}')">
-      <div class="top"><div class="nome">${d.grupoId?'🤝 ':''}${esc(d.titulo)}</div>${selo}</div>
+      <div class="top"><div class="nome">${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</div>${selo}</div>
       <div class="meta" style="margin-top:4px;">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${cli}</div>
       ${d.bloqueio ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">🕓 Aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
     </div>`;
@@ -13611,7 +13741,7 @@
        nem repassar, nem excluir, nem cobrar. Virou tela morta. Agora abre
        a ficha completa, igual às demandas dele. */
     return `<div class="item" style="border-left:3px solid ${borda};cursor:pointer;" onclick="abrirDemandaEnviada('${d.id}')">
-      <div class="top"><div class="nome">→ <b>${esc(d.destinatario||'?')}</b>: ${esc(d.titulo)}</div>${selo}</div>
+      <div class="top"><div class="nome">→ <b>${esc(d.destinatario||'?')}</b>: ${tituloDemanda(d)}</div>${selo}</div>
       <div class="meta" style="margin-top:4px;">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${d.prazoSolicitado ? ' · <span style="color:var(--yellow2);">pediu mais prazo</span>' : ''}${d.bloqueio ? ' · <span style="color:var(--yellow2);">travada esperando ' + esc(d.bloqueio.pessoa||'alguém') + '</span>' : ''}</div>
       <div class="meta" style="margin-top:3px;opacity:.6;">toque pra mudar prazo, repassar, cobrar ou excluir</div>
     </div>`;
@@ -13639,7 +13769,7 @@
       : '<span class="selo pendente">Em aberto</span>';
 
     modal.innerHTML = `
-      <h2>${esc(d.titulo)}</h2>
+      <h2>${tituloDemanda(d)}</h2>
       <div class="linha">Com <b>${esc(pessoa)}</b> · ${estado}</div>
       ${d.descricao ? '<div class="linha" style="white-space:pre-wrap;">' + linkifyDescricao(d.descricao) + '</div>' : ''}
       ${d.clienteNome ? '<div class="meta">Cliente: ' + esc(d.clienteNome) + '</div>' : ''}
@@ -13836,7 +13966,7 @@
   function cardDemandaEncalhada(d){
     const dias = Math.floor((new Date().setHours(0,0,0,0) - new Date(d.prazoData + 'T00:00:00').getTime()) / 86400000);
     return `<div class="item" style="border-left:3px solid var(--muted);opacity:.9;">
-      <div class="top" style="cursor:pointer;" onclick="abrirDemandaMinha('${d.id}')"><div class="nome">${esc(d.titulo)}</div><span class="meta">${dias} dias</span></div>
+      <div class="top" style="cursor:pointer;" onclick="abrirDemandaMinha('${d.id}')"><div class="nome">${tituloDemanda(d)}</div><span class="meta">${dias} dias</span></div>
       <div class="btnrow" style="margin-top:9px;">
         <button class="btn secondary" style="width:auto;padding:8px 14px;font-size:11.5px;" onclick="reativarDemandaEncalhada('${d.id}')">Ainda faz sentido — reativar</button>
         <button class="btn secondary" style="width:auto;padding:8px 14px;font-size:11.5px;opacity:.8;" onclick="encerrarDemandaEncalhada('${d.id}')">Já era — encerrar</button>
@@ -13964,7 +14094,7 @@
         <div class="desc">Últimas ${Math.min(concluidas.length,40)} concluídas, de ${concluidas.length}. <b>Não contam em nenhum número</b> — estão aqui só como histórico.</div>
       </div>` + (concluidas.length
         ? concluidas.slice(0,40).map(d => `<div class="item" style="border-left:3px solid var(--green);padding:13px 15px;margin-bottom:12px;">
-            <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="meta">${d.destinatario === usuarioAtual ? 'era sua' : 'você mandou pra ' + esc(d.destinatario||'?')}</span></div>
+            <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="meta">${d.destinatario === usuarioAtual ? 'era sua' : 'você mandou pra ' + esc(d.destinatario||'?')}</span></div>
             <div class="meta" style="margin-top:5px;">✅ ${esc(d.concluidoPor||'?')}${d.concluidoEm?.seconds ? ' · ' + new Date(d.concluidoEm.seconds*1000).toLocaleDateString('pt-BR') : ''}${d.notaConclusao ? ' · ' + esc(String(d.notaConclusao).slice(0,80)) : ''}</div>
           </div>`).join('')
         : '<div class="card"><div class="empty">Nada concluído ainda.</div></div>');
@@ -14119,7 +14249,7 @@
             <div class="grupoHead" onclick="toggleGrupoDemanda(this)"><span class="gic">👤</span><span class="grot">${esc(nome)}</span><span class="gqtd">${porQuem[nome].length}</span><span class="gseta">▾</span></div>
             <div class="grupoItens">${porQuem[nome].map(d => `
               <div class="item" style="border-left:3px solid var(--yellow);" onclick="abrirDemandaGerencia('${d.id}')">
-                <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="selo aguardando">Entregue</span></div>
+                <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="selo aguardando">Entregue</span></div>
                 ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:8px;border-radius:6px;">"'+esc(d.provaTexto)+'"</div>' : ''}
                 <div class="meta" style="margin-top:4px;">Toque pra revisar e aprovar</div>
               </div>`).join('')}</div>
@@ -14356,7 +14486,7 @@
     /* Cadastro novo: além de ler, o Chris despacha pra Cecília daqui. */
     if(d.ehCadastroNovo && d.leadId){
       modal.innerHTML = `
-        <h2>${esc(d.titulo)}</h2>
+        <h2>${tituloDemanda(d)}</h2>
         <div class="linha" style="white-space:pre-wrap;">${linkifyDescricao(d.descricao || '')}</div>
         <div class="btnrow" style="margin-top:18px;">
           <button class="btn secondary" style="padding:13px;font-size:12.5px;" onclick="fecharModal()">Depois</button>
@@ -14369,7 +14499,7 @@
 
     if(ehDemandaDeDecisao(d)){
       modal.innerHTML = `
-        <h2>${esc(d.titulo)}</h2>
+        <h2>${tituloDemanda(d)}</h2>
         <div class="linha" style="white-space:pre-wrap;">${linkifyDescricao(d.descricao || '')}</div>
         <div class="linha"><b>Pedido por:</b> ${esc(d.origem || '?')}${d.clienteNome ? ' · Cliente: ' + esc(d.clienteNome) : ''}</div>
         <div class="btnrow" style="margin-top:18px;">
@@ -14383,7 +14513,7 @@
 
     const jaTemProva = d.status === 'concluida_aguardando_aprovacao';
     modal.innerHTML = `
-      <h2>${d.grupoId?'🤝 ':''}${esc(d.titulo)}</h2>
+      <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
@@ -14605,7 +14735,7 @@
     const pessoa = emLote ? d0.destinatario : document.getElementById('alertaPessoa_'+id)?.value;
     if(!pessoa){ if(!emLote) mostrarToast('Escolhe quem alertar.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id) || {};
-    const titulo = (d.titulo||'').replace(/^[🔴🎥📅📸🔗💰⚠️📲🤝📋✍️🎬🧩✅]+\s*/,'');
+    const titulo = nomeDaDemanda(d).nome;   /* era uma lista de emoji à mão, ver nomeDaDemanda */
     const prazo = d.prazoData ? formatarDataBR(d.prazoData) + (d.prazoHora ? ' às ' + d.prazoHora : '') : 'sem prazo definido';
 
     await addDoc(collection(db,'demandas'), {
@@ -17501,7 +17631,7 @@
     const htmlMinhas = minhasPend.slice(0,6).map(d => {
       const urg = calcularUrgencia(d);
       return `<div class="item demCompacta" style="border-left:3px solid ${urg==='atrasado'?'var(--red)':urg==='hoje'?'var(--yellow2)':'var(--line)'};" onclick="abrirDemandaMinha('${d.id}')">
-        <div class="nome">${esc(d.titulo)}</div>
+        <div class="nome">${tituloDemanda(d)}</div>
         <div class="metaLinha">${formatarDataBR(d.prazoData)} ${d.prazoHora||''}</div>
       </div>`;
     }).join('') + (minhasPend.length > 6 ? '<div class="empty" style="font-size:11px;">+ ' + (minhasPend.length-6) + ' — ver Minhas Demandas</div>' : '');
@@ -19118,7 +19248,7 @@
         if(v.status!=='pendente' || v.destinatario!==nome) return;
         const prazo = new Date(v.prazoData+'T'+(v.prazoHora||'19:00'));
         const dias = Math.floor((agora-prazo)/86400000);
-        if(dias>=0) itens.push({ txt:(v.titulo||'').replace(/^[🔴🎥📅📸🔗💰⚠️📲🤝📋✍️🎬]+\s*/,''), dias });
+        if(dias>=0) itens.push({ txt: nomeDaDemanda(v).nome, dias })   /* idem */;
       });
       vidSnap.forEach(d => { const v=d.data();
         if(v.excluido || ['finalizado','arquivado'].includes(v.status)) return;
@@ -19413,14 +19543,14 @@
          decisão dele, não trabalho dele. */
       const decisoes = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d));
       if(decisoes.length) html += decisoes.map(d => `<div class="item" style="border-left:3px solid var(--yellow);">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="selo pendente">decisão</span></div>
+        <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="selo pendente">decisão</span></div>
         <div class="meta" style="margin-top:6px;">${esc((d.descricao||'').split('\n')[0].slice(0,110))}</div>
         <div class="btnrow" style="margin-top:10px;">
           <button class="btn red" style="width:auto;padding:8px 14px;font-size:11.5px;" onclick="responderDecisao('${d.id}', false)">${esc(d.decisaoNao || 'Não autorizar')}</button>
           <button class="btn green" style="width:auto;padding:8px 16px;font-size:11.5px;" onclick="responderDecisao('${d.id}', true)">${esc(d.decisaoSim || 'Autorizar')}</button>
         </div></div>`).join('');
       if(aprovar.length) html += aprovar.map(d => `<div class="item" style="border-left:3px solid var(--yellow);">
-        <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${esc(d.titulo)}</div><span class="selo pendente">${esc(d.destinatario)}</span></div>
+        <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${tituloDemanda(d)}</div><span class="selo pendente">${esc(d.destinatario)}</span></div>
         ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:9px 11px;border-radius:7px;">"'+esc(d.provaTexto)+'"</div>' : ''}
         <div class="btnrow" style="margin-top:9px;">
           <button class="btn red" style="width:auto;padding:6px 13px;font-size:11px;" onclick="rejeitarDemanda('${d.id}')">Refazer</button>
@@ -19428,7 +19558,7 @@
         </div></div>`).join('');
       if(prazos.length) html += prazos.map(d => `<div class="item" style="border-left:3px solid var(--yellow2);">
         <div class="top"><div class="nome">🕓 ${esc(d.destinatario)} pediu novo prazo</div></div>
-        <div class="meta" style="margin-top:4px;">${esc(d.titulo)} · de <b>${formatarDataBR(d.prazoData)}</b> pra <b style="color:var(--yellow);">${formatarDataBR(d.prazoSolicitado)}</b></div>
+        <div class="meta" style="margin-top:4px;">${tituloDemanda(d)} · de <b>${formatarDataBR(d.prazoData)}</b> pra <b style="color:var(--yellow);">${formatarDataBR(d.prazoSolicitado)}</b></div>
         <div class="btnrow" style="margin-top:9px;">
           <button class="btn secondary" style="width:auto;padding:6px 13px;font-size:11px;" onclick="recusarNovoPrazo('${d.id}')">Manter</button>
           <button class="btn green" style="width:auto;padding:6px 18px;font-size:11px;" onclick="autorizarNovoPrazo('${d.id}')">Autorizar</button>
@@ -21207,12 +21337,38 @@
       : nota >= 50 ? { cor:'var(--yellow2)', txt:'Dia mediano — voltou correção demais' }
       : { cor:'var(--red)', txt:'Dia ruim — mais correção do que entrega limpa' };
 
+    /* ===== A MÉDIA DE 7 DIAS — 02/08/2026 (item 12 do pedido) =========
+       "quero saber quantos vídeos foram feitos no dia, com média, por
+       editor, pra cobrar com resumo pro WhatsApp."
+       Número do dia sozinho não diz nada: 6 entregas é bom ou ruim? Só a
+       média responde. Conta os 7 dias anteriores, sem contar hoje —
+       comparar o dia em andamento com dias fechados puxaria a média pra
+       baixo toda manhã. */
+    const dias7 = [];
+    for(let i = 1; i <= 7; i++){
+      const d = new Date(hojeStr + 'T00:00:00'); d.setDate(d.getDate() - i);
+      dias7.push(dataLocal(d));
+    }
+    const entregues7 = todos.filter(v => dias7.includes(String(v.enviadoEm||'').slice(0,10)));
+    const media7 = Math.round(entregues7.length / 7 * 10) / 10;
+    const compara = media7 === 0 ? null : Math.round((entregues.length - media7) / media7 * 100);
+
     const porEditor = {};
     todos.filter(v => !['finalizado','arquivado'].includes(v.status)).forEach(v => {
       const e = v.editorAtribuido || v.editor || 'sem editor';
-      porEditor[e] = porEditor[e] || { fila:0, correcao:0 };
+      porEditor[e] = porEditor[e] || { fila:0, correcao:0, hoje:0, semana:0 };
       porEditor[e].fila++;
       if(v.status === 'correcao') porEditor[e].correcao++;
+    });
+    /* entregue hoje e na semana conta o vídeo JÁ FECHADO também — senão o
+       editor que entregou tudo aparece com zero, que é o oposto da verdade */
+    todos.forEach(v => {
+      const e = v.editorAtribuido || v.editor || 'sem editor';
+      const q = String(v.enviadoEm||'').slice(0,10);
+      if(!q) return;
+      porEditor[e] = porEditor[e] || { fila:0, correcao:0, hoje:0, semana:0 };
+      if(q === hojeStr) porEditor[e].hoje++;
+      if(dias7.includes(q)) porEditor[e].semana++;
     });
     const maxFila = Math.max(...Object.values(porEditor).map(x=>x.fila), 1);
 
@@ -21242,6 +21398,14 @@
           </div></div>
       </div>`).join('')}` : '';
 
+    /* O resumo pro WhatsApp lê daqui — assim o texto copiado é EXATAMENTE
+       o que está na tela. Recalcular pro texto seria abrir a porta pra
+       tela e mensagem divergirem, que é o defeito que passei a semana
+       matando. */
+    window.__retratoProducao = { hojeStr, entregues:entregues.length, aprovados:aprovados.length,
+      correcao:correcao.length, atrasados:atrasados.length, aguardando:aguardando.length,
+      emEdicao:emEdicao.length, media7, compara, porEditor, humor:humor.txt, nota };
+
     return `<div class="card metaSec" style="border-color:${humor.cor};">
       <div class="metaSecTit">📹 Produção de hoje — ${formatarDataBR(hojeStr)}</div>
       <div class="desc" style="margin-bottom:10px;">${humor.txt}${nota!==null?' · '+nota+'% das entregas de hoje passaram sem voltar':''}</div>
@@ -21251,7 +21415,9 @@
         <div class="resumoCard ${correcao.length?'red':'green'}"><div class="num">${correcao.length}</div><div class="lbl">voltaram pra correção</div></div>
         <div class="resumoCard ${atrasados.length?'red':'green'}"><div class="num">${atrasados.length}</div><div class="lbl">atrasados</div></div>
         <div class="resumoCard"><div class="num" style="font-size:16px;">${aguardando.length}</div><div class="lbl">esperando aprovação</div></div>
+        <div class="resumoCard"><div class="num" style="font-size:16px;">${media7}</div><div class="lbl">média/dia (7 dias)${compara!==null ? ' · <b style="color:'+(compara>=0?'var(--green)':'var(--red)')+';">'+(compara>=0?'+':'')+compara+'%</b>' : ''}</div></div>
       </div>
+      <button class="btn secondary" style="width:auto;padding:7px 14px;font-size:11.5px;border-color:var(--yellow);margin-bottom:12px;" onclick="copiarResumoProducao(this)">📲 Copiar resumo pro WhatsApp</button>
       ${blocoClientes}
       <div class="desc" style="margin:16px 0 8px;">Onde a fila está parada agora</div>
       ${[['Em edição', emEdicao.length, 'var(--yellow)'],['Esperando sua aprovação', aguardando.length, 'var(--yellow2)'],['Em correção', correcao.length, 'var(--red)']]
@@ -21259,10 +21425,64 @@
       <div class="desc" style="margin:14px 0 8px;">Carga por editor</div>
       ${Object.entries(porEditor).sort((a,b)=>b[1].fila-a[1].fila).map(([n,x]) =>
         `<div style="margin-bottom:9px;">
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;"><b>${esc(n)}</b><span class="meta">${x.fila} na fila${x.correcao?' · '+x.correcao+' em correção':''}</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;"><b>${esc(n)}</b><span class="meta">${x.hoje?'<b style="color:var(--green);">'+x.hoje+' hoje</b> · ':''}${x.fila} na fila${x.correcao?' · <b style="color:var(--red);">'+x.correcao+' em correção</b>':''}${x.semana?' · '+x.semana+' na semana':''}</span></div>
           <div style="height:8px;background:var(--deep);border-radius:5px;overflow:hidden;"><div style="height:100%;width:${Math.round(x.fila/maxFila*100)}%;background:${x.correcao?'var(--red)':'var(--yellow)'};"></div></div>
         </div>`).join('') || '<div class="empty" style="font-size:11px;">Nenhum vídeo em aberto.</div>'}
     </div>`;
+  };
+
+  /* ===== O RESUMO PRO WHATSAPP — 02/08/2026 =========================
+     "pra cobrar com resumo pro WhatsApp". O texto sai do MESMO retrato que
+     desenhou a tela — não recalculo nada aqui. Se recalculasse, tela e
+     mensagem poderiam divergir, que é exatamente o defeito que esta
+     semana inteira foi gasta matando.
+
+     O tom é de cobrança, mas não é de bronca: começa pelo que foi feito.
+     Time que só recebe cobrança para de ler a mensagem. */
+  window.copiarResumoProducao = async function(btn){
+    let r = window.__retratoProducao;
+    if(!r){ try{ await htmlDiaDosVideos(); r = window.__retratoProducao; }catch(e){} }
+    if(!r){ mostrarToast('Abre a Produção de hoje primeiro — o resumo sai de lá.', 'erro'); return; }
+
+    const L = [];
+    L.push('*Produção — ' + formatarDataBR(r.hojeStr) + '*');
+    L.push('');
+    L.push('✅ Entregues hoje: *' + r.entregues + '*'
+      + (r.media7 ? '  (média dos 7 dias: ' + r.media7 + (r.compara!==null ? ', ' + (r.compara>=0?'+':'') + r.compara + '%' : '') + ')' : ''));
+    if(r.aprovados)  L.push('👍 Aprovados hoje: ' + r.aprovados);
+    if(r.correcao)   L.push('🔁 Voltaram pra correção: *' + r.correcao + '*');
+    if(r.atrasados)  L.push('🔴 Atrasados: *' + r.atrasados + '*');
+    if(r.aguardando) L.push('⏳ Esperando aprovação: ' + r.aguardando);
+    if(r.emEdicao)   L.push('🎬 Em edição: ' + r.emEdicao);
+
+    const eds = Object.entries(r.porEditor || {})
+      .filter(([n]) => n !== 'sem editor')
+      .sort((a,b) => (b[1].hoje||0) - (a[1].hoje||0) || (b[1].fila||0) - (a[1].fila||0));
+    if(eds.length){
+      L.push(''); L.push('*Por editor*');
+      eds.forEach(([n,x]) => {
+        const p = [];
+        if(x.hoje) p.push(x.hoje + ' entregue' + (x.hoje>1?'s':'') + ' hoje');
+        if(x.fila) p.push(x.fila + ' na fila');
+        if(x.correcao) p.push(x.correcao + ' em correção');
+        L.push('• ' + n + ': ' + (p.length ? p.join(' · ') : 'sem nada em aberto'));
+      });
+    }
+    const semEditor = (r.porEditor||{})['sem editor'];
+    if(semEditor && semEditor.fila) L.push('', '⚠️ *' + semEditor.fila + ' vídeo(s) ainda sem editor.*');
+
+    L.push(''); L.push('_' + r.humor + '_');
+
+    const texto = L.join('\n');
+    try{
+      await navigator.clipboard.writeText(texto);
+      if(btn){ const o = btn.textContent; btn.textContent = '✓ Copiado'; setTimeout(()=>btn.textContent=o, 2000); }
+      mostrarToast('Resumo copiado — é só colar no grupo.');
+    }catch(e){
+      console.error('Não consegui copiar:', e);
+      prompt('Copia daqui:', texto);
+    }
+    return texto;
   };
 
   window.renderVideosHub = async function(){
@@ -21376,7 +21596,7 @@
          pra mexer no prazo de alguem ela tinha que sair dali. Agora o cartao
          abre o mesmo modal da gerencia, onde ela edita prazo e exclui. */
       return `<div class="item" style="border-left:3px solid ${urg==='atrasado'?'var(--red)':urg==='hoje'?'var(--yellow2)':'var(--line)'};cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="selo ${urg==='atrasado'?'atrasado':urg==='hoje'?'hoje':'pendente'}">${urg==='atrasado'?'Atrasada':urg==='hoje'?'Hoje':'Em aberto'}</span></div>
+        <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="selo ${urg==='atrasado'?'atrasado':urg==='hoje'?'hoje':'pendente'}">${urg==='atrasado'?'Atrasada':urg==='hoje'?'Hoje':'Em aberto'}</span></div>
         <div class="meta" style="margin-top:4px;">Prazo ${formatarDataBR(d.prazoData)} ${d.prazoHora||''}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
         ${d.bloqueio ? '<div class="meta" style="margin-top:4px;color:var(--yellow2);">🕓 Aguardando '+esc(d.bloqueio.pessoa)+': '+esc(d.bloqueio.texto||'')+'</div>' : ''}
       </div>`;
@@ -21518,7 +21738,7 @@
         </div>
       </div>`;
       const cardAtrasadaGer = d => `<div class="item" style="border-left:3px solid var(--red);" onclick="abrirDemandaGerencia('${d.id}')">
-            <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag vermelho">${diasAtraso(d)} dia(s)</span></div>
+            <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="prioTag vermelho">${diasAtraso(d)} dia(s)</span></div>
             <div class="meta" style="margin-top:4px;">Prazo era: ${formatarDataBR(d.prazoData)} às ${d.prazoHora} · Origem: ${esc(d.origem||'—')}</div>
             ${d.clienteNome ? '<div class="meta">Cliente: '+esc(d.clienteNome)+'</div>' : ''}
           </div>`;
@@ -21687,7 +21907,7 @@
     return `<div class="item" style="border-left:3px solid ${info.cor};display:flex;gap:10px;align-items:flex-start;">
       ${comCaixa ? `<input type="checkbox" class="chkDem" value="${d.id}" onclick="event.stopPropagation();atualizarBarraLote();" style="margin-top:4px;width:16px;height:16px;flex-shrink:0;cursor:pointer;">` : ''}
       <div style="flex:1;min-width:0;cursor:pointer;" onclick="${aoAbrir}('${d.id}')">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div>${selo}</div>
+        <div class="top"><div class="nome">${tituloDemanda(d)}</div>${selo}</div>
         <div class="meta" style="margin-top:4px;">${comCaixa?esc(d.destinatario||'?')+' · ':''}${d.prazoData?'prazo '+formatarDataBR(d.prazoData):'sem prazo definido'}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
         ${d.bloqueio ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">Aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
         ${d.pedidoExclusao ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">Pediu pra excluir — esperando decisão</div>' : ''}
@@ -22834,7 +23054,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${itens.length})</span>${dono?'':'<span class="qtd" style="opacity:.6;"> · não é sua</span>'}<span class="seta">▾</span></div>
         <div class="faixaItens">${itens.map(d => `
           <div class="item" style="border-left:3px solid var(--yellow);">
-            <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${esc(d.titulo)}</div><span class="selo pendente">entregue</span></div>
+            <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${tituloDemanda(d)}</div><span class="selo pendente">entregue</span></div>
             ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:9px 11px;border-radius:7px;">"'+esc(d.provaTexto)+'"</div>' : '<div class="meta" style="margin-top:6px;opacity:.7;">Sem relato — abre pra ver.</div>'}
             ${d.provaImagemUrl ? '<a href="'+esc(d.provaImagemUrl)+'" target="_blank" class="meta" style="display:inline-block;margin-top:6px;color:var(--yellow);">🔗 Abrir a prova ↗</a>' : ''}
             <div class="btnrow" style="margin-top:10px;">
@@ -22875,19 +23095,19 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     html += `<div class="grupoFuncionario"><h3>⏳ Em aberto</h3>`;
     html += abertas.length ? abertas.map(d => `<div class="item" style="${calcularUrgencia(d)==='atrasado'?'border-left:3px solid var(--red);':''}">
-      <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag ${calcularUrgencia(d)==='atrasado'?'vermelho':'amarelo'}">${esc(d.destinatario)}</span></div>
+      <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="prioTag ${calcularUrgencia(d)==='atrasado'?'vermelho':'amarelo'}">${esc(d.destinatario)}</span></div>
       <div class="meta" style="margin-top:4px;">Prazo: ${formatarDataBR(d.prazoData)} ${d.prazoHora}</div>
     </div>`).join('') : '<div class="empty" style="font-size:11px;">Nenhuma em aberto.</div>';
     html += `</div>`;
 
     html += `<div class="grupoFuncionario"><h3>🕓 Aguardando sua revisão</h3>`;
     html += aguardando.length ? aguardando.map(d => `<div class="item" onclick="abrirDemandaGerencia('${d.id}')">
-      <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag amarelo">${esc(d.destinatario)}</span></div>
+      <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="prioTag amarelo">${esc(d.destinatario)}</span></div>
     </div>`).join('') : '<div class="empty" style="font-size:11px;">Nada aguardando.</div>';
     html += `</div>`;
 
     html += `<div class="grupoFuncionario"><h3>✅ Concluídas (últimas 15)</h3>`;
-    html += feitas.slice(0,15).map(d => `<div class="item" style="opacity:.7;"><div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag verde">${esc(d.destinatario)}</span></div></div>`).join('') || '<div class="empty" style="font-size:11px;">Nenhuma concluída ainda.</div>';
+    html += feitas.slice(0,15).map(d => `<div class="item" style="opacity:.7;"><div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="prioTag verde">${esc(d.destinatario)}</span></div></div>`).join('') || '<div class="empty" style="font-size:11px;">Nenhuma concluída ainda.</div>';
     html += `</div>`;
 
     cont.innerHTML = html;
@@ -23061,14 +23281,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     const detalheAtrasadas = atrasadas.length ? `<div class="grupoFuncionario" style="margin-top:8px;">
       ${atrasadas.sort((a,b)=>diasAtraso(b)-diasAtraso(a)).map(d => `<div class="item" style="border-left:3px solid var(--red);" onclick="abrirDemandaGerencia('${d.id}')">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="prioTag vermelho">${diasAtraso(d)} dia(s) atrasado</span></div>
+        <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="prioTag vermelho">${diasAtraso(d)} dia(s) atrasado</span></div>
         <div class="meta" style="margin-top:4px;">👤 ${esc(d.destinatario)} · prazo era ${formatarDataBR(d.prazoData)} ${d.prazoHora}</div>
       </div>`).join('')}
     </div>` : '<div class="empty" style="margin-top:8px;">Nenhuma atrasada — tudo em dia. 🎉</div>';
 
     const detalheAguardandoDemanda = aguardandoAprovacaoDemanda.length ? `<div class="grupoFuncionario" style="margin-top:8px;">
       ${aguardandoAprovacaoDemanda.map(d => `<div class="item" onclick="abrirDemandaGerencia('${d.id}')">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div></div>
+        <div class="top"><div class="nome">${tituloDemanda(d)}</div></div>
         <div class="meta" style="margin-top:4px;">👤 ${esc(d.destinatario)} enviou — clica pra revisar e aprovar</div>
       </div>`).join('')}
     </div>` : '<div class="empty" style="margin-top:8px;">Nada esperando sua aprovação agora.</div>';
@@ -24284,7 +24504,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const bloco = (chave, titulo, lista, aberta) => !lista.length ? '' : `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="eq_${chave}">
       <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
       <div class="faixaItens">${lista.map(d => `<div class="item" style="cursor:pointer;padding:14px 16px;margin-bottom:16px;" onclick="abrirDemandaGerencia('${d.id}')">
-        <div class="top"><div class="nome">${esc(d.titulo)}</div><span class="meta">${d.prazoData ? formatarDataBR(d.prazoData) : 'sem prazo'}</span></div>
+        <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="meta">${d.prazoData ? formatarDataBR(d.prazoData) : 'sem prazo'}</span></div>
         <div class="meta" style="margin-top:5px;">${esc((d.descricao||'').slice(0,90).replace(/\n/g,' ')) || 'sem descrição'}</div>
       </div>`).join('')}</div>
     </div>`;
@@ -24455,7 +24675,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         html += `<div class="grupoFuncionario"><h3>⏭️ Pedidos pra pular legenda (${pedidosPularLegenda.length})</h3>`;
         html += pedidosPularLegenda.map(d => `
           <div class="item">
-            <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">Pedido pela Gabi</div></div>
+            <div class="top"><div class="nome">${tituloDemanda(d)}</div><div class="meta">Pedido pela Gabi</div></div>
             <div class="meta" style="margin-top:6px;">${linkifyDescricao(d.descricao)}</div>
             <div class="btnrow" style="margin-top:8px;">
               <button class="btn secondary" onclick="recusarPularLegenda('${d.id}','${d.postagemId}')">Recusar — precisa escrever</button>
@@ -24468,7 +24688,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         html += `<div class="grupoFuncionario"><h3>🕓 Pedidos de novo prazo (${pedidosPrazo.length})</h3>`;
         html += pedidosPrazo.map(d => `
           <div class="item">
-            <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">${esc(d.destinatario)}</div></div>
+            <div class="top"><div class="nome">${tituloDemanda(d)}</div><div class="meta">${esc(d.destinatario)}</div></div>
             <div class="meta" style="margin-top:6px;">De <b>${formatarDataBR(d.prazoData)}</b> pra <b style="color:var(--yellow);">${formatarDataBR(d.prazoSolicitado)}</b></div>
             <div class="btnrow" style="margin-top:8px;">
               <button class="btn secondary" onclick="recusarNovoPrazo('${d.id}')">Manter prazo atual</button>
@@ -24480,7 +24700,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       if(aguardando.length){
         html += `<div class="grupoFuncionario"><h3>🕓 Demandas concluídas, esperando aprovação (${aguardando.length})</h3>`;
         const cardAguardAmanda = d => `<div class="item" onclick="abrirDemandaGerencia('${d.id}')">
-          <div class="top"><div class="nome">${esc(d.titulo)}</div><div class="meta">${esc(d.destinatario)}</div></div>
+          <div class="top"><div class="nome">${tituloDemanda(d)}</div><div class="meta">${esc(d.destinatario)}</div></div>
         </div>`;
         html += agruparEmFamiliasHtml(aguardando, cardAguardAmanda, false) + `</div>`;
       }
@@ -24551,13 +24771,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
         html += dele.map(d => {
           const urg = calcularUrgencia(d);
           return `<div class="item" style="margin-left:14px;border-left:3px solid ${urg==='atrasado'?'var(--red)':'var(--line)'};cursor:pointer;" onclick="event.stopPropagation();abrirDemandaGerencia('${d.id}')">
-          <div class="top"><div class="nome" style="font-size:12.5px;">${urg==='atrasado'?'⚠️ ':''}${esc(d.titulo)}</div><div class="meta">${formatarDataBR(d.prazoData)} ${d.prazoHora}</div></div>
+          <div class="top"><div class="nome" style="font-size:12.5px;">${urg==='atrasado'?'⚠️ ':''}${tituloDemanda(d)}</div><div class="meta">${formatarDataBR(d.prazoData)} ${d.prazoHora}</div></div>
           <div class="meta" style="margin-top:3px;">${d.status==='concluida_aguardando_aprovacao'?'Aguardando sua aprovação':'Pendente'}</div>
         </div>`;
         }).join('');
       } else if(atrasadasDele.length){
         html += atrasadasDele.map(d => `<div class="item" style="margin-left:14px;border-left:3px solid var(--red);" onclick="event.stopPropagation();abrirDemandaGerencia('${d.id}')">
-          <div class="top"><div class="nome" style="font-size:12.5px;">⚠️ ${esc(d.titulo)}</div><div class="meta">${formatarDataBR(d.prazoData)} ${d.prazoHora}</div></div>
+          <div class="top"><div class="nome" style="font-size:12.5px;">⚠️ ${tituloDemanda(d)}</div><div class="meta">${formatarDataBR(d.prazoData)} ${d.prazoHora}</div></div>
         </div>`).join('');
       }
     });
@@ -25047,7 +25267,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     /* Prazo editavel direto — mesma regra do ehGerencia (so Chris e Amanda). */
     const podeMexerNoPrazo = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
     modal.innerHTML = `
-      <h2>${d.grupoId?'🤝 ':''}${esc(d.titulo)}</h2>
+      <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(d.destinatario)}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
       ${podeMexerNoPrazo ? `
@@ -25253,11 +25473,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
     try{
       if(sim){
         if(d.agendamentoId) await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado:true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString() });
+        /* 02/08/2026 — a decisão só sabia liberar gravação. Agora também
+           recupera vídeo, chamando o MESMO núcleo do botão da lixeira. */
+        if(d.videoRecuperarId) await window.recuperarVideoDeVerdade(d.videoRecuperarId, d.motivoRecuperacao || 'aprovado por ' + (usuarioAtual||'?'));
         await updateDoc(doc(db,'demandas', id), {
           status:'aprovada', concluidoPor: usuarioAtual||'?', concluidoEm: serverTimestamp(),
           decisao:'autorizado', notaConclusao:'Autorizado por ' + (usuarioAtual||'?')
         });
-        mostrarToast('Liberado — o filmmaker já pode registrar.');
+        /* 02/08/2026 — dizia "o filmmaker já pode registrar" pra qualquer
+           decisão. Depois que a recuperação de vídeo virou decisão, a
+           mensagem passou a mentir na metade dos casos. */
+        mostrarToast(d.videoRecuperarId ? 'Vídeo recuperado — voltou pro fluxo.' : 'Liberado — o filmmaker já pode registrar.');
       } else {
         const motivo = prompt('Por que não? (a pessoa que pediu vê este texto)') || '';
         if(d.agendamentoId) await updateDoc(doc(db,'agendamentos', d.agendamentoId), { aprovado:false, recusadoPor: usuarioAtual||'?', recusadoEm: new Date().toISOString(), motivoRecusa: motivo });

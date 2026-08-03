@@ -606,6 +606,7 @@
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
       <div class="navitem" id="navChecklist" onclick="irPara('checklist', this)"><span class="ico"><svg><use href="#i-clipboard"/></svg></span> Meu Checklist</div>
       <div class="navitem" id="navVideos" onclick="irPara('videos', this)"><span class="ico"><svg><use href="#i-video"/></svg></span> Vídeos em Edição<span class="navbadge" id="badgeVideosMenu" style="display:none;"></span></div>
+      <div class="navitem" id="navExtras" onclick="irParaExtras()"><span class="ico"><svg><use href="#i-dollar"/></svg></span> Extras da Equipe<span class="navbadge" id="badgeExtrasMenu" style="display:none;"></span></div>
       <div class="navitem" id="navAprovacoes" onclick="irParaAprovacoes()"><span class="ico"><svg><use href="#i-check"/></svg></span> Aprovar Vídeos e Demandas<span class="navbadge" id="badgeAprovacoesMenu" style="display:none;"></span></div>
       <div class="navitem" id="navAgendamento" onclick="irPara('agendamento', this)"><span class="ico"><svg><use href="#i-camera"/></svg></span> Gravações</div>
       <div class="navitem" id="navFuncoesFixas" onclick="irPara('funcoesFixas', this)"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Funções Fixas</div>
@@ -3535,12 +3536,37 @@
     const snap = await getDocs(collection(db,'videos_producao'));
     const meus = [];
     snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
+    /* ===== "AGUARDANDO APROVAÇÃO" DE QUEM? — 03/08/2026 =============
+       O Chris: "no painel da Cecília existe um número pra enviados e
+       aguardando aprovação com total de oito, porém não se sabe que tipo
+       de aprovação é essa, se é do cliente ou se é nossa — todos os
+       vídeos que ela enviou eu já aprovei".
+
+       Ele está certo, e a confusão fui EU que criei ontem. A tela lia só
+       `aguardando_aprovacao` (1 documento no banco inteiro), então a
+       entrega da editora sumia da tela dela. Consertei incluindo
+       `aguardando_cliente` — mas juntei os dois no MESMO número, sob um
+       rótulo que não diz de quem é a aprovação.
+
+       São duas esperas completamente diferentes:
+         aguardando_aprovacao → esperando a GERÊNCIA revisar
+         aguardando_cliente   → a gerência JÁ aprovou, espera o CLIENTE
+
+       Juntar as duas fez a Cecília ver 8 "esperando aprovação" de
+       vídeos que o Chris já tinha aprovado. O dado estava certo; o
+       rótulo é que mentia. Agora são dois números e duas listas. */
+    const aguardandoGerencia = [];
+    const aguardandoCli = [];
     const aguardando = [];
     /* 03/08 — lia só 'aguardando_aprovacao', que tem 1 documento no
        banco inteiro. O status real de "entreguei, está com a gerência ou
        com o cliente" é 'aguardando_cliente', com 11. O editor entregava
        e a entrega sumia da tela dele. */
-    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && ['aguardando_aprovacao','aguardando_cliente'].includes(String(v.status||''))) aguardando.push({id:d.id, ...v}); });
+    snap.forEach(d => { const v=d.data();
+      if(v.excluido || v.editorAtribuido !== usuarioAtual) return;
+      if(String(v.status) === 'aguardando_aprovacao'){ aguardandoGerencia.push({id:d.id, ...v}); aguardando.push({id:d.id, ...v}); }
+      else if(String(v.status) === 'aguardando_cliente'){ aguardandoCli.push({id:d.id, ...v}); aguardando.push({id:d.id, ...v}); }
+    });
     const correcoes = [];
     snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'correcao') correcoes.push({id:d.id, ...v}); });
     const aprovados = [];
@@ -3555,7 +3581,8 @@
       <h2>📊 Seu resumo geral</h2>
       <div class="painelResumo">
         <div class="resumoCard"><div class="num">${meus.length}</div><div class="lbl">Pra editar agora</div></div>
-        <div class="resumoCard yellow"><div class="num">${aguardando.length}</div><div class="lbl">Enviados, aguardando aprovação</div></div>
+        <div class="resumoCard ${aguardandoGerencia.length?'yellow':''}"><div class="num">${aguardandoGerencia.length}</div><div class="lbl">Esperando a gerência revisar</div></div>
+        <div class="resumoCard"><div class="num">${aguardandoCli.length}</div><div class="lbl">Aprovado — esperando o cliente</div></div>
         <div class="resumoCard ${correcoes.length?'red':''}"><div class="num">${correcoes.length}</div><div class="lbl">Precisam de correção</div></div>
         <div class="resumoCard green"><div class="num">${aprovados.length}</div><div class="lbl">Aprovados no total (histórico)</div></div>
       </div>
@@ -3579,9 +3606,17 @@
       `).join('');
     }
 
-    if(aguardando.length){
-      html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardando.length} vídeo(s) aguardando aprovação do Chris/Amanda<span>Você já enviou, só aguardar.</span></div></div>`;
-      html += aguardando.map(v => `<div class="item">
+    if(aguardandoCli.length){
+      html += `<div class="avisoBanner" style="border-color:var(--green);"><div class="icone">✅</div><div class="texto">${aguardandoCli.length} vídeo(s) seu(s) já foram aprovados aqui dentro<span>Passaram pela revisão da gerência e agora estão com o cliente. <b>Não é trabalho seu</b> — é só pra você saber onde estão.</span></div></div>`;
+      html += aguardandoCli.map(v => `<div class="item" style="border-left:3px solid var(--green);opacity:.8;">
+        <div class="top"><div class="nome">${esc(v.titulo)}</div><span class="selo aprovada">com o cliente</span></div>
+        <div class="meta" style="margin-top:5px;">Aprovado por ${esc(v.aprovadoPor||'—')}${v.aprovadoInternoEm?' em '+formatarDataBR(String(v.aprovadoInternoEm).slice(0,10)):''}${v.enviadoParaCliente?' · já foi mandado pro cliente':' · ainda não foi mandado pro cliente'}</div>
+      </div>`).join('');
+    }
+
+    if(aguardandoGerencia.length){
+      html += `<div class="avisoBanner"><div class="icone">⏳</div><div class="texto">${aguardandoGerencia.length} vídeo(s) aguardando aprovação do Chris/Amanda<span>Você já enviou, só aguardar.</span></div></div>`;
+      html += aguardandoGerencia.map(v => `<div class="item">
         <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
         <div class="meta" style="margin-top:6px;">🔗 <a href="${esc(v.linkFinalizado)}" target="_blank" style="color:var(--yellow);">Ver link enviado ↗</a></div>
         <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
@@ -7333,10 +7368,18 @@
     const abrindo = box.style.display === 'none';
     box.style.display = abrindo ? 'block' : 'none';
     if(abrindo){
-      const d = document.getElementById('avulsoData');
-      if(d && !d.value) d.value = hojeLocal();
-      const h = document.getElementById('avulsoHora');
-      if(h && !h.value) h.value = '12:00';
+      /* ===== A DATA QUE SE PREENCHIA SOZINHA — 03/08/2026 ===========
+         O Chris: "a Amanda tem que ter a opção de só adicionar a
+         postagem, ou seja cliente, link do conteúdo e o título".
+
+         O código já aceitava sem data desde ontem — mas o formulário
+         PREENCHIA a data de hoje e a hora 12:00 ao abrir. Então na
+         prática nunca chegava vazio: todo post nascia "agendado pra
+         hoje ao meio-dia", pulando a fila da Gabi e caindo direto como
+         agendado. O campo era opcional no código e obrigatório na tela.
+
+         Agora abre vazio. Quem tiver a data preenche; quem não tiver
+         deixa em branco e o post segue a esteira normal. */
       const c = document.getElementById('avulsoCliente');
       if(c) c.focus();
     }
@@ -7458,13 +7501,17 @@
             </select></div>
         </div>
         <div class="field"><label>Título</label><input type="text" id="avulsoTitulo" placeholder="Ex: Arte da promoção de agosto"></div>
+        <div class="desc" style="margin:-2px 0 10px;padding:9px 11px;background:var(--deep);border-left:3px solid var(--yellow);border-radius:8px;">
+          <b>Só isto já basta:</b> cliente, título e link. Sem legenda vai pra Gabi escrever; depois vai pra Cecília agendar — o mesmo caminho dos vídeos que passam pelo site.
+          O resto abaixo é opcional, pra quando você já tiver a informação.
+        </div>
         <div class="field"><label>Link do material</label><input type="text" id="avulsoLink" placeholder="Link do Drive, Canva, WeTransfer...">
           <div class="desc" style="margin:4px 0 0;">Opcional, mas sem ele quem posta vai ter que procurar.</div></div>
         <div class="field"><label>Legenda <span style="color:var(--muted);font-weight:400;">— opcional</span></label>
           <textarea id="avulsoLegenda" placeholder="Se já tiver a legenda, cola aqui. Se não, deixa vazio: vai pra Gabi escrever."></textarea>
           <div class="desc" style="margin:4px 0 0;"><b>Deixando vazio</b>, o post cai na fila de legendas da Gabi. Quando ela escrever, ele segue pra Cecília agendar — igual aos vídeos que passam pelo site.</div></div>
         <div class="row2">
-          <div class="field"><label>Dia da postagem</label><input type="date" id="avulsoData"></div>
+          <div class="field"><label>Dia da postagem <span style="color:var(--muted);font-weight:400;">— opcional</span></label><input type="date" id="avulsoData"></div>
           <div class="field"><label>Hora</label><input type="time" id="avulsoHora"></div>
         </div>
         <div class="desc" style="margin-bottom:8px;">Sem dia, ele entra na fila de "pra agendar" em vez de ficar marcado — assim não some nem mente que está agendado.</div>
@@ -13974,7 +14021,7 @@
        não achar mais a tela: "quero ela visível e fácil de achar como
        era antes". Tirar a porta não é o mesmo que tirar a sala
        duplicada. */
-    'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes'],
+    'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes','navExtras'],
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
     'Amanda': ['navVideos','navStories','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
@@ -14495,6 +14542,41 @@
       const el = document.getElementById('subtabConfirmarPub');
       if(el) setPostagensSub('confirmar', el);
     }, 300);
+  };
+
+  /* ===== UM CAMINHO DIRETO PROS EXTRAS — 03/08/2026 =================
+     O botão "abrir os extras" chamava `navegarGerenciaSub('pagamentos')`
+     estando no FINANCEIRO. Aquela função troca a sub-aba DENTRO da
+     Gerência — de outra tela ela não faz nada, e não dá erro. Botão
+     morto, exatamente o que o Chris relatou.
+
+     Agora existe um caminho só, que funciona de onde for chamado: leva
+     pra tela que a pessoa tem direito de ver. O Chris tem Financeiro; a
+     Amanda não tem, e a dela é a Gerência. Mesma tela desenhada, porta
+     diferente conforme quem é. */
+  /* cache leve só pra badge — a tela lê do banco por conta dela */
+  let cacheExtrasMenu = [];
+  window.atualizarCacheExtrasMenu = async function(){
+    try{
+      const snap = await getDocs(collection(db,'pagamentos_extra'));
+      const l = []; snap.forEach(d => l.push({id:d.id, ...d.data()}));
+      cacheExtrasMenu = l;
+      atualizarTodosOsBadges();
+    }catch(e){ console.error('Falha ao ler extras pra badge:', e); }
+  };
+
+  window.irParaExtras = function(){
+    if(usuarioAtual === 'Chris'){
+      irPara('financeiro', document.getElementById('navFinanceiro'));
+      setTimeout(() => {
+        if(window.montarFinanceiroCompleto) montarFinanceiroCompleto();
+        const box = document.getElementById('financeiroExtrasBox');
+        if(box) box.scrollIntoView({ behavior:'smooth', block:'start' });
+      }, 420);
+      return;
+    }
+    irPara('gerencia', document.getElementById('navitemGerencia'));
+    setTimeout(()=>{ if(window.navegarGerenciaSub) navegarGerenciaSub('pagamentos'); }, 350);
   };
 
   window.irParaAprovacoes = function(){
@@ -16403,6 +16485,18 @@
        decidir — vídeo esperando revisão + demanda pela regra da tela.
        Mesma regra da tela, de propósito: foi a divergência entre badge e
        tela que fez o Chris ver 6 e não achar 6. */
+    /* Badge dos extras: o que a agência DEVE, de qualquer mês — mesma
+       conta da tela, pra não repetir a divergência de número que o Chris
+       achou hoje entre o Financeiro e o painel de extras. */
+    try{
+      const be = document.getElementById('badgeExtrasMenu');
+      if(be){
+        const abertos = (cacheExtrasMenu || []).filter(p => !p.excluido && !p.pago && (!p.informadoPelaPessoa || p.aprovadoPeloChris));
+        if(abertos.length && usuarioAtual === 'Chris'){ be.textContent = abertos.length; be.style.display = 'flex'; }
+        else be.style.display = 'none';
+      }
+    }catch(e){ console.error('Falha na badge de extras:', e); }
+
     try{
       const ba = document.getElementById('badgeAprovacoesMenu');
       if(ba){
@@ -16812,12 +16906,33 @@
     const prazo = d.prazoData ? formatarDataBR(d.prazoData) + (d.prazoHora ? ' às ' + d.prazoHora : '') : 'sem prazo definido';
 
     await addDoc(collection(db,'demandas'), {
-      titulo: '🔔 ' + (usuarioAtual||'?') + ' te alertou: ' + titulo,
-      descricao: (usuarioAtual||'?') + ' marcou este item como prioridade agora.\n\n'
-        + 'Item: ' + titulo + '\n'
-        + 'Responsável: ' + (d.destinatario||'—') + '\n'
-        + 'Prazo: ' + prazo
-        + (d.descricao ? '\n\nDescrição original:\n' + d.descricao : ''),
+      /* ===== O ALERTA QUE NINGUÉM ENTENDIA — 03/08/2026 ==============
+         O Chris mandou o print: "nem eu nem a Amanda entendemos o que é
+         pra fazer".
+
+         Reli o texto que este código gerava e ele tem razão. O alerta:
+           · repetia o título como "Item:"
+           · dizia "Responsável: Chris" — que é o dono da demanda ORIGINAL,
+             e lido rápido parece que o responsável pelo alerta é ele
+           · despejava a descrição original INTEIRA, que já era longa e
+             tinha o próprio "PRÓXIMO PASSO" dentro
+           · e em nenhum momento dizia o que a pessoa devia FAZER
+
+         Virava uma parede de texto com dois "próximos passos" aninhados.
+
+         Um empurrão precisa de três coisas: o que é, por que chegou
+         agora, e o que fazer. O resto é ruído — e a descrição original
+         a pessoa lê na demanda de verdade, que é onde ela vai trabalhar. */
+      titulo: '🔔 Prioridade agora: ' + titulo,
+      descricao: 'Isto é um EMPURRÃO, não uma tarefa nova.\n\n'
+        + (usuarioAtual||'?') + ' marcou "' + titulo + '" como prioridade.\n'
+        + 'Prazo do item: ' + prazo + '\n\n'
+        + 'O QUE FAZER: abre a demanda "' + titulo + '" na sua lista e resolve ela. '
+        + 'Quando terminar, é lá que você marca como feita — aqui é só o aviso.\n\n'
+        + 'Depois de ver, marca este aviso como visto pra ele sair da sua tela.'
+        + (d.descricao ? '\n\n─────────────\nResumo do que o item pede:\n'
+            + String(d.descricao).replace(/\s+/g,' ').trim().slice(0,220)
+            + (String(d.descricao).length > 220 ? '… (o texto completo está na demanda)' : '') : ''),
       destinatario: pessoa, origem: usuarioAtual === 'Amanda' ? 'amanda' : 'chris',
       clienteNome: d.clienteNome || '', ehAviso: true, alertaSobre: id,
       prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
@@ -22419,18 +22534,33 @@
        Agora soma os dois, e o painel mostra os dois separados, porque
        são naturezas diferentes: um é serviço prestado, outro é
        reembolso de despesa. */
-    const extrasDoMes = extras.filter(e => e.mes === comp && (!e.informadoPelaPessoa || e.aprovadoPeloChris));
+    /* ===== O NÚMERO QUE DISCORDAVA — 03/08/2026 =====================
+       O Chris: "estão errados os valores; no painel de extras temos um
+       valor e aqui temos outro, e sumiram os registros dos extras
+       antigos do filmmaker".
+
+       Os dois números estavam certos e respondiam perguntas diferentes,
+       o que é a pior forma de estar certo. Este bloco filtrava pelo mês
+       ESCOLHIDO no seletor do Financeiro (agosto → R$ 100), e a tela de
+       extras mostra o que a agência DEVE, que atravessa mês (R$ 712,03
+       de julho, ainda em aberto). Quem olha os dois vê contradição.
+
+       A folha do dia 15 não é uma pergunta sobre mês: é sobre o que
+       ainda vai sair do caixa. Então passa a somar tudo que está em
+       aberto, de qualquer mês, e mostra o mês de cada coisa. É a mesma
+       conta da outra tela — uma verdade só. */
+    const extrasDoMes = extras.filter(e => (!e.informadoPelaPessoa || e.aprovadoPeloChris) && (!e.pago || mesDoLancamento(e) === comp));
     const somaExtra = e => valorDeTexto(e.valorExtra) + valorDeTexto(e.valorUber);
     const despesaFilmagem = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
     const despesaUber     = extrasDoMes.reduce((s,e)=>s+valorDeTexto(e.valorUber),0);
     const despesaExtras = despesaFilmagem + despesaUber;
     const despesaExtrasPagas = extrasDoMes.filter(e=>e.pago).reduce((s,e)=>s+somaExtra(e),0);
     const despesaExtrasAPagar = despesaExtras - despesaExtrasPagas;
-    const extrasSemValor = extras.filter(e => e.mes === comp && !e.valorExtra && !e.semCobrancaFilmagem).length;
+    const extrasSemValor = extras.filter(e => !e.valorExtra && !e.semCobrancaFilmagem && !e.pago).length;
     /* O que o filmmaker registrou e a Amanda ainda não conferiu fica FORA
        do total de propósito — mas precisa ser visível, senão vira dinheiro
        invisível. Foi o caso do Uber do Luís. */
-    const naoConferidos = extras.filter(e => e.mes === comp && e.informadoPelaPessoa && !e.aprovadoPeloChris);
+    const naoConferidos = extras.filter(e => e.informadoPelaPessoa && !e.aprovadoPeloChris);
     const aguardandoConferencia = { qtd: naoConferidos.length, total: somarExtras(naoConferidos).total };
 
     const totalEntrou = recebidoMensal + receitaAvulsa;
@@ -22526,15 +22656,15 @@
          números que interessam ao caixa, e um caminho pra o único lugar
          onde se age. Números aqui, ação lá — e uma implementação só. */
       html += `<div class="card metaSec" style="border-color:var(--red);">
-        <div class="metaSecTit">💸 A folha do dia 15 — extras da equipe em ${nomeMes(comp)}</div>
+        <div class="metaSecTit">💸 A folha do dia 15 — tudo que a agência deve de extra</div>
         <div class="desc" style="margin-bottom:12px;">Quem você paga, quanto e por quê. Sai junto com o salário no dia <b>15</b>. É saída, não entrada — por isso fica fora de "de onde veio o dinheiro".</div>
         <div class="painelResumo" style="margin-bottom:14px;">
           <div class="resumoCard ${despesaExtrasAPagar?'yellow':'green'}"><div class="num" style="font-size:19px;">${brl(despesaExtrasAPagar)}</div><div class="lbl">total a pagar dia 15</div></div>
           <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(despesaExtrasPagas)}</div><div class="lbl">já pago</div></div>
           <div class="resumoCard"><div class="num" style="font-size:15px;">🎥 ${brl(despesaFilmagem)}</div><div class="lbl">filmagens avulsas</div></div>
           <div class="resumoCard"><div class="num" style="font-size:15px;">🚗 ${brl(despesaUber)}</div><div class="lbl">Uber / deslocamento</div></div>
-          ${extrasSemValor ? '<div class="resumoCard yellow clicavel" onclick="navegarGerenciaSub(\'pagamentos\')"><div class="num" style="font-size:17px;">'+extrasSemValor+'</div><div class="lbl">⏳ sem valor — falta a Amanda definir →</div></div>' : ''}
-          ${aguardandoConferencia.qtd ? '<div class="resumoCard red clicavel" onclick="navegarGerenciaSub(\'pagamentos\')"><div class="num" style="font-size:17px;">'+brl(aguardandoConferencia.total)+'</div><div class="lbl">🔔 registrado e não conferido — não está no total acima →</div></div>' : ''}
+          ${extrasSemValor ? '<div class="resumoCard yellow clicavel" onclick="irParaExtras()"><div class="num" style="font-size:17px;">'+extrasSemValor+'</div><div class="lbl">⏳ sem valor — falta a Amanda definir →</div></div>' : ''}
+          ${aguardandoConferencia.qtd ? '<div class="resumoCard red clicavel" onclick="irParaExtras()"><div class="num" style="font-size:17px;">'+brl(aguardandoConferencia.total)+'</div><div class="lbl">🔔 registrado e não conferido — não está no total acima →</div></div>' : ''}
         </div>
 
         ${ordenadas.length ? `<div style="background:var(--deep);border-radius:10px;padding:13px 15px;">
@@ -22543,7 +22673,7 @@
             <span style="font-size:13px;">${esc(nome)} <span class="meta">· ${lista.length} lançamento(s)</span></span>
             <b style="font-size:13px;color:${aPagar?'var(--yellow)':'var(--green)'};">${aPagar ? brl(aPagar)+' a pagar' : 'tudo pago'}</b>
           </div>`).join('')}
-          <button class="btn" style="margin-top:12px;padding:12px;" onclick="navegarGerenciaSub('pagamentos')">Abrir os extras pra conferir, liberar e pagar →</button>
+          <button class="btn" style="margin-top:12px;padding:12px;" onclick="irParaExtras()">Abrir os extras pra conferir, liberar e pagar →</button>
           <div class="meta" style="margin-top:7px;">Todas as ações de extra ficam num lugar só: lançar, conferir o que o filmmaker mandou, definir valor, pagar e copiar o resumo pro WhatsApp.</div>
         </div>` : ''}
       </div>`;

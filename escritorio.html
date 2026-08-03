@@ -21332,7 +21332,10 @@
     // desempenho do dia: entregue sem volta = bom; volta pra correção = custo
     const base = entregues.length + correcao.length;
     const nota = base ? Math.round(entregues.length / base * 100) : null;
-    const humor = nota === null ? { cor:'var(--line)', txt:'Sem entrega hoje ainda' }
+    /* 02/08/2026 — `nota` só existe quando houve entrega OU correção. Num
+       domingo com 3 correções antigas e zero entregas, ele dizia "dia
+       ruim". Correção parada não é o dia sendo ruim; é fila. */
+    const humor = (nota === null || entregues.length === 0) ? { cor:'var(--line)', txt:'Sem entrega registrada hoje ainda' }
       : nota >= 80 ? { cor:'var(--green)', txt:'Dia bom — quase tudo passou de primeira' }
       : nota >= 50 ? { cor:'var(--yellow2)', txt:'Dia mediano — voltou correção demais' }
       : { cor:'var(--red)', txt:'Dia ruim — mais correção do que entrega limpa' };
@@ -21351,14 +21354,39 @@
     }
     const entregues7 = todos.filter(v => dias7.includes(String(v.enviadoEm||'').slice(0,10)));
     const media7 = Math.round(entregues7.length / 7 * 10) / 10;
-    const compara = media7 === 0 ? null : Math.round((entregues.length - media7) / media7 * 100);
+    /* A comparação só aparece quando JÁ HOUVE entrega hoje. O teste no ar
+       caiu num domingo: zero entregas, e o painel gritava "-100%" contra a
+       média. Comparar dia em andamento (ou dia sem expediente) com dias
+       fechados não informa nada — só assusta. */
+    const compara = (media7 === 0 || entregues.length === 0) ? null
+      : Math.round((entregues.length - media7) / media7 * 100);
 
+    /* ===== "47 NA FILA" QUE ERAM 6 — 02/08/2026 ======================
+       O teste no ar pegou isto, e eu ia mandar pro grupo de WhatsApp.
+
+       A carga por editor contava TUDO que não estava finalizado. Pro João
+       Victor isso dava 47. Fui ao banco conferir os 47:
+
+           6  aguardando_edicao   ← isto é fila dele
+           5  aguardando_cliente  ← já entregou, está com o cliente
+          36  aprovado            ← já passou, não é dele
+
+       Ou seja: 41 dos 47 eram trabalho que ele JÁ FEZ. A barra de carga
+       mostrava um editor afogado que na verdade tinha 6 vídeos.
+
+       Fila do editor é o que está NA MÃO dele: esperando edição ou
+       voltando pra correção. O resto é história. */
+    const NA_MAO_DO_EDITOR = ['aguardando_edicao','correcao'];
     const porEditor = {};
-    todos.filter(v => !['finalizado','arquivado'].includes(v.status)).forEach(v => {
+    todos.forEach(v => {
       const e = v.editorAtribuido || v.editor || 'sem editor';
-      porEditor[e] = porEditor[e] || { fila:0, correcao:0, hoje:0, semana:0 };
-      porEditor[e].fila++;
-      if(v.status === 'correcao') porEditor[e].correcao++;
+      porEditor[e] = porEditor[e] || { fila:0, correcao:0, hoje:0, semana:0, comCliente:0 };
+      if(NA_MAO_DO_EDITOR.includes(v.status)){
+        porEditor[e].fila++;
+        if(v.status === 'correcao') porEditor[e].correcao++;
+      } else if(v.status === 'aguardando_cliente'){
+        porEditor[e].comCliente++;
+      }
     });
     /* entregue hoje e na semana conta o vídeo JÁ FECHADO também — senão o
        editor que entregou tudo aparece com zero, que é o oposto da verdade */
@@ -21422,10 +21450,10 @@
       <div class="desc" style="margin:16px 0 8px;">Onde a fila está parada agora</div>
       ${[['Em edição', emEdicao.length, 'var(--yellow)'],['Esperando sua aprovação', aguardando.length, 'var(--yellow2)'],['Em correção', correcao.length, 'var(--red)']]
         .map(([n,v,c]) => barraFin(n + ' — vídeo(s)', v, Math.max(emEdicao.length, aguardando.length, correcao.length, 1), c, false)).join('')}
-      <div class="desc" style="margin:14px 0 8px;">Carga por editor</div>
+      <div class="desc" style="margin:14px 0 8px;">Carga por editor — <b>só o que está na mão dele</b> (esperando edição ou em correção)</div>
       ${Object.entries(porEditor).sort((a,b)=>b[1].fila-a[1].fila).map(([n,x]) =>
         `<div style="margin-bottom:9px;">
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;"><b>${esc(n)}</b><span class="meta">${x.hoje?'<b style="color:var(--green);">'+x.hoje+' hoje</b> · ':''}${x.fila} na fila${x.correcao?' · <b style="color:var(--red);">'+x.correcao+' em correção</b>':''}${x.semana?' · '+x.semana+' na semana':''}</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;"><b>${esc(n)}</b><span class="meta">${x.hoje?'<b style="color:var(--green);">'+x.hoje+' hoje</b> · ':''}${x.fila} na mão${x.correcao?' (<b style="color:var(--red);">'+x.correcao+' correção</b>)':''}${x.comCliente?' · '+x.comCliente+' com o cliente':''}${x.semana?' · '+x.semana+' na semana':''}</span></div>
           <div style="height:8px;background:var(--deep);border-radius:5px;overflow:hidden;"><div style="height:100%;width:${Math.round(x.fila/maxFila*100)}%;background:${x.correcao?'var(--red)':'var(--yellow)'};"></div></div>
         </div>`).join('') || '<div class="empty" style="font-size:11px;">Nenhum vídeo em aberto.</div>'}
     </div>`;
@@ -21449,6 +21477,9 @@
     L.push('');
     L.push('✅ Entregues hoje: *' + r.entregues + '*'
       + (r.media7 ? '  (média dos 7 dias: ' + r.media7 + (r.compara!==null ? ', ' + (r.compara>=0?'+':'') + r.compara + '%' : '') + ')' : ''));
+    /* Dia sem entrega nenhuma merece uma frase, não um silêncio seguido de
+       cobrança. Domingo de manhã não é "dia ruim". */
+    if(!r.entregues) L.push('_(nenhuma entrega registrada até agora)_');
     if(r.aprovados)  L.push('👍 Aprovados hoje: ' + r.aprovados);
     if(r.correcao)   L.push('🔁 Voltaram pra correção: *' + r.correcao + '*');
     if(r.atrasados)  L.push('🔴 Atrasados: *' + r.atrasados + '*');
@@ -21463,8 +21494,9 @@
       eds.forEach(([n,x]) => {
         const p = [];
         if(x.hoje) p.push(x.hoje + ' entregue' + (x.hoje>1?'s':'') + ' hoje');
-        if(x.fila) p.push(x.fila + ' na fila');
+        if(x.fila) p.push(x.fila + ' na mão');
         if(x.correcao) p.push(x.correcao + ' em correção');
+        if(x.comCliente) p.push(x.comCliente + ' com o cliente');
         L.push('• ' + n + ': ' + (p.length ? p.join(' · ') : 'sem nada em aberto'));
       });
     }

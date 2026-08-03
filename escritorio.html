@@ -4359,17 +4359,135 @@
     renderGerenciaPagamentos();
   };
 
+  /* ===== O MES DOS EXTRAS — 03/08/2026 ==============================
+     Guardado fora da funcao porque a tela e desenhada em dois lugares
+     (painel da Amanda e Financeiro do Chris) e precisa lembrar tanto
+     ONDE desenhar quanto QUAL mes esta aberto entre um clique e outro. */
+  let __alvoExtras = 'gerenciaPagamentos';
+  let __mesExtras = '';
+
+  /* Nao reimplementa nome de mes: DELEGA pro `nomeMes`, que ja era a
+     resposta da casa em 11 lugares. Escrevi uma segunda implementacao
+     aqui por reflexo e apaguei — duas respostas pra mesma pergunta e o
+     defeito que passei a semana desmontando. Isto so muda a caixa da
+     primeira letra, porque aqui o mes aparece como titulo e nao no meio
+     de uma frase. */
+  function rotuloMesExtras(m){
+    const t = nomeMes(m);
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  /* ===== O QUE A AGENCIA DEVE — UMA RESPOSTA SO — 03/08/2026 ========
+     Quando a tela de extras zerou em 01/08, fui ver quem mais olhava
+     esse dinheiro. Eram QUATRO lugares, e os quatro filtravam pelo mes
+     do relogio, cada um com seu proprio `if`:
+
+       renderGerenciaPagamentos  — a tela da Amanda
+       htmlResumoExtrasGestao    — o resumo no Inicio dela
+       htmlMeusExtras            — o que o Luis ve do proprio dinheiro
+       pagarTudoDaPessoa         — o botao que da baixa no dia 15
+       copiarFolhaDaPessoa       — o texto que vai pro WhatsApp dele
+
+     Os dois ultimos sao os graves. Em 15/08 a Amanda clicaria "pagar
+     tudo do Luis" e o sistema responderia "Nada em aberto pra Luis",
+     porque agosto estava vazio — enquanto julho seguia devendo
+     R$ 712,03. E o resumo do WhatsApp diria "Total a receber dia 15:
+     R$ 0,00". Os dois lados cegos ao mesmo tempo: nem quem paga nem
+     quem recebe tinha como perceber.
+
+     Agora existe UMA definicao de "em aberto", e ela nao conhece mes:
+     divida e divida ate ser paga. Quem quiser recortar por mes recorta
+     em cima disso, nao no lugar dela. */
+  const extraLiberado = p => !p.informadoPelaPessoa || p.aprovadoPeloChris;
+  const mesDoLancamento = p => String((p && p.mes) || String((p && p.data) || '').slice(0,7) || new Date().toISOString().slice(0,7));
+  async function lerTodosOsExtras(){
+    const snap = await getDocs(collection(db,'pagamentos_extra'));
+    const l = []; snap.forEach(d => { const v = d.data(); if(!v.excluido) l.push({id:d.id, ...v}); });
+    return l;
+  }
+  function extrasEmAberto(lista, nome){
+    return (lista||[]).filter(p => !p.pago && extraLiberado(p) && (!nome || (p.filmmaker||'') === nome));
+  }
+  function porMesDosExtras(lista){
+    const m = {};
+    (lista||[]).forEach(p => { const k = mesDoLancamento(p); (m[k] = m[k] || []).push(p); });
+    return m;
+  }
+  function htmlDividaDeOutrosMeses(lista, mesDeReferencia, comBotao){
+    const fora = extrasEmAberto(lista).filter(p => mesDoLancamento(p) !== mesDeReferencia);
+    if(!fora.length) return '';
+    const c = somarExtras(fora);
+    if(!c.total) return '';
+    const grupos = porMesDosExtras(fora);
+    return `<div class="card" style="border:2px solid var(--red);background:rgba(214,58,58,.07);">
+      <div class="metaSecTit" style="color:var(--red);">⚠️ ${brl(c.total)} de outros meses continuam sem pagamento</div>
+      <div class="desc">Isso <b>não está somado</b> nos totais de ${rotuloMesExtras(mesDeReferencia)} abaixo — é de mês fechado.${comBotao?' Clica no mês pra abrir e dar baixa.':''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        ${Object.keys(grupos).sort().reverse().map(m => {
+          const v = somarExtras(grupos[m]).total;
+          return comBotao
+            ? `<button class="btn secondary" style="width:auto;padding:9px 15px;font-size:12px;border-color:var(--red);" onclick="verMesDosExtras('${m}')">${rotuloMesExtras(m)} → <b>${brl(v)}</b></button>`
+            : `<span class="selo" style="border-color:var(--red);color:var(--red);">${rotuloMesExtras(m)}: ${brl(v)}</span>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+  window.verMesDosExtras = function(m){
+    if(!/^\d{4}-\d{2}$/.test(String(m||''))) return;
+    __mesExtras = m;
+    renderGerenciaPagamentos();
+  };
+
   async function renderGerenciaPagamentos(alvoId){
     await mapaTipoCliente();   // classifica antes de desenhar (ver tipoDoExtra)
     /* 30/07/2026 — a mesma tela agora é desenhada em dois lugares (o
        painel da Amanda e o Financeiro do Chris). Em vez de copiar o
        conteúdo, ela recebe onde desenhar. Uma implementação, dois
        lugares — sem risco de divergirem. */
-    const cont = document.getElementById(alvoId || 'gerenciaPagamentos');
-    const mesAtual = new Date().toISOString().slice(0,7);
+    if(alvoId) __alvoExtras = alvoId;
+    const cont = document.getElementById(__alvoExtras) || document.getElementById('gerenciaPagamentos');
+    if(!cont) return;   /* sem a guarda, um alvo ausente derruba o Promise.all inteiro */
+
+    /* ===== A CEGUEIRA DE MES — CONSERTADA EM 03/08/2026 ================
+       A Amanda abriu a tela em 03/08 e ela estava ZERADA. Fui ao banco
+       achando que eu tinha apagado dado, e nao tinha: os 8 lancamentos
+       estavam todos la, intactos.
+
+       O defeito era pior que apagar. A tela lia:
+
+           const mesAtual = new Date().toISOString().slice(0,7);
+           const doMes = pagamentos.filter(p => p.mes === mesAtual);
+
+       e TODO o resto — total, grafico, faixas por pessoa, fila de
+       conferencia — derivava de `doMes`. Sem seletor de mes. Nenhum.
+
+       Entao em 01/08, a meia-noite, os quatro extras de julho do Luis
+       — R$ 712,03, TODOS marcados como nao pagos — sumiram da tela. Nao
+       dava nem pra marcar como pago: o botao so existe pra quem aparece
+       na lista.
+
+       E o mesmo defeito que passei a semana desmontando: dado certo no
+       banco, invisivel na tela. So que aqui era dinheiro que a agencia
+       devia pra uma pessoa, e o dia 15 chegaria dizendo R$ 0,00.
+
+       Duas coisas agora impedem que se repita:
+       1. SELETOR DE MES — da pra voltar e fechar mes anterior
+       2. AVISO QUE ATRAVESSA O MES — o que esta em aberto em QUALQUER
+          mes aparece no topo, sempre, seja qual for o mes escolhido. A
+          virada do calendario nao esconde mais divida. */
+    const mesDeHoje = new Date().toISOString().slice(0,7);
+    if(!__mesExtras) __mesExtras = mesDeHoje;
     const snap = await getDocs(collection(db,'pagamentos_extra'));
     const pagamentos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) pagamentos.push({id:d.id, ...v}); });
-    const doMes = pagamentos.filter(p => p.mes === mesAtual);
+
+    /* Um lancamento sem mes nao pode desaparecer: ele cai no mes da data
+       dele, e sem data nenhuma, no mes corrente, onde alguem vai ver e
+       arrumar. Sumir calado e o que nao pode. */
+    const mesDoExtra = mesDoLancamento;          /* a definicao da casa */
+    const mesAtual = __mesExtras;
+    const doMes = pagamentos.filter(p => mesDoExtra(p) === mesAtual);
+    const mesesComDado = [...new Set(pagamentos.map(mesDoExtra).concat([mesDeHoje, __mesExtras]))].sort().reverse();
+    const abertoDoMes = m => somarExtras(extrasEmAberto(pagamentos).filter(p => mesDoExtra(p) === m)).total;
 
     /* ===== A CENTRAL DE EXTRAS — REFEITA EM 28/07/2026 =================
        Três coisas estavam erradas ao mesmo tempo:
@@ -4392,8 +4510,23 @@
     const QUEM_VAI_A_CAMPO = ['Luís','Nathan'];
     const outrosDaEquipe = FILMMAKERS_PAGAMENTO.filter(f => !QUEM_VAI_A_CAMPO.includes(f));
 
-    let html = `<div class="card" style="border:2px solid var(--yellow);">
-      <h2>💸 Extras da equipe — ${mesAtual}</h2>
+    let html = '';
+
+    /* O AVISO QUE ATRAVESSA O MES vem antes de tudo, inclusive do
+       formulario, porque divida em aberto e a coisa mais importante
+       desta tela. Aparece esteja em que mes estiver. */
+    html += htmlDividaDeOutrosMeses(pagamentos, mesAtual, true);
+
+    html += `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>💸 Extras da equipe — ${rotuloMesExtras(mesAtual)}</h2>
+      <div class="field" style="margin:4px 0 12px;"><label>Mes que voce esta vendo</label>
+        <select id="seletorMesExtras" onchange="verMesDosExtras(this.value)">
+          ${mesesComDado.map(m=>{ const ab = abertoDoMes(m);
+            return `<option value="${m}" ${m===mesAtual?'selected':''}>${rotuloMesExtras(m)}${m===mesDeHoje?' (mes corrente)':''}${ab?' — falta pagar '+brl(ab):''}</option>`;
+          }).join('')}
+        </select>
+        ${mesAtual!==mesDeHoje?'<div class="meta" style="margin-top:5px;color:var(--yellow2);">⏪ Voce esta olhando um mes fechado. O lancamento abaixo entra no mes da data que escolher.</div>':''}
+      </div>
       <div class="desc">Tudo que a agência paga <b>além do salário</b>, no dia <b>15</b>. São duas coisas diferentes e elas nunca devem ser somadas no mesmo campo:</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 4px;">
         <div style="flex:1;min-width:200px;background:var(--deep);border-left:3px solid var(--yellow);border-radius:9px;padding:11px 13px;">
@@ -4519,7 +4652,9 @@
     }
 
     if(!doMes.length){
-      html += '<div class="empty">Nenhum registro esse mês ainda — adicione acima, ou espere alguém informar pelo painel dela.</div>';
+      html += '<div class="empty">Nenhum registro em ' + rotuloMesExtras(mesAtual) + ' — adicione acima, ou espere alguém informar pelo painel dela.'
+            + (pagamentos.length ? '<br><br>Existem <b>' + pagamentos.length + '</b> lançamento(s) em outros meses. Troca o mês no seletor acima pra ver.' : '')
+            + '</div>';
     } else {
       /* ===== AGRUPADO POR FILMMAKER — 27/07/2026 =====
          A tela listava so o nome do CLIENTE, entao no dia 15 ninguem sabia
@@ -12131,9 +12266,17 @@
 
     // ---------- DINHEIRO (só pro Chris) ----------
     if(usuarioAtual === 'Chris'){
-      const doMes = extras.filter(x => x.mes === mes && !x.pago);
-      const soma = doMes.reduce((t,x) => t + (Number(x.valorExtra)||0) + (Number(x.valorUber)||0), 0);
-      lista.push(I('extras', 'A pagar dia 15', soma, doMes.length?'info':'ok', "irParaFinanceiroCompleto()", 'Filmagem avulsa e Uber da equipe.', ));
+      /* 03/08/2026 — este cartao tambem filtrava pelo mes do relogio, e
+         reimplementava a soma a mao em vez de usar `somarExtras`. Em
+         01/08 ele mostrava "A pagar dia 15: R$ 0,00" com R$ 712,03
+         devidos. Agora pergunta o que a agencia DEVE, sem mes, com a
+         conta da casa — e diz quando a divida vem de mes fechado. */
+      const abertos = extrasEmAberto(extras);
+      const soma = somarExtras(abertos).total;
+      const mesesAb = Object.keys(porMesDosExtras(abertos)).sort();
+      const deAntes = mesesAb.filter(m => m !== mes);
+      lista.push(I('extras', 'A pagar dia 15', soma, abertos.length?'info':'ok', "irParaFinanceiroCompleto()",
+        'Filmagem avulsa e Uber da equipe.' + (deAntes.length ? ' ⚠️ Inclui ' + deAntes.map(rotuloMesExtras).join(' e ') + ' que ficou em aberto.' : ''), ));
       lista[lista.length-1].dinheiro = true;
     }
 
@@ -13927,18 +14070,32 @@
       await mapaTipoCliente();
       const mes = new Date().toISOString().slice(0,7);
       const snap = await getDocs(collection(db,'pagamentos_extra'));
-      const meus = [];
+      /* ===== O LADO DO LUIS — CONSERTADO EM 03/08/2026 ================
+         Esta tela tambem filtrava `v.mes === mes`. Entao em 01/08 nem a
+         Amanda nem o Luis viam os R$ 712,03 de julho: os dois lados
+         cegos ao mesmo tempo, o que explica ninguem ter percebido. O que
+         ele TEM A RECEBER passa a atravessar o mes; o que ele
+         "registrou este mes" segue sendo do mes, porque ali a pergunta
+         e outra. */
+      const todosMeus = [];
       snap.forEach(d => { const v=d.data(); if(v.excluido) return;
         if(v.filmmaker) __jaTeveExtra.add(v.filmmaker);
-        if(v.filmmaker === usuarioAtual && v.mes === mes) meus.push({id:d.id, ...v}); });
+        if(v.filmmaker === usuarioAtual) todosMeus.push({id:d.id, ...v}); });
+      const meus = todosMeus.filter(m => mesDoLancamento(m) === mes);
       /* Depois de saber quem já teve extra, decide. Quem não é de campo e
          nunca registrou nada não vê o painel — não é tela dele. */
       if(!podeVerExtras()) return '';
-      const aReceberL = meus.filter(m=>!m.pago), pagosL = meus.filter(m=>m.pago);
+      const aReceberL = todosMeus.filter(m => !m.pago);
+      const pagosL = meus.filter(m => m.pago);
+      const abertoDeAntes = aReceberL.filter(m => mesDoLancamento(m) !== mes);
+      const contaAntes = somarExtras(abertoDeAntes);
       const aReceber = somarExtras(aReceberL), jaPago = somarExtras(pagosL);
 
       return `<div class="card" style="border:2px solid var(--yellow);">
-        <h2>💰 Meus extras deste mês</h2>
+        <h2>💰 Meus extras</h2>
+          ${contaAntes.total ? '<div style="background:rgba(251,188,25,.10);border-left:3px solid var(--yellow);border-radius:9px;padding:11px 13px;margin-bottom:12px;"><b style="font-size:12.5px;">⏳ '
+            + brl(contaAntes.total) + ' de ' + Object.keys(porMesDosExtras(abertoDeAntes)).sort().map(rotuloMesExtras).join(' e ')
+            + ' ainda não foi pago</b><div class="meta" style="margin-top:4px;">Já está somado no "A receber" abaixo. Se você já recebeu e continua aparecendo aqui, fala com a Amanda pra ela dar baixa.</div></div>' : ''}
         <div class="desc">Tudo que a agência te deve fora do salário: <b>filmagem avulsa</b> (cliente que não é da nossa base mensal) e <b>Uber</b> que você pagou do próprio bolso. Cai no dia <b>15</b>, junto com o salário.</div>
 
         <div class="painelResumo" style="margin:12px 0;">
@@ -14025,7 +14182,7 @@
         </div>
 
         <div style="margin-top:16px;">
-          <div class="meta" style="font-weight:800;margin-bottom:6px;">O que já registrei este mês (${meus.length})</div>
+          <div class="meta" style="font-weight:800;margin-bottom:6px;">O que já registrei em ${rotuloMesExtras(mes)} (${meus.length})</div>
           ${meus.length ? meus.sort((a,b)=>String(b.data||'').localeCompare(String(a.data||''))).map(m => { const c = contasDoExtra(m);
             return `<div class="item" style="margin-top:8px;border-left:3px solid ${m.pago?'var(--green)':c.semValor?'var(--yellow2)':'var(--yellow)'};">
               <div class="top">
@@ -18536,10 +18693,19 @@
   async function lembrarExtrasDosFilmmakers(){
     const hoje = new Date();
     if(hoje.getDate() !== 13) return;
+    /* ===== O AVISO DO DIA 13 — CONSERTADO EM 03/08/2026 ==============
+       Esta automacao existe exatamente pra ninguem esquecer de pagar, e
+       ela tinha OS DOIS defeitos ao mesmo tempo:
+
+       1. filtrava `v.mes === mes`, entao em 13/08 avisaria sobre agosto
+          e nao mencionaria os R$ 712,03 de julho
+       2. somava `valorExtra` e IGNORAVA `valorUber` — os R$ 412,03 de
+          Uber nunca entraram na conta do aviso
+
+       Ou seja: o alarme contra o esquecimento estava mudo e, quando
+       falava, falava um numero menor que o real. */
     const mes = hoje.toISOString().slice(0,7);
-    const snap = await getDocs(collection(db,'pagamentos_extra'));
-    const abertos = [];
-    snap.forEach(d => { const v=d.data(); if(!v.excluido && !v.pago && v.mes === mes) abertos.push(v); });
+    const abertos = extrasEmAberto(await lerTodosOsExtras());
     if(!abertos.length) return;
 
     // nao repete se ja avisou neste mes
@@ -18548,9 +18714,16 @@
     if(!ja.empty) return;
 
     const porFilm = {};
-    abertos.forEach(p => { const k = p.filmmaker || 'sem filmmaker definido'; porFilm[k] = (porFilm[k]||0) + (Number(p.valorExtra)||0); });
-    const linhas = Object.entries(porFilm).map(([n,v]) => '• ' + n + ': ' + brl(v)).join('\n');
-    const total = Object.values(porFilm).reduce((a,b)=>a+b,0);
+    abertos.forEach(p => { const k = p.filmmaker || 'sem filmmaker definido'; (porFilm[k] = porFilm[k] || []).push(p); });
+    const linhas = Object.entries(porFilm).map(([n,l]) => {
+      const c = somarExtras(l);
+      const ms = Object.keys(porMesDosExtras(l)).sort();
+      /* usa somarExtras — a conta da casa, que inclui o Uber */
+      return '• ' + n + ': ' + brl(c.total)
+           + ' (🎥 ' + brl(c.filmagem) + ' · 🚗 ' + brl(c.uber) + ')'
+           + (ms.length > 1 ? ' — atenção: ' + ms.map(rotuloMesExtras).join(' + ') : '');
+    }).join('\n');
+    const total = somarExtras(abertos).total;
 
     await addDoc(collection(db,'demandas'), {
       titulo: '💰 Extras dos filmmakers pro pagamento do dia 15',
@@ -20707,8 +20880,13 @@
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
   }
   function nomeMes(comp){
-    const [a,m] = comp.split('-').map(Number);
-    return new Date(a, m-1, 1).toLocaleDateString('pt-BR',{month:'long', year:'numeric'});
+    /* Endurecida em 03/08/2026: antes `comp.split` estourava com nulo e
+       `new Date(NaN)` devolvia "Invalid Date" na cara do usuario. */
+    const p = String(comp == null ? '' : comp).match(/^(\d{4})-(\d{2})$/);
+    if(!p) return String(comp == null || comp === '' ? '—' : comp);
+    const m = Number(p[2]);
+    if(m < 1 || m > 12) return String(comp);
+    return new Date(Number(p[1]), m-1, 1).toLocaleDateString('pt-BR',{month:'long', year:'numeric'});
   }
   // valores de proposta sao texto livre ("R$ 2.500,00") — extrai o numero
   function valorDeTexto(t){
@@ -24667,35 +24845,58 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.pagarTudoDaPessoa = async function(nome){
-    const mes = new Date().toISOString().slice(0,7);
+    /* ===== O BOTAO DO DIA 15 — CONSERTADO EM 03/08/2026 ==============
+       Filtrava `v.mes === mes` com o mes do relogio. Em 15/08 isso
+       responderia "Nada em aberto pra Luis" enquanto julho seguia
+       devendo R$ 712,03 — e o dinheiro nunca mais seria cobrado, porque
+       nao havia tela onde ele aparecesse. Divida nao tem mes: ela existe
+       ate ser paga. O recorte por mes ficou onde ele serve (a tela), nao
+       aqui, onde ele esquecia gente. */
     let lista = [];
     try{
-      const snap = await getDocs(collection(db,'pagamentos_extra'));
-      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.mes === mes && (v.filmmaker||'') === nome && !v.pago) lista.push({id:d.id, ...v}); });
+      lista = extrasEmAberto(await lerTodosOsExtras(), nome);
     }catch(e){ console.error(e); mostrarToast('Não consegui ler os lançamentos.', 'erro'); return; }
     if(!lista.length){ mostrarToast('Nada em aberto pra ' + nome + '.'); return; }
     const c = somarExtras(lista);
+    const grupos = porMesDosExtras(lista);
+    const meses = Object.keys(grupos).sort();
+    /* Se a divida atravessa mes, isso tem que estar na cara antes do
+       clique — senao ela da baixa em julho achando que e agosto. */
+    const detalheMeses = meses.length > 1
+      ? '\n\nSão ' + meses.length + ' meses:\n' + meses.map(m => '  · ' + rotuloMesExtras(m) + ': ' + brl(somarExtras(grupos[m]).total)).join('\n')
+      : '\n\nMês: ' + rotuloMesExtras(meses[0]);
     if(c.semComprovante && !confirm(c.semComprovante + ' corrida(s) de Uber estão SEM COMPROVANTE.\n\nMarcar como pago assim mesmo? Depois não vai ter como conferir esses valores.')) return;
     if(!confirm('Marcar como pago tudo de ' + nome + '?\n\n' + lista.length + ' lançamento(s) · ' + brl(c.total) +
-      '\n🎥 ' + brl(c.filmagem) + ' em filmagens\n🚗 ' + brl(c.uber) + ' em deslocamento')) return;
+      '\n🎥 ' + brl(c.filmagem) + ' em filmagens\n🚗 ' + brl(c.uber) + ' em deslocamento' + detalheMeses)) return;
     for(const e of lista){
       try{ await updateDoc(doc(db,'pagamentos_extra', e.id), { pago:true, pagoPor: usuarioAtual||'?', pagoEm: new Date().toISOString() }); }
       catch(err){ console.error('Falha em ' + e.id, err); }
     }
-    registrarLogAutomacao('folha_paga', '', nome + ' — ' + brl(c.total) + ' em ' + lista.length + ' lançamento(s)');
+    registrarLogAutomacao('folha_paga', '', nome + ' — ' + brl(c.total) + ' em ' + lista.length + ' lançamento(s) · ' + meses.map(rotuloMesExtras).join(', '));
     mostrarToast(brl(c.total) + ' marcados como pagos pra ' + nome + '.');
     renderFinanceiro();
+    /* A tela de extras pode estar aberta atras: ela tem que refletir a
+       baixa na hora, senao o valor continua vermelho e ela paga de novo. */
+    if(document.getElementById(__alvoExtras)) renderGerenciaPagamentos();
   };
 
   window.copiarFolhaDaPessoa = async function(nome){
     try{
+      /* ===== O TEXTO DO WHATSAPP — CONSERTADO EM 03/08/2026 ===========
+         Tambem filtrava pelo mes do relogio. O Luis receberia em 15/08
+         um resumo dizendo "Total a receber dia 15: R$ 0,00" com julho
+         inteiro de fora. Agora o resumo leva TUDO que esta em aberto,
+         de qualquer mes, mais o que ja foi pago no mes corrente (pra ele
+         conferir o historico recente). */
       const mes = new Date().toISOString().slice(0,7);
-      const snap = await getDocs(collection(db,'pagamentos_extra'));
-      const lista = [];
-      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.mes === mes && (v.filmmaker||'') === nome) lista.push(v); });
-      if(!lista.length){ mostrarToast('Nada lançado pra ' + nome + ' neste mês.', 'erro'); return; }
+      const todos = await lerTodosOsExtras();
+      const dele = todos.filter(v => (v.filmmaker||'') === nome);
+      const lista = dele.filter(v => !v.pago || mesDoLancamento(v) === mes);
+      if(!lista.length){ mostrarToast('Nada lançado pra ' + nome + '.', 'erro'); return; }
       const c = somarExtras(lista);
-      const aPagar = somarExtras(lista.filter(x=>!x.pago)).total;
+      const emAbertoL = extrasEmAberto(dele);
+      const aPagar = somarExtras(emAbertoL).total;
+      const mesesAbertos = Object.keys(porMesDosExtras(emAbertoL)).sort();
       const linhas = lista
         .sort((a,b)=>String(a.data||'').localeCompare(String(b.data||'')))
         .map(e => {
@@ -24704,13 +24905,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
           if(Number(e.valorExtra)) partes.push('filmagem ' + brl(Number(e.valorExtra)));
           else if(cc.semValor) partes.push('filmagem sem valor definido');
           if(Number(e.valorUber)) partes.push('Uber ' + brl(Number(e.valorUber)) + ' (ida ' + brl(Number(e.uberIda)||0) + ' + volta ' + brl(Number(e.uberVolta)||0) + ')');
-          return '• ' + (e.data ? formatarDataBR(e.data) + ' — ' : '') + (e.clienteNome||'sem cliente') +
+          return '• ' + (e.data ? formatarDataBR(e.data) + ' — ' : '[' + rotuloMesExtras(mesDoLancamento(e)) + '] ') + (e.clienteNome||'sem cliente') +
                  ' [' + (tipoDoExtra(e) === 'mensalista' ? 'mensalista' : 'avulso') + ']' +
                  ': ' + partes.join(' + ') + ' = ' + brl(cc.total) + (e.pago ? ' (já pago)' : '');
         }).join('\n');
-      const txt = '*Extras de ' + nome + ' — ' + nomeMes(mes) + '*\n\n' + linhas +
+      const cab = mesesAbertos.length > 1
+        ? '*Extras de ' + nome + '*\n_Em aberto de ' + mesesAbertos.map(rotuloMesExtras).join(' e ') + '_'
+        : '*Extras de ' + nome + ' — ' + nomeMes(mesesAbertos[0] || mes) + '*';
+      const txt = cab + '\n\n' + linhas +
         '\n\n🎥 Filmagens: ' + brl(c.filmagem) + '\n🚗 Uber: ' + brl(c.uber) +
-        '\n*Total a receber dia 15: ' + brl(aPagar) + '*';
+        '\n*Total a receber dia 15: ' + brl(aPagar) + '*' +
+        (mesesAbertos.length > 1 ? '\n\n_Inclui mês anterior que ficou em aberto._' : '');
       await navigator.clipboard.writeText(txt);
       mostrarToast('Resumo de ' + nome + ' copiado — é só colar no WhatsApp.');
     }catch(e){ console.error('Falha ao copiar folha:', e); mostrarToast('Não consegui copiar agora.', 'erro'); }
@@ -25110,9 +25315,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     let extras = [];
     try{
-      const snap = await getDocs(collection(db,'pagamentos_extra'));
-      const mes = hoje.slice(0,7);
-      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.mes === mes) extras.push(v); });
+      /* Mesmo motivo da ficha: o painel mostra o que esta em aberto, e
+         divida nao vira zero na virada do mes. */
+      extras = extrasEmAberto(await lerTodosOsExtras());
     }catch(e){ console.error('Falha ao ler extras:', e); }
 
     const dados = pessoas.map(nome => {
@@ -25175,9 +25380,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
       snap.forEach(d => { const v = d.data(); if(!v.excluido && v.editorAtribuido === nome && ['aguardando_edicao','correcao'].includes(v.status)) videos.push({id:d.id, ...v}); });
     }catch(e){ console.error(e); }
     try{
-      const mes = new Date().toISOString().slice(0,7);
-      const snap = await getDocs(collection(db,'pagamentos_extra'));
-      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.mes === mes && v.filmmaker === nome) extras.push({id:d.id, ...v}); });
+      /* A ficha responde "quanto a agencia deve a esta pessoa", e isso
+         nao tem mes. Antes zerava na virada e a ficha dizia que estava
+         tudo quitado. */
+      extras = extrasEmAberto(await lerTodosOsExtras(), nome);
     }catch(e){ console.error(e); }
     try{ checklist = await obterTemplatesEfetivos(nome); }catch(e){ console.error(e); }
 
@@ -25267,9 +25473,11 @@ Observações do cliente: ${l.observacoes||'—'}`;
     try{
       await mapaTipoCliente();
       const mes = new Date().toISOString().slice(0,7);
-      const snap = await getDocs(collection(db,'pagamentos_extra'));
-      const doMes = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.mes === mes) doMes.push({id:d.id, ...v}); });
-      const validos = doMes.filter(p => !p.informadoPelaPessoa || p.aprovadoPeloChris);
+      /* Le tudo e recorta depois. Antes, o `if` dentro do getDocs jogava
+         julho fora antes de alguem poder perceber que julho devia. */
+      const todosOsExtras = await lerTodosOsExtras();
+      const doMes = todosOsExtras.filter(p => mesDoLancamento(p) === mes);
+      const validos = doMes.filter(extraLiberado);
       const g = somarExtras(validos);
       const semValor = doMes.filter(p => contasDoExtra(p).semValor);
       const aPagar = somarExtras(validos.filter(p=>!p.pago));
@@ -25277,8 +25485,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       const porPessoa = {};
       validos.forEach(p => { const k = p.filmmaker || 'sem dono'; (porPessoa[k] = porPessoa[k]||[]).push(p); });
 
-      return `<div class="card" style="border:2px solid ${semValor.length?'var(--yellow2)':'var(--yellow)'};">
-        <h2>💸 Filmagens avulsas e Uber — ${mes}</h2>
+      return htmlDividaDeOutrosMeses(todosOsExtras, mes, false)
+      + `<div class="card" style="border:2px solid ${semValor.length?'var(--yellow2)':'var(--yellow)'};">
+        <h2>💸 Filmagens avulsas e Uber — ${rotuloMesExtras(mes)}</h2>
         <div class="desc">O que a agência vai pagar no dia <b>15</b> além do salário. Você lança e define os valores aqui; o total vai direto pro financeiro.</div>
         <div class="painelResumo" style="margin:12px 0;">
           <div class="resumoCard"><div class="num" style="font-size:18px;">${brl(g.total)}</div><div class="lbl">total do mês</div></div>

@@ -3490,6 +3490,7 @@
     // correção), garante que ninguém confunda "já mandei" com "preciso
     // mandar de novo".
     await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo, correcaoImagemUrl: foto, correcaoSolicitadaEm: new Date().toISOString(), enviadoParaCliente: false });
+    await reiniciarPrazoPorAjuste(id, usuarioAtual);
     registrarHistorico('videos_producao', id, 'Pedido de ajuste enviado pro editor', motivo);
     const vSnap = await getDoc(doc(db,'videos_producao', id));
     if(vSnap.exists()){
@@ -3545,6 +3546,7 @@
       correcaoSolicitadaEm: new Date().toISOString(),
       enviadoParaCliente: false
     });
+    await reiniciarPrazoPorAjuste(id, usuarioAtual);
     registrarHistorico('videos_producao', id, 'Cliente pediu ajuste (antes de aprovar)', textoCompleto);
     const vSnap = await getDoc(doc(db,'videos_producao', id));
     if(vSnap.exists()){
@@ -3561,10 +3563,11 @@
     const postSnap = await getDocs(collection(db,'postagens'));
     for(const d of postSnap.docs){ if(d.data().videoId === id) await deleteDoc(doc(db,'postagens', d.id)); }
     await updateDoc(doc(db,'videos_producao', id), {
-      status:'correcao', correcao: '[Cliente pediu depois de já aprovado] ' + motivo,
+      status:'correcao', correcao: '[Cliente pediu depois de já aprovado] ' + motivo, correcaoSolicitadaEm: new Date().toISOString(),
       clienteAprovou:false, clienteAprovouEm:'', clienteAprovouPor:'', correcaoSolicitadaEm: new Date().toISOString(),
       enviadoParaCliente: false
     });
+    await reiniciarPrazoPorAjuste(id, usuarioAtual);
     registrarHistorico('videos_producao', id, 'Cliente pediu ajuste após já ter aprovado', motivo);
     const vSnap = await getDoc(doc(db,'videos_producao', id));
     if(vSnap.exists()){
@@ -6788,6 +6791,52 @@
      Consertar a função só resolve daqui pra frente. Os 32 que já estão
      presos precisam de alguém que passe e feche. Entra no motor, roda
      sozinha, e não faz barulho: se não houver nenhum, não escreve nada. */
+  /* ===== O ALERTA DOS 3 DIAS — 03/08/2026 ============================
+     "Caso uma demanda permaneça em Em espera do cliente por mais de 3
+     dias, o sistema deverá enviar uma notificação para Amanda informando
+     que aquele cliente precisa ser cobrado."
+
+     Uma decisão: avisa UMA VEZ por demanda, não todo dia. Aviso diário
+     sobre a mesma coisa é a definição de ruído — e ruído a pessoa
+     aprende a ignorar, que é como o silêncio volta. Se passar de 7 dias,
+     avisa de novo, porque aí virou outra conversa. */
+  async function cobrarEsperaDoClienteParada(){
+    const snap = await getDocs(collection(db,'demandas'));
+    let n = 0;
+    for(const dd of snap.docs){
+      const d = dd.data();
+      if(d.status !== 'pendente') continue;
+      const e = d.esperandoCliente;
+      if(!e || !e.desde) continue;
+      const dias = Math.max(0, Math.round(
+        (new Date(hojeLocal()+'T00:00:00') - new Date(String(e.desde).slice(0,10)+'T00:00:00')) / 86400000));
+      if(dias < 3) continue;
+      const jaAvisou = Number(e.avisadoEmDias || 0);
+      if(dias < 7 && jaAvisou >= 3) continue;      // já avisei aos 3
+      if(dias >= 7 && jaAvisou >= 7) continue;     // já avisei aos 7
+      const marco = dias >= 7 ? 7 : 3;
+      await criarDemandaSegura({
+        titulo: '⏸ ' + (d.clienteNome || 'Cliente') + ' não respondeu há ' + dias + ' dia(s)',
+        descricao: 'A demanda "' + (d.titulo||'') + '" está parada esperando o cliente há ' + dias + ' dia(s).'
+          + '\n\nO que está esperando: ' + (e.motivo || '(não anotado)')
+          + '\nMarcada por: ' + (e.por || '?')
+          + '\nCom: ' + (d.destinatario || '?')
+          + '\n\nVale cobrar o cliente pra o processo andar. Quando ele responder, abre a demanda e clica em '
+          + '"O cliente respondeu — voltar pro fluxo".'
+          + (marco === 7 ? '\n\n⚠️ Já são mais de 7 dias. Se não vai andar, talvez seja o caso de cancelar a demanda.' : ''),
+        destinatario: 'Amanda', origem: 'sistema', clienteNome: d.clienteNome || '',
+        ehAviso: true, demandaOrigemId: dd.id,
+        prazoData: hojeLocal(), prazoHora: '19:00', status: 'pendente'
+      }, { janelaMinutos: 20 * 60 });
+      await updateDoc(doc(db,'demandas', dd.id), {
+        esperandoCliente: { ...e, avisadoEmDias: marco, avisadoEm: new Date().toISOString() }
+      });
+      n++;
+    }
+    if(n) registrarLogAutomacao('espera_cliente_cobrada', String(n), n + ' cliente(s) cobrado(s) por demora');
+    return n;
+  }
+
   async function conciliarVideoComPostagemPublicada(){
     const [vSnap, pSnap] = await Promise.all([
       getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
@@ -11423,8 +11472,114 @@
   function tituloDemanda(d){ return esc(nomeDaDemanda(d).completo); }
   window.tituloDemanda = tituloDemanda;
 
+  /* ===================================================================
+     O CORTE DO EXPEDIENTE — 03/08/2026 (item 3 do pedido da Amanda)
+     "Enquanto a demanda possuir prazo para o dia atual, ela não deve
+     aparecer como atraso. Somente após o encerramento do expediente
+     (19h) ou no dia seguinte ela poderá ser considerada atrasada."
+
+     PRECISO SEPARAR ISTO DO BUG QUE CONSERTEI EM 30/07, porque parece a
+     mesma coisa e não é:
+
+       O bug antigo usava a HORA DO PRAZO. Prazo hoje às 12:00 virava
+       atrasado às 12:01. A pessoa abria a tela às 11h e via o próprio
+       dia em vermelho. Isso desanima e não organiza.
+
+       A regra da Amanda usa a HORA DO EXPEDIENTE, que é a mesma pra
+       todo mundo. Enquanto o dia útil está correndo, nada do dia é
+       atraso. Passou das 19h, o dia acabou e o que era pra hoje não foi
+       feito.
+
+     A diferença prática: com o bug, cada demanda tinha um horário
+     diferente de virar vermelha. Com esta regra, é um só, e é o fim do
+     expediente. Ninguém abre a tela de manhã e vê o dia todo vermelho.
+
+     `prazoHora` continua ordenando a fila e aparecendo escrita — ela só
+     não decide mais a cor, como já era desde 30/07. */
+  const HORA_FIM_EXPEDIENTE = 19;
+  function atrasaDepoisDoExpediente(){
+    return new Date().getHours() >= HORA_FIM_EXPEDIENTE;
+  }
+  window.atrasaDepoisDoExpediente = atrasaDepoisDoExpediente;
+
+  /* ===================================================================
+     EM ESPERA DO CLIENTE — 03/08/2026 (item 4 do pedido da Amanda)
+     "Quando esse status for selecionado, a demanda deixa de contar como
+     atraso, sai da lista de pendências atrasadas, e fica em uma coluna
+     específica."
+
+     UMA DECISÃO QUE PRECISO EXPLICAR: ela pediu um "status novo", e eu
+     fiz uma MARCA, não um status.
+
+     `status` é o que move a demanda pela esteira: pendente → concluída
+     esperando aprovação → aprovada. Tem 40+ lugares que decidem coisa
+     olhando pra ele. Inventar um sexto valor ali significaria revisar os
+     40 e rezar — e um esquecido faz a demanda desaparecer de uma tela.
+
+     A marca `esperandoCliente` faz tudo que ela pediu (sai do atraso,
+     tem coluna própria, alerta em 3 dias) e não mexe na esteira. Pra
+     quem usa, é indistinguível de um status. Pro código, é seguro. */
+  function esperandoCliente(d){
+    const e = d && d.esperandoCliente;
+    return !!(e && e.desde);
+  }
+  window.esperandoCliente = esperandoCliente;
+
+  function diasEsperandoCliente(d){
+    if(!esperandoCliente(d)) return 0;
+    const desde = new Date(String(d.esperandoCliente.desde).slice(0,10) + 'T00:00:00');
+    const hoje  = new Date(hojeLocal() + 'T00:00:00');
+    return Math.max(0, Math.round((hoje - desde) / 86400000));
+  }
+  window.diasEsperandoCliente = diasEsperandoCliente;
+
+  const MOTIVOS_ESPERA_CLIENTE = [
+    'Aguardando aprovação',
+    'Aguardando material',
+    'Aguardando informações',
+    'Aguardando retorno',
+    'Aguardando ajustes solicitados ao cliente'
+  ];
+
+  window.marcarEsperandoCliente = async function(id){
+    const d = todasDemandas.find(x=>x.id===id);
+    if(!d) return;
+    const opcoes = MOTIVOS_ESPERA_CLIENTE.map((m,i)=>(i+1)+') '+m).join('\n');
+    const esc0 = prompt('O que está esperando do cliente?\n\n' + opcoes + '\n\nEscreve o número, ou o texto do que for:');
+    if(esc0 === null) return;
+    const n = parseInt(String(esc0).trim());
+    const motivo = (n >= 1 && n <= MOTIVOS_ESPERA_CLIENTE.length) ? MOTIVOS_ESPERA_CLIENTE[n-1] : String(esc0).trim();
+    if(!motivo){ mostrarToast('Sem dizer o que está esperando, não dá pra cobrar depois.', 'erro'); return; }
+    await updateDoc(doc(db,'demandas', id), {
+      esperandoCliente: { desde: new Date().toISOString(), motivo, por: usuarioAtual||'?' }
+    });
+    registrarHistorico('demandas', id, 'Marcada como "em espera do cliente" por ' + (usuarioAtual||'?'), motivo);
+    mostrarToast('Marcada. Ela sai das atrasadas e vai pra coluna de espera do cliente.');
+    fecharModal();
+    await carregarTodasDemandas();
+    if(window.renderPainelDemandas) renderPainelDemandas();
+    atualizarTodosOsBadges();
+  };
+
+  window.destravarDaEsperaDoCliente = async function(id){
+    const d = todasDemandas.find(x=>x.id===id);
+    if(!d) return;
+    const dias = diasEsperandoCliente(d);
+    await updateDoc(doc(db,'demandas', id), { esperandoCliente: null, esperaClienteEncerradaEm: new Date().toISOString() });
+    registrarHistorico('demandas', id, 'Voltou da espera do cliente', 'Ficou ' + dias + ' dia(s) esperando: ' + ((d.esperandoCliente||{}).motivo||''));
+    mostrarToast('Voltou pro fluxo normal — o prazo volta a contar.');
+    fecharModal();
+    await carregarTodasDemandas();
+    if(window.renderPainelDemandas) renderPainelDemandas();
+    atualizarTodosOsBadges();
+  };
+
   function calcularUrgencia(demanda){
     if(demanda.status !== 'pendente') return 'normal';
+    /* Espera do cliente sai do atraso. A equipe não pode ser cobrada por
+       algo que não depende dela — e a gestão continua vendo, na coluna
+       própria e no alerta de 3 dias. */
+    if(esperandoCliente(demanda)) return 'normal';
     if(estaAusente(demanda.destinatario)) return 'normal';
     if(demanda.urgenciaManual && ['atrasado','hoje','normal'].includes(demanda.urgenciaManual)) return demanda.urgenciaManual;
     /* ===== A RAIZ DE TUDO — 30/07/2026 ================================
@@ -11449,7 +11604,7 @@
     const hojeStr = hojeLocal();
     if(!demanda.prazoData) return 'normal';
     if (demanda.prazoData < hojeStr) return 'atrasado';
-    if (demanda.prazoData === hojeStr) return 'hoje';
+    if (demanda.prazoData === hojeStr) return atrasaDepoisDoExpediente() ? 'atrasado' : 'hoje';
     return 'normal';
   }
 
@@ -11476,6 +11631,50 @@
 
      Agora quem decide se um vídeo está atrasado é o PRAZO, não a
      cicatriz. E a cicatriz é apagada quando o vídeo volta pro prazo. */
+  /* ===================================================================
+     O PRAZO DO AJUSTE — 03/08/2026 (itens 1 e 2 do pedido da Amanda)
+     "Sempre que um vídeo retornar para ajuste, o sistema deve atualizar
+     automaticamente a data de entrega. O novo prazo passa a ser o dia em
+     que o ajuste foi enviado ao editor. O vídeo não deve herdar o prazo
+     antigo."
+
+     POR QUE ISSO ACONTECIA. Existiam DUAS respostas pra "qual é o prazo
+     deste vídeo":
+
+       `calcularPrazoEdicaoVideo(v)`  — já fazia certo: em correção, conta
+                                        do dia em que a correção foi pedida
+       `v.prazoEntrega`               — o campo gravado, do prazo ORIGINAL
+
+     E o `videoAtrasado` usava o CAMPO primeiro:
+         const prazo = v.prazoEntrega || calcularPrazoEdicaoVideo(v)
+
+     Ou seja: a conta certa existia e nunca era usada, porque o campo
+     velho sempre estava lá. O vídeo voltava pra ajuste às 14h e já
+     nascia atrasado, com o prazo de três dias antes.
+
+     Duas respostas pra mesma pergunta, e a errada ganhando. É o mesmo
+     defeito que passei a semana inteira desmontando.
+
+     AGORA: quando o vídeo volta pra ajuste, o prazo é REESCRITO pro dia
+     do envio. Uma resposta só, e é a certa. */
+  async function reiniciarPrazoPorAjuste(id, quemPediu){
+    const hoje = hojeLocal();
+    await updateDoc(doc(db,'videos_producao', id), {
+      prazoEntrega: hoje,
+      prazoEntregaLabel: 'Ajuste pedido em ' + formatarDataBR(hoje),
+      prazoReiniciadoPorAjuste: true,
+      prazoReiniciadoEm: new Date().toISOString(),
+      /* A cicatriz do escalonamento também zera: o vídeo recomeça, não
+         continua devendo o atraso da versão anterior. */
+      nivelEscalonamento: 0
+    });
+    registrarHistorico('videos_producao', id, 'Prazo reiniciado pelo ajuste',
+      'Novo prazo: ' + formatarDataBR(hoje) + ' — o dia em que o ajuste foi enviado ao editor. Pedido por ' + (quemPediu||'?') + '.');
+    /* O aviso de atraso da versão anterior não faz mais sentido. */
+    try{ await encerrarAvisosDeVideoAtrasado(id, ''); }catch(e){ console.error('Falha ao encerrar avisos do vídeo:', e); }
+  }
+  window.reiniciarPrazoPorAjuste = reiniciarPrazoPorAjuste;
+
   function videoAtrasado(v){
     if(!v || v.excluido) return false;
     if(!['aguardando_edicao','correcao'].includes(v.status)) return false;
@@ -13820,6 +14019,11 @@
 
   async function atualizarBadgeMinhas(){
     const badge = document.getElementById('badgeMinhas');
+    /* 03/08/2026 — sem esta guarda, um badge ausente estoura aqui e
+       derruba `atualizarTodosOsBadges` inteira: os outros contadores
+       param de atualizar por causa de um. Mesma família da guarda do
+       toast e do cockpit. */
+    if(!badge) return;
     if(!usuarioAtual){ badge.style.display='none'; return; }
     // Agora esse badge é sobre a página "Minhas Anotações" (só pessoal) —
     // as demandas do sistema não vivem mais lá, então não contam mais aqui.
@@ -15085,7 +15289,9 @@
       const cx = document.getElementById('gerenciaAtrasosEquipe');
       if(cx && cx.offsetParent !== null && window.renderAtrasosEquipe) window.renderAtrasosEquipe();
     }catch(e){}
-    if(document.getElementById('view-atrasadas')?.offsetParent && window.renderPainelDemandas) window.renderPainelDemandas();
+    /* 03/08/2026 — item 2: mesma coisa pro prazo de DEMANDA. Era só o
+       painel de demandas; agora tudo que estiver aberto. */
+    try{ atualizarTelasDepoisDeMexerNoPrazo(); }catch(e){ console.error('Falha ao redesenhar as telas:', e); }
 
   };
 
@@ -18586,7 +18792,8 @@
          erro e o intervalo já estão resolvidos aqui. Ela mesma se limita
          a uma rodada por dia. */
       { nome: 'conferenciaDoSistema', fn: () => window.conferenciaDoSistema() },
-      { nome: 'videoComPostagemPublicada', fn: conciliarVideoComPostagemPublicada }
+      { nome: 'videoComPostagemPublicada', fn: conciliarVideoComPostagemPublicada },
+      { nome: 'esperaDoClienteParada', fn: cobrarEsperaDoClienteParada }
     ];
 
     for(const v of verificacoes){
@@ -19546,6 +19753,20 @@
     }catch(e){ console.error('Falha ao abrir vídeo:', e); mostrarToast('Não consegui abrir agora.', 'erro'); }
   };
 
+  /* Redesenha o que estiver aberto. Uma função só, chamada por todos os
+     caminhos que mexem em prazo — senão cada um esquece uma tela. */
+  function atualizarTelasDepoisDeMexerNoPrazo(){
+    const visivel = id => { const el = document.getElementById(id); return el && el.offsetParent !== null; };
+    if(visivel('atrasadasConteudo') && window.renderPainelDemandas) renderPainelDemandas();
+    if(visivel('gerenciaVideosHub') && window.renderVideosHub) renderVideosHub();
+    if(visivel('gerenciaVideos') && window.renderGerenciaVideos) renderGerenciaVideos();
+    if(visivel('producaoLista') && window.renderProducao) renderProducao();
+    if(visivel('gerenciaAgora') && window.renderAgora) renderAgora();
+    if(visivel('esteiraConteudoBox') && window.renderEsteiraConteudo) renderEsteiraConteudo();
+    if(window.calcularIndicadores) calcularIndicadores(true).catch(()=>{});
+  }
+  window.atualizarTelasDepoisDeMexerNoPrazo = atualizarTelasDepoisDeMexerNoPrazo;
+
   window.salvarPrazoVideo = async function(id){
     const novo = document.getElementById('prazoVid_'+id)?.value;
     if(!novo){ mostrarToast('Escolhe a data.', 'erro'); return; }
@@ -19563,6 +19784,14 @@
       fecharModal();
       await carregarTodasDemandas();
       atualizarTodosOsBadges();
+      /* ===== 03/08/2026 — item 2 do pedido da Amanda ==================
+         "Sempre que Amanda alterar um prazo, o sistema deve atualizar
+         IMEDIATAMENTE todas as informações relacionadas."
+         Antes recarregava as demandas e os badges, mas a tela aberta
+         continuava desenhada com o número velho — ela mudava o prazo e
+         via o mesmo "3 atrasados" até sair e voltar. Agora redesenha o
+         que estiver na frente. */
+      try{ atualizarTelasDepoisDeMexerNoPrazo(); }catch(e){ console.error('Falha ao redesenhar as telas:', e); }
       try{ renderPainelDemandas(); }catch(e){}
       try{ renderGerenciaVideos(); }catch(e){}
     }catch(e){ mostrarToast('Não consegui salvar: ' + e.message, 'erro'); }
@@ -22078,6 +22307,9 @@
      =================================================================== */
 
   const FAIXAS_DEMANDA = [
+    /* 03/08/2026 — a coluna que a Amanda pediu. Vem primeiro na régua
+       porque é a que explica por que o número de atrasadas caiu. */
+    { chave:'esperaCliente', rot:'Em espera do cliente', cor:'var(--yellow2)', dica:'não depende da equipe' },
     { chave:'atrasada', rot:'Atrasada',      cor:'var(--red)',     dica:'o dia do prazo já passou' },
     { chave:'hoje',     rot:'Vence hoje',    cor:'var(--yellow)',  dica:'tem o dia inteiro' },
     { chave:'proxima',  rot:'Próximos 3 dias',cor:'var(--yellow2)', dica:'dá pra se organizar' },
@@ -22086,6 +22318,7 @@
   ];
 
   function faixaDaDemanda(d){
+    if(esperandoCliente(d)) return 'esperaCliente';
     const u = calcularUrgencia(d);
     if(u === 'atrasado') return 'atrasada';
     if(u === 'hoje') return 'hoje';
@@ -22160,7 +22393,8 @@
     const f = faixaDaDemanda(d);
     const info = FAIXAS_DEMANDA.find(x=>x.chave===f);
     const dias = diasDeAtraso(d);
-    const selo = f==='atrasada' ? `<span class="prioTag vermelho">${dias} dia(s)</span>`
+    const selo = f==='esperaCliente' ? `<span class="prioTag amarelo">⏸ com o cliente</span>`
+               : f==='atrasada' ? `<span class="prioTag vermelho">${dias} dia(s)</span>`
                : f==='hoje'     ? `<span class="prioTag amarelo">hoje${d.prazoHora?' · '+d.prazoHora:''}</span>`
                : f==='semprazo' ? `<span class="prioTag" style="background:var(--line);color:var(--muted);">sem prazo</span>`
                : `<span class="meta">${d.prazoData?formatarDataBR(d.prazoData):''}</span>`;
@@ -22171,6 +22405,7 @@
         <div class="meta" style="margin-top:4px;">${comCaixa?esc(d.destinatario||'?')+' · ':''}${d.prazoData?'prazo '+formatarDataBR(d.prazoData):'sem prazo definido'}${d.clienteNome?' · '+esc(d.clienteNome):''}</div>
         ${d.bloqueio ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">Aguardando '+esc(d.bloqueio.pessoa)+'</div>' : ''}
         ${d.pedidoExclusao ? '<div class="meta" style="color:var(--yellow2);margin-top:2px;">Pediu pra excluir — esperando decisão</div>' : ''}
+        ${esperandoCliente(d) ? '<div class="meta" style="margin-top:4px;background:var(--deep);border-left:3px solid var(--yellow2);padding:7px 9px;border-radius:6px;">⏸ '+esc((d.esperandoCliente||{}).motivo||'esperando o cliente')+' · há <b>'+diasEsperandoCliente(d)+' dia(s)</b>'+(diasEsperandoCliente(d)>=3?' — <b style="color:var(--yellow2);">já passou de 3, vale cobrar</b>':'')+'</div>' : ''}
       </div>
     </div>`;
   }
@@ -22210,6 +22445,7 @@
     /* A ORDEM É A MENSAGEM: primeiro o que dá pra fazer, depois a dívida. */
     html += bloco('hoje', 'Pra hoje', 'Nada vence hoje.');
     html += bloco('atrasada', 'Passou do prazo', 'Nenhuma atrasada — você está em dia.');
+    html += bloco('esperaCliente', 'Em espera do cliente — não é sua culpa', '');
     html += bloco('proxima', 'Próximos 3 dias', '');
     html += bloco('adiante', 'Mais pra frente', '');
     html += bloco('semprazo', 'Sem prazo definido', '');
@@ -22385,6 +22621,7 @@
     };
     html += blocoG('atrasada', 'Passou do prazo');
     html += blocoG('hoje', 'Vence hoje');
+    html += blocoG('esperaCliente', 'Em espera do cliente');
     html += blocoG('proxima', 'Próximos 3 dias');
     html += blocoG('adiante', 'Mais pra frente');
     html += blocoG('semprazo', 'Sem prazo definido');
@@ -23679,7 +23916,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.rejeitarDireto = async function(id){
     const motivo = prompt('O que precisa ser ajustado nesse vídeo?');
     if(!motivo) return;
-    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo });
+    await updateDoc(doc(db,'videos_producao', id), { status:'correcao', correcao: motivo, correcaoSolicitadaEm: new Date().toISOString() });
+    await reiniciarPrazoPorAjuste(id, usuarioAtual);
     mostrarToast('Enviado de volta pro editor com a correção.');
     renderCentralComando();
   };
@@ -25551,6 +25789,16 @@ Observações do cliente: ${l.observacoes||'—'}`;
           ${d.urgenciaManual ? '<span class="selo pendente">fixada na mão por '+esc(d.urgenciaFixadaPor||'?')+'</span>' : ''}
         </div>
       </div>` : `<div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>`}
+      ${/* 03/08/2026 — o botão da espera do cliente, na ficha. Fica junto
+            do prazo porque é a alternativa a mudar prazo: quando o que
+            trava não é a equipe, não é prazo que resolve. */''}
+      ${esperandoCliente(d)
+        ? `<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:11px 13px;border-radius:8px;">
+             <b>⏸ Em espera do cliente</b> — ${esc((d.esperandoCliente||{}).motivo||'')}
+             <div class="meta" style="margin-top:4px;">Marcada por ${esc((d.esperandoCliente||{}).por||'?')} · há ${diasEsperandoCliente(d)} dia(s). Não conta como atraso.</div>
+             <button class="btn secondary" style="width:auto;margin-top:9px;padding:6px 12px;font-size:11px;" onclick="destravarDaEsperaDoCliente('${d.id}')">▶ O cliente respondeu — voltar pro fluxo</button>
+           </div>`
+        : (podeMexerNoPrazo ? `<button class="btn secondary" style="margin-top:8px;font-size:12px;" onclick="marcarEsperandoCliente('${d.id}')">⏸ Está esperando o cliente</button>` : '')}
       ${d.redirecionamentoPedido ? `<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow2);padding:12px 14px;border-radius:8px;">
         <b>↪️ ${esc(d.redirecionamentoPedido.por||'?')} pediu pra repassar pra ${esc(d.redirecionamentoPedido.para)}</b>
         <div class="meta" style="margin-top:5px;">"${esc(d.redirecionamentoPedido.motivo||'')}"</div>

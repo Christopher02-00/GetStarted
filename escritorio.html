@@ -2799,7 +2799,16 @@
     return String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
   }
   let __cacheAlvoConteudo = null;
-  window.limparCacheAlvoConteudo = function(){ __cacheAlvoConteudo = null; };
+  /* 03/08/2026 — tres caches respondem sobre cliente (alvo de conteudo,
+     casta, tipo). Limpar um so fazia as respostas divergirem entre si
+     ate o proximo F5, que e o mesmo defeito de "duas verdades" visto de
+     outro angulo. Agora limpa-se tudo junto, sempre. */
+  window.limparCacheDeClientes = function(){
+    __cacheAlvoConteudo = null;
+    __cacheCasta = null;
+    try{ __cacheTipoCliente = null; }catch(e){}
+  };
+  window.limparCacheAlvoConteudo = function(){ window.limparCacheDeClientes(); };
 
   /* Os três que a Gabi apontou em 29/07. Ficam por NOME e não por slug
      porque vieram de cadastro extra e o slug varia. É só uma semente:
@@ -2811,6 +2820,176 @@
     'eliz noivas': 'saiu da carteira',
     'ikn': 'saiu da carteira'
   };
+
+  /* ===== A CASTA DO CLIENTE — UMA RESPOSTA SO — 03/08/2026 ==========
+     O Chris me disse mais de uma vez que cliente avulso nao tem
+     calendario, e o sistema continuava cobrando. Fui ver por que, e o
+     motivo e o mesmo defeito de sempre: existiam DUAS respostas pra
+     "que tipo de cliente e este", e a corrente de calendario usava a
+     que nao sabia responder.
+
+       mapaTipoCliente()        — sabia dizer mensalista/avulso, e era
+                                  usada SO na tela de extras
+       clientesForaDoConteudo() — decidia quem deve calendario, e nunca
+                                  perguntava se o cliente e mensalista.
+                                  Tirava so quem estava explicitamente
+                                  marcado (entrega direta, encerrado,
+                                  marcado a mao, e tres nomes no codigo)
+
+     Resultado em 03/08: 23 clientes cobrados de calendario, e entre
+     eles a PROPRIA AGENCIA ("Get Started — conteudo interno") e o Mayk
+     Leao, que nunca teve contrato nem mensalidade.
+
+     Agora existe UMA funcao que responde a casta, e todo mundo le dela.
+
+     ---- POR QUE NAO BASTA "NAO TEM CONTRATO" ----
+
+     Foi a primeira coisa que eu ia fazer, e teria quebrado um cliente
+     de verdade. Conferindo no banco antes de escrever, achei isto:
+
+       contratos_cliente/zeens  → clienteNome "Zeens", R$ 1.700/mes,
+                                   plano Intermediario, pagamento
+                                   mensal zeens_2026-07 registrado
+       o cliente na lista       → slug "zeiss", com calendario, extras
+                                   do Luis e 2 videos em edicao
+
+     E O MESMO CLIENTE, cadastrado com duas grafias. O contrato e as
+     mensalidades foram pra "zeens"; o calendario, os extras e os
+     videos foram pra "zeiss". Se eu tivesse liberado "quem nao tem
+     contrato", a Zeiss sairia de TODA cobranca de processo mensal
+     sendo mensalista de R$ 1.700 — trocaria um erro que incomoda por
+     um erro que faz perder cliente calado. Cobrar de mais irrita;
+     cobrar de menos ninguem percebe.
+
+     Por isso: APELIDOS_DE_CONTRATO resolve o caso conhecido agora, e a
+     fusao dos dois cadastros virou decisao do Chris (e contrato +
+     mensalidade sao financeiro, entao e dele mesmo, nao da Amanda). */
+  const SLUGS_INTERNOS = ['get-started'];
+  /* Ponte pro caso real achado em 03/08. Nao e gambiarra permanente: a
+     demanda de fusao esta no painel do Chris. Quando ele unificar, esta
+     linha pode sair — e o teste avisa se sair antes da hora. */
+  const APELIDOS_DE_CONTRATO = { 'zeiss': 'zeens' };
+
+  let __cacheCasta = null;
+  window.limparCacheCasta = function(){ __cacheCasta = null; };
+
+  /* tipo: 'interno' | 'mensalista' | 'avulso' | 'encerrado' | 'indefinido'
+     `origem` diz DE ONDE veio a conclusao, pra ninguem ter que adivinhar
+     por que um cliente esta numa lista. */
+  window.castaDosClientes = async function(){
+    if(__cacheCasta) return __cacheCasta;
+    const m = {};
+    const marca = (slug, tipo, origem) => { m[slug] = { tipo, origem }; };
+    try{
+      const [cfgSnap, contratoSnap, encSnap, mensSnap] = await Promise.all([
+        getDocs(collection(db,'clientes_config')),
+        getDocs(collection(db,'contratos_cliente')),
+        getDocs(collection(db,'clientes_encerrados')),
+        getDocs(collection(db,'pagamentos_mensais'))
+      ]);
+
+      const explicito = {};
+      cfgSnap.forEach(d => { const t = d.data().tipoCliente;
+        if(t === 'mensalista' || t === 'avulso' || t === 'interno') explicito[d.id] = t; });
+
+      const contratoAtivo = new Set(), contratoPorNome = {};
+      contratoSnap.forEach(d => { const v = d.data();
+        if(v.encerrado || v.status === 'encerrado') return;
+        contratoAtivo.add(d.id);
+        if(v.clienteNome) contratoPorNome[normNomeCliente(v.clienteNome)] = d.id;
+      });
+
+      /* Mensalidade lancada e prova de mensalista tao boa quanto contrato:
+         ninguem cobra mensalidade de quem nao paga mensalidade. */
+      const temMensalidade = new Set();
+      mensSnap.forEach(d => { const v = d.data();
+        const s = v.cliente || String(d.id).replace(/_\d{4}-\d{2}$/, '');
+        if(s) temMensalidade.add(s);
+      });
+
+      const encerrados = new Set(), encPorNome = new Set();
+      encSnap.forEach(d => { const v = d.data(); if(v.excluido) return;
+        if(v.slug) encerrados.add(v.slug);
+        if(v.nome) encPorNome.add(normNomeCliente(v.nome)); });
+
+      CLIENTES_LISTA.forEach(c => {
+        const slug = c.slug, nome = normNomeCliente(c.nome);
+        const apelido = APELIDOS_DE_CONTRATO[slug];
+        if(SLUGS_INTERNOS.includes(slug))        return marca(slug, 'interno', 'é a própria agência');
+        if(explicito[slug])                      return marca(slug, explicito[slug], 'marcado à mão');
+        if(encerrados.has(slug) || encPorNome.has(nome)) return marca(slug, 'encerrado', 'saiu da carteira');
+        if(contratoAtivo.has(slug))              return marca(slug, 'mensalista', 'tem contrato ativo');
+        if(apelido && contratoAtivo.has(apelido)) return marca(slug, 'mensalista', 'contrato registrado como "' + apelido + '"');
+        if(contratoPorNome[nome])                return marca(slug, 'mensalista', 'contrato pelo nome');
+        if(temMensalidade.has(slug))             return marca(slug, 'mensalista', 'tem mensalidade lançada');
+        if(apelido && temMensalidade.has(apelido)) return marca(slug, 'mensalista', 'mensalidade registrada como "' + apelido + '"');
+        return marca(slug, 'indefinido', 'sem contrato e sem mensalidade');
+      });
+    }catch(e){ console.error('Não consegui classificar as castas:', e); }
+    __cacheCasta = m;
+    return m;
+  };
+  window.castaDoClienteSync = function(slug){
+    return ((__cacheCasta || {})[slug] || { tipo:'indefinido', origem:'ainda não classificado' });
+  };
+  /* ===== QUEM NAO DEVE PROCESSO MENSAL ==============================
+     Eu tinha colocado `indefinido` aqui e minha propria suite de testes
+     me pegou (teste 18: "se o banco falhar, a meta nao fica vazia —
+     ninguem some por erro de leitura").
+
+     Ela estava certa e o erro era grave na direcao errada. `indefinido`
+     nao quer dizer avulso: quer dizer QUE EU NAO SEI. Tirar da cobranca
+     quem eu nao sei classificar transformaria "cobra de mais", que
+     irrita, em "nao cobra e ninguem percebe", que perde cliente. Foi
+     exatamente o risco que eu levantei no caso Zeiss/Zeens e ia repetir
+     de outra forma.
+
+     Agora: sai quem eu SEI que nao e mensalista. Quem eu nao sei
+     continua na cobranca E aparece no cartao de classificacao pendente,
+     pra Amanda resolver com um clique. Fica chato, e chato e visivel. */
+  function castaSemProcessoMensal(tipo){
+    return tipo === 'avulso' || tipo === 'interno' || tipo === 'encerrado';
+  }
+  /* A lista do que precisa de decisao humana. Um clique resolve. */
+  window.clientesSemClassificacao = async function(){
+    const casta = await castaDosClientes();
+    const fora = await clientesForaDoConteudo();
+    return Object.entries(casta)
+      .filter(([slug, c]) => c.tipo === 'indefinido' && !fora.has(slug))
+      .map(([slug, c]) => ({ slug, nome: (CLIENTES_LISTA.find(x=>x.slug===slug)||{}).nome || slug, origem: c.origem }));
+  };
+  window.classificarClienteAgora = async function(slug, tipo){
+    const nome = (CLIENTES_LISTA.find(x=>x.slug===slug)||{}).nome || slug;
+    if(!confirm('Marcar ' + nome + ' como ' + tipo.toUpperCase() + '?\n\n' +
+      (tipo === 'avulso'
+        ? 'Ele sai de calendário, referências e de todo processo mensal. Dá pra desfazer aqui mesmo.'
+        : 'Ele entra em calendário, referências e no ciclo do dia 15.'))) return;
+    await definirCastaCliente(slug, tipo, usuarioAtual || '?');
+    mostrarToast(nome + ' agora é ' + tipo + '.');
+    if(window.calcularIndicadores) atualizarTelasDepoisDeMexerNoPrazo();
+    if(document.getElementById('painelClassificacao')) renderClassificacaoPendente();
+  };
+  async function renderClassificacaoPendente(alvoId){
+    const cont = document.getElementById(alvoId || 'painelClassificacao');
+    if(!cont) return;
+    let lista = [];
+    try{ lista = await window.clientesSemClassificacao(); }catch(e){ console.error(e); return; }
+    if(!lista.length){ cont.innerHTML = ''; return; }
+    cont.innerHTML = `<div class="card" style="border:2px solid var(--yellow2);">
+      <div class="metaSecTit" style="color:var(--yellow2);">❓ ${lista.length} cliente(s) sem classificação</div>
+      <div class="desc">Estes não têm contrato nem mensalidade registrada, então eu não sei se são mensalistas ou avulsos.
+      <b>Continuam sendo cobrados de calendário e referências</b> — de propósito: é melhor cobrar à toa do que deixar um mensalista sem processo e ninguém notar.
+      Um clique resolve e o sistema para de perguntar.</div>
+      ${lista.map(c => `<div class="item" style="margin-top:9px;border-left:3px solid var(--yellow2);">
+        <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">${esc(c.origem)}</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;">
+          <button class="btn secondary" style="width:auto;padding:7px 14px;font-size:11.5px;" onclick="classificarClienteAgora('${c.slug}','avulso')">🎬 É avulso</button>
+          <button class="btn green" style="width:auto;padding:7px 14px;font-size:11.5px;" onclick="classificarClienteAgora('${c.slug}','mensalista')">📅 É mensalista</button>
+        </div>
+      </div>`).join('')}
+    </div>`;
+  }
+  window.renderClassificacaoPendente = renderClassificacaoPendente;
 
   window.clientesForaDoConteudo = async function(){
     const fora = new Map();   // slug -> motivo
@@ -2837,6 +3016,21 @@
         if(v.semConteudoRecorrente) fora.set(d.id, v.motivoSemConteudo || 'marcado à mão');
         else if(v.semConteudoRecorrente === false) fora.delete(d.id); });
     }catch(e){ console.error('Não consegui ler as configurações de cliente:', e); }
+
+    /* ===== O CONSERTO DE 03/08/2026, NA FONTE =======================
+       Aqui e onde a corrente inteira comeca: 12 telas leem desta
+       funcao. Cliente que nao e mensalista nao deve calendario, nao
+       deve referencia, nao deve nada de processo mensal — porque
+       processo mensal e o que a agencia faz PELO plano, e ele nao tem
+       plano. Isso vale sem excecao, e vale por casta, nao por nome
+       escrito no codigo. */
+    try{
+      const casta = await castaDosClientes();
+      Object.entries(casta).forEach(([slug, c]) => {
+        if(fora.has(slug)) return;                 /* motivo mais especifico ganha */
+        if(castaSemProcessoMensal(c.tipo)) fora.set(slug, c.tipo + ' — ' + c.origem);
+      });
+    }catch(e){ console.error('Não consegui aplicar a casta do cliente:', e); }
     return fora;
   };
 
@@ -3019,6 +3213,49 @@
      Central de Legendas até alguém notar. Essa função fecha esse buraco
      na origem: toda vez que um cliente novo é criado, grava JUNTO o
      tipoEntrega — sem depender de ninguém lembrar de configurar depois. */
+  /* ===== A CASTA PERGUNTADA NA FONTE — 03/08/2026 ===================
+     Pedido do Chris: "nenhum cliente avulso que entra, ou que e
+     cadastrado na pagina quando o videomaker vai subir algum video,
+     deve precisar de calendario nem nada dessas coisas, que sao
+     processos internos da agencia para os nossos clientes mensalistas".
+
+     O jeito de garantir isso e nao deixar cliente nascer sem casta. Ja
+     existia esse padrao aqui pra `tipoEntrega` desde 22/07 — usei o
+     mesmo caminho, no mesmo momento, pelos mesmos pontos de criacao.
+
+     A ORDEM IMPORTA: pergunta a casta PRIMEIRO. Se e avulso, entrega
+     direta e consequencia (avulso nao entra no processo de postagem da
+     casa), e a segunda pergunta nem aparece. Menos clique e menos
+     chance de errar — quem responde as vezes e o videomaker em campo,
+     no celular. */
+  function perguntarCastaClienteNovo(nomeCliente){
+    const ehMensalista = confirm('Cliente novo "' + nomeCliente + '" — que tipo de cliente é?\n\n' +
+      'OK = MENSALISTA. Paga plano mensal. Entra nos processos da casa: calendário editorial, referências, ciclo do dia 15.\n\n' +
+      'Cancelar = AVULSO. Trabalho pontual, sem plano mensal. NÃO entra em calendário nem em nenhuma cobrança de processo mensal.');
+    return ehMensalista ? 'mensalista' : 'avulso';
+  }
+  async function definirCastaCliente(slug, tipoCliente, quemDefiniu){
+    try{
+      await setDoc(doc(db,'clientes_config', slug),
+        { tipoCliente, castaDefinidaPor: quemDefiniu, castaDefinidaEm: new Date().toISOString() }, { merge: true });
+      window.limparCacheDeClientes();
+    }catch(e){ console.error('Falha ao gravar a casta do cliente ' + slug + ':', e); }
+  }
+  /* Um caminho so pra "acabei de criar um cliente, classifica ele". */
+  async function classificarClienteNovo(slug, nome, quemDefiniu){
+    const casta = perguntarCastaClienteNovo(nome);
+    if(casta === 'avulso'){
+      await definirCastaCliente(slug, 'avulso', quemDefiniu);
+      await definirTipoEntregaClienteNovo(slug, 'entrega_direta', quemDefiniu);
+      mostrarToast(nome + ' entrou como AVULSO — fora de calendário e dos processos mensais.');
+      return 'entrega_direta';
+    }
+    await definirCastaCliente(slug, 'mensalista', quemDefiniu);
+    const te = perguntarTipoEntregaClienteNovo(nome);
+    await definirTipoEntregaClienteNovo(slug, te, quemDefiniu);
+    return te;
+  }
+
   async function definirTipoEntregaClienteNovo(slug, tipoEntrega, quemDefiniu){
     try{
       await setDoc(doc(db,'clientes_config', slug), { tipoEntrega, atualizadoPor: quemDefiniu + ' (definido na criação do cliente)', atualizadoEm: serverTimestamp() }, { merge: true });
@@ -3080,8 +3317,10 @@
         await addDoc(collection(db,'clientes_extras'), { nome: clienteNome, slug: clienteSlug, criadoPor: usuarioAtual+' (direto no lançamento de vídeo)', criadoEm: serverTimestamp() });
         CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
         CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
-        const tipoEntregaNovo = perguntarTipoEntregaClienteNovo(clienteNome);
-        await definirTipoEntregaClienteNovo(clienteSlug, tipoEntregaNovo, usuarioAtual||'?');
+        /* 03/08 — era so tipoEntrega; agora classifica a casta tambem.
+           Este e exatamente o ponto que o Chris citou: o videomaker
+           subindo video de um cliente que nao esta na lista. */
+        await classificarClienteNovo(clienteSlug, clienteNome, usuarioAtual||'?');
       }
     } else {
       clienteNome = sel.selectedOptions[0].dataset.nome;
@@ -5050,8 +5289,7 @@
       await addDoc(collection(db,'clientes_extras'), { nome: clienteNome, slug: clienteSlug, criadoPor: (usuarioAtual||'?')+' (cadastro rápido)', criadoEm: serverTimestamp() });
       CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
       CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
-      const tipoEntregaNovo2 = perguntarTipoEntregaClienteNovo(clienteNome);
-      await definirTipoEntregaClienteNovo(clienteSlug, tipoEntregaNovo2, usuarioAtual||'?');
+      await classificarClienteNovo(clienteSlug, clienteNome, usuarioAtual||'?');
     } else if(jaExisteExcluido){
       await updateDoc(doc(db,'clientes_extras', jaExisteId), { excluido: false });
       if(!CLIENTES_LISTA.some(c=>c.slug===clienteSlug)) CLIENTES_LISTA.push({nome: clienteNome, slug: clienteSlug, extra: true});
@@ -5109,9 +5347,14 @@
       const mesRef = (document.getElementById('agData')?.value || hojeLocal()).slice(0,7);
       const meses = mesesDeCalendario(cal);
       const mes = meses.includes(mesRef) ? mesRef : (meses.slice(-1)[0] || '');
+      /* 03/08 — antes tirava só o publicado. Passa a usar a regra
+         espelhada: quem já foi gravado ou agendado não precisa de câmera,
+         então não pode entrar na quantidade sugerida pra gravação. Era o
+         mesmo defeito que a Amanda apontou no painel da Gabi, aqui do
+         lado da Cecília. */
       const itens = (cal.items||[])
         .filter(i => !mes || ((i && i.mes) || '') === mes)
-        .filter(i => !i.posted)
+        .filter(i => !itemNaoPrecisaGravar(i))
         .slice().sort((a,b)=>(a.day||0)-(b.day||0));
       const n = quantosBlocos(cal, mes);
       const cont = contarPorBloco(itens, n);
@@ -6142,6 +6385,88 @@
     renderConfirmarPublicacoes();
   };
 
+  /* ===== AVISO DO SISTEMA — 03/08/2026 ==============================
+     Pedido do Chris: avisar cada funcionario do que mudou na aba dele
+     desde sexta, pedir que teste, e "com um botao diferenciado para
+     quando ja estiverem feito ou verificado".
+
+     Por que nao dava pra usar a demanda normal: a demanda normal pede
+     "descreva o que foi feito" + prova, e vai pra fila de aprovacao.
+     Pra "confere se a sua tela esta funcionando" isso e atrito puro —
+     a pessoa nao tem prova pra anexar, e a fila do Chris encheria de
+     coisa que ninguem aprova. Foi exatamente assim que a fila de
+     aprovacao chegou a 19 itens presos em 25/07.
+
+     Entao o aviso do sistema tem DOIS botoes e nenhum formulario:
+       ✔ Conferi e esta funcionando  → fecha na hora, um clique
+       ⚠️ Testei e achei problema     → abre uma demanda pra Amanda com
+                                        o que a pessoa escreveu
+
+     O segundo e o mais importante. O Chris pediu que a equipe "aponte
+     possiveis erros que ainda podem vir a acontecer" — sem um caminho
+     de volta, o aviso seria so mais uma coisa pra marcar como lida, e
+     o retorno ficaria perdido no WhatsApp. */
+  const AVISO_SISTEMA_MARCA = 'mudanca_do_sistema';
+  function ehAvisoDoSistema(d){
+    return !!(d && (d.ehAvisoDoSistema === true || d.tipoEspecial === AVISO_SISTEMA_MARCA));
+  }
+  window.confirmarAvisoDoSistema = async function(id){
+    try{
+      await updateDoc(doc(db,'demandas', id), {
+        status: 'aprovada',
+        concluidaEm: serverTimestamp(),
+        concluidoPor: usuarioAtual || '?',
+        verificadoPor: usuarioAtual || '?',
+        verificadoEm: new Date().toISOString(),
+        notaConclusao: 'Conferido pela pessoa — aviso do sistema, não precisa de aprovação.'
+      });
+      mostrarToast('Obrigado! Marcado como conferido.');
+      fecharModal();
+      carregarMinhasDemandas();
+      atualizarTodosOsBadges();
+    }catch(e){ mostrarToast('Não consegui registrar: ' + e.message, 'erro'); }
+  };
+  window.relatarProblemaDoAviso = async function(id){
+    const d = todasDemandas.find(x => x.id === id) || {};
+    const txt = prompt('O que você achou de errado? Escreve com o máximo de detalhe que puder — em que tela, o que você fez, e o que aconteceu:');
+    if(txt === null) return;
+    if(!String(txt).trim()){ mostrarToast('Sem a descrição eu não consigo consertar.', 'erro'); return; }
+    /* Financeiro vai pro Chris; todo o resto termina na Amanda. Regra
+       dele, e ela vale aqui como vale no resto do sistema. */
+    const ehDinheiro = /financeiro|pagamento|mensalidade|extra|uber|dinheiro|cobran/i.test(String(d.titulo||'') + ' ' + String(txt));
+    const paraQuem = ehDinheiro ? 'Chris' : 'Amanda';
+    try{
+      await criarDemandaSegura({
+        titulo: '🐞 ' + (usuarioAtual||'Alguém') + ' achou um problema: ' + String(d.tituloCurtoAviso || d.titulo || 'mudança do sistema').replace(/^🔧\s*/,''),
+        descricao: 'Relatado por ' + (usuarioAtual||'?') + ' ao conferir o aviso do sistema.\n\n' +
+                   'O QUE ELE(A) DESCREVEU:\n' + String(txt).trim() +
+                   '\n\nAviso de origem: ' + String(d.titulo||'') +
+                   '\n\nSe for algo que eu preciso consertar no código, manda pro Chris repassar.',
+        destinatario: paraQuem, origem: 'sistema', ehAviso: true,
+        prazoData: hojeLocal(), prazoHora: '19:00',
+        prioridade: 'alta', problemaRelatadoDe: id
+      });
+      await updateDoc(doc(db,'demandas', id), {
+        problemaRelatado: true, problemaRelatadoPor: usuarioAtual || '?',
+        problemaRelatadoEm: new Date().toISOString(), problemaRelatadoTexto: String(txt).trim()
+      });
+      mostrarToast('Registrado e enviado pra ' + paraQuem + '. Obrigado — isso é exatamente o que eu precisava.');
+      fecharModal();
+      carregarMinhasDemandas();
+    }catch(e){ mostrarToast('Não consegui registrar: ' + e.message, 'erro'); }
+  };
+
+  /* escapa pra dentro de atributo (aspas incluidas). O esc() da casa so
+     trata & < > e por isso nao serve pra href. */
+  function escAttrPub(s){
+    return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                               .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  window.alternarLegendaPub = function(id){
+    const b = document.getElementById('legPub_' + id);
+    if(b) b.style.display = (b.style.display === 'none' || !b.style.display) ? 'block' : 'none';
+  };
+
   async function renderConfirmarPublicacoes(){
     const cont = document.getElementById('postagensConteudo');
     if(!cont) return;
@@ -6180,7 +6505,8 @@
         que ela realmente foi ao ar. Enquanto ninguém diz, o vídeo continua contando como <b>trabalho em aberto</b> —
         e aí a esteira mostra mais coisa do que existe, a carga dos editores infla e o número do mês fica errado.<br><br>
         <b>O que fazer aqui.</b> Abaixo estão as postagens cuja <b>data já passou</b> e ninguém confirmou.
-        Confere no Instagram do cliente e marca as que já estão no ar. <b>Um clique fecha tudo:</b>
+        <b>Clica em "Ver o vídeo"</b> pra abrir exatamente o vídeo daquela postagem — só o nome não
+        identifica qual é. Confere no Instagram do cliente e marca as que já estão no ar. <b>Um clique fecha tudo:</b>
         a postagem vira publicada, o vídeo é finalizado, e o conteúdo aparece como publicado no portal do cliente.<br><br>
         <b>Se não foi postada</b>, não marca — deixa aí e resolve com a Cecília. Esta tela não cobra ninguém,
         só pergunta o que aconteceu.
@@ -6211,7 +6537,28 @@
         </h2>
         ${l.map(p => {
           const d = diasDe(p.dataAgendada);
-          return `<label class="item" style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;border-left:3px solid ${d>=7?'var(--red)':'var(--yellow)'};">
+          /* ===== O LINK QUE FALTAVA — 03/08/2026 =====================
+             Pedido da Amanda, no print de hoje: "preciso ter acesso ao
+             link para analisar se realmente foi postado — so pelo nome
+             do video nao e possivel identificar exatamente o video".
+
+             Ela esta certa e o defeito era meu: eu construi uma tela que
+             pede CONFERENCIA e nao dei o que conferir. "Joaquin Assados
+             — Ambiente" nao diz qual dos videos e.
+
+             Conferi no banco antes de prometer: as 103 postagens tem
+             `linkVideo` preenchido, e os 31 videos agendados tambem tem
+             `linkFinalizado`. Cobertura de 100% — o link sempre existiu,
+             so nao estava na tela.
+
+             O link fica FORA do <label> de proposito: dentro dele,
+             clicar no link marcaria a caixa de "ja foi postada" sem
+             querer — o pior efeito colateral possivel nesta tela. */
+          const v = p.videoId ? vids[p.videoId] : null;
+          const linkPub = String(p.linkVideo || (v && v.linkFinalizado) || '').trim();
+          const legPub = String(p.legenda || p.legendaInstagram || '').trim();
+          return `<div class="item" style="border-left:3px solid ${d>=7?'var(--red)':'var(--yellow)'};">
+            <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;">
             <input type="checkbox" class="chkPub" data-cli="${slug}" value="${p.id}" onclick="atualizarBarraConfirmarPub()" style="margin-top:3px;width:16px;height:16px;flex-shrink:0;">
             <div style="flex:1;min-width:0;">
               <div class="nome" style="font-size:13px;">${esc(nomeDaDemanda({titulo:p.titulo}).nome)}</div>
@@ -6220,7 +6567,15 @@
                 ? '<div class="meta" style="margin-top:2px;color:var(--yellow2);">O vídeo desta postagem ainda conta como trabalho em aberto.</div>' : ''}
               ${p.origemManual ? '<div class="meta" style="margin-top:2px;">'+esc(p.tipoManual||'Post avulso')+' — adicionado à mão por '+esc(p.criadoPor||'?')+', não passou pela esteira</div>' : ''}
             </div>
-          </label>`;
+            </label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:9px 0 0 26px;">
+              ${linkPub
+                ? '<a href="'+escAttrPub(linkPub)+'" target="_blank" rel="noopener" class="btn secondary" style="width:auto;padding:6px 13px;font-size:11.5px;text-decoration:none;">▶ Ver o vídeo</a>'
+                : '<span class="selo pendente">sem link do vídeo — confere com a Cecília</span>'}
+              ${legPub ? '<button type="button" class="btn secondary" style="width:auto;padding:6px 13px;font-size:11.5px;" onclick="alternarLegendaPub(\''+p.id+'\')">Ver a legenda</button>' : ''}
+            </div>
+            ${legPub ? '<div id="legPub_'+p.id+'" style="display:none;margin:9px 0 0 26px;padding:11px 13px;background:var(--deep);border-radius:9px;"><div class="meta" style="white-space:pre-wrap;line-height:1.6;">'+esc(legPub)+'</div></div>' : ''}
+          </div>`;
         }).join('')}
       </div>`;
     }).join('');
@@ -6698,7 +7053,31 @@
     const nomeCliente = (CLIENTES_LISTA.find(c => c.slug === cliente) || {}).nome || cliente;
     /* Sem data, ele entra na fila de pendentes em vez de ficar agendado —
        assim não desaparece nem mente que está marcado. */
+    /* ===== O AVULSO ENTRA NA ESTEIRA — 03/08/2026 ====================
+       Pedido da Amanda:
+         "Amanda tem que ter a opção de só adicionar a postagem, ou seja
+          cliente, link do conteúdo e o título. Legenda vai pra Gabi
+          colocar. E postagem vai pra Ceci agendar normal, como feito
+          com os vídeos editados pelo site."
+
+       Antes: sem legenda e sem data o post ia pra 'aguardando_agendamento'
+       direto, pulando a Gabi. A legenda ficava vazia e ninguém era
+       cobrado por ela — o post chegava na Cecília sem texto pra postar.
+
+       Agora ele segue a MESMA ordem do vídeo normal, com os mesmos
+       status que as filas já leem:
+         sem legenda           → aguardando_legenda      (fila da Gabi)
+         com legenda, sem data → aguardando_agendamento  (fila da Ceci)
+         com legenda e data    → agendado
+
+       Não inventei status novo de propósito: 'aguardando_legenda' já é
+       lido em 9 lugares. Status novo obrigaria a ensinar os 9. */
     const temData = !!data;
+    const temLegenda = !!legenda;
+    const statusInicial = !temLegenda ? 'aguardando_legenda'
+                        : (temData ? 'agendado' : 'aguardando_agendamento');
+    /* Só sincroniza o calendário quando o post está de fato agendado. */
+    const vaiPraCalendario = temData && temLegenda;
 
     const btn = document.getElementById('btnSalvarAvulso');
     if(btn){ btn.disabled = true; btn.textContent = 'Salvando…'; }
@@ -6708,19 +7087,26 @@
         titulo: titulo, linkVideo: link, legenda,
         legendaPor: legenda ? (usuarioAtual||'?') : '', legendaEm: legenda ? new Date().toISOString() : '',
         calendarItemIdx: null, calendarClienteSlug: null,
-        dataAgendada: temData ? data : '', horaAgendada: temData ? hora : '',
-        agendadoPor: temData ? (usuarioAtual||'?') : '', agendadoEm: temData ? new Date().toISOString() : '',
-        status: temData ? 'agendado' : 'aguardando_agendamento',
+        /* guarda o dia sugerido mesmo sem legenda, pra Ceci não perder a
+           intenção da Amanda quando a Gabi devolver o texto */
+        dataAgendada: (temData && temLegenda) ? data : '', horaAgendada: (temData && temLegenda) ? hora : '',
+        dataSugerida: temData ? data : '', horaSugerida: temData ? hora : '',
+        agendadoPor: (temData && temLegenda) ? (usuarioAtual||'?') : '', agendadoEm: (temData && temLegenda) ? new Date().toISOString() : '',
+        status: statusInicial,
         origemManual: true, tipoManual: tipo, criadoPor: usuarioAtual || '?',
         criadoEm: serverTimestamp()
       });
       registrarHistorico('postagens', ref.id,
         'Post avulso criado por ' + (usuarioAtual||'?'),
-        tipo + (temData ? ' — agendado pra ' + formatarDataBR(data) + ' às ' + hora : ' — sem data ainda, entrou na fila'));
+        tipo + ' — ' + (statusInicial === 'aguardando_legenda'
+          ? 'sem legenda, foi pra fila da Gabi' + (temData ? ' (dia sugerido: ' + formatarDataBR(data) + ')' : '')
+          : statusInicial === 'aguardando_agendamento'
+            ? 'com legenda, foi pra fila da Cecília agendar'
+            : 'agendado pra ' + formatarDataBR(data) + ' às ' + hora));
 
       /* Só sincroniza o calendário do cliente se tem data. Item sem dia
          no calendário dele não faz sentido. */
-      if(temData){
+      if(vaiPraCalendario){
         try{
           const r = await sincronizarItemDoCalendario(ref.id);
           if(!r.ok) console.error('Post avulso: não sincronizou o calendário —', r.motivo);
@@ -6748,7 +7134,8 @@
         <span>Post que não está no sistema</span>
         <button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11.5px;" onclick="abrirFormPostAvulso()">+ Adicionar</button>
       </h2>
-      <div class="desc">Pra arte, vídeo extra que o cliente mandou, ou qualquer coisa que vai ser postada mas não passou pela esteira de produção. Entra na fila igual às outras e aparece no calendário do cliente.</div>
+      <div class="desc">Pra arte, vídeo extra que o cliente mandou, ou qualquer coisa que vai ser postada mas não passou pela esteira de produção.
+      <b>Dá pra registrar só o essencial</b> — cliente, título e link. Sem legenda vai pra Gabi escrever; sem data vai pra Cecília agendar. O post segue o mesmo caminho dos vídeos do site.</div>
       <div id="formPostAvulso" style="display:none;margin-top:12px;">
         <div class="row2">
           <div class="field"><label>Cliente</label>
@@ -6768,7 +7155,9 @@
         <div class="field"><label>Título</label><input type="text" id="avulsoTitulo" placeholder="Ex: Arte da promoção de agosto"></div>
         <div class="field"><label>Link do material</label><input type="text" id="avulsoLink" placeholder="Link do Drive, Canva, WeTransfer...">
           <div class="desc" style="margin:4px 0 0;">Opcional, mas sem ele quem posta vai ter que procurar.</div></div>
-        <div class="field"><label>Legenda</label><textarea id="avulsoLegenda" placeholder="Se já tiver a legenda, cola aqui. Se não, deixa vazio e escreve depois."></textarea></div>
+        <div class="field"><label>Legenda <span style="color:var(--muted);font-weight:400;">— opcional</span></label>
+          <textarea id="avulsoLegenda" placeholder="Se já tiver a legenda, cola aqui. Se não, deixa vazio: vai pra Gabi escrever."></textarea>
+          <div class="desc" style="margin:4px 0 0;"><b>Deixando vazio</b>, o post cai na fila de legendas da Gabi. Quando ela escrever, ele segue pra Cecília agendar — igual aos vídeos que passam pelo site.</div></div>
         <div class="row2">
           <div class="field"><label>Dia da postagem</label><input type="date" id="avulsoData"></div>
           <div class="field"><label>Hora</label><input type="time" id="avulsoHora"></div>
@@ -7178,6 +7567,197 @@
        3. o título exato do conteúdo (funciona pro que já existe hoje)
      E quando acha, ATUALIZA o dia em vez de empurrar item novo. Só cria
      item quando não achou nada mesmo. */
+  /* ===== CHOQUE DE DATA — 03/08/2026 (pedido da Amanda) =============
+     Áudio dela: "sempre que tiver postagem duplicada, é interessante
+     imediatamente aparecer ali pra Cecília — esse cliente tem dois
+     post. Que daí automaticamente ela vai naquele ali que ainda não foi
+     gravado e realoca pra outra data sugerida."
+
+     O caso real que ela viu: no calendário da Dra. Monique, dia 3 tem a
+     proposta "Propósito" (da Gabi, não gravada) e o "Depoimento paciente
+     II" (já publicado). Dia 5 tem "Vídeo intuitivo" (proposta, com
+     observação do cliente) e "Depoimento 2" (agendado no Instagram).
+
+     Quem tem que mudar é sempre o que AINDA NÃO FOI GRAVADO — o outro
+     já está no ar ou a caminho, mexer nele é retrabalho. Então o aviso
+     não só diz "tem dois": diz qual dos dois mover.
+
+     Não repete: uma vez por cliente/mês/dia. Aviso repetido é ruído, e
+     ruído a pessoa aprende a ignorar — foi assim que o silêncio voltou
+     em 30/07. */
+  function itensDoDia(items, dia, mes){
+    return (items||[]).map((it,i)=>({it,i}))
+      .filter(x => x.it && Number(x.it.day) === Number(dia)
+                && (!mes || !x.it.mes || String(x.it.mes) === String(mes)));
+  }
+  function precisaGravarAinda(it){
+    return !!it && !(it.gravado || it.agendado || it.posted);
+  }
+  async function avisarChoqueDeData(slug, nomeCliente, dia, items, mes){
+    try{
+      const doDia = itensDoDia(items, dia, mes);
+      if(doDia.length < 2) return { ok:false, motivo:'só tem um conteúdo no dia' };
+      const paraMover = doDia.filter(x => precisaGravarAinda(x.it));
+      if(!paraMover.length) return { ok:false, motivo:'os dois já saíram do planejamento' };
+
+      const chave = slug + '_' + (mes || '') + '_' + dia;
+      const q = query(collection(db,'demandas'), where('tipoEspecial','==','choque_de_data'), where('chaveChoque','==', chave));
+      const ja = await getDocs(q);
+      if(!ja.empty) return { ok:false, motivo:'já avisei sobre este dia' };
+
+      const nomes = doDia.map(x => '• ' + String(x.it.name||'sem nome').trim()
+        + (precisaGravarAinda(x.it) ? '  ← ainda não foi gravado' : '  (' + (x.it.posted ? 'já publicado' : x.it.agendado ? 'já programado no Instagram' : 'já gravado') + ')')).join('\n');
+
+      await criarDemandaSegura({
+        titulo: '📆 ' + (nomeCliente || slug) + ' tem ' + doDia.length + ' conteúdos no mesmo dia ' + dia,
+        descricao: 'O calendário de ' + (nomeCliente || slug) + ' ficou com ' + doDia.length + ' conteúdos marcados pro dia ' + dia + '.\n\n' + nomes +
+          '\n\nO QUE FAZER: move pra outra data o que ainda não foi gravado. O outro já está no ar ou programado — mexer nele é retrabalho.' +
+          '\n\nAbre o calendário do cliente, clica no conteúdo marcado acima e troca o dia. Se a data já estava combinada com o cliente, fala com a Amanda antes.',
+        destinatario: 'Cecília', origem: 'sistema', ehAviso: true,
+        prazoData: hojeLocal(), prazoHora: '19:00', prioridade: 'alta',
+        tipoEspecial: 'choque_de_data', chaveChoque: chave,
+        clienteNome: nomeCliente || slug, clienteSlugRef: slug
+      });
+      registrarLogAutomacao('choque_de_data', slug, doDia.length + ' conteúdos no dia ' + dia);
+      return { ok:true, quantos: doDia.length, moveEste: paraMover.map(x=>x.it.name) };
+    }catch(e){ console.error('Falha ao avisar choque de data:', e); return { ok:false, motivo:'erro: ' + e.message }; }
+  }
+
+  /* Varredura de todos os calendários — pega os choques que já existem
+     hoje, não só os que nascerem daqui pra frente. Entra no motor. */
+  window.varrerChoquesDeData = async function(){
+    let achados = 0;
+    try{
+      const snap = await getDocs(collection(db,'calendarios'));
+      const cals = []; snap.forEach(d => cals.push({ slug:d.id, ...d.data() }));
+      for(const c of cals){
+        const items = c.items || [];
+        const chaves = [...new Set(items.filter(Boolean).map(it => String(it.mes||'') + '|' + Number(it.day)))];
+        for(const ch of chaves){
+          const [mes, dia] = ch.split('|');
+          const r = await avisarChoqueDeData(c.slug, c.client || c.slug, dia, items, mes || '');
+          if(r && r.ok) achados++;
+        }
+      }
+    }catch(e){ console.error('Varredura de choques falhou:', e); }
+    return achados;
+  };
+
+  /* ===== ALERTAS DE GARGALO — 03/08/2026 (pedido da Amanda) ==========
+     Ela pediu previsibilidade em vez de constatação:
+
+       "Faltam alertas proativos pra evitar atrasos na esteira conforme a
+        data final da postagem se aproxima.
+        · Faltam 5 dias e o conteúdo ainda não foi captado → avisa a
+          Amanda pra ela acionar a Cecília
+        · Faltam 2 ou 3 dias, já gravado mas não editado e aprovado →
+          avisa a Amanda pra pedir urgência"
+
+     A diferença entre isto e tudo que o sistema já fazia: os alertas de
+     hoje olham PRAZO DE TAREFA. Este olha a DATA DA POSTAGEM, que é a
+     única data que o cliente vê. Um vídeo pode estar dentro do prazo de
+     edição e ainda assim não chegar no ar no dia combinado — e era
+     exatamente esse buraco que ninguém enxergava.
+
+     Duas decisões que valem explicar:
+
+     1. A JANELA É FECHADA, não "≤ N dias". Se fosse "faltam 5 dias ou
+        menos", o alerta de captação dispararia todo dia até a data
+        chegar. Aviso diário sobre a mesma coisa é ruído — o mesmo erro
+        que eu já corrigi na cobrança de espera do cliente em 03/08.
+        Então: captação avisa na janela de 5 a 4 dias, edição na de 3 a
+        2 dias, e cada um avisa UMA vez por postagem.
+
+     2. QUEM NÃO TEM VÍDEO NENHUM também conta como não captado. Se a
+        postagem existe com data e não tem `videoId`, ninguém gravou —
+        é o caso mais grave e o mais fácil de passar batido. */
+  const JANELA_CAPTACAO = { de: 5, ate: 4 };
+  const JANELA_EDICAO    = { de: 3, ate: 2 };
+  const STATUS_JA_GRAVADO = ['gravado','aguardando_edicao','correcao','aguardando_cliente','aprovado','finalizado'];
+  const STATUS_PRONTO     = ['aprovado','finalizado'];
+
+  function diasAteAData(dataISO){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(dataISO||''))) return null;
+    const hoje = new Date(hojeLocal() + 'T00:00:00');
+    const alvo = new Date(String(dataISO) + 'T00:00:00');
+    return Math.round((alvo - hoje) / 86400000);
+  }
+
+  async function alertasDeGargalo(){
+    let criados = 0;
+    try{
+      const [pS, vS, dS] = await Promise.all([
+        getDocs(collection(db,'postagens')),
+        getDocs(collection(db,'videos_producao')),
+        getDocs(query(collection(db,'demandas'), where('tipoEspecial','==','gargalo')))
+      ]);
+      const vids = {}; vS.forEach(d => { const v = d.data(); if(!v.excluido) vids[d.id] = v; });
+      const jaAvisado = new Set();
+      dS.forEach(d => { const v = d.data(); if(v.chaveGargalo) jaAvisado.add(v.chaveGargalo); });
+
+      const posts = [];
+      pS.forEach(d => { const v = d.data(); if(!v.excluido) posts.push({ id:d.id, ...v }); });
+
+      for(const p of posts){
+        /* só interessa o que ainda vai ao ar */
+        if(['postado','arquivada'].includes(String(p.status||''))) continue;
+        if(String(p.status||'').startsWith('cancelada')) continue;
+        const dias = diasAteAData(p.dataAgendada);
+        if(dias === null || dias < 0) continue;
+
+        const v = p.videoId ? vids[p.videoId] : null;
+        const gravado = !!v && STATUS_JA_GRAVADO.includes(String(v.status||''));
+        const pronto  = !!v && STATUS_PRONTO.includes(String(v.status||''));
+        const nome = String(p.clienteNome || p.cliente || 'cliente');
+        const tit = String(p.titulo || 'conteúdo sem título');
+
+        /* ---- ALERTA DE CAPTAÇÃO ---- */
+        if(dias <= JANELA_CAPTACAO.de && dias >= JANELA_CAPTACAO.ate && !gravado){
+          const chave = 'capt_' + p.id;
+          if(!jaAvisado.has(chave)){
+            await criarDemandaSegura({
+              titulo: '🎥 Falta ' + dias + ' dia(s) e "' + tit + '" ainda não foi gravado',
+              descricao: 'A postagem de ' + nome + ' está marcada pro dia ' + formatarDataBR(p.dataAgendada) +
+                ' — faltam ' + dias + ' dia(s).\n\nSITUAÇÃO: ' +
+                (v ? 'o vídeo existe no sistema mas está em "' + String(v.status) + '", ou seja, ainda não foi captado.'
+                   : 'NÃO existe vídeo nenhum ligado a esta postagem. Ninguém gravou.') +
+                '\n\nO QUE FAZER: aciona a Cecília pra resolver a produção. Se não der pra gravar em tempo, é melhor remarcar a data agora do que furar o dia com o cliente.' +
+                '\n\nDepois de resolver, marca este aviso como visto.',
+              destinatario: 'Amanda', origem: 'sistema', ehAviso: true,
+              prazoData: hojeLocal(), prazoHora: '19:00', prioridade: 'alta',
+              tipoEspecial: 'gargalo', chaveGargalo: chave,
+              clienteNome: nome, postagemId: p.id
+            });
+            jaAvisado.add(chave); criados++;
+          }
+        }
+
+        /* ---- ALERTA DE EDIÇÃO ---- */
+        if(dias <= JANELA_EDICAO.de && dias >= JANELA_EDICAO.ate && gravado && !pronto){
+          const chave = 'edic_' + p.id;
+          if(!jaAvisado.has(chave)){
+            await criarDemandaSegura({
+              titulo: '✂️ Falta ' + dias + ' dia(s) e "' + tit + '" não está editado e aprovado',
+              descricao: 'A postagem de ' + nome + ' está marcada pro dia ' + formatarDataBR(p.dataAgendada) +
+                ' — faltam ' + dias + ' dia(s).\n\nSITUAÇÃO: já foi gravado, mas o vídeo está em "' + String(v.status) + '"' +
+                (v.editorAtribuido ? ' com ' + String(v.editorAtribuido) : '') + '.' +
+                '\n\nO QUE FAZER: pede urgência na edição. Se o vídeo ainda precisa passar pelo cliente depois, o tempo é mais curto do que parece — ' + dias + ' dia(s) cobre edição, aprovação interna e aprovação do cliente.' +
+                '\n\nDepois de resolver, marca este aviso como visto.',
+              destinatario: 'Amanda', origem: 'sistema', ehAviso: true,
+              prazoData: hojeLocal(), prazoHora: '19:00', prioridade: 'alta',
+              tipoEspecial: 'gargalo', chaveGargalo: chave,
+              clienteNome: nome, postagemId: p.id, videoId: p.videoId || ''
+            });
+            jaAvisado.add(chave); criados++;
+          }
+        }
+      }
+      if(criados) registrarLogAutomacao('alertas_gargalo', '', criados + ' alerta(s) de gargalo criado(s)');
+    }catch(e){ console.error('Alertas de gargalo falharam:', e); }
+    return criados;
+  }
+  window.alertasDeGargalo = alertasDeGargalo;
+
   async function sincronizarItemDoCalendario(postagemId){
     let p = null;
     try{ const sn = await getDoc(doc(db,'postagens', postagemId)); if(sn.exists()) p = sn.data(); }catch(e){}
@@ -7222,11 +7802,15 @@
          não pode ser sobrescrito pela legenda da postagem. */
       if(!String(items[idx].desc||'').trim() && String(p.legenda||'').trim()) items[idx].desc = p.legenda;
       await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+      await avisarChoqueDeData(p.cliente, p.clienteNome || p.cliente, dia, items, String(p.dataAgendada).slice(0,7));
       return { ok:true, como, deDia: antes, praDia: dia, mudouDia: Number(antes) !== dia };
     }
 
     items.push(novoItem);
     await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+    /* Este é o caminho que mais gera choque: não achou item parecido e
+       criou um novo, então o dia pode já ter a proposta da Gabi. */
+    await avisarChoqueDeData(p.cliente, p.clienteNome || p.cliente, dia, items, String(p.dataAgendada).slice(0,7));
     return { ok:true, como:'criou item novo (não achei nenhum parecido)' };
   }
   window.sincronizarItemDoCalendario = sincronizarItemDoCalendario;
@@ -9560,6 +10144,10 @@
       <div class="desc">Pra clientes fora do banco fixo (trabalho pontual, "frio") que precisam aparecer nos formulários de gravação, vídeo e agendamento.</div>
       <div class="field"><label>Nome do cliente</label><input type="text" id="extraNome" placeholder="Ex: Escolinha do Bairro"></div>
       <div class="field"><label>Esse cliente precisa de legenda e agendamento pela nossa equipe?</label>
+        <select id="extraCasta" style="margin-bottom:8px;">
+          <option value="avulso">🎬 Avulso — trabalho pontual, SEM plano mensal (fora de calendário e processos)</option>
+          <option value="mensalista">📅 Mensalista — paga plano mensal (entra em calendário, referências, dia 15)</option>
+        </select>
         <select id="extraTipoEntrega">
           <option value="entrega_direta" selected>📦 Não — é entrega única/avulso, ele posta sozinho (padrão daqui)</option>
           <option value="postagem_completa">📲 Sim — vamos escrever legenda e agendar as postagens dele</option>
@@ -9638,10 +10226,12 @@
     if(!nome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
     const slug = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
     if(CLIENTES_LISTA.some(c=>c.slug===slug)){ mostrarToast('Já existe um cliente com esse nome.', 'erro'); return; }
+    const castaExtra = document.getElementById('extraCasta')?.value || 'avulso';
     const tipoEntregaExtra = document.getElementById('extraTipoEntrega')?.value || 'entrega_direta';
     await addDoc(collection(db,'clientes_extras'), { nome, slug, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp() });
     CLIENTES_LISTA.push({nome, slug, extra:true});
     CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+    await definirCastaCliente(slug, castaExtra, usuarioAtual||'Amanda');
     await definirTipoEntregaClienteNovo(slug, tipoEntregaExtra, usuarioAtual||'Amanda');
     mostrarToast(nome + ' cadastrado! Já aparece nos formulários de gravação e vídeo.' + (tipoEntregaExtra==='entrega_direta' ? ' Configurado como entrega direta — sem legenda/agendamento.' : ''));
     document.getElementById('extraNome').value = '';
@@ -10786,6 +11376,61 @@
   const BLOCOS_MAX = 3;
 
   /* 17 itens em 2 blocos → [9, 8]. A sobra vai pro primeiro. */
+  /* ===== O QUE JA SAIU DO PLANEJAMENTO — 03/08/2026 =================
+     Áudio da Amanda sobre o calendário da Dra. Monique:
+
+       "as coisas que a Cecília já fez as postagem no mesmo calendário,
+        coisas que já estão pronto, que já foram editadas, aprovadas e
+        programadas lá no Instagram, estão aparecendo ali como se fosse
+        pra aprovação, dando pra sugerir melhorias. Isso confunde o
+        cliente e confunde o filmmaker, não sei como vai aparecer na
+        contagem do calendário."
+
+     Fui ao banco ver o caso dela antes de mexer. Está tudo certo no
+     dado e errado na tela:
+
+       dia 3  idx 0  "Propósito"                 apr:true  gravado:false
+              idx 14 "Depoimento paciente II"    posted:true
+       dia 5  idx 8  "Vídeo intuitivo sobre..."  obsCliente escrita
+              idx 15 "Depoimento 2"              agendado:true
+
+     Os itens 14 e 15 JÁ TÊM a marca (`posted` e `agendado`). Os 137
+     itens do sistema todos têm esses campos. A tela simplesmente não
+     olhava pra eles — mostrava botão de aprovar e caixa de observação
+     pro cliente em conteúdo que já estava no ar.
+
+     E ela acertou também no segundo dano, que eu não teria achado sem
+     o áudio: `renderBlocos` contava TODOS os itens do mês. Então o
+     filmmaker via na contagem de gravações conteúdo que já estava
+     gravado, editado e agendado. O número que ele usa pra saber quanto
+     gravar no dia estava inflado.
+
+     São DUAS perguntas diferentes e por isso duas funções:
+
+       itemJaNaEsteira      — já foi programado ou publicado. Ninguém
+                              aprova nem comenta mais: está no ar ou a
+                              caminho. Trava.
+       itemNaoPrecisaGravar — já gravado, agendado ou publicado. Sai da
+                              contagem do filmmaker: gravar de novo não
+                              faz sentido.
+
+     `gravado` entra na segunda e não na primeira de propósito: gravado
+     e não agendado ainda está na esteira interna, e a Gabi pode mexer
+     no plano. Programado no Instagram, não. */
+  function itemJaNaEsteira(it){
+    return !!(it && (it.posted || it.agendado));
+  }
+  function itemNaoPrecisaGravar(it){
+    return !!(it && (it.gravado || it.agendado || it.posted));
+  }
+  function rotuloEstadoItem(it){
+    if(!it) return '';
+    if(it.posted)   return 'já publicado';
+    if(it.agendado) return 'já programado no Instagram';
+    if(it.gravado)  return 'já gravado';
+    return '';
+  }
+
   function tamanhosDosBlocos(total, quantos){
     const n = Math.max(1, Math.min(BLOCOS_MAX, Number(quantos) || BLOCOS_PADRAO));
     const t = Math.max(0, Number(total) || 0);
@@ -11528,7 +12173,7 @@
     // Ja deixa a config do cliente pronta (mesma chave slug usada no resto do sistema)
     try{
       const slugNovo = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-      if(slugNovo) await setDoc(doc(db,'clientes_config', slugNovo), { tipoEntrega: tipoEntregaNovo, atualizadoPor: usuarioAtual||'Chris (reunião)', atualizadoEm: serverTimestamp() }, { merge: true });
+      if(slugNovo) await setDoc(doc(db,'clientes_config', slugNovo), { tipoEntrega: tipoEntregaNovo, tipoCliente: 'mensalista', castaDefinidaPor: 'funil (negócio fechado)', castaDefinidaEm: new Date().toISOString(), atualizadoPor: usuarioAtual||'Chris (reunião)', atualizadoEm: serverTimestamp() }, { merge: true });
     }catch(e){ console.error('Falha ao salvar tipo de entrega do cliente novo:', e); }
 
     const etapasIniciais = {};
@@ -12184,16 +12829,47 @@
       return mesDoTextoCal((cal||{}).month || '') || (cal||{}).mesLegado || '';
     }
 
-    let liberados = 0, semCal = 0, espRevisao = 0, represados = 0, mesVelho = 0;
-    const nomesMesVelho = [];
+    /* ===== "SEM CALENDARIO" ERA DUAS COISAS DIFERENTES — 03/08/2026 ==
+       O Chris disse que o sistema apontava 6 calendarios faltando e que
+       so dois faltavam de verdade. Fui ao banco cliente por cliente e
+       ele estava certo — por DOIS motivos ao mesmo tempo:
+
+       1. contava avulso e a propria agencia (resolvido na casta)
+       2. e juntava dois casos que nao sao o mesmo problema:
+
+          Helo Arquiteta  → 0 videos, 0 postagens, 0 gravacoes, 0 itens
+                            ninguem tocou. Isto e alarme.
+          Vital Seg       → 5 videos em producao, 0 itens de calendario
+          Vitalle Odonto  → 5 videos em producao, 0 itens
+          Zeiss           → 2 videos em edicao, 0 itens
+                            o trabalho ESTA andando; o que falta e o
+                            plano editorial. Isto e pendencia de
+                            planejamento, nao cliente abandonado.
+
+       Misturar os dois fazia o numero parecer catastrofe e por isso
+       ninguem olhava — que e como o indicador perde utilidade. Agora
+       sao dois numeros com nomes diferentes. */
+    let liberados = 0, semCal = 0, espRevisao = 0, represados = 0, mesVelho = 0, semPlano = 0;
+    const nomesMesVelho = [], nomesSemCal = [], nomesSemPlano = [];
     try{
       const mesAgora = hojeLocal().slice(0,7);
       const alvo = await clientesDeConteudoRecorrente();
       const mapa = {}; cals.forEach(c => mapa[c.id] = c);
+      const temProducao = c => {
+        const s = c.slug, n = String(c.nome||'').toLowerCase();
+        const bate = x => (x.clienteSlug === s) || (x.cliente === s) || (String(x.clienteNome||'').toLowerCase() === n);
+        return vids.some(v => !v.excluido && bate(v))
+            || posts.some(p => bate(p) || p.calendarClienteSlug === s)
+            || agends.some(a => a.status !== 'cancelado' && bate(a));
+      };
       alvo.forEach(c => {
         const cal = mapa[c.slug];
         const itens = ((cal||{}).items||[]).length;
-        if(!itens){ semCal++; return; }
+        if(!itens){
+          if(temProducao(c)){ semPlano++; nomesSemPlano.push(c.nome); }
+          else { semCal++; nomesSemCal.push(c.nome); }
+          return;
+        }
         const m = mesMaisRecenteDoCal(cal);
         if(m && m < mesAgora){ mesVelho++; nomesMesVelho.push(c.nome); }
         const st = estadoDoCalendario(cal);
@@ -12205,7 +12881,12 @@
     lista.push(I('calLiberados', 'Calendários no ar', liberados, 'bom', "irParaCalendariosLiberados()", 'O cliente já está vendo.'));
     lista.push(I('calRevisao', 'Esperando sua revisão', espRevisao, espRevisao?'alto':'ok', "irParaRevisaoCalendarios()", 'A Gabi enviou, falta você aprovar.'));
     lista.push(I('calRepresados', 'Guardados pro dia 15', represados, 'info', "irParaEnvioCalendarios()", 'Aprovados, esperando o disparo.'));
-    lista.push(I('semCal', 'Sem calendário', semCal, semCal?'alto':'ok', "irParaAtalho('calendarios')", 'Cliente sem nenhum conteúdo montado.'));
+    lista.push(I('semCal', 'Cliente sem nada montado', semCal, semCal?'alto':'ok', "irParaAtalho('calendarios')",
+      semCal ? ('Nem calendário, nem vídeo, nem gravação: ' + nomesSemCal.join(', ') + '. Este é o caso grave — ninguém começou.')
+             : 'Todo mensalista tem calendário ou produção andando.'));
+    lista.push(I('semPlano', 'Produção andando sem plano', semPlano, semPlano?'info':'ok', "irParaAtalho('calendarios')",
+      semPlano ? ('O trabalho está saindo, mas não existe calendário editorial montado: ' + nomesSemPlano.join(', ') + '. Não é urgente como o de cima, mas sem plano a gente trabalha reagindo.')
+               : 'Quem tem produção tem plano.'));
     /* ===== CLIENTE QUE SAIU E CONTINUA DANDO TRABALHO — 02/08/2026 ====
        Varredura de integridade no banco real. A Suellen saiu em 27/07 e
        ainda tinha, em 02/08:
@@ -13227,14 +13908,32 @@
          Agora a seção de hoje vem da GRAVAÇÃO agendada pro dia: pega o
          bloco daquela gravação e mostra os conteúdos daquele bloco. */
       const grav = (window.__gravacoesDeHoje || {})[slug] || null;
+      /* ===== A DIVISÃO ERA CALCULADA SOBRE O MÊS TODO — 03/08/2026 ====
+         Achado a partir do áudio da Amanda ("interfere na divisão
+         automática e na contagem de gravações exibida para o filmmaker").
+         Ela viu o sintoma no painel da Gabi; o defeito estava aqui
+         também, e é pior aqui.
+
+         `blocoAutomatico` divide POR POSIÇÃO na lista. Então incluir na
+         lista o que já foi gravado, agendado ou publicado não só inflava
+         o número: mudava QUAL conteúdo cai em qual gravação. O Luís podia
+         abrir a tela na 1ª gravação e ver conteúdo da 2ª, porque a
+         posição de todos escorregou.
+
+         Agora a divisão é feita só sobre o que ainda precisa de câmera —
+         que é a única lista que faz sentido dividir entre idas a campo.
+         O que já está resolvido não desaparece da tela: aparece contado
+         à parte, pra ele saber que existe e não achar que sumiu. */
+      const paraGravar = itens.filter(i => !itemNaoPrecisaGravar(i));
+      const jaResolvidos = itens.length - paraGravar.length;
       const nBlocos = quantosBlocos(cal, mes);
-      const totalItens = itens.length;
+      const totalItens = paraGravar.length;
       const blocoDe = (i, pos) => blocoDoItem(i, pos, totalItens, nBlocos);
 
-      let deHoje = [], resto = itens;
+      let deHoje = [], resto = paraGravar;
       if(grav){
-        deHoje = itens.filter((i,pos) => blocoDe(i,pos) === grav.bloco && !i.gravado);
-        resto  = itens.filter((i,pos) => !(blocoDe(i,pos) === grav.bloco && !i.gravado));
+        deHoje = paraGravar.filter((i,pos) => blocoDe(i,pos) === grav.bloco);
+        resto  = paraGravar.filter((i,pos) => blocoDe(i,pos) !== grav.bloco);
       }
 
       cont.innerHTML = `
@@ -13253,6 +13952,7 @@
         </div>
         ${grav && deHoje.length ? '<div class="metaSecTit" style="margin-top:14px;">GRAVAR HOJE — ' + deHoje.length + ' conteúdo(s)</div>' + deHoje.map(i=>cartao(i,true)).join('') : ''}
         ${grav && !deHoje.length ? '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">Tudo desta gravação já está marcado como gravado.</div></div>' : ''}
+        ${jaResolvidos ? '<div class="meta" style="margin-top:12px;padding:9px 11px;background:var(--deep);border-radius:8px;">✅ <b>' + jaResolvidos + '</b> conteúdo(s) deste mês já estão gravados, agendados ou publicados — não entram na conta de hoje.</div>' : ''}
         ${resto.length ? '<div class="metaSecTit" style="margin-top:14px;">' + (grav ? 'O resto do mês (não é de hoje)' : 'O mês inteiro') + '</div>' + resto.map(i=>cartao(i,false)).join('') : ''}
         ${!itens.length ? '<div class="card"><div class="empty">Nada montado neste mês ainda.</div></div>' : ''}`;
       setTimeout(()=>cont.scrollIntoView({behavior:'smooth', block:'start'}), 150);
@@ -13980,16 +14680,19 @@
      O resto é avulso. Guardo o resultado no lançamento pra que uma
      mudança futura de plano não reescreva o histórico do pagamento. */
   let __cacheTipoCliente = null;
+  /* 03/08/2026 — esta funcao respondia por conta propria e por isso
+     divergia da corrente de calendario. Agora DELEGA pra casta: uma
+     pergunta, uma resposta. O contrato dela nao muda (devolve
+     'mensalista' ou 'avulso'), entao a tela de extras nao sentiu. */
   async function mapaTipoCliente(){
     if(__cacheTipoCliente) return __cacheTipoCliente;
     const m = {};
     try{
+      const casta = await castaDosClientes();
       const entregaDireta = await obterSlugsEntregaDireta();
-      const snap = await getDocs(collection(db,'contratos_cliente'));
-      const comContrato = new Set();
-      snap.forEach(d => { const v = d.data(); if(!v.encerrado) comContrato.add(d.id); });
       CLIENTES_LISTA.forEach(c => {
-        m[c.slug] = (comContrato.has(c.slug) && !entregaDireta.has(c.slug)) ? 'mensalista' : 'avulso';
+        const t = (casta[c.slug] || {}).tipo;
+        m[c.slug] = (t === 'mensalista' && !entregaDireta.has(c.slug)) ? 'mensalista' : 'avulso';
       });
     }catch(e){ console.error('Não consegui classificar os clientes:', e); }
     __cacheTipoCliente = m;
@@ -15323,7 +16026,21 @@
           <button class="btn secondary" onclick="solicitarNovoPrazo('${d.id}')">Solicitar</button>
         </div>
       </div>` : ''}
-      ${jaTemProva ? '<div class="linha" style="color:var(--yellow2);">✋ Já enviado, aguardando aprovação da gerência.</div><button class="btn red" style="margin-top:10px;" onclick="desfazerEnvioDemanda(\''+d.id+'\')">✕ Cancelar envio — voltar a fazer</button>' : `
+      ${ehAvisoDoSistema(d) ? `
+        <div class="linha" style="background:rgba(251,188,25,.10);border-left:3px solid var(--yellow);padding:12px 14px;border-radius:9px;">
+          <b>🔧 Isto é um aviso do sistema, não uma tarefa de cliente.</b>
+          <div class="meta" style="margin-top:5px;line-height:1.6;">Alguma coisa mudou na sua parte do site. Dá uma olhada, usa
+          normalmente por alguns minutos, e responde aqui embaixo. <b>Não precisa escrever relatório nem anexar print.</b></div>
+        </div>
+        ${d.problemaRelatado ? `<div class="linha" style="background:var(--deep);border-left:3px solid var(--red);padding:11px 13px;border-radius:8px;">
+          🐞 <b>Você já relatou um problema aqui:</b>
+          <div class="meta" style="margin-top:4px;white-space:pre-wrap;">${esc(d.problemaRelatadoTexto||'')}</div>
+          <div class="meta" style="margin-top:5px;">Já foi encaminhado. Pode conferir de novo e marcar como funcionando quando estiver resolvido.</div>
+        </div>` : ''}
+        <button class="btn green" style="margin-top:12px;padding:15px;font-size:14px;font-weight:800;" onclick="confirmarAvisoDoSistema('${d.id}')">✔ Conferi e está funcionando</button>
+        <button class="btn secondary" style="margin-top:8px;padding:13px;border-color:var(--red);color:var(--red);" onclick="relatarProblemaDoAviso('${d.id}')">⚠️ Testei e achei problema</button>
+        <div class="meta" style="margin-top:8px;text-align:center;">Se achou problema, escreve o que aconteceu — é assim que eu conserto.</div>
+      ` : `${jaTemProva ? '<div class="linha" style="color:var(--yellow2);">✋ Já enviado, aguardando aprovação da gerência.</div><button class="btn red" style="margin-top:10px;" onclick="desfazerEnvioDemanda(\''+d.id+'\')">✕ Cancelar envio — voltar a fazer</button>' : `
       ${d.tipoFuncaoFixa === 'reuniao' ? `
       <div class="field"><label>Data real da reunião marcada com o cliente</label><input type="date" id="reuniaoDataReal" value="${d.prazoData}"></div>
       <div class="field"><label>Hora real da reunião</label><input type="time" id="reuniaoHoraReal" value="${d.prazoHora==='19:00'?'10:00':d.prazoHora}"></div>
@@ -15337,7 +16054,7 @@
       <div class="field"><label>Descreva o que foi feito</label><textarea id="provaTextoInput" placeholder="O que você fez pra concluir..."></textarea></div>
       <div class="field"><label>Link do print/foto como prova (opcional)</label><input type="text" id="provaLinkInput" placeholder="Cola aqui o link do Drive/WhatsApp com o print"></div>
       <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Marcar como feita</button>
-      `}`}
+      `}`}`}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
       ${(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')
         ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Excluir esta demanda</button>`
@@ -19151,7 +19868,12 @@
          a uma rodada por dia. */
       { nome: 'conferenciaDoSistema', fn: () => window.conferenciaDoSistema() },
       { nome: 'videoComPostagemPublicada', fn: conciliarVideoComPostagemPublicada },
-      { nome: 'esperaDoClienteParada', fn: cobrarEsperaDoClienteParada }
+      { nome: 'esperaDoClienteParada', fn: cobrarEsperaDoClienteParada },
+      /* 03/08/2026 — os dois pedidos novos da Amanda. O de gargalo olha a
+         data da POSTAGEM (a que o cliente vê); o de choque varre os
+         calendários por dois conteúdos no mesmo dia. */
+      { nome: 'alertasDeGargalo', fn: alertasDeGargalo },
+      { nome: 'choquesDeData', fn: () => window.varrerChoquesDeData() }
     ];
 
     for(const v of verificacoes){
@@ -23324,7 +24046,9 @@ ${blocoFaltaPerguntar([['Instagram',l.instagram],['Segmento do negócio',l.segme
          por padrão, sem precisar perguntar (já veio do link de vídeo
          avulso). Fecha o mesmo buraco que pegou She Joias/Dra. Júlia,
          automaticamente, pra todo lead que vira cliente por aqui. */
-      if(clienteNovoNesseAgendamento) await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead avulso convertido)');
+      /* lead avulso convertido ja diz na origem que e avulso */
+      if(clienteNovoNesseAgendamento){ await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead avulso convertido)');
+        await definirCastaCliente(slug, 'avulso', 'sistema (lead avulso convertido)'); }
       mostrarToast('Gravação agendada e lead marcado como convertido!');
       fecharModal();
       renderLeadsAvulsos();
@@ -23355,7 +24079,9 @@ ${blocoFaltaPerguntar([['Instagram',l.instagram],['Segmento do negócio',l.segme
         idsAgendados.push(agRef.id);
       }
       await updateDoc(doc(db,'leads_avulsos', id), { status: 'convertido', agendamentoIds: idsAgendados });
-      if(clienteNovoNesseAgendamentoML) await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead avulso convertido)');
+      /* lead avulso convertido ja diz na origem que e avulso */
+      if(clienteNovoNesseAgendamentoML){ await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead avulso convertido)');
+        await definirCastaCliente(slug, 'avulso', 'sistema (lead avulso convertido)'); }
       mostrarToast(idsAgendados.length + ' agendamento(s) criado(s) e lead marcado como convertido!');
       fecharModal();
       renderLeadsAvulsos();
@@ -23642,7 +24368,9 @@ Observações: ${l.observacoes||'—'}`;
       // Mesma lógica dos leads avulsos de empresa: cliente pessoa física
       // também é entrega direta por padrão (não entra no fluxo de
       // legenda/agendamento mensal — é vídeo avulso pra uso pessoal).
-      if(clienteNovoNesseAgendamentoPF) await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead pessoa física convertido)');
+      /* lead avulso convertido ja diz na origem que e avulso */
+      if(clienteNovoNesseAgendamentoPF){ await definirTipoEntregaClienteNovo(slug, 'entrega_direta', 'sistema (lead pessoa física convertido)');
+        await definirCastaCliente(slug, 'avulso', 'sistema (lead pessoa física convertido)'); }
       mostrarToast('Gravação agendada e lead marcado como convertido!');
       fecharModal();
       renderLeadsPessoal();
@@ -23885,11 +24613,45 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const dosOutros = todas.filter(d => !minhas.includes(d));
     const lista = window.__aguardVerTudo ? todas : minhas;
 
+    /* ===== TRÊS TIPOS, TRÊS FILTROS — 03/08/2026 ======================
+       Pedido da Amanda: "na aba de aprovação agora ficou extenso,
+       importante ser separado por botão e coluna pra filtrar o tipo de
+       aprovação: aprovação de vídeo, aprovação de demandas, aprovação de
+       novo prazo solicitado. Ambos os botões devem ter uma bolinha como
+       notificação."
+
+       Ela está certa e o motivo é meu: esta tela juntou vídeo e demanda
+       quando eu desfiz a duplicação em 30/07. Ficou uma tela só com dois
+       assuntos empilhados e nenhuma forma de olhar um de cada vez.
+
+       O TERCEIRO tipo ela pediu e NÃO EXISTIA em lugar nenhum: pedido de
+       novo prazo. A `atualizarBadgeGerencia` contava esses pedidos desde
+       27/07, mas eles só apareciam dentro da ficha de cada demanda — ou
+       seja, a badge dizia "tem 2 coisas esperando" e não havia tela onde
+       ver os 2. Quem não soubesse abrir a demanda certa não achava.
+       Achei isso por causa do pedido dela. */
+    const pedidosDePrazo = todasDemandas.filter(d => d.prazoSolicitado
+      && !['aprovada','cancelada'].includes(String(d.status||'')));
+    /* Pedido de prazo é decisão da Amanda (regra da fase 2). O Chris vê
+       se estiver cobrindo a ausência dela. */
+    const prazosMeus = (usuarioAtual === 'Amanda' || (usuarioAtual === 'Chris' && estaAusente('Amanda'))) ? pedidosDePrazo : [];
+    const filtro = window.__filtroAprov || 'tudo';
+    const bolinha = n => n ? '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;">' + n + '</span>' : '';
+    const chip = (id, rot, n) => `<button class="btn ${filtro===id?'':'secondary'}" style="width:auto;padding:8px 15px;font-size:12px;" onclick="filtrarAprovacoes('${id}')">${rot}${bolinha(n)}</button>`;
+
     let html = `<div class="card">
       <h2><svg class="ic"><use href="#i-clock"/></svg>Esperando você aprovar</h2>
       <div class="desc">Demanda que <b>você mandou</b> e a pessoa já entregou. Aprovar tira da lista dela e avisa na hora.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+        ${chip('tudo','Tudo', 0)}
+        ${chip('videos','🎬 Vídeos', 0)}
+        ${chip('demandas','📋 Demandas', minhas.length)}
+        ${chip('prazos','🕓 Novo prazo', prazosMeus.length)}
+      </div>
+      <div class="meta" style="margin-top:8px;">A bolinha vermelha é o que está parado esperando você. O contador dos vídeos aparece dentro do bloco deles.</div>
       <div class="painelResumo" style="margin-top:10px;">
-        <div class="resumoCard ${minhas.length?'yellow':'green'}"><div class="num">${minhas.length}</div><div class="lbl">esperando você</div></div>
+        <div class="resumoCard ${minhas.length?'yellow':'green'}"><div class="num">${minhas.length}</div><div class="lbl">demandas esperando você</div></div>
+        <div class="resumoCard ${prazosMeus.length?'yellow':''}"><div class="num">${prazosMeus.length}</div><div class="lbl">pedidos de prazo</div></div>
         <div class="resumoCard"><div class="num">${dosOutros.length}</div><div class="lbl">com outra pessoa</div></div>
       </div>
       ${dosOutros.length ? `<button class="btn secondary" style="margin-top:10px;" onclick="window.__aguardVerTudo=!window.__aguardVerTudo;renderDemandasAguardandoDetalhe();">
@@ -23897,10 +24659,51 @@ Observações do cliente: ${l.observacoes||'—'}`;
       </button>` : ''}
     </div>`;
 
-    if(!lista.length){
+    /* ---- os pedidos de novo prazo, que não tinham tela ---- */
+    let htmlPrazos = '';
+    if(prazosMeus.length && (filtro === 'tudo' || filtro === 'prazos')){
+      htmlPrazos = `<div class="card" style="border:2px solid var(--yellow2);">
+        <h2 style="font-size:15px;">🕓 Pedidos de novo prazo <span class="qtd">(${prazosMeus.length})</span></h2>
+        <div class="desc">Alguém da equipe pediu mais tempo. Enquanto você não decide, o prazo antigo continua valendo e a demanda segue contando como atrasada.</div>
+        ${prazosMeus.map(d => `<div class="item" style="border-left:3px solid var(--yellow2);margin-top:9px;">
+          <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="selo pendente">${esc(d.destinatario||'?')}</span></div>
+          <div class="meta" style="margin-top:5px;">De <b>${formatarDataBR(d.prazoData)}</b> para <b>${formatarDataBR(d.prazoSolicitado)}</b></div>
+          ${d.motivoPrazo ? '<div class="meta" style="margin-top:5px;background:var(--deep);padding:8px 10px;border-radius:7px;">"'+esc(d.motivoPrazo)+'"</div>' : '<div class="meta" style="margin-top:5px;opacity:.7;">Sem motivo escrito.</div>'}
+          <div class="btnrow" style="margin-top:10px;">
+            <button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="abrirDemandaGerencia('${d.id}')">Ver a demanda</button>
+            <button class="btn green" style="width:auto;padding:6px 18px;font-size:11px;" onclick="aceitarPrazoPedido('${d.id}')">✔ Aceitar novo prazo</button>
+          </div>
+        </div>`).join('')}
+      </div>`;
+    }
+
+    if(filtro === 'prazos'){
+      html += htmlPrazos || '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhum pedido de prazo esperando você.</div></div>';
+      cont.innerHTML = cabecalho + html;
+      return;
+    }
+    if(filtro === 'videos'){
+      cont.innerHTML = cabecalho + html;
+      renderAprovacaoVideos('centralAprovVideos');
+      return;
+    }
+    html += htmlPrazos;
+
+    if(!lista.length || filtro === 'videos'){
       html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nada esperando você agora.</div></div>';
       cont.innerHTML = cabecalho + html;
       renderAprovacaoVideos('centralAprovVideos');
+      return;
+    }
+
+    if(filtro === 'demandas'){
+      /* só demandas: não desenha o bloco de vídeos */
+      const porPessoaD = {};
+      lista.forEach(d => { (porPessoaD[d.destinatario] = porPessoaD[d.destinatario]||[]).push(d); });
+      Object.keys(porPessoaD).sort((a,b)=>porPessoaD[b].length-porPessoaD[a].length).forEach(nome => {
+        html += htmlFaixaAprovacao(nome, porPessoaD[nome], daPessoa);
+      });
+      cont.innerHTML = cabecalho + html;
       return;
     }
 
@@ -23908,9 +24711,23 @@ Observações do cliente: ${l.observacoes||'—'}`;
     lista.forEach(d => { (porPessoa[d.destinatario] = porPessoa[d.destinatario]||[]).push(d); });
 
     Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length-porPessoa[a].length).forEach(nome => {
-      const itens = porPessoa[nome];
+      html += htmlFaixaAprovacao(nome, porPessoa[nome], daPessoa);
+    });
+    cont.innerHTML = cabecalho + html;
+    renderAprovacaoVideos('centralAprovVideos');
+  }
+
+  window.filtrarAprovacoes = function(qual){
+    window.__filtroAprov = qual;
+    renderDemandasAguardandoDetalhe();
+  };
+
+  /* Uma implementação da faixa, usada pelo ramo "tudo" e pelo ramo
+     "só demandas". Copiar isto em dois lugares é como nascem as duas
+     verdades que passei a semana desmontando. */
+  function htmlFaixaAprovacao(nome, itens, daPessoa){
       const dono = itens.every(daPessoa);
-      html += `<div class="faixaDem aberta" data-faixa="aprov_${esc(nome)}">
+      return `<div class="faixaDem aberta" data-faixa="aprov_${esc(nome)}">
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${itens.length})</span>${dono?'':'<span class="qtd" style="opacity:.6;"> · não é sua</span>'}<span class="seta">▾</span></div>
         <div class="faixaItens">${itens.map(d => `
           <div class="item" style="border-left:3px solid var(--yellow);">
@@ -23923,11 +24740,6 @@ Observações do cliente: ${l.observacoes||'—'}`;
             </div>
           </div>`).join('')}</div>
       </div>`;
-    });
-    cont.innerHTML = cabecalho + html;
-    /* A tela de vídeos é desenhada DEPOIS, no espaço reservado — é
-       assíncrona e não pode segurar o resto da página. */
-    renderAprovacaoVideos('centralAprovVideos');
   }
 
   async function renderMinhasDemandasEnviadas(){

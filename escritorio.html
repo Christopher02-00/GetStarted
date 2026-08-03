@@ -818,7 +818,9 @@
             <div class="field"><label>Vídeos planejados</label><input type="number" id="agQtdPlanejada" min="1" value="2">
               <div class="desc" id="dicaQtdBloco" style="margin:4px 0 0;"></div></div>
           </div>
-          <div class="field"><label>Local</label><input type="text" id="agLocal" placeholder="Endereço ou referência do local"></div>
+          <div class="field"><label>📍 Local da gravação <span style="color:var(--red);">(obrigatório)</span></label>
+            <input type="text" id="agLocal" placeholder="Endereço completo, ou o ponto de encontro">
+            <div class="desc" style="margin:4px 0 0;">É o que o filmmaker lê no dia pra saber pra onde ir. <b>Sem isso ele sai sem endereço</b> — hoje 32 das 38 gravações do sistema estão sem local.</div></div>
 
           <!-- ===== O QUE O FILMMAKER PRECISA SABER — 28/07/2026 ==========
                Pedido do Chris: a Cecília precisa passar mais que data e
@@ -3392,6 +3394,56 @@
       const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
       const editor = ehGestao ? (editorManual || await decidirEditor(clienteSlug)) : '';
       const sugerido = ehGestao ? editor : (editorManual || '');
+
+      /* ===== O VÍDEO DUPLICADO DA BLUEFIT — 03/08/2026 ================
+         Em 25/07 nasceram DUAS cópias de "Bluefit — Poder do movimento",
+         com 24 segundos de diferença. O Chris apagou uma em 27/07 às
+         20:46 achando que era duplicata (era). A Amanda apagou a outra
+         em 28/07 às 12:19 pelo mesmo motivo. Nenhum dos dois sabia que o
+         outro já tinha apagado uma — e a Cecília foi agendar e não achou
+         nada. O conteúdo se perdeu.
+
+         A exclusão com motivo e aviso eu já consertei em 02/08. Falta a
+         ORIGEM: o sistema deixou criar duas cópias idênticas.
+
+         A trava é por TÍTULO + CLIENTE, olhando só o que está vivo. Não
+         travo de vez: pergunto. Cliente pode legitimamente ter dois
+         vídeos com o mesmo nome (duas versões, dois cortes), e travar
+         duro deixaria o filmmaker preso em campo sem saída — que é pior
+         que o problema. Perguntar resolve o caso real (dedo duplo, lote
+         reenviado) sem criar um novo. */
+      let jaExistem = [];
+      try{
+        const snapDup = await getDocs(collection(db,'videos_producao'));
+        snapDup.forEach(d => { const v = d.data();
+          if(v.excluido) return;
+          if(String(v.cliente||'') !== clienteSlug) return;
+          if(['finalizado','arquivado'].includes(String(v.status||''))) return;
+          jaExistem.push(String(v.titulo||'').trim().toLowerCase());
+        });
+      }catch(e){ console.error('Não consegui checar vídeo repetido:', e); }
+
+      const repetidos = todosNomes.filter(n => {
+        const t = ((origemMaterial === 'recebido' ? '✂️ ' : '') + clienteNome + ' — ' + n).trim().toLowerCase();
+        return jaExistem.includes(t);
+      });
+      if(repetidos.length){
+        const ok = confirm('⚠️ ' + clienteNome + ' JÁ TEM vídeo em produção com este nome:\n\n' +
+          repetidos.map(n => '• ' + n).join('\n') +
+          '\n\nSe for o mesmo conteúdo, CANCELA — o que já existe continua valendo e ninguém precisa apagar nada depois.\n\n' +
+          'Se for outra versão/outro corte de propósito, OK pra criar assim mesmo (vale colocar algo no nome pra diferenciar).');
+        if(!ok){
+          mostrarToast('Não criei nada. O vídeo que já existe segue na esteira.');
+          /* `txtBotao` não existe neste escopo — eu tinha inventado a
+             variável. O arquivo já restaura este botão com o texto
+             literal logo acima; sigo o mesmo. */
+          if(btn){ btn.disabled = false; btn.textContent = 'Registrar e distribuir'; }
+          return;
+        }
+        registrarLogAutomacao('video_duplicado_confirmado', clienteSlug,
+          (usuarioAtual||'?') + ' confirmou criar mesmo com nome repetido: ' + repetidos.join(', '));
+      }
+
       for(const nomeVideo of todosNomes){
         const novoVideoRef = await addDoc(collection(db,'videos_producao'), {
           cliente: clienteSlug, clienteNome, data,
@@ -5593,6 +5645,24 @@
     const tipo = document.getElementById('agTipo').value;
     const qtdPlanejada = parseInt(document.getElementById('agQtdPlanejada').value) || 1;
     if(!clienteSlug || !data){ mostrarToast('Preenche cliente e data.', 'erro'); return; }
+    /* ===== LOCAL OBRIGATÓRIO — 03/08/2026 (pedido da Amanda) =========
+       Ela pediu que o local seja obrigatório no agendamento e visível no
+       painel do videomaker desde o início. Fui ao banco antes: o campo
+       `local` existe desde sempre e está preenchido em 6 de 38
+       gravações. Ou seja, em 32 casos o filmmaker saiu sem endereço e
+       teve que perguntar no WhatsApp — trabalho que o sistema devia ter
+       evitado e não evitava porque o campo era opcional e discreto.
+
+       A trava é dura de propósito: sem local não salva. Mas dá saída
+       honesta pra quem ainda não sabe o endereço, em vez de obrigar a
+       inventar — quem escreve "a definir" está dizendo a verdade, e o
+       painel do filmmaker mostra isso em vermelho até alguém resolver. */
+    if(!local){
+      mostrarToast('Falta o local da gravação — é por ele que o filmmaker sabe pra onde ir.', 'erro');
+      const el = document.getElementById('agLocal');
+      if(el){ el.focus(); el.style.borderColor = 'var(--red)'; }
+      return;
+    }
 
     const snap = await getDocs(collection(db,'agendamentos'));
     let qtdNoDia = 0;
@@ -9455,6 +9525,177 @@
     return renderPortalClienteAdmin(__portalAdminContainer, __portalAdminLeitura);
   }
 
+  /* ===== CHECKLIST DO CLIENTE — 03/08/2026 (itens 5 e 6 da Amanda) ===
+     "Gabi registra tarefas do cliente (título, descrição, data de
+      criação, responsável, prazo opcional, caixa de conclusão para o
+      cliente). Gabi vê no fim do mês o que foi feito."
+     "Lembrete automático pra Amanda quando um cliente tem pendência
+      durante a semana."
+
+     Por que uma coleção nova e não `demandas`: demanda é trabalho da
+     EQUIPE, entra na fila de alguém, tem prazo cobrado, conta na
+     produtividade. Isto é trabalho do CLIENTE — não pode entrar na
+     conta de ninguém aqui dentro nem aparecer como atraso da Gabi.
+     Misturar os dois inflaria todo indicador do escritório com coisa
+     que não depende da gente. */
+  window.__checklistCliente = { slug:'', cache:[] };
+
+  window.salvarTarefaChecklist = async function(containerId, apenasLeitura){
+    const v = id => (document.getElementById(id)?.value || '').trim();
+    const slug = v('ckCliente'), titulo = v('ckTitulo');
+    if(!slug){ mostrarToast('Escolhe o cliente.', 'erro'); return; }
+    if(!titulo){ mostrarToast('Escreve o que o cliente precisa fazer.', 'erro'); return; }
+    const nome = (CLIENTES_LISTA.find(c=>c.slug===slug)||{}).nome || slug;
+    try{
+      await addDoc(collection(db,'checklist_cliente'), {
+        cliente: slug, clienteNome: nome,
+        titulo, descricao: v('ckDescricao'), prazo: v('ckPrazo'),
+        concluido: false, concluidoEm: '', concluidoPor: '',
+        criadoPor: usuarioAtual || '?', criadoEm: new Date().toISOString()
+      });
+      mostrarToast('Pedido registrado — ' + nome + ' já vê no portal dele.');
+      ['ckTitulo','ckDescricao','ckPrazo'].forEach(id => { const e=document.getElementById(id); if(e) e.value=''; });
+      renderPortalClienteAdmin(containerId, apenasLeitura);
+    }catch(e){ mostrarToast('Não consegui salvar: ' + e.message, 'erro'); }
+  };
+  window.excluirTarefaChecklist = async function(id, containerId, apenasLeitura){
+    if(!confirm('Apagar este pedido? O cliente deixa de ver.')) return;
+    try{
+      await updateDoc(doc(db,'checklist_cliente', id), { excluido:true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
+      mostrarToast('Apagado.');
+      renderPortalClienteAdmin(containerId, apenasLeitura);
+    }catch(e){ mostrarToast('Não consegui apagar: ' + e.message, 'erro'); }
+  };
+  window.desmarcarTarefaChecklist = async function(id, containerId, apenasLeitura){
+    try{
+      await updateDoc(doc(db,'checklist_cliente', id), { concluido:false, concluidoEm:'', concluidoPor:'' });
+      renderPortalClienteAdmin(containerId, apenasLeitura);
+    }catch(e){ mostrarToast('Não consegui reabrir: ' + e.message, 'erro'); }
+  };
+
+  async function htmlChecklistAdmin(containerId, apenasLeitura){
+    let lista = [];
+    try{
+      const snap = await getDocs(collection(db,'checklist_cliente'));
+      snap.forEach(d => { const v=d.data(); if(!v.excluido) lista.push({id:d.id, ...v}); });
+    }catch(e){ console.error('Falha ao ler o checklist:', e); return '<div class="empty">Não consegui carregar agora.</div>'; }
+
+    const hoje = hojeLocal();
+    const mesAtual = hoje.slice(0,7);
+    const abertas = lista.filter(t => !t.concluido);
+    const feitasNoMes = lista.filter(t => t.concluido && String(t.concluidoEm||'').slice(0,7) === mesAtual);
+    const atrasadas = abertas.filter(t => t.prazo && String(t.prazo) < hoje);
+
+    const porCliente = {};
+    abertas.forEach(t => { const k = t.clienteNome || t.cliente; (porCliente[k] = porCliente[k]||[]).push(t); });
+    const nomes = Object.keys(porCliente).sort((a,b) => porCliente[b].length - porCliente[a].length);
+
+    let h = `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>✅ Checklist do Cliente</h2>
+      <div class="desc">O que a gente está esperando <b>do cliente</b>: foto, texto, aprovação, acesso, confirmação de data.
+      Ele vê na aba Demandas do portal dele e marca quando resolver. <b>Isto não entra na fila de ninguém aqui dentro</b> — não é trabalho nosso, é o que trava o nosso.</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${abertas.length?'yellow':'green'}"><div class="num">${abertas.length}</div><div class="lbl">esperando o cliente</div></div>
+        <div class="resumoCard ${atrasadas.length?'red':''}"><div class="num">${atrasadas.length}</div><div class="lbl">passou do prazo</div></div>
+        <div class="resumoCard green"><div class="num">${feitasNoMes.length}</div><div class="lbl">resolvido em ${rotuloMesExtras(mesAtual)}</div></div>
+      </div>
+    </div>`;
+
+    if(!apenasLeitura){
+      h += `<div class="card">
+        <div class="metaSecTit">Pedir uma coisa pro cliente</div>
+        <div class="row2" style="margin-top:8px;">
+          <div class="field"><label>Cliente</label>
+            <select id="ckCliente"><option value="">Escolhe...</option>
+              ${CLIENTES_LISTA.map(c=>`<option value="${c.slug}">${esc(c.nome)}</option>`).join('')}
+            </select></div>
+          <div class="field"><label>Prazo <span style="color:var(--muted);font-weight:400;">— opcional</span></label><input type="date" id="ckPrazo"></div>
+        </div>
+        <div class="field" style="margin-top:8px;"><label>O que ele precisa fazer</label>
+          <input type="text" id="ckTitulo" placeholder="Ex: mandar as fotos do salão novo"></div>
+        <div class="field" style="margin-top:8px;"><label>Detalhe <span style="color:var(--muted);font-weight:400;">— opcional</span></label>
+          <textarea id="ckDescricao" placeholder="Explica direitinho, do jeito que ele entende. Ele lê isso sozinho, sem você do lado."></textarea></div>
+        <button class="btn" style="margin-top:12px;padding:13px;" onclick="salvarTarefaChecklist('${containerId}', ${apenasLeitura})">+ Pedir pro cliente</button>
+      </div>`;
+    }
+
+    if(!abertas.length){
+      h += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">Nenhum cliente devendo nada. Tudo destravado.</div></div>';
+    } else {
+      nomes.forEach(nome => {
+        const l = porCliente[nome].sort((a,b)=>String(a.prazo||'9999').localeCompare(String(b.prazo||'9999')));
+        const atr = l.filter(t => t.prazo && String(t.prazo) < hoje).length;
+        h += `<div class="faixaDem aberta" data-faixa="ck_${esc(nome)}">
+          <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${l.length}${atr?' · '+atr+' atrasada(s)':''})</span><span class="seta">▾</span></div>
+          <div class="faixaItens">${l.map(t => {
+            const atrasada = t.prazo && String(t.prazo) < hoje;
+            return `<div class="item" style="border-left:3px solid ${atrasada?'var(--red)':'var(--yellow)'};">
+              <div class="top"><div class="nome">${esc(t.titulo)}</div><div class="meta">${t.prazo ? (atrasada?'⚠️ ':'')+formatarDataBR(t.prazo) : 'sem prazo'}</div></div>
+              ${t.descricao ? '<div class="meta" style="margin-top:5px;white-space:pre-wrap;">'+esc(t.descricao)+'</div>' : ''}
+              <div class="meta" style="margin-top:5px;opacity:.7;">Pedido por ${esc(t.criadoPor||'?')} em ${formatarDataBR(String(t.criadoEm||'').slice(0,10))}</div>
+              ${apenasLeitura ? '' : `<div class="btnrow" style="margin-top:9px;">
+                <button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="excluirTarefaChecklist('${t.id}','${containerId}', ${apenasLeitura})">Apagar</button>
+              </div>`}
+            </div>`;
+          }).join('')}</div>
+        </div>`;
+      });
+    }
+
+    if(feitasNoMes.length){
+      h += `<div class="card metaSec"><div class="metaSecTit">✅ O que os clientes resolveram em ${rotuloMesExtras(mesAtual)} (${feitasNoMes.length})</div>
+        <div class="desc" style="margin-bottom:8px;">É isto que a Gabi olha no fim do mês.</div>
+        ${feitasNoMes.sort((a,b)=>String(b.concluidoEm||'').localeCompare(String(a.concluidoEm||''))).map(t => `<div class="item" style="border-left:3px solid var(--green);">
+          <div class="top"><div class="nome">${esc(t.clienteNome||t.cliente)} — ${esc(t.titulo)}</div>
+            <div class="meta">${formatarDataBR(String(t.concluidoEm||'').slice(0,10))}</div></div>
+          ${apenasLeitura ? '' : '<button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;margin-top:8px;" onclick="desmarcarTarefaChecklist(\''+t.id+'\',\''+containerId+'\', '+apenasLeitura+')">↩ Reabrir</button>'}
+        </div>`).join('')}
+      </div>`;
+    }
+    return h;
+  }
+
+  /* Item 6 — o lembrete da Amanda. Uma vez por semana, não por dia:
+     cobrança diária sobre coisa que depende de terceiro é ruído, e ruído
+     a pessoa aprende a ignorar. */
+  async function lembrarChecklistPendente(){
+    try{
+      const hoje = hojeLocal();
+      const snap = await getDocs(collection(db,'checklist_cliente'));
+      const abertas = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && !v.concluido) abertas.push({id:d.id, ...v}); });
+      if(!abertas.length) return;
+      /* 03/08 — eu tinha escrito `semanaDoAno ? ... : ...` sobre uma
+         função que NÃO existe. Isso não cai no fallback: variável não
+         declarada estoura ReferenceError e derrubaria a verificação
+         inteira dentro do motor. Uso `semanaRefAtual()`, que é a
+         resposta da casa e já é usada pelas referências e stories. */
+      const semana = semanaRefAtual();
+      const q = query(collection(db,'demandas'), where('tipoEspecial','==','checklist_semana'), where('semanaRef','==', String(semana)));
+      const ja = await getDocs(q);
+      if(!ja.empty) return;
+
+      const porCli = {};
+      abertas.forEach(t => { const k = t.clienteNome || t.cliente; (porCli[k] = porCli[k]||[]).push(t); });
+      const atrasadas = abertas.filter(t => t.prazo && String(t.prazo) < hoje);
+      const linhas = Object.entries(porCli).sort((a,b)=>b[1].length-a[1].length)
+        .map(([n,l]) => '• ' + n + ': ' + l.length + ' pendência(s)' +
+          (l.some(t=>t.prazo && String(t.prazo) < hoje) ? ' — ⚠️ tem coisa fora do prazo' : '')).join('\n');
+
+      await criarDemandaSegura({
+        titulo: '📋 ' + abertas.length + ' pendência(s) esperando cliente esta semana',
+        descricao: 'Estes clientes têm coisa pra fazer no portal e ainda não fizeram:\n\n' + linhas +
+          (atrasadas.length ? '\n\n' + atrasadas.length + ' já passou do prazo combinado.' : '') +
+          '\n\nO QUE FAZER: cobra no WhatsApp o que estiver travando trabalho nosso. O que não trava nada pode esperar — não vale queimar o cliente por foto que a gente nem vai usar esta semana.' +
+          '\n\nA lista completa está em Portal do Cliente → Checklist do Cliente.',
+        destinatario: 'Amanda', origem: 'sistema', ehAviso: true,
+        prazoData: hoje, prazoHora: '19:00', prioridade: 'normal',
+        tipoEspecial: 'checklist_semana', semanaRef: String(semana)
+      });
+      registrarLogAutomacao('checklist_semana', '', abertas.length + ' pendência(s) de cliente');
+    }catch(e){ console.error('Lembrete de checklist falhou:', e); }
+  }
+  window.lembrarChecklistPendente = lembrarChecklistPendente;
+
   async function renderPortalClienteAdmin(containerId, apenasLeitura){
     containerId = containerId || 'gerenciaPortalCliente';
     apenasLeitura = apenasLeitura || false;
@@ -9469,6 +9710,7 @@
       <div class="desc">Tudo que os clientes enviam pelo portal deles cai aqui — banco de ideias, atas e informações extras.${apenasLeitura ? ' Só a Amanda e a Gabi podem editar; o resto da equipe acompanha aqui.' : ' Stories saiu daqui e virou tela própria — está no menu lateral, em 📸 Stories.'}</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn ${sub==='checklist'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('checklist','${containerId}',${apenasLeitura})">✅ Checklist do Cliente</button>
       <button class="btn ${sub==='ideias'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('ideias','${containerId}',${apenasLeitura})">💡 Banco de Ideias</button>
       <button class="btn ${sub==='atas'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('atas','${containerId}',${apenasLeitura})">📝 Atas</button>
       <button class="btn ${sub==='referencias'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('referencias','${containerId}',${apenasLeitura})">🔗 Referências</button>
@@ -9484,6 +9726,11 @@
        tambem cria ideia daqui — antes so o cliente conseguia criar, pelo
        portal. Quando o status vira "Concluida", a ideia cai na fila de
        aprovacao final da Amanda, que encerra oficialmente a sugestao. */
+    if(sub === 'checklist'){
+      cont.innerHTML = html + await htmlChecklistAdmin(containerId, apenasLeitura);
+      return;
+    }
+
     if(sub === 'ideias'){
       const podeMexer = !apenasLeitura;
       const snap = await getDocs(collection(db,'ideias_cliente'));
@@ -14081,9 +14328,29 @@
           ${grav ? `<div style="margin-top:10px;background:var(--yellow);color:var(--graphite);border-radius:9px;padding:11px 13px;">
             <div style="font-size:16px;font-weight:900;line-height:1.15;">🎥 Hoje: ${deHoje.length} vídeo${deHoje.length===1?'':'s'} pra gravar</div>
             <div style="font-size:11.5px;font-weight:700;margin-top:3px;opacity:.85;">
-              ${grav.bloco}ª gravação do mês${grav.hora?' · '+esc(grav.hora):''}${grav.local?' · '+esc(grav.local):''}
+              ${grav.bloco}ª gravação do mês${grav.hora?' · '+esc(grav.hora):''}
               ${grav.qtd && grav.qtd !== deHoje.length ? ' · a Cecília marcou '+grav.qtd : ''}
             </div>
+          </div>
+          ${/* ===== O LOCAL EM DESTAQUE — 03/08/2026 ===================
+                Pedido da Amanda: o local tem que estar "claramente
+                visível no painel principal dos videomakers desde o
+                início". Antes ele era um pedaço de uma linha pequena,
+                depois do bloco e da hora — e só aparecia se estivesse
+                preenchido, o que acontecia em 6 de 38 gravações.
+
+                Agora é um bloco próprio, com o endereço em tamanho de
+                leitura e um botão que abre o mapa. E quando falta, a
+                tela DIZ que falta em vermelho, com o caminho pra
+                resolver: quem descobre o problema é ele, em campo, e
+                antes disso ninguém sabia que faltava. */''}
+          <div style="margin-top:10px;background:${grav.local?'var(--deep)':'rgba(214,58,58,.12)'};border-left:3px solid ${grav.local?'var(--yellow)':'var(--red)'};border-radius:9px;padding:12px 14px;">
+            ${grav.local ? `<div style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.4px;">📍 ONDE É</div>
+              <div style="font-size:15px;font-weight:800;margin-top:4px;line-height:1.35;">${esc(grav.local)}</div>
+              <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(grav.local)}" target="_blank" rel="noopener"
+                 class="btn secondary" style="width:auto;padding:7px 14px;font-size:11.5px;text-decoration:none;margin-top:9px;display:inline-block;">🗺️ Abrir no mapa</a>`
+            : `<div style="font-size:13.5px;font-weight:800;color:var(--red);">📍 Local não informado</div>
+              <div class="meta" style="margin-top:4px;">Esta gravação foi marcada sem endereço. <b>Fala com a Cecília antes de sair</b> — agendamento novo já não deixa mais salvar sem local.</div>`}
           </div>` : `<div class="desc" style="margin-top:10px;">Sem gravação marcada pra hoje neste cliente. Abaixo está o mês inteiro, pra consulta.</div>`}
           ${st !== 'liberado' ? '<div class="desc" style="margin-top:10px;background:rgba(224,197,106,.12);border-left:3px solid var(--yellow2);padding:10px 12px;border-radius:7px;"><b>⚠️ Este mês ainda não foi aprovado pelo cliente.</b> Pode mudar — confirma com a Cecília antes de gravar algo caro de refazer.</div>' : ''}
         </div>
@@ -20063,6 +20330,7 @@
          data da POSTAGEM (a que o cliente vê); o de choque varre os
          calendários por dois conteúdos no mesmo dia. */
       { nome: 'alertasDeGargalo', fn: alertasDeGargalo },
+      { nome: 'checklistDoCliente', fn: lembrarChecklistPendente },
       { nome: 'choquesDeData', fn: () => window.varrerChoquesDeData() }
     ];
 

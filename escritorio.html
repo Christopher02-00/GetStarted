@@ -908,6 +908,9 @@
         <!-- 01/08/2026 — a mesma grade que o cliente vê no portal, aqui
              clicável pra Cecília abrir e editar. Ver o bloco espelhado. -->
         <div class="subtab" id="subtabCalendarioPostagem" onclick="setPostagensSub('gradeMes', this)">Calendário de Postagem (por cliente)</div>
+        <!-- 02/08/2026 — pedido do Chris: um lugar bem visível pra Amanda
+             fechar o que já foi postado, senão os números ficam errados. -->
+        <div class="subtab" id="subtabConfirmarPub" onclick="setPostagensSub('confirmar', this)">Confirmar o que já foi postado<span class="navbadge" id="badgeConfirmarPub" style="display:none;background:var(--yellow);color:var(--graphite);">0</span></div>
         <div class="subtab" id="subtabTodasPostagens" onclick="setPostagensSub('todas', this)">Todas as Postagens</div>
         <div class="subtab" id="subtabStatusCompleto" onclick="setPostagensSub('statusCompleto', this)">Status Completo (do início ao fim)</div>
       </div>
@@ -5918,6 +5921,7 @@
     if(qual==='legendasCalendario') renderLegendasDoCalendario();
     if(qual==='agendar') renderAgendarPostagens();
     if(qual==='gradeMes') renderGradeDePostagens();
+    if(qual==='confirmar') renderConfirmarPublicacoes();
     if(qual==='todas') renderTodasPostagens();
     if(qual==='statusCompleto') renderStatusCompletoPipeline();
   };
@@ -5942,6 +5946,152 @@
     window.__gradeClienteCecilia = v;
     renderGradeDePostagens();
   };
+
+  /* ===================================================================
+     CONFIRMAR O QUE JÁ FOI POSTADO — 02/08/2026
+     Pedido do Chris: "seria interessante pensar numa opção bem visível
+     onde a Amanda consiga controlar isso facilmente para que esses dados
+     não fiquem errados, e isso deve estar bem visível e explicativo".
+
+     O CONTEXTO, medido no banco: 81 vídeos estavam parados em "aprovado".
+     Fui olhar um por um pela postagem correspondente:
+
+        32  postagem JÁ PUBLICADA     ← elo quebrado no código, consertei
+        33  postagem agendada
+         9  esperando legenda
+         7  esperando agendamento
+
+     Os 32 não eram trabalho da Amanda: era o `confirmarPostagemPublicada`
+     que nunca finalizava o vídeo. Consertei a função e a conciliação
+     fecha os que já ficaram presos.
+
+     O QUE SOBRA PRA ELA é o caso que o Chris descreveu: os clientes ainda
+     não usam a plataforma, então tem post que já foi ao ar e ninguém
+     marcou. O sistema não tem como adivinhar isso — só ela sabe.
+
+     Esta tela existe pra isso, e segue três regras:
+       1. Explica ANTES de pedir. Quem não entende por que está clicando
+          clica errado.
+       2. Agrupa por cliente. Ela confere um perfil de cada vez, que é
+          como a cabeça dela funciona nesse trabalho.
+       3. Um clique fecha a corrente inteira: postagem publicada, vídeo
+          finalizado, item marcado no calendário do cliente. */
+  window.__confirmarPubSel = {};
+  window.marcarTodasConfirmarPub = function(cliente, ligar){
+    document.querySelectorAll('#postagensConteudo .chkPub' + (cliente ? '[data-cli="'+cliente+'"]' : ''))
+      .forEach(c => { c.checked = ligar; });
+    atualizarBarraConfirmarPub();
+  };
+  window.atualizarBarraConfirmarPub = function(){
+    const n = document.querySelectorAll('#postagensConteudo .chkPub:checked').length;
+    const b = document.getElementById('barraConfirmarPub');
+    if(b) b.style.display = n ? 'flex' : 'none';
+    const c = document.getElementById('contagemConfirmarPub');
+    if(c) c.textContent = n + ' selecionada(s)';
+  };
+  window.confirmarPublicacoesEmLote = async function(){
+    const ids = Array.from(document.querySelectorAll('#postagensConteudo .chkPub:checked')).map(c=>c.value);
+    if(!ids.length) return;
+    if(!confirm('Confirmar que ' + ids.length + ' postagem(ns) já foram publicadas?\n\n'
+      + 'Isso fecha a corrente inteira de cada uma: a postagem vira publicada, o vídeo é finalizado '
+      + 'e o conteúdo aparece como publicado no portal do cliente.\n\nSó marca o que realmente já está no ar.')) return;
+    let n = 0;
+    for(const id of ids){
+      try{ await window.confirmarPostagemPublicada(id); n++; }
+      catch(e){ console.error('Falha ao confirmar ' + id, e); }
+    }
+    mostrarToast(n + ' publicação(ões) confirmada(s) — os números já refletem isso.');
+    renderConfirmarPublicacoes();
+  };
+
+  async function renderConfirmarPublicacoes(){
+    const cont = document.getElementById('postagensConteudo');
+    if(!cont) return;
+    cont.innerHTML = '<div class="card"><div class="desc">Procurando o que ainda não foi confirmado...</div></div>';
+
+    let posts = [], vids = {};
+    try{
+      const [pS, vS] = await Promise.all([getDocs(collection(db,'postagens')), getDocs(collection(db,'videos_producao'))]);
+      pS.forEach(d => { const x=d.data(); if(!x.excluido) posts.push({id:d.id, ...x}); });
+      vS.forEach(d => { const x=d.data(); if(!x.excluido) vids[d.id]=x; });
+    }catch(e){
+      console.error('Falha ao carregar as publicações:', e);
+      cont.innerHTML = '<div class="card"><div class="empty">Não consegui carregar. Recarrega a página.</div></div>'; return;
+    }
+
+    const hoje = hojeLocal();
+    /* Só o que está agendado — legenda e agendamento ainda são trabalho de
+       verdade, não têm o que confirmar. */
+    const abertas = posts.filter(p => p.status === 'agendado');
+    const vencidas = abertas.filter(p => String(p.dataAgendada||'') < hoje);
+    const futuras  = abertas.filter(p => String(p.dataAgendada||'') >= hoje);
+
+    const badge = document.getElementById('badgeConfirmarPub');
+    if(badge){ if(vencidas.length){ badge.textContent = vencidas.length; badge.style.display='inline-block'; } else badge.style.display='none'; }
+
+    const porCliente = {};
+    vencidas.forEach(p => { const k = p.clienteNome || p.cliente || '?'; (porCliente[k]=porCliente[k]||[]).push(p); });
+    const nomes = Object.keys(porCliente).sort((a,b)=>porCliente[b].length-porCliente[a].length);
+
+    const diasDe = d => d ? Math.floor((new Date(hoje+'T00:00:00') - new Date(d+'T00:00:00'))/86400000) : 0;
+
+    let html = `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>Confirmar o que já foi postado</h2>
+      <div class="desc" style="line-height:1.6;">
+        <b>Por que esta tela existe.</b> Quando uma postagem é agendada, o sistema fica esperando alguém dizer
+        que ela realmente foi ao ar. Enquanto ninguém diz, o vídeo continua contando como <b>trabalho em aberto</b> —
+        e aí a esteira mostra mais coisa do que existe, a carga dos editores infla e o número do mês fica errado.<br><br>
+        <b>O que fazer aqui.</b> Abaixo estão as postagens cuja <b>data já passou</b> e ninguém confirmou.
+        Confere no Instagram do cliente e marca as que já estão no ar. <b>Um clique fecha tudo:</b>
+        a postagem vira publicada, o vídeo é finalizado, e o conteúdo aparece como publicado no portal do cliente.<br><br>
+        <b>Se não foi postada</b>, não marca — deixa aí e resolve com a Cecília. Esta tela não cobra ninguém,
+        só pergunta o que aconteceu.
+      </div>
+    </div>`;
+
+    if(!vencidas.length){
+      html += `<div class="card" style="border-color:var(--green);">
+        <div class="empty" style="color:var(--green);font-weight:700;">Nada esperando confirmação — todas as postagens com data passada já foram confirmadas.</div>
+      </div>`;
+      if(futuras.length) html += `<div class="card"><div class="meta">${futuras.length} postagem(ns) agendada(s) pra frente. Elas aparecem aqui quando a data chegar.</div></div>`;
+      cont.innerHTML = html; return;
+    }
+
+    html += `<div id="barraConfirmarPub" style="display:none;position:sticky;top:8px;z-index:20;gap:10px;flex-wrap:wrap;align-items:center;background:var(--yellow);color:var(--graphite);padding:11px 15px;border-radius:10px;margin-bottom:12px;box-shadow:0 6px 18px rgba(0,0,0,.35);">
+      <b id="contagemConfirmarPub" style="font-size:13px;">0 selecionada(s)</b>
+      <button class="btn" style="width:auto;padding:7px 14px;font-size:11.5px;background:var(--graphite);color:var(--yellow);" onclick="confirmarPublicacoesEmLote()">✔ Já foram postadas</button>
+      <button class="btn" style="width:auto;padding:7px 12px;font-size:11.5px;background:transparent;color:var(--graphite);border:1px solid var(--graphite);" onclick="marcarTodasConfirmarPub('', false)">Limpar</button>
+    </div>`;
+
+    html += nomes.map(nome => {
+      const l = porCliente[nome].sort((a,b)=>String(a.dataAgendada||'').localeCompare(String(b.dataAgendada||'')));
+      const slug = (l[0].cliente||'').replace(/[^a-z0-9-]/gi,'');
+      return `<div class="card">
+        <h2 style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span>${esc(nome)} <span class="qtd">(${l.length})</span></span>
+          <button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="marcarTodasConfirmarPub('${slug}', true)">Marcar as ${l.length}</button>
+        </h2>
+        ${l.map(p => {
+          const d = diasDe(p.dataAgendada);
+          return `<label class="item" style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;border-left:3px solid ${d>=7?'var(--red)':'var(--yellow)'};">
+            <input type="checkbox" class="chkPub" data-cli="${slug}" value="${p.id}" onclick="atualizarBarraConfirmarPub()" style="margin-top:3px;width:16px;height:16px;flex-shrink:0;">
+            <div style="flex:1;min-width:0;">
+              <div class="nome" style="font-size:13px;">${esc(nomeDaDemanda({titulo:p.titulo}).nome)}</div>
+              <div class="meta" style="margin-top:3px;">Era pra ir ao ar em ${formatarDataBR(p.dataAgendada)}${p.horaAgendada?' às '+esc(p.horaAgendada):''} · <b>${d} dia(s) atrás</b></div>
+              ${p.videoId && vids[p.videoId] && !['finalizado','arquivado'].includes(vids[p.videoId].status)
+                ? '<div class="meta" style="margin-top:2px;color:var(--yellow2);">O vídeo desta postagem ainda conta como trabalho em aberto.</div>' : ''}
+            </div>
+          </label>`;
+        }).join('')}
+      </div>`;
+    }).join('');
+
+    html += `<div class="card"><button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="marcarTodasConfirmarPub('', true)">Marcar todas as ${vencidas.length}</button>
+      <div class="desc" style="margin-top:8px;">Só use isto se tiver certeza de que todas já foram ao ar.</div></div>`;
+
+    cont.innerHTML = html;
+    atualizarBarraConfirmarPub();
+  }
 
   async function renderGradeDePostagens(){
     const cont = document.getElementById('postagensConteudo');
@@ -6605,10 +6755,67 @@
       }
     }catch(e){ console.error('Falha ao marcar item do calendário como publicado:', e); }
 
+    /* ===== O ELO QUE FALTAVA — 02/08/2026 =============================
+       Esta função marcava a postagem como publicada, fechava a demanda e
+       acertava o calendário do cliente — e NUNCA tocava no vídeo. O vídeo
+       ficava em "aprovado" pra sempre, mesmo com o post já no ar.
+
+       Medi no banco em 02/08: dos 81 vídeos parados em "aprovado", 32
+       tinham a postagem JÁ PUBLICADA. Não era fila, era elo quebrado.
+
+       Efeito: a esteira mostrava 81 vídeos em aberto quando 32 estavam
+       prontos, e a carga por editor inflava pelo mesmo motivo. */
+    try{
+      const pSnap2 = await getDoc(doc(db,'postagens', id));
+      const p2 = pSnap2.exists() ? pSnap2.data() : null;
+      if(p2 && p2.videoId){
+        const vSnap = await getDoc(doc(db,'videos_producao', p2.videoId));
+        if(vSnap.exists() && !['finalizado','arquivado'].includes(vSnap.data().status)){
+          await updateDoc(doc(db,'videos_producao', p2.videoId), {
+            status: 'finalizado', finalizadoEm: new Date().toISOString(), finalizadoVia: 'postagem_publicada'
+          });
+          registrarHistorico('videos_producao', p2.videoId, 'Finalizado — a postagem foi publicada', 'Confirmado por ' + (usuarioAtual||'?'));
+        }
+      }
+    }catch(e){ console.error('Falha ao finalizar o vídeo depois da publicação:', e); }
+
     mostrarToast('Publicação confirmada! ✔');
     if(document.getElementById('subtabAgendarPostagem')?.classList.contains('active')) renderAgendarPostagens();
     else renderTodasPostagens();
   };
+
+  /* ===== A CONCILIAÇÃO DOS QUE JÁ FICARAM PRESOS =====================
+     Consertar a função só resolve daqui pra frente. Os 32 que já estão
+     presos precisam de alguém que passe e feche. Entra no motor, roda
+     sozinha, e não faz barulho: se não houver nenhum, não escreve nada. */
+  async function conciliarVideoComPostagemPublicada(){
+    const [vSnap, pSnap] = await Promise.all([
+      getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens'))
+    ]);
+    const postadoPorVideo = {};
+    pSnap.forEach(d => { const p = d.data();
+      if(p.excluido || p.status !== 'postado' || !p.videoId) return;
+      postadoPorVideo[p.videoId] = { id: d.id, em: p.postadoEm || p.dataAgendada || '' }; });
+
+    let n = 0;
+    for(const d of vSnap.docs){
+      const v = d.data();
+      if(v.excluido) continue;
+      if(['finalizado','arquivado'].includes(v.status)) continue;
+      const post = postadoPorVideo[d.id];
+      if(!post) continue;
+      await updateDoc(doc(db,'videos_producao', d.id), {
+        status: 'finalizado', finalizadoEm: post.em || new Date().toISOString(),
+        finalizadoVia: 'conciliacao_postagem_publicada'
+      });
+      registrarHistorico('videos_producao', d.id, 'Finalizado pela conciliação',
+        'A postagem deste vídeo já estava publicada e o vídeo tinha ficado em "' + (v.status||'?') + '".');
+      n++;
+    }
+    if(n) registrarLogAutomacao('conciliacao_video_postado', String(n), n + ' vídeo(s) fechados por já terem a postagem publicada');
+    return n;
+  }
+  window.conciliarVideoComPostagemPublicada = conciliarVideoComPostagemPublicada;
 
   /* 01/08/2026 — passou a aceitar os valores por parâmetro. O calendário
      de postagem precisa salvar a partir da ficha, e ler `dataPost_<id>`
@@ -10866,6 +11073,8 @@
          exatamente o defeito do painel de extras que o Chris reportou. */
       const elGrade = document.getElementById('subtabCalendarioPostagem');
       if(elGrade) elGrade.style.display = veAgendar ? 'block' : 'none';
+      const elConf = document.getElementById('subtabConfirmarPub');
+      if(elConf) elConf.style.display = veAgendar ? 'block' : 'none';
       // Aterrissagem por papel: Gabi cai em legenda, Ceci em agendar,
       // Chris/Amanda no Status Completo (visao de gestao), resto em Todas.
       let primeiraAba = 'todas', elPrimeira = document.getElementById('subtabTodasPostagens');
@@ -11518,6 +11727,15 @@
         porCliente[k] = (porCliente[k]||0) + 1; });
       Object.entries(porCliente).forEach(([k,n]) => detalheSaiu.push(k + ' (' + n + ')'));
     }catch(e){ console.error('Indicadores: trabalho de cliente que saiu', e); }
+    /* 02/08/2026 — o Chris pediu que isto ficasse BEM VISÍVEL pra Amanda.
+       Indicador no painel + sub-aba própria: os dois caminhos levam ao
+       mesmo lugar, porque o custo de ela não ver é o número do mês errado. */
+    const pubVencidas = (posts||[]).filter(p => p.status === 'agendado' && String(p.dataAgendada||'') < hoje);
+    lista.push(I('confirmarPub', 'Esperando confirmar que foi postado', pubVencidas.length,
+      pubVencidas.length ? 'alto' : 'ok', "irParaConfirmarPublicacoes()",
+      pubVencidas.length ? ('A data já passou e ninguém disse se foi ao ar. Enquanto isso, ' + pubVencidas.length + ' vídeo(s) continuam contando como trabalho em aberto.')
+                         : 'Tudo que tinha data passada já foi confirmado.'));
+
     lista.push(I('clienteSaiuAberto', 'Trabalho de cliente que saiu', saiuAberto, saiuAberto?'alto':'ok',
       "irParaAtalho('postagens')",
       saiuAberto ? ('Continua na esteira depois da saída: ' + detalheSaiu.join(', ') + '. Postagem agendada pode subir sozinha no perfil dele.')
@@ -12515,6 +12733,15 @@
       console.error('Modo campo — erro de conexão:', err);
       cont.innerHTML = '<div class="card"><div class="empty">Perdi a conexão. Recarrega a página.</div></div>';
     });
+  };
+
+  window.irParaConfirmarPublicacoes = function(){
+    const nav = document.getElementById('navPostagens');
+    if(nav) irPara('postagens', nav);
+    setTimeout(() => {
+      const el = document.getElementById('subtabConfirmarPub');
+      if(el) setPostagensSub('confirmar', el);
+    }, 300);
   };
 
   window.irParaAprovacoes = function(){
@@ -18358,7 +18585,8 @@
          existe em vez de virar um segundo motor: o lock, o isolamento de
          erro e o intervalo já estão resolvidos aqui. Ela mesma se limita
          a uma rodada por dia. */
-      { nome: 'conferenciaDoSistema', fn: () => window.conferenciaDoSistema() }
+      { nome: 'conferenciaDoSistema', fn: () => window.conferenciaDoSistema() },
+      { nome: 'videoComPostagemPublicada', fn: conciliarVideoComPostagemPublicada }
     ];
 
     for(const v of verificacoes){

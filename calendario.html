@@ -313,6 +313,17 @@
         <button class="btn btn-y" onclick="saveItem()">Salvar</button>
       </div>
     </div>
+    <!-- ===== 03/08/2026 — O CAMPO DO CLIENTE =========================
+         A Emanuelle escreveu a observação dela no campo "Observação pro
+         filmmaker", que é da Gabi — e que nem grava quando o cliente
+         mexe. Agora ela tem campo próprio, e o que ela escreve aqui vira
+         demanda pra Gabi ajustar. -->
+    <div class="field" id="campoObsCliente" style="display:none;">
+      <label>Quer pedir algum ajuste neste conteúdo?</label>
+      <textarea id="mObsCliente" style="min-height:64px;font-size:11.5px;line-height:1.5;" placeholder="Ex: trocar o prato, mudar o dia, o texto não é bem assim..."></textarea>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Isso chega direto na Gabi como tarefa de ajuste. Se estiver tudo certo, deixa vazio e só aprova.</div>
+      <button class="btn btn-y" id="btnEnviarObsCliente" onclick="enviarObsDoCliente()" style="width:100%;margin-top:8px;">Enviar pedido de ajuste</button>
+    </div>
     <div style="margin-top:10px;text-align:center;">
       <button class="btn btn-g" id="aprBtn" onclick="toggleApr()" style="width:100%;">✓ Aprovar conteúdo</button>
     </div>
@@ -904,6 +915,86 @@ async function load(){
     document.getElementById('viewGrid').innerHTML='<div style="padding:30px;text-align:center;color:#e07a7a;">Erro de conexão com o banco de dados: '+err.message+'</div>';
   });
 }
+/* ===================================================================
+   A APROVAÇÃO DO CLIENTE — 03/08/2026
+   O Chris relatou: "a Emanuelle aprovou e colocou Obs mas não atualizou
+   nem pra ela nem pra nós."
+
+   FUI MEDIR NO BANCO E É PIOR QUE UM CASO:
+       46 sessões de cliente abertas
+        0 itens aprovados no sistema inteiro (21 calendários)
+        0 comentários de cliente em calendário
+        0 avisos de cliente na coleção
+
+   Nenhum cliente jamais conseguiu aprovar nada. A barra "Aprovação do
+   cliente: 0/15" que ele mandou no print é o sistema dizendo a verdade:
+   nada foi aprovado, porque nada PODIA ser.
+
+   A CAUSA. O `save()` tem a TRAVA 0: "cliente não grava calendário".
+   Ela existe por um bom motivo — antes, a mesma página editável servia
+   os dois lados e o cliente podia apagar o mês inteiro sem querer.
+   Mas o botão de aprovar do cliente chama `save()`. E o campo de
+   comentário também. Então a trava, que era pra impedir ele de APAGAR,
+   impedia ele de fazer as duas únicas coisas que ele deve fazer.
+
+   E FALHAVA CALADA: a tela pintava o conteúdo de verde, a barra subia,
+   e no F5 sumia tudo. O cliente achava que aprovou. A equipe nunca sabia.
+
+   O CONSERTO. O cliente ganha um caminho próprio de escrita, restrito
+   por construção:
+     · lê o documento do banco na hora (fonte da verdade)
+     · aplica SÓ o que ele tem direito de mudar
+     · nunca toca em nome, descrição, dia, mês, legenda ou referência
+     · se a gravação falhar, DESFAZ o visual e diz na cara
+
+   O que ele pode mudar: `apr` (aprovar/desaprovar), `obsCliente` (a
+   observação dele, num campo separado do `obs` da Gabi pra não haver
+   disputa) e `comments`. Nada mais.
+   =================================================================== */
+async function salvarComoCliente(aplicar, oQueFoi){
+  if(!window.__fb){ avisarTela('Sem conexão com o servidor. Nada foi salvo.', 'erro'); return false; }
+  const { docRef, getDoc, setDoc } = window.__fb;
+  try{
+    const atual = await getDoc(docRef);
+    if(!atual.exists()){ avisarTela('Não achei seu calendário no servidor. Avisa a Get Started.', 'erro'); return false; }
+    const srv = atual.data();
+    const itens = (srv.items || []).map(i => ({ ...i }));
+    const comentarios = (srv.comments || []).slice();
+
+    /* `aplicar` só recebe o que é do cliente. Ele não tem como alterar
+       outra coisa nem por engano, porque o resto do documento vem do
+       servidor e volta intacto. */
+    const mudou = aplicar(itens, comentarios);
+    if(!mudou) return false;
+
+    await setDoc(docRef, {
+      ...srv,
+      items: itens,
+      comments: comentarios,
+      updatedAt: new Date().toISOString(),
+      ultimaAcaoDoCliente: { oQue: oQueFoi || '', em: new Date().toISOString() }
+    });
+
+    /* A memória desta aba passa a ser o que o banco tem. Sem isso, a
+       próxima ação dela gravaria em cima com dado velho. */
+    data.items = itens; data.comments = comentarios;
+    renderAll_semSalvar();
+    return true;
+  }catch(e){
+    console.error('Falha ao gravar a ação do cliente:', e);
+    avisarTela('Não consegui salvar no servidor — nada foi registrado. Tenta de novo; se insistir, avisa a Get Started.', 'erro');
+    return false;
+  }
+}
+
+/* Redesenha sem passar pelo save() — o cliente não grava por este caminho. */
+function renderAll_semSalvar(){
+  renderGrid();renderWeek();renderKanban();renderProgress();renderSeletorMes();
+  try{ renderBlocos(); }catch(e){}
+  try{ renderFeedback(); }catch(e){}
+}
+window.renderAll_semSalvar = renderAll_semSalvar;
+
 function save(){
   /* TRAVA 0 — cliente não grava calendário. Ele lê, comenta e aprova.
      Antes era a MESMA página editável pros dois lados: o cliente podia
@@ -1334,11 +1425,92 @@ function submitFeedback(){
   if(!txt)return;
   if(!data.comments)data.comments=[];
   const ehCliente = window.__modoCal === 'cliente';
-  data.comments.unshift({text:txt,date:new Date().toISOString(),porCliente:ehCliente});
+  const registro = {text:txt,date:new Date().toISOString(),porCliente:ehCliente};
+
+  /* 03/08/2026 — o recado do cliente também morria no `save()`. O aviso
+     pra equipe era criado, mas o texto não ficava guardado no calendário,
+     então ninguém achava depois. Agora grava pelo caminho dele. */
+  if(ehCliente){
+    salvarComoCliente((itens, comentarios) => { comentarios.unshift(registro); return true; }, 'deixou um recado')
+      .then(ok => {
+        if(!ok) return;
+        document.getElementById('fbText').value='';
+        renderFeedback();
+        avisarEquipeDoRecado(txt);
+      });
+    return;
+  }
+
+  data.comments.unshift(registro);
   document.getElementById('fbText').value='';
   save();
   renderFeedback();
-  if(ehCliente) avisarEquipeDoRecado(txt);
+}
+
+/* ===== O AVISO QUE NÃO EXISTIA — 03/08/2026 ========================
+   O Chris pediu: "importante chegar notificação do que está aprovando".
+   Aprovação de cliente não avisava ninguém — nem quando funcionava. */
+window.enviarObsDoCliente = async function(){
+  if(editIdx===null) return;
+  const idx = editIdx;
+  const item = data.items[idx];
+  if(!item) return;
+  const txt = (document.getElementById('mObsCliente')?.value || '').trim();
+  if(!txt){ avisarTela('Escreve o que você quer mudar antes de enviar.', 'erro'); return; }
+  const btn = document.getElementById('btnEnviarObsCliente');
+  if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
+  const ok = await salvarComoCliente((itens) => {
+    if(!itens[idx]) return false;
+    itens[idx].obsCliente = txt;
+    itens[idx].obsClienteEm = new Date().toISOString();
+    /* Pedir ajuste desfaz a aprovação: não faz sentido estar aprovado e
+       com ajuste pedido ao mesmo tempo. */
+    itens[idx].apr = false; itens[idx].aprPor=''; itens[idx].aprEm='';
+    return true;
+  }, 'pediu um ajuste');
+  if(btn){ btn.disabled = false; btn.textContent = 'Enviar pedido de ajuste'; }
+  if(!ok) return;
+  await pedirAjusteDoCliente(item, idx, txt);
+  avisarTela('Pedido enviado — a Gabi recebeu e vai ajustar.');
+  openEdit(idx);
+};
+
+async function avisarEquipeDaAprovacao(item, idx){
+  try{
+    const fb = window.__fb; if(!fb || !fb.addDoc) return;
+    const nome = (data.client || window.__clienteId || 'cliente');
+    const quantos = (data.items||[]).filter(i=>i&&i.apr).length;
+    const total = (data.items||[]).length;
+    for(const quem of ['Gabrielle','Amanda']){
+      await fb.addDoc(fb.collection(fb.db,'avisos_do_cliente'), {
+        cliente: window.__clienteId, clienteNome: nome,
+        titulo: '✅ ' + nome + ' aprovou: ' + String(item.name||'conteúdo').slice(0,50),
+        descricao: 'Dia ' + (item.day||'?') + ' — ' + (item.name||'')
+          + '\n\nAprovados até agora: ' + quantos + ' de ' + total + '.'
+          + (String(item.obsCliente||'').trim() ? '\n\nObservação que ele deixou:\n"' + item.obsCliente + '"' : ''),
+        paraQuem: quem, lido: false, viraDemanda: false, criadoEm: new Date().toISOString()
+      });
+    }
+  }catch(e){ console.error('Falha ao avisar a equipe da aprovação:', e); }
+}
+
+/* A observação do cliente num conteúdo específico vira DEMANDA pra Gabi
+   ajustar — foi pedido explícito do Chris: "Obs e ajuste ir de demanda
+   pra gabi ajustar". Recado solto continua sendo aviso; observação em
+   cima de um conteúdo é trabalho. */
+async function pedirAjusteDoCliente(item, idx, texto){
+  try{
+    const fb = window.__fb; if(!fb || !fb.addDoc) return;
+    const nome = (data.client || window.__clienteId || 'cliente');
+    await fb.addDoc(fb.collection(fb.db,'avisos_do_cliente'), {
+      cliente: window.__clienteId, clienteNome: nome,
+      titulo: '✏️ ' + nome + ' pediu ajuste em: ' + String(item.name||'conteúdo').slice(0,45),
+      descricao: 'Conteúdo do dia ' + (item.day||'?') + ' — ' + (item.name||'')
+        + '\n\nO que ele escreveu:\n"' + texto + '"'
+        + '\n\nAjusta no calendário dele e, se precisar, fala com ele. Depois de ajustar, ele aprova de novo.',
+      paraQuem: 'Gabrielle', lido: false, viraDemanda: true, criadoEm: new Date().toISOString()
+    });
+  }catch(e){ console.error('Falha ao criar o pedido de ajuste:', e); }
 }
 
 async function avisarEquipeDoRecado(txt){
@@ -1498,6 +1670,13 @@ function openEdit(i){editIdx=i;const it=data.items[i];document.getElementById('m
   document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
   document.getElementById('mLegenda').value=it.legenda||'';
   const moE=document.getElementById('mObs'); if(moE) moE.value=it.obs||'';
+  /* 03/08/2026 — o campo do cliente só aparece pra ele, e já mostra o que
+     ele escreveu antes, pra não parecer que sumiu. */
+  const ehCli = window.__modoCal === 'cliente';
+  const boxCli = document.getElementById('campoObsCliente');
+  if(boxCli) boxCli.style.display = ehCli ? 'block' : 'none';
+  const moCli = document.getElementById('mObsCliente');
+  if(moCli) moCli.value = it.obsCliente || '';
   document.getElementById('mRef').value=it.ref||'';
   document.getElementById('mStage').value=it.stage;document.getElementById('mFmt').value=it.fmt;
   document.getElementById('mFlex').checked=!!it.dataFlexivel;
@@ -1530,7 +1709,43 @@ function saveItem(){
   if(editIdx!==null)data.items[editIdx]=it;else data.items.push(it);
   closeModal();renderAll();}
 function delItem(){if(editIdx!==null){apagouDePropósito=true;data.items.splice(editIdx,1);}closeModal();renderAll();}
-function toggleApr(){if(editIdx!==null){data.items[editIdx].apr=!data.items[editIdx].apr;save();openEdit(editIdx);renderAll();}}
+async function toggleApr(){
+  if(editIdx===null) return;
+  const idx = editIdx;
+  const item = data.items[idx];
+  if(!item) return;
+
+  /* ===== 03/08/2026 — O CLIENTE TEM CAMINHO PRÓPRIO ==================
+     Antes isto chamava `save()` pros dois lados, e o `save()` recusava a
+     gravação do cliente. Ele via verde e nada acontecia. */
+  if(window.__modoCal === 'cliente'){
+    const virandoAprovado = !item.apr;
+    const btn = document.getElementById('aprBtn');
+    if(btn){ btn.disabled = true; btn.textContent = virandoAprovado ? 'Aprovando…' : 'Removendo…'; }
+    const ok = await salvarComoCliente((itens) => {
+      if(!itens[idx]) return false;
+      itens[idx].apr = virandoAprovado;
+      itens[idx].aprPor = virandoAprovado ? 'cliente' : '';
+      itens[idx].aprEm  = virandoAprovado ? new Date().toISOString() : '';
+      return true;
+    }, virandoAprovado ? 'aprovou um conteúdo' : 'removeu a aprovação de um conteúdo');
+
+    if(btn) btn.disabled = false;
+    if(!ok){
+      /* Falhou: NÃO deixa a tela mentindo. */
+      openEdit(idx);
+      return;
+    }
+    if(virandoAprovado) avisarEquipeDaAprovacao(item, idx);
+    avisarTela(virandoAprovado ? 'Aprovado! A Get Started foi avisada.' : 'Aprovação removida.');
+    openEdit(idx);
+    return;
+  }
+
+  /* Equipe: segue como sempre. */
+  data.items[idx].apr = !data.items[idx].apr;
+  save(); openEdit(idx); renderAll();
+}
 
 function stageLabel(s){return s==='topo'?'Topo':s==='meio'?'Meio':'Fundo';}
 function shortMonth(){return (data.month||'').slice(0,3).toUpperCase();}

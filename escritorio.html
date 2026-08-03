@@ -6083,6 +6083,7 @@
               <div class="meta" style="margin-top:3px;">Era pra ir ao ar em ${formatarDataBR(p.dataAgendada)}${p.horaAgendada?' às '+esc(p.horaAgendada):''} · <b>${d} dia(s) atrás</b></div>
               ${p.videoId && vids[p.videoId] && !['finalizado','arquivado'].includes(vids[p.videoId].status)
                 ? '<div class="meta" style="margin-top:2px;color:var(--yellow2);">O vídeo desta postagem ainda conta como trabalho em aberto.</div>' : ''}
+              ${p.origemManual ? '<div class="meta" style="margin-top:2px;">'+esc(p.tipoManual||'Post avulso')+' — adicionado à mão por '+esc(p.criadoPor||'?')+', não passou pela esteira</div>' : ''}
             </div>
           </label>`;
         }).join('')}
@@ -6512,6 +6513,137 @@
     renderLegendasPendentes();
   };
 
+  /* ===================================================================
+     POST QUE NÃO ESTÁ NO SISTEMA — 03/08/2026 (pedidos 2 e 3 da Amanda)
+     "Ter a opção de agendar outros post, exemplo agendar as artes: poder
+     colocar um link que não tenha no sistema mas que vai virar postagem
+     nessa aba, com título, legenda, dia e hora, assim como dos vídeos."
+     "Na aba de postagens pendentes, Amanda ter a opção de adicionar os
+     post que precisam ser agendados (arte ou vídeo extra encaminhado
+     pelo cliente)."
+
+     São o mesmo pedido visto de dois lugares: uma forma de criar postagem
+     sem que exista vídeo por trás. Fiz UM caminho, com o botão onde ela
+     pediu — na aba de agendamento.
+
+     Uma decisão: o post avulso entra na MESMA coleção `postagens`, não
+     numa coleção separada. Se fosse separada, a grade do portal, o
+     "Programados", o "Postagem até quando" e a conferência do sistema
+     todos teriam que aprender a ler dois lugares — e algum esqueceria.
+     Ele nasce marcado com `origemManual` pra dar pra distinguir na tela e
+     nos relatórios, sem duplicar a fonte da verdade. */
+  window.abrirFormPostAvulso = function(){
+    const box = document.getElementById('formPostAvulso');
+    if(!box) return;
+    const abrindo = box.style.display === 'none';
+    box.style.display = abrindo ? 'block' : 'none';
+    if(abrindo){
+      const d = document.getElementById('avulsoData');
+      if(d && !d.value) d.value = hojeLocal();
+      const h = document.getElementById('avulsoHora');
+      if(h && !h.value) h.value = '12:00';
+      const c = document.getElementById('avulsoCliente');
+      if(c) c.focus();
+    }
+  };
+
+  window.salvarPostAvulso = async function(){
+    const v = id => (document.getElementById(id)?.value || '').trim();
+    const cliente = v('avulsoCliente');
+    const titulo  = v('avulsoTitulo');
+    const legenda = v('avulsoLegenda');
+    const link    = v('avulsoLink');
+    const data    = v('avulsoData');
+    const hora    = v('avulsoHora') || '12:00';
+    const tipo    = v('avulsoTipo') || 'Arte';
+
+    if(!cliente){ mostrarToast('Escolhe o cliente.', 'erro'); return; }
+    if(!titulo){ mostrarToast('Escreve um título — é por ele que o cliente reconhece o post.', 'erro'); return; }
+
+    const nomeCliente = (CLIENTES_LISTA.find(c => c.slug === cliente) || {}).nome || cliente;
+    /* Sem data, ele entra na fila de pendentes em vez de ficar agendado —
+       assim não desaparece nem mente que está marcado. */
+    const temData = !!data;
+
+    const btn = document.getElementById('btnSalvarAvulso');
+    if(btn){ btn.disabled = true; btn.textContent = 'Salvando…'; }
+    try{
+      const ref = await addDoc(collection(db,'postagens'), {
+        videoId: null, cliente, clienteNome: nomeCliente,
+        titulo: titulo, linkVideo: link, legenda,
+        legendaPor: legenda ? (usuarioAtual||'?') : '', legendaEm: legenda ? new Date().toISOString() : '',
+        calendarItemIdx: null, calendarClienteSlug: null,
+        dataAgendada: temData ? data : '', horaAgendada: temData ? hora : '',
+        agendadoPor: temData ? (usuarioAtual||'?') : '', agendadoEm: temData ? new Date().toISOString() : '',
+        status: temData ? 'agendado' : 'aguardando_agendamento',
+        origemManual: true, tipoManual: tipo, criadoPor: usuarioAtual || '?',
+        criadoEm: serverTimestamp()
+      });
+      registrarHistorico('postagens', ref.id,
+        'Post avulso criado por ' + (usuarioAtual||'?'),
+        tipo + (temData ? ' — agendado pra ' + formatarDataBR(data) + ' às ' + hora : ' — sem data ainda, entrou na fila'));
+
+      /* Só sincroniza o calendário do cliente se tem data. Item sem dia
+         no calendário dele não faz sentido. */
+      if(temData){
+        try{
+          const r = await sincronizarItemDoCalendario(ref.id);
+          if(!r.ok) console.error('Post avulso: não sincronizou o calendário —', r.motivo);
+        }catch(e){ console.error('Post avulso: falha ao sincronizar o calendário:', e); }
+      }
+
+      mostrarToast(temData
+        ? 'Post criado e agendado pra ' + formatarDataBR(data) + ' — já aparece no portal do cliente.'
+        : 'Post criado e entrou na fila de agendamento.');
+
+      ['avulsoTitulo','avulsoLegenda','avulsoLink'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+      const box = document.getElementById('formPostAvulso'); if(box) box.style.display='none';
+      renderAgendarPostagens();
+    }catch(e){
+      console.error('Falha ao criar o post avulso:', e);
+      mostrarToast('Não consegui criar agora: ' + (e.message||'erro'), 'erro');
+    }finally{
+      if(btn){ btn.disabled = false; btn.textContent = '✔ Criar post'; }
+    }
+  };
+
+  function htmlFormPostAvulso(){
+    return `<div class="card" style="border-color:var(--yellow);">
+      <h2 style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>Post que não está no sistema</span>
+        <button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11.5px;" onclick="abrirFormPostAvulso()">+ Adicionar</button>
+      </h2>
+      <div class="desc">Pra arte, vídeo extra que o cliente mandou, ou qualquer coisa que vai ser postada mas não passou pela esteira de produção. Entra na fila igual às outras e aparece no calendário do cliente.</div>
+      <div id="formPostAvulso" style="display:none;margin-top:12px;">
+        <div class="row2">
+          <div class="field"><label>Cliente</label>
+            <select id="avulsoCliente">
+              <option value="">Selecione...</option>
+              ${CLIENTES_LISTA.map(c=>`<option value="${c.slug}">${esc(c.nome)}</option>`).join('')}
+            </select></div>
+          <div class="field"><label>O que é</label>
+            <select id="avulsoTipo">
+              <option value="Arte">Arte</option>
+              <option value="Vídeo extra do cliente">Vídeo extra do cliente</option>
+              <option value="Story">Story</option>
+              <option value="Carrossel">Carrossel</option>
+              <option value="Outro">Outro</option>
+            </select></div>
+        </div>
+        <div class="field"><label>Título</label><input type="text" id="avulsoTitulo" placeholder="Ex: Arte da promoção de agosto"></div>
+        <div class="field"><label>Link do material</label><input type="text" id="avulsoLink" placeholder="Link do Drive, Canva, WeTransfer...">
+          <div class="desc" style="margin:4px 0 0;">Opcional, mas sem ele quem posta vai ter que procurar.</div></div>
+        <div class="field"><label>Legenda</label><textarea id="avulsoLegenda" placeholder="Se já tiver a legenda, cola aqui. Se não, deixa vazio e escreve depois."></textarea></div>
+        <div class="row2">
+          <div class="field"><label>Dia da postagem</label><input type="date" id="avulsoData"></div>
+          <div class="field"><label>Hora</label><input type="time" id="avulsoHora"></div>
+        </div>
+        <div class="desc" style="margin-bottom:8px;">Sem dia, ele entra na fila de "pra agendar" em vez de ficar marcado — assim não some nem mente que está agendado.</div>
+        <button class="btn" id="btnSalvarAvulso" onclick="salvarPostAvulso()">✔ Criar post</button>
+      </div>
+    </div>`;
+  }
+
   async function renderAgendarPostagens(){
     const cont = document.getElementById('postagensConteudo');
     const [postSnap, agSnap] = await Promise.all([
@@ -6557,11 +6689,18 @@
       `).join('');
     }
 
-    if(!pendentes.length){ cont.innerHTML = resumo + '<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'; return; }
+    /* 03/08/2026 — o botão fica ANTES da lista, e aparece mesmo quando a
+       fila está vazia. Ela pediu "na aba de postagens pendentes", e é
+       justamente quando não tem nada pendente que ela vai querer
+       acrescentar uma arte. */
+    if(!pendentes.length){ cont.innerHTML = resumo + htmlFormPostAvulso() + '<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'; return; }
 
     pendentes.sort((a,b) => new Date(a.legendaEm||0) - new Date(b.legendaEm||0));
 
-    cont.innerHTML = resumo + pendentes.map(p => {
+    /* Ordena pelos mais antigos na fila primeiro — o avulso recém-criado
+       não pode furar a fila de quem está esperando há dias. */
+    pendentes.sort((a,b) => String(a.legendaEm||a.criadoEm?.seconds||'').localeCompare(String(b.legendaEm||b.criadoEm?.seconds||'')));
+    cont.innerHTML = resumo + htmlFormPostAvulso() + pendentes.map(p => {
       const diasEsperando = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime()) / 86400000) : 0;
       const urgente = diasEsperando >= 1;
       return `
@@ -6871,6 +7010,92 @@
      de lá criaria dois elementos com o mesmo id na página (a fila e a
      ficha), com o getElementById pegando o errado. Sem parâmetro,
      continua funcionando exatamente como antes. */
+  /* ===================================================================
+     A DATA NO CALENDÁRIO DO CLIENTE — 03/08/2026 (pedido da Amanda)
+     "atualizar a data de programados no portal do cliente sempre que for
+     ajustado. Ex: Juliane foi ajustada a postagem do dia 03 para o dia 01."
+
+     FUI VER NO BANCO E O CASO DELA ESTÁ LÁ:
+        postagem "Juliane Nerone — Pego ou passo": dataAgendada 2026-08-03
+        item do calendário, mesmo nome:            day 1
+
+     Três dias de diferença entre o que a agência agendou e o que a
+     cliente vê. E são DOIS bugs empilhados:
+
+     BUG 1 — NOME DE CAMPO ERRADO. A sincronização procurava o item
+     planejado assim:
+         p.calendarioSlug === p.cliente && Number.isInteger(p.calendarioIdx)
+     Só que a postagem grava `calendarClienteSlug` e `calendarItemIdx`.
+     Nomes diferentes. Medi: 0 de 102 postagens têm `calendarioIdx`.
+     Então aquele `if` era SEMPRE falso, e caía no `items.push()` — que
+     cria item novo em vez de atualizar o que existe.
+
+     BUG 2 — O VÍNCULO NUNCA FOI PREENCHIDO. `calendarItemIdx` existe em
+     79 postagens e está nulo em TODAS. Nenhum item do calendário tem
+     `postagemId`. Ou seja: nem com o nome certo o vínculo seria achado.
+
+     Por isso mudar a data nunca chegou na cliente: não havia como o
+     sistema saber QUAL item do calendário era aquela postagem.
+
+     O CONSERTO: casar por três caminhos, em ordem de confiança —
+       1. `postagemId` no item (vínculo direto, o melhor)
+       2. `calendarItemIdx` da postagem (o nome CERTO do campo)
+       3. o título exato do conteúdo (funciona pro que já existe hoje)
+     E quando acha, ATUALIZA o dia em vez de empurrar item novo. Só cria
+     item quando não achou nada mesmo. */
+  async function sincronizarItemDoCalendario(postagemId){
+    let p = null;
+    try{ const sn = await getDoc(doc(db,'postagens', postagemId)); if(sn.exists()) p = sn.data(); }catch(e){}
+    if(!p || !p.cliente || !p.dataAgendada) return { ok:false, motivo:'postagem sem cliente ou sem data' };
+
+    const calRef = doc(db,'calendarios', p.cliente);
+    let calSnap;
+    try{ calSnap = await getDoc(calRef); }catch(e){ return { ok:false, motivo:'não consegui ler o calendário' }; }
+
+    const dia = parseInt(String(p.dataAgendada).split('-')[2]);
+    const novoItem = {
+      day: dia, name: p.titulo, desc: p.legenda || '', ref: p.linkVideo || '',
+      stage: 'meio', fmt: 'Reel', apr: false, posted: false, gravado: true,
+      agendado: true, postagemId: postagemId, mes: String(p.dataAgendada).slice(0,7),
+      dataFlexivel: false, dataPostagem: p.dataAgendada
+    };
+
+    if(!calSnap.exists()){
+      await setDoc(calRef, { client: p.clienteNome || p.cliente, month: '', items: [novoItem],
+                             comments: [], updatedAt: new Date().toISOString() });
+      return { ok:true, como:'criou o calendário' };
+    }
+
+    const dados = calSnap.data();
+    const items = (dados.items || []).slice();
+
+    let idx = items.findIndex(it => it && it.postagemId === postagemId);
+    let como = 'pelo vínculo direto';
+    if(idx < 0 && Number.isInteger(p.calendarItemIdx) && p.calendarClienteSlug === p.cliente && items[p.calendarItemIdx]){
+      idx = p.calendarItemIdx; como = 'pelo índice do calendário';
+    }
+    if(idx < 0){
+      idx = items.findIndex(it => it && String(it.name||'').trim() === String(p.titulo||'').trim());
+      como = 'pelo título';
+    }
+
+    if(idx >= 0){
+      const antes = items[idx].day;
+      items[idx] = { ...items[idx], day: dia, agendado: true, postagemId: postagemId,
+                     ref: p.linkVideo || items[idx].ref || '', dataPostagem: p.dataAgendada };
+      /* A legenda só entra se o item não tinha texto — o roteiro da Gabi
+         não pode ser sobrescrito pela legenda da postagem. */
+      if(!String(items[idx].desc||'').trim() && String(p.legenda||'').trim()) items[idx].desc = p.legenda;
+      await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+      return { ok:true, como, deDia: antes, praDia: dia, mudouDia: Number(antes) !== dia };
+    }
+
+    items.push(novoItem);
+    await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+    return { ok:true, como:'criou item novo (não achei nenhum parecido)' };
+  }
+  window.sincronizarItemDoCalendario = sincronizarItemDoCalendario;
+
   window.salvarAgendamentoPostagem = async function(id, dataArg, horaArg){
     const data = dataArg !== undefined ? dataArg : document.getElementById('dataPost_'+id).value;
     const hora = (horaArg !== undefined ? horaArg : document.getElementById('horaPost_'+id).value) || '12:00';
@@ -6882,63 +7107,23 @@
     await updateDoc(doc(db,'postagens', id), { dataAgendada: data, horaAgendada: hora, agendadoPor: usuarioAtual||'Cecília', agendadoEm: new Date().toISOString(), status: 'agendado' });
     darBaixaDemandaAgendamento(id).catch(e => console.error('Fase 6: falha ao dar baixa automática na demanda', e));
 
-    try {
-      const calRef = doc(db,'calendarios', p.cliente);
-      const calSnap = await getDoc(calRef);
-      const diaDoMes = parseInt(data.split('-')[2]);
-      /* ===== REVERTIDO 25/07/2026 — erro meu de diagnostico =====
-         Em 23/07 troquei 'meio' por 'programado' achando que `stage` era
-         status de fluxo, porque o portal tem um mapa proprio
-         (planejamento/roteiro/gravacao/programado/publicado) sem a chave
-         'meio'. Estava errado: no calendario, `stage` e ETAPA DE FUNIL —
-         'topo' (atração), 'meio' (conexão) e 'fundo' (conversão). Sao dois
-         vocabularios diferentes com o mesmo nome de campo.
-         'meio' e o padrao certo pra conteudo agendado: a maior parte do
-         conteudo de rotina e de conexao. A Gabi ajusta no proprio
-         calendario quando for topo ou fundo. */
-      const novoItem = {
-        day: diaDoMes, name: p.titulo, desc: p.legenda || '', ref: p.linkVideo || '',
-        /* posted: false — CORRIGIDO 27/07/2026.
-           Antes era `true`: no instante em que a Cecilia AGENDAVA, o item
-           ja nascia "publicado" no calendario do cliente. O Camargo's tinha
-           video marcado como publicado com data 29/07 (dois dias no futuro).
-           Agora quem vira a chave e confirmarPostagemPublicada(). */
-        /* apr: false — DECISAO A, 27/07/2026. A barra do calendario se chama
-           "Aprovacao do cliente" e a automacao a preenchia sozinha ao agendar.
-           Quem marca aprovado agora e o cliente, clicando. */
-        stage: 'meio', fmt: 'Reel', apr: false, posted: false, agendado: true
-      };
-      if(calSnap.exists()){
-        const dados = calSnap.data();
-        const items = dados.items || [];
-        /* ===== 27/07/2026 — ANTES DUPLICAVA O CALENDARIO DA GABI =====
-           Aqui sempre se fazia items.push(): a Gabi planejava "Bastidor da
-           consulta" no dia 10, o video era produzido, a Cecilia agendava, e
-           nascia um SEGUNDO item ("Dra. Monique — video 3") no mesmo dia.
-           O cliente veria o mes em dobro e a barra de aprovacao contaria o
-           dobro. Nenhum cliente tinha os dois tipos ainda, entao isso nunca
-           apareceu — a Monique seria a primeira.
-           Agora, se a legenda veio de um item planejado, esse item e
-           ATUALIZADO no lugar. Sem vinculo (legenda escrita na mao), cai no
-           comportamento antigo e cria um item novo, que e o certo. */
-        const idxPlanejado = (p.calendarioSlug === p.cliente && Number.isInteger(p.calendarioIdx) && items[p.calendarioIdx]) ? p.calendarioIdx : -1;
-        if(idxPlanejado >= 0){
-          items[idxPlanejado] = {
-            ...items[idxPlanejado],
-            day: diaDoMes,
-            ref: p.linkVideo || items[idxPlanejado].ref || '',
-            agendado: true, posted: false,
-            postagemId: id
-          };
-        } else {
-          items.push(novoItem);
-        }
-        await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
+    /* 03/08/2026 — todo este bloco virou uma chamada. Ele montava o item
+       e decidia sozinho se atualizava ou empurrava, com o nome de campo
+       errado. Agora existe uma função só, que casa por três caminhos e
+       ATUALIZA o dia — é o que faz a mudança de data chegar na cliente. */
+    try{
+      const r = await sincronizarItemDoCalendario(id);
+      if(r.ok && r.mudouDia){
+        mostrarToast('Agendado e o calendário do cliente foi atualizado: dia ' + r.deDia + ' → dia ' + r.praDia + '.');
+        registrarHistorico('postagens', id, 'Data mudada no calendário do cliente',
+          'Dia ' + r.deDia + ' → dia ' + r.praDia + ' (casou ' + r.como + ')');
+      } else if(r.ok){
+        mostrarToast('Postagem agendada e sincronizada no calendário do cliente.');
       } else {
-        await setDoc(calRef, { client: p.clienteNome, month: '', items: [novoItem], comments: [], updatedAt: new Date().toISOString() });
+        mostrarToast('Postagem agendada, mas não consegui sincronizar o calendário: ' + (r.motivo||'?'), 'erro');
       }
-      mostrarToast('Postagem agendada e já sincronizada no calendário do cliente!');
-    } catch(e){
+    }catch(e){
+      console.error('Falha ao sincronizar o calendário do cliente:', e);
       mostrarToast('Postagem agendada, mas não consegui sincronizar com o calendário do cliente.', 'erro');
     }
     /* 01/08/2026 — antes chamava renderAgendarPostagens() fixo. Quem

@@ -250,6 +250,10 @@
 <div class="overlay" id="overlay">
   <div class="modal">
     <h2 id="mTitle">Editar conteúdo</h2>
+    <div id="travaItem" style="display:none;background:rgba(251,188,25,.10);border:1px solid var(--yellow,#FBBC19);border-left:3px solid var(--yellow,#FBBC19);border-radius:9px;padding:12px 14px;margin-bottom:12px;">
+      <b id="travaItemTit" style="font-size:13px;">🔒 Este conteúdo já foi programado no Instagram</b>
+      <div id="travaItemTxt" style="font-size:11.5px;color:var(--muted,#8a8a8d);margin-top:5px;line-height:1.55;"></div>
+    </div>
     <div class="field"><label>Dia</label><input id="mDay" type="number" min="1" max="31"></div>
     <div class="field"><label>Título do conteúdo</label><input id="mName"></div>
     <!-- ===== SOLICITAÇÕES ESPECIAIS — 29/07/2026 ====================
@@ -479,6 +483,61 @@ function carimbarMesDosAntigos(){
   const BLOCOS_MAX = 3;
 
   /* 17 itens em 2 blocos → [9, 8]. A sobra vai pro primeiro. */
+  /* ===== O QUE JA SAIU DO PLANEJAMENTO — 03/08/2026 =================
+     Áudio da Amanda sobre o calendário da Dra. Monique:
+
+       "as coisas que a Cecília já fez as postagem no mesmo calendário,
+        coisas que já estão pronto, que já foram editadas, aprovadas e
+        programadas lá no Instagram, estão aparecendo ali como se fosse
+        pra aprovação, dando pra sugerir melhorias. Isso confunde o
+        cliente e confunde o filmmaker, não sei como vai aparecer na
+        contagem do calendário."
+
+     Fui ao banco ver o caso dela antes de mexer. Está tudo certo no
+     dado e errado na tela:
+
+       dia 3  idx 0  "Propósito"                 apr:true  gravado:false
+              idx 14 "Depoimento paciente II"    posted:true
+       dia 5  idx 8  "Vídeo intuitivo sobre..."  obsCliente escrita
+              idx 15 "Depoimento 2"              agendado:true
+
+     Os itens 14 e 15 JÁ TÊM a marca (`posted` e `agendado`). Os 137
+     itens do sistema todos têm esses campos. A tela simplesmente não
+     olhava pra eles — mostrava botão de aprovar e caixa de observação
+     pro cliente em conteúdo que já estava no ar.
+
+     E ela acertou também no segundo dano, que eu não teria achado sem
+     o áudio: `renderBlocos` contava TODOS os itens do mês. Então o
+     filmmaker via na contagem de gravações conteúdo que já estava
+     gravado, editado e agendado. O número que ele usa pra saber quanto
+     gravar no dia estava inflado.
+
+     São DUAS perguntas diferentes e por isso duas funções:
+
+       itemJaNaEsteira      — já foi programado ou publicado. Ninguém
+                              aprova nem comenta mais: está no ar ou a
+                              caminho. Trava.
+       itemNaoPrecisaGravar — já gravado, agendado ou publicado. Sai da
+                              contagem do filmmaker: gravar de novo não
+                              faz sentido.
+
+     `gravado` entra na segunda e não na primeira de propósito: gravado
+     e não agendado ainda está na esteira interna, e a Gabi pode mexer
+     no plano. Programado no Instagram, não. */
+  function itemJaNaEsteira(it){
+    return !!(it && (it.posted || it.agendado));
+  }
+  function itemNaoPrecisaGravar(it){
+    return !!(it && (it.gravado || it.agendado || it.posted));
+  }
+  function rotuloEstadoItem(it){
+    if(!it) return '';
+    if(it.posted)   return 'já publicado';
+    if(it.agendado) return 'já programado no Instagram';
+    if(it.gravado)  return 'já gravado';
+    return '';
+  }
+
   function tamanhosDosBlocos(total, quantos){
     const n = Math.max(1, Math.min(BLOCOS_MAX, Number(quantos) || BLOCOS_PADRAO));
     const t = Math.max(0, Number(total) || 0);
@@ -1104,8 +1163,21 @@ function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgr
 function renderBlocos(){
   const box = document.getElementById('painelBlocos');
   if(!box) return;
-  const itens = itensDoMes(mesVisivel).slice().sort((a,b)=>(a.day||0)-(b.day||0));
-  if(!itens.length){ box.innerHTML=''; return; }
+  /* 03/08 — só entra aqui o que ainda precisa ir pra câmera. Antes
+     contava tudo, e o filmmaker via na conta conteúdo já gravado,
+     editado e agendado. */
+  const doMesBlocos = itensDoMes(mesVisivel);
+  const itens = doMesBlocos.filter(i => !itemNaoPrecisaGravar(i)).slice().sort((a,b)=>(a.day||0)-(b.day||0));
+  const foraDaConta = doMesBlocos.length - itens.length;
+  if(!itens.length){
+    box.innerHTML = doMesBlocos.length
+      ? `<div style="background:var(--card,#26272a);border:1px solid var(--line,#3A3A3D);border-radius:12px;padding:13px 15px;margin-bottom:14px;">
+           <b style="font-size:13px;">Divisão das gravações</b>
+           <div style="font-size:11.5px;color:var(--muted,#8a8a8d);margin-top:5px;line-height:1.5;">Nada pra gravar neste mês — os ${doMesBlocos.length} conteúdo(s) já estão gravados, agendados ou publicados.</div>
+         </div>`
+      : '';
+    return;
+  }
   const n = quantosBlocos(data, mesVisivel);
   const cont = contarPorBloco(itens, n);
   const manuais = itens.filter(i => Number(i.bloco) >= 1).length;
@@ -1127,7 +1199,7 @@ function renderBlocos(){
       </div>`).join('')}
     </div>
     <div style="font-size:11px;color:var(--muted,#8a8a8d);margin-top:9px;line-height:1.5;">
-      É este número que o filmmaker vê no dia. ${manuais ? '<b>'+manuais+'</b> conteúdo(s) você escolheu na mão; o resto é automático (metade e metade, na ordem).' : 'Divisão automática — metade e metade, na ordem. Pra mudar um conteúdo de gravação, abre ele e escolhe em <b>Gravação</b>.'}
+      É este número que o filmmaker vê no dia.${foraDaConta ? ' <b>'+foraDaConta+'</b> conteúdo(s) do mês não entram nesta conta porque já estão gravados, agendados ou publicados.' : ''} ${manuais ? '<b>'+manuais+'</b> conteúdo(s) você escolheu na mão; o resto é automático (metade e metade, na ordem).' : 'Divisão automática — metade e metade, na ordem. Pra mudar um conteúdo de gravação, abre ele e escolhe em <b>Gravação</b>.'}
     </div>
   </div>`;
 }
@@ -1559,7 +1631,9 @@ function setView(v,el){
    retroativamente nao faz sentido. */
 function renderProgress(){
   const doMes = itensDoMes(mesVisivel);
-  const pendentes = doMes.filter(i=>!i.posted);
+  /* 03/08 — antes tirava só o publicado. O agendado no Instagram
+     também não depende mais do cliente: ele está a caminho do ar. */
+  const pendentes = doMes.filter(i => !itemJaNaEsteira(i));
   const tot = pendentes.length;
   const ap  = pendentes.filter(i=>i.apr).length;
   const txt = document.getElementById('progText');
@@ -1683,9 +1757,37 @@ function openEdit(i){editIdx=i;const it=data.items[i];document.getElementById('m
   const mdp=document.getElementById('mDataPost'); if(mdp) mdp.value=it.dataPostagem||'';
   const mbl=document.getElementById('mBloco'); if(mbl) mbl.value=it.bloco||'';
   const selE=document.getElementById('mRefSelect'); if(selE) selE.value='';
-  const b=document.getElementById('aprBtn');b.style.display='block';
+  /* ===== A TRAVA — 03/08/2026 ====================================
+     Conteúdo já programado ou publicado não pede mais aprovação nem
+     observação. Pro cliente é trava total: aprovar o que já está no ar
+     não quer dizer nada, e pedir ajuste faz ele achar que dá pra mudar
+     algo que já foi. Pra equipe eu NÃO tranco o formulário — travar a
+     Gabi e a Cecília fora de um item deixaria elas sem caminho —, mas
+     aviso na cara que mexer aqui não mexe no agendamento do Instagram. */
+  const travado = itemJaNaEsteira(it);
+  const boxTrava = document.getElementById('travaItem');
+  const titTrava = document.getElementById('travaItemTit');
+  const txtTrava = document.getElementById('travaItemTxt');
+  if(boxTrava){
+    boxTrava.style.display = travado ? 'block' : 'none';
+    if(travado && titTrava && txtTrava){
+      titTrava.textContent = it.posted ? '🔒 Este conteúdo já foi publicado' : '🔒 Este conteúdo já foi programado no Instagram';
+      txtTrava.textContent = ehCli
+        ? (it.posted
+            ? 'Ele já está no ar no seu perfil. Não precisa aprovar nem comentar aqui — se quiser mudar alguma coisa, fala com a gente no WhatsApp.'
+            : 'Ele já está editado, aprovado e programado pra ir ao ar. Não precisa aprovar de novo. Se precisar mudar algo, fala com a gente no WhatsApp que a gente vê o que dá pra fazer.')
+        : 'Mudar o texto aqui NÃO muda o que já está agendado no Instagram — quem mexe no agendamento é a Cecília. Este conteúdo também saiu da contagem de gravações do filmmaker.';
+    }
+  }
+  if(boxCli && travado) boxCli.style.display = 'none';
+
+  const b=document.getElementById('aprBtn');
+  b.style.display = travado ? 'none' : 'block';
   b.textContent=it.apr?'✕ Remover aprovação':'✓ Aprovar conteúdo';
   b.className='btn '+(it.apr?'btn-o':'btn-g');
+  /* o cliente também não apaga o que já está no ar */
+  const btnDel = document.getElementById('delBtn');
+  if(btnDel && ehCli) btnDel.style.display = 'none';
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
 function closeModal(){document.getElementById('overlay').classList.remove('show');}

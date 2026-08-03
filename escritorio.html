@@ -589,7 +589,8 @@
       <div class="navitem" id="navAtrasadas" onclick="irPara('atrasadas', this)"><span class="ico"><svg><use href="#i-activity"/></svg></span> Demandas<span class="navbadge" id="badgeAtrasadas" style="display:none;background:var(--red);">0</span></div>
       <div class="navitem" id="navMinhasDemandas" onclick="irPara('minhasDemandas', this)"><span class="ico"><svg><use href="#i-check"/></svg></span> Minhas Anotações<span class="navbadge" id="badgeMinhas" style="display:none;">0</span></div>
       <div class="navitem" id="navChecklist" onclick="irPara('checklist', this)"><span class="ico"><svg><use href="#i-clipboard"/></svg></span> Meu Checklist</div>
-      <div class="navitem" id="navVideos" onclick="irPara('videos', this)"><span class="ico"><svg><use href="#i-video"/></svg></span> Vídeos em Edição</div>
+      <div class="navitem" id="navVideos" onclick="irPara('videos', this)"><span class="ico"><svg><use href="#i-video"/></svg></span> Vídeos em Edição<span class="navbadge" id="badgeVideosMenu" style="display:none;"></span></div>
+      <div class="navitem" id="navAprovacoes" onclick="irParaAprovacoes()"><span class="ico"><svg><use href="#i-check"/></svg></span> Aprovar Vídeos e Demandas<span class="navbadge" id="badgeAprovacoesMenu" style="display:none;"></span></div>
       <div class="navitem" id="navAgendamento" onclick="irPara('agendamento', this)"><span class="ico"><svg><use href="#i-camera"/></svg></span> Gravações</div>
       <div class="navitem" id="navFuncoesFixas" onclick="irPara('funcoesFixas', this)"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Funções Fixas</div>
       <div class="navitem" id="navPostagens" onclick="irPara('postagens', this)"><span class="ico"><svg><use href="#i-file"/></svg></span> Postagens<span class="navbadge" id="badgePostagens" style="display:none;">0</span></div>
@@ -3446,7 +3447,11 @@
     const meus = [];
     snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
     const aguardando = [];
-    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'aguardando_aprovacao') aguardando.push({id:d.id, ...v}); });
+    /* 03/08 — lia só 'aguardando_aprovacao', que tem 1 documento no
+       banco inteiro. O status real de "entreguei, está com a gerência ou
+       com o cliente" é 'aguardando_cliente', com 11. O editor entregava
+       e a entrega sumia da tela dele. */
+    snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && ['aguardando_aprovacao','aguardando_cliente'].includes(String(v.status||''))) aguardando.push({id:d.id, ...v}); });
     const correcoes = [];
     snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'correcao') correcoes.push({id:d.id, ...v}); });
     const aprovados = [];
@@ -3609,9 +3614,21 @@
     aprovadosRecentes.sort((a,b)=> new Date(b.clienteAprovouEm) - new Date(a.clienteAprovouEm));
     const ultimosAprovados = aprovadosRecentes.slice(0,8);
 
-    let html = '';
+    /* Um raio-x no topo. Antes, quando `pendentes` estava vazio, a tela
+       dizia "Nenhum vídeo aguardando aprovação" e mais nada — parecendo
+       que não havia trabalho, com 11 vídeos esperando o cliente logo
+       abaixo. Número que some é como número errado. */
+    let html = `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>🎬 Aprovação de vídeos — tudo num lugar</h2>
+      <div class="desc">Os três momentos em que um vídeo passa por você.</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${pendentes.length?'yellow':'green'}"><div class="num">${pendentes.length}</div><div class="lbl">esperando sua revisão</div></div>
+        <div class="resumoCard ${aguardandoCliente.length?'yellow':''}"><div class="num">${aguardandoCliente.length}</div><div class="lbl">esperando o cliente</div></div>
+        <div class="resumoCard green"><div class="num">${ultimosAprovados.length}</div><div class="lbl">aprovados recentes</div></div>
+      </div>
+    </div>`;
     if(!pendentes.length){
-      html += '<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="empty">Nenhum vídeo aguardando aprovação agora.</div></div>';
+      html += '<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="empty">Nenhum vídeo esperando sua revisão de qualidade agora.' + (aguardandoCliente.length ? ' Os ' + aguardandoCliente.length + ' de baixo já passaram por aqui e estão com o cliente.' : '') + '</div></div>';
     } else {
       html += `<div class="card"><h2>✅ Aprovar Vídeos</h2><div class="desc">${pendentes.length} vídeo(s) aguardando revisão de qualidade.</div>
         ${pendentes.length > 1 ? '<button class="btn" style="margin-top:10px;" onclick="aprovarVideosSelecionados()">✓✓ Aprovar selecionados</button>' : ''}
@@ -3638,7 +3655,31 @@
       });
     }
 
-    if(usuarioAtual !== 'Chris'){
+    /* ===== EU TIREI A TELA DO CHRIS SEM ELE PEDIR — 03/08/2026 =======
+       Ele reclamou hoje: "a parte onde aprovo os vídeos não encontro e
+       está ruim (...) não tenho mais como pedir para arrumarem nada,
+       apenas aprovar ou rejeitar (...) eu só pedi para centralizar num
+       lugar, e quase se perderam todas as funções".
+
+       Ele está certo e o erro é meu, de duas formas.
+
+       PRIMEIRA: este bloco inteiro estava dentro de
+       `if(usuarioAtual !== 'Chris')`. Eu escondi dele, na fase 4 de
+       supervisão, os 11 vídeos que esperam confirmação do cliente — e
+       com eles TODAS as ações ricas: desfazer aprovação interna, cobrar
+       o cliente no WhatsApp, registrar que o cliente pediu ajuste,
+       liberar. Sobrava pra ele só o bloco de cima, que hoje tem 1 vídeo
+       e dois botões. Daí "quase se perderam todas as funções".
+
+       "Chris vira supervisão" queria dizer que as decisões operacionais
+       TERMINAM na Amanda — não que ele fica sem poder ver e agir. Tirar
+       ferramenta de quem não pediu não é simplificar, é mutilar.
+
+       SEGUNDA: ele pediu pra CENTRALIZAR e eu centralizei tirando o
+       caminho. Devolvi o acesso direto no menu, abaixo.
+
+       Agora todo mundo vê tudo. */
+    {
       html += `<div class="card" style="border:2px solid var(--yellow);"><h2>👤 Aguardando confirmação do CLIENTE</h2><div class="desc">Aprovado internamente — só falta confirmar que o cliente aprovou de verdade. Enquanto isso não for marcado, o vídeo NÃO segue pra legenda nem postagem.</div>
         ${aguardandoCliente.length > 1 ? '<button class="btn" style="margin-top:10px;" onclick="confirmarClienteAprovouLote()">✓✓ Cliente aprovou — em lote</button>' : ''}
       </div>`;
@@ -4962,6 +5003,10 @@
         html += `<div class="faixaDem aberta" data-faixa="pag_${esc(nome)}">
           <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${brl(aberto)} a receber · 🎥 ${brl(cTudo.filmagem)} · 🚗 ${brl(cTudo.uber)})</span><span class="seta">▾</span></div>
           <div class="faixaItens">
+          ${(!semDono && pendentes) ? `<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 2px 10px;">
+            <button class="btn green" style="width:auto;padding:8px 15px;font-size:11.5px;" onclick="pagarTudoDaPessoa('${escJs(nome)}')">✔ Pagar tudo de ${esc(nome)}</button>
+            <button class="btn secondary" style="width:auto;padding:8px 15px;font-size:11.5px;" onclick="copiarFolhaDaPessoa('${escJs(nome)}')">📋 Copiar resumo pro WhatsApp</button>
+          </div>` : ''}
           ${semDono ? '<div class="desc" style="color:var(--yellow2);padding:8px;">Estes vieram antes do campo de filmmaker existir, ou foram lançados sem escolher a pessoa. Define abaixo pra quem é cada um.</div>' : ''}
           ${lista.map(p => `<div class="item" style="border-left:3px solid ${p.pago?'var(--green)':'var(--yellow)'};">
             <div class="top"><div class="nome">${esc(p.clienteNome)}</div><div class="meta">${p.pago ? '✅ Pago' : '⏳ Pendente'}</div></div>
@@ -5122,10 +5167,85 @@
     renderGerenciaAvaliacoes();
   };
 
+  /* Um caminho só pra "avisa o editor que este vídeo é dele agora".
+     Usado pela reatribuição e por quem distribuir em lote — pra não
+     nascer uma segunda versão disso na próxima tela. */
+  async function avisarEditorDoVideo(videoId, editor, anterior, titulo, clienteNome){
+    if(!editor) return;
+    try{
+      const prazo = (typeof calcularPrazoEdicaoVideo === 'function')
+        ? calcularPrazoEdicaoVideo({ id: videoId, status: 'aguardando_edicao', criadoEm: new Date().toISOString() })
+        : null;
+      const prazoStr = prazo ? prazo.toISOString().slice(0,10) : hojeLocal();
+      await criarDemandaSegura({
+        titulo: '🎬 Vídeo novo pra você editar: ' + String(titulo || 'sem título'),
+        descricao: (usuarioAtual || 'A gerência') + ' passou este vídeo pra você' +
+          (anterior ? ' (estava com ' + anterior + ')' : '') + '.\n\n' +
+          'Cliente: ' + (clienteNome || '—') + '\n\n' +
+          'Ele já está na sua aba "Vídeos em Edição → Meus Vídeos", com o link do material. ' +
+          'Marca este aviso como visto quando começar.',
+        destinatario: editor, origem: 'sistema', ehAviso: true,
+        prazoData: prazoStr, prazoHora: '19:00', prioridade: 'alta',
+        videoId: videoId, clienteNome: clienteNome || '',
+        tipoEspecial: 'video_atribuido'
+      });
+      dispararEmailIndividual(editor, 'video_atribuido', {
+        titulo: String(titulo || 'vídeo'), itemId: videoId, colecao: 'videos_producao'
+      }).catch(()=>{});
+      if(anterior && anterior !== editor){
+        await criarDemandaSegura({
+          titulo: '↪️ Um vídeo saiu da sua fila: ' + String(titulo || 'sem título'),
+          descricao: (usuarioAtual || 'A gerência') + ' passou este vídeo pra ' + editor + '.\n\n' +
+            'Você não precisa mais editar. Se já tinha começado, avisa ' + editor + ' pra não refazer o trabalho.',
+          destinatario: anterior, origem: 'sistema', ehAviso: true,
+          prazoData: hojeLocal(), prazoHora: '19:00', prioridade: 'normal',
+          videoId: videoId, tipoEspecial: 'video_saiu_da_fila'
+        });
+      }
+      try{ atualizarTodosOsBadges(); }catch(e){}
+    }catch(e){ console.error('Falha ao avisar o editor:', e); }
+  }
+  window.avisarEditorDoVideo = avisarEditorDoVideo;
+
   window.reatribuirVideo = async function(videoId, clienteSlug, novoEditor){
     if(!novoEditor) return;
-    await updateDoc(doc(db,'videos_producao', videoId), { editorAtribuido: novoEditor });
-    registrarHistorico('videos_producao', videoId, 'Reatribuído para ' + novoEditor);
+    /* ===== A ATRIBUIÇÃO ERA MUDA — 03/08/2026 ========================
+       Existem três caminhos que põem editor num vídeo. Só UM avisava:
+
+         criar vídeo já com editor  → dispara e-mail pro editor  ✅
+         reatribuirVideo            → gravava o campo e pronto   ❌
+         salvarEditorVideo          → chama o de cima            ❌
+
+       Então tudo que a Amanda distribui DEPOIS da criação chegava em
+       silêncio. O vídeo entrava na aba do editor sem nada avisando que
+       tinha entrado — e a aba de Vídeos nem badge tinha no menu.
+
+       Três coisas somadas explicam "o editor fica sem trabalho": ele não
+       era avisado, não tinha número no menu, e (no caso da Cecília) o
+       vídeo nem aparecia no Meu Dia dela.
+
+       Agora reatribuir avisa de verdade, e registra quem/quando — sem
+       isso não dá nem pra medir quanto tempo um vídeo ficou parado
+       depois de distribuído (`editorAtribuidoEm` era 0 de 153). */
+    let anterior = '', titulo = '', clienteNome = '';
+    try{
+      const s = await getDoc(doc(db,'videos_producao', videoId));
+      if(s.exists()){ const v = s.data(); anterior = v.editorAtribuido || ''; titulo = v.titulo || ''; clienteNome = v.clienteNome || ''; }
+    }catch(e){}
+    if(anterior === novoEditor){
+      mostrarToast('Já era ' + novoEditor + ' — nada mudou.');
+      return;
+    }
+    await updateDoc(doc(db,'videos_producao', videoId), {
+      editorAtribuido: novoEditor,
+      editorAtribuidoEm: new Date().toISOString(),
+      editorAtribuidoPor: usuarioAtual || '?',
+      editorAnterior: anterior || ''
+    });
+    registrarHistorico('videos_producao', videoId,
+      anterior ? ('Reatribuído de ' + anterior + ' para ' + novoEditor) : ('Atribuído para ' + novoEditor),
+      'Por ' + (usuarioAtual || '?'));
+    await avisarEditorDoVideo(videoId, novoEditor, anterior, titulo, clienteNome);
 
     const afinidadeRef = doc(db, 'editores_afinidade', clienteSlug);
     const afinidadeSnap = await getDoc(afinidadeRef);
@@ -13480,7 +13600,12 @@
      Nathan). Os elementos sao MOVIDOS no DOM (nao recriados) — handlers,
      badges e estados continuam intactos. */
   const DIA_A_DIA_POR_FUNCAO = {
-    'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios'],
+    /* 03/08 — `navAprovacoes` voltou pro Chris. Eu tinha tirado o item
+       de menu quando desfiz a duplicação em 30/07, e o resultado foi ele
+       não achar mais a tela: "quero ela visível e fácil de achar como
+       era antes". Tirar a porta não é o mesmo que tirar a sala
+       duplicada. */
+    'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes'],
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
     'Amanda': ['navVideos','navStories','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
@@ -13679,12 +13804,24 @@
     /* 30/07/2026 — o Chris pediu Resumo Executivo e Financeiro completo
        no menu principal, em amarelo. Antes os dois estavam a três
        cliques de distância, dentro de abas de Gerência. */
-    'Chris':       [{ rot:'Aprovar',                acao:"irParaAprovacoes()", contador:'aprovar' },
-                    { rot:'Painel de controle',   acao:"irParaPainelDeControle()" },
+    /* ===== O ATALHO "APROVAR" SAIU — 03/08/2026 =====================
+       Em 01/08 o Chris me deu uma bronca por ter DOIS caminhos pro mesmo
+       lugar, um embaixo do outro. Eu tirei os três e ele ficou sem achar
+       a tela. Hoje ele pediu de volta: "quero ela visível e fácil de
+       achar como era antes".
+
+       Ao devolver o item de menu, eu recriei a duplicação — e a suíte
+       t17, que nasceu exatamente daquela bronca, me pegou: "botão
+       amarelo E item de menu pra irParaAprovacoes()".
+
+       Os dois pedidos dele não se contradizem; o que faltava era eu
+       escolher UMA porta. Fica o ITEM DE MENU, porque é permanente,
+       está sempre à vista e agora carrega badge com o número. O atalho
+       amarelo era temporário e aparecia no meio de outros. */
+    'Chris':       [{ rot:'Painel de controle',   acao:"irParaPainelDeControle()" },
                     { rot:'Financeiro completo',   acao:"irParaFinanceiroCompleto()" },
                     { rot:'Referências do dia',     acao:"irParaReferenciasDoDia()", contador:'refsHoje', rotNumero: n => ' — ' + n + ' hoje' }],
-    'Amanda':      [{ rot:'Aprovar',                acao:"irParaAprovacoes()", contador:'aprovar' },
-                    { rot:'Painel de controle',   acao:"irParaPainelDeControle()" },
+    'Amanda':      [{ rot:'Painel de controle',   acao:"irParaPainelDeControle()" },
                     { rot:'Distribuir vídeos',     acao:"irParaDistribuirVideos()", contador:'distribuir' },
                     { rot:'Aprovar e enviar stories',  acao:"irParaStories('aprovar')" }]
     /* 28/07/2026 — o Chris não tem atalho: o painel de gerência dele já
@@ -14519,7 +14656,22 @@
     });
 
     // 2) Vídeos em edição/correção atribuídos a mim
-    if(['Helo','João Victor','Nathan','Chris'].includes(usuarioAtual)){
+    /* ===== A CECÍLIA NÃO ESTAVA NA LISTA — 03/08/2026 ================
+       O Chris relatou que a Amanda atribui vídeo e o editor não recebe,
+       e que estão ficando sem trabalho. Varri o arquivo inteiro atrás de
+       listas de pessoas escritas à mão: são 47, e esta era a ÚNICA lista
+       de editores que não usava `EDITORES_GERAL`/`EDITORES_SELECIONAVEIS`.
+
+       Ela dizia ['Helo','João Victor','Nathan','Chris'] — sem a Cecília.
+       E a Cecília é quem tem MAIS vídeo na mão: 8 (6 pra editar, 2 em
+       correção). Ou seja, o trabalho dela nunca apareceu no Meu Dia
+       dela. Ela só via se lembrasse de abrir a aba de Vídeos.
+
+       Agora não existe lista nenhuma aqui. A pergunta certa não é "esta
+       pessoa é editora?" e sim "tem vídeo atribuído a esta pessoa?" — e
+       o próprio filtro logo abaixo já responde isso. Lista que não
+       existe não pode esquecer ninguém. */
+    {
       cacheVideosProducao.filter(v => !v.excluido && v.editorAtribuido === usuarioAtual && ['aguardando_edicao','correcao'].includes(v.status)).forEach(v => {
         const atrasado = videoEstaAtrasado(v);
         const prazo = calcularPrazoEdicaoVideo(v);
@@ -15715,30 +15867,26 @@
     let faixaAprovar = '';
     if(['Chris','Amanda'].includes(usuarioAtual)){
       const paraAprovar = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
-      atualizarBadgeAprovar(paraAprovar.length);
+      /* ===== O BOTÃO LATERAL VIVIA ZERADO — 03/08/2026 ==============
+         O Chris relatou: "aparecem duas demandas pra eu aprovar, porém
+         essas mesmas não estão no botão lateral de aprovação".
+
+         A causa era código morto que EU deixei. Quando desfiz a
+         duplicação da central de aprovações em 30/07, o bloco que
+         desenhava a lista antiga virou `if(false){ ... }` — e no `else`
+         ficou `atualizarBadgeAprovar(0)`. Ou seja: a linha de cima
+         calculava o número certo e a de baixo apagava, sempre. O botão
+         lateral marcava zero desde 30/07.
+
+         Aprendi que apagar tela por `if(false)` deixa exatamente este
+         tipo de resto vivo. O bloco saiu inteiro.
+
+         E o número agora usa `aprovacaoEhDe` — a MESMA regra da tela.
+         Antes o badge contava tudo que estava esperando aprovação de
+         qualquer um, e a tela mostrava só o que era do Chris: badge 7,
+         tela 2. Contador e tela têm que responder a mesma pergunta. */
+      atualizarBadgeAprovar(paraAprovar.filter(d => aprovacaoEhDe(d, usuarioAtual)).length);
       atualizarBadgeGerencia();
-      if(false){
-        const porQuem = {};
-        paraAprovar.forEach(d => { (porQuem[d.destinatario||'?'] = porQuem[d.destinatario||'?'] || []).push(d); });
-        const corpo = Object.keys(porQuem).sort((a,b)=>porQuem[b].length-porQuem[a].length).map(nome => `
-          <div class="grupoDem">
-            <div class="grupoHead" onclick="toggleGrupoDemanda(this)"><span class="gic">👤</span><span class="grot">${esc(nome)}</span><span class="gqtd">${porQuem[nome].length}</span><span class="gseta">▾</span></div>
-            <div class="grupoItens">${porQuem[nome].map(d => `
-              <div class="item" style="border-left:3px solid var(--yellow);" onclick="abrirDemandaGerencia('${d.id}')">
-                <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="selo aguardando">Entregue</span></div>
-                ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:8px;border-radius:6px;">"'+esc(d.provaTexto)+'"</div>' : ''}
-                <div class="meta" style="margin-top:4px;">Toque pra revisar e aprovar</div>
-              </div>`).join('')}</div>
-          </div>`).join('');
-        faixaAprovar = `<div class="faixaDem aberta" data-faixa="paraAprovar">
-          <div class="faixaHead" onclick="toggleFaixaDemandas(this)">✅ Esperando SUA aprovação <span class="qtd">(${paraAprovar.length})</span><span class="seta">▾</span></div>
-          <div class="faixaItens">
-            <div class="meta" style="padding:6px 2px;opacity:.8;">Entregas da equipe paradas até você revisar. Enquanto não aprovar, elas não somem da lista de ninguém.</div>
-            ${paraAprovar.some(d => d.ehAviso === true || d.origem === 'cliente') ? '<button class="btn secondary" style="width:auto;padding:6px 13px;font-size:11px;margin:4px 0 8px;" onclick="limparAvisosDaFila()">🧹 Tirar da fila os avisos do portal</button>' : ''}
-            ${corpo}
-          </div>
-        </div>`;
-      } else { atualizarBadgeAprovar(0); }
     }
 
     lista.innerHTML = resumoHtml + chips + faixaAprovar +
@@ -15774,10 +15922,18 @@
       const snap = await getDocs(collection(db,'demandas'));
       const ehAmanda = usuarioAtual === 'Amanda' || estaAusente('Amanda');
       let n = 0;
-      snap.forEach(d => { const v=d.data();
+      /* 03/08/2026 — esta badge contava TUDO que estava esperando
+         aprovação de qualquer pessoa, enquanto a tela mostra só o que é
+         seu (regra `aprovacaoEhDe`, da fase 2). Resultado medido hoje:
+         badge 7, tela 2 — e o Chris entrava e não achava os 5 restantes,
+         porque eram da Amanda. Agora as duas usam a mesma regra. */
+      snap.forEach(d => { const v={id:d.id, ...d.data()};
         // pedido de prazo e decisao da Amanda — nao conta pro Chris
         if(v.prazoSolicitado){ if(ehAmanda) n++; return; }
-        if(v.status === 'concluida_aguardando_aprovacao' && v.destinatario !== usuarioAtual) n++;
+        if(v.status !== 'concluida_aguardando_aprovacao') return;
+        const praSiMesma = String(v.origem||'').toLowerCase() === String(v.destinatario||'').toLowerCase();
+        if(v.destinatario === usuarioAtual && !praSiMesma) return;
+        if(aprovacaoEhDe(v, usuarioAtual)) n++;
       });
       if(n>0){ badge.textContent = n; badge.style.display='flex'; } else badge.style.display='none';
     }catch(e){ console.error('Falha na badge da Gerência:', e); }
@@ -15841,6 +15997,40 @@
 
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(vivas));
     atualizarBadgeAtrasadas(vivas.filter(d => calcularUrgencia(d) === 'atrasado').length);
+
+    /* ===== O MENU DE VÍDEOS NÃO TINHA NÚMERO — 03/08/2026 ============
+       O editor só descobria que chegou vídeo se lembrasse de abrir a
+       aba. Havia badge, mas na SUB-aba lá dentro — ou seja, só via quem
+       já tinha entrado. Agora o número está no menu, onde ele decide
+       para onde ir.
+
+       Sem lista de quem é editor: quem tem vídeo atribuído vê o número.
+       Foi uma lista dessas que escondeu o trabalho da Cecília. */
+    /* Badge do caminho de aprovação: soma o que ESTA pessoa tem pra
+       decidir — vídeo esperando revisão + demanda pela regra da tela.
+       Mesma regra da tela, de propósito: foi a divergência entre badge e
+       tela que fez o Chris ver 6 e não achar 6. */
+    try{
+      const ba = document.getElementById('badgeAprovacoesMenu');
+      if(ba){
+        const vidRev = (cacheVideosProducao || []).filter(v => !v.excluido && v.status === 'aguardando_aprovacao').length;
+        const demRev = (todasDemandas || []).filter(d => d.status === 'concluida_aguardando_aprovacao' && aprovacaoEhDe(d, usuarioAtual)).length;
+        const tot = vidRev + demRev;
+        if(tot && ['Chris','Amanda'].includes(usuarioAtual)){ ba.textContent = tot; ba.style.display = 'flex'; }
+        else ba.style.display = 'none';
+      }
+    }catch(e){ console.error('Falha na badge de aprovações:', e); }
+
+    try{
+      const bv = document.getElementById('badgeVideosMenu');
+      if(bv){
+        const meus = (cacheVideosProducao || []).filter(v =>
+          !v.excluido && v.editorAtribuido === usuarioAtual &&
+          ['aguardando_edicao','correcao'].includes(String(v.status||'')));
+        if(meus.length){ bv.textContent = meus.length; bv.style.display = 'flex'; }
+        else bv.style.display = 'none';
+      }
+    }catch(e){ console.error('Falha na badge de vídeos:', e); }
 
     /* Fila de aprovação: só quem aprova tem. Pra equipe, sempre escondido. */
     const itemAprov = null;   // o item duplicado não existe mais
@@ -21867,6 +22057,21 @@
         .map(([n, l]) => [n, l, somarExtras(l.filter(x=>!x.pago)).total, somarExtras(l).total])
         .sort((a,b) => b[2] - a[2]);
 
+      /* ===== UM LUGAR SÓ PRA EXTRA — 03/08/2026 ======================
+         O Chris: "a filmagem extra do meu filmmaker pra eu aprovar
+         aparece em lugares diferentes, devemos centralizar isso num
+         lugar só".
+
+         Ele estava vendo a mesma coisa DUAS VEZES dentro do próprio
+         Financeiro: o box `financeiroExtrasBox`, que desenha a tela
+         completa de extras, e este bloco aqui, que montava a folha por
+         pessoa por conta própria.
+
+         A tela completa passou a ter também as ações do dia 15 (pagar
+         tudo da pessoa, copiar o resumo pro WhatsApp), então este bloco
+         não precisa mais listar ninguém: virou o RESUMO do mês, com os
+         números que interessam ao caixa, e um caminho pra o único lugar
+         onde se age. Números aqui, ação lá — e uma implementação só. */
       html += `<div class="card metaSec" style="border-color:var(--red);">
         <div class="metaSecTit">💸 A folha do dia 15 — extras da equipe em ${nomeMes(comp)}</div>
         <div class="desc" style="margin-bottom:12px;">Quem você paga, quanto e por quê. Sai junto com o salário no dia <b>15</b>. É saída, não entrada — por isso fica fora de "de onde veio o dinheiro".</div>
@@ -21879,72 +22084,15 @@
           ${aguardandoConferencia.qtd ? '<div class="resumoCard red clicavel" onclick="navegarGerenciaSub(\'pagamentos\')"><div class="num" style="font-size:17px;">'+brl(aguardandoConferencia.total)+'</div><div class="lbl">🔔 registrado e não conferido — não está no total acima →</div></div>' : ''}
         </div>
 
-        ${ordenadas.map(([nome, lista, aPagar, total]) => {
-          const c = somarExtras(lista);
-          const pagos = lista.filter(x=>x.pago).length;
-          return `<div class="card" style="background:var(--deep);border:1px solid ${aPagar?'var(--yellow)':'var(--line)'};margin-bottom:16px;padding:16px 18px;">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
-              <div style="font-size:16px;font-weight:800;">${esc(nome)}</div>
-              <div style="text-align:right;">
-                <div style="font-size:20px;font-weight:800;color:${aPagar?'var(--yellow)':'var(--green)'};">${brl(aPagar)}</div>
-                <div class="meta">${aPagar ? 'a pagar dia 15' : 'tudo pago'}</div>
-              </div>
-            </div>
-            <div class="meta" style="margin-top:6px;">🎥 ${brl(c.filmagem)} em ${c.qtdFilmagem} filmagem(ns) · 🚗 ${brl(c.uber)} em ${c.qtdUber} corrida(s)${pagos ? ' · ' + pagos + ' já pago(s)' : ''}</div>
-
-            ${(() => {
-              /* Separado por natureza — foi exatamente isso que confundiu:
-                 a Stokki é mensalista e aparecia como filmagem avulsa. */
-              const ordenar = l => l.slice().sort((a,b)=>String(a.data||'').localeCompare(String(b.data||'')));
-              const filmagens = ordenar(lista.filter(e => Number(e.valorExtra) || contasDoExtra(e).semValor));
-              const ubers     = ordenar(lista.filter(e => Number(e.valorUber)));
-
-              const linha = (e, modo) => {
-                const cc = contasDoExtra(e);
-                const valor = modo === 'uber' ? cc.uber : cc.filmagem;
-                return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:11px 0;border-top:1px solid var(--line);">
-                  <div style="flex:1;min-width:0;">
-                    <div style="font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                      ${esc(e.clienteNome || 'sem cliente')} ${selosDoExtra(e)}
-                      ${e.data ? '<span class="meta">'+formatarDataBR(e.data)+'</span>' : ''}
-                    </div>
-                    <div class="meta" style="margin-top:4px;">
-                      ${modo === 'uber'
-                        ? 'ida ' + brl(Number(e.uberIda)||0) + ' + volta ' + brl(Number(e.uberVolta)||0) +
-                          (e.motivoUber ? ' · ' + (MOTIVO_UBER_LABEL[e.motivoUber]||e.motivoUber) : '') +
-                          (String(e.uberLink||'').trim()
-                            ? ' · <a href="'+esc(e.uberLink)+'" target="_blank" rel="noopener" style="color:var(--yellow);">ver comprovante ↗</a>'
-                            : ' · <span style="color:var(--red);font-weight:700;">⚠️ sem comprovante</span>')
-                        : (cc.semValor ? '<span style="color:var(--yellow2);">esperando a Amanda definir o valor</span>' : (esc(String(e.servico||'').slice(0,60)) || 'filmagem avulsa'))}
-                    </div>
-                  </div>
-                  <div style="text-align:right;white-space:nowrap;">
-                    <div style="font-size:13.5px;font-weight:800;">${brl(valor)}</div>
-                    <button class="btn secondary" style="width:auto;margin-top:5px;padding:6px 11px;font-size:10.5px;${e.pago?'border-color:var(--green);color:var(--green);':''}"
-                      onclick="marcarPagoNaFolha('${e.id}', ${!e.pago})">${e.pago ? '✓ pago' : 'marcar pago'}</button>
-                  </div>
-                </div>`;
-              };
-
-              return `
-              ${filmagens.length ? `<div style="margin-top:14px;">
-                <div class="meta" style="font-weight:800;color:var(--yellow);">🎥 FILMAGENS AVULSAS — ${brl(c.filmagem)}</div>
-                ${filmagens.map(e=>linha(e,'filmagem')).join('')}
-              </div>` : ''}
-              ${ubers.length ? `<div style="margin-top:18px;">
-                <div class="meta" style="font-weight:800;color:var(--yellow2);">🚗 UBER / DESLOCAMENTO — ${brl(c.uber)}</div>
-                ${ubers.map(e=>linha(e,'uber')).join('')}
-              </div>` : ''}`;
-            })()}
-
-            ${c.semComprovante ? '<div class="desc" style="margin-top:12px;background:var(--redbg);border-left:3px solid var(--red);padding:10px 12px;border-radius:8px;">⚠️ <b>'+c.semComprovante+' corrida sem comprovante.</b> Cobra o link do Drive antes de pagar — sem ele não há como conferir o valor depois.</div>' : ''}
-
-            <div class="btnrow" style="margin-top:16px;">
-              <button class="btn secondary" style="padding:11px;font-size:12px;" onclick="copiarFolhaDaPessoa('${escJs(nome)}')">⧉ Copiar resumo</button>
-              ${aPagar ? `<button class="btn green" style="padding:11px;font-size:12px;" onclick="pagarTudoDaPessoa('${escJs(nome)}')">✓ Paguei tudo (${brl(aPagar)})</button>` : ''}
-            </div>
-          </div>`;
-        }).join('')}
+        ${ordenadas.length ? `<div style="background:var(--deep);border-radius:10px;padding:13px 15px;">
+          <div class="meta" style="font-weight:800;margin-bottom:8px;">Quem tem a receber</div>
+          ${ordenadas.map(([nome, lista, aPagar, total]) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);">
+            <span style="font-size:13px;">${esc(nome)} <span class="meta">· ${lista.length} lançamento(s)</span></span>
+            <b style="font-size:13px;color:${aPagar?'var(--yellow)':'var(--green)'};">${aPagar ? brl(aPagar)+' a pagar' : 'tudo pago'}</b>
+          </div>`).join('')}
+          <button class="btn" style="margin-top:12px;padding:12px;" onclick="navegarGerenciaSub('pagamentos')">Abrir os extras pra conferir, liberar e pagar →</button>
+          <div class="meta" style="margin-top:7px;">Todas as ações de extra ficam num lugar só: lançar, conferir o que o filmmaker mandou, definir valor, pagar e copiar o resumo pro WhatsApp.</div>
+        </div>` : ''}
       </div>`;
     }
 

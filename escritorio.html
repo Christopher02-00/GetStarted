@@ -22016,6 +22016,20 @@
     if(!nome){ mostrarToast('O nome do cliente é obrigatório.', 'erro'); return; }
     const dia = parseInt(g('ctDia'),10);
     if(!dia || dia < 1 || dia > 31){ mostrarToast('Dia de vencimento inválido (1 a 31).', 'erro'); return; }
+    /* ===== OS MESES DE CORTESIA — 03/08/2026 =========================
+       Validado na entrada, não na saída: mês escrito errado aqui vira
+       cobrança errada lá na frente, e ninguém percebe até o cliente
+       reclamar. O que não estiver no formato AAAA-MM é recusado com o
+       texto exato do que ele digitou, pra ele ver onde errou. */
+    const mesesTxt = (document.getElementById('ctCortesiaMeses_' + slug)?.value || '');
+    const meses = mesesTxt.split('\n').map(x=>x.trim()).filter(Boolean);
+    const ruins = meses.filter(m => !/^\d{4}-(0[1-9]|1[0-2])$/.test(m));
+    if(ruins.length){
+      mostrarToast('Mês de cortesia inválido: "' + ruins[0] + '". Use o formato 2026-08.', 'erro');
+      return;
+    }
+    const cortesiaPerm = !!document.getElementById('ctCortesiaPerm_' + slug)?.checked;
+
     await setDoc(doc(db,'contratos_cliente', slug), {
       clienteNome: nome, plano: g('ctPlano'),
       valorCheio: Number(g('ctValorCheio')) || 0,
@@ -22023,8 +22037,27 @@
       voltaAoCheioEm: g('ctVolta'),
       diaVencimento: dia, status: g('ctStatus'),
       observacao: g('ctObs').trim(),
+      cortesiaPermanente: cortesiaPerm,
+      cortesiaMeses: [...new Set(meses)].sort(),
       atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
     }, { merge: true });
+
+    /* Mês de cortesia marcado DEPOIS que a mensalidade já nasceu não
+       conserta nada sozinho — o gerador só decide na criação. Então
+       avisa, em vez de deixar a pessoa achar que resolveu. */
+    if(meses.length){
+      try{
+        const jaCriadas = [];
+        for(const m of meses){
+          const s2 = await getDoc(doc(db,'pagamentos_mensais', slug + '_' + m));
+          if(s2.exists() && s2.data().status !== 'isento') jaCriadas.push(m);
+        }
+        if(jaCriadas.length){
+          mostrarToast('Atenção: a mensalidade de ' + jaCriadas.map(m=>rotuloMesExtras(m)).join(', ') +
+            ' já tinha sido gerada e continua cobrando. Marca como isenta na tela de Mensalidades.', 'erro');
+        }
+      }catch(e){ console.error('Falha ao conferir mensalidade já gerada:', e); }
+    }
     mostrarToast('Contrato de ' + nome + ' salvo.');
     renderContratos();
   };
@@ -22900,7 +22933,31 @@
           ${['ativo','pausado','encerrado'].map(s=>`<option value="${s}" ${ct.status===s?'selected':''}>${s}</option>`).join('')}
         </select></div>
         <div class="field"><label>Observação comercial</label><textarea id="ctObs_${ct.slug}" style="min-height:60px;">${esc(ct.observacao||'')}</textarea></div>
-        <button class="btn" onclick="salvarContrato('${ct.slug}')">Salvar contrato</button>
+
+        ${/* ===== CORTESIA — 03/08/2026 ==============================
+             Até hoje a cortesia de UM MÊS existia só como frase na
+             observação ("cortesia combinada para agosto/2026"), e o
+             gerador de mensalidade não lê frase. Os quatro clientes com
+             essa combinação iam nascer devendo R$ 1.700 cada em agosto.
+
+             Agora tem campo, e ele fica aqui — na ficha do contrato,
+             que é onde a decisão comercial já mora. Não precisa de mim
+             pra marcar o mês que vem. */''}
+        <div style="margin-top:12px;background:var(--deep);border-left:3px solid var(--yellow);border-radius:9px;padding:12px 14px;">
+          <div style="font-weight:800;font-size:12.5px;">🎁 Cortesia</div>
+          <label style="display:flex;align-items:center;gap:9px;margin-top:9px;cursor:pointer;">
+            <input type="checkbox" id="ctCortesiaPerm_${ct.slug}" ${ct.cortesiaPermanente?'checked':''} style="width:16px;height:16px;">
+            <span style="font-size:12.5px;">Cortesia <b>permanente</b> — não paga nenhum mês, mas segue cliente ativo</span>
+          </label>
+          <div class="field" style="margin-top:10px;">
+            <label>Meses de cortesia <span style="color:var(--muted);font-weight:400;">— um por linha, no formato 2026-08</span></label>
+            <textarea id="ctCortesiaMeses_${ct.slug}" style="min-height:52px;" placeholder="2026-08">${esc((Array.isArray(ct.cortesiaMeses)?ct.cortesiaMeses:[]).join('\n'))}</textarea>
+            <div class="desc" style="margin:5px 0 0;">A mensalidade desses meses <b>nasce isenta</b> e não entra na régua de cobrança. Os outros meses seguem normais.
+            ${(Array.isArray(ct.cortesiaMeses)&&ct.cortesiaMeses.length) ? '<br><b style="color:var(--yellow);">Hoje isento em: ' + ct.cortesiaMeses.map(m=>rotuloMesExtras(m)).join(', ') + '</b>' : ''}</div>
+          </div>
+        </div>
+
+        <button class="btn" style="margin-top:12px;" onclick="salvarContrato('${ct.slug}')">Salvar contrato</button>
       </div>
     </div>`).join('');
 

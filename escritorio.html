@@ -5979,8 +5979,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
          então não pode entrar na quantidade sugerida pra gravação. Era o
          mesmo defeito que a Amanda apontou no painel da Gabi, aqui do
          lado da Cecília. */
-      const itens = (cal.items||[])
-        .filter(i => !mes || ((i && i.mes) || '') === mes)
+      const itens = (mes ? itensDoMesCalendario(cal, mes) : (cal.items||[]))
         .filter(i => !itemNaoPrecisaGravar(i))
         .slice().sort((a,b)=>(a.day||0)-(b.day||0));
       const n = quantosBlocos(cal, mes);
@@ -13674,7 +13673,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const t = (txt||'').trim().toLowerCase();
       const nomes = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
       const semAcento = x => x.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-      const i = nomes.findIndex(n => semAcento(t).startsWith(semAcento(n)));
+      const textoSemAcento = semAcento(t);
+      const i = nomes.findIndex(n => textoSemAcento.includes(semAcento(n)));
       const ano = (t.match(/(20\d{2})/)||[])[1];
       if(i < 0 || !ano) return '';
       return ano + '-' + String(i+1).padStart(2,'0');
@@ -14774,8 +14774,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const meses = mesesDeCalendario(cal);
       const mesAtual = new Date().toISOString().slice(0,7);
       const mes = meses.includes(mesAtual) ? mesAtual : (meses.slice(-1)[0] || '');
-      const itens = (cal.items||[]).filter(i => !mes || ((i&&i.mes)||'') === mes)
-                                    .slice().sort((a,b)=>(a.day||0)-(b.day||0));
+      const itens = (mes ? itensDoMesCalendario(cal, mes) : (cal.items||[]))
+        .slice().sort((a,b)=>(a.day||0)-(b.day||0));
       const st = estadoMesCal(cal, mes);
       const hojeDia = new Date().getDate();
       const rotMes = m => { const n=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -18793,14 +18793,26 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         await setDoc(doc(db,'calendarios_versoes', slug + '__antes-do-resgate-' + carimbo),
           { ...atual.data(), __cliente: slug, __salvoEm: new Date().toISOString(), __itens: atualQtd });
       }
-      await setDoc(doc(db,'calendarios', slug), {
+      /* A cópia é do DOCUMENTO inteiro, não só dos conteúdos. A versão
+         anterior desta restauração descartava `aprovacaoInterna`,
+         `aprovacaoMeses`, `mesLegado` e os blocos de gravação. Assim um
+         calendário recuperado podia continuar fora da fila da Amanda e
+         ainda perder a divisão usada pelo filmmaker. */
+      const dadosDaCopia = Object.fromEntries(Object.entries(v.dados)
+        .filter(([chave]) => !['__cliente','__salvoEm','__itens'].includes(chave)));
+      const dadosRestaurados = {
+        ...dadosDaCopia,
         client: v.dados.client || nomeDeSlugSeguro(slug),
         month: v.dados.month || '',
         items: itens,
         comments: v.dados.comments || [],
         updatedAt: new Date().toISOString(),
         restauradoPor: usuarioAtual || '?', restauradoDe: v.fonte + '/' + v.id, restauradoEm: new Date().toISOString()
-      });
+      };
+      /* Os três metadados separados acima pertencem à coleção de
+         versões e não são gravados no documento vivo. A versão guardada
+         permanece intacta no banco. */
+      await setDoc(doc(db,'calendarios', slug), dadosRestaurados);
       registrarHistorico('calendarios', slug, 'Calendário restaurado de ' + v.fonte + ' — ' + itens.length + ' conteúdo(s)');
       mostrarToast(itens.length + ' conteúdo(s) restaurados!');
       procurarVersoesCalendario();
@@ -20975,7 +20987,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const velhos = [];
       alvo.forEach(c => {
         const cal = cals[c.slug]; if(!cal || !((cal.items||[]).length)) return;
-        const ms = [...new Set((cal.items||[]).map(i=>(i&&i.mes)||'').filter(Boolean))].sort();
+        const ms = mesesDeCalendario(cal);
         const m = ms.length ? ms[ms.length-1] : (mesDoTextoConf((cal.month)||'') || cal.mesLegado || '');
         if(m && m < mesAgora) velhos.push(c.nome);
       });
@@ -21083,7 +21095,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const t = (txt||'').trim().toLowerCase();
     const nomes = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
     const semAcento = x => x.normalize('NFD').replace(/[̀-ͯ]/g,'');
-    const i = nomes.findIndex(n => semAcento(t).startsWith(semAcento(n)));
+    const textoSemAcento = semAcento(t);
+    const i = nomes.findIndex(n => textoSemAcento.includes(semAcento(n)));
     const ano = (t.match(/(20\d{2})/)||[])[1];
     if(i < 0 || !ano) return '';
     return ano + '-' + String(i+1).padStart(2,'0');
@@ -26767,7 +26780,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         const meses = mesesDeCalendario(v);
         (meses.length ? meses : ['']).forEach(m => {
           if(estadoMesCal(v, m) !== 'aguardando_interna') return;
-          const doMes = (v.items||[]).filter(i => (((i&&i.mes)||'') === m));
+          const doMes = itensDoMesCalendario(v, m);
           if(!doMes.length) return;
           const ap = ((v.aprovacaoMeses||{})[m]) || v.aprovacaoInterna || {};
           fila.push({ slug:d.id, mesKey:m, nome:v.client || d.id,
@@ -26796,7 +26809,16 @@ Observações do cliente: ${l.observacoes||'—'}`;
           </div>
         </div>`).join('')}
       </div>`;
-    }catch(e){ console.error('Falha na fila de calendários:', e); return ''; }
+    }catch(e){
+      console.error('Falha na fila de calendários:', e);
+      /* Erro de leitura não é fila vazia. Com a cota do Firebase
+         esgotada, retornar '' fazia a Amanda acreditar que não havia
+         calendário esperando — exatamente o pior diagnóstico possível. */
+      return `<div class="card" style="border:2px solid var(--red);">
+        <h2>⚠️ Não consegui carregar a fila de calendários</h2>
+        <div class="desc">O banco não respondeu. <b>Isso não significa que a fila está vazia.</b> Não aprove nem refaça calendário por causa desta tela; tente novamente quando a conexão do Firebase voltar.</div>
+      </div>`;
+    }
   };
 
   /* ===== O REPRESAMENTO DO DIA 15 — 29/07/2026 ======================
@@ -26814,19 +26836,60 @@ Observações do cliente: ${l.observacoes||'—'}`;
        aprovado_interno   → ela aprovou, ESTÁ REPRESADO (cliente não vê)
        liberado           → foi enviado, o cliente vê e pode aprovar
        ajuste_interno     → devolvido pra Gabi */
+  /* ===== O MÊS NÃO PODE FAZER O CALENDÁRIO SUMIR — 04/08/2026 =====
+     A fila da Amanda filtrava apenas `item.mes === mes`. Num documento
+     misto, bastava um conteúdo novo ter `mes` e os antigos não terem:
+     a marca "aguardando_interna" existia, mas a fila calculava zero
+     conteúdos e descartava o calendário inteiro. Isso é compatível com
+     o relato da Monique. A mesma regra passa a alimentar fila, campo e
+     quantidades. */
+  function mesDoItemCalendario(cal, item){
+    if(item && item.mes) return item.mes;
+    if(cal && cal.mesLegado) return cal.mesLegado;
+    const ap = cal && cal.aprovacaoInterna;
+    if(ap && ap.mes) return ap.mes;
+    /* Algumas versões chegaram a gravar o mês somente na aprovação por
+       mês. Se houver uma única chave, ela identifica com segurança os
+       conteúdos antigos que ainda não têm `item.mes`. */
+    const chavesAprovacao = Object.keys((cal&&cal.aprovacaoMeses)||{}).filter(Boolean);
+    if(chavesAprovacao.length === 1) return chavesAprovacao[0];
+    return mesDoTextoConf((cal&&cal.month)||'');
+  }
+  function itensDoMesCalendario(cal, mes){
+    const itens = (cal&&cal.items)||[];
+    if(!mes) return itens.filter(i => !mesDoItemCalendario(cal, i));
+    return itens.filter(i => mesDoItemCalendario(cal, i) === mes);
+  }
+  function mesUsaCampoLegadoCalendario(cal, mes){
+    const itens = (cal&&cal.items)||[];
+    const ap = cal&&cal.aprovacaoInterna;
+    return !mes || mes === ((cal&&cal.mesLegado)||'') ||
+      !!(ap&&ap.mes&&ap.mes===mes) ||
+      (!((cal&&cal.mesLegado)||'') && !itens.some(i => i&&i.mes));
+  }
   function mesesDeCalendario(cal){
     const its = (cal && cal.items) || [];
-    const ms = [...new Set(its.map(i => (i&&i.mes)||'').filter(Boolean))];
+    const ms = [...new Set(its.map(i => mesDoItemCalendario(cal, i)).filter(Boolean))];
+    /* Documento vazio não vira mês fantasma. Se há conteúdo mas o rótulo
+       é impossível de ler, a marca de aprovação ainda é uma pista válida. */
+    if(!ms.length && its.length){
+      const ap = cal && cal.aprovacaoInterna;
+      if(ap && ap.mes) ms.push(ap.mes);
+      Object.keys((cal&&cal.aprovacaoMeses)||{}).forEach(m => { if(m && !ms.includes(m)) ms.push(m); });
+    }
     return ms.sort();
   }
   function estadoMesCal(cal, mes){
     const porMes = ((cal&&cal.aprovacaoMeses)||{})[mes];
     if(porMes && porMes.status) return porMes.status;
+    const ap = cal && cal.aprovacaoInterna;
+    /* Versões que gravaram a marca nova só no campo compatível antigo
+       também entram na fila, desde que a própria marca diga qual mês é. */
+    if(ap && ap.status && ap.mes && ap.mes === mes) return ap.status;
     const usaMeses = ((cal&&cal.items)||[]).some(i=>i&&i.mes) || !!(cal&&cal.aprovacaoMeses) || !!(cal&&cal.mesLegado);
     const legado = (cal&&cal.mesLegado) || '';
     const heraldaAntiga = !mes || (legado && mes === legado) || !usaMeses;
     if(!heraldaAntiga) return 'rascunho';
-    const ap = cal && cal.aprovacaoInterna;
     if(ap && ap.status) return ap.status;
     return ((cal&&cal.items)||[]).length ? 'liberado' : 'rascunho';
   }
@@ -26843,7 +26906,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         const meses = mesesDeCalendario(cal);
         (meses.length ? meses : ['']).forEach(m => {
           const st = estadoMesCal(cal, m);
-          const qtd = (cal.items||[]).filter(i => (((i&&i.mes)||'') === m)).length;
+          const qtd = itensDoMesCalendario(cal, m).length;
           if(!qtd) return;
           const linha = { slug:d.id, nome: cal.client || nomeDeSlugSeguro(d.id), mes:m, qtd,
                           quando: ((cal.aprovacaoMeses||{})[m]||{}).em || '' };
@@ -26903,7 +26966,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     snap.forEach(d => { const cal = d.data();
       const meses = mesesDeCalendario(cal);
       (meses.length ? meses : ['']).forEach(m => {
-        if(estadoMesCal(cal, m) === 'aprovado_interno') alvos.push({ slug:d.id, mes:m });
+        if(estadoMesCal(cal, m) === 'aprovado_interno' && itensDoMesCalendario(cal, m).length){
+          alvos.push({ slug:d.id, mes:m });
+        }
       });
     });
     if(!alvos.length){ mostrarToast('Nada represado pra enviar.', 'erro'); return; }
@@ -26922,13 +26987,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
         const snap = await getDoc(ref);
         if(!snap.exists()) continue;
         const cal = snap.data();
+        if(!itensDoMesCalendario(cal, a.mes).length){
+          console.error('Envio de calendário abortado: mês sem conteúdo', a.slug, a.mes);
+          continue;
+        }
         const mapa = { ...(cal.aprovacaoMeses||{}) };
         mapa[a.mes] = { ...(mapa[a.mes]||{}), status:'liberado', enviadoPor: usuarioAtual||'?',
                         enviadoEm: new Date().toISOString(), em: new Date().toISOString(), motivoAjuste:'' };
         const patch = { aprovacaoMeses: mapa };
         /* Se é o mês legado, o campo antigo acompanha — senão as telas
            que ainda leem `aprovacaoInterna` divergiriam. */
-        if(!a.mes || a.mes === (cal.mesLegado||'')) patch.aprovacaoInterna = mapa[a.mes];
+        if(mesUsaCampoLegadoCalendario(cal, a.mes)) patch.aprovacaoInterna = mapa[a.mes];
         await updateDoc(ref, patch);
         registrarHistorico('calendarios', a.slug, 'Calendário de ' + (a.mes||'mês único') + ' enviado pro cliente por ' + (usuarioAtual||'?'));
         n++;
@@ -26957,7 +27026,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cal = snap.data();
     const nome = cal.client || nomeDeSlugSeguro(slug);
     const alvo = (mes !== undefined && mes !== null && mes !== '') ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
-    const qtd = (cal.items||[]).filter(i => (((i&&i.mes)||'') === alvo)).length;
+    const qtd = itensDoMesCalendario(cal, alvo).length;
+    if(!qtd){ mostrarToast('Este mês está sem conteúdo. Nada foi enviado.', 'erro'); return; }
     if(!confirm('Aprovar e ENVIAR AGORA o calendário de ' + nome + '?\n\n' +
       qtd + ' conteúdo(s). Ela passa a ver no portal dela imediatamente e já pode aprovar.\n\n' +
       'Se preferir que vá junto com os outros no dia 15, use o botão verde.')) return;
@@ -26981,11 +27051,12 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cal = snap.data();
     const nome = cal.client || slug;
     const alvo = (mes !== undefined && mes !== null) ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    if(!itensDoMesCalendario(cal, alvo).length){ mostrarToast('Este mês está sem conteúdo. Nada foi aprovado.', 'erro'); return; }
     const marca = { status:'aprovado_interno', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste:'' };
     const mapa = { ...(cal.aprovacaoMeses||{}) };
     mapa[alvo] = marca;
     const patch = { aprovacaoMeses: mapa };
-    if(!alvo || alvo === (cal.mesLegado||'')) patch.aprovacaoInterna = marca;
+    if(mesUsaCampoLegadoCalendario(cal, alvo)) patch.aprovacaoInterna = marca;
     await updateDoc(ref, patch);
     registrarHistorico('calendarios', slug, 'Calendário de ' + (alvo||'mês único') + ' aprovado internamente por ' + (usuarioAtual||'?') + ' — guardado pro envio do dia 15');
     mostrarToast('Aprovado e guardado. Vai pro cliente no disparo do dia 15 — em Calendários → "Prontos pra enviar".');
@@ -27005,7 +27076,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const marca = { status:'ajuste_interno', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste: String(motivo).trim() };
     const mapa = { ...(cal.aprovacaoMeses||{}) }; mapa[alvo] = marca;
     const patch = { aprovacaoMeses: mapa };
-    if(!alvo || alvo === (cal.mesLegado||'')) patch.aprovacaoInterna = marca;
+    if(mesUsaCampoLegadoCalendario(cal, alvo)) patch.aprovacaoInterna = marca;
     await updateDoc(ref, patch);
     registrarHistorico('calendarios', slug, 'Calendário devolvido pra ajuste por ' + (usuarioAtual||'?'), motivo);
     await criarDemandaSegura({

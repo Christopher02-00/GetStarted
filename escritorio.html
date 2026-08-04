@@ -604,6 +604,7 @@
     <div class="navgroup" id="navgroupDia">
       <div class="label" id="labelNavDia">Meu dia a dia</div>
       <div class="navitem active" id="navInicio" onclick="irPara('inicio', this)"><span class="ico"><svg><use href="#i-home"/></svg></span> Início</div>
+      <div class="navitem" id="navCentral" onclick="irPara('central', this)" style="background:var(--yellow);color:var(--graphite);font-weight:800;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-video"/></svg></span> Central de Vídeos<span class="navbadge" id="badgeCentralMenu" style="display:none;"></span></div>
       <!-- 27/07/2026 — a Gerência ficava lá embaixo, depois de Vendas, e o
            Chris relatou que esquecia de olhar. Subiu pro topo, logo abaixo
            do Início, com badge do que está esperando decisão. -->
@@ -759,6 +760,11 @@
       <div id="checklistConteudo"></div>
     </div>
 
+    <div class="view" id="view-central">
+      <h1>Central de <span class="y">Vídeos</span></h1>
+      <div class="sub" id="centralSub">Tudo que estava espalhado, num lugar só.</div>
+      <div id="centralBox"></div>
+    </div>
     <div class="view" id="view-videos">
       <h1>Vídeos em <span class="y">Edição</span></h1>
       <div class="sub">Lançamento de gravações, distribuição automática e confirmação de entrega.</div>
@@ -3567,7 +3573,92 @@
 
      Quem define o prazo e a AMANDA, na Gerencia. O texto diz isso: o
      editor precisa saber a quem pedir quando a data nao fizer sentido. */
-  /* ===== PRIORIDADE DO VIDEO — pedido da Amanda, 04/08/2026 =====
+  /* ================= CENTRAL DE VIDEOS — 04/08/2026 =================
+   Um lugar so, no menu principal, no lugar da mesma informacao dividida
+   em varias telas. Duas leituras da MESMA fonte:
+     gestao -> o que falta distribuir, o que esta sem prazo, e o time
+               inteiro por dia com o nome de quem edita
+     editor -> so a fila dele, por dia, urgente em cima
+   Esta tela NAO reimplementa nada: desenha com htmlVideosPorDia (a mesma
+   do Inicio e da Equipe) e as acoes abrem abrirVideoDeAtraso, unico lugar
+   onde prazo, editor e prioridade se salvam. */
+window.renderCentral = function(){
+  const box = document.getElementById('centralBox');
+  if(!box) return;
+  const sub = document.getElementById('centralSub');
+  if(!usuarioAtual){ box.innerHTML = ''; return; }
+  try{
+    const todos  = (cacheVideosProducao||[]).filter(v => !v.excluido);
+    const ativos = todos.filter(v => ['aguardando_edicao','correcao'].includes(String(v.status||'')));
+    const ehGestao = ['Amanda','Chris'].includes(usuarioAtual);
+    if(!ehGestao){
+      /* Nem monta. Se alguem chegar aqui por um caminho que eu nao previ,
+         nao ha o que vazar: a lista de gestao so existe abaixo desta linha. */
+      box.innerHTML = '<div class="card"><div class="empty">Essa área é da gerência. O que você precisa entregar está no <b>Início</b>.</div></div>';
+      if(sub) sub.textContent = '';
+      return;
+    }
+    if(sub) sub.textContent = 'Distribuir, dar prazo e prioridade — e ver o time inteiro por dia, num lugar só.';
+    const semEditor = ativos.filter(v => !v.editorAtribuido);
+    const semPrazo  = ativos.filter(v => !window.diaISOdoVideo(v));
+    const hj = hojeLocal();
+    const atrasados = ativos.filter(v => { const d = window.diaISOdoVideo(v); return d && d < hj; });
+    const cartao = (n, rot, cor) => '<div class="resumoCard ' + (n ? cor : 'green') + '"><div class="num">' + n + '</div><div class="lbl">' + rot + '</div></div>';
+    let h = '<div class="painelResumo">'
+      + cartao(semEditor.length, 'esperando você distribuir', 'red')
+      + cartao(semPrazo.length,  'sem prazo definido', 'yellow')
+      + cartao(atrasados.length, 'atrasados', 'red')
+      + cartao(ativos.length,    'em edição agora', 'yellow')
+      + '</div>';
+    const listar = (arr, titulo, desc, cor) => {
+      if(!arr.length) return '';
+      let cliAnterior = '';
+      return '<div class="card" style="border:2px solid ' + cor + ';margin-top:14px;">'
+        + '<h2>' + titulo + ' (' + arr.length + ')</h2><div class="desc">' + desc + '</div>'
+        + arr.map(v => { const cli = String(v.clienteNome||'—');
+            const mesmo = cli === cliAnterior; cliAnterior = cli;
+            return '<div class="item" style="cursor:pointer;' + (mesmo ? 'border-top:none;margin-top:-1px;' : '') + '" onclick="abrirVideoDeAtraso(\'' + escJs(v.id) + '\')">'
+              + '<div class="top"><div class="nome">' + esc(v.titulo||'(sem título)') + '</div><span class="selo pendente">abrir</span></div>'
+              + '<div class="meta" style="margin-top:3px;">' + (mesmo ? '↳ ' : '') + esc(cli)
+              + (v.editorSugerido && !v.editorAtribuido ? ' · sugerido: <b>' + esc(v.editorSugerido) + '</b>' : '')
+              + (v.editorAtribuido ? ' · 👤 <b>' + esc(v.editorAtribuido) + '</b>' : '')
+              + '</div></div>'; }).join('') + '</div>'; };
+    h += listar(semEditor, '🆕 Sem editor — distribuir agora',
+          'Clica no vídeo pra escolher quem edita, o prazo e a prioridade — tudo na mesma janela.', 'var(--red)');
+    h += listar(semPrazo.filter(v => v.editorAtribuido), '❔ Já tem editor, mas ainda sem prazo',
+          'Enquanto você não define a data, ninguém é cobrado por ela — e o vídeo fica esperando aqui.', 'var(--yellow)');
+    h += '<div style="margin-top:14px;"></div>';
+    h += htmlVideosPorDia(ativos, true, 'centralBox', true)
+      || '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhum vídeo em edição agora.</div></div>';
+    h += '<div class="card" style="margin-top:14px;"><div class="desc">O resto continua onde sempre esteve:</div><div class="btnrow" style="margin-top:8px;">'
+      + '<button class="btn secondary" style="width:auto;padding:7px 15px;font-size:11.5px;" onclick="irParaAprovacoes()">✓ Aprovações</button>'
+      + '<button class="btn secondary" style="width:auto;padding:7px 15px;font-size:11.5px;" onclick="irParaExtras()">💲 Extras da equipe</button>'
+      + '</div></div>';
+    box.innerHTML = h;
+  }catch(e){
+    console.error('Central de Vídeos:', e);
+    box.innerHTML = '<div class="card"><div class="empty">Não consegui montar a Central agora. O resto do sistema segue normal.</div></div>';
+  }
+};
+/* O numero do botao amarelo. Para a gestao: o que espera decisao DELA
+   (sem editor + sem prazo). Para o editor: o que vence hoje ou ja venceu.
+   Mesma fonte do resto da tela — nao e uma segunda conta. */
+window.contadorCentral = function(){
+  try{
+    const ativos = (cacheVideosProducao||[]).filter(v => !v.excluido && ['aguardando_edicao','correcao'].includes(String(v.status||'')));
+    const hj = hojeLocal();
+    if(!['Amanda','Chris'].includes(usuarioAtual)) return 0;
+    return ativos.filter(v => !v.editorAtribuido || !window.diaISOdoVideo(v)).length;
+  }catch(e){ return 0; }
+};
+window.atualizarBadgeCentral = function(){
+  const el = document.getElementById('badgeCentralMenu');
+  if(!el) return;
+  const n = window.contadorCentral();
+  el.textContent = n;
+  el.style.display = n ? 'inline-flex' : 'none';
+};
+/* ===== PRIORIDADE DO VIDEO — pedido da Amanda, 04/08/2026 =====
    Ela precisa dizer o que e urgente. Antes so existia prazo, e prazo
    igual nao diz o que fazer primeiro. Tres niveis, e o urgente sobe
    sempre — inclusive acima de quem tem o mesmo prazo. */
@@ -3584,6 +3675,7 @@ window.__filtroVideoDia = window.__filtroVideoDia || 'tudo';
 window.filtrarVideosPorDia = function(qual, alvoId){
   window.__filtroVideoDia = qual || 'tudo';
   try{
+    if(alvoId === 'centralBox' && typeof renderCentral === 'function'){ renderCentral(); return; }
     if(alvoId && alvoId !== 'videosPorDiaBox' && typeof renderEquipeVisao === 'function'){ renderEquipeVisao(); return; }
     if(typeof renderVideosPorDiaInicio === 'function') renderVideosPorDiaInicio();
   }catch(e){ console.error('filtro por dia:', e); }
@@ -3595,7 +3687,7 @@ window.diaISOdoVideo = function(v){
   if(v && typeof v.prazoEntrega === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.prazoEntrega)) return v.prazoEntrega;
   return '';
 };
-window.htmlVideosPorDia = function(lista, compacto, alvoId){
+window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   const alvo = alvoId || 'videosPorDiaBox';
   const l = (lista||[]).filter(v => v && ['aguardando_edicao','correcao'].includes(String(v.status||'')));
   if(!l.length) return '';
@@ -3651,6 +3743,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId){
             + '<div class="meta" style="margin-top:3px;">' + (mesmoCliente ? '↳ ' : '') + esc(cli)
             + (v.status === 'correcao' ? ' · <b style="color:var(--yellow2);">em ajuste</b>' : '')
             + (window.diaISOdoVideo(v) ? ' · entrega ' + formatarDataBR(window.diaISOdoVideo(v)) : '')
+            + (mostrarEditor ? ' · 👤 <b>' + esc(v.editorAtribuido || 'sem editor') + '</b>' : '')
             + '</div></div>'; }).join('')
       + '</div>'; };
   h += faixa('atrasado','🔴 Atrasado', g.atrasado);
@@ -12728,6 +12821,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId){
     /* Esconder o menu nao e proteger: bastava chamar irPara('financeiro')
        pelo console, ou o site restaurar a ultima aba aberta, pra cair na
        tela mesmo sem o item visivel. A trava real e aqui. */
+    /* 04/08/2026 — A CENTRAL E DA GESTAO. Mesma licao da linha abaixo:
+       esconder o item do menu nao protege nada, porque irPara('central')
+       pelo console — ou o site restaurando a ultima aba aberta — entraria
+       igual. A trava mora aqui, na porta. */
+    if(nome === 'central' && !['Chris','Amanda'].includes(usuarioAtual)){
+      mostrarToast('Essa área é da gerência.', 'erro');
+      return;
+    }
     if(VIEWS_SO_CHRIS.includes(nome) && usuarioAtual !== 'Chris'){
       mostrarToast('Essa área é restrita.', 'erro');
       return;
@@ -12751,6 +12852,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId){
       try{ window.tentarAbrirGerenciaLembrada(); }
       catch(e){ console.error('Falha ao tentar a gerência lembrada:', e); }
     }
+    if(nome === 'central') renderCentral();
     if(nome === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas();
     if(nome === 'atrasadas') renderPainelDemandas();
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
@@ -14209,7 +14311,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId){
        de fora da lista e perdeu o acesso por completo: o botão de criar
        story pro cliente simplesmente sumiu pra ela. Ela é a Social Media
        chefe — é a dona natural disso. */
-    'Amanda': ['navChecklist','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
+    'Amanda': ['navCentral','navChecklist','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
     'Cecília': ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem'],
     'Gabrielle': ['navChecklist','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
@@ -14236,7 +14338,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId){
     'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes','navExtras'],
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
-    'Amanda': ['navVideos','navStories','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
+    'Amanda': ['navCentral','navVideos','navStories','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
     'Cecília': ['navControlePostagem','navAgendamento','navPostagens','navStories','navVideos'],
     'Gabrielle': ['navStories','navRoteiros','navPostagens','navCampanhas','navReferencias'],
     'Helo': ['navVideos'],
@@ -16780,6 +16882,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId){
     }
     try{ atualizarBadgeMinhas(); }catch(e){}
     try{ atualizarBadgePostagens(); }catch(e){}
+    try{ if(window.atualizarBadgeCentral) atualizarBadgeCentral(); }catch(e){ console.error('badge da Central:', e); }
   };
 
   function atualizarBadgeMinhasDemandasAtribuidas(qtd){
@@ -21811,6 +21914,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId){
     /* 04/08/2026 — FALTAVAM ESTAS DUAS, e era exatamente a queixa da Amanda:
      ela mudava o prazo e a tela de Equipe continuava mostrando o antigo.
      Nao era cache do banco: ninguem mandava redesenhar. */
+  if(visivel('centralBox') && window.renderCentral) renderCentral();
   if(visivel('videosPorDiaBox') && window.renderVideosPorDiaInicio) renderVideosPorDiaInicio();
   if(visivel('gerenciaEquipeVisao') && window.renderEquipeVisao) renderEquipeVisao();
   if(window.calcularIndicadores) calcularIndicadores(true).catch(()=>{});

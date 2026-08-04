@@ -7692,11 +7692,28 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        Não inventei status novo de propósito: 'aguardando_legenda' já é
        lido em 9 lugares. Status novo obrigaria a ensinar os 9. */
     const temData = !!data;
-    const temLegenda = !!legenda;
-    const statusInicial = !temLegenda ? 'aguardando_legenda'
-                        : (temData ? 'agendado' : 'aguardando_agendamento');
-    /* Só sincroniza o calendário quando o post está de fato agendado. */
-    const vaiPraCalendario = temData && temLegenda;
+      const temLegenda = !!legenda;
+      /* ===== 04/08/2026 — QUEM CADASTRA NAO DECIDE A ETAPA =====
+         Pedido do Chris: "A Amanda nao deve ter permissao para enviar
+         conteudos diretamente para a fila de agendamento. A funcao dela
+         e apenas cadastrar o conteudo e disponibilizar o link."
+         A ordem da casa: Amanda -> Gabi (legenda) -> Ceci (programacao).
+         O buraco que sobrou do conserto de 03/08: com legenda E data o
+         post nascia 'agendado' — pulava a Gabi E a Ceci de uma vez.
+         Agora so quem de fato agenda chega nesse estado. O dia que a
+         Amanda digitar vira SUGESTAO pra Ceci, nao decisao. */
+      const ehQuemAgenda = ['Cecília','Chris'].includes(usuarioAtual);
+      /* A regra nao pode depender de o campo estar escondido na tela.
+         Se um dia alguem devolver o campo de legenda pra Amanda — ou se
+         ela chegar por outro caminho — a ordem tem que continuar valendo.
+         Por isso a origem 'Amanda' entra na propria condicao. */
+      const statusInicial = (usuarioAtual === 'Amanda' || !temLegenda)
+            ? 'aguardando_legenda'
+            : ((temData && ehQuemAgenda) ? 'agendado' : 'aguardando_agendamento');
+      /* UMA resposta so: entra no calendario do cliente se, e somente se,
+         esta agendado. Antes decidia sozinho por data+legenda — e passaria
+         a mandar pro calendario post que ainda esta na fila da Gabi. */
+      const vaiPraCalendario = statusInicial === 'agendado';
 
     const btn = document.getElementById('btnSalvarAvulso');
     if(btn){ btn.disabled = true; btn.textContent = 'Salvando…'; }
@@ -7708,9 +7725,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         calendarItemIdx: null, calendarClienteSlug: null,
         /* guarda o dia sugerido mesmo sem legenda, pra Ceci não perder a
            intenção da Amanda quando a Gabi devolver o texto */
-        dataAgendada: (temData && temLegenda) ? data : '', horaAgendada: (temData && temLegenda) ? hora : '',
+        dataAgendada: vaiPraCalendario ? data : '', horaAgendada: vaiPraCalendario ? hora : '',
         dataSugerida: temData ? data : '', horaSugerida: temData ? hora : '',
-        agendadoPor: (temData && temLegenda) ? (usuarioAtual||'?') : '', agendadoEm: (temData && temLegenda) ? new Date().toISOString() : '',
+        agendadoPor: vaiPraCalendario ? (usuarioAtual||'?') : '', agendadoEm: vaiPraCalendario ? new Date().toISOString() : '',
         status: statusInicial,
         origemManual: true, tipoManual: tipo, criadoPor: usuarioAtual || '?',
         criadoEm: serverTimestamp()
@@ -7732,9 +7749,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         }catch(e){ console.error('Post avulso: falha ao sincronizar o calendário:', e); }
       }
 
-      mostrarToast(temData
+      mostrarToast(statusInicial === 'agendado'
         ? 'Post criado e agendado pra ' + formatarDataBR(data) + ' — já aparece no portal do cliente.'
-        : 'Post criado e entrou na fila de agendamento.');
+        : statusInicial === 'aguardando_legenda'
+          ? 'Post criado. Foi pra fila da Gabi escrever a legenda.' + (temData ? ' O dia que você marcou seguiu como sugestão pra Cecília.' : '')
+          : 'Post criado. Foi pra fila da Cecília agendar.');
 
       ['avulsoTitulo','avulsoLegenda','avulsoLink'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
       const box = document.getElementById('formPostAvulso'); if(box) box.style.display='none';
@@ -7748,13 +7767,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   function htmlFormPostAvulso(){
+    /* 04/08/2026 — a Amanda cadastra e passa adiante. Esconder o campo nao
+       e a protecao (a trava real esta em salvarPostAvulso, no status): e
+       pra tela nao prometer uma decisao que nao e dela. */
+    const podeDefinirLegendaEData = usuarioAtual !== 'Amanda';
     return `<div class="card" style="border-color:var(--yellow);">
       <h2 style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
         <span>Post que não está no sistema</span>
         <button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11.5px;" onclick="abrirFormPostAvulso()">+ Adicionar</button>
       </h2>
       <div class="desc">Pra arte, vídeo extra que o cliente mandou, ou qualquer coisa que vai ser postada mas não passou pela esteira de produção.
-      <b>Dá pra registrar só o essencial</b> — cliente, título e link. Sem legenda vai pra Gabi escrever; sem data vai pra Cecília agendar. O post segue o mesmo caminho dos vídeos do site.</div>
+      <b>Dá pra registrar só o essencial</b> — cliente, título e link. O post segue sempre a mesma ordem: <b>Gabi</b> escreve a legenda, <b>Cecília</b> define o dia, e só então fica agendado.</div>
       <div id="formPostAvulso" style="display:none;margin-top:12px;">
         <div class="row2">
           <div class="field"><label>Cliente</label>
@@ -7778,7 +7801,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         </div>
         <div class="field"><label>Link do material</label><input type="text" id="avulsoLink" placeholder="Link do Drive, Canva, WeTransfer...">
           <div class="desc" style="margin:4px 0 0;">Opcional, mas sem ele quem posta vai ter que procurar.</div></div>
-        <div class="field"><label>Legenda <span style="color:var(--muted);font-weight:400;">— opcional</span></label>
+        ${ podeDefinirLegendaEData ? `<div class="field"><label>Legenda <span style="color:var(--muted);font-weight:400;">— opcional</span></label>
           <textarea id="avulsoLegenda" placeholder="Se já tiver a legenda, cola aqui. Se não, deixa vazio: vai pra Gabi escrever."></textarea>
           <div class="desc" style="margin:4px 0 0;"><b>Deixando vazio</b>, o post cai na fila de legendas da Gabi. Quando ela escrever, ele segue pra Cecília agendar — igual aos vídeos que passam pelo site.</div></div>
         <div class="row2">
@@ -7786,7 +7809,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <div class="field"><label>Hora</label><input type="time" id="avulsoHora"></div>
         </div>
         <div class="desc" style="margin-bottom:8px;">Sem dia, ele entra na fila de "pra agendar" em vez de ficar marcado — assim não some nem mente que está agendado.</div>
-        <button class="btn" id="btnSalvarAvulso" onclick="salvarPostAvulso()">✔ Criar post</button>
+        ` : `<div class="desc" style="margin:-2px 0 12px;padding:9px 11px;background:var(--deep);border-left:3px solid var(--yellow);border-radius:8px;">A legenda e da <b>Gabi</b> e o dia e da <b>Cecilia</b> — por isso os campos nao aparecem aqui. Voce cadastra e disponibiliza o link; o post segue sozinho pela fila.</div>` }<button class="btn" id="btnSalvarAvulso" onclick="salvarPostAvulso()">✔ Criar post</button>
       </div>
     </div>`;
   }

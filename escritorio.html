@@ -3567,41 +3567,101 @@
 
      Quem define o prazo e a AMANDA, na Gerencia. O texto diz isso: o
      editor precisa saber a quem pedir quando a data nao fizer sentido. */
-  window.htmlVideosPorDia = function(lista, compacto){
-    const l = (lista||[]).filter(v => v && ['aguardando_edicao','correcao'].includes(String(v.status||'')));
-    if(!l.length) return '';
-    const hj = hojeLocal();
-    const dISO = d => { const p = calcularPrazoEdicaoVideo(d);
-      return p ? new Date(p.getTime() - p.getTimezoneOffset()*60000).toISOString().slice(0,10) : ''; };
-    const amanha = (() => { const d = new Date(hj + 'T00:00:00'); d.setDate(d.getDate()+1);
-      return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10); })();
-    const gAtras = l.filter(v => { const p = dISO(v); return p && p < hj; });
-    const gHoje  = l.filter(v => dISO(v) === hj);
-    const gAmanha= l.filter(v => dISO(v) === amanha);
-    const gDepois= l.filter(v => { const p = dISO(v); return p && p > amanha; });
-    const gSem   = l.filter(v => !dISO(v));
-    const linha = (rot, arr, cor, aviso) => arr.length
-      ? '<div style="margin-top:10px;"><div style="font-weight:800;font-size:12.5px;color:' + cor + ';">'
-        + rot + ' (' + arr.length + ')</div>'
-        + (aviso ? '<div class="meta" style="margin-top:2px;">' + aviso + '</div>' : '')
-        + arr.map(v => '<div class="meta" style="margin-top:5px;padding:7px 9px;background:var(--deep);border-left:3px solid '
-            + cor + ';border-radius:7px;">' + (v.status === 'correcao' ? '🔁 ' : '🎬 ')
-            + esc(nomeDaDemanda({titulo:v.titulo}).nome) + '</div>').join('')
-        + '</div>'
-      : '';
-    return '<div class="card" style="border:2px solid ' + (gAtras.length ? 'var(--red)' : gHoje.length ? 'var(--yellow)' : 'var(--green)') + ';">'
-      + '<h2 style="font-size:15px;">🗓️ O que entregar, por dia</h2>'
-      + '<div class="desc">' + (gAtras.length || gHoje.length
-          ? 'Comece de cima. Quem define os prazos é a Amanda — se alguma data não fizer sentido, fala com ela.'
-          : 'Nada vencendo hoje. Quem define os prazos é a Amanda.') + '</div>'
-      + linha('🔴 Atrasado', gAtras, 'var(--red)', 'Passou do prazo — estes primeiro.')
-      + linha('🟡 Pra entregar hoje', gHoje, 'var(--yellow)', '')
-      + linha('🔵 Amanhã', gAmanha, 'var(--yellow2)', '')
-      + (compacto ? '' : linha('⚪ Depois', gDepois, 'var(--muted)', ''))
-      + linha('❔ Sem prazo definido', gSem, 'var(--muted)', 'Pede um prazo pra Amanda.')
-      + (compacto && gDepois.length ? '<div class="meta" style="margin-top:9px;opacity:.7;">+ ' + gDepois.length + ' pra depois de amanhã — a lista completa está em Vídeos em Edição.</div>' : '')
-      + '</div>';
-  };
+  /* ===== PRIORIDADE DO VIDEO — pedido da Amanda, 04/08/2026 =====
+   Ela precisa dizer o que e urgente. Antes so existia prazo, e prazo
+   igual nao diz o que fazer primeiro. Tres niveis, e o urgente sobe
+   sempre — inclusive acima de quem tem o mesmo prazo. */
+window.PRIORIDADES_VIDEO = {
+  urgente: { rotulo:'Urgente',         icone:'🔴', peso:0, cor:'var(--red)'    },
+  alta:    { rotulo:'Alta prioridade', icone:'🟠', peso:1, cor:'var(--yellow)' },
+  normal:  { rotulo:'Normal',          icone:'⚪', peso:2, cor:'var(--muted)'  }
+};
+window.prioridadeDoVideo = function(v){
+  const p = String((v && v.prioridade) || 'normal').toLowerCase();
+  return window.PRIORIDADES_VIDEO[p] ? p : 'normal';
+};
+window.__filtroVideoDia = window.__filtroVideoDia || 'tudo';
+window.filtrarVideosPorDia = function(qual, alvoId){
+  window.__filtroVideoDia = qual || 'tudo';
+  try{
+    if(alvoId && alvoId !== 'videosPorDiaBox' && typeof renderEquipeVisao === 'function'){ renderEquipeVisao(); return; }
+    if(typeof renderVideosPorDiaInicio === 'function') renderVideosPorDiaInicio();
+  }catch(e){ console.error('filtro por dia:', e); }
+};
+/* Uma resposta so para 'em que dia este video cai'. Se a Amanda ainda
+   nao definiu, ele NAO entra em nenhum dia — fica em 'sem prazo', pra
+   nao comecar a contar atraso de uma data que ninguem escolheu. */
+window.diaISOdoVideo = function(v){
+  if(v && typeof v.prazoEntrega === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.prazoEntrega)) return v.prazoEntrega;
+  return '';
+};
+window.htmlVideosPorDia = function(lista, compacto, alvoId){
+  const alvo = alvoId || 'videosPorDiaBox';
+  const l = (lista||[]).filter(v => v && ['aguardando_edicao','correcao'].includes(String(v.status||'')));
+  if(!l.length) return '';
+  const hj = hojeLocal();
+  const amanhaISO = (function(){ const d = new Date(hj + 'T12:00:00'); d.setDate(d.getDate()+1);
+    return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10); })();
+  const P = window.PRIORIDADES_VIDEO;
+  /* Ordem dentro de cada dia: urgente primeiro, e o mesmo cliente junto.
+     A data manda; dentro da data, a prioridade; dentro dela, o cliente. */
+  const ordenar = arr => arr.slice().sort((a,b) => {
+    const pa = P[window.prioridadeDoVideo(a)].peso, pb = P[window.prioridadeDoVideo(b)].peso;
+    if(pa !== pb) return pa - pb;
+    const ca = String(a.clienteNome||'').toLowerCase(), cb = String(b.clienteNome||'').toLowerCase();
+    if(ca !== cb) return ca < cb ? -1 : 1;
+    return String(a.titulo||'').localeCompare(String(b.titulo||''));
+  });
+  const g = { atrasado:[], hoje:[], amanha:[], proximos:[], sem:[] };
+  l.forEach(v => { const dISO = window.diaISOdoVideo(v);
+    if(!dISO) g.sem.push(v);
+    else if(dISO < hj) g.atrasado.push(v);
+    else if(dISO === hj) g.hoje.push(v);
+    else if(dISO === amanhaISO) g.amanha.push(v);
+    else g.proximos.push(v); });
+  Object.keys(g).forEach(k => g[k] = ordenar(g[k]));
+  const f = window.__filtroVideoDia || 'tudo';
+  const chips = [
+    ['tudo','Todos', l.length],
+    ['atrasado','🔴 Atrasados', g.atrasado.length],
+    ['hoje','🟡 Hoje', g.hoje.length],
+    ['amanha','🔵 Amanhã', g.amanha.length],
+    ['proximos','⚪ Próximos dias', g.proximos.length]
+  ];
+  if(g.sem.length) chips.push(['sem','❔ Sem prazo', g.sem.length]);
+  let h = '<div class="card" style="margin-bottom:14px;">'
+    + '<h2 style="margin-bottom:2px;">🗓️ O que entregar, por dia</h2>'
+    + '<div class="desc">Quem define os prazos e a prioridade é a Amanda — se alguma data não fizer sentido, fala com ela.</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;">'
+    + chips.map(c => '<button class="btn" onclick="filtrarVideosPorDia(\'' + c[0] + '\',\'' + escJs(alvo) + '\')" style="width:auto;padding:5px 11px;font-size:11.5px;border-radius:999px;'
+        + (f === c[0] ? 'background:var(--yellow);color:var(--graphite);font-weight:700;' : 'background:var(--deep);color:var(--text);')
+        + '">' + c[1] + ' (' + c[2] + ')</button>').join('')
+    + '</div>';
+  const selo = v => { const k = window.prioridadeDoVideo(v); if(k === 'normal') return '';
+    return '<span style="font-size:10px;font-weight:800;letter-spacing:.4px;color:' + P[k].cor + ';">' + P[k].icone + ' ' + P[k].rotulo.toUpperCase() + '</span> '; };
+  const faixa = (chave, titulo, arr) => {
+    if(!arr.length) return '';
+    if(f !== 'tudo' && f !== chave) return '';
+    let cliAnterior = '';
+    return '<div style="margin-top:12px;"><div style="font-size:12.5px;font-weight:800;margin-bottom:6px;">' + titulo + ' (' + arr.length + ')</div>'
+      + arr.map(v => { const cli = String(v.clienteNome||'—');
+          const mesmoCliente = cli === cliAnterior; cliAnterior = cli;
+          return '<div class="item" style="' + (mesmoCliente ? 'border-top:none;margin-top:-1px;' : '') + '">'
+            + '<div class="top"><div class="nome">' + selo(v) + esc(v.titulo||'(sem título)') + '</div></div>'
+            + '<div class="meta" style="margin-top:3px;">' + (mesmoCliente ? '↳ ' : '') + esc(cli)
+            + (v.status === 'correcao' ? ' · <b style="color:var(--yellow2);">em ajuste</b>' : '')
+            + (window.diaISOdoVideo(v) ? ' · entrega ' + formatarDataBR(window.diaISOdoVideo(v)) : '')
+            + '</div></div>'; }).join('')
+      + '</div>'; };
+  h += faixa('atrasado','🔴 Atrasado', g.atrasado);
+  h += faixa('hoje','🟡 Pra entregar hoje', g.hoje);
+  h += faixa('amanha','🔵 Amanhã', g.amanha);
+  h += faixa('proximos','⚪ Próximos dias', g.proximos);
+  h += faixa('sem','❔ Sem prazo — a Amanda ainda vai definir', g.sem);
+  const visiveis = (f === 'tudo') ? l.length : (g[f]||[]).length;
+  if(!visiveis) h += '<div class="meta" style="margin-top:12px;">Nada neste filtro. Clica em <b>Todos</b> pra ver o resto.</div>';
+  return h + '</div>';
+};
 
   /* O mesmo bloco no Inicio do editor, em versao compacta. */
   window.renderVideosPorDiaInicio = function(){
@@ -4312,7 +4372,23 @@
     const snap = await getDocs(collection(db,'videos_producao'));
     const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
     const abertos = todos.filter(v => ['aguardando_edicao','correcao'].includes(v.status));
-    const semEditor = abertos.filter(v => !v.editorAtribuido);
+    /* ===== 04/08/2026 — ORDEM DA FILA DE DISTRIBUICAO (pedido da Amanda) =====
+       Primeiro o prazo; dentro do mesmo prazo, o mesmo cliente em sequencia,
+       pra ela distribuir um cliente inteiro de uma vez em vez de pular de
+       um pra outro. Quem ainda nao tem prazo fica por ultimo: nao ha data
+       a cumprir ate ela decidir. */
+    const semEditor = abertos.filter(v => !v.editorAtribuido).sort((a,b) => {
+      const dia = v => (typeof window.diaISOdoVideo === 'function') ? window.diaISOdoVideo(v) : (v.prazoEntrega||'');
+      const da = dia(a), db_ = dia(b);
+      if(!!da !== !!db_) return da ? -1 : 1;
+      if(da && db_ && da !== db_) return da < db_ ? -1 : 1;
+      const peso = v => { try{ return window.PRIORIDADES_VIDEO[window.prioridadeDoVideo(v)].peso; }catch(e){ return 2; } };
+      const pa = peso(a), pb = peso(b);
+      if(pa !== pb) return pa - pb;
+      const ca = String(a.clienteNome||'').toLowerCase(), cb = String(b.clienteNome||'').toLowerCase();
+      if(ca !== cb) return ca < cb ? -1 : 1;
+      return String(a.titulo||'').localeCompare(String(b.titulo||''));
+    });
     const concluidosRecentes = todos.filter(v => (v.status === 'aprovado' || v.status === 'finalizado') && v.clienteAprovouEm)
       .sort((a,b) => new Date(b.clienteAprovouEm) - new Date(a.clienteAprovouEm)).slice(0, 15);
     const concluidosTotal = todos.filter(v => v.status === 'aprovado' || v.status === 'finalizado').length;
@@ -13281,7 +13357,15 @@
   function videoAtrasado(v){
     if(!v || v.excluido) return false;
     if(!['aguardando_edicao','correcao'].includes(v.status)) return false;
-    const prazo = v.prazoEntrega || (typeof calcularPrazoEdicaoVideo === 'function' ? (()=>{ const d=calcularPrazoEdicaoVideo(v); return d ? dataLocal(d) : ''; })() : '');
+    /* ===== 04/08/2026 — O PRAZO QUE NINGUEM ESCOLHEU =====
+     A Amanda: "o prazo ja comeca a contar para o editor antes mesmo de
+     eu definir". Era aqui. Quando o video nao tinha prazoEntrega, esta
+     linha INVENTAVA um (criacao + 2 dias uteis) e o video podia nascer
+     atrasado por uma data que nenhuma pessoa decidiu.
+     Quem define prazo e a Amanda. Sem decisao dela, nao ha atraso —
+     o video aparece em "Sem prazo" na tela de todo mundo, visivel,
+     em vez de cobrado por uma data inventada. */
+    const prazo = (v && typeof v.prazoEntrega === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.prazoEntrega)) ? v.prazoEntrega : '';
     if(!prazo) return false;
     return prazo < hojeLocal();
   }
@@ -21701,6 +21785,13 @@
           <button class="btn secondary" style="margin-top:8px;" onclick="salvarEditorVideo('${id}','${escJs(v.cliente||'')}')">↪️ Salvar editor</button>
         </div>
 
+        <div class="field" style="margin-top:12px;"><label>Prioridade</label>
+          <select id="prioVid_${id}">
+            ${['urgente','alta','normal'].map(k=>`<option value="${k}" ${k===prioridadeDoVideo(v)?'selected':''}>${PRIORIDADES_VIDEO[k].icone} ${PRIORIDADES_VIDEO[k].rotulo}</option>`).join('')}
+          </select>
+          <div class="meta" style="margin-top:4px;">Urgente e alta prioridade sobem pro topo da lista da pessoa, mesmo que o prazo seja o mesmo dos outros.</div>
+          <button class="btn secondary" style="margin-top:8px;" onclick="salvarPrioridadeVideo('${id}')">🔺 Salvar prioridade</button>
+        </div>
         <button class="btn secondary" style="margin-top:12px;" onclick="fecharModal()">Fechar</button>
         ${renderLinhaDoTempo(v.historico)}`;
       document.getElementById('overlayView').classList.add('show');
@@ -21717,11 +21808,35 @@
     if(visivel('producaoLista') && window.renderProducao) renderProducao();
     if(visivel('gerenciaAgora') && window.renderAgora) renderAgora();
     if(visivel('esteiraConteudoBox') && window.renderEsteiraConteudo) renderEsteiraConteudo();
-    if(window.calcularIndicadores) calcularIndicadores(true).catch(()=>{});
+    /* 04/08/2026 — FALTAVAM ESTAS DUAS, e era exatamente a queixa da Amanda:
+     ela mudava o prazo e a tela de Equipe continuava mostrando o antigo.
+     Nao era cache do banco: ninguem mandava redesenhar. */
+  if(visivel('videosPorDiaBox') && window.renderVideosPorDiaInicio) renderVideosPorDiaInicio();
+  if(visivel('gerenciaEquipeVisao') && window.renderEquipeVisao) renderEquipeVisao();
+  if(window.calcularIndicadores) calcularIndicadores(true).catch(()=>{});
   }
   window.atualizarTelasDepoisDeMexerNoPrazo = atualizarTelasDepoisDeMexerNoPrazo;
 
-  window.salvarPrazoVideo = async function(id){
+  /* ===== PRIORIDADE — 04/08/2026 =====
+   Fica junto de prazo e editor de proposito: sao as tres coisas que a
+   Amanda muda, e as tres redesenham as mesmas telas. Uma so funcao de
+   redesenho pros tres, senao um deles esquece uma tela. */
+window.salvarPrioridadeVideo = async function(id){
+  const el = document.getElementById('prioVid_' + id);
+  const valor = el ? String(el.value||'normal') : 'normal';
+  if(!window.PRIORIDADES_VIDEO[valor]){ mostrarToast('Prioridade inválida.', 'erro'); return; }
+  try{
+    await updateDoc(doc(db,'videos_producao', id), {
+      prioridade: valor,
+      prioridadeDefinidaPor: usuarioAtual || '?',
+      prioridadeDefinidaEm: new Date().toISOString()
+    });
+    registrarHistorico('videos_producao', id, 'Prioridade: ' + window.PRIORIDADES_VIDEO[valor].rotulo, usuarioAtual);
+    mostrarToast('Prioridade salva: ' + window.PRIORIDADES_VIDEO[valor].rotulo + '.');
+    try{ atualizarTelasDepoisDeMexerNoPrazo(); }catch(e){ console.error(e); }
+  }catch(e){ mostrarToast('Não consegui salvar a prioridade: ' + e.message, 'erro'); }
+};
+window.salvarPrazoVideo = async function(id){
     const novo = document.getElementById('prazoVid_'+id)?.value;
     if(!novo){ mostrarToast('Escolhe a data.', 'erro'); return; }
     try{
@@ -22042,7 +22157,7 @@
       </div>`;
     }
 
-    cont.innerHTML = cabecalhoIndicadores + html;
+    cont.innerHTML = barraFiltros + cabecalhoIndicadores + html;
   };
 
   window.renderAtrasosEquipe = async function(){
@@ -24185,10 +24300,16 @@
     html += faixaEV('ev_todas', '📋 Todas em aberto', pendentes, false);
 
     // ----- producao, conforme a funcao da pessoa -----
+    /* ===== 04/08/2026 — A AMANDA VIA DIFERENTE DO EDITOR =====
+   Aqui existia uma segunda lista de videos, escrita a mao: so status e
+   'lancado em', sem prazo nenhum. O editor via a organizacao por dia e
+   ela via outra coisa — as duas certas, respondendo perguntas diferentes.
+   E o mesmo defeito que venho desmontando o mes inteiro.
+   Agora e a MESMA funcao dos dois lados. Nao ha como divergir de novo. */
     if(videos.length){
       html += `<div class="faixaDem aberta" data-faixa="ev_videos">
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🎬 Vídeos na mão dela <span class="qtd">(${videos.length})</span><span class="seta">▾</span></div>
-        <div class="faixaItens">${videos.map(v => `<div class="item"><div class="top"><div class="nome">${esc(v.titulo)}</div><span class="selo pendente">${esc(v.status)}</span></div><div class="meta" style="margin-top:4px;">${esc(v.clienteNome||'')} · lançado em ${esc(v.data||'—')}</div></div>`).join('')}</div>
+        <div class="faixaItens">${ htmlVideosPorDia(videos, true, 'equipeVisaoBox') || '<div class="meta">Nenhum vídeo em edição ou ajuste agora.</div>' }</div>
       </div>`;
     }
     if(gravacoes.length){
@@ -25650,15 +25771,29 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const bolinha = n => n ? '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;">' + n + '</span>' : '';
     const chip = (id, rot, n) => `<button class="btn ${filtro===id?'':'secondary'}" style="width:auto;padding:8px 15px;font-size:12px;" onclick="filtrarAprovacoes('${id}')">${rot}${bolinha(n)}</button>`;
 
+    /* ===== 04/08/2026 — OS FILTROS ESTAVAM DEPOIS DA LISTA =====
+       A fileira existia, mas nascia dentro do segundo card: a Amanda
+       tinha que rolar a lista inteira de pendencias pra so entao achar
+       como filtra-la. Filtro que aparece depois do conteudo nao filtra
+       nada — ele explica, tarde, o que a pessoa ja leu.
+       Agora ele e a PRIMEIRA coisa da tela, em todos os ramos. */
+    const extrasProConferir = (cacheExtrasMenu||[]).filter(p => !p.pago && !extraLiberado(p));
+    const barraFiltros = `<div class="card" style="margin-bottom:14px;">
+        <div style="font-size:12.5px;font-weight:800;margin-bottom:9px;">Filtrar o que precisa de você</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${chip('tudo','Todas as aprovações', 0)}
+          ${chip('videos','🎬 Vídeos', 0)}
+          ${chip('demandas','📋 Demandas', minhas.length)}
+          ${chip('prazos','🕓 Prazos', prazosMeus.length)}
+          ${chip('extras','💲 Extras', extrasProConferir.length)}
+        </div>
+        <div class="meta" style="margin-top:9px;">A bolinha vermelha é o que está parado esperando você. O contador dos vídeos aparece dentro do bloco deles.</div>
+      </div>`;
+
     let html = `<div class="card">
       <h2><svg class="ic"><use href="#i-clock"/></svg>Esperando você aprovar</h2>
       <div class="desc">Demanda que <b>você mandou</b> e a pessoa já entregou. Aprovar tira da lista dela e avisa na hora.</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-        ${chip('tudo','Tudo', 0)}
-        ${chip('videos','🎬 Vídeos', 0)}
-        ${chip('demandas','📋 Demandas', minhas.length)}
-        ${chip('prazos','🕓 Novo prazo', prazosMeus.length)}
-      </div>
+      
       <div class="meta" style="margin-top:8px;">A bolinha vermelha é o que está parado esperando você. O contador dos vídeos aparece dentro do bloco deles.</div>
       <div class="painelResumo" style="margin-top:10px;">
         <div class="resumoCard ${minhas.length?'yellow':'green'}"><div class="num">${minhas.length}</div><div class="lbl">demandas esperando você</div></div>
@@ -25688,13 +25823,22 @@ Observações do cliente: ${l.observacoes||'—'}`;
       </div>`;
     }
 
+    if(filtro === 'extras'){
+      /* Reaproveita a MESMA tela de extras do Financeiro/Gerência, que ja
+         sabe conferir e liberar. Escrever uma segunda lista aqui seria
+         criar mais uma resposta pra mesma pergunta. */
+      html += '<div id="centralAprovExtras"><div class="card"><div class="empty">Carregando os extras…</div></div></div>';
+      cont.innerHTML = barraFiltros + cabecalho + html;
+      try{ renderGerenciaPagamentos('centralAprovExtras'); }catch(e){ console.error('extras na aprovação:', e); }
+      return;
+    }
     if(filtro === 'prazos'){
       html += htmlPrazos || '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhum pedido de prazo esperando você.</div></div>';
-      cont.innerHTML = cabecalho + html;
+      cont.innerHTML = barraFiltros + cabecalho + html;
       return;
     }
     if(filtro === 'videos'){
-      cont.innerHTML = cabecalho + html;
+      cont.innerHTML = barraFiltros + cabecalho + html;
       renderAprovacaoVideos('centralAprovVideos');
       return;
     }
@@ -25702,7 +25846,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     if(!lista.length || filtro === 'videos'){
       html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nada esperando você agora.</div></div>';
-      cont.innerHTML = cabecalho + html;
+      cont.innerHTML = barraFiltros + cabecalho + html;
       renderAprovacaoVideos('centralAprovVideos');
       return;
     }
@@ -25714,7 +25858,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       Object.keys(porPessoaD).sort((a,b)=>porPessoaD[b].length-porPessoaD[a].length).forEach(nome => {
         html += htmlFaixaAprovacao(nome, porPessoaD[nome], daPessoa);
       });
-      cont.innerHTML = cabecalho + html;
+      cont.innerHTML = barraFiltros + cabecalho + html;
       return;
     }
 
@@ -25724,7 +25868,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length-porPessoa[a].length).forEach(nome => {
       html += htmlFaixaAprovacao(nome, porPessoa[nome], daPessoa);
     });
-    cont.innerHTML = cabecalho + html;
+    cont.innerHTML = barraFiltros + cabecalho + html;
     renderAprovacaoVideos('centralAprovVideos');
   }
 

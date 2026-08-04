@@ -428,7 +428,8 @@ function mesDoTexto(txt){
   const t=(txt||'').trim().toLowerCase();
   const nomes=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
   const semAcento=x=>x.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-  const i=nomes.findIndex(n=>semAcento(t).startsWith(semAcento(n)));
+  const textoSemAcento=semAcento(t);
+  const i=nomes.findIndex(n=>textoSemAcento.includes(semAcento(n)));
   const ano=(t.match(/(20\d{2})/)||[])[1];
   if(i<0||!ano) return '';
   return ano+'-'+String(i+1).padStart(2,'0');
@@ -451,7 +452,15 @@ let mesVisivel='';
 
    Então conteúdo sem mês cai no `mesLegado`, que é a âncora estável.
    Nunca no rótulo do documento, que anda. */
-function mesDoItem(it){ return (it && it.mes) || data.mesLegado || ''; }
+function mesDoItem(it){
+  if(it && it.mes) return it.mes;
+  if(data.mesLegado) return data.mesLegado;
+  const ap = data.aprovacaoInterna;
+  if(ap && ap.mes) return ap.mes;
+  const chavesAprovacao = Object.keys(data.aprovacaoMeses||{}).filter(Boolean);
+  if(chavesAprovacao.length === 1) return chavesAprovacao[0];
+  return mesDoTexto(data.month) || '';
+}
 
 /* ===== A ARMADILHA QUE EU QUASE DEIXEI ==============================
    Conteúdo antigo não tem `mes`. Se ele "herdasse" o mês do documento
@@ -648,6 +657,10 @@ let saveTimer=null;let pendingWrite=false;
 let carregado=false;      // o primeiro snapshot já chegou?
 let itensNoBanco=0;       // quantos itens o banco tinha na última leitura
 let apagouDePropósito=false;  // delItem marca isto; some depois de gravar
+/* Quantidade igual não significa conteúdo igual. Este carimbo identifica
+   a versão que esta aba realmente carregou e impede uma aba antiga de
+   sobrescrever silenciosamente uma edição mais nova com o mesmo total. */
+window.__calVersaoBancoLida=null;
 
 /* ===== O QUE ACONTECEU COM A GABI — 29/07/2026 =======================
    As travas de 27/07 protegeram o BANCO e sacrificaram o TRABALHO DELA.
@@ -820,10 +833,13 @@ function mostrarBarraDecisao(html){
 function fecharBarraDecisao(){ const el=document.getElementById('barraDecisao'); if(el) el.style.display='none'; }
 
 function mostrarConflito(meus, doBanco){
+  const explicacao = meus === doBanco
+    ? 'As duas versões têm a mesma quantidade, mas o banco foi alterado depois que esta aba carregou. '
+    : 'As versões têm quantidades diferentes. ';
   mostrarBarraDecisao(
-    '<b>Não gravei ainda — e não perdi nada.</b><br>'+
+    '<b>Não gravei ainda — e não perdi nada.</b><br>'+ 
     'Esta aba tem <b>'+meus+' conteúdo(s)</b> e o banco tem <b>'+doBanco+'</b>. '+
-    'Alguém editou de outro lugar, ou esta aba está aberta há um tempo. Escolhe:'+
+    explicacao+'Alguém editou de outro lugar, ou esta aba está aberta há um tempo. Escolhe:'+
     '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
     '<button onclick="juntarComOBanco()" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">🔀 Juntar os dois (recomendado)</button>'+
     '<button onclick="ficarComOBanco()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Descartar o meu e usar o do banco</button>'+
@@ -853,9 +869,10 @@ window.ficarComOBanco = function(){
   fecharBarraDecisao(); bloqueadoPorConflito=false; temNaoSalvo=false; limparRascunho();
   data = window.__versaoDoBanco || data;
   carregado=true; itensNoBanco=(data.items||[]).length;
+  window.__calVersaoBancoLida=String(data.updatedAt||'');
   document.getElementById('clientName').value=data.client||'';
   document.getElementById('monthName').value=data.month||'';
-  renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();pintarEstado();
+  renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();pintarEstado();
 };
 window.forcarMinhaVersao = function(){
   const doBanco = ((window.__versaoDoBanco||{}).items||[]).length;
@@ -868,9 +885,12 @@ window.forcarMinhaVersao = function(){
 function ofereceRascunho(rasc, itensDoBanco){
   const q = (rasc.data.items||[]).length;
   const quando = new Date(rasc.em).toLocaleString('pt-BR');
+  const situacaoBanco = itensDoBanco === null
+    ? 'O banco está indisponível agora, então ainda não comparei as versões.'
+    : 'O banco está com ' + itensDoBanco + '.';
   mostrarBarraDecisao(
     '<b>Achei trabalho não salvo neste navegador.</b><br>'+
-    q + ' conteúdo(s), de ' + quando + '. O banco está com ' + itensDoBanco + '.'+
+    q + ' conteúdo(s), de ' + quando + '. ' + situacaoBanco+
     '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
     '<button onclick="restaurarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">↩️ Trazer de volta</button>'+
     '<button onclick="descartarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Descartar</button>'+
@@ -938,6 +958,7 @@ async function load(){
       }
     }
     itensNoBanco=(data.items||[]).length;
+    window.__calVersaoBancoLida=String(data.updatedAt||'');
     setTimeout(renderAprovacaoInterna, 0);
     const av=document.getElementById('avisoSalvamento'); if(av) av.style.display='none';
     document.getElementById('clientName').value=data.client||nomeDoSlug(window.__clienteId);
@@ -987,6 +1008,13 @@ async function load(){
   },(err)=>{
     console.error('Erro de conexão:',err);
     document.getElementById('viewGrid').innerHTML='<div style="padding:30px;text-align:center;color:#e07a7a;">Erro de conexão com o banco de dados: '+err.message+'</div>';
+    /* A leitura do Firestore pode falhar justamente quando existe um
+       rascunho que nunca chegou ao banco. A recuperação local não pode
+       depender de uma leitura remota bem-sucedida. */
+    if(window.__modoCal === 'equipe'){
+      const rascunhoSemBanco = lerRascunho();
+      if(rascunhoSemBanco && rascunhoSemBanco.data) ofereceRascunho(rascunhoSemBanco, null);
+    }
   });
 }
 /* ===================================================================
@@ -1095,8 +1123,19 @@ function save(){
   saveTimer=setTimeout(gravarComSeguranca,400);
 }
 
+function mesclarAprovacoesMaisRecentes(mapaServidor, mapaDaAba){
+  const resultado = { ...(mapaServidor||{}) };
+  Object.entries(mapaDaAba||{}).forEach(([mes, local]) => {
+    const servidor = resultado[mes];
+    if(!servidor || !servidor.em || (local && local.em && String(local.em) >= String(servidor.em))){
+      resultado[mes] = local;
+    }
+  });
+  return resultado;
+}
+
 async function gravarComSeguranca(){
-  if(!window.__fb){pendingWrite=false;return;}
+  if(!window.__fb){pendingWrite=false;return {ok:false, motivo:'sem-conexao'};}
   const {docRef,doc,getDoc,setDoc,db}=window.__fb;
   try{
     const atual = await getDoc(docRef);
@@ -1112,8 +1151,8 @@ async function gravarComSeguranca(){
     if(atual.exists()){
       const srv = atual.data();
       if(srv.mesLegado && !data.mesLegado) data.mesLegado = srv.mesLegado;
-      if(srv.aprovacaoMeses){
-        data.aprovacaoMeses = { ...srv.aprovacaoMeses, ...(data.aprovacaoMeses||{}) };
+      if(srv.aprovacaoMeses || data.aprovacaoMeses){
+        data.aprovacaoMeses = mesclarAprovacoesMaisRecentes(srv.aprovacaoMeses, data.aprovacaoMeses);
       }
       /* A aprovação da Amanda é dela, não desta aba. Se a do servidor é
          mais recente que a que esta aba tem na memória, a do servidor
@@ -1127,7 +1166,10 @@ async function gravarComSeguranca(){
 
     /* TRAVA 2 — não deixa uma aba desatualizada apagar o trabalho de
        outra pessoa. Só passa se alguém apagou de propósito nesta aba. */
-    if(!apagouDePropósito && antes.length > 0 && depois.length < antes.length){
+    const versaoServidor = String((atual.exists() && atual.data().updatedAt) || '');
+    const mudouEmOutraAba = window.__calVersaoBancoLida !== null &&
+      versaoServidor !== window.__calVersaoBancoLida;
+    if(!apagouDePropósito && ((antes.length > 0 && depois.length < antes.length) || mudouEmOutraAba)){
       pendingWrite=false;
       /* NÃO manda mais atualizar a página. O rascunho já está guardado,
          e a decisão vira botão: juntar as duas versões ou ficar com a
@@ -1135,7 +1177,7 @@ async function gravarComSeguranca(){
       bloqueadoPorConflito=true;
       window.__versaoDoBanco = atual.data();
       mostrarConflito(depois.length, antes.length);
-      return;
+      return {ok:false, motivo:'conflito'};
     }
 
     /* TRAVA 3 — guarda a versão anterior antes de sobrescrever. */
@@ -1149,6 +1191,7 @@ async function gravarComSeguranca(){
 
     await setDoc(docRef, data);
     itensNoBanco = depois.length;
+    window.__calVersaoBancoLida = String(data.updatedAt||'');
     apagouDePropósito = false;
     pendingWrite=false;
     bloqueadoPorConflito=false;
@@ -1156,12 +1199,14 @@ async function gravarComSeguranca(){
     ultimoSalvo=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     limparRascunho();          // gravou de verdade: o rascunho já não serve
     pintarEstado();
+    return {ok:true};
   }catch(e){
     console.error('Erro ao salvar:', e);
     pendingWrite=false;
     /* O rascunho continua no navegador. Ela pode fechar tudo e voltar. */
     guardarRascunho(); pintarEstado();
     avisarTela('Não consegui salvar agora (internet). Seu trabalho está guardado neste navegador — pode até fechar a página, que ele volta quando você abrir de novo. Tento de novo a cada edição.', 'erro');
+    return {ok:false, motivo:/quota|exhaust|429/i.test(String((e&&e.message)||e))?'cota':'erro', erro:String((e&&e.message)||e)};
   }
 }
 function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();renderSeletorMes();renderBlocos();}
@@ -1303,6 +1348,8 @@ function docJaUsaMeses(){
 function estadoDoMes(mes){
   const porMes = (data.aprovacaoMeses||{})[mes];
   if(porMes && porMes.status) return porMes.status;
+  const ap = data.aprovacaoInterna;
+  if(ap && ap.status && ap.mes && ap.mes === mes) return ap.status;
 
   /* ===== O FURO QUE O TESTE PEGOU — 29/07/2026 ====================
      A primeira versão disto perguntava "esse mês é o mês do documento?"
@@ -1320,7 +1367,6 @@ function estadoDoMes(mes){
   const heraldaRegraAntiga = !mes || (legado && mes === legado);
   if(!heraldaRegraAntiga) return 'rascunho';
 
-  const ap = data.aprovacaoInterna;
   if(ap && ap.status) return ap.status;
   return (data.items && data.items.length) ? 'liberado' : 'rascunho';
 }
@@ -1355,22 +1401,54 @@ function renderAprovacaoInterna(){
     ${legado && ehEquipe ? '<div style="margin-top:6px;opacity:.75;">Calendário montado antes do ciclo de revisão existir — segue visível pro cliente, como sempre foi. Se quiser passar pela revisão da Amanda, é só enviar.</div>' : ''}
     ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
     ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
-    ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna()">Enviar pra aprovação interna →</button>' : ''}
+    ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">Enviar pra aprovação interna →</button>' : ''}
     ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. Enquanto não aprovar, o cliente não vê este calendário.</div>' : ''}`;
 }
 
-window.enviarParaAprovacaoInterna = function(){
+window.enviarParaAprovacaoInterna = async function(btn){
   if(window.__modoCal !== 'equipe') return;
+  if(window.__enviandoAprovacaoInterna) return;
   if(!itensDoMes(mesVisivel).length){ avisarTela('Este mês está vazio — monta o mês antes de enviar.', 'erro'); return; }
   const quem = prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
   if(quem === null) return;
   const alvo = mesVisivel || mesDoTexto(data.month) || '';
+  const aprovacaoMesesAntes = data.aprovacaoMeses ? JSON.parse(JSON.stringify(data.aprovacaoMeses)) : undefined;
+  const aprovacaoInternaAntes = data.aprovacaoInterna ? { ...data.aprovacaoInterna } : undefined;
+  const updatedAtAntes = data.updatedAt;
   const marca = { status:'aguardando_interna', por: quem || 'equipe', em: new Date().toISOString(), motivoAjuste:'', mes: alvo };
   if(alvo){ data.aprovacaoMeses = data.aprovacaoMeses || {}; data.aprovacaoMeses[alvo] = marca; }
   data.aprovacaoInterna = marca;   // o campo antigo continua valendo, pra nada quebrar
-  save();
-  renderAprovacaoInterna();
-  avisarTela('Enviado pra aprovação interna. O cliente só vê depois que a Amanda liberar.');
+  window.__enviandoAprovacaoInterna = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Enviando e confirmando…'; }
+  try{
+    save();
+    /* `save()` normalmente espera 400 ms. Aqui não pode esperar nem dar
+       sucesso antecipado: a Amanda só "recebeu" depois que o setDoc
+       terminou sem erro. */
+    clearTimeout(saveTimer);
+    const resultado = await gravarComSeguranca();
+    if(!resultado || !resultado.ok){
+      if(aprovacaoMesesAntes === undefined) delete data.aprovacaoMeses;
+      else data.aprovacaoMeses = aprovacaoMesesAntes;
+      if(aprovacaoInternaAntes === undefined) delete data.aprovacaoInterna;
+      else data.aprovacaoInterna = aprovacaoInternaAntes;
+      data.updatedAt = updatedAtAntes;
+      temNaoSalvo = true;
+      guardarRascunho(); pintarEstado(); renderAprovacaoInterna();
+      const msg = resultado && resultado.motivo === 'conflito'
+        ? 'NÃO enviei pra Amanda: existe outra versão no banco. Seu trabalho está salvo neste navegador — use a barra de decisão e envie de novo.'
+        : resultado && resultado.motivo === 'cota'
+          ? 'NÃO enviei pra Amanda: o limite do banco foi atingido. Seu trabalho está salvo neste navegador — tente novamente quando o banco voltar.'
+          : 'NÃO enviei pra Amanda: o banco não confirmou. Seu trabalho continua salvo neste navegador — tente novamente.';
+      avisarTela(msg, 'erro');
+      return;
+    }
+    renderAprovacaoInterna();
+    avisarTela('Envio confirmado no banco. O calendário já está na fila da Amanda.');
+  }finally{
+    window.__enviandoAprovacaoInterna = false;
+    if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = 'Enviar pra aprovação interna →'; }
+  }
 };
 
 /* Esconde da visão do cliente tudo que é ferramenta de edição. Não é só

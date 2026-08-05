@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-cadastro-mensalista-auditado-v14">
+<meta name="gs-build" content="2026-08-05-reparo-funcoes-fixas-calendarios-v16">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -7089,7 +7089,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return String(valor||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
   }
 
+  function ehConfigPrazoCalendarioCliente(tipo){
+    return String(tipo?.categoria||'') === 'prazo_calendario_cliente';
+  }
+  window.ehConfigPrazoCalendarioCliente = ehConfigPrazoCalendarioCliente;
+
   function ehTipoCalendarioIndividualLegado(tipo){
+    /* V16: uma configuração restaurada continua tendo o nome
+       "Calendário CLIENTE", mas não é mais uma demanda individual. Ela
+       guarda somente o dia do cliente dentro do checklist mensal único. */
+    if(ehConfigPrazoCalendarioCliente(tipo)) return false;
     const nome = normalizarNomeFuncaoFixa(tipo?.nome);
     return /^calendario\b/.test(nome) && tipo?.modo==='unica' && String(tipo?.responsavel||'')==='Gabrielle';
   }
@@ -7100,6 +7109,46 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const slugDireto = String(demanda?.cliente||'').trim();
     return CLIENTES_LISTA.find(c => c.slug===slugDireto) ||
       CLIENTES_LISTA.find(c => normalizarNomeFuncaoFixa(c.nome)===nomeTipo) || null;
+  }
+
+  function dataDoPrazoCalendarioConfig(tipo, mesChave){
+    const [ano,mes] = String(mesChave||'').split('-').map(Number);
+    if(!ano || !mes) return '';
+    const ultimoDia = new Date(ano,mes,0).getDate();
+    const dia = Math.min(Math.max(Number(tipo?.diaFixo)||1,1),ultimoDia);
+    let alvo = mesChave+'-'+String(dia).padStart(2,'0');
+    const feriados = obterFeriados(ano);
+    if(!ehDiaUtil(new Date(alvo+'T12:00:00'),feriados)){
+      const uteis = diasUteisDoMes(ano,mes);
+      alvo = uteis.find(d=>d>=alvo) || [...uteis].reverse().find(d=>d<alvo) || alvo;
+    }
+    return alvo;
+  }
+
+  function menorPrazoPendenteChecklist(lista, fallback){
+    const prazos = (Array.isArray(lista)?lista:[])
+      .filter(item=>!item.feito && /^\d{4}-\d{2}-\d{2}$/.test(String(item.prazoData||'')))
+      .map(item=>item.prazoData).sort();
+    return prazos[0] || fallback || '';
+  }
+
+  function menorVisibilidadePendenteChecklist(lista, fallback){
+    const datas=(Array.isArray(lista)?lista:[])
+      .filter(item=>!item.feito && /^\d{4}-\d{2}-\d{2}$/.test(String(item.visivelAPartir||'')))
+      .map(item=>item.visivelAPartir).sort();
+    return datas[0] || fallback || '';
+  }
+
+  async function configsPrazoCalendarioCliente(){
+    const snap = await getDocs(collection(db,'tipos_tarefa_fixa'));
+    const porSlug = new Map();
+    snap.forEach(registro=>{
+      const tipo={id:registro.id,...registro.data()};
+      if(tipo.excluido || tipo.ativo===false || !ehConfigPrazoCalendarioCliente(tipo)) return;
+      const cliente=clienteDoTipoCalendarioLegado(tipo,{cliente:tipo.clienteSlug});
+      if(cliente) porSlug.set(cliente.slug,tipo);
+    });
+    return porSlug;
   }
 
   function consolidarChecklistCalendariosV13(clientesFixos, padroesAtuais, legadasAbertas, tiposPorId){
@@ -7164,7 +7213,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const tipo = String(d.tipoFuncaoFixa||'');
       return !d.excluido && (['agendaReuniao','reuniao','calendario'].includes(tipo) || tipo.startsWith('custom_'));
     });
-    const futuras = fixas.filter(d => mesDaDemandaFixa(d)>mesAtual && !demandaFixaTemProgresso(d));
+    const hoje=hojeLocal();
+    const futuras = fixas.filter(d => mesDaDemandaFixa(d)>mesAtual && !demandaFixaTemProgresso(d)
+      && !(d.recorrencia==='mensal' && d.visivelAPartir && d.visivelAPartir<=hoje));
     const ignoradas = new Set(futuras.map(d=>d.id));
     const grupos = new Map();
     fixas.filter(d=>mesDaDemandaFixa(d)===mesAtual && !ignoradas.has(d.id)).forEach(d => {
@@ -7190,43 +7241,56 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const uteis = diasUteisDoMes(ano, mes);
     const ultimoDia = new Date(ano, mes, 0).getDate();
     const descricao = String(tipo.descricao||'').trim() || 'Função fixa recorrente criada pela Amanda.';
+    const inicioPara = prazo => {
+      const diaInicio=Math.min(Math.max(Number(tipo.diaInicio)||Number(String(prazo||'').slice(8,10))||1,1),ultimoDia);
+      return mesChave+'-'+String(diaInicio).padStart(2,'0');
+    };
+    const visivelPara = inicio => dataLocal(addDias(new Date(inicio+'T12:00:00'),-2));
     if(tipo.modo === 'distribuida'){
       const dias = uteis.slice(0, Math.max(1, Math.ceil(CLIENTES_LISTA.length/2)));
-      return CLIENTES_LISTA.map((cliente,idx) => ({
-        chave:'custom_'+tipoId+'|'+mesChave+'|'+cliente.slug,
-        titulo:tipo.nome+' — '+cliente.nome, descricao,
-        cliente:cliente.slug, clienteNome:cliente.nome,
-        destinatario:tipo.responsavel,
-        prazoData:dias[Math.floor(idx/2)] || dias[dias.length-1] || mesChave+'-01'
-      }));
+      return CLIENTES_LISTA.map((cliente,idx) => {
+        const prazoData=dias[Math.floor(idx/2)] || dias[dias.length-1] || mesChave+'-01';
+        const inicioData=inicioPara(prazoData);
+        return {
+          chave:'custom_'+tipoId+'|'+mesChave+'|'+cliente.slug,
+          titulo:tipo.nome+' — '+cliente.nome, descricao,
+          cliente:cliente.slug, clienteNome:cliente.nome,
+          destinatario:tipo.responsavel, inicioData,
+          visivelAPartir:visivelPara(inicioData), prazoData
+        };
+      });
     }
     const dia = Math.min(Math.max(Number(tipo.diaFixo)||5,1), ultimoDia);
     let dataAlvo = mesChave+'-'+String(dia).padStart(2,'0');
     if(!ehDiaUtil(new Date(dataAlvo+'T12:00:00'), obterFeriados(ano))){
       dataAlvo = uteis.find(d=>d>=dataAlvo) || [...uteis].reverse().find(d=>d<dataAlvo) || dataAlvo;
     }
+    const inicioData=inicioPara(dataAlvo);
     return [{
       chave:'custom_'+tipoId+'|'+mesChave+'|unica', titulo:tipo.nome,
       descricao, cliente:'', clienteNome:'', destinatario:tipo.responsavel,
-      prazoData:dataAlvo
+      inicioData, visivelAPartir:visivelPara(inicioData), prazoData:dataAlvo
     }];
   }
 
   async function sincronizarAutomacaoFuncoesFixas(opcoes){
     const opts = opcoes || {};
     const mesAtual = hojeLocal().slice(0,7);
-    const meses = (opts.meses || mesesDaJanelaFuncoesFixas(1)).filter(m=>m===mesAtual);
-    if(!meses.length) return {criadas:0,atualizadas:0,aposentadas:0,bloqueadasFuturas:true};
+    const mesesPermitidos=new Set(mesesDaJanelaFuncoesFixas(2));
+    const meses = (opts.meses || Array.from(mesesPermitidos)).filter(m=>mesesPermitidos.has(m));
+    if(!meses.length) return {criadas:0,atualizadas:0,aposentadas:0};
     const hoje = hojeLocal();
     const [tiposSnap, demandasSnap] = await Promise.all([
       getDocs(collection(db,'tipos_tarefa_fixa')),
-      getDocs(collection(db,'demandas'))
+      getDocs(opts.somenteLiberacao
+        ? query(collection(db,'demandas'),where('destinatario','==',opts.destinatario))
+        : collection(db,'demandas'))
     ]);
     const todosTipos = [];
-    tiposSnap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false && !ehTipoCalendarioIndividualLegado(v)) todosTipos.push({id:d.id,...v}); });
-    const tipos = todosTipos.filter(t=>!opts.tipoId || t.id===opts.tipoId);
+    tiposSnap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false && !ehTipoCalendarioIndividualLegado(v) && !ehConfigPrazoCalendarioCliente(v)) todosTipos.push({id:d.id,...v}); });
+    const tipos = todosTipos.filter(t=>(!opts.tipoId || t.id===opts.tipoId) && (!opts.destinatario || t.responsavel===opts.destinatario));
     const todasDemandas = demandasSnap.docs.map(d=>({id:d.id,...d.data()}));
-    const limpeza = selecionarLimpezaFuncoesFixas(todasDemandas, mesAtual);
+    const limpeza = opts.somenteLiberacao ? {futuras:[],duplicadas:[]} : selecionarLimpezaFuncoesFixas(todasDemandas, mesAtual);
     const idsLimpeza = new Set([...limpeza.futuras,...limpeza.duplicadas].map(d=>d.id));
     for(const antiga of limpeza.futuras){
       await updateDoc(doc(db,'demandas', antiga.id), {
@@ -7249,6 +7313,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     for(const tipo of tipos){
       for(const mesChave of meses){
         for(const modelo of modelosDoTipoTarefaFixa(tipo.id, tipo, mesChave)){
+          /* A configuração existe o mês inteiro na grade da Amanda, mas a
+             demanda operacional só passa a existir dois dias antes do
+             início. Para início no dia 01, isso pode ocorrer no fim do mês
+             anterior sem criar o restante da competência antecipadamente. */
+          if(modelo.visivelAPartir>hoje) continue;
           chavesDesejadas.add(modelo.chave);
           let atual = existentes.find(d=>!usados.has(d.id) && d.funcaoFixaChave===modelo.chave);
           if(!atual){
@@ -7261,7 +7330,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           const dados = {
             titulo:modelo.titulo, descricao:modelo.descricao,
             origem:'amanda', cliente:modelo.cliente, clienteNome:modelo.clienteNome,
-            destinatario:modelo.destinatario, prazoData:modelo.prazoData, prazoHora:'19:00',
+            destinatario:modelo.destinatario, inicioData:modelo.inicioData,
+            visivelAPartir:modelo.visivelAPartir, prazoData:modelo.prazoData, prazoHora:'19:00',
             tipoFuncaoFixa:'custom_'+tipo.id, tipoFuncaoFixaId:tipo.id,
             tipoFuncaoFixaNome:tipo.nome, funcaoFixaChave:modelo.chave, mesRef:mesChave,
             recorrencia:'mensal', excluido:false
@@ -7276,7 +7346,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           }
           usados.add(atual.id);
           if(['aprovada','cancelada'].includes(String(atual.status||'')) || String(atual.prazoData||'') < hoje) continue;
-          const mudou = ['titulo','descricao','cliente','clienteNome','destinatario','prazoData','prazoHora','funcaoFixaChave','mesRef']
+          const mudou = ['titulo','descricao','cliente','clienteNome','destinatario','inicioData','visivelAPartir','prazoData','prazoHora','funcaoFixaChave','mesRef']
             .some(campo => String(atual[campo]??'') !== String(dados[campo]??''));
           if(mudou){
             await updateDoc(doc(db,'demandas', atual.id), {
@@ -7294,7 +7364,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        futuro e aberto. */
     const idsTipos = new Set(todosTipos.map(t=>t.id));
     const idsTiposSincronizados = new Set(tipos.map(t=>t.id));
-    for(const antiga of existentes){
+    for(const antiga of (opts.somenteLiberacao?[]:existentes)){
       const tipoId = antiga.tipoFuncaoFixaId || String(antiga.tipoFuncaoFixa||'').replace(/^custom_/,'');
       if(!idsTipos.has(tipoId) || !idsTiposSincronizados.has(tipoId) || String(antiga.prazoData||'') < hoje || ['aprovada','cancelada'].includes(String(antiga.status||''))) continue;
       if(antiga.funcaoFixaChave && chavesDesejadas.has(antiga.funcaoFixaChave)) continue;
@@ -7459,6 +7529,78 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return {demandaPrincipalId:principal.id,clientesNoChecklist:checklistConsolidado.length,demandasAposentadas,tiposAposentados};
   }
 
+  async function restaurarConfiguracoesCalendariosV16(){
+    /* A V13 acertou ao trocar 22 demandas mensais por uma demanda com
+       checklist, mas errou ao tratar os 22 cadastros da Amanda como lixo:
+       ali também estavam os dias/prazos específicos de cada cliente.
+       Esta reparação recupera esses dados do próprio soft-delete, converte
+       os registros em CONFIGURAÇÃO (não em demanda) e devolve os prazos ao
+       checklist único. Assim a informação volta sem recriar 200 tarefas. */
+    await migrarCalendariosParaDemandaMensalUnicaV13();
+    const marcaRef=doc(db,'sistema','reparo_configuracoes_calendarios_v16');
+    const marca=await getDoc(marcaRef);
+    if(marca.exists() && marca.data().concluida===true) return {jaExecutada:true};
+    const mesAtual=hojeLocal().slice(0,7);
+    const [tiposSnap,demandasSnap]=await Promise.all([
+      getDocs(collection(db,'tipos_tarefa_fixa')),
+      getDocs(collection(db,'demandas'))
+    ]);
+    const tipos=[];
+    tiposSnap.forEach(registro=>{
+      const dados=registro.data();
+      const foiV13=String(dados.excluidoPor||'').includes('unificação mensal V13');
+      if(ehConfigPrazoCalendarioCliente(dados) || (foiV13 && ehTipoCalendarioIndividualLegado(dados))) tipos.push({id:registro.id,...dados});
+    });
+    const demandas=demandasSnap.docs.map(registro=>({id:registro.id,...registro.data()}));
+    const principal=demandas.find(d=>!d.excluido && d.tipoFuncaoFixa==='calendario' && mesDaDemandaFixa(d)===mesAtual);
+    if(!principal) throw new Error('Reparo V16: demanda mensal de calendários não encontrada.');
+    const checklist=Array.isArray(principal.checklistClientes)?principal.checklistClientes.map(item=>({...item})):[];
+    let restauradas=0;
+    for(const tipo of tipos){
+      const relacionadas=demandas.filter(d=>{
+        const tipoId=d.tipoFuncaoFixaId || String(d.tipoFuncaoFixa||'').replace(/^custom_/,'');
+        return tipoId===tipo.id && mesDaDemandaFixa(d)===mesAtual;
+      }).sort((a,b)=>Number(b.excluido!==true)-Number(a.excluido!==true) || instanteCriacaoDemandaFixa(b)-instanteCriacaoDemandaFixa(a));
+      const cliente=clienteDoTipoCalendarioLegado(tipo,relacionadas[0]);
+      if(!cliente) continue;
+      const item=checklist.find(c=>c.slug===cliente.slug);
+      const prazoOriginal=relacionadas.find(d=>/^\d{4}-\d{2}-\d{2}$/.test(String(d.prazoData||'')))?.prazoData;
+      const prazo=prazoOriginal || dataDoPrazoCalendarioConfig(tipo,mesAtual);
+      const inicioOriginal=relacionadas.find(d=>/^\d{4}-\d{2}-\d{2}$/.test(String(d.inicioData||'')))?.inicioData;
+      const diaInicio=Number(tipo.diaInicio)||Math.max(1,(Number(tipo.diaFixo)||5)-2);
+      const inicio=inicioOriginal || dataDoPrazoCalendarioConfig({diaFixo:diaInicio},mesAtual);
+      if(item){
+        item.inicioData=inicio;
+        item.visivelAPartir=dataLocal(addDias(new Date(inicio+'T12:00:00'),-2));
+        item.prazoData=prazo;
+        item.prazoHora=relacionadas[0]?.prazoHora || '19:00';
+        item.obsPrazo=tipo.descricao || item.obsPrazo || '';
+        item.prazoRestauradoV16=true;
+      }
+      await updateDoc(doc(db,'tipos_tarefa_fixa',tipo.id),{
+        categoria:'prazo_calendario_cliente', clienteSlug:cliente.slug,
+        nome:'Calendário '+cliente.nome, responsavel:'Gabrielle', modo:'unica',
+        diaInicio,
+        ativo:true, excluido:false, restauradoPor:'sistema — reparo V16',
+        restauradoEm:serverTimestamp(), motivoRestauracao:'Prazo configurado pela Amanda preservado dentro da demanda mensal única'
+      });
+      restauradas++;
+    }
+    const prazoGeral=menorPrazoPendenteChecklist(checklist,principal.prazoData);
+    await updateDoc(doc(db,'demandas',principal.id),{
+      checklistClientes:checklist, prazoData:prazoGeral,
+      visivelAPartir:menorVisibilidadePendenteChecklist(checklist,principal.visivelAPartir),
+      configuracoesRestauradasV16:true, configuracoesRestauradasEm:serverTimestamp(),
+      configuracoesRestauradasPor:usuarioAtual||'sistema'
+    });
+    await setDoc(marcaRef,{
+      concluida:true, executadaEm:serverTimestamp(), executadaPor:usuarioAtual||'sistema',
+      mesRef:mesAtual, demandaPrincipalId:principal.id, configuracoesRestauradas:restauradas
+    },{merge:true});
+    registrarLogAutomacao('reparo_configuracoes_calendarios_v16',principal.id,restauradas+' prazo(s) restaurado(s)');
+    return {demandaPrincipalId:principal.id,configuracoesRestauradas:restauradas};
+  }
+
   async function abrirFuncoesFixas(){
     const hoje = new Date();
     const ano = hoje.getFullYear(), mes = hoje.getMonth()+1;
@@ -7483,6 +7625,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // Clientes só-edição ficam fora das funções fixas: não têm reunião de
     // calendário nem entrega de calendário mensal por contrato.
     const clientesFixos = await window.clientesDeConteudoRecorrente();
+    const configsPrazosCalendario = await configsPrazoCalendarioCliente();
     const diasCecilia = uteis.slice(0, Math.ceil(clientesFixos.length/2));
     const diasGabi = uteisAntesLimite.slice(diasCecilia.length, diasCecilia.length + Math.ceil(clientesFixos.length/2));
 
@@ -7552,7 +7695,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     // Calendários da competência atual: uma demanda nasce no dia 1 e o
     // prazo continua com folga antes do fim do próprio mês.
-    const prazoCalendario = diasGabi[diasGabi.length-1] || dataParaStr(dataLimiteGabi);
+    const prazoCalendarioPadrao = diasGabi[diasGabi.length-1] || dataParaStr(dataLimiteGabi);
+    const checklistCalendarios = listaChecklist.map(c => {
+      const config=configsPrazosCalendario.get(c.slug);
+      const prazoData=config?dataDoPrazoCalendarioConfig(config,mesChave):prazoCalendarioPadrao;
+      const diaInicio=Number(config?.diaInicio)||Math.max(1,Number(prazoData.slice(8,10))-2);
+      const inicioData=dataDoPrazoCalendarioConfig({diaFixo:diaInicio},mesChave);
+      return {...c,inicioData,visivelAPartir:dataLocal(addDias(new Date(inicioData+'T12:00:00'),-2)),prazoData,prazoHora:'19:00'};
+    });
+    const prazoCalendario = menorPrazoPendenteChecklist(checklistCalendarios,prazoCalendarioPadrao);
     if(!fixasPadraoExistentes.has('calendario')) await setDoc(doc(db,'demandas',idDeterministicoFuncaoFixa('padrao|calendario|'+mesChave)), {
       titulo: '📅 Calendários do mês — ' + mesChave,
       descricao: 'Função fixa mensal da Gabrielle. No dia 1 nasce uma única demanda com TODOS os clientes; cada calendário desta competência deve ficar pronto e aprovado dentro do prazo.\n\n'
@@ -7562,9 +7713,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         + '3. Volta aqui e marca o cliente na lista\n\n'
         + 'São ' + clientesFixos.length + ' clientes. Uma demanda só — fecha sozinha quando todos estiverem marcados.',
       origem: 'amanda', clienteNome: '', destinatario: 'Gabrielle',
+      visivelAPartir: menorVisibilidadePendenteChecklist(checklistCalendarios,mesChave+'-01'),
       prazoData: prazoCalendario, prazoHora: '19:00', status: 'pendente',
       provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'calendario',
-      checklistClientes: listaChecklist.map(c => ({...c})), mesRef: mesChave,
+      checklistClientes: checklistCalendarios, mesRef: mesChave,
       emailEnviado:mesChave!==hojeLocal().slice(0,7), criadoEm: serverTimestamp()
     });
 
@@ -7579,8 +7731,34 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   async function renderFuncoesFixas(ano, mes, mesChave){
     const resumoBox = document.getElementById('funcoesFixasResumo');
     const gridBox = document.getElementById('funcoesFixasGrid');
-    const snap = await getDocs(collection(db,'demandas'));
+    const [snap,tiposSnap] = await Promise.all([
+      getDocs(collection(db,'demandas')),
+      ['Amanda','Chris'].includes(usuarioAtual)?getDocs(collection(db,'tipos_tarefa_fixa')):Promise.resolve(null)
+    ]);
     const tarefas = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push(v); });
+    if(['Amanda','Chris'].includes(usuarioAtual)){
+      const centralCalendarios=tarefas.find(t=>t.tipoFuncaoFixa==='calendario' && Array.isArray(t.checklistClientes));
+      (centralCalendarios?.checklistClientes||[]).forEach(item=>{
+        if(!String(item.prazoData||'').startsWith(mesChave)) return;
+        tarefas.push({
+          titulo:'Calendário — '+(item.nome||item.slug),destinatario:'Gabrielle',
+          prazoData:item.prazoData,status:item.feito?'aprovada':'programada',
+          tipoFuncaoFixa:'calendario_cliente_grade',somenteGrade:true
+        });
+      });
+    }
+    /* A grade da gestão mostra também a configuração futura, sem criar
+       demanda antecipada para a equipe. Para a Gabi e demais responsáveis,
+       só entram documentos já liberados pela janela de 2 dias. */
+    if(tiposSnap){
+      tiposSnap.forEach(registro=>{ const tipo=registro.data();
+        if(tipo.excluido || tipo.ativo===false || ehTipoCalendarioIndividualLegado(tipo) || ehConfigPrazoCalendarioCliente(tipo)) return;
+        modelosDoTipoTarefaFixa(registro.id,tipo,mesChave).forEach(modelo=>{
+          if(tarefas.some(t=>t.funcaoFixaChave===modelo.chave)) return;
+          tarefas.push({...modelo,tipoFuncaoFixa:'custom_'+registro.id,status:'programada',somenteGrade:true});
+        });
+      });
+    }
 
     /* 27/07/2026 — agora e UMA demanda por funcao, com checklist de clientes
        dentro. O progresso sai do checklist, nao mais da contagem de demandas.
@@ -9538,24 +9716,106 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     renderCampanhasKanban();
   };
 
+  async function demandaCalendariosDoMes(mesChave){
+    const snap=await getDocs(collection(db,'demandas'));
+    let encontrada=null;
+    snap.forEach(registro=>{ const v=registro.data();
+      if(!encontrada && !v.excluido && v.tipoFuncaoFixa==='calendario' && mesDaDemandaFixa(v)===mesChave) encontrada={id:registro.id,...v};
+    });
+    return encontrada;
+  }
+
+  async function salvarPrazoCalendarioClienteCentral(clienteSlug,novaData,inicioData,observacao){
+    if(usuarioAtual!=='Amanda'){ mostrarToast('Somente a Amanda altera os prazos dos calendários.','erro'); return false; }
+    const mesAtual=hojeLocal().slice(0,7);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(novaData||'')) || !String(novaData).startsWith(mesAtual)){
+      mostrarToast('Escolha uma data do mês atual. O próximo mês nasce automaticamente no dia 01.','erro'); return false;
+    }
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(inicioData||'')) || !String(inicioData).startsWith(mesAtual)){
+      mostrarToast('Escolha uma data de início do mês atual.','erro'); return false;
+    }
+    if(novaData<inicioData){ mostrarToast('O prazo final não pode ficar antes do início.','erro'); return false; }
+    const cliente=CLIENTES_LISTA.find(c=>c.slug===clienteSlug);
+    if(!cliente){ mostrarToast('Cliente não encontrado na lista ativa.','erro'); return false; }
+    const principal=await demandaCalendariosDoMes(mesAtual);
+    if(!principal){ mostrarToast('A demanda mensal de calendários ainda não existe. Abra Funções Fixas e tente novamente.','erro'); return false; }
+    const checklist=Array.isArray(principal.checklistClientes)?principal.checklistClientes.map(item=>({...item})):[];
+    let item=checklist.find(c=>c.slug===clienteSlug);
+    if(!item){ item={slug:clienteSlug,nome:cliente.nome,feito:false,data:'',obs:''}; checklist.push(item); }
+    item.inicioData=inicioData; item.visivelAPartir=dataLocal(addDias(new Date(inicioData+'T12:00:00'),-2));
+    item.prazoData=novaData; item.prazoHora='19:00'; item.obsPrazo=String(observacao||item.obsPrazo||'').trim();
+    item.prazoConfiguradoPor='Amanda'; item.prazoConfiguradoEm=new Date().toISOString();
+    const configRef=doc(db,'tipos_tarefa_fixa','prazo_calendario_'+clienteSlug.replace(/[^a-zA-Z0-9_-]/g,'_'));
+    await setDoc(configRef,{
+      categoria:'prazo_calendario_cliente', clienteSlug, nome:'Calendário '+cliente.nome,
+      descricao:item.obsPrazo, responsavel:'Gabrielle', modo:'unica',
+      diaInicio:Number(inicioData.slice(8,10)), diaFixo:Number(novaData.slice(8,10)), antecedenciaDias:2, ativo:true, excluido:false,
+      atualizadoPor:'Amanda', atualizadoEm:serverTimestamp()
+    },{merge:true});
+    await updateDoc(doc(db,'demandas',principal.id),{
+      checklistClientes:checklist,
+      visivelAPartir:menorVisibilidadePendenteChecklist(checklist,principal.visivelAPartir),
+      prazoData:menorPrazoPendenteChecklist(checklist,principal.prazoData),
+      prazoHora:'19:00', atualizadoPor:'Amanda', atualizadoEm:serverTimestamp()
+    });
+    registrarHistorico('demandas',principal.id,'Prazo do calendário de '+cliente.nome+' ajustado para '+novaData);
+    mostrarToast('Prazo de '+cliente.nome+' salvo na demanda mensal e no calendário da Gabi.');
+    return true;
+  }
+  window.salvarPrazoCalendarioClienteCentral = salvarPrazoCalendarioClienteCentral;
+
+  window.salvarPrazoCalendarioDaGrade = async function(clienteSlug){
+    const data=document.getElementById('prazoCal_'+clienteSlug)?.value||'';
+    const inicio=document.getElementById('inicioCal_'+clienteSlug)?.value||'';
+    const obs=document.getElementById('obsPrazoCal_'+clienteSlug)?.value||'';
+    if(await salvarPrazoCalendarioClienteCentral(clienteSlug,data,inicio,obs)) renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
+  };
+
+  async function gerarHtmlPrazosCalendarios(){
+    const mesAtual=hojeLocal().slice(0,7);
+    const principal=await demandaCalendariosDoMes(mesAtual);
+    if(!principal) return '<div class="card"><h2>📅 Prazos dos calendários por cliente</h2><div class="desc">A demanda mensal ainda não foi gerada.</div></div>';
+    const lista=Array.isArray(principal.checklistClientes)?principal.checklistClientes:[];
+    return `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>📅 Prazos dos calendários por cliente — ${mesAtual}</h2>
+      <div class="desc">Os calendários e as datas que você configurou ficam aqui. Continua existindo uma única demanda mensal para a Gabi; cada cliente mantém seu próprio prazo dentro dela. O mês seguinte só será criado no dia 01.</div>
+      ${lista.map(item=>`<div class="item" style="margin-top:8px;">
+        <div class="top"><div class="nome">${esc(item.nome||item.slug)}</div><span class="selo ${item.feito?'aprovada':'pendente'}">${item.feito?'feito':'pendente'}</span></div>
+        <div class="row2" style="margin-top:7px;">
+          <div class="field"><label>Início</label><input type="date" id="inicioCal_${escAttr(item.slug)}" value="${escAttr(item.inicioData||item.prazoData||principal.prazoData||'')}" min="${mesAtual}-01" max="${mesAtual}-31"></div>
+          <div class="field"><label>Entregar até</label><input type="date" id="prazoCal_${escAttr(item.slug)}" value="${escAttr(item.prazoData||principal.prazoData||'')}" min="${mesAtual}-01" max="${mesAtual}-31"></div>
+        </div>
+        <div class="field"><label>Observação</label><input type="text" id="obsPrazoCal_${escAttr(item.slug)}" value="${escAttr(item.obsPrazo||'')}" placeholder="Condição específica deste cliente"></div>
+        <button class="btn green" style="width:auto;padding:6px 14px;font-size:11px;" onclick="salvarPrazoCalendarioDaGrade('${escJs(item.slug)}')">Salvar prazo</button>
+      </div>`).join('')}
+    </div>`;
+  }
+
   async function gerarHtmlTiposTarefaFixa(){
     const snap = await getDocs(collection(db,'tipos_tarefa_fixa'));
-    const tipos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false && !ehTipoCalendarioIndividualLegado(v)) tipos.push({id:d.id, ...v}); });
+    const tipos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false && !ehTipoCalendarioIndividualLegado(v) && !ehConfigPrazoCalendarioCliente(v)) tipos.push({id:d.id, ...v}); });
 
-    let html = `<div class="card">
+    let html = '';
+    try{ html = await gerarHtmlPrazosCalendarios(); }
+    catch(e){
+      console.error('Falha isolada ao carregar prazos dos calendários:',e);
+      html = '<div class="card"><h2>📅 Prazos dos calendários por cliente</h2><div class="desc" style="color:var(--red);">Não consegui carregar os calendários agora. O cadastro das demais Funções Fixas continua disponível abaixo.</div></div>';
+    }
+    html += `<div class="card">
       <h2>⚙️ Tipos de tarefa fixa (recorrentes todo mês)</h2>
-      <div class="desc">Além da reunião da Cecília e do calendário da Gabi (padrão do sistema), crie qualquer outra tarefa fixa: envio de artes, reuniões de alinhamento, o que a agência precisar. Escolhe o responsável.</div>
+      <div class="desc">Cadastre uma vez e o sistema renova todo mês. A configuração permanece nesta grade, mas a demanda só aparece para o responsável 2 dias antes do início, já com o prazo final.</div>
       <div class="row2">
         <div class="field"><label>Nome da tarefa</label><input type="text" id="novoTipoNome" placeholder="Ex: Envio de artes do mês"></div>
-        <div class="field"><label>Responsável</label><select id="novoTipoResponsavel">${FUNCIONARIOS_ELEGIVEIS.map(f=>`<option value="${f}">${f}</option>`).join('')}</select></div>
+        <div class="field"><label>Responsável</label><select id="novoTipoResponsavel">${FUNCIONARIOS_ELEGIVEIS.map(f=>`<option value="${f}" ${f==='Gabrielle'?'selected':''}>${f}</option>`).join('')}</select></div>
       </div>
       <div class="row2">
-        <div class="field"><label>Modo</label><select id="novoTipoModo" onchange="document.getElementById('novoTipoDiaWrap').style.display = this.value==='unica' ? 'block':'none';">
+        <div class="field"><label>Modo</label><select id="novoTipoModo">
           <option value="unica">Uma vez no mês, dia fixo</option>
           <option value="distribuida">Distribuída por cliente (como reunião/calendário)</option>
         </select></div>
-        <div class="field" id="novoTipoDiaWrap"><label>Dia do mês (aproximado)</label><input type="number" id="novoTipoDia" min="1" max="28" value="5"></div>
+        <div class="field"><label>Dia de início</label><input type="number" id="novoTipoInicio" min="1" max="28" value="3"></div>
       </div>
+      <div class="field" id="novoTipoDiaWrap"><label>Prazo final (dia do mês)</label><input type="number" id="novoTipoDia" min="1" max="28" value="5"></div>
       <div class="field"><label>Descrição da atividade</label><textarea id="novoTipoDescricao" placeholder="Instruções que o responsável receberá todo mês"></textarea></div>
       <button class="btn secondary" onclick="criarTipoTarefaFixa()">+ Criar tipo de tarefa</button>
     </div>`;
@@ -9566,8 +9826,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         html += `<div class="item">
           <div class="row2"><div class="field"><label>Nome</label><input id="tipoNome_${t.id}" value="${escAttr(t.nome||'')}"></div>
           <div class="field"><label>Responsável</label><select id="tipoResp_${t.id}">${FUNCIONARIOS_ELEGIVEIS.map(f=>`<option value="${f}" ${f===t.responsavel?'selected':''}>${f}</option>`).join('')}</select></div></div>
-          <div class="row2"><div class="field"><label>Modo</label><select id="tipoModo_${t.id}" onchange="document.getElementById('tipoDiaWrap_${t.id}').style.display=this.value==='unica'?'block':'none';"><option value="unica" ${t.modo==='unica'?'selected':''}>Uma vez no mês</option><option value="distribuida" ${t.modo==='distribuida'?'selected':''}>Distribuída por cliente</option></select></div>
-          <div class="field" id="tipoDiaWrap_${t.id}" style="${t.modo==='unica'?'':'display:none;'}"><label>Dia do mês</label><input type="number" min="1" max="28" id="tipoDia_${t.id}" value="${Number(t.diaFixo)||5}"></div></div>
+          <div class="row2"><div class="field"><label>Modo</label><select id="tipoModo_${t.id}"><option value="unica" ${t.modo==='unica'?'selected':''}>Uma vez no mês</option><option value="distribuida" ${t.modo==='distribuida'?'selected':''}>Distribuída por cliente</option></select></div>
+          <div class="field"><label>Dia de início</label><input type="number" min="1" max="28" id="tipoInicio_${t.id}" value="${Number(t.diaInicio)||Math.max(1,(Number(t.diaFixo)||5)-2)}"></div></div>
+          <div class="field" id="tipoDiaWrap_${t.id}"><label>Prazo final (dia do mês)</label><input type="number" min="1" max="28" id="tipoDia_${t.id}" value="${Number(t.diaFixo)||5}"></div>
           <div class="field"><label>Descrição</label><textarea id="tipoDesc_${t.id}">${esc(t.descricao||'')}</textarea></div>
           <div class="btnrow"><button class="btn green" style="width:auto;padding:6px 14px;font-size:11px;" onclick="salvarTipoTarefaFixa('${t.id}')">Salvar e atualizar o mês atual</button>
           <button class="btn red" style="width:auto;padding:6px 14px;font-size:11px;" onclick="removerTipoTarefaFixa('${t.id}')">Remover tipo</button></div>
@@ -9584,15 +9845,28 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const responsavel = document.getElementById('novoTipoResponsavel').value;
     const modo = document.getElementById('novoTipoModo').value;
     const diaFixo = parseInt(document.getElementById('novoTipoDia').value) || 5;
+    const diaInicio = parseInt(document.getElementById('novoTipoInicio').value) || Math.max(1,diaFixo-2);
     const descricao = document.getElementById('novoTipoDescricao').value.trim();
     if(!nome){ mostrarToast('Dá um nome pra tarefa.', 'erro'); return; }
+    if(diaFixo<diaInicio){ mostrarToast('O prazo final não pode ficar antes do início.','erro'); return; }
+    try{
     if(/^calendario\b/.test(normalizarNomeFuncaoFixa(nome))){
-      mostrarToast('Calendários já são uma única Função Fixa mensal com checklist de todos os clientes. Não crie um tipo por cliente.', 'erro'); return;
+      const cliente=clienteDoTipoCalendarioLegado({nome,modo:'unica',responsavel:'Gabrielle'},{});
+      if(!cliente){ mostrarToast('Não identifiquei o cliente. Ajuste o prazo dele no quadro “Prazos dos calendários por cliente” acima.','erro'); return; }
+      const mesAtual=hojeLocal().slice(0,7);
+      const data=dataDoPrazoCalendarioConfig({diaFixo},mesAtual);
+      const inicio=dataDoPrazoCalendarioConfig({diaFixo:diaInicio},mesAtual);
+      if(await salvarPrazoCalendarioClienteCentral(cliente.slug,data,inicio,descricao)) renderEditarFuncoesFixas(mesAtual);
+      return;
     }
-    const ref = await addDoc(collection(db,'tipos_tarefa_fixa'), { nome, descricao, responsavel, modo, diaFixo, ativo:true, excluido:false, criadoPor:'Amanda', criadoEm: serverTimestamp() });
+    const ref = await addDoc(collection(db,'tipos_tarefa_fixa'), { nome, descricao, responsavel, modo, diaInicio, diaFixo, antecedenciaDias:2, ativo:true, excluido:false, criadoPor:'Amanda', criadoEm: serverTimestamp() });
     const resultado = await sincronizarAutomacaoFuncoesFixas({tipoId:ref.id});
-    mostrarToast('Função fixa criada e '+resultado.criadas+' demanda(s) do mês atual distribuída(s).');
+    mostrarToast(resultado.criadas ? 'Função fixa criada e '+resultado.criadas+' demanda(s) liberada(s).' : 'Função fixa criada. Ela aparecerá ao responsável 2 dias antes do início.');
     renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
+    }catch(e){
+      console.error('Falha ao criar Função Fixa:',e);
+      mostrarToast('Não foi possível salvar a Função Fixa: '+(e?.message||e),'erro');
+    }
   };
 
   window.salvarTipoTarefaFixa = async function(id){
@@ -9602,14 +9876,36 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const responsavel=document.getElementById('tipoResp_'+id)?.value||'';
     const modo=document.getElementById('tipoModo_'+id)?.value||'unica';
     const diaFixo=Math.min(28,Math.max(1,parseInt(document.getElementById('tipoDia_'+id)?.value)||5));
+    const diaInicio=Math.min(28,Math.max(1,parseInt(document.getElementById('tipoInicio_'+id)?.value)||Math.max(1,diaFixo-2)));
     if(!nome||!responsavel){ mostrarToast('Preenche nome e responsável.', 'erro'); return; }
+    if(diaFixo<diaInicio){ mostrarToast('O prazo final não pode ficar antes do início.','erro'); return; }
+    try{
     if(/^calendario\b/.test(normalizarNomeFuncaoFixa(nome))){
-      mostrarToast('Calendários são controlados pela demanda mensal única. Esse nome não pode virar uma segunda automação.', 'erro'); return;
+      const cliente=clienteDoTipoCalendarioLegado({nome,modo:'unica',responsavel:'Gabrielle'},{});
+      if(!cliente){ mostrarToast('Não identifiquei o cliente. Use o quadro de prazos dos calendários.','erro'); return; }
+      const mesAtual=hojeLocal().slice(0,7);
+      const data=dataDoPrazoCalendarioConfig({diaFixo},mesAtual);
+      const inicio=dataDoPrazoCalendarioConfig({diaFixo:diaInicio},mesAtual);
+      await updateDoc(doc(db,'tipos_tarefa_fixa',id),{
+        excluido:true,ativo:false,excluidoPor:'Amanda — conversão V16',excluidoEm:new Date().toISOString(),
+        motivoExclusao:'Convertida em prazo dentro da demanda mensal única de calendários'
+      });
+      const demandasAntigas=await getDocs(collection(db,'demandas'));
+      for(const registro of demandasAntigas.docs){ const antiga=registro.data();
+        if(antiga.excluido || antiga.tipoFuncaoFixaId!==id || ['aprovada','cancelada'].includes(String(antiga.status||''))) continue;
+        await updateDoc(registro.ref,{excluido:true,excluidoPor:'Amanda — conversão V16',excluidoEm:new Date().toISOString(),motivoExclusao:'Substituída pelo item correspondente no checklist mensal único'});
+      }
+      if(await salvarPrazoCalendarioClienteCentral(cliente.slug,data,inicio,descricao)) renderEditarFuncoesFixas(mesAtual);
+      return;
     }
-    await updateDoc(doc(db,'tipos_tarefa_fixa',id), {nome,descricao,responsavel,modo,diaFixo,atualizadoPor:'Amanda',atualizadoEm:serverTimestamp()});
+    await updateDoc(doc(db,'tipos_tarefa_fixa',id), {nome,descricao,responsavel,modo,diaInicio,diaFixo,antecedenciaDias:2,atualizadoPor:'Amanda',atualizadoEm:serverTimestamp()});
     const resultado=await sincronizarAutomacaoFuncoesFixas({tipoId:id});
     mostrarToast('Função atualizada: '+resultado.atualizadas+' demanda(s) ajustada(s), '+resultado.criadas+' criada(s).');
     renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
+    }catch(e){
+      console.error('Falha ao atualizar Função Fixa:',e);
+      mostrarToast('Não foi possível atualizar a Função Fixa: '+(e?.message||e),'erro');
+    }
   };
 
   window.removerTipoTarefaFixa = async function(id){
@@ -13082,7 +13378,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   let todasDemandas = [];
   function demandaOperacionalVisivel(demanda){
-    return !!demanda && demanda.excluido !== true;
+    if(!demanda || demanda.excluido===true) return false;
+    if(!['Amanda','Chris'].includes(usuarioAtual) && demanda.visivelAPartir && demanda.visivelAPartir>hojeLocal()) return false;
+    return true;
   }
   window.demandaOperacionalVisivel = demandaOperacionalVisivel;
   let usuarioAtual = '';
@@ -13530,7 +13828,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     { categoria:'amanda', chaves:['aprovar video','aprovacao video'], pergunta:'Como aprovo um vídeo?', resposta:'Gerência → Vídeos → Aprovar Vídeos. Você dá a aprovação de qualidade primeiro. Depois disso, o vídeo espera você confirmar que o CLIENTE também aprovou — só aí ele segue pra legenda e postagem.' },
     { categoria:'amanda', chaves:['cliente aprovou','gate cliente','liberar video'], pergunta:'Como libero um vídeo depois que o cliente aprovou de verdade?', resposta:'Gerência → Aprovar Vídeos → bloco "Aguardando confirmação do CLIENTE". Só ali você marca que o cliente aprovou, e o vídeo é liberado pra legenda/postagem.' },
     { categoria:'amanda', chaves:['funcionario do mes','trocar vencedor'], pergunta:'Errei o Funcionário do Mês, dá pra corrigir?', resposta:'Sim — Gerência → Funcionário do Mês tem um botão "Editar resultado" que aparece mesmo depois de aprovado. Você troca o nome ou desfaz a aprovação.' },
-    { categoria:'amanda', chaves:['tipo de tarefa','tarefa fixa nova','criar tarefa recorrente'], pergunta:'Como crio uma tarefa fixa nova, tipo envio de artes?', resposta:'Gerência → Editar Funções Fixas → seção "Tipos de tarefa fixa". Escolhe nome, responsável e frequência. O sistema já gera isso todo mês sozinho.' },
+    { categoria:'amanda', chaves:['tipo de tarefa','tarefa fixa nova','criar tarefa recorrente'], pergunta:'Como crio uma tarefa fixa nova, tipo envio de artes?', resposta:'Gerência → Editar Funções Fixas → Tipos de tarefa fixa. Informe nome, responsável, dia de início e prazo final. Você cadastra uma vez; a configuração fica na grade e o sistema renova todo mês. Para o responsável, a demanda só aparece 2 dias antes do início. Os prazos de cada calendário ficam no quadro amarelo “Prazos dos calendários por cliente”.' },
     { categoria:'amanda', chaves:['cofre de senha','senha do cliente','guardar senha'], pergunta:'Onde guardo as senhas dos clientes com segurança?', resposta:'Gerência → Cofre de Senhas. As senhas ficam criptografadas de verdade (AES-256) — só aparecem quando você clica em "Revelar".' },
     { categoria:'amanda', chaves:['rfv','recencia frequencia valor','risco de sair','cliente esfriando'], pergunta:'O que é a aba "Quem está em risco de sair"?', resposta:'Gerência → Risco de sair. Responde uma pergunta só: qual cliente está esfriando. Cruza há quanto tempo ele não renova com quanto ele já pagou pra gente. Cliente antigo e valioso parado há mais de 60 dias aparece em vermelho — é quem vale a conversa antes de perder. O valor e a frequência o sistema calcula sozinho; só a data da última renovação é preenchida na mão.' },
     { categoria:'amanda', chaves:['cliente saiu','cliente cancelou','churn'], pergunta:'Onde registro um cliente que cancelou?', resposta:'Gerência → Clientes que Saíram. Registra os serviços, tempo que ficou, reclamações e o motivo real do cancelamento — ajuda a identificar padrão.' },
@@ -18356,23 +18654,29 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      mesmo painel e o progresso. Quando o ultimo cliente e marcado, a
      demanda se fecha sozinha. */
   window.htmlChecklistClientes = function(d){
-    const lista = d.checklistClientes;
-    if(!Array.isArray(lista) || !lista.length) return '';
-    const feitos = lista.filter(c=>c.feito).length;
-    const pct = Math.round(feitos/lista.length*100);
+    const listaCompleta = d.checklistClientes;
+    if(!Array.isArray(listaCompleta) || !listaCompleta.length) return '';
+    const podeVerFuturos=['Amanda','Chris'].includes(usuarioAtual);
+    const itensVisiveis=listaCompleta.map((item,indice)=>({item,indice})).filter(({item})=>
+      podeVerFuturos || d.tipoFuncaoFixa!=='calendario' || !item.visivelAPartir || item.visivelAPartir<=hojeLocal()
+    );
+    const feitos = listaCompleta.filter(c=>c.feito).length;
+    const pct = Math.round(feitos/listaCompleta.length*100);
     const podeMarcar = (usuarioAtual === d.destinatario) || usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
     return `<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:10px 12px;border-radius:6px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-        <b>Clientes — ${feitos} de ${lista.length}</b>
-        <span class="selo ${feitos===lista.length?'aprovada':'pendente'}">${pct}%</span>
+        <b>Clientes — ${feitos} de ${listaCompleta.length}</b>
+        <span class="selo ${feitos===listaCompleta.length?'aprovada':'pendente'}">${pct}%</span>
       </div>
       <div style="max-height:46vh;overflow-y:auto;">
-        ${lista.map((c,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:4px;border-radius:6px;background:${c.feito?'rgba(80,180,120,.10)':'transparent'};border:1px solid var(--line);${podeMarcar?'cursor:pointer;':''}">
+        ${itensVisiveis.map(({item:c,indice:i})=>`<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:4px;border-radius:6px;background:${c.feito?'rgba(80,180,120,.10)':'transparent'};border:1px solid var(--line);${podeMarcar?'cursor:pointer;':''}">
           <input type="checkbox" ${c.feito?'checked':''} ${podeMarcar?'':'disabled'} onchange="marcarClienteChecklist('${d.id}', ${i}, this.checked)">
           <span style="flex:1;font-size:12px;${c.feito?'opacity:.6;text-decoration:line-through;':''}">${esc(c.nome||c.slug)}</span>
+          ${c.prazoData ? '<span class="meta" style="font-size:10px;color:' + (!c.feito && c.prazoData<hojeLocal()?'var(--red)':'var(--yellow2)') + ';">Prazo '+formatarDataBR(c.prazoData)+'</span>' : ''}
           ${c.feito && c.data ? '<span class="meta" style="font-size:10px;">'+formatarDataBR(c.data)+'</span>' : ''}
         </label>`).join('')}
       </div>
+      ${!podeVerFuturos && itensVisiveis.length<listaCompleta.length ? '<div class="desc" style="margin:6px 0 0;">Os próximos clientes aparecem automaticamente 2 dias antes do início.</div>' : ''}
       ${podeMarcar ? '' : '<div class="desc" style="margin:6px 0 0;">Só ' + esc(d.destinatario) + ' e a gerência marcam aqui.</div>'}
     </div>`;
   };
@@ -18403,6 +18707,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     const feitos = lista.filter(c=>c.feito).length;
     const dados = { checklistClientes: lista };
+    if(d.tipoFuncaoFixa==='calendario'){
+      dados.prazoData=menorPrazoPendenteChecklist(lista,d.prazoData);
+      dados.visivelAPartir=menorVisibilidadePendenteChecklist(lista,d.visivelAPartir);
+    }
     let fechou = false;
     if(feitos === lista.length){
       dados.status = 'concluida_aguardando_aprovacao';
@@ -18414,7 +18722,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }
     await updateDoc(doc(db,'demandas', id), dados);
     registrarHistorico('demandas', id, (marcado?'Marcou ':'Desmarcou ') + (lista[idx].nome||''), feitos + ' de ' + lista.length + ' clientes');
-    d.checklistClientes = lista; if(dados.status) d.status = dados.status;
+    d.checklistClientes = lista; if(dados.status) d.status = dados.status; if(dados.prazoData) d.prazoData=dados.prazoData; if(dados.visivelAPartir) d.visivelAPartir=dados.visivelAPartir;
     mostrarToast(fechou ? '✅ Todos os clientes marcados — demanda concluída!' : (feitos + ' de ' + lista.length + ' clientes.'));
     const modal = document.getElementById('modalConteudo');
     if(modal && modal.innerHTML.includes('marcarClienteChecklist')){
@@ -22413,6 +22721,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        sensível a hora do que é saneamento/retroativo. */
     const verificacoesFrequentes = [
       { nome: 'migracaoCalendariosMensaisV13', fn: migrarCalendariosParaDemandaMensalUnicaV13 },
+      { nome: 'reparoConfiguracoesCalendariosV16', fn: restaurarConfiguracoesCalendariosV16 },
       { nome: 'migracaoPrazosDemandasV12', fn: migrarPrazosDemandasSemAtrasoResidualV12 },
       { nome: 'migracaoFuncoesFixasMensalV11', fn: migrarFuncoesFixasParaRenovacaoMensalV11 },
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
@@ -22493,7 +22802,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   function iniciarMotorAutomacoes(){
     if(motorIntervalId) return; // já está agendado
     if(usuarioAtual !== 'Amanda' && usuarioAtual !== 'Chris') return;
-    motorAutomacoes('boot'); // primeira rodada assim que alguém se identifica
+    /* O reparo urgente não fica preso ao lock de 30 minutos do motor. Só
+       depois dele a rodada normal começa; a marca V16 torna a chamada
+       idempotente e impede repetição. */
+    restaurarConfiguracoesCalendariosV16()
+      .catch(e=>console.error('Reparo V16 não concluiu; o motor tentará novamente:',e))
+      .finally(()=>motorAutomacoes('boot'));
     motorIntervalId = setInterval(function(){
       if(document.visibilityState === 'visible' && (usuarioAtual === 'Amanda' || usuarioAtual === 'Chris')){
         motorAutomacoes('intervalo');
@@ -22607,6 +22921,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const pessoaDoOuvinte = usuarioAtual;
     const ehGestao = pessoaDoOuvinte === 'Amanda' || pessoaDoOuvinte === 'Chris';
     listenersTempoRealAtivos = true;
+
+    /* A liberação não depende de a Amanda estar online: cada funcionário
+       materializa somente as próprias recorrências cuja janela abriu. A
+       consulta de demandas usa destinatario==pessoaDoOuvinte. */
+    if(!ehGestao){
+      sincronizarAutomacaoFuncoesFixas({destinatario:pessoaDoOuvinte,somenteLiberacao:true})
+        .catch(e=>console.error('Não foi possível liberar as Funções Fixas de '+pessoaDoOuvinte+':',e));
+    }
 
     /* 04/08/2026 — a equipe inteira mantinha quatro coleções COMPLETAS em
        tempo real. Só demandas já passava de 546 documentos por abertura.

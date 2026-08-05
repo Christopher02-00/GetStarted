@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-<meta name="gs-build" content="2026-08-05-demandas-portal-funcoes-fixas-aprovacoes-v8">
+<meta name="gs-build" content="2026-08-05-central-clientes-aprovacoes-v19">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -2019,25 +2019,36 @@
 
     if(!slug || !token){ return; } // fica na tela de "link nao reconhecido"
 
-    const acessoSnap = await getDoc(doc(db,'clientes_acesso', slug));
-    if(!acessoSnap.exists() || acessoSnap.data().token !== token){
+    /* V17 — clientes novos usam o token como chave não enumerável. Assim
+       o Portal não precisa baixar um documento que contenha o segredo.
+       O fallback mantém os links antigos funcionando até a migração. */
+    let tokenSnap=null, acessoSnap=null;
+    try{ tokenSnap = await getDoc(doc(db,'clientes_portal_tokens', token)); }catch(e){}
+    const tokenNovoValido = tokenSnap && tokenSnap.exists() && tokenSnap.data().ativo !== false && tokenSnap.data().cliente === slug;
+    let sessaoClienteAberta=false;
+    try{
+      const uid = await window.__authPronta;
+      if(uid){
+        await setDoc(doc(db,'sessoes_cliente', uid), {cliente:slug,token,abertaEm:new Date().toISOString()});
+        sessaoClienteAberta=true;
+      }
+    }catch(e){ console.error('Link recusado ao abrir sessão do cliente:',e); }
+    if(sessaoClienteAberta && !tokenNovoValido){
+      try{ acessoSnap=await getDoc(doc(db,'clientes_acesso',slug)); }catch(e){}
+    }
+    /* Arquivar na Central desativa o acesso sem apagar nenhum documento.
+       Links legados também respeitam esse selo; antes eles contornavam a
+       revogação do token novo e mantinham o Portal aberto. */
+    const tokenLegadoValido = acessoSnap && acessoSnap.exists() && acessoSnap.data().ativo !== false && acessoSnap.data().token === token;
+    if(!sessaoClienteAberta || (!tokenNovoValido && !tokenLegadoValido)){
       document.getElementById('cardAcessoInvalido').innerHTML = `<div style="text-align:center;padding:10px 0;">
         <div style="font-size:14px;font-weight:700;margin-bottom:8px;color:var(--red);">Link inválido ou expirado</div>
         <div class="sub" style="margin-bottom:0;">Pede um link novo pra sua agência.</div>
       </div>`;
       return;
     }
-    /* Marca a sessão como sendo DESTE cliente. É este documento que as
-       regras do Firestore consultam pra decidir o que ele pode ler —
-       sem ele, nenhuma consulta do portal passa. */
-    try{
-      const uid = await window.__authPronta;
-      if(uid) await setDoc(doc(db,'sessoes_cliente', uid), {
-        cliente: slug, abertaEm: new Date().toISOString()
-      });
-    }catch(e){ console.error('Falha ao abrir sessão do cliente:', e); }
-
-    window.entrarPortal(slug, acessoSnap.data().nome || slug);
+    const dadosAcesso = tokenNovoValido ? tokenSnap.data() : acessoSnap.data();
+    window.entrarPortal(slug, dadosAcesso.nome || slug);
   });
 </script>
 </body>

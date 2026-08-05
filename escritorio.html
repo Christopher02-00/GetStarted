@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-04-retirada-aprovacao-v5">
+<meta name="gs-build" content="2026-08-05-fila-calendarios-gravacoes-v7">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1723,7 +1723,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -5952,13 +5952,20 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   window.setAgendamentoSub = function(qual, el){
+    if(qual === 'controleGravacoes' && !['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)){
+      mostrarToast('Este controle é da Cecília e dos filmmakers.', 'erro');
+      return;
+    }
     document.querySelectorAll('#view-agendamento .subtab').forEach(t=>t.classList.remove('active'));
-    el.classList.add('active');
+    if(el) el.classList.add('active');
     document.getElementById('agendamentoAgendar').style.display = qual==='agendar' ? 'block' : 'none';
     document.getElementById('agendamentoMinhaAgenda').style.display = qual==='minhaAgenda' ? 'block' : 'none';
     document.getElementById('agendamentoCalendarioMes').style.display = qual==='calendarioMes' ? 'block' : 'none';
+    const controle = document.getElementById('agendamentoControleGravacoes');
+    if(controle) controle.style.display = qual==='controleGravacoes' ? 'block' : 'none';
     if(qual==='agendar'){ popularClientesAgendamento(); renderListaAgendamentos(); verificarQtdHoje(); garantirLinhaEquipe(); }
     if(qual==='minhaAgenda') renderMinhaAgendaFilmmaker();
+    if(qual==='controleGravacoes') renderControleGravacoes();
     if(qual==='calendarioMes'){
       const hoje = new Date();
       document.getElementById('calMesFiltro').value = hoje.toISOString().slice(0,7);
@@ -5968,6 +5975,197 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(boxFiltroFilmmaker) boxFiltroFilmmaker.style.display = ehFilmmaker ? 'none' : 'block'; // trava automática, sem escolha, pro filmmaker
       renderCalendarioMesFilmmaker();
     }
+  };
+
+  /* A aba nasce e morre com o papel. Em Amanda, Chris, Gabi e editores
+     ela não fica escondida por CSS: não existe no DOM. */
+  function montarControleGravacoesPorPapel(){
+    const permitido = ['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual);
+    let aba = document.getElementById('subtabControleGravacoes');
+    let painel = document.getElementById('agendamentoControleGravacoes');
+    if(!permitido){
+      if(aba) aba.remove();
+      if(painel) painel.remove();
+      window.__voltarControleGravacoes = false;
+      return;
+    }
+    const view = document.getElementById('view-agendamento');
+    const subtabs = view?.querySelector('.subtabs');
+    if(!view || !subtabs) return;
+    if(!aba){
+      aba = document.createElement('div');
+      aba.className = 'subtab';
+      aba.id = 'subtabControleGravacoes';
+      aba.textContent = '🎬 Controle de gravações';
+      aba.onclick = () => setAgendamentoSub('controleGravacoes', aba);
+      subtabs.appendChild(aba);
+    }
+    if(!painel){
+      painel = document.createElement('div');
+      painel.id = 'agendamentoControleGravacoes';
+      painel.style.display = 'none';
+      view.appendChild(painel);
+    }
+  }
+  window.montarControleGravacoesPorPapel = montarControleGravacoesPorPapel;
+
+  function calcularLinhasControleGravacoes(calendariosPorSlug, agendamentos, clientes, mes, hoje){
+    return (clientes||[]).map(cliente => {
+      const cal = calendariosPorSlug[cliente.slug] || null;
+      const itens = itensDoMesCalendario(cal, mes).filter(i => i && !i.excluido);
+      const concluidos = itens.filter(itemNaoPrecisaGravar);
+      const faltam = itens.filter(i => !itemNaoPrecisaGravar(i));
+      const gravacoes = (agendamentos||[]).filter(a => !a.excluido && a.status !== 'cancelado' &&
+        (a.cliente === cliente.slug || a.clienteSlug === cliente.slug));
+      const doMes = gravacoes.filter(a => String(a.data||'').startsWith(mes));
+      const deHoje = gravacoes.filter(a => a.data === hoje);
+      const realizadasHoje = deHoje.filter(a => a.status === 'realizado');
+      const esperandoBaixaHoje = deHoje.filter(a => a.status === 'agendado' && a.aprovado !== false);
+      return {
+        slug:cliente.slug, nome:cliente.nome, itens, concluidos, faltam, gravacoes:doMes,
+        deHoje, realizadasHoje, esperandoBaixaHoje,
+        feitosHoje:realizadasHoje.reduce((s,a)=>s+(Number(a.qtdVideosRealizados)||0),0),
+        feitosMes:doMes.filter(a=>a.status==='realizado').reduce((s,a)=>s+(Number(a.qtdVideosRealizados)||0),0)
+      };
+    });
+  }
+  window.calcularLinhasControleGravacoes = calcularLinhasControleGravacoes;
+
+  function calcularProducaoHojePorFilmmaker(linhas){
+    const porPessoa = {};
+    (linhas||[]).forEach(linha => (linha.realizadasHoje||[]).forEach(agendamento => {
+      const equipe = (agendamento.equipe||[]).map(e=>typeof e==='string'?e:e&&e.nome).filter(Boolean);
+      const pessoa = equipe.length ? equipe.join(' + ') : (agendamento.filmmaker || agendamento.finalizadoPor || 'Não identificado');
+      porPessoa[pessoa] = (porPessoa[pessoa]||0) + (Number(agendamento.qtdVideosRealizados)||0);
+    }));
+    return porPessoa;
+  }
+  window.calcularProducaoHojePorFilmmaker = calcularProducaoHojePorFilmmaker;
+
+  window.renderControleGravacoes = async function(){
+    if(!['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)){
+      const indevido = document.getElementById('agendamentoControleGravacoes');
+      if(indevido) indevido.remove();
+      return;
+    }
+    const box = document.getElementById('agendamentoControleGravacoes');
+    if(!box) return;
+    const mesAnterior = document.getElementById('controleGravMes')?.value;
+    const buscaAnterior = (document.getElementById('controleGravBusca')?.value||'').trim().toLowerCase();
+    const mes = /^\d{4}-\d{2}$/.test(mesAnterior||'') ? mesAnterior : hojeLocal().slice(0,7);
+    box.innerHTML = '<div class="card"><div class="desc">Lendo os calendários e as gravações…</div></div>';
+    try{
+      const [calSnap, clientesBase] = await Promise.all([
+        obterCalendariosCompartilhados(),
+        clientesDeConteudoRecorrente().catch(()=>CLIENTES_LISTA.filter(c=>!ehClienteSoEdicao(c.slug)))
+      ]);
+      let agendamentos = [];
+      if(__cacheTempoRealPronto.agendamentos){
+        agendamentos = cacheAgendamentos.filter(a=>!a.excluido);
+      }else{
+        const agSnap = await getDocs(collection(db,'agendamentos'));
+        agSnap.forEach(d=>{ const a=d.data(); if(!a.excluido) agendamentos.push({id:d.id,...a}); });
+      }
+      const calendariosPorSlug = {};
+      calSnap.forEach(d => { calendariosPorSlug[d.id] = d.data() || {}; });
+      const hoje = hojeLocal();
+      /* “Todos os clientes” não pode significar apenas a lista mensalista.
+         Junta a carteira recorrente com qualquer cliente que tenha conteúdo
+         neste mês ou gravação operacional nele. Assim cliente novo/avulso
+         não some, sem ressuscitar cliente antigo sem atividade no período. */
+      const clientesPorSlugControle = new Map((clientesBase||[]).map(c=>[c.slug,{slug:c.slug,nome:c.nome}]));
+      Object.entries(calendariosPorSlug).forEach(([slug,cal]) => {
+        if(itensDoMesCalendario(cal, mes).some(i=>i&&!i.excluido)){
+          clientesPorSlugControle.set(slug, {slug, nome:cal.client || clientesPorSlugControle.get(slug)?.nome || nomeDeSlugSeguro(slug)});
+        }
+      });
+      agendamentos.forEach(a => {
+        const slug = a.cliente || a.clienteSlug || '';
+        if(!slug || a.excluido || a.status === 'cancelado' || !String(a.data||'').startsWith(mes)) return;
+        clientesPorSlugControle.set(slug, {slug, nome:a.clienteNome || clientesPorSlugControle.get(slug)?.nome || nomeDeSlugSeguro(slug)});
+      });
+      const clientes = Array.from(clientesPorSlugControle.values());
+      let linhas = calcularLinhasControleGravacoes(calendariosPorSlug, agendamentos, clientes, mes, hoje);
+      if(buscaAnterior) linhas = linhas.filter(l => l.nome.toLowerCase().includes(buscaAnterior));
+      linhas.sort((a,b) => {
+        const pa = a.esperandoBaixaHoje.length ? 0 : a.faltam.length ? 1 : a.itens.length ? 2 : 3;
+        const pb = b.esperandoBaixaHoje.length ? 0 : b.faltam.length ? 1 : b.itens.length ? 2 : 3;
+        return pa-pb || b.faltam.length-a.faltam.length || a.nome.localeCompare(b.nome,'pt-BR');
+      });
+
+      const total = linhas.reduce((s,l)=>s+l.itens.length,0);
+      const feitos = linhas.reduce((s,l)=>s+l.concluidos.length,0);
+      const faltam = linhas.reduce((s,l)=>s+l.faltam.length,0);
+      const hojeFeitos = linhas.reduce((s,l)=>s+l.feitosHoje,0);
+      const semBaixa = linhas.reduce((s,l)=>s+l.esperandoBaixaHoje.length,0);
+      const producaoHojePorFilmmaker = calcularProducaoHojePorFilmmaker(linhas);
+      const rotMes = (()=>{ const [a,m]=mes.split('-'); const ns=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']; return (ns[Number(m)-1]||mes)+' '+a; })();
+
+      box.innerHTML = `<div class="card" style="border:2px solid var(--yellow);">
+        <h2>🎬 Controle de gravações — ${esc(rotMes)}</h2>
+        <div class="desc">Uma fonte só: o calendário diz o que precisa ser feito; quando o filmmaker confirma a gravação, os itens marcados viram gravados e o saldo da Cecília cai aqui na hora.</div>
+        <div class="row2" style="margin-top:12px;">
+          <div class="field"><label>Mês</label><input type="month" id="controleGravMes" value="${mes}" onchange="renderControleGravacoes()"></div>
+          <div class="field"><label>Buscar cliente</label><input type="text" id="controleGravBusca" value="${esc(buscaAnterior)}" placeholder="Nome do cliente" oninput="filtrarControleGravacoes(this.value)"></div>
+        </div>
+        <div class="painelResumo" style="margin-top:10px;">
+          <div class="resumoCard"><div class="num">${total}</div><div class="lbl">planejados no calendário</div></div>
+          <div class="resumoCard green"><div class="num">${feitos}</div><div class="lbl">já gravados/resolvidos</div></div>
+          <div class="resumoCard ${faltam?'yellow':'green'}"><div class="num">${faltam}</div><div class="lbl">ainda faltam gravar</div></div>
+          <div class="resumoCard green"><div class="num">${hojeFeitos}</div><div class="lbl">vídeos feitos hoje</div></div>
+          <div class="resumoCard ${semBaixa?'red':'green'}"><div class="num">${semBaixa}</div><div class="lbl">gravações de hoje sem baixa</div></div>
+        </div>
+        <div style="margin-top:12px;background:var(--deep);border-radius:9px;padding:10px 12px;">
+          <div class="meta" style="font-weight:800;color:var(--yellow);margin-bottom:6px;">📹 Produção registrada hoje — por filmmaker</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">${Object.keys(producaoHojePorFilmmaker).length
+            ? Object.entries(producaoHojePorFilmmaker).sort((a,b)=>b[1]-a[1]).map(([p,q])=>`<span class="selo aprovada">${esc(p)}: ${q} vídeo(s)</span>`).join('')
+            : '<span class="meta">Nenhuma gravação recebeu baixa hoje.</span>'}</div>
+        </div>
+      </div>` + (linhas.length ? linhas.map(l => {
+        const pct = l.itens.length ? Math.round(l.concluidos.length/l.itens.length*100) : 0;
+        const cor = l.esperandoBaixaHoje.length ? 'var(--red)' : l.faltam.length ? 'var(--yellow2)' : l.itens.length ? 'var(--green)' : 'var(--line)';
+        const podeRegistrar = l.esperandoBaixaHoje.filter(a => usuarioAtual==='Cecília' || pessoaNaEquipe(a,usuarioAtual));
+        return `<details class="card controleGravCliente" data-cliente="${esc(l.nome.toLowerCase())}" style="border-left:4px solid ${cor};padding:0;overflow:hidden;">
+          <summary style="cursor:pointer;list-style:none;padding:14px 16px;">
+            <div class="top"><div class="nome">${esc(l.nome)}</div><span class="selo ${l.faltam.length?'pendente':'aprovada'}">${l.itens.length ? l.concluidos.length+'/'+l.itens.length+' resolvidos' : 'sem calendário em '+esc(rotMes)}</span></div>
+            <div class="meta" style="margin-top:5px;">${l.faltam.length} falta(m) · ${l.feitosMes} vídeo(s) registrados no mês${l.feitosHoje?' · '+l.feitosHoje+' hoje':''}</div>
+            <div style="background:var(--deep);height:7px;border-radius:5px;overflow:hidden;margin-top:8px;"><div style="width:${pct}%;height:100%;background:${cor};"></div></div>
+          </summary>
+          <div style="padding:0 16px 16px;border-top:1px solid var(--line);">
+            ${podeRegistrar.length ? `<div style="background:var(--redbg);border-left:3px solid var(--red);padding:10px 12px;border-radius:8px;margin:12px 0;">
+              <b>${podeRegistrar.length} gravação(ões) de hoje esperando registro.</b>
+              <div class="btnrow" style="margin-top:8px;">${podeRegistrar.map(a=>`<button class="btn" style="font-size:11px;" onclick="abrirRegistroPeloControle('${a.id}')">Registrar ${esc(a.hora||'agora')} →</button>`).join('')}</div>
+            </div>` : ''}
+            ${l.itens.length ? `<div class="metaSecTit" style="margin-top:12px;">Conteúdos do calendário</div>${l.itens.map(i=>`<div class="item" style="padding:8px 10px;margin-top:5px;border-left:3px solid ${itemNaoPrecisaGravar(i)?'var(--green)':'var(--yellow2)'};"><div class="top"><div class="nome" style="font-size:12px;">${itemNaoPrecisaGravar(i)?'✅':'⬜'} ${esc(i.name||'Sem título')}</div><span class="meta">${esc(i.fmt||'Reel')}</span></div><div class="meta">${itemNaoPrecisaGravar(i)?rotuloEstadoItem(i):'ainda precisa ser gravado'}</div></div>`).join('')}` : '<div class="empty" style="margin-top:12px;">Nenhum conteúdo deste mês no calendário.</div>'}
+            ${l.realizadasHoje.length ? `<div class="meta" style="margin-top:12px;color:var(--green);">Hoje: ${l.realizadasHoje.map(a=>esc(a.finalizadoPor||a.filmmaker||'?')+' registrou '+(a.qtdVideosRealizados||0)).join(' · ')}</div>` : ''}
+          </div>
+        </details>`;
+      }).join('') : '<div class="empty">Nenhum cliente corresponde à busca.</div>');
+    }catch(e){
+      console.error('Controle de gravações: falha ao carregar', e);
+      box.innerHTML = `<div class="card" style="border:2px solid var(--red);"><h2>⚠️ Não consegui carregar o controle</h2><div class="desc">O banco não respondeu. <b>Isso não significa que o saldo é zero.</b> Nenhum dado foi alterado.</div><button class="btn secondary" style="margin-top:10px;" onclick="renderControleGravacoes()">Tentar novamente</button></div>`;
+    }
+  };
+
+  window.filtrarControleGravacoes = function(valor){
+    const busca = String(valor||'').trim().toLowerCase();
+    document.querySelectorAll('#agendamentoControleGravacoes .controleGravCliente').forEach(card => {
+      card.style.display = !busca || String(card.dataset.cliente||'').includes(busca) ? 'block' : 'none';
+    });
+  };
+
+  window.abrirRegistroPeloControle = function(agId){
+    if(!['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)) return;
+    const sub = document.getElementById('subtabMinhaAgendaFilmmaker');
+    if(!sub) return;
+    window.__voltarControleGravacoes = true;
+    setAgendamentoSub('minhaAgenda', sub);
+    setTimeout(()=>{
+      const form = document.getElementById('formGrav_'+agId);
+      const card = document.getElementById('ag_'+agId);
+      if(form) form.style.display = 'block';
+      if(card) card.scrollIntoView({behavior:'smooth',block:'start'});
+    }, 500);
   };
 
   function popularClientesAgendamento(){
@@ -6422,8 +6620,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      Agora segue o padrao da Atrasadas: cockpit no topo, agrupamento por
      urgencia (atrasadas / hoje / proximas) em faixas colapsaveis, e cada
      gravacao vira um cartao .item compacto que só ABRE o formulario quando
-     voce clica nela. Os IDs dos campos continuam identicos — o
-     registrarGravacaoRealizada nao precisou mudar nada. */
+     voce clica nela. Os IDs dos campos continuam idênticos; o registro foi
+     depois reforçado com transação, sem mudar o caminho visual. */
   window.toggleFormGravacao = function(agId){
     const form = document.getElementById('formGrav_' + agId);
     const seta = document.getElementById('setaGrav_' + agId);
@@ -6518,8 +6716,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function renderMinhaAgendaFilmmaker(){
     const cont = document.getElementById('agendamentoMinhaAgenda');
-    const snap = await getDocs(collection(db,'agendamentos'));
-    let todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
+    let todos = [];
+    if(__cacheTempoRealPronto.agendamentos){
+      todos = cacheAgendamentos.filter(v=>!v.excluido).map(v=>({...v}));
+    }else{
+      const snap = await getDocs(collection(db,'agendamentos'));
+      snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
+    }
     // Nathan e Luís só veem a própria agenda — Cecília/Chris veem tudo (panorama)
     if(PESSOAS_DE_CAMPO.includes(usuarioAtual)){
       todos = todos.filter(a => pessoaNaEquipe(a, usuarioAtual));
@@ -6527,16 +6730,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const aguardandoAprovacao = todos.filter(a => a.status === 'agendado' && a.aprovado === false);
     const pendentes = todos.filter(a => a.status === 'agendado' && a.aprovado !== false).sort((a,b)=>a.data.localeCompare(b.data));
 
-    const hojeStr = new Date().toISOString().slice(0,10);
+    const hojeStr = hojeLocal();
     const atrasadas = pendentes.filter(a => a.data < hojeStr);
     const deHoje = pendentes.filter(a => a.data === hojeStr);
     const futuras = pendentes.filter(a => a.data > hojeStr);
 
-    let html = `<div class="painelResumo" style="margin-bottom:16px;">
+    let html = `${window.__voltarControleGravacoes ? '<button class="btn secondary" style="width:auto;margin-bottom:12px;" onclick="window.__voltarControleGravacoes=false;setAgendamentoSub(\'controleGravacoes\',document.getElementById(\'subtabControleGravacoes\'))">← Voltar ao controle de gravações</button>' : ''}<div class="painelResumo" style="margin-bottom:16px;">
       <div class="resumoCard ${atrasadas.length ? 'red' : 'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">🔴 Atrasadas — registra já</div></div>
       <div class="resumoCard ${deHoje.length ? 'yellow' : 'green'}"><div class="num">${deHoje.length}</div><div class="lbl">🟡 De hoje</div></div>
       <div class="resumoCard"><div class="num">${futuras.length}</div><div class="lbl">⚪ Próximas</div></div>
-      <div class="resumoCard ${aguardandoAprovacao.length ? 'yellow' : ''}"><div class="num">${aguardandoAprovacao.length}</div><div class="lbl">⏳ Aguardando Chris</div></div>
+      <div class="resumoCard ${aguardandoAprovacao.length ? 'yellow' : ''}"><div class="num">${aguardandoAprovacao.length}</div><div class="lbl">⏳ Aguardando Amanda</div></div>
     </div>`;
 
     if(aguardandoAprovacao.length){
@@ -6554,22 +6757,41 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       return;
     }
 
+    /* Antes, cada cartão fazia 1 leitura do calendário + 1 leitura da
+       coleção inteira de referências. Dez gravações abertas viravam vinte
+       consultas completas. Carrega cada fonte uma vez e recorta em memória. */
+    let calendariosSnapAgenda, refsSnapAgenda;
+    try{
+      [calendariosSnapAgenda, refsSnapAgenda] = await Promise.all([
+        obterCalendariosCompartilhados(),
+        obterRefsPerfilCompartilhadas().catch(()=>null)
+      ]);
+    }catch(e){
+      console.error('Agenda: falha ao carregar calendários:', e);
+      cont.innerHTML = blocoAgenda + html + '<div class="card" style="border:2px solid var(--red);"><h2>⚠️ Não consegui carregar os conteúdos</h2><div class="desc">A agenda existe, mas o banco não entregou os calendários. <b>Não registre no escuro:</b> tente novamente para preservar o vínculo com os conteúdos.</div><button class="btn secondary" style="margin-top:10px;" onclick="renderMinhaAgendaFilmmaker()">Tentar novamente</button></div>';
+      return;
+    }
+    const calendariosAgenda = {};
+    calendariosSnapAgenda.forEach(d => { calendariosAgenda[d.id] = d.data() || {}; });
+    const refsAgenda = {};
+    if(refsSnapAgenda) refsSnapAgenda.forEach(dd => {
+      const pv = dd.data() || {}; if(!pv.cliente) return;
+      const cand = (pv.slots||[]).filter(x=>x&&x.link);
+      const atuais = refsAgenda[pv.cliente] || [];
+      if(cand.length > atuais.filter(x=>x&&x.link).length) refsAgenda[pv.cliente] = pv.slots || [];
+    });
+
     // Monta o cartao de UMA gravacao: cabecalho compacto sempre visivel +
     // formulario completo escondido, que abre no clique.
     const cardGravacao = async (a, urgencia) => {
-      const calSnap = await getDoc(doc(db,'calendarios', a.cliente));
-      const itensCalendario = calSnap.exists() ? (calSnap.data().items||[]).map((it,idx)=>({...it, idx})).filter(it=>!it.gravado) : [];
+      const calAgenda = calendariosAgenda[a.cliente] || null;
+      const itensCalendario = calAgenda ? (calAgenda.items||[]).map((it,idx)=>({...it, idx})).filter(it=>!itemNaoPrecisaGravar(it)) : [];
       /* 27/07/2026 — o filmmaker precisa saber o ESTILO antes de sair pra
          gravar. Os perfis de referência do cliente ficavam só na tela da
          Gabi; agora vêm junto na agenda dele. */
       let htmlPerfis = '';
       try{
-        const pfSnap = await getDocs(collection(db,'refs_perfil_semana'));
-        let slots = [];
-        // pega o registro mais completo do cliente, não o último que aparecer
-        pfSnap.forEach(dd => { const pv=dd.data(); if(pv.cliente !== a.cliente) return;
-          const cand = (pv.slots||[]).filter(x=>x&&x.link);
-          if(cand.length > slots.filter(x=>x&&x.link).length) slots = pv.slots||[]; });
+        const slots = refsAgenda[a.cliente] || [];
         const validos = slots.filter(x=>x.link);
         if(validos.length){
           htmlPerfis = `<div style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;margin:8px 0;">
@@ -8384,7 +8606,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.varrerChoquesDeData = async function(){
     let achados = 0;
     try{
-      const snap = await getDocs(collection(db,'calendarios'));
+      const snap = await obterCalendariosCompartilhados();
       const cals = []; snap.forEach(d => cals.push({ slug:d.id, ...d.data() }));
       for(const c of cals){
         const items = c.items || [];
@@ -10729,7 +10951,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        isso, o painel gritaria todo dia por um prazo que nunca foi firmado. */
     const slugsFlexiveis = new Set();
     try{
-      const calSnap = await getDocs(collection(db,'calendarios'));
+      const calSnap = await obterCalendariosCompartilhados();
       calSnap.forEach(d => {
         // o campo é `items` (inglês) em todo o sistema — eu tinha escrito `itens` aqui
         const itens = (d.data() || {}).items || [];
@@ -11344,6 +11566,22 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   window.registrarGravacaoRealizada = async function(agId, clienteSlug, clienteNome){
+    if(!['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)){
+      mostrarToast('Só a Cecília e os filmmakers podem registrar uma gravação.', 'erro');
+      return;
+    }
+    const agRef = doc(db,'agendamentos', agId);
+    const agSnap = await getDoc(agRef);
+    if(!agSnap.exists()){ mostrarToast('Essa gravação não existe mais.', 'erro'); return; }
+    const agDadosAntes = agSnap.data() || {};
+    if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(agDadosAntes, usuarioAtual)){
+      mostrarToast('Essa gravação não está na sua equipe.', 'erro');
+      return;
+    }
+    if(agDadosAntes.status === 'realizado'){
+      mostrarToast('Essa gravação já foi registrada. O controle foi preservado.', 'erro');
+      return;
+    }
     // Coleta os itens do calendario marcados + os extras digitados em texto livre
     const checkboxesMarcados = Array.from(document.querySelectorAll('.chkVideoCalendario_'+agId+':checked'));
     const idxsGravados = checkboxesMarcados.map(c => parseInt(c.dataset.idx));
@@ -11352,25 +11590,78 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // depender só do nome bater (frágil: nomes parecidos, edições, etc).
     const videosDoCalendario = checkboxesMarcados.map(c => ({ nome: c.dataset.nome, calendarItemIdx: parseInt(c.dataset.idx) }));
 
-    const textoExtras = document.getElementById('extras_'+agId).value.trim();
+    const textoExtras = (document.getElementById('extras_'+agId)?.value||'').trim();
     const nomesExtras = textoExtras ? textoExtras.split('\n').map(s=>s.trim()).filter(Boolean) : [];
     const videosExtras = nomesExtras.map(nome => ({ nome, calendarItemIdx: null }));
 
     const todosVideosParaCriar = [...videosDoCalendario, ...videosExtras];
     const qtdRealizada = todosVideosParaCriar.length;
+    if(qtdRealizada === 0){
+      mostrarToast('Marque ou escreva pelo menos um vídeo. Uma gravação com zero não pode ser finalizada.', 'erro');
+      return;
+    }
 
-    const temUber = document.getElementById('uber_'+agId).checked;
-    const uberLink = temUber ? document.getElementById('uberInput_'+agId).value.trim() : '';
+    const temUber = !!document.getElementById('uber_'+agId)?.checked;
+    const uberLink = temUber ? (document.getElementById('uberInput_'+agId)?.value||'').trim() : '';
     const campoValorExtra = document.getElementById('valorExtra_'+agId);
     const valorExtra = campoValorExtra ? campoValorExtra.value.trim() : '';
-    const agSnap = await getDoc(doc(db,'agendamentos', agId));
-    const qtdPlanejada = agSnap.data().qtdVideosPlanejados;
+    const qtdPlanejada = Number(agDadosAntes.qtdVideosPlanejados)||0;
+    const editorSugeridoPeloFilmmaker = document.getElementById('editorEscolhido_'+agId)?.value || '';
+    const hojeRegistro = hojeLocal();
+    const videosParaTransacao = todosVideosParaCriar.map(v => ({
+      ref: doc(collection(db,'videos_producao')), dados: {
+        cliente: clienteSlug, clienteNome, data: hojeRegistro,
+        titulo: clienteNome + ' — ' + v.nome,
+        calendarItemIdx: v.calendarItemIdx,
+        calendarClienteSlug: v.calendarItemIdx !== null ? clienteSlug : null,
+        observacao: '', editorSugerido: editorSugeridoPeloFilmmaker, editorAtribuido: '',
+        status: 'aguardando_edicao', linkFinalizado: '', criadoEm: serverTimestamp()
+      }
+    }));
 
-    await updateDoc(doc(db,'agendamentos', agId), {
-      status: 'realizado', qtdVideosRealizados: qtdRealizada,
-      finalizadoPor: usuarioAtual || '?', finalizadoEm: new Date().toISOString(),
-      temUber, uberLink, valorExtra
-    });
+    /* O núcleo é atômico: baixa da gravação, criação dos vídeos e marcas
+       no calendário confirmam juntos. Antes, uma falha no meio deixava a
+       gravação como realizada sem vídeo, ou criava vídeo sem marcar o
+       conteúdo — exatamente a divergência que a Cecília quer controlar. */
+    try{
+      await runTransaction(db, async transacao => {
+        const agAtual = await transacao.get(agRef);
+        if(!agAtual.exists()) throw new Error('Gravação removida durante o registro.');
+        if((agAtual.data()||{}).status === 'realizado') throw new Error('Esta gravação já foi registrada em outra aba.');
+        const calRef = doc(db,'calendarios', clienteSlug);
+        const calAtual = idxsGravados.length ? await transacao.get(calRef) : null;
+
+        transacao.update(agRef, {
+          status:'realizado', qtdVideosRealizados:qtdRealizada,
+          finalizadoPor:usuarioAtual||'?', finalizadoEm:new Date().toISOString(),
+          temUber, uberLink, valorExtra
+        });
+        videosParaTransacao.forEach(v => transacao.set(v.ref, v.dados));
+        if(calAtual && calAtual.exists()){
+          const itensAtualizados = [...((calAtual.data()||{}).items||[])];
+          /* O índice veio da tela aberta. Se a Gabi reorganizou o
+             calendário em outra máquina antes do clique, não podemos
+             marcar silenciosamente outro conteúdo. A transação aborta e
+             pede recarga; nenhum vídeo nasce pela metade. */
+          videosDoCalendario.forEach(videoSelecionado => {
+            const idx = videoSelecionado.calendarItemIdx;
+            const itemAtual = itensAtualizados[idx];
+            if(!itemAtual || String(itemAtual.name||'') !== String(videoSelecionado.nome||'')){
+              throw new Error('O calendário mudou depois que esta agenda foi aberta. Recarregue e marque novamente.');
+            }
+            itensAtualizados[idx] = { ...itemAtual, gravado:true };
+          });
+          transacao.update(calRef, { items:itensAtualizados, updatedAt:new Date().toISOString(), gravacaoAtualizadaPor:usuarioAtual||'?' });
+        }
+      });
+    }catch(e){
+      console.error('Falha no núcleo da gravação:', e);
+      const mudouCalendario = /calendário mudou/i.test(String((e&&e.message)||e));
+      mostrarToast(mudouCalendario
+        ? 'O calendário mudou em outra máquina. Recarregue a página e marque os conteúdos novamente; nada foi registrado.'
+        : 'Não registrei: o banco não confirmou tudo junto. Nenhum sucesso foi mostrado e você pode tentar novamente.', 'erro');
+      return;
+    }
 
     /* ===== O CHRIS PRECISA SABER QUE ACABOU — 28/07/2026 ================
        Gravação de cliente novo é a primeira entrega da agência pra ele —
@@ -11392,61 +11683,34 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
              precisar agir — que é o papel de supervisão que ele pediu. */
           destinatario: 'Amanda', origem: 'sistema', clienteNome,
           ehAviso: true, agendamentoId: agId,
-          prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00', status: 'pendente'
+          prazoData: hojeRegistro, prazoHora: '19:00', status: 'pendente'
         }, { janelaMinutos: 120 });
       }
     }catch(e){ console.error('Falha ao avisar a coordenação da gravação:', e); }
 
     if(temUber || valorExtra){
-      const refPagExtra = await addDoc(collection(db,'pagamentos_extra'), {
-        cliente: clienteSlug, clienteNome, agendamentoId: agId,
-        temUber, uberLink, valorExtra,
-        /* 27/07/2026 — o valor e do FILMMAKER, nao do cliente. Antes so o
-           nome do cliente era guardado, entao na hora de pagar dia 15
-           ninguem sabia de quem era o reembolso. Quem registra a gravacao
-           e quem gravou, entao e ele quem recebe. */
-        filmmaker: usuarioAtual || '',
-        mes: new Date().toISOString().slice(0,7),
-        criadoEm: serverTimestamp()
-      });
-      // NOVO 21/07/2026 — antes esse pagamento pendente só aparecia se
-      // alguém abrisse Gerência → Pagamentos por conta própria; podia ficar
-      // semanas sem ninguém saber que tinha reembolso pendente. Agora avisa
-      // a Amanda na hora, com o valor e quem gravou.
-      const partesPagK = [];
-      if(temUber) partesPagK.push('Uber' + (uberLink ? ' (recibo anexado)' : ''));
-      if(valorExtra) partesPagK.push('R$ ' + valorExtra);
-      dispararEmailIndividual('Amanda', 'pagamento_extra_novo', {
-        titulo: '💰 Novo pagamento extra pendente — ' + (clienteNome||'') + ': ' + partesPagK.join(' + ') + ' (registrado por ' + (usuarioAtual||'?') + ')',
-        itemId: refPagExtra.id, colecao: 'pagamentos_extra'
-      }).catch(()=>{});
-    }
-
-    if(qtdRealizada > 0){
-      // Não atribui editor automaticamente mais — isso virou responsabilidade
-      // exclusiva da Amanda, todo dia de manhã (checklist diário dela).
-      // O filmmaker pode sugerir um editor (campo editorEscolhido), mas isso
-      // fica só como sugestão (editorSugerido) — não confirma sozinho.
-      const editorSugeridoPeloFilmmaker = document.getElementById('editorEscolhido_'+agId).value;
-      const hoje = new Date().toISOString().slice(0,10);
-      for(const v of todosVideosParaCriar){
-        await addDoc(collection(db,'videos_producao'), {
-          cliente: clienteSlug, clienteNome, data: hoje,
-          titulo: clienteNome + ' — ' + v.nome,
-          calendarItemIdx: v.calendarItemIdx, calendarClienteSlug: v.calendarItemIdx !== null ? clienteSlug : null,
-          observacao: '', editorSugerido: editorSugeridoPeloFilmmaker, editorAtribuido: '',
-          status: 'aguardando_edicao', linkFinalizado: '', criadoEm: serverTimestamp()
+      try{
+        const refPagExtra = await addDoc(collection(db,'pagamentos_extra'), {
+          cliente: clienteSlug, clienteNome, agendamentoId: agId,
+          temUber, uberLink, valorExtra,
+          /* 27/07/2026 — o valor e do FILMMAKER, nao do cliente. Antes so o
+             nome do cliente era guardado, entao na hora de pagar dia 15
+             ninguem sabia de quem era o reembolso. Quem registra a gravacao
+             e quem gravou, entao e ele quem recebe. */
+          filmmaker: usuarioAtual || '',
+          mes: hojeRegistro.slice(0,7),
+          criadoEm: serverTimestamp()
         });
-      }
-      // Marca os itens do calendario selecionados como gravados
-      if(idxsGravados.length){
-        const calRef = doc(db,'calendarios', clienteSlug);
-        const calSnap = await getDoc(calRef);
-        if(calSnap.exists()){
-          const dados = calSnap.data();
-          idxsGravados.forEach(idx => { if(dados.items[idx]) dados.items[idx].gravado = true; });
-          await setDoc(calRef, dados);
-        }
+        const partesPagK = [];
+        if(temUber) partesPagK.push('Uber' + (uberLink ? ' (recibo anexado)' : ''));
+        if(valorExtra) partesPagK.push('R$ ' + valorExtra);
+        dispararEmailIndividual('Amanda', 'pagamento_extra_novo', {
+          titulo: '💰 Novo pagamento extra pendente — ' + (clienteNome||'') + ': ' + partesPagK.join(' + ') + ' (registrado por ' + (usuarioAtual||'?') + ')',
+          itemId: refPagExtra.id, colecao: 'pagamentos_extra'
+        }).catch(()=>{});
+      }catch(e){
+        console.error('Gravação confirmada, mas o pagamento extra falhou:', e);
+        mostrarToast('A gravação foi registrada, mas o pagamento extra não confirmou. Avise a Amanda para conferir.', 'erro');
       }
     }
 
@@ -11454,35 +11718,52 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const faltaram = qtdPlanejada - qtdRealizada;
       const explicacao = prompt(`Faltaram ${faltaram} vídeo(s) do planejado. O que aconteceu? (vai ficar registrado)`) || 'Sem explicação informada';
 
-      const todosAgSnap = await getDocs(collection(db,'agendamentos'));
-      let proximaAg = null;
-      todosAgSnap.forEach(d => {
-        const a = d.data();
-        if(a.cliente === clienteSlug && a.status === 'agendado' && a.data > agSnap.data().data){
-          if(!proximaAg || a.data < proximaAg.data) proximaAg = {id: d.id, ...a};
+      try{
+        let proximaAg = null;
+        let todosAgendamentosControle = [];
+        if(__cacheTempoRealPronto.agendamentos){
+          todosAgendamentosControle = cacheAgendamentos.map(a=>({...a}));
+        }else{
+          const todosAgSnap = await getDocs(collection(db,'agendamentos'));
+          todosAgSnap.forEach(d=>todosAgendamentosControle.push({id:d.id,...d.data()}));
         }
-      });
-
-      if(proximaAg){
-        await updateDoc(doc(db,'agendamentos', proximaAg.id), {
-          qtdVideosPlanejados: (proximaAg.qtdVideosPlanejados||0) + faltaram
+        todosAgendamentosControle.forEach(a => {
+          if(a.cliente === clienteSlug && a.status === 'agendado' && a.data > agDadosAntes.data){
+            if(!proximaAg || a.data < proximaAg.data) proximaAg = a;
+          }
         });
-        mostrarToast(`${faltaram} vídeo(s) empurrado(s) automaticamente pra próxima gravação (${proximaAg.data}).`, 'erro');
-      } else {
-        mostrarToast(`${faltaram} vídeo(s) ficaram faltando — não há próxima gravação agendada. Avisando Cecília.`, 'erro');
-      }
 
-      await addDoc(collection(db,'demandas'), {
-        titulo: 'Gravação abaixo do planejado — ' + clienteNome,
-        descricao: `Planejado ${qtdPlanejada}, realizado ${qtdRealizada}. Motivo: ${explicacao}. ${proximaAg ? 'Vídeos já empurrados pra próxima gravação em '+proximaAg.data+'.' : 'PRECISA agendar nova gravação — não há próxima data marcada.'}`,
-        origem: 'amanda', clienteNome: '', destinatario: proximaAg ? 'Amanda' : 'Cecília',
-        prazoData: new Date().toISOString().slice(0,10), prazoHora: '19:00',
-        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-      });
+        if(proximaAg){
+          await updateDoc(doc(db,'agendamentos', proximaAg.id), {
+            qtdVideosPlanejados: (proximaAg.qtdVideosPlanejados||0) + faltaram
+          });
+          mostrarToast(`${faltaram} vídeo(s) empurrado(s) automaticamente pra próxima gravação (${proximaAg.data}).`, 'erro');
+        } else {
+          mostrarToast(`${faltaram} vídeo(s) ficaram faltando — não há próxima gravação agendada. Avisando Cecília.`, 'erro');
+        }
+
+        await criarDemandaSegura({
+          titulo: 'Gravação abaixo do planejado — ' + clienteNome,
+          descricao: `Planejado ${qtdPlanejada}, realizado ${qtdRealizada}. Motivo: ${explicacao}. ${proximaAg ? 'Vídeos já empurrados pra próxima gravação em '+proximaAg.data+'.' : 'PRECISA agendar nova gravação — não há próxima data marcada.'}`,
+          origem: 'sistema', clienteNome, destinatario: 'Cecília', agendamentoId: agId,
+          prazoData: hojeRegistro, prazoHora: '19:00',
+          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+        }, { janelaMinutos: 24*60 });
+      }catch(e){
+        console.error('Gravação confirmada, mas o tratamento do saldo falhou:', e);
+        mostrarToast('A gravação foi registrada, mas não consegui encaminhar o saldo restante. A Cecília deve conferir o controle.', 'erro');
+      }
     } else {
-      mostrarToast('Gravação registrada e vídeos distribuídos pros editores!');
+      mostrarToast('Gravação registrada. Os vídeos já estão na fila para a Amanda distribuir.');
     }
-    renderMinhaAgendaFilmmaker();
+    __snapshotCalendariosEm = 0;
+    limparCacheIndicadores();
+    if(window.__voltarControleGravacoes){
+      window.__voltarControleGravacoes = false;
+      setAgendamentoSub('controleGravacoes', document.getElementById('subtabControleGravacoes'));
+    }else{
+      renderMinhaAgendaFilmmaker();
+    }
   };
 
   function popularClientesReferencia(){
@@ -11723,7 +12004,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const [refSnap, cliSnap, calSnap] = await Promise.all([
       getDocs(collection(db,'referencias')),
       getDocs(collection(db,'referencias_cliente')),
-      getDocs(collection(db,'calendarios'))
+      obterCalendariosCompartilhados()
     ]);
     let refs = [];
     refSnap.forEach(d => { const v=d.data(); if(!v.excluido) refs.push({id:d.id, origem:'hub', ...v}); });
@@ -13003,6 +13284,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       else { popularClientesVideo(); }
     }
     if(nome === 'agendamento'){
+      montarControleGravacoesPorPapel();
       const ehFilmmaker = CAMPO_MAIS_CHRIS.includes(usuarioAtual);
       const subFilmmaker = document.getElementById('subtabMinhaAgendaFilmmaker');
       if(subFilmmaker) subFilmmaker.style.display = ehFilmmaker ? 'block' : 'none';
@@ -13656,22 +13938,34 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const ehGestao = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
 
     let vids = [], posts = [], cals = [], extras = [], agends = [], naLixeira = 0;
-    try{
-      const [v, p, c, e, a] = await Promise.all([
-        getDocs(collection(db,'videos_producao')),
-        getDocs(collection(db,'postagens')),
-        getDocs(collection(db,'calendarios')),
-        getDocs(collection(db,'pagamentos_extra')),
-        getDocs(collection(db,'agendamentos'))
-      ]);
-      /* Conta a lixeira nesta MESMA passada. Antes eu relia a coleção
-         inteira só pra isso — 252 documentos lidos duas vezes. */
-      v.forEach(d => { const x=d.data(); if(x.excluido){ naLixeira++; return; } vids.push({id:d.id, ...x}); });
-      p.forEach(d => { const x=d.data(); if(!x.excluido) posts.push({id:d.id, ...x}); });
-      c.forEach(d => cals.push({id:d.id, ...d.data()}));
-      e.forEach(d => { const x=d.data(); if(!x.excluido) extras.push({id:d.id, ...x}); });
-      a.forEach(d => { const x=d.data(); if(!x.excluido) agends.push({id:d.id, ...x}); });
-    }catch(err){ console.error('Indicadores: falha ao ler o banco', err); }
+    const errosLeitura = [];
+    /* Gestão já mantém as coleções quentes em tempo real. Reutilizar esses
+       dados evita a sequência antiga: o contador lia a coleção inteira e,
+       segundos depois, o detalhe fazia a mesma leitura de novo. Cada fonte
+       falha isoladamente; uma cota esgotada nunca transforma erro em zero. */
+    const fontes = await Promise.allSettled([
+      (ehGestao && __cacheTempoRealPronto.videos_producao) ? Promise.resolve(cacheVideosProducao.map(x=>({...x}))) : getDocs(collection(db,'videos_producao')),
+      (ehGestao && __cacheTempoRealPronto.postagens) ? Promise.resolve(cachePostagens.map(x=>({...x}))) : getDocs(collection(db,'postagens')),
+      obterCalendariosCompartilhados(),
+      getDocs(collection(db,'pagamentos_extra')),
+      (ehGestao && __cacheTempoRealPronto.agendamentos) ? Promise.resolve(cacheAgendamentos.map(x=>({...x}))) : getDocs(collection(db,'agendamentos'))
+    ]);
+    const nomesFontes = ['vídeos','postagens','calendários','pagamentos','agendamentos'];
+    fontes.forEach((r,i)=>{ if(r.status==='rejected'){ errosLeitura.push(nomesFontes[i]); console.error('Indicadores: falha em '+nomesFontes[i], r.reason); } });
+    const percorrer = (resultado, fn) => {
+      if(resultado.status !== 'fulfilled') return;
+      const valor = resultado.value;
+      if(Array.isArray(valor)) valor.forEach(x=>fn({ id:x.id, data:()=>x }));
+      else valor.forEach(fn);
+    };
+    /* Conta a lixeira nesta MESMA passada. Antes eu relia a coleção
+       inteira só pra isso — 252 documentos lidos duas vezes. */
+    percorrer(fontes[0], d => { const x=d.data(); if(x.excluido){ naLixeira++; return; } vids.push({id:d.id, ...x}); });
+    percorrer(fontes[1], d => { const x=d.data(); if(!x.excluido) posts.push({id:d.id, ...x}); });
+    percorrer(fontes[2], d => cals.push({id:d.id, ...d.data()}));
+    percorrer(fontes[3], d => { const x=d.data(); if(!x.excluido) extras.push({id:d.id, ...x}); });
+    percorrer(fontes[4], d => { const x=d.data(); if(!x.excluido) agends.push({id:d.id, ...x}); });
+    if(__erroCalendariosCompartilhado && !errosLeitura.includes('calendários')) errosLeitura.push('calendários (dados anteriores)');
 
     const dems = (todasDemandas||[]).filter(d => !d.escalacaoGerencial);
     const abertas = dems.filter(d => d.status !== 'aprovada' && d.status !== 'concluida');
@@ -13827,14 +14121,29 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         }
         const m = mesMaisRecenteDoCal(cal);
         if(m && m < mesAgora){ mesVelho++; nomesMesVelho.push(c.nome); }
-        const st = estadoDoCalendario(cal);
-        if(st === 'liberado') liberados++;
-        else if(st === 'aguardando_interna') espRevisao++;
-        else if(st === 'aprovado_interno') represados++;
+        /* A fila detalhada é por mês, então o contador também precisa ser.
+           Antes ele usava o estado geral do documento: um calendário com
+           julho liberado e agosto aguardando podia contar diferente da
+           lista que a Amanda realmente abre. */
+        const mesesConhecidos = mesesDeCalendario(cal);
+        (mesesConhecidos.length ? mesesConhecidos : ['']).forEach(mesCal => {
+          if(!itensDoMesCalendario(cal, mesCal).length) return;
+          const st = estadoMesCal(cal, mesCal);
+          if(st === 'liberado') liberados++;
+          else if(st === 'aprovado_interno') represados++;
+        });
       });
     }catch(e){ console.error('Indicadores: calendários', e); }
+    /* Esta é exatamente a mesma função usada para desenhar a fila. Não
+       depende da lista de mensalistas: se existe um documento esperando
+       Amanda, o contador e a lista enxergam juntos. */
+    espRevisao = linhasCalendariosAguardandoRevisao(cals).length;
     lista.push(I('calLiberados', 'Calendários no ar', liberados, 'bom', "irParaCalendariosLiberados()", 'O cliente já está vendo.'));
-    lista.push(I('calRevisao', 'Esperando sua revisão', espRevisao, espRevisao?'alto':'ok', "irParaRevisaoCalendarios()", 'A Gabi enviou, falta você aprovar.'));
+    const rotuloRevisaoCal = usuarioAtual === 'Amanda' ? 'Esperando sua revisão' : 'Esperando revisão da Amanda';
+    const dicaRevisaoCal = usuarioAtual === 'Amanda' ? 'A Gabi enviou, falta você aprovar.' : 'A Gabi enviou; a decisão é da Amanda. Você acompanha em modo leitura.';
+    const numeroRevisaoCal = errosLeitura.some(x=>x.startsWith('calendários')) && !cals.length ? '—' : espRevisao;
+    lista.push(I('calRevisao', rotuloRevisaoCal, numeroRevisaoCal,
+      numeroRevisaoCal === '—' ? 'alto' : espRevisao?'alto':'ok', "irParaRevisaoCalendarios()", dicaRevisaoCal));
     lista.push(I('calRepresados', 'Guardados pro dia 15', represados, 'info', "irParaEnvioCalendarios()", 'Aprovados, esperando o disparo.'));
     lista.push(I('semCal', 'Cliente sem nada montado', semCal, semCal?'alto':'ok', "irParaAtalho('calendarios')",
       semCal ? ('Nem calendário, nem vídeo, nem gravação: ' + nomesSemCal.join(', ') + '. Este é o caso grave — ninguém começou.')
@@ -13931,7 +14240,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // ---------- ARQUIVO (nunca alerta) ----------
     lista.push(I('lixeira', 'Vídeos na lixeira', naLixeira, 'arquivo', "irParaLixeiraVideos()", 'Arquivo. Não é pendência.'));
 
-    __cacheIndicadores = { lista, hoje, porChave: Object.fromEntries(lista.map(x=>[x.chave,x])) };
+    __cacheIndicadores = {
+      lista, hoje, errosLeitura,
+      dados:{ videos:vids, postagens:posts, calendarios:cals, extras, agendamentos:agends },
+      porChave: Object.fromEntries(lista.map(x=>[x.chave,x]))
+    };
     __cacheIndicadoresEm = Date.now();
     return __cacheIndicadores;
   };
@@ -14657,13 +14970,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      já com "edição avulsa" escolhida. */
   const ATALHO_DESTAQUE = {
     'Cecília':     [{ rot:'Agendar postagens',     acao:"irParaFila('agendar')", contador:'agendar' },
-                    { rot:'Nova gravação',        acao:"irParaAgendarGravacao()" }],
+                    { rot:'Nova gravação',        acao:"irParaAgendarGravacao()" },
+                    { rot:'Controle de gravações', acao:"irParaControleGravacoes()" }],
     /* 01/08/2026 — pedido urgente do Chris: o filmmaker precisa do
        calendário do cliente na mão, em campo, sempre na última versão. */
     'Luís':        [{ rot:'Calendário do cliente', acao:"irParaCalendarioDeCampo()" },
+                    { rot:'Controle de gravações', acao:"irParaControleGravacoes()" },
                     { rot:'Subir vídeo pra edição', acao:"irParaSubirEdicao()" },
                     { rot:'Registrar extra/Uber', acao:"irParaMeusExtras()" }],
     'Nathan':      [{ rot:'Calendário do cliente', acao:"irParaCalendarioDeCampo()" },
+                    { rot:'Controle de gravações', acao:"irParaControleGravacoes()" },
                     { rot:'Subir vídeo pra edição', acao:"irParaSubirEdicao()" },
                     { rot:'Registrar extra/Uber', acao:"irParaMeusExtras()" }],
     'Helo':        [{ rot:'Subir vídeo pra edição', acao:"irParaSubirEdicao()" }],
@@ -14709,6 +15025,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const sub = Array.from(document.querySelectorAll('#view-agendamento .subtab')).find(x=>(x.textContent||'').includes('Marcar Nova'));
       if(sub) sub.click();
       const c = document.getElementById('agCliente'); if(c) c.focus();
+    }, 250);
+  };
+
+  window.irParaControleGravacoes = function(){
+    if(!['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)) return;
+    const nav = document.getElementById('navAgendamento');
+    if(nav) irPara('agendamento', nav);
+    setTimeout(()=>{
+      const aba = document.getElementById('subtabControleGravacoes');
+      if(aba) setAgendamentoSub('controleGravacoes', aba);
     }, 250);
   };
 
@@ -14824,7 +15150,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const alvo = await clientesDeConteudoRecorrente();
       const hoje = await carregarGravacoesDeHoje();
-      const snap = await getDocs(collection(db,'calendarios'));
+      const snap = await obterCalendariosCompartilhados();
       const comConteudo = {};
       snap.forEach(d => { const v=d.data(); const n=(v.items||[]).length; if(n) comConteudo[d.id]=n; });
       const lista = alvo.filter(c => comConteudo[c.slug]);
@@ -15082,7 +15408,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     irPara('gerencia', document.getElementById('navitemGerencia'));
     setTimeout(()=>{
       if(window.navegarGerenciaSub) navegarGerenciaSub(usuarioAtual==='Amanda' ? 'amanda' : 'chris');
-      setTimeout(()=>{ const h=[...document.querySelectorAll('h2')].find(x=>/esperando sua revisão/i.test(x.textContent||''));
+      setTimeout(()=>{ const h=[...document.querySelectorAll('h2')].find(x=>/calendários esperando (sua revisão|revisão da Amanda)/i.test(x.textContent||''));
         if(h) h.scrollIntoView({behavior:'smooth', block:'center'}); }, 1200);
     }, 350);
   };
@@ -15411,6 +15737,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const antigo = document.getElementById('atalhoDestaque');
     if(antigo) antigo.remove();
     montarPainelCapsulaAmanda();
+    montarControleGravacoesPorPapel();
     let cfg = ATALHO_DESTAQUE[usuarioAtual];
     if(!usuarioAtual || !cfg) return;
     if(!Array.isArray(cfg)) cfg = [cfg];          // formato antigo continua valendo
@@ -18633,7 +18960,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     box.innerHTML = '<div class="desc">Lendo os calendários e os acessos…</div>';
     try{
       const [cals, acessos, alvo] = await Promise.all([
-        getDocs(collection(db,'calendarios')),
+        obterCalendariosCompartilhados(),
         getDocs(collection(db,'clientes_acesso')),
         clientesDeConteudoRecorrente()
       ]);
@@ -18714,7 +19041,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // o que está no ar
     const perdas = [], ok = [];
     try{
-      const vivos = await getDocs(collection(db,'calendarios'));
+      const vivos = await obterCalendariosCompartilhados();
       vivos.forEach(dd => {
         const d = dd.data();
         const reaisVivos = itensReais(d.items||[]);
@@ -19041,7 +19368,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     let cals = {};
     try{
-      const snap = await getDocs(collection(db,'calendarios'));
+      const snap = await obterCalendariosCompartilhados();
       snap.forEach(d => { cals[d.id] = d.data(); });
     }catch(e){ console.error('Falha ao ler calendários:', e); }
 
@@ -20288,7 +20615,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }
   }
 
-  const MOTOR_INTERVALO_MIN = 30; // uma rodada operacional por meia hora; o lock é compartilhado entre máquinas
+  const MOTOR_INTERVALO_MIN = 60; // urgências por hora; manutenção pesada só uma vez ao dia
 
   /* ===== CENTRAL DE INTELIGÊNCIA DIÁRIA — "RESUMO DO DIA" =====
      Substitui de vez o lembrete-demanda de segunda-feira (que ficava
@@ -20666,7 +20993,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   async function avisarCalendarioPronto(){
     const hojeStr = new Date().toISOString().slice(0,10);
     const [calSnap, agSnap, demSnap, postSnap] = await Promise.all([
-      getDocs(collection(db,'calendarios')),
+      obterCalendariosCompartilhados(),
       getDocs(collection(db,'agendamentos')),
       getDocs(collection(db,'demandas')),
       getDocs(collection(db,'postagens'))
@@ -21055,7 +21382,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const [v,p,a,c,e,d] = await Promise.all([
         getDocs(collection(db,'videos_producao')), getDocs(collection(db,'postagens')),
-        getDocs(collection(db,'agendamentos')),    getDocs(collection(db,'calendarios')),
+        getDocs(collection(db,'agendamentos')),    obterCalendariosCompartilhados(),
         getDocs(collection(db,'clientes_encerrados')), getDocs(collection(db,'demandas'))
       ]);
       v.forEach(x=>{ const y=x.data(); if(!y.excluido) vids.push({id:x.id,...y}); });
@@ -21228,6 +21555,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function motorAutomacoes(origem){
     const lockRef = doc(db, 'sistema', 'motor_lock');
+    const diaMotor = hojeLocal();
+    let rodarManutencaoDiaria = false;
     try{
       const lockSnap = await getDoc(lockRef);
       if(lockSnap.exists()){
@@ -21236,23 +21565,39 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         if(Date.now() - ultimaMs < MOTOR_INTERVALO_MIN * 60000){
           return; // outra máquina já rodou o motor há pouco — não duplicar
         }
+        rodarManutencaoDiaria = dados.ultimaManutencaoDia !== diaMotor;
+      }else{
+        rodarManutencaoDiaria = true;
       }
-      await setDoc(lockRef, { ultimaExecucao: serverTimestamp(), executadoPor: usuarioAtual || 'sistema (' + (origem||'?') + ')' });
+      await setDoc(lockRef, { ultimaExecucao: serverTimestamp(), executadoPor: usuarioAtual || 'sistema (' + (origem||'?') + ')' }, {merge:true});
     }catch(e){
       console.error('motorAutomacoes: falha ao checar/gravar lock, abortando esta rodada.', e);
       return;
     }
 
-    const verificacoes = [
+    /* Antes, cerca de quarenta varreduras completas rodavam a cada meia
+       hora em toda máquina de gestão. Muitas já têm marca diária interna,
+       mas gastavam as leituras antes de descobrir isso. Separa o que é
+       sensível a hora do que é saneamento/retroativo. */
+    const verificacoesFrequentes = [
+      { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
+      { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
+      { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
+      { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
+      { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
+      { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
+      { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
+      { nome: 'resumoChecklist19h', fn: enviarResumoChecklist19h },
+      { nome: 'digestsDeEmail', fn: enviarDigestsPendentes },
+      { nome: 'lembreteFimDoDia17h', fn: verificarLembreteFimDoDia17h }
+    ];
+    const verificacoesDiarias = [
       { nome: 'sementeEmailsEquipe', fn: semearEmailsEquipeIniciais },
       { nome: 'correcaoAvisosAntigos', fn: corrigirDemandasAvisoAntigas },
       { nome: 'limpezaAlertasFantasma', fn: limparAlertasVideoFantasma },
       { nome: 'conciliacaoPostagensOrfas', fn: conciliarPostagensOrfas },
       { nome: 'conciliacaoClienteEntregaDireta', fn: conciliarPostagensClienteVirouEntregaDireta },
       { nome: 'conciliacaoVideosTrafego', fn: conciliarVideosDeTrafegoRetroativo },
-      { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
-      { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
-      { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
       { nome: 'varreduraDuplicatas', fn: varrerDuplicatas },
       { nome: 'avisosDoPortal', fn: converterAvisosDoCliente },
@@ -21261,13 +21606,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       { nome: 'calendarioNovoParaProducao', fn: avisarCalendarioPronto },
       { nome: 'storiesDaSemana', fn: cobrarStoriesDaSemana },
       { nome: 'extrasDoDia15', fn: lembrarExtrasDosFilmmakers },
-      { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
-      { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
       { nome: 'checklistAutoVerificado', fn: autoVerificarChecklist },
-      { nome: 'resumoChecklist19h', fn: enviarResumoChecklist19h },
       { nome: 'resumoDiario', fn: gerarResumoDiarioSeNecessario },
-      { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
-      { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
       { nome: 'gravacoesFantasma', fn: verificarGravacoesFantasma },
       { nome: 'videosParadosEsteira', fn: verificarVideosParadosNaEsteira },
       { nome: 'aprovacoesTacitas', fn: confirmarAprovacoesTacitas },
@@ -21280,8 +21620,6 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
          tarefa recorrente que nunca fechava, e enchia a fila dela à toa.
          A obrigatoriedade continua — o que sai é o prazo. */
       // { nome: 'coberturaRefsSemanal', fn: verificarCoberturaReferenciasSemanal },
-      { nome: 'digestsDeEmail', fn: enviarDigestsPendentes },
-      { nome: 'lembreteFimDoDia17h', fn: verificarLembreteFimDoDia17h },
       { nome: 'vinculoDemandasCliente', fn: vincularDemandasClienteAntigas },
       /* 02/08/2026 — a conferência do sistema. Entra no motor que já
          existe em vez de virar um segundo motor: o lock, o isolamento de
@@ -21297,6 +21635,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       { nome: 'checklistDoCliente', fn: lembrarChecklistPendente },
       { nome: 'choquesDeData', fn: () => window.varrerChoquesDeData() }
     ];
+    const verificacoes = verificacoesFrequentes.concat(rodarManutencaoDiaria ? verificacoesDiarias : []);
 
     for(const v of verificacoes){
       try{
@@ -21305,6 +21644,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         console.error('motorAutomacoes: falha em ' + v.nome, e);
         registrarLogAutomacao('erro_verificacao', v.nome, String(e?.message || e));
       }
+    }
+    if(rodarManutencaoDiaria){
+      try{ await setDoc(lockRef, {ultimaManutencaoDia:diaMotor, manutencaoConcluidaEm:serverTimestamp()}, {merge:true}); }
+      catch(e){ console.error('motorAutomacoes: falha ao marcar manutenção diária', e); }
     }
     registrarLogAutomacao('motor_executado', origem || '?', 'rodada completa das verificações automáticas');
   }
@@ -21361,6 +21704,52 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   let __ouvintesTempoReal = [];
   let __usuarioDosOuvintes = '';
+  const __cacheTempoRealPronto = {
+    demandas:false, videos_producao:false, postagens:false, agendamentos:false, calendarios:false
+  };
+
+  /* ===== UMA LEITURA DE CALENDÁRIOS POR VEZ — 05/08/2026 ============
+     A fila da Amanda, o painel do Chris, a agenda do filmmaker e outras
+     telas liam a coleção inteira separadamente. Ao estourar a cota, o
+     contador podia ficar na tela e o detalhe desaparecia na leitura
+     seguinte. Este snapshot compartilhado elimina as releituras em
+     cascata e o listener da operação o mantém atual quando a Gabi envia. */
+  let __snapshotCalendariosCompartilhado = null;
+  let __snapshotCalendariosEm = 0;
+  let __snapshotCalendariosPromise = null;
+  let __erroCalendariosCompartilhado = null;
+  const TTL_CALENDARIOS_COMPARTILHADO = 60000;
+
+  async function obterCalendariosCompartilhados(forcar){
+    if(!forcar && __snapshotCalendariosCompartilhado &&
+       (Date.now() - __snapshotCalendariosEm) < TTL_CALENDARIOS_COMPARTILHADO){
+      return __snapshotCalendariosCompartilhado;
+    }
+    if(__snapshotCalendariosPromise) return __snapshotCalendariosPromise;
+    __snapshotCalendariosPromise = getDocs(collection(db,'calendarios')).then(snap => {
+      __snapshotCalendariosCompartilhado = snap;
+      __snapshotCalendariosEm = Date.now();
+      __erroCalendariosCompartilhado = null;
+      return snap;
+    }).catch(erro => {
+      __erroCalendariosCompartilhado = erro;
+      if(__snapshotCalendariosCompartilhado) return __snapshotCalendariosCompartilhado;
+      throw erro;
+    }).finally(() => { __snapshotCalendariosPromise = null; });
+    return __snapshotCalendariosPromise;
+  }
+  window.obterCalendariosCompartilhados = obterCalendariosCompartilhados;
+
+  let __snapshotRefsPerfilCompartilhado = null;
+  let __snapshotRefsPerfilEm = 0;
+  async function obterRefsPerfilCompartilhadas(){
+    if(__snapshotRefsPerfilCompartilhado && Date.now() - __snapshotRefsPerfilEm < 5*60000){
+      return __snapshotRefsPerfilCompartilhado;
+    }
+    __snapshotRefsPerfilCompartilhado = await getDocs(collection(db,'refs_perfil_semana'));
+    __snapshotRefsPerfilEm = Date.now();
+    return __snapshotRefsPerfilCompartilhado;
+  }
 
   function pararListenersTempoReal(limparDemandas){
     __ouvintesTempoReal.forEach(parar => { try{ parar(); }catch(e){} });
@@ -21370,6 +21759,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     cacheVideosProducao = [];
     cachePostagens = [];
     cacheAgendamentos = [];
+    Object.keys(__cacheTempoRealPronto).forEach(k => { __cacheTempoRealPronto[k] = false; });
     if(limparDemandas !== false) todasDemandas = [];
   }
 
@@ -21414,6 +21804,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         });
       }
       primeiroSnapshotDemandas = false;
+      __cacheTempoRealPronto.demandas = true;
       onDadosTempoRealMudaram('demandas');
     }, (erro)=>{ console.error('Listener demandas falhou:', erro); }));
 
@@ -21451,6 +21842,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           });
         }
         primeiroSnapshotVideos = false;
+        __cacheTempoRealPronto.videos_producao = true;
         onDadosTempoRealMudaram('videos_producao');
       }, (erro)=>{ console.error('Listener videos_producao falhou:', erro); }));
     }
@@ -21466,20 +21858,44 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
         cachePostagens = [];
         snap.forEach(d => cachePostagens.push({id:d.id, ...d.data()}));
+        __cacheTempoRealPronto.postagens = true;
         onDadosTempoRealMudaram('postagens');
       }, (erro)=>{ console.error('Listener postagens falhou:', erro); }));
     }
 
     if(ehGestao || pessoaDoOuvinte === 'Cecília' || ['Luís','Nathan'].includes(pessoaDoOuvinte)){
-      const refAgendamentos = (pessoaDoOuvinte === 'Luís' || pessoaDoOuvinte === 'Nathan')
-        ? query(collection(db,'agendamentos'), where('filmmaker','==',pessoaDoOuvinte))
-        : collection(db,'agendamentos');
+      /* O controle de gravações é compartilhado entre Cecília e os dois
+         filmmakers: todos precisam ver a baixa do mesmo dia. A agenda
+         pessoal continua filtrada por `pessoaNaEquipe`, e o registro tem
+         trava de papel/equipe antes de escrever. */
+      const refAgendamentos = collection(db,'agendamentos');
       __ouvintesTempoReal.push(onSnapshot(refAgendamentos, (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
         cacheAgendamentos = [];
         snap.forEach(d => cacheAgendamentos.push({id:d.id, ...d.data()}));
+        __cacheTempoRealPronto.agendamentos = true;
         onDadosTempoRealMudaram('agendamentos');
       }, (erro)=>{ console.error('Listener agendamentos falhou:', erro); }));
+    }
+
+    /* Calendários são a fonte comum da Gabi, da aprovação da Amanda e do
+       controle de gravações. Uma assinatura substitui dezenas de leituras
+       completas e entrega a mudança da Gabi à fila sem recarregar a página. */
+    if(['Chris','Amanda','Cecília', ...PESSOAS_DE_CAMPO].includes(pessoaDoOuvinte)){
+      let primeiroSnapshotCalendarios = true;
+      __ouvintesTempoReal.push(onSnapshot(collection(db,'calendarios'), (snap)=>{
+        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        __snapshotCalendariosCompartilhado = snap;
+        __snapshotCalendariosEm = Date.now();
+        __erroCalendariosCompartilhado = null;
+        __cacheTempoRealPronto.calendarios = true;
+        limparCacheIndicadores();
+        if(!primeiroSnapshotCalendarios) onDadosTempoRealMudaram('calendarios');
+        primeiroSnapshotCalendarios = false;
+      }, (erro)=>{
+        __erroCalendariosCompartilhado = erro;
+        console.error('Listener calendarios falhou:', erro);
+      }));
     }
   }
 
@@ -21497,6 +21913,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(viewAtiva === 'inicio' && ['demandas','videos_producao','postagens','agendamentos'].includes(colecao)){
       renderMeuDia(); try{ renderVideosPorDiaInicio(); }catch(e){}
       if(colecao === 'agendamentos') renderCalendarioVisualHome();
+    }
+    if(colecao === 'calendarios'){
+      if(viewAtiva === 'agendamento' && document.getElementById('agendamentoControleGravacoes')?.offsetParent !== null){
+        renderControleGravacoes();
+      }
+      if(viewAtiva === 'gerencia'){
+        const a = document.getElementById('gerenciaAmanda');
+        const c = document.getElementById('gerenciaChris');
+        if(a?.offsetParent !== null) renderGerenciaAmanda();
+        if(c?.offsetParent !== null) renderGerenciaChris();
+      }
     }
     // A Central de Comando já checa sozinha se está visível antes de fazer
     // qualquer trabalho (ver início de renderCentralComando) — por isso é
@@ -22433,15 +22860,18 @@ window.salvarPrazoVideo = async function(id){
        Todos os números vêm de `calcularIndicadores()` — a mesma fonte
        que qualquer outra tela vai usar. Acabou o "20 aqui, 25 ali". */
     let cabecalhoIndicadores = '';
+    let indicadoresAgora = null;
     try{
       /* Sem forçar: o cache de 20s evita reler 6 coleções a cada
          atualização automática do painel (que roda a cada 25s). */
       const ind = await calcularIndicadores();
+      indicadoresAgora = ind;
       const ehGestao = usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
       cabecalhoIndicadores =
         `<div class="card" style="border:2px solid var(--yellow);">
           <h2>🎛️ Painel de controle</h2>
           <div class="desc">Tudo que está acontecendo agora, num lugar só. <b>Clica em qualquer número</b> pra ir direto onde se resolve. Atualiza sozinho.</div>` +
+        ((ind.errosLeitura||[]).length ? `<div style="margin-top:10px;background:var(--redbg);border-left:3px solid var(--red);padding:9px 11px;border-radius:7px;font-size:12px;"><b>⚠️ Dados incompletos:</b> falhou a leitura de ${esc(ind.errosLeitura.join(', '))}. Um traço significa “não foi possível conferir”, nunca zero.</div>` : '') +
         htmlIndicadores(ind, ['aprovar','atrasadas','hoje','vidAtrasados','semEditor','calRevisao'],
           '🚨 O que trava agora', 'Só o que precisa de decisão sua hoje.') +
         htmlIndicadores(ind, ['emEdicao','emCorrecao','aguardInterna','aguardCliente','semLegenda','semAgendar','agendadas'],
@@ -22466,12 +22896,13 @@ window.salvarPrazoVideo = async function(id){
 
     const agora = new Date();
     const hojeStr = agora.toISOString().slice(0,10);
-    const [vidSnap, agSnap, postSnap] = await Promise.all([
-      getDocs(collection(db,'videos_producao')),
-      getDocs(collection(db,'agendamentos')),
-      getDocs(collection(db,'postagens'))
-    ]);
-    const videos = []; vidSnap.forEach(d => { const v=d.data(); if(!v.excluido) videos.push({id:d.id, ...v}); });
+    /* Reusa exatamente a leitura dos indicadores. O bloco antigo fazia
+       outras três consultas completas logo depois de terminar as cinco
+       primeiras, agravando a cota e permitindo números divergentes. */
+    const dadosAgora = (indicadoresAgora&&indicadoresAgora.dados) || {};
+    const videos = (dadosAgora.videos||[]).filter(v=>!v.excluido);
+    const agendamentosAgora = (dadosAgora.agendamentos||[]).filter(a=>!a.excluido);
+    const postagensAgora = (dadosAgora.postagens||[]).filter(p=>!p.excluido);
 
     // ---- BLOCO 1: esperando VOCÊ ----
     const daPessoaAgora = d => aprovacaoEhDe(d, usuarioAtual);   // cópia 3 de 4 → função única
@@ -22490,7 +22921,7 @@ window.salvarPrazoVideo = async function(id){
 
     // ---- BLOCO 4: risco ----
     const riscos = [];
-    agSnap.forEach(d => { const a=d.data();
+    agendamentosAgora.forEach(a => {
       /* ===== ESTE BLOCO MENTIA — 01/08/2026 =========================
          Usava `!a.registrado`. Esse campo NUNCA é gravado em lugar
          nenhum do sistema — conferi. Resultado: TODA gravação passada
@@ -22506,7 +22937,7 @@ window.salvarPrazoVideo = async function(id){
          continuavam sendo cobradas. */
       if(a.excluido) return;
       if(a.data < hojeStr && a.status === 'agendado') riscos.push({ txt:'Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''), cor:'var(--red)' }); });
-    postSnap.forEach(d => { const p=d.data();
+    postagensAgora.forEach(p => {
       if(p.excluido) return;
       if(p.status === 'agendado' && p.dataAgendada && p.dataAgendada < hojeStr) riscos.push({ txt:'Postagem de ' + formatarDataBR(p.dataAgendada) + ' sem confirmação — ' + (p.clienteNome||''), cor:'var(--yellow2)' }); });
     videos.filter(v => (v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status))
@@ -26815,7 +27246,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       const [manualSnap, postSnap, calSnap] = await Promise.all([
         getDocs(collection(db,'controle_postagens')),
         getDocs(collection(db,'postagens')),
-        getDocs(collection(db,'calendarios'))
+        obterCalendariosCompartilhados()
       ]);
       const manual = {}; manualSnap.forEach(d => { manual[d.id] = d.data(); });
       const calc = {};
@@ -26858,7 +27289,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       const [perfis, hub, cals] = await Promise.all([
         getDocs(collection(db,'refs_perfil_semana')),
         getDocs(collection(db,'referencias')),
-        getDocs(collection(db,'calendarios'))
+        obterCalendariosCompartilhados()
       ]);
 
       const alvo = await clientesDeConteudoRecorrente();
@@ -26985,41 +27416,32 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }catch(e){ console.error('Falha no placar de conteúdo:', e); return ''; }
   };
 
-  window.htmlCalendariosParaRevisar = async function(){
+  window.htmlCalendariosParaRevisar = async function(opcoes){
     try{
-      const snap = await getDocs(collection(db,'calendarios'));
-      const fila = [];
-      snap.forEach(d => {
-        const v = d.data() || {};
-        const meses = mesesDeCalendario(v);
-        (meses.length ? meses : ['']).forEach(m => {
-          if(estadoMesCal(v, m) !== 'aguardando_interna') return;
-          const doMes = itensDoMesCalendario(v, m);
-          if(!doMes.length) return;
-          const ap = ((v.aprovacaoMeses||{})[m]) || v.aprovacaoInterna || {};
-          fila.push({ slug:d.id, mesKey:m, nome:v.client || d.id,
-                      mes: m ? (['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][Number(m.split('-')[1])-1]+' '+m.split('-')[0]) : (v.month||''),
-                      itens: doMes.length, por:ap.por||'?', em:ap.em||'', refs: doMes.filter(i=>i&&i.ref).length });
-        });
-      });
+      const snap = await obterCalendariosCompartilhados();
+      const somenteLeitura = !!(opcoes&&opcoes.somenteLeitura) || usuarioAtual !== 'Amanda';
+      const fila = linhasCalendariosAguardandoRevisao(snap);
+      if(!fila.length && __erroCalendariosCompartilhado){
+        return `<div class="card" style="border:2px solid var(--red);"><h2>⚠️ A fila não pôde ser confirmada</h2><div class="desc">O último retrato disponível não tinha itens, mas o Firebase falhou agora. <b>Isso não confirma fila vazia.</b></div><button class="btn secondary" style="margin-top:10px;width:auto;" onclick="recarregarFilaCalendarios()">Tentar novamente</button></div>`;
+      }
       if(!fila.length) return '';
-      fila.sort((a,b)=>String(a.em).localeCompare(String(b.em)));
-      return `<div class="card" style="border:2px solid var(--yellow2);">
-        <h2>🗓️ Calendários esperando sua revisão</h2>
-        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. Confere o mês e escolhe o caminho:</div>
-        <div class="desc" style="margin-top:6px;line-height:1.7;">
+      return `<div class="card" id="filaCalendariosRevisao" style="border:2px solid var(--yellow2);">
+        <h2>🗓️ ${somenteLeitura ? 'Calendários esperando revisão da Amanda' : 'Calendários esperando sua revisão'}</h2>
+        ${__erroCalendariosCompartilhado ? '<div style="background:var(--redbg);border-left:3px solid var(--red);padding:9px 11px;border-radius:7px;margin-bottom:10px;font-size:12px;"><b>⚠️ Mostrando o último retrato disponível.</b> O Firebase não confirmou se houve mudança depois dele.</div>' : ''}
+        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. ${somenteLeitura ? 'Aqui é acompanhamento: a decisão continua exclusivamente no painel da Amanda.' : 'Confere o mês e escolhe o caminho:'}</div>
+        ${somenteLeitura ? '' : `<div class="desc" style="margin-top:6px;line-height:1.7;">
           <b style="color:var(--green);">✅ Guardar pro dia 15</b> — o de sempre: fica represado e vai junto com todos no disparo.<br>
           <b style="color:var(--yellow);">⚡ Enviar HOJE</b> — pro calendário fora de data, ou quando o cliente precisa ver agora. Vai direto pro portal dele.<br>
           <b style="color:var(--red);">↩️ Pedir ajuste</b> — volta pra Gabi com o motivo escrito.
-        </div>
+        </div>`}
         ${fila.map(c => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow2);">
           <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">${esc(c.mes||'sem mês')}</span></div>
           <div class="meta" style="margin-top:4px;">${c.itens} conteúdo(s) · ${c.refs} com referência · enviado por ${esc(c.por)}${c.em ? ' em ' + new Date(c.em).toLocaleDateString('pt-BR') : ''}</div>
           <div class="btnrow" style="margin-top:10px;">
             <button class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${c.slug}','${escJs(c.nome)}')">👁️ Abrir e conferir</button>
-            <button class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${c.slug}','${escJs(c.mesKey||'')}')">↩️ Pedir ajuste</button>
+            ${somenteLeitura ? '' : `<button class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${c.slug}','${escJs(c.mesKey||'')}')">↩️ Pedir ajuste</button>
             <button class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${c.slug}','${escJs(c.mesKey||'')}')">✅ Aprovar e guardar pro dia 15</button>
-            <button class="btn" style="font-size:11.5px;" onclick="aprovarEEnviarAgora('${c.slug}','${escJs(c.mesKey||'')}', this)">⚡ Aprovar e enviar HOJE</button>
+            <button class="btn" style="font-size:11.5px;" onclick="aprovarEEnviarAgora('${c.slug}','${escJs(c.mesKey||'')}', this)">⚡ Aprovar e enviar HOJE</button>`}
           </div>
         </div>`).join('')}
       </div>`;
@@ -27030,9 +27452,18 @@ Observações do cliente: ${l.observacoes||'—'}`;
          calendário esperando — exatamente o pior diagnóstico possível. */
       return `<div class="card" style="border:2px solid var(--red);">
         <h2>⚠️ Não consegui carregar a fila de calendários</h2>
-        <div class="desc">O banco não respondeu. <b>Isso não significa que a fila está vazia.</b> Não aprove nem refaça calendário por causa desta tela; tente novamente quando a conexão do Firebase voltar.</div>
+        <div class="desc">O banco não respondeu. <b>Isso não significa que a fila está vazia.</b> Nenhum dado foi alterado.</div>
+        <button class="btn secondary" style="margin-top:10px;width:auto;" onclick="recarregarFilaCalendarios()">Tentar novamente</button>
       </div>`;
     }
+  };
+
+  window.recarregarFilaCalendarios = async function(){
+    __snapshotCalendariosEm = 0;
+    limparCacheIndicadores();
+    try{ await obterCalendariosCompartilhados(true); }catch(e){}
+    if(usuarioAtual === 'Amanda') renderGerenciaAmanda();
+    else if(usuarioAtual === 'Chris') renderGerenciaChris();
   };
 
   /* ===== O REPRESAMENTO DO DIA 15 — 29/07/2026 ======================
@@ -27108,12 +27539,41 @@ Observações do cliente: ${l.observacoes||'—'}`;
     return ((cal&&cal.items)||[]).length ? 'liberado' : 'rascunho';
   }
 
+  /* Fonte única do contador e das duas filas (Amanda e Chris). Aceita
+     tanto QuerySnapshot do Firestore quanto o array já normalizado dos
+     indicadores, para nenhuma tela precisar reimplementar o filtro. */
+  function linhasCalendariosAguardandoRevisao(fonte){
+    const fila = [];
+    if(!fonte || typeof fonte.forEach !== 'function') return fila;
+    fonte.forEach(registro => {
+      const temData = registro && typeof registro.data === 'function';
+      const v = temData ? (registro.data()||{}) : (registro||{});
+      const slug = registro.id || v.id || '';
+      const meses = mesesDeCalendario(v);
+      (meses.length ? meses : ['']).forEach(m => {
+        if(estadoMesCal(v, m) !== 'aguardando_interna') return;
+        const doMes = itensDoMesCalendario(v, m);
+        if(!doMes.length) return;
+        const ap = ((v.aprovacaoMeses||{})[m]) || v.aprovacaoInterna || {};
+        const nomesMeses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+        fila.push({
+          slug, mesKey:m, nome:v.client || slug,
+          mes: m ? ((nomesMeses[Number(m.split('-')[1])-1]||m)+' '+m.split('-')[0]) : (v.month||''),
+          itens:doMes.length, por:ap.por||'?', em:ap.em||'', refs:doMes.filter(i=>i&&i.ref).length
+        });
+      });
+    });
+    fila.sort((a,b)=>String(a.em).localeCompare(String(b.em)) || String(a.nome).localeCompare(String(b.nome),'pt-BR'));
+    return fila;
+  }
+  window.linhasCalendariosAguardandoRevisao = linhasCalendariosAguardandoRevisao;
+
   window.renderFilaEnvioCalendarios = async function(){
     const box = document.getElementById('filaEnvioCalendarios');
     if(!box) return;
     box.innerHTML = '<div class="desc">Carregando…</div>';
     try{
-      const snap = await getDocs(collection(db,'calendarios'));
+      const snap = await obterCalendariosCompartilhados();
       const represados = [], jaEnviados = [], esperando = [];
       snap.forEach(d => {
         const cal = d.data();
@@ -27167,6 +27627,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.enviarUmCalendario = async function(slug, mes, btn){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('A decisão e o envio de calendários são da Amanda.', 'erro'); return; }
     if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
     const n = await dispararCalendarios([{slug, mes}]);
     mostrarToast(n ? 'Enviado — o cliente já vê.' : 'Não consegui enviar.', n ? 'ok' : 'erro');
@@ -27174,8 +27635,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.enviarTodosOsCalendarios = async function(btn){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('A decisão e o envio de calendários são da Amanda.', 'erro'); return; }
     const box = document.getElementById('filaEnvioCalendarios');
-    const snap = await getDocs(collection(db,'calendarios'));
+    const snap = await obterCalendariosCompartilhados();
     const alvos = [];
     snap.forEach(d => { const cal = d.data();
       const meses = mesesDeCalendario(cal);
@@ -27194,6 +27656,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   async function dispararCalendarios(alvos){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('A decisão e o envio de calendários são da Amanda.', 'erro'); return 0; }
     let n = 0;
     for(const a of alvos){
       try{
@@ -27235,6 +27698,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
      pro cliente. Não existe segundo caminho de liberação, então não há
      como um divergir do outro. */
   window.aprovarEEnviarAgora = async function(slug, mes, btn){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('A aprovação de calendários é exclusiva da Amanda.', 'erro'); return; }
     const snap = await getDoc(doc(db,'calendarios', slug));
     if(!snap.exists()){ mostrarToast('Não achei esse calendário.', 'erro'); return; }
     const cal = snap.data();
@@ -27259,6 +27723,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.liberarCalendario = async function(slug, mes){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('A aprovação de calendários é exclusiva da Amanda.', 'erro'); return; }
     const ref = doc(db,'calendarios', slug);
     const snap = await getDoc(ref);
     if(!snap.exists()) return;
@@ -27278,6 +27743,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.devolverCalendario = async function(slug, mes){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('A revisão de calendários é exclusiva da Amanda.', 'erro'); return; }
     const motivo = prompt('O que precisa ser ajustado? (a Gabi vê exatamente este texto)');
     if(motivo === null) return;
     if(!String(motivo).trim()){ mostrarToast('Escreve o que precisa mudar — sem isso ela não sabe o que fazer.', 'erro'); return; }
@@ -28433,7 +28899,20 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
   async function renderGerenciaChris(){
     const cont = document.getElementById('gerenciaChris');
-    return montarCockpitEm(cont);
+    if(!cont) return;
+    /* A fila fica fora do cockpit pesado. Assim, se pagamentos, leads ou
+       saúde dos clientes falharem por cota, o calendário que motivou o
+       clique continua visível e não é substituído por “Carregando…”. */
+    let filaCalendarios = '';
+    try{ filaCalendarios = await htmlCalendariosParaRevisar({somenteLeitura:true}); }
+    catch(e){ console.error('Falha ao montar acompanhamento de calendários:', e); }
+    cont.innerHTML = filaCalendarios + '<div id="gerenciaChrisCockpitResto"><div class="card"><div class="desc">Carregando restante do painel…</div></div></div>';
+    const resto = document.getElementById('gerenciaChrisCockpitResto');
+    try{ await montarCockpitEm(resto); }
+    catch(e){
+      console.error('Falha no restante do cockpit do Chris:', e);
+      if(resto) resto.innerHTML = '<div class="card" style="border-color:var(--red);"><div class="desc">O restante do painel não carregou agora. A fila de calendários acima continua válida.</div></div>';
+    }
   }
 
   /* 01/08/2026 — pedido do Chris: tirar o placar de conteúdo e o
@@ -28518,7 +28997,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const mostrarOrganizacao = !(opcoes && opcoes.organizacao === false);
     let placarConteudo = '';
     if(mostrarOrganizacao){
-      try{ placarConteudo = await htmlPlacarConteudo(); }catch(e){ console.error(e); }
+      try{ placarConteudo += await htmlPlacarConteudo(); }catch(e){ console.error(e); }
       try{ placarConteudo += await htmlPostagemAteQuandoResumo(); }catch(e){ console.error(e); }
     }
     cont.innerHTML = '<div class="card"><div class="desc">Carregando cockpit...</div></div>';

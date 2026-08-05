@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-<meta name="gs-build" content="2026-08-04-iframes-cota-v4">
+<meta name="gs-build" content="2026-08-04-retirada-aprovacao-v5">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -123,6 +123,18 @@
   .comment .ctxt{font-size:12.5px;line-height:1.4;margin-bottom:4px;white-space:pre-wrap;}
   .comment .cdate{font-size:9.5px;color:var(--muted);}
   .nocomments{font-size:11.5px;color:var(--muted);text-align:center;padding:10px;}
+  /* Enquanto a Amanda revisa, o mês vira uma fotografia: dá pra ler e
+     navegar, mas qualquer alteração exige retirar formalmente da fila. */
+  body.calRevisaoTravada #clientName,
+  body.calRevisaoTravada #monthName{cursor:not-allowed;opacity:.7;}
+  body.calRevisaoTravada #viewGrid .cell,
+  body.calRevisaoTravada #viewWeek .listitem,
+  body.calRevisaoTravada #viewKanban .kcard,
+  body.calRevisaoTravada #viewKanban .kmini,
+  body.calRevisaoTravada #painelBlocos button{cursor:not-allowed!important;opacity:.58;}
+  body.calRevisaoTravada #viewGrid .cell:hover,
+  body.calRevisaoTravada #viewWeek .listitem:hover,
+  body.calRevisaoTravada #viewKanban .kcard:hover{border-color:var(--line);}
   @media(max-width:720px){.kanban{grid-template-columns:1fr;} .grid,.weekdays{font-size:9px;} .cell{min-height:70px;}}
 </style>
 <script type="module">
@@ -737,7 +749,10 @@ function mostrarEnvioPendente(){
   const quando=p.em ? new Date(p.em).toLocaleString('pt-BR') : 'agora';
   mostrarBarraDecisao('<b>Envio pra Amanda pendente — trabalho protegido.</b><br>'+ 
     'O banco não confirmou o envio de '+quando+'. Vou tentar novamente sem apagar nada.'+
-    '<div style="margin-top:10px;"><button onclick="tentarEnvioPendente(false)" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">↻ Tentar enviar agora</button></div>');
+    '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
+      '<button onclick="tentarEnvioPendente(false)" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">↻ Tentar enviar agora</button>'+
+      '<button onclick="cancelarEnvioPendente()" style="padding:8px 14px;border:1px solid #8a5a3a;border-radius:6px;background:transparent;color:#ffe0c8;font-weight:700;cursor:pointer;font-size:12.5px;">Cancelar este envio</button>'+
+    '</div>');
   return true;
 }
 function agendarEnvioPendente(atraso){
@@ -777,6 +792,18 @@ window.tentarEnvioPendente = async function(automatico){
   }finally{
     window.__enviandoAprovacaoInterna=false;
   }
+};
+
+/* Se a gravação falhou, a intenção fica numa caixa de saída local. A
+   Gabi precisa conseguir desistir dela; caso contrário uma tentativa
+   automática antiga poderia mandar uma versão que ela decidiu editar. */
+window.cancelarEnvioPendente = function(){
+  const pacote = lerEnvioPendente();
+  if(!pacote) return;
+  if(!confirm('Cancelar este envio pendente?\n\nO calendário e todos os conteúdos continuam intactos como rascunho. Apenas a tentativa de envio para a Amanda será cancelada.')) return;
+  limparEnvioPendente();
+  fecharBarraDecisao();
+  avisarTela('Envio pendente cancelado. Nada do calendário foi apagado.');
 };
 
 function pintarEstado(){
@@ -927,6 +954,7 @@ function mostrarConflito(meus, doBanco){
    mesmo dia e o mesmo título. */
 function chaveItem(it){ return (it.day||0) + '|' + String(it.name||'').trim().toLowerCase(); }
 window.juntarComOBanco = function(){
+  if(exigirRetiradaAntesDeEditar()) return;
   const doBanco = (window.__versaoDoBanco && window.__versaoDoBanco.items) || [];
   const meus = data.items || [];
   const vistos = new Set(doBanco.map(chaveItem));
@@ -950,6 +978,7 @@ window.ficarComOBanco = function(){
   renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();pintarEstado();
 };
 window.forcarMinhaVersao = function(){
+  if(exigirRetiradaAntesDeEditar()) return;
   const doBanco = ((window.__versaoDoBanco||{}).items||[]).length;
   if(!confirm('Isso apaga ' + doBanco + ' conteúdo(s) que estão no banco e deixa só os desta aba. A versão do banco fica guardada e dá pra voltar atrás pelo escritório. Continuar?')) return;
   fecharBarraDecisao(); bloqueadoPorConflito=false; apagouDePropósito=true;
@@ -972,6 +1001,7 @@ function ofereceRascunho(rasc, itensDoBanco){
     '</div>');
 }
 window.restaurarRascunho = function(){
+  if(exigirRetiradaAntesDeEditar()) return;
   const r = lerRascunho(); if(!r) return;
   data = r.data; carregado=true; apagouDePropósito=true;
   document.getElementById('clientName').value=data.client||'';
@@ -1187,6 +1217,13 @@ function save(){
     avisarTela('Este calendário é de leitura. Você pode comentar e aprovar — quem edita é a equipe.', 'erro');
     return;
   }
+  /* Não existe mais edição silenciosa de uma versão que a Amanda está
+     lendo. As duas transições formais (enviar/retirar) usam a flag de
+     gravação protegida e são as únicas exceções. */
+  if(edicaoBloqueadaPorRevisao() && !window.__enviandoAprovacaoInterna){
+    exigirRetiradaAntesDeEditar();
+    return;
+  }
   /* TRAVA 1 — nada é gravado antes do primeiro snapshot chegar.
      Era por aqui que o calendário vazio da memória ia por cima do cheio. */
   if(!carregado){
@@ -1358,6 +1395,7 @@ function renderBlocos(){
 }
 
 window.mudarQtdBlocos = function(n){
+  if(exigirRetiradaAntesDeEditar()) return;
   if(!(n >= 1 && n <= BLOCOS_MAX)) return;
   data.blocosPorMes = data.blocosPorMes || {};
   data.blocosPorMes[mesVisivel || ''] = n;
@@ -1365,6 +1403,7 @@ window.mudarQtdBlocos = function(n){
 };
 
 window.voltarDivisaoAutomatica = function(){
+  if(exigirRetiradaAntesDeEditar()) return;
   if(!confirm('Voltar todos os conteúdos deste mês pra divisão automática?\n\nO que você escolheu na mão se perde.')) return;
   itensDoMes(mesVisivel).forEach(it => { if(it) it.bloco = ''; });
   renderAll();
@@ -1464,6 +1503,30 @@ function estadoDoMes(mes){
   return (data.items && data.items.length) ? 'liberado' : 'rascunho';
 }
 function estadoAprovacao(){ return estadoDoMes(mesVisivel); }
+function edicaoBloqueadaPorRevisao(){
+  if(window.__modoCal !== 'equipe') return false;
+  const st = estadoAprovacao();
+  return st === 'aguardando_interna' || st === 'aprovado_interno';
+}
+function exigirRetiradaAntesDeEditar(){
+  if(!edicaoBloqueadaPorRevisao()) return false;
+  const aprovado = estadoAprovacao() === 'aprovado_interno';
+  avisarTela(aprovado
+    ? 'Este mês já foi aprovado pela Amanda. Para alterar, use “Retirar da aprovação e voltar a editar”. A aprovação anterior será cancelada.'
+    : 'A Amanda está revisando este mês. Para alterar, use “Retirar da aprovação e voltar a editar”.', 'erro');
+  return true;
+}
+function atualizarTravaVisualDoMes(){
+  const travado = edicaoBloqueadaPorRevisao();
+  document.body.classList.toggle('calRevisaoTravada', travado);
+  if(window.__modoCal === 'equipe'){
+    const cliente = document.getElementById('clientName');
+    const mes = document.getElementById('monthName');
+    if(cliente) cliente.readOnly = travado;
+    if(mes) mes.readOnly = travado;
+  }
+  return travado;
+}
 function ehCalendarioLegado(){
   const porMes = (data.aprovacaoMeses||{})[mesVisivel];
   if(porMes && porMes.status) return false;
@@ -1486,6 +1549,7 @@ function renderAprovacaoInterna(){
   const r = ROTULO_APROVACAO[st] || ROTULO_APROVACAO.rascunho;
   const info = (data.aprovacaoMeses||{})[mesVisivel] || data.aprovacaoInterna || {};
   const ehEquipe = window.__modoCal === 'equipe';
+  atualizarTravaVisualDoMes();
 
   const legado = ehCalendarioLegado();
   box.style.background = 'rgba(255,255,255,.03)';
@@ -1495,12 +1559,15 @@ function renderAprovacaoInterna(){
     ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
     ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
     ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">Enviar pra aprovação interna →</button>' : ''}
-    ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. Enquanto não aprovar, o cliente não vê este calendário.</div>' : ''}`;
+    ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição e o cliente ainda não vê.</div>' : ''}
+    ${ehEquipe && st === 'aprovado_interno' ? '<div style="margin-top:6px;opacity:.75;">A Amanda já aprovou. O mês está travado e guardado para o envio ao cliente.</div>' : ''}
+    ${ehEquipe && (st === 'aguardando_interna' || st === 'aprovado_interno') ? '<button class="btn btn-o" style="margin-top:10px;padding:10px 16px;border-color:#e0c56a;color:#ffe9a8;" onclick="retirarDaAprovacaoInterna(this)">↩️ Retirar da aprovação e voltar a editar</button>' : ''}`;
 }
 
 window.enviarParaAprovacaoInterna = async function(btn){
   if(window.__modoCal !== 'equipe') return;
   if(window.__enviandoAprovacaoInterna) return;
+  if(edicaoBloqueadaPorRevisao()){ exigirRetiradaAntesDeEditar(); return; }
   if(!itensDoMes(mesVisivel).length){ avisarTela('Este mês está vazio — monta o mês antes de enviar.', 'erro'); return; }
   const quem = prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
   if(quem === null) return;
@@ -1549,6 +1616,91 @@ window.enviarParaAprovacaoInterna = async function(btn){
   }finally{
     window.__enviandoAprovacaoInterna = false;
     if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = 'Enviar pra aprovação interna →'; }
+  }
+};
+
+/* ===== RETIRAR DA APROVAÇÃO — 04/08/2026 ===========================
+   Antes, depois de enviar, a Gabi ainda conseguia editar a mesma versão
+   que a Amanda estava lendo. E não existia caminho explícito de volta.
+
+   Agora retirar é uma transição gravada no próprio mês:
+     aguardando/aprovado → rascunho
+   Nenhum conteúdo, comentário ou documento é excluído. A fila da Amanda
+   deixa de listar o mês porque ela já é calculada pelo estado. */
+window.retirarDaAprovacaoInterna = async function(btn){
+  if(window.__modoCal !== 'equipe') return;
+  if(window.__enviandoAprovacaoInterna) return;
+  const estadoAntes = estadoAprovacao();
+  if(estadoAntes !== 'aguardando_interna' && estadoAntes !== 'aprovado_interno'){
+    avisarTela('Este mês já não está na aprovação interna.', 'erro');
+    renderAprovacaoInterna();
+    return;
+  }
+  const avisoEstado = estadoAntes === 'aprovado_interno'
+    ? 'A aprovação já dada pela Amanda será cancelada e o mês sairá da fila de envio ao cliente.'
+    : 'O mês sairá da fila de revisão da Amanda.';
+  if(!confirm('Retirar este mês da aprovação e voltar para rascunho?\n\n' + avisoEstado + '\n\nTodos os conteúdos serão preservados. Depois das alterações, será necessário enviar novamente.')) return;
+  const quem = prompt('Seu nome (pra registrar quem retirou):', 'Gabrielle');
+  if(quem === null) return;
+
+  const alvo = mesVisivel || mesDoTexto(data.month) || '';
+  const aprovacaoMesesAntes = data.aprovacaoMeses ? JSON.parse(JSON.stringify(data.aprovacaoMeses)) : undefined;
+  const aprovacaoInternaAntes = data.aprovacaoInterna ? { ...data.aprovacaoInterna } : undefined;
+  const updatedAtAntes = data.updatedAt;
+  const temNaoSalvoAntes = temNaoSalvo;
+  const apagouDePropositoAntes = apagouDePropósito;
+  const agora = new Date().toISOString();
+  const marca = {
+    status:'rascunho', por: quem || 'equipe', em: agora, motivoAjuste:'', mes: alvo,
+    retiradoDe:estadoAntes, retiradoPor:quem || 'equipe', retiradoEm:agora
+  };
+  if(alvo){
+    data.aprovacaoMeses = data.aprovacaoMeses || {};
+    data.aprovacaoMeses[alvo] = marca;
+  }
+  /* Só espelha no campo antigo se ele representa este mesmo mês. Assim
+     retirar setembro não muda acidentalmente a situação de agosto. */
+  const campoAntigoDoMesmoMes = !data.aprovacaoInterna ||
+    data.aprovacaoInterna.mes === alvo || data.mesLegado === alvo;
+  if(campoAntigoDoMesmoMes) data.aprovacaoInterna = marca;
+
+  window.__enviandoAprovacaoInterna = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Retirando e confirmando…'; }
+  try{
+    save();
+    clearTimeout(saveTimer);
+    const resultado = await gravarComSeguranca();
+    if(!resultado || !resultado.ok){
+      if(aprovacaoMesesAntes === undefined) delete data.aprovacaoMeses;
+      else data.aprovacaoMeses = aprovacaoMesesAntes;
+      if(aprovacaoInternaAntes === undefined) delete data.aprovacaoInterna;
+      else data.aprovacaoInterna = aprovacaoInternaAntes;
+      data.updatedAt = updatedAtAntes;
+      temNaoSalvo = temNaoSalvoAntes;
+      apagouDePropósito = apagouDePropositoAntes;
+      pintarEstado();
+      renderAprovacaoInterna();
+      const msg = resultado && resultado.motivo === 'conflito'
+        ? 'Não retirei: a Amanda ou outra aba alterou este calendário ao mesmo tempo. O estado do banco foi preservado; confira e tente novamente.'
+        : 'Não retirei: o banco não confirmou. O mês continua na aprovação e nenhum conteúdo foi alterado.';
+      avisarTela(msg, 'erro');
+      return;
+    }
+    /* Se a Amanda aprovou exatamente durante esta operação, a mesclagem
+       de segurança mantém a marca mais recente. Não mostramos sucesso
+       falso: a Gabi vê o estado real e pode repetir a retirada. */
+    if(estadoAprovacao() !== 'rascunho'){
+      renderAprovacaoInterna();
+      avisarTela('A Amanda alterou este mês ao mesmo tempo. Mantive a decisão mais recente do banco; confira o estado e, se quiser editar, retire novamente.', 'erro');
+      return;
+    }
+    limparEnvioPendente();
+    closeModal();
+    renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();pintarEstado();
+    avisarTela('Retirado da aprovação. O mês voltou para rascunho, todos os conteúdos foram preservados e a edição está liberada.');
+  }finally{
+    window.__enviandoAprovacaoInterna = false;
+    if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = '↩️ Retirar da aprovação e voltar a editar'; }
   }
 };
 
@@ -1689,6 +1841,7 @@ function closeFeedback(){document.getElementById('fbOverlay').classList.remove('
 function submitFeedback(){
   const txt=document.getElementById('fbText').value.trim();
   if(!txt)return;
+  if(window.__modoCal === 'equipe' && exigirRetiradaAntesDeEditar()) return;
   if(!data.comments)data.comments=[];
   const ehCliente = window.__modoCal === 'cliente';
   const registro = {text:txt,date:new Date().toISOString(),porCliente:ehCliente};
@@ -1918,12 +2071,12 @@ function renderKanban(){
     '</div>';
 }
 
-function quickApr(i){data.items[i].apr=true;renderAll();}
-function quickPost(i){data.items[i].posted=true;renderAll();}
-function quickUnpost(i){data.items[i].posted=false;renderAll();}
+function quickApr(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].apr=true;renderAll();}
+function quickPost(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=true;renderAll();}
+function quickUnpost(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
 
 // MODAL
-function openModal(day){editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
+function openModal(day){if(exigirRetiradaAntesDeEditar())return;editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
   document.getElementById('mDay').value=day;document.getElementById('mName').value='';document.getElementById('mDesc').value='';
   document.getElementById('mRef').value='';
   const mo=document.getElementById('mObs'); if(mo) mo.value='';
@@ -1934,7 +2087,7 @@ function openModal(day){editIdx=null;document.getElementById('mTitle').textConte
   document.getElementById('aprBtn').style.display='none';
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
-function openEdit(i){editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent='Editar conteúdo';
+function openEdit(i){if(exigirRetiradaAntesDeEditar())return;editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent='Editar conteúdo';
   document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
   document.getElementById('mLegenda').value=it.legenda||'';
   const moE=document.getElementById('mObs'); if(moE) moE.value=it.obs||'';
@@ -1986,6 +2139,7 @@ function openEdit(i){editIdx=i;const it=data.items[i];document.getElementById('m
   document.getElementById('overlay').classList.add('show');}
 function closeModal(){document.getElementById('overlay').classList.remove('show');}
 function saveItem(){
+  if(exigirRetiradaAntesDeEditar()) return;
   const it={day:parseInt(document.getElementById('mDay').value)||1,name:document.getElementById('mName').value||'Sem título',
     desc:document.getElementById('mDesc').value,legenda:document.getElementById('mLegenda').value,ref:document.getElementById('mRef').value,
     obs:(document.getElementById('mObs')?.value||''),
@@ -2004,7 +2158,7 @@ function saveItem(){
     dataPostagem:document.getElementById('mDataPost')?.value||''};
   if(editIdx!==null)data.items[editIdx]=it;else data.items.push(it);
   closeModal();renderAll();}
-function delItem(){if(editIdx!==null){apagouDePropósito=true;data.items.splice(editIdx,1);}closeModal();renderAll();}
+function delItem(){if(exigirRetiradaAntesDeEditar())return;if(editIdx!==null){apagouDePropósito=true;data.items.splice(editIdx,1);}closeModal();renderAll();}
 async function toggleApr(){
   if(editIdx===null) return;
   const idx = editIdx;
@@ -2039,6 +2193,7 @@ async function toggleApr(){
   }
 
   /* Equipe: segue como sempre. */
+  if(exigirRetiradaAntesDeEditar()) return;
   data.items[idx].apr = !data.items[idx].apr;
   save(); openEdit(idx); renderAll();
 }

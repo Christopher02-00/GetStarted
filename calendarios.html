@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
+<meta name="gs-build" content="2026-08-04-videos-cecilia-v3">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -629,6 +630,8 @@ function mesesExistentes(){
 }
 
 let saveTimer=null;let pendingWrite=false;
+const ATRASO_AUTOSAVE_MS = 1800;
+const INTERVALO_VERSAO_MS = 5 * 60 * 1000;
 /* ===== POR QUE O CALENDÁRIO DA MONIQUE ESVAZIOU — 27/07/2026 ==========
    `save()` faz `setDoc(docRef, data)` SEM merge: o documento inteiro do
    Firestore vira a cópia que está na memória desta aba. E `data` começa
@@ -652,8 +655,9 @@ let saveTimer=null;let pendingWrite=false;
       banco tem conteúdo e esta aba quer gravar vazio (ou perder mais da
       metade dos itens) sem que ninguém tenha apagado nada de propósito,
       a gravação é ABORTADA e a tela avisa.
-   3. Versão anterior guardada em `calendarios_versoes` a cada gravação —
-      dá pra voltar atrás sempre. */
+   3. Versão anterior guardada em `calendarios_versoes` no começo de cada
+      bloco de edição (e sempre antes de exclusão/envio) — dá pra voltar
+      atrás sem duplicar uma cópia a cada tecla. */
 let carregado=false;      // o primeiro snapshot já chegou?
 let itensNoBanco=0;       // quantos itens o banco tinha na última leitura
 let apagouDePropósito=false;  // delItem marca isto; some depois de gravar
@@ -661,6 +665,13 @@ let apagouDePropósito=false;  // delItem marca isto; some depois de gravar
    a versão que esta aba realmente carregou e impede uma aba antiga de
    sobrescrever silenciosamente uma edição mais nova com o mesmo total. */
 window.__calVersaoBancoLida=null;
+let ultimaAssinaturaSalva='';
+let ultimaVersaoGuardadaEm=0;
+
+function assinaturaCalendario(cal){
+  if(!cal) return '';
+  return JSON.stringify({ ...cal, updatedAt:null });
+}
 
 /* ===== O QUE ACONTECEU COM A GABI — 29/07/2026 =======================
    As travas de 27/07 protegeram o BANCO e sacrificaram o TRABALHO DELA.
@@ -703,6 +714,70 @@ function lerRascunho(){
   catch(e){ return null; }
 }
 function limparRascunho(){ try{ localStorage.removeItem(CHAVE_RASCUNHO()); }catch(e){} }
+
+/* Se a pessoa já mandou pra Amanda e o Firebase recusou por cota/rede, a
+   intenção de envio não pode depender de ela lembrar de clicar de novo.
+   A caixa de saída fica neste navegador, separada do rascunho comum, e é
+   reenviada com as mesmas travas de conflito quando o banco responder. */
+const CHAVE_ENVIO_PENDENTE = () => 'envio_amanda_cal_' + (window.__clienteId||'');
+let timerEnvioPendente=null;
+function guardarEnvioPendente(pacote){
+  try{ localStorage.setItem(CHAVE_ENVIO_PENDENTE(), JSON.stringify(pacote)); }catch(e){}
+}
+function lerEnvioPendente(){
+  try{ const p=localStorage.getItem(CHAVE_ENVIO_PENDENTE()); return p ? JSON.parse(p) : null; }
+  catch(e){ return null; }
+}
+function limparEnvioPendente(){
+  try{ localStorage.removeItem(CHAVE_ENVIO_PENDENTE()); }catch(e){}
+  if(timerEnvioPendente){ clearTimeout(timerEnvioPendente); timerEnvioPendente=null; }
+}
+function mostrarEnvioPendente(){
+  const p=lerEnvioPendente(); if(!p || !p.data) return false;
+  const quando=p.em ? new Date(p.em).toLocaleString('pt-BR') : 'agora';
+  mostrarBarraDecisao('<b>Envio pra Amanda pendente — trabalho protegido.</b><br>'+ 
+    'O banco não confirmou o envio de '+quando+'. Vou tentar novamente sem apagar nada.'+
+    '<div style="margin-top:10px;"><button onclick="tentarEnvioPendente(false)" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">↻ Tentar enviar agora</button></div>');
+  return true;
+}
+function agendarEnvioPendente(atraso){
+  if(timerEnvioPendente || !lerEnvioPendente()) return;
+  timerEnvioPendente=setTimeout(async ()=>{
+    timerEnvioPendente=null;
+    if(document.visibilityState === 'visible') await window.tentarEnvioPendente(true);
+    if(lerEnvioPendente()) agendarEnvioPendente(5*60*1000);
+  }, atraso || 60000);
+}
+window.tentarEnvioPendente = async function(automatico){
+  const pacote=lerEnvioPendente();
+  if(!pacote || !pacote.data || window.__modoCal !== 'equipe' || window.__enviandoAprovacaoInterna) return false;
+  const memoria=data;
+  const tinhaNaoSalvo=temNaoSalvo;
+  window.__enviandoAprovacaoInterna=true;
+  data=JSON.parse(JSON.stringify(pacote.data));
+  carregado=true; temNaoSalvo=true; guardarRascunho(); pintarEstado();
+  try{
+    const resultado=await gravarComSeguranca();
+    if(resultado && resultado.ok){
+      limparEnvioPendente(); fecharBarraDecisao();
+      document.getElementById('clientName').value=data.client||'';
+      document.getElementById('monthName').value=data.month||'';
+      renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();
+      avisarTela('Envio recuperado e confirmado no banco. O calendário já está na fila da Amanda.');
+      return true;
+    }
+    if(resultado && resultado.motivo === 'conflito'){
+      guardarRascunho();
+      if(!automatico) avisarTela('O envio encontrou outra versão no banco. Junte as versões na barra e envie novamente.', 'erro');
+      return false;
+    }
+    data=memoria; temNaoSalvo=tinhaNaoSalvo; pintarEstado(); mostrarEnvioPendente();
+    if(!automatico) avisarTela('O banco ainda não confirmou. O envio continua protegido e será tentado de novo.', 'erro');
+    return false;
+  }finally{
+    window.__enviandoAprovacaoInterna=false;
+  }
+};
 
 function pintarEstado(){
   if(window.__modoCal !== 'equipe') return;
@@ -944,8 +1019,10 @@ async function load(){
       data={client:nomeDoSlug(window.__clienteId),month:mesAtualTexto(),items:[],comments:[],
             aprovacaoInterna:{status:'rascunho',por:'',em:new Date().toISOString(),motivoAjuste:''},updatedAt:null};
     }
+    const assinaturaRecebida = assinaturaCalendario(data);
     carregado=true;                       // a partir daqui pode gravar
     const carimbou = carimbarMesDosAntigos();
+    ultimaAssinaturaSalva = assinaturaRecebida;
     if(!mesVisivel){
       if(window.__modoCal === 'cliente'){
         /* O cliente NUNCA abre no mês que a equipe está montando. Ele
@@ -991,7 +1068,9 @@ async function load(){
     if(primeiroSnapshot){
       primeiroSnapshot=false;
       pintarEstado();
-      if(window.__modoCal === 'equipe'){
+      if(window.__modoCal === 'equipe' && mostrarEnvioPendente()){
+        ofereceu = true; agendarEnvioPendente(3000);
+      }else if(window.__modoCal === 'equipe'){
         const r = lerRascunho();
         if(r && r.data){
           const noBanco = new Set((data.items||[]).map(chaveItem));
@@ -1012,8 +1091,11 @@ async function load(){
        rascunho que nunca chegou ao banco. A recuperação local não pode
        depender de uma leitura remota bem-sucedida. */
     if(window.__modoCal === 'equipe'){
-      const rascunhoSemBanco = lerRascunho();
-      if(rascunhoSemBanco && rascunhoSemBanco.data) ofereceRascunho(rascunhoSemBanco, null);
+      if(mostrarEnvioPendente()) agendarEnvioPendente(60000);
+      else {
+        const rascunhoSemBanco = lerRascunho();
+        if(rascunhoSemBanco && rascunhoSemBanco.data) ofereceRascunho(rascunhoSemBanco, null);
+      }
     }
   });
 }
@@ -1113,6 +1195,10 @@ function save(){
   }
   data.client=document.getElementById('clientName').value;
   data.month=document.getElementById('monthName').value;
+  const assinaturaAtual = assinaturaCalendario(data);
+  if(!temNaoSalvo && assinaturaAtual === ultimaAssinaturaSalva){
+    renderMeta(); pintarEstado(); return;
+  }
   data.updatedAt=new Date().toISOString();
   /* O rascunho é gravado ANTES de qualquer tentativa de ir pro banco.
      Se a gravação for recusada, se a internet cair, se ela fechar a
@@ -1120,7 +1206,7 @@ function save(){
   temNaoSalvo=true; guardarRascunho(); pintarEstado();
   renderMeta();
   pendingWrite=true;clearTimeout(saveTimer);
-  saveTimer=setTimeout(gravarComSeguranca,400);
+  saveTimer=setTimeout(gravarComSeguranca,ATRASO_AUTOSAVE_MS);
 }
 
 function mesclarAprovacoesMaisRecentes(mapaServidor, mapaDaAba){
@@ -1180,18 +1266,25 @@ async function gravarComSeguranca(){
       return {ok:false, motivo:'conflito'};
     }
 
-    /* TRAVA 3 — guarda a versão anterior antes de sobrescrever. */
-    if(atual.exists() && antes.length){
+    /* TRAVA 3 — guarda a versão anterior antes de sobrescrever. A cópia
+       continua obrigatória no começo do bloco de edição e em operações de
+       risco; dentro dos 5 minutos seguintes o rascunho local cobre cada
+       tecla sem dobrar o número de escritas do Firebase. */
+    const deveGuardarVersao = atual.exists() && antes.length &&
+      (Date.now() - ultimaVersaoGuardadaEm >= INTERVALO_VERSAO_MS || apagouDePropósito || window.__enviandoAprovacaoInterna);
+    if(deveGuardarVersao){
       try{
         const carimbo = new Date().toISOString().replace(/[:.]/g,'-');
         await setDoc(doc(db,'calendarios_versoes', window.__clienteId + '__' + carimbo),
           { ...atual.data(), __cliente: window.__clienteId, __salvoEm: new Date().toISOString(), __itens: antes.length });
+        ultimaVersaoGuardadaEm = Date.now();
       }catch(e){ console.error('Falha ao guardar versão anterior:', e); }
     }
 
     await setDoc(docRef, data);
     itensNoBanco = depois.length;
     window.__calVersaoBancoLida = String(data.updatedAt||'');
+    ultimaAssinaturaSalva = assinaturaCalendario(data);
     apagouDePropósito = false;
     pendingWrite=false;
     bloqueadoPorConflito=false;
@@ -1418,6 +1511,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
   const marca = { status:'aguardando_interna', por: quem || 'equipe', em: new Date().toISOString(), motivoAjuste:'', mes: alvo };
   if(alvo){ data.aprovacaoMeses = data.aprovacaoMeses || {}; data.aprovacaoMeses[alvo] = marca; }
   data.aprovacaoInterna = marca;   // o campo antigo continua valendo, pra nada quebrar
+  const pacoteEnvioPendente = { data:JSON.parse(JSON.stringify(data)), em:marca.em, mes:alvo, por:marca.por };
   window.__enviandoAprovacaoInterna = true;
   if(btn){ btn.disabled = true; btn.textContent = 'Enviando e confirmando…'; }
   try{
@@ -1428,6 +1522,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
     clearTimeout(saveTimer);
     const resultado = await gravarComSeguranca();
     if(!resultado || !resultado.ok){
+      guardarEnvioPendente(pacoteEnvioPendente);
       if(aprovacaoMesesAntes === undefined) delete data.aprovacaoMeses;
       else data.aprovacaoMeses = aprovacaoMesesAntes;
       if(aprovacaoInternaAntes === undefined) delete data.aprovacaoInterna;
@@ -1441,8 +1536,14 @@ window.enviarParaAprovacaoInterna = async function(btn){
           ? 'NÃO enviei pra Amanda: o limite do banco foi atingido. Seu trabalho está salvo neste navegador — tente novamente quando o banco voltar.'
           : 'NÃO enviei pra Amanda: o banco não confirmou. Seu trabalho continua salvo neste navegador — tente novamente.';
       avisarTela(msg, 'erro');
+      /* Em conflito, a barra de juntar versões precisa continuar visível.
+         Cota/rede usam a caixa de saída e a retentativa automática. */
+      if(!resultado || resultado.motivo !== 'conflito'){
+        mostrarEnvioPendente(); agendarEnvioPendente(60000);
+      }
       return;
     }
+    limparEnvioPendente();
     renderAprovacaoInterna();
     avisarTela('Envio confirmado no banco. O calendário já está na fila da Amanda.');
   }finally{

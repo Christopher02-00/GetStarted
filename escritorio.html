@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-links-calendario-v21">
+<meta name="gs-build" content="2026-08-05-auditoria-operacional-v23">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -2764,7 +2764,7 @@
 
   async function obterTemplatesEfetivos(funcionario){
     const customSnap = await getDoc(doc(db,'checklist_templates_custom', funcionario));
-    if(customSnap.exists() && customSnap.data().periodos){
+    if(customSnap.exists() && customSnap.data().excluido!==true && customSnap.data().periodos){
       return customSnap.data().periodos;
     }
     return CHECKLIST_TEMPLATES[funcionario] || null;
@@ -3449,14 +3449,15 @@
 
   /* Aviso pontual pra gestão, no mesmo formato de demanda que o resto do
      site usa. Não repete o mesmo aviso no mesmo dia pro mesmo assunto. */
-  async function criarAvisoParaGestao(titulo, descricao, destinatario){
+  async function criarAvisoParaGestao(titulo, descricao, destinatario, camposExtras){
     try{
-      const hojeStr = new Date().toISOString().slice(0,10);
+      const hojeStr = hojeLocal();
       await addDoc(collection(db,'demandas'), {
         titulo, descricao,
         origem: 'sistema', clienteNome: '', destinatario: destinatario || 'Amanda',
         prazoData: hojeStr, prazoHora: '18:00',
-        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp(),
+        ...(camposExtras || {})
       });
     }catch(e){ console.error('Não consegui avisar a gestão:', e); }
   }
@@ -6035,13 +6036,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   window.salvarTemplateEditado = async function(){
-    await setDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual), { periodos: editorTemplateAtual, editadoEm: new Date().toISOString() });
+    await setDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual), { periodos: editorTemplateAtual, excluido:false, editadoEm: new Date().toISOString() });
     mostrarToast('Checklist de ' + editorFuncionarioAtual + ' atualizado!');
   };
 
   window.restaurarPadraoChecklist = async function(){
     if(!confirm('Restaurar o checklist de '+editorFuncionarioAtual+' pro padrão original? Isso apaga TODAS as customizações feitas nele.')) return;
-    await deleteDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual));
+    await setDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual), {
+      excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString(),
+      motivoExclusao:'Checklist personalizado restaurado para o padrão original'
+    },{merge:true});
     editorTemplateAtual = JSON.parse(JSON.stringify(CHECKLIST_TEMPLATES[editorFuncionarioAtual] || {}));
     renderEditorTemplate();
     mostrarToast('Restaurado pro padrão original.');
@@ -10086,7 +10090,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   window.removerAusencia = async function(id){
     if(!confirm('Remover esse registro de ausência?')) return;
-    await deleteDoc(doc(db,'ausencias', id));
+    await updateDoc(doc(db,'ausencias', id), {
+      excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString()
+    });
     mostrarToast('Ausência removida.');
     renderGerenciaAusencias();
   };
@@ -10128,6 +10134,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(v.competencia) c.meses.add(v.competencia);
     });
     avSnap.forEach(d => { const v = d.data();
+      if(v.excluido) return;
       const achado = CLIENTES_LISTA.find(x => (x.nome||'').toLowerCase() === String(v.clienteNome||'').toLowerCase());
       if(!achado || !v.recebido) return;
       garantir(achado.slug).valor += Number(v.valor) || 0;
@@ -10602,7 +10609,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     const podeEditar = ['Chris','Amanda'].includes(usuarioAtual);
     const snap = await getDocs(collection(db,'get_academy'));
-    const cursos = []; snap.forEach(d => cursos.push({id:d.id, ...d.data()}));
+    const cursos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) cursos.push({id:d.id, ...v}); });
     cursos.sort((a,b) => (a.titulo||'').localeCompare(b.titulo||''));
 
     let html = '';
@@ -10647,7 +10654,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   window.excluirCursoGetAcademy = async function(id){
     if(!confirm('Remover esse curso da lista?')) return;
-    await deleteDoc(doc(db,'get_academy', id));
+    await updateDoc(doc(db,'get_academy', id), {
+      excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString()
+    });
     mostrarToast('Curso removido.');
     renderGetAcademy();
   };
@@ -12234,7 +12243,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       getDocs(collection(db,'clientes_encerrados'))
     ]);
     const comContrato = new Set(); ctSnapX.forEach(d => { if((d.data().status||'ativo')!=='encerrado') comContrato.add(d.id); });
-    const nomesAvulso = new Set(); avSnapX.forEach(d => nomesAvulso.add((d.data().clienteNome||'').toLowerCase().trim()));
+    const nomesAvulso = new Set(); avSnapX.forEach(d => { const v=d.data(); if(!v.excluido) nomesAvulso.add((v.clienteNome||'').toLowerCase().trim()); });
     const nomesSaidos = new Set(); encSnapX.forEach(d => { const v=d.data(); if(!v.excluido) nomesSaidos.add((v.nome||'').toLowerCase().trim()); });
     const normaliza = t => (t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
     const contagem = {};
@@ -13438,6 +13447,56 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return true;
   }
   window.demandaOperacionalVisivel = demandaOperacionalVisivel;
+
+  /* ===== V22 — CALENDÁRIOS COMO ENTREGAS DIÁRIAS, SEM DUPLICAR DADOS ===
+     A função fixa de calendários continua sendo UM documento mensal no
+     Firestore. Isso evita voltar às 200+ demandas duplicadas. Para a Gabi,
+     porém, cada cliente pendente vira uma linha operacional própria nas
+     telas de demanda, usando o prazo daquele item do checklist. O item só
+     aparece dois dias antes do início configurado e abre a demanda mensal
+     original, onde ela marca o cliente como concluído. */
+  function expandirCalendariosDaPessoa(lista, pessoa){
+    const hoje = hojeLocal();
+    const resultado = [];
+    (lista || []).forEach(demanda => {
+      if(demanda.destinatario !== pessoa || demanda.tipoFuncaoFixa !== 'calendario' ||
+         !Array.isArray(demanda.checklistClientes)){
+        resultado.push(demanda);
+        return;
+      }
+      const pendentes = demanda.checklistClientes
+        .map((item, indice) => ({item, indice}))
+        .filter(x => !x.item.feito && (!x.item.visivelAPartir || x.item.visivelAPartir <= hoje));
+      if(!pendentes.length && demanda.status !== 'pendente'){
+        resultado.push(demanda);
+        return;
+      }
+      pendentes.forEach(({item, indice}) => resultado.push({
+        ...demanda,
+        titulo: '📅 Entregar calendário — ' + (item.nome || item.slug || 'cliente'),
+        descricao: (item.obsPrazo ? item.obsPrazo + '\n\n' : '') +
+          'Abra esta entrega, monte o calendário do cliente e marque o cliente na lista mensal.',
+        cliente: item.slug || '', clienteNome: item.nome || demanda.clienteNome || '',
+        prazoData: item.prazoData || demanda.prazoData,
+        prazoHora: item.prazoHora || demanda.prazoHora || '19:00',
+        visivelAPartir: item.visivelAPartir || demanda.visivelAPartir || '',
+        calendarioItemIndice: indice, calendarioItemSlug: item.slug || '',
+        demandaCalendarioPaiId: demanda.id, ehLinhaCalendarioMensal: true
+      }));
+    });
+    return resultado;
+  }
+  window.expandirCalendariosDaPessoa = expandirCalendariosDaPessoa;
+
+  function demandasVisiveisDaPessoa(pessoa, opcoes){
+    const opts = opcoes || {};
+    const base = (todasDemandas || []).filter(d =>
+      d.destinatario === pessoa &&
+      (opts.somentePendentes ? d.status === 'pendente' : d.status !== 'aprovada') &&
+      (opts.incluirEscalacao || !d.escalacaoGerencial));
+    return expandirCalendariosDaPessoa(base, pessoa);
+  }
+  window.demandasVisiveisDaPessoa = demandasVisiveisDaPessoa;
   let usuarioAtual = '';
 
   /* ===== FASE 2 — TEMPO REAL (onSnapshot) =====
@@ -14974,7 +15033,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function carregarAusencias(){
     const snap = await getDocs(collection(db,'ausencias'));
-    todasAusencias = []; snap.forEach(d => todasAusencias.push({id:d.id, ...d.data()}));
+    todasAusencias = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todasAusencias.push({id:d.id, ...v}); });
   }
 
   /* ===== URGENCIA MANUAL — 27/07/2026 (pedido da Amanda) =====
@@ -15388,13 +15447,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      Isto NÃO substitui nenhuma tela nesta etapa. É base. As telas antigas
      continuam funcionando enquanto migram uma a uma. */
 
-  let __cacheIndicadores = null, __cacheIndicadoresEm = 0;
+  let __cacheIndicadores = null, __cacheIndicadoresEm = 0, __geracaoIndicadores = 0;
   const TTL_INDICADORES = 20000;   // 20s — o painel atualiza sozinho a cada 25s
 
-  window.limparCacheIndicadores = function(){ __cacheIndicadores = null; };
+  window.limparCacheIndicadores = function(){ __cacheIndicadores = null; __geracaoIndicadores++; };
 
   window.calcularIndicadores = async function(forcar){
     const pessoaIndicadores = usuarioAtual;
+    const geracaoDestaLeitura = __geracaoIndicadores;
     if(!forcar && __cacheIndicadores && __cacheIndicadores.pessoa === pessoaIndicadores && (Date.now() - __cacheIndicadoresEm) < TTL_INDICADORES){
       return __cacheIndicadores;
     }
@@ -15717,7 +15777,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     /* Uma leitura iniciada por Amanda pode terminar depois que o usuário
        já virou Chris. Ela ainda devolve o próprio resultado ao chamador
        antigo, mas jamais substitui o cache da pessoa nova. */
-    if(usuarioAtual === pessoaIndicadores){
+    if(usuarioAtual === pessoaIndicadores && geracaoDestaLeitura === __geracaoIndicadores){
       __cacheIndicadores = resultadoIndicadores;
       __cacheIndicadoresEm = Date.now();
     }
@@ -17431,7 +17491,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(window.mascoteAtualizarEstado) window.mascoteAtualizarEstado(0, 100);
       return;
     }
-    const minhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial);
+    const minhas = demandasVisiveisDaPessoa(usuarioAtual);
     const atrasadas = minhas.filter(d => calcularUrgencia(d) === 'atrasado');
     atualizarBadgeAtrasadas(atrasadas.length);
     if(window.mascoteAtualizarEstado){
@@ -17533,8 +17593,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const hoje = new Date();
     const mesStr = hoje.toISOString().slice(0,7);
     const doMes = temCalendarioGravacao ? agendamentos.filter(a => a.data && a.data.startsWith(mesStr)) : [];
-    const funcoesFixasDoMes = (todasDemandas||[]).filter(d =>
-      !d.excluido && d.destinatario===usuarioAtual && !!d.tipoFuncaoFixa &&
+    const funcoesFixasDoMes = demandasVisiveisDaPessoa(usuarioAtual).filter(d =>
+      !d.excluido && !!d.tipoFuncaoFixa &&
       String(d.prazoData||'').startsWith(mesStr) && !['aprovada','cancelada'].includes(String(d.status||'')));
     if(!temCalendarioGravacao && !funcoesFixasDoMes.length){ box.innerHTML=''; return; }
 
@@ -17591,7 +17651,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // 1) Demandas pendentes/atrasadas (avisos de escalonamento gerencial —
     // sobre trabalho de outra pessoa — ficam só no painel da Gerência,
     // não aparecem aqui nem em Minhas Demandas)
-    todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial).forEach(d => {
+    demandasVisiveisDaPessoa(usuarioAtual).forEach(d => {
       itens.push({
         icone: '✅', titulo: d.titulo, meta: formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''),
         desc: d.descricao || '', urgencia: calcularUrgencia(d),
@@ -18376,7 +18436,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         <div class="meta" style="margin-top:6px;color:var(--fg);white-space:pre-wrap;">"${esc(d.exclusaoPedida.motivo||'')}"</div>
         <div class="btnrow" style="margin-top:10px;">
           <button class="btn secondary" style="font-size:11.5px;" onclick="recusarExclusaoDemanda('${d.id}')">Manter a demanda</button>
-          <button class="btn red" style="font-size:11.5px;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Excluir de vez</button>
+          <button class="btn red" style="font-size:11.5px;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Arquivar demanda</button>
         </div></div>` : ''}
       <div class="field" style="margin-top:16px;"><label>Prazo</label>
         <div class="row2">
@@ -18633,7 +18693,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!usuarioAtual){ lista.innerHTML=''; empty.style.display='block'; return; }
     empty.style.display='none';
     if(soRefiltrar !== true) await carregarTodasDemandas();
-    const todasMinhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial);
+    const todasMinhas = demandasVisiveisDaPessoa(usuarioAtual);
     /* mesma regra do badge lateral — um número só no site inteiro */
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
       todasMinhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d))));
@@ -18951,6 +19011,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      Agora existe UMA função que recalcula todos, sempre a partir da mesma
      fonte, e ela roda em toda troca de pessoa e a cada mudança em
      demandas. */
+  /* Cada chamada recebe uma versão. Uma leitura de calendários iniciada antes
+     de uma aprovação pode terminar depois dela; sem esta trava, o resultado
+     velho voltava a desenhar o número que já deveria ter sumido. */
+  let __versaoBadgeAprovacoes = 0;
+
   window.atualizarTodosOsBadges = function(){
     const zerar = id => { const b = document.getElementById(id); if(b) b.style.display = 'none'; };
     if(!usuarioAtual){
@@ -18969,7 +19034,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
        Agora os dois números saem da MESMA lista: o que está em aberto,
        com ela, e não encalhado. Se o número diz 6, tem 6 pra ver. */
-    const minhas = (todasDemandas||[]).filter(d => d.destinatario === usuarioAtual && d.status !== 'aprovada' && !d.escalacaoGerencial);
+    const minhas = demandasVisiveisDaPessoa(usuarioAtual);
     const vivas  = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d));
 
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(vivas));
@@ -19002,9 +19067,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const ba = document.getElementById('badgeAprovacoesMenu');
       if(ba){
+        const versaoDestaLeitura = ++__versaoBadgeAprovacoes;
         const vidRev = (cacheVideosProducao || []).filter(v => !v.excluido && v.status === 'aguardando_aprovacao').length;
         const demRev = (todasDemandas || []).filter(d => d.status === 'concluida_aguardando_aprovacao' && aprovacaoEhDe(d, usuarioAtual)).length;
-        const tot = vidRev + demRev;
+        /* Se o listener já entregou calendários, o contador usa exatamente
+           esse retrato e muda no mesmo ciclo do onSnapshot — sem esperar uma
+           segunda leitura nem o TTL de 60 segundos. */
+        const calRev = usuarioAtual === 'Amanda' && __snapshotCalendariosCompartilhado
+          ? linhasCalendariosAguardandoRevisao(__snapshotCalendariosCompartilhado).length
+          : 0;
+        const tot = vidRev + demRev + calRev;
         if(tot && ['Chris','Amanda'].includes(usuarioAtual)){ ba.textContent = tot; ba.style.display = 'flex'; }
         else ba.style.display = 'none';
         /* O retrato sincrono acima deixa o menu responder na hora. Em
@@ -19012,8 +19084,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
            da Gabi para a Amanda. Captura a pessoa para uma troca de login
            no meio da leitura nunca deixar o numero dela no usuario seguinte. */
         const pessoaDoBadgeAprovacoes = usuarioAtual;
-        calcularIndicadores().then(ind => {
-          if(usuarioAtual !== pessoaDoBadgeAprovacoes || !['Chris','Amanda'].includes(usuarioAtual)) return;
+        /* Só há algo para completar assincronamente antes do primeiro
+           snapshot de calendários da Amanda. Depois disso, o retrato acima é
+           a fonte em tempo real e evita releituras desnecessárias. */
+        if(usuarioAtual === 'Amanda' && !__snapshotCalendariosCompartilhado) calcularIndicadores(true).then(ind => {
+          if(versaoDestaLeitura !== __versaoBadgeAprovacoes || usuarioAtual !== pessoaDoBadgeAprovacoes || !['Chris','Amanda'].includes(usuarioAtual)) return;
           const totalReal = Number((ind.porChave.aprovar||{}).num)||0;
           if(totalReal){ ba.textContent=totalReal; ba.style.display='flex'; }
           else ba.style.display='none';
@@ -19318,11 +19393,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
-    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso não pode ser desfeito.')) return;
+    if(!confirm('Arquivar a demanda "'+titulo+'"? Ela sai da operação, mas o histórico fica preservado.')) return;
     try{
-      await deleteDoc(doc(db,'demandas', id));
+      await updateDoc(doc(db,'demandas', id), {
+        excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString(),
+        motivoExclusao:'Excluída manualmente em Minhas Demandas'
+      });
       registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída (Minhas Demandas) por ' + usuarioAtual + ' — "' + titulo + '"');
-      mostrarToast('Demanda excluída.');
+      mostrarToast('Demanda arquivada com histórico preservado.');
       fecharModal();
       renderMinhasDemandasAtribuidas();
     }catch(e){ mostrarToast('Erro ao excluir: ' + e.message, 'erro'); }
@@ -23542,7 +23620,6 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        controle de gravações. Uma assinatura substitui dezenas de leituras
        completas e entrega a mudança da Gabi à fila sem recarregar a página. */
     if(['Chris','Amanda','Cecília', ...PESSOAS_DE_CAMPO].includes(pessoaDoOuvinte)){
-      let primeiroSnapshotCalendarios = true;
       __ouvintesTempoReal.push(onSnapshot(collection(db,'calendarios'), (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
         __snapshotCalendariosCompartilhado = snap;
@@ -23550,8 +23627,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         __erroCalendariosCompartilhado = null;
         __cacheTempoRealPronto.calendarios = true;
         limparCacheIndicadores();
-        if(!primeiroSnapshotCalendarios) onDadosTempoRealMudaram('calendarios');
-        primeiroSnapshotCalendarios = false;
+        /* Inclusive no primeiro snapshot: a recontagem inicial pode ter
+           acontecido antes de os calendários chegarem. Ignorar o primeiro
+           retrato deixava a badge incompleta até recarregar ou editar algo. */
+        onDadosTempoRealMudaram('calendarios');
       }, (erro)=>{
         __erroCalendariosCompartilhado = erro;
         console.error('Listener calendarios falhou:', erro);
@@ -23560,11 +23639,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
 
   function onDadosTempoRealMudaram(colecao){
+    /* Estas são as três fontes que formam "Aprovar vídeos, demandas e
+       calendários". Qualquer mudança nelas invalida a conta anterior e
+       redesenha o menu imediatamente. */
+    if(['demandas','videos_producao','calendarios'].includes(colecao)){
+      limparCacheIndicadores();
+      atualizarTodosOsBadges();
+    }
     if(colecao === 'postagens'){
       atualizarBadgePostagens();
     }
     if(colecao === 'demandas'){
-      atualizarTodosOsBadges();   // qualquer mudança em demandas recontagem
       if(viewAtiva === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas();
     }
     if(viewAtiva === 'postagens' && ['videos_producao','postagens'].includes(colecao)){
@@ -23824,16 +23909,60 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         novasDemandas++;
       }
     }
-    /* Um aviso por pessoa, por dia, com a lista inteira — e só se algo
-       passou de 2 dias parado. */
+    /* Um aviso vivo por fila, nunca uma cobrança órfã. A versão anterior
+       criava uma demanda agregada sem `postagemId`; quando a Gabi zerava
+       as legendas, a varredura antifantasma não tinha como relacionar o
+       aviso com a fila e ele continuava atrasado para sempre. Agora o
+       aviso tem identidade estável, atualiza enquanto existe pendência e
+       é encerrado automaticamente quando a fila correspondente zera. */
     async function avisarParadas(lista, quem, titulo, ondeFazer, marcador){
-      if(!lista.length) return;
-      const mk = await getDoc(doc(db,'sistema', marcador));
-      if(mk.exists() && mk.data().ultimaData === hojeStr) return;
-      await criarAvisoParaGestao(titulo + ' — ' + lista.length + ' parado(s) há 2+ dias',
-        lista.slice(0,20).join('\n') + (lista.length>20 ? '\n…e mais ' + (lista.length-20) : '') +
-        '\n\n' + ondeFazer, quem);
-      await setDoc(doc(db,'sistema', marcador), { ultimaData: hojeStr });
+      const idAviso = 'alerta_fluxo_' + marcador.replace(/[^a-zA-Z0-9_-]/g,'_');
+      const avisoRef = doc(db,'demandas',idAviso);
+      const [mk, avisoAtual, pendentesSnap] = await Promise.all([
+        getDoc(doc(db,'sistema', marcador)),
+        getDoc(avisoRef),
+        getDocs(query(collection(db,'demandas'), where('status','==','pendente')))
+      ]);
+      const antigos = pendentesSnap.docs.filter(registro => {
+        if(registro.id === idAviso) return false;
+        const d = registro.data();
+        return d.destinatario === quem &&
+          (d.tipoEspecial === marcador || String(d.titulo||'').startsWith(titulo));
+      });
+
+      if(!lista.length){
+        const paraFechar = [...antigos];
+        if(avisoAtual.exists() && avisoAtual.data().status === 'pendente') paraFechar.push({id:idAviso,ref:avisoRef,data:()=>avisoAtual.data()});
+        for(const registro of paraFechar){
+          await updateDoc(registro.ref || doc(db,'demandas',registro.id), {
+            status:'aprovada', concluidoPor:'sistema', concluidoEm:serverTimestamp(),
+            notaConclusao:'Encerrada automaticamente — a fila correspondente foi zerada.'
+          });
+          registrarHistorico('demandas',registro.id,'Aviso encerrado automaticamente — fila zerada');
+        }
+        if(paraFechar.length || !mk.exists() || mk.data().estadoAtual!=='zerada'){
+          await setDoc(doc(db,'sistema', marcador), {ultimaData:hojeStr,estadoAtual:'zerada',quantidade:0},{merge:true});
+        }
+        return;
+      }
+
+      const estadoAtual = lista.slice().sort().join('|');
+      const jaAtual = avisoAtual.exists() && avisoAtual.data().status==='pendente' &&
+        mk.exists() && mk.data().estadoAtual===estadoAtual;
+      for(const registro of antigos){
+        await updateDoc(registro.ref,{status:'aprovada',concluidoPor:'sistema',concluidoEm:serverTimestamp(),
+          notaConclusao:'Substituída pelo aviso único e atualizado da mesma fila.'});
+        registrarHistorico('demandas',registro.id,'Aviso duplicado consolidado automaticamente');
+      }
+      if(jaAtual && !antigos.length) return;
+      await setDoc(avisoRef,{
+        titulo:titulo + ' — ' + lista.length + ' parado(s) há 2+ dias',
+        descricao:lista.slice(0,20).join('\n') + (lista.length>20 ? '\n…e mais ' + (lista.length-20) : '') + '\n\n' + ondeFazer,
+        origem:'sistema',clienteNome:'',destinatario:quem,prazoData:hojeStr,prazoHora:'18:00',
+        status:'pendente',provaTexto:'',provaImagemUrl:'',tipoEspecial:marcador,
+        atualizadoEm:serverTimestamp(),criadoEm:avisoAtual.exists()?(avisoAtual.data().criadoEm||serverTimestamp()):serverTimestamp(),excluido:false
+      },{merge:true});
+      await setDoc(doc(db,'sistema', marcador), { ultimaData: hojeStr,estadoAtual,quantidade:lista.length },{merge:true});
       registrarLogAutomacao(marcador, quem, lista.length + ' item(ns) parado(s)');
     }
     await avisarParadas(paradasLegenda, 'Gabrielle', '✍️ Legendas paradas',
@@ -25308,7 +25437,9 @@ window.salvarPrazoVideo = async function(id){
 
   window.excluirReceitaAvulsa = async function(id){
     if(!confirm('Excluir esse lançamento avulso?')) return;
-    await deleteDoc(doc(db,'receitas_avulsas', id));
+    await updateDoc(doc(db,'receitas_avulsas', id), {
+      excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString()
+    });
     mostrarToast('Lançamento excluído.');
     renderFinanceiro();
   };
@@ -25330,7 +25461,7 @@ window.salvarPrazoVideo = async function(id){
       getDocs(collection(db,'clientes_encerrados')),
       getDocs(collection(db,'receitas_avulsas'))
     ]);
-    const receitasAvulsas = []; avSnap.forEach(d => receitasAvulsas.push({id:d.id, ...d.data()}));
+    const receitasAvulsas = []; avSnap.forEach(d => { const v=d.data(); if(!v.excluido) receitasAvulsas.push({id:d.id, ...v}); });
     const contratos = []; ctSnap.forEach(d => contratos.push({slug:d.id, ...d.data()}));
     const pagamentos = []; pgSnap.forEach(d => pagamentos.push({id:d.id, ...d.data()}));
     const negocios = []; negSnap.forEach(d => negocios.push({id:d.id, ...d.data()}));
@@ -26113,7 +26244,7 @@ window.salvarPrazoVideo = async function(id){
       getDocs(collection(db,'clientes_encerrados'))
     ]);
     const leads = {}; leadSnap.forEach(d => leads[d.id] = d.data());
-    const receitas = []; recSnap.forEach(d => receitas.push({id:d.id, ...d.data()}));
+    const receitas = []; recSnap.forEach(d => { const v=d.data(); if(!v.excluido) receitas.push({id:d.id, ...v}); });
 
     const fichas = [];
     negSnap.forEach(d => {
@@ -26318,7 +26449,7 @@ window.salvarPrazoVideo = async function(id){
       const novo = valorDeTexto(valor);
       const snap = await getDocs(collection(db,'receitas_avulsas'));
       let alvo = null;
-      snap.forEach(d => { if(d.data().negocioId === id) alvo = { id:d.id, ...d.data() }; });
+      snap.forEach(d => { const v=d.data(); if(!v.excluido && v.negocioId === id) alvo = { id:d.id, ...v }; });
       if(alvo && novo && !alvo.recebido && (Number(alvo.valor)||0) !== novo){
         await updateDoc(doc(db,'receitas_avulsas', alvo.id), { valor: novo, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() });
         mostrarToast('Valor salvo — o lançamento do Financeiro foi junto: ' + brl(novo));
@@ -27094,6 +27225,7 @@ window.salvarPrazoVideo = async function(id){
     { chave:'esperaCliente', rot:'Em espera do cliente', cor:'var(--yellow2)', dica:'não depende da equipe' },
     { chave:'atrasada', rot:'Atrasada',      cor:'var(--red)',     dica:'o dia do prazo já passou' },
     { chave:'hoje',     rot:'Vence hoje',    cor:'var(--yellow)',  dica:'tem o dia inteiro' },
+    { chave:'amanha',   rot:'Para amanhã',   cor:'var(--yellow2)', dica:'já aparece para organizar o próximo dia' },
     { chave:'proxima',  rot:'Próximos 3 dias',cor:'var(--yellow2)', dica:'dá pra se organizar' },
     { chave:'adiante',  rot:'Mais pra frente',cor:'var(--line)',   dica:'sem pressa ainda' },
     { chave:'semprazo', rot:'Sem prazo',     cor:'var(--muted)',   dica:'ninguém definiu quando' }
@@ -27106,6 +27238,9 @@ window.salvarPrazoVideo = async function(id){
     if(u === 'hoje') return 'hoje';
     if(!d.prazoData) return 'semprazo';
     const hoje = hojeLocal();
+    const amanha = new Date(hoje + 'T00:00:00');
+    amanha.setDate(amanha.getDate() + 1);
+    if(d.prazoData === dataLocal(amanha)) return 'amanha';
     const limite = new Date(hoje + 'T00:00:00');
     limite.setDate(limite.getDate() + 3);
     return d.prazoData <= dataLocal(limite) ? 'proxima' : 'adiante';
@@ -27197,7 +27332,7 @@ window.salvarPrazoVideo = async function(id){
     const cont = document.getElementById('atrasadasConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando suas demandas...</div></div>';
     await carregarTodasDemandas();
-    const minhas = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente');
+    const minhas = demandasVisiveisDaPessoa(usuarioAtual, {somentePendentes:true});
     const por = {}; FAIXAS_DEMANDA.forEach(f => por[f.chave] = []);
     minhas.forEach(d => por[faixaDaDemanda(d)].push(d));
     atualizarBadgeAtrasadas(por.atrasada.length);
@@ -27226,6 +27361,7 @@ window.salvarPrazoVideo = async function(id){
 
     /* A ORDEM É A MENSAGEM: primeiro o que dá pra fazer, depois a dívida. */
     html += bloco('hoje', 'Pra hoje', 'Nada vence hoje.');
+    html += bloco('amanha', 'Para amanhã', '');
     html += bloco('atrasada', 'Passou do prazo', 'Nenhuma atrasada — você está em dia.');
     html += bloco('esperaCliente', 'Em espera do cliente — não é sua culpa', '');
     html += bloco('proxima', 'Próximos 3 dias', '');
@@ -27334,7 +27470,7 @@ window.salvarPrazoVideo = async function(id){
   window.loteExcluir = async function(){
     const ids = idsSelecionados();
     if(!ids.length) return;
-    if(!confirm('EXCLUIR ' + ids.length + ' demanda(s)?\n\nIsso não volta atrás. Fica registrado quem excluiu.')) return;
+    if(!confirm('Arquivar ' + ids.length + ' demanda(s)?\n\nElas saem da operação, mas o histórico fica preservado.')) return;
     let n = 0;
     for(const id of ids){ try{ await window.excluirDemandaGerencia(id, true); n++; }catch(e){ console.error(e); } }
     mostrarToast(n + ' demanda(s) excluída(s).');
@@ -27356,7 +27492,7 @@ window.salvarPrazoVideo = async function(id){
     const pessoas = {};
     abertas.forEach(d => {
       const q = d.destinatario || '(sem dono)';
-      pessoas[q] = pessoas[q] || { atrasada:0, hoje:0, proxima:0, adiante:0, semprazo:0, total:0 };
+      pessoas[q] = pessoas[q] || { esperaCliente:0, atrasada:0, hoje:0, amanha:0, proxima:0, adiante:0, semprazo:0, total:0 };
       pessoas[q][faixaDaDemanda(d)]++; pessoas[q].total++;
     });
     const ordemPessoas = Object.keys(pessoas).sort((a,b)=>pessoas[b].atrasada-pessoas[a].atrasada || pessoas[b].total-pessoas[a].total);
@@ -27404,6 +27540,7 @@ window.salvarPrazoVideo = async function(id){
     };
     html += blocoG('atrasada', 'Passou do prazo');
     html += blocoG('hoje', 'Vence hoje');
+    html += blocoG('amanha', 'Para amanhã');
     html += blocoG('esperaCliente', 'Em espera do cliente');
     html += blocoG('proxima', 'Próximos 3 dias');
     html += blocoG('adiante', 'Mais pra frente');
@@ -27444,11 +27581,14 @@ window.salvarPrazoVideo = async function(id){
     if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
-    if(!confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito.')) return;
+    if(!confirm('Arquivar a demanda "'+titulo+'"? Ela sai da operação, mas o histórico fica preservado.')) return;
     try{
-      await deleteDoc(doc(db,'demandas', id));
+      await updateDoc(doc(db,'demandas', id), {
+        excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString(),
+        motivoExclusao:'Excluída manualmente no painel de demandas'
+      });
       registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída (painel de atrasos) por ' + usuarioAtual + ' — "' + titulo + '"');
-      mostrarToast('Demanda excluída.');
+      mostrarToast('Demanda arquivada com histórico preservado.');
       renderDemandasDaEquipe();
     }catch(e){ mostrarToast('Erro ao excluir: ' + e.message, 'erro'); }
   };
@@ -29195,6 +29335,24 @@ Observações do cliente: ${l.observacoes||'—'}`;
     else if(usuarioAtual === 'Chris') renderGerenciaChris();
   };
 
+  /* Confirma a coleção depois de uma decisão da Amanda. O onSnapshot já faz
+     a atualização normal, mas esta leitura aguardada garante resposta
+     imediata até em navegador que atrasou a entrega do listener. */
+  async function sincronizarBadgeAposDecisaoDeCalendario(){
+    limparCacheIndicadores();
+    try{
+      const snap = await getDocs(collection(db,'calendarios'));
+      __snapshotCalendariosCompartilhado = snap;
+      __snapshotCalendariosEm = Date.now();
+      __erroCalendariosCompartilhado = null;
+    }catch(e){
+      console.error('Não consegui confirmar a fila após a decisão de calendário:', e);
+      /* Não transforma falha de leitura em zero: o listener continua sendo a
+         segunda via e o último retrato permanece visível. */
+    }
+    atualizarTodosOsBadges();
+  }
+
   /* ===== O REPRESAMENTO DO DIA 15 — 29/07/2026 ======================
      Pedido do Chris, e a razão dele é operacional, não técnica: se cada
      calendário fosse pro cliente assim que a Amanda aprova, um cliente
@@ -29428,7 +29586,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
         n++;
       }catch(e){ console.error('Falha ao enviar ' + a.slug + ':', e); }
     }
-    if(n) registrarLogAutomacao('calendarios_enviados', '', n + ' calendário(s) liberados pros clientes');
+    if(n){
+      registrarLogAutomacao('calendarios_enviados', '', n + ' calendário(s) liberados pros clientes');
+      await sincronizarBadgeAposDecisaoDeCalendario();
+    }
     return n;
   }
 
@@ -29485,6 +29646,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const patch = { aprovacaoMeses: mapa };
     if(mesUsaCampoLegadoCalendario(cal, alvo)) patch.aprovacaoInterna = marca;
     await updateDoc(ref, patch);
+    await sincronizarBadgeAposDecisaoDeCalendario();
     registrarHistorico('calendarios', slug, 'Calendário de ' + (alvo||'mês único') + ' aprovado internamente por ' + (usuarioAtual||'?') + ' — guardado pro envio do dia 15');
     mostrarToast('Aprovado e guardado. Vai pro cliente no disparo do dia 15 — em Calendários → "Prontos pra enviar".');
     renderGerenciaAmanda();
@@ -29506,6 +29668,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const patch = { aprovacaoMeses: mapa };
     if(mesUsaCampoLegadoCalendario(cal, alvo)) patch.aprovacaoInterna = marca;
     await updateDoc(ref, patch);
+    await sincronizarBadgeAposDecisaoDeCalendario();
     registrarHistorico('calendarios', slug, 'Calendário devolvido pra ajuste por ' + (usuarioAtual||'?'), motivo);
     await criarDemandaSegura({
       titulo: '↩️ Ajustar o calendário de ' + nome,
@@ -30979,8 +31142,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
      Pedido explícito e recorrente do Chris: ele e a Amanda precisam poder
      excluir qualquer demanda errada, duplicada ou que não faz mais sentido
      — de verdade, sem deixar isso acessível pra mais ninguém da equipe.
-     Exclui de verdade (não soft-delete). Fica um registro em
-     log_automacoes pra rastro de quem excluiu o quê e quando. */
+     Usa soft-delete. O registro e o histórico permanecem no banco para
+     auditoria, enquanto todas as telas operacionais deixam de exibi-lo. */
   /* 01/08/2026 — ganhou modo lote: no lote a confirmação já aconteceu
      uma vez, pro conjunto. Perguntar 12 vezes seguidas faz a pessoa
      clicar em "ok" no automático, que é pior que não perguntar. */
@@ -30991,11 +31154,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
-    if(!emLote && !confirm('Excluir de vez a demanda "'+titulo+'"? Isso NÃO pode ser desfeito.')) return;
+    if(!emLote && !confirm('Arquivar a demanda "'+titulo+'"? Ela sai da operação, mas o histórico fica preservado.')) return;
     try{
-      await deleteDoc(doc(db,'demandas', id));
+      await updateDoc(doc(db,'demandas', id), {
+        excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString(),
+        motivoExclusao:'Excluída manualmente na Gerência'
+      });
       registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída por ' + usuarioAtual + ' — "' + titulo + '"');
-      mostrarToast('Demanda excluída.');
+      mostrarToast('Demanda arquivada com histórico preservado.');
       fecharModal();
       carregarGerencia();
     }catch(e){

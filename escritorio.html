@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-funcoes-fixas-renovacao-mensal-v11">
+<meta name="gs-build" content="2026-08-05-prazos-demandas-sem-atraso-residual-v12">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -7285,6 +7285,36 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return resultado;
   }
 
+  async function migrarPrazosDemandasSemAtrasoResidualV12(){
+    /* Saneia uma única vez os documentos afetados antes da centralização.
+       Não muda a data escolhida e não apaga demanda: só remove a cicatriz
+       de atraso quando o prazo vigente está hoje/no futuro. */
+    const marcaRef = doc(db,'sistema','migracao_prazos_demandas_v12');
+    const marca = await getDoc(marcaRef);
+    if(marca.exists() && marca.data().concluida===true) return {jaExecutada:true};
+    const hoje = hojeLocal();
+    const snap = await getDocs(collection(db,'demandas'));
+    let corrigidas = 0;
+    for(const registro of snap.docs){
+      const demanda = registro.data();
+      if(demanda.excluido || demanda.status!=='pendente' || String(demanda.prazoData||'')<hoje) continue;
+      const patch = {};
+      if(Number(demanda.nivelEscalonamentoDemanda||0)>0) patch.nivelEscalonamentoDemanda = 0;
+      if(demanda.urgenciaManual==='atrasado'){
+        patch.urgenciaManual=''; patch.urgenciaFixadaPor=''; patch.urgenciaFixadaEm='';
+      }
+      if(!Object.keys(patch).length) continue;
+      patch.atrasoResidualCorrigidoEm = new Date().toISOString();
+      await updateDoc(doc(db,'demandas',registro.id),patch);
+      corrigidas++;
+    }
+    await setDoc(marcaRef, {
+      concluida:true, executadaEm:serverTimestamp(), executadaPor:usuarioAtual||'sistema', corrigidas
+    }, {merge:true});
+    if(corrigidas) registrarLogAutomacao('prazos_demandas_v12','',corrigidas+' atraso(s) residual(is) corrigido(s)');
+    return {corrigidas};
+  }
+
   async function abrirFuncoesFixas(){
     const hoje = new Date();
     const ano = hoje.getFullYear(), mes = hoje.getMonth()+1;
@@ -9484,7 +9514,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda altera Funções Fixas.', 'erro'); return; }
     const novaData = document.getElementById('dataEdit_'+id).value;
     if(!novaData) return;
-    await updateDoc(doc(db,'demandas', id), { prazoData: novaData, emailEnviado:false, atualizadoPor:'Amanda', atualizadoEm:serverTimestamp() });
+    await updateDoc(doc(db,'demandas', id), {
+      ...camposAoAlterarPrazoDemanda(novaData, '19:00', 'Amanda'),
+      emailEnviado:false, atualizadoPor:'Amanda', atualizadoEm:serverTimestamp()
+    });
     mostrarToast('Data atualizada na demanda e no calendário do responsável.');
     renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas').value);
   };
@@ -14266,7 +14299,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        própria e no alerta de 3 dias. */
     if(esperandoCliente(demanda)) return 'normal';
     if(estaAusente(demanda.destinatario)) return 'normal';
-    if(demanda.urgenciaManual && ['atrasado','hoje','normal'].includes(demanda.urgenciaManual)) return demanda.urgenciaManual;
+    if(demanda.urgenciaManual && ['atrasado','hoje','normal'].includes(demanda.urgenciaManual)){
+      /* Uma urgência fixada antes da última troca de prazo é cicatriz, não
+         decisão atual. A data nova volta a ser a fonte da verdade. */
+      const fixadaEm = Date.parse(demanda.urgenciaFixadaEm||'');
+      const prazoMudouEm = Date.parse(demanda.prazoAlteradoEm||'');
+      if(!Number.isFinite(prazoMudouEm) || (Number.isFinite(fixadaEm) && fixadaEm >= prazoMudouEm)) return demanda.urgenciaManual;
+    }
     /* ===== A RAIZ DE TUDO — 30/07/2026 ================================
        Isto comparava o INSTANTE: prazo hoje às 12:00 virava "atrasado"
        às 12:01. A Helo abria a tela às 11h e via as demandas do próprio
@@ -14292,6 +14331,28 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if (demanda.prazoData === hojeStr) return atrasaDepoisDoExpediente() ? 'atrasado' : 'hoje';
     return 'normal';
   }
+
+  function camposAoAlterarPrazoDemanda(novaData, novaHora, ator){
+    /* Única definição de "prazo mudou" para TODAS as demandas. Além da
+       data, apaga as marcas históricas que antes mantinham o item vermelho
+       ou escalado depois de ele já estar em dia. Também libera lembretes
+       para a nova competência, sem reenviar o e-mail de criação. */
+    return {
+      prazoData:novaData, prazoHora:novaHora||'19:00',
+      prazoAlteradoPor:ator||'?', prazoAlteradoEm:new Date().toISOString(),
+      prazoSolicitado:'', prazoSolicitadoPor:'', motivoPrazo:'',
+      urgenciaManual:'', urgenciaFixadaPor:'', urgenciaFixadaEm:'',
+      nivelEscalonamentoDemanda:0,
+      lembretePrazoHojeEm:'', avisoRetaFinalEm:''
+    };
+  }
+  window.camposAoAlterarPrazoDemanda = camposAoAlterarPrazoDemanda;
+
+  function demandaTemAtrasoResidual(demanda){
+    return Number(demanda?.nivelEscalonamentoDemanda||0)>0 ||
+      ['atrasado','hoje','normal'].includes(String(demanda?.urgenciaManual||''));
+  }
+  window.demandaTemAtrasoResidual = demandaTemAtrasoResidual;
 
 
   /* ===== JANELA DE URGENCIA PRO BADGE DA BARRA LATERAL (23/07/2026) =====
@@ -17437,26 +17498,30 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const hora = document.getElementById('envPrazoHora_'+id)?.value || '19:00';
     if(!data){ mostrarToast('Escolhe a data.', 'erro'); return; }
     try{
-      await updateDoc(doc(db,'demandas', id), { prazoData: data, prazoHora: hora,
-        prazoSolicitado: null, motivoPrazo: '',
-        prazoAlteradoPor: usuarioAtual||'?', prazoAlteradoEm: new Date().toISOString() });
-      registrarHistorico('demandas', id, 'Prazo mudado de ' + formatarDataBR(d.prazoData) + ' pra ' + formatarDataBR(data) + ' por ' + (usuarioAtual||'?'));
+      const prazoAnterior = d.prazoData;
+      const resultado = await window.aplicarNovoPrazo(id, data, hora);
+      if(!resultado.ok){
+        mostrarToast(resultado.motivo === 'já era esse prazo' ? 'Esse já é o prazo atual e não há marca antiga de atraso.' : resultado.motivo, 'erro');
+        return;
+      }
       /* ===== O PRAZO MUDOU: A PESSOA PRECISA SABER — 30/07/2026 =======
          O Chris perguntou pra onde vai a demanda quando ele muda o prazo.
          Antes: pra lugar nenhum — ela sumia da lista dele de atrasadas e
          a pessoa nunca era avisada, então continuava vendo vermelho até
          recarregar. Agora ela recebe um aviso curto e claro. */
-      if(d.destinatario && d.destinatario !== usuarioAtual){
+      if(!resultado.apenasSaneamento && d.destinatario && d.destinatario !== usuarioAtual){
         await criarAvisoParaGestao('📅 Prazo novo — ' + (d.titulo||'sua demanda'),
           (usuarioAtual||'A gerência') + ' mudou o prazo de "' + (d.titulo||'') + '" de ' +
-          formatarDataBR(d.prazoData) + ' pra ' + formatarDataBR(data) + (hora ? ' às ' + hora : '') +
+          formatarDataBR(prazoAnterior) + ' pra ' + formatarDataBR(data) + (hora ? ' às ' + hora : '') +
           '.\n\nEla saiu das suas atrasadas.', d.destinatario);
       }
-      mostrarToast('Prazo salvo — ela saiu de atrasadas' + (d.destinatario && d.destinatario!==usuarioAtual ? ' e ' + d.destinatario + ' foi avisada.' : '.'));
+      mostrarToast(resultado.apenasSaneamento ? 'Prazo confirmado — a marca antiga de atraso foi removida.' :
+        'Prazo salvo — ela saiu de atrasadas' + (d.destinatario && d.destinatario!==usuarioAtual ? ' e ' + d.destinatario + ' foi avisada.' : '.'));
       fecharModal();
       await carregarTodasDemandas();
       renderMinhasDemandasAtribuidas(); atualizarTodosOsBadges();
       try{ renderPainelDemandas(); }catch(e){}
+      try{ atualizarTelasDepoisDeMexerNoPrazo(); }catch(e){}
     }catch(e){ mostrarToast('Não consegui mudar o prazo: ' + e.message, 'erro'); }
   };
 
@@ -17545,7 +17610,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const nova = new Date(); nova.setDate(nova.getDate() + 2);
     const prazo = nova.toISOString().slice(0,10);
     await updateDoc(doc(db,'demandas', id), {
-      prazoData: prazo, reativadaEm: new Date().toISOString(), reativadaPor: usuarioAtual || '?', urgenciaManual: ''
+      ...camposAoAlterarPrazoDemanda(prazo, '19:00', usuarioAtual||'?'),
+      reativadaEm: new Date().toISOString(), reativadaPor: usuarioAtual || '?'
     });
     registrarHistorico('demandas', id, 'Reativada com prazo novo (' + formatarDataBR(prazo) + ') por ' + (usuarioAtual||'?'));
     mostrarToast('Reativada pra ' + formatarDataBR(prazo) + '.');
@@ -18388,10 +18454,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   window.autorizarNovoPrazo = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
-    await updateDoc(doc(db,'demandas', id), { prazoData: d.prazoSolicitado, prazoSolicitado: '', prazoSolicitadoPor: '' });
-    registrarHistorico('demandas', id, 'Novo prazo autorizado', 'Novo prazo: ' + formatarDataBR(d.prazoSolicitado));
-    mostrarToast('Prazo novo autorizado!');
+    if(!d?.prazoSolicitado){ mostrarToast('Esse pedido não tem uma nova data válida.', 'erro'); return; }
+    const novaData = d.prazoSolicitado;
+    const resultado = await window.aplicarNovoPrazo(id, novaData, d.prazoHora||'19:00');
+    if(!resultado.ok){ mostrarToast(resultado.motivo, 'erro'); return; }
+    mostrarToast('Prazo novo autorizado — atraso e escalonamento recalculados.');
+    await carregarTodasDemandas();
     carregarGerencia();
+    try{ atualizarTelasDepoisDeMexerNoPrazo(); }catch(e){}
   };
 
   window.recusarNovoPrazo = async function(id){
@@ -18524,26 +18594,21 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!d) return { ok:false, motivo:'demanda não encontrada' };
     novaHora = novaHora || '19:00';
     if(!novaData) return { ok:false, motivo:'sem data' };
-    if(novaData === d.prazoData && novaHora === (d.prazoHora||'19:00')){
+    const mesmoPrazo = novaData === d.prazoData && novaHora === (d.prazoHora||'19:00');
+    const tinhaPedido = !!d.prazoSolicitado;
+    if(mesmoPrazo && !demandaTemAtrasoResidual(d) && !tinhaPedido){
       return { ok:false, motivo:'já era esse prazo' };
     }
     const antes  = formatarDataBR(d.prazoData) + ' às ' + (d.prazoHora||'19:00');
     const depois = formatarDataBR(novaData) + ' às ' + novaHora;
-    const tinhaPedido = !!d.prazoSolicitado;
-
-    const patch = {
-      prazoData: novaData, prazoHora: novaHora,
-      prazoAlteradoPor: usuarioAtual || '?', prazoAlteradoEm: new Date().toISOString()
-    };
-    // Pedido pendente do colaborador: a decisao da gerencia encerra ele.
-    if(tinhaPedido){ patch.prazoSolicitado = ''; patch.prazoSolicitadoPor = ''; }
+    const patch = camposAoAlterarPrazoDemanda(novaData, novaHora, usuarioAtual||'?');
     await updateDoc(doc(db,'demandas', id), patch);
 
-    registrarHistorico('demandas', id, 'Prazo alterado por ' + (usuarioAtual||'?'),
-      'De ' + antes + ' pra ' + depois + (tinhaPedido ? ' — encerrou o pedido pendente' : ''));
+    registrarHistorico('demandas', id, mesmoPrazo ? 'Marca antiga de atraso removida' : 'Prazo alterado por ' + (usuarioAtual||'?'),
+      (mesmoPrazo ? 'Prazo confirmado em ' + depois : 'De ' + antes + ' pra ' + depois) + (tinhaPedido ? ' — encerrou o pedido pendente' : ''));
 
     // O colaborador tem que saber: quando era ELE quem pedia, ele sabia.
-    if(d.destinatario && d.destinatario !== usuarioAtual){
+    if(!mesmoPrazo && d.destinatario && d.destinatario !== usuarioAtual){
       Promise.resolve(dispararEmailIndividual(d.destinatario, 'prazo_alterado', {
         titulo: d.titulo || '', prazoData: novaData, prazoHora: novaHora,
         colecao: 'demandas', itemId: id
@@ -18552,9 +18617,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     /* o cache em memória tem que acompanhar, senão o lote seguinte lê o
        prazo velho e conclui "já era esse prazo" */
-    d.prazoData = novaData; d.prazoHora = novaHora;
-    if(tinhaPedido){ d.prazoSolicitado = ''; d.prazoSolicitadoPor = ''; }
-    return { ok:true, antes, depois, pessoa: d.destinatario||'' };
+    Object.assign(d, patch);
+    return { ok:true, antes, depois, pessoa: d.destinatario||'', apenasSaneamento:mesmoPrazo };
   };
 
   window.alterarPrazoDireto = async function(id){
@@ -18563,7 +18627,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!novaData){ mostrarToast('Escolhe a data.', 'erro'); return; }
     const r = await window.aplicarNovoPrazo(id, novaData, novaHora);
     if(!r.ok){ mostrarToast(r.motivo === 'já era esse prazo' ? 'Esse já é o prazo atual — nada mudou.' : r.motivo, 'erro'); return; }
-    mostrarToast('Prazo alterado pra ' + r.depois + ' — ' + r.pessoa + ' foi avisado.');
+    mostrarToast(r.apenasSaneamento ? 'Prazo confirmado — marca antiga de atraso removida.' :
+      'Prazo alterado pra ' + r.depois + (r.pessoa ? ' — ' + r.pessoa + ' foi avisado(a).' : '.'));
     fecharModal();
     carregarGerencia();
     // carregarGerencia so re-renderiza o painel da Amanda; se ela estiver em
@@ -20667,8 +20732,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(dem.status !== 'pendente') continue;
       if(dem.destinatario && estaAusente(dem.destinatario)) continue;
       if(!dem.prazoData) continue;
+      /* O nível é memória de uma ocorrência passada; nunca pode decidir
+         sozinho se a demanda continua atrasada. Se a data vigente já a
+         colocou em dia, o próprio motor apaga essa memória. */
+      if(calcularUrgencia({id:docSnap.id,...dem}) !== 'atrasado'){
+        if(Number(dem.nivelEscalonamentoDemanda||0)>0){
+          await updateDoc(doc(db,'demandas', docSnap.id), {nivelEscalonamentoDemanda:0});
+          registrarHistorico('demandas', docSnap.id, 'Escalonamento zerado automaticamente', 'O prazo vigente não está atrasado.');
+        }
+        continue;
+      }
       const prazo = new Date(dem.prazoData + 'T' + (dem.prazoHora || '19:00'));
-      if(agora <= prazo) continue;
 
       const diasAtraso = diasUteisEntre(prazo, agora);
       const nivelAtual = dem.nivelEscalonamentoDemanda || 0;
@@ -22126,6 +22200,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        mas gastavam as leituras antes de descobrir isso. Separa o que é
        sensível a hora do que é saneamento/retroativo. */
     const verificacoesFrequentes = [
+      { nome: 'migracaoPrazosDemandasV12', fn: migrarPrazosDemandasSemAtrasoResidualV12 },
       { nome: 'migracaoFuncoesFixasMensalV11', fn: migrarFuncoesFixasParaRenovacaoMensalV11 },
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
       { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
@@ -23058,7 +23133,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      Pedido explícito do Chris: uma aba separada, só na Gerência, mostrando
      quem é o responsável, a gravidade, os dias de atraso e o que precisa
      ser feito — pra vídeos e demandas escalados (nível 2 ou 3). Consulta
-     direto o dado original (nivelEscalonamento/nivelEscalonamentoDemanda),
+     o dado original (nivelEscalonamento/nivelEscalonamentoDemanda), mas
+     reconfirma o atraso pelo prazo vigente antes de exibir,
      sem criar nenhum registro novo — não tem como isso vazar pra tela
      pessoal de ninguém porque não existe "demanda" nenhuma sendo criada. */
   /* ===== RESUMO DO DIA — 27/07/2026 =====
@@ -23240,6 +23316,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   function atualizarTelasDepoisDeMexerNoPrazo(){
     const visivel = id => { const el = document.getElementById(id); return el && el.offsetParent !== null; };
     if(visivel('atrasadasConteudo') && window.renderPainelDemandas) renderPainelDemandas();
+    if(visivel('listaMinhasDemandasAtribuidas') && window.renderMinhasDemandasAtribuidas) renderMinhasDemandasAtribuidas(true);
+    if(visivel('meuDiaBox') && window.renderMeuDia) renderMeuDia();
+    if(visivel('gerenciaAtrasosEquipe') && window.renderAtrasosEquipe) renderAtrasosEquipe();
     if(visivel('gerenciaVideosHub') && window.renderVideosHub) renderVideosHub();
     if(visivel('gerenciaVideos') && window.renderGerenciaVideos) renderGerenciaVideos();
     if(visivel('producaoLista') && window.renderProducao) renderProducao();
@@ -23252,6 +23331,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   if(visivel('videosPorDiaBox') && window.renderVideosPorDiaInicio) renderVideosPorDiaInicio();
   if(visivel('gerenciaEquipeVisao') && window.renderEquipeVisao) renderEquipeVisao();
   if(window.calcularIndicadores) calcularIndicadores(true).catch(()=>{});
+  if(window.atualizarTodosOsBadges) atualizarTodosOsBadges();
   }
   window.atualizarTelasDepoisDeMexerNoPrazo = atualizarTelasDepoisDeMexerNoPrazo;
 
@@ -23616,7 +23696,9 @@ window.salvarPrazoVideo = async function(id){
     demSnap.forEach(d => {
       const dem = d.data();
       const nivel = dem.nivelEscalonamentoDemanda || 0;
-      if(nivel < 2 || dem.status === 'aprovada') return;
+      /* Defesa dupla: mesmo que um documento antigo ainda carregue nível
+         2/3, ele só aparece aqui se a data ATUAL continuar atrasada. */
+      if(dem.excluido || nivel < 2 || dem.status !== 'pendente' || calcularUrgencia({id:d.id,...dem}) !== 'atrasado') return;
       const prazo = new Date(dem.prazoData + 'T' + (dem.prazoHora||'19:00'));
       const dias = diasUteisEntre(prazo, new Date());
       itens.push({
@@ -26194,6 +26276,7 @@ window.salvarPrazoVideo = async function(id){
     }
     mostrarToast(feitos + ' prazo(s) alterado(s)' + (falhas.length ? ' · ' + falhas.length + ' sem mudança (' + falhas[0] + ')' : '') + '.');
     renderDemandasDaEquipe();
+    try{ atualizarTelasDepoisDeMexerNoPrazo(); }catch(e){}
   };
 
   window.loteAlertar = async function(){

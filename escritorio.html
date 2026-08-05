@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
+<meta name="gs-build" content="2026-08-04-videos-cecilia-v3">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1755,13 +1756,31 @@
 
      A correção é um cache curto no ponto único por onde tudo passa:
      leitura da mesma coleção dentro de 10 segundos reaproveita o que já
-     veio. Qualquer gravação limpa o cache na hora, então ninguém lê dado
-     velho depois de mudar alguma coisa. É invisível pra quem usa: o
+     veio. Qualquer gravação invalida na hora o cache da coleção tocada,
+     então ninguém lê dado velho depois de mudar alguma coisa. É invisível pra quem usa: o
      resto do código continua chamando getDocs como sempre chamou. */
   const __cacheColecoes = new Map();
   const TTL_CACHE_MS = 10000;
 
   function __limparCacheColecoes(){ __cacheColecoes.clear(); }
+
+  /* 04/08/2026 — uma gravação em QUALQUER documento limpava o cache de
+     TODAS as coleções. O motor grava logs e avisos enquanto trabalha; cada
+     uma dessas gravações fazia as próximas verificações relerem demandas,
+     vídeos, postagens e agendamentos inteiros. Com centenas de documentos,
+     uma única rodada conseguia consumir milhares de leituras.
+
+     Agora só a coleção realmente alterada é invalidada. A leitura daquela
+     coleção continua fresca; as demais não são cobradas de novo sem motivo. */
+  function __nomeColecaoDoRef(ref){
+    const caminho = ref && typeof ref.path === 'string' ? ref.path : '';
+    return caminho ? caminho.split('/')[0] : '';
+  }
+  function __invalidarCacheDoRef(ref){
+    const nome = __nomeColecaoDoRef(ref);
+    if(nome) __cacheColecoes.delete(nome);
+    else __limparCacheColecoes();
+  }
 
   function __snapshotFalso(itens){
     const docs = itens.map(x => ({ id: x.__id, data: () => x.__dados, exists: () => true }));
@@ -1796,10 +1815,10 @@
   /* Toda gravação invalida o cache — sem isso a tela mostraria o estado
      anterior por até 10 segundos depois de você mudar algo, que é
      exatamente o tipo de bug que faz alguém clicar duas vezes. */
-  async function addDoc(...a){ const r = await _addDocFB(...a); __limparCacheColecoes(); return r; }
-  async function setDoc(...a){ const r = await _setDocFB(...a); __limparCacheColecoes(); return r; }
-  async function updateDoc(...a){ const r = await _updateDocFB(...a); __limparCacheColecoes(); return r; }
-  async function deleteDoc(...a){ const r = await _deleteDocFB(...a); __limparCacheColecoes(); return r; }
+  async function addDoc(...a){ const r = await _addDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
+  async function setDoc(...a){ const r = await _setDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
+  async function updateDoc(...a){ const r = await _updateDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
+  async function deleteDoc(...a){ const r = await _deleteDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
 
   const auth = getAuth(app);
   window.__authPronta = signInAnonymously(auth)
@@ -3816,8 +3835,19 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.renderMeusVideos = async function(){
     const cont = document.getElementById('videosMeus');
     if(!usuarioAtual){ cont.innerHTML = '<div class="empty">Selecione seu nome na tela de Início primeiro.</div>'; return; }
-    await verificarVideosAtrasadosEAlertar();
-    const snap = await getDocs(collection(db,'videos_producao'));
+    /* ===== CECÍLIA SEM VÍDEOS — CAUSA E CORREÇÃO (04/08/2026) ========
+       Bluefit, Hitech e Get Started tinham vídeos atribuídos à Cecília, mas
+       esta tela relia a coleção INTEIRA e ainda disparava a varredura global
+       de atrasos toda vez que qualquer editor a abria. Quando a cota diária
+       acabou, essa leitura falhou e a tela parecia dizer que o trabalho não
+       existia. A varredura de atrasos já pertence ao motor da gestão; não é
+       responsabilidade nem efeito colateral de abrir "Meus Vídeos".
+
+       Agora a tela pergunta ao banco somente pelos documentos cujo
+       `editorAtribuido` é a pessoa logada. Além de gastar muito menos, isso
+       mantém o isolamento real: o navegador da Cecília não recebe vídeos de
+       Helo, João Victor, Nathan ou qualquer outro editor. */
+    const snap = await getDocs(query(collection(db,'videos_producao'), where('editorAtribuido','==',usuarioAtual)));
     const meus = [];
     snap.forEach(d => { const v=d.data(); if(!v.excluido && v.editorAtribuido === usuarioAtual && v.status === 'aguardando_edicao') meus.push({id:d.id, ...v}); });
     /* ===== "AGUARDANDO APROVAÇÃO" DE QUEM? — 03/08/2026 =============
@@ -7387,8 +7417,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      sem precisar do calendário. Os dois nessa mesma tela agora. */
   async function renderLegendasPendentes(){
     const cont = document.getElementById('postagensConteudo');
-    const snap = await getDocs(collection(db,'postagens'));
-    const pendentes = []; snap.forEach(d => { if(d.data().status==='aguardando_legenda') pendentes.push({id:d.id, ...d.data()}); });
+    /* A Gabi precisa apenas da fila de legenda. Ler todas as postagens aqui
+       fazia cada abertura pagar também por agendadas, publicadas e arquivo. */
+    const snap = await getDocs(query(collection(db,'postagens'), where('status','==','aguardando_legenda')));
+    const pendentes = []; snap.forEach(d => { if(!d.data().excluido) pendentes.push({id:d.id, ...d.data()}); });
     if(!pendentes.length){ cont.innerHTML = '<div class="card"><div class="desc" style="margin-bottom:0;">📥 Todo vídeo aprovado — de cliente mensalista, avulso, extra ou vindo do Protocolo Cápsula — cai aqui automaticamente, sem exceção.</div></div><div class="empty">Nenhum vídeo aguardando legenda agora. 🎉</div>'; return; }
 
     // Busca o calendário de cada cliente envolvido, 1 vez só por cliente
@@ -7845,8 +7877,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   async function renderAgendarPostagens(){
     const cont = document.getElementById('postagensConteudo');
     const [postSnap, agSnap] = await Promise.all([
-      getDocs(collection(db,'postagens')),
-      getDocs(collection(db,'agendamentos'))
+      /* Cecília só precisa do que aguarda agendamento e do que já foi
+         agendado para confirmar. A consulta fica limitada a esses estados. */
+      getDocs(query(collection(db,'postagens'), where('status','in',['aguardando_agendamento','agendado']))),
+      /* Para o cartão "gravações hoje", nenhum outro dia precisa chegar ao
+         navegador dela. */
+      getDocs(query(collection(db,'agendamentos'), where('data','==',hojeLocal())))
     ]);
     const pendentes = []; const agendadasParaConfirmar = [];
     postSnap.forEach(d => {
@@ -7856,7 +7892,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(p.status==='agendado') agendadasParaConfirmar.push({id:d.id, ...p});
     });
 
-    const hoje = new Date().toISOString().slice(0,10);
+    const hoje = hojeLocal();
     let gravacoesHoje = 0;
     agSnap.forEach(d => { const a=d.data(); if(a.data===hoje && a.status!=='cancelado') gravacoesHoje++; });
     const atrasadasCount = pendentes.filter(p => p.legendaEm && Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) >= 1).length;
@@ -14089,9 +14125,23 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      Regra que passa a valer: consulta que decide o que a pessoa vê nunca
      ordena no banco por campo que pode faltar. */
   async function carregarTodasDemandas(){
-    const snap = await getDocs(collection(db,'demandas'));
-    todasDemandas = [];
-    snap.forEach(d => todasDemandas.push({id:d.id, ...d.data()}));
+    /* 04/08/2026 — cada funcionário lia as 546+ demandas da agência duas
+       vezes no login, mesmo usando apenas as endereçadas a ele. Além da
+       cota, isso colocava dados de outras pessoas na memória do navegador.
+
+       Gestão continua com a visão completa. Os demais recebem só a própria
+       fila. A segunda consulta cobre documentos antigos que ainda usam
+       `paraQuem`; itens repetidos são unidos pelo id. */
+    const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
+    const snaps = ehGestao
+      ? [await getDocs(collection(db,'demandas'))]
+      : await Promise.all([
+          getDocs(query(collection(db,'demandas'), where('destinatario','==',usuarioAtual))),
+          getDocs(query(collection(db,'demandas'), where('paraQuem','==',usuarioAtual)))
+        ]);
+    const porId = new Map();
+    snaps.forEach(snap => snap.forEach(d => porId.set(d.id, {id:d.id, ...d.data()})));
+    todasDemandas = Array.from(porId.values());
     todasDemandas.sort((a,b) => String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
     await carregarAusencias();
   }
@@ -14231,6 +14281,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        perde a tela de dinheiro — não o dia de trabalho. */
 
     usuarioAtual = escolhido;
+    /* Encerra imediatamente os ouvintes da pessoa anterior. A nova fila é
+       carregada abaixo antes de qualquer painel voltar a aparecer. */
+    try{ pararListenersTempoReal(); }catch(e){}
 
     /* 03/08/2026 — a trava do menu sai quando alguém se identifica, e
        VOLTA se a pessoa desmarcar. Sem isso, "Selecione..." depois de
@@ -14259,6 +14312,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     atualizarVisibilidadeMenuPorFuncao();
     const botaoNovaDemanda = document.getElementById('botaoNovaDemandaGlobal');
     if(!usuarioAtual){
+      try{ pararListenersTempoReal(); }catch(e){}
+      try{ pararMotorAutomacoes(); }catch(e){}
       document.getElementById('avisoInicio').innerHTML=''; boxSetor.innerHTML='';
       if(botaoNovaDemanda) botaoNovaDemanda.style.display = 'none';
       return;
@@ -14266,38 +14321,20 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(botaoNovaDemanda) botaoNovaDemanda.style.display = 'flex';
 
     await etapaSegura('carregar demandas', carregarTodasDemandas);
-    // O lembrete-demanda de digest foi APOSENTADO (virou o Resumo do Dia).
-    // Qualquer sobra dele — inclusive criada por versão antiga do site —
-    // é fechada aqui, no login, sem depender de ninguém abrir nada.
-    await etapaSegura('aposentar lembrete digest', async () => {
-      const n = await fecharLembretesDigestAbertos('Aposentado — substituído pelo Resumo do Dia no Início.');
-      if(n > 0) await carregarTodasDemandas();
-    });
-    await etapaSegura('corrigir avisos antigos', corrigirDemandasAvisoAntigas);
-    await etapaSegura('limpar alertas fantasma', limparAlertasVideoFantasma);
-    await etapaSegura('conciliar postagens órfãs', async () => {
-      const qtdConciliadas = await conciliarPostagensOrfas();
-      if(qtdConciliadas > 0) mostrarToast(qtdConciliadas + ' postagem(ns) recuperada(s) de vídeos já aprovados — caíram na fila de legenda.');
-    });
-    await etapaSegura('conciliar vídeos de tráfego presos', async () => {
-      const qtdTrafego = await conciliarVideosDeTrafegoRetroativo();
-      if(qtdTrafego > 0) mostrarToast(qtdTrafego + ' vídeo(s) de tráfego corrigido(s) — saíram da fila de legenda/agendamento e foram direto pra Entregas Finalizadas.');
-    });
-    await etapaSegura('conciliar clientes que viraram entrega direta', async () => {
-      // ACHADO 22/07/2026: essa função existia desde a Frente B6 mas nunca
-      // tinha sido chamada em lugar nenhum — ficou escrita e morta. Achado
-      // ao investigar o mesmo tipo de problema do vídeo de tráfego (postagem
-      // presa numa fila que não devia mais se aplicar). Ligando agora.
-      const qtdRecicladas = await conciliarPostagensClienteVirouEntregaDireta();
-      if(qtdRecicladas > 0) mostrarToast(qtdRecicladas + ' postagem(ns) reciclada(s) — cliente virou entrega direta depois de já estarem na fila.');
-    });
-    await etapaSegura('resumo de checklist das 19h', enviarResumoChecklist19h);
-    await etapaSegura('semear e-mails da equipe', semearEmailsEquipeIniciais);
+    const ehGestaoNoLogin = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
+
+    /* 04/08/2026 — a manutenção global não roda mais dentro do login.
+       Todas essas rotinas ficam no motor com lock compartilhado: uma rodada
+       atende a agência toda. Antes, cada pessoa repetia as mesmas varreduras
+       e uma simples entrada no site conseguia consumir milhares de leituras. */
 
     // Essas duas não são async/aguardadas — mas também protegidas, porque
     // se o próprio disparo inicial dentro delas falhar, não pode quebrar
     // o resto do login que vem depois.
-    try{ iniciarMotorAutomacoes(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao iniciar motor:', e); } // Fase 1
+    try{
+      if(ehGestaoNoLogin) iniciarMotorAutomacoes();
+      else pararMotorAutomacoes();
+    }catch(e){ console.error('mudarUsuarioGlobal: falha ao ajustar motor:', e); } // Fase 1
     try{ iniciarListenersTempoReal(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao iniciar listeners:', e); } // Fase 2
     try{ pedirPermissaoNotificacao(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao pedir permissão de notificação:', e); } // Fase 5
 
@@ -14619,10 +14656,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      foi a DEMANDA por item, que era o que pesava. */
   async function contarFila(qual){
     try{
-      const snap = await getDocs(collection(db,'postagens'));
-      let n = 0;
       const alvo = qual === 'legenda' ? 'aguardando_legenda' : 'aguardando_agendamento';
-      snap.forEach(d => { const v = d.data(); if(!v.excluido && v.status === alvo) n++; });
+      const snap = await getDocs(query(collection(db,'postagens'), where('status','==',alvo)));
+      let n = 0;
+      snap.forEach(d => { if(!d.data().excluido) n++; });
       return n;
     }catch(e){ console.error('Falha ao contar a fila:', e); return 0; }
   }
@@ -15033,20 +15070,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     capsulaAmandaLista.innerHTML = '<div class="card"><div class="desc">Lendo somente o histórico de cápsula...</div></div>';
     try{
       await carregarClientesExtras();
-      const capsulaAmandaLeituras = await Promise.all([
-        getDocs(collection(db,'clientes_config')),
-        getDocs(collection(db,'demandas'))
-      ]);
-      const capsulaAmandaCfgSnap = capsulaAmandaLeituras[0];
-      const capsulaAmandaDemSnap = capsulaAmandaLeituras[1];
+      const capsulaAmandaCfgSnap = await getDocs(collection(db,'clientes_config'));
       const capsulaAmandaPorSlug = {};
       capsulaAmandaCfgSnap.forEach(capsulaAmandaDoc => {
         capsulaAmandaPorSlug[capsulaAmandaDoc.id] = capsulaAmandaDoc.data();
       });
 
+      /* Amanda já carrega a fila completa na entrada e a mantém ao vivo.
+         Reler 546+ demandas só para procurar o histórico legado de cápsula
+         era uma das maiores leituras unitárias da tela. Usa a memória e
+         continua filtrando antes de qualquer coisa chegar ao DOM. */
       const capsulaAmandaHistorico = [];
-      capsulaAmandaDemSnap.forEach(capsulaAmandaDoc => {
-        const capsulaAmandaDemanda = capsulaAmandaDoc.data();
+      (todasDemandas||[]).forEach(capsulaAmandaDemanda => {
         if(capsulaAmandaDemanda.excluido) return;
         if(/Protocolo C[áa]psula/i.test(String(capsulaAmandaDemanda.titulo || ''))){
           capsulaAmandaHistorico.push(capsulaAmandaDemanda);
@@ -20164,7 +20199,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }
   }
 
-  const MOTOR_INTERVALO_MIN = 8; // janela mínima entre execuções (minutos)
+  const MOTOR_INTERVALO_MIN = 30; // uma rodada operacional por meia hora; o lock é compartilhado entre máquinas
 
   /* ===== CENTRAL DE INTELIGÊNCIA DIÁRIA — "RESUMO DO DIA" =====
      Substitui de vez o lembrete-demanda de segunda-feira (que ficava
@@ -21125,6 +21160,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       { nome: 'limpezaAlertasFantasma', fn: limparAlertasVideoFantasma },
       { nome: 'conciliacaoPostagensOrfas', fn: conciliarPostagensOrfas },
       { nome: 'conciliacaoClienteEntregaDireta', fn: conciliarPostagensClienteVirouEntregaDireta },
+      { nome: 'conciliacaoVideosTrafego', fn: conciliarVideosDeTrafegoRetroativo },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
       { nome: 'postagensEsquecidas', fn: verificarPostagensEsquecidas },
       { nome: 'demandasEscalonamento', fn: escalonarDemandasAtrasadas },
@@ -21139,6 +21175,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
       { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
       { nome: 'checklistAutoVerificado', fn: autoVerificarChecklist },
+      { nome: 'resumoChecklist19h', fn: enviarResumoChecklist19h },
       { nome: 'resumoDiario', fn: gerarResumoDiarioSeNecessario },
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
@@ -21187,12 +21224,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   function iniciarMotorAutomacoes(){
     if(motorIntervalId) return; // já está agendado
+    if(usuarioAtual !== 'Amanda' && usuarioAtual !== 'Chris') return;
     motorAutomacoes('boot'); // primeira rodada assim que alguém se identifica
     motorIntervalId = setInterval(function(){
-      if(document.visibilityState === 'visible' && usuarioAtual){
+      if(document.visibilityState === 'visible' && (usuarioAtual === 'Amanda' || usuarioAtual === 'Chris')){
         motorAutomacoes('intervalo');
       }
-    }, 10 * 60000);
+    }, MOTOR_INTERVALO_MIN * 60000);
+  }
+
+  function pararMotorAutomacoes(){
+    if(motorIntervalId){ clearInterval(motorIntervalId); motorIntervalId = null; }
   }
 
   /* ===== FASE 2 — TEMPO REAL DE VERDADE (onSnapshot) =====
@@ -21228,62 +21270,128 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     catch(e){ console.error('Falha ao disparar notificação do navegador:', e); }
   }
 
+  let __ouvintesTempoReal = [];
+  let __usuarioDosOuvintes = '';
+
+  function pararListenersTempoReal(limparDemandas){
+    __ouvintesTempoReal.forEach(parar => { try{ parar(); }catch(e){} });
+    __ouvintesTempoReal = [];
+    __usuarioDosOuvintes = '';
+    listenersTempoRealAtivos = false;
+    cacheVideosProducao = [];
+    cachePostagens = [];
+    cacheAgendamentos = [];
+    if(limparDemandas !== false) todasDemandas = [];
+  }
+
   function iniciarListenersTempoReal(){
-    if(listenersTempoRealAtivos) return; // já tem listener rodando, não duplicar
+    if(!usuarioAtual) return;
+    if(listenersTempoRealAtivos && __usuarioDosOuvintes === usuarioAtual) return;
+    pararListenersTempoReal(false);
+    __usuarioDosOuvintes = usuarioAtual;
+    const pessoaDoOuvinte = usuarioAtual;
+    const ehGestao = pessoaDoOuvinte === 'Amanda' || pessoaDoOuvinte === 'Chris';
     listenersTempoRealAtivos = true;
 
+    /* 04/08/2026 — a equipe inteira mantinha quatro coleções COMPLETAS em
+       tempo real. Só demandas já passava de 546 documentos por abertura.
+       Agora cada papel assina apenas o que usa; gestão preserva a visão total.
+       Trocar de pessoa encerra os ouvintes anteriores e limpa as caches. */
     let primeiroSnapshotDemandas = true;
-    onSnapshot(collection(db,'demandas'), (snap)=>{
+    const refDemandas = ehGestao
+      ? collection(db,'demandas')
+      : query(collection(db,'demandas'), where('destinatario','==',pessoaDoOuvinte));
+    __ouvintesTempoReal.push(onSnapshot(refDemandas, (snap)=>{
+      if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
       const anterioresPorId = new Map(todasDemandas.map(d=>[d.id,d]));
-      todasDemandas = [];
-      snap.forEach(d => todasDemandas.push({id:d.id, ...d.data()}));
-      // FASE 5 — notifica no navegador quando uma demanda NOVA chega pro
-      // usuário logado (cobre também os escalonamentos das Fases 4/6/7,
-      // já que eles são só demandas novas criadas pelo sistema).
-      if(!primeiroSnapshotDemandas && usuarioAtual){
-        todasDemandas.forEach(d => {
-          if(d.destinatario === usuarioAtual && !anterioresPorId.has(d.id)){
+      const recebidas = [];
+      snap.forEach(d => recebidas.push({id:d.id, ...d.data()}));
+      if(ehGestao){
+        todasDemandas = recebidas;
+      }else{
+        // Mantém itens legados (`paraQuem`) carregados na entrada.
+        const porId = new Map();
+        todasDemandas.filter(d => d.paraQuem === pessoaDoOuvinte && d.destinatario !== pessoaDoOuvinte)
+          .forEach(d => porId.set(d.id,d));
+        recebidas.forEach(d => porId.set(d.id,d));
+        todasDemandas = Array.from(porId.values());
+      }
+      todasDemandas.sort((a,b) => String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
+      if(!primeiroSnapshotDemandas){
+        recebidas.forEach(d => {
+          if(d.destinatario === pessoaDoOuvinte && !anterioresPorId.has(d.id)){
             dispararNotificacaoNavegador('📌 Nova demanda', d.titulo + ' — prazo ' + formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''));
           }
         });
       }
       primeiroSnapshotDemandas = false;
       onDadosTempoRealMudaram('demandas');
-    }, (erro)=>{ console.error('Listener demandas falhou:', erro); listenersTempoRealAtivos = false; });
+    }, (erro)=>{ console.error('Listener demandas falhou:', erro); }));
 
-    let primeiroSnapshotVideos = true;
-    onSnapshot(collection(db,'videos_producao'), (snap)=>{
-      const anterioresPorId = new Map(cacheVideosProducao.map(v=>[v.id,v]));
-      cacheVideosProducao = [];
-      snap.forEach(d => cacheVideosProducao.push({id:d.id, ...d.data()}));
-      // FASE 5 — notifica o editor quando o vídeo dele volta em correção,
-      // e notifica quando um vídeo novo é atribuído pra ele editar.
-      if(!primeiroSnapshotVideos && usuarioAtual){
-        cacheVideosProducao.forEach(v => {
-          if(v.editorAtribuido !== usuarioAtual) return;
-          const antes = anterioresPorId.get(v.id);
-          if(!antes && v.status === 'aguardando_edicao'){
-            dispararNotificacaoNavegador('🎬 Vídeo novo pra editar', v.titulo + ' — ' + (v.clienteNome||''));
-          } else if(antes && antes.status !== 'correcao' && v.status === 'correcao'){
-            dispararNotificacaoNavegador('🔁 Vídeo em correção', v.titulo + ' voltou pra ajuste.');
-          }
-        });
+    /* ===== LISTENER DO EDITOR — NÃO ESCREVER NOMES À MÃO ==============
+       A otimização de cota de 04/08 deixou apenas Helo e João Victor neste
+       array e, sem querer, excluiu Cecília (e Nathan) embora ambos estejam
+       em EDITORES_SELECIONAVEIS. O vídeo continuava no banco e até aparecia
+       numa consulta manual, mas não chegava ao cache do Início, ao Meu Dia
+       nem à notificação em tempo real do editor. Foi o elo que fez Bluefit,
+       Hitech e os vídeos internos da agência parecerem perdidos.
+
+       A fonte da verdade já existe. Derivar dela evita que um editor novo
+       volte a ser aceito no seletor e esquecido no listener. A consulta
+       continua isolada por `editorAtribuido`, portanto cada pessoa recebe
+       somente os próprios vídeos. */
+    if(ehGestao || EDITORES_SELECIONAVEIS.includes(pessoaDoOuvinte)){
+      let primeiroSnapshotVideos = true;
+      const refVideos = ehGestao
+        ? collection(db,'videos_producao')
+        : query(collection(db,'videos_producao'), where('editorAtribuido','==',pessoaDoOuvinte));
+      __ouvintesTempoReal.push(onSnapshot(refVideos, (snap)=>{
+        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        const anterioresPorId = new Map(cacheVideosProducao.map(v=>[v.id,v]));
+        cacheVideosProducao = [];
+        snap.forEach(d => cacheVideosProducao.push({id:d.id, ...d.data()}));
+        if(!primeiroSnapshotVideos){
+          cacheVideosProducao.forEach(v => {
+            if(v.editorAtribuido !== pessoaDoOuvinte) return;
+            const antes = anterioresPorId.get(v.id);
+            if(!antes && v.status === 'aguardando_edicao'){
+              dispararNotificacaoNavegador('🎬 Vídeo novo pra editar', v.titulo + ' — ' + (v.clienteNome||''));
+            } else if(antes && antes.status !== 'correcao' && v.status === 'correcao'){
+              dispararNotificacaoNavegador('🔁 Vídeo em correção', v.titulo + ' voltou pra ajuste.');
+            }
+          });
+        }
+        primeiroSnapshotVideos = false;
+        onDadosTempoRealMudaram('videos_producao');
+      }, (erro)=>{ console.error('Listener videos_producao falhou:', erro); }));
+    }
+
+    if(ehGestao || pessoaDoOuvinte === 'Gabrielle' || pessoaDoOuvinte === 'Cecília'){
+      let refPostagens = collection(db,'postagens');
+      if(pessoaDoOuvinte === 'Gabrielle'){
+        refPostagens = query(refPostagens, where('status','in',['aguardando_legenda','legenda_pronta']));
+      }else if(pessoaDoOuvinte === 'Cecília'){
+        refPostagens = query(refPostagens, where('status','in',['aguardando_agendamento','agendado']));
       }
-      primeiroSnapshotVideos = false;
-      onDadosTempoRealMudaram('videos_producao');
-    }, (erro)=>{ console.error('Listener videos_producao falhou:', erro); });
+      __ouvintesTempoReal.push(onSnapshot(refPostagens, (snap)=>{
+        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        cachePostagens = [];
+        snap.forEach(d => cachePostagens.push({id:d.id, ...d.data()}));
+        onDadosTempoRealMudaram('postagens');
+      }, (erro)=>{ console.error('Listener postagens falhou:', erro); }));
+    }
 
-    onSnapshot(collection(db,'postagens'), (snap)=>{
-      cachePostagens = [];
-      snap.forEach(d => cachePostagens.push({id:d.id, ...d.data()}));
-      onDadosTempoRealMudaram('postagens');
-    }, (erro)=>{ console.error('Listener postagens falhou:', erro); });
-
-    onSnapshot(collection(db,'agendamentos'), (snap)=>{
-      cacheAgendamentos = [];
-      snap.forEach(d => cacheAgendamentos.push({id:d.id, ...d.data()}));
-      onDadosTempoRealMudaram('agendamentos');
-    }, (erro)=>{ console.error('Listener agendamentos falhou:', erro); });
+    if(ehGestao || pessoaDoOuvinte === 'Cecília' || ['Luís','Nathan'].includes(pessoaDoOuvinte)){
+      const refAgendamentos = (pessoaDoOuvinte === 'Luís' || pessoaDoOuvinte === 'Nathan')
+        ? query(collection(db,'agendamentos'), where('filmmaker','==',pessoaDoOuvinte))
+        : collection(db,'agendamentos');
+      __ouvintesTempoReal.push(onSnapshot(refAgendamentos, (snap)=>{
+        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        cacheAgendamentos = [];
+        snap.forEach(d => cacheAgendamentos.push({id:d.id, ...d.data()}));
+        onDadosTempoRealMudaram('agendamentos');
+      }, (erro)=>{ console.error('Listener agendamentos falhou:', erro); }));
+    }
   }
 
   function onDadosTempoRealMudaram(colecao){
@@ -26289,6 +26397,19 @@ Observações do cliente: ${l.observacoes||'—'}`;
     renderCentralComando();
   };
 
+  let __presencaComandoCache=[];
+  let __presencaComandoCacheEm=0;
+  async function carregarPresencaComando(){
+    /* O relógio da Central redesenha a cada 30s, mas presença só é gravada
+       a cada 3 minutos. Reler a coleção em todo redesenho não deixa o dado
+       mais atual; apenas cobra a mesma leitura seis vezes. */
+    if(Date.now()-__presencaComandoCacheEm < 3*60*1000) return __presencaComandoCache;
+    const snap=await getDocs(collection(db,'presenca_funcionarios'));
+    const lista=[]; snap.forEach(d=>lista.push({id:d.id,...d.data()}));
+    __presencaComandoCache=lista; __presencaComandoCacheEm=Date.now();
+    return lista;
+  }
+
   async function renderCentralComando(){
     const cont = document.getElementById('gerenciaComando');
     if(!cont || cont.style.display === 'none') { pararCentralComando(); return; }
@@ -26317,14 +26438,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
       agendamentosRaw = []; agendamentosSnap.forEach(d => agendamentosRaw.push({id:d.id, ...d.data()}));
       postagensRaw = []; postagensSnap.forEach(d => postagensRaw.push({id:d.id, ...d.data()}));
     }
-    const presencaSnap = await getDocs(collection(db,'presenca_funcionarios')); // coleção fria, continua sob demanda
+    const presencaDocs = await carregarPresencaComando();
 
     const videos = videosRaw.filter(v => !v.excluido);
     const qtdNaLixeira = videosRaw.filter(v => v.excluido).length;
     const demandas = demandasRaw;
     const agendamentos = agendamentosRaw;
     const postagens = postagensRaw;
-    const presenca = {}; presencaSnap.forEach(d => { presenca[d.id] = d.data().ultimaAtividade; });
+    const presenca = {}; presencaDocs.forEach(d => { presenca[d.id] = d.ultimaAtividade; });
 
     const emEdicao = videos.filter(v=>v.status==='aguardando_edicao');
     const aguardApr = videos.filter(v=>v.status==='aguardando_aprovacao');

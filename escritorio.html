@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-central-clientes-aprovacoes-v19">
+<meta name="gs-build" content="2026-08-05-auth-google-regras-v20">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -517,6 +517,15 @@
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.emailjs.com/dist/email.min.js';document.head.appendChild(s);"></script>
 </head>
 <body class="semUsuario">
+<div id="authEquipeGate" style="position:fixed;inset:0;z-index:10000;background:#171717;color:#f5f5f2;display:flex;align-items:center;justify-content:center;padding:24px;font-family:Inter,system-ui,sans-serif;">
+  <div style="width:min(440px,100%);background:#252628;border:1px solid #444;border-top:5px solid #fbbc19;border-radius:16px;padding:28px;box-shadow:0 18px 60px rgba(0,0,0,.55);">
+    <div style="font-size:12px;font-weight:900;letter-spacing:.12em;color:#fbbc19;margin-bottom:10px;">GET STARTED · ACESSO DA EQUIPE</div>
+    <h1 style="font-size:24px;margin:0 0 10px;">Entre com seu Google</h1>
+    <p style="font-size:13.5px;line-height:1.55;color:#c8c9c7;margin:0 0 18px;">Use o mesmo e-mail que está cadastrado na equipe. O sistema identifica sua função automaticamente — não é mais possível escolher o nome de outra pessoa.</p>
+    <button class="btn" id="btnLoginGoogleEquipe" onclick="entrarComGoogleEquipe()">Continuar com Google</button>
+    <div id="authEquipeErro" style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:#5b2020;color:#fff;font-size:12.5px;line-height:1.45;"></div>
+  </div>
+</div>
 <div class="introOverlay" id="introOverlay">
   <div class="introStage">
     <svg class="introMark" viewBox="0 0 100 100">
@@ -684,10 +693,10 @@
     <!-- INÍCIO -->
     <div class="view active" id="view-inicio">
       <h1>Bem-vindo ao <span class="y">Escritório</span></h1>
-      <div class="sub">Selecione seu nome pra ver seus avisos do dia.</div>
+      <div class="sub">Seu nome é identificado pelo e-mail Google autorizado.</div>
       <div class="card" id="cardQuemSouEu">
-        <div class="field"><label>Quem é você?</label>
-          <select id="euSouGlobal" onchange="mudarUsuarioGlobal()">
+        <div class="field"><label>Acesso confirmado como</label>
+          <select id="euSouGlobal" disabled aria-label="Pessoa autenticada">
             <option value="">Selecione...</option>
             <option value="Chris">Chris</option>
             <option value="Amanda">Amanda</option>
@@ -700,6 +709,7 @@
             <option value="João Victor">João Victor</option>
           </select>
         </div>
+        <button class="btn secondary" style="margin-top:8px;" onclick="sairDoEscritorio()">Sair desta conta</button>
       </div>
       <div id="setorAtalhos"></div>
       <div id="avisoInicio"></div>
@@ -1734,7 +1744,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -1747,19 +1757,12 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  /* ===== AUTENTICAÇÃO — 28/07/2026 ==================================
-     Até hoje o banco aceitava qualquer leitura e qualquer escrita de
-     qualquer pessoa que abrisse qualquer página do site. Provado na
-     varredura: de dentro do calendário público li 21 contratos, 20
-     mensalidades, o cofre de senhas e os tokens dos 28 clientes.
-
-     A correção tem dois lados e os dois precisam existir:
-     - AQUI: toda página faz login anônimo antes de tocar no banco.
-     - NO FIREBASE: as regras exigem esse login (arquivo regras_firestore).
-
-     Login anônimo não identifica pessoa — ele cria uma sessão que as
-     regras conseguem enxergar. É em cima dela que a gerência e o cliente
-     ganham (ou não) permissão. Sem essa sessão, nada abre. */
+  /* ===== AUTENTICAÇÃO DA EQUIPE — V20 ================================
+     O Escritório usa conta Google verificada e mapeia o e-mail para uma
+     única pessoa. Formulários, Portal e calendários públicos usam outra
+     instância Firebase, anônima e isolada; abrir um link de cliente não
+     desconecta o funcionário. As regras repetem a validação pelo token:
+     esconder menu é UX, mas a proteção real fica no Firestore. */
   /* ===== O CARREGAMENTO LENTO — 28/07/2026 ===========================
      Contei no arquivo: 206 leituras de coleção INTEIRA. `videos_producao`
      sozinha é lida 37 vezes, `demandas` 24, `agendamentos` 24,
@@ -1835,18 +1838,105 @@
   async function deleteDoc(...a){ const r = await _deleteDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
 
   const auth = getAuth(app);
-  window.__authPronta = signInAnonymously(auth)
-    .then(cred => { window.__uid = cred.user.uid; return cred.user.uid; })
-    .catch(e => {
-      console.error('Falha na autenticação:', e);
-      document.body.insertAdjacentHTML('afterbegin',
-        '<div style="position:fixed;inset:0;z-index:9999;background:#141414;color:#fff;display:flex;align-items:center;justify-content:center;padding:30px;text-align:center;font-family:system-ui;">' +
-        '<div><div style="font-size:19px;font-weight:800;margin-bottom:10px;">Não consegui conectar com segurança</div>' +
-        '<div style="font-size:13.5px;opacity:.8;max-width:420px;line-height:1.55;">O login anônimo do Firebase precisa estar ativado ' +
-        '(Console → Authentication → Sign-in method → Anônimo). Enquanto isso não estiver ligado, o site não abre — e é assim mesmo: ' +
-        'melhor não abrir do que abrir sem proteção.</div></div></div>');
-      return null;
-    });
+  const EMAIL_PARA_PESSOA_EQUIPE = Object.freeze({
+    'christopherveloso0@gmail.com':'Chris',
+    'amandachamorrosm@gmail.com':'Amanda',
+    'vitoriaboaron215@gmail.com':'Cecília',
+    'gabrielleromaomarketing@gmail.com':'Gabrielle',
+    'heloisaksc@gmail.com':'Helo',
+    'luissouza280507@gmail.com':'Luís',
+    'nathanocosta652@gmail.com':'Nathan',
+    'victorvieiraj814@gmail.com':'João Victor'
+  });
+  let __resolverAuthEquipe;
+  window.__authPronta = new Promise(resolve => { __resolverAuthEquipe = resolve; });
+  let __uidEquipeResolvido = '';
+  let __identidadeEquipeAplicada = '';
+  let __autorizacoesEquipeSincronizadas = false;
+
+  function mostrarGateEquipe(mensagem){
+    const gate = document.getElementById('authEquipeGate');
+    const erro = document.getElementById('authEquipeErro');
+    if(gate) gate.style.display = 'flex';
+    if(erro){ erro.textContent = mensagem || ''; erro.style.display = mensagem ? 'block' : 'none'; }
+    document.body.classList.add('semUsuario');
+  }
+  function liberarGateEquipe(){
+    const gate = document.getElementById('authEquipeGate');
+    if(gate) gate.style.display = 'none';
+  }
+  async function pessoaAutorizadaPeloGoogle(user){
+    const email = String(user?.email || '').trim().toLowerCase();
+    if(!email || user?.emailVerified !== true) return null;
+    if(EMAIL_PARA_PESSOA_EQUIPE[email]) return { pessoa:EMAIL_PARA_PESSOA_EQUIPE[email], email };
+    try{
+      const snap = await getDoc(doc(db,'usuarios_equipe',email));
+      if(snap.exists() && snap.data().ativo === true && snap.data().pessoa){
+        return { pessoa:String(snap.data().pessoa), email };
+      }
+    }catch(e){ console.error('Falha ao conferir autorização da equipe:',e); }
+    return null;
+  }
+  async function aplicarUsuarioGoogle(user){
+    const autorizado = await pessoaAutorizadaPeloGoogle(user);
+    if(!autorizado){
+      mostrarGateEquipe('Este e-mail não está autorizado para o Escritório. Entre com o e-mail cadastrado pela gerência.');
+      return false;
+    }
+    const chaveIdentidade=user.uid+'|'+autorizado.pessoa;
+    if(__identidadeEquipeAplicada===chaveIdentidade){ liberarGateEquipe(); return true; }
+    __identidadeEquipeAplicada=chaveIdentidade;
+    window.__emailEquipe = autorizado.email;
+    window.__uid = user.uid;
+    if(!__uidEquipeResolvido){ __uidEquipeResolvido=user.uid; __resolverAuthEquipe(user.uid); }
+    const seletor=document.getElementById('euSouGlobal');
+    if(seletor){
+      let opcao=Array.from(seletor.options).find(o=>o.value===autorizado.pessoa);
+      if(!opcao){ opcao=new Option(autorizado.pessoa,autorizado.pessoa); seletor.add(opcao); }
+      seletor.value=autorizado.pessoa;
+      seletor.disabled=true;
+      seletor.title='Identidade confirmada pelo Google: '+autorizado.email;
+    }
+    liberarGateEquipe();
+    await window.mudarUsuarioGlobal();
+    /* Uma abertura da gerência migra contatos antigos para o diretório de
+       autorização. Assim Yas e futuros funcionários não dependem de a
+       Amanda abrir cada contato e clicar em salvar outra vez. */
+    if(['Chris','Amanda'].includes(autorizado.pessoa) && !__autorizacoesEquipeSincronizadas){
+      __autorizacoesEquipeSincronizadas = true;
+      sincronizarAutorizacoesEquipeDosContatos().catch(e=>{
+        __autorizacoesEquipeSincronizadas = false;
+        console.error('Não consegui sincronizar autorizações da equipe:',e);
+      });
+    }
+    return true;
+  }
+  window.entrarComGoogleEquipe = async function(){
+    const btn=document.getElementById('btnLoginGoogleEquipe');
+    const erro=document.getElementById('authEquipeErro');
+    try{
+      if(btn){btn.disabled=true;btn.textContent='Abrindo Google…';}
+      if(erro) erro.style.display='none';
+      await setPersistence(auth,browserLocalPersistence);
+      const provedor=new GoogleAuthProvider();
+      provedor.setCustomParameters({prompt:'select_account'});
+      const cred=await signInWithPopup(auth,provedor);
+      await aplicarUsuarioGoogle(cred.user);
+    }catch(e){
+      console.error('Falha no login Google da equipe:',e);
+      mostrarGateEquipe(e?.code==='auth/operation-not-allowed'
+        ? 'O Google ainda não foi ativado no Firebase Authentication. A gerência precisa concluir essa configuração uma única vez.'
+        : 'Não consegui concluir o login Google. Tente novamente e confirme que escolheu o e-mail cadastrado.');
+    }finally{ if(btn){btn.disabled=false;btn.textContent='Continuar com Google';} }
+  };
+  window.sairDoEscritorio = async function(){
+    try{ await signOut(auth); }catch(e){ console.error(e); }
+    location.reload();
+  };
+  onAuthStateChanged(auth,user=>{
+    if(user && !user.isAnonymous) aplicarUsuarioGoogle(user).catch(e=>{console.error(e);mostrarGateEquipe('Não consegui validar este acesso.');});
+    else mostrarGateEquipe('');
+  });
 
   /* ===== FASE 11 — CONFIGURAÇÃO DO EMAILJS =====
      Preencha os 3 valores abaixo depois de criar a conta gratuita em
@@ -15923,45 +16013,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     catch(e){ console.error('mudarUsuarioGlobal: falha isolada em "' + nome + '" — resto do login continua normal:', e); }
   }
 
-  /* ===== O ERRO QUE TRAVOU A EQUIPE — 28/07/2026 ======================
-     Depois que as regras novas subiram, o Luís não conseguia registrar
-     vídeo e os painéis da Cecília apareciam vazios. Não era a internet
-     deles: fui eu.
-
-     A regra geral do Firestore ficou "só gerência lê e escreve". E a
-     marca de gerência (`sessoes_gerencia`) só era criada quando alguém
-     digitava a senha do escritório PARA ABRIR O PAINEL DE GERÊNCIA. O
-     Luís, a Cecília e a Gabi usam o escritório o dia inteiro e nunca
-     abrem esse painel — então nunca tinham marca nenhuma, e o banco
-     recusava tudo em silêncio. A tela ficava vazia sem dizer por quê.
-
-     Correção: existe agora uma marca de EQUIPE, criada quando a pessoa
-     entra no escritório com a senha da casa. Ela libera o trabalho do
-     dia a dia. A marca de GERÊNCIA continua separada e é ela que libera
-     dinheiro, contratos e cofre.
-
-     Duas camadas, dois níveis — e ninguém mais trabalha sem permissão
-     nem enxerga o que não é da sua alçada. */
-  /* ===== REESCRITO EM 28/07/2026 — E ESTE É O PONTO ===================
-     A versão anterior desta função PEDIA SENHA e BLOQUEAVA a entrada se
-     qualquer coisa falhasse. Resultado: a Amanda, a Gabi e o Luís
-     pararam de trabalhar por causa de uma trava minha. Segurança que
-     impede a operação não é segurança — é prejuízo.
-
-     A regra que passa a valer aqui, e da qual eu não saio mais:
-     NADA no caminho do trabalho diário pode depender de uma verificação
-     que, ao falhar, impede a pessoa de trabalhar.
-
-     Agora esta função nunca bloqueia. Ela cria a marca de sessão em
-     segundo plano, sem senha e sem prompt. Se falhar, registra no
-     console e a pessoa entra do mesmo jeito — porque as regras do banco
-     passaram a exigir apenas uma sessão ativa (que toda página cria
-     sozinha) para o trabalho do dia.
-
-     O que continua trancado de verdade: cofre, contratos, mensalidades,
-     receitas e leads. Esses exigem a marca de GERÊNCIA, criada com senha
-     no painel — e se ela falhar, quem perde acesso é só quem mexe com
-     dinheiro, não a equipe inteira. */
+  /* ===== AUTORIZAÇÃO DA EQUIPE — V20 =================================
+     A autorização real agora vem do e-mail Google verificado nas regras
+     do Firestore. `sessoes_equipe` e `sessoes_gerencia` são somente uma
+     trilha de auditoria do navegador; nunca concedem permissão sozinhas.
+     Se a gravação dessa trilha falhar, a inicialização continua, pois o
+     token Google ainda protege todas as leituras e gravações. */
   /* ===== A MARCA DE GERÊNCIA NÃO PODE SER ETERNA — 28/07/2026 =========
      Descoberto testando: uma vez que alguém entra na gerência, a marca
      fica no navegador PRA SEMPRE. Ou seja, quem usar aquele computador
@@ -16016,6 +16073,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(!uid) return true;                       // sem sessão? entra mesmo assim
       if(sessionStorage.getItem('equipeLiberada') === uid) return true;
       await setDoc(doc(db,'sessoes_equipe', uid), {
+        pessoa: usuarioAtual || document.getElementById('euSouGlobal')?.value || '',
+        email: window.__emailEquipe || '',
         abertaEm: new Date().toISOString(), navegador: (navigator.userAgent||'').slice(0,120)
       });
       sessionStorage.setItem('equipeLiberada', uid);
@@ -19722,10 +19781,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      dias. "Sair da gerência" apaga a lembrança na hora.
 
      Sobre guardar o hash aqui: ele não é segredo — o hash padrão está
-     escrito neste próprio arquivo, que é público. O portão da tela sempre
-     foi brando; quem protege de verdade são as regras do Firestore, que
-     continuam exigindo a marca `sessoes_gerencia`. Guardar o hash não
-     enfraquece nada; guardar a SENHA enfraqueceria, e não guardo. */
+     escrito neste próprio arquivo, que é público. O portão da tela limita
+     a navegação; quem protege os dados de verdade são as regras V20, que
+     exigem o e-mail Google verificado de Chris ou Amanda. Guardar o hash
+     não enfraquece essa autorização; guardar a SENHA enfraqueceria, e não
+     guardo. */
   const CHAVE_LEMBRAR_GERENCIA = 'gerenciaLembrada_v1';
   const DIAS_LEMBRAR_GERENCIA = 30;
 
@@ -19779,14 +19839,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         return;
       }
       gerenciaAutenticada = true;
-      /* Marca a sessão como gerência. É este documento que as regras do
-         Firestore consultam pra liberar contratos, mensalidades e cofre.
-         Sem ele, mesmo logado, essas coleções não abrem. */
+      /* Registra a abertura para auditoria. A liberação de contratos,
+         mensalidades e cofre vem exclusivamente do e-mail Google de
+         Chris/Amanda validado pelas regras V20. */
       try{
         const uid = await window.__authPronta;
         if(uid){
           await setDoc(doc(db,'sessoes_gerencia', uid), {
-            pessoa: usuarioAtual || '?', abertaEm: new Date().toISOString(),
+            pessoa: usuarioAtual || '?', email:window.__emailEquipe || '', abertaEm: new Date().toISOString(),
             navegador: (navigator.userAgent||'').slice(0,120)
           });
           window.__sessaoGerencia = uid;
@@ -21396,6 +21456,29 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     'Cecília': 'vitoriaboaron215@gmail.com'
   };
 
+  async function sincronizarAutorizacoesEquipeDosContatos(){
+    if(!['Chris','Amanda'].includes(usuarioAtual)) return;
+    const [contatosSnap, autorizadosSnap] = await Promise.all([
+      getDocs(collection(db,'emails_equipe')),
+      getDocs(collection(db,'usuarios_equipe'))
+    ]);
+    const autorizados = new Map();
+    autorizadosSnap.forEach(d=>autorizados.set(d.id.toLowerCase(),d.data()));
+    for(const contatoDoc of contatosSnap.docs){
+      const dados=contatoDoc.data();
+      const pessoa=String(dados.nome||contatoDoc.id||'').trim();
+      const email=String(dados.email||'').trim().toLowerCase();
+      if(!pessoa || !email) continue;
+      const atual=autorizados.get(email);
+      if(atual && atual.ativo===true && atual.excluido!==true && atual.pessoa===pessoa) continue;
+      await setDoc(doc(db,'usuarios_equipe',email),{
+        pessoa,email,ativo:true,excluido:false,
+        atualizadoPor:usuarioAtual||'?',atualizadoEm:serverTimestamp(),
+        origem:'migração segura de emails_equipe'
+      },{merge:true});
+    }
+  }
+
   async function semearEmailsEquipeIniciais(){
     for(const [nome, email] of Object.entries(EMAILS_EQUIPE_SEMENTE)){
       const ref = doc(db, 'emails_equipe', nome);
@@ -21404,6 +21487,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         await setDoc(ref, { nome, email, atualizadoPor: 'sistema (semente inicial)', atualizadoEm: serverTimestamp() });
       }
     }
+    await sincronizarAutorizacoesEquipeDosContatos();
   }
 
   async function renderEmailsEquipe(){
@@ -21444,7 +21528,26 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(email && !email.includes('@')){ mostrarToast('Esse e-mail não parece válido.', 'erro'); return; }
     if(zap && zap.length < 10){ mostrarToast('O WhatsApp precisa do DDD — ex.: 5541999999999.', 'erro'); return; }
     if(!email && !zap){ mostrarToast('Preenche pelo menos um dos dois.', 'erro'); return; }
-    await setDoc(doc(db,'emails_equipe', nome), { nome, email, whatsapp: zap, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() }, { merge:true });
+    const emailNormalizado=email.toLowerCase();
+    const contatoRef=doc(db,'emails_equipe', nome);
+    const contatoAnterior=await getDoc(contatoRef);
+    const emailAnterior=String(contatoAnterior.exists()?contatoAnterior.data().email||'':'').trim().toLowerCase();
+    await setDoc(contatoRef, { nome, email:emailNormalizado, whatsapp: zap, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() }, { merge:true });
+    /* O diretório de contato também é a fonte de autorização do login.
+       Trocar um e-mail desativa o anterior por soft-delete e ativa o novo;
+       nenhum acesso antigo fica esquecido no banco. */
+    if(emailAnterior && emailAnterior!==emailNormalizado){
+      await setDoc(doc(db,'usuarios_equipe',emailAnterior),{
+        ativo:false,excluido:true,excluidoPor:usuarioAtual||'?',excluidoEm:serverTimestamp(),
+        motivoExclusao:'E-mail da equipe substituído por '+emailNormalizado
+      },{merge:true});
+    }
+    if(emailNormalizado){
+      await setDoc(doc(db,'usuarios_equipe',emailNormalizado),{
+        pessoa:nome,email:emailNormalizado,ativo:true,excluido:false,
+        atualizadoPor:usuarioAtual||'?',atualizadoEm:serverTimestamp()
+      },{merge:true});
+    }
     __cacheZapEquipe = null;
     mostrarToast('Contato de ' + nome + ' salvo!');
   };

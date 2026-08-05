@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-auth-google-regras-v20">
+<meta name="gs-build" content="2026-08-05-links-calendario-v21">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -20080,7 +20080,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.abrirCalendarioFerramentas = function(slug, nome){
     calendarioFerramentasAbertoSlug = slug;
     document.getElementById('nomeClienteFerramentasAberto').textContent = nome;
-    garantirTokensDoCliente(slug).then(t => {
+    garantirTokensDoCliente(slug, 'equipe').then(t => {
       /* 02/08/2026 — QUEBRA-CACHE NO IFRAME.
              Ao subir um `calendario.html` novo, quem já tinha o antigo no
              navegador continuava vendo o velho AQUI DENTRO, mesmo depois
@@ -20088,7 +20088,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
              URL não mudava. Perdi tempo investigando isto como possível
              causa do painel de gravações não aparecer (não era, mas o
              problema é real). `v=` muda a cada carga e mata o cache. */
-      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + slug + '&e=' + t.tokenEquipe + '&v=' + Date.now();
+      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + encodeURIComponent(slug) + '&e=' + encodeURIComponent(t.tokenEquipe) + '&v=' + Date.now();
+    }).catch(e=>{
+      console.error('Falha ao abrir calendário interno:',e);
+      const iframe=document.getElementById('iframeCalendarioFerramentas');
+      if(iframe) iframe.removeAttribute('src');
+      mostrarToast('Não consegui abrir o calendário: '+(e?.message||'tente novamente.'),'erro');
     });
     document.getElementById('calendarioFerramentasAberto').style.display = 'block';
     renderRefsPerfilCliente(slug, nome);
@@ -21221,14 +21226,28 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      Mesmo que o link do cliente vaze num grupo de WhatsApp, quem receber
      não consegue apagar nada. `garantirTokensDoCliente` cria o que
      faltar na hora, então nenhum cliente fica sem link. */
-  async function garantirTokensDoCliente(slug){
+  async function garantirTokensDoCliente(slug, tipoNecessario){
+    if(!slug) throw new Error('Cliente não informado para gerar o link.');
     const ref = doc(db,'clientes_acesso', slug);
     const snap = await getDoc(ref);
     const atual = snap.exists() ? snap.data() : {};
+    if(atual.ativo === false) throw new Error('Este cliente está arquivado. Reative-o antes de gerar um link.');
     const novo = {};
     const gerar = () => Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
-    if(!atual.token) novo.token = gerar();
-    if(!atual.tokenEquipe) novo.tokenEquipe = gerar();
+    /* Um documento novo nasce completo. Num documento antigo, porém, o
+       botão do CLIENTE não tenta mais criar também o token interno — foi
+       essa gravação desnecessária que fazia o clique da Cecília falhar. */
+    if(!snap.exists()){
+      novo.token = gerar();
+      novo.tokenEquipe = gerar();
+    }else if(tipoNecessario === 'equipe'){
+      if(!atual.tokenEquipe) novo.tokenEquipe = gerar();
+    }else if(tipoNecessario === 'cliente'){
+      if(!atual.token) novo.token = gerar();
+    }else{
+      if(!atual.token) novo.token = gerar();
+      if(!atual.tokenEquipe) novo.tokenEquipe = gerar();
+    }
     if(Object.keys(novo).length){
       novo.nome = atual.nome || nomeDeSlugSeguro(slug);
       await setDoc(ref, novo, { merge:true });
@@ -21237,24 +21256,33 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
 
   window.copiarLinkCalendarioEquipe = async function(slug, btn){
-    const t = await garantirTokensDoCliente(slug);
-    const link = 'https://get-started.agency/calendario.html?cliente=' + slug + '&e=' + t.tokenEquipe;
-    navigator.clipboard.writeText(link);
-    if(btn){ const o = btn.textContent; btn.textContent = '✓ Copiado'; setTimeout(()=>btn.textContent=o, 2000); }
-    mostrarToast('Link de EDIÇÃO copiado — esse é interno, não manda pro cliente.');
+    try{
+      const t = await garantirTokensDoCliente(slug, 'equipe');
+      if(!t.tokenEquipe) throw new Error('Token interno não disponível.');
+      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slug) + '&e=' + encodeURIComponent(t.tokenEquipe);
+      await navigator.clipboard.writeText(link);
+      if(btn){ const o = btn.textContent; btn.textContent = '✓ Copiado'; setTimeout(()=>btn.textContent=o, 2000); }
+      mostrarToast('Link de EDIÇÃO copiado — esse é interno, não manda pro cliente.');
+    }catch(e){
+      console.error('Falha ao preparar link interno do calendário:',e);
+      mostrarToast('Não consegui preparar o link de edição: '+(e?.message||'tente novamente.'), 'erro');
+    }
   };
 
   window.copiarLinkCalendarioDireto = async function(slug, btn){
-    const t = await garantirTokensDoCliente(slug);
-    const link = 'https://get-started.agency/calendario.html?cliente=' + slug + '&t=' + t.token;
-    navigator.clipboard.writeText(link).then(()=>{
-      const original = btn.textContent;
-      btn.textContent = '✓ Copiado!';
+    try{
+      const t = await garantirTokensDoCliente(slug, 'cliente');
+      if(!t.token) throw new Error('Token do cliente não disponível.');
+      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slug) + '&t=' + encodeURIComponent(t.token);
+      await navigator.clipboard.writeText(link);
+      const original = btn?.textContent || '';
+      if(btn) btn.textContent = '✓ Copiado!';
       mostrarToast('Link do cliente copiado — ele lê, comenta e aprova, mas não edita.');
-      setTimeout(()=>{ btn.textContent = original; }, 2000);
-    }).catch(()=>{
-      mostrarToast('Não consegui copiar — copia manualmente o link.', 'erro');
-    });
+      if(btn) setTimeout(()=>{ btn.textContent = original; }, 2000);
+    }catch(e){
+      console.error('Falha ao preparar link do cliente:',e);
+      mostrarToast('Não consegui preparar o link do cliente: '+(e?.message||'tente novamente.'), 'erro');
+    }
   };
 
   window.abrirLinkCliente = function(tipo, el){

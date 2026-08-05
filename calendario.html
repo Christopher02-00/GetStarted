@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-<meta name="gs-build" content="2026-08-05-auth-google-regras-v20">
+<meta name="gs-build" content="2026-08-05-links-calendario-v21">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -182,12 +182,51 @@
       '<div style="font-size:13.5px;line-height:1.6;opacity:.8;">' + texto + '</div></div></div>';
   }
 
+  function barrarFalhaFirebase(erro){
+    const codigo=String(erro?.code||'');
+    if(codigo.includes('resource-exhausted')){
+      barrar('Sistema temporariamente no limite','O link está correto, mas o Firebase atingiu a cota diária. Tente novamente após a renovação da cota ou avise a Get Started.');
+    }else if(codigo.includes('unavailable') || codigo.includes('deadline-exceeded') || codigo.includes('network-request-failed')){
+      barrar('Conexão temporariamente indisponível','O link está correto, mas não consegui alcançar o banco agora. Confira a internet e tente novamente em instantes.');
+    }else{
+      barrar('Link inválido ou expirado','Essa chave não confere. Pede um link novo pra sua agência.');
+    }
+  }
+
+  async function abrirSessaoClienteComRetry(ref,dados){
+    let ultimoErro=null;
+    for(let tentativa=0;tentativa<2;tentativa++){
+      try{ await setDoc(ref,dados); return; }
+      catch(e){
+        ultimoErro=e;
+        const codigo=String(e?.code||'');
+        if(!codigo.includes('unavailable') && !codigo.includes('deadline-exceeded') && !codigo.includes('network-request-failed')) break;
+        await new Promise(resolve=>setTimeout(resolve,700));
+      }
+    }
+    throw ultimoErro;
+  }
+
+  async function autenticarCalendarioComRetry(){
+    let ultimoErro=null;
+    for(let tentativa=0;tentativa<3;tentativa++){
+      try{ await signInAnonymously(auth); return; }
+      catch(e){
+        ultimoErro=e;
+        const codigo=String(e?.code||'');
+        if(!codigo.includes('network-request-failed') && !codigo.includes('unavailable')) break;
+        await new Promise(resolve=>setTimeout(resolve,600*(tentativa+1)));
+      }
+    }
+    throw ultimoErro;
+  }
+
   window.__modoCal = 'bloqueado';
   window.__calPronto = (async () => {
-    try{ await signInAnonymously(auth); }
+    try{ await autenticarCalendarioComRetry(); }
     catch(e){
       console.error('Falha na autenticação:', e);
-      barrar('Não consegui conectar com segurança', 'O login anônimo do Firebase precisa estar ativado no console. Avisa a Get Started.');
+      barrarFalhaFirebase(e);
       return false;
     }
     if(!clienteId){ barrar('Link incompleto', 'Esse link não diz de qual cliente é o calendário. Pede o link certo pra sua agência.'); return false; }
@@ -197,23 +236,23 @@
     }
     const tokenSolicitado = tokenCliente || tokenEquipe;
     try{
-      await setDoc(doc(db,'sessoes_cliente', auth.currentUser.uid), {cliente:clienteId,token:tokenSolicitado,abertaEm:new Date().toISOString(),modo:'validando'});
+      await abrirSessaoClienteComRetry(doc(db,'sessoes_cliente', auth.currentUser.uid), {
+        cliente:clienteId,token:tokenSolicitado,abertaEm:new Date().toISOString(),modo:tokenEquipe?'equipe':'cliente'
+      });
     }catch(e){
       console.error('Falha ao validar a sessão do calendário:',e);
-      barrar('Link inválido ou expirado','Essa chave não confere. Pede um link novo pra sua agência.');
+      barrarFalhaFirebase(e);
       return false;
     }
     let acesso = null;
     try{ const sn = await getDoc(doc(db,'clientes_acesso', clienteId)); acesso = sn.exists() ? sn.data() : null; }
-    catch(e){ console.error('Falha ao conferir acesso:', e); }
+    catch(e){ console.error('Falha ao conferir acesso:', e); barrarFalhaFirebase(e); return false; }
     if(!acesso){ barrar('Cliente não encontrado', 'Não achei esse cliente. Confere o link com a Get Started.'); return false; }
 
     if(tokenEquipe && acesso.tokenEquipe && tokenEquipe === acesso.tokenEquipe) window.__modoCal = 'equipe';
     else if(tokenCliente && acesso.ativo !== false && acesso.token && tokenCliente === acesso.token) window.__modoCal = 'cliente';
     else { barrar('Link inválido ou expirado', 'Essa chave não confere. Pede um link novo pra sua agência.'); return false; }
 
-    try{ await setDoc(doc(db,'sessoes_cliente', auth.currentUser.uid), { cliente: clienteId, token:tokenSolicitado, abertaEm: new Date().toISOString(), modo: window.__modoCal }); }
-    catch(e){ console.error('Falha ao abrir sessão:', e); }
     return true;
   })();
 

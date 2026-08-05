@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-<meta name="gs-build" content="2026-08-05-links-calendario-v21">
+<meta name="gs-build" content="2026-08-05-auditoria-operacional-v22">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -435,6 +435,23 @@ function nomeDoSlug(slug){
 }
 const MESES_PT=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function mesAtualTexto(){var h=new Date();return MESES_PT[h.getMonth()]+' '+h.getFullYear();}
+function mesRefDoTexto(valor){
+  var bruto=String(valor||'').trim().toLowerCase();
+  var t=bruto.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  var iso=t.match(/\b(20\d{2})[-\/.](0?[1-9]|1[0-2])\b/);
+  if(iso)return {mes:parseInt(iso[2],10)-1,ano:parseInt(iso[1],10)};
+  var brasileiro=t.match(/\b(0?[1-9]|1[0-2])[-\/](20\d{2})\b/);
+  if(brasileiro)return {mes:parseInt(brasileiro[1],10)-1,ano:parseInt(brasileiro[2],10)};
+  var i=-1;
+  for(var k=0;k<MESES_PT.length;k++){
+    var nome=MESES_PT[k].normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    if(new RegExp('(?:^|[^a-z])'+nome+'(?:$|[^a-z])').test(t) ||
+       new RegExp('(?:^|[^a-z])'+nome.slice(0,3)+'(?:$|[^a-z])').test(t)){i=k;break;}
+  }
+  if(i<0)return null;
+  var a=t.match(/\b(20\d{2})\b/);
+  return {mes:i,ano:a?parseInt(a[1],10):new Date().getFullYear()};
+}
 // Le o campo "Mês" (texto livre, ex.: "Julho 2026") e devolve o mes real.
 function mesRef(){
       /* ===== 04/08/2026 — A GRADE COMECAVA SEMPRE NO DOMINGO =====
@@ -449,19 +466,20 @@ function mesRef(){
          Errar calado e pior que nao desenhar: ninguem tem como perceber.
          Agora o nome do mes vale em qualquer posicao e, sem ano escrito,
          usa o ano corrente em vez de desistir. */
-      var t=(data.month||'').trim().toLowerCase();
-      var i=-1;
-      for(var k=0;k<MESES_PT.length;k++){
-        if(t.indexOf(MESES_PT[k].toLowerCase())>=0){ i=k; break; }
-      }
-      if(i<0){ try{ console.warn('Nao consegui ler o mes deste calendario:', data.month); }catch(e){} return null; }
-      var a=t.match(/(\d{4})/);
-      return {mes:i, ano: a ? parseInt(a[1],10) : new Date().getFullYear()};
+      var r=mesRefDoTexto(data.month);
+      if(!r){ try{ console.warn('Nao consegui ler o mes deste calendario:', data.month); }catch(e){} }
+      return r;
     }
-// Em que coluna cai o dia 1 (0=Dom). Antes era fixo em 5 ("agosto 2026").
-function offsetDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes,1).getDay():0;}
-// Quantos dias o mes tem de verdade. Antes era sempre 31.
-function diasDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes+1,0).getDate():31;}
+function referenciaGradeMes(){
+  if(/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mesVisivel||''))){
+    var p=mesVisivel.split('-').map(Number);return {ano:p[0],mes:p[1]-1};
+  }
+  return mesRef();
+}
+// Em que coluna cai o dia 1 (0=Dom), sempre do mês que está VISÍVEL.
+function offsetDoMes(){var r=referenciaGradeMes();return r?new Date(r.ano,r.mes,1).getDay():0;}
+// Quantos dias o mês visível tem de verdade (inclui fevereiro bissexto).
+function diasDoMes(){var r=referenciaGradeMes();return r?new Date(r.ano,r.mes+1,0).getDate():31;}
 
 /* ===== VÁRIOS MESES NO MESMO CALENDÁRIO — 29/07/2026 ================
    O pedido do Chris: a agência trabalha um mês adiantado. Em agosto a
@@ -486,14 +504,8 @@ function diasDoMes(){var r=mesRef();return r?new Date(r.ano,r.mes+1,0).getDate()
 
    Uma fonte só, aditivo, reversível. */
 function mesDoTexto(txt){
-  const t=(txt||'').trim().toLowerCase();
-  const nomes=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
-  const semAcento=x=>x.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-  const textoSemAcento=semAcento(t);
-  const i=nomes.findIndex(n=>textoSemAcento.includes(semAcento(n)));
-  const ano=(t.match(/(20\d{2})/)||[])[1];
-  if(i<0||!ano) return '';
-  return ano+'-'+String(i+1).padStart(2,'0');
+  const r=mesRefDoTexto(txt);
+  return r ? r.ano+'-'+String(r.mes+1).padStart(2,'0') : '';
 }
 function textoDoMes(mes){
   if(!mes) return '';
@@ -2070,13 +2082,15 @@ function renderGrid(){
 
 function renderWeek(){
   const wrap=document.getElementById('viewWeek');
-  const ultimo=diasDoMes();
-  const weeks=[[1,7],[8,14],[15,21],[22,ultimo]];
-  const wl=['Semana 1','Semana 2','Semana 3','Semana 4'];
+  const ultimo=diasDoMes(),offset=offsetDoMes();
+  const qtdSemanas=Math.ceil((offset+ultimo)/7);
+  const weeks=Array.from({length:qtdSemanas},(_,i)=>[
+    Math.max(1,1+i*7-offset),Math.min(ultimo,(i+1)*7-offset)
+  ]).filter(w=>w[0]<=w[1]);
   let html='';
   weeks.forEach((w,wi)=>{
     const its=itensDoMes(mesVisivel).filter(i=>i.day>=w[0]&&i.day<=w[1]).sort((a,b)=>a.day-b.day);
-    html+='<div class="weekblock"><div class="weekhead"><div class="wn">'+wl[wi]+'</div><div class="wl">dias '+w[0]+'–'+w[1]+' · '+its.length+' conteúdo(s)</div></div>';
+    html+='<div class="weekblock"><div class="weekhead"><div class="wn">Semana '+(wi+1)+'</div><div class="wl">dias '+w[0]+'–'+w[1]+' · '+its.length+' conteúdo(s)</div></div>';
     if(!its.length) html+='<div style="color:var(--muted);font-size:11px;padding:6px 2px;">Sem conteúdo — clique numa data na grade pra adicionar.</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
       const hasScript=(it.desc||'').trim().length>0;
@@ -2125,7 +2139,7 @@ function quickUnpost(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].po
 
 // MODAL
 function openModal(day){if(exigirRetiradaAntesDeEditar())return;editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
-  document.getElementById('mDay').value=day;document.getElementById('mName').value='';document.getElementById('mDesc').value='';
+  document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=day;document.getElementById('mName').value='';document.getElementById('mDesc').value='';
   document.getElementById('mRef').value='';
   const mo=document.getElementById('mObs'); if(mo) mo.value='';
   document.getElementById('mLegenda').value='';
@@ -2136,7 +2150,7 @@ function openModal(day){if(exigirRetiradaAntesDeEditar())return;editIdx=null;doc
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
 function openEdit(i){if(exigirRetiradaAntesDeEditar())return;editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent='Editar conteúdo';
-  document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
+  document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
   document.getElementById('mLegenda').value=it.legenda||'';
   const moE=document.getElementById('mObs'); if(moE) moE.value=it.obs||'';
   /* 03/08/2026 — o campo do cliente só aparece pra ele, e já mostra o que
@@ -2188,7 +2202,10 @@ function openEdit(i){if(exigirRetiradaAntesDeEditar())return;editIdx=i;const it=
 function closeModal(){document.getElementById('overlay').classList.remove('show');}
 function saveItem(){
   if(exigirRetiradaAntesDeEditar()) return;
-  const it={day:parseInt(document.getElementById('mDay').value)||1,name:document.getElementById('mName').value||'Sem título',
+  const diaEscolhido=parseInt(document.getElementById('mDay').value)||1;
+  const limiteDias=diasDoMes();
+  if(diaEscolhido<1||diaEscolhido>limiteDias){avisarTela('Esse mês termina no dia '+limiteDias+'. Escolha uma data válida.');return;}
+  const it={day:diaEscolhido,name:document.getElementById('mName').value||'Sem título',
     desc:document.getElementById('mDesc').value,legenda:document.getElementById('mLegenda').value,ref:document.getElementById('mRef').value,
     obs:(document.getElementById('mObs')?.value||''),
     /* Carimba o mês que está aberto. Sem isso, um conteúdo de setembro
@@ -2247,7 +2264,7 @@ async function toggleApr(){
 }
 
 function stageLabel(s){return s==='topo'?'Topo':s==='meio'?'Meio':'Fundo';}
-function shortMonth(){return (data.month||'').slice(0,3).toUpperCase();}
+function shortMonth(){const r=referenciaGradeMes();return r?MESES_PT[r.mes].slice(0,3).toUpperCase():(data.month||'').slice(0,3).toUpperCase();}
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 load();

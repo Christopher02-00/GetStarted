@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-prazos-demandas-sem-atraso-residual-v12">
+<meta name="gs-build" content="2026-08-05-calendarios-mensais-unificados-v13">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -4962,7 +4962,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     videosSnap.forEach(d => { const v=d.data(); if(v.cliente===clienteSlug) eventos.push({ data: v.data, tipo:'video', icone:'🎬', texto: v.titulo + ' — ' + (v.status==='finalizado'?'finalizado (entrega direta)':v.status==='aprovado'?'aprovado':v.status==='aguardando_aprovacao'?'aguardando aprovação':v.status==='correcao'?'precisa ajuste':'em edição') + ' (' + v.editorAtribuido + ')' }); });
     agSnap.forEach(d => { const a=d.data(); if(a.cliente===clienteSlug) eventos.push({ data: a.data, tipo:'gravacao', icone:'🎥', texto: 'Gravação ' + a.status + (a.qtdVideosRealizados?' — '+a.qtdVideosRealizados+' vídeo(s)':'') }); });
     avalSnap.forEach(d => { const av=d.data(); if(av.cliente===clienteSlug) eventos.push({ data: (av.criadoEm?.seconds ? new Date(av.criadoEm.seconds*1000).toISOString().slice(0,10) : ''), tipo:'avaliacao', icone:'⭐', texto: 'Avaliação: ' + '⭐'.repeat(av.nota) + (av.comentario ? ' — "'+av.comentario+'"' : '') }); });
-    demSnap.forEach(d => { const dem=d.data(); if(dem.titulo?.includes(clienteNome)) eventos.push({ data: dem.prazoData, tipo:'demanda', icone: dem.titulo.includes('Cápsula')?'🥶':'📋', texto: dem.titulo + ' (' + dem.status + ')' }); });
+    demSnap.forEach(d => { const dem=d.data(); if(demandaOperacionalVisivel(dem) && dem.titulo?.includes(clienteNome)) eventos.push({ data: dem.prazoData, tipo:'demanda', icone: dem.titulo.includes('Cápsula')?'🥶':'📋', texto: dem.titulo + ' (' + dem.status + ')' }); });
 
     eventos.sort((a,b) => (b.data||'').localeCompare(a.data||''));
 
@@ -6538,7 +6538,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const snap = await getDocs(collection(db,'demandas'));
       const alvo = [];
       snap.forEach(d => { const v = d.data();
-        if(v.agendamentoId === id && !['aprovada','cancelada'].includes(v.status)) alvo.push(d.id); });
+        if(demandaOperacionalVisivel(v) && v.agendamentoId === id && !['aprovada','cancelada'].includes(v.status)) alvo.push(d.id); });
       for(const dId of alvo){
         await updateDoc(doc(db,'demandas', dId), {
           status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(),
@@ -7068,6 +7068,47 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return ('fixa_'+String(chave||'sem-chave').replace(/[^a-zA-Z0-9_-]+/g,'_')).slice(0,300);
   }
 
+  function normalizarNomeFuncaoFixa(valor){
+    return String(valor||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  }
+
+  function ehTipoCalendarioIndividualLegado(tipo){
+    const nome = normalizarNomeFuncaoFixa(tipo?.nome);
+    return /^calendario\b/.test(nome) && tipo?.modo==='unica' && String(tipo?.responsavel||'')==='Gabrielle';
+  }
+  window.ehTipoCalendarioIndividualLegado = ehTipoCalendarioIndividualLegado;
+
+  function clienteDoTipoCalendarioLegado(tipo, demanda){
+    const nomeTipo = normalizarNomeFuncaoFixa(tipo?.nome).replace(/^calendario\s*/, '').trim();
+    const slugDireto = String(demanda?.cliente||'').trim();
+    return CLIENTES_LISTA.find(c => c.slug===slugDireto) ||
+      CLIENTES_LISTA.find(c => normalizarNomeFuncaoFixa(c.nome)===nomeTipo) || null;
+  }
+
+  function consolidarChecklistCalendariosV13(clientesFixos, padroesAtuais, legadasAbertas, tiposPorId){
+    const porSlug = new Map((clientesFixos||[]).map(c=>[c.slug,{slug:c.slug,nome:c.nome,feito:false,data:'',obs:''}]));
+    (padroesAtuais||[]).forEach(demanda=>{
+      (Array.isArray(demanda.checklistClientes)?demanda.checklistClientes:[]).forEach(item=>{
+        const atual=porSlug.get(item.slug);
+        if(!atual || !item.feito) return;
+        atual.feito=true; atual.data=item.data||atual.data;
+        atual.obs=item.obs||atual.obs||'Progresso preservado na unificação V13';
+      });
+    });
+    (legadasAbertas||[]).forEach(demanda=>{
+      const tipoId = demanda.tipoFuncaoFixaId || String(demanda.tipoFuncaoFixa||'').replace(/^custom_/,'');
+      const cliente = clienteDoTipoCalendarioLegado(tiposPorId.get(tipoId),demanda);
+      if(!cliente || !demandaFixaTemProgresso(demanda)) return;
+      const item=porSlug.get(cliente.slug);
+      if(!item) return;
+      item.feito=true;
+      item.data=item.data||String(demanda.concluidoEm||demanda.atualizadoEm||'').slice(0,10);
+      item.obs=item.obs||'Progresso importado da antiga demanda individual';
+    });
+    return (clientesFixos||[]).map(c=>porSlug.get(c.slug));
+  }
+  window.consolidarChecklistCalendariosV13 = consolidarChecklistCalendariosV13;
+
   function mesDaDemandaFixa(demanda){
     const mesRef = String(demanda?.mesRef||'');
     if(/^\d{4}-\d{2}$/.test(mesRef)) return mesRef;
@@ -7165,7 +7206,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       getDocs(collection(db,'demandas'))
     ]);
     const todosTipos = [];
-    tiposSnap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false) todosTipos.push({id:d.id,...v}); });
+    tiposSnap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false && !ehTipoCalendarioIndividualLegado(v)) todosTipos.push({id:d.id,...v}); });
     const tipos = todosTipos.filter(t=>!opts.tipoId || t.id===opts.tipoId);
     const todasDemandas = demandasSnap.docs.map(d=>({id:d.id,...d.data()}));
     const limpeza = selecionarLimpezaFuncoesFixas(todasDemandas, mesAtual);
@@ -7315,6 +7356,92 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return {corrigidas};
   }
 
+  async function migrarCalendariosParaDemandaMensalUnicaV13(){
+    /* O banco chegou a ter um tipo customizado "Calendário CLIENTE" para
+       cada cliente, além da Função Fixa padrão com checklist. A V11
+       deduplicava documentos da MESMA configuração, mas não sabia que as
+       22 configurações individuais eram cópias arquiteturais da demanda
+       mensal única. Esta migração consolida progresso antes do soft-delete. */
+    const marcaRef = doc(db,'sistema','migracao_calendarios_mensais_v13');
+    const marca = await getDoc(marcaRef);
+    if(marca.exists() && marca.data().concluida===true) return {jaExecutada:true};
+
+    const mesAtual = hojeLocal().slice(0,7);
+    const [ano,mes] = mesAtual.split('-').map(Number);
+    await gerarFuncoesFixasDoMes(ano,mes,mesAtual);
+
+    const [tiposSnap,demandasSnap] = await Promise.all([
+      getDocs(collection(db,'tipos_tarefa_fixa')),
+      getDocs(collection(db,'demandas'))
+    ]);
+    const tiposLegados = [];
+    tiposSnap.forEach(registro => {
+      const dados=registro.data();
+      if(ehTipoCalendarioIndividualLegado(dados)) tiposLegados.push({id:registro.id,...dados});
+    });
+    const tiposPorId = new Map(tiposLegados.map(t=>[t.id,t]));
+    const idsTiposLegados = new Set(tiposLegados.map(t=>t.id));
+    const demandas = demandasSnap.docs.map(registro=>({id:registro.id,...registro.data()}));
+    const abertas = demanda => !demanda.excluido && !['aprovada','cancelada'].includes(String(demanda.status||''));
+    const ehCalendarioCustomLegado = demanda => {
+      const tipoId = demanda.tipoFuncaoFixaId || String(demanda.tipoFuncaoFixa||'').replace(/^custom_/,'');
+      const nome = normalizarNomeFuncaoFixa(demanda.tipoFuncaoFixaNome||demanda.titulo);
+      return String(demanda.tipoFuncaoFixa||'').startsWith('custom_') &&
+        (idsTiposLegados.has(tipoId) || /^calendario\b/.test(nome));
+    };
+
+    const padroesAtuais = demandas.filter(d=>abertas(d) && d.tipoFuncaoFixa==='calendario' && mesDaDemandaFixa(d)===mesAtual);
+    padroesAtuais.sort((a,b)=>{
+      const idPreferido = idDeterministicoFuncaoFixa('padrao|calendario|'+mesAtual);
+      const deterministico = Number(b.id===idPreferido)-Number(a.id===idPreferido);
+      const tamanho = (b.checklistClientes?.length||0)-(a.checklistClientes?.length||0);
+      return deterministico || tamanho || instanteCriacaoDemandaFixa(a)-instanteCriacaoDemandaFixa(b);
+    });
+    const principal = padroesAtuais[0];
+    if(!principal) throw new Error('Não foi possível criar/localizar a demanda mensal única de calendários.');
+
+    const clientesFixos = CLIENTES_LISTA.filter(c=>!ehClienteSoEdicao(c.slug));
+    const legadasAbertas = demandas.filter(d=>abertas(d) && ehCalendarioCustomLegado(d));
+    const legadasDaCompetencia = legadasAbertas.filter(d=>mesDaDemandaFixa(d)===mesAtual);
+    const checklistConsolidado = consolidarChecklistCalendariosV13(clientesFixos,padroesAtuais,legadasDaCompetencia,tiposPorId);
+    await updateDoc(doc(db,'demandas',principal.id),{
+      titulo:'📅 Calendários do mês — '+mesAtual,
+      checklistClientes:checklistConsolidado, mesRef:mesAtual,
+      tipoFuncaoFixa:'calendario', excluido:false,
+      unificadoV13:true, unificadoEm:serverTimestamp(), unificadoPor:usuarioAtual||'sistema'
+    });
+
+    let demandasAposentadas=0;
+    for(const demanda of demandas){
+      if(!abertas(demanda)) continue;
+      const ehOutraPadrao = demanda.tipoFuncaoFixa==='calendario' && demanda.id!==principal.id;
+      if(!ehOutraPadrao && !ehCalendarioCustomLegado(demanda)) continue;
+      await updateDoc(doc(db,'demandas',demanda.id),{
+        excluido:true, excluidoPor:'sistema — unificação mensal V13', excluidoEm:new Date().toISOString(),
+        motivoExclusao:'Substituída pela demanda mensal única de calendários com checklist; dados anteriores preservados'
+      });
+      demandasAposentadas++;
+    }
+
+    let tiposAposentados=0;
+    for(const tipo of tiposLegados){
+      if(tipo.excluido && tipo.ativo===false) continue;
+      await updateDoc(doc(db,'tipos_tarefa_fixa',tipo.id),{
+        excluido:true, ativo:false, excluidoPor:'sistema — unificação mensal V13', excluidoEm:new Date().toISOString(),
+        motivoExclusao:'Calendários agora são uma única Função Fixa mensal com checklist de clientes'
+      });
+      tiposAposentados++;
+    }
+    await setDoc(marcaRef,{
+      concluida:true, executadaEm:serverTimestamp(), executadaPor:usuarioAtual||'sistema',
+      mesRef:mesAtual, demandaPrincipalId:principal.id,
+      clientesNoChecklist:checklistConsolidado.length, demandasAposentadas, tiposAposentados
+    },{merge:true});
+    registrarLogAutomacao('calendarios_mensais_unificados_v13',principal.id,
+      tiposAposentados+' tipo(s), '+demandasAposentadas+' demanda(s), '+checklistConsolidado.length+' cliente(s) no checklist');
+    return {demandaPrincipalId:principal.id,clientesNoChecklist:checklistConsolidado.length,demandasAposentadas,tiposAposentados};
+  }
+
   async function abrirFuncoesFixas(){
     const hoje = new Date();
     const ano = hoje.getFullYear(), mes = hoje.getMonth()+1;
@@ -7406,11 +7533,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       emailEnviado:mesChave!==hojeLocal().slice(0,7), criadoEm: serverTimestamp()
     });
 
-    // Calendarios do proximo mes: continuam com folga antes do fim do mes
+    // Calendários da competência atual: uma demanda nasce no dia 1 e o
+    // prazo continua com folga antes do fim do próprio mês.
     const prazoCalendario = diasGabi[diasGabi.length-1] || dataParaStr(dataLimiteGabi);
     if(!fixasPadraoExistentes.has('calendario')) await setDoc(doc(db,'demandas',idDeterministicoFuncaoFixa('padrao|calendario|'+mesChave)), {
-      titulo: '📅 Calendários do próximo mês — ' + mesChave,
-      descricao: 'Função fixa da Gabrielle. O calendário do mês que vem precisa estar pronto e aprovado para CADA cliente da lista.\n\n'
+      titulo: '📅 Calendários do mês — ' + mesChave,
+      descricao: 'Função fixa mensal da Gabrielle. No dia 1 nasce uma única demanda com TODOS os clientes; cada calendário desta competência deve ficar pronto e aprovado dentro do prazo.\n\n'
         + 'COMO FAZER\n'
         + '1. Menu lateral → Calendários\n'
         + '2. Busca o cliente e monta o calendário ali dentro\n'
@@ -8696,7 +8824,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let n = 0;
     for(const dd of snap.docs){
       const d = dd.data();
-      if(d.status !== 'pendente') continue;
+      if(!demandaOperacionalVisivel(d) || d.status !== 'pendente') continue;
       const e = d.esperandoCliente;
       if(!e || !e.desde) continue;
       const dias = Math.max(0, Math.round(
@@ -9395,7 +9523,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function gerarHtmlTiposTarefaFixa(){
     const snap = await getDocs(collection(db,'tipos_tarefa_fixa'));
-    const tipos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false) tipos.push({id:d.id, ...v}); });
+    const tipos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false && !ehTipoCalendarioIndividualLegado(v)) tipos.push({id:d.id, ...v}); });
 
     let html = `<div class="card">
       <h2>⚙️ Tipos de tarefa fixa (recorrentes todo mês)</h2>
@@ -9441,6 +9569,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const diaFixo = parseInt(document.getElementById('novoTipoDia').value) || 5;
     const descricao = document.getElementById('novoTipoDescricao').value.trim();
     if(!nome){ mostrarToast('Dá um nome pra tarefa.', 'erro'); return; }
+    if(/^calendario\b/.test(normalizarNomeFuncaoFixa(nome))){
+      mostrarToast('Calendários já são uma única Função Fixa mensal com checklist de todos os clientes. Não crie um tipo por cliente.', 'erro'); return;
+    }
     const ref = await addDoc(collection(db,'tipos_tarefa_fixa'), { nome, descricao, responsavel, modo, diaFixo, ativo:true, excluido:false, criadoPor:'Amanda', criadoEm: serverTimestamp() });
     const resultado = await sincronizarAutomacaoFuncoesFixas({tipoId:ref.id});
     mostrarToast('Função fixa criada e '+resultado.criadas+' demanda(s) do mês atual distribuída(s).');
@@ -9455,6 +9586,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const modo=document.getElementById('tipoModo_'+id)?.value||'unica';
     const diaFixo=Math.min(28,Math.max(1,parseInt(document.getElementById('tipoDia_'+id)?.value)||5));
     if(!nome||!responsavel){ mostrarToast('Preenche nome e responsável.', 'erro'); return; }
+    if(/^calendario\b/.test(normalizarNomeFuncaoFixa(nome))){
+      mostrarToast('Calendários são controlados pela demanda mensal única. Esse nome não pode virar uma segunda automação.', 'erro'); return;
+    }
     await updateDoc(doc(db,'tipos_tarefa_fixa',id), {nome,descricao,responsavel,modo,diaFixo,atualizadoPor:'Amanda',atualizadoEm:serverTimestamp()});
     const resultado=await sincronizarAutomacaoFuncoesFixas({tipoId:id});
     mostrarToast('Função atualizada: '+resultado.atualizadas+' demanda(s) ajustada(s), '+resultado.criadas+' criada(s).');
@@ -12583,7 +12717,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       getDocs(collection(db,'videos_producao')),
       getDocs(collection(db,'checklist_execucoes'))
     ]);
-    const demandas = []; demandasSnap.forEach(d => demandas.push(d.data()));
+    const demandas = []; demandasSnap.forEach(d => { const v=d.data(); if(demandaOperacionalVisivel(v)) demandas.push(v); });
     const videos = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido) videos.push(v); });
     const execucoesMap = {}; checklistSnap.forEach(d => { execucoesMap[d.id] = d.data(); });
 
@@ -12930,6 +13064,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   let todasDemandas = [];
+  function demandaOperacionalVisivel(demanda){
+    return !!demanda && demanda.excluido !== true;
+  }
+  window.demandaOperacionalVisivel = demandaOperacionalVisivel;
   let usuarioAtual = '';
 
   /* ===== FASE 2 — TEMPO REAL (onSnapshot) =====
@@ -13390,7 +13528,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // GABRIELLE
     { categoria:'gabrielle', chaves:['escrever legenda'], pergunta:'Onde escrevo a legenda de um vídeo aprovado?', resposta:'Postagens → aba "Escrever Legenda". Só aparecem ali os vídeos que já passaram por toda aprovação, inclusive a confirmação do cliente.' },
     { categoria:'gabrielle', chaves:['referencia','5 referencias'], pergunta:'Quantas referências preciso adicionar por dia?', resposta:'Pelo menos 5 novas por dia — é item crítico do seu checklist, então precisa de prova antes de marcar.' },
-    { categoria:'gabrielle', chaves:['calendario editorial','prazo calendario'], pergunta:'Quando preciso entregar o calendário do próximo mês?', resposta:'O prazo é gerado automaticamente pelas Funções Fixas, respeitando dias úteis. Você vê o prazo exato em Funções Fixas, na sua lista de demandas.' },
+    { categoria:'gabrielle', chaves:['calendario editorial','prazo calendario'], pergunta:'Quando preciso entregar os calendários do mês?', resposta:'No dia 1 nasce uma única demanda mensal com todos os clientes em checklist e prazo calculado em dias úteis. Você marca cada cliente dentro dela; não existe uma demanda separada por cliente.' },
 
     // EDITORES
     { categoria:'editor', chaves:['subir video','enviar video editado','link do drive'], pergunta:'Como envio o vídeo depois de editar?', resposta:'Vídeos em Edição → seu vídeo → cola o link do Drive e envia pelo sistema. Não manda por WhatsApp — o sistema só sabe que está pronto se for por ali.' },
@@ -15071,7 +15209,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           getDocs(query(collection(db,'demandas'), where('paraQuem','==',usuarioAtual)))
         ]);
     const porId = new Map();
-    snaps.forEach(snap => snap.forEach(d => porId.set(d.id, {id:d.id, ...d.data()})));
+    snaps.forEach(snap => snap.forEach(d => {
+      const dados = d.data();
+      if(demandaOperacionalVisivel(dados)) porId.set(d.id, {id:d.id, ...dados});
+    }));
     todasDemandas = Array.from(porId.values());
     todasDemandas.sort((a,b) => String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
     await carregarAusencias();
@@ -17567,7 +17708,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   function familiaDemanda(d){
     const t = d.titulo || '';
     if(d.tipoFuncaoFixa === 'reuniao') return { chave:'fam_reunioes', icone:'📅', rotulo:'Reuniões mensais a agendar', dica:'Uma demanda mensal. Marque cada cliente no checklist interno.' };
-    if(d.tipoFuncaoFixa === 'calendario') return { chave:'fam_calendarios', icone:'🗓️', rotulo:'Calendários do próximo mês', dica:'Uma demanda mensal. Marque cada cliente no checklist interno.' };
+    if(d.tipoFuncaoFixa === 'calendario') return { chave:'fam_calendarios', icone:'🗓️', rotulo:'Calendários do mês', dica:'Uma demanda mensal. Marque cada cliente no checklist interno.' };
     if(typeof d.tipoFuncaoFixa === 'string' && d.tipoFuncaoFixa.startsWith('custom_')) return { chave:'fam_'+d.tipoFuncaoFixa, icone:'🔁', rotulo:(d.tipoFuncaoFixaNome || 'Tarefa fixa recorrente'), dica:'Tarefa fixa recorrente distribuída por cliente.' };
     if(/^✍️\s*(Escrever legenda|Legenda pendente)/.test(t)) return { chave:'fam_legendas', icone:'✍️', rotulo:'Legendas a escrever', dica:'Uma por conteúdo aprovado. Escreva e dê baixa em cada uma.' };
     if(t.startsWith('📅 Agendar') || t.startsWith('⚠️ Postagem sem agendar')) return { chave:'fam_agendarPost', icone:'📅', rotulo:'Postagens a agendar', dica:'Legenda pronta esperando você agendar a data.' };
@@ -17983,6 +18124,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
          badge 7, tela 2 — e o Chris entrava e não achava os 5 restantes,
          porque eram da Amanda. Agora as duas usam a mesma regra. */
       snap.forEach(d => { const v={id:d.id, ...d.data()};
+        if(!demandaOperacionalVisivel(v)) return;
         // pedido de prazo e decisao da Amanda — nao conta pro Chris
         if(v.prazoSolicitado){ if(ehAmanda) n++; return; }
         if(v.status !== 'concluida_aguardando_aprovacao') return;
@@ -18715,10 +18857,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       getDocs(query(collection(db,'demandas'), where('origem','==','cliente'))),
       getDocs(collection(db,'demandas_cliente'))
     ]);
-    const semVinculo = []; demSnap.forEach(d => { const x=d.data(); if(!x.demandaClienteId) semVinculo.push({id:d.id, ...x}); });
+    const semVinculo = []; demSnap.forEach(d => { const x=d.data(); if(demandaOperacionalVisivel(x) && !x.demandaClienteId) semVinculo.push({id:d.id, ...x}); });
     const espelhos = []; demClienteSnap.forEach(d => espelhos.push({id:d.id, ...d.data()}));
     const espelhosJaUsados = new Set();
-    demSnap.forEach(d => { if(d.data().demandaClienteId) espelhosJaUsados.add(d.data().demandaClienteId); });
+    demSnap.forEach(d => { const x=d.data(); if(demandaOperacionalVisivel(x) && x.demandaClienteId) espelhosJaUsados.add(x.demandaClienteId); });
 
     let vinculadas = 0;
     for(const d of semVinculo){
@@ -19005,7 +19147,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       responsabilidades: [
         "Criar roteiros na Central de Roteiros",
         "Escrever a legenda dos conteúdos já aprovados",
-        "Função fixa mensal: entregar o calendário do próximo mês de cada cliente",
+        "Função fixa mensal: concluir a demanda única de calendários do mês, marcando cada cliente no checklist",
         "Adicionar pelo menos 5 referências novas por dia (item crítico do checklist)",
         "Criar e planejar campanhas",
         "Gerar o relatório mensal de cada cliente pras reuniões"
@@ -20456,6 +20598,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       let fechadas = 0;
       for(const dSnap of snap.docs){
         const dem = dSnap.data();
+        if(!demandaOperacionalVisivel(dem)) continue;
         if(dem.destinatario === 'Chris' && (dem.titulo||'').includes('Digest semanal pronto') && dem.status !== 'aprovada'){
           await updateDoc(doc(db,'demandas', dSnap.id), { status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(), notaConclusao: motivo });
           registrarHistorico('demandas', dSnap.id, 'Fechada automaticamente', motivo);
@@ -20710,6 +20853,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let corrigidas = 0;
     for(const docSnap of snap.docs){
       const d = docSnap.data();
+      if(!demandaOperacionalVisivel(d)) continue;
       if(d.status === 'aprovada') continue;
       if(!['Chris','Amanda'].includes(d.destinatario)) continue;
       const ehAvisoAntigo = PREFIXOS_DEMANDA_AVISO_ANTIGA.some(p => (d.titulo||'').startsWith(p));
@@ -20729,6 +20873,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const agora = new Date();
     for(const docSnap of snap.docs){
       const dem = docSnap.data();
+      if(!demandaOperacionalVisivel(dem)) continue;
       if(dem.status !== 'pendente') continue;
       if(dem.destinatario && estaAusente(dem.destinatario)) continue;
       if(!dem.prazoData) continue;
@@ -20944,6 +21089,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const snap = await getDocs(collection(db,'demandas'));
     for(const docSnap of snap.docs){
       const d = docSnap.data();
+      if(!demandaOperacionalVisivel(d)) continue;
       if(d.emailEnviado) continue;
       if(d.status !== 'pendente' || !d.destinatario){
         await updateDoc(doc(db,'demandas', docSnap.id), { emailEnviado: true }); // não é acionável, não precisa de e-mail
@@ -21003,6 +21149,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const snap = await getDocs(collection(db,'demandas'));
       for(const d of snap.docs){
         const v = d.data();
+        if(!demandaOperacionalVisivel(v)) continue;
         if(['aprovada','concluida'].includes(v.status)) continue;
         const t = String(v.titulo||'');
         const ehFila = /^✍️\s*(Escrever legenda|Legenda pendente)/.test(t) ||
@@ -21080,6 +21227,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let demandaSemana = null;
     demSnap.forEach(dd => {
       const dem = dd.data();
+      if(!demandaOperacionalVisivel(dem)) return;
       if(dem.tipoEspecial === 'ref_semana' && dem.semanaRef === semana && dem.destinatario === 'Gabrielle' && !['aprovada','cancelada'].includes(dem.status)) demandaSemana = { id: dd.id, ...dem };
     });
 
@@ -21131,7 +21279,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const MENINAS = ['Amanda','Cecília','Gabrielle','Yas'];
     const snap = await getDocs(collection(db,'demandas'));
     const pend = {};
-    snap.forEach(d => { const v=d.data(); if(v.status!=='pendente' || !v.destinatario) return; if(!MENINAS.includes(v.destinatario)) return; if(estaAusente(v.destinatario)) return; (pend[v.destinatario]=pend[v.destinatario]||[]).push(v); });
+    snap.forEach(d => { const v=d.data(); if(!demandaOperacionalVisivel(v) || v.status!=='pendente' || !v.destinatario) return; if(!MENINAS.includes(v.destinatario)) return; if(estaAusente(v.destinatario)) return; (pend[v.destinatario]=pend[v.destinatario]||[]).push(v); });
     let notificadas = 0;
     for(const nome of MENINAS){
       const lista = pend[nome]; if(!lista || !lista.length) continue;
@@ -21152,6 +21300,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const snap = await getDocs(collection(db,'demandas'));
     for(const docSnap of snap.docs){
       const d = docSnap.data();
+      if(!demandaOperacionalVisivel(d)) continue;
       if(d.status !== 'pendente' || !d.destinatario) continue;
       if(d.prazoData !== hojeStr) continue;
       if(d.lembretePrazoHojeEm === hojeStr) continue; // já lembrou hoje
@@ -21210,6 +21359,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const snapDRF = await getDocs(query(collection(db,'demandas'), where('status','==','pendente')));
     for(const ddRF of snapDRF.docs){
       const d = ddRF.data();
+      if(!demandaOperacionalVisivel(d)) continue;
       if(d.prazoData !== hojeRF || d.avisoRetaFinalEm === hojeRF) continue;
       if(!d.destinatario || estaAusente(d.destinatario)) continue;
       const prazoMs = new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime();
@@ -21626,7 +21776,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     agSnap.forEach(d => { const a=d.data(); if(a.cliente && a.status !== 'cancelado' && a.data >= hojeStr) comGravacao.add(a.cliente); });
     // quem já foi avisado
     const jaAvisado = new Set();
-    demSnap.forEach(d => { const v=d.data(); if(v.tipoEspecial === 'calendario_pronto' && v.clienteSlugRef) jaAvisado.add(v.clienteSlugRef); });
+    demSnap.forEach(d => { const v=d.data(); if(demandaOperacionalVisivel(v) && v.tipoEspecial === 'calendario_pronto' && v.clienteSlugRef) jaAvisado.add(v.clienteSlugRef); });
 
     for(const d of calSnap.docs){
       const cal = d.data();
@@ -21661,7 +21811,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // fecha sozinha quando a gravação for marcada
     for(const d of demSnap.docs){
       const v = d.data();
-      if(v.tipoEspecial !== 'calendario_pronto' || ['aprovada','cancelada'].includes(v.status)) continue;
+      if(!demandaOperacionalVisivel(v) || v.tipoEspecial !== 'calendario_pronto' || ['aprovada','cancelada'].includes(v.status)) continue;
       if(comGravacao.has(v.clienteSlugRef)){
         await updateDoc(doc(db,'demandas', d.id), { status:'aprovada', concluidoPor:'sistema (gravação marcada)', concluidoEm: serverTimestamp(),
           notaConclusao:'Gravação marcada — o calendário já tem como ser executado.' });
@@ -21900,7 +22050,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const dSnap = await getDocs(collection(db,'demandas'));
     const grupos = {};
     dSnap.forEach(d => { const v=d.data();
-      if(v.status !== 'pendente') return;
+      if(!demandaOperacionalVisivel(v) || v.status !== 'pendente') return;
       const k = (v.destinatario||'') + '||' + norm(v.titulo);
       (grupos[k] = grupos[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
     });
@@ -22010,7 +22160,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       a.forEach(x=>{ const y=x.data(); if(!y.excluido) agends.push({id:x.id,...y}); });
       c.forEach(x=>{ cals[x.id]=x.data(); });
       e.forEach(x=>{ const y=x.data(); if(!y.excluido) enc.push(y); });
-      d.forEach(x=>{ dems.push({id:x.id,...x.data()}); });
+      d.forEach(x=>{ const y=x.data(); if(demandaOperacionalVisivel(y)) dems.push({id:x.id,...y}); });
     }catch(err){
       console.error('Conferência: falha ao ler o banco', err);
       return { erro: String(err && err.message || err) };
@@ -22200,6 +22350,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        mas gastavam as leituras antes de descobrir isso. Separa o que é
        sensível a hora do que é saneamento/retroativo. */
     const verificacoesFrequentes = [
+      { nome: 'migracaoCalendariosMensaisV13', fn: migrarCalendariosParaDemandaMensalUnicaV13 },
       { nome: 'migracaoPrazosDemandasV12', fn: migrarPrazosDemandasSemAtrasoResidualV12 },
       { nome: 'migracaoFuncoesFixasMensalV11', fn: migrarFuncoesFixasParaRenovacaoMensalV11 },
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
@@ -22407,7 +22558,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
       const anterioresPorId = new Map(todasDemandas.map(d=>[d.id,d]));
       const recebidas = [];
-      snap.forEach(d => recebidas.push({id:d.id, ...d.data()}));
+      snap.forEach(d => {
+        const dados = d.data();
+        if(demandaOperacionalVisivel(dados)) recebidas.push({id:d.id, ...dados});
+      });
       if(ehGestao){
         todasDemandas = recebidas;
       }else{
@@ -22650,6 +22804,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let limpas = 0;
     for(const dSnapF of demSnapF.docs){
       const dem = dSnapF.data(); const t = dem.titulo || '';
+      if(!demandaOperacionalVisivel(dem)) continue;
       if(t.startsWith('Vídeo excluído')) continue; // aviso proposital sobre exclusão — não é fantasma
       let motivo = '';
       if(dem.videoId){
@@ -22685,6 +22840,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const q1 = query(collection(db,'demandas'), where('videoId','==', videoId), where('status','==','pendente'));
       const snap1 = await getDocs(q1);
       for(const d of snap1.docs){
+        if(!demandaOperacionalVisivel(d.data())) continue;
         await updateDoc(doc(db,'demandas', d.id), {
           status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
           notaConclusao: 'Concluída automaticamente — o vídeo foi entregue.'
@@ -22697,6 +22853,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         where('destinatario','==', editor), where('status','==','pendente'));
       const snap2 = await getDocs(q2);
       for(const d of snap2.docs){
+        if(!demandaOperacionalVisivel(d.data())) continue;
         await updateDoc(doc(db,'demandas', d.id), {
           status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
           notaConclusao: 'Concluída automaticamente — o vídeo foi entregue.'
@@ -22719,6 +22876,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let limpos = 0;
     for(const docSnap of snap.docs){
       const d = docSnap.data();
+      if(!demandaOperacionalVisivel(d)) continue;
       if(!d.titulo || !d.titulo.startsWith('⚠️ Vídeo atrasado — ')) continue;
       const tituloVideo = d.titulo.slice('⚠️ Vídeo atrasado — '.length);
       const video = d.videoId ? (videosSnap.docs.find(v=>v.id===d.videoId)?.data()) : videosPorTitulo[tituloVideo];
@@ -23231,7 +23389,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const agora = new Date();
       const itens = [];
       demSnap.forEach(d => { const v=d.data();
-        if(v.status!=='pendente' || v.destinatario!==nome) return;
+        if(!demandaOperacionalVisivel(v) || v.status!=='pendente' || v.destinatario!==nome) return;
         const prazo = new Date(v.prazoData+'T'+(v.prazoHora||'19:00'));
         const dias = Math.floor((agora-prazo)/86400000);
         if(dias>=0) itens.push({ txt: nomeDaDemanda(v).nome, dias })   /* idem */;
@@ -27602,7 +27760,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         getDocs(collection(db,'postagens'))
       ]);
       videosRaw = []; videosSnap.forEach(d => videosRaw.push({id:d.id, ...d.data()}));
-      demandasRaw = []; demandasSnap.forEach(d => demandasRaw.push({id:d.id, ...d.data()}));
+      demandasRaw = []; demandasSnap.forEach(d => { const v=d.data(); if(demandaOperacionalVisivel(v)) demandasRaw.push({id:d.id, ...v}); });
       agendamentosRaw = []; agendamentosSnap.forEach(d => agendamentosRaw.push({id:d.id, ...d.data()}));
       postagensRaw = []; postagensSnap.forEach(d => postagensRaw.push({id:d.id, ...d.data()}));
     }
@@ -27610,7 +27768,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     const videos = videosRaw.filter(v => !v.excluido);
     const qtdNaLixeira = videosRaw.filter(v => v.excluido).length;
-    const demandas = demandasRaw;
+    const demandas = demandasRaw.filter(demandaOperacionalVisivel);
     const agendamentos = agendamentosRaw;
     const postagens = postagensRaw;
     const presenca = {}; presencaDocs.forEach(d => { presenca[d.id] = d.ultimaAtividade; });

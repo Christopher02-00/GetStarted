@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-auditoria-operacional-v23">
+<meta name="gs-build" content="2026-08-05-auditoria-operacional-v24">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -7480,7 +7480,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const marca = await getDoc(marcaRef);
     if(marca.exists() && marca.data().concluida===true) return {jaExecutada:true};
     const hoje = hojeLocal();
-    const snap = await getDocs(collection(db,'demandas'));
+    const snap = await snapshotOperacional('demandas');
     let corrigidas = 0;
     for(const registro of snap.docs){
       const demanda = registro.data();
@@ -13508,6 +13508,32 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   let cacheVideosProducao = [];
   let cachePostagens = [];
   let cacheAgendamentos = [];
+
+  /* V24 — o motor não relê coleções que já estão abertas em tempo real.
+     Na gestão, demandas, vídeos, postagens e agendamentos chegam pelos
+     listeners. Reusar esse retrato evita milhares de leituras repetidas por
+     dia sem mudar uma única regra operacional. Se o listener ainda não
+     terminou, cai uma vez no getDocs normal. */
+  async function snapshotOperacional(colecao, filtro){
+    const mapas = {
+      demandas: () => todasDemandas,
+      videos_producao: () => cacheVideosProducao,
+      postagens: () => cachePostagens,
+      agendamentos: () => cacheAgendamentos
+    };
+    let docs;
+    if(mapas[colecao] && typeof __cacheTempoRealPronto !== 'undefined' && __cacheTempoRealPronto[colecao]){
+      docs = (mapas[colecao]() || []).map(valor => ({
+        id:valor.id, ref:doc(db,colecao,valor.id), data:()=>valor, exists:()=>true
+      }));
+    }else{
+      const snap = await getDocs(collection(db,colecao));
+      docs = snap.docs;
+    }
+    if(typeof filtro === 'function') docs = docs.filter(registro => filtro(registro.data()));
+    return { docs, size:docs.length, empty:!docs.length, forEach:fn=>docs.forEach(fn) };
+  }
+  window.snapshotOperacional = snapshotOperacional;
   let listenersTempoRealAtivos = false;
   let viewAtiva = 'inicio';
 
@@ -15942,7 +15968,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
 
   async function verificarVideosAtrasadosEAlertar(){
-    const snap = await getDocs(collection(db,'videos_producao'));
+    const snap = await snapshotOperacional('videos_producao');
     const agora = new Date();
     for(const docSnap of snap.docs){
       const v = docSnap.data();
@@ -21816,7 +21842,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
 
   async function escalonarDemandasAtrasadas(){
-    const snap = await getDocs(collection(db,'demandas'));
+    const snap = await snapshotOperacional('demandas');
     const agora = new Date();
     for(const docSnap of snap.docs){
       const dem = docSnap.data();
@@ -22033,7 +22059,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      então mesmo demandas criadas por qualquer pessoa acabam gerando e-mail
      sozinhas, sem depender de quem criou lembrar de disparar nada. */
   async function verificarEmailsDemandasNovas(){
-    const snap = await getDocs(collection(db,'demandas'));
+    const snap = await snapshotOperacional('demandas');
     for(const docSnap of snap.docs){
       const d = docSnap.data();
       if(!demandaOperacionalVisivel(d)) continue;
@@ -22224,7 +22250,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const marc = await getDoc(doc(db,'sistema','lembrete_fim_dia'));
     if(marc.exists() && marc.data().ultimaData === hojeStr) return;
     const MENINAS = ['Amanda','Cecília','Gabrielle','Yas'];
-    const snap = await getDocs(collection(db,'demandas'));
+    const snap = await snapshotOperacional('demandas');
     const pend = {};
     snap.forEach(d => { const v=d.data(); if(!demandaOperacionalVisivel(v) || v.status!=='pendente' || !v.destinatario) return; if(!MENINAS.includes(v.destinatario)) return; if(estaAusente(v.destinatario)) return; (pend[v.destinatario]=pend[v.destinatario]||[]).push(v); });
     let notificadas = 0;
@@ -22244,7 +22270,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function verificarLembretesPrazoHoje(){
     const hojeStr = new Date().toISOString().slice(0,10);
-    const snap = await getDocs(collection(db,'demandas'));
+    const snap = await snapshotOperacional('demandas');
     for(const docSnap of snap.docs){
       const d = docSnap.data();
       if(!demandaOperacionalVisivel(d)) continue;
@@ -22278,7 +22304,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const mSnapK = await getDoc(marcadorK);
     if(mSnapK.exists() && mSnapK.data().ultimaData === hojeK) return;
     const amanhaK = dataStrDiasAtras(-1);
-    const snapAgK = await getDocs(collection(db,'agendamentos'));
+    const snapAgK = await snapshotOperacional('agendamentos');
     const deAmanha = []; snapAgK.forEach(dd => { const a = dd.data(); if(!a.excluido && a.data === amanhaK && a.status === 'agendado' && a.aprovado !== false) deAmanha.push(a); });
     if(deAmanha.length){
       const porFilmmakerK = {};
@@ -22303,7 +22329,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   async function verificarRetaFinalPrazos(){
     const agoraRF = new Date();
     const hojeRF = agoraRF.toISOString().slice(0,10);
-    const snapDRF = await getDocs(query(collection(db,'demandas'), where('status','==','pendente')));
+    const snapDRF = await snapshotOperacional('demandas', d=>d.status==='pendente');
     for(const ddRF of snapDRF.docs){
       const d = ddRF.data();
       if(!demandaOperacionalVisivel(d)) continue;
@@ -22318,7 +22344,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       }
     }
     if(agoraRF.getHours() >= 17 && agoraRF.getHours() < 19){
-      const snapVRF = await getDocs(collection(db,'videos_producao'));
+      const snapVRF = await snapshotOperacional('videos_producao');
       for(const dvRF of snapVRF.docs){
         const v = dvRF.data();
         if(v.excluido || !['aguardando_edicao','correcao'].includes(v.status)) continue;
@@ -23870,7 +23896,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         confirmar que realmente foi ao ar — fecha o ciclo, que antes
         terminava em "agendado" e ninguém nunca verificava se postou. */
   async function verificarPostagensEsquecidas(){
-    const snap = await getDocs(collection(db,'postagens'));
+    const snap = await snapshotOperacional('postagens');
     const hojeStr = new Date().toISOString().slice(0,10);
     let novasDemandas = 0;
     const paradasLegenda = [], paradasAgendar = [];
@@ -23921,7 +23947,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const [mk, avisoAtual, pendentesSnap] = await Promise.all([
         getDoc(doc(db,'sistema', marcador)),
         getDoc(avisoRef),
-        getDocs(query(collection(db,'demandas'), where('status','==','pendente')))
+        snapshotOperacional('demandas', d=>d.status==='pendente')
       ]);
       const antigos = pendentesSnap.docs.filter(registro => {
         if(registro.id === idAviso) return false;

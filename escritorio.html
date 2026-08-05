@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-fila-calendarios-gravacoes-v7">
+<meta name="gs-build" content="2026-08-05-demandas-portal-funcoes-fixas-aprovacoes-v8">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -636,7 +636,7 @@
       <div class="navitem" id="navChecklist" onclick="irPara('checklist', this)"><span class="ico"><svg><use href="#i-clipboard"/></svg></span> Meu Checklist</div>
       <div class="navitem" id="navVideos" onclick="irPara('videos', this)"><span class="ico"><svg><use href="#i-video"/></svg></span> Vídeos em Edição<span class="navbadge" id="badgeVideosMenu" style="display:none;"></span></div>
       <div class="navitem" id="navExtras" onclick="irParaExtras()"><span class="ico"><svg><use href="#i-dollar"/></svg></span> Extras da Equipe<span class="navbadge" id="badgeExtrasMenu" style="display:none;"></span></div>
-      <div class="navitem" id="navAprovacoes" onclick="irParaAprovacoes()"><span class="ico"><svg><use href="#i-check"/></svg></span> Aprovar Vídeos e Demandas<span class="navbadge" id="badgeAprovacoesMenu" style="display:none;"></span></div>
+      <div class="navitem" id="navAprovacoes" onclick="irParaAprovacoes()"><span class="ico"><svg><use href="#i-check"/></svg></span> Aprovar Vídeos, Demandas e Calendários<span class="navbadge" id="badgeAprovacoesMenu" style="display:none;"></span></div>
       <div class="navitem" id="navAgendamento" onclick="irPara('agendamento', this)"><span class="ico"><svg><use href="#i-camera"/></svg></span> Gravações</div>
       <div class="navitem" id="navFuncoesFixas" onclick="irPara('funcoesFixas', this)"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Funções Fixas</div>
       <div class="navitem" id="navPostagens" onclick="irPara('postagens', this)"><span class="ico"><svg><use href="#i-file"/></svg></span> Postagens<span class="navbadge" id="badgePostagens" style="display:none;">0</span></div>
@@ -7038,14 +7038,150 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return dias;
   }
 
+  /* ===== AUTOMAÇÃO REAL DAS FUNÇÕES FIXAS — 05/08/2026 =============
+     O cadastro customizado existia, mas só entrava em demandas quando
+     alguém apagava/regerava manualmente um mês. Esta camada mantém uma
+     janela móvel de seis meses, com chave estável por tipo+mês+cliente.
+     Editar o tipo atualiza apenas demandas futuras ainda abertas; histórico
+     concluído nunca é reescrito. O calendário pessoal usa essas mesmas
+     demandas, portanto não existe segunda cópia da atividade. */
+  function mesesDaJanelaFuncoesFixas(qtd){
+    const base = new Date(); base.setDate(1);
+    return Array.from({length:qtd||6}, (_,i) => {
+      const d = new Date(base.getFullYear(), base.getMonth()+i, 1);
+      return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    });
+  }
+
+  function modelosDoTipoTarefaFixa(tipoId, tipo, mesChave){
+    const [ano, mes] = mesChave.split('-').map(Number);
+    const uteis = diasUteisDoMes(ano, mes);
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    const descricao = String(tipo.descricao||'').trim() || 'Função fixa recorrente criada pela Amanda.';
+    if(tipo.modo === 'distribuida'){
+      const dias = uteis.slice(0, Math.max(1, Math.ceil(CLIENTES_LISTA.length/2)));
+      return CLIENTES_LISTA.map((cliente,idx) => ({
+        chave:'custom_'+tipoId+'|'+mesChave+'|'+cliente.slug,
+        titulo:tipo.nome+' — '+cliente.nome, descricao,
+        cliente:cliente.slug, clienteNome:cliente.nome,
+        destinatario:tipo.responsavel,
+        prazoData:dias[Math.floor(idx/2)] || dias[dias.length-1] || mesChave+'-01'
+      }));
+    }
+    const dia = Math.min(Math.max(Number(tipo.diaFixo)||5,1), ultimoDia);
+    let dataAlvo = mesChave+'-'+String(dia).padStart(2,'0');
+    if(!ehDiaUtil(new Date(dataAlvo+'T12:00:00'), obterFeriados(ano))){
+      dataAlvo = uteis.find(d=>d>=dataAlvo) || [...uteis].reverse().find(d=>d<dataAlvo) || dataAlvo;
+    }
+    return [{
+      chave:'custom_'+tipoId+'|'+mesChave+'|unica', titulo:tipo.nome,
+      descricao, cliente:'', clienteNome:'', destinatario:tipo.responsavel,
+      prazoData:dataAlvo
+    }];
+  }
+
+  async function sincronizarAutomacaoFuncoesFixas(opcoes){
+    const opts = opcoes || {};
+    const meses = opts.meses || mesesDaJanelaFuncoesFixas(6);
+    const hoje = hojeLocal();
+    const [tiposSnap, demandasSnap] = await Promise.all([
+      getDocs(collection(db,'tipos_tarefa_fixa')),
+      getDocs(collection(db,'demandas'))
+    ]);
+    const tipos = [];
+    tiposSnap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false && (!opts.tipoId || d.id===opts.tipoId)) tipos.push({id:d.id,...v}); });
+    const existentes = [];
+    demandasSnap.forEach(d => { const v=d.data(); if(!v.excluido && String(v.tipoFuncaoFixa||'').startsWith('custom_')) existentes.push({id:d.id,...v}); });
+    const chavesDesejadas = new Set();
+    const usados = new Set();
+    let criadas=0, atualizadas=0, aposentadas=0;
+
+    for(const tipo of tipos){
+      for(const mesChave of meses){
+        for(const modelo of modelosDoTipoTarefaFixa(tipo.id, tipo, mesChave)){
+          chavesDesejadas.add(modelo.chave);
+          let atual = existentes.find(d=>!usados.has(d.id) && d.funcaoFixaChave===modelo.chave);
+          if(!atual){
+            atual = existentes.find(d => {
+              if(usados.has(d.id) || d.tipoFuncaoFixa!=='custom_'+tipo.id || !String(d.prazoData||'').startsWith(mesChave)) return false;
+              if(modelo.cliente) return d.cliente===modelo.cliente || String(d.titulo||'').endsWith('— '+modelo.clienteNome);
+              return true;
+            });
+          }
+          const dados = {
+            titulo:modelo.titulo, descricao:modelo.descricao,
+            origem:'amanda', cliente:modelo.cliente, clienteNome:modelo.clienteNome,
+            destinatario:modelo.destinatario, prazoData:modelo.prazoData, prazoHora:'19:00',
+            tipoFuncaoFixa:'custom_'+tipo.id, tipoFuncaoFixaId:tipo.id,
+            tipoFuncaoFixaNome:tipo.nome, funcaoFixaChave:modelo.chave, mesRef:mesChave,
+            recorrencia:'mensal', excluido:false
+          };
+          if(!atual){
+            await addDoc(collection(db,'demandas'), {
+              ...dados, status:'pendente', provaTexto:'', provaImagemUrl:'',
+              emailEnviado:modelo.prazoData.slice(0,7)!==hoje.slice(0,7), criadoEm:serverTimestamp()
+            });
+            criadas++;
+            continue;
+          }
+          usados.add(atual.id);
+          if(['aprovada','cancelada'].includes(String(atual.status||'')) || String(atual.prazoData||'') < hoje) continue;
+          const mudou = ['titulo','descricao','cliente','clienteNome','destinatario','prazoData','prazoHora','funcaoFixaChave','mesRef']
+            .some(campo => String(atual[campo]??'') !== String(dados[campo]??''));
+          if(mudou){
+            await updateDoc(doc(db,'demandas', atual.id), {
+              ...dados, emailEnviado:modelo.prazoData.slice(0,7)!==hoje.slice(0,7), atualizadoPor:'Amanda', atualizadoEm:serverTimestamp()
+            });
+            registrarHistorico('demandas', atual.id, 'Função fixa futura sincronizada após alteração da Amanda');
+            atualizadas++;
+          }
+        }
+      }
+    }
+
+    /* Se o modo mudou de distribuída para única (ou um cliente saiu), o
+       excedente não é apagado: vai para soft-delete, somente se ainda é
+       futuro e aberto. */
+    const idsTipos = new Set(tipos.map(t=>t.id));
+    for(const antiga of existentes){
+      const tipoId = antiga.tipoFuncaoFixaId || String(antiga.tipoFuncaoFixa||'').replace(/^custom_/,'');
+      if(!idsTipos.has(tipoId) || String(antiga.prazoData||'') < hoje || ['aprovada','cancelada'].includes(String(antiga.status||''))) continue;
+      if(antiga.funcaoFixaChave && chavesDesejadas.has(antiga.funcaoFixaChave)) continue;
+      if(usados.has(antiga.id)) continue;
+      if(!meses.some(m=>String(antiga.prazoData||'').startsWith(m))) continue;
+      await updateDoc(doc(db,'demandas', antiga.id), {
+        excluido:true, excluidoPor:'Amanda', excluidoEm:new Date().toISOString(),
+        motivoExclusao:'Substituída automaticamente pela nova configuração da Função Fixa'
+      });
+      aposentadas++;
+    }
+    if(criadas||atualizadas||aposentadas){
+      registrarLogAutomacao('funcoes_fixas_sincronizadas','',criadas+' criada(s), '+atualizadas+' atualizada(s), '+aposentadas+' aposentada(s)');
+    }
+    return {criadas,atualizadas,aposentadas};
+  }
+  window.sincronizarAutomacaoFuncoesFixas = sincronizarAutomacaoFuncoesFixas;
+
+  async function garantirAutomacaoFuncoesFixas(){
+    /* Garante o mês atual e o próximo para as três funções-padrão. Os
+       tipos customizados mantêm seis meses pela sincronização abaixo. */
+    for(const mesChave of mesesDaJanelaFuncoesFixas(2)){
+      const marcador = await getDoc(doc(db,'funcoes_fixas_geradas', mesChave));
+      if(!marcador.exists() || marcador.data().gerado!==true){
+        const [ano,mes] = mesChave.split('-').map(Number);
+        await gerarFuncoesFixasDoMes(ano,mes,mesChave);
+      }
+    }
+    return sincronizarAutomacaoFuncoesFixas();
+  }
+
   async function abrirFuncoesFixas(){
     const hoje = new Date();
     const ano = hoje.getFullYear(), mes = hoje.getMonth()+1;
     const mesChave = ano + '-' + String(mes).padStart(2,'0');
     const geradoSnap = await getDoc(doc(db,'funcoes_fixas_geradas', mesChave));
-    if(!geradoSnap.exists()){
-      await gerarFuncoesFixasDoMes(ano, mes, mesChave);
-    }
+    if((usuarioAtual==='Amanda'||usuarioAtual==='Chris') && (!geradoSnap.exists() || geradoSnap.data().gerado!==true)) await gerarFuncoesFixasDoMes(ano, mes, mesChave);
+    if(usuarioAtual==='Amanda'||usuarioAtual==='Chris') await sincronizarAutomacaoFuncoesFixas();
     await renderFuncoesFixas(ano, mes, mesChave);
   }
 
@@ -7054,6 +7190,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const ultimoDiaMes = new Date(ano, mes, 0).getDate();
     const dataLimiteGabi = new Date(ano, mes-1, Math.max(1, ultimoDiaMes-10));
     const uteisAntesLimite = uteis.filter(d => new Date(d) <= dataLimiteGabi);
+    const demandasDoMesSnap = await getDocs(collection(db,'demandas'));
+    const fixasPadraoExistentes = new Set();
+    demandasDoMesSnap.forEach(d => { const v=d.data();
+      if(!v.excluido && v.tipoFuncaoFixa && (v.mesRef===mesChave || String(v.prazoData||'').startsWith(mesChave))) fixasPadraoExistentes.add(v.tipoFuncaoFixa);
+    });
 
     // Clientes só-edição ficam fora das funções fixas: não têm reunião de
     // calendário nem entrega de calendário mensal por contrato.
@@ -7090,7 +7231,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        pra ela ter tempo de marcar os horários. */
     const abreAgenda = uteis.filter(d => Number(d.split('-')[2]) > ultimoDiaMes - 12)[0] || inicioUltimaSemana;
 
-    await addDoc(collection(db,'demandas'), {
+    if(!fixasPadraoExistentes.has('agendaReuniao')) await addDoc(collection(db,'demandas'), {
       titulo: '🗓️ Abrir sua agenda de reuniões — ' + mesChave,
       descricao: 'Antes da Cecília marcar as reuniões do mês com os clientes, ela precisa saber quando você pode.\n\n'
         + 'Acontecem na última semana, a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
@@ -7103,10 +7244,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       origem: 'amanda', clienteNome: '', destinatario: 'Gabrielle',
       prazoData: abreAgenda, prazoHora: '19:00', status: 'pendente',
       provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'agendaReuniao',
-      mesRef: mesChave, criadoEm: serverTimestamp()
+      mesRef: mesChave, emailEnviado:mesChave!==hojeLocal().slice(0,7), criadoEm: serverTimestamp()
     });
 
-    await addDoc(collection(db,'demandas'), {
+    if(!fixasPadraoExistentes.has('reuniao')) await addDoc(collection(db,'demandas'), {
       titulo: '🤝 Marcar as reuniões mensais com os clientes — ' + mesChave,
       descricao: 'Marcar a reunião mensal de alinhamento do próximo calendário com CADA cliente da lista. Quem conduz a reunião é a Gabi; você marca.\n\n'
         + 'Acontecem na última semana do mês — a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
@@ -7122,12 +7263,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'reuniao',
       checklistClientes: listaChecklist, mesRef: mesChave,
       mostrarAgendaDe: 'Gabrielle',
-      criadoEm: serverTimestamp()
+      emailEnviado:mesChave!==hojeLocal().slice(0,7), criadoEm: serverTimestamp()
     });
 
     // Calendarios do proximo mes: continuam com folga antes do fim do mes
     const prazoCalendario = diasGabi[diasGabi.length-1] || dataParaStr(dataLimiteGabi);
-    await addDoc(collection(db,'demandas'), {
+    if(!fixasPadraoExistentes.has('calendario')) await addDoc(collection(db,'demandas'), {
       titulo: '📅 Calendários do próximo mês — ' + mesChave,
       descricao: 'Função fixa da Gabrielle. O calendário do mês que vem precisa estar pronto e aprovado para CADA cliente da lista.\n\n'
         + 'COMO FAZER\n'
@@ -7139,44 +7280,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       prazoData: prazoCalendario, prazoHora: '19:00', status: 'pendente',
       provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'calendario',
       checklistClientes: listaChecklist.map(c => ({...c})), mesRef: mesChave,
-      criadoEm: serverTimestamp()
+      emailEnviado:mesChave!==hojeLocal().slice(0,7), criadoEm: serverTimestamp()
     });
 
-    // Tipos de tarefa fixa customizados (criados pela Amanda)
-    const tiposSnap = await getDocs(collection(db,'tipos_tarefa_fixa'));
-    for(const tipoDoc of tiposSnap.docs){
-      const tipo = tipoDoc.data();
-      if(tipo.modo === 'unica'){
-        const diaEscolhido = Math.min(tipo.diaFixo || 5, ultimoDiaMes);
-        let dataAlvo = ano + '-' + String(mes).padStart(2,'0') + '-' + String(diaEscolhido).padStart(2,'0');
-        const dataObj = new Date(dataAlvo+'T12:00:00');
-        if(!ehDiaUtil(dataObj, obterFeriados(ano))){
-          const proximoUtil = uteis.find(d => d >= dataAlvo);
-          if(proximoUtil) dataAlvo = proximoUtil;
-        }
-        await addDoc(collection(db,'demandas'), {
-          titulo: tipo.nome,
-          descricao: 'Função fixa customizada, criada pela Amanda — recorrente todo mês.',
-          origem: 'amanda', clienteNome: '', destinatario: tipo.responsavel,
-          prazoData: dataAlvo, prazoHora: '19:00', status: 'pendente',
-          provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'custom_'+tipoDoc.id, tipoFuncaoFixaNome: tipo.nome, criadoEm: serverTimestamp()
-        });
-      } else if(tipo.modo === 'distribuida'){
-        const diasTipo = uteis.slice(0, Math.ceil(CLIENTES_LISTA.length/2));
-        let idxT = 0;
-        for(const cliente of CLIENTES_LISTA){
-          const dataAlvo = diasTipo[Math.floor(idxT/2)] || diasTipo[diasTipo.length-1];
-          await addDoc(collection(db,'demandas'), {
-            titulo: tipo.nome + ' — ' + cliente.nome,
-            descricao: 'Função fixa customizada, criada pela Amanda — recorrente todo mês, distribuída por cliente.',
-            origem: 'amanda', clienteNome: '', destinatario: tipo.responsavel,
-            prazoData: dataAlvo, prazoHora: '19:00', status: 'pendente',
-            provaTexto: '', provaImagemUrl: '', tipoFuncaoFixa: 'custom_'+tipoDoc.id, tipoFuncaoFixaNome: tipo.nome, criadoEm: serverTimestamp()
-          });
-          idxT++;
-        }
-      }
-    }
+    /* Os tipos customizados não são criados aqui. Eles passam pela
+       sincronização idempotente de seis meses, com chave estável. Manter
+       dois geradores foi exatamente o que criava duplicatas quando um mês
+       futuro já existia e depois recebia a marca mensal. */
 
     await setDoc(doc(db,'funcoes_fixas_geradas', mesChave), { gerado: true, criadoEm: serverTimestamp() });
   }
@@ -7185,7 +7295,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const resumoBox = document.getElementById('funcoesFixasResumo');
     const gridBox = document.getElementById('funcoesFixasGrid');
     const snap = await getDocs(collection(db,'demandas'));
-    const tarefas = []; snap.forEach(d => { const v=d.data(); if(v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push(v); });
+    const tarefas = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push(v); });
 
     /* 27/07/2026 — agora e UMA demanda por funcao, com checklist de clientes
        dentro. O progresso sai do checklist, nao mais da contagem de demandas.
@@ -9145,7 +9255,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function gerarHtmlTiposTarefaFixa(){
     const snap = await getDocs(collection(db,'tipos_tarefa_fixa'));
-    const tipos = []; snap.forEach(d => tipos.push({id:d.id, ...d.data()}));
+    const tipos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.ativo!==false) tipos.push({id:d.id, ...v}); });
 
     let html = `<div class="card">
       <h2>⚙️ Tipos de tarefa fixa (recorrentes todo mês)</h2>
@@ -9161,6 +9271,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         </select></div>
         <div class="field" id="novoTipoDiaWrap"><label>Dia do mês (aproximado)</label><input type="number" id="novoTipoDia" min="1" max="28" value="5"></div>
       </div>
+      <div class="field"><label>Descrição da atividade</label><textarea id="novoTipoDescricao" placeholder="Instruções que o responsável receberá todo mês"></textarea></div>
       <button class="btn secondary" onclick="criarTipoTarefaFixa()">+ Criar tipo de tarefa</button>
     </div>`;
 
@@ -9168,9 +9279,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       html += `<div class="grupoFuncionario"><h3>Tipos customizados ativos</h3>`;
       tipos.forEach(t => {
         html += `<div class="item">
-          <div class="top"><div class="nome">${esc(t.nome)}</div><div class="meta">${esc(t.responsavel)}</div></div>
-          <div class="meta">${t.modo === 'unica' ? 'Uma vez no mês, dia '+t.diaFixo : 'Distribuída por cliente'}</div>
-          <button class="btn red" style="width:auto;padding:4px 10px;font-size:10px;margin-top:6px;" onclick="removerTipoTarefaFixa('${t.id}')">Remover tipo</button>
+          <div class="row2"><div class="field"><label>Nome</label><input id="tipoNome_${t.id}" value="${escAttr(t.nome||'')}"></div>
+          <div class="field"><label>Responsável</label><select id="tipoResp_${t.id}">${FUNCIONARIOS_ELEGIVEIS.map(f=>`<option value="${f}" ${f===t.responsavel?'selected':''}>${f}</option>`).join('')}</select></div></div>
+          <div class="row2"><div class="field"><label>Modo</label><select id="tipoModo_${t.id}" onchange="document.getElementById('tipoDiaWrap_${t.id}').style.display=this.value==='unica'?'block':'none';"><option value="unica" ${t.modo==='unica'?'selected':''}>Uma vez no mês</option><option value="distribuida" ${t.modo==='distribuida'?'selected':''}>Distribuída por cliente</option></select></div>
+          <div class="field" id="tipoDiaWrap_${t.id}" style="${t.modo==='unica'?'':'display:none;'}"><label>Dia do mês</label><input type="number" min="1" max="28" id="tipoDia_${t.id}" value="${Number(t.diaFixo)||5}"></div></div>
+          <div class="field"><label>Descrição</label><textarea id="tipoDesc_${t.id}">${esc(t.descricao||'')}</textarea></div>
+          <div class="btnrow"><button class="btn green" style="width:auto;padding:6px 14px;font-size:11px;" onclick="salvarTipoTarefaFixa('${t.id}')">Salvar e atualizar demandas futuras</button>
+          <button class="btn red" style="width:auto;padding:6px 14px;font-size:11px;" onclick="removerTipoTarefaFixa('${t.id}')">Remover tipo</button></div>
         </div>`;
       });
       html += `</div>`;
@@ -9179,39 +9294,63 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
 
   window.criarTipoTarefaFixa = async function(){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda altera Funções Fixas.', 'erro'); return; }
     const nome = document.getElementById('novoTipoNome').value.trim();
     const responsavel = document.getElementById('novoTipoResponsavel').value;
     const modo = document.getElementById('novoTipoModo').value;
     const diaFixo = parseInt(document.getElementById('novoTipoDia').value) || 5;
+    const descricao = document.getElementById('novoTipoDescricao').value.trim();
     if(!nome){ mostrarToast('Dá um nome pra tarefa.', 'erro'); return; }
-    await addDoc(collection(db,'tipos_tarefa_fixa'), { nome, responsavel, modo, diaFixo, criadoEm: serverTimestamp() });
-    mostrarToast('Tipo de tarefa criado! Vai entrar na próxima vez que gerar/regerar o mês.');
+    const ref = await addDoc(collection(db,'tipos_tarefa_fixa'), { nome, descricao, responsavel, modo, diaFixo, ativo:true, excluido:false, criadoPor:'Amanda', criadoEm: serverTimestamp() });
+    const resultado = await sincronizarAutomacaoFuncoesFixas({tipoId:ref.id});
+    mostrarToast('Função fixa criada e '+resultado.criadas+' demanda(s) futura(s) distribuída(s).');
+    renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
+  };
+
+  window.salvarTipoTarefaFixa = async function(id){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda altera Funções Fixas.', 'erro'); return; }
+    const nome=(document.getElementById('tipoNome_'+id)?.value||'').trim();
+    const descricao=(document.getElementById('tipoDesc_'+id)?.value||'').trim();
+    const responsavel=document.getElementById('tipoResp_'+id)?.value||'';
+    const modo=document.getElementById('tipoModo_'+id)?.value||'unica';
+    const diaFixo=Math.min(28,Math.max(1,parseInt(document.getElementById('tipoDia_'+id)?.value)||5));
+    if(!nome||!responsavel){ mostrarToast('Preenche nome e responsável.', 'erro'); return; }
+    await updateDoc(doc(db,'tipos_tarefa_fixa',id), {nome,descricao,responsavel,modo,diaFixo,atualizadoPor:'Amanda',atualizadoEm:serverTimestamp()});
+    const resultado=await sincronizarAutomacaoFuncoesFixas({tipoId:id});
+    mostrarToast('Função atualizada: '+resultado.atualizadas+' demanda(s) ajustada(s), '+resultado.criadas+' criada(s).');
     renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
   };
 
   window.removerTipoTarefaFixa = async function(id){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda altera Funções Fixas.', 'erro'); return; }
     if(!confirm('Remover esse tipo de tarefa fixa? Ele não vai mais ser gerado nos próximos meses.')) return;
-    await deleteDoc(doc(db,'tipos_tarefa_fixa', id));
-    mostrarToast('Tipo removido.');
+    await updateDoc(doc(db,'tipos_tarefa_fixa', id), {excluido:true,ativo:false,excluidoPor:'Amanda',excluidoEm:new Date().toISOString()});
+    const snap=await getDocs(collection(db,'demandas')); let aposentadas=0;
+    for(const d of snap.docs){ const v=d.data();
+      if(v.excluido || v.tipoFuncaoFixa!=='custom_'+id || String(v.prazoData||'')<hojeLocal() || ['aprovada','cancelada'].includes(String(v.status||''))) continue;
+      await updateDoc(doc(db,'demandas',d.id), {excluido:true,excluidoPor:'Amanda',excluidoEm:new Date().toISOString(),motivoExclusao:'Função Fixa removida pela Amanda'}); aposentadas++;
+    }
+    mostrarToast('Tipo removido e '+aposentadas+' demanda(s) futura(s) aposentada(s).');
     renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
   };
 
   async function renderEditarFuncoesFixas(mesChaveEscolhido){
     const cont = document.getElementById('gerenciaEditarFuncoesFixas');
+    const podeEditarFuncoesFixas = usuarioAtual === 'Amanda';
     const hoje = new Date();
     const mesChave = mesChaveEscolhido || (hoje.getFullYear() + '-' + String(hoje.getMonth()+1).padStart(2,'0'));
     const snap = await getDocs(collection(db,'demandas'));
-    const tarefas = []; snap.forEach(d => { const v=d.data(); if(v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push({id:d.id, ...v}); });
+    const tarefas = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push({id:d.id, ...v}); });
     tarefas.sort((a,b) => a.prazoData.localeCompare(b.prazoData));
 
     let html = `<div class="card">
       <h2>📆 Editar Funções Fixas</h2>
-      <div class="desc">Escolhe o mês — pode ser um mês futuro, pra já ir organizando com antecedência.</div>
+      <div class="desc">Escolhe o mês — pode ser um mês futuro, pra já ir organizando com antecedência.${podeEditarFuncoesFixas?'':' Edição exclusiva da Amanda; aqui é somente leitura.'}</div>
       <div class="field"><label>Mês</label><input type="month" id="mesEditarFuncoesFixas" value="${mesChave}" onchange="renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas').value)"></div>
-      <button class="btn secondary" onclick="regerarFuncoesFixas('${mesChave}')">🔄 Gerar / regerar esse mês do zero</button>
+      ${podeEditarFuncoesFixas?`<button class="btn secondary" onclick="regerarFuncoesFixas('${mesChave}')">🔄 Gerar / regerar esse mês do zero</button>`:''}
     </div>`;
 
-    html += await gerarHtmlTiposTarefaFixa();
+    if(podeEditarFuncoesFixas) html += await gerarHtmlTiposTarefaFixa();
 
     if(!tarefas.length){ html += '<div class="empty">Nenhuma função fixa gerada pra '+mesChave+' ainda — clica em "Gerar / regerar esse mês do zero" acima.</div>'; cont.innerHTML = html; return; }
 
@@ -9220,8 +9359,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       html += `<div class="item">
         <div class="top"><div class="nome">${esc(t.titulo)}</div><div class="meta">${esc(quem)}</div></div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
-          <input type="date" id="dataEdit_${t.id}" value="${t.prazoData}" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:5px 8px;border-radius:6px;font-size:11.5px;">
-          <button class="btn secondary" style="width:auto;padding:5px 12px;font-size:10.5px;" onclick="salvarNovaDataFuncaoFixa('${t.id}')">Salvar nova data</button>
+          <input type="date" id="dataEdit_${t.id}" value="${t.prazoData}" ${podeEditarFuncoesFixas?'':'disabled'} style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:5px 8px;border-radius:6px;font-size:11.5px;">
+          ${podeEditarFuncoesFixas?`<button class="btn secondary" style="width:auto;padding:5px 12px;font-size:10.5px;" onclick="salvarNovaDataFuncaoFixa('${t.id}')">Salvar nova data</button>`:''}
           <span class="selo ${t.status==='aprovada'?'aprovada':'pendente'}">${t.status}</span>
         </div>
       </div>`;
@@ -9232,20 +9371,23 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.renderEditarFuncoesFixas = renderEditarFuncoesFixas;
 
   window.salvarNovaDataFuncaoFixa = async function(id){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda altera Funções Fixas.', 'erro'); return; }
     const novaData = document.getElementById('dataEdit_'+id).value;
     if(!novaData) return;
-    await updateDoc(doc(db,'demandas', id), { prazoData: novaData });
-    mostrarToast('Data atualizada!');
+    await updateDoc(doc(db,'demandas', id), { prazoData: novaData, emailEnviado:false, atualizadoPor:'Amanda', atualizadoEm:serverTimestamp() });
+    mostrarToast('Data atualizada na demanda e no calendário do responsável.');
     renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas').value);
   };
 
   window.regerarFuncoesFixas = async function(mesChave){
-    if(!confirm('Isso vai apagar todas as tarefas desse mês e gerar de novo do zero. Confirma?')) return;
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda altera Funções Fixas.', 'erro'); return; }
+    if(!confirm('Isso vai aposentar as tarefas abertas desse mês e gerar novas a partir da configuração atual. O histórico concluído será preservado. Confirma?')) return;
     const snap = await getDocs(collection(db,'demandas'));
-    for(const d of snap.docs){ if(d.data().tipoFuncaoFixa && d.data().prazoData?.startsWith(mesChave)) await deleteDoc(doc(db,'demandas', d.id)); }
-    await deleteDoc(doc(db,'funcoes_fixas_geradas', mesChave));
+    for(const d of snap.docs){ const v=d.data(); if(!v.excluido && v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave) && !['aprovada','cancelada'].includes(String(v.status||''))) await updateDoc(doc(db,'demandas', d.id), {excluido:true,excluidoPor:'Amanda',excluidoEm:new Date().toISOString(),motivoExclusao:'Mês regerado pela Amanda'}); }
+    await setDoc(doc(db,'funcoes_fixas_geradas', mesChave), {gerado:false,regeradoPor:'Amanda',regeradoEm:serverTimestamp()},{merge:true});
     const [ano, mes] = mesChave.split('-').map(Number);
     await gerarFuncoesFixasDoMes(ano, mes, mesChave);
+    await sincronizarAutomacaoFuncoesFixas({meses:[mesChave]});
     mostrarToast('Mês regerado do zero!');
     renderEditarFuncoesFixas(mesChave);
   };
@@ -10484,6 +10626,117 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
   window.lembrarChecklistPendente = lembrarChecklistPendente;
 
+  /* ===== DEMANDAS DO PORTAL — 05/08/2026 ============================
+     Uma solicitacao de cliente e UMA entidade no portal, mesmo quando
+     precisa de mais de uma pessoa da equipe. Cada responsavel recebe sua
+     propria demanda interna, ligada pelo mesmo `demandaClienteId`. Assim o
+     cliente acompanha um pedido unico e a equipe nao perde a atribuicao
+     individual. Criacao e escrita ficam exclusivamente com a Amanda. */
+  async function htmlDemandasPortalAdmin(apenasLeitura){
+    let registros = [];
+    try{
+      const snap = await getDocs(collection(db,'demandas_cliente'));
+      snap.forEach(d => { const v=d.data(); if(!v.excluido) registros.push({id:d.id, ...v}); });
+    }catch(e){
+      console.error('Falha ao ler demandas do Portal:', e);
+      return '<div class="card" style="border-color:var(--red);"><div class="empty">Nao consegui carregar as demandas agora. Nenhum dado foi alterado.</div></div>';
+    }
+
+    const podeCriar = usuarioAtual === 'Amanda';
+    const valorTempo = v => v?.seconds ? v.seconds*1000 : Date.parse(v||'')||0;
+    registros.sort((a,b)=>valorTempo(b.criadoEm)-valorTempo(a.criadoEm));
+    const abertas = registros.filter(d => !['concluida','cancelada'].includes(String(d.status||'')));
+    const concluidas = registros.filter(d => d.status === 'concluida');
+    const STATUS = { pendente:'Pendente', andamento:'Em andamento', aguardando:'Aguardando retorno', concluida:'Concluida', cancelada:'Cancelada' };
+    const COR = { pendente:'var(--yellow2)', andamento:'var(--yellow)', aguardando:'var(--yellow2)', concluida:'var(--green)', cancelada:'var(--muted)' };
+    const card = d => {
+      const responsaveis = Array.isArray(d.responsaveis) ? d.responsaveis : [];
+      const mapa = d.responsaveisStatus || {};
+      return `<div class="item" style="border-left:3px solid ${COR[d.status]||'var(--line)'};">
+        <div class="top"><div class="nome">${esc(d.titulo || d.texto || '(sem titulo)')}</div><span class="selo ${d.status==='concluida'?'aprovada':'pendente'}">${STATUS[d.status]||'Pendente'}</span></div>
+        <div class="meta" style="margin-top:5px;">${esc(d.clienteNome||d.cliente||'')} ${d.prazoData ? '· entregar ate '+formatarDataBR(d.prazoData) : ''}</div>
+        ${d.descricao ? '<div class="meta" style="margin-top:7px;white-space:pre-wrap;">'+esc(d.descricao)+'</div>' : ''}
+        ${d.observacoes ? '<div class="meta" style="margin-top:7px;background:var(--deep);padding:8px 10px;border-radius:7px;">📝 '+esc(d.observacoes)+'</div>' : ''}
+        ${responsaveis.length ? '<div class="meta" style="margin-top:8px;line-height:1.7;"><b>Responsaveis:</b> '+responsaveis.map(n => esc(n)+' — '+esc(STATUS[mapa[n]]||'Pendente')).join('<br>')+'</div>' : ''}
+      </div>`;
+    };
+
+    let h = `<div class="card" style="border:2px solid var(--yellow);">
+      <h2>📋 Demandas dos clientes</h2>
+      <div class="desc">Pedido registrado pela Amanda a partir de reuniao ou WhatsApp. O cliente acompanha o mesmo registro no Portal e cada responsavel recebe sua parte em Minhas Demandas.</div>
+      <div class="painelResumo" style="margin-top:10px;">
+        <div class="resumoCard ${abertas.length?'yellow':'green'}"><div class="num">${abertas.length}</div><div class="lbl">em aberto</div></div>
+        <div class="resumoCard green"><div class="num">${concluidas.length}</div><div class="lbl">concluidas</div></div>
+      </div>
+    </div>`;
+
+    if(podeCriar){
+      h += `<div class="card">
+        <h2>+ Nova demanda do cliente</h2>
+        <div class="desc">A gravacao e atomica: ou o Portal e todas as caixas dos responsaveis recebem, ou nada e criado.</div>
+        <div class="field"><label>Cliente</label><select id="demPortalCliente"><option value="">Escolhe...</option>${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
+        <div class="field"><label>Titulo da demanda</label><input type="text" id="demPortalTitulo" placeholder="Ex: Ajustar campanha de Dia dos Pais"></div>
+        <div class="field"><label>Descricao</label><textarea id="demPortalDescricao" placeholder="O que foi solicitado e qual resultado precisa ser entregue"></textarea></div>
+        <div class="field"><label>Observacoes <span style="color:var(--muted);font-weight:400;">— opcional</span></label><textarea id="demPortalObservacoes" placeholder="Contexto da reuniao, restricoes, links ou combinados"></textarea></div>
+        <div class="field"><label>Colaborador(es) responsavel(is)</label><div id="demPortalResponsaveis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;margin-top:6px;">${DESTINATARIOS_DEMANDA.map(n=>`<label style="display:flex;align-items:center;gap:7px;background:var(--deep);padding:8px 10px;border-radius:7px;"><input type="checkbox" value="${esc(n)}"> ${esc(n)}</label>`).join('')}</div></div>
+        <div class="field"><label>Entregar ate</label><input type="date" id="demPortalPrazo"></div>
+        <button class="btn" id="btnCriarDemPortal" onclick="criarDemandaPortalAdmin()">Criar e distribuir demanda</button>
+      </div>`;
+    } else {
+      h += `<div class="card"><div class="desc">Somente a Amanda cria demandas oficiais do Portal. Esta visualizacao e de acompanhamento.</div></div>`;
+    }
+
+    h += `<div class="grupoFuncionario"><h3>Em andamento (${abertas.length})</h3>${abertas.length ? abertas.map(card).join('') : '<div class="empty">Nenhuma demanda em aberto.</div>'}</div>`;
+    if(concluidas.length) h += `<div class="grupoFuncionario"><h3>Concluidas (${concluidas.length})</h3>${concluidas.slice(0,30).map(card).join('')}</div>`;
+    return h;
+  }
+
+  window.criarDemandaPortalAdmin = async function(){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda cria demandas do Portal.', 'erro'); return; }
+    const sel = document.getElementById('demPortalCliente');
+    const cliente = sel?.value || '';
+    const clienteNome = sel?.selectedOptions?.[0]?.dataset?.nome || cliente;
+    const titulo = (document.getElementById('demPortalTitulo')?.value || '').trim();
+    const descricao = (document.getElementById('demPortalDescricao')?.value || '').trim();
+    const observacoes = (document.getElementById('demPortalObservacoes')?.value || '').trim();
+    const prazoData = document.getElementById('demPortalPrazo')?.value || '';
+    const responsaveis = Array.from(document.querySelectorAll('#demPortalResponsaveis input[type="checkbox"]:checked')).map(n=>n.value);
+    if(!cliente || !titulo || !descricao || !prazoData || !responsaveis.length){
+      mostrarToast('Preenche cliente, titulo, descricao, responsavel e prazo.', 'erro'); return;
+    }
+    const btn = document.getElementById('btnCriarDemPortal');
+    if(btn){ btn.disabled=true; btn.textContent='Criando e distribuindo...'; }
+    try{
+      const portalRef = doc(collection(db,'demandas_cliente'));
+      const grupoId = 'portal_' + portalRef.id;
+      const refsEquipe = responsaveis.map(() => doc(collection(db,'demandas')));
+      const participantes = responsaveis.map(pessoa => ({pessoa, tarefa:titulo}));
+      await runTransaction(db, async tx => {
+        tx.set(portalRef, {
+          cliente, clienteNome, titulo, texto:titulo, descricao, observacoes,
+          responsaveis, responsaveisStatus:Object.fromEntries(responsaveis.map(n=>[n,'pendente'])),
+          prazoData, prazoHora:'19:00', status:'pendente', origemRegistro:'equipe',
+          criadoPor:'Amanda', grupoId, excluido:false, criadoEm:serverTimestamp()
+        });
+        refsEquipe.forEach((ref, i) => tx.set(ref, {
+          titulo, descricao, observacoes, origem:'amanda', criadoPor:'Amanda',
+          cliente, clienteNome, destinatario:responsaveis[i], prazoData, prazoHora:'19:00',
+          status:'pendente', provaTexto:'', provaImagemUrl:'', grupoId,
+          grupoParticipantes:participantes, demandaClienteId:portalRef.id,
+          origemPortalCliente:true, emailEnviado:false, excluido:false, criadoEm:serverTimestamp()
+        }));
+      });
+      refsEquipe.forEach((ref,i)=>registrarHistorico('demandas', ref.id, 'Demanda do Portal criada pela Amanda para '+responsaveis[i]));
+      mostrarToast('Demanda criada no Portal e distribuida para '+responsaveis.length+' responsavel(is).');
+      await carregarTodasDemandas();
+      reRenderPortalAdmin();
+    }catch(e){
+      console.error('Falha ao criar demanda do Portal:', e);
+      mostrarToast('Nada foi criado: '+e.message, 'erro');
+      if(btn){ btn.disabled=false; btn.textContent='Criar e distribuir demanda'; }
+    }
+  };
+
   async function renderPortalClienteAdmin(containerId, apenasLeitura){
     containerId = containerId || 'gerenciaPortalCliente';
     apenasLeitura = apenasLeitura || false;
@@ -10499,6 +10752,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <button class="btn ${sub==='checklist'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('checklist','${containerId}',${apenasLeitura})">✅ Checklist do Cliente</button>
+      <button class="btn ${sub==='demandas'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('demandas','${containerId}',${apenasLeitura})">📋 Demandas</button>
       <button class="btn ${sub==='ideias'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('ideias','${containerId}',${apenasLeitura})">💡 Banco de Ideias</button>
       <button class="btn ${sub==='atas'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('atas','${containerId}',${apenasLeitura})">📝 Atas</button>
       <button class="btn ${sub==='referencias'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('referencias','${containerId}',${apenasLeitura})">🔗 Referências</button>
@@ -10516,6 +10770,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        aprovacao final da Amanda, que encerra oficialmente a sugestao. */
     if(sub === 'checklist'){
       cont.innerHTML = html + await htmlChecklistAdmin(containerId, apenasLeitura);
+      return;
+    }
+
+    if(sub === 'demandas'){
+      cont.innerHTML = html + await htmlDemandasPortalAdmin(apenasLeitura);
       return;
     }
 
@@ -13981,9 +14240,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     // ---------- O QUE TRAVA AGORA ----------
     const vidAprovar = vids.filter(v => v.status === 'aguardando_aprovacao').length;
-    lista.push(I('aprovar', 'Pra você aprovar', aprovarDem.length + vidAprovar,
-      (aprovarDem.length + vidAprovar) ? 'alto' : 'ok', "irParaAprovacoes()",
-      'Vídeos entregues pelos editores e demandas marcadas como feitas — tudo que espera seu ok.'));
+    const calendariosAprovarAgora = usuarioAtual === 'Amanda' ? linhasCalendariosAguardandoRevisao(cals).length : 0;
+    const totalAprovarAgora = aprovarDem.length + vidAprovar + calendariosAprovarAgora;
+    lista.push(I('aprovar', 'Pra você aprovar', totalAprovarAgora,
+      totalAprovarAgora ? 'alto' : 'ok', "irParaAprovacoes()",
+      'Vídeos, demandas e calendários enviados pela Gabi — tudo que espera seu ok.'));
 
     const atrasadas = (ehGestao ? abertas : minhas).filter(d => calcularUrgencia(d) === 'atrasado');
     lista.push(I('atrasadas', ehGestao ? 'Atrasadas na equipe' : 'Suas atrasadas', atrasadas.length,
@@ -14137,7 +14398,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     /* Esta é exatamente a mesma função usada para desenhar a fila. Não
        depende da lista de mensalistas: se existe um documento esperando
        Amanda, o contador e a lista enxergam juntos. */
-    espRevisao = linhasCalendariosAguardandoRevisao(cals).length;
+    const filaRevisaoCalendarios = linhasCalendariosAguardandoRevisao(cals);
+    espRevisao = filaRevisaoCalendarios.length;
+    sinalizarFilaCalendariosAmanda(filaRevisaoCalendarios);
     lista.push(I('calLiberados', 'Calendários no ar', liberados, 'bom', "irParaCalendariosLiberados()", 'O cliente já está vendo.'));
     const rotuloRevisaoCal = usuarioAtual === 'Amanda' ? 'Esperando sua revisão' : 'Esperando revisão da Amanda';
     const dicaRevisaoCal = usuarioAtual === 'Amanda' ? 'A Gabi enviou, falta você aprovar.' : 'A Gabi enviou; a decisão é da Amanda. Você acompanha em modo leitura.';
@@ -14758,7 +15021,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        de fora da lista e perdeu o acesso por completo: o botão de criar
        story pro cliente simplesmente sumiu pra ela. Ela é a Social Media
        chefe — é a dona natural disso. */
-    'Amanda': ['navCentral','navChecklist','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
+    'Amanda': ['navCentral','navAprovacoes','navChecklist','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
     'Cecília': ['navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem'],
     'Gabrielle': ['navChecklist','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
@@ -14792,7 +15055,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes','navExtras'],
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
-    'Amanda': ['navCentral','navVideos','navStories','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
+    'Amanda': ['navCentral','navAprovacoes','navVideos','navStories','navPostagens','navReferencias','navCampanhas','navFuncoesFixas'],
     'Cecília': ['navControlePostagem','navAgendamento','navPostagens','navStories','navVideos'],
     'Gabrielle': ['navStories','navRoteiros','navPostagens','navCampanhas','navReferencias'],
     'Helo': ['navVideos'],
@@ -16047,15 +16310,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        a derivar de PESSOAS_DE_CAMPO pra não virar mais uma lista que
        esquece alguém quando entrar um filmmaker novo. */
     const papeisComCalendario = [...PESSOAS_DE_CAMPO, 'Cecília', 'Amanda', 'Chris'];
-    if(!papeisComCalendario.includes(usuarioAtual)){ box.innerHTML = ''; return; }
-
+    const temCalendarioGravacao = papeisComCalendario.includes(usuarioAtual);
     const ehFilmmaker = PESSOAS_DE_CAMPO.includes(usuarioAtual);
     let agendamentos = cacheAgendamentos.filter(a => !a.excluido && a.status !== 'cancelado');
     if(ehFilmmaker) agendamentos = agendamentos.filter(a => pessoaNaEquipe(a, usuarioAtual));
 
     const hoje = new Date();
     const mesStr = hoje.toISOString().slice(0,7);
-    const doMes = agendamentos.filter(a => a.data && a.data.startsWith(mesStr));
+    const doMes = temCalendarioGravacao ? agendamentos.filter(a => a.data && a.data.startsWith(mesStr)) : [];
+    const funcoesFixasDoMes = (todasDemandas||[]).filter(d =>
+      !d.excluido && d.destinatario===usuarioAtual && !!d.tipoFuncaoFixa &&
+      String(d.prazoData||'').startsWith(mesStr) && !['aprovada','cancelada'].includes(String(d.status||'')));
+    if(!temCalendarioGravacao && !funcoesFixasDoMes.length){ box.innerHTML=''; return; }
 
     const [ano, mes] = mesStr.split('-').map(Number);
     const primeiroDia = new Date(ano, mes-1, 1);
@@ -16069,11 +16335,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     for(let d=1; d<=diasNoMes; d++){
       const diaStr = mesStr + '-' + String(d).padStart(2,'0');
       const its = doMes.filter(a => a.data === diaStr);
-      const clique = ehFilmmaker ? '' : ` onclick="abrirAgendarNoDia('${diaStr}')"`;
-      grade += `<div class="calCell ${ehFilmmaker?'':'clicavel'}" style="${diaStr===hojeStr?'border:1px solid var(--yellow);':''}"${clique}><div class="cdnum">${d}</div>`;
+      const funcoesDia = funcoesFixasDoMes.filter(t=>t.prazoData===diaStr);
+      const podeAbrirGravacao = temCalendarioGravacao && !ehFilmmaker;
+      const clique = podeAbrirGravacao ? ` onclick="abrirAgendarNoDia('${diaStr}')"` : '';
+      grade += `<div class="calCell ${podeAbrirGravacao?'clicavel':''}" style="${diaStr===hojeStr?'border:1px solid var(--yellow);':''}"${clique}><div class="cdnum">${d}</div>`;
       its.forEach(it => {
         const pendCls = it.aprovado === false ? 'pendente' : '';
         grade += `<div class="calChip ${pendCls}">${it.hora||''} · ${esc(it.clienteNome||'')}${!ehFilmmaker && it.filmmaker ? ' · '+esc(it.filmmaker) : ''}</div>`;
+      });
+      funcoesDia.forEach(t => {
+        grade += `<div class="calChip pendente" style="border-left:3px solid var(--yellow);cursor:pointer;" onclick="event.stopPropagation();abrirDemandaMinha('${t.id}')">🔁 ${esc(t.titulo||'Função fixa')}</div>`;
       });
       grade += `</div>`;
     }
@@ -16081,10 +16352,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     box.innerHTML = `<div class="card">
       <h2 style="display:flex;justify-content:space-between;align-items:center;">
-        <span>📅 Calendário de Gravações — <span>${nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1)}</span></span>
-        <button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="irParaAtalho('agendamento')">Ver completo →</button>
+        <span>📅 ${temCalendarioGravacao ? (funcoesFixasDoMes.length?'Calendário do mês':'Calendário de Gravações') : 'Calendário de Funções Fixas'} — <span>${nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1)}</span></span>
+        ${temCalendarioGravacao ? '<button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="irParaAtalho(\'agendamento\')">Ver gravações →</button>' : '<button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="irParaAtalho(\'minhasDemandasAtribuidas\')">Ver demandas →</button>'}
       </h2>
-      <div class="desc">${ehFilmmaker ? 'Só as suas gravações do mês, em todos os clientes.' : 'Panorama geral — todos os clientes, todos os filmmakers. Toque num dia pra marcar uma gravação nova.'}</div>
+      <div class="desc">${ehFilmmaker ? 'Suas gravações e Funções Fixas do mês.' : temCalendarioGravacao ? 'Gravações da equipe e suas Funções Fixas na data de entrega.' : 'As atividades recorrentes criadas pela Amanda aparecem aqui e em Minhas Demandas.'}</div>
       ${grade}
     </div>`;
   }
@@ -17510,6 +17781,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         const tot = vidRev + demRev;
         if(tot && ['Chris','Amanda'].includes(usuarioAtual)){ ba.textContent = tot; ba.style.display = 'flex'; }
         else ba.style.display = 'none';
+        /* O retrato sincrono acima deixa o menu responder na hora. Em
+           seguida a fonte unica de indicadores acrescenta os calendarios
+           da Gabi para a Amanda. Captura a pessoa para uma troca de login
+           no meio da leitura nunca deixar o numero dela no usuario seguinte. */
+        const pessoaDoBadgeAprovacoes = usuarioAtual;
+        calcularIndicadores().then(ind => {
+          if(usuarioAtual !== pessoaDoBadgeAprovacoes || !['Chris','Amanda'].includes(usuarioAtual)) return;
+          const totalReal = Number((ind.porChave.aprovar||{}).num)||0;
+          if(totalReal){ ba.textContent=totalReal; ba.style.display='flex'; }
+          else ba.style.display='none';
+        }).catch(e=>console.error('Falha ao acrescentar calendarios na badge de aprovacoes:', e));
       }
     }catch(e){ console.error('Falha na badge de aprovações:', e); }
 
@@ -18083,13 +18365,39 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      atualizado depois. Pro cliente, a demanda ficava "Pendente" pra
      sempre, mesmo já resolvida há meses. Agora sincroniza nos 3 momentos
      em que o status realmente muda. */
+  function calcularStatusPortalPorDemandas(grupo, statusFallback){
+    const ativas = (grupo||[]).filter(d=>d&&!d.excluido);
+    if(!ativas.length) return {status:statusFallback||'pendente', responsaveisStatus:{}};
+    const encerrada = d => ['aprovada','cancelada'].includes(String(d.status||''));
+    const todosEncerrados = ativas.every(encerrada);
+    const alguemAndou = ativas.some(d => encerrada(d) || d.status === 'concluida_aguardando_aprovacao');
+    const responsaveisStatus = {};
+    ativas.forEach(d => { if(d.destinatario) responsaveisStatus[d.destinatario] = encerrada(d) ? 'concluida' : (d.status === 'concluida_aguardando_aprovacao' ? 'andamento' : 'pendente'); });
+    return {status:todosEncerrados?'concluida':(alguemAndou?'andamento':'pendente'), responsaveisStatus};
+  }
+  window.calcularStatusPortalPorDemandas = calcularStatusPortalPorDemandas;
+
   async function sincronizarStatusDemandaCliente(demandaId, statusCliente){
     try{
       const demSnap = await getDoc(doc(db,'demandas', demandaId));
       if(!demSnap.exists()) return;
       const demandaClienteId = demSnap.data().demandaClienteId;
       if(!demandaClienteId) return; // demanda antiga, criada antes do vínculo existir
-      await updateDoc(doc(db,'demandas_cliente', demandaClienteId), { status: statusCliente });
+      /* Uma demanda criada pela Amanda pode ter varios responsaveis. O
+         primeiro a terminar nao pode concluir o pedido inteiro pro cliente.
+         Recalcula pelo grupo vinculado e mantem compatibilidade com os
+         pedidos antigos, que possuem apenas uma demanda interna. */
+      const grupoSnap = await getDocs(query(collection(db,'demandas'), where('demandaClienteId','==',demandaClienteId)));
+      const grupo = [];
+      grupoSnap.forEach(d => { const v=d.data(); if(!v.excluido) grupo.push(v); });
+      if(!grupo.length){
+        await updateDoc(doc(db,'demandas_cliente', demandaClienteId), { status: statusCliente });
+        return;
+      }
+      const calculado = calcularStatusPortalPorDemandas(grupo,statusCliente);
+      await updateDoc(doc(db,'demandas_cliente', demandaClienteId), {
+        status: calculado.status, responsaveisStatus:calculado.responsaveisStatus, atualizadoEm: serverTimestamp()
+      });
     }catch(e){ console.error('Falha ao sincronizar status com o portal do cliente:', e); }
   }
 
@@ -21614,6 +21922,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       { nome: 'distribuicaoDiariaAmanda', fn: verificarDistribuicaoDiariaAmanda },
       { nome: 'storiesEsperandoRevisao', fn: verificarStoriesParadosAmanda },
       { nome: 'migracaoFilas', fn: aposentarDemandasDeFila },
+      { nome: 'automacaoFuncoesFixas', fn: garantirAutomacaoFuncoesFixas },
       /* 27/07/2026 — REMOVIDO. Perfil de referência não tem prazo: é um
          cadastro que a Gabi preenche uma vez por cliente e atualiza quando
          quiser. Cobrar toda semana transformava um cadastro permanente numa
@@ -26614,7 +26923,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
        implementação, um lugar. */
     const cabecalho = `<div class="card" style="border:2px solid var(--yellow);">
       <h2>✅ Tudo que espera você</h2>
-      <div class="desc">Vídeo que o editor entregou e demanda que alguém marcou como feita. <b>Este é o único lugar</b> — o que você aprovar aqui sai daqui e anda na esteira.</div>
+      <div class="desc">Vídeo que o editor entregou, demanda marcada como feita e calendário enviado pela Gabi. <b>Este é o único lugar de aprovação</b> — o que você decidir aqui segue para a próxima etapa.</div>
     </div>
     <div id="centralAprovVideos"></div>`;
 
@@ -26661,6 +26970,12 @@ Observações do cliente: ${l.observacoes||'—'}`;
     /* Pedido de prazo é decisão da Amanda (regra da fase 2). O Chris vê
        se estiver cobrindo a ausência dela. */
     const prazosMeus = (usuarioAtual === 'Amanda' || (usuarioAtual === 'Chris' && estaAusente('Amanda'))) ? pedidosDePrazo : [];
+    let filaCalendariosAprovacao = [];
+    try{
+      const fonteCalendariosAprovacao = await obterCalendariosCompartilhados();
+      filaCalendariosAprovacao = linhasCalendariosAguardandoRevisao(fonteCalendariosAprovacao);
+      sinalizarFilaCalendariosAmanda(filaCalendariosAprovacao);
+    }catch(e){ console.error('Falha ao contar calendarios na Central de Aprovacoes:', e); }
     const filtro = window.__filtroAprov || 'tudo';
     const bolinha = n => n ? '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;">' + n + '</span>' : '';
     const chip = (id, rot, n) => `<button class="btn ${filtro===id?'':'secondary'}" style="width:auto;padding:8px 15px;font-size:12px;" onclick="filtrarAprovacoes('${id}')">${rot}${bolinha(n)}</button>`;
@@ -26678,6 +26993,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           ${chip('tudo','Todas as aprovações', 0)}
           ${chip('videos','🎬 Vídeos', 0)}
           ${chip('demandas','📋 Demandas', minhas.length)}
+          ${chip('calendarios','🗓️ Aprovar calendários', filaCalendariosAprovacao.length)}
           ${chip('prazos','🕓 Prazos', prazosMeus.length)}
           ${chip('extras','💲 Extras', extrasProConferir.length)}
         </div>
@@ -26726,6 +27042,11 @@ Observações do cliente: ${l.observacoes||'—'}`;
       try{ renderGerenciaPagamentos('centralAprovExtras'); }catch(e){ console.error('extras na aprovação:', e); }
       return;
     }
+    if(filtro === 'calendarios'){
+      const htmlCalendariosCentral = await htmlCalendariosParaRevisar({somenteLeitura:usuarioAtual!=='Amanda'});
+      cont.innerHTML = barraFiltros + cabecalho + (htmlCalendariosCentral || '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhum calendário esperando aprovação.</div></div>');
+      return;
+    }
     if(filtro === 'prazos'){
       html += htmlPrazos || '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhum pedido de prazo esperando você.</div></div>';
       cont.innerHTML = barraFiltros + cabecalho + html;
@@ -26737,6 +27058,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       return;
     }
     html += htmlPrazos;
+    if(filtro === 'tudo') html += await htmlCalendariosParaRevisar({somenteLeitura:usuarioAtual!=='Amanda'});
 
     if(!lista.length || filtro === 'videos'){
       html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nada esperando você agora.</div></div>';
@@ -27567,6 +27889,25 @@ Observações do cliente: ${l.observacoes||'—'}`;
     return fila;
   }
   window.linhasCalendariosAguardandoRevisao = linhasCalendariosAguardandoRevisao;
+
+  /* Alem da bolinha vermelha no menu, cada versao nova enviada pela Gabi
+     avisa a Amanda uma vez neste navegador. A chave inclui mes e instante
+     do envio: reenviar depois de um ajuste volta a sinalizar, mas renderizar
+     a mesma tela varias vezes nao cria notificacao repetida. */
+  function sinalizarFilaCalendariosAmanda(fila){
+    if(usuarioAtual !== 'Amanda' || !Array.isArray(fila) || !fila.length) return;
+    try{
+      const chaveStorage = 'gs_calendarios_aprovacao_v8';
+      const vistos = new Set(JSON.parse(localStorage.getItem(chaveStorage)||'[]'));
+      const chavesAtuais = fila.map(c => [c.slug,c.mesKey||'',c.em||''].join('|'));
+      const novos = fila.filter((c,i)=>!vistos.has(chavesAtuais[i]));
+      localStorage.setItem(chaveStorage, JSON.stringify(chavesAtuais.slice(-120)));
+      if(!novos.length) return;
+      const nomes = novos.slice(0,3).map(c=>c.nome).join(', ') + (novos.length>3?' e mais '+(novos.length-3):'');
+      mostrarToast('🗓️ '+novos.length+' calendário(s) esperando sua aprovação: '+nomes);
+      dispararNotificacaoNavegador('🗓️ Calendário para aprovar', novos.length+' calendário(s) da Gabi esperando você: '+nomes);
+    }catch(e){ console.error('Falha ao sinalizar fila de calendarios:', e); }
+  }
 
   window.renderFilaEnvioCalendarios = async function(){
     const box = document.getElementById('filaEnvioCalendarios');

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-06-firestore-read-budget-v28">
+<meta name="gs-build" content="2026-08-06-calendar-chain-recovery-v29">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -16921,6 +16921,27 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   let __campoOuvinte = null;
+
+  /* Falha de leitura nunca mais vira "calendário vazio". Em 06/08/2026 o
+     Firestore atingiu a cota e duas telas traduziram indisponibilidade como
+     ausência de dados: o filmmaker viu nenhum cliente e a Amanda viu zero na
+     fila. A mensagem abaixo é comum aos três caminhos e não afirma que um
+     dado sumiu quando o banco apenas não respondeu. */
+  function erroCalendariosEhCota(erro){
+    const texto = String((erro && (erro.code || erro.message)) || erro || '').toLowerCase();
+    return /resource-exhausted|quota|429|limite.*(leitura|uso)/.test(texto);
+  }
+  function htmlFalhaLeituraCalendarios(titulo, erro){
+    const cota = erroCalendariosEhCota(erro);
+    return `<div class="card" style="border:2px solid var(--red);">
+      <h2 style="font-size:15px;">⚠️ ${esc(titulo || 'Calendários indisponíveis agora')}</h2>
+      <div class="desc">${cota
+        ? 'O limite de leitura do Firebase foi atingido. <b>Isso não apagou nem confirma ausência de nenhum calendário.</b>'
+        : 'O banco não confirmou a leitura. <b>Isso não significa que o calendário esteja vazio ou apagado.</b>'}</div>
+      <div class="meta" style="margin-top:8px;">Evite atualizar a página várias vezes. Quando o banco responder, saia e entre novamente nesta aba.</div>
+    </div>`;
+  }
+
   window.renderCalendarioDeCampo = async function(){
     const box = document.getElementById('campoClientes');
     if(!box) return;
@@ -16928,11 +16949,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const alvo = await clientesDeConteudoRecorrente();
       const hoje = await carregarGravacoesDeHoje();
-      const snap = await obterCalendariosCompartilhados();
       const comConteudo = {};
-      snap.forEach(d => { const v=d.data(); const n=(v.items||[]).length; if(n) comConteudo[d.id]=n; });
-      const lista = alvo.filter(c => comConteudo[c.slug]);
-      if(!lista.length){ box.innerHTML = '<div class="empty">Nenhum cliente com calendário montado ainda.</div>'; return; }
+      /* O modo campo não depende mais de listar a coleção inteira. O
+         filmmaker abre somente o documento do cliente que vai gravar. Se a
+         gestão já tem um snapshot em memória, ele serve apenas para mostrar
+         a quantidade no cartão — nunca para decidir se o cliente existe. */
+      if(__snapshotCalendariosCompartilhado){
+        __snapshotCalendariosCompartilhado.forEach(d => {
+          const v=d.data(); comConteudo[d.id]=(v.items||[]).length;
+        });
+      }
+      const lista = alvo.slice();
+      if(!lista.length){ box.innerHTML = '<div class="empty">Nenhum cliente mensalista ativo cadastrado.</div>'; return; }
       /* Cartões grandes: isto é usado com o dedo, no celular, em pé. */
       box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:10px;">' +
         /* 01/08/2026 — a reclamação do Luís começa aqui: o cartão dizia
@@ -16946,9 +16974,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
                  background:var(--deep);color:var(--fg);font-size:14px;font-weight:800;cursor:pointer;text-align:left;">
           ${esc(c.nome)}
           ${g ? `<div style="font-size:12.5px;font-weight:800;color:var(--yellow);margin-top:5px;">🎥 HOJE${g.hora?' às '+esc(g.hora):''} · ${g.qtd} vídeo(s)</div>` : ''}
-          <div style="font-size:11px;font-weight:500;opacity:.65;margin-top:4px;">${comConteudo[c.slug]} conteúdo(s) no mês</div>
+          <div style="font-size:11px;font-weight:500;opacity:.65;margin-top:4px;">${Number.isFinite(comConteudo[c.slug])
+            ? comConteudo[c.slug] + ' conteúdo(s) no calendário'
+            : 'Toque para abrir o calendário deste cliente'}</div>
         </button>`; }).join('') + '</div>';
-    }catch(e){ console.error('Falha no modo campo:', e); box.innerHTML = '<div class="empty">Não consegui carregar. Recarrega a página.</div>'; }
+    }catch(e){ console.error('Falha no modo campo:', e); box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui abrir a lista de clientes', e); }
   };
 
   /* ===== A GRAVAÇÃO DE HOJE — 01/08/2026 =============================
@@ -17091,7 +17121,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       setTimeout(()=>cont.scrollIntoView({behavior:'smooth', block:'start'}), 150);
     }, (err) => {
       console.error('Modo campo — erro de conexão:', err);
-      cont.innerHTML = '<div class="card"><div class="empty">Perdi a conexão. Recarrega a página.</div></div>';
+      cont.innerHTML = htmlFalhaLeituraCalendarios('Não consegui abrir o calendário de ' + nome, err);
     });
   };
 
@@ -19423,8 +19453,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           ? linhasCalendariosAguardandoRevisao(__snapshotCalendariosCompartilhado).length
           : 0;
         const tot = vidRev + demRev + calRev;
-        if(tot && ['Chris','Amanda'].includes(usuarioAtual)){ ba.textContent = tot; ba.style.display = 'flex'; }
-        else ba.style.display = 'none';
+        const calendarioNaoConfirmado = usuarioAtual === 'Amanda' && !!__erroCalendariosCompartilhado;
+        if(calendarioNaoConfirmado){
+          ba.textContent = tot ? String(tot) + '+' : '!';
+          ba.title = 'A fila de calendários não pôde ser confirmada pelo Firebase; abra para ver o aviso.';
+          ba.style.display = 'flex';
+        }else if(tot && ['Chris','Amanda'].includes(usuarioAtual)){
+          ba.textContent = tot; ba.removeAttribute('title'); ba.style.display = 'flex';
+        }else{
+          ba.removeAttribute('title'); ba.style.display = 'none';
+        }
         /* O retrato sincrono acima deixa o menu responder na hora. Em
            seguida a fonte unica de indicadores acrescenta os calendarios
            da Gabi para a Amanda. Captura a pessoa para uma troca de login
@@ -19436,8 +19474,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         if(usuarioAtual === 'Amanda' && !__snapshotCalendariosCompartilhado) calcularIndicadores(true).then(ind => {
           if(versaoDestaLeitura !== __versaoBadgeAprovacoes || usuarioAtual !== pessoaDoBadgeAprovacoes || !['Chris','Amanda'].includes(usuarioAtual)) return;
           const totalReal = Number((ind.porChave.aprovar||{}).num)||0;
-          if(totalReal){ ba.textContent=totalReal; ba.style.display='flex'; }
-          else ba.style.display='none';
+          const falhouCalendario = (ind.errosLeitura||[]).some(x=>String(x).startsWith('calendários'));
+          if(falhouCalendario){
+            ba.textContent = totalReal ? String(totalReal) + '+' : '!';
+            ba.title = 'A fila de calendários não pôde ser confirmada pelo Firebase; abra para ver o aviso.';
+            ba.style.display = 'flex';
+          }else if(totalReal){
+            ba.textContent=totalReal; ba.removeAttribute('title'); ba.style.display='flex';
+          }else{
+            ba.removeAttribute('title'); ba.style.display='none';
+          }
         }).catch(e=>console.error('Falha ao acrescentar calendarios na badge de aprovacoes:', e));
       }
     }catch(e){ console.error('Falha na badge de aprovações:', e); }
@@ -21348,7 +21394,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const snap = await obterCalendariosCompartilhados();
       snap.forEach(d => { cals[d.id] = d.data(); });
-    }catch(e){ console.error('Falha ao ler calendários:', e); }
+    }catch(e){
+      console.error('Falha ao ler calendários:', e);
+      box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui confirmar os calendários', e);
+      return;
+    }
 
     const alvo = await clientesDeConteudoRecorrente();
 
@@ -24003,7 +24053,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     /* Calendários são a fonte comum da Gabi, da aprovação da Amanda e do
        controle de gravações. Uma assinatura substitui dezenas de leituras
        completas e entrega a mudança da Gabi à fila sem recarregar a página. */
-    if(['Chris','Amanda','Cecília', ...PESSOAS_DE_CAMPO].includes(pessoaDoOuvinte)){
+    /* Filmmaker não assina mais os 21 calendários ao entrar. O modo campo
+       mostra os clientes pela carteira e abre só o documento escolhido,
+       mantendo atualização ao vivo sem cobrar a coleção inteira. */
+    if(['Chris','Amanda','Cecília'].includes(pessoaDoOuvinte)){
       __ouvintesTempoReal.push(onSnapshot(collection(db,'calendarios'), (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
         __alimentarCacheTempoReal('calendarios',snap);
@@ -28865,12 +28918,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
        se estiver cobrindo a ausência dela. */
     const prazosMeus = (pessoaDaFilaAprovacoes === 'Amanda' || (pessoaDaFilaAprovacoes === 'Chris' && estaAusente('Amanda'))) ? pedidosDePrazo : [];
     let filaCalendariosAprovacao = [];
+    let erroFilaCalendariosAprovacao = null;
     try{
       const fonteCalendariosAprovacao = await obterCalendariosCompartilhados();
       if(usuarioAtual !== pessoaDaFilaAprovacoes){ cont.replaceChildren(); return; }
       filaCalendariosAprovacao = linhasCalendariosAguardandoRevisao(fonteCalendariosAprovacao);
       sinalizarFilaCalendariosAmanda(filaCalendariosAprovacao);
-    }catch(e){ console.error('Falha ao contar calendarios na Central de Aprovacoes:', e); }
+    }catch(e){ erroFilaCalendariosAprovacao = e; console.error('Falha ao contar calendarios na Central de Aprovacoes:', e); }
     const filtro = window.__filtroAprov || 'tudo';
     const bolinha = n => n ? '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;">' + n + '</span>' : '';
     const chip = (id, rot, n) => `<button class="btn ${filtro===id?'':'secondary'}" style="width:auto;padding:8px 15px;font-size:12px;" onclick="filtrarAprovacoes('${id}')">${rot}${bolinha(n)}</button>`;
@@ -28888,7 +28942,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           ${chip('tudo','Todas as aprovações', 0)}
           ${chip('videos','🎬 Vídeos', 0)}
           ${chip('demandas','📋 Demandas', minhas.length)}
-          ${chip('calendarios','🗓️ Aprovar calendários', filaCalendariosAprovacao.length)}
+          ${chip('calendarios','🗓️ Aprovar calendários', erroFilaCalendariosAprovacao ? '!' : filaCalendariosAprovacao.length)}
           ${chip('prazos','🕓 Prazos', prazosMeus.length)}
           ${chip('extras','💲 Extras', extrasProConferir.length)}
         </div>
@@ -29899,7 +29953,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         </div>` : '');
     }catch(e){
       console.error('Falha na fila de envio:', e);
-      box.innerHTML = '<div class="empty">Não consegui carregar. Recarrega a página.</div>';
+      box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui confirmar os calendários prontos para envio', e);
     }
   };
 

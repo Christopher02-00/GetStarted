@@ -683,13 +683,13 @@ function carimbarMesDosAntigos(){
   }
 
 function itensDoMes(mes){
-  const todos=data.items||[];
+  const todos=(data.items||[]).filter(it=>it && !it.excluido);
   if(!mes) return todos;
   return todos.filter(it => mesDoItem(it) === mes);
 }
 function mesesExistentes(){
   const set=new Set();
-  (data.items||[]).forEach(it => { const m=mesDoItem(it); if(m) set.add(m); });
+  (data.items||[]).filter(it=>it&&!it.excluido).forEach(it => { const m=mesDoItem(it); if(m) set.add(m); });
   const doDoc=mesDoTexto(data.month); if(doDoc) set.add(doDoc);
   if(mesVisivel) set.add(mesVisivel);
   return [...set].sort();
@@ -1458,6 +1458,11 @@ function renderBlocos(){
 window.mudarQtdBlocos = function(n){
   if(exigirRetiradaAntesDeEditar()) return;
   if(!(n >= 1 && n <= BLOCOS_MAX)) return;
+  const orfaos = itensDoMes(mesVisivel).filter(it => Number(it.bloco) > n);
+  if(orfaos.length){
+    avisarTela('Não reduzi: '+orfaos.length+' conteúdo(s) ainda estão marcados para uma gravação que deixaria de existir. Abra esses conteúdos e escolha outra gravação primeiro.', 'erro');
+    return;
+  }
   data.blocosPorMes = data.blocosPorMes || {};
   data.blocosPorMes[mesVisivel || ''] = n;
   renderAll();
@@ -1863,7 +1868,7 @@ window.verMes = function(m){
   mesVisivel = m;
   const campo=document.getElementById('monthName');
   if(campo) campo.value = textoDoMes(m);
-  renderGrid();renderWeek();renderKanban();renderProgress();renderSeletorMes();renderAprovacaoInterna();
+  renderGrid();renderWeek();renderKanban();renderProgress();renderSeletorMes();renderAprovacaoInterna();renderBlocos();
 };
 
 function renderMeta(){
@@ -2146,6 +2151,10 @@ function openModal(day){if(exigirRetiradaAntesDeEditar())return;editIdx=null;doc
   document.getElementById('mLegenda').value='';
   document.getElementById('mStage').value='topo';document.getElementById('mFmt').value='';
   document.getElementById('mFlex').checked=false;
+  const mdp=document.getElementById('mDataPost'); if(mdp) mdp.value='';
+  const mbl=document.getElementById('mBloco'); if(mbl) mbl.value='';
+  const moCli=document.getElementById('mObsCliente'); if(moCli) moCli.value='';
+  const boxCli=document.getElementById('campoObsCliente'); if(boxCli) boxCli.style.display=window.__modoCal==='cliente'?'block':'none';
   const selN=document.getElementById('mRefSelect'); if(selN) selN.value='';
   document.getElementById('aprBtn').style.display='none';
   updateRefLink();
@@ -2206,25 +2215,27 @@ function saveItem(){
   const diaEscolhido=parseInt(document.getElementById('mDay').value)||1;
   const limiteDias=diasDoMes();
   if(diaEscolhido<1||diaEscolhido>limiteDias){avisarTela('Esse mês termina no dia '+limiteDias+'. Escolha uma data válida.');return;}
-  const it={day:diaEscolhido,name:document.getElementById('mName').value||'Sem título',
+  const anterior=editIdx!==null?(data.items[editIdx]||{}):{};
+  const it={...anterior,itemId:anterior.itemId||('calitem_'+Date.now()+'_'+Math.random().toString(36).slice(2,9)),day:diaEscolhido,name:document.getElementById('mName').value||'Sem título',
     desc:document.getElementById('mDesc').value,legenda:document.getElementById('mLegenda').value,ref:document.getElementById('mRef').value,
     obs:(document.getElementById('mObs')?.value||''),
     /* Carimba o mês que está aberto. Sem isso, um conteúdo de setembro
        criado enquanto agosto roda cairia em agosto sem ninguém perceber. */
     mes: mesVisivel || mesDoTexto(data.month) || '',
     stage:document.getElementById('mStage').value,fmt:document.getElementById('mFmt').value||'Reel',
-    apr:editIdx!==null?(data.items[editIdx].apr||false):false,posted:editIdx!==null?(data.items[editIdx].posted||false):false,
-    gravado:editIdx!==null?(data.items[editIdx].gravado||false):false,
-    agendado:editIdx!==null?(data.items[editIdx].agendado||false):false,
-    postagemId:editIdx!==null?(data.items[editIdx].postagemId||''):'',
+    apr:editIdx!==null?(anterior.apr||false):false,posted:editIdx!==null?(anterior.posted||false):false,
+    gravado:editIdx!==null?(anterior.gravado||false):false,
+    agendado:editIdx!==null?(anterior.agendado||false):false,
+    postagemId:editIdx!==null?(anterior.postagemId||''):'',
     dataFlexivel:document.getElementById('mFlex').checked,
     /* vazio = automático. Guardo o vazio de propósito: assim a divisão
        acompanha se a Gabi acrescentar ou tirar conteúdo do mês. */
     bloco:(document.getElementById('mBloco')?.value||''),
-    dataPostagem:document.getElementById('mDataPost')?.value||''};
+    dataPostagem:document.getElementById('mDataPost')?.value||'',
+    obsCliente:window.__modoCal==='cliente'?(document.getElementById('mObsCliente')?.value||''):(anterior.obsCliente||'')};
   if(editIdx!==null)data.items[editIdx]=it;else data.items.push(it);
   closeModal();renderAll();}
-function delItem(){if(exigirRetiradaAntesDeEditar())return;if(editIdx!==null){apagouDePropósito=true;data.items.splice(editIdx,1);}closeModal();renderAll();}
+function delItem(){if(exigirRetiradaAntesDeEditar())return;if(editIdx!==null&&data.items[editIdx]){apagouDePropósito=true;data.items[editIdx]={...data.items[editIdx],excluido:true,excluidoPor:'equipe',excluidoEm:new Date().toISOString()};}closeModal();renderAll();}
 async function toggleApr(){
   if(editIdx===null) return;
   const idx = editIdx;

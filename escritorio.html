@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-extras-badges-v27">
+<meta name="gs-build" content="2026-08-06-firestore-read-budget-v28">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1807,6 +1807,23 @@
     };
   }
 
+  /* 06/08/2026 — o listener já pagou pela leitura e é a fonte mais nova.
+     Reusar o mesmo retrato nas telas evita que cada badge/painel abra uma
+     segunda leitura completa da coleção. Só snapshots de coleção inteira
+     entram aqui; consultas filtradas por funcionário nunca alimentam este
+     cache, para não produzir uma visão parcial com aparência de completa. */
+  function __alimentarCacheTempoReal(nome, snap){
+    if(!nome || !snap || typeof snap.forEach !== 'function') return;
+    const itens=[];
+    snap.forEach(d=>itens.push({__id:d.id,__dados:d.data()}));
+    __cacheColecoes.set(nome,{em:Date.now(),itens,tempoReal:true});
+  }
+
+  function __falhouCacheTempoReal(nome){
+    const atual=__cacheColecoes.get(nome);
+    if(atual?.tempoReal) __cacheColecoes.delete(nome);
+  }
+
   async function getDocs(ref){
     // só cacheia coleção inteira; consulta com where/orderBy passa direto
     const nome = (ref && ref.type === 'collection' && ref.path && ref.path.indexOf('/') === -1) ? ref.path : null;
@@ -1814,6 +1831,7 @@
 
     const agora = Date.now();
     const guardado = __cacheColecoes.get(nome);
+    if(guardado?.tempoReal) return __snapshotFalso(guardado.itens);
     if(guardado && (agora - guardado.em) < TTL_CACHE_MS) return __snapshotFalso(guardado.itens);
     if(guardado && guardado.promessa) return guardado.promessa;   // já tem uma busca em voo
 
@@ -14550,23 +14568,42 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return !v.excluido && !finais.includes(String(v.statusGerencia||'')) && !finais.includes(String(v.status||''));
   }
 
-  async function carregarContadorEntradaClientes(){
+  let __contadorEntradaCache={total:0,em:0};
+  let __contadorEntradaPromise=null;
+  const TTL_CONTADOR_ENTRADA=2*60*1000;
+
+  function aplicarContadorEntradaClientes(badge,total){
+    badge.textContent=String(total);
+    badge.style.display=total?'inline-flex':'none';
+    return total;
+  }
+
+  async function carregarContadorEntradaClientes(forcar){
     const badge=document.getElementById('badgeEntradaClientes');
     if(!badge || !['Amanda','Chris'].includes(usuarioAtual)){ if(badge) badge.style.display='none'; return 0; }
     const pessoaContadorEntrada=usuarioAtual;
     try{
-      const [mensalistas,avulsos,pessoais]=await Promise.all([
-        getDocs(collection(db,'cadastros_clientes')),
-        getDocs(collection(db,'leads_avulsos')),
-        getDocs(collection(db,'leads_pessoa_fisica'))
-      ]);
+      if(!forcar && Date.now()-__contadorEntradaCache.em<TTL_CONTADOR_ENTRADA){
+        return aplicarContadorEntradaClientes(badge,__contadorEntradaCache.total);
+      }
+      if(!__contadorEntradaPromise){
+        __contadorEntradaPromise=(async()=>{
+          const [mensalistas,avulsos,pessoais]=await Promise.all([
+            getDocs(collection(db,'cadastros_clientes')),
+            getDocs(collection(db,'leads_avulsos')),
+            getDocs(collection(db,'leads_pessoa_fisica'))
+          ]);
+          let total=0;
+          mensalistas.forEach(d=>{ if(entradaClientePendente(d.data())) total++; });
+          avulsos.forEach(d=>{ if(entradaClientePendente(d.data())) total++; });
+          pessoais.forEach(d=>{ if(entradaClientePendente(d.data())) total++; });
+          __contadorEntradaCache={total,em:Date.now()};
+          return total;
+        })().finally(()=>{ __contadorEntradaPromise=null; });
+      }
+      const total=await __contadorEntradaPromise;
       if(usuarioAtual!==pessoaContadorEntrada || !['Amanda','Chris'].includes(usuarioAtual)){ if(badge) badge.style.display='none'; return 0; }
-      let total=0;
-      mensalistas.forEach(d=>{ if(entradaClientePendente(d.data())) total++; });
-      avulsos.forEach(d=>{ if(entradaClientePendente(d.data())) total++; });
-      pessoais.forEach(d=>{ if(entradaClientePendente(d.data())) total++; });
-      badge.textContent=String(total); badge.style.display=total?'inline-flex':'none';
-      return total;
+      return aplicarContadorEntradaClientes(badge,total);
     }catch(e){ console.error('Falha ao contar entradas de clientes:',e); badge.style.display='none'; return 0; }
   }
   window.carregarContadorEntradaClientes=carregarContadorEntradaClientes;
@@ -14802,7 +14839,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         <h2 style="margin:28px 0 8px;">Clientes ativos vindos do link (${ativos.length})</h2>${ativos.length?ativos.map(itemAtivo).join(''):'<div class="empty">Nenhum cliente do link foi ativado ainda.</div>'}
         <h2 style="margin:28px 0 8px;">Arquivados (${arquivadosDoLink.length})</h2>${arquivadosDoLink.length?arquivadosDoLink.map(v=>'<div class="item" style="cursor:default;"><div class="top"><div class="nome">'+esc(v.nome||v.clienteNome||v.slug||'Cliente')+'</div><span class="selo pendente">ARQUIVADO</span></div><div class="meta">'+esc(v.dataSaida||'')+(v.motivo?' · '+esc(v.motivo):'')+'</div></div>').join(''):'<div class="empty">Nenhum cadastro do link arquivado.</div>'}
         <h2 style="margin:28px 0 8px;">Onboarding dos mensalistas ativos</h2>`;
-      await carregarContadorEntradaClientes();
+      await carregarContadorEntradaClientes(true);
     }catch(e){ console.error('Falha na Central de Entrada:',e); box.innerHTML='<div class="empty">Não foi possível carregar as entradas. Atualize a página e tente novamente.</div>'; }
   };
 
@@ -16454,11 +16491,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // Essas duas não são async/aguardadas — mas também protegidas, porque
     // se o próprio disparo inicial dentro delas falhar, não pode quebrar
     // o resto do login que vem depois.
+    try{ iniciarListenersTempoReal(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao iniciar listeners:', e); } // Fase 2
+    /* O motor reaproveita os snapshots operacionais. Iniciar os ouvintes
+       primeiro evita que a rodada de boot faça varreduras completas das
+       mesmas coleções segundos antes de recebê-las em tempo real. */
     try{
       if(ehGestaoNoLogin) iniciarMotorAutomacoes();
       else pararMotorAutomacoes();
     }catch(e){ console.error('mudarUsuarioGlobal: falha ao ajustar motor:', e); } // Fase 1
-    try{ iniciarListenersTempoReal(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao iniciar listeners:', e); } // Fase 2
     try{ pedirPermissaoNotificacao(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao pedir permissão de notificação:', e); } // Fase 5
 
     await etapaSegura('recarregar demandas', carregarTodasDemandas);
@@ -18515,7 +18555,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }catch(e){}
   }
 
-  async function atualizarBadgeMinhas(){
+  let __badgeAnotacoesCache={pessoa:'',total:0,em:0};
+  let __badgeAnotacoesPromise=null;
+  const TTL_BADGE_ANOTACOES=60*1000;
+
+  function aplicarBadgeAnotacoes(badge,total){
+    if(total){ badge.style.display='flex'; badge.textContent=total; }
+    else { badge.style.display='none'; badge.textContent=''; }
+  }
+
+  async function atualizarBadgeMinhas(forcar){
     const badge = document.getElementById('badgeMinhas');
     /* 03/08/2026 — sem esta guarda, um badge ausente estoura aqui e
        derruba `atualizarTodosOsBadges` inteira: os outros contadores
@@ -18526,11 +18575,25 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // Agora esse badge é sobre a página "Minhas Anotações" (só pessoal) —
     // as demandas do sistema não vivem mais lá, então não contam mais aqui.
     try{
-      const snap = await getDocs(collection(db,'anotacoes_pessoais'));
-      let pendentes = 0;
-      snap.forEach(d => { const a = d.data(); if(a.autor === usuarioAtual && !a.feita && !a.excluido) pendentes++; });
-      if(pendentes){ badge.style.display='flex'; badge.textContent = pendentes; }
-      else { badge.style.display='none'; }
+      const pessoaBadge=usuarioAtual;
+      if(!forcar && __badgeAnotacoesCache.pessoa===pessoaBadge && Date.now()-__badgeAnotacoesCache.em<TTL_BADGE_ANOTACOES){
+        aplicarBadgeAnotacoes(badge,__badgeAnotacoesCache.total);
+        return;
+      }
+      if(!__badgeAnotacoesPromise || __badgeAnotacoesPromise.pessoa!==pessoaBadge){
+        const promessa=getDocs(query(collection(db,'anotacoes_pessoais'),where('autor','==',pessoaBadge))).then(snap=>{
+          let pendentes=0;
+          snap.forEach(d=>{ const a=d.data(); if(!a.feita&&!a.excluido) pendentes++; });
+          __badgeAnotacoesCache={pessoa:pessoaBadge,total:pendentes,em:Date.now()};
+          return pendentes;
+        });
+        __badgeAnotacoesPromise={pessoa:pessoaBadge,promessa};
+        const limparPromessa=()=>{ if(__badgeAnotacoesPromise?.promessa===promessa) __badgeAnotacoesPromise=null; };
+        promessa.then(limparPromessa,limparPromessa);
+      }
+      const pendentes=await __badgeAnotacoesPromise.promessa;
+      if(usuarioAtual!==pessoaBadge) return;
+      aplicarBadgeAnotacoes(badge,pendentes);
     }catch(e){ badge.style.display='none'; }
   }
 
@@ -18554,14 +18617,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     document.getElementById('anotData').value = '';
     mostrarToast('Anotação adicionada!');
     renderAnotacoesPessoais();
-    atualizarBadgeMinhas();
+    atualizarBadgeMinhas(true);
   };
 
   async function renderAnotacoesPessoais(){
     const cont = document.getElementById('listaAnotacoesPessoais');
     if(!usuarioAtual){ cont.innerHTML = ''; return; }
-    const snap = await getDocs(collection(db,'anotacoes_pessoais'));
-    const minhas = []; snap.forEach(d => { const a = d.data(); if(a.autor === usuarioAtual && !a.excluido) minhas.push({id:d.id, ...a}); });
+    const snap = await getDocs(query(collection(db,'anotacoes_pessoais'),where('autor','==',usuarioAtual)));
+    const minhas = []; snap.forEach(d => { const a = d.data(); if(!a.excluido) minhas.push({id:d.id, ...a}); });
 
     const ordem = { vermelho:0, laranja:1, amarelo:2, verde:3 };
     minhas.sort((a,b) => (ordem[a.prioridade]??9) - (ordem[b.prioridade]??9) || (a.data||'').localeCompare(b.data||''));
@@ -18587,7 +18650,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.toggleAnotacaoFeita = async function(id, novoEstado){
     await updateDoc(doc(db,'anotacoes_pessoais', id), { feita: novoEstado });
     renderAnotacoesPessoais();
-    atualizarBadgeMinhas();
+    atualizarBadgeMinhas(true);
   };
 
   window.excluirAnotacaoPessoal = async function(id){
@@ -18597,7 +18660,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     await updateDoc(doc(db,'anotacoes_pessoais', id), { excluido: true, excluidoEm: new Date().toISOString() });
     mostrarToast('Anotação excluída.');
     renderAnotacoesPessoais();
-    atualizarBadgeMinhas();
+    atualizarBadgeMinhas(true);
   };
 
   window.carregarMinhasDemandas = async function(){
@@ -19225,7 +19288,6 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const badge = document.getElementById('badgeGerencia');
     if(!badge || !['Chris','Amanda'].includes(usuarioAtual)){ if(badge) badge.style.display='none'; return; }
     try{
-      const snap = await getDocs(collection(db,'demandas'));
       const ehAmanda = usuarioAtual === 'Amanda' || estaAusente('Amanda');
       let n = 0;
       /* 03/08/2026 — esta badge contava TUDO que estava esperando
@@ -19233,7 +19295,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
          seu (regra `aprovacaoEhDe`, da fase 2). Resultado medido hoje:
          badge 7, tela 2 — e o Chris entrava e não achava os 5 restantes,
          porque eram da Amanda. Agora as duas usam a mesma regra. */
-      snap.forEach(d => { const v={id:d.id, ...d.data()};
+      /* A fila completa da gestão já está em `todasDemandas` e é mantida
+         pelo listener. Reler centenas de documentos para desenhar um badge
+         repetia a mesma fonte e foi parte do estouro diário de cota. */
+      (todasDemandas||[]).forEach(v => {
         if(!demandaOperacionalVisivel(v)) return;
         // pedido de prazo e decisao da Amanda — nao conta pro Chris
         if(v.prazoSolicitado){ if(ehAmanda) n++; return; }
@@ -23768,7 +23833,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return __snapshotRefsPerfilCompartilhado;
   }
 
-  function pararListenersTempoReal(limparDemandas){
+  function pararListenersTempoReal(limparDemandas, limparCachesColecoes){
     __ouvintesTempoReal.forEach(parar => { try{ parar(); }catch(e){} });
     __ouvintesTempoReal = [];
     __usuarioDosOuvintes = '';
@@ -23780,12 +23845,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     cacheExtrasMenuPronto = false;
     Object.keys(__cacheTempoRealPronto).forEach(k => { __cacheTempoRealPronto[k] = false; });
     if(limparDemandas !== false) todasDemandas = [];
+    /* Troca de papel é fronteira de privacidade. Nenhum retrato completo
+       carregado por Chris/Amanda pode permanecer disponível na memória do
+       próximo usuário. A chamada interna de reinício passa `false` porque
+       ainda está no mesmo papel e só está recriando os ouvintes. */
+    if(limparCachesColecoes !== false) __limparCacheColecoes();
   }
 
   function iniciarListenersTempoReal(){
     if(!usuarioAtual) return;
     if(listenersTempoRealAtivos && __usuarioDosOuvintes === usuarioAtual) return;
-    pararListenersTempoReal(false);
+    pararListenersTempoReal(false, false);
     __usuarioDosOuvintes = usuarioAtual;
     const pessoaDoOuvinte = usuarioAtual;
     const ehGestao = pessoaDoOuvinte === 'Amanda' || pessoaDoOuvinte === 'Chris';
@@ -23812,6 +23882,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       : query(collection(db,'demandas'), where('destinatario','==',pessoaDoOuvinte));
     __ouvintesTempoReal.push(onSnapshot(refDemandas, (snap)=>{
       if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+      if(ehGestao) __alimentarCacheTempoReal('demandas',snap);
       const anterioresPorId = new Map(todasDemandas.map(d=>[d.id,d]));
       const recebidas = [];
       snap.forEach(d => {
@@ -23839,7 +23910,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       primeiroSnapshotDemandas = false;
       __cacheTempoRealPronto.demandas = true;
       onDadosTempoRealMudaram('demandas');
-    }, (erro)=>{ console.error('Listener demandas falhou:', erro); }));
+    }, (erro)=>{ if(ehGestao) __falhouCacheTempoReal('demandas'); console.error('Listener demandas falhou:', erro); }));
 
     /* ===== LISTENER DO EDITOR — NÃO ESCREVER NOMES À MÃO ==============
        A otimização de cota de 04/08 deixou apenas Helo e João Victor neste
@@ -23860,6 +23931,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         : query(collection(db,'videos_producao'), where('editorAtribuido','==',pessoaDoOuvinte));
       __ouvintesTempoReal.push(onSnapshot(refVideos, (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        if(ehGestao) __alimentarCacheTempoReal('videos_producao',snap);
         const anterioresPorId = new Map(cacheVideosProducao.map(v=>[v.id,v]));
         cacheVideosProducao = [];
         snap.forEach(d => cacheVideosProducao.push({id:d.id, ...d.data()}));
@@ -23877,7 +23949,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         primeiroSnapshotVideos = false;
         __cacheTempoRealPronto.videos_producao = true;
         onDadosTempoRealMudaram('videos_producao');
-      }, (erro)=>{ console.error('Listener videos_producao falhou:', erro); }));
+      }, (erro)=>{ if(ehGestao) __falhouCacheTempoReal('videos_producao'); console.error('Listener videos_producao falhou:', erro); }));
     }
 
     if(ehGestao || pessoaDoOuvinte === 'Gabrielle' || pessoaDoOuvinte === 'Cecília'){
@@ -23889,11 +23961,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       }
       __ouvintesTempoReal.push(onSnapshot(refPostagens, (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        if(ehGestao) __alimentarCacheTempoReal('postagens',snap);
         cachePostagens = [];
         snap.forEach(d => cachePostagens.push({id:d.id, ...d.data()}));
         __cacheTempoRealPronto.postagens = true;
         onDadosTempoRealMudaram('postagens');
-      }, (erro)=>{ console.error('Listener postagens falhou:', erro); }));
+      }, (erro)=>{ if(ehGestao) __falhouCacheTempoReal('postagens'); console.error('Listener postagens falhou:', erro); }));
     }
 
     if(ehGestao || pessoaDoOuvinte === 'Cecília' || ['Luís','Nathan'].includes(pessoaDoOuvinte)){
@@ -23904,11 +23977,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const refAgendamentos = collection(db,'agendamentos');
       __ouvintesTempoReal.push(onSnapshot(refAgendamentos, (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        __alimentarCacheTempoReal('agendamentos',snap);
         cacheAgendamentos = [];
         snap.forEach(d => cacheAgendamentos.push({id:d.id, ...d.data()}));
         __cacheTempoRealPronto.agendamentos = true;
         onDadosTempoRealMudaram('agendamentos');
-      }, (erro)=>{ console.error('Listener agendamentos falhou:', erro); }));
+      }, (erro)=>{ __falhouCacheTempoReal('agendamentos'); console.error('Listener agendamentos falhou:', erro); }));
     }
 
     /* Só a gestão recebe a coleção financeira inteira. O Chris usa o
@@ -23917,12 +23991,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(ehGestao){
       __ouvintesTempoReal.push(onSnapshot(collection(db,'pagamentos_extra'), (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        __alimentarCacheTempoReal('pagamentos_extra',snap);
         cacheExtrasMenu=[];
         snap.forEach(d=>cacheExtrasMenu.push({id:d.id,...d.data()}));
         cacheExtrasMenuPronto=true;
         __cacheTempoRealPronto.pagamentos_extra=true;
         onDadosTempoRealMudaram('pagamentos_extra');
-      }, (erro)=>{ console.error('Listener pagamentos_extra falhou:',erro); }));
+      }, (erro)=>{ __falhouCacheTempoReal('pagamentos_extra'); console.error('Listener pagamentos_extra falhou:',erro); }));
     }
 
     /* Calendários são a fonte comum da Gabi, da aprovação da Amanda e do
@@ -23931,6 +24006,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(['Chris','Amanda','Cecília', ...PESSOAS_DE_CAMPO].includes(pessoaDoOuvinte)){
       __ouvintesTempoReal.push(onSnapshot(collection(db,'calendarios'), (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        __alimentarCacheTempoReal('calendarios',snap);
         __snapshotCalendariosCompartilhado = snap;
         __snapshotCalendariosEm = Date.now();
         __erroCalendariosCompartilhado = null;
@@ -23941,6 +24017,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
            retrato deixava a badge incompleta até recarregar ou editar algo. */
         onDadosTempoRealMudaram('calendarios');
       }, (erro)=>{
+        __falhouCacheTempoReal('calendarios');
         __erroCalendariosCompartilhado = erro;
         console.error('Listener calendarios falhou:', erro);
       }));

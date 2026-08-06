@@ -79,6 +79,50 @@ function testarBadgesExtrasSandbox() {
   exigir(filtro.demandaDeExtraJaResolvida({}) === false, 'demanda comum foi confundida com aviso de extra');
 }
 
+async function testarOrcamentoLeiturasFirestoreSandbox() {
+  const fonte = trecho(escritorio, 'function __snapshotFalso', '/* Toda gravação invalida');
+  const api = executarSandbox('firestore-cache-sandbox.js',
+    `const __cacheColecoes=new Map();const TTL_CACHE_MS=10000;let backend=0;\n` +
+    `async function _getDocsFB(){backend++;return {forEach(fn){fn({id:'backend',data:()=>({origem:'backend'})});}};}\n` +
+    `${fonte}\n` +
+    `globalThis.api={__cacheColecoes,__alimentarCacheTempoReal,__falhouCacheTempoReal,__snapshotFalso,getDocs,backend:()=>backend};`);
+  const snapshot = {
+    forEach(fn) {
+      fn({ id:'a', data:()=>({status:'pendente'}) });
+      fn({ id:'b', data:()=>({status:'aprovada'}) });
+    }
+  };
+  api.__alimentarCacheTempoReal('demandas', snapshot);
+  const guardado = api.__cacheColecoes.get('demandas');
+  exigir(guardado?.tempoReal === true && guardado.itens.length === 2,
+    'snapshot em tempo real não alimentou o cache compartilhado');
+  const falso = api.__snapshotFalso(guardado.itens);
+  exigir(falso.size === 2 && falso.docs[0].id === 'a' && falso.docs[0].data().status === 'pendente',
+    'cache em tempo real mudou o formato esperado do snapshot');
+  const ref={type:'collection',path:'demandas'};
+  for(let i=0;i<50;i++) await api.getDocs(ref);
+  exigir(api.backend()===0, 'painéis voltaram a cobrar a coleção depois do snapshot em tempo real');
+  api.__falhouCacheTempoReal('demandas');
+  exigir(!api.__cacheColecoes.has('demandas'), 'falha do listener deixou cache em tempo real obsoleto');
+  await api.getDocs(ref);
+  exigir(api.backend()===1, 'fallback do banco não voltou depois da falha do listener');
+
+  const parar = trecho(escritorio, 'function pararListenersTempoReal', 'function iniciarListenersTempoReal');
+  exigir(parar.includes('if(limparCachesColecoes !== false) __limparCacheColecoes();'),
+    'troca de papel não limpa o cache completo da pessoa anterior');
+  exigir(escritorio.includes("if(ehGestao) __alimentarCacheTempoReal('demandas',snap);"),
+    'listener de gestão não reaproveita demandas já lidas');
+  exigir(escritorio.includes("__alimentarCacheTempoReal('calendarios',snap);"),
+    'listener de calendários não reaproveita o snapshot já lido');
+  const badgeGerencia = trecho(escritorio, 'async function atualizarBadgeGerencia', 'function atualizarBadgeAprovar');
+  exigir(!badgeGerencia.includes("getDocs(collection(db,'demandas'))"),
+    'badge da gerência voltou a reler a coleção inteira');
+  exigir(escritorio.includes("getDocs(query(collection(db,'anotacoes_pessoais'),where('autor','==',pessoaBadge)))"),
+    'badge de anotações voltou a ler dados de todos os funcionários');
+  exigir(escritorio.includes('const TTL_CONTADOR_ENTRADA=2*60*1000;'),
+    'contador de clientes novos perdeu a deduplicação de leituras');
+}
+
 function testarDatasOperacionaisSandbox() {
   const fonte = trecho(escritorio, 'function dataLocal(d)', 'function hojeLocal()');
   const api = executarSandbox('datas-sandbox.js', `${fonte}\nglobalThis.api={dataLocal,diaOperacional,mesOperacional};`);
@@ -146,6 +190,7 @@ function testarCalendariosSandbox() {
 try {
   testarFinanceiroSandbox();
   testarBadgesExtrasSandbox();
+  await testarOrcamentoLeiturasFirestoreSandbox();
   testarDatasOperacionaisSandbox();
   testarAcompanhamentoSandbox();
   testarDemandasSandbox();

@@ -300,9 +300,9 @@ function testarCalendariosSandbox() {
   exigir(!agenda.includes('obterCalendariosCompartilhados()') &&
     agenda.includes("getDoc(doc(db,'calendarios',slug))"),
     'Minha agenda do filmmaker voltou a ler todos os calendários');
-  exigir(agenda.includes('itensDoMesComIndiceGlobal(calAgenda, mesAgenda)') &&
+  exigir(agenda.includes('planejarSessaoGravacao(calAgenda, a)') &&
     agenda.includes('errosCalendariosAgenda.has(slugAgenda)'),
-    'agenda não separa competência, perdeu o índice global ou converte falha em vazio');
+    'agenda não separa a sessão ou converte falha em vazio');
   const fonteIndices = trecho(escritorio, 'function itensDoMesComIndiceGlobal', 'async function renderMinhaAgendaFilmmaker');
   const indices = executarSandbox('indices-calendario-agenda-sandbox.js',
     `function itensDoMesCalendario(cal,mes){return (cal.items||[]).filter(i=>i.mes===mes);}\n` +
@@ -316,13 +316,20 @@ function testarCalendariosSandbox() {
   const gravacoesHoje = trecho(escritorio, 'async function carregarGravacoesDeHoje', 'window.abrirCampoDoCliente');
   exigir(gravacoesHoje.includes("query(collection(db,'agendamentos'), where('data','==',hoje))"),
     'destaque de hoje voltou a ler todos os agendamentos');
+  exigir(gravacoesHoje.includes("a.status !== 'agendado'") && gravacoesHoje.includes('sessaoOrdem') &&
+    gravacoesHoje.includes('window.__erroGravacoesDeHoje = e'),
+    'destaque de hoje inclui gravação encerrada, perde a sessão ou converte erro em vazio');
+  const campoAberto = trecho(escritorio, 'window.abrirCampoDoCliente = function', 'window.irParaConfirmarPublicacoes');
+  exigir(campoAberto.includes('planejarSessaoGravacao(cal,g)') && campoAberto.includes('inconsistenciasCampo') &&
+    !campoAberto.includes('const blocoDe ='),
+    'modo Campo voltou a recalcular blocos dinamicamente fora da ordem congelada');
   const listenerCalendarios = trecho(escritorio, '/* Calendários são a fonte comum', 'function onDadosTempoRealMudaram');
   exigir(listenerCalendarios.includes("if(['Chris','Amanda','Cecília'].includes(pessoaDoOuvinte))") &&
     !listenerCalendarios.includes('...PESSOAS_DE_CAMPO'),
     'login do filmmaker voltou a assinar a coleção inteira de calendários');
   exigir(escritorio.includes("'Nathan': ['navVideos','navAgendamento','navCalendarios'") &&
     escritorio.includes("'Luís': ['navVideos','navChecklist','navAgendamento','navCalendarios'") &&
-    escritorio.includes("'Luís':      ['campo','visao']") && escritorio.includes("'Nathan':    ['campo','visao']"),
+    escritorio.includes("'Luís':      ['campo']") && escritorio.includes("'Nathan':    ['campo']"),
     'Luís ou Nathan perdeu a porta/aterrissagem do calendário de campo');
   exigir(escritorio.includes("ba.textContent = tot ? String(tot) + '+' : '!'") &&
     escritorio.includes("erroFilaCalendariosAprovacao ? '!'"),
@@ -330,6 +337,104 @@ function testarCalendariosSandbox() {
   exigir(calendario.includes("['viewGrid','viewWeek','viewKanban'].forEach") &&
     calendario.includes('O calendário não foi apagado; o banco não conseguiu entregá-lo agora.'),
     'Gabi voltou a receber uma grade branca quando o Firestore falha');
+}
+
+function testarSessoesGravacaoSandbox() {
+  const fonte = trecho(escritorio, 'function itensDoMesComIndiceGlobal', 'async function renderMinhaAgendaFilmmaker');
+  const api = executarSandbox('sessao-gravacao-sandbox.js',
+    `const BLOCOS_MAX=3;\n` +
+    `function itensDoMesCalendario(cal,mes){return (cal.items||[]).filter(i=>!mes||i.mes===mes);}\n` +
+    `function mesesDeCalendario(cal){return [...new Set((cal.items||[]).map(i=>i.mes).filter(Boolean))].sort();}\n` +
+    `function quantosBlocos(cal,mes){return Number(cal.blocosPorMes?.[mes])||2;}\n` +
+    `function blocoDoItem(item,pos,total,quantos){if(Number(item.bloco)>=1)return Number(item.bloco);const base=Math.floor(total/quantos),resto=total%quantos;let acc=0;for(let i=0;i<quantos;i++){acc+=base+(i<resto?1:0);if(pos<acc)return i+1;}return quantos;}\n` +
+    `function itemNaoPrecisaGravar(i){return !!(i.gravado||i.agendado||i.posted);}\n` +
+    `function estadoMesCal(cal,mes){return cal.aprovacaoMeses?.[mes]?.status||'';}\n` +
+    `${fonte}\nglobalThis.api={planejarSessaoGravacao,chaveSessaoGravacao};`);
+
+  const cal = { blocosPorMes:{'2026-08':2}, aprovacaoMeses:{'2026-08':{status:'liberado'}}, items:[
+    {itemId:'a',mes:'2026-08',day:1,name:'Semana 1 A',bloco:1},
+    {itemId:'b',mes:'2026-08',day:2,name:'Semana 1 B',bloco:1},
+    {itemId:'c',mes:'2026-08',day:8,name:'Semana 2 A',bloco:2},
+    {itemId:'d',mes:'2026-08',day:9,name:'Semana 2 B',bloco:2}
+  ]};
+  const ag = {cliente:'kerry',data:'2026-08-06',mesCalendario:'2026-08',sessaoOrdem:1,sessaoPlanejamentoVersao:1,
+    sessaoItensPlanejados:[
+      {idx:0,itemId:'a',nome:'Semana 1 A',ordem:1,grupo:'fazerHoje'},
+      {idx:1,itemId:'b',nome:'Semana 1 B',ordem:2,grupo:'fazerHoje'}
+    ]};
+  const plano = api.planejarSessaoGravacao(cal,ag);
+  exigir(plano.permitidos.map(i=>i.itemId).join(',') === 'a,b', 'sessão Kerry misturou pauta da semana/sessão 2');
+  exigir(plano.naoGravarHoje.map(i=>i.itemId).join(',') === 'c,d', 'pauta futura não foi separada em NÃO GRAVAR HOJE');
+
+  const depoisPrimeiro = JSON.parse(JSON.stringify(cal));
+  depoisPrimeiro.items[0].gravado = true;
+  const estavel = api.planejarSessaoGravacao(depoisPrimeiro,ag);
+  exigir(estavel.permitidos.map(i=>i.itemId).join(',') === 'b' && estavel.inconsistencias.length === 0,
+    'snapshot da sessão derivou outra divisão depois de um item concluído');
+
+  const legado = { blocosPorMes:{'2026-08':2}, aprovacaoMeses:{'2026-08':{status:'liberado'}}, items:[
+    {mes:'2026-08',day:1,name:'L1'}, {mes:'2026-08',day:2,name:'L2'},
+    {mes:'2026-08',day:8,name:'L3'}, {mes:'2026-08',day:9,name:'L4'}
+  ]};
+  const planoLegado = api.planejarSessaoGravacao(legado,{cliente:'legado',data:'2026-08-06',bloco:1});
+  exigir(planoLegado.permitidos.map(i=>i.name).join(',') === 'L1,L2' && planoLegado.usaDerivacaoLegada === true,
+    'calendário legado seguro não derivou a primeira sessão sem migrar dados');
+  const ambiguo = api.planejarSessaoGravacao({items:[{mes:'2026-07',name:'J'},{mes:'2026-08',name:'A'}]},
+    {cliente:'legado',data:'2026-09-01',bloco:1});
+  exigir(ambiguo.permitidos.length === 0 && ambiguo.inconsistencias.length === 1,
+    'sessão legada ambígua liberou conteúdo de um mês por suposição');
+
+  const agenda = trecho(escritorio, 'async function renderMinhaAgendaFilmmaker', 'window.renderMinhaAgendaFilmmaker = renderMinhaAgendaFilmmaker');
+  exigir(agenda.includes('FAZER HOJE') && agenda.includes('NÃO GRAVAR HOJE') &&
+    agenda.includes('confirmacaoBloqueada') && agenda.includes('planoSessao.permitidos'),
+    'Minha sessão perdeu grupos visuais ou desbloqueou pauta não planejada');
+  const confirmar = trecho(escritorio, 'async function registrarGravacaoRealizadaNucleo', 'function popularClientesReferencia');
+  exigir(confirmar.includes("dadosAtuais.status !== 'agendado'") && confirmar.includes('dadosAtuais.aprovado === false') &&
+    confirmar.includes('pessoaNaEquipe(dadosAtuais,usuarioAtual)') && confirmar.includes('permitidosAgora.has(chave)') &&
+    confirmar.includes('Captações extras não estão autorizadas nesta sessão.'),
+    'transação de confirmação não revalida status, equipe, aprovação, sessão e extras');
+  const wrapperConfirmacao = trecho(escritorio, 'const __confirmacoesGravacaoEmCurso', 'function popularClientesReferencia');
+  exigir(wrapperConfirmacao.includes('__confirmacoesGravacaoEmCurso.has(agId)') &&
+    wrapperConfirmacao.indexOf('__confirmacoesGravacaoEmCurso.add(agId)') < wrapperConfirmacao.indexOf('await registrarGravacaoRealizadaNucleo(agId)'),
+    'confirmação perdeu a trava anterior ao primeiro await');
+
+  exigir(calendario.includes('const it={...anterior,itemId:anterior.itemId||') &&
+    calendario.includes("data.items[editIdx]={...data.items[editIdx],excluido:true") &&
+    calendario.includes("const mbl=document.getElementById('mBloco'); if(mbl) mbl.value='';") &&
+    calendario.includes('renderAprovacaoInterna();renderBlocos();'),
+    'editor de calendário voltou a apagar campos, excluir fisicamente, herdar bloco ou não atualizar a divisão');
+  exigir(escritorio.includes("'Amanda': ['navCentral','navAprovacoes','navChecklist','navAgendamento'") &&
+    escritorio.includes("window.replanejarSessaoGravacao = async function"),
+    'Amanda perdeu acesso ao planejamento das sessões');
+
+  const agendar = trecho(escritorio, 'window.agendarGravacao = async function', 'window.toggleFormGravacao');
+  exigir(agendar.includes('equipePermitidaNoAgendamento(lerEquipeDoFormulario(), usuarioAtual)') &&
+    agendar.includes("if(!equipe.length)") && agendar.includes('sessaoItensPlanejados'),
+    'agendamento não fixa equipe ou não congela a pauta da sessão');
+  exigir(agendar.indexOf('__agendamentoEmCurso = true;') < agendar.indexOf('await getDocs(') &&
+    agendar.includes('finally') && agendar.includes('__agendamentoEmCurso = false;'),
+    'agendamento perdeu a trava de clique duplo antes da primeira leitura');
+
+  const trocar = trecho(escritorio, 'window.trocarFilmmakerAgendamento', '/* ===== A CECÍLIA PRECISA PODER DESFAZER');
+  exigir(trocar.includes('filmmaker: filmmaker ||') && trocar.includes('equipe,'),
+    'troca de filmmaker voltou a atualizar somente um dos modelos compatíveis');
+}
+
+function testarPermissoesAcoesSandbox() {
+  const aplicar = trecho(escritorio, 'async function aplicarUsuarioGoogle', 'window.entrarComGoogleEquipe');
+  exigir(aplicar.indexOf('limparIdentidadeEquipeAnterior') < aplicar.indexOf('await pessoaAutorizadaPeloGoogle'),
+    'troca de conta valida a nova pessoa antes de limpar dados da anterior');
+  const videosSub = trecho(escritorio, 'window.setVideosSub = function', '/* ===== FRENTE B5');
+  exigir(videosSub.includes("qual==='lancar' && CAMPO_MAIS_CHRIS.includes(usuarioAtual)") &&
+    videosSub.includes("qual==='meus' && [...EDITORES_SELECIONAVEIS,'Chris'].includes(usuarioAtual)"),
+    'sub-abas de vídeo voltaram a confiar só em display:none');
+  const excluir = trecho(escritorio, 'window.excluirVideoComMotivo', 'window.excluirVideoGerencia');
+  exigir(excluir.indexOf("getDoc(doc(db,'videos_producao', id))") < excluir.indexOf("prompt('Por que este vídeo") &&
+    excluir.includes('ehDonoVideo') && excluir.includes('ehGestaoVideo'),
+    'exclusão de vídeo não confirma propriedade antes de pedir/efetuar a exclusão');
+  const stories = trecho(escritorio, 'window.liberarStory', '/* Guarda os links por cliente');
+  exigir((stories.match(/\!\['Chris','Amanda'\]\.includes\(usuarioAtual\)/g)||[]).length === 2,
+    'liberar/devolver Stories perdeu a guarda de gestão');
 }
 
 try {
@@ -341,6 +446,8 @@ try {
   testarAcompanhamentoSandbox();
   testarDemandasSandbox();
   testarCalendariosSandbox();
+  testarSessoesGravacaoSandbox();
+  testarPermissoesAcoesSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

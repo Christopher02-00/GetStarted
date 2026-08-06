@@ -122,8 +122,8 @@ function delimitadoresBalanceados(fonte) {
   }
   return !string && !comentarioBloco && pilha.length === 0;
 }
-const regrasSemComentariosIniciais = regras.replace(/^\s*(?:\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/\s*)*/, '');
-if (!/^rules_version\s*=/.test(regrasSemComentariosIniciais)) falhar('firestore.rules não começa por comentários válidos seguidos de rules_version');
+if (!/^rules_version\s*=\s*'2';/.test(regras)) falhar(`firestore.rules: a linha 1 deve começar exatamente com rules_version = '2';`);
+else provar(`firestore.rules começa por rules_version = '2'; na linha 1`);
 if (!delimitadoresBalanceados(regras)) falhar('firestore.rules contém delimitadores desbalanceados');
 else provar('firestore.rules com delimitadores balanceados');
 

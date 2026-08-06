@@ -185,6 +185,52 @@ function testarCalendariosSandbox() {
       exigir(api.diasDoMes() === new Date(ano, mes, 0).getDate(), `quantidade de dias incorreta em ${ano}-${mes}`);
     }
   }
+
+  /* A mesma implementação precisa reconhecer a marca gravada pela Gabi e
+     alimentar a lista/contador da Amanda, inclusive em documentos legados. */
+  const fonteFila = trecho(escritorio, 'function mesDoItemCalendario', 'window.linhasCalendariosAguardandoRevisao');
+  const fila = executarSandbox('calendarios-aprovacao-sandbox.js',
+    `function mesDoTextoConf(txt){const m=String(txt||'').match(/(20\\d{2})-(\\d{2})/);return m?m[1]+'-'+m[2]:'';}\n` +
+    `${fonteFila}\nglobalThis.api={estadoMesCal,itensDoMesCalendario,linhasCalendariosAguardandoRevisao};`);
+  const registro = (id, dados) => ({ id, data:()=>dados });
+  const agostoPendente = registro('cliente-x', {
+    client:'Cliente X', items:[{mes:'2026-08',name:'A',ref:'https://ref'}],
+    aprovacaoMeses:{'2026-08':{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-06T01:00:00Z'}}
+  });
+  exigir(fila.linhasCalendariosAguardandoRevisao([agostoPendente]).length === 1,
+    'envio mensal da Gabi não chegou à fila da Amanda');
+  const mistoLegado = registro('cliente-legado', {
+    client:'Legado', mesLegado:'2026-07', items:[{name:'antigo'},{mes:'2026-08',name:'novo'}],
+    aprovacaoMeses:{'2026-07':{status:'aguardando_interna',por:'Gabrielle'},'2026-08':{status:'rascunho'}}
+  });
+  const filaLegado = fila.linhasCalendariosAguardandoRevisao([mistoLegado]);
+  exigir(filaLegado.length === 1 && filaLegado[0].itens === 1 && filaLegado[0].mesKey === '2026-07',
+    'conteúdo legado sumiu da fila mensal da Amanda');
+  exigir(fila.linhasCalendariosAguardandoRevisao([registro('ok', {
+    items:[{mes:'2026-08',name:'A'}], aprovacaoMeses:{'2026-08':{status:'liberado'}}
+  })]).length === 0, 'calendário já liberado continuou pedindo aprovação');
+
+  /* O filmmaker não pode depender da leitura dos 21 documentos para abrir
+     um único cliente; o documento escolhido mantém o listener próprio. */
+  const campo = trecho(escritorio, 'window.renderCalendarioDeCampo = async function', '/* ===== A GRAVAÇÃO DE HOJE');
+  exigir(!campo.includes('obterCalendariosCompartilhados()'),
+    'modo campo voltou a listar a coleção inteira de calendários');
+  exigir(campo.includes('const lista = alvo.slice();') && campo.includes("onclick=\"abrirCampoDoCliente("),
+    'modo campo voltou a esconder clientes antes de abrir o documento escolhido');
+  const listenerCalendarios = trecho(escritorio, '/* Calendários são a fonte comum', 'function onDadosTempoRealMudaram');
+  exigir(listenerCalendarios.includes("if(['Chris','Amanda','Cecília'].includes(pessoaDoOuvinte))") &&
+    !listenerCalendarios.includes('...PESSOAS_DE_CAMPO'),
+    'login do filmmaker voltou a assinar a coleção inteira de calendários');
+  exigir(escritorio.includes("'Nathan': ['navVideos','navAgendamento','navCalendarios'") &&
+    escritorio.includes("'Luís': ['navVideos','navChecklist','navAgendamento','navCalendarios'") &&
+    escritorio.includes("'Luís':      ['campo','visao']") && escritorio.includes("'Nathan':    ['campo','visao']"),
+    'Luís ou Nathan perdeu a porta/aterrissagem do calendário de campo');
+  exigir(escritorio.includes("ba.textContent = tot ? String(tot) + '+' : '!'") &&
+    escritorio.includes("erroFilaCalendariosAprovacao ? '!'"),
+    'falha de leitura voltou a aparecer como zero para Amanda');
+  exigir(calendario.includes("['viewGrid','viewWeek','viewKanban'].forEach") &&
+    calendario.includes('O calendário não foi apagado; o banco não conseguiu entregá-lo agora.'),
+    'Gabi voltou a receber uma grade branca quando o Firestore falha');
 }
 
 try {

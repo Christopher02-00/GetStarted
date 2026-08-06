@@ -139,7 +139,7 @@
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, addDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -250,7 +250,7 @@
     return true;
   })();
 
-  window.__fb = { docRef, doc, getDoc, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp };
+  window.__fb = { docRef, doc, getDoc, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
 </script>
 </head>
@@ -1904,13 +1904,33 @@ function closeFeedback(){document.getElementById('fbOverlay').classList.remove('
 
    Agora o recado vira aviso pras duas, e o aviso vira demanda pelo mesmo
    caminho que o resto do portal já usa. */
-function submitFeedback(){
+async function salvarComentarioEquipeDuranteRevisao(registro){
+  const fb=window.__fb;
+  if(!fb || !fb.docRef || !fb.runTransaction) throw new Error('Conexão de revisão indisponível.');
+  await fb.runTransaction(fb.db, async transacao => {
+    const snap=await transacao.get(fb.docRef);
+    if(!snap.exists()) throw new Error('O calendário não existe mais.');
+    const atual=snap.data()||{};
+    transacao.update(fb.docRef,{
+      comments:[registro,...(atual.comments||[])],
+      updatedAt:new Date().toISOString()
+    });
+  });
+}
+
+async function submitFeedback(){
   const txt=document.getElementById('fbText').value.trim();
   if(!txt)return;
-  if(window.__modoCal === 'equipe' && exigirRetiradaAntesDeEditar()) return;
   if(!data.comments)data.comments=[];
   const ehCliente = window.__modoCal === 'cliente';
-  const registro = {text:txt,date:new Date().toISOString(),porCliente:ehCliente};
+  const estadoRevisao = estadoAprovacao();
+  const comentarioEmRevisao = window.__modoCal === 'equipe' && ['aguardando_interna','aprovado_interno'].includes(estadoRevisao);
+  const registro = {
+    id:'comentario_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+    text:txt,date:new Date().toISOString(),porCliente:ehCliente,
+    por:ehCliente?'Cliente':'Equipe interna', origem:comentarioEmRevisao?'revisao_interna':'calendario',
+    mes:mesVisivel||mesDoTexto(data.month)||''
+  };
 
   /* 03/08/2026 — o recado do cliente também morria no `save()`. O aviso
      pra equipe era criado, mas o texto não ficava guardado no calendário,
@@ -1923,6 +1943,23 @@ function submitFeedback(){
         renderFeedback();
         avisarEquipeDoRecado(txt);
       });
+    return;
+  }
+
+  /* Conteúdo fica travado enquanto Amanda revisa, mas comentário não é
+     edição da pauta. Salva somente `comments` em transação; nunca chama o
+     save completo e nunca exige retirar o mês da aprovação. */
+  if(comentarioEmRevisao){
+    try{
+      await salvarComentarioEquipeDuranteRevisao(registro);
+      data.comments.unshift(registro);
+      document.getElementById('fbText').value='';
+      renderFeedback();
+      avisarTela('Comentário salvo sem alterar nem desbloquear o calendário.');
+    }catch(e){
+      console.error('Falha ao salvar comentário da revisão:',e);
+      avisarTela('Não salvei o comentário: '+String(e&&e.message||e), 'erro');
+    }
     return;
   }
 

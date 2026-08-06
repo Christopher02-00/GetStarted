@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-06-filmmaker-recording-stability-v32">
+<meta name="gs-build" content="2026-08-06-calendar-review-legacy-recording-v33">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -6616,8 +6616,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(a && a.filmmaker) return [{ nome: a.filmmaker, papel: 'Filmmaker' }];
     return [];
   }
+  function nomeOperacionalCanonico(nome){
+    const base = String(nome||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const aliases = {
+      'natan':'nathan', 'nathan':'nathan',
+      'luis':'luis', 'luiz':'luis',
+      'gabi':'gabrielle', 'gabrielle':'gabrielle'
+    };
+    return aliases[base] || base;
+  }
   function pessoaNaEquipe(a, nome){
-    return equipeDoAgendamento(a).some(p => p.nome === nome);
+    const alvo = nomeOperacionalCanonico(nome);
+    return !!alvo && equipeDoAgendamento(a).some(p => nomeOperacionalCanonico(p&&p.nome) === alvo);
   }
   function rotuloEquipe(a){
     const e = equipeDoAgendamento(a);
@@ -6676,7 +6686,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return (Array.isArray(equipe) ? equipe : []).map(p => ({
       nome:String((p&&p.nome)||'').trim(),
       papel:String((p&&p.papel)||'Filmmaker').trim() || 'Filmmaker'
-    })).filter(p => p.nome && !vistos.has(p.nome) && vistos.add(p.nome));
+    })).filter(p => {
+      const chave = nomeOperacionalCanonico(p.nome);
+      return chave && !vistos.has(chave) && vistos.add(chave);
+    });
   }
 
   function equipePermitidaNoAgendamento(equipeInformada, pessoa){
@@ -6944,7 +6957,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const snap = await getDoc(ref);
     if(!snap.exists()){ mostrarToast('Essa gravação não existe mais.', 'erro'); return false; }
     const atual = equipeDoAgendamento(snap.data() || {});
-    const demais = atual.slice(1).filter(p => p && p.nome !== filmmaker);
+    const chaveNovoResponsavel = nomeOperacionalCanonico(filmmaker);
+    const demais = atual.slice(1).filter(p => p && nomeOperacionalCanonico(p.nome) !== chaveNovoResponsavel);
     const equipe = filmmaker
       ? [{ nome:filmmaker, papel:(atual[0]&&atual[0].papel)||'Filmmaker' }, ...demais]
       : demais;
@@ -6954,6 +6968,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     });
     mostrarToast(filmmaker ? 'Gravação atribuída a ' + filmmaker + '!' : 'Responsável principal removido.');
     renderListaAgendamentos();
+    const minhaAgenda = document.getElementById('agendamentoMinhaAgenda');
+    if(minhaAgenda && minhaAgenda.style.display !== 'none') renderMinhaAgendaFilmmaker();
     return true;
   };
 
@@ -7205,6 +7221,20 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return ag.sessaoChave || (slug+'|'+mes+'|S'+String(bloco).padStart(2,'0'));
   }
 
+  /* Agendamentos criados antes da V32 não têm vínculo de sessão. O fluxo
+     antigo permitia descrever o material gravado em texto livre; a V32
+     removeu essa porta e passou a presumir bloco 1. Isso bloqueou registros
+     reais de Luís/Nathan sem que os dados tivessem sido migrados. A
+     compatibilidade abaixo vale somente para esses documentos antigos e
+     nunca transforma a descrição em item de outro bloco do calendário. */
+  function sessaoLegadaSemVinculo(agendamento){
+    const ag = agendamento || {};
+    return ag.sessaoPlanejamentoVersao !== 1 &&
+      !ag.sessaoChave && !ag.mesCalendario && !ag.competenciaCalendario &&
+      !ag.sessaoOrdem && !ag.bloco;
+  }
+  window.sessaoLegadaSemVinculo = sessaoLegadaSemVinculo;
+
   /* A sessão não é a “semana” visual do calendário. A chave operacional é
      cliente + competência + bloco. O vínculo manual (`item.bloco`) manda;
      itens legados sem esse campo usam a mesma divisão automática exibida
@@ -7215,7 +7245,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const mesExplicito = ag.mesCalendario || ag.competenciaCalendario || '';
     const mesDaData = String(ag.data||'').slice(0,7);
     const mesesDisponiveis = mesesDeCalendario(cal);
-    const mes = mesExplicito || mesDaData;
+    /* Um único mês disponível é uma derivação inequívoca para documento
+       legado. Com dois ou mais meses e nenhum vínculo explícito, continua
+       bloqueado: jamais escolhemos uma pauta por suposição. */
+    const mes = mesExplicito || (mesesDisponiveis.length === 1 ? mesesDisponiveis[0] : mesDaData);
     const blocoSessao = Number(ag.sessaoOrdem || ag.bloco)||1;
     const quantos = quantosBlocos(cal, mes);
     const itensDaCompetencia = itensDoMesComIndiceGlobal(cal, mes)
@@ -7258,7 +7291,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         sessaoChave:chaveSessaoGravacao(ag), mes, bloco:blocoSessao,
         fazerHoje, pendenciasAprovadas, naoGravarHoje,
         permitidos:[...fazerHoje,...pendenciasAprovadas], inconsistencias,
-        estadoMes, usaDerivacaoLegada:!mesExplicito, planejamentoCongelado:true
+        estadoMes, usaDerivacaoLegada:!mesExplicito, planejamentoCongelado:true,
+        mesResolvidoPor:!mesExplicito && mesesDisponiveis.length === 1 ? 'unico_mes_disponivel' : 'explicito_ou_data'
       };
     }
     itensDaCompetencia.forEach((item,pos) => {
@@ -7276,7 +7310,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       sessaoChave:chaveSessaoGravacao(ag), mes, bloco:blocoSessao,
       fazerHoje, pendenciasAprovadas, naoGravarHoje,
       permitidos:[...fazerHoje,...pendenciasAprovadas], inconsistencias,
-      estadoMes, usaDerivacaoLegada:!mesExplicito || itensPendentes.some(i=>!(Number(i.bloco)>=1&&Number(i.bloco)<=BLOCOS_MAX))
+      estadoMes, usaDerivacaoLegada:!mesExplicito || itensPendentes.some(i=>!(Number(i.bloco)>=1&&Number(i.bloco)<=BLOCOS_MAX)),
+      mesResolvidoPor:!mesExplicito && mesesDisponiveis.length === 1 ? 'unico_mes_disponivel' : 'explicito_ou_data'
     };
   }
   window.planejarSessaoGravacao = planejarSessaoGravacao;
@@ -7390,7 +7425,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const itensCalendario = planoSessao.permitidos || [];
       const podePlanejarSessao = ['Chris','Amanda','Cecília'].includes(usuarioAtual);
       const podeExecutarSessao = ['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual);
-      const permiteExtrasSessao = !!(a.permitirCaptacoesExtras || a.ehClienteNovo);
+      const responsavelPrincipalSessao = a.filmmaker || (equipeDoAgendamento(a)[0]&&equipeDoAgendamento(a)[0].nome) || '';
+      const registroLegado = sessaoLegadaSemVinculo(a);
+      const permiteExtrasSessao = !!(a.permitirCaptacoesExtras || a.ehClienteNovo || registroLegado);
       const planejamentoInconsistente = (planoSessao.inconsistencias||[]).length > 0;
       const semExecucaoPermitida = !itensCalendario.length && !permiteExtrasSessao;
       const confirmacaoBloqueada = falhouCalendarioAgenda || planejamentoInconsistente || semExecucaoPermitida || !podeExecutarSessao;
@@ -7448,16 +7485,19 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <div style="background:var(--deep);border:2px solid var(--yellow);border-radius:12px;padding:13px 15px;margin:10px 0;">
             <div style="font-weight:900;color:var(--yellow);font-size:14px;">🎬 ORDEM DE GRAVAÇÃO DO DIA / MINHA SESSÃO</div>
             <div class="meta" style="margin-top:6px;line-height:1.6;"><b>Cliente:</b> ${esc(a.clienteNome||slugAgenda)} · <b>Quando:</b> ${formatarDataBR(a.data)} ${esc(a.hora||'')}<br><b>Responsável:</b> ${esc(rotuloEquipe(a)||'não definido')} · <b>Esperado:</b> ${qtdPlan} vídeo(s)<br><b>Sessão:</b> ${esc(planoSessao.sessaoChave||chaveSessaoGravacao(a))} · <b>Pauta:</b> ${esc(mesAgenda||'não definida')}</div>
+            ${podePlanejarSessao?`<div class="field" style="margin-top:10px;"><label>Responsável que realmente realizou esta sessão</label><select onchange="trocarFilmmakerAgendamento('${a.id}',this.value)">
+              ${PESSOAS_DE_CAMPO.map(p=>`<option value="${esc(p)}" ${nomeOperacionalCanonico(responsavelPrincipalSessao)===nomeOperacionalCanonico(p)?'selected':''}>${esc(p)}</option>`).join('')}
+            </select><div class="meta" style="margin-top:5px;">Apenas coordenação altera. O filmmaker só passa a ver e registrar depois da correção.</div></div>`:''}
           </div>
           ${falhouCalendarioAgenda ? '<div class="card" style="border:2px solid var(--red);margin:10px 0;"><b>⚠️ Calendário indisponível agora.</b><div class="meta" style="margin-top:5px;">A agenda foi preservada e a confirmação foi bloqueada para não registrar pauta errada.</div><button class="btn secondary" style="margin-top:8px;" onclick="renderMinhaAgendaFilmmaker()">Tentar carregar novamente</button></div>' : ''}
           ${planejamentoInconsistente ? `<div class="card" style="border:2px solid var(--red);margin:10px 0;"><b>⚠️ A pauta mudou depois do planejamento.</b><div class="meta" style="margin-top:5px;">${(planoSessao.inconsistencias||[]).map(x=>esc(x.motivo||'Item alterado.')).join('<br>')} A confirmação está bloqueada até Amanda ou Cecília revisar esta sessão.</div>${podePlanejarSessao?`<button class="btn secondary" style="margin-top:8px;" onclick="replanejarSessaoGravacao('${a.id}')">Revisar e confirmar ordem desta sessão</button>`:''}</div>` : ''}
-          ${planoSessao.usaDerivacaoLegada && !planejamentoInconsistente ? `<div class="meta" style="padding:8px 10px;border-left:3px solid var(--yellow);margin:8px 0;">⚠️ Pauta legada: a ordem foi derivada da competência e do bloco desta gravação. ${podePlanejarSessao?'Revise e confirme a ordem antes da execução.':'Se algo não corresponder ao briefing, não grave e peça revisão à Amanda/Cecília.'}</div>` : ''}
+          ${planoSessao.usaDerivacaoLegada && !planejamentoInconsistente ? `<div class="meta" style="padding:8px 10px;border-left:3px solid var(--yellow);margin:8px 0;">⚠️ Pauta legada: ${planoSessao.mesResolvidoPor==='unico_mes_disponivel'?'o cliente possui um único mês disponível e ele foi usado sem alterar o banco.':'a ordem foi derivada da competência e do bloco desta gravação.'} ${podePlanejarSessao?'Revise e confirme a ordem antes da próxima execução.':'Marque apenas o que realmente pertence a esta captação.'}</div>` : ''}
           ${renderItensPermitidos(planoSessao.fazerHoje||[], '✅ FAZER HOJE — ordem liberada', 'var(--green)', 1)}
           ${renderItensPermitidos(planoSessao.pendenciasAprovadas||[], '↩️ PENDÊNCIAS APROVADAS DA MESMA SESSÃO', 'var(--yellow)', inicioPendencias)}
           ${htmlNaoGravar}
           ${!itensCalendario.length && !planejamentoInconsistente ? `<div class="meta" style="margin-top:10px;color:${permiteExtrasSessao?'var(--yellow)':'var(--red)'};">${permiteExtrasSessao?'Esta sessão foi liberada para captações descritas manualmente.':'Nenhuma captação está liberada para esta sessão. Amanda ou Cecília precisa planejar a ordem.'}</div>` : ''}
 
-          ${permiteExtrasSessao ? `<div class="field"><label>Captações extras autorizadas (uma por linha)</label><textarea id="extras_${a.id}" placeholder="Descreva exatamente o que foi autorizado" oninput="atualizarContadorVideos('${a.id}', ${qtdPlan})"></textarea></div>` : '<div class="meta" style="margin:10px 0;color:var(--muted);">Captações fora desta lista não estão autorizadas nesta sessão.</div>'}
+          ${permiteExtrasSessao ? `<div class="field" style="${registroLegado?'border:1px solid var(--yellow);border-radius:9px;padding:10px;':''}"><label>${registroLegado?'Registro compatível da sessão antiga — vídeos realmente gravados (um por linha)':'Captações extras autorizadas (uma por linha)'}</label><textarea id="extras_${a.id}" placeholder="${registroLegado?'Ex: Vídeo do prato executivo\\nBastidores da cozinha':'Descreva exatamente o que foi autorizado'}" oninput="atualizarContadorVideos('${a.id}', ${qtdPlan})"></textarea>${registroLegado?'<div class="meta" style="margin-top:6px;">Esta gravação foi criada antes da ordem por sessão. O texto será vinculado somente a este agendamento e <b>não marcará pauta de outra semana</b>.</div>':''}</div>` : '<div class="meta" style="margin:10px 0;color:var(--muted);">Captações fora desta lista não estão autorizadas nesta sessão.</div>'}
 
           <div class="avisoBanner" style="margin:10px 0;"><div class="icone">🎬</div><div class="texto" id="contadorVideos_${a.id}"><b style="color:var(--red);">0 vídeo(s) vão ser lançados</b><span style="color:var(--muted);"> (planejado: ${qtdPlan})</span></div></div>
 
@@ -13141,6 +13181,26 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return true;
   };
 
+  function prepararMateriaisDeclaradosSessao(videosDoCalendario, textoExtras, agendamento){
+    const ag = agendamento || {};
+    const registroLegado = sessaoLegadaSemVinculo(ag);
+    const nomesExtras = String(textoExtras||'').split('\n').map(s=>s.trim()).filter(Boolean);
+    if(nomesExtras.length && !(ag.permitirCaptacoesExtras || ag.ehClienteNovo || registroLegado)){
+      return { ok:false, erro:'Captações fora da ordem não foram autorizadas para esta sessão.', videos:[] };
+    }
+    const extras = nomesExtras.map(nome => ({
+      nome, calendarItemIdx:null, calendarItemId:null,
+      vinculoSessao:registroLegado ? 'declarado_legado' : 'captacao_extra_autorizada'
+    }));
+    const videos = [...(videosDoCalendario||[]),...extras];
+    const chaves = videos.map(v => String(v.nome||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim());
+    if(chaves.some((chave,idx)=>!chave || chaves.indexOf(chave)!==idx)){
+      return { ok:false, erro:'Há um vídeo sem nome ou repetido nesta sessão. Corrija a lista antes de enviar.', videos:[] };
+    }
+    return { ok:true, erro:'', videos, registroLegado, extras };
+  }
+  window.prepararMateriaisDeclaradosSessao = prepararMateriaisDeclaradosSessao;
+
   async function registrarGravacaoRealizadaNucleo(agId){
     if(!['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)){
       mostrarToast('Só a Cecília e os filmmakers podem registrar uma gravação.', 'erro');
@@ -13172,7 +13232,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // Guarda o par {nome, idx} pra cada vídeo do calendário — é esse índice
     // que vira o VÍNCULO REAL entre vídeo e item do calendário, em vez de
     // depender só do nome bater (frágil: nomes parecidos, edições, etc).
-    const videosDoCalendario = checkboxesMarcados.map(c => ({ nome:c.dataset.nome, calendarItemIdx:parseInt(c.dataset.idx), calendarItemId:c.dataset.itemId||'' }));
+    const videosDoCalendario = checkboxesMarcados.map(c => ({
+      nome:String(c.dataset.nome||'').trim(), calendarItemIdx:parseInt(c.dataset.idx),
+      calendarItemId:c.dataset.itemId||'', vinculoSessao:'calendario_planejado'
+    }));
 
     const calAntesSnap = await getDoc(doc(db,'calendarios',clienteSlug));
     const calAntes = calAntesSnap.exists() ? (calAntesSnap.data()||{}) : {};
@@ -13187,13 +13250,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }
 
     const textoExtras = (document.getElementById('extras_'+agId)?.value||'').trim();
-    const nomesExtras = textoExtras ? textoExtras.split('\n').map(s=>s.trim()).filter(Boolean) : [];
-    if(nomesExtras.length && !(agDadosAntes.permitirCaptacoesExtras || agDadosAntes.ehClienteNovo)){
-      mostrarToast('Captações fora da ordem não foram autorizadas para esta sessão.', 'erro'); return false;
-    }
-    const videosExtras = nomesExtras.map(nome => ({ nome, calendarItemIdx: null }));
-
-    const todosVideosParaCriar = [...videosDoCalendario, ...videosExtras];
+    const preparacaoMateriais = prepararMateriaisDeclaradosSessao(videosDoCalendario,textoExtras,agDadosAntes);
+    if(!preparacaoMateriais.ok){ mostrarToast(preparacaoMateriais.erro,'erro'); return false; }
+    const videosExtras = preparacaoMateriais.extras;
+    const todosVideosParaCriar = preparacaoMateriais.videos;
     const qtdRealizada = todosVideosParaCriar.length;
     if(qtdRealizada === 0){
       mostrarToast('Marque ou escreva pelo menos um vídeo. Uma gravação com zero não pode ser finalizada.', 'erro');
@@ -13215,6 +13275,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         calendarItemId: v.calendarItemId || null,
         calendarClienteSlug: v.calendarItemIdx !== null ? clienteSlug : null,
         agendamentoId:agId, sessaoChave:chaveSessaoGravacao(agDadosAntes),
+        vinculoSessao:v.vinculoSessao || 'calendario_planejado',
         enviadoPor:usuarioAtual||'?', filmmaker:usuarioAtual||'?',
         observacao: '', editorSugerido: editorSugeridoPeloFilmmaker, editorAtribuido: '',
         status: 'aguardando_edicao', linkFinalizado: '', criadoEm: serverTimestamp()
@@ -13245,7 +13306,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           const chave = v.calendarItemId ? 'id:'+v.calendarItemId : 'idx:'+v.calendarItemIdx+'|'+String(v.nome||'');
           if(!permitidosAgora.has(chave)) throw new Error('Um conteúdo marcado pertence a outra sessão. Reabra a ordem do dia.');
         });
-        if(videosExtras.length && !(dadosAtuais.permitirCaptacoesExtras || dadosAtuais.ehClienteNovo)) throw new Error('Captações extras não estão autorizadas nesta sessão.');
+        if(videosExtras.length && !(dadosAtuais.permitirCaptacoesExtras || dadosAtuais.ehClienteNovo || sessaoLegadaSemVinculo(dadosAtuais))) throw new Error('Captações extras não estão autorizadas nesta sessão.');
 
         transacao.update(agRef, {
           status:'realizado', qtdVideosRealizados:qtdRealizada,
@@ -30407,11 +30468,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">${esc(c.mes||'sem mês')}</span></div>
           <div class="meta" style="margin-top:4px;">${c.itens} conteúdo(s) · ${c.refs} com referência · enviado por ${esc(c.por)}${c.em ? ' em ' + new Date(c.em).toLocaleDateString('pt-BR') : ''}</div>
           <div class="btnrow" style="margin-top:10px;">
-            <button class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${c.slug}','${escJs(c.nome)}')">👁️ Abrir e conferir</button>
+            <button class="btn secondary" style="font-size:11.5px;" onclick="abrirAnaliseCalendarioRevisao('${c.slug}','${escJs(c.mesKey||'')}')">📝 Analisar roteiro e comentar</button>
+            <button class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${c.slug}','${escJs(c.nome)}')">↗ Abrir calendário completo</button>
             ${somenteLeitura ? '' : `<button class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${c.slug}','${escJs(c.mesKey||'')}')">↩️ Pedir ajuste</button>
             <button class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${c.slug}','${escJs(c.mesKey||'')}')">✅ Aprovar e guardar pro dia 15</button>
             <button class="btn" style="font-size:11.5px;" onclick="aprovarEEnviarAgora('${c.slug}','${escJs(c.mesKey||'')}', this)">⚡ Aprovar e enviar HOJE</button>`}
           </div>
+          <div id="${idAnaliseCalendarioRevisao(c.slug,c.mesKey||'')}" style="margin-top:10px;"></div>
         </div>`).join('')}
       </div>`;
     }catch(e){
@@ -30424,6 +30487,110 @@ Observações do cliente: ${l.observacoes||'—'}`;
         <div class="desc">O banco não respondeu. <b>Isso não significa que a fila está vazia.</b> Nenhum dado foi alterado.</div>
         <button class="btn secondary" style="margin-top:10px;width:auto;" onclick="recarregarFilaCalendarios()">Tentar novamente</button>
       </div>`;
+    }
+  };
+
+  function idAnaliseCalendarioRevisao(slug, mes){
+    return 'analiseCal_' + String(slug||'').replace(/[^a-zA-Z0-9_-]/g,'_') + '_' + String(mes||'legado').replace(/[^a-zA-Z0-9_-]/g,'_');
+  }
+
+  function urlHttpSegura(valor){
+    try{
+      const u = new URL(String(valor||'').trim());
+      return ['http:','https:'].includes(u.protocol) ? u.href : '';
+    }catch(e){ return ''; }
+  }
+
+  function htmlItemAnaliseCalendario(item, ordem){
+    const it = item || {};
+    const link = urlHttpSegura(it.ref);
+    const roteiro = String(it.desc||'').trim();
+    const legenda = String(it.legenda||'').trim();
+    const obs = String(it.obs||it.obsFilmmaker||'').trim();
+    return `<details class="item" style="margin-top:8px;border-left:3px solid var(--yellow);">
+      <summary style="cursor:pointer;font-weight:800;">${ordem}. ${esc(it.name||'Sem título')} <span class="meta">· dia ${esc(String(it.day||'—'))} · ${esc(it.fmt||'formato não informado')}</span></summary>
+      <div style="margin-top:10px;display:grid;gap:9px;">
+        <div><div class="meta" style="font-weight:800;color:var(--yellow);">ROTEIRO / COPY</div><div class="desc" style="white-space:pre-wrap;margin-top:3px;">${roteiro?esc(roteiro):'<span style="color:var(--red);">Não preenchido.</span>'}</div></div>
+        <div><div class="meta" style="font-weight:800;color:var(--yellow);">LEGENDA</div><div class="desc" style="white-space:pre-wrap;margin-top:3px;">${legenda?esc(legenda):'<span style="color:var(--muted);">Ainda não preenchida.</span>'}</div></div>
+        ${obs?`<div><div class="meta" style="font-weight:800;color:var(--yellow);">OBSERVAÇÃO PARA A PRODUÇÃO</div><div class="desc" style="white-space:pre-wrap;margin-top:3px;">${esc(obs)}</div></div>`:''}
+        <div>${link?`<a class="btn secondary" style="display:inline-block;width:auto;text-decoration:none;font-size:11px;" href="${escAttr(link)}" target="_blank" rel="noopener">🔗 Abrir referência</a>`:'<span class="meta">Sem referência anexada.</span>'}</div>
+      </div>
+    </details>`;
+  }
+
+  window.abrirAnaliseCalendarioRevisao = async function(slug, mes){
+    const alvo = document.getElementById(idAnaliseCalendarioRevisao(slug,mes));
+    if(!alvo) return false;
+    if(alvo.dataset.aberto === '1'){
+      alvo.dataset.aberto = '0'; alvo.innerHTML = ''; return true;
+    }
+    alvo.innerHTML = '<div class="meta">Carregando roteiro, legenda, referências e comentários…</div>';
+    try{
+      const snap = await getDoc(doc(db,'calendarios',slug));
+      if(!snap.exists()) throw new Error('Calendário não encontrado.');
+      const cal = snap.data() || {};
+      const itens = itensDoMesCalendario(cal,mes).filter(it=>it&&!it.excluido);
+      const comentarios = (cal.comments||[]).filter(c=>!c.mes || c.mes===mes);
+      if(!itens.length) throw new Error('O mês não possui conteúdos para revisar.');
+      alvo.dataset.aberto = '1';
+      alvo.innerHTML = `<div class="card" style="margin:0;background:var(--deep);border-color:var(--yellow);">
+        <div style="font-weight:900;color:var(--yellow);">🔎 Revisão completa — ${esc(cal.client||slug)}</div>
+        <div class="meta" style="margin-top:5px;">Abra cada conteúdo para ler o roteiro inteiro. Aprovar e devolver continuam no mesmo cartão acima.</div>
+        ${itens.map((it,idx)=>htmlItemAnaliseCalendario(it,idx+1)).join('')}
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
+          <div class="meta" style="font-weight:900;color:var(--yellow);">COMENTÁRIO DA REVISÃO</div>
+          ${usuarioAtual==='Amanda'?`<textarea id="comentarioCal_${idAnaliseCalendarioRevisao(slug,mes)}" placeholder="Escreva uma observação geral para este mês" style="margin-top:7px;min-height:74px;"></textarea>
+          <button class="btn secondary" style="width:auto;margin-top:7px;" onclick="comentarAnaliseCalendario('${escJs(slug)}','${escJs(mes)}',this)">Salvar comentário sem alterar os conteúdos</button>`:'<div class="meta" style="margin-top:6px;">Somente Amanda comenta nesta etapa.</div>'}
+          <div style="margin-top:10px;">${comentarios.length?comentarios.map(c=>`<div class="item" style="margin-top:6px;"><div class="desc" style="white-space:pre-wrap;">${esc(c.text||'')}</div><div class="meta" style="margin-top:4px;">${esc(c.por||(c.porCliente?'Cliente':'Equipe'))}${c.date?' · '+new Date(c.date).toLocaleString('pt-BR'):''}</div></div>`).join(''):'<div class="meta">Nenhum comentário registrado neste mês.</div>'}</div>
+        </div>
+      </div>`;
+      return true;
+    }catch(e){
+      console.error('Falha ao abrir análise do calendário:',e);
+      alvo.dataset.aberto = '0';
+      alvo.innerHTML = `<div class="card" style="border:2px solid var(--red);margin:0;"><b>⚠️ Não consegui carregar a análise.</b><div class="meta" style="margin-top:5px;">${esc(String(e&&e.message||e))} Isso não significa que o calendário sumiu.</div></div>`;
+      return false;
+    }
+  };
+
+  const __comentariosCalendarioEmCurso = new Set();
+  window.comentarAnaliseCalendario = async function(slug, mes, btn){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('O comentário da revisão é exclusivo da Amanda.','erro'); return false; }
+    const chave = slug+'|'+mes;
+    if(__comentariosCalendarioEmCurso.has(chave)) return false;
+    const campo = document.getElementById('comentarioCal_'+idAnaliseCalendarioRevisao(slug,mes));
+    const texto = String(campo&&campo.value||'').trim();
+    if(!texto){ mostrarToast('Escreva o comentário antes de salvar.','erro'); return false; }
+    __comentariosCalendarioEmCurso.add(chave);
+    if(btn){ btn.disabled=true; btn.textContent='Salvando…'; }
+    try{
+      const ref = doc(db,'calendarios',slug);
+      await runTransaction(db, async transacao => {
+        const atual = await transacao.get(ref);
+        if(!atual.exists()) throw new Error('O calendário não existe mais.');
+        const cal = atual.data() || {};
+        if(!['aguardando_interna','aprovado_interno'].includes(estadoMesCal(cal,mes))){
+          throw new Error('O estado deste mês mudou. Reabra a fila antes de comentar.');
+        }
+        const registro = {
+          id:'revisao_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+          text:texto, date:new Date().toISOString(), por:'Amanda', porCliente:false,
+          origem:'revisao_interna', mes
+        };
+        transacao.update(ref,{ comments:[registro,...(cal.comments||[])], updatedAt:new Date().toISOString() });
+      });
+      mostrarToast('Comentário salvo sem desbloquear nem alterar o calendário.');
+      const alvo = document.getElementById(idAnaliseCalendarioRevisao(slug,mes));
+      if(alvo){ alvo.dataset.aberto='0'; }
+      await window.abrirAnaliseCalendarioRevisao(slug,mes);
+      return true;
+    }catch(e){
+      console.error('Falha ao comentar calendário:',e);
+      mostrarToast('Não salvei o comentário: '+String(e&&e.message||e),'erro');
+      return false;
+    }finally{
+      __comentariosCalendarioEmCurso.delete(chave);
+      if(btn&&btn.isConnected){ btn.disabled=false; btn.textContent='Salvar comentário sem alterar os conteúdos'; }
     }
   };
 
@@ -30715,6 +30882,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const alvo = (mes !== undefined && mes !== null && mes !== '') ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
     const qtd = itensDoMesCalendario(cal, alvo).length;
     if(!qtd){ mostrarToast('Este mês está sem conteúdo. Nada foi enviado.', 'erro'); return; }
+    if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
+      mostrarToast('O estado deste calendário mudou. Recarregue a fila antes de decidir.','erro'); return;
+    }
     if(!confirm('Aprovar e ENVIAR AGORA o calendário de ' + nome + '?\n\n' +
       qtd + ' conteúdo(s). Ela passa a ver no portal dela imediatamente e já pode aprovar.\n\n' +
       'Se preferir que vá junto com os outros no dia 15, use o botão verde.')) return;
@@ -30740,6 +30910,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const nome = cal.client || slug;
     const alvo = (mes !== undefined && mes !== null) ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
     if(!itensDoMesCalendario(cal, alvo).length){ mostrarToast('Este mês está sem conteúdo. Nada foi aprovado.', 'erro'); return; }
+    if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
+      mostrarToast('O estado deste calendário mudou. Recarregue a fila antes de decidir.','erro'); return;
+    }
     const marca = { status:'aprovado_interno', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste:'' };
     const mapa = { ...(cal.aprovacaoMeses||{}) };
     mapa[alvo] = marca;
@@ -30763,6 +30936,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cal = snap.data();
     const nome = cal.client || slug;
     const alvo = (mes !== undefined && mes !== null) ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
+      mostrarToast('O estado deste calendário mudou. Recarregue a fila antes de devolver.','erro'); return;
+    }
     const marca = { status:'ajuste_interno', por: usuarioAtual || '?', em: new Date().toISOString(), motivoAjuste: String(motivo).trim() };
     const mapa = { ...(cal.aprovacaoMeses||{}) }; mapa[alvo] = marca;
     const patch = { aprovacaoMeses: mapa };

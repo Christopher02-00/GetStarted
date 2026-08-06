@@ -1,4 +1,3 @@
-[AGENTS.md](https://github.com/user-attachments/files/30792426/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -43,6 +42,10 @@ O acesso de Luís no Safari expôs uma regressão diferente no primeiro toque: o
 O caso Kerry revelou que “semana” visual não é vínculo operacional de gravação. A agenda mostrava todos os conteúdos pendentes do mês como marcáveis, e a confirmação confiava no índice recebido da tela. A regra permanente é: cada gravação possui `cliente + mesCalendario + sessaoOrdem`, congela `sessaoItensPlanejados` e a transação revalida status, aprovação, equipe, cliente e itens permitidos. Conteúdo de outra sessão aparece em “NÃO GRAVAR HOJE” e nunca vira checkbox executável. Itens novos recebem `itemId` estável; legado usa índice + nome somente como compatibilidade. Se mês ou vínculo legado for ambíguo, bloquear e pedir planejamento humano — nunca escolher uma semana por suposição nem migrar produção ao abrir a tela.
 
 Ainda neste incidente, duas falhas de manutenção foram registradas: a trava de clique duplo precisa ser armada antes do primeiro `await`, e campos compatíveis (`filmmaker` e `equipe`) precisam ser atualizados juntos. Ao trocar de usuário, listeners, caches e identidade anterior são fronteira de privacidade e devem ser limpos antes de validar a nova conta. Edição de calendário preserva campos desconhecidos com merge do item anterior; modal de item novo sempre limpa mês/data/bloco; redução de sessões não pode deixar bloco manual órfão.
+
+A V32 expôs dois outros rompimentos de compatibilidade. Primeiro, a trava correta de edição durante `aguardando_interna` foi reutilizada em `submitFeedback()` e impediu a Amanda de comentar justamente enquanto revisava. Comentário de revisão não é edição de pauta: deve atualizar somente `comments` e `updatedAt` em transação, enquanto roteiro, legenda, referências e botões de aprovar/devolver permanecem ligados à mesma fila `linhasCalendariosAguardandoRevisao`. Nunca chamar o `save()` completo para registrar esse comentário nem remover a trava dos conteúdos.
+
+Segundo, a ordem de sessão da V32 removeu a descrição livre que registros anteriores usavam para declarar o que já havia sido filmado. Agendamentos sem `sessaoPlanejamentoVersao`, `sessaoChave`, competência e bloco precisam de compatibilidade explícita: se o calendário possui um único mês, ele pode ser exibido por derivação inequívoca; se possui mais de um, a execução continua bloqueada para planejamento humano. O material declarado num agendamento legado recebe vínculo apenas com o próprio `agendamentoId` (`vinculoSessao: declarado_legado`), sem `calendarItemIdx`/`calendarItemId` e sem marcar pauta de outra semana. Sessões modernas nunca ganham texto livre sem autorização. Grafias legadas de equipe (Natan/Nathan e Luiz/Luís) são comparadas por identidade operacional normalizada, sem ampliar a carteira para outros filmmakers.
 
 ## Depois de editar
 

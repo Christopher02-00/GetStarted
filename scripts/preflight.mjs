@@ -182,6 +182,27 @@ if (!escritorio.includes('identidadeRecorrenteDemanda') || !escritorio.includes(
   falhar('proteção de competência/prazo residual ausente');
 } else provar('deduplicação mensal e limpeza de prazo residual presentes');
 
+const confirmacaoGravacao = escritorio.slice(
+  escritorio.indexOf('async function registrarGravacaoRealizadaNucleo'),
+  escritorio.indexOf('function popularClientesReferencia')
+);
+if (!escritorio.includes('NÃO GRAVAR HOJE') || !escritorio.includes('sessaoItensPlanejados') ||
+    !confirmacaoGravacao.includes("dadosAtuais.status !== 'agendado'") ||
+    !confirmacaoGravacao.includes('permitidosAgora.has(chave)')) {
+  falhar('ordem da sessão ou revalidação atômica da gravação ausente');
+} else provar('gravação limitada à ordem planejada da sessão');
+
+const calendarioEditor = ler('calendario.html');
+if (!calendarioEditor.includes('const it={...anterior,itemId:anterior.itemId||') ||
+    !calendarioEditor.includes('excluido:true,excluidoPor:')) {
+  falhar('item de calendário não preserva campos/ID ou perdeu soft-delete');
+} else provar('itens de calendário preservam campos, ID estável e soft-delete');
+
+const regraCalendario = regras.slice(regras.indexOf('match /calendarios/{slug}'), regras.indexOf('match /videos_producao'));
+if (!regraCalendario.includes('temSessaoCalendarioEquipe() && slug == clienteDaSessao()')) {
+  falhar('link interno do calendário continua sem permissão compatível de gravação');
+} else provar('link interno do calendário grava somente o cliente da própria sessão');
+
 if (!escritorio.includes("definirItemExclusivoNoDOM('navCadastro'") ||
     !escritorio.includes("definirItemExclusivoNoDOM('navgroupVendas'")) {
   falhar('itens privados de clientes/financeiro não são removidos do DOM por papel');

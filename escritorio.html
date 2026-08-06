@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-06-calendar-chain-recovery-v29">
+<meta name="gs-build" content="2026-08-06-login-field-calendar-recovery-v30">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1206,7 +1206,7 @@
       <div id="calSubCampo" style="display:none;">
         <div class="card" style="border:2px solid var(--yellow);">
           <h2>📅 Calendário do cliente — modo gravação</h2>
-          <div class="desc">Escolhe o cliente e veja o que é pra gravar. <b>Sempre a última versão</b> — se a equipe mudar algo enquanto você está com a tela aberta, muda aqui na hora.</div>
+          <div class="desc">Escolhe o cliente e veja o que é pra gravar. <b>Acesso livre o dia inteiro</b>: o horário da gravação só destaca o cliente, nunca fecha o calendário. Sempre a última versão — se a equipe mudar algo enquanto você está com a tela aberta, muda aqui na hora.</div>
           <div id="campoClientes" style="margin-top:12px;"></div>
         </div>
         <div id="campoConteudo"></div>
@@ -1916,7 +1916,15 @@
       seletor.title='Identidade confirmada pelo Google: '+autorizado.email;
     }
     liberarGateEquipe();
-    await window.mudarUsuarioGlobal();
+    /* A identidade e o isolamento visual são aplicados de forma síncrona
+       no começo de mudarUsuarioGlobal. A carga operacional continua em
+       segundo plano: login não pode ficar preso em "Abrindo Google…"
+       porque uma consulta do Firestore demorou ou não respondeu. */
+    window.__inicializacaoEquipeAtual = Promise.resolve(window.mudarUsuarioGlobal());
+    window.__inicializacaoEquipeAtual.catch(e=>{
+      console.error('Falha na inicialização progressiva da equipe:', e);
+      mostrarToast('Você entrou, mas parte dos dados ainda não carregou. Tente abrir a aba novamente.', 'erro');
+    });
     /* Uma abertura da gerência migra contatos antigos para o diretório de
        autorização. Assim Yas e futuros funcionários não dependem de a
        Amanda abrir cada contato e clicar em salvar outra vez. */
@@ -6916,6 +6924,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     renderMinhaAgendaFilmmaker();
   };
 
+  function itensDoMesComIndiceGlobal(calendario, mes){
+    if(!calendario) return [];
+    const globais = (calendario.items || []).map((item, idx) => ({ item, idx }));
+    const selecionados = mes ? new Set(itensDoMesCalendario(calendario, mes)) : null;
+    return globais
+      .filter(par => !selecionados || selecionados.has(par.item))
+      .map(par => ({ ...par.item, idx:par.idx }));
+  }
+
   async function renderMinhaAgendaFilmmaker(){
     const cont = document.getElementById('agendamentoMinhaAgenda');
     let todos = [];
@@ -6959,22 +6976,43 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       return;
     }
 
-    /* Antes, cada cartão fazia 1 leitura do calendário + 1 leitura da
-       coleção inteira de referências. Dez gravações abertas viravam vinte
-       consultas completas. Carrega cada fonte uma vez e recorta em memória. */
-    let calendariosSnapAgenda, refsSnapAgenda;
-    try{
-      [calendariosSnapAgenda, refsSnapAgenda] = await Promise.all([
-        obterCalendariosCompartilhados(),
-        obterRefsPerfilCompartilhadas().catch(()=>null)
-      ]);
-    }catch(e){
-      console.error('Agenda: falha ao carregar calendários:', e);
-      cont.innerHTML = blocoAgenda + html + '<div class="card" style="border:2px solid var(--red);"><h2>⚠️ Não consegui carregar os conteúdos</h2><div class="desc">A agenda existe, mas o banco não entregou os calendários. <b>Não registre no escuro:</b> tente novamente para preservar o vínculo com os conteúdos.</div><button class="btn secondary" style="margin-top:10px;" onclick="renderMinhaAgendaFilmmaker()">Tentar novamente</button></div>';
-      return;
-    }
+    /* Luís/Nathan leem somente os calendários dos clientes presentes na
+       própria agenda. A versão anterior ainda listava a coleção inteira
+       nesta segunda porta de entrada, mesmo depois de o modo Campo já ter
+       sido corrigido. Uma falha isolada fica marcada no cartão correto e
+       não apaga a agenda inteira. */
     const calendariosAgenda = {};
-    calendariosSnapAgenda.forEach(d => { calendariosAgenda[d.id] = d.data() || {}; });
+    const errosCalendariosAgenda = new Set();
+    const slugsCalendariosAgenda = [...new Set(
+      [...pendentes, ...aguardandoAprovacao]
+        .map(a => a.clienteSlug || a.cliente || '')
+        .filter(Boolean)
+    )];
+    let leituraCalendariosAgendaConcluida = false;
+    await etapaSegura('calendários da agenda do filmmaker', async () => {
+      const resultados = await Promise.all(slugsCalendariosAgenda.map(async slug => {
+        try{
+          const snap = await getDoc(doc(db,'calendarios',slug));
+          return { slug, dados:snap.exists() ? (snap.data() || {}) : null, erro:false };
+        }catch(e){
+          console.error('Agenda: falha ao carregar o calendário de ' + slug + ':', e);
+          return { slug, dados:null, erro:true };
+        }
+      }));
+      resultados.forEach(r => {
+        if(r.dados) calendariosAgenda[r.slug] = r.dados;
+        if(r.erro) errosCalendariosAgenda.add(r.slug);
+      });
+      leituraCalendariosAgendaConcluida = true;
+    });
+    if(!leituraCalendariosAgendaConcluida){
+      slugsCalendariosAgenda.forEach(slug => errosCalendariosAgenda.add(slug));
+    }
+
+    let refsSnapAgenda = null;
+    await etapaSegura('referências da agenda do filmmaker', async () => {
+      refsSnapAgenda = await obterRefsPerfilCompartilhadas();
+    }, 6000);
     const refsAgenda = {};
     if(refsSnapAgenda) refsSnapAgenda.forEach(dd => {
       const pv = dd.data() || {}; if(!pv.cliente) return;
@@ -6986,8 +7024,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // Monta o cartao de UMA gravacao: cabecalho compacto sempre visivel +
     // formulario completo escondido, que abre no clique.
     const cardGravacao = async (a, urgencia) => {
-      const calAgenda = calendariosAgenda[a.cliente] || null;
-      const itensCalendario = calAgenda ? (calAgenda.items||[]).map((it,idx)=>({...it, idx})).filter(it=>!itemNaoPrecisaGravar(it)) : [];
+      const slugAgenda = a.clienteSlug || a.cliente || '';
+      const calAgenda = calendariosAgenda[slugAgenda] || null;
+      const falhouCalendarioAgenda = errosCalendariosAgenda.has(slugAgenda);
+      const mesAgenda = String(a.data || '').slice(0,7);
+      /* `idx` precisa continuar sendo o índice do array global gravado no
+         Firestore. Numerar novamente só o recorte do mês marcaria outro
+         conteúdo quando a gravação fosse confirmada. */
+      const itensCalendario = itensDoMesComIndiceGlobal(calAgenda, mesAgenda)
+        .filter(it=>!itemNaoPrecisaGravar(it));
       /* 27/07/2026 — o filmmaker precisa saber o ESTILO antes de sair pra
          gravar. Os perfis de referência do cliente ficavam só na tela da
          Gabi; agora vêm junto na agenda dele. */
@@ -7025,6 +7070,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           ${estaAtrasado ? `<div class="meta" style="color:var(--red);font-weight:800;margin:10px 0;">⚠️ Essa gravação foi no dia ${formatarDataBR(a.data)}, e você está registrando só hoje. Registra sempre no MESMO DIA a partir de agora — isso atrasa toda a fila de edição e aprovação.</div>` : ''}
 
           ${htmlPerfis}
+          ${falhouCalendarioAgenda ? '<div class="card" style="border:2px solid var(--red);margin:10px 0;"><b>⚠️ Calendário indisponível agora.</b><div class="meta" style="margin-top:5px;">A agenda foi preservada, mas os conteúdos deste cliente não foram confirmados. Tente novamente antes de registrar a gravação.</div></div>' : ''}
           ${itensCalendario.length ? `
           ${/* ===== GRAVAÇÃO DE CLIENTE NOVO — 28/07/2026 ===============
                 Cliente que acabou de entrar não tem calendário editorial,
@@ -7060,7 +7106,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <div class="btnrow">
             <button class="btn secondary" onclick="reagendarGravacao('${a.id}')">Reagendar</button>
             <button class="btn red" onclick="cancelarGravacaoAgendada('${a.id}')">✕ Cancelar</button>
-            <button class="btn green" onclick="registrarGravacaoRealizada('${a.id}','${escJs(a.cliente)}','${escJs(a.clienteNome)}')">Confirmar gravação</button>
+            <button class="btn green" ${falhouCalendarioAgenda?'disabled title="Reabra a agenda depois que o calendário carregar"':''} onclick="registrarGravacaoRealizada('${a.id}','${escJs(a.cliente)}','${escJs(a.clienteNome)}')">Confirmar gravação</button>
           </div>
         </div>
       </div>`;
@@ -16298,9 +16344,20 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      instante. Isso explica sintomas "aleatórios" como o botão de Nova
      Demanda sumindo. Cada etapa agora roda isolada — uma falhar não impede
      as outras de rodar. */
-  async function etapaSegura(nome, fn){
-    try{ await fn(); }
-    catch(e){ console.error('mudarUsuarioGlobal: falha isolada em "' + nome + '" — resto do login continua normal:', e); }
+  const LIMITE_ETAPA_INICIALIZACAO_MS = 8000;
+  async function etapaSegura(nome, fn, limiteMs){
+    let timer = null;
+    const limite = Number(limiteMs) > 0 ? Number(limiteMs) : LIMITE_ETAPA_INICIALIZACAO_MS;
+    try{
+      await Promise.race([
+        Promise.resolve().then(fn),
+        new Promise((_, rejeitar) => {
+          timer = setTimeout(() => rejeitar(new Error('tempo limite de ' + limite + ' ms')), limite);
+        })
+      ]);
+    }
+    catch(e){ console.error('etapaSegura: falha isolada em "' + nome + '" — o restante continua:', e); }
+    finally{ if(timer) clearTimeout(timer); }
   }
 
   /* ===== AUTORIZAÇÃO DA EQUIPE — V20 =================================
@@ -16377,14 +16434,6 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   window.mudarUsuarioGlobal = async function(){
     const escolhido = document.getElementById('euSouGlobal').value;
-
-    // A V17 usa esta marca para separar o navegador da equipe do Portal
-    // do cliente. Abre antes das leituras para nenhuma tela iniciar sem
-    // o contexto correto; a função continua capturando falhas sem travar.
-    if(escolhido){
-      await abrirSessaoDeEquipe();
-      await carregarClientesExtras();
-    }
 
     /* ===== A SENHA PESSOAL SAIU DA PORTA DE ENTRADA — 28/07/2026 =======
        Ela estava aqui, barrando quem escolhe o nome. Quando falhava — e
@@ -16479,6 +16528,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       return;
     }
     if(botaoNovaDemanda) botaoNovaDemanda.style.display = 'flex';
+
+    /* Nenhuma leitura remota acontece antes deste ponto. A identidade, a
+       limpeza do papel anterior e o DOM permitido já foram aplicados; uma
+       rede lenta não deixa Elô ou qualquer outra pessoa presa no login. */
+    await etapaSegura('abrir sessão da equipe', abrirSessaoDeEquipe);
+    await etapaSegura('carregar clientes extras', carregarClientesExtras);
 
     await etapaSegura('carregar demandas', carregarTodasDemandas);
     const ehGestaoNoLogin = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
@@ -16942,12 +16997,38 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     </div>`;
   }
 
+  /* A visão de campo não pode depender da classificação financeira do
+     cliente. `clientesDeConteudoRecorrente()` consulta contrato,
+     mensalidade e clientes encerrados — coleções que, corretamente, não
+     são liberadas para filmmakers. Para Luís/Nathan a carteira operacional
+     vem apenas de clientes_extras + clientes_config, ambas autorizadas ao
+     papel, e falha de configuração inclui o cliente em vez de fazê-lo
+     desaparecer silenciosamente. */
+  function clienteDisponivelParaCampo(cliente, configuracoes){
+    const cfg = (configuracoes && configuracoes[cliente.slug]) || {};
+    if(SLUGS_INTERNOS.includes(cliente.slug) || ehClienteSoEdicao(cliente.slug)) return false;
+    if(FORA_DA_META_SEMENTE[normNomeCliente(cliente.nome)] && cfg.semConteudoRecorrente !== false) return false;
+    if(cfg.semConteudoRecorrente === true || cfg.clienteInativo === true) return false;
+    if(cfg.tipoEntrega === 'entrega_direta') return false;
+    if(['avulso','interno','encerrado'].includes(cfg.tipoCliente)) return false;
+    return true;
+  }
+  async function clientesOperacionaisParaCampo(){
+    await etapaSegura('atualizar clientes do calendário de campo', carregarClientesExtras, 5000);
+    const configuracoes = {};
+    await etapaSegura('ler configurações do calendário de campo', async () => {
+      const snap = await getDocs(collection(db,'clientes_config'));
+      snap.forEach(d => { configuracoes[d.id] = d.data() || {}; });
+    }, 6000);
+    return CLIENTES_LISTA.filter(c => clienteDisponivelParaCampo(c, configuracoes));
+  }
+
   window.renderCalendarioDeCampo = async function(){
     const box = document.getElementById('campoClientes');
     if(!box) return;
     box.innerHTML = '<div class="desc">Carregando clientes…</div>';
     try{
-      const alvo = await clientesDeConteudoRecorrente();
+      const alvo = await clientesOperacionaisParaCampo();
       const hoje = await carregarGravacoesDeHoje();
       const comConteudo = {};
       /* O modo campo não depende mais de listar a coleção inteira. O
@@ -16989,11 +17070,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const hoje = hojeLocal();
     const mapa = {};
     try{
-      const snap = await getDocs(collection(db,'agendamentos'));
+      const snap = await getDocs(query(collection(db,'agendamentos'), where('data','==',hoje)));
       snap.forEach(d => { const a = d.data();
         if(a.excluido || a.status === 'cancelado') return;
-        if(String(a.data||'') !== hoje) return;
-        const k = a.cliente || a.clienteSlug || '';
+        const k = a.clienteSlug || a.cliente || '';
         if(!k) return;
         mapa[k] = { id:d.id, bloco: Number(a.bloco) || 1, qtd: Number(a.qtdVideosPlanejados) || 0,
                     hora: a.hora || '', local: a.local || '', ehClienteNovo: !!a.ehClienteNovo };
@@ -17020,7 +17100,6 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const itens = (mes ? itensDoMesCalendario(cal, mes) : (cal.items||[]))
         .slice().sort((a,b)=>(a.day||0)-(b.day||0));
       const st = estadoMesCal(cal, mes);
-      const hojeDia = new Date().getDate();
       const rotMes = m => { const n=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
         if(!m) return cal.month||''; const [a,mm]=m.split('-'); return (n[Number(mm)-1]||'')+' '+a; };
 

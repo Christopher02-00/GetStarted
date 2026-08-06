@@ -22,9 +22,34 @@ function trecho(fonte, inicio, fim) {
 }
 
 function executarSandbox(nome, codigo) {
-  const contexto = vm.createContext({ Date, console, window: {} });
+  const contexto = vm.createContext({ Date, console, window: {}, setTimeout, clearTimeout });
   new vm.Script(codigo, { filename: nome }).runInContext(contexto);
   return contexto.api;
+}
+
+async function testarLoginSandbox() {
+  exigir(escritorio.includes("'heloisaksc@gmail.com':'Helo'") &&
+    escritorio.includes("'luissouza280507@gmail.com':'Luís'"),
+    'Elô ou Luís perdeu o mapeamento de e-mail autorizado');
+
+  const aplicar = trecho(escritorio, 'async function aplicarUsuarioGoogle', 'window.entrarComGoogleEquipe');
+  exigir(!aplicar.includes('await window.mudarUsuarioGlobal()') &&
+    aplicar.includes('window.__inicializacaoEquipeAtual = Promise.resolve(window.mudarUsuarioGlobal())'),
+    'login Google voltou a aguardar toda a carga operacional');
+
+  const mudar = trecho(escritorio, 'window.mudarUsuarioGlobal = async function', '/* ===== FRENTE C1');
+  const identidade = mudar.indexOf('usuarioAtual = escolhido');
+  const isolamento = mudar.indexOf('atualizarVisibilidadeMenuPorFuncao()');
+  const primeiraLeitura = mudar.indexOf("await etapaSegura('abrir sessão da equipe'");
+  exigir(identidade >= 0 && isolamento > identidade && primeiraLeitura > isolamento,
+    'uma leitura remota voltou a bloquear identidade ou isolamento do DOM');
+
+  const etapaFonte = trecho(escritorio, 'const LIMITE_ETAPA_INICIALIZACAO_MS', '/* ===== AUTORIZAÇÃO DA EQUIPE');
+  const api = executarSandbox('login-timeout-sandbox.js',
+    `${etapaFonte}\nglobalThis.api={etapaSegura};`);
+  const inicio = Date.now();
+  await api.etapaSegura('consulta que não responde', () => new Promise(()=>{}), 5);
+  exigir(Date.now() - inicio < 250, 'etapa sem resposta ainda prende o login indefinidamente');
 }
 
 function testarFinanceiroSandbox() {
@@ -215,8 +240,49 @@ function testarCalendariosSandbox() {
   const campo = trecho(escritorio, 'window.renderCalendarioDeCampo = async function', '/* ===== A GRAVAÇÃO DE HOJE');
   exigir(!campo.includes('obterCalendariosCompartilhados()'),
     'modo campo voltou a listar a coleção inteira de calendários');
+  exigir(campo.includes('const alvo = await clientesOperacionaisParaCampo()') &&
+    !campo.includes('clientesDeConteudoRecorrente()'),
+    'modo campo voltou a depender de classificação financeira');
   exigir(campo.includes('const lista = alvo.slice();') && campo.includes("onclick=\"abrirCampoDoCliente("),
     'modo campo voltou a esconder clientes antes de abrir o documento escolhido');
+  exigir(!campo.includes('getHours(') && !campo.includes('filter(c => hoje['),
+    'horário ou agenda do dia voltou a bloquear a carteira do filmmaker');
+
+  const fonteCarteira = trecho(escritorio, 'function clienteDisponivelParaCampo', 'window.renderCalendarioDeCampo = async function');
+  const carteira = executarSandbox('carteira-campo-sandbox.js',
+    `const SLUGS_INTERNOS=['get-started'];const FORA_DA_META_SEMENTE={'ex cliente':'saiu'};\n` +
+    `function normNomeCliente(x){return String(x||'').toLowerCase();}\n` +
+    `function ehClienteSoEdicao(slug){return slug==='so-edicao';}\n` +
+    `${fonteCarteira}\nglobalThis.api={clienteDisponivelParaCampo};`);
+  exigir(carteira.clienteDisponivelParaCampo({slug:'stokki',nome:'Stokki'}, {}) === true,
+    'cliente mensalista sem restrição desapareceu da carteira de campo');
+  exigir(carteira.clienteDisponivelParaCampo({slug:'get-started',nome:'Get Started'}, {}) === false,
+    'cliente interno vazou para o calendário de campo');
+  exigir(carteira.clienteDisponivelParaCampo({slug:'avulso',nome:'Avulso'}, {avulso:{tipoCliente:'avulso'}}) === false,
+    'cliente avulso vazou para o calendário de campo');
+  exigir(carteira.clienteDisponivelParaCampo({slug:'legado',nome:'Ex Cliente'}, {legado:{semConteudoRecorrente:false}}) === true,
+    'configuração explícita não prevaleceu sobre exclusão legada');
+
+  const agenda = trecho(escritorio, 'async function renderMinhaAgendaFilmmaker', 'window.renderMinhaAgendaFilmmaker = renderMinhaAgendaFilmmaker');
+  exigir(!agenda.includes('obterCalendariosCompartilhados()') &&
+    agenda.includes("getDoc(doc(db,'calendarios',slug))"),
+    'Minha agenda do filmmaker voltou a ler todos os calendários');
+  exigir(agenda.includes('itensDoMesComIndiceGlobal(calAgenda, mesAgenda)') &&
+    agenda.includes('errosCalendariosAgenda.has(slugAgenda)'),
+    'agenda não separa competência, perdeu o índice global ou converte falha em vazio');
+  const fonteIndices = trecho(escritorio, 'function itensDoMesComIndiceGlobal', 'async function renderMinhaAgendaFilmmaker');
+  const indices = executarSandbox('indices-calendario-agenda-sandbox.js',
+    `function itensDoMesCalendario(cal,mes){return (cal.items||[]).filter(i=>i.mes===mes);}\n` +
+    `${fonteIndices}\nglobalThis.api={itensDoMesComIndiceGlobal};`);
+  const misturado = {items:[
+    {mes:'2026-07',name:'jul-0'}, {mes:'2026-08',name:'ago-1'},
+    {mes:'2026-07',name:'jul-2'}, {mes:'2026-08',name:'ago-3'}
+  ]};
+  exigir(indices.itensDoMesComIndiceGlobal(misturado,'2026-08').map(i=>i.idx).join(',') === '1,3',
+    'recorte mensal renumerou o índice global do calendário');
+  const gravacoesHoje = trecho(escritorio, 'async function carregarGravacoesDeHoje', 'window.abrirCampoDoCliente');
+  exigir(gravacoesHoje.includes("query(collection(db,'agendamentos'), where('data','==',hoje))"),
+    'destaque de hoje voltou a ler todos os agendamentos');
   const listenerCalendarios = trecho(escritorio, '/* Calendários são a fonte comum', 'function onDadosTempoRealMudaram');
   exigir(listenerCalendarios.includes("if(['Chris','Amanda','Cecília'].includes(pessoaDoOuvinte))") &&
     !listenerCalendarios.includes('...PESSOAS_DE_CAMPO'),
@@ -234,6 +300,7 @@ function testarCalendariosSandbox() {
 }
 
 try {
+  await testarLoginSandbox();
   testarFinanceiroSandbox();
   testarBadgesExtrasSandbox();
   await testarOrcamentoLeiturasFirestoreSandbox();

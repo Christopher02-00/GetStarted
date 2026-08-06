@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-05-estabilizacao-integrada-v26">
+<meta name="gs-build" content="2026-08-05-extras-badges-v27">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -5230,13 +5230,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }
 
     try{
-      await updateDoc(doc(db,'pagamentos_extra', id), {
+      await atualizarExtraEEncerrarAvisos(id, {
         valorExtra: filmagem, valorUber: uber, uberIda: ida, uberVolta: volta,
         temUber: uber > 0, uberLink: link,
         semCobrancaFilmagem: !filmagem,
         aprovadoPeloChris: true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString(),
         conferidoPor: usuarioAtual||'?', conferidoEm: new Date().toISOString()
-      });
+      }, 'extra conferido e liberado pela Amanda');
       mostrarToast('Liberado — ' + brl(filmagem + uber) + ' entrou na folha de ' + rotuloMesExtras(mesDoPagamentoExtra(reg)) + '.');
       renderGerenciaPagamentos();
     }catch(e){ console.error('Falha ao liberar:', e); mostrarToast('Não consegui liberar agora.', 'erro'); }
@@ -5286,7 +5286,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   window.aprovarExtra = async function(id){
     if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão.', 'erro'); return; }
-    await updateDoc(doc(db,'pagamentos_extra', id), { aprovadoPeloChris:true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString() });
+    await atualizarExtraEEncerrarAvisos(id, { aprovadoPeloChris:true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString() }, 'extra aprovado pela gestão');
     mostrarToast('Aprovado — entrou na folha do mês seguinte à realização.');
     renderGerenciaPagamentos();
   };
@@ -5377,6 +5377,22 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   const mesDoLancamento = mesDaRealizacaoExtra;
   function extrasExigiveisAte(lista, competenciaPagamento, nome){
     return extrasEmAberto(lista, nome).filter(p => mesDoPagamentoExtra(p) <= competenciaPagamento);
+  }
+  /* Badge é alarme, não extrato. O pagamento vence no dia 15 do mês da
+     folha: antes disso o lançamento aparece normalmente na tela, mas não
+     acende um número vermelho como se estivesse atrasado. */
+  function dataLimitePagamentoExtra(p){
+    const competencia = mesDoPagamentoExtra(p);
+    return competenciaValidaExtra(competencia) ? competencia + '-15' : '';
+  }
+  function extraVencidoParaPagamento(p, dataReferencia){
+    if(!p || p.excluido || p.pago || !extraLiberado(p)) return false;
+    const hoje = String(dataReferencia || hojeLocal()).slice(0,10);
+    const limite = dataLimitePagamentoExtra(p);
+    return /^\d{4}-\d{2}-\d{2}$/.test(hoje) && !!limite && limite <= hoje;
+  }
+  function extrasVencidosParaPagamento(lista, dataReferencia){
+    return (lista || []).filter(p => extraVencidoParaPagamento(p, dataReferencia));
   }
   function porMesDePagamentoDosExtras(lista){
     const m = {};
@@ -5853,9 +5869,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(v < 50 || v > 500){
       if(!confirm('Valor fora do normal (' + brl(v) + ').\n\nFilmagem avulsa costuma ficar entre ' + brl(100) + ' e ' + brl(150) + '. Confirma?')) return;
     }
-    await updateDoc(doc(db,'pagamentos_extra', id), {
+    await atualizarExtraEEncerrarAvisos(id, {
       valorExtra: v, valorDefinidoPor: usuarioAtual||'?', valorDefinidoEm: new Date().toISOString(), aprovadoPeloChris: true
-    });
+    }, 'valor da filmagem definido pela Amanda');
     mostrarToast('Valor definido — entrou na folha do mês seguinte à realização.');
     renderGerenciaPagamentos();
   };
@@ -5864,10 +5880,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      ele ficaria pra sempre na fila de "sem valor definido". */
   window.marcarSemCobrancaFilmagem = async function(id){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('Conferir este lançamento é da Amanda.', 'erro'); return; }
-    await updateDoc(doc(db,'pagamentos_extra', id), {
+    await atualizarExtraEEncerrarAvisos(id, {
       semCobrancaFilmagem: true, valorExtra: 0, aprovadoPeloChris: true,
       marcadoPor: usuarioAtual||'?', marcadoEm: new Date().toISOString()
-    });
+    }, 'extra conferido como somente deslocamento');
     mostrarToast('Marcado como só deslocamento.');
     renderGerenciaPagamentos();
   };
@@ -5883,9 +5899,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         return;
       }
     }
-    await updateDoc(doc(db,'pagamentos_extra', id), {
+    const dadosPagamentoExtra = {
       pago: novoEstado, pagoPor: novoEstado ? (usuarioAtual||'?') : '', pagoEm: novoEstado ? new Date().toISOString() : ''
-    });
+    };
+    if(novoEstado) await atualizarExtraEEncerrarAvisos(id, dadosPagamentoExtra, 'extra marcado como pago');
+    else {
+      await updateDoc(doc(db,'pagamentos_extra', id), dadosPagamentoExtra);
+      refletirExtraNoCache(id, dadosPagamentoExtra);
+    }
     mostrarToast(novoEstado ? 'Marcado como pago.' : 'Marcado como pendente.');
     renderGerenciaPagamentos();
   };
@@ -5893,7 +5914,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.excluirPagamentoExtra = async function(id){
     if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão.', 'erro'); return; }
     if(!confirm('Excluir esse pagamento extra?')) return;
-    await updateDoc(doc(db,'pagamentos_extra', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
+    await atualizarExtraEEncerrarAvisos(id, { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() }, 'lançamento removido por soft-delete');
     mostrarToast('Removido.');
     renderGerenciaPagamentos();
   };
@@ -13546,6 +13567,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   let todasDemandas = [];
   function demandaOperacionalVisivel(demanda){
     if(!demanda || demanda.excluido===true) return false;
+    /* Aviso de extra não pode continuar como demanda depois que o
+       lançamento já foi conferido, pago ou removido. A cache financeira
+       só existe na gestão; nos demais papéis esta verificação não expõe
+       nem consulta valores de colegas. Também neutraliza avisos legados
+       que ficaram abertos antes da correção V27. */
+    if(demandaDeExtraJaResolvida(demanda)) return false;
     if(!['Amanda','Chris'].includes(usuarioAtual) && demanda.visivelAPartir && demanda.visivelAPartir>hojeLocal()) return false;
     return true;
   }
@@ -17050,6 +17077,51 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   /* Cache ao vivo da gestão. É preenchido pelo listener de
      `pagamentos_extra`; não existe uma segunda leitura só para badge. */
   let cacheExtrasMenu = [];
+  let cacheExtrasMenuPronto = false;
+
+  function refletirExtraNoCache(id, dados, redesenharBadge){
+    const indice = cacheExtrasMenu.findIndex(p => p.id === id);
+    if(indice >= 0) cacheExtrasMenu[indice] = { ...cacheExtrasMenu[indice], ...dados };
+    if(redesenharBadge !== false) atualizarTodosOsBadges();
+  }
+
+  /* A aprovação e o aviso correspondente são fechados no mesmo batch.
+     Antes, o extra mudava de estado mas a demanda "conferir extra" ficava
+     pendente para sempre, contaminando os contadores da Amanda. */
+  async function atualizarExtraEEncerrarAvisos(id, dados, motivo){
+    const avisos = await getDocs(query(collection(db,'demandas'), where('pagamentoExtraId','==',id)));
+    const lote = writeBatch(db);
+    lote.update(doc(db,'pagamentos_extra',id), dados);
+    const idsEncerrados = [];
+    avisos.forEach(registro => {
+      const aviso = registro.data();
+      if(aviso.excluido || aviso.status === 'aprovada') return;
+      idsEncerrados.push(registro.id);
+      lote.update(doc(db,'demandas',registro.id), {
+        status:'aprovada', concluidaEm:serverTimestamp(), concluidoPor:usuarioAtual||'sistema',
+        notaConclusao:'Aviso encerrado automaticamente: ' + motivo,
+        encerradoAutomaticamente:'pagamento_extra', atualizadoEm:serverTimestamp()
+      });
+    });
+    await lote.commit();
+    __cacheColecoes.delete('pagamentos_extra');
+    __cacheColecoes.delete('demandas');
+    refletirExtraNoCache(id,dados,false);
+    if(idsEncerrados.length){
+      const fechados = new Set(idsEncerrados);
+      todasDemandas = todasDemandas.map(d => fechados.has(d.id)
+        ? { ...d, status:'aprovada', notaConclusao:'Aviso encerrado automaticamente: ' + motivo }
+        : d);
+    }
+    atualizarTodosOsBadges();
+  }
+
+  function demandaDeExtraJaResolvida(demanda){
+    if(!demanda || !demanda.pagamentoExtraId) return false;
+    if(!cacheExtrasMenuPronto) return false;
+    const extra = cacheExtrasMenu.find(p => p.id === demanda.pagamentoExtraId);
+    return !extra || !!extra.excluido || !!extra.pago || extraLiberado(extra);
+  }
 
   window.irParaExtras = function(){
     if(!['Chris','Amanda'].includes(usuarioAtual)){
@@ -19220,7 +19292,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   let __versaoBadgeAprovacoes = 0;
 
   window.atualizarTodosOsBadges = function(){
-    const zerar = id => { const b = document.getElementById(id); if(b) b.style.display = 'none'; };
+    const zerar = id => { const b = document.getElementById(id); if(b){ b.style.display = 'none'; b.textContent=''; b.removeAttribute('title'); } };
     if(!usuarioAtual){
       ['badgeMinhasDemandasAtribuidas','badgeAprovar','badgeAtrasadas','badgeMinhas','badgePostagens','badgeEntradaClientes','badgeAprovacoesMenu','badgeExtrasMenu','badgeVideosMenu'].forEach(zerar);
       return;
@@ -19255,15 +19327,21 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        decidir — vídeo esperando revisão + demanda pela regra da tela.
        Mesma regra da tela, de propósito: foi a divergência entre badge e
        tela que fez o Chris ver 6 e não achar 6. */
-    /* Badge dos extras: o que a agência DEVE, de qualquer mês — mesma
-       conta da tela, pra não repetir a divergência de número que o Chris
-       achou hoje entre o Financeiro e o painel de extras. */
+    /* Badge dos extras: somente pagamento já vencido. Extras de folhas
+       futuras continuam visíveis no extrato, sem virar falso alarme. */
     try{
       const be = document.getElementById('badgeExtrasMenu');
       if(be){
-        const abertos = (cacheExtrasMenu || []).filter(p => !p.excluido && !p.pago && (!p.informadoPelaPessoa || p.aprovadoPeloChris));
-        if(abertos.length && usuarioAtual === 'Chris'){ be.textContent = abertos.length; be.style.display = 'flex'; }
-        else be.style.display = 'none';
+        const vencidos = extrasVencidosParaPagamento(cacheExtrasMenu, hojeLocal());
+        if(vencidos.length && usuarioAtual === 'Chris'){
+          be.textContent = vencidos.length;
+          be.title = vencidos.length + (vencidos.length === 1 ? ' extra vencido para pagamento' : ' extras vencidos para pagamento');
+          be.style.display = 'flex';
+        }else{
+          be.style.display = 'none';
+          be.textContent = '';
+          be.removeAttribute('title');
+        }
       }
     }catch(e){ console.error('Falha na badge de extras:', e); }
 
@@ -23699,6 +23777,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     cachePostagens = [];
     cacheAgendamentos = [];
     cacheExtrasMenu = [];
+    cacheExtrasMenuPronto = false;
     Object.keys(__cacheTempoRealPronto).forEach(k => { __cacheTempoRealPronto[k] = false; });
     if(limparDemandas !== false) todasDemandas = [];
   }
@@ -23840,6 +23919,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
         cacheExtrasMenu=[];
         snap.forEach(d=>cacheExtrasMenu.push({id:d.id,...d.data()}));
+        cacheExtrasMenuPronto=true;
         __cacheTempoRealPronto.pagamentos_extra=true;
         onDadosTempoRealMudaram('pagamentos_extra');
       }, (erro)=>{ console.error('Listener pagamentos_extra falhou:',erro); }));
@@ -29939,6 +30019,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       const pagoEm=new Date().toISOString();
       lista.forEach(e=>lote.update(doc(db,'pagamentos_extra',e.id),{pago:true,pagoPor:usuarioAtual||'?',pagoEm}));
       await lote.commit();
+      __cacheColecoes.delete('pagamentos_extra');
+      lista.forEach(e=>refletirExtraNoCache(e.id,{pago:true,pagoPor:usuarioAtual||'?',pagoEm},false));
+      atualizarTodosOsBadges();
     }catch(err){
       console.error('A baixa atômica da folha falhou; nenhum item foi confirmado:',err);
       mostrarToast('A baixa não foi concluída. Nenhum lançamento foi confirmado; tente novamente.','erro');

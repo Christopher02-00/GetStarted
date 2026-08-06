@@ -32,6 +32,39 @@ async function testarLoginSandbox() {
     escritorio.includes("'luissouza280507@gmail.com':'Luís'"),
     'Elô ou Luís perdeu o mapeamento de e-mail autorizado');
 
+  exigir(escritorio.includes('id="btnLoginGoogleEquipe" onclick="entrarComGoogleEquipe()" disabled>Preparando login…</button>'),
+    'botão Google voltou a aceitar clique antes de a persistência estar pronta');
+  const login = trecho(escritorio, 'window.entrarComGoogleEquipe = async function', '  window.sairDoEscritorio');
+  exigir(!login.includes('await setPersistence(') &&
+    login.indexOf('signInWithPopup(auth,provedor)') >= 0 &&
+    login.indexOf('signInWithPopup(auth,provedor)') < login.indexOf('const cred=await'),
+    'Safari voltou a perder o gesto porque há espera antes de abrir o Google');
+  exigir(login.includes('if(__loginGoogleEquipeEmCurso) return false;') &&
+    login.includes('__loginGoogleEquipeEmCurso = false;'),
+    'login Google perdeu a trava contra clique duplo');
+
+  const loginFonte = trecho(escritorio, 'function mensagemErroLoginGoogleEquipe', '  window.sairDoEscritorio');
+  const loginApi = executarSandbox('google-primeiro-clique-sandbox.js',
+    `let __persistenciaAuthEquipePronta=true;let __loginGoogleEquipeEmCurso=false;let chamadasPopup=0;let aplicacoes=0;let gate='';\n` +
+    `const botao={disabled:false,textContent:'Continuar com Google'};const erro={style:{display:'none'},textContent:''};\n` +
+    `const document={getElementById:id=>id==='btnLoginGoogleEquipe'?botao:erro};const auth={};\n` +
+    `class GoogleAuthProvider{setCustomParameters(v){this.parametros=v;}}\n` +
+    `function signInWithPopup(){chamadasPopup++;return Promise.resolve({user:{uid:'luis'}});}\n` +
+    `async function aplicarUsuarioGoogle(){aplicacoes++;return true;}\n` +
+    `function mostrarGateEquipe(msg){gate=msg;}\n` +
+    `${loginFonte}\n` +
+    `globalThis.api={entrar:()=>window.entrarComGoogleEquipe(),chamadas:()=>chamadasPopup,aplicacoes:()=>aplicacoes,botao,erro,gate:()=>gate,mensagemErroLoginGoogleEquipe};`);
+  const primeiroClique = loginApi.entrar();
+  const cliqueDuplicado = loginApi.entrar();
+  exigir(loginApi.chamadas() === 1, 'primeiro clique não abriu o Google exatamente uma vez');
+  exigir(await cliqueDuplicado === false, 'clique duplo iniciou uma segunda autenticação');
+  exigir(await primeiroClique === true && loginApi.aplicacoes() === 1,
+    'retorno do Google não aplicou a identidade exatamente uma vez');
+  exigir(loginApi.botao.disabled === false && loginApi.botao.textContent === 'Continuar com Google',
+    'botão de login não voltou ao estado utilizável após a tentativa');
+  exigir(loginApi.mensagemErroLoginGoogleEquipe({code:'auth/popup-blocked'}).includes('auth/popup-blocked'),
+    'erro do Google voltou a ser escondido por mensagem genérica');
+
   const aplicar = trecho(escritorio, 'async function aplicarUsuarioGoogle', 'window.entrarComGoogleEquipe');
   exigir(!aplicar.includes('await window.mudarUsuarioGlobal()') &&
     aplicar.includes('window.__inicializacaoEquipeAtual = Promise.resolve(window.mudarUsuarioGlobal())'),

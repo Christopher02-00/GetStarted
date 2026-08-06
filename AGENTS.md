@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30785656/AGENTS.md)
+[AGENTS.md](https://github.com/user-attachments/files/30786894/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -37,6 +37,8 @@ O Firestore excedeu a cota de leitura e o código interpretou falhas como lista 
 No mesmo dia, a segunda porta do filmmaker (`Minha agenda`) ainda listava todos os calendários, e o modo de campo montava a carteira por uma função que também consultava contratos, mensalidades e clientes encerrados. Essas coleções são privadas da gestão e a negativa correta das regras podia virar carregamento ou lista vazia para Luís. A correção separa a carteira operacional (`clientes_extras` + `clientes_config`), lê somente os calendários presentes na agenda do filmmaker e mantém o acesso independente de horário. Nunca ampliar regras financeiras para consertar uma tela operacional.
 
 A entrada de Elô expôs outra variante: o portão Google aguardava toda a inicialização operacional. Uma leitura sem resposta mantinha “Abrindo Google…” para sempre apesar de e-mail e usuário estarem ativos. Identidade, limpeza do papel anterior e isolamento do DOM agora acontecem antes da primeira leitura; a carga seguinte é progressiva e cada etapa tem limite de tempo. Nunca voltar a aguardar a carga completa dentro de `aplicarUsuarioGoogle()`.
+
+O acesso de Luís no Safari expôs uma regressão diferente no primeiro toque: o handler aguardava `setPersistence()` antes de `signInWithPopup()`, perdia o gesto transitório do usuário e o navegador bloqueava/cancelava a janela do Google. A persistência deve ser preparada na inicialização, o botão permanece desativado até ela terminar e `signInWithPopup()` precisa ser a primeira operação assíncrona disparada diretamente pelo clique. Mantenha também a trava de tentativa única e sempre mostre o código real de `auth/*`; nunca reintroduza `await` antes do popup nem uma mensagem apenas genérica.
 
 ## Depois de editar
 

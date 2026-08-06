@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-06-login-field-calendar-recovery-v30">
+<meta name="gs-build" content="2026-08-06-safari-google-login-recovery-v31">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -522,7 +522,7 @@
     <div style="font-size:12px;font-weight:900;letter-spacing:.12em;color:#fbbc19;margin-bottom:10px;">GET STARTED · ACESSO DA EQUIPE</div>
     <h1 style="font-size:24px;margin:0 0 10px;">Entre com seu Google</h1>
     <p style="font-size:13.5px;line-height:1.55;color:#c8c9c7;margin:0 0 18px;">Use o mesmo e-mail que está cadastrado na equipe. O sistema identifica sua função automaticamente — não é mais possível escolher o nome de outra pessoa.</p>
-    <button class="btn" id="btnLoginGoogleEquipe" onclick="entrarComGoogleEquipe()">Continuar com Google</button>
+    <button class="btn" id="btnLoginGoogleEquipe" onclick="entrarComGoogleEquipe()" disabled>Preparando login…</button>
     <div id="authEquipeErro" style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:#5b2020;color:#fff;font-size:12.5px;line-height:1.45;"></div>
   </div>
 </div>
@@ -1856,6 +1856,23 @@
   async function deleteDoc(...a){ const r = await _deleteDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
 
   const auth = getAuth(app);
+  /* Safari móvel exige que `signInWithPopup` seja chamado diretamente no
+     gesto do usuário. Antes o clique aguardava setPersistence e só depois
+     tentava abrir o Google; esse await fazia o Safari perder o gesto e
+     responder com popup bloqueado/cancelado. A persistência é preparada
+     na abertura da página, e o botão só é liberado quando isso termina. */
+  let __persistenciaAuthEquipePronta = false;
+  let __loginGoogleEquipeEmCurso = false;
+  const __preparoPersistenciaAuthEquipe = setPersistence(auth,browserLocalPersistence)
+    .catch(e => {
+      console.warn('Persistência local do login não pôde ser preparada; seguindo com a persistência disponível:', e);
+      return false;
+    })
+    .finally(() => {
+      __persistenciaAuthEquipePronta = true;
+      const btn = document.getElementById('btnLoginGoogleEquipe');
+      if(btn && !__loginGoogleEquipeEmCurso){ btn.disabled=false; btn.textContent='Continuar com Google'; }
+    });
   const EMAIL_PARA_PESSOA_EQUIPE = Object.freeze({
     'christopherveloso0@gmail.com':'Chris',
     'amandachamorrosm@gmail.com':'Amanda',
@@ -1937,23 +1954,52 @@
     }
     return true;
   }
+  function mensagemErroLoginGoogleEquipe(erro){
+    const codigo = String(erro?.code || 'auth/erro-desconhecido');
+    const mensagens = {
+      'auth/popup-blocked':'O navegador bloqueou a janela do Google. Libere pop-ups para get-started.agency e toque novamente.',
+      'auth/popup-closed-by-user':'A janela do Google foi fechada antes de concluir. Toque novamente e termine a escolha da conta.',
+      'auth/cancelled-popup-request':'Já havia uma tentativa de login aberta. Feche a janela anterior e toque uma única vez.',
+      'auth/network-request-failed':'A internet falhou durante o login. Confira a conexão e tente novamente.',
+      'auth/unauthorized-domain':'O domínio do site não está autorizado no Firebase. Avise a gerência com este código.',
+      'auth/web-storage-unsupported':'O Safari está bloqueando o armazenamento necessário ao Google. Desative a navegação privada/bloqueio para este site e tente novamente.',
+      'auth/operation-not-allowed':'O provedor Google não está ativado no Firebase Authentication.'
+    };
+    return (mensagens[codigo] || 'O Google não concluiu o login. Tente novamente e confirme o e-mail cadastrado.') + ' Código: ' + codigo + '.';
+  }
+
   window.entrarComGoogleEquipe = async function(){
     const btn=document.getElementById('btnLoginGoogleEquipe');
     const erro=document.getElementById('authEquipeErro');
+    if(__loginGoogleEquipeEmCurso) return false;
+    if(!__persistenciaAuthEquipePronta){
+      if(erro){ erro.textContent='O login ainda está sendo preparado. Aguarde um instante.'; erro.style.display='block'; }
+      return false;
+    }
+    __loginGoogleEquipeEmCurso = true;
     try{
       if(btn){btn.disabled=true;btn.textContent='Abrindo Google…';}
       if(erro) erro.style.display='none';
-      await setPersistence(auth,browserLocalPersistence);
       const provedor=new GoogleAuthProvider();
       provedor.setCustomParameters({prompt:'select_account'});
-      const cred=await signInWithPopup(auth,provedor);
+      /* Não colocar nenhum await antes desta chamada. É esta ordem que
+         preserva o gesto do primeiro toque no Safari/iPhone. */
+      const tentativaLogin = signInWithPopup(auth,provedor);
+      const cred=await tentativaLogin;
       await aplicarUsuarioGoogle(cred.user);
+      return true;
     }catch(e){
       console.error('Falha no login Google da equipe:',e);
-      mostrarGateEquipe(e?.code==='auth/operation-not-allowed'
-        ? 'O Google ainda não foi ativado no Firebase Authentication. A gerência precisa concluir essa configuração uma única vez.'
-        : 'Não consegui concluir o login Google. Tente novamente e confirme que escolheu o e-mail cadastrado.');
-    }finally{ if(btn){btn.disabled=false;btn.textContent='Continuar com Google';} }
+      window.__ultimoErroLoginGoogleEquipe = {
+        codigo:String(e?.code||'auth/erro-desconhecido'),
+        mensagem:String(e?.message||''), em:new Date().toISOString()
+      };
+      mostrarGateEquipe(mensagemErroLoginGoogleEquipe(e));
+      return false;
+    }finally{
+      __loginGoogleEquipeEmCurso = false;
+      if(btn){btn.disabled=false;btn.textContent='Continuar com Google';}
+    }
   };
   window.sairDoEscritorio = async function(){
     try{ await signOut(auth); }catch(e){ console.error(e); }

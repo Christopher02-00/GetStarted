@@ -44,6 +44,41 @@ function testarFinanceiroSandbox() {
   }
 }
 
+function testarBadgesExtrasSandbox() {
+  const fonte = trecho(escritorio, 'const extraLiberado =', 'function porMesDePagamentoDosExtras');
+  const api = executarSandbox('extras-badges-sandbox.js',
+    `function hojeLocal(){ return '2026-08-05'; }\n${fonte}\n` +
+    `globalThis.api={dataLimitePagamentoExtra,extraVencidoParaPagamento,extrasVencidosParaPagamento};`);
+  const folhaAtual = { id:'jul', competenciaRealizacao:'2026-07', pago:false, aprovadoPeloChris:true, informadoPelaPessoa:true };
+  const folhaAnterior = { id:'jun', competenciaRealizacao:'2026-06', pago:false, aprovadoPeloChris:true, informadoPelaPessoa:true };
+  exigir(api.dataLimitePagamentoExtra(folhaAtual) === '2026-08-15', 'vencimento do extra não caiu no dia 15 da folha seguinte');
+  exigir(api.extraVencidoParaPagamento(folhaAtual, '2026-08-05') === false, 'folha futura virou falso atraso no badge');
+  exigir(api.extraVencidoParaPagamento(folhaAtual, '2026-08-15') === true, 'extra não acendeu no próprio vencimento');
+  exigir(api.extraVencidoParaPagamento(folhaAnterior, '2026-08-05') === true, 'folha anterior em aberto não apareceu como vencida');
+  exigir(api.extraVencidoParaPagamento({ ...folhaAnterior, pago:true }, '2026-08-05') === false, 'extra pago permaneceu no badge');
+  exigir(api.extraVencidoParaPagamento({ ...folhaAnterior, excluido:true }, '2026-08-05') === false, 'soft-delete permaneceu no badge');
+  exigir(api.extraVencidoParaPagamento({ ...folhaAnterior, aprovadoPeloChris:false }, '2026-08-05') === false, 'extra ainda não conferido foi contado como pagamento vencido');
+  exigir(api.extrasVencidosParaPagamento([folhaAtual,folhaAnterior], '2026-08-05').map(x=>x.id).join(',') === 'jun',
+    'badge não usa exatamente a lista de pagamentos realmente vencidos');
+  exigir(escritorio.includes("encerradoAutomaticamente:'pagamento_extra'"), 'aprovação do extra não encerra o aviso relacionado');
+  exigir(escritorio.includes('if(demandaDeExtraJaResolvida(demanda)) return false;'), 'avisos legados resolvidos continuam visíveis');
+  const filtroAvisoFonte = trecho(escritorio, 'function demandaDeExtraJaResolvida', 'window.irParaExtras');
+  const filtro = executarSandbox('extras-avisos-sandbox.js',
+    `const extraLiberado=p=>!p.informadoPelaPessoa||p.aprovadoPeloChris;\n` +
+    `let cacheExtrasMenuPronto=true;let cacheExtrasMenu=[` +
+    `{id:'pendente',informadoPelaPessoa:true,aprovadoPeloChris:false,pago:false},` +
+    `{id:'aprovado',informadoPelaPessoa:true,aprovadoPeloChris:true,pago:false},` +
+    `{id:'pago',informadoPelaPessoa:true,aprovadoPeloChris:true,pago:true},` +
+    `{id:'excluido',informadoPelaPessoa:true,aprovadoPeloChris:false,pago:false,excluido:true}];\n` +
+    `${filtroAvisoFonte}\nglobalThis.api={demandaDeExtraJaResolvida};`);
+  exigir(filtro.demandaDeExtraJaResolvida({pagamentoExtraId:'pendente'}) === false, 'aviso de extra ainda não conferido foi escondido');
+  exigir(filtro.demandaDeExtraJaResolvida({pagamentoExtraId:'aprovado'}) === true, 'aviso legado aprovado continuou aberto');
+  exigir(filtro.demandaDeExtraJaResolvida({pagamentoExtraId:'pago'}) === true, 'aviso legado pago continuou aberto');
+  exigir(filtro.demandaDeExtraJaResolvida({pagamentoExtraId:'excluido'}) === true, 'aviso legado de soft-delete continuou aberto');
+  exigir(filtro.demandaDeExtraJaResolvida({pagamentoExtraId:'inexistente'}) === true, 'aviso órfão continuou contaminando contador');
+  exigir(filtro.demandaDeExtraJaResolvida({}) === false, 'demanda comum foi confundida com aviso de extra');
+}
+
 function testarDatasOperacionaisSandbox() {
   const fonte = trecho(escritorio, 'function dataLocal(d)', 'function hojeLocal()');
   const api = executarSandbox('datas-sandbox.js', `${fonte}\nglobalThis.api={dataLocal,diaOperacional,mesOperacional};`);
@@ -110,6 +145,7 @@ function testarCalendariosSandbox() {
 
 try {
   testarFinanceiroSandbox();
+  testarBadgesExtrasSandbox();
   testarDatasOperacionaisSandbox();
   testarAcompanhamentoSandbox();
   testarDemandasSandbox();

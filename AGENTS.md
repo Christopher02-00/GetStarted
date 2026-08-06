@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30786894/AGENTS.md)
+[AGENTS.md](https://github.com/user-attachments/files/30792426/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -24,7 +24,7 @@ Este repositório é um sistema operacional em produção, baseado principalment
 - A cadeia é única: Gabi grava e envia o mês, Amanda revisa pela mesma fonte de estado e Luís/Nathan consultam o conteúdo de gravação. Alterar qualquer elo exige testar os três papéis.
 - Falha, cota ou timeout do Firestore nunca pode ser convertido em lista vazia, contador zero ou “calendário apagado”. Mostre estado indisponível e preserve o último retrato confirmado quando existir.
 - O modo do filmmaker não deve listar a coleção inteira para abrir um cliente: mostre a carteira autorizada e leia somente o documento escolhido. A atualização daquele documento continua em tempo real.
-- A carteira e os calendários de Luís/Nathan ficam disponíveis durante todo o dia. Data e hora da gravação servem apenas para ordenar e destacar o trabalho; nunca são condição de autorização. O papel continua limitado ao modo de campo/visão e aos clientes operacionais, sem herdar telas de Gabi ou gestão.
+- A carteira e os calendários de Luís/Nathan ficam disponíveis durante todo o dia. Data e hora da gravação servem apenas para ordenar e destacar o trabalho; nunca são condição de autorização. O papel continua limitado ao modo de campo e às próprias sessões/clientes operacionais, sem herdar telas de Gabi ou gestão.
 - Um fluxo de papel operacional nunca pode consultar contratos, mensalidades, financeiro ou outra coleção que suas regras não permitem. Classificação gerencial e carteira operacional são fontes diferentes quando a privacidade exige.
 - A fila e o contador da Amanda usam `linhasCalendariosAguardandoRevisao`; não crie filtro paralelo para `aprovacaoInterna`/`aprovacaoMeses`.
 - `calendario.html` e `calendarios.html` são endereços compatíveis do mesmo produto e devem permanecer byte a byte idênticos.
@@ -39,6 +39,10 @@ No mesmo dia, a segunda porta do filmmaker (`Minha agenda`) ainda listava todos 
 A entrada de Elô expôs outra variante: o portão Google aguardava toda a inicialização operacional. Uma leitura sem resposta mantinha “Abrindo Google…” para sempre apesar de e-mail e usuário estarem ativos. Identidade, limpeza do papel anterior e isolamento do DOM agora acontecem antes da primeira leitura; a carga seguinte é progressiva e cada etapa tem limite de tempo. Nunca voltar a aguardar a carga completa dentro de `aplicarUsuarioGoogle()`.
 
 O acesso de Luís no Safari expôs uma regressão diferente no primeiro toque: o handler aguardava `setPersistence()` antes de `signInWithPopup()`, perdia o gesto transitório do usuário e o navegador bloqueava/cancelava a janela do Google. A persistência deve ser preparada na inicialização, o botão permanece desativado até ela terminar e `signInWithPopup()` precisa ser a primeira operação assíncrona disparada diretamente pelo clique. Mantenha também a trava de tentativa única e sempre mostre o código real de `auth/*`; nunca reintroduza `await` antes do popup nem uma mensagem apenas genérica.
+
+O caso Kerry revelou que “semana” visual não é vínculo operacional de gravação. A agenda mostrava todos os conteúdos pendentes do mês como marcáveis, e a confirmação confiava no índice recebido da tela. A regra permanente é: cada gravação possui `cliente + mesCalendario + sessaoOrdem`, congela `sessaoItensPlanejados` e a transação revalida status, aprovação, equipe, cliente e itens permitidos. Conteúdo de outra sessão aparece em “NÃO GRAVAR HOJE” e nunca vira checkbox executável. Itens novos recebem `itemId` estável; legado usa índice + nome somente como compatibilidade. Se mês ou vínculo legado for ambíguo, bloquear e pedir planejamento humano — nunca escolher uma semana por suposição nem migrar produção ao abrir a tela.
+
+Ainda neste incidente, duas falhas de manutenção foram registradas: a trava de clique duplo precisa ser armada antes do primeiro `await`, e campos compatíveis (`filmmaker` e `equipe`) precisam ser atualizados juntos. Ao trocar de usuário, listeners, caches e identidade anterior são fronteira de privacidade e devem ser limpos antes de validar a nova conta. Edição de calendário preserva campos desconhecidos com merge do item anterior; modal de item novo sempre limpa mês/data/bloco; redução de sessões não pode deixar bloco manual órfão.
 
 ## Depois de editar
 

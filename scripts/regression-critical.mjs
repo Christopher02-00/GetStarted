@@ -228,7 +228,7 @@ function testarDemandasSandbox() {
     'prazo alterado manteve cicatriz de atraso');
 }
 
-function testarCalendariosSandbox() {
+async function testarCalendariosSandbox() {
   const fonte = trecho(calendario, "const MESES_PT=", '/* ===== VÁRIOS MESES');
   const api = executarSandbox('calendario-sandbox.js',
     `let data={month:'Agosto 2026'};let mesVisivel='';\n${fonte}\n` +
@@ -337,6 +337,52 @@ function testarCalendariosSandbox() {
   exigir(calendario.includes("['viewGrid','viewWeek','viewKanban'].forEach") &&
     calendario.includes('O calendário não foi apagado; o banco não conseguiu entregá-lo agora.'),
     'Gabi voltou a receber uma grade branca quando o Firestore falha');
+
+  const revisaoAmanda = trecho(escritorio, 'function idAnaliseCalendarioRevisao', 'window.recarregarFilaCalendarios');
+  exigir(revisaoAmanda.includes('ROTEIRO / COPY') && revisaoAmanda.includes('LEGENDA') &&
+    revisaoAmanda.includes('Abrir referência') && revisaoAmanda.includes('comentarAnaliseCalendario'),
+    'fila da Amanda perdeu roteiro, legenda, referência ou comentário no mesmo cartão');
+  exigir(revisaoAmanda.includes('runTransaction') && revisaoAmanda.includes("comments:[registro,...(cal.comments||[])]") &&
+    !revisaoAmanda.includes('items:'),
+    'comentário da Amanda não é uma gravação parcial/atômica isolada dos conteúdos');
+  const revisaoInlineApi = executarSandbox('revisao-inline-amanda-sandbox.js',
+    `let usuarioAtual='Amanda';let patchInline=null;let calendarioInline={client:'Cliente X',items:[{mes:'2026-08',name:'Vídeo principal',day:12,fmt:'Reel',desc:'Roteiro completo',legenda:'Legenda final',ref:'https://example.com/ref'}],comments:[],aprovacaoMeses:{'2026-08':{status:'aguardando_interna'}}};\n` +
+    `const alvoInline={dataset:{},innerHTML:''};const campoInline={value:'Ajustar somente a chamada final'};const elementosInline={'analiseCal_cliente-x_2026-08':alvoInline,'comentarioCal_analiseCal_cliente-x_2026-08':campoInline};\n` +
+    `const document={getElementById:id=>elementosInline[id]||null};const db={};const doc=(...p)=>p.join('/');const esc=v=>String(v??'');const escAttr=esc;const escJs=esc;\n` +
+    `class URL{constructor(v){this.href=String(v);this.protocol=this.href.startsWith('https:')?'https:':this.href.startsWith('http:')?'http:':'x:';}}\n` +
+    `const snapInline=()=>({exists:()=>true,data:()=>calendarioInline});const getDoc=async()=>snapInline();const itensDoMesCalendario=(cal,mes)=>(cal.items||[]).filter(i=>i.mes===mes);const estadoMesCal=(cal,mes)=>cal.aprovacaoMeses?.[mes]?.status||'';\n` +
+    `const runTransaction=async(db,fn)=>fn({get:async()=>snapInline(),update:(ref,p)=>{patchInline=p;calendarioInline={...calendarioInline,comments:p.comments,updatedAt:p.updatedAt};}});function mostrarToast(){}\n` +
+    `${revisaoAmanda}\n` +
+    `globalThis.api={abrir:window.abrirAnaliseCalendarioRevisao,comentar:window.comentarAnaliseCalendario,alvo:alvoInline,campo:campoInline,patch:()=>patchInline,cal:()=>calendarioInline,setUsuario:v=>{usuarioAtual=v;}};`);
+  exigir(await revisaoInlineApi.abrir('cliente-x','2026-08') === true &&
+    revisaoInlineApi.alvo.innerHTML.includes('Roteiro completo') &&
+    revisaoInlineApi.alvo.innerHTML.includes('Legenda final') &&
+    revisaoInlineApi.alvo.innerHTML.includes('https://example.com/ref'),
+    'análise inline não abriu roteiro, legenda e referência do mês correto');
+  exigir(await revisaoInlineApi.comentar('cliente-x','2026-08',{disabled:false,textContent:'',isConnected:true}) === true &&
+    Object.keys(revisaoInlineApi.patch()||{}).sort().join(',') === 'comments,updatedAt' &&
+    revisaoInlineApi.cal().items[0].desc === 'Roteiro completo' &&
+    revisaoInlineApi.cal().aprovacaoMeses['2026-08'].status === 'aguardando_interna',
+    'comentário inline alterou pauta/estado ou não persistiu apenas comentários');
+  revisaoInlineApi.setUsuario('Chris');
+  revisaoInlineApi.campo.value='Comentário indevido';
+  exigir(await revisaoInlineApi.comentar('cliente-x','2026-08',null) === false,
+    'papel fora da Amanda conseguiu comentar na revisão interna');
+  const feedbackCalendario = trecho(calendario, 'async function salvarComentarioEquipeDuranteRevisao', '/* ===== O AVISO QUE NÃO EXISTIA');
+  exigir(feedbackCalendario.includes('runTransaction') && feedbackCalendario.includes("comments:[registro,...(atual.comments||[])]") &&
+    !feedbackCalendario.includes('exigirRetiradaAntesDeEditar()'),
+    'calendário completo voltou a bloquear comentário durante a revisão da Amanda');
+  const feedbackApi = executarSandbox('comentario-revisao-calendario-sandbox.js',
+    `let data={month:'Agosto 2026',comments:[],items:[{name:'Roteiro preservado'}]};let mesVisivel='2026-08';let patch=null;let saves=0;\n` +
+    `window.__modoCal='equipe';window.__fb={db:{},docRef:{},runTransaction:async(db,fn)=>fn({get:async()=>({exists:()=>true,data:()=>({comments:[]})}),update:(ref,p)=>{patch=p;}})};\n` +
+    `const campo={value:'Ajustar a chamada final'};const document={getElementById:id=>campo};\n` +
+    `function estadoAprovacao(){return 'aguardando_interna';}function mesDoTexto(){return '2026-08';}\n` +
+    `function renderFeedback(){}function avisarTela(){}function save(){saves++;}function salvarComoCliente(){}function avisarEquipeDoRecado(){}\n` +
+    `${feedbackCalendario}\nglobalThis.api={enviar:submitFeedback,patch:()=>patch,saves:()=>saves,data};`);
+  await feedbackApi.enviar();
+  exigir(Object.keys(feedbackApi.patch()||{}).sort().join(',') === 'comments,updatedAt' &&
+    feedbackApi.saves() === 0 && feedbackApi.data.items[0].name === 'Roteiro preservado',
+    'comentário durante revisão chamou save completo ou alterou conteúdo');
 }
 
 function testarSessoesGravacaoSandbox() {
@@ -349,7 +395,7 @@ function testarSessoesGravacaoSandbox() {
     `function blocoDoItem(item,pos,total,quantos){if(Number(item.bloco)>=1)return Number(item.bloco);const base=Math.floor(total/quantos),resto=total%quantos;let acc=0;for(let i=0;i<quantos;i++){acc+=base+(i<resto?1:0);if(pos<acc)return i+1;}return quantos;}\n` +
     `function itemNaoPrecisaGravar(i){return !!(i.gravado||i.agendado||i.posted);}\n` +
     `function estadoMesCal(cal,mes){return cal.aprovacaoMeses?.[mes]?.status||'';}\n` +
-    `${fonte}\nglobalThis.api={planejarSessaoGravacao,chaveSessaoGravacao};`);
+    `${fonte}\nglobalThis.api={planejarSessaoGravacao,chaveSessaoGravacao,sessaoLegadaSemVinculo};`);
 
   const cal = { blocosPorMes:{'2026-08':2}, aprovacaoMeses:{'2026-08':{status:'liberado'}}, items:[
     {itemId:'a',mes:'2026-08',day:1,name:'Semana 1 A',bloco:1},
@@ -379,6 +425,28 @@ function testarSessoesGravacaoSandbox() {
   const planoLegado = api.planejarSessaoGravacao(legado,{cliente:'legado',data:'2026-08-06',bloco:1});
   exigir(planoLegado.permitidos.map(i=>i.name).join(',') === 'L1,L2' && planoLegado.usaDerivacaoLegada === true,
     'calendário legado seguro não derivou a primeira sessão sem migrar dados');
+  const divinaLegada = { month:'Julho 2026', items:[
+    {mes:'2026-07',day:7,name:'vídeo 1',posted:true},
+    {mes:'2026-07',day:20,name:'vídeo 2',agendado:true}
+  ]};
+  const agDivina = {cliente:'divina-cantina',data:'2026-08-05',filmmaker:'Luís',status:'agendado',qtdVideosPlanejados:9};
+  const planoDivina = api.planejarSessaoGravacao(divinaLegada,agDivina);
+  exigir(planoDivina.mes === '2026-07' && planoDivina.mesResolvidoPor === 'unico_mes_disponivel',
+    'agendamento antigo com um único mês disponível continuou preso ao mês da data');
+  exigir(api.sessaoLegadaSemVinculo(agDivina) === true &&
+    api.sessaoLegadaSemVinculo({...agDivina,sessaoPlanejamentoVersao:1,sessaoChave:'x'}) === false,
+    'compatibilidade de registro vazou para sessões modernas');
+  const sessaoLegadaFonte = trecho(escritorio, 'function sessaoLegadaSemVinculo', 'window.sessaoLegadaSemVinculo');
+  const materiaisFonte = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');
+  const materiais = executarSandbox('materiais-pos-filmagem-sandbox.js',
+    `${sessaoLegadaFonte}\n${materiaisFonte}\nglobalThis.api={prepararMateriaisDeclaradosSessao};`);
+  const declarado = materiais.prepararMateriaisDeclaradosSessao([], 'Prato executivo\nBastidores da cozinha', agDivina);
+  exigir(declarado.ok && declarado.videos.length === 2 && declarado.videos.every(v=>v.vinculoSessao==='declarado_legado' && v.calendarItemIdx===null),
+    'sessão Divina anterior à V32 não prepara material isolado do calendário');
+  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Extra sem autorização', {...agDivina,sessaoPlanejamentoVersao:1,sessaoChave:'nova'}).ok === false,
+    'sessão moderna ganhou texto livre sem autorização');
+  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Vídeo Único\nvideo unico', agDivina).ok === false,
+    'nomes duplicados com acento/capitalização passariam a criar vídeos repetidos');
   const ambiguo = api.planejarSessaoGravacao({items:[{mes:'2026-07',name:'J'},{mes:'2026-08',name:'A'}]},
     {cliente:'legado',data:'2026-09-01',bloco:1});
   exigir(ambiguo.permitidos.length === 0 && ambiguo.inconsistencias.length === 1,
@@ -388,11 +456,23 @@ function testarSessoesGravacaoSandbox() {
   exigir(agenda.includes('FAZER HOJE') && agenda.includes('NÃO GRAVAR HOJE') &&
     agenda.includes('confirmacaoBloqueada') && agenda.includes('planoSessao.permitidos'),
     'Minha sessão perdeu grupos visuais ou desbloqueou pauta não planejada');
+  exigir(agenda.includes('Registro compatível da sessão antiga') &&
+    agenda.includes('não marcará pauta de outra semana') && agenda.includes('sessaoLegadaSemVinculo(a)'),
+    'sessão anterior à V32 não recuperou a declaração segura do material gravado');
+  exigir(agenda.includes('Responsável que realmente realizou esta sessão') &&
+    agenda.includes("const podePlanejarSessao = ['Chris','Amanda','Cecília'].includes(usuarioAtual)") &&
+    agenda.includes("PESSOAS_DE_CAMPO.map(p=>"),
+    'coordenação perdeu a correção de responsável nas sessões antigas/atrasadas');
   const confirmar = trecho(escritorio, 'async function registrarGravacaoRealizadaNucleo', 'function popularClientesReferencia');
   exigir(confirmar.includes("dadosAtuais.status !== 'agendado'") && confirmar.includes('dadosAtuais.aprovado === false') &&
     confirmar.includes('pessoaNaEquipe(dadosAtuais,usuarioAtual)') && confirmar.includes('permitidosAgora.has(chave)') &&
     confirmar.includes('Captações extras não estão autorizadas nesta sessão.'),
     'transação de confirmação não revalida status, equipe, aprovação, sessão e extras');
+  const prepararMateriais = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');
+  exigir(prepararMateriais.includes("vinculoSessao:registroLegado ? 'declarado_legado'") &&
+    prepararMateriais.includes('Há um vídeo sem nome ou repetido nesta sessão.') &&
+    confirmar.includes('agendamentoId:agId') && confirmar.includes("status: 'aguardando_edicao'"),
+    'pós-filmagem legado perdeu vínculo, proteção contra duplicata ou entrada na fila de edição');
   const wrapperConfirmacao = trecho(escritorio, 'const __confirmacoesGravacaoEmCurso', 'function popularClientesReferencia');
   exigir(wrapperConfirmacao.includes('__confirmacoesGravacaoEmCurso.has(agId)') &&
     wrapperConfirmacao.indexOf('__confirmacoesGravacaoEmCurso.add(agId)') < wrapperConfirmacao.indexOf('await registrarGravacaoRealizadaNucleo(agId)'),
@@ -416,8 +496,23 @@ function testarSessoesGravacaoSandbox() {
     'agendamento perdeu a trava de clique duplo antes da primeira leitura');
 
   const trocar = trecho(escritorio, 'window.trocarFilmmakerAgendamento', '/* ===== A CECÍLIA PRECISA PODER DESFAZER');
-  exigir(trocar.includes('filmmaker: filmmaker ||') && trocar.includes('equipe,'),
-    'troca de filmmaker voltou a atualizar somente um dos modelos compatíveis');
+  exigir(trocar.includes('filmmaker: filmmaker ||') && trocar.includes('equipe,') &&
+    trocar.includes('nomeOperacionalCanonico(p.nome)') && trocar.includes('renderMinhaAgendaFilmmaker()'),
+    'troca de filmmaker perdeu campos compatíveis, normalização ou atualização da agenda');
+
+  const equipeFonte = trecho(escritorio, 'function equipeDoAgendamento', 'function rotuloEquipe');
+  const equipe = executarSandbox('equipe-alias-sandbox.js',
+    `${equipeFonte}\nglobalThis.api={pessoaNaEquipe};`);
+  exigir(equipe.pessoaNaEquipe({filmmaker:'Natan'},'Nathan') && equipe.pessoaNaEquipe({filmmaker:'Luiz'},'Luís'),
+    'grafia legada de Natan/Luiz continua escondendo gravações da equipe correta');
+
+  const distribuicao = trecho(escritorio, 'async function avisarEditorDoVideo', 'let editorFuncionarioAtual');
+  exigir(distribuicao.includes("updateDoc(doc(db,'videos_producao', videoId)") &&
+    distribuicao.includes('editorAtribuido: novoEditor') && distribuicao.includes('await avisarEditorDoVideo') &&
+    distribuicao.includes("tipoEspecial: 'video_atribuido'"),
+    'atribuição da Amanda não entrega o vídeo à fila/aviso do editor');
+  exigir(escritorio.includes("v.editorAtribuido === usuarioAtual && ['aguardando_edicao','correcao'].includes(v.status)"),
+    'editor não encontra o vídeo atribuído na própria fila');
 }
 
 function testarPermissoesAcoesSandbox() {
@@ -445,7 +540,7 @@ try {
   testarDatasOperacionaisSandbox();
   testarAcompanhamentoSandbox();
   testarDemandasSandbox();
-  testarCalendariosSandbox();
+  await testarCalendariosSandbox();
   testarSessoesGravacaoSandbox();
   testarPermissoesAcoesSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);

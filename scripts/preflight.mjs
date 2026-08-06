@@ -186,17 +186,58 @@ const confirmacaoGravacao = escritorio.slice(
   escritorio.indexOf('async function registrarGravacaoRealizadaNucleo'),
   escritorio.indexOf('function popularClientesReferencia')
 );
+const preparacaoMateriaisGravacao = escritorio.slice(
+  escritorio.indexOf('function prepararMateriaisDeclaradosSessao'),
+  escritorio.indexOf('window.prepararMateriaisDeclaradosSessao')
+);
 if (!escritorio.includes('NÃO GRAVAR HOJE') || !escritorio.includes('sessaoItensPlanejados') ||
     !confirmacaoGravacao.includes("dadosAtuais.status !== 'agendado'") ||
     !confirmacaoGravacao.includes('permitidosAgora.has(chave)')) {
   falhar('ordem da sessão ou revalidação atômica da gravação ausente');
 } else provar('gravação limitada à ordem planejada da sessão');
+if (!escritorio.includes('Registro compatível da sessão antiga') ||
+    !preparacaoMateriaisGravacao.includes("vinculoSessao:registroLegado ? 'declarado_legado'") ||
+    !confirmacaoGravacao.includes('sessaoLegadaSemVinculo(dadosAtuais)') ||
+    !preparacaoMateriaisGravacao.includes('Há um vídeo sem nome ou repetido nesta sessão.')) {
+  falhar('compatibilidade pós-filmagem anterior à V32 está ausente ou sem proteções');
+} else provar('pós-filmagem legado registra material sem vincular pauta de outra sessão');
+const trocaResponsavelGravacao = escritorio.slice(
+  escritorio.indexOf('window.trocarFilmmakerAgendamento'),
+  escritorio.indexOf('/* ===== A CECÍLIA PRECISA PODER DESFAZER')
+);
+if (!escritorio.includes('Responsável que realmente realizou esta sessão') ||
+    !trocaResponsavelGravacao.includes('nomeOperacionalCanonico(p.nome)') ||
+    !trocaResponsavelGravacao.includes('renderMinhaAgendaFilmmaker()')) {
+  falhar('coordenação não consegue corrigir responsável de gravação atrasada sem ampliar acesso');
+} else provar('coordenação corrige responsável legado e atualiza a agenda isolada');
+const distribuicaoVideo = escritorio.slice(
+  escritorio.indexOf('async function avisarEditorDoVideo'),
+  escritorio.indexOf('let editorFuncionarioAtual')
+);
+if (!distribuicaoVideo.includes('editorAtribuido: novoEditor') ||
+    !distribuicaoVideo.includes('await avisarEditorDoVideo') ||
+    !escritorio.includes("v.editorAtribuido === usuarioAtual && ['aguardando_edicao','correcao'].includes(v.status)")) {
+  falhar('cadeia pós-filmagem → distribuição Amanda → fila do editor incompleta');
+} else provar('pós-filmagem chega à distribuição e à fila do editor após atribuição');
 
 const calendarioEditor = ler('calendario.html');
 if (!calendarioEditor.includes('const it={...anterior,itemId:anterior.itemId||') ||
     !calendarioEditor.includes('excluido:true,excluidoPor:')) {
   falhar('item de calendário não preserva campos/ID ou perdeu soft-delete');
 } else provar('itens de calendário preservam campos, ID estável e soft-delete');
+const revisaoCalendario = escritorio.slice(
+  escritorio.indexOf('function htmlItemAnaliseCalendario'),
+  escritorio.indexOf('window.recarregarFilaCalendarios')
+);
+const comentarioCalendario = calendarioEditor.slice(
+  calendarioEditor.indexOf('async function salvarComentarioEquipeDuranteRevisao'),
+  calendarioEditor.indexOf('/* ===== O AVISO QUE NÃO EXISTIA')
+);
+if (!revisaoCalendario.includes('ROTEIRO / COPY') || !revisaoCalendario.includes('LEGENDA') ||
+    !revisaoCalendario.includes('Abrir referência') || !revisaoCalendario.includes('runTransaction') ||
+    !comentarioCalendario.includes('runTransaction') || comentarioCalendario.includes('exigirRetiradaAntesDeEditar()')) {
+  falhar('revisão da Amanda não comprova análise/comentário sem desbloquear o calendário');
+} else provar('Amanda analisa roteiro/referência e comenta sem editar a pauta');
 
 const regraCalendario = regras.slice(regras.indexOf('match /calendarios/{slug}'), regras.indexOf('match /videos_producao'));
 if (!regraCalendario.includes('temSessaoCalendarioEquipe() && slug == clienteDaSessao()')) {

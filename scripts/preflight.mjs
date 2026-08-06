@@ -74,9 +74,9 @@ for (const arquivo of htmls) {
 provar(`${totalChamadas} chamadas diretas de UI sem handler órfão`);
 
 // Login: alteração intencional exige atualizar explicitamente este baseline.
-const etapa = escritorio.match(/  async function etapaSegura\(nome, fn\)\{[\s\S]*?\n  \}/)?.[0] || '';
+const etapa = escritorio.match(/  async function etapaSegura\(nome, fn, limiteMs\)\{[\s\S]*?\n  \}/)?.[0] || '';
 const hashEtapa = crypto.createHash('sha256').update(etapa + (etapa ? '\n' : '')).digest('hex');
-const baselineEtapa = '1b8d3855df1f4dcd3b30a4a311dc7be2b90df7feb1bb7b580d703cfd54ce09b4';
+const baselineEtapa = 'a7272a98a268b1e56e7816d7623d26542652458c4430b48f5008b49a56d36b31';
 if (hashEtapa !== baselineEtapa) falhar(`etapaSegura mudou (${hashEtapa}); audite login e atualize o baseline conscientemente`);
 else provar('etapaSegura preservada');
 

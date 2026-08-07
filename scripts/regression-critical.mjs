@@ -29,8 +29,10 @@ function executarSandbox(nome, codigo) {
 
 async function testarLoginSandbox() {
   exigir(escritorio.includes("'heloisaksc@gmail.com':'Helo'") &&
+    escritorio.includes("'yasmocelin@gmail.com':'Yas'") &&
+    escritorio.includes("'Yas': 'yasmocelin@gmail.com'") &&
     escritorio.includes("'luissouza280507@gmail.com':'Luís'"),
-    'Elô ou Luís perdeu o mapeamento de e-mail autorizado');
+    'Elô, Yas ou Luís perdeu o mapeamento de e-mail autorizado');
 
   exigir(escritorio.includes('id="btnLoginGoogleEquipe" onclick="entrarComGoogleEquipe()" disabled>Preparando login…</button>'),
     'botão Google voltou a aceitar clique antes de a persistência estar pronta');
@@ -148,6 +150,29 @@ function testarMensalidadesSandbox() {
   exigir((painel.match(/!\['isento','cancelado'\]\.includes\(statusMensalidadeCanonico\(p\)\)/g)||[]).length >= 5 &&
     painel.includes("doMes.filter(p => statusMensalidadeCanonico(p)==='isento')"),
     'totais, movimento ou concentração do financeiro voltaram a cobrar cortesia/cancelamento');
+
+  const ficha = trecho(escritorio, 'const ETAPAS_ONBOARDING_LOCAL', '  window.registrarClienteDaReuniao');
+  const fichaApi = executarSandbox('ficha-cortesia-cliente-sandbox.js',
+    `function mesesCortesiaValidos(meses){return (meses||[]).every(m=>/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(m)));}\n${ficha}\nglobalThis.api={validarEntradaClienteMensalista,modelarClienteMensalistaUnificado};`);
+  const base={nome:'Cliente Teste',instagram:'@teste',telefone:'41999999999',plano:'Intermediário',planoDetalhes:'',valorMensal:1700,diaVencimento:10,primeiraCompetencia:'2026-08',tipoEntrega:'postagem_completa',incluiStories:false,contrato:'',cortesiaTipo:'meses',cortesiaMeses:['2026-08'],cortesiaPermanente:false,cortesiaInicial:true};
+  exigir(fichaApi.validarEntradaClienteMensalista(base).length === 0,
+    'ficha da Amanda recusou uma cortesia mensal válida');
+  const mensal=fichaApi.modelarClienteMensalistaUnificado(base,'2026-08-07T12:00:00.000Z','token');
+  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true,
+    'cortesia escolhida na ficha não chegou ao contrato e à primeira mensalidade');
+  const futura=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaMeses:['2026-09'],cortesiaInicial:false},'2026-08-07T12:00:00.000Z','token');
+  exigir(futura.contrato.cortesiaMeses[0] === '2026-09' && futura.mensalidade.status === 'aberto',
+    'cortesia futura isentou o mês errado');
+  const permanente=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaTipo:'permanente',cortesiaMeses:[],cortesiaPermanente:true},'2026-08-07T12:00:00.000Z','token');
+  exigir(permanente.contrato.cortesiaPermanente === true && permanente.mensalidade.status === 'isento',
+    'cortesia permanente da ficha não chegou ao financeiro');
+  exigir(fichaApi.validarEntradaClienteMensalista({...base,cortesiaMeses:['08/2026']}).some(e=>e.includes('formato 2026-08')),
+    'ficha aceitou mês de cortesia ambíguo');
+  const editarFicha = trecho(escritorio, 'window.salvarClienteAtivoCentral=async function', '  window.arquivarEntradaPendente');
+  exigir(editarFicha.includes('ajusteCortesiaMensalidade') && editarFicha.includes('cortesiaPermanente:dados.cortesiaPermanente') &&
+    editarFicha.includes('cortesiaMeses:dados.cortesiaMeses') &&
+    editarFicha.includes("!['pago','cancelado'].includes(statusMensalidadeCanonico(p))") && editarFicha.includes('if(mudou) tx.set(ref,atualizacao'),
+    'editar ficha ativa não sincroniza contrato e mensalidades');
 }
 
 function testarBadgesExtrasSandbox() {

@@ -33,6 +33,12 @@ async function testarLoginSandbox() {
     escritorio.includes("'Yas': 'yasmocelin@gmail.com'") &&
     escritorio.includes("'luissouza280507@gmail.com':'Luís'"),
     'Elô, Yas ou Luís perdeu o mapeamento de e-mail autorizado');
+  const regrasLogin = fs.readFileSync(path.join(raiz, 'firestore.rules'), 'utf8');
+  const mapaLogin = trecho(escritorio, 'const EMAIL_PARA_PESSOA_EQUIPE', '  let __resolverAuthEquipe');
+  const emailsFixos = [...mapaLogin.matchAll(/'([^']+@gmail\.com)'\s*:/g)].map(m=>m[1]);
+  const sementeRegras = trecho(regrasLogin, 'function emailDaEquipeSemente()', '    function emailDaEquipeCadastrado');
+  exigir(emailsFixos.length >= 9 && emailsFixos.every(email=>sementeRegras.includes(`'${email}'`)),
+    'um e-mail fixo do login abre a interface, mas continua sem autorização operacional no Firestore');
 
   exigir(escritorio.includes('id="btnLoginGoogleEquipe" onclick="entrarComGoogleEquipe()" disabled>Preparando login…</button>'),
     'botão Google voltou a aceitar clique antes de a persistência estar pronta');

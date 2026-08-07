@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-07-cookiery-cache-clientes-v35">
+<meta name="gs-build" content="2026-08-07-financeiro-cortesias-v36">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -10859,7 +10859,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const calc = {};
     const garantir = k => (calc[k] = calc[k] || { valor:0, meses:new Set(), primeiroRegistro:null });
     pagSnap.forEach(d => { const v = d.data();
-      if(!v.cliente || v.status !== 'pago') return;
+      if(!v.cliente || statusMensalidadeCanonico(v) !== 'pago') return;
       const c = garantir(v.cliente);
       c.valor += Number(v.valorDevido) || 0;
       if(v.competencia) c.meses.add(v.competencia);
@@ -10903,7 +10903,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         getDocs(collection(db,'agendamentos')),
         getDocs(collection(db,'avaliacoes_clientes'))
       ]);
-      pg.forEach(d => { const v = d.data(); if(v.status !== 'pago' && v.cliente) atrasoPagamento[v.cliente] = true; });
+      pg.forEach(d => { const v = d.data(); if(!mensalidadeResolvida(v) && v.cliente) atrasoPagamento[v.cliente] = true; });
       const ultimaPost = {};
       po.forEach(d => { const v = d.data();
         if(v.excluido || v.status !== 'agendado' || !v.dataAgendada) return;
@@ -15379,7 +15379,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const pagamentosAbertos=[];
       if(mensal){
         const pagamentosSnap=await getDocs(collection(db,'pagamentos_mensais'));
-        pagamentosSnap.forEach(d=>{ const p=d.data(); if((p.cliente===slug||p.clienteSlug===slug) && !['pago','isento','cancelado'].includes(String(p.status||'')) && String(p.competencia||'')>=hojeLocal().slice(0,7)) pagamentosAbertos.push(d.ref); });
+        pagamentosSnap.forEach(d=>{ const p=d.data(); if((p.cliente===slug||p.clienteSlug===slug) && !mensalidadeResolvida(p) && String(p.competencia||'')>=hojeLocal().slice(0,7)) pagamentosAbertos.push(d.ref); });
       }
       const refs={
         config:doc(db,'clientes_config',slug), extra:atual.extraId?doc(db,'clientes_extras',atual.extraId):null,
@@ -26616,7 +26616,15 @@ window.salvarPrazoVideo = async function(id){
     }
     const cortesiaPerm = !!document.getElementById('ctCortesiaPerm_' + slug)?.checked;
 
-    await setDoc(doc(db,'contratos_cliente', slug), {
+    const contratoRef = doc(db,'contratos_cliente', slug);
+    const pagamentosSnap = await getDocs(collection(db,'pagamentos_mensais'));
+    const pagamentosDoContrato = [];
+    pagamentosSnap.forEach(d => {
+      const p=d.data();
+      if(p.cliente === slug || p.clienteSlug === slug || String(d.id).startsWith(slug+'_')) pagamentosDoContrato.push({ref:d.ref,dados:p});
+    });
+    const lote = writeBatch(db);
+    lote.set(contratoRef, {
       clienteNome: nome, plano: g('ctPlano'),
       valorCheio: Number(g('ctValorCheio')) || 0,
       valorVigente: Number(g('ctValorVigente')) || Number(g('ctValorCheio')) || 0,
@@ -26627,25 +26635,21 @@ window.salvarPrazoVideo = async function(id){
       cortesiaMeses: [...new Set(meses)].sort(),
       atualizadoPor: usuarioAtual || '?', atualizadoEm: serverTimestamp()
     }, { merge: true });
-
-    /* Mês de cortesia marcado DEPOIS que a mensalidade já nasceu não
-       conserta nada sozinho — o gerador só decide na criação. Então
-       avisa, em vez de deixar a pessoa achar que resolveu. */
-    if(meses.length){
-      try{
-        const jaCriadas = [];
-        for(const m of meses){
-          const s2 = await getDoc(doc(db,'pagamentos_mensais', slug + '_' + m));
-          if(s2.exists() && s2.data().status !== 'isento') jaCriadas.push(m);
-        }
-        if(jaCriadas.length){
-          mostrarToast('Atenção: a mensalidade de ' + jaCriadas.map(m=>rotuloMesExtras(m)).join(', ') +
-            ' já tinha sido gerada e continua cobrando. Marca como isenta na tela de Mensalidades.', 'erro');
-        }
-      }catch(e){ console.error('Falha ao conferir mensalidade já gerada:', e); }
+    let mensalidadesSincronizadas=0;
+    pagamentosDoContrato.forEach(({ref,dados:p})=>{
+      const ajuste=ajusteCortesiaMensalidade(p,p.competencia,cortesiaPerm,meses);
+      if(!ajuste) return;
+      lote.set(ref,{...ajuste,atualizadoPor:usuarioAtual||'?',atualizadoEm:serverTimestamp()},{merge:true});
+      mensalidadesSincronizadas++;
+    });
+    try{
+      await lote.commit();
+      mostrarToast('Contrato de ' + nome + ' salvo.' + (mensalidadesSincronizadas?' '+mensalidadesSincronizadas+' mensalidade(s) sincronizada(s).':''));
+      await renderContratos();
+    }catch(e){
+      console.error('Falha ao salvar contrato e sincronizar cortesias:',e);
+      mostrarToast('Nada foi alterado: '+(e.message||e),'erro');
     }
-    mostrarToast('Contrato de ' + nome + ' salvo.');
-    renderContratos();
   };
 
   window.novoContrato = async function(){
@@ -26671,6 +26675,46 @@ window.salvarPrazoVideo = async function(id){
      A regra de atraso respeita a carencia de 5 dias definida pelo Chris. */
   const CARENCIA_DIAS = 5;
 
+  /* Uma mensalidade tem um único estado financeiro. Antes cada painel
+     interpretava `status` por conta própria: a grade aceitava cortesia,
+     mas o risco do cliente continuava tratando o mesmo registro como
+     atraso e a ação "Recebi" permanecia visível. Toda leitura financeira
+     passa por esta normalização; flags de cortesia são contexto, não uma
+     segunda cobrança concorrente. */
+  function statusMensalidadeCanonico(p){
+    const status = String(p?.status || 'aberto').trim().toLowerCase();
+    if(status === 'pago') return 'pago';
+    if(status === 'isento' || status === 'cortesia') return 'isento';
+    if(status === 'cancelado' || status === 'cancelada') return 'cancelado';
+    return 'aberto';
+  }
+  function mensalidadeResolvida(p){
+    return ['pago','isento','cancelado'].includes(statusMensalidadeCanonico(p));
+  }
+  window.statusMensalidadeCanonico = statusMensalidadeCanonico;
+  window.mensalidadeResolvida = mensalidadeResolvida;
+
+  function ajusteCortesiaMensalidade(p, competencia, cortesiaPermanente, cortesiaMeses){
+    const meses = Array.isArray(cortesiaMeses) ? cortesiaMeses.map(String) : [];
+    const cortesiaDoContrato = cortesiaPermanente === true || meses.includes(String(competencia||''));
+    const status = statusMensalidadeCanonico(p);
+    const motivo = String(p?.motivoIsencao || '');
+    const nasceuDoContrato = p?.cortesiaPermanente === true || p?.cortesiaDoMes === true ||
+      ['cortesia permanente','cortesia combinada para este mês'].includes(motivo);
+    if(cortesiaDoContrato && !['pago','cancelado'].includes(status)){
+      return {
+        status:'isento', pagoEm:'', cortesiaPermanente:cortesiaPermanente === true,
+        cortesiaDoMes:cortesiaPermanente !== true && meses.includes(String(competencia||'')),
+        motivoIsencao:cortesiaPermanente === true ? 'cortesia permanente' : 'cortesia combinada para este mês'
+      };
+    }
+    if(!cortesiaDoContrato && status === 'isento' && nasceuDoContrato){
+      return { status:'aberto', pagoEm:'', cortesiaPermanente:false, cortesiaDoMes:false, motivoIsencao:'' };
+    }
+    return null;
+  }
+  window.ajusteCortesiaMensalidade = ajusteCortesiaMensalidade;
+
   window.mudarMesMensalidades = function(delta){
     const campo = document.getElementById('mensMes');
     if(!campo || !campo.value) return;
@@ -26681,9 +26725,11 @@ window.salvarPrazoVideo = async function(id){
   };
 
   function situacaoMensalidade(p, competencia){
-    if(p.status === 'pago') return { k:'pago', rotulo:'Pago', cor:'var(--green)', selo:'aprovada' };
+    const status = statusMensalidadeCanonico(p);
+    if(status === 'pago') return { k:'pago', rotulo:'Pago', cor:'var(--green)', selo:'aprovada' };
+    if(status === 'cancelado') return { k:'cancelado', rotulo:'Cancelada', cor:'var(--line)', selo:'pendente' };
     if(p.cortesiaPermanente) return { k:'isento', rotulo:'🎁 Cortesia permanente', cor:'var(--line)', selo:'pendente' };
-    if(p.status === 'isento') return { k:'isento', rotulo:'Isento/cortesia', cor:'var(--line)', selo:'pendente' };
+    if(status === 'isento') return { k:'isento', rotulo:'🎁 Isento/cortesia', cor:'var(--line)', selo:'pendente' };
     const [ano, mes] = competencia.split('-').map(Number);
     const venc = new Date(ano, mes-1, Math.min(p.diaVencimento||10, new Date(ano, mes, 0).getDate()));
     const hoje = new Date(); hoje.setHours(0,0,0,0);
@@ -26694,16 +26740,35 @@ window.salvarPrazoVideo = async function(id){
     return { k:'aVencer', rotulo:'Vence dia ' + (p.diaVencimento||10), cor:'var(--line)', selo:'pendente' };
   }
 
+  const __mensalidadesEmAtualizacao = new Set();
   window.marcarMensalidade = async function(id, status){
+    if(usuarioAtual !== 'Chris'){ mostrarToast('Mensalidades são exclusivas do financeiro do Chris.','erro'); return; }
+    if(__mensalidadesEmAtualizacao.has(id)) return;
     const rot = status==='pago' ? 'PAGO' : status==='isento' ? 'ISENTO/cortesia' : 'em aberto';
     if(!confirm('Marcar como ' + rot + '?')) return;
+    __mensalidadesEmAtualizacao.add(id);
     const dados = { status, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() };
     if(status === 'pago') dados.pagoEm = hojeLocal();
-    else { dados.pagoEm = ''; }
-    await updateDoc(doc(db,'pagamentos_mensais', id), dados);
-    registrarLogAutomacao('mensalidade_' + status, id, 'por ' + (usuarioAtual||'?'));
-    mostrarToast('Marcado como ' + rot + '.');
-    renderMensalidades();
+    else dados.pagoEm = '';
+    if(status === 'isento'){
+      dados.cortesiaDoMes = false;
+      dados.motivoIsencao = 'cortesia manual';
+    }else if(status === 'aberto'){
+      dados.cortesiaDoMes = false;
+      dados.cortesiaPermanente = false;
+      dados.motivoIsencao = '';
+    }
+    try{
+      await updateDoc(doc(db,'pagamentos_mensais', id), dados);
+      registrarLogAutomacao('mensalidade_' + status, id, 'por ' + (usuarioAtual||'?'));
+      mostrarToast('Marcado como ' + rot + '.');
+      await renderMensalidades();
+    }catch(e){
+      console.error('Falha ao atualizar mensalidade:',e);
+      mostrarToast('Nada foi alterado: '+(e.message||e),'erro');
+    }finally{
+      __mensalidadesEmAtualizacao.delete(id);
+    }
   };
 
   /* ===== PAINEL FINANCEIRO (25/07/2026) =====
@@ -26898,9 +26963,9 @@ window.salvarPrazoVideo = async function(id){
 
     // ---- 1. o que entrou no mes ----
     const doMes = pagamentos.filter(p => p.competencia === comp);
-    const recebidoMensal = doMes.filter(p => p.status==='pago').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-    const previstoMensal = doMes.filter(p => p.status!=='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-    const cortesias = doMes.filter(p => p.status==='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const recebidoMensal = doMes.filter(p => statusMensalidadeCanonico(p)==='pago').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const previstoMensal = doMes.filter(p => !['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const cortesias = doMes.filter(p => statusMensalidadeCanonico(p)==='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
 
     // avulso: lancamentos de receita daquele mes (editaveis, ver secao propria)
     const avulsosDoMes = receitasAvulsas.filter(r => r.competencia === comp);
@@ -26951,7 +27016,7 @@ window.salvarPrazoVideo = async function(id){
     // ---- 2. movimento da receita recorrente ----
     const compAnterior = mesAnterior(comp);
     const doMesAnterior = pagamentos.filter(p => p.competencia === compAnterior);
-    const baseAnterior = doMesAnterior.filter(p=>p.status!=='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const baseAnterior = doMesAnterior.filter(p=>!['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
     const clientesAnterior = new Set(doMesAnterior.map(p=>p.cliente));
     const clientesAgora = new Set(doMes.map(p=>p.cliente));
     const entraram = [...clientesAgora].filter(c => !clientesAnterior.has(c));
@@ -26978,15 +27043,15 @@ window.salvarPrazoVideo = async function(id){
       .map(e => e.slug || normNomeCliente(e.nome||''))
       .filter(Boolean);
     const sairam = [...new Set([...sairamPelaCobranca, ...sairamRegistrados])];
-    const valorEntraram = doMes.filter(p=>entraram.includes(p.cliente)).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-    const valorSairam = doMesAnterior.filter(p=>sairam.includes(p.cliente)).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const valorEntraram = doMes.filter(p=>entraram.includes(p.cliente) && !['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const valorSairam = doMesAnterior.filter(p=>sairam.includes(p.cliente) && !['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
     const saidasRegistradas = encerrados.filter(e => (e.dataSaida||'').slice(0,7) === comp);
     const perdaRegistrada = saidasRegistradas.reduce((s,e)=>s+(Number(e.valorMensal)||0),0);
     const variacao = previstoMensal - baseAnterior;
 
     // ---- 3. por tipo de servico ----
     const porPlano = {};
-    doMes.filter(p=>p.status==='pago').forEach(p => {
+    doMes.filter(p=>statusMensalidadeCanonico(p)==='pago').forEach(p => {
       const ct = contratos.find(c=>c.slug===p.cliente);
       const plano = ct?.plano || 'Sem plano';
       porPlano[plano] = (porPlano[plano]||0) + (Number(p.valorDevido)||0);
@@ -27000,14 +27065,14 @@ window.salvarPrazoVideo = async function(id){
     let cursor = comp;
     for(let i=0;i<6;i++){
       const c2 = cursor;
-      const pagos = pagamentos.filter(p=>p.competencia===c2 && p.status==='pago').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+      const pagos = pagamentos.filter(p=>p.competencia===c2 && statusMensalidadeCanonico(p)==='pago').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
       evolucao.unshift({ comp:c2, valor: pagos });
       cursor = mesAnterior(cursor);
     }
     const maxEvo = Math.max(...evolucao.map(e=>e.valor), 1);
 
     // ---- 5. concentracao ----
-    const porCliente = doMes.filter(p=>p.status!=='isento').map(p=>({ nome:p.clienteNome, valor:Number(p.valorDevido)||0 }))
+    const porCliente = doMes.filter(p=>!['isento','cancelado'].includes(statusMensalidadeCanonico(p))).map(p=>({ nome:p.clienteNome, valor:Number(p.valorDevido)||0 }))
       .sort((a,b)=>b.valor-a.valor);
     const top5 = porCliente.slice(0,5);
     const pctTop5 = previstoMensal>0 ? Math.round(top5.reduce((s,c)=>s+c.valor,0)/previstoMensal*100) : 0;
@@ -27319,8 +27384,9 @@ window.salvarPrazoVideo = async function(id){
             <div class="meta" style="margin-top:4px;">${brl(l.valorDevido)}${l.pagoEm ? ' · pago em ' + formatarDataBR(l.pagoEm) : ''}</div>
             ${l.comprovante ? '<div class="meta" style="margin-top:4px;">📎 <a href="'+esc(l.comprovante)+'" target="_blank" style="color:var(--yellow);">Ver comprovante ↗</a></div>' : ''}
             <div class="btnrow" style="margin-top:8px;">
-              ${l.sit.k!=='pago' ? `<button class="btn green" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${l.id}','pago')">✔ Recebi</button>` : `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${l.id}','aberto')">↩ Desfazer</button>`}
-              ${l.sit.k!=='isento' ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${l.id}','isento')">🎁 Cortesia</button>` : ''}
+              ${l.sit.k==='pago' ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${escJs(l.id)}','aberto')">↩ Desfazer pagamento</button>` : ''}
+              ${!['pago','isento','cancelado'].includes(l.sit.k) ? `<button class="btn green" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${escJs(l.id)}','pago')">✔ Recebi</button><button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${escJs(l.id)}','isento')">🎁 Cortesia</button>` : ''}
+              ${l.sit.k==='isento' && !l.cortesiaPermanente ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="marcarMensalidade('${escJs(l.id)}','aberto')">↩ Retirar cortesia</button>` : ''}
               ${['atrasado','carencia','hoje'].includes(l.sit.k) ? `<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;border-color:var(--yellow);" onclick="cobrarMensalidade('${l.id}')">📲 Cobrar</button>` : ''}
             </div>
           </div>`).join('')}</div>
@@ -27391,6 +27457,7 @@ window.salvarPrazoVideo = async function(id){
     const snap = await getDoc(doc(db,'pagamentos_mensais', id));
     if(!snap.exists()) return;
     const p = snap.data();
+    if(mensalidadeResolvida(p)){ mostrarToast('Essa mensalidade já está resolvida e não entra na cobrança.','erro'); return; }
     const [ano, mes] = (p.competencia||'').split('-').map(Number);
     const ultimoDia = new Date(ano, mes, 0).getDate();
     const venc = new Date(ano, mes-1, Math.min(p.diaVencimento||10, ultimoDia));
@@ -27438,7 +27505,7 @@ window.salvarPrazoVideo = async function(id){
     const fila = [];
     pgSnap.forEach(d => {
       const p = d.data();
-      if(p.status === 'pago' || p.status === 'isento') return;
+      if(mensalidadeResolvida(p)) return;
       if(p.comprovante) return;   // mandou comprovante — nao cobra ate conferir
       const [ano, mes] = (p.competencia||'').split('-').map(Number);
       if(!ano) return;
@@ -27507,6 +27574,7 @@ window.salvarPrazoVideo = async function(id){
     if(!snap.exists()) return;
     const p = snap.data();
     const sit = situacaoMensalidade(p, p.competencia);
+    if(['pago','isento','cancelado'].includes(sit.k)){ mostrarToast('Essa mensalidade já está resolvida e não pode ser cobrada.','erro'); return; }
     const cfg = await obterConfigCliente(p.cliente);
     const primeiro = (p.clienteNome||'').split(' ')[0];
     let msg;

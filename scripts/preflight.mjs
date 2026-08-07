@@ -221,6 +221,11 @@ if (!distribuicaoVideo.includes('editorAtribuido: novoEditor') ||
 } else provar('pós-filmagem chega à distribuição e à fila do editor após atribuição');
 
 const calendarioEditor = ler('calendario.html');
+if (!calendarioEditor.includes("const modoAuditoria = params.get('auditoria') === '1'") ||
+    !calendarioEditor.includes('function impedirEscritaAuditoria(ref)') ||
+    !escritorio.includes("window.__auditoriaPapelAtiva?'&auditoria=1':''")) {
+  falhar('iframe do calendário não preserva o modo somente leitura da auditoria');
+} else provar('auditoria mantém calendário em modo somente leitura');
 if (!calendarioEditor.includes('const it={...anterior,itemId:anterior.itemId||') ||
     !calendarioEditor.includes('excluido:true,excluidoPor:')) {
   falhar('item de calendário não preserva campos/ID ou perdeu soft-delete');
@@ -248,6 +253,36 @@ if (!escritorio.includes("definirItemExclusivoNoDOM('navCadastro'") ||
     !escritorio.includes("definirItemExclusivoNoDOM('navgroupVendas'")) {
   falhar('itens privados de clientes/financeiro não são removidos do DOM por papel');
 } else provar('itens privados de sidebar são removidos do DOM por papel');
+
+if (!escritorio.includes('function __impedirGravacaoDuranteAuditoria') ||
+    !['addDoc','setDoc','updateDoc','deleteDoc','runTransaction','writeBatch'].every(nome =>
+      new RegExp(`(?:function|async function) ${nome}\\([^)]*\\)\\{\\s*__impedirGravacaoDuranteAuditoria\\(\\)`).test(escritorio)) ||
+    !escritorio.includes("window.__pessoaAutenticadaReal !== 'Chris'")) {
+  falhar('auditoria de perfis não está exclusiva do Chris ou não é integralmente somente leitura');
+} else provar('auditoria de perfis exclusiva do Chris e sem gravação Firestore');
+
+if (!escritorio.includes('producaoPorFilmmaker') || !escritorio.includes('conteudosRealizados') ||
+    !escritorio.includes('function producaoDetalhadaDoAgendamento') ||
+    !escritorio.includes('Baixas das gravações — quem fez e quais conteúdos')) {
+  falhar('controle da Cecília perdeu autoria, quantidade ou títulos por gravação');
+} else provar('controle da Cecília detalha filmmaker, quantidade e conteúdos');
+const controleGravacoes = escritorio.slice(escritorio.indexOf('window.renderControleGravacoes = async function'), escritorio.indexOf('window.filtrarControleGravacoes'));
+if (!controleGravacoes.includes('agendamentos.filter(a=>pessoaNaEquipe(a,usuarioAtual))') ||
+    !controleGravacoes.includes("getDoc(doc(db,'calendarios',slug))")) {
+  falhar('controle de gravações do filmmaker lista calendários fora da própria equipe');
+} else provar('controle de gravações limita filmmaker às próprias sessões');
+
+if (!escritorio.includes('function saidaClienteJaEfetiva') ||
+    !escritorio.includes('async function efetivarSaidasProgramadas') ||
+    !escritorio.includes("statusSaida:'encerrada'") ||
+    !regras.includes('function acessoDentroDaVigencia(dados)')) {
+  falhar('saída programada não cobre filtros, motor e expiração do Portal');
+} else provar('saída programada preserva operação até a data e expira acessos');
+const cargaClientes = escritorio.slice(escritorio.indexOf('async function carregarClientesExtras'), escritorio.indexOf('carregarClientesExtras();'));
+if (!cargaClientes.includes("getDocs(collection(db,'clientes_config'))") ||
+    !cargaClientes.includes('filter(c=>!clienteInativoEfetivo(configuracoes[c.slug]))')) {
+  falhar('seletores gerais podem ressuscitar cliente após a data de saída');
+} else provar('carteira operacional remove saídas efetivas de todos os seletores');
 
 const inicioMeusExtras = escritorio.indexOf('window.htmlMeusExtras = async function');
 const fimMeusExtras = escritorio.indexOf('window.alternarCamposExtra', inicioMeusExtras);

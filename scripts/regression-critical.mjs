@@ -140,22 +140,23 @@ function testarBadgesExtrasSandbox() {
 async function testarOrcamentoLeiturasFirestoreSandbox() {
   const fonte = trecho(escritorio, 'function __snapshotFalso', '/* Toda gravação invalida');
   const api = executarSandbox('firestore-cache-sandbox.js',
-    `const __cacheColecoes=new Map();const TTL_CACHE_MS=10000;let backend=0;\n` +
-    `async function _getDocsFB(){backend++;return {forEach(fn){fn({id:'backend',data:()=>({origem:'backend'})});}};}\n` +
+    `const __cacheColecoes=new Map();const TTL_CACHE_MS=10000;let backend=0;const db={nome:'teste'};\n` +
+    `function doc(banco,caminho){if(!caminho)throw new Error('ref vazia');return {path:caminho,firestore:banco};}\n` +
+    `async function _getDocsFB(){backend++;return {forEach(fn){fn({id:'backend',ref:doc(db,'demandas/backend'),data:()=>({origem:'backend'})});}};}\n` +
     `${fonte}\n` +
     `globalThis.api={__cacheColecoes,__alimentarCacheTempoReal,__falhouCacheTempoReal,__snapshotFalso,getDocs,backend:()=>backend};`);
   const snapshot = {
     forEach(fn) {
-      fn({ id:'a', data:()=>({status:'pendente'}) });
-      fn({ id:'b', data:()=>({status:'aprovada'}) });
+      fn({ id:'a', ref:{path:'demandas/a'}, data:()=>({status:'pendente'}) });
+      fn({ id:'b', ref:{path:'demandas/b'}, data:()=>({status:'aprovada'}) });
     }
   };
   api.__alimentarCacheTempoReal('demandas', snapshot);
   const guardado = api.__cacheColecoes.get('demandas');
   exigir(guardado?.tempoReal === true && guardado.itens.length === 2,
     'snapshot em tempo real não alimentou o cache compartilhado');
-  const falso = api.__snapshotFalso(guardado.itens);
-  exigir(falso.size === 2 && falso.docs[0].id === 'a' && falso.docs[0].data().status === 'pendente',
+  const falso = api.__snapshotFalso(guardado.itens,'demandas');
+  exigir(falso.size === 2 && falso.docs[0].id === 'a' && falso.docs[0].ref.path === 'demandas/a' && falso.docs[0].data().status === 'pendente',
     'cache em tempo real mudou o formato esperado do snapshot');
   const ref={type:'collection',path:'demandas'};
   for(let i=0;i<50;i++) await api.getDocs(ref);
@@ -404,7 +405,7 @@ function testarSessoesGravacaoSandbox() {
     `function blocoDoItem(item,pos,total,quantos){if(Number(item.bloco)>=1)return Number(item.bloco);const base=Math.floor(total/quantos),resto=total%quantos;let acc=0;for(let i=0;i<quantos;i++){acc+=base+(i<resto?1:0);if(pos<acc)return i+1;}return quantos;}\n` +
     `function itemNaoPrecisaGravar(i){return !!(i.gravado||i.agendado||i.posted);}\n` +
     `function estadoMesCal(cal,mes){return cal.aprovacaoMeses?.[mes]?.status||'';}\n` +
-    `${fonte}\nglobalThis.api={planejarSessaoGravacao,chaveSessaoGravacao,sessaoLegadaSemVinculo};`);
+    `${fonte}\nglobalThis.api={planejarSessaoGravacao,chaveSessaoGravacao,sessaoLegadaSemVinculo,chaveItemSessao,nomeItemSessaoCanonico};`);
 
   const cal = { blocosPorMes:{'2026-08':2}, aprovacaoMeses:{'2026-08':{status:'liberado'}}, items:[
     {itemId:'a',mes:'2026-08',day:1,name:'Semana 1 A',bloco:1},
@@ -434,6 +435,15 @@ function testarSessoesGravacaoSandbox() {
   const planoLegado = api.planejarSessaoGravacao(legado,{cliente:'legado',data:'2026-08-06',bloco:1});
   exigir(planoLegado.permitidos.map(i=>i.name).join(',') === 'L1,L2' && planoLegado.usaDerivacaoLegada === true,
     'calendário legado seguro não derivou a primeira sessão sem migrar dados');
+  const cookieryLegado = { blocosPorMes:{'2026-08':1}, aprovacaoMeses:{'2026-08':{status:'liberado'}}, items:[
+    {mes:'2026-08',day:5,name:'Carrossel 3 '},
+    {mes:'2026-08',day:6,name:'"Saindo do Forno" (O Horário do Cookie Quentinho)'}
+  ]};
+  const planoCookiery = api.planejarSessaoGravacao(cookieryLegado,{cliente:'cookiery',data:'2026-08-05',bloco:1});
+  exigir(planoCookiery.permitidos.length === 2 &&
+    api.chaveItemSessao(planoCookiery.permitidos[0]) === api.chaveItemSessao({calendarItemIdx:0,nome:'Carrossel 3'}) &&
+    api.nomeItemSessaoCanonico('  "Saindo do Forno"   (O Horário do Cookie Quentinho) ') === '"Saindo do Forno" (O Horário do Cookie Quentinho)',
+    'Cookiery: espaço residual ou aspas continuam bloqueando o envio do mesmo item legado');
   const divinaLegada = { month:'Julho 2026', items:[
     {mes:'2026-07',day:7,name:'vídeo 1',posted:true},
     {mes:'2026-07',day:20,name:'vídeo 2',agendado:true}
@@ -473,6 +483,8 @@ function testarSessoesGravacaoSandbox() {
   exigir(agenda.includes('FAZER HOJE') && agenda.includes('NÃO GRAVAR HOJE') &&
     agenda.includes('confirmacaoBloqueada') && agenda.includes('planoSessao.permitidos'),
     'Minha sessão perdeu grupos visuais ou desbloqueou pauta não planejada');
+  exigir(agenda.includes('data-nome="${escAttr(it.name)}"') && agenda.includes('aria-label="Quem gravou ${escAttr(it.name'),
+    'título com aspas voltou a quebrar o checkbox da sessão do filmmaker');
   exigir(agenda.includes('Registro compatível da sessão antiga') &&
     agenda.includes('não marcará pauta de outra semana') && agenda.includes('sessaoLegadaSemVinculo(a)'),
     'sessão anterior à V32 não recuperou a declaração segura do material gravado');
@@ -483,6 +495,8 @@ function testarSessoesGravacaoSandbox() {
   const confirmar = trecho(escritorio, 'async function registrarGravacaoRealizadaNucleo', 'function popularClientesReferencia');
   exigir(confirmar.includes("dadosAtuais.status !== 'agendado'") && confirmar.includes('dadosAtuais.aprovado === false') &&
     confirmar.includes('pessoaNaEquipe(dadosAtuais,usuarioAtual)') && confirmar.includes('permitidosAgora.has(chave)') &&
+    confirmar.includes('new Set(planoAntes.permitidos.map(chaveItemSessao))') &&
+    confirmar.includes('nomeItemSessaoCanonico(itemAtual.name) === nomeItemSessaoCanonico(videoSelecionado.nome)') &&
     confirmar.includes('Captações extras não estão autorizadas nesta sessão.'),
     'transação de confirmação não revalida status, equipe, aprovação, sessão e extras');
   const prepararMateriais = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');

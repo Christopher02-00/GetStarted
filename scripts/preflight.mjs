@@ -195,6 +195,16 @@ if (!escritorio.includes('NÃO GRAVAR HOJE') || !escritorio.includes('sessaoIten
     !confirmacaoGravacao.includes('permitidosAgora.has(chave)')) {
   falhar('ordem da sessão ou revalidação atômica da gravação ausente');
 } else provar('gravação limitada à ordem planejada da sessão');
+if (!escritorio.includes('function chaveItemSessao(item)') ||
+    !escritorio.includes('nomeItemSessaoCanonico(itemAtual.name) === nomeItemSessaoCanonico(videoSelecionado.nome)') ||
+    !escritorio.includes('data-nome="${escAttr(it.name)}"')) {
+  falhar('compatibilidade de títulos legados com espaços/aspas ausente na gravação');
+} else provar('Cookiery e legados preservam aspas e ignoram apenas espaços residuais no vínculo da sessão');
+if (!escritorio.includes('function __snapshotFalso(itens, colecao)') ||
+    !escritorio.includes("ref: caminho ? doc(db,caminho) : undefined") ||
+    !escritorio.includes("__path:d.ref?.path || (nome+'/'+d.id)")) {
+  falhar('cache do Firestore perdeu DocumentReference e quebra transações da Central de Clientes');
+} else provar('cache preserva DocumentReference usado ao salvar/ativar clientes');
 if (!escritorio.includes('Registro compatível da sessão antiga') ||
     !preparacaoMateriaisGravacao.includes("vinculoSessao:registroLegado ? 'declarado_legado'") ||
     !confirmacaoGravacao.includes('sessaoLegadaSemVinculo(dadosAtuais)') ||

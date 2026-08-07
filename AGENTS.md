@@ -1,3 +1,4 @@
+[AGENTS.md](https://github.com/user-attachments/files/30829424/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -46,6 +47,10 @@ Ainda neste incidente, duas falhas de manutenção foram registradas: a trava de
 A V32 expôs dois outros rompimentos de compatibilidade. Primeiro, a trava correta de edição durante `aguardando_interna` foi reutilizada em `submitFeedback()` e impediu a Amanda de comentar justamente enquanto revisava. Comentário de revisão não é edição de pauta: deve atualizar somente `comments` e `updatedAt` em transação, enquanto roteiro, legenda, referências e botões de aprovar/devolver permanecem ligados à mesma fila `linhasCalendariosAguardandoRevisao`. Nunca chamar o `save()` completo para registrar esse comentário nem remover a trava dos conteúdos.
 
 Segundo, a ordem de sessão da V32 removeu a descrição livre que registros anteriores usavam para declarar o que já havia sido filmado. Agendamentos sem `sessaoPlanejamentoVersao`, `sessaoChave`, competência e bloco precisam de compatibilidade explícita: se o calendário possui um único mês, ele pode ser exibido por derivação inequívoca; se possui mais de um, a execução continua bloqueada para planejamento humano. O material declarado num agendamento legado recebe vínculo apenas com o próprio `agendamentoId` (`vinculoSessao: declarado_legado`), sem `calendarItemIdx`/`calendarItemId` e sem marcar pauta de outra semana. Sessões modernas nunca ganham texto livre sem autorização. Grafias legadas de equipe (Natan/Nathan e Luiz/Luís) são comparadas por identidade operacional normalizada, sem ampliar a carteira para outros filmmakers.
+
+Em 07/08/2026, a Cookiery expôs uma terceira variante de compatibilidade legada: itens sem `itemId` usavam `índice + nome bruto` como identidade, mas o formulário aplicava `trim()` antes da revalidação. Um espaço residual em `Carrossel 3 ` fazia o mesmo item parecer de outra sessão; aspas em títulos quebravam `data-nome` porque `esc()` não é escape de atributo. Para itens legados, mantenha o índice e compare o nome em NFC com espaços colapsados/aparados; use sempre `escAttr()` em atributos HTML. Não relaxar a validação por índice nem liberar outra sessão.
+
+No mesmo dia, a Central de Clientes revelou que o snapshot reconstruído pelo cache do Firestore não preservava `.ref`. Fluxos que reutilizam `DocumentSnapshot.ref` em transações (ativação/edição de mensalista, pagamentos futuros e saída programada) recebiam `undefined` e falhavam em `getModularInstance(...).firestore`. Todo snapshot compatível deve preservar `id`, `ref`, `data()` e `exists()`; o cache guarda o caminho original e reconstrói a `DocumentReference` sem nova leitura. Nunca corrigir cada formulário separadamente nem aceitar referência vazia numa transação.
 
 ## Depois de editar
 

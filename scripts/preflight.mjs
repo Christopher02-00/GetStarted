@@ -201,8 +201,10 @@ if (!escritorio.includes('function chaveItemSessao(item)') ||
   falhar('compatibilidade de títulos legados com espaços/aspas ausente na gravação');
 } else provar('Cookiery e legados preservam aspas e ignoram apenas espaços residuais no vínculo da sessão');
 if (!escritorio.includes('function __snapshotFalso(itens, colecao)') ||
-    !escritorio.includes("ref: caminho ? doc(db,caminho) : undefined") ||
-    !escritorio.includes("__path:d.ref?.path || (nome+'/'+d.id)")) {
+    !escritorio.includes('ref: doc(db,caminho)') ||
+    !escritorio.includes("__path:d.ref?.path || (nome+'/'+d.id)") ||
+    (escritorio.match(/__snapshotFalso\([^)]*,nome\)/g)||[]).length < 3 ||
+    !escritorio.includes('function __validarReferenciasFirestore(refs, contexto)')) {
   falhar('cache do Firestore perdeu DocumentReference e quebra transações da Central de Clientes');
 } else provar('cache preserva DocumentReference usado ao salvar/ativar clientes');
 if (!escritorio.includes('Registro compatível da sessão antiga') ||

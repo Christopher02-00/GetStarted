@@ -286,6 +286,7 @@ async function testarCalendariosSandbox() {
     `const SLUGS_INTERNOS=['get-started'];const FORA_DA_META_SEMENTE={'ex cliente':'saiu'};\n` +
     `function normNomeCliente(x){return String(x||'').toLowerCase();}\n` +
     `function ehClienteSoEdicao(slug){return slug==='so-edicao';}\n` +
+    `function clienteInativoEfetivo(cfg,hoje='2026-08-07'){const data=String(cfg?.saidaProgramadaPara||'').slice(0,10);return cfg?.clienteInativo===true||!!data&&data<=hoje;}\n` +
     `${fonteCarteira}\nglobalThis.api={clienteDisponivelParaCampo};`);
   exigir(carteira.clienteDisponivelParaCampo({slug:'stokki',nome:'Stokki'}, {}) === true,
     'cliente mensalista sem restrição desapareceu da carteira de campo');
@@ -295,6 +296,9 @@ async function testarCalendariosSandbox() {
     'cliente avulso vazou para o calendário de campo');
   exigir(carteira.clienteDisponivelParaCampo({slug:'legado',nome:'Ex Cliente'}, {legado:{semConteudoRecorrente:false}}) === true,
     'configuração explícita não prevaleceu sobre exclusão legada');
+  exigir(carteira.clienteDisponivelParaCampo({slug:'futuro',nome:'Futuro'}, {futuro:{saidaProgramadaPara:'2026-08-20'}}) === true &&
+    carteira.clienteDisponivelParaCampo({slug:'vence-hoje',nome:'Vence hoje'}, {'vence-hoje':{saidaProgramadaPara:'2026-08-07'}}) === false,
+    'saída futura desligou o cliente antes da data ou saída vencida continuou na carteira');
 
   const agenda = trecho(escritorio, 'async function renderMinhaAgendaFilmmaker', 'window.renderMinhaAgendaFilmmaker = renderMinhaAgendaFilmmaker');
   exigir(!agenda.includes('obterCalendariosCompartilhados()') &&
@@ -327,6 +331,11 @@ async function testarCalendariosSandbox() {
   exigir(listenerCalendarios.includes("if(['Chris','Amanda','Cecília'].includes(pessoaDoOuvinte))") &&
     !listenerCalendarios.includes('...PESSOAS_DE_CAMPO'),
     'login do filmmaker voltou a assinar a coleção inteira de calendários');
+  const controleCecilia = trecho(escritorio, 'window.renderControleGravacoes = async function', 'window.filtrarControleGravacoes');
+  exigir(controleCecilia.includes('if(ehCampoNoControle) agendamentos=agendamentos.filter(a=>pessoaNaEquipe(a,usuarioAtual))') &&
+    controleCecilia.includes("getDoc(doc(db,'calendarios',slug))") &&
+    controleCecilia.includes('obterCalendariosCompartilhados()'),
+    'controle perdeu visão geral da Cecília ou voltou a expor todos os calendários ao filmmaker');
   exigir(escritorio.includes("'Nathan': ['navVideos','navAgendamento','navCalendarios'") &&
     escritorio.includes("'Luís': ['navVideos','navChecklist','navAgendamento','navCalendarios'") &&
     escritorio.includes("'Luís':      ['campo']") && escritorio.includes("'Nathan':    ['campo']"),
@@ -439,14 +448,22 @@ function testarSessoesGravacaoSandbox() {
   const sessaoLegadaFonte = trecho(escritorio, 'function sessaoLegadaSemVinculo', 'window.sessaoLegadaSemVinculo');
   const materiaisFonte = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');
   const materiais = executarSandbox('materiais-pos-filmagem-sandbox.js',
+    `const CAMPO_MAIS_CHRIS=['Chris','Luís','Nathan'];\n`+
+    `function nomeOperacionalCanonico(n){return String(n||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace('luiz','luis').replace('natan','nathan');}\n`+
+    `function equipeDoAgendamento(a){return Array.isArray(a?.equipe)&&a.equipe.length?a.equipe:(a?.filmmaker?[{nome:a.filmmaker,papel:'Filmmaker'}]:[]);}\n`+
+    `function filmmakersDaSessao(a){return equipeDoAgendamento(a).map(p=>p.nome);}\n`+
     `${sessaoLegadaFonte}\n${materiaisFonte}\nglobalThis.api={prepararMateriaisDeclaradosSessao};`);
-  const declarado = materiais.prepararMateriaisDeclaradosSessao([], 'Prato executivo\nBastidores da cozinha', agDivina);
+  const declarado = materiais.prepararMateriaisDeclaradosSessao([], 'Prato executivo\nBastidores da cozinha', agDivina, 'Luís');
   exigir(declarado.ok && declarado.videos.length === 2 && declarado.videos.every(v=>v.vinculoSessao==='declarado_legado' && v.calendarItemIdx===null),
     'sessão Divina anterior à V32 não prepara material isolado do calendário');
-  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Extra sem autorização', {...agDivina,sessaoPlanejamentoVersao:1,sessaoChave:'nova'}).ok === false,
+  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Extra sem autorização', {...agDivina,sessaoPlanejamentoVersao:1,sessaoChave:'nova'}, 'Luís').ok === false,
     'sessão moderna ganhou texto livre sem autorização');
-  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Vídeo Único\nvideo unico', agDivina).ok === false,
+  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Vídeo Único\nvideo unico', agDivina, 'Luís').ok === false,
     'nomes duplicados com acento/capitalização passariam a criar vídeos repetidos');
+  const equipeDupla={...agDivina,equipe:[{nome:'Luís',papel:'Filmmaker'},{nome:'Nathan',papel:'2º Filmmaker'}]};
+  exigir(materiais.prepararMateriaisDeclaradosSessao([{nome:'A',responsavel:'Luís'},{nome:'B',responsavel:'Nathan'}], '', equipeDupla, '').ok === true &&
+    materiais.prepararMateriaisDeclaradosSessao([{nome:'A',responsavel:'Outra pessoa'}], '', equipeDupla, '').ok === false,
+    'atribuição por conteúdo não respeitou a equipe real da sessão');
   const ambiguo = api.planejarSessaoGravacao({items:[{mes:'2026-07',name:'J'},{mes:'2026-08',name:'A'}]},
     {cliente:'legado',data:'2026-09-01',bloco:1});
   exigir(ambiguo.permitidos.length === 0 && ambiguo.inconsistencias.length === 1,
@@ -473,6 +490,19 @@ function testarSessoesGravacaoSandbox() {
     prepararMateriais.includes('Há um vídeo sem nome ou repetido nesta sessão.') &&
     confirmar.includes('agendamentoId:agId') && confirmar.includes("status: 'aguardando_edicao'"),
     'pós-filmagem legado perdeu vínculo, proteção contra duplicata ou entrada na fila de edição');
+  exigir(confirmar.includes('producaoPorFilmmaker') && confirmar.includes('conteudosRealizados') &&
+    confirmar.includes('dataProducao = agDadosAntes.data || hojeRegistro') && confirmar.includes('filmmaker:v.responsavel'),
+    'baixa da gravação não preserva dia real, títulos e filmmaker de cada conteúdo');
+
+  const fonteProducao = trecho(escritorio, 'function producaoDetalhadaDoAgendamento', 'window.calcularProducaoHojePorFilmmaker');
+  const producao = executarSandbox('producao-cecilia-sandbox.js',
+    `function equipeDoAgendamento(a){return a.equipe||[];}\n${fonteProducao}\nglobalThis.api={producaoDetalhadaDoAgendamento,calcularProducaoHojePorFilmmaker};`);
+  const sessaoDetalhada={producaoPorFilmmaker:[{filmmaker:'Luís',quantidade:2,conteudos:['A','B']},{filmmaker:'Nathan',quantidade:1,conteudos:['C']}]};
+  exigir(producao.producaoDetalhadaDoAgendamento(sessaoDetalhada).length===2 &&
+    JSON.stringify(producao.calcularProducaoHojePorFilmmaker([{realizadasHoje:[sessaoDetalhada]}]))===JSON.stringify({Luís:2,Nathan:1}),
+    'controle da Cecília não separou quantidade e títulos por filmmaker');
+  exigir(producao.producaoDetalhadaDoAgendamento({qtdVideosRealizados:3,filmmaker:'Luís'})[0].legado===true,
+    'registro antigo foi inventado como se tivesse detalhamento moderno');
   const wrapperConfirmacao = trecho(escritorio, 'const __confirmacoesGravacaoEmCurso', 'function popularClientesReferencia');
   exigir(wrapperConfirmacao.includes('__confirmacoesGravacaoEmCurso.has(agId)') &&
     wrapperConfirmacao.indexOf('__confirmacoesGravacaoEmCurso.add(agId)') < wrapperConfirmacao.indexOf('await registrarGravacaoRealizadaNucleo(agId)'),
@@ -530,6 +560,41 @@ function testarPermissoesAcoesSandbox() {
   const stories = trecho(escritorio, 'window.liberarStory', '/* Guarda os links por cliente');
   exigir((stories.match(/\!\['Chris','Amanda'\]\.includes\(usuarioAtual\)/g)||[]).length === 2,
     'liberar/devolver Stories perdeu a guarda de gestão');
+
+  const auditoria = trecho(escritorio, 'function __impedirGravacaoDuranteAuditoria', 'const auth = getAuth(app)');
+  exigir(['addDoc','setDoc','updateDoc','deleteDoc','runTransaction','writeBatch'].every(nome=>
+    new RegExp(`(?:function|async function) ${nome}\\([^)]*\\)\\{\\s*__impedirGravacaoDuranteAuditoria\\(\\)`).test(auditoria)),
+    'modo de auditoria não bloqueia todos os caminhos Firestore de gravação');
+  const perfis = trecho(escritorio, 'window.abrirAuditoriaPerfisChris', 'window.sairAuditoriaPerfilChris');
+  exigir(perfis.includes("window.__pessoaAutenticadaReal !== 'Chris'") &&
+    escritorio.includes("{ id:'navAuditoriaPerfisChris', rot:'Auditar perfil da equipe'") &&
+    !escritorio.includes("'Amanda': [{ id:'navAuditoriaPerfisChris'"),
+    'auditoria por perfil deixou de ser exclusiva da identidade Google real do Chris');
+  exigir(calendario.includes("const modoAuditoria = params.get('auditoria') === '1'") &&
+    calendario.includes("startsWith('sessoes_cliente/')") &&
+    calendario.includes("impedirEscritaAuditoria(doc(db,'calendarios','auditoria'))") &&
+    escritorio.includes("window.__auditoriaPapelAtiva?'&auditoria=1':''"),
+    'auditoria permitiu gravação pelo iframe do calendário ou bloqueou a sessão necessária à leitura');
+
+  const saida = trecho(escritorio, 'window.salvarSaidaClienteCentral', 'window.cancelarProgramacaoSaidaCentral');
+  exigir(saida.includes('saidaProgramadaPara:dataSaida') && saida.includes('clienteInativo:imediata') &&
+    saida.includes('ativoAte:limiteAcesso') && saida.includes('statusSaida:imediata'),
+    'saída futura ainda encerra imediatamente ou não limita o Portal na data');
+  const efetivar = trecho(escritorio, 'async function efetivarSaidasProgramadas', 'window.efetivarSaidasProgramadas');
+  exigir(efetivar.includes("statusSaida==='programada'&&saidaClienteJaEfetiva(v)") &&
+    efetivar.includes("statusSaida:'encerrada'") && !efetivar.includes('deleteDoc('),
+    'motor de saída programada perdeu idempotência ou soft-delete');
+  exigir(escritorio.includes("{ nome: 'saidasProgramadasClientes', fn: efetivarSaidasProgramadas }") &&
+    escritorio.includes('function clienteInativoEfetivo(config, hoje)'),
+    'saída agendada não está conectada ao motor e aos filtros operacionais');
+  const cargaClientes = trecho(escritorio, 'async function carregarClientesExtras', 'carregarClientesExtras();');
+  exigir(cargaClientes.includes("getDocs(collection(db,'clientes_config'))") &&
+    cargaClientes.includes('filter(c=>!clienteInativoEfetivo(configuracoes[c.slug]))'),
+    'cliente encerrado pode reaparecer nos seletores gerais após recarregar');
+  const regras = fs.readFileSync(path.join(raiz, 'firestore.rules'), 'utf8');
+  exigir(regras.includes('function acessoDentroDaVigencia(dados)') &&
+    (regras.match(/acessoDentroDaVigencia\(/g)||[]).length >= 4,
+    'Portal/calendário interno não expiram pela regra na data de saída');
 }
 
 try {

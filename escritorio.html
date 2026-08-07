@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-07-producao-cecilia-saida-clientes-auditoria-v34">
+<meta name="gs-build" content="2026-08-07-cookiery-cache-clientes-v35">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1809,8 +1809,20 @@
     else __limparCacheColecoes();
   }
 
-  function __snapshotFalso(itens){
-    const docs = itens.map(x => ({ id: x.__id, data: () => x.__dados, exists: () => true }));
+  function __snapshotFalso(itens, colecao){
+    /* Um DocumentSnapshot compatível precisa carregar `.ref`. A primeira
+       versão do cache devolvia só id/data/exists; qualquer fluxo que
+       reutilizasse `d.ref` dentro de uma transação recebia `undefined` e o
+       SDK quebrava em getModularInstance(...).firestore. Foi o erro real ao
+       Amanda salvar/ativar clientes. O caminho é reconstruído sem nova
+       leitura e preserva a mesma referência do documento original. */
+    const docs = itens.map(x => {
+      const caminho = x.__path || (colecao ? colecao + '/' + x.__id : '');
+      return {
+        id: x.__id, ref: caminho ? doc(db,caminho) : undefined,
+        data: () => x.__dados, exists: () => true
+      };
+    });
     return {
       docs, size: docs.length, empty: docs.length === 0,
       forEach(cb){ docs.forEach(cb); }
@@ -1825,7 +1837,7 @@
   function __alimentarCacheTempoReal(nome, snap){
     if(!nome || !snap || typeof snap.forEach !== 'function') return;
     const itens=[];
-    snap.forEach(d=>itens.push({__id:d.id,__dados:d.data()}));
+    snap.forEach(d=>itens.push({__id:d.id,__path:d.ref?.path || (nome+'/'+d.id),__dados:d.data()}));
     __cacheColecoes.set(nome,{em:Date.now(),itens,tempoReal:true});
   }
 
@@ -1841,14 +1853,14 @@
 
     const agora = Date.now();
     const guardado = __cacheColecoes.get(nome);
-    if(guardado?.tempoReal) return __snapshotFalso(guardado.itens);
-    if(guardado && (agora - guardado.em) < TTL_CACHE_MS) return __snapshotFalso(guardado.itens);
+    if(guardado?.tempoReal) return __snapshotFalso(guardado.itens,nome);
+    if(guardado && (agora - guardado.em) < TTL_CACHE_MS) return __snapshotFalso(guardado.itens,nome);
     if(guardado && guardado.promessa) return guardado.promessa;   // já tem uma busca em voo
 
     const promessa = (async () => {
       const snap = await _getDocsFB(ref);
       const itens = [];
-      snap.forEach(d => itens.push({ __id: d.id, __dados: d.data() }));
+      snap.forEach(d => itens.push({ __id: d.id, __path:d.ref?.path || (nome+'/'+d.id), __dados: d.data() }));
       __cacheColecoes.set(nome, { em: Date.now(), itens });
       return __snapshotFalso(itens);
     })();
@@ -7319,6 +7331,23 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       .map(par => ({ ...par.item, idx:par.idx }));
   }
 
+  /* Identidade compatível para itens antigos que ainda não têm itemId.
+     O índice continua sendo a âncora; o nome só protege contra a Gabi ter
+     reorganizado o calendário enquanto o filmmaker estava com a agenda
+     aberta. Espaços acidentais no começo/fim (caso real da Cookiery) não
+     transformam o mesmo item em "outra sessão". Aspas permanecem parte do
+     nome e são protegidas separadamente por escAttr ao entrar no HTML. */
+  function nomeItemSessaoCanonico(nome){
+    return String(nome||'').normalize('NFC').replace(/\s+/g,' ').trim();
+  }
+  function chaveItemSessao(item){
+    const v = item || {};
+    const itemId = v.itemId || v.calendarItemId || '';
+    if(itemId) return 'id:' + String(itemId);
+    const idx = Number(v.idx ?? v.calendarItemIdx);
+    return 'idx:' + idx + '|' + nomeItemSessaoCanonico(v.name ?? v.nome);
+  }
+
   function chaveSessaoGravacao(agendamento){
     const ag = agendamento || {};
     const slug = ag.clienteSlug || ag.cliente || '';
@@ -7382,7 +7411,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const permitidosIdx = new Set();
       ag.sessaoItensPlanejados.slice().sort((a,b)=>(Number(a.ordem)||0)-(Number(b.ordem)||0)).forEach(reg => {
         const item = reg.itemId ? porItemId.get(String(reg.itemId)) : porIndice.get(Number(reg.idx));
-        if(!item || (!reg.itemId && String(item.name||'') !== String(reg.nome||''))){
+        if(!item || (!reg.itemId && nomeItemSessaoCanonico(item.name) !== nomeItemSessaoCanonico(reg.nome))){
           inconsistencias.push({ idx:Number(reg.idx), nome:reg.nome||'', motivo:'A pauta mudou depois do planejamento.' });
           return;
         }
@@ -7543,9 +7572,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         <div style="margin-top:12px;border:1px solid ${cor};border-radius:10px;padding:10px 11px;">
           <div class="meta" style="font-weight:900;color:${cor};margin-bottom:7px;">${titulo}</div>
           ${lista.map((it,pos)=>`<label class="linhaCaptacaoSessao" style="background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:5px;cursor:pointer;">
-            <input type="checkbox" class="chkVideoCalendario_${a.id}" data-idx="${it.idx}" data-item-id="${esc(it.itemId||'')}" data-nome="${esc(it.name)}" onchange="atualizarContadorVideos('${a.id}', ${a.qtdVideosPlanejados||0})">
+            <input type="checkbox" class="chkVideoCalendario_${a.id}" data-idx="${it.idx}" data-item-id="${escAttr(it.itemId||'')}" data-nome="${escAttr(it.name)}" onchange="atualizarContadorVideos('${a.id}', ${a.qtdVideosPlanejados||0})">
             <b style="color:${cor};min-width:22px;">${inicio+pos}.</b><span style="font-size:12px;">${esc(it.name||'Sem título')}</span>
-            ${filmmakersSessao.length>1?`<select class="responsavelVideoCalendario_${a.id}" onclick="event.stopPropagation()" aria-label="Quem gravou ${esc(it.name||'este conteúdo')}">${filmmakersSessao.map(p=>`<option value="${esc(p)}" ${nomeOperacionalCanonico(p)===nomeOperacionalCanonico(responsavelCaptacaoPadrao)?'selected':''}>Feito por ${esc(p)}</option>`).join('')}</select>`:`<input type="hidden" class="responsavelVideoCalendario_${a.id}" value="${esc(responsavelCaptacaoPadrao||'')}"><span class="meta responsavelCaptacaoRotulo" style="grid-column:4/5;">Feito por ${esc(responsavelCaptacaoPadrao||'responsável da sessão')}</span>`}
+            ${filmmakersSessao.length>1?`<select class="responsavelVideoCalendario_${a.id}" onclick="event.stopPropagation()" aria-label="Quem gravou ${escAttr(it.name||'este conteúdo')}">${filmmakersSessao.map(p=>`<option value="${escAttr(p)}" ${nomeOperacionalCanonico(p)===nomeOperacionalCanonico(responsavelCaptacaoPadrao)?'selected':''}>Feito por ${esc(p)}</option>`).join('')}</select>`:`<input type="hidden" class="responsavelVideoCalendario_${a.id}" value="${escAttr(responsavelCaptacaoPadrao||'')}"><span class="meta responsavelCaptacaoRotulo" style="grid-column:4/5;">Feito por ${esc(responsavelCaptacaoPadrao||'responsável da sessão')}</span>`}
           </label>`).join('')}
         </div>` : '';
       const inicioPendencias = (planoSessao.fazerHoje||[]).length + 1;
@@ -13257,8 +13286,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if((planoAntes.inconsistencias||[]).length){
       mostrarToast('A pauta desta sessão mudou. Amanda ou Cecília precisa revisar a ordem antes de confirmar.', 'erro'); return false;
     }
-    const idsPermitidos = new Set(planoAntes.permitidos.map(i=>i.itemId ? 'id:'+i.itemId : 'idx:'+i.idx+'|'+String(i.name||'')));
-    const foraDaSessao = videosDoCalendario.find(v=>!idsPermitidos.has(v.calendarItemId ? 'id:'+v.calendarItemId : 'idx:'+v.calendarItemIdx+'|'+String(v.nome||'')));
+    const idsPermitidos = new Set(planoAntes.permitidos.map(chaveItemSessao));
+    const foraDaSessao = videosDoCalendario.find(v=>!idsPermitidos.has(chaveItemSessao(v)));
     if(foraDaSessao){
       mostrarToast('“'+foraDaSessao.nome+'” pertence a outra sessão e não foi registrado.', 'erro'); return false;
     }
@@ -13331,9 +13360,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         const calAtual = idxsGravados.length ? await transacao.get(calRef) : null;
         const planoAtual = planejarSessaoGravacao(calAtual&&calAtual.exists() ? (calAtual.data()||{}) : {}, dadosAtuais);
         if((planoAtual.inconsistencias||[]).length) throw new Error('A pauta mudou depois que esta agenda foi aberta. Recarregue e peça a revisão da ordem.');
-        const permitidosAgora = new Set(planoAtual.permitidos.map(i=>i.itemId ? 'id:'+i.itemId : 'idx:'+i.idx+'|'+String(i.name||'')));
+        const permitidosAgora = new Set(planoAtual.permitidos.map(chaveItemSessao));
         videosDoCalendario.forEach(v=>{
-          const chave = v.calendarItemId ? 'id:'+v.calendarItemId : 'idx:'+v.calendarItemIdx+'|'+String(v.nome||'');
+          const chave = chaveItemSessao(v);
           if(!permitidosAgora.has(chave)) throw new Error('Um conteúdo marcado pertence a outra sessão. Reabra a ordem do dia.');
         });
         if(videosExtras.length && !(dadosAtuais.permitirCaptacoesExtras || dadosAtuais.ehClienteNovo || sessaoLegadaSemVinculo(dadosAtuais))) throw new Error('Captações extras não estão autorizadas nesta sessão.');
@@ -13361,7 +13390,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
             const itemAtual = itensAtualizados[idx];
             const mesmoItem = videoSelecionado.calendarItemId
               ? itemAtual && String(itemAtual.itemId||'') === String(videoSelecionado.calendarItemId)
-              : itemAtual && String(itemAtual.name||'') === String(videoSelecionado.nome||'');
+              : itemAtual && nomeItemSessaoCanonico(itemAtual.name) === nomeItemSessaoCanonico(videoSelecionado.nome);
             if(!mesmoItem){
               throw new Error('O calendário mudou depois que esta agenda foi aberta. Recarregue e marque novamente.');
             }
@@ -17980,8 +18009,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(grav){
         const planos = (grav.gravacoes||[]).map(g=>planejarSessaoGravacao(cal,g));
         inconsistenciasCampo = planos.flatMap(p=>p.inconsistencias||[]);
-        const chavesHoje = new Set(planos.flatMap(p=>p.permitidos||[]).map(i=>i.itemId?'id:'+i.itemId:'idx:'+i.idx+'|'+String(i.name||'')));
-        deHoje = inconsistenciasCampo.length ? [] : paraGravar.filter(i=>chavesHoje.has(i.itemId?'id:'+i.itemId:'idx:'+i.idx+'|'+String(i.name||'')));
+        const chavesHoje = new Set(planos.flatMap(p=>p.permitidos||[]).map(chaveItemSessao));
+        deHoje = inconsistenciasCampo.length ? [] : paraGravar.filter(i=>chavesHoje.has(chaveItemSessao(i)));
         resto = paraGravar.filter(i=>!deHoje.some(h=>h.idx===i.idx));
       }
 

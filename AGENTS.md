@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30831484/AGENTS.md)
+[AGENTS.md](https://github.com/user-attachments/files/30834410/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -56,7 +56,9 @@ Segundo, a ordem de sessão da V32 removeu a descrição livre que registros ant
 
 Em 07/08/2026, a Cookiery expôs uma terceira variante de compatibilidade legada: itens sem `itemId` usavam `índice + nome bruto` como identidade, mas o formulário aplicava `trim()` antes da revalidação. Um espaço residual em `Carrossel 3 ` fazia o mesmo item parecer de outra sessão; aspas em títulos quebravam `data-nome` porque `esc()` não é escape de atributo. Para itens legados, mantenha o índice e compare o nome em NFC com espaços colapsados/aparados; use sempre `escAttr()` em atributos HTML. Não relaxar a validação por índice nem liberar outra sessão.
 
-No mesmo dia, a Central de Clientes revelou que o snapshot reconstruído pelo cache do Firestore não preservava `.ref`. Fluxos que reutilizam `DocumentSnapshot.ref` em transações (ativação/edição de mensalista, pagamentos futuros e saída programada) recebiam `undefined` e falhavam em `getModularInstance(...).firestore`. Todo snapshot compatível deve preservar `id`, `ref`, `data()` e `exists()`; o cache guarda o caminho original e reconstrói a `DocumentReference` sem nova leitura. Nunca corrigir cada formulário separadamente nem aceitar referência vazia numa transação.
+No mesmo dia, a Central de Clientes revelou que o snapshot reconstruído pelo cache do Firestore não preservava `.ref`. Fluxos que reutilizam `DocumentSnapshot.ref` em transações (ativação/edição de mensalista, pagamentos futuros e saída programada) recebiam `undefined` e falhavam em `getModularInstance(...).firestore`. A primeira correção ainda deixou uma chamada inicial de `__snapshotFalso` sem o nome da coleção, portanto não garantia o caminho de fallback. Todo snapshot compatível deve preservar `id`, `ref`, `data()` e `exists()`; todas as chamadas passam a coleção, o cache guarda o caminho original e toda transação valida as referências antes de escrever. Nunca corrigir cada formulário separadamente nem aceitar referência vazia numa transação.
+
+A mesma Central filtrava “ativos” e “arquivados” apenas pela origem no link novo. Isso escondia da Amanda os clientes legados e fazia uma saída legítima desaparecer do arquivo, apesar de o registro continuar no Firestore. A Central de gestão deve unir por slug os cadastros oficiais, a carteira operacional e a base legada, sem criar cópia; `clientes_encerrados` é o arquivo completo, não apenas o arquivo do link. A saída grava uma fotografia gerencial da ficha, mantém todos os documentos históricos, limita o Portal por `ativoAte` e remove o cliente das listas somente na data efetiva.
 
 ## Depois de editar
 

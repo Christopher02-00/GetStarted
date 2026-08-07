@@ -671,7 +671,7 @@ function testarPermissoesAcoesSandbox() {
 
   const saida = trecho(escritorio, 'window.salvarSaidaClienteCentral', 'window.cancelarProgramacaoSaidaCentral');
   exigir(saida.includes('saidaProgramadaPara:dataSaida') && saida.includes('clienteInativo:imediata') &&
-    saida.includes('ativoAte:limiteAcesso') && saida.includes('statusSaida:imediata'),
+    saida.includes('ativoAte:limiteAcesso') && saida.includes('statusSaida:imediata') && saida.includes('fichaSnapshot'),
     'saída futura ainda encerra imediatamente ou não limita o Portal na data');
   const efetivar = trecho(escritorio, 'async function efetivarSaidasProgramadas', 'window.efetivarSaidasProgramadas');
   exigir(efetivar.includes("statusSaida==='programada'&&saidaClienteJaEfetiva(v)") &&
@@ -680,6 +680,19 @@ function testarPermissoesAcoesSandbox() {
   exigir(escritorio.includes("{ nome: 'saidasProgramadasClientes', fn: efetivarSaidasProgramadas }") &&
     escritorio.includes('function clienteInativoEfetivo(config, hoje)'),
     'saída agendada não está conectada ao motor e aos filtros operacionais');
+  const centralClientes = trecho(escritorio, 'window.renderCentralEntradaClientes = async function', 'async function carregarMensalistaRecebidoNosCampos');
+  exigir(centralClientes.includes('const fontesLegadas=new Map()') && centralClientes.includes('CLIENTES_BASE.forEach') &&
+    centralClientes.includes("cfg.tipoCliente==='avulso'?false") && centralClientes.includes('[...encerrados,...arquivadosDeOrigem]') && centralClientes.includes('id="centralSaidasClientes"') &&
+    centralClientes.includes('Portal:</b> dados preservados'),
+    'Central da Amanda voltou a esconder clientes legados, saída rápida ou arquivo preservado');
+  exigir(escritorio.includes("{ rot:'Registrar saída de cliente', acao:\"irParaSaidaClientes()\" }") &&
+    escritorio.includes('window.abrirSaidaRapidaCentral=function()'),
+    'Amanda perdeu o atalho direto para registrar saída');
+  const cacheFirestore = trecho(escritorio, 'function __snapshotFalso(itens, colecao)', 'const auth = getAuth(app)');
+  exigir(cacheFirestore.includes('ref: doc(db,caminho)') &&
+    (cacheFirestore.match(/__snapshotFalso\([^)]*,nome\)/g)||[]).length >= 3 &&
+    cacheFirestore.includes('function __validarReferenciasFirestore(refs, contexto)'),
+    'cache voltou a entregar referência undefined às transações da Amanda');
   const cargaClientes = trecho(escritorio, 'async function carregarClientesExtras', 'carregarClientesExtras();');
   exigir(cargaClientes.includes("getDocs(collection(db,'clientes_config'))") &&
     cargaClientes.includes('filter(c=>!clienteInativoEfetivo(configuracoes[c.slug]))'),
@@ -688,6 +701,26 @@ function testarPermissoesAcoesSandbox() {
   exigir(regras.includes('function acessoDentroDaVigencia(dados)') &&
     (regras.match(/acessoDentroDaVigencia\(/g)||[]).length >= 4,
     'Portal/calendário interno não expiram pela regra na data de saída');
+}
+
+function testarCentralClientesAmandaSandbox() {
+  const snapshotFonte = trecho(escritorio, 'function __snapshotFalso(itens, colecao)', '  /* 06/08/2026 — o listener');
+  const validarRefsFonte = trecho(escritorio, 'function __validarReferenciasFirestore(refs, contexto)', '  /* Toda gravação invalida');
+  const api = executarSandbox('central-clientes-amanda-sandbox.js',
+    `const db={nome:'sandbox'};function doc(banco,caminho){return {firestore:banco,path:caminho};}\n`+
+    `${snapshotFonte}\n${validarRefsFonte}\n`+
+    `globalThis.api={snapshot:__snapshotFalso,validar:__validarReferenciasFirestore};`);
+  const snap=api.snapshot([{__id:'cliente-teste',__dados:{nome:'Teste'}}],'clientes_config');
+  exigir(snap.docs.length===1 && snap.docs[0].ref.path==='clientes_config/cliente-teste' && snap.docs[0].ref.firestore.nome==='sandbox',
+    'snapshot em cache ainda perde a referência usada pela Amanda ao salvar');
+  exigir(api.validar([null,snap.docs[0].ref],'teste').length===1,
+    'referência opcional nula não foi tratada sem contaminar a transação');
+  let bloqueouUndefined=false;
+  try{ api.validar([undefined,snap.docs[0].ref],'teste'); }catch(e){ bloqueouUndefined=String(e.message).includes('nenhum dado foi alterado'); }
+  exigir(bloqueouUndefined,'transação da Amanda ainda aceita referência undefined');
+  let bloqueouSnapshotSemCaminho=false;
+  try{ api.snapshot([{__id:'cliente-teste',__dados:{}}]); }catch(e){ bloqueouSnapshotSemCaminho=String(e.message).includes('nenhuma alteração foi feita'); }
+  exigir(bloqueouSnapshotSemCaminho,'cache sem coleção voltou a produzir DocumentReference indefinida');
 }
 
 try {
@@ -702,6 +735,7 @@ try {
   await testarCalendariosSandbox();
   testarSessoesGravacaoSandbox();
   testarPermissoesAcoesSandbox();
+  testarCentralClientesAmandaSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

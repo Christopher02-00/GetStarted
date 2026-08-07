@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-07-acesso-demandas-yas-v38">
+<meta name="gs-build" content="2026-08-07-clientes-amanda-saidas-v39">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1822,8 +1822,9 @@
        leitura e preserva a mesma referência do documento original. */
     const docs = itens.map(x => {
       const caminho = x.__path || (colecao ? colecao + '/' + x.__id : '');
+      if(!caminho) throw new Error('Cache do Firestore sem caminho do documento em '+(colecao||'coleção desconhecida')+'. Atualize a página; nenhuma alteração foi feita.');
       return {
-        id: x.__id, ref: caminho ? doc(db,caminho) : undefined,
+        id: x.__id, ref: doc(db,caminho),
         data: () => x.__dados, exists: () => true
       };
     });
@@ -1866,11 +1867,20 @@
       const itens = [];
       snap.forEach(d => itens.push({ __id: d.id, __path:d.ref?.path || (nome+'/'+d.id), __dados: d.data() }));
       __cacheColecoes.set(nome, { em: Date.now(), itens });
-      return __snapshotFalso(itens);
+      return __snapshotFalso(itens,nome);
     })();
     __cacheColecoes.set(nome, { em: 0, itens: [], promessa });
     try{ return await promessa; }
     catch(e){ __cacheColecoes.delete(nome); throw e; }
+  }
+
+  function __validarReferenciasFirestore(refs, contexto){
+    const lista=(refs||[]).filter(ref=>ref!==null);
+    const temInvalida=lista.some(ref=>!ref||typeof ref.path!=='string'||!ref.path);
+    if(temInvalida){
+      throw new Error('Não foi possível preparar '+contexto+'. Atualize a página e tente novamente; nenhum dado foi alterado.');
+    }
+    return lista;
   }
 
   /* Toda gravação invalida o cache — sem isso a tela mostraria o estado
@@ -15409,7 +15419,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         contrato:mensal?doc(db,'contratos_cliente',slug):null, onboarding:atual.onboardingId?doc(db,'onboarding_processos',atual.onboardingId):null,
         story:mensal?doc(db,'stories_clientes',slug):null
       };
-      const listaRefs=[...Object.values(refs).filter(Boolean),...pagamentosDoCliente.map(p=>p.ref)];
+      const listaRefs=__validarReferenciasFirestore([...Object.values(refs),...pagamentosDoCliente.map(p=>p.ref)],'a atualização da ficha de '+atual.nome);
       await runTransaction(db,async tx=>{
         const snaps=await Promise.all(listaRefs.map(r=>tx.get(r))); const existe=new Map(listaRefs.map((r,i)=>[r.path,snaps[i].exists()]));
         const snapshotPorCaminho=new Map(listaRefs.map((r,i)=>[r.path,snaps[i]]));
@@ -15455,6 +15465,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     window.__saidaClienteEditando=slug;
     window.renderCentralEntradaClientes().then(()=>document.getElementById('editorSaidaClienteCentral')?.scrollIntoView({behavior:'smooth',block:'center'}));
   };
+  window.abrirSaidaRapidaCentral=function(){
+    if(!['Amanda','Chris'].includes(usuarioAtual)) return;
+    const slug=document.getElementById('saidaRapidaCliente')?.value||'';
+    if(!slug){ mostrarToast('Escolha o cliente que vai sair.','erro'); return; }
+    window.abrirSaidaClienteCentral(slug);
+  };
   window.cancelarSaidaClienteCentral=function(){ window.__saidaClienteEditando=''; window.renderCentralEntradaClientes(); };
 
   function htmlSaidaClienteCentral(){
@@ -15490,7 +15506,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const tokensDoCliente=atual.tipo==='mensalista'?(await getDocs(query(collection(db,'clientes_portal_tokens'),where('cliente','==',slug)))).docs.map(d=>d.ref):[];
       const saidaAnterior=(window.__saidasProgramadasPorSlug||{})[slug]||{};
       const encerRef=saidaAnterior.id?doc(db,'clientes_encerrados',saidaAnterior.id):doc(collection(db,'clientes_encerrados'));
-      const listaRefs=[...Object.values(refs).filter(Boolean),...tokensDoCliente];
+      const listaRefs=__validarReferenciasFirestore([...Object.values(refs),...tokensDoCliente],'a saída de '+atual.nome);
       const limiteAcesso=new Date(dataSaida+'T00:00:00-03:00');
       await runTransaction(db,async tx=>{
         const snaps=await Promise.all(listaRefs.map(r=>tx.get(r))); const existe=new Map(listaRefs.map((r,i)=>[r.path,snaps[i].exists()]));
@@ -15503,7 +15519,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         if(refs.onboarding&&existe.get(refs.onboarding.path)) tx.set(refs.onboarding,{...agenda,...(imediata?{status:'encerrado',encerradoEm:serverTimestamp(),encerradoPor:usuarioAtual}:{})},{merge:true});
         if(refs.acesso&&existe.get(refs.acesso.path)) tx.set(refs.acesso,{ativo:!imediata,ativoAte:limiteAcesso,saidaProgramadaPara:dataSaida,...(imediata?{desativadoEm:serverTimestamp(),desativadoPor:usuarioAtual}:{})},{merge:true});
         tokensDoCliente.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{ativo:!imediata,ativoAte:limiteAcesso,saidaProgramadaPara:dataSaida,...(imediata?{desativadoEm:serverTimestamp(),desativadoPor:usuarioAtual}:{})},{merge:true}); });
-        tx.set(encerRef,{nome:atual.nome,slug,dataAviso,dataSaida,statusSaida:imediata?'encerrada':'programada',tipoCliente:atual.tipo,extraId:atual.extraId||'',cadastroId:atual.cadastroId||'',leadId:atual.leadId||'',leadColecao:atual.leadColecao||'',onboardingId:atual.onboardingId||'',servicos:atual.tipo==='mensalista'?[atual.plano,atual.planoDetalhes].filter(Boolean).join(' — '):'Projeto avulso',valorMensal:Number(atual.valorMensal||0),motivo,motivoDetalhe,pendenciasFinais,origemCentralEntrada:true,criadoPor:saidaAnterior.criadoPor||usuarioAtual,criadoEm:saidaAnterior.criadoEm||serverTimestamp(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp(),excluido:false},{merge:true});
+        const fichaSnapshot={
+          nome:String(atual.nome||''),slug,tipo:String(atual.tipo||''),instagram:String(atual.instagram||''),telefone:String(atual.telefone||''),
+          aniversario:String(atual.aniversario||''),contatos:String(atual.contatos||''),plano:String(atual.plano||''),planoDetalhes:String(atual.planoDetalhes||''),
+          valorMensal:Number(atual.valorMensal||0),diaVencimento:Number(atual.diaVencimento||0),primeiraCompetencia:String(atual.primeiraCompetencia||''),
+          tipoEntrega:String(atual.tipoEntrega||''),incluiStories:atual.incluiStories===true,cortesiaPermanente:atual.cortesiaPermanente===true,
+          cortesiaMeses:Array.isArray(atual.cortesiaMeses)?atual.cortesiaMeses.map(String):[],observacoes:String(atual.observacoes||''),
+          tinhaPortal:!!atual.token,origem:String(atual.origem||'central')
+        };
+        tx.set(encerRef,{nome:atual.nome,slug,dataAviso,dataSaida,statusSaida:imediata?'encerrada':'programada',tipoCliente:atual.tipo,extraId:atual.extraId||'',cadastroId:atual.cadastroId||'',leadId:atual.leadId||'',leadColecao:atual.leadColecao||'',onboardingId:atual.onboardingId||'',servicos:atual.tipo==='mensalista'?[atual.plano,atual.planoDetalhes].filter(Boolean).join(' — '):'Projeto avulso',valorMensal:Number(atual.valorMensal||0),motivo,motivoDetalhe,pendenciasFinais,fichaSnapshot,origemCentralEntrada:true,criadoPor:saidaAnterior.criadoPor||usuarioAtual,criadoEm:saidaAnterior.criadoEm||serverTimestamp(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp(),excluido:false},{merge:true});
       });
       window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras();
       try{ await sincronizarAutomacaoFuncoesFixas(); }catch(e){ console.error('Saída salva; automações sincronizarão no motor:',e); }
@@ -15519,7 +15543,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!confirm('Cancelar a saída programada e manter o cliente ativo? O registro continuará no histórico como cancelado.')) return;
     const atual=(window.__entradaClientesAtivos||{})[slug]||{};
     try{
-      const refs=[
+      const refs=__validarReferenciasFirestore([
         doc(db,'clientes_config',slug),
         saida.extraId?doc(db,'clientes_extras',saida.extraId):null,
         saida.cadastroId?doc(db,'cadastros_clientes',saida.cadastroId):null,
@@ -15527,10 +15551,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         saida.onboardingId?doc(db,'onboarding_processos',saida.onboardingId):null,
         atual.tipo==='mensalista'?doc(db,'contratos_cliente',slug):null,
         atual.tipo==='mensalista'?doc(db,'clientes_acesso',slug):null
-      ].filter(Boolean);
+      ],'o cancelamento da saída');
       const tokens=atual.tipo==='mensalista'?(await getDocs(query(collection(db,'clientes_portal_tokens'),where('cliente','==',slug)))).docs.map(d=>d.ref):[];
       await runTransaction(db,async tx=>{
-        const todos=[...refs,...tokens]; const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
+        const todos=__validarReferenciasFirestore([...refs,...tokens],'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
         refs.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),saidaAtualizadaPor:deleteField(),saidaAtualizadaEm:deleteField(),ativoAte:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true}); });
         tx.set(doc(db,'clientes_config',slug),{clienteInativo:false,inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField()},{merge:true});
         const acessoRef=atual.tipo==='mensalista'?doc(db,'clientes_acesso',slug):null;
@@ -15559,7 +15583,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         saida:doc(db,'clientes_encerrados',saida.id)
       };
       const tokens=saida.tipoCliente==='mensalista'?(await getDocs(query(collection(db,'clientes_portal_tokens'),where('cliente','==',slug)))).docs.map(d=>d.ref):[];
-      const lista=[...Object.values(refs).filter(Boolean),...tokens];
+      const lista=__validarReferenciasFirestore([...Object.values(refs),...tokens],'a efetivação da saída programada');
       await runTransaction(db,async tx=>{
         const snaps=await Promise.all(lista.map(r=>tx.get(r))); const existe=new Map(lista.map((r,i)=>[r.path,snaps[i].exists()]));
         const motivo=saida.motivoDetalhe||saida.motivo||'Saída programada';
@@ -15641,6 +15665,29 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         return {tipo:'avulso',slug,nome:v.nome||extra.nome||slug,instagram:v.instagram||'',telefone:v.whatsapp||v.telefone||'',plano:'Projeto avulso',planoDetalhes:escopoAvulso,valorMensal:0,diaVencimento:0,primeiraCompetencia:'',tipoEntrega:'entrega_direta',incluiStories:false,observacoes:v.observacoes||'',leadId:v.id,leadColecao:v.colecaoOrigem,extraId:extra.id||'',token:'',saida:saidasProgramadasPorSlug[slug]||null};
       });
       const unicos=new Map(); [...mensalistasAtivos,...avulsosAtivos].forEach(v=>{ if(v.slug) unicos.set(v.slug,v); });
+
+      /* Clientes anteriores ao link oficial também precisam aparecer para
+         Amanda encerrar. A versão anterior limitava a Central aos cadastros
+         novos e, por isso, a maior parte da carteira ficava sem botão de
+         saída. A união abaixo é somente de leitura e usa o slug existente;
+         não cria cópias nem regrava clientes legados. */
+      const fontesLegadas=new Map();
+      CLIENTES_BASE.forEach(v=>fontesLegadas.set(v.slug,{nome:v.nome,slug:v.slug}));
+      Object.values(extrasPorId).forEach(v=>{ if(v.slug) fontesLegadas.set(v.slug,{...(fontesLegadas.get(v.slug)||{}),...v}); });
+      fontesLegadas.forEach((extra,slug)=>{
+        if(!slug||SLUGS_INTERNOS.includes(slug)||unicos.has(slug)||extra.excluido) return;
+        const cfg=configs[slug]||{}, ctr=contratos[slug]||{}, acesso=acessos[slug]||{}, onboarding=onboardingPorSlug[slug]||{};
+        if(clienteInativoEfetivo(cfg)||String(ctr.status||'ativo')==='encerrado'||saidaClienteJaEfetiva(ctr)) return;
+        const mensal=cfg.tipoCliente==='avulso'?false:(cfg.tipoCliente==='mensalista'||extra.casta==='mensalista'||!!acesso.token||Object.keys(ctr).length>1||CLIENTES_BASE.some(c=>c.slug===slug));
+        unicos.set(slug,{tipo:mensal?'mensalista':'avulso',origem:'legado',slug,nome:extra.nome||ctr.clienteNome||slug,
+          instagram:extra.instagram||'',telefone:extra.telefone||extra.whatsapp||'',aniversario:'',contatos:'',
+          plano:mensal?(ctr.plano||extra.plano||'Mensalista legado'):'Projeto avulso',planoDetalhes:ctr.planoDetalhes||extra.planoDetalhes||'',
+          valorMensal:Number(ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(ctr.diaVencimento||0),primeiraCompetencia:'',
+          tipoEntrega:cfg.tipoEntrega||(mensal?'postagem_completa':'entrega_direta'),incluiStories:stories[slug]?.ativo===true,
+          cortesiaPermanente:ctr.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:[],
+          observacoes:ctr.observacao||extra.observacoes||'',extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'',
+          token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null});
+      });
       const ativos=[...unicos.values()].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
       window.__entradaClientesAtivos=Object.fromEntries(ativos.map(v=>[v.slug,v]));
       const itemMensal=v=>`<div class="card" style="border-left:4px solid var(--yellow);">
@@ -15667,25 +15714,30 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <button class="btn red" style="width:auto;" onclick="abrirSaidaClienteCentral('${escJs(v.slug)}')">${v.saida?'Revisar saída':'Programar saída'}</button>
         </div>
       </div>`;
-      const doLinkArquivados=new Set([...mensalistasSnap.docs.map(d=>slugDo(d.data())),...avulsosEmpresaSnap.docs.map(d=>slugDo(d.data())),...avulsosPessoalSnap.docs.map(d=>slugDo(d.data()))]);
       const arquivadosDeOrigem=[
         ...mensalistasSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'cadastro mensalista'})),
         ...avulsosEmpresaSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'projeto avulso'})),
         ...avulsosPessoalSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'projeto pessoal'}))
       ].filter(v=>v.excluido || ['arquivado','finalizado','cancelado','recusado'].includes(String(v.statusGerencia||v.status||'')));
       const arquivoUnico=new Map();
-      [...encerrados.filter(v=>doLinkArquivados.has(slugDo(v))),...arquivadosDeOrigem].forEach(v=>{
+      [...encerrados,...arquivadosDeOrigem].forEach(v=>{
         const chave=slugDo(v)||('registro-'+v.id); const anterior=arquivoUnico.get(chave);
         if(!anterior || v.origemCentralEntrada) arquivoUnico.set(chave,v);
       });
       const arquivadosDoLink=[...arquivoUnico.values()].sort((a,b)=>String(b.dataSaida||b.arquivadoEm||b.dataFinalizacao||'').localeCompare(String(a.dataSaida||a.arquivadoEm||a.dataFinalizacao||'')));
+      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div></details>`; };
       box.innerHTML=`<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Central única de clientes</h2><div class="desc">O link é a porta de entrada. Aqui a gerência confere, ativa, abre o Portal, edita dados e arquiva sem apagar histórico.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="setCadastroSub('form',document.querySelectorAll('#view-cadastro .subtab')[1])">Abrir link para enviar</button></div>
+        <div class="card" id="centralSaidasClientes" style="border:2px solid var(--red);"><h2 style="margin-top:0;">Registrar saída de cliente</h2><div class="desc">Escolha qualquer cliente ativo, inclusive os antigos. Ele continua operando até a data definida; depois sai das listas e do Portal, enquanto todo o histórico fica no arquivo abaixo.</div><div class="row2" style="margin-top:12px;"><div class="field"><label>Cliente</label><select id="saidaRapidaCliente"><option value="">Selecione...</option>${ativos.map(v=>`<option value="${escAttr(v.slug)}">${esc(v.nome)} · ${v.tipo==='mensalista'?'mensalista':'avulso'}</option>`).join('')}</select></div><button class="btn red" style="align-self:end;" onclick="abrirSaidaRapidaCentral()">Programar saída</button></div></div>
         ${formularioEdicao}${formularioSaida}
         <h2 style="margin:24px 0 8px;">Mensalistas aguardando (${mensalistas.length})</h2>${mensalistas.length?mensalistas.map(itemMensal).join(''):'<div class="empty">Nenhum mensalista aguardando.</div>'}
         <h2 style="margin:24px 0 8px;">Solicitações avulsas (${avulsos.length})</h2>${avulsos.length?avulsos.map(itemAvulso).join(''):'<div class="empty">Nenhuma solicitação avulsa aguardando.</div>'}
         <h2 style="margin:28px 0 8px;">Clientes ativos vindos do link (${ativos.length})</h2>${ativos.length?ativos.map(itemAtivo).join(''):'<div class="empty">Nenhum cliente do link foi ativado ainda.</div>'}
-        <h2 style="margin:28px 0 8px;">Arquivados (${arquivadosDoLink.length})</h2>${arquivadosDoLink.length?arquivadosDoLink.map(v=>'<div class="item" style="cursor:default;"><div class="top"><div class="nome">'+esc(v.nome||v.clienteNome||v.slug||'Cliente')+'</div><span class="selo pendente">ARQUIVADO</span></div><div class="meta">'+esc(v.dataSaida||'')+(v.motivo?' · '+esc(v.motivo):'')+'</div></div>').join(''):'<div class="empty">Nenhum cadastro do link arquivado.</div>'}
+        <h2 style="margin:28px 0 8px;">Arquivo de clientes (${arquivadosDoLink.length})</h2>${arquivadosDoLink.length?arquivadosDoLink.map(htmlArquivado).join(''):'<div class="empty">Nenhum cliente arquivado.</div>'}
         <h2 style="margin:28px 0 8px;">Onboarding dos mensalistas ativos</h2>`;
+      if(window.__focoSaidaClientes){
+        window.__focoSaidaClientes=false;
+        setTimeout(()=>{ document.getElementById('centralSaidasClientes')?.scrollIntoView({behavior:'smooth',block:'start'}); document.getElementById('saidaRapidaCliente')?.focus(); },0);
+      }
       await carregarContadorEntradaClientes(true);
     }catch(e){ console.error('Falha na Central de Entrada:',e); box.innerHTML='<div class="empty">Não foi possível carregar as entradas. Atualize a página e tente novamente.</div>'; }
   };
@@ -15919,7 +15971,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const participaConteudoRecorrente = entrada.tipoEntrega==='postagem_completa';
       const fixasRefs = participaConteudoRecorrente ? demandasFixasSnap.docs.filter(d=>{ const v=d.data(); return !v.excluido && ['reuniao','calendario'].includes(v.tipoFuncaoFixa) && String(v.mesRef||'')===mesAtualCadastro && !['aprovada','cancelada'].includes(String(v.status||'')); }).map(d=>d.ref) : [];
       await runTransaction(db, async tx => {
-        const refs = [extraRef,cadastroRef,onboardingRef,configRef,acessoRef,portalTokenRef,contratoRef,mensalidadeRef,calendarioRef,storyRef,...encerradosRefs,...fixasRefs];
+        const refs = __validarReferenciasFirestore([extraRef,cadastroRef,onboardingRef,configRef,acessoRef,portalTokenRef,contratoRef,mensalidadeRef,calendarioRef,storyRef,...encerradosRefs,...fixasRefs],'a ativação do novo cliente');
         const snaps = await Promise.all(refs.map(ref=>tx.get(ref)));
         const [extraAtual,cadastroAtual,onboardingAtual,,acessoAtual,,contratoAtual,mensalidadeAtual,calendarioAtual,storyAtual] = snaps;
         const encerradosAtuais = snaps.slice(10,10+encerradosRefs.length);
@@ -17665,6 +17717,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
                     { id:'navAuditoriaPerfisChris', rot:'Auditar perfil da equipe', acao:"abrirAuditoriaPerfisChris()" }],
     'Amanda':      [{ rot:'Painel de controle',   acao:"irParaPainelDeControle()" },
                     { rot:'Clientes — entrada e saída', acao:"irParaCentralClientes()" },
+                    { rot:'Registrar saída de cliente', acao:"irParaSaidaClientes()" },
                     { id:'navCapsulaAmanda', rot:'Protocolo Cápsula', acao:"irParaCapsulaAmanda()" },
                     { rot:'Distribuir vídeos',     acao:"irParaDistribuirVideos()", contador:'distribuir' },
                     { rot:'Aprovar e enviar stories',  acao:"irParaStories('aprovar')" }]
@@ -17698,6 +17751,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!['Amanda','Chris'].includes(usuarioAtual)) return;
     const nav = document.getElementById('navCadastro');
     if(nav) irPara('cadastro', nav);
+  };
+
+  window.irParaSaidaClientes = function(){
+    if(!['Amanda','Chris'].includes(usuarioAtual)) return;
+    window.__focoSaidaClientes=true;
+    window.irParaCentralClientes();
+    setTimeout(()=>{
+      const alvo=document.getElementById('centralSaidasClientes');
+      if(alvo) alvo.scrollIntoView({behavior:'smooth',block:'start'});
+      const seletor=document.getElementById('saidaRapidaCliente');
+      if(seletor) seletor.focus();
+    },500);
   };
 
   function atualizarBannerAuditoriaChris(){

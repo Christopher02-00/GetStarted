@@ -102,6 +102,54 @@ function testarFinanceiroSandbox() {
   }
 }
 
+function testarMensalidadesSandbox() {
+  const fonte = trecho(escritorio, 'function statusMensalidadeCanonico', '  window.marcarMensalidade = async function');
+  const api = executarSandbox('mensalidades-sandbox.js',
+    `${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,ajusteCortesiaMensalidade,situacaoMensalidade};`);
+  exigir(api.statusMensalidadeCanonico({status:' ISENTO '}) === 'isento' &&
+    api.mensalidadeResolvida({status:'cortesia'}) === true,
+    'cortesia legada/normalizada voltou a ser tratada como cobrança');
+  exigir(api.mensalidadeResolvida({status:'pago'}) && api.mensalidadeResolvida({status:'cancelado'}) &&
+    !api.mensalidadeResolvida({status:'aberto'}),
+    'estado resolvido de mensalidade está inconsistente');
+  exigir(api.situacaoMensalidade({status:'isento'},'2026-08').k === 'isento' &&
+    api.situacaoMensalidade({status:'cancelado'},'2026-08').k === 'cancelado',
+    'grade voltou a transformar cortesia/cancelamento em atraso');
+
+  const abrir = {status:'aberto',competencia:'2026-08'};
+  const tornarCortesia = api.ajusteCortesiaMensalidade(abrir,'2026-08',false,['2026-08']);
+  exigir(tornarCortesia?.status === 'isento' && tornarCortesia.cortesiaDoMes === true,
+    'salvar contrato não sincroniza mensalidade já criada com o mês de cortesia');
+  const retirarContrato = api.ajusteCortesiaMensalidade(
+    {status:'isento',cortesiaDoMes:true,motivoIsencao:'cortesia combinada para este mês'},'2026-08',false,[]);
+  exigir(retirarContrato?.status === 'aberto',
+    'retirar cortesia do contrato não reabre a mensalidade criada por ele');
+  exigir(api.ajusteCortesiaMensalidade(
+    {status:'isento',cortesiaDoMes:false,motivoIsencao:'cortesia manual'},'2026-08',false,[]) === null,
+    'editar contrato sobrescreve uma cortesia manual legítima');
+  exigir(api.ajusteCortesiaMensalidade({status:'pago'},'2026-08',true,[]) === null,
+    'cortesia do contrato sobrescreve pagamento já confirmado');
+
+  const salvarContrato = trecho(escritorio, 'window.salvarContrato = async function', '  window.novoContrato');
+  exigir(salvarContrato.includes('const lote = writeBatch(db);') &&
+    salvarContrato.includes('ajusteCortesiaMensalidade') && salvarContrato.includes('await lote.commit()'),
+    'contrato e mensalidades voltaram a ser salvos em estados divergentes');
+  const acoes = trecho(escritorio, 'dias.forEach(dia => {', '    box.innerHTML = html;');
+  exigir(acoes.includes("l.sit.k==='isento' && !l.cortesiaPermanente") &&
+    acoes.includes('Retirar cortesia') && acoes.includes("!['pago','isento','cancelado'].includes(l.sit.k)"),
+    'cliente isento voltou a exibir o botão Recebi como se estivesse em aberto');
+  const risco = trecho(escritorio, 'async function renderRfv()', '  /* Salva enquanto ele digita');
+  exigir(risco.includes('!mensalidadeResolvida(v) && v.cliente'),
+    'RFV voltou a sinalizar cortesia como atraso financeiro');
+  const cobranca = trecho(escritorio, 'window.renderCobranca = async function', '  function atualizarBadgeCobranca');
+  exigir(cobranca.includes('if(mensalidadeResolvida(p)) return;'),
+    'régua de cobrança voltou a incluir mensalidade resolvida');
+  const painel = trecho(escritorio, 'window.renderFinanceiro = async function', '  window.renderMensalidades = async function');
+  exigir((painel.match(/!\['isento','cancelado'\]\.includes\(statusMensalidadeCanonico\(p\)\)/g)||[]).length >= 5 &&
+    painel.includes("doMes.filter(p => statusMensalidadeCanonico(p)==='isento')"),
+    'totais, movimento ou concentração do financeiro voltaram a cobrar cortesia/cancelamento');
+}
+
 function testarBadgesExtrasSandbox() {
   const fonte = trecho(escritorio, 'const extraLiberado =', 'function porMesDePagamentoDosExtras');
   const api = executarSandbox('extras-badges-sandbox.js',
@@ -614,6 +662,7 @@ function testarPermissoesAcoesSandbox() {
 try {
   await testarLoginSandbox();
   testarFinanceiroSandbox();
+  testarMensalidadesSandbox();
   testarBadgesExtrasSandbox();
   await testarOrcamentoLeiturasFirestoreSandbox();
   testarDatasOperacionaisSandbox();

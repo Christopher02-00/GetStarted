@@ -682,7 +682,10 @@ function testarPermissoesAcoesSandbox() {
     'saída agendada não está conectada ao motor e aos filtros operacionais');
   const centralClientes = trecho(escritorio, 'window.renderCentralEntradaClientes = async function', 'async function carregarMensalistaRecebidoNosCampos');
   exigir(centralClientes.includes('const fontesLegadas=new Map()') && centralClientes.includes('CLIENTES_BASE.forEach') &&
-    centralClientes.includes("cfg.tipoCliente==='avulso'?false") && centralClientes.includes('[...encerrados,...arquivadosDeOrigem]') && centralClientes.includes('id="centralSaidasClientes"') &&
+    centralClientes.includes("cfg.tipoCliente==='avulso'?false") && centralClientes.includes('const slugsArquivadosDeOrigem=new Set') &&
+    centralClientes.includes('slugsArquivadosDeOrigem.has(slug)') && centralClientes.includes('const slugsAtivosNaCentral=new Set') &&
+    centralClientes.includes('arquivadosDeOrigem.filter(v=>!slugsAtivosNaCentral.has(slugDo(v)))') &&
+    centralClientes.includes('const saidasProgramadas=') && centralClientes.includes('id="centralSaidasClientes"') &&
     centralClientes.includes('Portal:</b> dados preservados'),
     'Central da Amanda voltou a esconder clientes legados, saída rápida ou arquivo preservado');
   exigir(escritorio.includes("{ rot:'Registrar saída de cliente', acao:\"irParaSaidaClientes()\" }") &&

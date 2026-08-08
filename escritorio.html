@@ -619,6 +619,7 @@
     <div class="navgroup" id="navgroupDia">
       <div class="label" id="labelNavDia">Meu dia a dia</div>
       <div class="navitem" id="navMetas" onclick="irPara('metas', this)" style="background:var(--green);color:#fff;font-weight:800;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-star"/></svg></span> Metas da Equipe</div>
+      <div class="navitem" id="navAcompCampanhas" onclick="irPara('acompCampanhas', this)" style="background:var(--green);color:#fff;font-weight:800;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-bulb"/></svg></span> Campanhas<span class="navbadge" id="badgeCampanhasAcomp" style="display:none;"></span></div>
       <div class="navitem active" id="navInicio" onclick="irPara('inicio', this)"><span class="ico"><svg><use href="#i-home"/></svg></span> Início</div>
       <div class="navitem" id="navCentral" onclick="irPara('central', this)" style="background:var(--yellow);color:var(--graphite);font-weight:800;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-video"/></svg></span> Central de Vídeos<span class="navbadge" id="badgeCentralMenu" style="display:none;"></span></div>
       <!-- 27/07/2026 — a Gerência ficava lá embaixo, depois de Vendas, e o
@@ -1002,6 +1003,11 @@
     </div>
 
     <!-- CAMPANHAS -->
+    <div class="view" id="view-acompCampanhas">
+      <h1>Campanhas — <span class="y">acompanhamento</span></h1>
+      <div class="sub">O que a Gabi escreveu nos calendários, num lugar só.</div>
+      <div id="acompCampanhasBox"></div>
+    </div>
     <div class="view" id="view-campanhas">
       <h1>Quadro de <span class="y">Campanhas</span></h1>
       <div class="sub">Gabi cria e planeja, Amanda acompanha e gerencia.</div>
@@ -10510,6 +10516,114 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     {chave:'finalizada', label:'Finalizada'}
   ];
 
+  /* ============ ACOMPANHAMENTO DE CAMPANHAS — 08/08/2026 ============
+     A Gabi escreve as campanhas DENTRO do calendario e nao existia ponte ate
+     o quadro. Varri os 24 calendarios: 8 campanhas de Dia dos Pais; o quadro
+     tinha 1. Foi assim que a da Cookiery se perdeu.
+     Esta tela e uma JANELA: nao cria registro, e o calendario continua
+     identico — o videomaker segue vendo tudo, inclusive o marcado como feito.
+     A unica escrita e uma marca ADITIVA no item (campResolvida), lida so aqui. */
+  const PALAVRAS_CAMPANHA = ['campanha','dia dos pais','dia das maes','dia das mães',
+    'dia das criancas','dia das crianças','black friday','natal','pascoa','páscoa',
+    'namorados','dia da mulher','setembro amarelo','outubro rosa','novembro azul'];
+  window.detectarCampanhas = function(calendarios){
+    const r = [];
+    (calendarios||[]).forEach(cal => (cal.items||[]).forEach((it, idx) => {
+      if(it.excluido) return;
+      const txt = [it.name, it.desc, it.obs].filter(Boolean).join(' ').toLowerCase();
+      const bateu = PALAVRAS_CAMPANHA.find(p => txt.indexOf(p) >= 0);
+      if(!bateu) return;
+      r.push({ slug: cal.id, cliente: cal.client || cal.id, mes: cal.month || '',
+        dia: it.day || null, titulo: it.name || '(sem título)',
+        descricao: (it.desc || it.obs || ''), formato: it.fmt || '', motivo: bateu,
+        gravado: !!it.gravado, agendado: !!it.agendado, postado: !!it.posted,
+        resolvida: !!it.campResolvida, resolvidaPor: it.campResolvidaPor || '', idx });
+    }));
+    return r;
+  };
+  window.campanhaPendente = function(c){ return !c.postado && !c.agendado && !c.resolvida; };
+  window.marcarCampanha = async function(slug, idx, feito){
+    if(!['Cecília','Amanda','Chris'].includes(usuarioAtual)){
+      mostrarToast('Quem marca campanha é a Cecília ou a Amanda.', 'erro'); return;
+    }
+    try{
+      const ref = doc(db,'calendarios', slug);
+      const snap = await getDoc(ref);
+      if(!snap.exists()){ mostrarToast('Calendário não encontrado.', 'erro'); return; }
+      const itens = (snap.data().items||[]).slice();
+      if(!itens[idx]){ mostrarToast('Item não encontrado.', 'erro'); return; }
+      itens[idx] = Object.assign({}, itens[idx], {
+        campResolvida: !!feito,
+        campResolvidaPor: feito ? (usuarioAtual||'') : '',
+        campResolvidaEm: feito ? new Date().toISOString() : ''
+      });
+      await updateDoc(ref, { items: itens });
+      mostrarToast(feito ? 'Marcada como feita.' : 'Voltou pra fila.');
+      try{ renderAcompCampanhas(); }catch(e){}
+    }catch(e){ mostrarToast('Não consegui salvar: ' + e.message, 'erro'); }
+  };
+  window.renderAcompCampanhas = async function(){
+    const box = document.getElementById('acompCampanhasBox');
+    if(!box) return;
+    box.innerHTML = '<div class="card"><div class="desc">Lendo os calendários…</div></div>';
+    let cals = [];
+    try{ const snap = await obterCalendariosCompartilhados();
+         snap.forEach(d => cals.push({ id:d.id, ...d.data() })); }
+    catch(e){ box.innerHTML = '<div class="card"><div class="empty">Não consegui ler os calendários agora.</div></div>'; return; }
+    const todas = detectarCampanhas(cals);
+    const pend = todas.filter(campanhaPendente);
+    const feitas = todas.filter(c => !campanhaPendente(c));
+    const podeMarcar = ['Cecília','Amanda','Chris'].includes(usuarioAtual);
+    const mesAtual = new Date().toISOString().slice(0,7);
+    const ordena = a => a.slice().sort((x,y) => (x.mes+String(x.dia).padStart(2,'0')) < (y.mes+String(y.dia).padStart(2,'0')) ? -1 : 1);
+    const cartao = (n, rot, cor) => '<div class="resumoCard ' + (n?cor:'green') + '"><div class="num">' + n + '</div><div class="lbl">' + rot + '</div></div>';
+    const rotMes = m => { if(!m) return ''; const [a,x]=String(m).split('-');
+      const ns=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+      return x? (ns[Number(x)-1]||m)+' '+a : m; };
+    const item = (c, resolvida) => {
+      const atrasada = !resolvida && c.mes && c.mes < mesAtual;
+      return '<div class="item" style="' + (atrasada?'border-left:3px solid var(--red);':'') + '">'
+        + '<div class="top"><div class="nome">' + esc(c.titulo) + '</div>'
+        + '<span class="selo ' + (resolvida?'ok':'pendente') + '">' + (c.dia? 'dia '+c.dia : 'sem dia') + '</span></div>'
+        + '<div class="meta" style="margin-top:3px;"><b>' + esc(c.cliente) + '</b> · ' + esc(rotMes(c.mes))
+        + (c.formato? ' · ' + esc(c.formato) : '')
+        + (c.gravado? ' · 🎥 gravado' : '') + (c.agendado? ' · 📅 agendado' : '') + (c.postado? ' · ✅ postado' : '')
+        + (c.resolvidaPor? ' · marcada por ' + esc(c.resolvidaPor) : '') + '</div>'
+        + (c.descricao? '<div class="meta" style="margin-top:5px;white-space:pre-wrap;opacity:.85;">' + esc(String(c.descricao).slice(0,300)) + (String(c.descricao).length>300?'…':'') + '</div>' : '')
+        + (podeMarcar? '<button class="btn ' + (resolvida?'secondary':'green') + '" style="width:auto;padding:6px 14px;font-size:11px;margin-top:8px;" onclick="marcarCampanha(\'' + escJs(c.slug) + '\',' + c.idx + ',' + (resolvida?'false':'true') + ')">' + (resolvida?'↩ Voltar pra fila':'✓ Já foi feito') + '</button>' : '')
+        + '</div>';
+    };
+    let h = '<div class="card">'
+      + '<h2>📣 Campanhas — acompanhamento</h2>'
+      + '<div class="desc">Tudo que a <b>Gabi</b> escreveu como campanha dentro dos calendários dos clientes aparece aqui. '
+      + 'Ela continua trabalhando no calendário do mesmo jeito — esta tela só mostra. '
+      + '<b>Nada some do calendário do cliente</b>, mesmo marcado como feito.</div>'
+      + '<div class="painelResumo" style="margin-top:10px;">'
+      + cartao(pend.length, 'esperando a Cecília', 'red')
+      + cartao(feitas.length, 'já resolvidas', 'green')
+      + cartao(todas.length, 'campanhas encontradas', 'yellow')
+      + '</div></div>';
+    if(pend.length){
+      h += '<div class="card" style="border:2px solid var(--red);margin-top:14px;">'
+        + '<h2>🔴 Ainda esperando (' + pend.length + ')</h2>'
+        + '<div class="desc">Some daqui sozinha quando o post for agendado ou publicado — ou quando você marcar como feita.</div>'
+        + ordena(pend).map(c => item(c,false)).join('') + '</div>';
+    } else {
+      h += '<div class="card" style="border-color:var(--green);margin-top:14px;"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhuma campanha esperando.</div></div>';
+    }
+    if(feitas.length){
+      h += '<div class="faixaDem" data-faixa="campFeitas" style="margin-top:14px;">'
+        + '<div class="faixaHead" onclick="toggleFaixaDemandas(this)">✅ Já resolvidas <span class="qtd">(' + feitas.length + ')</span><span class="seta">▾</span></div>'
+        + '<div class="faixaItens">' + ordena(feitas).map(c => item(c,true)).join('') + '</div></div>';
+    }
+    box.innerHTML = h;
+    try{ atualizarBadgeCampanhas(pend.length); }catch(e){}
+  };
+  window.atualizarBadgeCampanhas = function(n){
+    const el = document.getElementById('badgeCampanhasAcomp');
+    if(!el) return;
+    el.textContent = n; el.style.display = n ? 'inline-flex' : 'none';
+  };
   async function renderCampanhasKanban(){
     /* 08/08/2026 — Amanda e Cecilia so visualizam. Esconder o controle nao
        e a protecao (a trava esta nas funcoes): e pra tela nao oferecer uma
@@ -15285,6 +15399,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       mostrarToast('Essa área é da gerência.', 'erro');
       return;
     }
+    if(nome === 'acompCampanhas'){ try{ renderAcompCampanhas(); }catch(e){ console.error('Campanhas:', e); } }
     if(nome === 'metas'){ try{ renderFuncionarioMesPainel('metasBox'); }catch(e){ console.error('Metas:', e); } }
     if(nome === 'central') renderCentral();
     if(nome === 'cadastro') setCadastroSub('central', document.querySelector('#view-cadastro .subtab'));
@@ -17635,9 +17750,9 @@ window.setGerenciaSub = function(qual, el){
        de fora da lista e perdeu o acesso por completo: o botão de criar
        story pro cliente simplesmente sumiu pra ela. Ela é a Social Media
        chefe — é a dona natural disso. */
-    'Amanda': ['navMetas','navExtras','navRoteiros','navCentral','navAprovacoes','navChecklist','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
-    'Cecília': ['navCampanhas','navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem'],
-    'Gabrielle': ['navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
+    'Amanda': ['navAcompCampanhas','navMetas','navExtras','navRoteiros','navCentral','navAprovacoes','navChecklist','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navCampanhas','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
+    'Cecília': ['navAcompCampanhas','navCampanhas','navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem'],
+    'Gabrielle': ['navAcompCampanhas','navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCampanhas','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'João Victor': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'Nathan': ['navVideos','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
@@ -17645,6 +17760,7 @@ window.setGerenciaSub = function(qual, el){
     'Yas': ['navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
   };
   const ITENS_CONTROLADOS = [
+    'navAcompCampanhas',
     'navMetas',
     /* 04/08/2026 — A GABI ESTAVA VENDO A CENTRAL.
        Tirar o item do mapa de permissao NAO esconde nada: quem esconde

@@ -13658,25 +13658,75 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      clientes já têm etapa registrada, quantos têm melhoria registrada, e
      quantos ainda não têm nada — pra ficar claro o que é realmente vazio
      (uso) vs o que é bug. */
+  async /* ===== 07/08/2026 — O ACOMPANHAMENTO NAO DIZIA NADA =====
+     O Chris: "nem entendi ela, precisa saber de onde vem e o que aponta".
+     Ele estava certo, e o defeito nao era falta de dado — era o dado errado.
+     A tela contava 27 com etapa / 8 com melhoria / 4 sem nada. Tres numeros
+     que nao pedem nada de ninguem.
+     O campo `atualizadoEm` JA era gravado em toda atualizacao e a visao geral
+     simplesmente ignorava. E ele e o que importa: isto aparece no portal do
+     cliente em tempo real. Registro parado ha tres meses nao e ausencia de
+     informacao — e informacao ERRADA, e pior, com cara de atual.
+     Agora a tela responde: quantos clientes estao mostrando processo velho,
+     quem sao, ha quanto tempo, e de onde sai cada numero. */
   async function renderAcompanhamentoVisaoGeral(){
     const cont = document.getElementById('acompVisaoGeral');
     if(!cont) return;
     await carregarClientesExtras();
     const snap = await getDocs(collection(db,'processos_cliente'));
     const dados = {}; snap.forEach(d => dados[d.id] = d.data());
-    const slugsEntregaDireta = await obterSlugsEntregaDireta();
-    const comEtapa = CLIENTES_LISTA.filter(c => dados[c.slug]?.etapaAtual);
-    const comMelhoria = CLIENTES_LISTA.filter(c => (dados[c.slug]?.melhorias||[]).length);
-    const semNada = CLIENTES_LISTA.filter(c => !dados[c.slug]?.etapaAtual && !(dados[c.slug]?.melhorias||[]).length);
-    cont.innerHTML = `<div class="card">
-      <h2>📊 Visão geral</h2>
-      <div class="painelResumo" style="margin-top:8px;">
-        <div class="resumoCard green"><div class="num">${comEtapa.length}</div><div class="lbl">com etapa registrada</div></div>
-        <div class="resumoCard yellow"><div class="num">${comMelhoria.length}</div><div class="lbl">com melhoria registrada</div></div>
-        <div class="resumoCard"><div class="num">${semNada.length}</div><div class="lbl">ainda sem nenhum registro</div></div>
-      </div>
-      <div class="desc" style="margin-top:10px;">${semNada.length === CLIENTES_LISTA.length ? 'Nenhum cliente foi registrado ainda — normal se a equipe ainda não começou a usar essa aba no dia a dia.' : 'Clica em um cliente abaixo pra ver ou atualizar o processo dele.'}</div>
-    </div>`;
+    const LIMITE = 30;
+    const diasDesde = v => {
+      if(!v) return null;
+      let ms = null;
+      if(typeof v === 'object' && v.seconds) ms = v.seconds * 1000;
+      else if(typeof v === 'object' && typeof v.toDate === 'function') ms = v.toDate().getTime();
+      else { const p = Date.parse(v); if(!isNaN(p)) ms = p; }
+      return ms === null ? null : Math.floor((Date.now() - ms) / 86400000);
+    };
+    const fichas = CLIENTES_LISTA.map(c => {
+      const r = dados[c.slug] || {};
+      const melhorias = (r.melhorias || []).length;
+      return { nome: c.nome, slug: c.slug, etapa: r.etapaAtual || '', melhorias,
+               tem: !!r.etapaAtual || melhorias > 0, dias: diasDesde(r.atualizadoEm) };
+    });
+    const nunca  = fichas.filter(f => !f.tem);
+    const velhos = fichas.filter(f => f.tem && (f.dias === null || f.dias > LIMITE))
+                         .sort((a,b) => (b.dias||9999) - (a.dias||9999));
+    const emDia  = fichas.filter(f => f.tem && f.dias !== null && f.dias <= LIMITE);
+    const cartao = (n, rot, cor) => '<div class="resumoCard ' + (n ? cor : 'green') + '">'
+      + '<div class="num">' + n + '</div><div class="lbl">' + rot + '</div></div>';
+    let h = '<div class="card">'
+      + '<h2>📊 Visão geral</h2>'
+      + '<div class="desc">Cada cliente abaixo <b>vê o próprio processo no portal dele</b>, em tempo real. '
+      + 'Os números saem da coleção <code>processos_cliente</code>, atualizada por quem registra etapa ou melhoria (Cecília e Gabi).</div>'
+      + '<div class="painelResumo" style="margin-top:10px;">'
+      + cartao(velhos.length, 'mostrando processo <b>parado há mais de ' + LIMITE + ' dias</b>', 'red')
+      + cartao(emDia.length,  'em dia (mexido nos últimos ' + LIMITE + ' dias)', 'green')
+      + cartao(nunca.length,  'nunca preenchidos — o cliente não vê nada', 'yellow')
+      + cartao(fichas.length, 'clientes no total', 'yellow')
+      + '</div>';
+    if(velhos.length){
+      h += '<div style="margin-top:14px;"><div style="font-size:12.5px;font-weight:800;margin-bottom:6px;">'
+        + '🔴 Estão mostrando informação velha pro cliente</div>'
+        + velhos.map(f => '<div class="item"><div class="top"><div class="nome">' + esc(f.nome) + '</div>'
+            + '<span class="selo pendente">' + (f.dias === null ? 'sem data' : f.dias + ' dias') + '</span></div>'
+            + '<div class="meta" style="margin-top:3px;">'
+            + (f.etapa ? 'etapa: ' + esc(f.etapa) : 'sem etapa')
+            + (f.melhorias ? ' · ' + f.melhorias + ' melhoria(s)' : '')
+            + '</div></div>').join('')
+        + '</div>';
+    }
+    if(nunca.length && nunca.length < fichas.length){
+      h += '<div style="margin-top:14px;"><div style="font-size:12.5px;font-weight:800;margin-bottom:6px;">'
+        + '⚪ Nunca preenchidos</div><div class="meta">' + nunca.map(f => esc(f.nome)).join(' · ') + '</div></div>';
+    }
+    h += '<div class="desc" style="margin-top:14px;">'
+      + (nunca.length === fichas.length
+          ? 'Nenhum cliente foi registrado ainda — normal se a equipe ainda não começou a usar esta aba.'
+          : 'Escolhe um cliente abaixo pra ver ou atualizar o processo dele. <b>O que estiver em vermelho é o que o cliente está lendo agora</b>, e não corresponde mais à realidade.')
+      + '</div></div>';
+    cont.innerHTML = h;
   }
 
   function popularClientesAcomp(){

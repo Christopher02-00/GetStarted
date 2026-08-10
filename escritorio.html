@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-10-cofre-cecilia-saidas-financeiras-v50">
+<meta name="gs-build" content="2026-08-10-calendarios-roteiros-stories-v51">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -15508,11 +15508,35 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let totalDias = 0, totalFeitos = 0;
     const blocos = [];
 
-    for(const c of clientes){
-      const slug = c.clienteNome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-');
-      const docId = slug + '_' + semanaChave;
-      const execSnap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
-      const diasFeitos = execSnap.exists() ? (execSnap.data().dias || {}) : {};
+    /* A tela fazia uma leitura por cliente, uma depois da outra. Em rede
+       móvel, o bloco de check podia ficar vários segundos só em
+       "Carregando" e parecia que a opção não existia. O documento de cada
+       cliente continua isolado, mas as leituras independentes são feitas
+       em paralelo e usam o slug estável do cadastro — trocar o nome visível
+       não cria outra semana nem faz um check já salvo desaparecer. */
+    let execucoes;
+    try{
+      execucoes = await Promise.all(clientes.map(async c => {
+        const slugEstavel = String(c.id || c.slug || c.clienteNome || '')
+          .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+          .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+        const docId = slugEstavel + '_' + semanaChave;
+        const execSnap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
+        return { c, docId, execucao: execSnap.exists() ? execSnap.data() : {} };
+      }));
+    }catch(e){
+      console.error('Falha ao ler os checks de Stories:', e);
+      box.innerHTML = `<div class="card" style="border:2px solid var(--red);">
+        <h2>📖 Stories Diários da Semana</h2>
+        <div class="desc" style="color:var(--red);"><b>Não consegui confirmar os checks agora.</b> Nenhum dia foi apagado nem considerado pendente.</div>
+        <button class="btn secondary" style="margin-top:10px;" onclick="abrirChecklist()">Tentar carregar novamente</button>
+      </div>`;
+      return;
+    }
+
+    for(const {c, docId, execucao} of execucoes){
+      const diasFeitos = execucao.dias || {};
+      const detalhes = execucao.detalhes || {};
       const feitosCount = c.dias.filter(d => diasFeitos[d]).length;
       const todosFeitos = feitosCount === c.dias.length;
       totalDias += c.dias.length;
@@ -15532,9 +15556,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           ${c.dias.map(dia => {
             const feito = !!diasFeitos[dia];
             const ehHoje = dia === diaHojeChave;
-            return `<button type="button" onclick="toggleStoryDiario('${docId}','${dia}', ${!feito})"
-              style="display:flex;align-items:center;gap:5px;background:${feito?'#1e3428':'var(--deep)'};border:2px solid ${feito?'#4caf72':ehHoje?'var(--yellow)':'var(--line)'};border-radius:8px;padding:7px 12px;cursor:pointer;font-size:11.5px;font-weight:${ehHoje?'800':'500'};color:${feito?'#7fd99f':'#fff'};">
-              ${feito?'✓':ehHoje?'👉':''} ${DIAS_SEMANA_LABEL[dia]}${ehHoje?' (hoje)':''}
+            const verificado = detalhes[dia]?.feito && detalhes[dia]?.por
+              ? ' · verificado por ' + detalhes[dia].por : feito ? ' · verificado' : '';
+            return `<button type="button" data-story-check="${docId}:${dia}" aria-pressed="${feito?'true':'false'}" onclick="toggleStoryDiario('${docId}','${dia}', ${!feito}, this)"
+              style="display:flex;align-items:center;gap:7px;background:${feito?'#1e3428':'var(--deep)'};border:2px solid ${feito?'#4caf72':ehHoje?'var(--yellow)':'var(--line)'};border-radius:8px;padding:9px 13px;cursor:pointer;font-size:11.5px;font-weight:${ehHoje?'800':'600'};color:${feito?'#7fd99f':'#fff'};">
+              <span style="font-size:16px;line-height:1;">${feito?'☑':'☐'}</span>
+              <span>${ehHoje&&!feito?'👉 ':''}${DIAS_SEMANA_LABEL[dia]}${ehHoje?' (hoje)':''}<small style="display:block;font-size:9px;opacity:.72;margin-top:2px;">${feito?verificado.replace(/^ · /,''):'clique para marcar'}</small></span>
             </button>`;
           }).join('')}
         </div>
@@ -15554,13 +15581,34 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     box.innerHTML = html;
   }
 
-  window.toggleStoryDiario = async function(docId, dia, valor){
-    const snap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
-    const diasAtuais = snap.exists() ? (snap.data().dias || {}) : {};
-    diasAtuais[dia] = valor;
-    await setDoc(doc(db,'stories_diarios_execucoes', docId), { dias: diasAtuais, atualizadoEm: serverTimestamp() }, { merge: true });
-    mostrarToast(valor ? 'Marcado!' : 'Desmarcado.');
-    renderStoriesDiarios();
+  window.toggleStoryDiario = async function(docId, dia, valor, btn){
+    if(usuarioAtual !== 'Gabrielle'){
+      mostrarToast('Somente a Gabi confirma a execução diária dos Stories.', 'erro');
+      return false;
+    }
+    if(btn?.disabled) return false;
+    if(btn) btn.disabled = true;
+    try{
+      const snap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
+      const atual = snap.exists() ? snap.data() : {};
+      const diasAtuais = { ...(atual.dias || {}), [dia]: valor };
+      const detalhes = { ...(atual.detalhes || {}) };
+      detalhes[dia] = valor
+        ? { feito:true, por:'Gabrielle', em:new Date().toISOString() }
+        : { feito:false, por:'Gabrielle', em:new Date().toISOString() };
+      await setDoc(doc(db,'stories_diarios_execucoes', docId), {
+        dias: diasAtuais, detalhes,
+        atualizadoPor:'Gabrielle', atualizadoEm: serverTimestamp()
+      }, { merge: true });
+      mostrarToast(valor ? '☑ Story verificado e salvo!' : 'Check do Story retirado.');
+      await renderStoriesDiarios();
+      return true;
+    }catch(e){
+      console.error('Falha ao confirmar Story diário:', e);
+      mostrarToast('Não consegui salvar o check do Story' + (e?.code ? ' ('+e.code+')' : '') + '. Nada foi marcado.', 'erro');
+      if(btn) btn.disabled = false;
+      return false;
+    }
   };
 
   // ===== BIT — CENTRAL DE DUVIDAS (banco de perguntas, nao IA real) =====
@@ -23361,6 +23409,17 @@ window.setGerenciaSub = function(qual, el){
   }
   window.estadoDoCalendario = estadoDoCalendario;
 
+  function progressoEditorialCalendario(itens){
+    const lista = Array.isArray(itens) ? itens : [];
+    const preenchido = valor => String(valor == null ? '' : valor).trim().length > 0;
+    return {
+      total: lista.length,
+      roteiros: lista.filter(i => preenchido(i?.desc)).length,
+      legendas: lista.filter(i => preenchido(i?.legenda)).length,
+      referencias: lista.filter(i => preenchido(i?.ref)).length
+    };
+  }
+
   const MESES_CAL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
   let __calAbertoSlug = null;
 
@@ -23467,18 +23526,29 @@ window.setGerenciaSub = function(qual, el){
 
     const linhas = alvo.map(c => {
       const cal = cals[c.slug] || {};
-      const itens = cal.items || [];
-      return { ...c, mes: cal.month || '', total: itens.length,
+      const meses = mesesDeCalendario(cal);
+      const mesAtual = meses.length ? meses[meses.length-1] : '';
+      const itens = mesAtual ? itensDoMesCalendario(cal, mesAtual) : (cal.items || []);
+      const progressoEditorial = progressoEditorialCalendario(itens);
+      const aprovacaoMes = mesAtual ? ((cal.aprovacaoMeses||{})[mesAtual]||{}) : {};
+      return { ...c, mes: mesAtual || cal.month || '', total: itens.length,
         gravados: itens.filter(i=>i.gravado).length,
         postados: itens.filter(i=>i.posted).length,
         aprovados: itens.filter(i=>i.apr).length,
         comDataPost: itens.filter(i=>i.dataPostagem).length,
-        estado: estadoDoCalendario(cal), legado: ehCalendarioLegado(cal), itens };
+        ...progressoEditorial,
+        estado: mesAtual ? estadoMesCal(cal, mesAtual) : estadoDoCalendario(cal),
+        legado: !(aprovacaoMes.status || cal.aprovacaoInterna?.status), itens };
     });
 
     const prontos = linhas.filter(l => l.estado === 'liberado').length;
     const emMontagem = linhas.filter(l => l.total && l.estado !== 'liberado').length;
     const vazios = linhas.filter(l => !l.total).length;
+
+    const podeAcompanharRoteiros = ['Amanda','Gabrielle'].includes(usuarioAtual);
+    const totalRoteiros = linhas.reduce((s,l)=>s+l.total,0);
+    const roteirosProntos = linhas.reduce((s,l)=>s+l.roteiros,0);
+    const roteirosFaltando = Math.max(0, totalRoteiros-roteirosProntos);
 
     window.__calSufixo = sufixo || '';
     box.innerHTML = `<div class="painelResumo" style="margin-bottom:16px;">
@@ -23486,6 +23556,15 @@ window.setGerenciaSub = function(qual, el){
       <div class="resumoCard ${emMontagem?'yellow':''}"><div class="num">${emMontagem}</div><div class="lbl">📝 em montagem</div></div>
       <div class="resumoCard ${vazios?'red':'green'}"><div class="num">${vazios}</div><div class="lbl">⚠️ sem calendário</div></div>
     </div>
+    ${podeAcompanharRoteiros ? `<div class="card" data-calendarios-progresso-editorial="true" style="border:2px solid var(--yellow);">
+      <h2>🧭 Acompanhamento de roteiros em tempo real</h2>
+      <div class="desc">Mesma fonte usada para montar e aprovar o calendário. Cada alteração salva pela Gabi atualiza este painel para ela e para a Amanda.</div>
+      <div class="painelResumo" style="margin-top:12px;">
+        <div class="resumoCard green"><div class="num">${roteirosProntos}</div><div class="lbl">roteiros preenchidos</div></div>
+        <div class="resumoCard ${roteirosFaltando?'red':'green'}"><div class="num">${roteirosFaltando}</div><div class="lbl">roteiros ainda faltando</div></div>
+        <div class="resumoCard"><div class="num">${totalRoteiros}</div><div class="lbl">conteúdos do mês atual</div></div>
+      </div>
+    </div>` : ''}
     <div class="card">
       <div class="metaSecTit">Clientes — clica pra ver o mês inteiro</div>
       <div class="desc" style="margin-bottom:12px;">Quem está sem calendário aparece primeiro: é o que trava o mês.</div>
@@ -23507,7 +23586,12 @@ window.setGerenciaSub = function(qual, el){
               <div class="nome" style="font-size:14.5px;">${esc(l.nome)}</div>
               <span class="meta" style="color:${cor};font-weight:800;white-space:nowrap;">${l.total ? l.postados + '/' + l.total + ' publicado' : 'vazio'}</span>
             </div>
-            <div class="meta" style="margin-top:5px;">${estadoTxt}${l.total ? ' · ' + l.gravados + ' gravado(s)' + (l.comDataPost ? ' · ' + l.comDataPost + ' com dia fechado' : '') : ''}</div>
+            <div class="meta" style="margin-top:5px;">${l.mes ? esc(l.mes)+' · ' : ''}${estadoTxt}${l.total ? ' · ' + l.gravados + ' gravado(s)' + (l.comDataPost ? ' · ' + l.comDataPost + ' com dia fechado' : '') : ''}</div>
+            ${podeAcompanharRoteiros && l.total ? `<div data-calendario-progresso-cliente="${escAttr(l.slug)}" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:10px;">
+              <div style="background:var(--deep);border-radius:8px;padding:8px;"><b style="color:${l.roteiros===l.total?'var(--green)':'var(--yellow)'};">${l.roteiros}/${l.total}</b><span class="meta" style="display:block;margin-top:2px;">roteiros</span></div>
+              <div style="background:var(--deep);border-radius:8px;padding:8px;"><b>${l.legendas}/${l.total}</b><span class="meta" style="display:block;margin-top:2px;">legendas</span></div>
+              <div style="background:var(--deep);border-radius:8px;padding:8px;"><b>${l.referencias}/${l.total}</b><span class="meta" style="display:block;margin-top:2px;">referências</span></div>
+            </div>` : ''}
             ${l.total ? `<div style="height:6px;background:var(--deep);border-radius:4px;overflow:hidden;margin-top:9px;">
               <div style="height:100%;width:${pct}%;background:${cor};"></div></div>` : ''}
           </div>`;
@@ -26123,7 +26207,7 @@ window.setGerenciaSub = function(qual, el){
     /* Filmmaker não assina mais os 21 calendários ao entrar. O modo campo
        mostra os clientes pela carteira e abre só o documento escolhido,
        mantendo atualização ao vivo sem cobrar a coleção inteira. */
-    if(['Chris','Amanda','Cecília'].includes(pessoaDoOuvinte)){
+    if(['Chris','Amanda','Gabrielle','Cecília'].includes(pessoaDoOuvinte)){
       __ouvintesTempoReal.push(onSnapshot(collection(db,'calendarios'), (snap)=>{
         if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
         __alimentarCacheTempoReal('calendarios',snap);
@@ -26171,6 +26255,11 @@ window.setGerenciaSub = function(qual, el){
       if(colecao === 'agendamentos') renderCalendarioVisualHome();
     }
     if(colecao === 'calendarios'){
+      if(viewAtiva === 'calendarios' &&
+         ['Amanda','Gabrielle'].includes(usuarioAtual) &&
+         document.getElementById('calSubVisao')?.offsetParent !== null){
+        renderVisaoCalendarios('2');
+      }
       if(viewAtiva === 'agendamento' && document.getElementById('agendamentoControleGravacoes')?.offsetParent !== null){
         renderControleGravacoes();
       }

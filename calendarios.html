@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-<meta name="gs-build" content="2026-08-05-auditoria-operacional-v22">
+<meta name="gs-build" content="2026-08-10-reabrir-antes-envio-v49">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1589,14 +1589,19 @@ function estadoAprovacao(){ return estadoDoMes(mesVisivel); }
 function edicaoBloqueadaPorRevisao(){
   if(window.__modoCal !== 'equipe') return false;
   const st = estadoAprovacao();
-  return st === 'aguardando_interna' || st === 'aprovado_interno';
+  /* A Gabi pode reabrir uma aprovação interna enquanto a Amanda ainda
+     não enviou o mês. Depois de `liberado`, o cliente já está vendo:
+     nenhuma edição silenciosa pode mudar aquilo que ele recebeu. */
+  return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado';
 }
 function exigirRetiradaAntesDeEditar(){
   if(!edicaoBloqueadaPorRevisao()) return false;
-  const aprovado = estadoAprovacao() === 'aprovado_interno';
-  avisarTela(aprovado
-    ? 'Este mês já foi aprovado pela Amanda. Para alterar, use “Retirar da aprovação e voltar a editar”. A aprovação anterior será cancelada.'
-    : 'A Amanda está revisando este mês. Para alterar, use “Retirar da aprovação e voltar a editar”.', 'erro');
+  const st = estadoAprovacao();
+  avisarTela(st === 'liberado'
+    ? 'Este mês já foi enviado ao cliente e está fechado para edição. Se o cliente pedir mudança, registre o ajuste para ele voltar formalmente à Gabi.'
+    : st === 'aprovado_interno'
+      ? 'A Amanda aprovou, mas o cliente ainda não recebeu. Use “Reabrir para melhorar antes de enviar”; a aprovação será cancelada e, depois da edição, o mês volta para a Amanda.'
+      : 'A Amanda está revisando este mês. Para alterar, retire da revisão e volte a editar.', 'erro');
   return true;
 }
 function atualizarTravaVisualDoMes(){
@@ -1643,8 +1648,10 @@ function renderAprovacaoInterna(){
     ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
     ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">Enviar pra aprovação interna →</button>' : ''}
     ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição e o cliente ainda não vê.</div>' : ''}
-    ${ehEquipe && st === 'aprovado_interno' ? '<div style="margin-top:6px;opacity:.75;">A Amanda já aprovou. O mês está travado e guardado para o envio ao cliente.</div>' : ''}
-    ${ehEquipe && (st === 'aguardando_interna' || st === 'aprovado_interno') ? '<button class="btn btn-o" style="margin-top:10px;padding:10px 16px;border-color:#e0c56a;color:#ffe9a8;" onclick="retirarDaAprovacaoInterna(this)">↩️ Retirar da aprovação e voltar a editar</button>' : ''}`;
+    ${ehEquipe && st === 'aprovado_interno' ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente ainda não recebeu.</b> A Gabi pode reabrir para melhorar; depois precisa enviar novamente para a Amanda aprovar.</div>' : ''}
+    ${ehEquipe && st === 'liberado' ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente já recebeu este mês.</b> A edição fica fechada para não mudar silenciosamente o que foi enviado.</div>' : ''}
+    ${ehEquipe && st === 'aguardando_interna' ? '<button class="btn btn-o" style="margin-top:10px;padding:10px 16px;border-color:#e0c56a;color:#ffe9a8;" onclick="retirarDaAprovacaoInterna(this)">↩️ Retirar da revisão e voltar a editar</button>' : ''}
+    ${ehEquipe && st === 'aprovado_interno' ? '<button class="btn btn-o" style="margin-top:10px;padding:10px 16px;border-color:#7fd99f;color:#bff5d0;" onclick="retirarDaAprovacaoInterna(this)">✏️ Reabrir para melhorar antes de enviar ao cliente</button>' : ''}`;
 }
 
 window.enviarParaAprovacaoInterna = async function(btn){
@@ -1702,14 +1709,19 @@ window.enviarParaAprovacaoInterna = async function(btn){
   }
 };
 
-/* ===== RETIRAR DA APROVAÇÃO — 04/08/2026 ===========================
+/* ===== REABRIR ANTES DO ENVIO — 10/08/2026 =========================
    Antes, depois de enviar, a Gabi ainda conseguia editar a mesma versão
    que a Amanda estava lendo. E não existia caminho explícito de volta.
 
-   Agora retirar é uma transição gravada no próprio mês:
+   Retirar/reabrir é uma transição gravada no próprio mês:
      aguardando/aprovado → rascunho
    Nenhum conteúdo, comentário ou documento é excluído. A fila da Amanda
-   deixa de listar o mês porque ela já é calculada pelo estado. */
+   deixa de listar o mês porque ela já é calculada pelo estado.
+
+   A V49 fecha a corrida que ainda existia: Amanda podia enviar enquanto
+   Gabi retirava, e o `setDoc` completo podia vencer a decisão mais recente.
+   Agora a transição é uma operação atômica que relê o estado no banco.
+   Se já estiver `liberado`, não reabre e não grava nada. */
 window.retirarDaAprovacaoInterna = async function(btn){
   if(window.__modoCal !== 'equipe') return;
   if(window.__enviandoAprovacaoInterna) return;
@@ -1727,63 +1739,73 @@ window.retirarDaAprovacaoInterna = async function(btn){
   if(quem === null) return;
 
   const alvo = mesVisivel || mesDoTexto(data.month) || '';
-  const aprovacaoMesesAntes = data.aprovacaoMeses ? JSON.parse(JSON.stringify(data.aprovacaoMeses)) : undefined;
-  const aprovacaoInternaAntes = data.aprovacaoInterna ? { ...data.aprovacaoInterna } : undefined;
-  const updatedAtAntes = data.updatedAt;
-  const temNaoSalvoAntes = temNaoSalvo;
-  const apagouDePropositoAntes = apagouDePropósito;
-  const agora = new Date().toISOString();
-  const marca = {
-    status:'rascunho', por: quem || 'equipe', em: agora, motivoAjuste:'', mes: alvo,
-    retiradoDe:estadoAntes, retiradoPor:quem || 'equipe', retiradoEm:agora
-  };
-  if(alvo){
-    data.aprovacaoMeses = data.aprovacaoMeses || {};
-    data.aprovacaoMeses[alvo] = marca;
-  }
-  /* Só espelha no campo antigo se ele representa este mesmo mês. Assim
-     retirar setembro não muda acidentalmente a situação de agosto. */
-  const campoAntigoDoMesmoMes = !data.aprovacaoInterna ||
-    data.aprovacaoInterna.mes === alvo || data.mesLegado === alvo;
-  if(campoAntigoDoMesmoMes) data.aprovacaoInterna = marca;
-
   window.__enviandoAprovacaoInterna = true;
-  if(btn){ btn.disabled = true; btn.textContent = 'Retirando e confirmando…'; }
+  if(btn){ btn.disabled = true; btn.textContent = estadoAntes === 'aprovado_interno' ? 'Reabrindo e confirmando…' : 'Retirando e confirmando…'; }
   try{
-    save();
-    clearTimeout(saveTimer);
-    const resultado = await gravarComSeguranca();
-    if(!resultado || !resultado.ok){
-      if(aprovacaoMesesAntes === undefined) delete data.aprovacaoMeses;
-      else data.aprovacaoMeses = aprovacaoMesesAntes;
-      if(aprovacaoInternaAntes === undefined) delete data.aprovacaoInterna;
-      else data.aprovacaoInterna = aprovacaoInternaAntes;
-      data.updatedAt = updatedAtAntes;
-      temNaoSalvo = temNaoSalvoAntes;
-      apagouDePropósito = apagouDePropositoAntes;
-      pintarEstado();
-      renderAprovacaoInterna();
-      const msg = resultado && resultado.motivo === 'conflito'
-        ? 'Não retirei: a Amanda ou outra aba alterou este calendário ao mesmo tempo. O estado do banco foi preservado; confira e tente novamente.'
-        : 'Não retirei: o banco não confirmou. O mês continua na aprovação e nenhum conteúdo foi alterado.';
-      avisarTela(msg, 'erro');
-      return;
-    }
-    /* Se a Amanda aprovou exatamente durante esta operação, a mesclagem
-       de segurança mantém a marca mais recente. Não mostramos sucesso
-       falso: a Gabi vê o estado real e pode repetir a retirada. */
-    if(estadoAprovacao() !== 'rascunho'){
-      renderAprovacaoInterna();
-      avisarTela('A Amanda alterou este mês ao mesmo tempo. Mantive a decisão mais recente do banco; confira o estado e, se quiser editar, retire novamente.', 'erro');
-      return;
-    }
+    const fb = window.__fb || {};
+    if(!fb.runTransaction || !fb.db || !fb.docRef) throw Object.assign(new Error('Conexão do calendário indisponível.'), {code:'gs/sem-conexao'});
+    const resultado = await fb.runTransaction(fb.db, async tx => {
+      const snap = await tx.get(fb.docRef);
+      if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'), {code:'gs/calendario-ausente'});
+      const servidor = snap.data() || {};
+      const porMes = alvo ? (servidor.aprovacaoMeses||{})[alvo] : null;
+      const antigo = servidor.aprovacaoInterna || {};
+      const antigoRepresentaOMes = !alvo || antigo.mes === alvo || servidor.mesLegado === alvo;
+      const estadoServidor = (porMes && porMes.status) || (antigoRepresentaOMes && antigo.status) || '';
+      if(estadoServidor === 'liberado'){
+        throw Object.assign(new Error('O calendário já foi enviado ao cliente.'), {code:'gs/calendario-ja-enviado'});
+      }
+      if(estadoServidor !== 'aguardando_interna' && estadoServidor !== 'aprovado_interno'){
+        throw Object.assign(new Error('O estado do calendário mudou.'), {code:'gs/estado-alterado'});
+      }
+      const agora = new Date().toISOString();
+      const marca = {
+        status:'rascunho', por: quem || 'equipe', em: agora, motivoAjuste:'', mes: alvo,
+        retiradoDe:estadoServidor, retiradoPor:quem || 'equipe', retiradoEm:agora,
+        exigeNovaAprovacao:true
+      };
+      const mapa = { ...(servidor.aprovacaoMeses||{}) };
+      if(alvo) mapa[alvo] = marca;
+      const patch = { updatedAt:agora };
+      if(alvo) patch.aprovacaoMeses = mapa;
+      const espelharAntigo = !servidor.aprovacaoInterna || antigoRepresentaOMes;
+      if(espelharAntigo) patch.aprovacaoInterna = marca;
+      tx.set(fb.docRef, patch, {merge:true});
+      return {marca, mapa, espelharAntigo};
+    });
+
+    if(alvo) data.aprovacaoMeses = resultado.mapa;
+    if(resultado.espelharAntigo) data.aprovacaoInterna = resultado.marca;
+    data.updatedAt = resultado.marca.em;
+    window.__calVersaoBancoLida = String(data.updatedAt||'');
+    ultimaAssinaturaSalva = assinaturaCalendario(data);
+    temNaoSalvo = false;
+    bloqueadoPorConflito = false;
+    limparRascunho();
     limparEnvioPendente();
     closeModal();
     renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();pintarEstado();
-    avisarTela('Retirado da aprovação. O mês voltou para rascunho, todos os conteúdos foram preservados e a edição está liberada.');
+    avisarTela(estadoAntes === 'aprovado_interno'
+      ? 'Reaberto antes do envio. A aprovação anterior foi cancelada, o cliente continua sem ver e todos os conteúdos foram preservados. Depois de melhorar, envie novamente para a Amanda.'
+      : 'Retirado da revisão. O mês voltou para rascunho, todos os conteúdos foram preservados e a edição está liberada.');
+  }catch(e){
+    console.error('Falha ao reabrir calendário:', e);
+    renderAprovacaoInterna();
+    if(String(e&&e.code||'') === 'gs/calendario-ja-enviado'){
+      avisarTela('Não reabri: a Amanda já enviou este mês ao cliente. O conteúdo permanece exatamente como foi enviado.', 'erro');
+    }else if(String(e&&e.code||'') === 'gs/estado-alterado'){
+      avisarTela('Não reabri: o estado mudou em outra aba. Recarregue para ver a decisão mais recente; nenhum conteúdo foi alterado.', 'erro');
+    }else{
+      avisarTela('Não reabri: o banco não confirmou a transição. O mês continua no estado anterior e nenhum conteúdo foi alterado.', 'erro');
+    }
   }finally{
     window.__enviandoAprovacaoInterna = false;
-    if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = '↩️ Retirar da aprovação e voltar a editar'; }
+    if(btn && btn.isConnected){
+      btn.disabled = false;
+      btn.textContent = estadoAntes === 'aprovado_interno'
+        ? '✏️ Reabrir para melhorar antes de enviar ao cliente'
+        : '↩️ Retirar da revisão e voltar a editar';
+    }
   }
 };
 

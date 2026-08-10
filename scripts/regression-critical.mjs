@@ -620,6 +620,52 @@ async function testarCalendariosSandbox() {
   exigir(Object.keys(feedbackApi.patch()||{}).sort().join(',') === 'comments,updatedAt' &&
     feedbackApi.saves() === 0 && feedbackApi.data.items[0].name === 'Roteiro preservado',
     'comentário durante revisão chamou save completo ou alterou conteúdo');
+
+  const travaEdicaoCalendario = trecho(calendario,
+    'function edicaoBloqueadaPorRevisao()',
+    'function atualizarTravaVisualDoMes()');
+  const travaApi = executarSandbox('trava-calendario-enviado-sandbox.js',
+    `let status='rascunho',ultimoAviso='';window.__modoCal='equipe';function estadoAprovacao(){return status;}function avisarTela(m){ultimoAviso=m;}\n` +
+    `${travaEdicaoCalendario}\n` +
+    `globalThis.api={travada:edicaoBloqueadaPorRevisao,exigir:exigirRetiradaAntesDeEditar,status:v=>{status=v;},modo:v=>{window.__modoCal=v;},aviso:()=>ultimoAviso};`);
+  travaApi.status('rascunho');
+  exigir(travaApi.travada() === false, 'rascunho deixou de ser editável pela equipe');
+  travaApi.status('aprovado_interno');
+  exigir(travaApi.travada() === true, 'aprovação interna deixou de travar edição direta');
+  travaApi.status('liberado');
+  exigir(travaApi.travada() === true && travaApi.exigir() === true && travaApi.aviso().includes('já foi enviado ao cliente'),
+    'calendário liberado continuou editável ou sem aviso específico');
+  travaApi.modo('cliente');
+  exigir(travaApi.travada() === false, 'trava visual da equipe vazou para o modo cliente');
+
+  const reaberturaCalendario = trecho(calendario,
+    'window.retirarDaAprovacaoInterna = async function',
+    '/* Esconde da visão do cliente');
+  const reaberturaApi = executarSandbox('reabrir-calendario-antes-envio-sandbox.js',
+    `let data={month:'Agosto 2026',items:[{itemId:'item-1',mes:'2026-08',name:'Roteiro preservado'}],aprovacaoMeses:{'2026-08':{status:'aprovado_interno',mes:'2026-08'}},aprovacaoInterna:{status:'aprovado_interno',mes:'2026-08'}};\n` +
+    `let mesVisivel='2026-08',servidor=JSON.parse(JSON.stringify(data)),patch=null,mergeOpt=null,avisos=[],transacoes=0,ultimaAssinaturaSalva='',temNaoSalvo=false,bloqueadoPorConflito=false;\n` +
+    `window.__modoCal='equipe';window.__enviandoAprovacaoInterna=false;window.__fb={db:{},docRef:{path:'calendarios/cliente-x'},runTransaction:async(db,fn)=>{transacoes++;return fn({get:async()=>({exists:()=>true,data:()=>servidor}),set:(ref,p,o)=>{patch=p;mergeOpt=o;servidor={...servidor,...p};}});}};\n` +
+    `function estadoAprovacao(){return data.aprovacaoMeses['2026-08'].status;}function mesDoTexto(){return '2026-08';}function assinaturaCalendario(v){return JSON.stringify(v);}\n` +
+    `function confirm(){return true;}function prompt(){return 'Gabrielle';}function avisarTela(m,t){avisos.push({m,t});}function renderAprovacaoInterna(){}function limparRascunho(){}function limparEnvioPendente(){}function closeModal(){}function renderGrid(){}function renderWeek(){}function renderKanban(){}function renderProgress(){}function renderMeta(){}function renderSeletorMes(){}function renderBlocos(){}function pintarEstado(){}\n` +
+    `${reaberturaCalendario}\n` +
+    `globalThis.api={reabrir:window.retirarDaAprovacaoInterna,patch:()=>patch,merge:()=>mergeOpt,avisos:()=>avisos,transacoes:()=>transacoes,data,cenario:(local,remoto)=>{data.aprovacaoMeses['2026-08']={status:local,mes:'2026-08'};data.aprovacaoInterna={status:local,mes:'2026-08'};servidor={month:data.month,items:JSON.parse(JSON.stringify(data.items)),aprovacaoMeses:{'2026-08':{status:remoto,mes:'2026-08'}},aprovacaoInterna:{status:remoto,mes:'2026-08'}};patch=null;mergeOpt=null;avisos=[];window.__enviandoAprovacaoInterna=false;}};`);
+  const botaoReabrir = {disabled:false,textContent:'',isConnected:true};
+  await reaberturaApi.reabrir(botaoReabrir);
+  const patchReabertura = reaberturaApi.patch() || {};
+  exigir(reaberturaApi.transacoes() === 1 && reaberturaApi.merge()?.merge === true,
+    'reabertura do calendário não ocorreu em uma única transação com merge');
+  exigir(Object.keys(patchReabertura).sort().join(',') === 'aprovacaoInterna,aprovacaoMeses,updatedAt' &&
+    patchReabertura.aprovacaoMeses['2026-08'].status === 'rascunho' &&
+    patchReabertura.aprovacaoMeses['2026-08'].retiradoDe === 'aprovado_interno' &&
+    patchReabertura.aprovacaoMeses['2026-08'].exigeNovaAprovacao === true &&
+    reaberturaApi.data.items[0].name === 'Roteiro preservado',
+    'reabrertura pré-envio alterou pauta, perdeu histórico ou não exigiu nova aprovação');
+  reaberturaApi.cenario('aprovado_interno','liberado');
+  await reaberturaApi.reabrir(botaoReabrir);
+  exigir(reaberturaApi.patch() === null &&
+    reaberturaApi.data.aprovacaoMeses['2026-08'].status === 'aprovado_interno' &&
+    reaberturaApi.avisos().some(a=>a.m.includes('já enviou este mês ao cliente')),
+    'corrida com envio da Amanda reabriu ou alterou calendário já liberado');
 }
 
 function testarSessoesGravacaoSandbox() {

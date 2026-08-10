@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-07-clientes-amanda-saidas-v40">
+<meta name="gs-build" content="2026-08-10-estabilizacao-clientes-filmagem-v41">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3112,7 +3112,13 @@
       ]);
       const configuracoes={}; cfgSnap.forEach(d=>{ configuracoes[d.id]=d.data()||{}; });
       const porSlug=new Map(CLIENTES_BASE.map(c=>[c.slug,{...c}]));
-      snap.forEach(d=>{ const v=d.data(); if(!v.excluido&&v.slug) porSlug.set(v.slug,{nome:v.nome||v.slug,slug:v.slug,extra:true}); });
+      snap.forEach(d=>{
+        const v=d.data();
+        if(v.excluido||!v.slug) return;
+        const slug=slugClienteCanonico(v.slug);
+        const anterior=porSlug.get(slug);
+        if(!anterior||v.slug===slug) porSlug.set(slug,{nome:v.slug===slug?(v.nome||nomeDeSlugSeguro(slug)):(anterior?.nome||nomeDeSlugSeguro(slug)),slug,extra:true});
+      });
       const ativos=[...porSlug.values()].filter(c=>!clienteInativoEfetivo(configuracoes[c.slug])).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
       CLIENTES_LISTA.splice(0,CLIENTES_LISTA.length,...ativos);
     }catch(e){ console.error('Não consegui atualizar a carteira operacional; mantive a última lista confirmada.',e); }
@@ -3223,7 +3229,39 @@
   /* Ponte pro caso real achado em 03/08. Nao e gambiarra permanente: a
      demanda de fusao esta no painel do Chris. Quando ele unificar, esta
      linha pode sair — e o teste avisa se sair antes da hora. */
-  const APELIDOS_DE_CONTRATO = { 'zeiss': 'zeens' };
+  const APELIDOS_DE_CONTRATO = {
+    'zeiss': 'zeens',
+    'otica-visao-araucaria': 'zeens',
+    'master-chefe': 'master-chef',
+    'master-chef-pizzaria': 'master-chef'
+  };
+
+  /* Um apelido não pode virar uma segunda identidade no Financeiro. A
+     função só normaliza a leitura; nenhum documento é apagado, movido ou
+     sobrescrito. Registros arquivados continuam no banco, mas deixam de
+     participar de totais, cobranças e listas operacionais. */
+  function slugClienteCanonico(slug){
+    let atual = String(slug||'').trim();
+    const visitados = new Set();
+    while(APELIDOS_DE_CONTRATO[atual] && !visitados.has(atual)){
+      visitados.add(atual);
+      atual = APELIDOS_DE_CONTRATO[atual];
+    }
+    return atual;
+  }
+  function registroOperacionalAtivo(registro){
+    const v = registro || {};
+    return v.excluido !== true && v.arquivado !== true && v.cancelado !== true;
+  }
+  function contratoOperacionalAtivo(contrato){
+    const v = contrato || {};
+    const status = String(v.status||'').trim().toLowerCase();
+    return registroOperacionalAtivo(v) && v.encerrado !== true && v.ativo !== false &&
+      !['encerrado','pausado','cancelado','cancelada','arquivado','finalizado'].includes(status);
+  }
+  window.slugClienteCanonico = slugClienteCanonico;
+  window.registroOperacionalAtivo = registroOperacionalAtivo;
+  window.contratoOperacionalAtivo = contratoOperacionalAtivo;
 
   function dataOperacionalISO(valor){
     if(!valor) return '';
@@ -3268,8 +3306,8 @@
 
       const contratoAtivo = new Set(), contratoPorNome = {};
       contratoSnap.forEach(d => { const v = d.data();
-        if(v.encerrado || v.status === 'encerrado' || saidaClienteJaEfetiva(v)) return;
-        contratoAtivo.add(d.id);
+        if(!contratoOperacionalAtivo(v) || saidaClienteJaEfetiva(v)) return;
+        contratoAtivo.add(slugClienteCanonico(d.id));
         if(v.clienteNome) contratoPorNome[normNomeCliente(v.clienteNome)] = d.id;
       });
 
@@ -3277,7 +3315,8 @@
          ninguem cobra mensalidade de quem nao paga mensalidade. */
       const temMensalidade = new Set();
       mensSnap.forEach(d => { const v = d.data();
-        const s = v.cliente || String(d.id).replace(/_\d{4}-\d{2}$/, '');
+        if(!registroOperacionalAtivo(v)) return;
+        const s = slugClienteCanonico(v.cliente || String(d.id).replace(/_\d{4}-\d{2}$/, ''));
         if(s) temMensalidade.add(s);
       });
 
@@ -3288,15 +3327,15 @@
 
       CLIENTES_LISTA.forEach(c => {
         const slug = c.slug, nome = normNomeCliente(c.nome);
-        const apelido = APELIDOS_DE_CONTRATO[slug];
+        const apelido = slugClienteCanonico(slug);
         if(SLUGS_INTERNOS.includes(slug))        return marca(slug, 'interno', 'é a própria agência');
         if(encerrados.has(slug) || encPorNome.has(nome)) return marca(slug, 'encerrado', 'saiu da carteira');
         if(explicito[slug])                      return marca(slug, explicito[slug], 'marcado à mão');
         if(contratoAtivo.has(slug))              return marca(slug, 'mensalista', 'tem contrato ativo');
-        if(apelido && contratoAtivo.has(apelido)) return marca(slug, 'mensalista', 'contrato registrado como "' + apelido + '"');
+        if(apelido !== slug && contratoAtivo.has(apelido)) return marca(slug, 'mensalista', 'contrato registrado como "' + apelido + '"');
         if(contratoPorNome[nome])                return marca(slug, 'mensalista', 'contrato pelo nome');
         if(temMensalidade.has(slug))             return marca(slug, 'mensalista', 'tem mensalidade lançada');
-        if(apelido && temMensalidade.has(apelido)) return marca(slug, 'mensalista', 'mensalidade registrada como "' + apelido + '"');
+        if(apelido !== slug && temMensalidade.has(apelido)) return marca(slug, 'mensalista', 'mensalidade registrada como "' + apelido + '"');
         return marca(slug, 'indefinido', 'sem contrato e sem mensalidade');
       });
     }catch(e){ console.error('Não consegui classificar as castas:', e); }
@@ -7682,6 +7721,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           ${permiteExtrasSessao ? `<div class="field" style="${registroLegado?'border:1px solid var(--yellow);border-radius:9px;padding:10px;':''}"><label>${registroLegado?'Registro compatível da sessão antiga — vídeos realmente gravados (um por linha)':'Captações extras autorizadas (uma por linha)'}</label><textarea id="extras_${a.id}" placeholder="${registroLegado?'Ex: Vídeo do prato executivo\\nBastidores da cozinha':'Descreva exatamente o que foi autorizado'}" oninput="atualizarContadorVideos('${a.id}', ${qtdPlan})"></textarea>${filmmakersSessao.length>1?`<label style="margin-top:8px;">Quem gravou estas captações extras</label><select id="responsavelExtras_${a.id}">${filmmakersSessao.map(p=>`<option value="${esc(p)}" ${nomeOperacionalCanonico(p)===nomeOperacionalCanonico(responsavelCaptacaoPadrao)?'selected':''}>${esc(p)}</option>`).join('')}</select>`:`<input type="hidden" id="responsavelExtras_${a.id}" value="${esc(responsavelCaptacaoPadrao||'')}">`}${registroLegado?'<div class="meta" style="margin-top:6px;">Esta gravação foi criada antes da ordem por sessão. O texto será vinculado somente a este agendamento e <b>não marcará pauta de outra semana</b>.</div>':''}</div>` : '<div class="meta" style="margin:10px 0;color:var(--muted);">Captações fora desta lista não estão autorizadas nesta sessão.</div>'}
 
           <div class="avisoBanner" style="margin:10px 0;"><div class="icone">🎬</div><div class="texto" id="contadorVideos_${a.id}"><b style="color:var(--red);">0 vídeo(s) vão ser lançados</b><span style="color:var(--muted);"> (planejado: ${qtdPlan})</span></div></div>
+          <div class="meta" style="margin:-3px 0 12px;padding:9px 11px;border-left:3px solid var(--green);background:rgba(72,187,120,.08);border-radius:8px;"><b>O envio não depende da Cecília.</b> Ao confirmar, estes vídeos entram direto na fila da Amanda para distribuição. Se faltar alguma captação do planejado, nasce uma tarefa separada para a Cecília organizar somente o saldo — os vídeos feitos não ficam bloqueados.</div>
 
           <div class="field"><label>Sugestão de editor (opcional — a Amanda confirma de manhã)</label><select id="editorEscolhido_${a.id}">
             <option value="">Sem sugestão — deixa a Amanda decidir</option>
@@ -7694,7 +7734,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <div class="btnrow">
             ${podePlanejarSessao?`<button class="btn secondary" onclick="replanejarSessaoGravacao('${a.id}')">Confirmar ordem</button>`:''}
             ${podeExecutarSessao?`<button class="btn secondary" onclick="reagendarGravacao('${a.id}')">Reagendar</button><button class="btn red" onclick="cancelarGravacaoAgendada('${a.id}')">✕ Cancelar</button>`:''}
-            ${podeExecutarSessao?`<button class="btn green" id="btnConfirmarGravacao_${a.id}" data-confirmar-gravacao="${a.id}" ${confirmacaoBloqueada?'disabled title="A ordem desta sessão precisa ser validada antes"':''} onclick="registrarGravacaoRealizada('${a.id}')">Confirmar somente esta sessão</button>`:'<span class="meta">Visão de planejamento — a execução é do filmmaker/Cecília.</span>'}
+            ${podeExecutarSessao?`<button class="btn green" id="btnConfirmarGravacao_${a.id}" data-confirmar-gravacao="${a.id}" ${confirmacaoBloqueada?'disabled title="A ordem desta sessão precisa ser validada antes"':''} onclick="registrarGravacaoRealizada('${a.id}')">Enviar vídeos gravados e concluir sessão</button>`:'<span class="meta">Visão de planejamento — a execução é do filmmaker/Cecília.</span>'}
           </div>
         </div>
       </div>`;
@@ -10602,7 +10642,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const pend = todas.filter(campanhaPendente);
     const feitas = todas.filter(c => !campanhaPendente(c));
     const podeMarcar = ['Cecília','Amanda','Chris'].includes(usuarioAtual);
-    const mesAtual = new Date().toISOString().slice(0,7);
+    const mesAtual = hojeLocal().slice(0,7);
     const ordena = a => a.slice().sort((x,y) => (x.mes+String(x.dia).padStart(2,'0')) < (y.mes+String(y.dia).padStart(2,'0')) ? -1 : 1);
     const cartao = (n, rot, cor) => '<div class="resumoCard ' + (n?cor:'green') + '"><div class="num">' + n + '</div><div class="lbl">' + rot + '</div></div>';
     const rotMes = m => { if(!m) return ''; const [a,x]=String(m).split('-');
@@ -11068,7 +11108,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     /* O que o sistema consegue calcular sozinho */
     const calc = {};
     const garantir = k => (calc[k] = calc[k] || { valor:0, meses:new Set(), primeiroRegistro:null });
-    pagSnap.forEach(d => { const v = d.data();
+    const pagamentosRfv = [];
+    pagSnap.forEach(d => pagamentosRfv.push({id:d.id,...d.data()}));
+    mensalidadesOperacionaisCanonicas(pagamentosRfv).forEach(v => {
       if(!v.cliente || statusMensalidadeCanonico(v) !== 'pago') return;
       const c = garantir(v.cliente);
       c.valor += Number(v.valorDevido) || 0;
@@ -11113,7 +11155,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         getDocs(collection(db,'agendamentos')),
         getDocs(collection(db,'avaliacoes_clientes'))
       ]);
-      pg.forEach(d => { const v = d.data(); if(!mensalidadeResolvida(v) && v.cliente) atrasoPagamento[v.cliente] = true; });
+      const pagamentosRisco = [];
+      pg.forEach(d => pagamentosRisco.push({id:d.id,...d.data()}));
+      mensalidadesOperacionaisCanonicas(pagamentosRisco).forEach(v => {
+        if(!mensalidadeResolvida(v) && v.cliente) atrasoPagamento[v.cliente] = true;
+      });
       const ultimaPost = {};
       po.forEach(d => { const v = d.data();
         if(v.excluido || v.status !== 'agendado' || !v.dataAgendada) return;
@@ -13268,6 +13314,31 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           await updateDoc(doc(db,'clientes_extras', d.id), { excluido:true, arquivadoEm:agora, unificadoEm:PARA });
           _jlog('cadastro de ' + DE + ' arquivado', true); } }
       const ac = await getDoc(doc(db,'clientes_acesso', DE));
+      const acDestinoRef = doc(db,'clientes_acesso', PARA);
+      const acDestino = await getDoc(acDestinoRef);
+      if(ac.exists()){
+        const origemAcesso = ac.data() || {};
+        const destinoAcesso = acDestino.exists() ? (acDestino.data() || {}) : {};
+        const tokenTransferido = destinoAcesso.token || origemAcesso.token || '';
+        const tokenEquipeTransferido = destinoAcesso.tokenEquipe || origemAcesso.tokenEquipe || '';
+        const camposDestino = {
+          nome: destinoAcesso.nome || nomeDeSlugSeguro(PARA), ativo:true,
+          recuperadoDe:DE, recuperadoEm:agora, recuperadoPor:usuarioAtual
+        };
+        if(tokenTransferido) camposDestino.token = tokenTransferido;
+        if(tokenEquipeTransferido) camposDestino.tokenEquipe = tokenEquipeTransferido;
+        await setDoc(acDestinoRef, camposDestino, {merge:true});
+        if(tokenTransferido){
+          await setDoc(doc(db,'clientes_portal_tokens',tokenTransferido), {
+            cliente:PARA, nome:camposDestino.nome, ativo:true,
+            transferidoDe:DE, transferidoEm:agora, transferidoPor:usuarioAtual
+          }, {merge:true});
+        }
+        const portalConfirmado = await getDoc(acDestinoRef);
+        const acessoConfirmado = portalConfirmado.exists() && (portalConfirmado.data()||{}).ativo !== false && !!(portalConfirmado.data()||{}).token;
+        _jlog('portal preservado em ' + PARA + ' antes de revogar o duplicado', acessoConfirmado);
+        if(!acessoConfirmado){ _jlog('PAREI — o Portal do cadastro correto não foi confirmado.', false); return window.__logJuncao; }
+      }
       if(ac.exists() && (ac.data()||{}).ativo !== false){
         await updateDoc(doc(db,'clientes_acesso', DE), { ativo:false, revogadoEm:agora });
         _jlog('portal de ' + DE + ' desativado', true); }
@@ -13278,55 +13349,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.arquivarClienteDuplicado = async function(slugDuplicado, slugQueFica){
     if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa.', false); return; }
     if(!slugDuplicado || !slugQueFica){ _jlog('Use: arquivarClienteDuplicado("duplicado","queFica")', false); return; }
-    window.__logJuncao = [];
-    const marca = { excluido:true, encerrado:true, ativo:false,
-      arquivadoEm:new Date().toISOString(), arquivadoPor: usuarioAtual,
-      unificadoEm: slugQueFica, motivoArquivo:'Registro duplicado — cliente unificado em ' + slugQueFica };
-    try{
-      /* 1) contrato — e o que faz aparecer em Contratos e alimenta Mensalidades */
-      const cRef = doc(db,'contratos_cliente', slugDuplicado);
-      const cSnap = await getDoc(cRef);
-      if(cSnap.exists()){
-        await updateDoc(cRef, marca);
-        const c2 = await getDoc(cRef);
-        const ok = (c2.data()||{}).encerrado === true;
-        _jlog('contrato de ' + slugDuplicado + ' arquivado', ok);
-        if(!ok){ _jlog('PAREI — o contrato não confirmou.', false); return window.__logJuncao; }
-      } else _jlog('sem contrato em ' + slugDuplicado);
-      /* 2) cadastro na lista de clientes */
-      const ext = await getDocs(collection(db,'clientes_extras'));
-      let n = 0;
-      for(const d of ext.docs){ const v = d.data()||{};
-        if((v.slug === slugDuplicado || d.id === slugDuplicado) && v.excluido !== true){
-          await updateDoc(doc(db,'clientes_extras', d.id), marca); n++; } }
-      _jlog('cadastros arquivados: ' + n, true);
-      /* 3) config */
-      const cfg = await getDoc(doc(db,'clientes_config', slugDuplicado));
-      if(cfg.exists()){ await updateDoc(doc(db,'clientes_config', slugDuplicado), marca);
-        _jlog('config arquivada', true); }
-      /* 4) portal */
-      const ac = await getDoc(doc(db,'clientes_acesso', slugDuplicado));
-      if(ac.exists() && (ac.data()||{}).ativo !== false){
-        await updateDoc(doc(db,'clientes_acesso', slugDuplicado), { ativo:false,
-          revogadoEm:new Date().toISOString(), revogadoPor: usuarioAtual,
-          motivo:'cliente unificado em ' + slugQueFica });
-        _jlog('portal desativado', true);
-      }
-      /* 5) registrar a saida no arquivo oficial */
-      const encRef = doc(db,'clientes_encerrados', slugDuplicado);
-      const encSnap = await getDoc(encRef);
-      if(!encSnap.exists()){
-        await setDoc(encRef, { cliente: slugDuplicado, slug: slugDuplicado,
-          nome: (cSnap.exists() ? (cSnap.data().nome || slugDuplicado) : slugDuplicado),
-          motivo:'Registro duplicado — unificado em ' + slugQueFica,
-          data: new Date().toISOString().slice(0,10), valorMensal: 0,
-          registradoPor: usuarioAtual, unificacao: true });
-        _jlog('registrado no arquivo de clientes', true);
-      }
-      _jlog('PRONTO. ' + slugDuplicado + ' não aparece mais como cliente ativo.', true);
-      _jlog('Nada foi apagado — tudo continua no banco, marcado como arquivado.');
-    }catch(e){ _jlog('ERRO: ' + e.message, false); }
-    return window.__logJuncao;
+    /* Mantemos um único motor de fusão. A antiga implementação arquivava
+       o acesso antes de assegurar o Portal canônico e não movia todas as
+       referências, o que causou o caso Master Chef. */
+    return window.fundirClientes(slugDuplicado, slugQueFica);
   };
   window.juntarZeens = async function(){
     if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa junção.', false); return; }
@@ -14061,22 +14087,20 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           }
         });
 
-        if(proximaAg){
-          await updateDoc(doc(db,'agendamentos', proximaAg.id), {
-            qtdVideosPlanejados: (proximaAg.qtdVideosPlanejados||0) + faltaram
-          });
-          mostrarToast(`${faltaram} vídeo(s) empurrado(s) automaticamente pra próxima gravação (${proximaAg.data}).`, 'erro');
-        } else {
-          mostrarToast(`${faltaram} vídeo(s) ficaram faltando — não há próxima gravação agendada. Avisando Cecília.`, 'erro');
-        }
-
+        /* Não alteramos apenas o número da próxima sessão. Fazer isso sem
+           anexar os itemIds exatos criava duas verdades: o contador subia,
+           mas a ordem congelada continuava sem os conteúdos que faltaram. */
+        const temProxima = !!proximaAg;
         await criarDemandaSegura({
-          titulo: 'Gravação abaixo do planejado — ' + clienteNome,
-          descricao: `Planejado ${qtdPlanejada}, realizado ${qtdRealizada}. Motivo: ${explicacao}. ${proximaAg ? 'Vídeos já empurrados pra próxima gravação em '+proximaAg.data+'.' : 'PRECISA agendar nova gravação — não há próxima data marcada.'}`,
+          titulo: (temProxima ? 'Replanejar saldo de captação — ' : 'Agendar saldo de captação — ') + clienteNome,
+          descricao: `${qtdRealizada} vídeo(s) realizados já foram enviados para a fila da Amanda e NÃO dependem de aprovação da Cecília.\n\nFaltaram ${faltaram} do total planejado de ${qtdPlanejada}. Motivo informado: ${explicacao}.\n\n${temProxima ? 'O cliente já tem gravação em '+proximaAg.data+'. Abra essa sessão e vincule nela os conteúdos exatos que ficaram faltando; não aumente apenas o contador.' : 'Não existe próxima gravação. Agende uma nova sessão e vincule os conteúdos exatos que ficaram faltando.'}`,
           origem: 'sistema', clienteNome, destinatario: 'Cecília', agendamentoId: agId,
+          proximoAgendamentoId: temProxima ? proximaAg.id : '',
+          tipoPendencia: 'saldo_captacao', quantidadeFaltante: faltaram,
           prazoData: hojeRegistro, prazoHora: '19:00',
           status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
         }, { janelaMinutos: 24*60 });
+        mostrarToast(`${qtdRealizada} vídeo(s) enviados para a Amanda. A Cecília recebeu somente o planejamento dos ${faltaram} que faltaram.`, 'erro');
       }catch(e){
         console.error('Gravação confirmada, mas o tratamento do saldo falhou:', e);
         mostrarToast('A gravação foi registrada, mas não consegui encaminhar o saldo restante. A Cecília deve conferir o controle.', 'erro');
@@ -14106,7 +14130,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }finally{
       __confirmacoesGravacaoEmCurso.delete(agId);
       const atual = document.getElementById('btnConfirmarGravacao_'+agId);
-      if(atual){ atual.disabled=false; atual.textContent=atual.dataset.rotuloAnterior||'Confirmar somente esta sessão'; }
+      if(atual){ atual.disabled=false; atual.textContent=atual.dataset.rotuloAnterior||'Enviar vídeos gravados e concluir sessão'; }
     }
   };
 
@@ -16011,9 +16035,31 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   function linkPortalClienteCentral(slug){
     if(!['Amanda','Chris'].includes(usuarioAtual)) return '';
-    const v=(window.__entradaClientesAtivos||{})[slug];
-    return v&&v.token?'https://get-started.agency/portal-cliente.html?c='+encodeURIComponent(slug)+'&t='+encodeURIComponent(v.token):'';
+    const canonico=slugClienteCanonico(slug);
+    const v=(window.__entradaClientesAtivos||{})[canonico];
+    return v&&v.token?'https://get-started.agency/portal-cliente.html?c='+encodeURIComponent(canonico)+'&t='+encodeURIComponent(v.token):'';
   }
+  window.garantirPortalClienteCentral=async function(slug){
+    if(!['Amanda','Chris'].includes(usuarioAtual)){ mostrarToast('Área exclusiva da gerência.','erro'); return; }
+    const canonico=slugClienteCanonico(slug);
+    const atual=(window.__entradaClientesAtivos||{})[canonico];
+    if(!atual || atual.tipo!=='mensalista'){ mostrarToast('O Portal é criado somente para mensalista ativo.','erro'); return; }
+    try{
+      const acessoRef=doc(db,'clientes_acesso',canonico);
+      const acessoSnap=await getDoc(acessoRef);
+      const acesso=acessoSnap.exists()?(acessoSnap.data()||{}):{};
+      const gerar=()=>Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,10);
+      const token=acesso.token||gerar();
+      await setDoc(acessoRef,{token,nome:atual.nome,ativo:true,recuperadoPor:usuarioAtual,recuperadoEm:serverTimestamp()},{merge:true});
+      await setDoc(doc(db,'clientes_portal_tokens',token),{cliente:canonico,nome:atual.nome,ativo:true,recuperadoPor:usuarioAtual,recuperadoEm:serverTimestamp()},{merge:true});
+      atual.token=token;
+      mostrarToast('Portal de '+atual.nome+' criado/recuperado sem apagar histórico.');
+      await window.renderCentralEntradaClientes();
+    }catch(e){
+      console.error('Falha ao criar/recuperar Portal do cliente:',e);
+      mostrarToast('Não foi possível recuperar o Portal: '+(e?.message||'tente novamente.'),'erro');
+    }
+  };
   window.abrirPortalClienteCentral=function(slug){ const link=linkPortalClienteCentral(slug); if(link) window.open(link,'_blank','noopener'); else mostrarToast('Este cliente ainda não tem link de Portal.','erro'); };
   window.copiarPortalClienteCentral=function(slug){ const link=linkPortalClienteCentral(slug); if(!link){mostrarToast('Este cliente ainda não tem link de Portal.','erro');return;} navigator.clipboard.writeText(link).then(()=>mostrarToast('Link do Portal copiado!')).catch(()=>mostrarToast('Não consegui copiar automaticamente.','erro')); };
 
@@ -16047,7 +16093,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const pagamentosDoCliente=[];
       if(mensal){
         const pagamentosSnap=await getDocs(collection(db,'pagamentos_mensais'));
-        pagamentosSnap.forEach(d=>{ const p=d.data(); if(p.cliente===slug||p.clienteSlug===slug||String(d.id).startsWith(slug+'_')) pagamentosDoCliente.push({ref:d.ref,dados:p}); });
+        pagamentosSnap.forEach(d=>{ const p=d.data(); if(!registroOperacionalAtivo(p)) return; if(p.cliente===slug||p.clienteSlug===slug||String(d.id).startsWith(slug+'_')) pagamentosDoCliente.push({ref:d.ref,dados:p}); });
       }
       const refs={
         config:doc(db,'clientes_config',slug), extra:atual.extraId?doc(db,'clientes_extras',atual.extraId):null,
@@ -16273,12 +16319,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const saidasProgramadasPorSlug={};
       encerrados.forEach(v=>{ if(v.slug && v.statusSaida==='programada' && !saidaClienteJaEfetiva(v)) saidasProgramadasPorSlug[v.slug]=v; });
       window.__saidasProgramadasPorSlug=saidasProgramadasPorSlug;
-      const slugDo=v=>v.slugAtivado||v.slug||slugClienteMensalista(v.nome||v.clienteNome||'');
+      const slugDo=v=>slugClienteCanonico(v.slugAtivado||v.slug||slugClienteMensalista(v.nome||v.clienteNome||''));
       const registroArquivado=v=>v.excluido===true||['arquivado','finalizado','cancelado','recusado'].includes(String(v.statusGerencia||v.status||''));
       const slugsArquivadosDeOrigem=new Set([
         ...mensalistasSnap.docs.map(d=>d.data()),...avulsosEmpresaSnap.docs.map(d=>d.data()),...avulsosPessoalSnap.docs.map(d=>d.data())
       ].filter(registroArquivado).map(slugDo).filter(Boolean));
-      const extrasPorSlug={}; Object.values(extrasPorId).forEach(v=>{ if(v.slug) extrasPorSlug[v.slug]=v; });
+      const extrasPorSlug={}; Object.values(extrasPorId).forEach(v=>{ if(v.slug){ const s=slugClienteCanonico(v.slug); if(!extrasPorSlug[s]||v.slug===s) extrasPorSlug[s]=v; } });
       const onboardingPorSlug={}; onboardingTodos.forEach(v=>{ const s=slugDo(v); if(s && !v.excluido && (!onboardingPorSlug[s] || v.status!=='concluido')) onboardingPorSlug[s]=v; });
       const tokenPorCliente={}; Object.values(tokens).forEach(v=>{ if(v.cliente && v.ativo!==false) tokenPorCliente[v.cliente]=v; });
 
@@ -16346,7 +16392,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;"><div><h2 style="margin:0 0 4px;">${esc(v.nome)}</h2><div class="meta">${v.tipo==='mensalista'?'MENSALISTA':'AVULSO'} · ${esc(v.slug)}</div></div><span class="pill ${v.saida?'warn':(v.tipo==='mensalista'?'ok':'')}">${v.saida?'SAÍDA EM '+formatarDataBR(v.saida.dataSaida):(v.tipo==='mensalista'?'ATIVO':'PONTUAL')}</span></div>
         <div class="desc" style="margin-top:11px;line-height:1.7;"><b>Contato:</b> ${esc(v.instagram||'—')} · ${esc(v.telefone||'—')}${v.aniversario?' · aniversário '+esc(v.aniversario):''}${v.contatos?'<br><b>Outros contatos:</b> '+esc(v.contatos):''}<br><b>Plano/escopo:</b> ${esc([v.plano,(!v.planoDetalhes||String(v.plano||'').includes(v.planoDetalhes))?'':v.planoDetalhes].filter(Boolean).join(' — ')||'—')}${v.tipo==='mensalista'?'<br><b>Mensalidade:</b> '+brl(v.valorMensal)+' · vence dia '+esc(String(v.diaVencimento||'—'))+' · primeira cobrança '+esc(v.primeiraCompetencia||'—')+' · <b>entrega:</b> '+(v.tipoEntrega==='entrega_direta'?'direta':'agência publica')+' · <b>Stories:</b> '+(v.incluiStories?'sim':'não')+'<br><b>Cortesia:</b> '+(v.cortesiaPermanente?'permanente':(v.cortesiaMeses||[]).length?(v.cortesiaMeses||[]).map(esc).join(', '):'não')+'<br><b>Onboarding:</b> '+esc(v.onboardingStatus):''}${v.observacoes?'<br><b>Observações:</b> '+esc(v.observacoes):''}</div>
         <div class="btnrow" style="margin-top:11px;flex-wrap:wrap;">
-          ${v.token?'<button class="btn" style="width:auto;" onclick="abrirPortalClienteCentral(\''+escJs(v.slug)+'\')">Abrir Portal ↗</button><button class="btn secondary" style="width:auto;" onclick="copiarPortalClienteCentral(\''+escJs(v.slug)+'\')">Copiar Portal</button>':''}
+          ${v.token?'<button class="btn" style="width:auto;" onclick="abrirPortalClienteCentral(\''+escJs(v.slug)+'\')">Abrir Portal ↗</button><button class="btn secondary" style="width:auto;" onclick="copiarPortalClienteCentral(\''+escJs(v.slug)+'\')">Copiar Portal</button>':'<button class="btn" style="width:auto;" onclick="garantirPortalClienteCentral(\''+escJs(v.slug)+'\')">Criar/recuperar Portal</button>'}
           ${v.tipo==='mensalista'?'<button class="btn secondary" style="width:auto;" onclick="abrirCalendarioDeCliente(\''+escJs(v.slug)+'\',\''+escJs(v.nome)+'\')">Calendário</button>':''}
           ${v.onboardingId&&v.onboardingStatus!=='concluido'?'<button class="btn secondary" style="width:auto;" onclick="abrirOnboardingCentral(\''+escJs(v.onboardingId)+'\')">Onboarding</button>':''}
           <button class="btn secondary" style="width:auto;" onclick="navegarGerenciaSub('saudeClientes')">Ficha operacional</button>
@@ -27405,7 +27451,7 @@ window.salvarPrazoVideo = async function(id){
     { nome:'Helo arquiteta',     plano:'Intermediário', valor:1000, dia:10 },
     { nome:'Rodrigo',            plano:'Outros',        valor:870,  dia:15 },
     { nome:'Fior restaurante',   plano:'Intermediário', valor:1700, dia:19 },
-    { nome:'Master Chefe',       plano:'Intermediário', valor:1700, dia:14, obs:'Cortesia combinada para agosto/2026 — marcar o mês como isento quando chegar.' },
+    { nome:'Master Chef',        plano:'Intermediário', valor:1700, dia:14, obs:'Cortesia combinada para agosto/2026 — marcar o mês como isento quando chegar.' },
     { nome:'Cookiery',           plano:'Intermediário', valor:1700, dia:10, obs:'Cortesia combinada para agosto/2026 — marcar o mês como isento quando chegar.' },
     { nome:'Emanuelle',          plano:'Intermediário', valor:1700, dia:10, obs:'Cortesia combinada para agosto/2026 — marcar o mês como isento quando chegar.' },
     { nome:'Zeens',             plano:'Intermediário', valor:1700, dia:10, obs:'Cortesia combinada para agosto/2026 — marcar o mês como isento quando chegar.' }
@@ -27463,7 +27509,7 @@ window.salvarPrazoVideo = async function(id){
     const pagamentosDoContrato = [];
     pagamentosSnap.forEach(d => {
       const p=d.data();
-      if(p.cliente === slug || p.clienteSlug === slug || String(d.id).startsWith(slug+'_')) pagamentosDoContrato.push({ref:d.ref,dados:p});
+      if(registroOperacionalAtivo(p) && (p.cliente === slug || p.clienteSlug === slug || String(d.id).startsWith(slug+'_'))) pagamentosDoContrato.push({ref:d.ref,dados:p});
     });
     const lote = writeBatch(db);
     lote.set(contratoRef, {
@@ -27533,8 +27579,44 @@ window.salvarPrazoVideo = async function(id){
   function mensalidadeResolvida(p){
     return ['pago','isento','cancelado'].includes(statusMensalidadeCanonico(p));
   }
+  function mensalidadesOperacionaisCanonicas(lista){
+    const porClienteMes = new Map();
+    (lista||[]).forEach((registro, indice) => {
+      if(!registroOperacionalAtivo(registro)) return;
+      const original = String(registro.cliente || registro.clienteSlug || registro.slug ||
+        String(registro.id||'').replace(/_\d{4}-\d{2}$/, '')).trim();
+      const canonico = slugClienteCanonico(original);
+      const competencia = String(registro.competencia || registro.mes || registro.mesRef || '').trim();
+      const chave = competencia ? canonico + '|' + competencia : 'sem-competencia|' + String(registro.id||indice);
+      const status = statusMensalidadeCanonico(registro);
+      const prioridadeStatus = status === 'pago' ? 40 : status === 'isento' ? 30 : status === 'aberto' ? 20 : 10;
+      const candidato = {
+        ...registro,
+        clienteOriginal:original,
+        cliente:canonico,
+        __prioridadeCanonica:prioridadeStatus + (original === canonico ? 5 : 0)
+      };
+      const atual = porClienteMes.get(chave);
+      if(!atual || candidato.__prioridadeCanonica > atual.__prioridadeCanonica) porClienteMes.set(chave,candidato);
+    });
+    return Array.from(porClienteMes.values()).map(v=>{ const r={...v}; delete r.__prioridadeCanonica; return r; });
+  }
+  function contratosOperacionaisCanonicos(lista){
+    const porCliente = new Map();
+    (lista||[]).forEach((contrato,indice) => {
+      if(!contratoOperacionalAtivo(contrato)) return;
+      const original = String(contrato.slug || contrato.cliente || contrato.clienteSlug || indice);
+      const canonico = slugClienteCanonico(original);
+      const candidato = {...contrato,slugOriginal:original,slugCanonico:canonico,slug:original};
+      const atual = porCliente.get(canonico);
+      if(!atual || (original === canonico && atual.slugOriginal !== canonico)) porCliente.set(canonico,candidato);
+    });
+    return Array.from(porCliente.values());
+  }
   window.statusMensalidadeCanonico = statusMensalidadeCanonico;
   window.mensalidadeResolvida = mensalidadeResolvida;
+  window.mensalidadesOperacionaisCanonicas = mensalidadesOperacionaisCanonicas;
+  window.contratosOperacionaisCanonicos = contratosOperacionaisCanonicos;
 
   function ajusteCortesiaMensalidade(p, competencia, cortesiaPermanente, cortesiaMeses){
     const meses = Array.isArray(cortesiaMeses) ? cortesiaMeses.map(String) : [];
@@ -27797,7 +27879,8 @@ window.salvarPrazoVideo = async function(id){
     ]);
     const receitasAvulsas = []; avSnap.forEach(d => { const v=d.data(); if(!v.excluido) receitasAvulsas.push({id:d.id, ...v}); });
     const contratos = []; ctSnap.forEach(d => contratos.push({slug:d.id, ...d.data()}));
-    const pagamentos = []; pgSnap.forEach(d => pagamentos.push({id:d.id, ...d.data()}));
+    const pagamentosBrutos = []; pgSnap.forEach(d => pagamentosBrutos.push({id:d.id, ...d.data()}));
+    const pagamentos = mensalidadesOperacionaisCanonicas(pagamentosBrutos);
     const negocios = []; negSnap.forEach(d => negocios.push({id:d.id, ...d.data()}));
     const negociosMapa = {}; negocios.forEach(n => { negociosMapa[n.id] = n; });
     const extras = []; extraSnap.forEach(d => { const v=d.data(); if(!v.excluido) extras.push({id:d.id, ...v}); });
@@ -27859,9 +27942,17 @@ window.salvarPrazoVideo = async function(id){
     const compAnterior = mesAnterior(comp);
     const doMesAnterior = pagamentos.filter(p => p.competencia === compAnterior);
     const baseAnterior = doMesAnterior.filter(p=>!['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-    const clientesAnterior = new Set(doMesAnterior.map(p=>p.cliente));
-    const clientesAgora = new Set(doMes.map(p=>p.cliente));
-    const entraram = [...clientesAgora].filter(c => !clientesAnterior.has(c));
+    const clientesAnterior = new Set(doMesAnterior.filter(p=>statusMensalidadeCanonico(p)!=='cancelado').map(p=>p.cliente));
+    const clientesAgora = new Set(doMes.filter(p=>statusMensalidadeCanonico(p)!=='cancelado').map(p=>p.cliente));
+    /* Entrada é a primeira competência real do cliente, não apenas a
+       ausência no mês anterior. Assim cortesia, mês sem cobrança e um
+       apelido duplicado não fazem o mesmo mensalista "entrar" de novo. */
+    const primeiraCompetenciaPorCliente = {};
+    pagamentos.filter(p=>statusMensalidadeCanonico(p)!=='cancelado').forEach(p=>{
+      if(!p.cliente || !/^\d{4}-\d{2}$/.test(String(p.competencia||''))) return;
+      if(!primeiraCompetenciaPorCliente[p.cliente] || p.competencia < primeiraCompetenciaPorCliente[p.cliente]) primeiraCompetenciaPorCliente[p.cliente]=p.competencia;
+    });
+    const entraram = [...clientesAgora].filter(c => primeiraCompetenciaPorCliente[c] === comp);
     /* ===== "SAÍRAM 0" COM DUAS SAÍDAS — 03/08/2026 ==================
        O Chris: "acredito que no segundo print esteja errado também, pois
        em julho saíram duas empresas".
@@ -28128,7 +28219,8 @@ window.salvarPrazoVideo = async function(id){
     box.innerHTML = '<div class="card"><div class="desc">Montando o mês...</div></div>';
 
     const ctSnap = await getDocs(collection(db,'contratos_cliente'));
-    const contratos = []; ctSnap.forEach(d => { const v=d.data(); if(v.status==='ativo') contratos.push({slug:d.id, ...v}); });
+    const contratosBrutos = []; ctSnap.forEach(d => contratosBrutos.push({slug:d.id, ...d.data()}));
+    const contratos = contratosOperacionaisCanonicos(contratosBrutos);
     if(!contratos.length){
       box.innerHTML = '<div class="card"><div class="empty">Nenhum contrato ativo ainda. Cadastra em <b>Contratos</b> primeiro — é de lá que este mês é montado.</div></div>';
       return;
@@ -28136,10 +28228,15 @@ window.salvarPrazoVideo = async function(id){
 
     // cria os registros do mes que ainda nao existem
     const pgSnap = await getDocs(collection(db,'pagamentos_mensais'));
-    const existentes = {}; pgSnap.forEach(d => { const v=d.data(); if(v.competencia===competencia) existentes[d.id] = { id:d.id, ...v }; });
+    const pagamentosBrutos = []; pgSnap.forEach(d=>pagamentosBrutos.push({id:d.id,...d.data()}));
+    const existentes = {};
+    mensalidadesOperacionaisCanonicas(pagamentosBrutos).forEach(v=>{
+      if(v.competencia===competencia) existentes[v.cliente+'_'+competencia]={...v};
+    });
     let criados = 0;
     for(const ct of contratos){
-      const id = ct.slug + '_' + competencia;
+      const clienteCanonico = ct.slugCanonico || slugClienteCanonico(ct.slug);
+      const id = clienteCanonico + '_' + competencia;
       if(existentes[id]) continue;
       /* 27/07/2026 — cliente de cortesia permanente (caso da Dra Júlia:
          Premium ativa, participa de tudo, mas nao paga por acordo pessoal).
@@ -28173,7 +28270,7 @@ window.salvarPrazoVideo = async function(id){
       const cortesiaDesteMes = mesesCortesia.includes(competencia);
       const isentoAgora = ehCortesia || cortesiaDesteMes;
       const registro = {
-        cliente: ct.slug, clienteNome: ct.clienteNome, competencia,
+        cliente: clienteCanonico, clienteNome: ct.clienteNome, competencia,
         valorDevido: Number(ct.valorVigente)||0, diaVencimento: ct.diaVencimento||10,
         status: isentoAgora ? 'isento' : 'aberto', pagoEm: '', comprovante: '',
         cortesiaPermanente: ehCortesia,
@@ -28345,8 +28442,9 @@ window.salvarPrazoVideo = async function(id){
     const hoje = new Date(); hoje.setHours(0,0,0,0);
     const hojeStr = dataLocal(hoje);
     const fila = [];
-    pgSnap.forEach(d => {
-      const p = d.data();
+    const pagamentosCobranca = [];
+    pgSnap.forEach(d=>pagamentosCobranca.push({id:d.id,...d.data()}));
+    mensalidadesOperacionaisCanonicas(pagamentosCobranca).forEach(p => {
       if(mensalidadeResolvida(p)) return;
       if(p.comprovante) return;   // mandou comprovante — nao cobra ate conferir
       const [ano, mes] = (p.competencia||'').split('-').map(Number);
@@ -28356,7 +28454,7 @@ window.salvarPrazoVideo = async function(id){
       const dias = Math.floor((hoje - venc)/86400000);
       const fase = faseDaCobranca(dias);
       if(!fase) return;   // ainda longe do vencimento
-      fila.push({ id:d.id, ...p, dias, fase, jaCobradoHoje: (p.ultimaCobranca||'').slice(0,10) === hojeStr });
+      fila.push({ ...p, dias, fase, jaCobradoHoje: (p.ultimaCobranca||'').slice(0,10) === hojeStr });
     });
 
     const aCobrar = fila.filter(f => !f.jaCobradoHoje);
@@ -28447,7 +28545,8 @@ window.salvarPrazoVideo = async function(id){
     const lista = []; snap.forEach(d => lista.push({ slug:d.id, ...d.data() }));
     lista.sort((a,b)=>(a.clienteNome||'').localeCompare(b.clienteNome||'','pt-BR'));
 
-    const ativos = lista.filter(c => c.status === 'ativo');
+    const ativos = contratosOperacionaisCanonicos(lista);
+    const inativos = lista.filter(c => !contratoOperacionalAtivo(c));
     const mrr = ativos.reduce((s,c)=>s+(Number(c.valorVigente)||0),0);
     const mrrCheio = ativos.reduce((s,c)=>s+(Number(c.valorCheio)||0),0);
 
@@ -28469,7 +28568,7 @@ window.salvarPrazoVideo = async function(id){
       cont.innerHTML = html; return;
     }
 
-    html += lista.filter(c => c.status === 'ativo').map(ct => `<div class="faixaDem" data-faixa="ct_${ct.slug}">
+    html += ativos.map(ct => `<div class="faixaDem" data-faixa="ct_${ct.slug}">
       <div class="faixaHead" onclick="toggleFaixaDemandas(this)">
         ${esc(ct.clienteNome)} <span class="qtd">${brl(ct.valorVigente)} · dia ${ct.diaVencimento}${ct.status!=='ativo'?' · '+esc(ct.status):''}${(Number(ct.valorCheio)>Number(ct.valorVigente))?' · desconto':''}</span><span class="seta">▾</span>
       </div>
@@ -28517,6 +28616,16 @@ window.salvarPrazoVideo = async function(id){
         <button class="btn" style="margin-top:12px;" onclick="salvarContrato('${ct.slug}')">Salvar contrato</button>
       </div>
     </div>`).join('');
+
+    if(inativos.length){
+      html += `<div class="faixaDem" data-faixa="ct_inativos" style="margin-top:16px;">
+        <div class="faixaHead" onclick="toggleFaixaDemandas(this)">🗄️ Pausados, encerrados e registros arquivados <span class="qtd">(${inativos.length})</span><span class="seta">▾</span></div>
+        <div class="faixaItens">${inativos.map(ct=>`<div class="item" style="opacity:.78;">
+          <div class="top"><div class="nome">${esc(ct.clienteNome||ct.slug)}</div><span class="selo pendente">${ct.excluido?'ARQUIVADO':esc(ct.status||'INATIVO')}</span></div>
+          <div class="meta" style="margin-top:5px;">${brl(ct.valorVigente)} · dia ${ct.diaVencimento||'—'}${ct.unificadoEm?' · unificado em '+esc(ct.unificadoEm):''}</div>
+        </div>`).join('')}</div>
+      </div>`;
+    }
 
     cont.innerHTML = html;
   };

@@ -324,6 +324,24 @@ function testarDemandasSandbox() {
   exigir(prazo.prazoData === '2026-08-20' && prazo.prazoHora === '18:00', 'novo prazo não foi preservado');
   exigir(prazo.nivelEscalonamentoDemanda === 0 && prazo.urgenciaManual === '' && prazo.lembretePrazoHojeEm === '',
     'prazo alterado manteve cicatriz de atraso');
+
+  const resumoMinhas = trecho(escritorio,
+    'const resumoHtml = `<div class="painelResumo painelResumoDemandas"',
+    '/* ===== FILA DE APROVACAO');
+  exigir((resumoMinhas.match(/resumoCard clicavel/g)||[]).length === 5 && !resumoMinhas.includes('grid-column:span 2'),
+    'resumo de Minhas Demandas voltou a criar lacuna ou cartão condicional');
+  for (const destino of ['atrasadas','hoje','proximas','aguardando','enviei']) {
+    exigir(resumoMinhas.includes(`setFiltroMinhasDemandas('${destino}', null)`),
+      `cartão de Minhas Demandas perdeu o destino ${destino}`);
+  }
+
+  const central = trecho(escritorio, 'async function renderDemandasDaEquipe', 'window.renderPainelDemandas');
+  exigir(central.includes("const visiveis = filtroFaixa === 'todas' ? abertas : abertas.filter") &&
+    central.includes('visiveis.forEach(d => por[faixaDaDemanda(d)].push(d))'),
+    'filtro visual da Central de Demandas não controla a lista exibida');
+  exigir(central.includes('<details class="distribuicaoDemandas">') &&
+    central.includes('Nenhuma demanda corresponde a este filtro.'),
+    'Central de Demandas perdeu o recolhimento ou o estado vazio do filtro');
 }
 
 async function testarCalendariosSandbox() {

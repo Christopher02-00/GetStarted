@@ -50,7 +50,9 @@ const leisV48 = [
 ];
 const leisV49 = [
   'Calendário enviado continuava editável pela equipe',
-  'Reabertura disputava com o envio da Amanda'
+  'Reabertura disputava com o envio da Amanda',
+  '“Subi tudo” não foi conferido arquivo por arquivo',
+  'Regra publicada e backup do GitHub ficaram em versões diferentes'
 ];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
     [...leisV45, ...leisV47, ...leisV48, ...leisV49].some(lei => !catalogoErros.includes(lei))) {

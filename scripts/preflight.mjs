@@ -42,10 +42,16 @@ const leisV47 = [
   'Contrato ativo podia sumir da Central por cadastro antigo arquivado',
   'Texto livre de cortesia divergiu do lançamento real'
 ];
+const leisV48 = [
+  'Primeiro pagamento misturava conta pessoal e caixa da agência',
+  'Variável privada do Financeiro caiu na Central de Demandas',
+  'Mensalidade legada era vinculada pelo ID presumido',
+  'Destino bancário quase vazou pelo documento da mensalidade'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V47');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V47');
+    [...leisV45, ...leisV47, ...leisV48].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V48');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V48');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -200,6 +206,33 @@ for (const provaSeguranca of [
 ]) {
   if (!provaSeguranca[1]) falhar(provaSeguranca[0]); else provar(provaSeguranca[0]);
 }
+
+const regraEntradaPessoal = regras.match(/match \/recebimentos_entrada_pessoal\/\{docId\} \{[\s\S]*?allow delete:\s*if false;[\s\S]*?\n    \}/)?.[0] || '';
+if (!regraEntradaPessoal.includes('allow read, update: if ehChris()') ||
+    !regraEntradaPessoal.includes('allow create: if ehChris() || (ehAmanda()') ||
+    !regraEntradaPessoal.includes("request.resource.data.status == 'pendente'") ||
+    !regraEntradaPessoal.includes("!('destino' in request.resource.data)") ||
+    !regraEntradaPessoal.includes("!('foraCaixaAgencia' in request.resource.data)")) {
+  falhar('controle do primeiro pagamento expõe conta pessoal ou permite confirmação fora do Chris');
+} else provar('primeiro pagamento pessoal é legível/editável só por Chris; Amanda cria apenas pendente padronizado');
+
+const blocoDemandasEquipe = escritorio.slice(
+  escritorio.indexOf('async function renderDemandasDaEquipe'),
+  escritorio.indexOf('  window.renderPainelDemandas', escritorio.indexOf('async function renderDemandasDaEquipe'))
+);
+if (blocoDemandasEquipe.includes('controleEntradasHTML') || blocoDemandasEquipe.includes('avisoControleEntradaHTML')) {
+  falhar('variável privada do Financeiro vazou para a Central de Demandas');
+} else provar('variáveis do primeiro pagamento permanecem no escopo exclusivo do Financeiro');
+
+const confirmacaoEntrada = escritorio.slice(
+  escritorio.indexOf('window.confirmarRecebimentoEntrada=async function'),
+  escritorio.indexOf('  window.desfazerRecebimentoEntrada', escritorio.indexOf('window.confirmarRecebimentoEntrada=async function'))
+);
+const escritaMensalEntrada = confirmacaoEntrada.match(/tx\.set\(mensalidadeRef,\{([^}]|\}(?!,\{merge:true\}))*\},\{merge:true\}\)/)?.[0] || '';
+if (!escritaMensalEntrada.includes("origemRecebimento:'entrada_contrato'") ||
+    escritaMensalEntrada.includes('destinoRecebimento') || escritaMensalEntrada.includes('foraCaixaAgencia')) {
+  falhar('destino bancário privado vazou para pagamentos_mensais, que o Portal do cliente pode ler');
+} else provar('pagamentos_mensais recebe apenas o vínculo; destino bancário fica na coleção exclusiva do Chris');
 
 if (!escritorio.includes('identidadeRecorrenteDemanda') || !escritorio.includes('camposAoAlterarPrazoDemanda(novoPrazoPai')) {
   falhar('proteção de competência/prazo residual ausente');
@@ -420,9 +453,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-10-saidas-financeiro-v47') {
-  falhar(`build V47 inesperado: ${build || 'ausente'}`);
-} else provar('V47 identifica competência final, cancelamento financeiro reversível e isolamento preservado');
+if (build !== '2026-08-10-entrada-pagamento-pessoal-v48') {
+  falhar(`build V48 inesperado: ${build || 'ausente'}`);
+} else provar('V48 separa primeiro pagamento pessoal/agência sem duplicar mensalidade ou caixa');
 
 const saidaFinanceira = escritorio.slice(
   escritorio.indexOf('window.salvarSaidaClienteCentral=async function'),

@@ -582,6 +582,13 @@ async function testarCalendariosSandbox() {
     renderStoriesFonte.includes('String(c.id || c.slug || c.clienteNome') &&
     renderStoriesFonte.includes('data-story-check='),
     'check de Stories voltou a carregar em série, derivar identidade do nome ou esconder o controle');
+  const aberturaChecklistFonte = trecho(escritorio,
+    'window.abrirChecklist = async function',
+    'function renderChecklist');
+  exigir(aberturaChecklistFonte.indexOf('renderStoriesDiarios();') >= 0 &&
+    aberturaChecklistFonte.indexOf('renderStoriesDiarios();') < aberturaChecklistFonte.indexOf('await autoVerificarChecklist()') &&
+    aberturaChecklistFonte.includes('cont.appendChild(storiesBoxAntecipado)'),
+    'check de Stories voltou a esperar streak/auto-verificação ou a recriar o nó durante a carga');
 
   /* O filmmaker não pode depender da leitura dos 21 documentos para abrir
      um único cliente; o documento escolhido mantém o listener próprio. */

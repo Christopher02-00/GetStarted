@@ -13180,6 +13180,102 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      duplicada na regua. Entao antes de qualquer junção alguem precisa VER
      os cinco, com mes, valor e situacao.
      ESTA FUNCAO SO LE. */
+  /* ============ JUNCAO DE CLIENTES DUPLICADOS — 10/08/2026 ============
+   Diagnostico feito com dados reais. Duas regras absolutas:
+     1. ARQUIVA, nunca apaga. Se der errado, da pra voltar.
+     2. Verifica DEPOIS de cada passo. Se algo nao bater, para e avisa.
+   Nada roda sozinho — cada funcao precisa ser chamada explicitamente. */
+  window.__logJuncao = [];
+  const _jlog = (msg, ok) => {
+    window.__logJuncao.push((ok===false?'❌ ':ok===true?'✅ ':'• ')+msg);
+    console.log((ok===false?'%c❌ ':ok===true?'%c✅ ':'%c• ')+msg,
+      ok===false?'color:#D63A3A;font-weight:bold':ok===true?'color:#3BA55D;font-weight:bold':'color:#888');
+  };
+
+  /* ---- PAR 1: Zeens x Otica — sem dinheiro envolvido ---- */
+  window.juntarZeens = async function(){
+    if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa junção.', false); return; }
+    window.__logJuncao = [];
+    const DE = 'otica-visao-araucaria', PARA = 'zeens';
+    try{
+      _jlog('Lendo o que está pendurado em ' + DE + '…');
+      const vids = await getDocs(collection(db,'videos_producao'));
+      const mover = [];
+      vids.forEach(d => { const v = d.data()||{};
+        if((v.cliente||v.clienteSlug) === DE) mover.push({id:d.id, titulo:v.titulo||d.id}); });
+      _jlog('Vídeos a transferir: ' + mover.length);
+      for(const m of mover){
+        await updateDoc(doc(db,'videos_producao', m.id), { cliente: PARA, clienteSlug: PARA,
+          juntadoDe: DE, juntadoEm: new Date().toISOString(), juntadoPor: usuarioAtual });
+        const conf = await getDoc(doc(db,'videos_producao', m.id));
+        const ok = conf.exists() && (conf.data().cliente === PARA);
+        _jlog('vídeo "' + m.titulo + '" → ' + PARA, ok);
+        if(!ok){ _jlog('PAREI — a verificação falhou.', false); return window.__logJuncao; }
+      }
+      const proc = await getDoc(doc(db,'processos_cliente', DE));
+      if(proc.exists()){
+        const dados = proc.data();
+        const destino = await getDoc(doc(db,'processos_cliente', PARA));
+        if(destino.exists()){ _jlog('O ' + PARA + ' já tem processo — NÃO sobrescrevi. Confira à mão.', false); }
+        else {
+          await setDoc(doc(db,'processos_cliente', PARA), Object.assign({}, dados,
+            { cliente: PARA, juntadoDe: DE, juntadoEm: new Date().toISOString() }));
+          const c2 = await getDoc(doc(db,'processos_cliente', PARA));
+          _jlog('processo do cliente → ' + PARA, c2.exists());
+        }
+      }
+      const acesso = await getDoc(doc(db,'clientes_acesso', DE));
+      if(acesso.exists()){
+        await updateDoc(doc(db,'clientes_acesso', DE), { ativo:false, revogadoEm:new Date().toISOString(),
+          revogadoPor: usuarioAtual, motivo:'cliente unificado em ' + PARA });
+        _jlog('portal de ' + DE + ' desativado', true);
+      }
+      const ext = await getDocs(collection(db,'clientes_extras'));
+      for(const d of ext.docs){ const v=d.data()||{};
+        if(v.slug === DE){
+          await updateDoc(doc(db,'clientes_extras', d.id), { excluido:true, arquivadoEm:new Date().toISOString(),
+            arquivadoPor: usuarioAtual, unificadoEm: PARA });
+          _jlog('registro de ' + DE + ' ARQUIVADO (não apagado)', true); } }
+      _jlog('TERMINOU. Rode compararDuplicados para conferir.', true);
+    }catch(e){ _jlog('ERRO: ' + e.message, false); }
+    return window.__logJuncao;
+  };
+
+  /* ---- PAR 2: mensalidades do Master Chef ---- */
+  window.arrumarMensalidadesMasterChef = async function(valorMensal){
+    if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa.', false); return; }
+    if(!valorMensal || isNaN(valorMensal)){ _jlog('Passe o valor: arrumarMensalidadesMasterChef(1700)', false); return; }
+    window.__logJuncao = [];
+    const V = Number(valorMensal);
+    const plano = [
+      { id:'master-chef_2026-07', acao:'pago',     rot:'julho — marcado como PAGO' },
+      { id:'master-chef_2026-08', acao:'cortesia', rot:'agosto — CORTESIA (mês atual)' },
+      { id:'master-chef_2026-09', acao:'aberto',   rot:'setembro — volta a pagar' },
+      { id:'master-chef-pizzaria_2026-08', acao:'arquivar', rot:'duplicata de agosto' },
+      { id:'master-chef-pizzaria_2026-09', acao:'arquivar', rot:'duplicata de setembro' }
+    ];
+    try{
+      for(const p of plano){
+        const ref = doc(db,'pagamentos_mensais', p.id);
+        const snap = await getDoc(ref);
+        if(!snap.exists()){ _jlog('não existe: ' + p.id + ' — pulei', false); continue; }
+        let campos = {};
+        if(p.acao==='pago')     campos = { valor:V, pago:true,  isento:false, pagoEm:'2026-07-27' };
+        if(p.acao==='cortesia') campos = { valor:V, pago:false, isento:true, cortesia:true, motivoIsencao:'Cortesia combinada — agosto/2026' };
+        if(p.acao==='aberto')   campos = { valor:V, pago:false, isento:false, cortesia:false };
+        if(p.acao==='arquivar') campos = { excluido:true, arquivadoEm:new Date().toISOString(),
+                                           arquivadoPor: usuarioAtual, motivo:'duplicata — cliente unificado em master-chef' };
+        await updateDoc(ref, Object.assign({}, campos, { ajustadoEm:new Date().toISOString(), ajustadoPor: usuarioAtual }));
+        const conf = await getDoc(ref);
+        const d = conf.data()||{};
+        const ok = p.acao==='arquivar' ? d.excluido===true : Number(d.valor)===V;
+        _jlog(p.rot, ok);
+        if(!ok){ _jlog('PAREI — verificação falhou em ' + p.id, false); return window.__logJuncao; }
+      }
+      _jlog('TERMINOU. Rode detalharMensalidades para conferir.', true);
+    }catch(e){ _jlog('ERRO: ' + e.message, false); }
+    return window.__logJuncao;
+  };
   window.detalharMensalidades = async function(...slugs){
     const linhas = [];
     try{

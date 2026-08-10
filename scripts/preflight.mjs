@@ -54,10 +54,14 @@ const leisV49 = [
   '“Subi tudo” não foi conferido arquivo por arquivo',
   'Regra publicada e backup do GitHub ficaram em versões diferentes'
 ];
+const leisV50 = [
+  'Cofre necessário à operação estava preso à Gerência inteira',
+  'Saída antiga sem competência final continuava parecendo conciliada'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V49');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V49');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V50');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V50');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -472,9 +476,29 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-10-entrada-pagamento-pessoal-v48') {
-  falhar(`build V48 inesperado: ${build || 'ausente'}`);
-} else provar('V48 separa primeiro pagamento pessoal/agência sem duplicar mensalidade ou caixa');
+if (build !== '2026-08-10-cofre-cecilia-saidas-financeiras-v50') {
+  falhar(`build V50 inesperado: ${build || 'ausente'}`);
+} else provar('V50 libera o cofre operacional da Cecília e fecha saídas financeiras legadas');
+
+const cofreCecilia = escritorio.slice(
+  escritorio.indexOf('async function renderCofreCecilia'),
+  escritorio.indexOf('window.excluirSenhaCofre')
+);
+const syncDomPapel = escritorio.slice(
+  escritorio.indexOf('const __sidebarExclusivos'),
+  escritorio.indexOf('function esc(s)')
+);
+if (!escritorio.includes('id="navCofreCecilia"') ||
+    !escritorio.includes('id="view-cofreCecilia"') ||
+    !syncDomPapel.includes("'navCofreCecilia','view-cofreCecilia'") ||
+    !syncDomPapel.includes("definirItemExclusivoNoDOM('navCofreCecilia',usuarioAtual==='Cecília')") ||
+    !escritorio.includes("if(nome === 'cofreCecilia' && usuarioAtual!=='Cecília')") ||
+    !cofreCecilia.includes("if(usuarioAtual!=='Cecília')") ||
+    cofreCecilia.includes('salvarSenhaCofre(') || cofreCecilia.includes('excluirSenhaCofre(') ||
+    !regras.includes('allow read: if ehGerencia() || ehCecilia();') ||
+    !regras.includes('allow create, update: if ehGerencia();')) {
+  falhar('cofre da Cecília perdeu leitura mínima, isolamento real de DOM ou separação das escritas de Gerência');
+} else provar('Cecília recebe cofre somente leitura; menu/view saem do DOM dos demais e regras não liberam escrita');
 
 const saidaFinanceira = escritorio.slice(
   escritorio.indexOf('window.salvarSaidaClienteCentral=async function'),
@@ -485,9 +509,12 @@ if (!escritorio.includes('id="saidaUltimaCompetencia"') ||
     !saidaFinanceira.includes("status:'cancelado',canceladoPorSaida:true") ||
     !saidaFinanceira.includes('pagosPosteriores.length') ||
     !saidaFinanceira.includes('ultimaCompetenciaDoContrato:true') ||
-    !escritorio.includes("String(competencia||'') > fim")) {
+    !escritorio.includes("String(competencia||'') > fim") ||
+    !escritorio.includes('financeiroLegadoPendente') ||
+    !escritorio.includes('FINANCEIRO PENDENTE') ||
+    !escritorio.includes('Definir último mês')) {
   falhar('saída de cliente não fecha toda a cadeia financeira pela última competência');
-} else provar('saída bloqueia pagamento posterior, cancela futuro sem apagar e limita novas competências');
+} else provar('saída bloqueia pagamento posterior, cancela futuro sem apagar, limita novas competências e denuncia legado incompleto');
 
 const resumoMinhas = escritorio.slice(
   escritorio.indexOf('const resumoHtml = `<div class="painelResumo painelResumoDemandas"'),

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-10-entrada-pagamento-pessoal-v48">
+<meta name="gs-build" content="2026-08-10-cofre-cecilia-saidas-financeiras-v50">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -672,6 +672,7 @@
       <div class="navitem" id="navStories" onclick="irPara('stories', this)"><span class="ico"><svg><use href="#i-image"/></svg></span> Stories</div>
       <div class="navitem" id="navPortalGeral" onclick="irPara('portalGeral', this)"><span class="ico"><svg><use href="#i-external"/></svg></span> Portal do Cliente</div>
       <div class="navitem" id="navGetAcademy" onclick="irPara('getAcademy', this)"><span class="ico"><svg><use href="#i-award"/></svg></span> Get Academy</div>
+      <div class="navitem" id="navCofreCecilia" onclick="irPara('cofreCecilia', this)" style="background:var(--yellow);color:var(--graphite);font-weight:900;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-lock"/></svg></span> Senhas dos Clientes</div>
     </div>
 
     <div class="navgroup" id="navgroupApoio">
@@ -1012,6 +1013,13 @@
       <h1>🎓 Get <span class="y">Academy</span></h1>
       <div class="sub">Cursos que a agência oferece pra equipe — link direto e acesso de cada um.</div>
       <div id="getAcademyConteudo"></div>
+    </div>
+
+    <!-- COFRE OPERACIONAL — somente Cecília, leitura; o DOM sai para os demais papéis -->
+    <div class="view" id="view-cofreCecilia">
+      <h1>🔐 Senhas dos <span class="y">Clientes</span></h1>
+      <div class="sub">Acesso operacional somente para a Cecília. Inclusão, alteração e arquivamento continuam exclusivos da Gerência.</div>
+      <div id="cofreCeciliaConteudo"></div>
     </div>
 
     <!-- CAMPANHAS -->
@@ -11346,10 +11354,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return new TextDecoder().decode(decifrado);
   }
 
+  async function carregarRegistrosCofre(){
+    const snap = await getDocs(collection(db,'cofre_senhas'));
+    const lista = [];
+    snap.forEach(d => { const v=d.data(); if(!v.excluido) lista.push({id:d.id, ...v}); });
+    return lista.sort((a,b)=>String(a.cliente||'').localeCompare(String(b.cliente||''),'pt-BR'));
+  }
+
   async function renderCofreSenhas(){
     const cont = document.getElementById('gerenciaCofreSenhas');
-    const snap = await getDocs(collection(db,'cofre_senhas'));
-    const lista = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) lista.push({id:d.id, ...v}); });
+    if(!cont || !['Chris','Amanda'].includes(usuarioAtual)) return;
+    const lista = await carregarRegistrosCofre();
 
     /* ===== O PAINEL DE SEGURANÇA — 28/07/2026 =========================
        Eu descrevi "Gerência → Cofre → trocar senha" e nunca coloquei o
@@ -11424,6 +11439,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
 
   window.salvarSenhaCofre = async function(){
+    if(!['Chris','Amanda'].includes(usuarioAtual)){
+      mostrarToast('A gestão do cofre é exclusiva da Gerência.', 'erro');
+      return;
+    }
     const cliente = document.getElementById('cofreCliente').value.trim();
     const usuario = document.getElementById('cofreUsuario').value.trim();
     const senha = document.getElementById('cofreSenha').value;
@@ -11441,20 +11460,72 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     renderCofreSenhas();
   };
 
-  window.revelarSenhaCofre = async function(id){
+  async function revelarSenhaCofreNoAlvo(id, alvoId){
+    if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)){
+      mostrarToast('Você não tem acesso ao cofre de clientes.', 'erro');
+      return;
+    }
     const snap = await getDoc(doc(db,'cofre_senhas', id));
+    if(!snap.exists() || snap.data().excluido===true){
+      mostrarToast('Essa credencial não está mais disponível.', 'erro');
+      return;
+    }
     const s = snap.data();
     try {
       const senhaTexto = await descriptografarTexto(s.senhaCriptografada);
-      const box = document.getElementById('senhaRevelada_'+id);
+      const box = document.getElementById(alvoId);
+      if(!box) return;
       box.innerHTML = `<span class="prioTag verde">🔓 ${esc(senhaTexto)}</span>`;
       setTimeout(()=>{ box.innerHTML = ''; }, 8000);
     } catch(e){
       mostrarToast('Não consegui descriptografar essa senha.', 'erro');
     }
+  }
+
+  window.revelarSenhaCofre = async function(id){
+    if(!['Chris','Amanda'].includes(usuarioAtual)){
+      mostrarToast('A gestão do cofre é exclusiva da Gerência.', 'erro');
+      return;
+    }
+    await revelarSenhaCofreNoAlvo(id,'senhaRevelada_'+id);
   };
 
+  window.revelarSenhaCofreCecilia = async function(id){
+    if(usuarioAtual!=='Cecília'){
+      mostrarToast('Esta visualização é exclusiva da Cecília.', 'erro');
+      return;
+    }
+    await revelarSenhaCofreNoAlvo(id,'senhaCeciliaRevelada_'+id);
+  };
+
+  async function renderCofreCecilia(){
+    const cont=document.getElementById('cofreCeciliaConteudo');
+    if(!cont) return;
+    if(usuarioAtual!=='Cecília'){
+      cont.replaceChildren();
+      return;
+    }
+    cont.innerHTML='<div class="card"><div class="loader">Carregando credenciais autorizadas...</div></div>';
+    try{
+      const lista=await carregarRegistrosCofre();
+      let html=`<div class="card" style="border:2px solid var(--yellow);"><h2>🔐 Cofre operacional</h2><div class="desc">Use somente para executar o trabalho dos clientes. A senha aparece por 8 segundos. Para cadastrar, corrigir ou arquivar uma credencial, peça à Amanda ou ao Chris.</div></div>`;
+      if(!lista.length) html+='<div class="empty">Nenhuma credencial ativa no cofre.</div>';
+      lista.forEach(s=>{
+        html+=`<div class="item"><div class="top"><div class="nome">${esc(s.cliente)}</div><div class="meta">${esc(s.usuario||'usuário não informado')}</div></div>${s.notas?'<div class="meta" style="margin-top:4px;">'+esc(s.notas)+'</div>':''}<div id="senhaCeciliaRevelada_${s.id}" style="margin-top:8px;"></div><button class="btn secondary" style="width:auto;padding:7px 14px;font-size:12px;margin-top:8px;" onclick="revelarSenhaCofreCecilia('${escJs(s.id)}')">👁️ Revelar por 8 segundos</button></div>`;
+      });
+      cont.innerHTML=html;
+    }catch(e){
+      console.error('Cofre operacional da Cecília:',e);
+      cont.innerHTML='<div class="card" style="border-color:var(--red);"><b style="color:var(--red);">Cofre indisponível.</b><div class="desc">Nenhuma lista vazia foi simulada. Atualize a página; se persistir, envie o código do erro: '+esc(e.code||e.message||String(e))+'</div></div>';
+    }
+  }
+  window.renderCofreCecilia=renderCofreCecilia;
+
   window.excluirSenhaCofre = async function(id){
+    if(!['Chris','Amanda'].includes(usuarioAtual)){
+      mostrarToast('A gestão do cofre é exclusiva da Gerência.', 'erro');
+      return;
+    }
     if(!confirm('Excluir essa senha do cofre?')) return;
     await updateDoc(doc(db,'cofre_senhas', id), { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() });
     mostrarToast('Removido do cofre.');
@@ -15050,7 +15121,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   /* Itens exclusivos não ficam apenas escondidos: fora do papel certo
      eles são retirados do DOM e voltam pelo marcador ao trocar de conta. */
   const __sidebarExclusivos = new Map();
-  ['navCadastro','navAprovacoes','navExtras','navgroupVendas','navAcompCampanhas','view-campanhas'].forEach(id=>{
+  ['navCadastro','navAprovacoes','navExtras','navgroupVendas','navAcompCampanhas','view-campanhas','navCofreCecilia','view-cofreCecilia'].forEach(id=>{
     const no=document.getElementById(id); if(!no?.parentNode) return;
     const marca=document.createComment('slot-'+id);
     no.parentNode.insertBefore(marca,no);
@@ -15073,6 +15144,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     definirItemExclusivoNoDOM('navgroupVendas',usuarioAtual==='Chris');
     definirItemExclusivoNoDOM('navAcompCampanhas',podeCampanhas);
     definirItemExclusivoNoDOM('view-campanhas',podeCampanhas);
+    definirItemExclusivoNoDOM('navCofreCecilia',usuarioAtual==='Cecília');
+    definirItemExclusivoNoDOM('view-cofreCecilia',usuarioAtual==='Cecília');
   }
 
   function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -15770,6 +15843,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       mostrarToast('Postagem Até Quando é uma ferramenta da Cecília e da gestão.', 'erro');
       return;
     }
+    if(nome === 'cofreCecilia' && usuarioAtual!=='Cecília'){
+      const viewCofreCeciliaNegada=document.getElementById('view-cofreCecilia');
+      if(viewCofreCeciliaNegada) viewCofreCeciliaNegada.remove();
+      mostrarToast('As credenciais operacionais são exclusivas da Cecília.', 'erro');
+      return;
+    }
     /* ===== PROTOCOLO CÁPSULA — PORTA EXCLUSIVA DA AMANDA (04/08/2026)
        O item lateral e a tela são montados dinamicamente só para ela,
        mas a trava também vive na navegação: chamar a view pelo console
@@ -15814,6 +15893,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(nome === 'metas'){ try{ renderFuncionarioMesPainel('metasBox'); }catch(e){ console.error('Metas:', e); } }
     if(nome === 'central') renderCentral();
     if(nome === 'cadastro') setCadastroSub('central', document.querySelector('#view-cadastro .subtab'));
+    if(nome === 'cofreCecilia') renderCofreCecilia();
     if(nome === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas();
     if(nome === 'atrasadas') renderPainelDemandas();
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
@@ -16189,9 +16269,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const atual=(window.__entradaClientesAtivos||{})[slug]; if(!atual) return '';
     const saida=(window.__saidasProgramadasPorSlug||{})[slug]||{};
     const ultimaCompetenciaPagamento=saida.ultimaCompetenciaPagamento||atual.ultimaCompetenciaPagamento||(!saida.id?String(saida.dataSaida||hojeLocal()).slice(0,7):'');
+    const financeiroLegadoPendente=atual.tipo==='mensalista'&&!!saida.id&&!competenciaFinanceiraValida(ultimaCompetenciaPagamento);
     return `<div class="card" id="editorSaidaClienteCentral" style="border:2px solid var(--red);">
       <h2 style="margin-top:0;">Saída de ${esc(atual.nome)}</h2>
       <div class="desc"><b>Nada já produzido será apagado.</b> Até a data de saída, o cliente continua no Portal, nas listas e nas rotinas. Na data informada, novas rotinas e acessos são encerrados; o histórico permanece.</div>
+      ${financeiroLegadoPendente?'<div class="card" style="border:2px solid var(--red);background:rgba(255,93,93,.08);margin-top:12px;"><b style="color:var(--red);">⚠️ Saída antiga sem competência final.</b><div class="desc">O Financeiro ainda não sabe qual foi o último mês devido. Informe o mês abaixo e salve: lançamentos posteriores em aberto serão cancelados sem apagar histórico; pagamentos já recebidos impedem a mudança.</div></div>':''}
       <div class="row2"><div class="field"><label>Data em que avisou</label><input type="date" id="saidaAviso" value="${esc(saida.dataAviso||hojeLocal())}"></div><div class="field"><label>Data em que sai da operação</label><input type="date" id="saidaData" min="${hojeLocal()}" value="${esc(saida.dataSaida||hojeLocal())}"></div></div>
       ${atual.tipo==='mensalista'?`<div class="field" style="background:var(--deep);border-left:3px solid var(--yellow);border-radius:9px;padding:12px 14px;"><label>Último mês cobrado / competência final no Financeiro</label><input type="month" id="saidaUltimaCompetencia" value="${esc(ultimaCompetenciaPagamento)}"><div class="desc" style="margin:6px 0 0;">O mês informado continua normal. Cobranças posteriores serão canceladas sem apagar o histórico e deixarão de entrar no previsto, em aberto e régua de cobrança. Se existir pagamento posterior já recebido, o sistema bloqueia a saída para não perder dinheiro contabilizado.${atual.cortesiaPermanente?' Este cliente tem cortesia permanente; o campo define apenas o último mês exibido no histórico financeiro.':''}</div></div>`:''}
       <div class="field"><label>Motivo</label><select id="saidaMotivo"><option value="">Selecione...</option>${[['preco','Preço'],['resultado','Resultado'],['atendimento','Atendimento'],['mudanca_interna','Mudança interna do cliente'],['fim_projeto','Fim do projeto'],['outro','Outro']].map(([v,n])=>`<option value="${v}" ${saida.motivo===v?'selected':''}>${n}</option>`).join('')}</select></div>
@@ -16480,8 +16562,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       </div>`;
       const formularioEdicao=htmlEditorClienteAtivoCentral();
       const formularioSaida=htmlSaidaClienteCentral();
-      const itemAtivo=v=>`<div class="card" style="border-left:4px solid ${v.tipo==='mensalista'?'var(--green)':'#7e8aa6'};">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;"><div><h2 style="margin:0 0 4px;">${esc(v.nome)}</h2><div class="meta">${v.tipo==='mensalista'?'MENSALISTA':'AVULSO'} · ${esc(v.slug)}</div></div><span class="pill ${v.saida?'warn':(v.tipo==='mensalista'?'ok':'')}">${v.saida?'SAÍDA EM '+formatarDataBR(v.saida.dataSaida):(v.tipo==='mensalista'?'ATIVO':'PONTUAL')}</span></div>
+      const itemAtivo=v=>{ const saidaFinanceiraPendente=v.tipo==='mensalista'&&!!v.saida&&!competenciaFinanceiraValida(v.ultimaCompetenciaPagamento); return `<div class="card" style="border-left:4px solid ${saidaFinanceiraPendente?'var(--red)':(v.tipo==='mensalista'?'var(--green)':'#7e8aa6')};">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;"><div><h2 style="margin:0 0 4px;">${esc(v.nome)}</h2><div class="meta">${v.tipo==='mensalista'?'MENSALISTA':'AVULSO'} · ${esc(v.slug)}</div></div><span class="pill ${v.saida?'warn':(v.tipo==='mensalista'?'ok':'')}">${saidaFinanceiraPendente?'FINANCEIRO PENDENTE':(v.saida?'SAÍDA EM '+formatarDataBR(v.saida.dataSaida):(v.tipo==='mensalista'?'ATIVO':'PONTUAL'))}</span></div>
+        ${saidaFinanceiraPendente?'<div class="card" style="border-color:var(--red);margin:11px 0 0;background:rgba(255,93,93,.08);"><b style="color:var(--red);">Defina o último mês cobrado.</b><div class="desc">Enquanto faltar esse dado, a saída não está conciliada com as mensalidades. Clique em “Definir último mês” abaixo.</div></div>':''}
         <div class="desc" style="margin-top:11px;line-height:1.7;"><b>Contato:</b> ${esc(v.instagram||'—')} · ${esc(v.telefone||'—')}${v.aniversario?' · aniversário '+esc(v.aniversario):''}${v.contatos?'<br><b>Outros contatos:</b> '+esc(v.contatos):''}<br><b>Plano/escopo:</b> ${esc([v.plano,(!v.planoDetalhes||String(v.plano||'').includes(v.planoDetalhes))?'':v.planoDetalhes].filter(Boolean).join(' — ')||'—')}${v.tipo==='mensalista'?'<br><b>Mensalidade:</b> '+brl(v.valorMensal)+' · vence dia '+esc(String(v.diaVencimento||'—'))+' · primeira cobrança '+esc(v.primeiraCompetencia||'—')+(v.ultimaCompetenciaPagamento?' · <b>último mês no Financeiro:</b> '+esc(v.ultimaCompetenciaPagamento):'')+' · <b>entrega:</b> '+(v.tipoEntrega==='entrega_direta'?'direta':'agência publica')+' · <b>Stories:</b> '+(v.incluiStories?'sim':'não')+'<br><b>Cortesia:</b> '+(v.cortesiaPermanente?'permanente':(v.cortesiaMeses||[]).length?(v.cortesiaMeses||[]).map(esc).join(', '):'não')+'<br><b>Onboarding:</b> '+esc(v.onboardingStatus):''}${v.observacoes?'<br><b>Observações:</b> '+esc(v.observacoes):''}</div>
         <div class="btnrow" style="margin-top:11px;flex-wrap:wrap;">
           ${v.token?'<button class="btn" style="width:auto;" onclick="abrirPortalClienteCentral(\''+escJs(v.slug)+'\')">Abrir Portal ↗</button><button class="btn secondary" style="width:auto;" onclick="copiarPortalClienteCentral(\''+escJs(v.slug)+'\')">Copiar Portal</button>':'<button class="btn" style="width:auto;" onclick="garantirPortalClienteCentral(\''+escJs(v.slug)+'\')">Criar/recuperar Portal</button>'}
@@ -16490,9 +16573,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <button class="btn secondary" style="width:auto;" onclick="navegarGerenciaSub('saudeClientes')">Ficha operacional</button>
           <button class="btn secondary" style="width:auto;" onclick="editarClienteAtivoCentral('${escJs(v.slug)}')">Editar dados</button>
           ${v.identidadeDivergente?'<button class="btn" style="width:auto;" onclick="repararIdentidadeClienteCentral(\''+escJs(v.slug)+'\')">Corrigir identidade para '+esc(nomeClienteCanonico(v.slug,v.nome))+'</button>':''}
-          <button class="btn red" style="width:auto;" onclick="abrirSaidaClienteCentral('${escJs(v.slug)}')">${v.saida?'Revisar saída':'Programar saída'}</button>
+          <button class="btn red" style="width:auto;" onclick="abrirSaidaClienteCentral('${escJs(v.slug)}')">${saidaFinanceiraPendente?'Definir último mês':(v.saida?'Revisar saída':'Programar saída')}</button>
         </div>
-      </div>`;
+      </div>`; };
       const arquivadosDeOrigem=[
         ...mensalistasSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'cadastro mensalista'})),
         ...avulsosEmpresaSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'projeto avulso'})),
@@ -18303,7 +18386,7 @@ window.setGerenciaSub = function(qual, el){
        story pro cliente simplesmente sumiu pra ela. Ela é a Social Media
        chefe — é a dona natural disso. */
     'Amanda': ['navAcompCampanhas','navMetas','navExtras','navRoteiros','navCentral','navAprovacoes','navChecklist','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
-    'Cecília': ['navAcompCampanhas','navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem'],
+    'Cecília': ['navAcompCampanhas','navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem','navCofreCecilia'],
     'Gabrielle': ['navAcompCampanhas','navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'João Victor': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
@@ -18320,7 +18403,7 @@ window.setGerenciaSub = function(qual, el){
        fora dela nasce visivel pra todo mundo, pra sempre.
        Foi o meu erro ao criar o navCentral — e o meu teste conferiu o
        mapa em vez de conferir quem apaga. */
-    'navCentral','navChecklist','navVideos','navExtras','navAprovacoes','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navControlePostagem','navArquivoEntregas','navCadastro','navManualFuncao','navDuvidasBit'];
+    'navCentral','navChecklist','navVideos','navExtras','navAprovacoes','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navControlePostagem','navArquivoEntregas','navCadastro','navManualFuncao','navDuvidasBit','navCofreCecilia'];
   const ITENS_UNIVERSAIS = ['navMinhasDemandasAtribuidas','navMinhasDemandas'];
 
   /* ===== FRENTE C2 — SIDEBAR POR FREQUENCIA DE USO =====
@@ -18339,7 +18422,7 @@ window.setGerenciaSub = function(qual, el){
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
     'Amanda': ['navCentral','navAprovacoes','navAgendamento','navVideos','navStories','navPostagens','navReferencias','navAcompCampanhas','navFuncoesFixas'],
-    'Cecília': ['navAcompCampanhas','navControlePostagem','navAgendamento','navPostagens','navVideos'],
+    'Cecília': ['navAcompCampanhas','navControlePostagem','navAgendamento','navPostagens','navVideos','navCofreCecilia'],
     'Gabrielle': ['navPostagens','navAcompCampanhas','navReferencias'],
     'Helo': ['navVideos'],
     'João Victor': ['navVideos'],
@@ -19722,7 +19805,7 @@ window.setGerenciaSub = function(qual, el){
       videos:'navVideos', agendamento:'navAgendamento', funcoesFixas:'navFuncoesFixas',
       postagens:'navPostagens', stories:'navStories', campanhas:'navAcompCampanhas', roteiros:'navRoteiros',
       referencias:'navReferencias', briefings:'navBriefings', acompanhamento:'navAcompanhamento', relatorioMensal:'navRelatorio', calendarios:'navCalendarios',
-      cadastro:'navCadastro', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit',
+      cadastro:'navCadastro', cofreCecilia:'navCofreCecilia', manualFuncao:'navManualFuncao', duvidasBit:'navDuvidasBit',
       mensalidades:'navMensalidades', contratos:'navContratos', financeiro:'navFinanceiro', cobranca:'navCobranca'
     };
     const el = document.getElementById(idParaId[nomeView]);

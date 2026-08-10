@@ -114,7 +114,7 @@ function testarMensalidadesSandbox() {
   const identidadeClientes = trecho(escritorio, 'const APELIDOS_DE_CONTRATO', '  function dataOperacionalISO');
   const fonte = trecho(escritorio, 'function statusMensalidadeCanonico', '  window.marcarMensalidade = async function');
   const api = executarSandbox('mensalidades-sandbox.js',
-    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,contratoVigenteNaCompetencia,ajusteCortesiaMensalidade,situacaoMensalidade};`);
+    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,competenciaFinanceiraValida,pagamentoPertenceAoCliente,analisarPagamentosParaSaida,contratoVigenteNaCompetencia,ajusteCortesiaMensalidade,situacaoMensalidade};`);
   exigir(api.statusMensalidadeCanonico({status:' ISENTO '}) === 'isento' &&
     api.mensalidadeResolvida({status:'cortesia'}) === true,
     'cortesia legada/normalizada voltou a ser tratada como cobrança');
@@ -155,10 +155,19 @@ function testarMensalidadesSandbox() {
   ]);
   exigir(contratosCanonicos.length===1 && contratosCanonicos[0].slugCanonico==='master-chef' && contratosCanonicos[0].clienteNome==='Master Chef',
     'contrato duplicado/encerrado de Master Chef voltou à operação');
-  exigir(api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08'},'2026-07')===false &&
-    api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08'},'2026-08')===true &&
+  exigir(api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08',ultimaCompetenciaPagamento:'2026-09'},'2026-07')===false &&
+    api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08',ultimaCompetenciaPagamento:'2026-09'},'2026-08')===true &&
+    api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08',ultimaCompetenciaPagamento:'2026-09'},'2026-10')===false &&
     api.contratoVigenteNaCompetencia({},'2026-01')===true,
-    'primeira competência não bloqueia cobrança anterior ou apagou compatibilidade de contrato legado');
+    'primeira/última competência não limita a cobrança ou apagou compatibilidade de contrato legado');
+  const analiseSaida=api.analisarPagamentosParaSaida([
+    {id:'zeiss_2026-08',cliente:'zeiss',competencia:'2026-08',status:'pago'},
+    {id:'zeens_2026-09',cliente:'zeens',competencia:'2026-09',status:'aberto'},
+    {id:'zeens_2026-10',cliente:'zeens',competencia:'2026-10',status:'pago'},
+    {id:'zeens_2026-07',cliente:'zeens',competencia:'2026-07',status:'cancelado',canceladoPorSaida:true,canceladoPorSaidaId:'saida-1',statusAntesSaida:'isento'}
+  ],'zeens','2026-09','saida-1');
+  exigir(analiseSaida.posteriores.length===1 && analiseSaida.pagosPosteriores[0]?.competencia==='2026-10' && analiseSaida.reabrir[0]?.competencia==='2026-07',
+    'análise da saída não reconhece alias, pagamento posterior ou reabertura da própria programação');
 
   const salvarContrato = trecho(escritorio, 'window.salvarContrato = async function', '  window.novoContrato');
   exigir(salvarContrato.includes('const lote = writeBatch(db);') &&
@@ -181,8 +190,10 @@ function testarMensalidadesSandbox() {
     painel.includes('Em aberto neste mês') && painel.includes('Base recorrente vs.'),
     'totais, movimento ou concentração do financeiro voltaram a cobrar cortesia/cancelamento');
   const geradorMensal = trecho(escritorio, 'window.renderMensalidades = async function', '  function atualizarBadgeMensalidades');
-  exigir(geradorMensal.includes('if(!contratoVigenteNaCompetencia(ct, competencia)) continue;'),
-    'gerador mensal voltou a criar cobrança anterior à entrada do cliente');
+  exigir(geradorMensal.includes('if(!contratoVigenteNaCompetencia(ct, competencia)) continue;') &&
+    geradorMensal.includes("!['isento','cancelado'].includes(l.sit.k)") &&
+    geradorMensal.includes("!['pago','isento','cancelado'].includes(l.sit.k)"),
+    'gerador/grade mensal voltou a criar ou contar cobrança fora do contrato/cancelada');
 
   const ficha = trecho(escritorio, 'const ETAPAS_ONBOARDING_LOCAL', '  window.registrarClienteDaReuniao');
   const fichaApi = executarSandbox('ficha-cortesia-cliente-sandbox.js',
@@ -241,6 +252,10 @@ function testarCampanhasMensaisSandbox(){
     'riscos de Campanhas só aparecem depois de abrir a tela e não alertam no menu');
   exigir((escritorio.match(/id="navAcompCampanhas"/g)||[]).length===1&&!escritorio.includes('id="navCampanhas"'),
     'duas portas de Campanhas voltaram ao menu lateral');
+  exigir(escritorio.includes("'navAcompCampanhas','view-campanhas'].forEach") &&
+    escritorio.includes("definirItemExclusivoNoDOM('navAcompCampanhas',podeCampanhas)") &&
+    escritorio.includes("definirItemExclusivoNoDOM('view-campanhas',podeCampanhas)"),
+    'Campanhas voltou a permanecer escondida no DOM de papéis sem acesso');
   const regras=fs.readFileSync(path.join(raiz,'firestore.rules'),'utf8');
   const regraCamp=trecho(regras,'match /campanhas/{docId}',"    // Coleções exclusivamente operacionais");
   exigir(regraCamp.includes('ehGabi()')&&regraCamp.includes('ehAmanda()')&&regraCamp.includes('ehCecilia()')&&
@@ -767,8 +782,12 @@ function testarPermissoesAcoesSandbox() {
     'auditoria permitiu gravação pelo iframe do calendário ou bloqueou a sessão necessária à leitura');
 
   const saida = trecho(escritorio, 'window.salvarSaidaClienteCentral', 'window.cancelarProgramacaoSaidaCentral');
+  const marcadorFinalExistente=trecho(saida,'const baseFinal=','if(!snapFinal?.exists())');
   exigir(saida.includes('saidaProgramadaPara:dataSaida') && saida.includes('clienteInativo:imediata') &&
-    saida.includes('ativoAte:limiteAcesso') && saida.includes('statusSaida:imediata') && saida.includes('fichaSnapshot'),
+    saida.includes('ativoAte:limiteAcesso') && saida.includes('statusSaida:imediata') && saida.includes('fichaSnapshot') &&
+    saida.includes('ultimaCompetenciaPagamento') && saida.includes('analisarPagamentosParaSaida') &&
+    saida.includes('pagosPosteriores.length') && saida.includes("status:'cancelado',canceladoPorSaida:true") &&
+    saida.includes('ultimaCompetenciaDoContrato:true') && !marcadorFinalExistente.includes('valorDevido'),
     'saída futura ainda encerra imediatamente ou não limita o Portal na data');
   const efetivar = trecho(escritorio, 'async function efetivarSaidasProgramadas', 'window.efetivarSaidasProgramadas');
   exigir(efetivar.includes("statusSaida==='programada'&&saidaClienteJaEfetiva(v)") &&
@@ -779,6 +798,7 @@ function testarPermissoesAcoesSandbox() {
     'saída agendada não está conectada ao motor e aos filtros operacionais');
   const centralClientes = trecho(escritorio, 'window.renderCentralEntradaClientes = async function', 'async function carregarMensalistaRecebidoNosCampos');
   exigir(centralClientes.includes('const fontesLegadas=new Map()') && centralClientes.includes('CLIENTES_BASE.forEach') &&
+    centralClientes.includes('Object.entries(contratos).forEach') && centralClientes.includes('contratoAtivo') &&
     centralClientes.includes("cfg.tipoCliente==='avulso'?false") && centralClientes.includes('const slugsArquivadosDeOrigem=new Set') &&
     centralClientes.includes('slugsArquivadosDeOrigem.has(slug)') && centralClientes.includes('const slugsAtivosNaCentral=new Set') &&
     centralClientes.includes('arquivadosDeOrigem.filter(v=>!slugsAtivosNaCentral.has(slugDo(v)))') &&
@@ -798,6 +818,8 @@ function testarPermissoesAcoesSandbox() {
   exigir(escritorio.includes('Reativar cliente e recuperar Portal') &&
     reativacaoArquivado.includes('reativarEfetiva') &&
     reativacaoArquivado.includes("status:'ativo',encerrado:false,excluido:false,ativo:true") &&
+    reativacaoArquivado.includes('status:p.statusAntesSaida') &&
+    reativacaoArquivado.includes('ultimaCompetenciaPagamento:deleteField()') &&
     reativacaoArquivado.includes("statusSaida:'cancelada',excluido:true") &&
     reativacaoArquivado.includes('await window.garantirPortalClienteCentral(slug)') &&
     !reativacaoArquivado.includes('deleteDoc('),

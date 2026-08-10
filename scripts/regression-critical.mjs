@@ -730,6 +730,10 @@ function testarPermissoesAcoesSandbox() {
     reativacaoArquivado.includes('await window.garantirPortalClienteCentral(slug)') &&
     !reativacaoArquivado.includes('deleteDoc('),
     'arquivo de clientes não reativa mensalista e Portal preservando o histórico');
+  exigir(reativacaoArquivado.includes('nomeClienteCanonico(slug') &&
+    reativacaoArquivado.includes('clienteNome:nomeReativado') &&
+    reativacaoArquivado.includes('nome:nomeReativado,ativo:true'),
+    'reativação voltou a promover o nome legado do alias para a identidade canônica');
   const fusao = trecho(escritorio, 'window.fundirClientes = async function', 'window.arquivarClienteDuplicado');
   exigir(fusao.indexOf("doc(db,'clientes_acesso', PARA)") >= 0 &&
     fusao.indexOf('portal preservado em ') < fusao.indexOf("updateDoc(doc(db,'clientes_acesso', DE)"),
@@ -775,6 +779,7 @@ async function testarCentralClientesAmandaSandbox() {
   const portalApi = executarSandbox('portal-master-chef-sandbox.js',
     `let usuarioAtual='Amanda';const gravacoes=[];const avisos=[];const db={};\n`+
     `function slugClienteCanonico(s){return {'master-chefe':'master-chef','master-chef-pizzaria':'master-chef'}[s]||s;}\n`+
+    `function nomeClienteCanonico(s,n){return slugClienteCanonico(s)==='master-chef'?'Master Chef':n;}\n`+
     `function doc(b,c,id){return {path:c+'/'+id};}function serverTimestamp(){return 'SERVIDOR';}\n`+
     `async function getDoc(){return {exists:()=>false,data:()=>({})};}\n`+
     `async function setDoc(ref,dados,opts){gravacoes.push({ref,dados,opts});}\n`+
@@ -805,7 +810,7 @@ async function testarIdentidadeClienteSandbox() {
     `async function getDocs(ref){if(globalThis.__falharLeitura)throw new Error('sem leitura');const itens=colecoes.get(ref.col)||[];return {docs:itens.map(v=>({id:v.id,data:()=>v.dados}))};}\n`+
     `function clienteInativoEfetivo(v){return v.clienteInativo===true;}\n`+
     `${identidadeFonte}\n`+
-    `globalThis.api={diagnosticar:diagnosticarIdentidadeCliente,mensagem:mensagemIdentidadeClienteExistente};`,
+    `globalThis.api={diagnosticar:diagnosticarIdentidadeCliente,mensagem:mensagemIdentidadeClienteExistente,nome:nomeClienteCanonico};`,
     {filename:'identidade-cliente-sandbox.js'}
   ).runInContext(contexto);
   const api=contexto.api;
@@ -822,6 +827,13 @@ async function testarIdentidadeClienteSandbox() {
   let falhouFechado=false;
   try{ await api.diagnosticar('Cliente Novo'); }catch(e){ falhouFechado=String(e.message).includes('sem leitura'); }
   exigir(falhouFechado,'falha de leitura ainda poderia ser interpretada como identidade livre');
+
+  exigir(api.nome('master-chef-pizzaria','Master chef pizzaria')==='Master Chef' &&
+    api.nome('master-chef','Master chef pizzaria')==='Master Chef',
+    'nome legado voltou a aparecer no Portal depois da canonicalização do slug');
+  const arquivoFonte=trecho(escritorio, 'const htmlArquivado=v=>', 'box.innerHTML=', escritorio.indexOf('const htmlArquivado=v=>'));
+  exigir(arquivoFonte.includes('aliasOuFusao')&&arquivoFonte.includes('!aliasOuFusao'),
+    'registro arquivado de alias/unificação voltou a oferecer reativação');
 }
 
 try {

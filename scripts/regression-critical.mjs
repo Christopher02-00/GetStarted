@@ -177,7 +177,7 @@ function testarMensalidadesSandbox() {
 
   const ficha = trecho(escritorio, 'const ETAPAS_ONBOARDING_LOCAL', '  window.registrarClienteDaReuniao');
   const fichaApi = executarSandbox('ficha-cortesia-cliente-sandbox.js',
-    `function mesesCortesiaValidos(meses){return (meses||[]).every(m=>/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(m)));}\n${ficha}\nglobalThis.api={validarEntradaClienteMensalista,modelarClienteMensalistaUnificado};`);
+    `function slugClienteCanonico(s){return s;}function mesesCortesiaValidos(meses){return (meses||[]).every(m=>/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(m)));}\n${ficha}\nglobalThis.api={validarEntradaClienteMensalista,modelarClienteMensalistaUnificado};`);
   const base={nome:'Cliente Teste',instagram:'@teste',telefone:'41999999999',plano:'Intermediário',planoDetalhes:'',valorMensal:1700,diaVencimento:10,primeiraCompetencia:'2026-08',tipoEntrega:'postagem_completa',incluiStories:false,contrato:'',cortesiaTipo:'meses',cortesiaMeses:['2026-08'],cortesiaPermanente:false,cortesiaInicial:true};
   exigir(fichaApi.validarEntradaClienteMensalista(base).length === 0,
     'ficha da Amanda recusou uma cortesia mensal válida');
@@ -722,6 +722,14 @@ function testarPermissoesAcoesSandbox() {
     acessoCentral.includes("doc(db,'clientes_portal_tokens',token)") &&
     acessoCentral.includes('ativo:true'),
     'recuperação do Portal não confirma as duas fontes de autorização no slug canônico');
+  const reativacaoArquivado = trecho(escritorio, 'window.cancelarProgramacaoSaidaCentral=async function', 'async function efetivarSaidasProgramadas');
+  exigir(escritorio.includes('Reativar cliente e recuperar Portal') &&
+    reativacaoArquivado.includes('reativarEfetiva') &&
+    reativacaoArquivado.includes("status:'ativo',encerrado:false,excluido:false,ativo:true") &&
+    reativacaoArquivado.includes("statusSaida:'cancelada',excluido:true") &&
+    reativacaoArquivado.includes('await window.garantirPortalClienteCentral(slug)') &&
+    !reativacaoArquivado.includes('deleteDoc('),
+    'arquivo de clientes não reativa mensalista e Portal preservando o histórico');
   const fusao = trecho(escritorio, 'window.fundirClientes = async function', 'window.arquivarClienteDuplicado');
   exigir(fusao.indexOf("doc(db,'clientes_acesso', PARA)") >= 0 &&
     fusao.indexOf('portal preservado em ') < fusao.indexOf("updateDoc(doc(db,'clientes_acesso', DE)"),
@@ -783,6 +791,39 @@ async function testarCentralClientesAmandaSandbox() {
     'recuperação do Portal de Master Chef não escreveu acesso e token na identidade canônica');
 }
 
+async function testarIdentidadeClienteSandbox() {
+  const identidadeFonte = trecho(escritorio, 'const APELIDOS_DE_CONTRATO', '  function dataOperacionalISO');
+  const banco = new Map();
+  const colecoes = new Map([
+    ['clientes_extras', []], ['cadastros_clientes', []], ['clientes_encerrados', []]
+  ]);
+  const contexto = vm.createContext({ Date, console, window: {}, setTimeout, clearTimeout, __banco:banco, __colecoes:colecoes });
+  new vm.Script(
+    `let usuarioAtual='Amanda';const db={};const banco=globalThis.__banco;const colecoes=globalThis.__colecoes;\n`+
+    `function doc(_db,col,id){return {path:col+'/'+id,col,id};}function collection(_db,col){return {col};}\n`+
+    `async function getDoc(ref){const v=banco.get(ref.path);return {exists:()=>v!==undefined,data:()=>v};}\n`+
+    `async function getDocs(ref){if(globalThis.__falharLeitura)throw new Error('sem leitura');const itens=colecoes.get(ref.col)||[];return {docs:itens.map(v=>({id:v.id,data:()=>v.dados}))};}\n`+
+    `function clienteInativoEfetivo(v){return v.clienteInativo===true;}\n`+
+    `${identidadeFonte}\n`+
+    `globalThis.api={diagnosticar:diagnosticarIdentidadeCliente,mensagem:mensagemIdentidadeClienteExistente};`,
+    {filename:'identidade-cliente-sandbox.js'}
+  ).runInContext(contexto);
+  const api=contexto.api;
+  banco.set('contratos_cliente/master-chef',{clienteNome:'Master Chef',status:'ativo'});
+  const ativa=await api.diagnosticar('Master Chefe');
+  exigir(ativa.slug==='master-chef'&&ativa.ativo&&ativa.fontes.some(v=>v.fonte==='contrato'),
+    'alias de Master Chef não foi bloqueado pela identidade canônica ativa');
+  banco.clear();
+  colecoes.set('clientes_encerrados',[{id:'saida-1',dados:{slug:'master-chef',nome:'Master Chef',excluido:false}}]);
+  const arquivada=await api.diagnosticar('Master Chef Pizzaria');
+  exigir(arquivada.slug==='master-chef'&&arquivada.arquivado&&!arquivada.ativo&&api.mensagem(arquivada).includes('Reativar cliente'),
+    'cliente arquivado poderia ser recadastrado em vez de reativado');
+  contexto.__falharLeitura=true;
+  let falhouFechado=false;
+  try{ await api.diagnosticar('Cliente Novo'); }catch(e){ falhouFechado=String(e.message).includes('sem leitura'); }
+  exigir(falhouFechado,'falha de leitura ainda poderia ser interpretada como identidade livre');
+}
+
 try {
   await testarLoginSandbox();
   testarFinanceiroSandbox();
@@ -796,6 +837,7 @@ try {
   testarSessoesGravacaoSandbox();
   testarPermissoesAcoesSandbox();
   await testarCentralClientesAmandaSandbox();
+  await testarIdentidadeClienteSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

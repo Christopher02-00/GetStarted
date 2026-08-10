@@ -114,7 +114,7 @@ function testarMensalidadesSandbox() {
   const identidadeClientes = trecho(escritorio, 'const APELIDOS_DE_CONTRATO', '  function dataOperacionalISO');
   const fonte = trecho(escritorio, 'function statusMensalidadeCanonico', '  window.marcarMensalidade = async function');
   const api = executarSandbox('mensalidades-sandbox.js',
-    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,competenciaFinanceiraValida,pagamentoPertenceAoCliente,analisarPagamentosParaSaida,contratoVigenteNaCompetencia,ajusteCortesiaMensalidade,situacaoMensalidade};`);
+    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,destinoRecebimentoEntradaValido,recebimentosEntradaOperacionais,resumoRecebimentosEntradaNoMes,competenciaFinanceiraValida,pagamentoPertenceAoCliente,analisarPagamentosParaSaida,contratoVigenteNaCompetencia,ajusteCortesiaMensalidade,situacaoMensalidade};`);
   exigir(api.statusMensalidadeCanonico({status:' ISENTO '}) === 'isento' &&
     api.mensalidadeResolvida({status:'cortesia'}) === true,
     'cortesia legada/normalizada voltou a ser tratada como cobrança');
@@ -138,6 +138,18 @@ function testarMensalidadesSandbox() {
     'editar contrato sobrescreve uma cortesia manual legítima');
   exigir(api.ajusteCortesiaMensalidade({status:'pago'},'2026-08',true,[]) === null,
     'cortesia do contrato sobrescreve pagamento já confirmado');
+
+  const resumoEntradas=api.resumoRecebimentosEntradaNoMes([
+    {id:'pessoal',status:'pago',destino:'conta_pessoal_chris',pagoEm:'2026-08-03',valorConfirmado:1700},
+    {id:'agencia',status:'pago',destino:'conta_agencia',pagoEm:'2026-08-04',valorConfirmado:1200},
+    {id:'outro-mes',status:'pago',destino:'conta_agencia',pagoEm:'2026-07-31',valorConfirmado:900},
+    {id:'pendente',status:'pendente',destino:'conta_pessoal_chris',pagoEm:'',valorPrevisto:2500},
+    {id:'apagado',status:'pago',destino:'conta_agencia',pagoEm:'2026-08-04',valorConfirmado:9999,excluido:true}
+  ],'2026-08');
+  exigir(resumoEntradas.totalPessoal===1700&&resumoEntradas.totalAgencia===1200&&resumoEntradas.pagos.length===2,
+    'primeiro pagamento pessoal/agência voltou a se misturar, contar pendência ou ignorar soft-delete');
+  exigir(api.destinoRecebimentoEntradaValido('conta_pessoal_chris')&&api.destinoRecebimentoEntradaValido('conta_agencia')&&!api.destinoRecebimentoEntradaValido('qualquer'),
+    'controle de entrada aceitou uma conta não prevista');
 
   const consolidadas=api.mensalidadesOperacionaisCanonicas([
     {id:'master-chef_2026-07',cliente:'master-chef',competencia:'2026-07',status:'pago',valor:1700},
@@ -201,14 +213,19 @@ function testarMensalidadesSandbox() {
   const base={nome:'Cliente Teste',instagram:'@teste',telefone:'41999999999',plano:'Intermediário',planoDetalhes:'',valorMensal:1700,diaVencimento:10,primeiraCompetencia:'2026-08',tipoEntrega:'postagem_completa',incluiStories:false,contrato:'',cortesiaTipo:'meses',cortesiaMeses:['2026-08'],cortesiaPermanente:false,cortesiaInicial:true};
   exigir(fichaApi.validarEntradaClienteMensalista(base).length === 0,
     'ficha da Amanda recusou uma cortesia mensal válida');
-  const mensal=fichaApi.modelarClienteMensalistaUnificado(base,'2026-08-07T12:00:00.000Z','token');
-  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.contrato.primeiraCompetencia==='2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true,
+  const mensal=fichaApi.modelarClienteMensalistaUnificado(base,'2026-08-07T12:00:00.000Z','token','entrada-isenta');
+  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.contrato.primeiraCompetencia==='2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true && mensal.recebimentoEntrada===null,
     'cortesia escolhida na ficha não chegou ao contrato e à primeira mensalidade');
-  const futura=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaMeses:['2026-09'],cortesiaInicial:false},'2026-08-07T12:00:00.000Z','token');
-  exigir(futura.contrato.cortesiaMeses[0] === '2026-09' && futura.mensalidade.status === 'aberto',
-    'cortesia futura isentou o mês errado');
-  const permanente=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaTipo:'permanente',cortesiaMeses:[],cortesiaPermanente:true},'2026-08-07T12:00:00.000Z','token');
-  exigir(permanente.contrato.cortesiaPermanente === true && permanente.mensalidade.status === 'isento',
+  const futura=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaMeses:['2026-09'],cortesiaInicial:false},'2026-08-07T12:00:00.000Z','token','entrada-cliente-teste');
+  exigir(futura.contrato.cortesiaMeses[0] === '2026-09' && futura.mensalidade.status === 'aberto' &&
+    futura.mensalidade.recebimentoEntradaId==='entrada-cliente-teste' && futura.mensalidade.pagamentoEntradaPendente===true &&
+    futura.recebimentoEntrada?.mensalidadeId==='cliente-teste_2026-08' && futura.recebimentoEntrada.status==='pendente',
+    'cortesia futura isentou o mês errado ou o primeiro pagamento não ficou ligado uma única vez');
+  let recusouSemId=false;
+  try{ fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaTipo:'nenhuma',cortesiaMeses:[],cortesiaInicial:false},'2026-08-07T12:00:00.000Z','token',''); }catch{ recusouSemId=true; }
+  exigir(recusouSemId,'cadastro cobrável aceitou nascer sem controle do primeiro pagamento');
+  const permanente=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaTipo:'permanente',cortesiaMeses:[],cortesiaPermanente:true},'2026-08-07T12:00:00.000Z','token','entrada-permanente');
+  exigir(permanente.contrato.cortesiaPermanente === true && permanente.mensalidade.status === 'isento' && permanente.recebimentoEntrada===null,
     'cortesia permanente da ficha não chegou ao financeiro');
   exigir(fichaApi.validarEntradaClienteMensalista({...base,cortesiaMeses:['08/2026']}).some(e=>e.includes('formato 2026-08')),
     'ficha aceitou mês de cortesia ambíguo');
@@ -217,6 +234,37 @@ function testarMensalidadesSandbox() {
     editarFicha.includes('cortesiaMeses:dados.cortesiaMeses') &&
     editarFicha.includes("!['pago','cancelado'].includes(statusMensalidadeCanonico(p))") && editarFicha.includes('if(mudou) tx.set(ref,atualizacao'),
     'editar ficha ativa não sincroniza contrato e mensalidades');
+
+  const painelFinanceiro=trecho(escritorio,'window.confirmarRecebimentoEntrada=async function','  window.renderMensalidades = async function');
+  exigir(painelFinanceiro.includes("usuarioAtual!=='Chris'")&&
+    painelFinanceiro.includes("getDocs(collection(db,'recebimentos_entrada_pessoal')).catch")&&
+    painelFinanceiro.includes("origemRecebimento:'entrada_contrato'")&&
+    painelFinanceiro.includes("foraCaixaAgencia:destino==='conta_pessoal_chris'")&&
+    painelFinanceiro.includes("valorConfirmado:valorRecebido")&&painelFinanceiro.includes("if(!(valorRecebido>0))")&&
+    painelFinanceiro.includes('const totalEntrou = recebidoMensalAgencia + receitaAvulsa')&&
+    painelFinanceiro.includes('Controle privado de entradas indisponível'),
+    'primeiro pagamento perdeu isolamento, vínculo atômico, exclusão do caixa pessoal ou estado de erro');
+  const marcarMensalidade=trecho(escritorio,'window.marcarMensalidade = async function','  /* ===== PAINEL FINANCEIRO');
+  exigir(marcarMensalidade.includes("atual.pagamentoEntradaPendente===true||atual.origemRecebimento==='entrada_contrato'"),
+    'primeiro pagamento ainda pode ser alterado pelo botão mensal genérico e duplicar o caixa');
+  const confirmarEntrada=trecho(escritorio,'window.confirmarRecebimentoEntrada=async function','  window.desfazerRecebimentoEntrada');
+  const escritaMensalConfirmacao=confirmarEntrada.match(/tx\.set\(mensalidadeRef,\{([^}]|\}(?!,\{merge:true\}))*\},\{merge:true\}\)/)?.[0]||'';
+  exigir(escritaMensalConfirmacao.includes("origemRecebimento:'entrada_contrato'")&&
+    !escritaMensalConfirmacao.includes('destinoRecebimento')&&!escritaMensalConfirmacao.includes('foraCaixaAgencia'),
+    'destino da conta pessoal vazou para pagamentos_mensais, coleção legível pelo Portal do cliente');
+  const centralDemandas=trecho(escritorio,'async function renderDemandasDaEquipe','  window.renderPainelDemandas');
+  exigir(!centralDemandas.includes('controleEntradasHTML')&&!centralDemandas.includes('avisoControleEntradaHTML'),
+    'variável privada do Financeiro vazou novamente para a Central de Demandas');
+
+  const regras=fs.readFileSync(path.join(raiz,'firestore.rules'),'utf8');
+  const regraEntrada=trecho(regras,'match /recebimentos_entrada_pessoal/{docId}',"    match /pagamentos_extra/{docId}");
+  exigir(regraEntrada.includes('allow read, update: if ehChris()')&&
+    regraEntrada.includes('allow create: if ehChris() || (ehAmanda()')&&
+    regraEntrada.includes("request.resource.data.status == 'pendente'")&&
+    regraEntrada.includes("!('destino' in request.resource.data)")&&
+    regraEntrada.includes("!('foraCaixaAgencia' in request.resource.data)")&&
+    regraEntrada.includes('allow delete: if false;'),
+    'Firestore expõe a conta pessoal ou permite que Amanda confirme/altere o recebimento');
 }
 
 function testarCampanhasMensaisSandbox(){

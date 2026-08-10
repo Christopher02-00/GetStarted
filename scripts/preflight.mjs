@@ -236,6 +236,23 @@ if (!barreiraDuplicidade.includes("getDoc(doc(db,'contratos_cliente',slug))") ||
   falhar('barreira sistêmica contra cliente duplicado não cobre todas as entradas ou voltou a usar ID aleatório');
 } else provar('entradas de cliente usam identidade canônica, varredura cruzada e documento determinístico');
 
+const reparoIdentidade = escritorio.slice(
+  escritorio.indexOf('window.repararIdentidadeClienteCentral=async function'),
+  escritorio.indexOf('window.salvarClienteAtivoCentral')
+);
+const renderArquivoClientes = escritorio.slice(
+  escritorio.indexOf('const htmlArquivado=v=>'),
+  escritorio.indexOf('box.innerHTML=', escritorio.indexOf('const htmlArquivado=v=>'))
+);
+if (!escritorio.includes("const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef'}") ||
+    !reparoIdentidade.includes("doc(db,'clientes_portal_tokens',atual.token)") ||
+    !reparoIdentidade.includes("doc(db,'calendarios',slug)") ||
+    !reparoIdentidade.includes('identidadeCanonicaCorrigidaEm') ||
+    !renderArquivoClientes.includes('aliasOuFusao') ||
+    !renderArquivoClientes.includes('!aliasOuFusao')) {
+  falhar('nome canônico/Portal ainda pode herdar alias ou arquivo de fusão pode oferecer reativação');
+} else provar('identidade canônica corrige Portal e calendário; alias arquivado permanece somente histórico');
+
 const saldoCaptacao = escritorio.slice(
   escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'),
   escritorio.indexOf('    } else {', escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'))

@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30915605/AGENTS.md)
+[AGENTS.md](https://github.com/user-attachments/files/30915885/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -91,6 +91,8 @@ Ainda em 10/08/2026, a trava de calendário enviado revelou outra fronteira de c
 O acompanhamento editorial também deve manter recorte único: estado, total de conteúdos, roteiros, legendas, referências, gravações e publicações são calculados sobre o mesmo mês mais recente, nunca sobre o histórico inteiro. A visão detalhada existe no DOM apenas de Amanda/Gabi e usa o listener compartilhado; filmmakers continuam lendo somente o calendário autorizado e não assinam a coleção completa.
 
 O checklist diário de Stories usa o slug persistido como identidade semanal, não o nome visível. Leituras independentes são paralelas; `☐/☑`, autoria e erro de gravação precisam aparecer na própria ação. Nunca mostrar sucesso antes de o `setDoc` concluir, nunca transformar falha em check local e nunca considerar a simples presença tardia da seção como prova de que Gabi consegue utilizá-la.
+
+A auditoria publicada da V51 mostrou que acelerar somente as leituras de Stories ainda deixou o controle 11,6 segundos atrás de `autoVerificarChecklist()` e `calcularStreak()`. O tempo obrigatório é do clique até o primeiro controle acionável, não apenas da função final. `storiesDiariosBox` deve nascer antes dessas verificações independentes e o mesmo nó deve ser preservado quando o restante do checklist terminar; nunca recriar o bloco, duplicar leituras ou bloquear Stories por streak.
 
 Antes de entregar qualquer mudança, faça também a checagem curta do catálogo: confirme a base mais recente, procure substituições globais e prefixos `async` alterados, compare contagens/escopo das ocorrências, valide variáveis no escopo que as declara, normalize apenas o formato de linha esperado e carregue a versão nova em documento/iframe limpo. Essa checagem complementa, não substitui, `preflight` e `regression-critical`.
 

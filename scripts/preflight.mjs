@@ -48,10 +48,14 @@ const leisV48 = [
   'Mensalidade legada era vinculada pelo ID presumido',
   'Destino bancário quase vazou pelo documento da mensalidade'
 ];
+const leisV49 = [
+  'Calendário enviado continuava editável pela equipe',
+  'Reabertura disputava com o envio da Amanda'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V48');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V48');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V49');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V49');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -371,6 +375,19 @@ if (!distribuicaoVideo.includes('editorAtribuido: novoEditor') ||
 } else provar('pós-filmagem chega à distribuição e à fila do editor após atribuição');
 
 const calendarioEditor = ler('calendario.html');
+const reabrirCalendario = calendarioEditor.slice(
+  calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
+  calendarioEditor.indexOf('/* Esconde da visão do cliente')
+);
+if (!calendarioEditor.includes('2026-08-10-reabrir-antes-envio-v49') ||
+    !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
+    !reabrirCalendario.includes('fb.runTransaction') ||
+    !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
+    !reabrirCalendario.includes("code:'gs/calendario-ja-enviado'") ||
+    !reabrirCalendario.includes('exigeNovaAprovacao:true') ||
+    reabrirCalendario.includes('gravarComSeguranca()')) {
+  falhar('reabertura do calendário não está atômica, limitada ao pré-envio ou exige nova aprovação');
+} else provar('Gabi reabre calendário aprovado antes do envio; liberado permanece imutável');
 if (!calendarioEditor.includes("const modoAuditoria = params.get('auditoria') === '1'") ||
     !calendarioEditor.includes('function impedirEscritaAuditoria(ref)') ||
     !escritorio.includes("window.__auditoriaPapelAtiva?'&auditoria=1':''")) {

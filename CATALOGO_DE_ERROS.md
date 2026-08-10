@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30913043/CATALOGO_DE_ERROS.md)
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30915612/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -533,3 +533,43 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Competências posteriores ficam canceladas por soft-delete lógico e deixam de entrar nos totais/cobrança.
 - [x] Saída legada sem competência final fica vermelha e não pode ser confundida com uma conciliação pronta.
 - [ ] Regra V29 e HTML V50 dependem do upload/publicação manual do Chris; o acesso da Cecília não funciona antes dos dois destinos estarem atualizados.
+
+---
+
+## 24. ERROS E INTERCEPTAÇÕES — V51 (10/08/2026)
+
+### 24.1 Calendário legado oferecia um envio que a própria trava recusava
+**O que fiz:** a V49 passou a considerar todo estado `liberado` imutável, inclusive o `liberado` implícito de calendários antigos que nunca haviam recebido um status formal.
+**O que aconteceu:** a Gabi via “Enviar pra aprovação interna”, mas o primeiro `if` do handler interrompia a ação e mostrava a mensagem de calendário já enviado. A fila da Amanda nunca recebia esse mês.
+**Como o Chris viu:** Gabi deixou de conseguir finalizar/enviar calendários, embora o botão ainda estivesse presente.
+**Por que passou:** o teste cobria rascunho novo e calendário explicitamente liberado, mas não o estado compatível “legado sem status”, que visualmente compartilha o rótulo `liberado`.
+**Como consertei:** somente a ausência comprovada de qualquer status explícito pode atravessar a trava para entrar em `aguardando_interna`, com confirmação de que a visibilidade do cliente será temporariamente suspensa. Um calendário com `liberado` gravado continua bloqueado.
+> **LEI:** estado implícito de compatibilidade e estado explícito de negócio nunca podem compartilhar cegamente a mesma guarda; todo botão renderizado precisa ter pelo menos um teste que prove que seu handler aceita exatamente aquele estado.
+
+### 24.2 Acompanhamento misturava o estado do mês atual com totais de outros meses
+**O que fiz:** a Visão do mês calculava o estado pelo mês mais recente, mas contava `cal.items` inteiro, somando conteúdos de competências anteriores.
+**O que acontecia:** Amanda e Gabi podiam ver um calendário como “agosto” com totais de julho + agosto, impedindo saber quantos roteiros realmente estavam prontos ou faltando no ciclo atual.
+**Como o Chris viu:** pediu acompanhamento compartilhado e em tempo real de roteiros por calendário.
+**Por que passou:** a tela já exibia totais e status, mas não havia teste que exigisse que ambos fossem calculados sobre o mesmo recorte mensal.
+**Como consertei:** status, conteúdos, roteiros, legendas, referências, gravações e publicações agora usam o mesmo `mesAtual` e `itensDoMesCalendario`. O detalhe editorial só existe no DOM de Amanda e Gabi e ambas usam o listener central de calendários.
+> **LEI:** todo painel temporal calcula rótulo, numerador e denominador a partir do mesmo recorte; misturar estado mensal com coleção histórica produz um número plausível e falso.
+
+### 24.3 Check de Stories parecia ausente e usava identidade derivada do nome
+**O que fiz:** o checklist lia cada cliente em sequência e criava o ID semanal recalculando o nome visível, ignorando o slug estável já carregado.
+**O que acontecia:** em rede móvel o controle permanecia vários segundos como “Carregando”; o botão não parecia um check e uma alteração no nome podia abrir outro documento, fazendo a marca anterior desaparecer. Falhas de gravação não tinham retorno claro.
+**Como o Chris viu:** Gabi disse que nunca conseguia marcar/ver o verificado no acompanhamento de Stories.
+**Por que passou:** a verificação anterior confirmou que a seção existia no código, não mediu seu estado de carregamento nem provou a persistência da ação.
+**Como consertei:** leituras independentes são paralelas, o ID usa `c.id/c.slug`, o controle mostra `☐/☑` e autoria, e só confirma depois de `setDoc`; erro mantém o botão disponível e informa que nada foi marcado. O handler também recusa papéis diferentes da Gabi.
+> **LEI:** presença tardia no DOM não prova que uma ação está operacional; controles críticos precisam de identidade estável, estado visível de carregamento, confirmação após persistência e falha fechada testada.
+
+## 25. CHECKLIST EXECUTADO NA V51
+
+- [x] Calendário legado sem status entra em `aguardando_interna` e chega à fonte única da fila da Amanda.
+- [x] Calendário explicitamente `liberado` permanece travado e não pode voltar silenciosamente à revisão.
+- [x] `calendario.html` e `calendarios.html` permanecem byte a byte idênticos.
+- [x] Painel de roteiros conta somente o mês mais recente e usa a mesma fonte de estado da aprovação.
+- [x] Detalhes de roteiro/legenda/referência existem no DOM somente para Amanda e Gabi.
+- [x] Gabi passa a receber o listener compartilhado; filmmakers continuam sem assinatura da coleção inteira.
+- [x] Stories carregam em paralelo, usam slug estável e exibem check grande, autoria e falha de gravação.
+- [x] O check de Stories é gravável somente pela Gabi no handler; nenhuma ação financeira, de login ou de cliente foi alterada.
+- [ ] Escritas autenticadas em produção não foram executadas: enviar calendário real ou marcar Story real apenas para teste alteraria dados operacionais.

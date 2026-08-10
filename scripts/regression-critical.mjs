@@ -180,6 +180,22 @@ function testarMensalidadesSandbox() {
   ],'zeens','2026-09','saida-1');
   exigir(analiseSaida.posteriores.length===1 && analiseSaida.pagosPosteriores[0]?.competencia==='2026-10' && analiseSaida.reabrir[0]?.competencia==='2026-07',
     'análise da saída não reconhece alias, pagamento posterior ou reabertura da própria programação');
+  const joaquins=api.analisarPagamentosParaSaida([
+    {id:'joaquin-assados_2026-08',cliente:'joaquin-assados',competencia:'2026-08',status:'pago'},
+    {id:'joaquin-assados_2026-09',cliente:'joaquin-assados',competencia:'2026-09',status:'aberto'},
+    {id:'acougue-sao-joaquim_2026-09',cliente:'acougue-sao-joaquim',competencia:'2026-09',status:'isento',cortesiaPermanente:true}
+  ],'joaquin-assados','2026-08','saida-joaquin');
+  exigir(joaquins.posteriores.length===1 && joaquins.posteriores[0].competencia==='2026-09' && joaquins.pagosPosteriores.length===0,
+    'Joaquin Assados voltou a manter setembro depois da competência final de agosto');
+  const acougue=api.analisarPagamentosParaSaida([
+    {id:'acougue-sao-joaquim_2026-09',cliente:'acougue-sao-joaquim',competencia:'2026-09',status:'isento',cortesiaPermanente:true}
+  ],'acougue-sao-joaquim','2026-08','saida-acougue');
+  exigir(acougue.posteriores.length===1 && acougue.pagosPosteriores.length===0,
+    'cortesia permanente posterior à saída do Açougue São Joaquim permaneceu na recorrência');
+  let bloqueouCompetenciaAusente=false;
+  try{ api.analisarPagamentosParaSaida([], 'joaquin-assados', '', 'saida-antiga'); }catch(e){ bloqueouCompetenciaAusente=String(e.message).includes('último mês financeiro'); }
+  exigir(bloqueouCompetenciaAusente,
+    'saída antiga sem competência final voltou a passar como conciliada');
 
   const salvarContrato = trecho(escritorio, 'window.salvarContrato = async function', '  window.novoContrato');
   exigir(salvarContrato.includes('const lote = writeBatch(db);') &&
@@ -300,7 +316,7 @@ function testarCampanhasMensaisSandbox(){
     'riscos de Campanhas só aparecem depois de abrir a tela e não alertam no menu');
   exigir((escritorio.match(/id="navAcompCampanhas"/g)||[]).length===1&&!escritorio.includes('id="navCampanhas"'),
     'duas portas de Campanhas voltaram ao menu lateral');
-  exigir(escritorio.includes("'navAcompCampanhas','view-campanhas'].forEach") &&
+  exigir(escritorio.includes("'navAcompCampanhas','view-campanhas','navCofreCecilia','view-cofreCecilia'].forEach") &&
     escritorio.includes("definirItemExclusivoNoDOM('navAcompCampanhas',podeCampanhas)") &&
     escritorio.includes("definirItemExclusivoNoDOM('view-campanhas',podeCampanhas)"),
     'Campanhas voltou a permanecer escondida no DOM de papéis sem acesso');
@@ -944,6 +960,40 @@ function testarPermissoesAcoesSandbox() {
     'Portal/calendário interno não expiram pela regra na data de saída');
 }
 
+function testarCofreCeciliaSandbox() {
+  const regras = fs.readFileSync(path.join(raiz, 'firestore.rules'), 'utf8');
+  const blocoRegra = trecho(regras, 'match /cofre_senhas/{docId}', 'match /receitas_avulsas/{docId}');
+  exigir(blocoRegra.includes('allow read: if ehGerencia() || ehCecilia();') &&
+    blocoRegra.includes('allow create, update: if ehGerencia();') &&
+    blocoRegra.includes('allow delete: if false;'),
+    'Cecília perdeu a leitura do cofre ou recebeu permissão de escrita/exclusão');
+
+  const isolamento = trecho(escritorio, 'const __sidebarExclusivos', 'function esc(s)');
+  exigir(isolamento.includes("'navCofreCecilia','view-cofreCecilia'") &&
+    isolamento.includes("definirItemExclusivoNoDOM('navCofreCecilia',usuarioAtual==='Cecília')") &&
+    isolamento.includes("definirItemExclusivoNoDOM('view-cofreCecilia',usuarioAtual==='Cecília')"),
+    'menu/view do cofre operacional voltou a permanecer no DOM de outros papéis');
+
+  const navegacao = trecho(escritorio, 'window.irPara = function(nome, el)', 'function renderAvisoInicio');
+  exigir(navegacao.includes("if(nome === 'cofreCecilia' && usuarioAtual!=='Cecília')") &&
+    navegacao.includes("if(nome === 'cofreCecilia') renderCofreCecilia();"),
+    'porta do cofre da Cecília confia apenas no menu ou não renderiza a tela autorizada');
+
+  const leitura = trecho(escritorio, 'async function renderCofreCecilia', 'window.excluirSenhaCofre');
+  exigir(leitura.includes("if(usuarioAtual!=='Cecília')") &&
+    leitura.includes('carregarRegistrosCofre()') &&
+    leitura.includes('revelarSenhaCofreCecilia') &&
+    leitura.includes('Cofre indisponível') &&
+    !leitura.includes('salvarSenhaCofre(') && !leitura.includes('excluirSenhaCofre('),
+    'tela operacional da Cecília ganhou escrita ou voltou a transformar erro em lista vazia');
+
+  const escrita = trecho(escritorio, 'window.salvarSenhaCofre', 'async function revelarSenhaCofreNoAlvo');
+  const exclusao = trecho(escritorio, 'window.excluirSenhaCofre', '// ===== CALENDARIOS ENVIADOS');
+  exigir(escrita.includes("!['Chris','Amanda'].includes(usuarioAtual)") &&
+    exclusao.includes("!['Chris','Amanda'].includes(usuarioAtual)"),
+    'handlers de escrita do cofre não possuem guarda própria de Gerência');
+}
+
 async function testarCentralClientesAmandaSandbox() {
   const snapshotFonte = trecho(escritorio, 'function __snapshotFalso(itens, colecao)', '  /* 06/08/2026 — o listener');
   const validarRefsFonte = trecho(escritorio, 'function __validarReferenciasFirestore(refs, contexto)', '  /* Toda gravação invalida');
@@ -1037,6 +1087,7 @@ try {
   await testarCalendariosSandbox();
   testarSessoesGravacaoSandbox();
   testarPermissoesAcoesSandbox();
+  testarCofreCeciliaSandbox();
   await testarCentralClientesAmandaSandbox();
   await testarIdentidadeClienteSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);

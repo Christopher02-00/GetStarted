@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30910254/AGENTS.md)
+[AGENTS.md](https://github.com/user-attachments/files/30910818/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -97,6 +97,7 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - Nunca declare uma correção validada sem informar comando ou método, resultado e limite do teste.
 - Classifique o resultado como `validado`, `corrigido + validado`, `não validável` ou `bloqueado`.
 - Não invente arquivos para upload. Informe nome, caminho absoluto, hash, estado Git, estado de publicação e se existe ação manual.
+- Uma entrega com vários arquivos só pode ser chamada de publicada depois de consultar cada caminho anunciado na branch de publicação. HTML no ar não comprova scripts, catálogo, instruções nem `firestore.rules`; regra no Firebase também não comprova que o backup equivalente está no GitHub.
 - O usuário faz o upload manual para o GitHub, salvo autorização explícita diferente. Não diga que algo está no ar sem comparação da versão publicada.
 - Entregue sempre em cinco blocos curtos: **Entendimento**, **Alterações**, **Provas de validação**, **Riscos/pendências**, **Próximo passo**.
 

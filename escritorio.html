@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-10-reativacao-master-chef-v42">
+<meta name="gs-build" content="2026-08-10-identidade-canonica-master-chef-v43">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3249,6 +3249,11 @@
     }
     return atual;
   }
+  const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef'};
+  function nomeClienteCanonico(slug,nome){
+    return NOMES_CLIENTES_CANONICOS[slugClienteCanonico(slug)] || String(nome||'').trim();
+  }
+  window.nomeClienteCanonico=nomeClienteCanonico;
   function registroOperacionalAtivo(registro){
     const v = registro || {};
     return v.excluido !== true && v.arquivado !== true && v.cancelado !== true;
@@ -16094,10 +16099,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const acesso=acessoSnap.exists()?(acessoSnap.data()||{}):{};
       const gerar=()=>Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,10);
       const token=acesso.token||gerar();
-      await setDoc(acessoRef,{token,nome:atual.nome,ativo:true,recuperadoPor:usuarioAtual,recuperadoEm:serverTimestamp()},{merge:true});
-      await setDoc(doc(db,'clientes_portal_tokens',token),{cliente:canonico,nome:atual.nome,ativo:true,recuperadoPor:usuarioAtual,recuperadoEm:serverTimestamp()},{merge:true});
+      const nomeCanonico=nomeClienteCanonico(canonico,atual.nome);
+      await setDoc(acessoRef,{token,nome:nomeCanonico,ativo:true,recuperadoPor:usuarioAtual,recuperadoEm:serverTimestamp()},{merge:true});
+      await setDoc(doc(db,'clientes_portal_tokens',token),{cliente:canonico,nome:nomeCanonico,ativo:true,recuperadoPor:usuarioAtual,recuperadoEm:serverTimestamp()},{merge:true});
       atual.token=token;
-      mostrarToast('Portal de '+atual.nome+' criado/recuperado sem apagar histórico.');
+      atual.nome=nomeCanonico;
+      mostrarToast('Portal de '+nomeCanonico+' criado/recuperado sem apagar histórico.');
       await window.renderCentralEntradaClientes();
     }catch(e){
       console.error('Falha ao criar/recuperar Portal do cliente:',e);
@@ -16106,6 +16113,46 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
   window.abrirPortalClienteCentral=function(slug){ const link=linkPortalClienteCentral(slug); if(link) window.open(link,'_blank','noopener'); else mostrarToast('Este cliente ainda não tem link de Portal.','erro'); };
   window.copiarPortalClienteCentral=function(slug){ const link=linkPortalClienteCentral(slug); if(!link){mostrarToast('Este cliente ainda não tem link de Portal.','erro');return;} navigator.clipboard.writeText(link).then(()=>mostrarToast('Link do Portal copiado!')).catch(()=>mostrarToast('Não consegui copiar automaticamente.','erro')); };
+
+  window.repararIdentidadeClienteCentral=async function(slug){
+    if(!['Amanda','Chris'].includes(usuarioAtual)){ mostrarToast('Área exclusiva da gerência.','erro'); return; }
+    slug=slugClienteCanonico(slug);
+    const atual=(window.__entradaClientesAtivos||{})[slug];
+    const nomeCanonico=nomeClienteCanonico(slug,atual?.nome||'');
+    if(!atual||!NOMES_CLIENTES_CANONICOS[slug]){ mostrarToast('Esta identidade não possui correção canônica pendente.','erro'); return; }
+    if(!confirm('Corrigir o nome deste cliente para “'+nomeCanonico+'” em Portal, ficha, contrato e calendário? Nenhum histórico será apagado.')) return;
+    try{
+      const refs={
+        config:doc(db,'clientes_config',slug),
+        extra:atual.extraId?doc(db,'clientes_extras',atual.extraId):null,
+        cadastro:atual.cadastroId?doc(db,'cadastros_clientes',atual.cadastroId):null,
+        contrato:atual.tipo==='mensalista'?doc(db,'contratos_cliente',slug):null,
+        acesso:atual.tipo==='mensalista'?doc(db,'clientes_acesso',slug):null,
+        token:atual.token?doc(db,'clientes_portal_tokens',atual.token):null,
+        onboarding:atual.onboardingId?doc(db,'onboarding_processos',atual.onboardingId):null,
+        calendario:atual.tipo==='mensalista'?doc(db,'calendarios',slug):null,
+        story:atual.tipo==='mensalista'?doc(db,'stories_clientes',slug):null
+      };
+      const lista=__validarReferenciasFirestore(Object.values(refs),'a correção da identidade canônica');
+      await runTransaction(db,async tx=>{
+        const snaps=await Promise.all(lista.map(ref=>tx.get(ref)));
+        const existe=new Map(lista.map((ref,i)=>[ref.path,snaps[i].exists()]));
+        const carimbo={identidadeCanonicaCorrigidaPor:usuarioAtual,identidadeCanonicaCorrigidaEm:serverTimestamp()};
+        if(existe.get(refs.config.path)) tx.set(refs.config,{nome:nomeCanonico,...carimbo},{merge:true});
+        if(refs.extra&&existe.get(refs.extra.path)) tx.set(refs.extra,{nome:nomeCanonico,slug,excluido:false,...carimbo},{merge:true});
+        if(refs.cadastro&&existe.get(refs.cadastro.path)) tx.set(refs.cadastro,{nome:nomeCanonico,slugAtivado:slug,...carimbo},{merge:true});
+        if(refs.contrato&&existe.get(refs.contrato.path)) tx.set(refs.contrato,{clienteNome:nomeCanonico,...carimbo},{merge:true});
+        if(refs.acesso&&existe.get(refs.acesso.path)) tx.set(refs.acesso,{nome:nomeCanonico,ativo:true,...carimbo},{merge:true});
+        if(refs.token&&existe.get(refs.token.path)) tx.set(refs.token,{nome:nomeCanonico,cliente:slug,ativo:true,...carimbo},{merge:true});
+        if(refs.onboarding&&existe.get(refs.onboarding.path)) tx.set(refs.onboarding,{clienteNome:nomeCanonico,...carimbo},{merge:true});
+        if(refs.calendario&&existe.get(refs.calendario.path)) tx.set(refs.calendario,{client:nomeCanonico,...carimbo},{merge:true});
+        if(refs.story&&existe.get(refs.story.path)) tx.set(refs.story,{nome:nomeCanonico,slug,...carimbo},{merge:true});
+      });
+      window.limparCacheDeClientes();
+      mostrarToast('Identidade corrigida para '+nomeCanonico+' sem apagar histórico.');
+      await window.renderCentralEntradaClientes();
+    }catch(e){ console.error('Falha ao corrigir identidade canônica:',e); mostrarToast('Nada foi alterado: '+(e.message||e),'erro'); }
+  };
 
   window.salvarClienteAtivoCentral=async function(slug){
     if(!['Amanda','Chris'].includes(usuarioAtual)){ mostrarToast('Área exclusiva da gerência.','erro'); return; }
@@ -16269,6 +16316,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!saida?.id){ mostrarToast('Não encontrei o registro de saída. Atualize a Central e tente novamente.','erro'); return; }
     if(saidaClienteJaEfetiva(saida)&&!reativarEfetiva){ mostrarToast('Esta saída já está efetiva. Use “Reativar cliente” no arquivo se a saída foi registrada por engano.','erro'); return; }
     const mensalista=saida.tipoCliente==='mensalista'||saida.fichaSnapshot?.tipo==='mensalista';
+    const nomeReativado=nomeClienteCanonico(slug,saida.fichaSnapshot?.nome||saida.nome||nomeDeSlugSeguro(slug));
     const pergunta=reativarEfetiva
       ? 'Reativar este cliente? O registro de saída continuará preservado como cancelado e o Portal será recuperado.'
       : 'Cancelar a saída programada e manter o cliente ativo? O registro continuará no histórico como cancelado.';
@@ -16294,14 +16342,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       await runTransaction(db,async tx=>{
         const todos=__validarReferenciasFirestore([...refs,...tokens],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
         refs.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),saidaAtualizadaPor:deleteField(),saidaAtualizadaEm:deleteField(),ativoAte:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true}); });
-        tx.set(doc(db,'clientes_config',slug),{clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
-        if(extraRef&&(existe.get(extraRef.path)||reativarEfetiva)) tx.set(extraRef,{slug,nome:saida.fichaSnapshot?.nome||saida.nome||nomeDeSlugSeguro(slug),casta:mensalista?'mensalista':(atual.tipo||'avulso'),excluido:false,ativo:true,arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField(),motivoExclusao:deleteField(),excluidoEm:deleteField(),excluidoPor:deleteField()},{merge:true});
-        if(saida.cadastroId){ const ref=doc(db,'cadastros_clientes',saida.cadastroId); if(existe.get(ref.path)) tx.set(ref,{excluido:false,statusGerencia:'oficializado',arquivadoEm:deleteField(),arquivadoPor:deleteField()},{merge:true}); }
+        tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado,clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        if(extraRef&&(existe.get(extraRef.path)||reativarEfetiva)) tx.set(extraRef,{slug,nome:nomeReativado,casta:mensalista?'mensalista':(atual.tipo||'avulso'),excluido:false,ativo:true,arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField(),motivoExclusao:deleteField(),excluidoEm:deleteField(),excluidoPor:deleteField()},{merge:true});
+        if(saida.cadastroId){ const ref=doc(db,'cadastros_clientes',saida.cadastroId); if(existe.get(ref.path)) tx.set(ref,{nome:nomeReativado,slugAtivado:slug,excluido:false,statusGerencia:'oficializado',arquivadoEm:deleteField(),arquivadoPor:deleteField()},{merge:true}); }
         const contratoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'contratos_cliente',slug):null;
-        if(contratoRef&&existe.get(contratoRef.path)) tx.set(contratoRef,{status:'ativo',encerrado:false,excluido:false,ativo:true,encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        if(contratoRef&&existe.get(contratoRef.path)) tx.set(contratoRef,{clienteNome:nomeReativado,status:'ativo',encerrado:false,excluido:false,ativo:true,encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
         const acessoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'clientes_acesso',slug):null;
-        if(acessoRef&&existe.get(acessoRef.path)) tx.set(acessoRef,{ativo:true,desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true});
-        tokens.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{ativo:true,ativoAte:deleteField(),saidaProgramadaPara:deleteField(),desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true}); });
+        if(acessoRef&&existe.get(acessoRef.path)) tx.set(acessoRef,{nome:nomeReativado,ativo:true,desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true});
+        tokens.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{cliente:slug,nome:nomeReativado,ativo:true,ativoAte:deleteField(),saidaProgramadaPara:deleteField(),desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true}); });
         tx.set(doc(db,'clientes_encerrados',saida.id),{statusSaida:'cancelada',excluido:true,excluidoPor:usuarioAtual,excluidoEm:serverTimestamp(),motivoExclusao:reativarEfetiva?'Arquivamento cancelado; cliente reativado sem apagar histórico':'Saída programada cancelada; cliente mantido ativo'},{merge:true});
       });
       window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras(); mostrarToast(reativarEfetiva?'Cliente reativado; agora vou confirmar o Portal.':'Saída cancelada; cliente continua ativo.'); await window.renderCentralEntradaClientes();
@@ -16398,7 +16446,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         return oficial && !v.excluido && !clienteInativoEfetivo(cfg) && String(ctr.status||'ativo')!=='encerrado' && !saidaClienteJaEfetiva(ctr);
       }).map(v=>{
         const slug=slugDo(v), ctr=contratos[slug]||{}, acesso=acessos[slug]||{}, extra=extrasPorSlug[slug]||{}, onboarding=onboardingPorSlug[slug]||{};
-        return {tipo:'mensalista',slug,nome:v.nome||ctr.clienteNome||extra.nome||slug,instagram:v.instagram||'',telefone:v.telefone||'',aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(v.valorMensal??ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||'',tipoEntrega:v.tipoEntrega||configs[slug]?.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
+        const nomeOriginal=v.nome||ctr.clienteNome||extra.nome||slug, nome=nomeClienteCanonico(slug,nomeOriginal);
+        return {tipo:'mensalista',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,instagram:v.instagram||'',telefone:v.telefone||'',aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(v.valorMensal??ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||'',tipoEntrega:v.tipoEntrega||configs[slug]?.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
       });
       const avulsosAtivos=[
         ...avulsosEmpresaSnap.docs.map(d=>({id:d.id,colecaoOrigem:'leads_avulsos',...d.data()})),
@@ -16426,7 +16475,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         const cfg=configs[slug]||{}, ctr=contratos[slug]||{}, acesso=acessos[slug]||{}, onboarding=onboardingPorSlug[slug]||{};
         if(clienteInativoEfetivo(cfg)||String(ctr.status||'ativo')==='encerrado'||saidaClienteJaEfetiva(ctr)) return;
         const mensal=cfg.tipoCliente==='avulso'?false:(cfg.tipoCliente==='mensalista'||extra.casta==='mensalista'||!!acesso.token||Object.keys(ctr).length>1||CLIENTES_BASE.some(c=>c.slug===slug));
-        unicos.set(slug,{tipo:mensal?'mensalista':'avulso',origem:'legado',slug,nome:extra.nome||ctr.clienteNome||slug,
+        const nomeOriginal=extra.nome||ctr.clienteNome||slug, nome=nomeClienteCanonico(slug,nomeOriginal);
+        unicos.set(slug,{tipo:mensal?'mensalista':'avulso',origem:'legado',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,
           instagram:extra.instagram||'',telefone:extra.telefone||extra.whatsapp||'',aniversario:'',contatos:'',
           plano:mensal?(ctr.plano||extra.plano||'Mensalista legado'):'Projeto avulso',planoDetalhes:ctr.planoDetalhes||extra.planoDetalhes||'',
           valorMensal:Number(ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(ctr.diaVencimento||0),primeiraCompetencia:'',
@@ -16458,6 +16508,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           ${v.onboardingId&&v.onboardingStatus!=='concluido'?'<button class="btn secondary" style="width:auto;" onclick="abrirOnboardingCentral(\''+escJs(v.onboardingId)+'\')">Onboarding</button>':''}
           <button class="btn secondary" style="width:auto;" onclick="navegarGerenciaSub('saudeClientes')">Ficha operacional</button>
           <button class="btn secondary" style="width:auto;" onclick="editarClienteAtivoCentral('${escJs(v.slug)}')">Editar dados</button>
+          ${v.identidadeDivergente?'<button class="btn" style="width:auto;" onclick="repararIdentidadeClienteCentral(\''+escJs(v.slug)+'\')">Corrigir identidade para '+esc(nomeClienteCanonico(v.slug,v.nome))+'</button>':''}
           <button class="btn red" style="width:auto;" onclick="abrirSaidaClienteCentral('${escJs(v.slug)}')">${v.saida?'Revisar saída':'Programar saída'}</button>
         </div>
       </div>`;
@@ -16476,7 +16527,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const saidasProgramadas=arquivadosDoLink.filter(v=>v.statusSaida==='programada'&&!saidaClienteJaEfetiva(v));
       const arquivoEfetivo=arquivadosDoLink.filter(v=>!saidasProgramadas.includes(v));
       window.__clientesArquivadosCentral=Object.fromEntries(arquivoEfetivo.map(v=>[v.id,v]));
-      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; const slug=slugClienteCanonico(v.slug||f.slug||''); const mensalista=v.tipoCliente==='mensalista'||f.tipo==='mensalista'||!!contratos[slug]; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${mensalista&&v.statusSaida!=='programada'?`<button class="btn" style="width:auto;margin-top:10px;" onclick="cancelarProgramacaoSaidaCentral('${escJs(slug)}','${escJs(v.id)}',true)">Reativar cliente e recuperar Portal</button>`:''}</details>`; };
+      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; const slugBruto=String(v.slug||f.slug||''), slug=slugClienteCanonico(slugBruto); const mensalista=v.tipoCliente==='mensalista'||f.tipo==='mensalista'||!!contratos[slug]; const aliasOuFusao=(slugBruto&&slugBruto!==slug)||!!v.unificadoEm||!!f.unificadoEm||/duplicad|unificad/i.test(String(v.motivoDetalhe||v.motivoArquivamento||'')); const podeReativar=mensalista&&v.statusSaida!=='programada'&&!aliasOuFusao; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${podeReativar?`<button class="btn" style="width:auto;margin-top:10px;" onclick="cancelarProgramacaoSaidaCentral('${escJs(slug)}','${escJs(v.id)}',true)">Reativar cliente e recuperar Portal</button>`:'<div class="meta" style="margin-top:9px;">Registro histórico preservado; não cria outra identidade.</div>'}</details>`; };
       box.innerHTML=`<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Central única de clientes</h2><div class="desc">O link é a porta de entrada. Aqui a gerência confere, ativa, abre o Portal, edita dados e arquiva sem apagar histórico.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="setCadastroSub('form',document.querySelectorAll('#view-cadastro .subtab')[1])">Abrir link para enviar</button></div>
         <div class="card" id="centralSaidasClientes" style="border:2px solid var(--red);"><h2 style="margin-top:0;">Registrar saída de cliente</h2><div class="desc">Só <b>mensalistas</b> aparecem aqui — é quem tem contrato recorrente e portanto pode sair da agência. Cliente avulso não sai: o projeto dele termina. Ele continua operando até a data definida; depois sai das listas e do Portal, e todo o histórico fica no arquivo abaixo.</div><div class="row2" style="margin-top:12px;"><div class="field"><label>Cliente</label><select id="saidaRapidaCliente"><option value="">Selecione...</option>${(ativos.filter(v=>v.tipo==='mensalista')).map(v=>`<option value="${escAttr(v.slug)}">${esc(v.nome)}</option>`).join('')}</select></div><button class="btn red" style="align-self:end;" onclick="abrirSaidaRapidaCentral()">Programar saída</button></div></div>
         ${formularioEdicao}${formularioSaida}

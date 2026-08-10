@@ -1,4 +1,4 @@
-[Uploading AGENTS.md…]()
+[AGENTS.md](https://github.com/user-attachments/files/30910254/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -17,6 +17,7 @@ Este repositório é um sistema operacional em produção, baseado principalment
 - Preserve dados legados por leitura compatível; migrações e gravações em produção exigem autorização e validação específicas.
 - Centralize regras de negócio compartilhadas. Remova a lógica antiga quando ela for substituída, inclusive listeners, timers, chamadas e variáveis residuais.
 - Itens exclusivos por papel não podem existir no DOM de outros papéis; esconder com CSS não é isolamento.
+- `navAcompCampanhas` e `view-campanhas` só existem no DOM de Chris, Amanda, Cecília e Gabrielle. Luís, Nathan, editores e demais papéis não recebem esses nós; teste a ausência real depois de cada troca de papel.
 - Exclusões de dados operacionais são soft-delete. Não use exclusão física salvo para registros temporários explicitamente aprovados.
 
 ### Invariantes da cadeia de calendários
@@ -27,6 +28,7 @@ Este repositório é um sistema operacional em produção, baseado principalment
 - A carteira e os calendários de Luís/Nathan ficam disponíveis durante todo o dia. Data e hora da gravação servem apenas para ordenar e destacar o trabalho; nunca são condição de autorização. O papel continua limitado ao modo de campo e às próprias sessões/clientes operacionais, sem herdar telas de Gabi ou gestão.
 - Um fluxo de papel operacional nunca pode consultar contratos, mensalidades, financeiro ou outra coleção que suas regras não permitem. Classificação gerencial e carteira operacional são fontes diferentes quando a privacidade exige.
 - A fila e o contador da Amanda usam `linhasCalendariosAguardandoRevisao`; não crie filtro paralelo para `aprovacaoInterna`/`aprovacaoMeses`.
+- `aprovado_interno` ainda não foi enviado ao cliente: Gabi pode reabrir para melhorar, o estado volta a `rascunho` e exige nova aprovação. Essa transição relê e grava o estado na mesma transação. `liberado` já foi entregue e fica bloqueado no editor; nunca permitir que uma reabertura concorrente sobrescreva o envio da Amanda.
 - `calendario.html` e `calendarios.html` são endereços compatíveis do mesmo produto e devem permanecer byte a byte idênticos.
 - Calendários não têm exclusão física. Antes de concluir que algo sumiu, confira o documento primário, `calendarios_versoes` e os backups disponíveis, sem restaurar por cima nem duplicar dados.
 

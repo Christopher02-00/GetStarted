@@ -209,6 +209,33 @@ if (!centralClientes.includes('window.garantirPortalClienteCentral=async functio
   falhar('Central da Amanda/Chris não consegue recuperar Portal ausente de mensalista ativo');
 } else provar('Central recupera Portal ausente sem apagar histórico');
 
+const reativacaoCliente = escritorio.slice(
+  escritorio.indexOf('window.cancelarProgramacaoSaidaCentral=async function'),
+  escritorio.indexOf('async function efetivarSaidasProgramadas')
+);
+if (!escritorio.includes('Reativar cliente e recuperar Portal') ||
+    !reativacaoCliente.includes("statusSaida:'cancelada',excluido:true") ||
+    !reativacaoCliente.includes("status:'ativo',encerrado:false,excluido:false,ativo:true") ||
+    !reativacaoCliente.includes('await window.garantirPortalClienteCentral(slug)') ||
+    reativacaoCliente.includes('deleteDoc(')) {
+  falhar('reativação de mensalista arquivado não restaura a cadeia completa com soft-delete');
+} else provar('reativação restaura operação e Portal mantendo a saída no histórico');
+
+const barreiraDuplicidade = escritorio.slice(
+  escritorio.indexOf('async function diagnosticarIdentidadeCliente'),
+  escritorio.indexOf('function dataOperacionalISO')
+);
+if (!barreiraDuplicidade.includes("getDoc(doc(db,'contratos_cliente',slug))") ||
+    !barreiraDuplicidade.includes("getDocs(collection(db,'clientes_extras'))") ||
+    !barreiraDuplicidade.includes("getDocs(collection(db,'cadastros_clientes'))") ||
+    !barreiraDuplicidade.includes("getDocs(collection(db,'clientes_encerrados'))") ||
+    escritorio.includes("addDoc(collection(db,'clientes_extras')") ||
+    !escritorio.includes("setDoc(doc(db,'clientes_extras',slug)") ||
+    !escritorio.includes('existentes.add(slugClienteCanonico(d.id))') ||
+    !escritorio.includes('return slugClienteMensalista(nome);')) {
+  falhar('barreira sistêmica contra cliente duplicado não cobre todas as entradas ou voltou a usar ID aleatório');
+} else provar('entradas de cliente usam identidade canônica, varredura cruzada e documento determinístico');
+
 const saldoCaptacao = escritorio.slice(
   escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'),
   escritorio.indexOf('    } else {', escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'))

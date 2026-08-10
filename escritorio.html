@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-10-sessoes-financeiro-campanhas-v45">
+<meta name="gs-build" content="2026-08-10-saidas-financeiro-v47">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -15046,7 +15046,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   /* Itens exclusivos não ficam apenas escondidos: fora do papel certo
      eles são retirados do DOM e voltam pelo marcador ao trocar de conta. */
   const __sidebarExclusivos = new Map();
-  ['navCadastro','navAprovacoes','navExtras','navgroupVendas'].forEach(id=>{
+  ['navCadastro','navAprovacoes','navExtras','navgroupVendas','navAcompCampanhas','view-campanhas'].forEach(id=>{
     const no=document.getElementById(id); if(!no?.parentNode) return;
     const marca=document.createComment('slot-'+id);
     no.parentNode.insertBefore(marca,no);
@@ -15062,10 +15062,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
   function sincronizarSidebarDOMPorPapel(){
     const gestao=['Chris','Amanda'].includes(usuarioAtual);
+    const podeCampanhas=['Chris','Amanda','Cecília','Gabrielle'].includes(usuarioAtual);
     definirItemExclusivoNoDOM('navCadastro',gestao);
     definirItemExclusivoNoDOM('navAprovacoes',gestao);
     definirItemExclusivoNoDOM('navExtras',usuarioAtual==='Chris');
     definirItemExclusivoNoDOM('navgroupVendas',usuarioAtual==='Chris');
+    definirItemExclusivoNoDOM('navAcompCampanhas',podeCampanhas);
+    definirItemExclusivoNoDOM('view-campanhas',podeCampanhas);
   }
 
   function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -16181,10 +16184,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const slug=window.__saidaClienteEditando||''; if(!slug) return '';
     const atual=(window.__entradaClientesAtivos||{})[slug]; if(!atual) return '';
     const saida=(window.__saidasProgramadasPorSlug||{})[slug]||{};
+    const ultimaCompetenciaPagamento=saida.ultimaCompetenciaPagamento||atual.ultimaCompetenciaPagamento||(!saida.id?String(saida.dataSaida||hojeLocal()).slice(0,7):'');
     return `<div class="card" id="editorSaidaClienteCentral" style="border:2px solid var(--red);">
       <h2 style="margin-top:0;">Saída de ${esc(atual.nome)}</h2>
       <div class="desc"><b>Nada já produzido será apagado.</b> Até a data de saída, o cliente continua no Portal, nas listas e nas rotinas. Na data informada, novas rotinas e acessos são encerrados; o histórico permanece.</div>
       <div class="row2"><div class="field"><label>Data em que avisou</label><input type="date" id="saidaAviso" value="${esc(saida.dataAviso||hojeLocal())}"></div><div class="field"><label>Data em que sai da operação</label><input type="date" id="saidaData" min="${hojeLocal()}" value="${esc(saida.dataSaida||hojeLocal())}"></div></div>
+      ${atual.tipo==='mensalista'?`<div class="field" style="background:var(--deep);border-left:3px solid var(--yellow);border-radius:9px;padding:12px 14px;"><label>Último mês cobrado / competência final no Financeiro</label><input type="month" id="saidaUltimaCompetencia" value="${esc(ultimaCompetenciaPagamento)}"><div class="desc" style="margin:6px 0 0;">O mês informado continua normal. Cobranças posteriores serão canceladas sem apagar o histórico e deixarão de entrar no previsto, em aberto e régua de cobrança. Se existir pagamento posterior já recebido, o sistema bloqueia a saída para não perder dinheiro contabilizado.${atual.cortesiaPermanente?' Este cliente tem cortesia permanente; o campo define apenas o último mês exibido no histórico financeiro.':''}</div></div>`:''}
       <div class="field"><label>Motivo</label><select id="saidaMotivo"><option value="">Selecione...</option>${[['preco','Preço'],['resultado','Resultado'],['atendimento','Atendimento'],['mudanca_interna','Mudança interna do cliente'],['fim_projeto','Fim do projeto'],['outro','Outro']].map(([v,n])=>`<option value="${v}" ${saida.motivo===v?'selected':''}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Detalhes do motivo</label><textarea id="saidaDetalhe" placeholder="Contexto necessário para o histórico">${esc(saida.motivoDetalhe||'')}</textarea></div>
       <div class="field"><label>Entregas ou observações até a saída</label><textarea id="saidaPendencias" placeholder="Ex.: finalizar vídeos já gravados; entregar relatório final">${esc(saida.pendenciasFinais||'')}</textarea></div>
@@ -16200,38 +16205,67 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const motivo=document.getElementById('saidaMotivo')?.value||'';
     const motivoDetalhe=(document.getElementById('saidaDetalhe')?.value||'').trim();
     const pendenciasFinais=(document.getElementById('saidaPendencias')?.value||'').trim();
+    const ultimaCompetenciaPagamento=atual.tipo==='mensalista'?(document.getElementById('saidaUltimaCompetencia')?.value||''):'';
     if(!dataAviso||!dataSaida||!motivo||!motivoDetalhe){ mostrarToast('Preencha data, motivo e detalhes da saída.','erro'); return; }
     if(dataSaida<dataAviso){ mostrarToast('A saída não pode ser anterior ao aviso.','erro'); return; }
+    if(atual.tipo==='mensalista'&&!competenciaFinanceiraValida(ultimaCompetenciaPagamento)){ mostrarToast('Informe o último mês cobrado no formato AAAA-MM.','erro'); return; }
+    if(atual.tipo==='mensalista'&&competenciaFinanceiraValida(atual.primeiraCompetencia)&&ultimaCompetenciaPagamento<atual.primeiraCompetencia){ mostrarToast('O último mês não pode ser anterior à primeira cobrança do contrato.','erro'); return; }
     const imediata=dataSaida<=hojeLocal();
     const frase=imediata?'retirar o cliente da operação agora':'manter o cliente ativo até '+formatarDataBR(dataSaida)+' e retirá-lo automaticamente nessa data';
-    if(!confirm('Confirmar e '+frase+'? O histórico e as entregas já criadas serão preservados.')) return;
     try{
       const refs={config:doc(db,'clientes_config',slug),extra:atual.extraId?doc(db,'clientes_extras',atual.extraId):null,cadastro:atual.cadastroId?doc(db,'cadastros_clientes',atual.cadastroId):null,lead:atual.leadId?doc(db,atual.leadColecao==='leads_pessoa_fisica'?'leads_pessoa_fisica':'leads_avulsos',atual.leadId):null,contrato:atual.tipo==='mensalista'?doc(db,'contratos_cliente',slug):null,onboarding:atual.onboardingId?doc(db,'onboarding_processos',atual.onboardingId):null,acesso:atual.tipo==='mensalista'?doc(db,'clientes_acesso',slug):null};
       const tokensDoCliente=atual.tipo==='mensalista'?(await getDocs(query(collection(db,'clientes_portal_tokens'),where('cliente','==',slug)))).docs.map(d=>d.ref):[];
       const saidaAnterior=(window.__saidasProgramadasPorSlug||{})[slug]||{};
       const encerRef=saidaAnterior.id?doc(db,'clientes_encerrados',saidaAnterior.id):doc(collection(db,'clientes_encerrados'));
-      const listaRefs=__validarReferenciasFirestore([...Object.values(refs),...tokensDoCliente],'a saída de '+atual.nome);
+      const pagamentosDoCliente=[];
+      if(atual.tipo==='mensalista'){
+        const pagamentosSnap=await getDocs(collection(db,'pagamentos_mensais'));
+        pagamentosSnap.forEach(d=>{ const p=d.data(); if(pagamentoPertenceAoCliente(p,d.id,slug)) pagamentosDoCliente.push({id:d.id,ref:d.ref,...p}); });
+      }
+      const analiseInicial=atual.tipo==='mensalista'?analisarPagamentosParaSaida(pagamentosDoCliente,slug,ultimaCompetenciaPagamento,encerRef.id):{posteriores:[],pagosPosteriores:[],reabrir:[]};
+      if(analiseInicial.pagosPosteriores.length){
+        const meses=[...new Set(analiseInicial.pagosPosteriores.map(p=>p.competencia))].sort().join(', ');
+        throw new Error('Há pagamento já recebido depois do último mês informado ('+meses+'). Ajuste a competência final antes de continuar.');
+      }
+      if(!confirm('Confirmar e '+frase+'?'+(atual.tipo==='mensalista'?' Último mês no Financeiro: '+ultimaCompetenciaPagamento+'. '+analiseInicial.posteriores.length+' lançamento(s) posterior(es) será(ão) cancelado(s) sem exclusão.':'')+' O histórico e as entregas já criadas serão preservados.')) return;
+      const mensalidadeFinalRef=atual.tipo==='mensalista'?doc(db,'pagamentos_mensais',slug+'_'+ultimaCompetenciaPagamento):null;
+      const refsFinanceiras=[...new Map([...pagamentosDoCliente.map(p=>p.ref),mensalidadeFinalRef].filter(Boolean).map(r=>[r.path,r])).values()];
+      const listaRefs=__validarReferenciasFirestore([...Object.values(refs),...tokensDoCliente,...refsFinanceiras],'a saída de '+atual.nome);
       const limiteAcesso=new Date(dataSaida+'T00:00:00-03:00');
       await runTransaction(db,async tx=>{
         const snaps=await Promise.all(listaRefs.map(r=>tx.get(r))); const existe=new Map(listaRefs.map((r,i)=>[r.path,snaps[i].exists()]));
+        const snapshotPorCaminho=new Map(listaRefs.map((r,i)=>[r.path,snaps[i]]));
+        const pagamentosTransacao=pagamentosDoCliente.map(p=>{ const snap=snapshotPorCaminho.get(p.ref.path); return snap?.exists()?{id:p.id,ref:p.ref,...snap.data()}:null; }).filter(Boolean);
+        const analiseFinanceira=atual.tipo==='mensalista'?analisarPagamentosParaSaida(pagamentosTransacao,slug,ultimaCompetenciaPagamento,encerRef.id):{posteriores:[],pagosPosteriores:[],reabrir:[]};
+        if(analiseFinanceira.pagosPosteriores.length) throw new Error('Um pagamento posterior foi confirmado enquanto a saída era preparada. Atualize a tela e revise a competência final.');
         const agenda={saidaProgramadaPara:dataSaida,saidaMotivo:motivo,saidaMotivoDetalhe:motivoDetalhe,saidaAtualizadaPor:usuarioAtual,saidaAtualizadaEm:serverTimestamp()};
         tx.set(refs.config,{...agenda,clienteInativo:imediata,inativoDesde:imediata?dataSaida:deleteField(),inativoMotivo:imediata?motivo:deleteField(),inativoPor:imediata?usuarioAtual:deleteField()},{merge:true});
         if(refs.extra&&existe.get(refs.extra.path)) tx.set(refs.extra,{...agenda,excluido:imediata,excluidoPor:imediata?usuarioAtual:deleteField(),excluidoEm:imediata?serverTimestamp():deleteField(),motivoExclusao:imediata?'Saída de cliente: '+motivoDetalhe:deleteField()},{merge:true});
         if(refs.cadastro&&existe.get(refs.cadastro.path)) tx.set(refs.cadastro,{...agenda,statusGerencia:imediata?'arquivado':'oficializado',arquivadoPor:imediata?usuarioAtual:deleteField(),arquivadoEm:imediata?serverTimestamp():deleteField()},{merge:true});
         if(refs.lead&&existe.get(refs.lead.path)) tx.set(refs.lead,{...agenda,statusGerencia:imediata?'arquivado':'convertido',arquivadoPor:imediata?usuarioAtual:deleteField(),arquivadoEm:imediata?serverTimestamp():deleteField()},{merge:true});
-        if(refs.contrato&&existe.get(refs.contrato.path)) tx.set(refs.contrato,{...agenda,status:imediata?'encerrado':'ativo',encerradoEm:imediata?new Date().toISOString():deleteField(),encerradoPor:imediata?usuarioAtual:deleteField()},{merge:true});
+        if(refs.contrato&&existe.get(refs.contrato.path)) tx.set(refs.contrato,{...agenda,ultimaCompetenciaPagamento,status:imediata?'encerrado':'ativo',encerradoEm:imediata?new Date().toISOString():deleteField(),encerradoPor:imediata?usuarioAtual:deleteField()},{merge:true});
         if(refs.onboarding&&existe.get(refs.onboarding.path)) tx.set(refs.onboarding,{...agenda,...(imediata?{status:'encerrado',encerradoEm:serverTimestamp(),encerradoPor:usuarioAtual}:{})},{merge:true});
         if(refs.acesso&&existe.get(refs.acesso.path)) tx.set(refs.acesso,{ativo:!imediata,ativoAte:limiteAcesso,saidaProgramadaPara:dataSaida,...(imediata?{desativadoEm:serverTimestamp(),desativadoPor:usuarioAtual}:{})},{merge:true});
         tokensDoCliente.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{ativo:!imediata,ativoAte:limiteAcesso,saidaProgramadaPara:dataSaida,...(imediata?{desativadoEm:serverTimestamp(),desativadoPor:usuarioAtual}:{})},{merge:true}); });
+        analiseFinanceira.reabrir.forEach(p=>tx.set(p.ref,{status:p.statusAntesSaida||'aberto',canceladoPorSaida:deleteField(),canceladoPorSaidaId:deleteField(),statusAntesSaida:deleteField(),motivoCancelamento:deleteField(),canceladoEm:deleteField(),canceladoPor:deleteField(),atualizadoEm:serverTimestamp(),atualizadoPor:usuarioAtual},{merge:true}));
+        analiseFinanceira.posteriores.forEach(p=>tx.set(p.ref,{status:'cancelado',canceladoPorSaida:true,canceladoPorSaidaId:encerRef.id,statusAntesSaida:p.canceladoPorSaida===true?(p.statusAntesSaida||'aberto'):statusMensalidadeCanonico(p),motivoCancelamento:'Competência posterior ao último mês do contrato ('+ultimaCompetenciaPagamento+')',canceladoEm:serverTimestamp(),canceladoPor:usuarioAtual,atualizadoEm:serverTimestamp(),atualizadoPor:usuarioAtual},{merge:true}));
+        pagamentosTransacao.filter(p=>p.ultimaCompetenciaDoContrato===true&&p.saidaFinanceiraId===encerRef.id&&p.competencia!==ultimaCompetenciaPagamento).forEach(p=>tx.set(p.ref,{ultimaCompetenciaDoContrato:deleteField(),saidaFinanceiraId:deleteField()},{merge:true}));
+        if(mensalidadeFinalRef){
+          const snapFinal=snapshotPorCaminho.get(mensalidadeFinalRef.path);
+          const cortesiaFinal=atual.cortesiaPermanente===true||(Array.isArray(atual.cortesiaMeses)&&atual.cortesiaMeses.map(String).includes(ultimaCompetenciaPagamento));
+          const baseFinal={ultimaCompetenciaDoContrato:true,saidaFinanceiraId:encerRef.id,atualizadoEm:serverTimestamp(),atualizadoPor:usuarioAtual};
+          if(!snapFinal?.exists()) Object.assign(baseFinal,{cliente:slug,clienteNome:atual.nome,competencia:ultimaCompetenciaPagamento,valorDevido:Number(atual.valorMensal||0),diaVencimento:Number(atual.diaVencimento||10),status:cortesiaFinal?'isento':'aberto',pagoEm:'',comprovante:'',cortesiaPermanente:atual.cortesiaPermanente===true,cortesiaDoMes:!atual.cortesiaPermanente&&cortesiaFinal,motivoIsencao:atual.cortesiaPermanente?'cortesia permanente':cortesiaFinal?'cortesia combinada para este mês':'',criadoEm:serverTimestamp()});
+          tx.set(mensalidadeFinalRef,baseFinal,{merge:true});
+        }
         const fichaSnapshot={
           nome:String(atual.nome||''),slug,tipo:String(atual.tipo||''),instagram:String(atual.instagram||''),telefone:String(atual.telefone||''),
           aniversario:String(atual.aniversario||''),contatos:String(atual.contatos||''),plano:String(atual.plano||''),planoDetalhes:String(atual.planoDetalhes||''),
           valorMensal:Number(atual.valorMensal||0),diaVencimento:Number(atual.diaVencimento||0),primeiraCompetencia:String(atual.primeiraCompetencia||''),
           tipoEntrega:String(atual.tipoEntrega||''),incluiStories:atual.incluiStories===true,cortesiaPermanente:atual.cortesiaPermanente===true,
-          cortesiaMeses:Array.isArray(atual.cortesiaMeses)?atual.cortesiaMeses.map(String):[],observacoes:String(atual.observacoes||''),
+          cortesiaMeses:Array.isArray(atual.cortesiaMeses)?atual.cortesiaMeses.map(String):[],ultimaCompetenciaPagamento,observacoes:String(atual.observacoes||''),
           tinhaPortal:!!atual.token,origem:String(atual.origem||'central')
         };
-        tx.set(encerRef,{nome:atual.nome,slug,dataAviso,dataSaida,statusSaida:imediata?'encerrada':'programada',tipoCliente:atual.tipo,extraId:atual.extraId||'',cadastroId:atual.cadastroId||'',leadId:atual.leadId||'',leadColecao:atual.leadColecao||'',onboardingId:atual.onboardingId||'',servicos:atual.tipo==='mensalista'?[atual.plano,atual.planoDetalhes].filter(Boolean).join(' — '):'Projeto avulso',valorMensal:Number(atual.valorMensal||0),motivo,motivoDetalhe,pendenciasFinais,fichaSnapshot,origemCentralEntrada:true,criadoPor:saidaAnterior.criadoPor||usuarioAtual,criadoEm:saidaAnterior.criadoEm||serverTimestamp(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp(),excluido:false},{merge:true});
+        tx.set(encerRef,{nome:atual.nome,slug,dataAviso,dataSaida,ultimaCompetenciaPagamento,statusSaida:imediata?'encerrada':'programada',tipoCliente:atual.tipo,extraId:atual.extraId||'',cadastroId:atual.cadastroId||'',leadId:atual.leadId||'',leadColecao:atual.leadColecao||'',onboardingId:atual.onboardingId||'',servicos:atual.tipo==='mensalista'?[atual.plano,atual.planoDetalhes].filter(Boolean).join(' — '):'Projeto avulso',valorMensal:Number(atual.valorMensal||0),motivo,motivoDetalhe,pendenciasFinais,fichaSnapshot,origemCentralEntrada:true,criadoPor:saidaAnterior.criadoPor||usuarioAtual,criadoEm:saidaAnterior.criadoEm||serverTimestamp(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp(),excluido:false},{merge:true});
       });
       window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras();
       try{ await sincronizarAutomacaoFuncoesFixas(); }catch(e){ console.error('Saída salva; automações sincronizarão no motor:',e); }
@@ -16270,17 +16304,27 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         (atual.tipo==='mensalista'||mensalista)?doc(db,'clientes_acesso',slug):null
       ],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída');
       const tokens=(atual.tipo==='mensalista'||mensalista)?(await getDocs(query(collection(db,'clientes_portal_tokens'),where('cliente','==',slug)))).docs.map(d=>d.ref):[];
+      const pagamentosDaSaidaFinanceira=[];
+      if(atual.tipo==='mensalista'||mensalista){
+        const pagamentosSnap=await getDocs(collection(db,'pagamentos_mensais'));
+        pagamentosSnap.forEach(d=>{ const p=d.data(); if(pagamentoPertenceAoCliente(p,d.id,slug)&&(p.canceladoPorSaidaId===saida.id||p.saidaFinanceiraId===saida.id)) pagamentosDaSaidaFinanceira.push({id:d.id,ref:d.ref,...p}); });
+      }
       await runTransaction(db,async tx=>{
-        const todos=__validarReferenciasFirestore([...refs,...tokens],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
+        const todos=__validarReferenciasFirestore([...refs,...tokens,...pagamentosDaSaidaFinanceira.map(p=>p.ref)],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
         refs.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),saidaAtualizadaPor:deleteField(),saidaAtualizadaEm:deleteField(),ativoAte:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true}); });
         tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado,clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
         if(extraRef&&(existe.get(extraRef.path)||reativarEfetiva)) tx.set(extraRef,{slug,nome:nomeReativado,casta:mensalista?'mensalista':(atual.tipo||'avulso'),excluido:false,ativo:true,arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField(),motivoExclusao:deleteField(),excluidoEm:deleteField(),excluidoPor:deleteField()},{merge:true});
         if(saida.cadastroId){ const ref=doc(db,'cadastros_clientes',saida.cadastroId); if(existe.get(ref.path)) tx.set(ref,{nome:nomeReativado,slugAtivado:slug,excluido:false,statusGerencia:'oficializado',arquivadoEm:deleteField(),arquivadoPor:deleteField()},{merge:true}); }
         const contratoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'contratos_cliente',slug):null;
-        if(contratoRef&&existe.get(contratoRef.path)) tx.set(contratoRef,{clienteNome:nomeReativado,status:'ativo',encerrado:false,excluido:false,ativo:true,encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        if(contratoRef&&existe.get(contratoRef.path)) tx.set(contratoRef,{clienteNome:nomeReativado,status:'ativo',encerrado:false,excluido:false,ativo:true,ultimaCompetenciaPagamento:deleteField(),encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
         const acessoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'clientes_acesso',slug):null;
         if(acessoRef&&existe.get(acessoRef.path)) tx.set(acessoRef,{nome:nomeReativado,ativo:true,desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true});
         tokens.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{cliente:slug,nome:nomeReativado,ativo:true,ativoAte:deleteField(),saidaProgramadaPara:deleteField(),desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true}); });
+        pagamentosDaSaidaFinanceira.forEach(p=>{
+          const restauracao={ultimaCompetenciaDoContrato:deleteField(),saidaFinanceiraId:deleteField(),atualizadoEm:serverTimestamp(),atualizadoPor:usuarioAtual};
+          if(p.canceladoPorSaida===true&&p.canceladoPorSaidaId===saida.id) Object.assign(restauracao,{status:p.statusAntesSaida||'aberto',canceladoPorSaida:deleteField(),canceladoPorSaidaId:deleteField(),statusAntesSaida:deleteField(),motivoCancelamento:deleteField(),canceladoEm:deleteField(),canceladoPor:deleteField()});
+          tx.set(p.ref,restauracao,{merge:true});
+        });
         tx.set(doc(db,'clientes_encerrados',saida.id),{statusSaida:'cancelada',excluido:true,excluidoPor:usuarioAtual,excluidoEm:serverTimestamp(),motivoExclusao:reativarEfetiva?'Arquivamento cancelado; cliente reativado sem apagar histórico':'Saída programada cancelada; cliente mantido ativo'},{merge:true});
       });
       window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras(); mostrarToast(reativarEfetiva?'Cliente reativado; agora vou confirmar o Portal.':'Saída cancelada; cliente continua ativo.'); await window.renderCentralEntradaClientes();
@@ -16378,7 +16422,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       }).map(v=>{
         const slug=slugDo(v), ctr=contratos[slug]||{}, acesso=acessos[slug]||{}, extra=extrasPorSlug[slug]||{}, onboarding=onboardingPorSlug[slug]||{};
         const nomeOriginal=v.nome||ctr.clienteNome||extra.nome||slug, nome=nomeClienteCanonico(slug,nomeOriginal);
-        return {tipo:'mensalista',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,instagram:v.instagram||'',telefone:v.telefone||'',aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(v.valorMensal??ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||'',tipoEntrega:v.tipoEntrega||configs[slug]?.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
+        return {tipo:'mensalista',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,instagram:v.instagram||'',telefone:v.telefone||'',aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(v.valorMensal??ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||ctr.primeiraCompetencia||'',ultimaCompetenciaPagamento:ctr.ultimaCompetenciaPagamento||saidasProgramadasPorSlug[slug]?.ultimaCompetenciaPagamento||'',tipoEntrega:v.tipoEntrega||configs[slug]?.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
       });
       const avulsosAtivos=[
         ...avulsosEmpresaSnap.docs.map(d=>({id:d.id,colecaoOrigem:'leads_avulsos',...d.data()})),
@@ -16401,8 +16445,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const fontesLegadas=new Map();
       CLIENTES_BASE.forEach(v=>fontesLegadas.set(v.slug,{nome:v.nome,slug:v.slug}));
       Object.values(extrasPorId).forEach(v=>{ if(v.slug) fontesLegadas.set(v.slug,{...(fontesLegadas.get(v.slug)||{}),...v}); });
+      Object.entries(contratos).forEach(([slugBruto,ctr])=>{ const slug=slugClienteCanonico(slugBruto); if(slug&&contratoOperacionalAtivo(ctr)) fontesLegadas.set(slug,{...(fontesLegadas.get(slug)||{}),slug,nome:ctr.clienteNome||fontesLegadas.get(slug)?.nome||slug}); });
       fontesLegadas.forEach((extra,slug)=>{
-        if(!slug||SLUGS_INTERNOS.includes(slug)||unicos.has(slug)||extra.excluido||slugsArquivadosDeOrigem.has(slug)) return;
+        const contratoAtivo=contratoOperacionalAtivo(contratos[slug]||{});
+        if(!slug||SLUGS_INTERNOS.includes(slug)||unicos.has(slug)||((extra.excluido||slugsArquivadosDeOrigem.has(slug))&&!contratoAtivo)) return;
         const cfg=configs[slug]||{}, ctr=contratos[slug]||{}, acesso=acessos[slug]||{}, onboarding=onboardingPorSlug[slug]||{};
         if(clienteInativoEfetivo(cfg)||String(ctr.status||'ativo')==='encerrado'||saidaClienteJaEfetiva(ctr)) return;
         const mensal=cfg.tipoCliente==='avulso'?false:(cfg.tipoCliente==='mensalista'||extra.casta==='mensalista'||!!acesso.token||Object.keys(ctr).length>1||CLIENTES_BASE.some(c=>c.slug===slug));
@@ -16410,7 +16456,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         unicos.set(slug,{tipo:mensal?'mensalista':'avulso',origem:'legado',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,
           instagram:extra.instagram||'',telefone:extra.telefone||extra.whatsapp||'',aniversario:'',contatos:'',
           plano:mensal?(ctr.plano||extra.plano||'Mensalista legado'):'Projeto avulso',planoDetalhes:ctr.planoDetalhes||extra.planoDetalhes||'',
-          valorMensal:Number(ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(ctr.diaVencimento||0),primeiraCompetencia:'',
+          valorMensal:Number(ctr.valorVigente??ctr.valorCheio??0),diaVencimento:Number(ctr.diaVencimento||0),primeiraCompetencia:ctr.primeiraCompetencia||'',ultimaCompetenciaPagamento:ctr.ultimaCompetenciaPagamento||saidasProgramadasPorSlug[slug]?.ultimaCompetenciaPagamento||'',
           tipoEntrega:cfg.tipoEntrega||(mensal?'postagem_completa':'entrega_direta'),incluiStories:stories[slug]?.ativo===true,
           cortesiaPermanente:ctr.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:[],
           observacoes:ctr.observacao||extra.observacoes||'',extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'',
@@ -16432,7 +16478,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const formularioSaida=htmlSaidaClienteCentral();
       const itemAtivo=v=>`<div class="card" style="border-left:4px solid ${v.tipo==='mensalista'?'var(--green)':'#7e8aa6'};">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;"><div><h2 style="margin:0 0 4px;">${esc(v.nome)}</h2><div class="meta">${v.tipo==='mensalista'?'MENSALISTA':'AVULSO'} · ${esc(v.slug)}</div></div><span class="pill ${v.saida?'warn':(v.tipo==='mensalista'?'ok':'')}">${v.saida?'SAÍDA EM '+formatarDataBR(v.saida.dataSaida):(v.tipo==='mensalista'?'ATIVO':'PONTUAL')}</span></div>
-        <div class="desc" style="margin-top:11px;line-height:1.7;"><b>Contato:</b> ${esc(v.instagram||'—')} · ${esc(v.telefone||'—')}${v.aniversario?' · aniversário '+esc(v.aniversario):''}${v.contatos?'<br><b>Outros contatos:</b> '+esc(v.contatos):''}<br><b>Plano/escopo:</b> ${esc([v.plano,(!v.planoDetalhes||String(v.plano||'').includes(v.planoDetalhes))?'':v.planoDetalhes].filter(Boolean).join(' — ')||'—')}${v.tipo==='mensalista'?'<br><b>Mensalidade:</b> '+brl(v.valorMensal)+' · vence dia '+esc(String(v.diaVencimento||'—'))+' · primeira cobrança '+esc(v.primeiraCompetencia||'—')+' · <b>entrega:</b> '+(v.tipoEntrega==='entrega_direta'?'direta':'agência publica')+' · <b>Stories:</b> '+(v.incluiStories?'sim':'não')+'<br><b>Cortesia:</b> '+(v.cortesiaPermanente?'permanente':(v.cortesiaMeses||[]).length?(v.cortesiaMeses||[]).map(esc).join(', '):'não')+'<br><b>Onboarding:</b> '+esc(v.onboardingStatus):''}${v.observacoes?'<br><b>Observações:</b> '+esc(v.observacoes):''}</div>
+        <div class="desc" style="margin-top:11px;line-height:1.7;"><b>Contato:</b> ${esc(v.instagram||'—')} · ${esc(v.telefone||'—')}${v.aniversario?' · aniversário '+esc(v.aniversario):''}${v.contatos?'<br><b>Outros contatos:</b> '+esc(v.contatos):''}<br><b>Plano/escopo:</b> ${esc([v.plano,(!v.planoDetalhes||String(v.plano||'').includes(v.planoDetalhes))?'':v.planoDetalhes].filter(Boolean).join(' — ')||'—')}${v.tipo==='mensalista'?'<br><b>Mensalidade:</b> '+brl(v.valorMensal)+' · vence dia '+esc(String(v.diaVencimento||'—'))+' · primeira cobrança '+esc(v.primeiraCompetencia||'—')+(v.ultimaCompetenciaPagamento?' · <b>último mês no Financeiro:</b> '+esc(v.ultimaCompetenciaPagamento):'')+' · <b>entrega:</b> '+(v.tipoEntrega==='entrega_direta'?'direta':'agência publica')+' · <b>Stories:</b> '+(v.incluiStories?'sim':'não')+'<br><b>Cortesia:</b> '+(v.cortesiaPermanente?'permanente':(v.cortesiaMeses||[]).length?(v.cortesiaMeses||[]).map(esc).join(', '):'não')+'<br><b>Onboarding:</b> '+esc(v.onboardingStatus):''}${v.observacoes?'<br><b>Observações:</b> '+esc(v.observacoes):''}</div>
         <div class="btnrow" style="margin-top:11px;flex-wrap:wrap;">
           ${v.token?'<button class="btn" style="width:auto;" onclick="abrirPortalClienteCentral(\''+escJs(v.slug)+'\')">Abrir Portal ↗</button><button class="btn secondary" style="width:auto;" onclick="copiarPortalClienteCentral(\''+escJs(v.slug)+'\')">Copiar Portal</button>':'<button class="btn" style="width:auto;" onclick="garantirPortalClienteCentral(\''+escJs(v.slug)+'\')">Criar/recuperar Portal</button>'}
           ${v.tipo==='mensalista'?'<button class="btn secondary" style="width:auto;" onclick="abrirCalendarioDeCliente(\''+escJs(v.slug)+'\',\''+escJs(v.nome)+'\')">Calendário</button>':''}
@@ -16458,13 +16504,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const saidasProgramadas=arquivadosDoLink.filter(v=>v.statusSaida==='programada'&&!saidaClienteJaEfetiva(v));
       const arquivoEfetivo=arquivadosDoLink.filter(v=>!saidasProgramadas.includes(v));
       window.__clientesArquivadosCentral=Object.fromEntries(arquivoEfetivo.map(v=>[v.id,v]));
-      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; const slugBruto=String(v.slug||f.slug||''), slug=slugClienteCanonico(slugBruto); const mensalista=v.tipoCliente==='mensalista'||f.tipo==='mensalista'||!!contratos[slug]; const aliasOuFusao=(slugBruto&&slugBruto!==slug)||!!v.unificadoEm||!!f.unificadoEm||/duplicad|unificad/i.test(String(v.motivoDetalhe||v.motivoArquivamento||'')); const podeReativar=mensalista&&v.statusSaida!=='programada'&&!aliasOuFusao; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${podeReativar?`<button class="btn" style="width:auto;margin-top:10px;" onclick="cancelarProgramacaoSaidaCentral('${escJs(slug)}','${escJs(v.id)}',true)">Reativar cliente e recuperar Portal</button>`:'<div class="meta" style="margin-top:9px;">Registro histórico preservado; não cria outra identidade.</div>'}</details>`; };
+      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; const slugBruto=String(v.slug||f.slug||''), slug=slugClienteCanonico(slugBruto); const mensalista=v.tipoCliente==='mensalista'||f.tipo==='mensalista'||!!contratos[slug]; const aliasOuFusao=(slugBruto&&slugBruto!==slug)||!!v.unificadoEm||!!f.unificadoEm||/duplicad|unificad/i.test(String(v.motivoDetalhe||v.motivoArquivamento||'')); const podeReativar=mensalista&&v.statusSaida!=='programada'&&!aliasOuFusao; const ultima=v.ultimaCompetenciaPagamento||f.ultimaCompetenciaPagamento||''; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${ultima?' · último mês financeiro '+esc(ultima):''}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}${ultima?'<br><b>Último mês no Financeiro:</b> '+esc(ultima):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${podeReativar?`<button class="btn" style="width:auto;margin-top:10px;" onclick="cancelarProgramacaoSaidaCentral('${escJs(slug)}','${escJs(v.id)}',true)">Reativar cliente e recuperar Portal</button>`:'<div class="meta" style="margin-top:9px;">Registro histórico preservado; não cria outra identidade.</div>'}</details>`; };
       box.innerHTML=`<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Central única de clientes</h2><div class="desc">O link é a porta de entrada. Aqui a gerência confere, ativa, abre o Portal, edita dados e arquiva sem apagar histórico.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="setCadastroSub('form',document.querySelectorAll('#view-cadastro .subtab')[1])">Abrir link para enviar</button></div>
         <div class="card" id="centralSaidasClientes" style="border:2px solid var(--red);"><h2 style="margin-top:0;">Registrar saída de cliente</h2><div class="desc">Só <b>mensalistas</b> aparecem aqui — é quem tem contrato recorrente e portanto pode sair da agência. Cliente avulso não sai: o projeto dele termina. Ele continua operando até a data definida; depois sai das listas e do Portal, e todo o histórico fica no arquivo abaixo.</div><div class="row2" style="margin-top:12px;"><div class="field"><label>Cliente</label><select id="saidaRapidaCliente"><option value="">Selecione...</option>${(ativos.filter(v=>v.tipo==='mensalista')).map(v=>`<option value="${escAttr(v.slug)}">${esc(v.nome)}</option>`).join('')}</select></div><button class="btn red" style="align-self:end;" onclick="abrirSaidaRapidaCentral()">Programar saída</button></div></div>
         ${formularioEdicao}${formularioSaida}
         <h2 style="margin:24px 0 8px;">Mensalistas aguardando (${mensalistas.length})</h2>${mensalistas.length?mensalistas.map(itemMensal).join(''):'<div class="empty">Nenhum mensalista aguardando.</div>'}
         <h2 style="margin:24px 0 8px;">Solicitações avulsas (${avulsos.length})</h2>${avulsos.length?avulsos.map(itemAvulso).join(''):'<div class="empty">Nenhuma solicitação avulsa aguardando.</div>'}
-        <h2 style="margin:28px 0 8px;">Clientes ativos vindos do link (${ativos.length})</h2>${ativos.length?ativos.map(itemAtivo).join(''):'<div class="empty">Nenhum cliente do link foi ativado ainda.</div>'}
+        <h2 style="margin:28px 0 8px;">Clientes ativos da operação (${ativos.length})</h2>${ativos.length?ativos.map(itemAtivo).join(''):'<div class="empty">Nenhum cliente ativo encontrado.</div>'}
         <h2 style="margin:28px 0 8px;">Saídas programadas (${saidasProgramadas.length})</h2>${saidasProgramadas.length?saidasProgramadas.map(htmlArquivado).join(''):'<div class="empty">Nenhuma saída programada.</div>'}
         <h2 style="margin:28px 0 8px;">Arquivo de clientes (${arquivoEfetivo.length})</h2>${arquivoEfetivo.length?arquivoEfetivo.map(htmlArquivado).join(''):'<div class="empty">Nenhum cliente arquivado.</div>'}
         <h2 style="margin:28px 0 8px;">Onboarding dos mensalistas ativos</h2>`;
@@ -27694,6 +27740,28 @@ window.salvarPrazoVideo = async function(id){
   window.mensalidadesOperacionaisCanonicas = mensalidadesOperacionaisCanonicas;
   window.contratosOperacionaisCanonicos = contratosOperacionaisCanonicos;
 
+  function competenciaFinanceiraValida(valor){
+    return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(valor||'').trim());
+  }
+
+  function pagamentoPertenceAoCliente(pagamento, id, slug){
+    const original=String(pagamento?.cliente||pagamento?.clienteSlug||pagamento?.slug||String(id||'').replace(/_\d{4}-\d{2}$/,'')).trim();
+    return slugClienteCanonico(original)===slugClienteCanonico(slug);
+  }
+
+  function analisarPagamentosParaSaida(pagamentos, slug, ultimaCompetenciaPagamento, saidaId){
+    const ultima=String(ultimaCompetenciaPagamento||'').trim();
+    if(!competenciaFinanceiraValida(ultima)) throw new Error('Informe o último mês financeiro no formato AAAA-MM.');
+    const doCliente=(pagamentos||[]).filter(p=>pagamentoPertenceAoCliente(p,p.id,slug));
+    const posteriores=doCliente.filter(p=>competenciaFinanceiraValida(p.competencia)&&p.competencia>ultima);
+    const pagosPosteriores=posteriores.filter(p=>statusMensalidadeCanonico(p)==='pago');
+    const reabrir=doCliente.filter(p=>p.canceladoPorSaida===true&&p.canceladoPorSaidaId===saidaId&&competenciaFinanceiraValida(p.competencia)&&p.competencia<=ultima);
+    return {doCliente,posteriores,pagosPosteriores,reabrir};
+  }
+  window.competenciaFinanceiraValida=competenciaFinanceiraValida;
+  window.pagamentoPertenceAoCliente=pagamentoPertenceAoCliente;
+  window.analisarPagamentosParaSaida=analisarPagamentosParaSaida;
+
   /* V45 — o contrato do cadastro já conhece o primeiro mês cobrado. A
      geração mensal ignorava esse campo (ele nem era copiado ao contrato),
      então abrir um mês histórico podia criar uma cobrança anterior à
@@ -27702,6 +27770,8 @@ window.salvarPrazoVideo = async function(id){
   function contratoVigenteNaCompetencia(contrato, competencia){
     const inicio = String(contrato?.primeiraCompetencia || '').trim();
     if(inicio && /^\d{4}-(0[1-9]|1[0-2])$/.test(inicio) && String(competencia||'') < inicio) return false;
+    const fim = String(contrato?.ultimaCompetenciaPagamento || '').trim();
+    if(competenciaFinanceiraValida(fim) && String(competencia||'') > fim) return false;
     return true;
   }
   window.contratoVigenteNaCompetencia = contratoVigenteNaCompetencia;
@@ -28293,7 +28363,7 @@ window.salvarPrazoVideo = async function(id){
       html += `<div class="desc" style="margin-bottom:10px;">Perda de <b style="color:var(--red);">${brl(perdaRegistrada)}/mês</b> recorrente — ou ${brl(perdaRegistrada*12)} no ano se não repuser.</div>`;
       html += saidasRegistradas.map(e => `<div class="item" style="border-left:3px solid var(--red);">
         <div class="top"><div class="nome">${esc(e.nome||'')}</div><span class="selo atrasado">${esc(e.motivo||'sem motivo')}</span></div>
-        <div class="meta" style="margin-top:4px;">${e.valorMensal?brl(e.valorMensal)+'/mês · ':''}${esc(e.tempoPermaneceu||'tempo não informado')}${e.servicos?' · '+esc(e.servicos):''}</div>
+        <div class="meta" style="margin-top:4px;">${e.valorMensal?brl(e.valorMensal)+'/mês · ':''}${e.ultimaCompetenciaPagamento?'último mês financeiro '+esc(e.ultimaCompetenciaPagamento)+' · ':''}${esc(e.tempoPermaneceu||'tempo não informado')}${e.servicos?' · '+esc(e.servicos):''}</div>
         ${e.reclamacoes ? '<div class="meta" style="margin-top:4px;opacity:.85;">💬 '+esc(e.reclamacoes)+'</div>' : ''}
       </div>`).join('');
     } else {
@@ -28380,13 +28450,13 @@ window.salvarPrazoVideo = async function(id){
     }
 
     let linhas = Object.values(existentes).map(p => ({ ...p, sit: situacaoMensalidade(p, competencia) }));
-    if(filtro === 'aberto') linhas = linhas.filter(l => !['pago','isento'].includes(l.sit.k));
+    if(filtro === 'aberto') linhas = linhas.filter(l => !['pago','isento','cancelado'].includes(l.sit.k));
     if(filtro === 'atrasado') linhas = linhas.filter(l => l.sit.k === 'atrasado');
     if(filtro === 'pago') linhas = linhas.filter(l => l.sit.k === 'pago');
     linhas.sort((a,b) => (a.diaVencimento||0)-(b.diaVencimento||0) || (a.clienteNome||'').localeCompare(b.clienteNome||'','pt-BR'));
 
     const todas = Object.values(existentes).map(p => ({ ...p, sit: situacaoMensalidade(p, competencia) }));
-    const previsto = todas.filter(l=>l.sit.k!=='isento').reduce((s,l)=>s+(Number(l.valorDevido)||0),0);
+    const previsto = todas.filter(l=>!['isento','cancelado'].includes(l.sit.k)).reduce((s,l)=>s+(Number(l.valorDevido)||0),0);
     const recebido = todas.filter(l=>l.sit.k==='pago').reduce((s,l)=>s+(Number(l.valorDevido)||0),0);
     const atrasados = todas.filter(l=>l.sit.k==='atrasado');
     const emAberto = previsto - recebido;
@@ -28409,7 +28479,7 @@ window.salvarPrazoVideo = async function(id){
 
     dias.forEach(dia => {
       const doDia = porDia[dia];
-      const abertos = doDia.filter(l => !['pago','isento'].includes(l.sit.k)).length;
+      const abertos = doDia.filter(l => !['pago','isento','cancelado'].includes(l.sit.k)).length;
       html += `<div class="faixaDem aberta" data-faixa="mens_${dia}">
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${doDia.length}${abertos?' · '+abertos+' em aberto':' · tudo resolvido'})</span><span class="seta">▾</span></div>
         <div class="faixaItens">${doDia.map(l => `
@@ -28665,7 +28735,7 @@ window.salvarPrazoVideo = async function(id){
 
     html += ativos.map(ct => `<div class="faixaDem" data-faixa="ct_${ct.slug}">
       <div class="faixaHead" onclick="toggleFaixaDemandas(this)">
-        ${esc(ct.clienteNome)} <span class="qtd">${brl(ct.valorVigente)} · dia ${ct.diaVencimento}${ct.status!=='ativo'?' · '+esc(ct.status):''}${(Number(ct.valorCheio)>Number(ct.valorVigente))?' · desconto':''}</span><span class="seta">▾</span>
+        ${esc(ct.clienteNome)} <span class="qtd">${brl(ct.valorVigente)} · dia ${ct.diaVencimento}${ct.ultimaCompetenciaPagamento?' · último mês '+esc(ct.ultimaCompetenciaPagamento):''}${ct.status!=='ativo'?' · '+esc(ct.status):''}${(Number(ct.valorCheio)>Number(ct.valorVigente))?' · desconto':''}</span><span class="seta">▾</span>
       </div>
       <div class="faixaItens">
         <div class="row2">
@@ -28681,6 +28751,7 @@ window.salvarPrazoVideo = async function(id){
           <div class="field"><label>Volta ao valor cheio em</label><input type="month" id="ctVolta_${ct.slug}" value="${esc(ct.voltaAoCheioEm||'')}"></div>
         </div>
         <div class="field"><label>Primeiro mês cobrado</label><input type="month" id="ctPrimeiraCompetencia_${ct.slug}" value="${esc(ct.primeiraCompetencia||'')}"><div class="desc" style="margin:5px 0 0;">Impede o sistema de criar cobrança antes da entrada real do cliente. Em contratos antigos sem essa informação, deixe vazio para preservar o histórico.</div></div>
+        ${ct.ultimaCompetenciaPagamento?`<div class="field" style="background:var(--deep);border-left:3px solid var(--red);border-radius:9px;padding:12px 14px;"><label>Último mês financeiro</label><input type="month" value="${esc(ct.ultimaCompetenciaPagamento)}" disabled><div class="desc" style="margin:5px 0 0;">Definido em <b>Clientes — entrada e saída</b>. Para alterar com segurança e sincronizar cobranças, use “Revisar saída” na Central de Clientes.</div></div>`:''}
         <div class="field"><label>Situação</label><select id="ctStatus_${ct.slug}">
           ${['ativo','pausado','encerrado'].map(s=>`<option value="${s}" ${ct.status===s?'selected':''}>${s}</option>`).join('')}
         </select></div>

@@ -111,9 +111,10 @@ function testarFinanceiroSandbox() {
 }
 
 function testarMensalidadesSandbox() {
+  const identidadeClientes = trecho(escritorio, 'const APELIDOS_DE_CONTRATO', '  function dataOperacionalISO');
   const fonte = trecho(escritorio, 'function statusMensalidadeCanonico', '  window.marcarMensalidade = async function');
   const api = executarSandbox('mensalidades-sandbox.js',
-    `${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,ajusteCortesiaMensalidade,situacaoMensalidade};`);
+    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,ajusteCortesiaMensalidade,situacaoMensalidade};`);
   exigir(api.statusMensalidadeCanonico({status:' ISENTO '}) === 'isento' &&
     api.mensalidadeResolvida({status:'cortesia'}) === true,
     'cortesia legada/normalizada voltou a ser tratada como cobrança');
@@ -137,6 +138,23 @@ function testarMensalidadesSandbox() {
     'editar contrato sobrescreve uma cortesia manual legítima');
   exigir(api.ajusteCortesiaMensalidade({status:'pago'},'2026-08',true,[]) === null,
     'cortesia do contrato sobrescreve pagamento já confirmado');
+
+  const consolidadas=api.mensalidadesOperacionaisCanonicas([
+    {id:'master-chef_2026-07',cliente:'master-chef',competencia:'2026-07',status:'pago',valor:1700},
+    {id:'master-chef-pizzaria_2026-07',cliente:'master-chef-pizzaria',competencia:'2026-07',status:'aberto',valor:1700},
+    {id:'master-chef-pizzaria_2026-08',cliente:'master-chef-pizzaria',competencia:'2026-08',status:'aberto',valor:1700,excluido:true},
+    {id:'master-chef_2026-08',cliente:'master-chef',competencia:'2026-08',status:'isento',valor:1700}
+  ]);
+  exigir(consolidadas.length===2 && consolidadas.every(v=>v.cliente==='master-chef') &&
+    consolidadas.find(v=>v.competencia==='2026-07')?.status==='pago' &&
+    consolidadas.find(v=>v.competencia==='2026-08')?.status==='isento',
+    'aliases/soft-delete de Master Chef voltaram a criar cobrança ou competência duplicada');
+  const contratosCanonicos=api.contratosOperacionaisCanonicos([
+    {slug:'master-chef-pizzaria',status:'encerrado',clienteNome:'duplicado'},
+    {slug:'master-chef',status:'ativo',clienteNome:'Master Chef'}
+  ]);
+  exigir(contratosCanonicos.length===1 && contratosCanonicos[0].slugCanonico==='master-chef' && contratosCanonicos[0].clienteNome==='Master Chef',
+    'contrato duplicado/encerrado de Master Chef voltou à operação');
 
   const salvarContrato = trecho(escritorio, 'window.salvarContrato = async function', '  window.novoContrato');
   exigir(salvarContrato.includes('const lote = writeBatch(db);') &&
@@ -586,6 +604,12 @@ function testarSessoesGravacaoSandbox() {
   exigir(confirmar.includes('producaoPorFilmmaker') && confirmar.includes('conteudosRealizados') &&
     confirmar.includes('dataProducao = agDadosAntes.data || hojeRegistro') && confirmar.includes('filmmaker:v.responsavel'),
     'baixa da gravação não preserva dia real, títulos e filmmaker de cada conteúdo');
+  const saldoCaptacao = confirmar.slice(confirmar.indexOf('if(qtdRealizada < qtdPlanejada)'), confirmar.indexOf('    } else {', confirmar.indexOf('if(qtdRealizada < qtdPlanejada)')));
+  exigir(saldoCaptacao.includes("tipoPendencia: 'saldo_captacao'") &&
+    saldoCaptacao.includes('NÃO dependem de aprovação da Cecília') &&
+    saldoCaptacao.includes('vincule nela os conteúdos exatos') &&
+    !saldoCaptacao.includes('qtdVideosPlanejados: increment('),
+    'Cecília voltou a ser aprovação dos vídeos ou o saldo alterou uma sessão sem itens exatos');
 
   const fonteProducao = trecho(escritorio, 'function producaoDetalhadaDoAgendamento', 'window.calcularProducaoHojePorFilmmaker');
   const producao = executarSandbox('producao-cecilia-sandbox.js',
@@ -606,7 +630,8 @@ function testarSessoesGravacaoSandbox() {
     calendario.includes("const mbl=document.getElementById('mBloco'); if(mbl) mbl.value='';") &&
     calendario.includes('renderAprovacaoInterna();renderBlocos();'),
     'editor de calendário voltou a apagar campos, excluir fisicamente, herdar bloco ou não atualizar a divisão');
-  exigir(escritorio.includes("'Amanda': ['navCentral','navAprovacoes','navChecklist','navAgendamento'") &&
+  const visibilidadeAmanda = trecho(escritorio, "'Amanda': [", "    'Cecília': [");
+  exigir(['navCentral','navAprovacoes','navChecklist','navAgendamento'].every(id=>visibilidadeAmanda.includes("'"+id+"'")) &&
     escritorio.includes("window.replanejarSessaoGravacao = async function"),
     'Amanda perdeu acesso ao planejamento das sessões');
 
@@ -688,6 +713,19 @@ function testarPermissoesAcoesSandbox() {
     centralClientes.includes('const saidasProgramadas=') && centralClientes.includes('id="centralSaidasClientes"') &&
     centralClientes.includes('Portal:</b> dados preservados'),
     'Central da Amanda voltou a esconder clientes legados, saída rápida ou arquivo preservado');
+  exigir(centralClientes.includes('const slugDo=v=>slugClienteCanonico(') &&
+    centralClientes.includes('Criar/recuperar Portal'),
+    'Central voltou a expor alias como cliente separado ou não oferece recuperação do Portal');
+  const acessoCentral = trecho(escritorio, 'function linkPortalClienteCentral', 'window.salvarClienteAtivoCentral');
+  exigir(acessoCentral.includes('window.garantirPortalClienteCentral=async function') &&
+    acessoCentral.includes("doc(db,'clientes_acesso',canonico)") &&
+    acessoCentral.includes("doc(db,'clientes_portal_tokens',token)") &&
+    acessoCentral.includes('ativo:true'),
+    'recuperação do Portal não confirma as duas fontes de autorização no slug canônico');
+  const fusao = trecho(escritorio, 'window.fundirClientes = async function', 'window.arquivarClienteDuplicado');
+  exigir(fusao.indexOf("doc(db,'clientes_acesso', PARA)") >= 0 &&
+    fusao.indexOf('portal preservado em ') < fusao.indexOf("updateDoc(doc(db,'clientes_acesso', DE)"),
+    'fusão revoga o Portal duplicado antes de preservar o acesso correto');
   exigir(escritorio.includes("{ rot:'Registrar saída de cliente', acao:\"irParaSaidaClientes()\" }") &&
     escritorio.includes('window.abrirSaidaRapidaCentral=function()'),
     'Amanda perdeu o atalho direto para registrar saída');
@@ -706,7 +744,7 @@ function testarPermissoesAcoesSandbox() {
     'Portal/calendário interno não expiram pela regra na data de saída');
 }
 
-function testarCentralClientesAmandaSandbox() {
+async function testarCentralClientesAmandaSandbox() {
   const snapshotFonte = trecho(escritorio, 'function __snapshotFalso(itens, colecao)', '  /* 06/08/2026 — o listener');
   const validarRefsFonte = trecho(escritorio, 'function __validarReferenciasFirestore(refs, contexto)', '  /* Toda gravação invalida');
   const api = executarSandbox('central-clientes-amanda-sandbox.js',
@@ -724,6 +762,25 @@ function testarCentralClientesAmandaSandbox() {
   let bloqueouSnapshotSemCaminho=false;
   try{ api.snapshot([{__id:'cliente-teste',__dados:{}}]); }catch(e){ bloqueouSnapshotSemCaminho=String(e.message).includes('nenhuma alteração foi feita'); }
   exigir(bloqueouSnapshotSemCaminho,'cache sem coleção voltou a produzir DocumentReference indefinida');
+
+  const recuperarPortalFonte = trecho(escritorio, 'window.garantirPortalClienteCentral=async function', '  window.abrirPortalClienteCentral');
+  const portalApi = executarSandbox('portal-master-chef-sandbox.js',
+    `let usuarioAtual='Amanda';const gravacoes=[];const avisos=[];const db={};\n`+
+    `function slugClienteCanonico(s){return {'master-chefe':'master-chef','master-chef-pizzaria':'master-chef'}[s]||s;}\n`+
+    `function doc(b,c,id){return {path:c+'/'+id};}function serverTimestamp(){return 'SERVIDOR';}\n`+
+    `async function getDoc(){return {exists:()=>false,data:()=>({})};}\n`+
+    `async function setDoc(ref,dados,opts){gravacoes.push({ref,dados,opts});}\n`+
+    `function mostrarToast(m,t){avisos.push({m,t});}\n`+
+    `window.__entradaClientesAtivos={'master-chef':{slug:'master-chef',nome:'Master Chef',tipo:'mensalista',token:''}};\n`+
+    `window.renderCentralEntradaClientes=async()=>true;\n${recuperarPortalFonte}\n`+
+    `globalThis.api={recuperar:window.garantirPortalClienteCentral,gravacoes,avisos,ativos:window.__entradaClientesAtivos};`);
+  await portalApi.recuperar('master-chefe');
+  exigir(portalApi.gravacoes.length===2 &&
+    portalApi.gravacoes[0].ref.path==='clientes_acesso/master-chef' &&
+    portalApi.gravacoes[1].ref.path.startsWith('clientes_portal_tokens/') &&
+    portalApi.gravacoes[1].dados.cliente==='master-chef' &&
+    portalApi.ativos['master-chef'].token,
+    'recuperação do Portal de Master Chef não escreveu acesso e token na identidade canônica');
 }
 
 try {
@@ -738,7 +795,7 @@ try {
   await testarCalendariosSandbox();
   testarSessoesGravacaoSandbox();
   testarPermissoesAcoesSandbox();
-  testarCentralClientesAmandaSandbox();
+  await testarCentralClientesAmandaSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

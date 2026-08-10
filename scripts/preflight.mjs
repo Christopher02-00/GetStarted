@@ -32,12 +32,20 @@ const leisV45 = [
   'Total recebido e composição pareciam duplicação',
   'Campanhas tinham duas portas e duas fontes',
   'Fallback de ID escrito antes do spread',
-  'Subaba inexistente de Campanhas na matriz de calendário'
+  'Subaba inexistente de Campanhas na matriz de calendário',
+  'Campanhas estava escondida, mas continuava no DOM de filmmakers'
+];
+const leisV47 = [
+  'Nome parecido não é identidade confirmada',
+  'Saída operacional não encerrava a recorrência financeira',
+  'Mensalidade cancelada ainda era contada como aberta',
+  'Contrato ativo podia sumir da Central por cadastro antigo arquivado',
+  'Texto livre de cortesia divergiu do lançamento real'
 ];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    leisV45.some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas na V45');
-} else provar('catálogo mestre preserva o checklist e as seis leis registradas na V45');
+    [...leisV45, ...leisV47].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V47');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V47');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -230,6 +238,8 @@ const reativacaoCliente = escritorio.slice(
 if (!escritorio.includes('Reativar cliente e recuperar Portal') ||
     !reativacaoCliente.includes("statusSaida:'cancelada',excluido:true") ||
     !reativacaoCliente.includes("status:'ativo',encerrado:false,excluido:false,ativo:true") ||
+    !reativacaoCliente.includes('status:p.statusAntesSaida') ||
+    !reativacaoCliente.includes('ultimaCompetenciaPagamento:deleteField()') ||
     !reativacaoCliente.includes('await window.garantirPortalClienteCentral(slug)') ||
     reativacaoCliente.includes('deleteDoc(')) {
   falhar('reativação de mensalista arquivado não restaura a cadeia completa com soft-delete');
@@ -357,9 +367,11 @@ if (!regraCalendario.includes('temSessaoCalendarioEquipe() && slug == clienteDaS
 } else provar('link interno do calendário grava somente o cliente da própria sessão');
 
 if (!escritorio.includes("definirItemExclusivoNoDOM('navCadastro'") ||
-    !escritorio.includes("definirItemExclusivoNoDOM('navgroupVendas'")) {
+    !escritorio.includes("definirItemExclusivoNoDOM('navgroupVendas'") ||
+    !escritorio.includes("definirItemExclusivoNoDOM('navAcompCampanhas',podeCampanhas)") ||
+    !escritorio.includes("definirItemExclusivoNoDOM('view-campanhas',podeCampanhas)")) {
   falhar('itens privados de clientes/financeiro não são removidos do DOM por papel');
-} else provar('itens privados de sidebar são removidos do DOM por papel');
+} else provar('itens privados e Campanhas são removidos do DOM por papel');
 
 if (!escritorio.includes('function __impedirGravacaoDuranteAuditoria') ||
     !['addDoc','setDoc','updateDoc','deleteDoc','runTransaction','writeBatch'].every(nome =>
@@ -408,9 +420,22 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-10-sessoes-financeiro-campanhas-v45') {
-  falhar(`build V45 inesperado: ${build || 'ausente'}`);
-} else provar('V45 identifica sessão legada, financeiro e quadro mensal de Campanhas');
+if (build !== '2026-08-10-saidas-financeiro-v47') {
+  falhar(`build V47 inesperado: ${build || 'ausente'}`);
+} else provar('V47 identifica competência final, cancelamento financeiro reversível e isolamento preservado');
+
+const saidaFinanceira = escritorio.slice(
+  escritorio.indexOf('window.salvarSaidaClienteCentral=async function'),
+  escritorio.indexOf('window.cancelarProgramacaoSaidaCentral=async function')
+);
+if (!escritorio.includes('id="saidaUltimaCompetencia"') ||
+    !saidaFinanceira.includes('analisarPagamentosParaSaida') ||
+    !saidaFinanceira.includes("status:'cancelado',canceladoPorSaida:true") ||
+    !saidaFinanceira.includes('pagosPosteriores.length') ||
+    !saidaFinanceira.includes('ultimaCompetenciaDoContrato:true') ||
+    !escritorio.includes("String(competencia||'') > fim")) {
+  falhar('saída de cliente não fecha toda a cadeia financeira pela última competência');
+} else provar('saída bloqueia pagamento posterior, cancela futuro sem apagar e limita novas competências');
 
 const resumoMinhas = escritorio.slice(
   escritorio.indexOf('const resumoHtml = `<div class="painelResumo painelResumoDemandas"'),

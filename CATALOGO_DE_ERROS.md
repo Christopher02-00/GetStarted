@@ -1,3 +1,4 @@
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30912328/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -500,3 +501,35 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Nenhuma regressão de código nova foi encontrada nas correções operacionais de hoje.
 - [ ] Escrita real de reabertura V49 não foi executada em produção: alterar calendário de cliente apenas para testar violaria a preservação de dados.
 - [ ] `CATALOGO_DE_ERROS.md`, instruções V49 e `firestore.rules` V28 ainda precisam ser confirmados na `main` depois do complemento de auditoria.
+
+---
+
+## 22. ERROS E INTERCEPTAÇÕES — V50 (10/08/2026)
+
+### 22.1 Cofre necessário à operação estava preso à Gerência inteira
+**O que fiz:** as credenciais dos clientes eram armazenadas no `cofre_senhas`, mas a única tela e a regra de leitura exigiam sessão de Gerência.
+**O que aconteceu:** Cecília precisava das senhas para executar a operação e não tinha uma porta própria; liberar a Gerência inteira teria exposto contratos, financeiro, controles e ações que não pertencem ao papel dela.
+**Como o Chris viu:** pediu que Ceci tivesse acesso às senhas já salvas no site.
+**Por que passou:** “quem pode abrir a tela” e “quem precisa do dado para trabalhar” foram tratados como a mesma autorização ampla.
+**Como consertei:** a V50 cria uma tela exclusiva da Cecília, somente leitura, com revelação por oito segundos. Menu e view são removidos do DOM de outros papéis; criar, alterar e fazer soft-delete continuam guardados no handler e nas regras para Chris/Amanda.
+> **LEI:** necessidade operacional concede o menor direito possível sobre o dado, nunca a tela gerencial que por acaso o contém; leitura, escrita e navegação devem ter guardas independentes.
+
+### 22.2 Saída antiga sem competência final continuava parecendo conciliada
+**O que fiz:** a V47 passou a exigir o último mês financeiro nas novas saídas, mas registros criados antes dela permaneceram sem o campo e sem um alerta visível.
+**O que aconteceu:** Joaquin Assados e Açougue São Joaquim tinham saída em setembro, último pagamento em agosto, mas setembro continuava lançado porque o Financeiro não recebeu `ultimaCompetenciaPagamento`. Dra. Monique possuía `2026-08` e funcionava corretamente.
+**Como o Chris viu:** os dois clientes ainda apareciam para pagamento em setembro.
+**Por que passou:** o teste provava a transação nova, não auditava documentos legados já programados antes da regra obrigatória.
+**Como consertei:** corrigi os dois registros reais pela transação existente, que bloqueia pagamento posterior recebido e cancela somente competências futuras sem apagar histórico. A Central agora marca qualquer saída antiga incompleta como `FINANCEIRO PENDENTE` e oferece “Definir último mês”, em vez de parecer concluída.
+> **LEI:** tornar um campo obrigatório corrige novas gravações, não dados antigos; toda mudança de esquema precisa de detecção explícita do legado e estado visível até sua reconciliação segura.
+
+## 23. CHECKLIST EXECUTADO NA V50
+
+- [x] Cofre da Cecília é somente leitura no HTML, handlers e Firestore Rules.
+- [x] Item e view do cofre não permanecem no DOM de Chris, Amanda, Gabi, editores ou filmmakers.
+- [x] Cecília não recebeu Gerência, contratos, mensalidades ou Financeiro.
+- [x] Falha de leitura do cofre aparece como indisponibilidade; nunca vira lista vazia falsa.
+- [x] Joaquin Assados e Açougue São Joaquim foram conferidos em produção: saída 15/09/2026 e competência final corrigida para 2026-08.
+- [x] A transação recusaria a correção se setembro já estivesse pago; os dois salvamentos concluíram sem apagar documentos.
+- [x] Competências posteriores ficam canceladas por soft-delete lógico e deixam de entrar nos totais/cobrança.
+- [x] Saída legada sem competência final fica vermelha e não pode ser confundida com uma conciliação pronta.
+- [ ] Regra V29 e HTML V50 dependem do upload/publicação manual do Chris; o acesso da Cecília não funciona antes dos dois destinos estarem atualizados.

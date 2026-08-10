@@ -23,6 +23,7 @@ for (const arquivo of obrigatorios) {
 if (erros.length) finalizar();
 
 const escritorio = ler('escritorio.html');
+const escritorioLf = escritorio.replace(/\r\n/g, '\n');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -74,7 +75,7 @@ for (const arquivo of htmls) {
 provar(`${totalChamadas} chamadas diretas de UI sem handler órfão`);
 
 // Login: alteração intencional exige atualizar explicitamente este baseline.
-const etapa = escritorio.match(/  async function etapaSegura\(nome, fn, limiteMs\)\{[\s\S]*?\n  \}/)?.[0] || '';
+const etapa = escritorioLf.match(/  async function etapaSegura\(nome, fn, limiteMs\)\{[\s\S]*?\n  \}/)?.[0] || '';
 const hashEtapa = crypto.createHash('sha256').update(etapa + (etapa ? '\n' : '')).digest('hex');
 const baselineEtapa = 'a7272a98a268b1e56e7816d7623d26542652458c4430b48f5008b49a56d36b31';
 if (hashEtapa !== baselineEtapa) falhar(`etapaSegura mudou (${hashEtapa}); audite login e atualize o baseline conscientemente`);
@@ -181,6 +182,42 @@ for (const provaSeguranca of [
 if (!escritorio.includes('identidadeRecorrenteDemanda') || !escritorio.includes('camposAoAlterarPrazoDemanda(novoPrazoPai')) {
   falhar('proteção de competência/prazo residual ausente');
 } else provar('deduplicação mensal e limpeza de prazo residual presentes');
+
+if (!escritorio.includes("'master-chefe': 'master-chef'") ||
+    !escritorio.includes("'master-chef-pizzaria': 'master-chef'") ||
+    !escritorio.includes("{ nome:'Master Chef',")) {
+  falhar('Master Chef perdeu a identidade canônica ou a grafia correta do importador');
+} else provar('Master Chef é a única identidade operacional; aliases permanecem apenas para compatibilidade');
+
+const fusaoClientes = escritorio.slice(
+  escritorio.indexOf('window.fundirClientes = async function'),
+  escritorio.indexOf('window.arquivarClienteDuplicado')
+);
+if (!fusaoClientes.includes("doc(db,'clientes_acesso', PARA)") ||
+    !fusaoClientes.includes("doc(db,'clientes_portal_tokens',tokenTransferido)") ||
+    fusaoClientes.indexOf('portal preservado em ') > fusaoClientes.indexOf("updateDoc(doc(db,'clientes_acesso', DE)")) {
+  falhar('fusão de cliente pode revogar o Portal duplicado antes de confirmar o acesso canônico');
+} else provar('fusão preserva e confirma o Portal canônico antes de revogar o duplicado');
+
+const centralClientes = escritorio.slice(
+  escritorio.indexOf('function linkPortalClienteCentral'),
+  escritorio.indexOf('window.salvarClienteAtivoCentral')
+);
+if (!centralClientes.includes('window.garantirPortalClienteCentral=async function') ||
+    !centralClientes.includes("doc(db,'clientes_portal_tokens',token)") ||
+    !escritorio.includes('Criar/recuperar Portal')) {
+  falhar('Central da Amanda/Chris não consegue recuperar Portal ausente de mensalista ativo');
+} else provar('Central recupera Portal ausente sem apagar histórico');
+
+const saldoCaptacao = escritorio.slice(
+  escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'),
+  escritorio.indexOf('    } else {', escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'))
+);
+if (!saldoCaptacao.includes("tipoPendencia: 'saldo_captacao'") ||
+    !saldoCaptacao.includes('NÃO dependem de aprovação da Cecília') ||
+    saldoCaptacao.includes('qtdVideosPlanejados: increment(')) {
+  falhar('saldo de captação voltou a bloquear vídeos na Cecília ou alterar contador sem itens exatos');
+} else provar('Cecília recebe apenas planejamento do saldo; vídeos realizados seguem para Amanda');
 
 const confirmacaoGravacao = escritorio.slice(
   escritorio.indexOf('async function registrarGravacaoRealizadaNucleo'),

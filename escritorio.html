@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-10-estabilizacao-clientes-filmagem-v41">
+<meta name="gs-build" content="2026-08-10-reativacao-master-chef-v42">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3262,6 +3262,46 @@
   window.slugClienteCanonico = slugClienteCanonico;
   window.registroOperacionalAtivo = registroOperacionalAtivo;
   window.contratoOperacionalAtivo = contratoOperacionalAtivo;
+
+  /* Barreira única contra duplicação. Toda criação gerencial consulta o
+     slug canônico nas fontes que formam a identidade do cliente. Falha
+     de leitura bloqueia a criação: é mais seguro tentar novamente do que
+     criar contrato, Portal ou calendário duplicado silenciosamente. */
+  async function diagnosticarIdentidadeCliente(nome, slugInformado, cadastroIgnorado){
+    if(!['Amanda','Chris'].includes(usuarioAtual)) throw new Error('Verificação de cliente disponível somente para a gerência.');
+    const bruto=String(slugInformado||nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    const slug=slugClienteCanonico(bruto);
+    if(!slug) throw new Error('O nome não gera um identificador válido.');
+    const [contrato,config,acesso,calendario,extras,cadastros,encerrados]=await Promise.all([
+      getDoc(doc(db,'contratos_cliente',slug)),getDoc(doc(db,'clientes_config',slug)),
+      getDoc(doc(db,'clientes_acesso',slug)),getDoc(doc(db,'calendarios',slug)),
+      getDocs(collection(db,'clientes_extras')),getDocs(collection(db,'cadastros_clientes')),
+      getDocs(collection(db,'clientes_encerrados'))
+    ]);
+    const fontes=[];
+    const adicionar=(fonte,estado,nomeEncontrado)=>fontes.push({fonte,estado,nome:nomeEncontrado||''});
+    if(contrato.exists()){ const v=contrato.data()||{}; adicionar('contrato',contratoOperacionalAtivo(v)?'ativo':'arquivado',v.clienteNome); }
+    if(config.exists()){ const v=config.data()||{}; adicionar('configuração',clienteInativoEfetivo(v)||v.excluido?'arquivado':'ativo',v.nome); }
+    if(acesso.exists()){ const v=acesso.data()||{}; adicionar('Portal',v.ativo===false?'arquivado':'ativo',v.nome); }
+    if(calendario.exists()){ const v=calendario.data()||{}; adicionar('calendário',v.excluido?'arquivado':'ativo',v.client||v.nome); }
+    extras.docs.forEach(d=>{ const v=d.data()||{}; if(slugClienteCanonico(v.slug||d.id)===slug) adicionar('cadastro operacional',v.excluido?'arquivado':'ativo',v.nome); });
+    cadastros.docs.forEach(d=>{ if(d.id===cadastroIgnorado) return; const v=d.data()||{}; const s=slugClienteCanonico(v.slugAtivado||v.slug||String(v.nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')); if(s===slug) adicionar('ficha de entrada',v.excluido||['arquivado','cancelado','recusado'].includes(String(v.statusGerencia||v.status||''))?'arquivado':'ativo',v.nome); });
+    encerrados.docs.forEach(d=>{ const v=d.data()||{}; if(slugClienteCanonico(v.slug||'')===slug&&!v.excluido) adicionar('arquivo de clientes','arquivado',v.nome); });
+    return {slug,existe:fontes.length>0,ativo:fontes.some(v=>v.estado==='ativo'),arquivado:fontes.some(v=>v.estado==='arquivado'),fontes};
+  }
+  window.diagnosticarIdentidadeCliente=diagnosticarIdentidadeCliente;
+  function mensagemIdentidadeClienteExistente(diag){
+    const onde=[...new Set((diag.fontes||[]).map(v=>v.fonte))].join(', ');
+    return diag.arquivado&&!diag.ativo
+      ? 'Este cliente já existe no arquivo ('+onde+'). Use “Reativar cliente” na Central; não crie outro cadastro.'
+      : 'Este cliente já existe no sistema ('+onde+'). Abra a ficha existente; não crie outro cadastro.';
+  }
+  async function identidadeClienteParaNovoTrabalho(nome, cadastroIgnorado){
+    const diag=await diagnosticarIdentidadeCliente(nome,'',cadastroIgnorado||'');
+    if(diag.arquivado&&!diag.ativo) throw new Error(mensagemIdentidadeClienteExistente(diag));
+    return diag;
+  }
+  window.identidadeClienteParaNovoTrabalho=identidadeClienteParaNovoTrabalho;
 
   function dataOperacionalISO(valor){
     if(!valor) return '';
@@ -13522,8 +13562,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.adicionarClienteExtra = async function(){
     const nome = document.getElementById('extraNome').value.trim();
     if(!nome){ mostrarToast('Escreve o nome do cliente.', 'erro'); return; }
-    const slug = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    const slug = slugClienteCanonico(nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''));
     if(CLIENTES_LISTA.some(c=>c.slug===slug)){ mostrarToast('Já existe um cliente com esse nome.', 'erro'); return; }
+    try{ const diag=await diagnosticarIdentidadeCliente(nome,slug); if(diag.existe){ mostrarToast(mensagemIdentidadeClienteExistente(diag),'erro'); return; } }
+    catch(e){ mostrarToast('Não consegui confirmar se este cliente já existe. Nada foi criado: '+(e.message||e),'erro'); return; }
     /* 08/08/2026 — alem do slug identico, avisa sobre nome PARECIDO. */
     const parecidos = window.clientesParecidos(nome, CLIENTES_LISTA);
     if(parecidos.length){
@@ -13536,7 +13578,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }
     const castaExtra = document.getElementById('extraCasta')?.value || 'avulso';
     const tipoEntregaExtra = document.getElementById('extraTipoEntrega')?.value || 'entrega_direta';
-    await addDoc(collection(db,'clientes_extras'), { nome, slug, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp() });
+    /* ID determinístico: mesmo que duas abas tentem salvar juntas, ambas
+       apontam para o mesmo documento canônico em vez de criar duas linhas. */
+    await setDoc(doc(db,'clientes_extras',slug), { nome, slug, excluido:false, criadoPor: usuarioAtual||'Amanda', criadoEm: serverTimestamp() });
     CLIENTES_LISTA.push({nome, slug, extra:true});
     CLIENTES_LISTA.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
     await definirCastaCliente(slug, castaExtra, usuarioAtual||'Amanda');
@@ -16218,34 +16262,51 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }catch(e){ console.error('Falha ao programar saída:',e); mostrarToast('Nada foi alterado: '+(e.message||e),'erro'); }
   };
 
-  window.cancelarProgramacaoSaidaCentral=async function(slug){
+  window.cancelarProgramacaoSaidaCentral=async function(slug, saidaId, reativarEfetiva){
     if(!['Amanda','Chris'].includes(usuarioAtual)) return;
-    const saida=(window.__saidasProgramadasPorSlug||{})[slug];
-    if(!saida?.id||saidaClienteJaEfetiva(saida)){ mostrarToast('Esta saída já está efetiva e não pode ser cancelada por este botão.','erro'); return; }
-    if(!confirm('Cancelar a saída programada e manter o cliente ativo? O registro continuará no histórico como cancelado.')) return;
+    slug=slugClienteCanonico(slug);
+    const saida=reativarEfetiva?(window.__clientesArquivadosCentral||{})[saidaId]:(window.__saidasProgramadasPorSlug||{})[slug];
+    if(!saida?.id){ mostrarToast('Não encontrei o registro de saída. Atualize a Central e tente novamente.','erro'); return; }
+    if(saidaClienteJaEfetiva(saida)&&!reativarEfetiva){ mostrarToast('Esta saída já está efetiva. Use “Reativar cliente” no arquivo se a saída foi registrada por engano.','erro'); return; }
+    const mensalista=saida.tipoCliente==='mensalista'||saida.fichaSnapshot?.tipo==='mensalista';
+    const pergunta=reativarEfetiva
+      ? 'Reativar este cliente? O registro de saída continuará preservado como cancelado e o Portal será recuperado.'
+      : 'Cancelar a saída programada e manter o cliente ativo? O registro continuará no histórico como cancelado.';
+    if(!confirm(pergunta)) return;
     const atual=(window.__entradaClientesAtivos||{})[slug]||{};
     try{
+      let extraRef=saida.extraId?doc(db,'clientes_extras',saida.extraId):null;
+      if(reativarEfetiva&&!extraRef){
+        const extras=await getDocs(collection(db,'clientes_extras'));
+        const encontrado=extras.docs.find(d=>slugClienteCanonico((d.data()||{}).slug||d.id)===slug);
+        extraRef=encontrado?.ref||doc(db,'clientes_extras',slug);
+      }
       const refs=__validarReferenciasFirestore([
         doc(db,'clientes_config',slug),
-        saida.extraId?doc(db,'clientes_extras',saida.extraId):null,
+        extraRef,
         saida.cadastroId?doc(db,'cadastros_clientes',saida.cadastroId):null,
         saida.leadId?doc(db,saida.leadColecao==='leads_pessoa_fisica'?'leads_pessoa_fisica':'leads_avulsos',saida.leadId):null,
         saida.onboardingId?doc(db,'onboarding_processos',saida.onboardingId):null,
-        atual.tipo==='mensalista'?doc(db,'contratos_cliente',slug):null,
-        atual.tipo==='mensalista'?doc(db,'clientes_acesso',slug):null
-      ],'o cancelamento da saída');
-      const tokens=atual.tipo==='mensalista'?(await getDocs(query(collection(db,'clientes_portal_tokens'),where('cliente','==',slug)))).docs.map(d=>d.ref):[];
+        (atual.tipo==='mensalista'||mensalista)?doc(db,'contratos_cliente',slug):null,
+        (atual.tipo==='mensalista'||mensalista)?doc(db,'clientes_acesso',slug):null
+      ],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída');
+      const tokens=(atual.tipo==='mensalista'||mensalista)?(await getDocs(query(collection(db,'clientes_portal_tokens'),where('cliente','==',slug)))).docs.map(d=>d.ref):[];
       await runTransaction(db,async tx=>{
-        const todos=__validarReferenciasFirestore([...refs,...tokens],'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
+        const todos=__validarReferenciasFirestore([...refs,...tokens],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
         refs.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),saidaAtualizadaPor:deleteField(),saidaAtualizadaEm:deleteField(),ativoAte:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true}); });
-        tx.set(doc(db,'clientes_config',slug),{clienteInativo:false,inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField()},{merge:true});
-        const acessoRef=atual.tipo==='mensalista'?doc(db,'clientes_acesso',slug):null;
+        tx.set(doc(db,'clientes_config',slug),{clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        if(extraRef&&(existe.get(extraRef.path)||reativarEfetiva)) tx.set(extraRef,{slug,nome:saida.fichaSnapshot?.nome||saida.nome||nomeDeSlugSeguro(slug),casta:mensalista?'mensalista':(atual.tipo||'avulso'),excluido:false,ativo:true,arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField(),motivoExclusao:deleteField(),excluidoEm:deleteField(),excluidoPor:deleteField()},{merge:true});
+        if(saida.cadastroId){ const ref=doc(db,'cadastros_clientes',saida.cadastroId); if(existe.get(ref.path)) tx.set(ref,{excluido:false,statusGerencia:'oficializado',arquivadoEm:deleteField(),arquivadoPor:deleteField()},{merge:true}); }
+        const contratoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'contratos_cliente',slug):null;
+        if(contratoRef&&existe.get(contratoRef.path)) tx.set(contratoRef,{status:'ativo',encerrado:false,excluido:false,ativo:true,encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        const acessoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'clientes_acesso',slug):null;
         if(acessoRef&&existe.get(acessoRef.path)) tx.set(acessoRef,{ativo:true,desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true});
         tokens.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{ativo:true,ativoAte:deleteField(),saidaProgramadaPara:deleteField(),desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true}); });
-        tx.set(doc(db,'clientes_encerrados',saida.id),{statusSaida:'cancelada',excluido:true,excluidoPor:usuarioAtual,excluidoEm:serverTimestamp(),motivoExclusao:'Saída programada cancelada; cliente mantido ativo'},{merge:true});
+        tx.set(doc(db,'clientes_encerrados',saida.id),{statusSaida:'cancelada',excluido:true,excluidoPor:usuarioAtual,excluidoEm:serverTimestamp(),motivoExclusao:reativarEfetiva?'Arquivamento cancelado; cliente reativado sem apagar histórico':'Saída programada cancelada; cliente mantido ativo'},{merge:true});
       });
-      window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras(); mostrarToast('Saída cancelada; cliente continua ativo.'); await window.renderCentralEntradaClientes();
-    }catch(e){ mostrarToast('Não consegui cancelar: '+(e.message||e),'erro'); }
+      window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras(); mostrarToast(reativarEfetiva?'Cliente reativado; agora vou confirmar o Portal.':'Saída cancelada; cliente continua ativo.'); await window.renderCentralEntradaClientes();
+      if(reativarEfetiva&&mensalista) await window.garantirPortalClienteCentral(slug);
+    }catch(e){ console.error('Falha ao cancelar/reativar cliente:',e); mostrarToast('Não consegui concluir; nenhum histórico foi apagado: '+(e.message||e),'erro'); }
   };
 
   async function efetivarSaidasProgramadas(){
@@ -16414,7 +16475,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const arquivadosDoLink=[...arquivoUnico.values()].sort((a,b)=>String(b.dataSaida||b.arquivadoEm||b.dataFinalizacao||'').localeCompare(String(a.dataSaida||a.arquivadoEm||a.dataFinalizacao||'')));
       const saidasProgramadas=arquivadosDoLink.filter(v=>v.statusSaida==='programada'&&!saidaClienteJaEfetiva(v));
       const arquivoEfetivo=arquivadosDoLink.filter(v=>!saidasProgramadas.includes(v));
-      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div></details>`; };
+      window.__clientesArquivadosCentral=Object.fromEntries(arquivoEfetivo.map(v=>[v.id,v]));
+      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; const slug=slugClienteCanonico(v.slug||f.slug||''); const mensalista=v.tipoCliente==='mensalista'||f.tipo==='mensalista'||!!contratos[slug]; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${mensalista&&v.statusSaida!=='programada'?`<button class="btn" style="width:auto;margin-top:10px;" onclick="cancelarProgramacaoSaidaCentral('${escJs(slug)}','${escJs(v.id)}',true)">Reativar cliente e recuperar Portal</button>`:''}</details>`; };
       box.innerHTML=`<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Central única de clientes</h2><div class="desc">O link é a porta de entrada. Aqui a gerência confere, ativa, abre o Portal, edita dados e arquiva sem apagar histórico.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="setCadastroSub('form',document.querySelectorAll('#view-cadastro .subtab')[1])">Abrir link para enviar</button></div>
         <div class="card" id="centralSaidasClientes" style="border:2px solid var(--red);"><h2 style="margin-top:0;">Registrar saída de cliente</h2><div class="desc">Só <b>mensalistas</b> aparecem aqui — é quem tem contrato recorrente e portanto pode sair da agência. Cliente avulso não sai: o projeto dele termina. Ele continua operando até a data definida; depois sai das listas e do Portal, e todo o histórico fica no arquivo abaixo.</div><div class="row2" style="margin-top:12px;"><div class="field"><label>Cliente</label><select id="saidaRapidaCliente"><option value="">Selecione...</option>${(ativos.filter(v=>v.tipo==='mensalista')).map(v=>`<option value="${escAttr(v.slug)}">${esc(v.nome)}</option>`).join('')}</select></div><button class="btn red" style="align-self:end;" onclick="abrirSaidaRapidaCentral()">Programar saída</button></div></div>
         ${formularioEdicao}${formularioSaida}
@@ -16473,8 +16535,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(!leadSnap.exists() || !entradaClientePendente(leadSnap.data())) throw new Error('Esta solicitação não está mais pendente.');
       const lead=leadSnap.data(); const slug=slugClienteMensalista(lead.nome);
       if(!slug) throw new Error('O nome do cliente não gera um identificador válido.');
+      const diag=await identidadeClienteParaNovoTrabalho(lead.nome);
+      if(diag.ativo) throw new Error(mensagemIdentidadeClienteExistente(diag)+' Vincule o novo trabalho à ficha existente.');
       const extrasSnap=await getDocs(collection(db,'clientes_extras'));
-      const extraExistente=extrasSnap.docs.find(d=>d.data().slug===slug);
+      const extraExistente=extrasSnap.docs.find(d=>slugClienteCanonico(d.data().slug||d.id)===slug);
       const extraRef=extraExistente?extraExistente.ref:doc(db,'clientes_extras',slug);
       const configRef=doc(db,'clientes_config',slug);
       await runTransaction(db,async tx=>{
@@ -16501,7 +16565,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   ];
 
   function slugClienteMensalista(nome){
-    return String(nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    const bruto=String(nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    return slugClienteCanonico(bruto);
   }
 
   function lerEntradaClienteMensalistaDoFormulario(){
@@ -16601,6 +16666,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const entrada = lerEntradaClienteMensalistaDoFormulario();
     const erros = validarEntradaClienteMensalista(entrada);
     if(erros.length){ mostrarToast(erros[0], 'erro'); window.previsualizarCadastroMensalista(); return; }
+    try{
+      const diag=await diagnosticarIdentidadeCliente(entrada.nome,slugClienteMensalista(entrada.nome),String(window.__cadastroOrigemAtivacaoId||''));
+      if(diag.existe){ mostrarToast(mensagemIdentidadeClienteExistente(diag),'erro'); return; }
+    }catch(e){ mostrarToast('Não consegui verificar duplicidade. Nada foi criado: '+(e.message||e),'erro'); return; }
     const agoraIso = new Date().toISOString();
     const tokenPortal = Array.from(crypto.getRandomValues(new Uint8Array(12))).map(n=>n.toString(36)).join('').slice(0,16);
     const modelo = modelarClienteMensalistaUnificado(entrada,agoraIso,tokenPortal);
@@ -27328,6 +27397,11 @@ window.salvarPrazoVideo = async function(id){
     const snap = await getDoc(ref);
     if(!snap.exists()) return;
     const n = snap.data();
+    let identidadeNegocio=null;
+    if(novoEstagio==='producao'){
+      try{ identidadeNegocio=await identidadeClienteParaNovoTrabalho(n.clienteNome); }
+      catch(e){ mostrarToast('Não movi o negócio: '+(e.message||e),'erro'); return; }
+    }
     const hist = Array.isArray(n.historico) ? n.historico : [];
     hist.push({ estagio: novoEstagio, em: new Date().toISOString(), por: usuarioAtual || '?' });
     await updateDoc(ref, { estagio: novoEstagio, historico: hist, atualizadoEm: serverTimestamp() });
@@ -27335,12 +27409,12 @@ window.salvarPrazoVideo = async function(id){
     /* AQUI o negocio vira cliente — e so aqui. Grava tipoEntrega junto,
        que e o que impede o problema do cliente-fantasma se repetir. */
     if(novoEstagio === 'producao'){
-      const slug = (n.clienteNome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+      const slug = identidadeNegocio?.slug || slugClienteMensalista(n.clienteNome);
       if(slug){
         const exSnap = await getDocs(collection(db,'clientes_extras'));
-        let existe = false; exSnap.forEach(d => { if(d.data().slug === slug) existe = true; });
+        let existe = false; exSnap.forEach(d => { if(slugClienteCanonico(d.data().slug||d.id) === slug && registroOperacionalAtivo(d.data())) existe = true; });
         if(!existe){
-          await addDoc(collection(db,'clientes_extras'), { nome: n.clienteNome, slug, criadoPor: 'funil (negócio fechado)', criadoEm: serverTimestamp() });
+          await setDoc(doc(db,'clientes_extras',slug), { nome: n.clienteNome, slug, excluido:false, criadoPor: 'funil (negócio fechado)', criadoEm: serverTimestamp() });
           if(!CLIENTES_LISTA.some(c=>c.slug===slug)) CLIENTES_LISTA.push({ nome: n.clienteNome, slug, extra:true });
         }
         await setDoc(doc(db,'clientes_config', slug), { tipoEntrega: 'entrega_direta', atualizadoPor: 'funil (negócio virou produção)', atualizadoEm: serverTimestamp() }, { merge:true });
@@ -27458,14 +27532,15 @@ window.salvarPrazoVideo = async function(id){
   ];
 
   function slugContrato(nome){
-    return (nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    const bruto=(nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    return slugClienteCanonico(bruto);
   }
   const brl = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
 
   window.importarContratosIniciais = async function(){
     if(!confirm('Importar os ' + CONTRATOS_INICIAIS.length + ' contratos da sua planilha?\n\nQuem já estiver cadastrado NÃO será sobrescrito.')) return;
     const snap = await getDocs(collection(db,'contratos_cliente'));
-    const existentes = new Set(); snap.forEach(d => existentes.add(d.id));
+    const existentes = new Set(); snap.forEach(d => existentes.add(slugClienteCanonico(d.id)));
     let criados = 0, pulados = 0;
     for(const ct of CONTRATOS_INICIAIS){
       const slug = slugContrato(ct.nome);
@@ -27544,6 +27619,8 @@ window.salvarPrazoVideo = async function(id){
     const nome = prompt('Nome do cliente:');
     if(!nome || !nome.trim()) return;
     const slug = slugContrato(nome);
+    try{ const diag=await diagnosticarIdentidadeCliente(nome,slug); if(diag.existe){ mostrarToast(mensagemIdentidadeClienteExistente(diag),'erro'); return; } }
+    catch(e){ mostrarToast('Não consegui verificar duplicidade. Nenhum contrato foi criado: '+(e.message||e),'erro'); return; }
     const snap = await getDoc(doc(db,'contratos_cliente', slug));
     if(snap.exists()){ mostrarToast('Esse cliente já tem contrato.', 'erro'); return; }
     await setDoc(doc(db,'contratos_cliente', slug), {
@@ -30290,7 +30367,10 @@ ${blocoFaltaPerguntar([['Instagram',l.instagram],['Segmento do negócio',l.segme
     const hora = document.getElementById('leadHora_'+id).value;
     if(!data){ mostrarToast('Escolhe uma data primeiro.', 'erro'); return; }
 
-    const slug = slugDeNomeLead(l.nome);
+    let identidade;
+    try{ identidade=await identidadeClienteParaNovoTrabalho(l.nome); }
+    catch(e){ mostrarToast(e.message||String(e),'erro'); return; }
+    const slug = identidade.slug;
     const clienteNovoNesseAgendamento = !CLIENTES_LISTA.some(c=>c.slug===slug);
     if(clienteNovoNesseAgendamento) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
 
@@ -30318,7 +30398,10 @@ ${blocoFaltaPerguntar([['Instagram',l.instagram],['Segmento do negócio',l.segme
   window.confirmarAgendarLeadMultiLocal = async function(id, qtd){
     const l = __leadsAvulsosCache.find(x=>x.id===id);
     if(!l) return;
-    const slug = slugDeNomeLead(l.nome);
+    let identidade;
+    try{ identidade=await identidadeClienteParaNovoTrabalho(l.nome); }
+    catch(e){ mostrarToast(e.message||String(e),'erro'); return; }
+    const slug = identidade.slug;
     const clienteNovoNesseAgendamentoML = !CLIENTES_LISTA.some(c=>c.slug===slug);
     if(clienteNovoNesseAgendamentoML) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
 
@@ -30357,7 +30440,7 @@ ${blocoFaltaPerguntar([['Instagram',l.instagram],['Segmento do negócio',l.segme
      menus de agendar/legenda — sem apagar nada, só deixa de aparecer. */
 
   function slugDeNomeLead(nome){
-    return nome.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    return slugClienteMensalista(nome);
   }
 
   window.finalizarLeadAvulso = async function(id){
@@ -30620,7 +30703,10 @@ Observações: ${l.observacoes||'—'}`;
     const hora = document.getElementById('leadPessoalHora_'+id).value;
     if(!data){ mostrarToast('Escolhe uma data primeiro.', 'erro'); return; }
 
-    const slug = slugDeNomeLead(l.nome);
+    let identidade;
+    try{ identidade=await identidadeClienteParaNovoTrabalho(l.nome); }
+    catch(e){ mostrarToast(e.message||String(e),'erro'); return; }
+    const slug = identidade.slug;
     const clienteNovoNesseAgendamentoPF = !CLIENTES_LISTA.some(c=>c.slug===slug);
     if(clienteNovoNesseAgendamentoPF) CLIENTES_LISTA.push({nome:l.nome, slug, extra:true});
 

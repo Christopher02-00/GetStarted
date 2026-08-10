@@ -1,7 +1,7 @@
 rules_version = '2';
-// Get Started — regras V24 (06/08/2026)
+// Get Started — regras V28 (10/08/2026)
 // Login da equipe por Google verificado; Portal/formulários continuam anônimos e isolados.
-// IMPORTANTE: publicar junto com escritorio.html V32 e os dois calendários V32.
+// IMPORTANTE: publicar junto com escritorio.html V48.
 service cloud.firestore {
   match /databases/{database}/documents {
     function logado() { return request.auth != null; }
@@ -12,7 +12,7 @@ service cloud.firestore {
     function emailDaEquipeSemente() {
       return temEmailVerificado() && request.auth.token.email in [
         'christopherveloso0@gmail.com','amandachamorrosm@gmail.com',
-        'vitoriaboaron215@gmail.com','gabrielleromaomarketing@gmail.com',
+        'vitoriaboaron215@gmail.com','gabrielleromaomarketing@gmail.com','yasmocelin@gmail.com',
         'heloisaksc@gmail.com','luissouza280507@gmail.com',
         'nathanocosta652@gmail.com','victorvieiraj814@gmail.com'
       ];
@@ -42,6 +42,15 @@ service cloud.firestore {
     }
     function ehAmanda() {
       return temEmailVerificado() && request.auth.token.email == 'amandachamorrosm@gmail.com';
+    }
+    function ehChris() {
+      return temEmailVerificado() && request.auth.token.email == 'christopherveloso0@gmail.com';
+    }
+    function ehGabi() {
+      return temEmailVerificado() && request.auth.token.email == 'gabrielleromaomarketing@gmail.com';
+    }
+    function ehCecilia() {
+      return temEmailVerificado() && request.auth.token.email == 'vitoriaboaron215@gmail.com';
     }
     function podePrepararLinkCalendario() {
       return temEmailVerificado() && request.auth.token.email in [
@@ -74,6 +83,9 @@ service cloud.firestore {
     function vouCarimbarCerto() {
       return temSessaoCliente() && request.resource.data.cliente == clienteDaSessao();
     }
+    function acessoDentroDaVigencia(dados) {
+      return !('ativoAte' in dados) || request.time < dados.ativoAte;
+    }
     function tokenPortalValido(cliente, token) {
       return (
         exists(/databases/$(database)/documents/clientes_portal_tokens/$(token)) &&
@@ -81,13 +93,15 @@ service cloud.firestore {
         (
           !('ativo' in get(/databases/$(database)/documents/clientes_portal_tokens/$(token)).data) ||
           get(/databases/$(database)/documents/clientes_portal_tokens/$(token)).data.ativo != false
-        )
+        ) &&
+        acessoDentroDaVigencia(get(/databases/$(database)/documents/clientes_portal_tokens/$(token)).data)
       ) || (
         exists(/databases/$(database)/documents/clientes_acesso/$(cliente)) &&
         (
           !('ativo' in get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data) ||
           get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.ativo != false
         ) &&
+        acessoDentroDaVigencia(get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data) &&
         get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.token == token
       );
     }
@@ -97,6 +111,7 @@ service cloud.firestore {
           !('ativo' in get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data) ||
           get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.ativo != false
         ) &&
+        acessoDentroDaVigencia(get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data) &&
         get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.tokenEquipe == token;
     }
     function ehDonoExtra(dados) {
@@ -222,6 +237,32 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['comprovante','comprovanteEnviadoEm']));
       allow delete: if false;
     }
+    // O registro da conta pessoal não fica exposto à Amanda, clientes ou equipe.
+    // Amanda pode apenas criar o pendente padronizado durante a ativação; depois
+    // somente o Chris lê, classifica a conta e confirma/desfaz o recebimento.
+    match /recebimentos_entrada_pessoal/{docId} {
+      allow read, update: if ehChris();
+      allow create: if ehChris() || (ehAmanda() &&
+        request.resource.data.keys().hasOnly([
+          'id','cliente','clienteNome','competencia','mensalidadeId','valorPrevisto',
+          'status','destino','foraCaixaAgencia','origem','pagoEm','excluido',
+          'criadoPor','criadoEm'
+        ]) &&
+        request.resource.data.id == docId &&
+        request.resource.data.cliente is string &&
+        request.resource.data.clienteNome is string &&
+        request.resource.data.competencia is string &&
+        request.resource.data.mensalidadeId is string &&
+        request.resource.data.valorPrevisto is number && request.resource.data.valorPrevisto > 0 &&
+        request.resource.data.status == 'pendente' &&
+        !('destino' in request.resource.data) &&
+        !('foraCaixaAgencia' in request.resource.data) &&
+        request.resource.data.origem == 'ativacao_mensalista' &&
+        request.resource.data.pagoEm == '' &&
+        request.resource.data.excluido == false
+      );
+      allow delete: if false;
+    }
     match /pagamentos_extra/{docId} {
       allow read: if ehGerencia() || (ehEquipe() && ehDonoExtra(resource.data));
       allow create: if ehGerencia() || (ehEquipe() && ehDonoExtra(request.resource.data) &&
@@ -335,13 +376,19 @@ service cloud.firestore {
       allow read, create, update: if ehAmanda();
       allow delete: if false;
     }
+    match /campanhas/{docId} {
+      allow read: if ehChris() || ehAmanda() || ehGabi() || ehCecilia();
+      allow create: if ehChris() || ehGabi();
+      allow update: if ehChris() || ehAmanda() || ehGabi() || ehCecilia();
+      allow delete: if false;
+    }
 
     // Coleções exclusivamente operacionais. Sem sessão de equipe, não há leitura.
     match /{colecao}/{docId} {
       allow read, create, update: if ehEquipe() && colecao in [
         'agenda_reunioes','anotacoes_pessoais','ausencias','avaliacoes_clientes',
         'calendarios_backup','calendarios_backup_20260727',
-        'calendarios_enviados','calendarios_versoes','campanhas',
+        'calendarios_enviados','calendarios_versoes',
         'checklist_execucoes','checklist_templates_custom','config_painel','controle_postagens',
         'demandas','editores_afinidade','email_digest_controle','email_throttle',
         'fila_emails','foto_do_dia','funcionario_do_mes','funcoes_fixas_geradas','get_academy',

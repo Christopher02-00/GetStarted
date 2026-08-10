@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30901361/AGENTS.md)
+[Uploading AGENTS.md…]()
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -65,6 +65,8 @@ Em 10/08/2026, a fusão de Master Chef revelou que unificar dados e desativar o 
 O mesmo incidente mostrou que uma saída efetivada por engano não pode ser corrigida pelo botão de cancelar saída futura nem por um novo cadastro com informações inventadas. O arquivo mantém uma ação explícita de reativação: marca o registro de saída como cancelado por soft-delete, reabre configuração, ficha, contrato e acesso do slug canônico, remove somente os campos de encerramento e então confirma o Portal pela função central. Nunca apague `clientes_encerrados`, nunca recrie calendário/mensalidade e nunca reative um alias como cliente independente.
 
 A duplicação de Master Chef também expôs portas de entrada com regras diferentes: cadastro manual e funil ainda podiam criar `clientes_extras` com ID aleatório, enquanto contrato e calendário usavam slug. Toda nova identidade agora passa por `diagnosticarIdentidadeCliente`, cruza contrato, configuração, Portal, calendário, cadastro operacional, ficha e arquivo, e falha fechada se alguma leitura não puder ser confirmada. `clientes_extras` novo usa o slug canônico como ID determinístico; aliases, leads e importadores chamam a mesma normalização. Cliente arquivado é reativado pela Central, nunca recadastrado; trabalho novo de cliente ativo reutiliza a identidade existente.
+
+Na primeira reativação real, o slug foi corrigido mas a ficha arquivada ainda forneceu o nome “Master chef pizzaria” ao Portal. Slug e nome visível formam a mesma identidade: `NOMES_CLIENTES_CANONICOS` prevalece na Central, no token, no acesso, no contrato, no calendário e na ficha. Arquivos cujo slug é alias, ou cuja causa é duplicação/unificação, são somente histórico e nunca exibem botão de reativação. A correção explícita de identidade atualiza apenas documentos canônicos existentes em transação e não altera nem apaga o alias arquivado.
 
 Na mesma revisão, ficou formalizado que confirmar uma gravação já cria os vídeos e os envia à fila de distribuição da Amanda. Uma gravação abaixo do planejado pode gerar para Cecília somente uma pendência de planejamento do saldo, nunca uma aprovação para “liberar” vídeos já gravados. Não aumentar apenas `qtdVideosPlanejados` de outra sessão: Cecília precisa vincular os itens exatos que faltaram antes da próxima execução, preservando a ordem congelada da sessão.
 

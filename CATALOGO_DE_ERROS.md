@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30915612/CATALOGO_DE_ERROS.md)
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30915891/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -573,3 +573,25 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Stories carregam em paralelo, usam slug estável e exibem check grande, autoria e falha de gravação.
 - [x] O check de Stories é gravável somente pela Gabi no handler; nenhuma ação financeira, de login ou de cliente foi alterada.
 - [ ] Escritas autenticadas em produção não foram executadas: enviar calendário real ou marcar Story real apenas para teste alteraria dados operacionais.
+
+---
+
+## 26. ERROS E INTERCEPTAÇÕES — V52 (10/08/2026)
+
+### 26.1 Stories esperava verificações sem relação antes de existir no DOM
+**O que fiz:** a V51 acelerou as leituras dos próprios Stories, mas o bloco só era criado depois de `autoVerificarChecklist()` e `calcularStreak()` terminarem.
+**O que aconteceu:** no domínio publicado, o check correto levou 11,6 segundos para aparecer. A função existia e gravava, porém a Gabi continuava podendo interpretar a espera como ausência da opção.
+**Como o Chris viu:** pediu a verificação após publicar; o teste cronometrado no perfil da Gabi revelou a demora residual.
+**Por que passou:** o sandbox provava renderização e gravação isoladas, mas não a ordem completa de inicialização de `abrirChecklist()`.
+**Como consertei:** o nó `storiesDiariosBox` nasce e começa a carregar antes da auto-verificação. Quando o checklist geral termina, o mesmo nó é movido para sua posição final, sem segunda leitura nem perda de estado.
+> **LEI:** otimizar a função final não resolve uma espera causada por etapas anteriores; teste de UI crítica mede desde o clique do usuário até o primeiro controle acionável e registra dependências que não podem bloquear esse caminho.
+
+## 27. CHECKLIST EXECUTADO NA V52
+
+- [x] A V51 foi confirmada na `main` e no domínio com cache-busting e espera de 3,5 segundos.
+- [x] Em auditoria publicada como Gabi, o painel editorial apareceu no DOM, visível, com 16 cartões de clientes.
+- [x] O check de Stories apareceu com `☐`, `aria-pressed` e texto “clique para marcar”; nenhuma escrita real foi executada.
+- [x] A demora observada de 11,6 segundos foi tratada como falha, não como sucesso.
+- [x] V52 cria Stories antes de `await autoVerificarChecklist()` e preserva o mesmo nó ao concluir o restante.
+- [x] Calendários, aprovação, papéis, login, Firestore, financeiro e soft-delete permanecem cobertos pela suíte completa.
+- [ ] V52 depende de novo upload manual; o domínio continua em V51 até essa publicação.

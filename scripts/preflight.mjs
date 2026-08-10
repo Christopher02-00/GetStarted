@@ -63,10 +63,13 @@ const leisV51 = [
   'Acompanhamento misturava o estado do mês atual com totais de outros meses',
   'Check de Stories parecia ausente e usava identidade derivada do nome'
 ];
+const leisV52 = [
+  'Stories esperava verificações sem relação antes de existir no DOM'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V51');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V51');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V52');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V52');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -390,7 +393,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-10-calendarios-roteiros-stories-v51') ||
+if (!calendarioEditor.includes('2026-08-10-stories-imediatos-v52') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -420,6 +423,15 @@ if (!storiesChecklist.includes('Promise.all(clientes.map') ||
     !storiesChecklist.includes('Nada foi marcado.')) {
   falhar('check de Stories perdeu carregamento paralelo, identidade estável, controle visível ou falha fechada');
 } else provar('check de Stories carrega em paralelo, usa slug estável e só confirma após gravação');
+const aberturaChecklist = escritorio.slice(
+  escritorio.indexOf('window.abrirChecklist = async function'),
+  escritorio.indexOf('function renderChecklist')
+);
+if (aberturaChecklist.indexOf('renderStoriesDiarios();') < 0 ||
+    aberturaChecklist.indexOf('renderStoriesDiarios();') > aberturaChecklist.indexOf('await autoVerificarChecklist()') ||
+    !aberturaChecklist.includes('cont.appendChild(storiesBoxAntecipado)')) {
+  falhar('Stories voltou a esperar auto-verificação/streak antes de existir no DOM');
+} else provar('Stories nasce antes das verificações independentes e preserva o mesmo nó durante a montagem');
 const visaoCalendarios = escritorio.slice(
   escritorio.indexOf('function progressoEditorialCalendario'),
   escritorio.indexOf('/* ===== REFEITA — 28/07/2026')
@@ -512,9 +524,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-10-calendarios-roteiros-stories-v51') {
-  falhar(`build V51 inesperado: ${build || 'ausente'}`);
-} else provar('V51 restaura envio legado, acompanha roteiros por mês e torna o check de Stories inequívoco');
+if (build !== '2026-08-10-stories-imediatos-v52') {
+  falhar(`build V52 inesperado: ${build || 'ausente'}`);
+} else provar('V52 preserva a V51 e mostra Stories antes das verificações independentes do checklist');
 
 const cofreCecilia = escritorio.slice(
   escritorio.indexOf('async function renderCofreCecilia'),

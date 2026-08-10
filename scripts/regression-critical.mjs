@@ -512,6 +512,77 @@ async function testarCalendariosSandbox() {
     items:[{mes:'2026-08',name:'A'}], aprovacaoMeses:{'2026-08':{status:'liberado'}}
   })]).length === 0, 'calendário já liberado continuou pedindo aprovação');
 
+  /* A compatibilidade legada não pode oferecer um botão impossível:
+     ausência de status explícito permite entrar no ciclo formal, mas um
+     mês efetivamente liberado continua imutável. */
+  const envioFonte = trecho(calendario,
+    'window.enviarParaAprovacaoInterna = async function',
+    '/* ===== REABRIR ANTES DO ENVIO');
+  const envioApi = executarSandbox('envio-calendario-legado-sandbox.js',
+    `let data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Legado'}]};let mesVisivel='2026-08',gravacoes=0,recusas=0,confirmacoes=0,saveTimer=null,temNaoSalvo=false;\n` +
+    `window.__modoCal='equipe';window.__enviandoAprovacaoInterna=false;\n` +
+    `function ehCalendarioLegado(){const m=data.aprovacaoMeses?.[mesVisivel];return !(m?.status||data.aprovacaoInterna?.status);}\n` +
+    `function estadoAprovacao(){return data.aprovacaoMeses?.[mesVisivel]?.status||data.aprovacaoInterna?.status||(data.items.length?'liberado':'rascunho');}\n` +
+    `function edicaoBloqueadaPorRevisao(){return ['aguardando_interna','aprovado_interno','liberado'].includes(estadoAprovacao());}\n` +
+    `function exigirRetiradaAntesDeEditar(){recusas++;return true;}function itensDoMes(m){return data.items.filter(i=>!i.mes||i.mes===m);}\n` +
+    `function confirm(){confirmacoes++;return true;}function prompt(){return 'Gabrielle';}function mesDoTexto(){return '2026-08';}function save(){}\n` +
+    `async function gravarComSeguranca(){gravacoes++;return {ok:true};}function limparEnvioPendente(){}function renderAprovacaoInterna(){}function avisarTela(){}\n` +
+    `function guardarEnvioPendente(){}function guardarRascunho(){}function pintarEstado(){}function mostrarEnvioPendente(){}function agendarEnvioPendente(){}\n` +
+    `${envioFonte}\n` +
+    `globalThis.api={enviar:window.enviarParaAprovacaoInterna,dados:()=>data,gravacoes:()=>gravacoes,recusas:()=>recusas,confirmacoes:()=>confirmacoes,explicito:()=>{data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Enviado'}],aprovacaoMeses:{'2026-08':{status:'liberado'}},aprovacaoInterna:{status:'liberado'}};}};`);
+  const btnEnvio = {disabled:false,textContent:'',isConnected:true};
+  await envioApi.enviar(btnEnvio);
+  exigir(envioApi.gravacoes() === 1 && envioApi.confirmacoes() === 1 &&
+    envioApi.dados().aprovacaoMeses['2026-08'].status === 'aguardando_interna',
+    'calendário legado continuou bloqueado ou não entrou na fila da Amanda');
+  envioApi.explicito();
+  await envioApi.enviar(btnEnvio);
+  exigir(envioApi.gravacoes() === 1 && envioApi.recusas() === 1 &&
+    envioApi.dados().aprovacaoMeses['2026-08'].status === 'liberado',
+    'exceção do legado desbloqueou calendário realmente enviado ao cliente');
+
+  const progressoFonte = trecho(escritorio,
+    'function progressoEditorialCalendario',
+    '  const MESES_CAL');
+  const progressoApi = executarSandbox('progresso-editorial-calendario-sandbox.js',
+    `${progressoFonte}\nglobalThis.api={progressoEditorialCalendario};`);
+  const progresso = progressoApi.progressoEditorialCalendario([
+    {desc:'Roteiro 1',legenda:'Legenda',ref:'https://ref'},
+    {desc:'  ',legenda:'',ref:''},
+    {desc:'Roteiro 3',legenda:'',ref:'https://ref-3'}
+  ]);
+  exigir(JSON.stringify(progresso) === JSON.stringify({total:3,roteiros:2,legendas:1,referencias:2}),
+    'progresso editorial contou campo vazio como roteiro/legenda/referência');
+  const visaoFonte = trecho(escritorio, 'window.renderVisaoCalendarios = async function', '/* ===== REFEITA — 28/07/2026');
+  exigir(visaoFonte.includes('itensDoMesCalendario(cal, mesAtual)') &&
+    visaoFonte.includes("['Amanda','Gabrielle'].includes(usuarioAtual)") &&
+    visaoFonte.includes('data-calendarios-progresso-editorial='),
+    'visão compartilhada voltou a misturar meses ou vazar detalhes para outro papel');
+
+  const storiesFonte = trecho(escritorio,
+    'window.toggleStoryDiario = async function',
+    '// ===== BIT — CENTRAL DE DUVIDAS');
+  const storiesApi = executarSandbox('check-stories-gabi-sandbox.js',
+    `let usuarioAtual='Gabrielle',gravacoes=[],renders=0;const db={};const atual={dias:{segunda:false},detalhes:{}};\n`+
+    `function doc(_db,c,id){return {c,id};}async function getDoc(){return {exists:()=>true,data:()=>atual};}\n`+
+    `async function setDoc(ref,dados,opts){gravacoes.push({ref,dados,opts});}function serverTimestamp(){return 'SERVIDOR';}\n`+
+    `function mostrarToast(){}async function renderStoriesDiarios(){renders++;}\n${storiesFonte}\n`+
+    `globalThis.api={marcar:window.toggleStoryDiario,gravacoes,renders:()=>renders,papel:v=>{usuarioAtual=v;}};`);
+  const btnStory = {disabled:false};
+  exigir(await storiesApi.marcar('vitalle-odonto_2026-W33','segunda',true,btnStory) === true &&
+    storiesApi.gravacoes.length === 1 && storiesApi.gravacoes[0].dados.dias.segunda === true &&
+    storiesApi.gravacoes[0].dados.detalhes.segunda.por === 'Gabrielle' && storiesApi.renders() === 1,
+    'check de Story informou sucesso sem persistir autoria e dia');
+  storiesApi.papel('Amanda'); btnStory.disabled=false;
+  exigir(await storiesApi.marcar('vitalle-odonto_2026-W33','terca',true,btnStory) === false &&
+    storiesApi.gravacoes.length === 1,
+    'papel diferente da Gabi conseguiu alterar o checklist diário de Stories');
+  const renderStoriesFonte = trecho(escritorio, 'async function renderStoriesDiarios', 'window.toggleStoryDiario');
+  exigir(renderStoriesFonte.includes('Promise.all(clientes.map') &&
+    renderStoriesFonte.includes('String(c.id || c.slug || c.clienteNome') &&
+    renderStoriesFonte.includes('data-story-check='),
+    'check de Stories voltou a carregar em série, derivar identidade do nome ou esconder o controle');
+
   /* O filmmaker não pode depender da leitura dos 21 documentos para abrir
      um único cliente; o documento escolhido mantém o listener próprio. */
   const campo = trecho(escritorio, 'window.renderCalendarioDeCampo = async function', '/* ===== A GRAVAÇÃO DE HOJE');
@@ -572,9 +643,9 @@ async function testarCalendariosSandbox() {
     !campoAberto.includes('const blocoDe ='),
     'modo Campo voltou a recalcular blocos dinamicamente fora da ordem congelada');
   const listenerCalendarios = trecho(escritorio, '/* Calendários são a fonte comum', 'function onDadosTempoRealMudaram');
-  exigir(listenerCalendarios.includes("if(['Chris','Amanda','Cecília'].includes(pessoaDoOuvinte))") &&
+  exigir(listenerCalendarios.includes("if(['Chris','Amanda','Gabrielle','Cecília'].includes(pessoaDoOuvinte))") &&
     !listenerCalendarios.includes('...PESSOAS_DE_CAMPO'),
-    'login do filmmaker voltou a assinar a coleção inteira de calendários');
+    'Gabi perdeu atualização ao vivo ou o filmmaker voltou a assinar a coleção inteira de calendários');
   const controleCecilia = trecho(escritorio, 'window.renderControleGravacoes = async function', 'window.filtrarControleGravacoes');
   exigir(controleCecilia.includes('if(ehCampoNoControle) agendamentos=agendamentos.filter(a=>pessoaNaEquipe(a,usuarioAtual))') &&
     controleCecilia.includes("getDoc(doc(db,'calendarios',slug))") &&

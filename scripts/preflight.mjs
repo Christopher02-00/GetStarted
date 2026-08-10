@@ -15,7 +15,7 @@ const ler = arquivo => fs.readFileSync(path.join(raiz, arquivo), 'utf8');
 const obrigatorios = [
   'escritorio.html', 'portal-cliente.html', 'calendario.html',
   'calendarios.html', 'cadastro.html', 'cadastros.html',
-  'avulso.html', 'firestore.rules'
+  'avulso.html', 'firestore.rules', 'CATALOGO_DE_ERROS.md'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -24,6 +24,20 @@ if (erros.length) finalizar();
 
 const escritorio = ler('escritorio.html');
 const escritorioLf = escritorio.replace(/\r\n/g, '\n');
+const catalogoErros = ler('CATALOGO_DE_ERROS.md');
+
+const leisV45 = [
+  'Sessão antiga parcialmente enriquecida virou “moderna”',
+  'Primeiro mês da ficha não chegava ao contrato',
+  'Total recebido e composição pareciam duplicação',
+  'Campanhas tinham duas portas e duas fontes',
+  'Fallback de ID escrito antes do spread',
+  'Subaba inexistente de Campanhas na matriz de calendário'
+];
+if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
+    leisV45.some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas na V45');
+} else provar('catálogo mestre preserva o checklist e as seis leis registradas na V45');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -394,9 +408,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-10-demandas-layout-visivel-v44') {
-  falhar(`build de Demandas/Minhas Demandas inesperado: ${build || 'ausente'}`);
-} else provar('V44 identifica a correção visual real de Demandas');
+if (build !== '2026-08-10-sessoes-financeiro-campanhas-v45') {
+  falhar(`build V45 inesperado: ${build || 'ausente'}`);
+} else provar('V45 identifica sessão legada, financeiro e quadro mensal de Campanhas');
 
 const resumoMinhas = escritorio.slice(
   escritorio.indexOf('const resumoHtml = `<div class="painelResumo painelResumoDemandas"'),

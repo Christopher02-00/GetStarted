@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30910818/AGENTS.md)
+[AGENTS.md](https://github.com/user-attachments/files/30912335/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -49,6 +49,10 @@ Ainda neste incidente, duas falhas de manutenção foram registradas: a trava de
 A V32 expôs dois outros rompimentos de compatibilidade. Primeiro, a trava correta de edição durante `aguardando_interna` foi reutilizada em `submitFeedback()` e impediu a Amanda de comentar justamente enquanto revisava. Comentário de revisão não é edição de pauta: deve atualizar somente `comments` e `updatedAt` em transação, enquanto roteiro, legenda, referências e botões de aprovar/devolver permanecem ligados à mesma fila `linhasCalendariosAguardandoRevisao`. Nunca chamar o `save()` completo para registrar esse comentário nem remover a trava dos conteúdos.
 
 O financeiro expôs uma divergência semelhante em 07/08/2026: a cortesia era salva no contrato, mas uma mensalidade já criada continuava aberta; quando a mensalidade era marcada manualmente como cortesia, a grade ainda exibia “Recebi” e o RFV considerava qualquer estado diferente de pago como atraso. A regra permanente é `statusMensalidadeCanonico`/`mensalidadeResolvida` como fonte única para grade, totais, risco e régua de cobrança. Salvar cortesia no contrato sincroniza atomicamente os registros existentes sem sobrescrever pagamentos nem cortesias manuais; mensalidade isenta nunca exibe ação de recebimento nem entra em alerta ou cobrança.
+
+O cofre de clientes tem dois níveis separados: Chris/Amanda administram; Cecília somente lê e revela credenciais necessárias à operação. A porta operacional (`navCofreCecilia`/`view-cofreCecilia`) existe no DOM exclusivamente para Cecília, não dá acesso à Gerência e nunca contém criar, alterar ou arquivar. As regras permitem `read` para `ehCecilia()`, mantendo `create/update` em `ehGerencia()` e `delete:false`. Nunca liberar contratos, mensalidades ou financeiro para resolver acesso a senha; nunca transformar falha de leitura em “nenhuma credencial”.
+
+Saída operacional e competência financeira final são um único compromisso. Novas saídas exigem `ultimaCompetenciaPagamento`; contratos impedem competências posteriores e lançamentos futuros existentes são cancelados com histórico, sem exclusão física. Registros legados sem o campo devem aparecer como `FINANCEIRO PENDENTE` até revisão humana — nunca inferir automaticamente o último pagamento pela data de saída. Tornar um campo obrigatório não migra documentos antigos: a checagem de legado é parte obrigatória da entrega.
 
 A definição comercial de cortesia nasce na conferência da ficha do cliente pela Amanda, não em uma correção posterior no Financeiro. A ficha aceita ausência, mês(es) específicos no formato `AAAA-MM` ou cortesia permanente e grava o mesmo estado em cadastro, contrato e mensalidade. Mês futuro não isenta a competência atual. Editar a ficha ativa reutiliza a sincronização financeira acima; nunca criar outro campo ou cálculo paralelo de cortesia.
 

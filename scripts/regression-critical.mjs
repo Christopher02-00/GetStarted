@@ -114,7 +114,7 @@ function testarMensalidadesSandbox() {
   const identidadeClientes = trecho(escritorio, 'const APELIDOS_DE_CONTRATO', '  function dataOperacionalISO');
   const fonte = trecho(escritorio, 'function statusMensalidadeCanonico', '  window.marcarMensalidade = async function');
   const api = executarSandbox('mensalidades-sandbox.js',
-    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,ajusteCortesiaMensalidade,situacaoMensalidade};`);
+    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,contratoVigenteNaCompetencia,ajusteCortesiaMensalidade,situacaoMensalidade};`);
   exigir(api.statusMensalidadeCanonico({status:' ISENTO '}) === 'isento' &&
     api.mensalidadeResolvida({status:'cortesia'}) === true,
     'cortesia legada/normalizada voltou a ser tratada como cobrança');
@@ -155,6 +155,10 @@ function testarMensalidadesSandbox() {
   ]);
   exigir(contratosCanonicos.length===1 && contratosCanonicos[0].slugCanonico==='master-chef' && contratosCanonicos[0].clienteNome==='Master Chef',
     'contrato duplicado/encerrado de Master Chef voltou à operação');
+  exigir(api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08'},'2026-07')===false &&
+    api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08'},'2026-08')===true &&
+    api.contratoVigenteNaCompetencia({},'2026-01')===true,
+    'primeira competência não bloqueia cobrança anterior ou apagou compatibilidade de contrato legado');
 
   const salvarContrato = trecho(escritorio, 'window.salvarContrato = async function', '  window.novoContrato');
   exigir(salvarContrato.includes('const lote = writeBatch(db);') &&
@@ -172,8 +176,13 @@ function testarMensalidadesSandbox() {
     'régua de cobrança voltou a incluir mensalidade resolvida');
   const painel = trecho(escritorio, 'window.renderFinanceiro = async function', '  window.renderMensalidades = async function');
   exigir((painel.match(/!\['isento','cancelado'\]\.includes\(statusMensalidadeCanonico\(p\)\)/g)||[]).length >= 5 &&
-    painel.includes("doMes.filter(p => statusMensalidadeCanonico(p)==='isento')"),
+    painel.includes("doMes.filter(p => statusMensalidadeCanonico(p)==='isento')") &&
+    painel.includes('Recebido no caixa') && painel.includes('Previsto total') &&
+    painel.includes('Em aberto neste mês') && painel.includes('Base recorrente vs.'),
     'totais, movimento ou concentração do financeiro voltaram a cobrar cortesia/cancelamento');
+  const geradorMensal = trecho(escritorio, 'window.renderMensalidades = async function', '  function atualizarBadgeMensalidades');
+  exigir(geradorMensal.includes('if(!contratoVigenteNaCompetencia(ct, competencia)) continue;'),
+    'gerador mensal voltou a criar cobrança anterior à entrada do cliente');
 
   const ficha = trecho(escritorio, 'const ETAPAS_ONBOARDING_LOCAL', '  window.registrarClienteDaReuniao');
   const fichaApi = executarSandbox('ficha-cortesia-cliente-sandbox.js',
@@ -182,7 +191,7 @@ function testarMensalidadesSandbox() {
   exigir(fichaApi.validarEntradaClienteMensalista(base).length === 0,
     'ficha da Amanda recusou uma cortesia mensal válida');
   const mensal=fichaApi.modelarClienteMensalistaUnificado(base,'2026-08-07T12:00:00.000Z','token');
-  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true,
+  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.contrato.primeiraCompetencia==='2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true,
     'cortesia escolhida na ficha não chegou ao contrato e à primeira mensalidade');
   const futura=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaMeses:['2026-09'],cortesiaInicial:false},'2026-08-07T12:00:00.000Z','token');
   exigir(futura.contrato.cortesiaMeses[0] === '2026-09' && futura.mensalidade.status === 'aberto',
@@ -197,6 +206,46 @@ function testarMensalidadesSandbox() {
     editarFicha.includes('cortesiaMeses:dados.cortesiaMeses') &&
     editarFicha.includes("!['pago','cancelado'].includes(statusMensalidadeCanonico(p))") && editarFicha.includes('if(mudou) tx.set(ref,atualizacao'),
     'editar ficha ativa não sincroniza contrato e mensalidades');
+}
+
+function testarCampanhasMensaisSandbox(){
+  const inicio=escritorio.indexOf('  const normTextoCampanha');
+  const fim=escritorio.indexOf('  window.riscoPostCampanha=riscoPostCampanha;',inicio);
+  exigir(inicio>=0&&fim>inicio,'funções puras do quadro mensal de campanhas não foram encontradas');
+  const fonte=escritorio.slice(inicio,fim+'  window.riscoPostCampanha=riscoPostCampanha;'.length);
+  const api=executarSandbox('campanhas-mensais-sandbox.js',
+    `const crypto={randomUUID:()=>\"id\"};const ETAPAS_CAMPANHA=[{chave:'planejamento'},{chave:'aprovacao'},{chave:'gravacao'},{chave:'edicao'},{chave:'programacao'},{chave:'finalizado'},{chave:'postado'}];\n`+
+    `function hojeLocal(){return '2026-08-10';}function dataLocal(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}function slugClienteCanonico(v){return String(v||'').toLowerCase().replace(/\\s+/g,'-');}\n`+
+    `${fonte}\nglobalThis.api={normalizarCampanhaMensal,statusAutomaticoPostCampanha,riscoPostCampanha};`);
+  const legado=api.normalizarCampanhaMensal({nome:'Dia da Pizza',cliente:'bluefit',clienteNome:'Bluefit',dataInicio:'2026-08-10',dataFim:'2026-08-12',etapa:'producao'});
+  exigir(legado.mesRef==='2026-08'&&legado.clientes.length===1&&legado.clientes[0].postagens.length===1,
+    'campanha legada desaparece ou perde mês/cliente ao abrir o quadro novo');
+  const moderno=api.normalizarCampanhaMensal({mesRef:'2026-09',clientes:[{slug:'a',nome:'A',postagens:[{titulo:'Post 1'},{titulo:'Post 2'}]}]});
+  exigir(moderno.clientes[0].postagens.length===2&&moderno.clientes[0].postagens.every(p=>p.id),
+    'campanha moderna não preserva postagens individuais ou IDs estáveis');
+  const cliente={slug:'bluefit',nome:'Bluefit'},post={titulo:'Setembro Amarelo',status:'planejamento',prazoGravacao:'2026-08-11'};
+  const pipeline={'bluefit|setembro amarelo':{videoStatus:'aguardando_edicao'}};
+  exigir(api.statusAutomaticoPostCampanha(post,cliente,pipeline)==='gravacao',
+    'status não avançou por vínculo exato com a cadeia de vídeo');
+  exigir(api.riscoPostCampanha(post,cliente,{},'2026-08-10')?.tipo==='vence_amanha',
+    'Amanda não recebe risco de prazo incompleto no dia anterior');
+  const bloco=trecho(escritorio,'/* ===== V45 — QUADRO MENSAL ÚNICO DE CAMPANHAS','async function demandaCalendariosDoMes');
+  exigir(bloco.includes("const PODE_PLANEJAR_CAMPANHA = ['Gabrielle','Chris']")&&
+    bloco.includes("const PODE_PRAZO_CAMPANHA = ['Amanda','Chris']")&&
+    bloco.includes("const PODE_STATUS_CAMPANHA = ['Cecília','Amanda','Chris']"),
+    'responsabilidades de Gabi/Amanda/Cecília voltaram a se misturar');
+  exigir(bloco.includes('excluido:true')&&bloco.includes('arquivada:true')&&!bloco.includes('deleteDoc('),
+    'campanhas perderam soft-delete/arquivo mensal');
+  exigir(bloco.includes('window.atualizarBadgeRiscosCampanhas=async function')&&
+    escritorio.includes('if(window.atualizarBadgeRiscosCampanhas) atualizarBadgeRiscosCampanhas()'),
+    'riscos de Campanhas só aparecem depois de abrir a tela e não alertam no menu');
+  exigir((escritorio.match(/id="navAcompCampanhas"/g)||[]).length===1&&!escritorio.includes('id="navCampanhas"'),
+    'duas portas de Campanhas voltaram ao menu lateral');
+  const regras=fs.readFileSync(path.join(raiz,'firestore.rules'),'utf8');
+  const regraCamp=trecho(regras,'match /campanhas/{docId}',"    // Coleções exclusivamente operacionais");
+  exigir(regraCamp.includes('ehGabi()')&&regraCamp.includes('ehAmanda()')&&regraCamp.includes('ehCecilia()')&&
+    !regras.match(/colecao in \[[\s\S]*?'campanhas'/),
+    'Firestore voltou a liberar Campanhas para toda a equipe');
 }
 
 function testarBadgesExtrasSandbox() {
@@ -567,9 +616,11 @@ function testarSessoesGravacaoSandbox() {
   const planoDivina = api.planejarSessaoGravacao(divinaLegada,agDivina);
   exigir(planoDivina.mes === '2026-07' && planoDivina.mesResolvidoPor === 'unico_mes_disponivel',
     'agendamento antigo com um único mês disponível continuou preso ao mês da data');
+  const vitalParcialmenteEnriquecida = {...agDivina,mesCalendario:'2026-08',sessaoOrdem:1,sessaoChave:'vital-seg|2026-08|S01'};
   exigir(api.sessaoLegadaSemVinculo(agDivina) === true &&
-    api.sessaoLegadaSemVinculo({...agDivina,sessaoPlanejamentoVersao:1,sessaoChave:'x'}) === false,
-    'compatibilidade de registro vazou para sessões modernas');
+    api.sessaoLegadaSemVinculo(vitalParcialmenteEnriquecida) === true &&
+    api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[]}) === false,
+    'compatibilidade não cobre o legado parcialmente enriquecido ou vazou para sessões modernas');
   const sessaoLegadaFonte = trecho(escritorio, 'function sessaoLegadaSemVinculo', 'window.sessaoLegadaSemVinculo');
   const materiaisFonte = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');
   const materiais = executarSandbox('materiais-pos-filmagem-sandbox.js',
@@ -581,6 +632,9 @@ function testarSessoesGravacaoSandbox() {
   const declarado = materiais.prepararMateriaisDeclaradosSessao([], 'Prato executivo\nBastidores da cozinha', agDivina, 'Luís');
   exigir(declarado.ok && declarado.videos.length === 2 && declarado.videos.every(v=>v.vinculoSessao==='declarado_legado' && v.calendarItemIdx===null),
     'sessão Divina anterior à V32 não prepara material isolado do calendário');
+  const declaradoVital = materiais.prepararMateriaisDeclaradosSessao([], 'Conteúdo institucional\nBastidores', vitalParcialmenteEnriquecida, 'Luís');
+  exigir(declaradoVital.ok && declaradoVital.videos.length === 2 && declaradoVital.videos.every(v=>v.vinculoSessao==='declarado_legado' && v.calendarItemId===null),
+    'Vital Seg parcialmente enriquecida continuou sem porta segura de envio');
   exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Extra sem autorização', {...agDivina,sessaoPlanejamentoVersao:1,sessaoChave:'nova'}, 'Luís').ok === false,
     'sessão moderna ganhou texto livre sem autorização');
   exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Vídeo Único\nvideo unico', agDivina, 'Luís').ok === false,
@@ -858,6 +912,7 @@ try {
   await testarLoginSandbox();
   testarFinanceiroSandbox();
   testarMensalidadesSandbox();
+  testarCampanhasMensaisSandbox();
   testarBadgesExtrasSandbox();
   await testarOrcamentoLeiturasFirestoreSandbox();
   testarDatasOperacionaisSandbox();

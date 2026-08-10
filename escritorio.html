@@ -13199,6 +13199,82 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      continuavam aparecendo em Contratos e Mensalidades — o Chris viu antes de mim.
      Meia correcao e a mesma coisa que nenhuma: a tela continua mentindo.
      Esta funcao fecha o que faltou: contrato, cadastro, config e acesso. */
+  /* ===== FUSAO COMPLETA DE CLIENTE — 10/08/2026 =====
+     A versao anterior marcava excluido/encerrado/ativo mas NAO mexia em
+     `status`. Contratos e Mensalidades filtram por status === 'ativo'.
+     Por isso eu arquivava e nada saia da tela. O Chris cobrou tres vezes
+     e estava certo. Agora move TUDO e mexe no campo que a tela le. */
+  window.fundirClientes = async function(DE, PARA){
+    if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa.', false); return; }
+    if(!DE || !PARA || DE === PARA){ _jlog('Use: fundirClientes("duplicado","queFica")', false); return; }
+    window.__logJuncao = [];
+    const agora = new Date().toISOString();
+    const selo = { fundidoDe: DE, fundidoEm: agora, fundidoPor: usuarioAtual };
+    const PORCAMPO = ['videos_producao','postagens','pagamentos_extra','pagamentos_mensais',
+      'agendamentos','campanhas','briefings_cliente','ideias_cliente','referencias_cliente',
+      'demandas_cliente','avaliacoes_clientes','stories_clientes','cadastros_clientes'];
+    const PORID = ['calendarios','processos_cliente','checklist_cliente','onboarding_processos','clientes_config'];
+    try{
+      let movidos = 0;
+      for(const col of PORCAMPO){
+        let snap;
+        try{ snap = await getDocs(collection(db, col)); }catch(e){ continue; }
+        for(const d of snap.docs){
+          const v = d.data() || {};
+          if(v.excluido === true) continue;
+          const dono = v.cliente || v.clienteSlug || v.slug;
+          if(dono !== DE) continue;
+          const novo = { cliente: PARA };
+          if('clienteSlug' in v) novo.clienteSlug = PARA;
+          if('slug' in v && v.slug === DE) novo.slug = PARA;
+          await updateDoc(doc(db, col, d.id), Object.assign(novo, selo));
+          const conf = await getDoc(doc(db, col, d.id));
+          if(((conf.data()||{}).cliente) !== PARA){ _jlog('PAREI em ' + col + '/' + d.id, false); return window.__logJuncao; }
+          movidos++;
+        }
+      }
+      _jlog('registros transferidos para ' + PARA + ': ' + movidos, true);
+      for(const col of PORID){
+        try{
+          const orig = await getDoc(doc(db, col, DE));
+          if(!orig.exists()) continue;
+          const dest = await getDoc(doc(db, col, PARA));
+          if(dest.exists()){ _jlog(col + ': destino já tem — mantive os dois'); }
+          else { await setDoc(doc(db, col, PARA), Object.assign({}, orig.data(), { cliente: PARA }, selo));
+            _jlog(col + ' copiado para ' + PARA, true); }
+          await updateDoc(doc(db, col, DE), { excluido:true, arquivadoEm:agora, unificadoEm:PARA });
+        }catch(e){}
+      }
+      const cRef = doc(db,'contratos_cliente', DE);
+      const cSnap = await getDoc(cRef);
+      if(cSnap.exists()){
+        await updateDoc(cRef, { status:'encerrado', encerrado:true, excluido:true, ativo:false,
+          arquivadoEm:agora, arquivadoPor:usuarioAtual, unificadoEm:PARA });
+        const c2 = await getDoc(cRef);
+        const ok = (c2.data()||{}).status === 'encerrado';
+        _jlog('contrato de ' + DE + ' → status ENCERRADO', ok);
+        if(!ok){ _jlog('PAREI — status não mudou.', false); return window.__logJuncao; }
+      }
+      const pRef = doc(db,'contratos_cliente', PARA);
+      const pSnap = await getDoc(pRef);
+      if(pSnap.exists() && (pSnap.data()||{}).status !== 'ativo'){
+        await updateDoc(pRef, { status:'ativo', encerrado:false, excluido:false, ativo:true, reativadoEm:agora });
+        const p2 = await getDoc(pRef);
+        _jlog('contrato de ' + PARA + ' REATIVADO', (p2.data()||{}).status === 'ativo');
+      }
+      const ext = await getDocs(collection(db,'clientes_extras'));
+      for(const d of ext.docs){ const v=d.data()||{};
+        if((v.slug === DE || d.id === DE) && v.excluido !== true){
+          await updateDoc(doc(db,'clientes_extras', d.id), { excluido:true, arquivadoEm:agora, unificadoEm:PARA });
+          _jlog('cadastro de ' + DE + ' arquivado', true); } }
+      const ac = await getDoc(doc(db,'clientes_acesso', DE));
+      if(ac.exists() && (ac.data()||{}).ativo !== false){
+        await updateDoc(doc(db,'clientes_acesso', DE), { ativo:false, revogadoEm:agora });
+        _jlog('portal de ' + DE + ' desativado', true); }
+      _jlog('PRONTO — Ctrl+Shift+R e confira Contratos.', true);
+    }catch(e){ _jlog('ERRO: ' + e.message, false); }
+    return window.__logJuncao;
+  };
   window.arquivarClienteDuplicado = async function(slugDuplicado, slugQueFica){
     if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa.', false); return; }
     if(!slugDuplicado || !slugQueFica){ _jlog('Use: arquivarClienteDuplicado("duplicado","queFica")', false); return; }

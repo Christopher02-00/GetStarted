@@ -394,6 +394,28 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
+if (build !== '2026-08-10-demandas-layout-visivel-v44') {
+  falhar(`build de Demandas/Minhas Demandas inesperado: ${build || 'ausente'}`);
+} else provar('V44 identifica a correção visual real de Demandas');
+
+const resumoMinhas = escritorio.slice(
+  escritorio.indexOf('const resumoHtml = `<div class="painelResumo painelResumoDemandas"'),
+  escritorio.indexOf('/* ===== FILA DE APROVACAO', escritorio.indexOf('const resumoHtml = `<div class="painelResumo painelResumoDemandas"'))
+);
+if (!resumoMinhas || (resumoMinhas.match(/resumoCard clicavel/g) || []).length !== 5 || resumoMinhas.includes('grid-column:span 2')) {
+  falhar('Minhas Demandas não preserva os cinco cartões clicáveis sem lacuna no topo');
+} else provar('Minhas Demandas tem cinco cartões fixos, clicáveis e sem grid-column residual');
+
+const centralDemandas = escritorio.slice(
+  escritorio.indexOf('async function renderDemandasDaEquipe'),
+  escritorio.indexOf('window.renderPainelDemandas', escritorio.indexOf('async function renderDemandasDaEquipe'))
+);
+if (!centralDemandas.includes('Central de Demandas') ||
+    !centralDemandas.includes('filtrosDemandas') ||
+    !centralDemandas.includes('setFiltroFaixaDemandas') ||
+    !centralDemandas.includes('<details class="distribuicaoDemandas">')) {
+  falhar('Demandas ainda não expõe cartões, filtros identificados e distribuição recolhível');
+} else provar('Demandas expõe central, filtros nomeados e distribuição por pessoa recolhível');
 
 finalizar();
 

@@ -13193,6 +13193,65 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   /* ---- PAR 1: Zeens x Otica — sem dinheiro envolvido ---- */
+  /* ===== ARQUIVAR O REGISTRO DE CLIENTE DUPLICADO — 10/08/2026 =====
+     Eu tinha consertado as mensalidades e transferido os videos, mas deixei
+     o REGISTRO DE CLIENTE e o CONTRATO do duplicado ativos. Por isso os dois
+     continuavam aparecendo em Contratos e Mensalidades — o Chris viu antes de mim.
+     Meia correcao e a mesma coisa que nenhuma: a tela continua mentindo.
+     Esta funcao fecha o que faltou: contrato, cadastro, config e acesso. */
+  window.arquivarClienteDuplicado = async function(slugDuplicado, slugQueFica){
+    if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa.', false); return; }
+    if(!slugDuplicado || !slugQueFica){ _jlog('Use: arquivarClienteDuplicado("duplicado","queFica")', false); return; }
+    window.__logJuncao = [];
+    const marca = { excluido:true, encerrado:true, ativo:false,
+      arquivadoEm:new Date().toISOString(), arquivadoPor: usuarioAtual,
+      unificadoEm: slugQueFica, motivoArquivo:'Registro duplicado — cliente unificado em ' + slugQueFica };
+    try{
+      /* 1) contrato — e o que faz aparecer em Contratos e alimenta Mensalidades */
+      const cRef = doc(db,'contratos_cliente', slugDuplicado);
+      const cSnap = await getDoc(cRef);
+      if(cSnap.exists()){
+        await updateDoc(cRef, marca);
+        const c2 = await getDoc(cRef);
+        const ok = (c2.data()||{}).encerrado === true;
+        _jlog('contrato de ' + slugDuplicado + ' arquivado', ok);
+        if(!ok){ _jlog('PAREI — o contrato não confirmou.', false); return window.__logJuncao; }
+      } else _jlog('sem contrato em ' + slugDuplicado);
+      /* 2) cadastro na lista de clientes */
+      const ext = await getDocs(collection(db,'clientes_extras'));
+      let n = 0;
+      for(const d of ext.docs){ const v = d.data()||{};
+        if((v.slug === slugDuplicado || d.id === slugDuplicado) && v.excluido !== true){
+          await updateDoc(doc(db,'clientes_extras', d.id), marca); n++; } }
+      _jlog('cadastros arquivados: ' + n, true);
+      /* 3) config */
+      const cfg = await getDoc(doc(db,'clientes_config', slugDuplicado));
+      if(cfg.exists()){ await updateDoc(doc(db,'clientes_config', slugDuplicado), marca);
+        _jlog('config arquivada', true); }
+      /* 4) portal */
+      const ac = await getDoc(doc(db,'clientes_acesso', slugDuplicado));
+      if(ac.exists() && (ac.data()||{}).ativo !== false){
+        await updateDoc(doc(db,'clientes_acesso', slugDuplicado), { ativo:false,
+          revogadoEm:new Date().toISOString(), revogadoPor: usuarioAtual,
+          motivo:'cliente unificado em ' + slugQueFica });
+        _jlog('portal desativado', true);
+      }
+      /* 5) registrar a saida no arquivo oficial */
+      const encRef = doc(db,'clientes_encerrados', slugDuplicado);
+      const encSnap = await getDoc(encRef);
+      if(!encSnap.exists()){
+        await setDoc(encRef, { cliente: slugDuplicado, slug: slugDuplicado,
+          nome: (cSnap.exists() ? (cSnap.data().nome || slugDuplicado) : slugDuplicado),
+          motivo:'Registro duplicado — unificado em ' + slugQueFica,
+          data: new Date().toISOString().slice(0,10), valorMensal: 0,
+          registradoPor: usuarioAtual, unificacao: true });
+        _jlog('registrado no arquivo de clientes', true);
+      }
+      _jlog('PRONTO. ' + slugDuplicado + ' não aparece mais como cliente ativo.', true);
+      _jlog('Nada foi apagado — tudo continua no banco, marcado como arquivado.');
+    }catch(e){ _jlog('ERRO: ' + e.message, false); }
+    return window.__logJuncao;
+  };
   window.juntarZeens = async function(){
     if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa junção.', false); return; }
     window.__logJuncao = [];

@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30942441/CATALOGO_DE_ERROS.md)
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30946616/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -679,3 +679,29 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Abrir, copiar link e visualizar o placar resolvem o documento real sem criar cópia.
 - [x] A fusão bloqueia a direção que arquivaria o destino canônico.
 - [ ] A presença exata do conteúdo da Zeiss no Firestore não foi alterada nem inferida por escrita: a V55 recupera a leitura do documento existente e requer confirmação visual da Gabi após publicação.
+
+---
+
+## 34. ERROS E INTERCEPTAÇÕES — V56 (11/08/2026)
+
+### 34.1 Alteração de contrato reescrevia a competência já aberta
+**O que existia:** `valorVigente` era um único número. A ficha geral e o contrato podiam substituí-lo imediatamente, e a ficha ainda atualizava toda mensalidade futura não paga sem uma competência formal de início.
+**Risco:** ao registrar o novo formato da Vitalle, agosto poderia passar de R$ 1.700 para R$ 1.000 retroativamente, alterando previsto, aberto e comparações já iniciadas.
+**Como consertei:** o contrato ganhou `valorProgramado`, `valorProgramadoEm`, motivo, autoria e histórico. `valorContratoNaCompetencia()` mantém o valor vigente antes da competência escolhida e aplica o novo valor nela e nas seguintes. Cobranças futuras já criadas são ajustadas apenas se abertas ou isentas; pagas e canceladas não mudam.
+> **LEI:** alteração comercial tem competência de vigência explícita. Nunca edite valor histórico, competência aberta ou pagamento confirmado para representar um acordo futuro.
+
+### 34.2 Ficha geral mantinha um segundo escritor de valor financeiro
+**O que existia:** “Clientes — entrada e saída” também gravava `valorVigente` e `valorDevido`, concorrendo com a aba Contratos.
+**Risco:** uma atualização cadastral posterior podia desfazer silenciosamente a programação financeira correta.
+**Como consertei:** o valor na ficha geral virou leitura. Ela continua atualizando plano, vencimento, cortesia e dados operacionais, mas mudanças de mensalidade ficam exclusivamente em Contratos.
+> **LEI:** dado financeiro crítico tem uma única porta de escrita. Uma tela cadastral não pode sobrescrever a regra temporal do contrato.
+
+## 35. CHECKLIST EXECUTADO NA V56
+
+- [x] R$ 1.700 continua valendo em 2026-08 e R$ 1.000 passa a valer em 2026-09 e nas competências seguintes no sandbox.
+- [x] Virada de dezembro para janeiro é calculada corretamente.
+- [x] Cobrança futura aberta ou isenta recebe o valor programado; pagamento confirmado e mês anterior permanecem intactos.
+- [x] Financeiro sinaliza mudanças vigentes ou do mês seguinte sem criar um quinto indicador no resumo.
+- [x] Contrato registra motivo, autoria e histórico da programação.
+- [x] A ficha geral não grava mais `valorVigente` nem `valorDevido`.
+- [ ] A programação real da Vitalle não foi gravada no Firestore durante o teste local; após o upload, Chris deve confirmar R$ 1.000 com início em 2026-09 na aba Contratos.

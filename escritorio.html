@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-10-stories-imediatos-v52">
+<meta name="gs-build" content="2026-08-11-stories-campanhas-v53">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -10123,7 +10123,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const nomes = doDia.map(x => '• ' + String(x.it.name||'sem nome').trim()
         + (precisaGravarAinda(x.it) ? '  ← ainda não foi gravado' : '  (' + (x.it.posted ? 'já publicado' : x.it.agendado ? 'já programado no Instagram' : 'já gravado') + ')')).join('\n');
 
-      await criarDemandaSegura({
+      /* A chave operacional vira também o ID do documento. A consulta
+         acima preserva avisos legados de ID aleatório; a transação fecha
+         a corrida entre duas abas/dispositivos que criava duplicatas. */
+      const avisoId = 'choque_' + chave.normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+        .toLowerCase().replace(/[^a-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,120);
+      const avisoRef = doc(db,'demandas',avisoId);
+      let criado = false;
+      await runTransaction(db, async tx => {
+        const existente = await tx.get(avisoRef);
+        if(existente.exists() && !String(existente.data().status||'').startsWith('cancelad')) return;
+        tx.set(avisoRef, {
         titulo: '📆 ' + (nomeCliente || slug) + ' tem ' + doDia.length + ' conteúdos no mesmo dia ' + dia,
         descricao: 'O calendário de ' + (nomeCliente || slug) + ' ficou com ' + doDia.length + ' conteúdos marcados pro dia ' + dia + '.\n\n' + nomes +
           '\n\nO QUE FAZER: move pra outra data o que ainda não foi gravado. O outro já está no ar ou programado — mexer nele é retrabalho.' +
@@ -10131,8 +10141,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         destinatario: 'Cecília', origem: 'sistema', ehAviso: true,
         prazoData: hojeLocal(), prazoHora: '19:00', prioridade: 'alta',
         tipoEspecial: 'choque_de_data', chaveChoque: chave,
-        clienteNome: nomeCliente || slug, clienteSlugRef: slug
+        clienteNome: nomeCliente || slug, clienteSlugRef: slug,
+        status: 'pendente', criadoEm: serverTimestamp(), atualizadoEm: serverTimestamp()
+        }, {merge:true});
+        criado = true;
       });
+      if(!criado) return { ok:false, motivo:'já avisei sobre este dia' };
       registrarLogAutomacao('choque_de_data', slug, doDia.length + ' conteúdos no dia ' + dia);
       return { ok:true, quantos: doDia.length, moveEste: paraMover.map(x=>x.it.name) };
     }catch(e){ console.error('Falha ao avisar choque de data:', e); return { ok:false, motivo:'erro: ' + e.message }; }
@@ -10679,8 +10693,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(it.excluido) return;
       const texto=[it.name,it.desc,it.obs].filter(Boolean).join(' ').toLowerCase();
       if(!PALAVRAS_CAMPANHA.some(p=>texto.includes(p))) return;
-      const mes=String(it.mes||cal.month||'').match(/^\d{4}-\d{2}/)?.[0] || '';
-      r.push({slug:cal.id,cliente:cal.client||cal.id,mes,dia:Number(it.day)||0,titulo:it.name||'Campanha',gravado:!!it.gravado,agendado:!!it.agendado,postado:!!it.posted,idx});
+      const dataDireta=/^\d{4}-\d{2}-\d{2}$/.test(String(it.dataPostagem||'')) ? String(it.dataPostagem) : '';
+      const mesBase=String(mesDoItemCalendario(cal,it)||it.mes||'').match(/^\d{4}-\d{2}/)?.[0]
+        || mesDoTextoConf(cal.month||'');
+      const dia=Number(it.day)||0;
+      let dataCampanha=dataDireta;
+      if(!dataCampanha && mesBase && dia){
+        const candidato=mesBase+'-'+String(dia).padStart(2,'0');
+        const dt=new Date(candidato+'T12:00:00');
+        if(!Number.isNaN(dt.getTime()) && dataLocal(dt)===candidato) dataCampanha=candidato;
+      }
+      const mes=String(dataCampanha||mesBase||'').slice(0,7);
+      r.push({slug:cal.id,cliente:cal.client||cal.id,mes,dia,dataCampanha,titulo:it.name||'Campanha',gravado:!!it.gravado,agendado:!!it.agendado,postado:!!it.posted,idx,itemId:it.itemId||'',origem:'calendario'});
     }));
     return r;
   };
@@ -10730,15 +10754,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const meses=[...new Set([hojeLocal().slice(0,7),...campanhas.map(c=>c.mesRef),...detectadas.map(c=>c.mes).filter(Boolean)])].sort();
       const mes=window.__mesCampanhas&&meses.includes(window.__mesCampanhas)?window.__mesCampanhas:(meses.includes(hojeLocal().slice(0,7))?hojeLocal().slice(0,7):meses[meses.length-1]);window.__mesCampanhas=mes;
       const doMes=campanhas.filter(c=>c.mesRef===mes&&!!c.arquivada===!!window.__historicoCampanhas);
-      const detectadasMes=detectadas.filter(c=>c.mes===mes);
+      const chavesManuais=new Set(doMes.flatMap(c=>c.clientes.flatMap(cl=>cl.postagens.filter(p=>!p.excluido).map(p=>slugClienteCanonico(cl.slug||cl.nome)+'|'+normTextoCampanha(p.titulo)+'|'+String(p.dataPublicacao||c.dataCampanha||'')))));
+      const detectadasMes=detectadas.filter(c=>c.mes===mes).filter(c=>!chavesManuais.has(slugClienteCanonico(c.slug||c.cliente)+'|'+normTextoCampanha(c.titulo)+'|'+String(c.dataCampanha||'')));
       const riscos=[];campanhas.filter(c=>!c.arquivada).forEach(c=>c.clientes.forEach(cl=>cl.postagens.filter(p=>!p.excluido).forEach(p=>{const r=riscoPostCampanha(p,cl,pipeline);if(r)riscos.push({c,cl,p,r});})));
       atualizarBadgeCampanhas(riscos.length);
       const [ano,numeroMes]=mes.split('-').map(Number);const ultimo=new Date(ano,numeroMes,0).getDate();const primeiro=new Date(ano,numeroMes-1,1).getDay();
-      const porDia={};doMes.forEach(c=>{const d=Number(String(c.dataCampanha||'').slice(8,10))||1;(porDia[d]=porDia[d]||[]).push(c);});
+      const porDia={};doMes.forEach(c=>{const d=Number(String(c.dataCampanha||'').slice(8,10))||1;(porDia[d]=porDia[d]||[]).push({...c,__origem:'campanha'});});
+      detectadasMes.filter(c=>c.dataCampanha).forEach(c=>{const d=Number(c.dataCampanha.slice(8,10));(porDia[d]=porDia[d]||[]).push({...c,__origem:'calendario',emoji:'📅',nome:c.titulo});});
       let html='<div class="card"><div class="btnrow" style="align-items:center;">'+meses.map(m=>'<button class="btn '+(m===mes?'':'secondary')+'" style="width:auto;padding:8px 13px;" onclick="selecionarMesCampanhas(\''+m+'\')">'+esc(nomeMes(m))+'</button>').join('')+'<button class="btn secondary" style="width:auto;padding:8px 13px;margin-left:auto;" onclick="alternarHistoricoCampanhas()">'+(window.__historicoCampanhas?'Ver meses ativos':'Histórico arquivado')+'</button></div><div class="desc" style="margin-top:9px;">'+riscos.length+' risco(s) real(is): somente prazo vencido, de hoje ou de amanhã ainda incompleto.</div></div>';
-      html+='<div class="card"><div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;">'+['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map(d=>'<div class="meta" style="text-align:center;font-weight:800;">'+d+'</div>').join('')+Array.from({length:primeiro},()=>'<div></div>').join('')+Array.from({length:ultimo},(_,i)=>{const dia=i+1;return '<div style="min-height:92px;border:1px solid var(--line);border-radius:8px;padding:6px;"><b class="meta">'+dia+'</b>'+(porDia[dia]||[]).map(c=>'<button class="btn secondary" style="display:block;width:100%;padding:6px;margin-top:5px;text-align:left;font-size:11px;" onclick="abrirCampanha(\''+c.id+'\')">'+esc(c.emoji)+' '+esc(c.nome)+'</button>').join('')+'</div>';}).join('')+'</div></div>';
+      html+='<div class="card"><div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;">'+['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map(d=>'<div class="meta" style="text-align:center;font-weight:800;">'+d+'</div>').join('')+Array.from({length:primeiro},()=>'<div></div>').join('')+Array.from({length:ultimo},(_,i)=>{const dia=i+1;return '<div style="min-height:92px;border:1px solid var(--line);border-radius:8px;padding:6px;"><b class="meta">'+dia+'</b>'+(porDia[dia]||[]).map(c=>c.__origem==='campanha'?'<button class="btn secondary" style="display:block;width:100%;padding:6px;margin-top:5px;text-align:left;font-size:11px;" onclick="abrirCampanha(\''+c.id+'\')">'+esc(c.emoji)+' '+esc(c.nome)+'</button>':'<div class="meta" style="display:block;padding:6px;margin-top:5px;border:1px solid var(--line);border-radius:6px;color:var(--offwhite);">📅 '+esc(c.cliente)+' — '+esc(c.titulo)+'</div>').join('')+'</div>';}).join('')+'</div></div>';
       if(!doMes.length) html+='<div class="card"><div class="empty">Nenhuma campanha '+(window.__historicoCampanhas?'arquivada':'ativa')+' em '+esc(nomeMes(mes))+'.</div></div>';
-      if(detectadasMes.length) html+='<div class="card"><h2>🔎 Campanhas já encontradas nos calendários</h2><div class="desc">Leitura compatível dos calendários existentes; não duplica nem altera a pauta.</div>'+detectadasMes.map(c=>'<div class="item"><div class="top"><div class="nome">'+esc(c.titulo)+'</div><span class="selo '+(c.postado?'aprovada':c.agendado?'hoje':'pendente')+'">'+(c.postado?'postado':c.agendado?'agendado':c.gravado?'gravado':'planejado')+'</span></div><div class="meta">'+esc(c.cliente)+(c.dia?' · dia '+c.dia:'')+'</div></div>').join('')+'</div>';
+      if(detectadasMes.length) html+='<div class="card"><h2>🔎 Campanhas encontradas nos calendários</h2><div class="desc">'+detectadasMes.filter(c=>c.dataCampanha).length+' com data completa · '+detectadasMes.filter(c=>!c.dataCampanha).length+' sem data confirmada. É uma janela da pauta existente: nada é copiado.</div>'+detectadasMes.map(c=>'<div class="item"><div class="top"><div class="nome">'+esc(c.titulo)+'</div><span class="selo '+(c.postado?'aprovada':c.agendado?'hoje':'pendente')+'">'+(c.postado?'postado':c.agendado?'agendado':c.gravado?'gravado':'planejado')+'</span></div><div class="meta">'+esc(c.cliente)+' · Publicação: '+(c.dataCampanha?esc(formatarDataBR(c.dataCampanha)):'<b style="color:var(--red);">data ainda não definida no calendário</b>')+'</div></div>').join('')+'</div>';
       const todosPosts=doMes.flatMap(c=>c.clientes.flatMap(cl=>cl.postagens.filter(p=>!p.excluido).map(p=>({c,cl,p,status:statusAutomaticoPostCampanha(p,cl,pipeline),risco:riscoPostCampanha(p,cl,pipeline)}))));
       if(todosPosts.length) html+='<div class="card"><h2>📋 Visão completa de '+esc(nomeMes(mes))+'</h2>'+todosPosts.map(x=>'<div class="item" style="border-left:3px solid '+(x.risco?'var(--red)':'var(--green)')+';"><div class="top"><div class="nome">'+esc(x.c.nome)+' — '+esc(x.cl.nome)+' — '+esc(x.p.titulo||'Postagem')+'</div><span class="selo '+(x.risco?'atrasado':'aprovada')+'">'+esc((ETAPAS_CAMPANHA.find(e=>e.chave===x.status)||{}).label||x.status)+'</span></div><div class="meta">Publicação: '+esc(x.p.dataPublicacao||'sem data')+(x.risco?' · ⚠️ '+esc(x.risco.tipo.replace('_',' '))+' ('+esc(x.risco.prazo)+')':'')+'</div></div>').join('')+'</div>';
       if(doMes.length&&!window.__historicoCampanhas&&window.podePrazoCampanha()) html+='<button class="btn secondary" onclick="arquivarMesCampanhas(\''+mes+'\')">🗄️ Arquivar '+esc(nomeMes(mes))+' quando tudo estiver concluído</button>';
@@ -11826,9 +11852,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const ref = doc(db,'stories_links', chave);
       const snap = await getDoc(ref);
-      const dias = snap.exists() ? (snap.data().dias || {}) : {};
+      const anterior = snap.exists() ? snap.data() : {};
+      const dias = anterior.dias || {};
+      const mudou = String(dias[dia]?.link||'').trim() !== link;
       dias[dia] = { link, por: usuarioAtual || '?', em: new Date().toISOString() };
-      await setDoc(ref, { cliente: slug, semana, dias, atualizadoEm: serverTimestamp() }, { merge:true });
+      const patch = { cliente: slug, semana, dias, atualizadoEm: serverTimestamp() };
+      if(mudou){
+        patch.revisaoInterna='aguardando_interna'; patch.liberadoCliente=false;
+        patch.enviadoPor=usuarioAtual||'?'; patch.enviadoEm=serverTimestamp();
+        patch.motivoAjusteInterno=deleteField(); patch.liberadoEm=deleteField(); patch.liberadoPor=deleteField();
+      }
+      await setDoc(ref, patch, { merge:true });
       window.__linksStorySemana = window.__linksStorySemana || {};
       window.__linksStorySemana[chave] = dias;
       el.style.borderColor = link ? 'var(--green)' : 'var(--line)';
@@ -11836,14 +11870,41 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }catch(e){ console.error('Falha ao salvar o link:', e); mostrarToast('Não consegui salvar o link.', 'erro'); }
   };
 
+  window.liberarLinksStory = async function(chave){
+    if(!['Amanda','Chris'].includes(usuarioAtual)) return mostrarToast('Somente Amanda pode liberar estes links.','erro');
+    try{
+      await updateDoc(doc(db,'stories_links',chave),{revisaoInterna:'liberado',liberadoCliente:true,liberadoPor:usuarioAtual,liberadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      mostrarToast('Links liberados no Portal do Cliente.'); await renderStoriesCliente();
+    }catch(e){ mostrarToast('Não consegui liberar os links: '+e.message,'erro'); }
+  };
+  window.devolverLinksStory = async function(chave){
+    if(!['Amanda','Chris'].includes(usuarioAtual)) return mostrarToast('Somente Amanda pode devolver estes links.','erro');
+    const motivo=prompt('O que a Gabi precisa ajustar nestes links?'); if(!motivo?.trim()) return;
+    try{
+      await updateDoc(doc(db,'stories_links',chave),{revisaoInterna:'ajuste_interno',liberadoCliente:false,motivoAjusteInterno:motivo.trim(),devolvidoPor:usuarioAtual,devolvidoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      mostrarToast('Links devolvidos para ajuste.'); await renderStoriesCliente();
+    }catch(e){ mostrarToast('Não consegui devolver os links: '+e.message,'erro'); }
+  };
+  window.enviarLinksStoryParaRevisao = async function(slug,semana){
+    if(usuarioAtual!=='Gabrielle') return mostrarToast('Somente a Gabi envia estes links para revisão.','erro');
+    const chave=slug+'_'+semana;
+    try{
+      const snap=await getDoc(doc(db,'stories_links',chave));
+      const temLink=snap.exists()&&Object.values(snap.data().dias||{}).some(d=>String(d?.link||'').trim());
+      if(!temLink) return mostrarToast('Cole pelo menos um link antes de enviar.','erro');
+      await updateDoc(doc(db,'stories_links',chave),{revisaoInterna:'aguardando_interna',liberadoCliente:false,enviadoPor:usuarioAtual,enviadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      mostrarToast('Links enviados para a Amanda revisar.'); await renderStoriesCliente();
+    }catch(e){ mostrarToast('Não consegui enviar os links: '+e.message,'erro'); }
+  };
+
   window.renderStoriesCliente = async function(){
     const cont = document.getElementById('storiesConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     try{
       const snapL = await getDocs(collection(db,'stories_links'));
-      window.__linksStorySemana = {};
-      snapL.forEach(d => { window.__linksStorySemana[d.id] = d.data().dias || {}; });
-    }catch(e){ console.error('Falha ao ler os links:', e); window.__linksStorySemana = {}; }
+      window.__linksStorySemana = {}; window.__linksStoryDocs = {};
+      snapL.forEach(d => { window.__linksStoryDocs[d.id]={id:d.id,...d.data()}; window.__linksStorySemana[d.id] = d.data().dias || {}; });
+    }catch(e){ console.error('Falha ao ler os links:', e); window.__linksStorySemana = {}; window.__linksStoryDocs={}; }
 
     const semanaAtual = segundaDaSemana(new Date());
     const semana = window.__semanaStories || semanaAtual;
@@ -11953,7 +12014,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           }).join('');
         })()}
       </div>
-      <div class="meta" style="margin-top:12px;">Depois de colar os links, o direcionamento é enviado pra cliente postar. Isso está no seu checklist de sexta.</div>
+      ${usuarioAtual==='Gabrielle'?`<button class="btn" style="margin-top:12px;" onclick="enviarLinksStoryParaRevisao('${escJs((clientesStory.find(c=>c.slug===(window.__storyClienteSel||clientesStory[0]?.slug))||{}).slug||'')}','${escJs(semana)}')">Enviar estes links para a Amanda revisar</button>`:''}
+      <div class="meta" style="margin-top:12px;">Depois da revisão da Amanda, os links aparecem no Portal do Cliente. Isso está no seu checklist de sexta.</div>
     </div>
 
     <div class="card" style="border:2px solid var(--yellow);">
@@ -11998,6 +12060,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     /* Campo ausente = story anterior a 29/07 = já estava com o cliente. */
     const revisaoStory = s => s.revisaoInterna || 'liberado';
     const esperandoAmanda = todos.filter(s => revisaoStory(s) === 'aguardando_interna');
+    const linksEsperandoAmanda=Object.values(window.__linksStoryDocs||{}).filter(x=>(x.revisaoInterna||'aguardando_interna')==='aguardando_interna'&&Object.values(x.dias||{}).some(d=>String(d?.link||'').trim()));
 
     const rotuloStatus = s => revisaoStory(s) === 'aguardando_interna' ? 'Esperando a Amanda liberar' :
                               revisaoStory(s) === 'ajuste_interno' ? 'A Amanda pediu ajuste: ' + esc(s.motivoAjusteInterno||'') :
@@ -12025,6 +12088,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           </div>
         </div>`).join('')}
       </div>`;
+    }
+    if(linksEsperandoAmanda.length && (usuarioAtual === 'Amanda' || usuarioAtual === 'Chris')){
+      blocoAmanda += `<div class="card" data-aprovacao-links-stories="true" style="border:2px solid var(--yellow2);"><h2>🔗 Links de Stories esperando liberação (${linksEsperandoAmanda.length})</h2><div class="desc">Confira os documentos. O cliente só vê depois de você liberar.</div>${linksEsperandoAmanda.map(st=>`<div class="item" style="margin-top:10px;"><div class="nome">${esc((clientesStory.find(c=>c.slug===st.cliente)||{}).nome||st.cliente)} · semana ${esc(st.semana||'?')}</div>${Object.entries(st.dias||{}).filter(([,d])=>String(d?.link||'').trim()).map(([dia,d])=>`<div class="meta" style="margin-top:6px;">${esc((DIAS_STORY.find(x=>String(x.n)===String(dia))||{}).nome||('Dia '+dia))}: <a href="${esc(d.link)}" target="_blank" rel="noopener" style="color:var(--yellow);">abrir documento ↗</a></div>`).join('')}<div class="btnrow" style="margin-top:10px;"><button class="btn red" onclick="devolverLinksStory('${escJs(st.id)}')">↩️ Pedir ajuste</button><button class="btn green" onclick="liberarLinksStory('${escJs(st.id)}')">✅ Liberar no portal</button></div></div>`).join('')}</div>`;
     }
 
     function itemStory(s){
@@ -15036,6 +15102,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   let todasDemandas = [];
   function demandaOperacionalVisivel(demanda){
     if(!demanda || demanda.excluido===true) return false;
+    if(String(demanda.status||'').toLowerCase().startsWith('cancelad')) return false;
     /* Aviso de extra não pode continuar como demanda depois que o
        lançamento já foi conferido, pago ou removido. A cache financeira
        só existe na gestão; nos demais papéis esta verificação não expõe
@@ -23428,7 +23495,7 @@ window.setGerenciaSub = function(qual, el){
   window.estadoDoCalendario = estadoDoCalendario;
 
   function progressoEditorialCalendario(itens){
-    const lista = Array.isArray(itens) ? itens : [];
+    const lista = (Array.isArray(itens) ? itens : []).filter(i=>i && i.excluido!==true);
     const preenchido = valor => String(valor == null ? '' : valor).trim().length > 0;
     return {
       total: lista.length,
@@ -23546,7 +23613,7 @@ window.setGerenciaSub = function(qual, el){
       const cal = cals[c.slug] || {};
       const meses = mesesDeCalendario(cal);
       const mesAtual = meses.length ? meses[meses.length-1] : '';
-      const itens = mesAtual ? itensDoMesCalendario(cal, mesAtual) : (cal.items || []);
+      const itens = (mesAtual ? itensDoMesCalendario(cal, mesAtual) : (cal.items || [])).filter(i=>i && i.excluido!==true);
       const progressoEditorial = progressoEditorialCalendario(itens);
       const aprovacaoMes = mesAtual ? ((cal.aprovacaoMeses||{})[mesAtual]||{}) : {};
       return { ...c, mes: mesAtual || cal.month || '', total: itens.length,
@@ -23564,9 +23631,9 @@ window.setGerenciaSub = function(qual, el){
     const vazios = linhas.filter(l => !l.total).length;
 
     const podeAcompanharRoteiros = ['Amanda','Gabrielle'].includes(usuarioAtual);
-    const totalRoteiros = linhas.reduce((s,l)=>s+l.total,0);
-    const roteirosProntos = linhas.reduce((s,l)=>s+l.roteiros,0);
-    const roteirosFaltando = Math.max(0, totalRoteiros-roteirosProntos);
+    const calendariosCompletos=linhas.filter(l=>l.total&&l.roteiros===l.total).length;
+    const calendariosEmAndamento=linhas.filter(l=>l.total&&l.roteiros>0&&l.roteiros<l.total).length;
+    const calendariosSemRoteiro=linhas.filter(l=>!l.total||l.roteiros===0).length;
 
     window.__calSufixo = sufixo || '';
     box.innerHTML = `<div class="painelResumo" style="margin-bottom:16px;">
@@ -23575,19 +23642,19 @@ window.setGerenciaSub = function(qual, el){
       <div class="resumoCard ${vazios?'red':'green'}"><div class="num">${vazios}</div><div class="lbl">⚠️ sem calendário</div></div>
     </div>
     ${podeAcompanharRoteiros ? `<div class="card" data-calendarios-progresso-editorial="true" style="border:2px solid var(--yellow);">
-      <h2>🧭 Acompanhamento de roteiros em tempo real</h2>
-      <div class="desc">Mesma fonte usada para montar e aprovar o calendário. Cada alteração salva pela Gabi atualiza este painel para ela e para a Amanda.</div>
+      <h2>🧭 Calendários: o que falta fazer</h2>
+      <div class="desc">Um calendário por cliente, usando somente o mês mais recente. Cada conteúdo ativo conta uma vez; itens arquivados não entram.</div>
       <div class="painelResumo" style="margin-top:12px;">
-        <div class="resumoCard green"><div class="num">${roteirosProntos}</div><div class="lbl">roteiros preenchidos</div></div>
-        <div class="resumoCard ${roteirosFaltando?'red':'green'}"><div class="num">${roteirosFaltando}</div><div class="lbl">roteiros ainda faltando</div></div>
-        <div class="resumoCard"><div class="num">${totalRoteiros}</div><div class="lbl">conteúdos do mês atual</div></div>
+        <div class="resumoCard green"><div class="num">${calendariosCompletos}</div><div class="lbl">calendários com todos os roteiros</div></div>
+        <div class="resumoCard ${calendariosEmAndamento?'yellow':'green'}"><div class="num">${calendariosEmAndamento}</div><div class="lbl">calendários em andamento</div></div>
+        <div class="resumoCard ${calendariosSemRoteiro?'red':'green'}"><div class="num">${calendariosSemRoteiro}</div><div class="lbl">calendários ainda sem roteiro</div></div>
       </div>
     </div>` : ''}
     <div class="card">
       <div class="metaSecTit">Clientes — clica pra ver o mês inteiro</div>
       <div class="desc" style="margin-bottom:12px;">Quem está sem calendário aparece primeiro: é o que trava o mês.</div>
       ${linhas
-        .sort((a,b) => (a.total?1:0)-(b.total?1:0) || (b.total-b.postados)-(a.total-a.postados))
+        .sort((a,b) => (a.total?1:0)-(b.total?1:0) || (a.roteiros===a.total?1:0)-(b.roteiros===b.total?1:0) || (a.roteiros/Math.max(a.total,1))-(b.roteiros/Math.max(b.total,1)))
         .map(l => {
           const cor = !l.total ? 'var(--red)' : l.estado === 'liberado' ? 'var(--green)' : 'var(--yellow2)';
           const ativo = __calAbertoSlug === l.slug;
@@ -23605,11 +23672,7 @@ window.setGerenciaSub = function(qual, el){
               <span class="meta" style="color:${cor};font-weight:800;white-space:nowrap;">${l.total ? l.postados + '/' + l.total + ' publicado' : 'vazio'}</span>
             </div>
             <div class="meta" style="margin-top:5px;">${l.mes ? esc(l.mes)+' · ' : ''}${estadoTxt}${l.total ? ' · ' + l.gravados + ' gravado(s)' + (l.comDataPost ? ' · ' + l.comDataPost + ' com dia fechado' : '') : ''}</div>
-            ${podeAcompanharRoteiros && l.total ? `<div data-calendario-progresso-cliente="${escAttr(l.slug)}" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:10px;">
-              <div style="background:var(--deep);border-radius:8px;padding:8px;"><b style="color:${l.roteiros===l.total?'var(--green)':'var(--yellow)'};">${l.roteiros}/${l.total}</b><span class="meta" style="display:block;margin-top:2px;">roteiros</span></div>
-              <div style="background:var(--deep);border-radius:8px;padding:8px;"><b>${l.legendas}/${l.total}</b><span class="meta" style="display:block;margin-top:2px;">legendas</span></div>
-              <div style="background:var(--deep);border-radius:8px;padding:8px;"><b>${l.referencias}/${l.total}</b><span class="meta" style="display:block;margin-top:2px;">referências</span></div>
-            </div>` : ''}
+            ${podeAcompanharRoteiros && l.total ? `<div data-calendario-progresso-cliente="${escAttr(l.slug)}" style="background:var(--deep);border-radius:8px;padding:10px;margin-top:10px;"><b style="color:${l.roteiros===l.total?'var(--green)':'var(--yellow)'};">Roteiros: ${l.roteiros} de ${l.total} prontos</b><span class="meta" style="display:block;margin-top:4px;">${l.roteiros===l.total?'Todos os roteiros deste calendário estão preenchidos.':l.roteiros===0?'Nenhum roteiro preenchido ainda.':'Faltam '+(l.total-l.roteiros)+' roteiro(s).'} · Legendas ${l.legendas}/${l.total} · Referências ${l.referencias}/${l.total}</span></div>` : ''}
             ${l.total ? `<div style="height:6px;background:var(--deep);border-radius:4px;overflow:hidden;margin-top:9px;">
               <div style="height:100%;width:${pct}%;background:${cor};"></div></div>` : ''}
           </div>`;

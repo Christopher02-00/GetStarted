@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30937434/CATALOGO_DE_ERROS.md)
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30942441/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -631,3 +631,51 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Campanhas mostram data completa validada e são deduplicadas sem nova escrita.
 - [x] Painel editorial ignora itens arquivados e mostra progresso por calendário.
 - [ ] Liberação real de links existentes e gravação de alertas não foram executadas em produção: isso alteraria operação real antes do upload e da conferência da Amanda.
+
+---
+
+## 30. ERROS E INTERCEPTAÇÕES — V54 (11/08/2026)
+
+### 30.1 Posição na grade editorial virou data fixa de publicação
+**O que existia:** o alerta da Cecília agrupava itens por `mes + day`. Esse par organiza a pauta no calendário, mas não significa que o post precisa sair naquela data.
+**O que aconteceu:** Cookiery e Dra. Júlia geraram demandas de “dois conteúdos no mesmo dia” mesmo quando eram conteúdos comuns que poderiam andar conforme gravação, edição e aprovação.
+**Como foi confirmado:** no áudio, a Cecília explicou que somente campanhas e datas comemorativas precisam de publicação fixa; o código confirmou que `avisarChoqueDeData()` não consultava `dataPostagem` nem `dataFlexivel`.
+**Como consertei:** conflitos agora usam apenas `dataPostagem` válida de itens ativos e não flexíveis. A grade ganhou rótulo explícito de ordem editorial. Avisos ativos baseados na regra antiga são marcados `cancelado_automaticamente` e `excluido:true`, com causa preservada.
+> **LEI:** `day` da grade nunca é compromisso de publicação. Só `dataPostagem` válida e não flexível pode gerar alerta de conflito; limpeza de alerta operacional é soft-delete.
+
+### 30.2 Caixa da agência apareceu como total de mensalidades pagas
+**O que existia:** o primeiro número verde do Financeiro mostrava `totalEntrou` no caixa da agência (R$ 5.800 no registro), enquanto Mensalidades mostrava `quitadoMensal` (R$ 8.300). Valores recebidos na conta pessoal são corretamente excluídos do caixa, mas o destaque induzia a leitura de que apenas R$ 5.800 em clientes haviam pago.
+**O que aconteceu:** o número verde parecia errado pela quantidade de clientes quitados, e doze cartões misturavam caixa, composição, previsão, folha e comparação histórica.
+**Como consertei:** o destaque verde agora usa exatamente a fonte canônica das competências pagas e informa também a quantidade de clientes. Caixa da agência continua separado. O topo foi reduzido a quatro indicadores do mês: mensalidades pagas, mensalidades em aberto, caixa da agência e extras a pagar. Evolução de seis meses e concentração foram removidas desta tela; composição fica recolhida.
+> **LEI:** “mensalidades pagas” e “caixa da agência” são métricas diferentes e devem aparecer com fontes e rótulos distintos. O resumo mensal tem no máximo quatro indicadores acionáveis ou decisórios.
+
+## 31. CHECKLIST EXECUTADO NA V54
+
+- [x] Conteúdo comum com `day` igual e sem `dataPostagem` não gera conflito.
+- [x] Data flexível, inválida ou item em soft-delete não gera conflito.
+- [x] Duas campanhas ativas com a mesma `dataPostagem` fixa continuam gerando um único alerta determinístico.
+- [x] Aviso antigo sem conflito válido é soft-cancelado; nenhum `deleteDoc` foi introduzido.
+- [x] `calendario.html` e `calendarios.html` permanecem byte a byte idênticos.
+- [x] Financeiro usa a mesma soma de competências pagas exibida em Mensalidades e mantém o caixa da agência separado.
+- [x] O resumo principal do Financeiro contém exatamente quatro cartões e não exibe evolução/concentração histórica.
+- [ ] A limpeza dos alertas antigos depende da V54 publicada e da próxima execução autenticada do motor; nenhum dado de produção foi alterado durante o teste local.
+
+---
+
+## 32. ERRO E INTERCEPTAÇÃO — V55 (11/08/2026)
+
+### 32.1 Alias financeiro retirou a Zeiss da operação da Gabi
+**O que existia:** a deduplicação apontava `zeiss` para `zeens`, apesar de contrato/mensalidades usarem o nome legado e calendário, vídeos e extras usarem `zeiss`. Ao arquivar o cadastro extra duplicado, nenhum dos dois slugs permaneceu na carteira operacional.
+**O que aconteceu:** Zeiss e todo o trabalho construído pela Gabi deixaram de aparecer nas listas. O calendário não foi comprovado como apagado; ficou órfão do seletor que o tornava acessível.
+**Como consertei:** `zeiss` passou a ser a identidade canônica e entrou na carteira-base. `zeens` e `otica-visao-araucaria` viraram aliases de leitura. Listas, placares, links e abertura do editor resolvem o documento existente, inclusive quando o conteúdo está somente no alias legado, sem recriar ou sobrescrever dados. A fusão bloqueia a tentativa de arquivar o destino canônico.
+> **LEI:** canonicalização precisa seguir a identidade operacional que possui o conteúdo. Antes de arquivar duplicata, teste lista, calendário, Portal, vídeos, contrato e mensalidade; alias arquivado nunca pode ser a única fonte que mantém um cliente visível.
+
+## 33. CHECKLIST EXECUTADO NA V55
+
+- [x] Zeiss permanece na carteira mesmo se o cadastro extra legado estiver arquivado.
+- [x] Calendário preenchido sob `zeens` continua abrindo como Zeiss quando o canônico está ausente ou vazio.
+- [x] Um calendário canônico preenchido nunca é substituído automaticamente por conteúdo legado do alias.
+- [x] Contratos/mensalidades `zeens` continuam pertencendo financeiramente à Zeiss sem duplicar totais.
+- [x] Abrir, copiar link e visualizar o placar resolvem o documento real sem criar cópia.
+- [x] A fusão bloqueia a direção que arquivaria o destino canônico.
+- [ ] A presença exata do conteúdo da Zeiss no Firestore não foi alterada nem inferida por escrita: a V55 recupera a leitura do documento existente e requer confirmação visual da Gabi após publicação.

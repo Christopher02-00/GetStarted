@@ -212,11 +212,12 @@ function testarMensalidadesSandbox() {
   exigir(cobranca.includes('if(mensalidadeResolvida(p)) return;'),
     'régua de cobrança voltou a incluir mensalidade resolvida');
   const painel = trecho(escritorio, 'window.renderFinanceiro = async function', '  window.renderMensalidades = async function');
-  exigir((painel.match(/!\['isento','cancelado'\]\.includes\(statusMensalidadeCanonico\(p\)\)/g)||[]).length >= 5 &&
-    painel.includes("doMes.filter(p => statusMensalidadeCanonico(p)==='isento')") &&
-    painel.includes('Recebido no caixa') && painel.includes('Previsto total') &&
-    painel.includes('Em aberto neste mês') && painel.includes('Base recorrente vs.'),
-    'totais, movimento ou concentração do financeiro voltaram a cobrar cortesia/cancelamento');
+  const resumoFinanceiro=trecho(painel,'let html = `<div class="painelResumo financeiroResumoMes"','/* Seção própria de saída');
+  exigir((resumoFinanceiro.match(/resumoCard/g)||[]).length===4 &&
+    resumoFinanceiro.includes('${brl(quitadoMensal)}') && resumoFinanceiro.includes('Mensalidades pagas em') &&
+    resumoFinanceiro.includes('${brl(totalEntrou)}') && resumoFinanceiro.includes('Entrou no caixa da agência') &&
+    !painel.includes('📈 Últimos 6 meses (recebido)') && !painel.includes('⚠️ Concentração de receita'),
+    'Financeiro voltou a confundir caixa com mensalidades quitadas ou a exibir mais de quatro indicadores principais');
   const geradorMensal = trecho(escritorio, 'window.renderMensalidades = async function', '  function atualizarBadgeMensalidades');
   exigir(geradorMensal.includes('if(!contratoVigenteNaCompetencia(ct, competencia)) continue;') &&
     geradorMensal.includes("!['isento','cancelado'].includes(l.sit.k)") &&
@@ -1126,10 +1127,29 @@ async function testarIdentidadeClienteSandbox() {
     `async function getDocs(ref){if(globalThis.__falharLeitura)throw new Error('sem leitura');const itens=colecoes.get(ref.col)||[];return {docs:itens.map(v=>({id:v.id,data:()=>v.dados}))};}\n`+
     `function clienteInativoEfetivo(v){return v.clienteInativo===true;}\n`+
     `${identidadeFonte}\n`+
-    `globalThis.api={diagnosticar:diagnosticarIdentidadeCliente,mensagem:mensagemIdentidadeClienteExistente,nome:nomeClienteCanonico};`,
+    `globalThis.api={diagnosticar:diagnosticarIdentidadeCliente,mensagem:mensagemIdentidadeClienteExistente,nome:nomeClienteCanonico,slug:slugClienteCanonico,mapa:mapaCalendariosPorIdentidade};`,
     {filename:'identidade-cliente-sandbox.js'}
   ).runInContext(contexto);
   const api=contexto.api;
+  exigir(api.slug('zeiss')==='zeiss'&&api.slug('zeens')==='zeiss'&&api.slug('otica-visao-araucaria')==='zeiss',
+    'identidade operacional da Zeiss voltou a apontar para o cadastro financeiro legado');
+  banco.set('contratos_cliente/zeens',{clienteNome:'Zeens',status:'ativo'});
+  const zeissLegada=await api.diagnosticar('Zeiss');
+  exigir(zeissLegada.slug==='zeiss'&&zeissLegada.ativo&&zeissLegada.fontes.some(v=>v.fonte==='contrato'),
+    'barreira de duplicidade não encontra o contrato legado Zeens ao conferir Zeiss');
+  const mapaLegado=api.mapa({forEach(fn){
+    fn({id:'zeiss',data:()=>({items:[]})});
+    fn({id:'zeens',data:()=>({items:[{name:'Roteiro preservado'}]})});
+  }});
+  exigir(mapaLegado.zeiss?.__documentoId==='zeens'&&mapaLegado.zeiss.items.length===1,
+    'calendário legado preenchido ficou escondido por documento canônico vazio');
+  const mapaCanonico=api.mapa({forEach(fn){
+    fn({id:'zeiss',data:()=>({items:[{name:'Atual'}]})});
+    fn({id:'zeens',data:()=>({items:[{name:'Antigo 1'},{name:'Antigo 2'}]})});
+  }});
+  exigir(mapaCanonico.zeiss?.__documentoId==='zeiss'&&mapaCanonico.zeiss.items[0].name==='Atual',
+    'alias legado voltou a substituir um calendário canônico preenchido');
+  banco.clear();
   banco.set('contratos_cliente/master-chef',{clienteNome:'Master Chef',status:'ativo'});
   const ativa=await api.diagnosticar('Master Chefe');
   exigir(ativa.slug==='master-chef'&&ativa.ativo&&ativa.fontes.some(v=>v.fonte==='contrato'),
@@ -1152,7 +1172,7 @@ async function testarIdentidadeClienteSandbox() {
     'registro arquivado de alias/unificação voltou a oferecer reativação');
 }
 
-function testarV53Sandbox() {
+function testarV54Sandbox() {
   const progressoFonte=trecho(escritorio,'function progressoEditorialCalendario','  const MESES_CAL');
   const progressoApi=executarSandbox('progresso-editorial-v53.js',`${progressoFonte}\nglobalThis.api={progressoEditorialCalendario};`);
   const progresso=progressoApi.progressoEditorialCalendario([
@@ -1181,6 +1201,27 @@ function testarV53Sandbox() {
   exigir(!demandaApi.visivel({status:'cancelada'})&&!demandaApi.visivel({status:'cancelada_video_trafego'})&&demandaApi.visivel({status:'pendente'}),
     'demanda cancelada voltou a aparecer como trabalho operacional');
 
+  const choqueFonte=trecho(escritorio,'function dataFixaDoItemCalendario','  function precisaGravarAinda');
+  const choqueApi=executarSandbox('datas-fixas-v54.js',`${choqueFonte}\nglobalThis.api={dataFixaDoItemCalendario,itensDaDataFixa};`);
+  exigir(choqueApi.dataFixaDoItemCalendario({day:17,mes:'2026-08'})==='' &&
+    choqueApi.dataFixaDoItemCalendario({day:17,dataPostagem:'2026-08-17'})==='2026-08-17' &&
+    choqueApi.dataFixaDoItemCalendario({dataPostagem:'2026-08-17',dataFlexivel:true})==='' &&
+    choqueApi.dataFixaDoItemCalendario({dataPostagem:'2026-02-31'})==='' &&
+    choqueApi.dataFixaDoItemCalendario({dataPostagem:'2026-08-17',excluido:true})==='',
+    'grade, data flexível, data inválida ou item arquivado voltou a gerar conflito para a Cecília');
+  const itens=[
+    {name:'Campanha A',day:17,dataPostagem:'2026-08-17'},
+    {name:'Conteúdo comum',day:17},
+    {name:'Campanha B',day:22,dataPostagem:'2026-08-17'},
+    {name:'Campanha flexível',day:17,dataPostagem:'2026-08-17',dataFlexivel:true}
+  ];
+  exigir(choqueApi.itensDaDataFixa(itens,'2026-08-17').length===2,
+    'conflito de campanha voltou a contar conteúdo comum ou flexível da mesma posição editorial');
+  const varreduraFonte=trecho(escritorio,'window.varrerChoquesDeData = async function','/* ===== ALERTAS DE GARGALO');
+  exigir(varreduraFonte.includes("status:'cancelado_automaticamente'")&&varreduraFonte.includes('excluido:true')&&
+    varreduraFonte.includes("excluidoPor:'sistema_regra_data_fixa'")&&!varreduraFonte.includes('deleteDoc('),
+    'limpeza de alertas antigos perdeu soft-delete ou introduziu exclusão física');
+
   const portal=fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8');
   const regras=fs.readFileSync(path.join(raiz,'firestore.rules'),'utf8');
   const storiesPortal=trecho(portal,'async function carregarStories','  /* ===== SUA PROPOSTA');
@@ -1206,7 +1247,7 @@ try {
   testarCofreCeciliaSandbox();
   await testarCentralClientesAmandaSandbox();
   await testarIdentidadeClienteSandbox();
-  testarV53Sandbox();
+  testarV54Sandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

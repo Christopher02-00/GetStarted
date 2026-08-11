@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-11-stories-campanhas-v53">
+<meta name="gs-build" content="2026-08-11-zeiss-preservada-v55">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3135,7 +3135,7 @@
     {nome:"Mochi", slug:"mochi"}, {nome:"Vitalle Odonto", slug:"vitalle-odonto"}, {nome:"Place", slug:"place"},
     {nome:"Stokki", slug:"stokki"}, {nome:"Vip", slug:"vip"}, {nome:"Vital Seg", slug:"vital-seg"},
     {nome:"Divina Cantina", slug:"divina-cantina"}, {nome:"Helo Arquiteta", slug:"helo-arquiteta"}, {nome:"Rodrigo", slug:"rodrigo"},
-    {nome:"Fior Restaurante", slug:"fior-restaurante"}
+    {nome:"Fior Restaurante", slug:"fior-restaurante"}, {nome:"Zeiss", slug:"zeiss"}
   ].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
   const CLIENTES_LISTA = CLIENTES_BASE.map(c=>({...c}));
 
@@ -3145,7 +3145,10 @@
         getDocs(collection(db,'clientes_extras')),
         getDocs(collection(db,'clientes_config'))
       ]);
-      const configuracoes={}; cfgSnap.forEach(d=>{ configuracoes[d.id]=d.data()||{}; });
+      const configuracoes={}; cfgSnap.forEach(d=>{
+        const slug=slugClienteCanonico(d.id), dados=d.data()||{};
+        if(!configuracoes[slug]||d.id===slug) configuracoes[slug]=dados;
+      });
       const porSlug=new Map(CLIENTES_BASE.map(c=>[c.slug,{...c}]));
       snap.forEach(d=>{
         const v=d.data();
@@ -3265,8 +3268,8 @@
      demanda de fusao esta no painel do Chris. Quando ele unificar, esta
      linha pode sair — e o teste avisa se sair antes da hora. */
   const APELIDOS_DE_CONTRATO = {
-    'zeiss': 'zeens',
-    'otica-visao-araucaria': 'zeens',
+    'zeens': 'zeiss',
+    'otica-visao-araucaria': 'zeiss',
     'master-chefe': 'master-chef',
     'master-chef-pizzaria': 'master-chef'
   };
@@ -3284,7 +3287,7 @@
     }
     return atual;
   }
-  const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef'};
+  const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef','zeiss':'Zeiss'};
   function nomeClienteCanonico(slug,nome){
     return NOMES_CLIENTES_CANONICOS[slugClienteCanonico(slug)] || String(nome||'').trim();
   }
@@ -3303,6 +3306,39 @@
   window.registroOperacionalAtivo = registroOperacionalAtivo;
   window.contratoOperacionalAtivo = contratoOperacionalAtivo;
 
+  /* Compatibilidade de leitura: a unificação antiga colocou contrato e
+     mensalidades em `zeens`, enquanto calendário, vídeos e extras ficaram em
+     `zeiss`. A identidade operacional é Zeiss. Estes helpers apenas resolvem
+     qual documento legado existe; não movem, recriam ou sobrescrevem dados. */
+  function slugsCompatibilidadeCliente(slug){
+    const canonico=slugClienteCanonico(slug);
+    return [canonico,...Object.keys(APELIDOS_DE_CONTRATO).filter(alias=>alias!==canonico&&slugClienteCanonico(alias)===canonico)];
+  }
+  function mapaCalendariosPorIdentidade(snapshot){
+    const mapa={};
+    snapshot.forEach(d=>{
+      const dados=d.data()||{}, canonico=slugClienteCanonico(d.id);
+      const itensAtivos=Array.isArray(dados.items)?dados.items.filter(i=>i&&i.excluido!==true).length:0;
+      const pontuacao=(dados.excluido===true?0:100)+(itensAtivos?10:0)+(d.id===canonico?1:0);
+      if(!mapa[canonico]||pontuacao>mapa[canonico].__pontuacaoIdentidade){
+        mapa[canonico]={...dados,__documentoId:d.id,__pontuacaoIdentidade:pontuacao};
+      }
+    });
+    return mapa;
+  }
+  async function resolverSlugCalendarioExistente(slug){
+    const canonico=slugClienteCanonico(slug), candidatos=slugsCompatibilidadeCliente(slug);
+    const encontrados=[];
+    for(const id of candidatos){
+      const snap=await getDoc(doc(db,'calendarios',id));
+      if(!snap.exists()) continue;
+      const dados=snap.data()||{}, itens=Array.isArray(dados.items)?dados.items.filter(i=>i&&i.excluido!==true).length:0;
+      encontrados.push({id,dados,pontos:(dados.excluido===true?0:100)+(itens?10:0)+(id===canonico?1:0)});
+    }
+    encontrados.sort((a,b)=>b.pontos-a.pontos);
+    return encontrados[0]?.id||canonico;
+  }
+
   /* Barreira única contra duplicação. Toda criação gerencial consulta o
      slug canônico nas fontes que formam a identidade do cliente. Falha
      de leitura bloqueia a criação: é mais seguro tentar novamente do que
@@ -3312,9 +3348,14 @@
     const bruto=String(slugInformado||nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
     const slug=slugClienteCanonico(bruto);
     if(!slug) throw new Error('O nome não gera um identificador válido.');
+    const candidatos=slugsCompatibilidadeCliente(slug);
+    const lerPrimeiroExistente=async colecao=>{
+      const snaps=await Promise.all(candidatos.map(id=>getDoc(doc(db,colecao,id))));
+      return snaps.find(s=>s.exists())||snaps[0];
+    };
     const [contrato,config,acesso,calendario,extras,cadastros,encerrados]=await Promise.all([
-      getDoc(doc(db,'contratos_cliente',slug)),getDoc(doc(db,'clientes_config',slug)),
-      getDoc(doc(db,'clientes_acesso',slug)),getDoc(doc(db,'calendarios',slug)),
+      lerPrimeiroExistente('contratos_cliente'),lerPrimeiroExistente('clientes_config'),
+      lerPrimeiroExistente('clientes_acesso'),lerPrimeiroExistente('calendarios'),
       getDocs(collection(db,'clientes_extras')),getDocs(collection(db,'cadastros_clientes')),
       getDocs(collection(db,'clientes_encerrados'))
     ]);
@@ -3371,7 +3412,7 @@
   window.castaDosClientes = async function(){
     if(__cacheCasta) return __cacheCasta;
     const m = {};
-    const marca = (slug, tipo, origem) => { m[slug] = { tipo, origem }; };
+    const marca = (slug, tipo, origem) => { m[slugClienteCanonico(slug)] = { tipo, origem }; };
     try{
       const [cfgSnap, contratoSnap, encSnap, mensSnap] = await Promise.all([
         getDocs(collection(db,'clientes_config')),
@@ -3382,7 +3423,7 @@
 
       const explicito = {};
       cfgSnap.forEach(d => { const t = d.data().tipoCliente;
-        if(t === 'mensalista' || t === 'avulso' || t === 'interno') explicito[d.id] = t; });
+        if(t === 'mensalista' || t === 'avulso' || t === 'interno') explicito[slugClienteCanonico(d.id)] = t; });
 
       const contratoAtivo = new Set(), contratoPorNome = {};
       contratoSnap.forEach(d => { const v = d.data();
@@ -6654,7 +6695,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           obterCalendariosCompartilhados(),
           clientesDeConteudoRecorrente().catch(()=>CLIENTES_LISTA.filter(c=>!ehClienteSoEdicao(c.slug)))
         ]);
-        calSnap.forEach(d=>{ calendariosPorSlug[d.id]=d.data()||{}; });
+        Object.assign(calendariosPorSlug,mapaCalendariosPorIdentidade(calSnap));
         clientesBase=recorrentes;
       }
       const hoje = hojeLocal();
@@ -10082,43 +10123,42 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        3. o título exato do conteúdo (funciona pro que já existe hoje)
      E quando acha, ATUALIZA o dia em vez de empurrar item novo. Só cria
      item quando não achou nada mesmo. */
-  /* ===== CHOQUE DE DATA — 03/08/2026 (pedido da Amanda) =============
-     Áudio dela: "sempre que tiver postagem duplicada, é interessante
-     imediatamente aparecer ali pra Cecília — esse cliente tem dois
-     post. Que daí automaticamente ela vai naquele ali que ainda não foi
-     gravado e realoca pra outra data sugerida."
-
-     O caso real que ela viu: no calendário da Dra. Monique, dia 3 tem a
-     proposta "Propósito" (da Gabi, não gravada) e o "Depoimento paciente
-     II" (já publicado). Dia 5 tem "Vídeo intuitivo" (proposta, com
-     observação do cliente) e "Depoimento 2" (agendado no Instagram).
-
-     Quem tem que mudar é sempre o que AINDA NÃO FOI GRAVADO — o outro
-     já está no ar ou a caminho, mexer nele é retrabalho. Então o aviso
-     não só diz "tem dois": diz qual dos dois mover.
-
-     Não repete: uma vez por cliente/mês/dia. Aviso repetido é ruído, e
-     ruído a pessoa aprende a ignorar — foi assim que o silêncio voltou
-     em 30/07. */
-  function itensDoDia(items, dia, mes){
+  /* ===== CONFLITO SOMENTE DE DATA FIXA — V54 =========================
+     O áudio da Cecília esclareceu a regra: datas comuns andam conforme
+     gravação, edição e aprovação. Apenas campanhas e compromissos com
+     `dataPostagem` não flexível podem gerar conflito. `day` organiza a
+     pauta na grade editorial; ele não promete publicação naquele dia. */
+  function dataFixaDoItemCalendario(it){
+    if(!it || it.excluido===true || it.dataFlexivel===true) return '';
+    const valor=String(it.dataPostagem||'').trim();
+    const m=valor.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m) return '';
+    const ano=Number(m[1]), mes=Number(m[2]), dia=Number(m[3]);
+    const data=new Date(Date.UTC(ano,mes-1,dia));
+    return data.getUTCFullYear()===ano&&data.getUTCMonth()===mes-1&&data.getUTCDate()===dia ? valor : '';
+  }
+  function itensDaDataFixa(items, dataISO){
     return (items||[]).map((it,i)=>({it,i}))
-      .filter(x => x.it && Number(x.it.day) === Number(dia)
-                && (!mes || !x.it.mes || String(x.it.mes) === String(mes)));
+      .filter(x => dataFixaDoItemCalendario(x.it)===dataISO);
   }
   function precisaGravarAinda(it){
     return !!it && !(it.gravado || it.agendado || it.posted);
   }
-  async function avisarChoqueDeData(slug, nomeCliente, dia, items, mes){
+  async function avisarChoqueDeData(slug, nomeCliente, dataISO, items){
     try{
-      const doDia = itensDoDia(items, dia, mes);
-      if(doDia.length < 2) return { ok:false, motivo:'só tem um conteúdo no dia' };
+      const doDia = itensDaDataFixa(items, dataISO);
+      if(doDia.length < 2) return { ok:false, motivo:'só tem um conteúdo com esta data fixa' };
       const paraMover = doDia.filter(x => precisaGravarAinda(x.it));
       if(!paraMover.length) return { ok:false, motivo:'os dois já saíram do planejamento' };
 
-      const chave = slug + '_' + (mes || '') + '_' + dia;
+      const chave = slug + '_' + dataISO;
       const q = query(collection(db,'demandas'), where('tipoEspecial','==','choque_de_data'), where('chaveChoque','==', chave));
       const ja = await getDocs(q);
-      if(!ja.empty) return { ok:false, motivo:'já avisei sobre este dia' };
+      const jaAtivo=ja.docs.some(d=>{
+        const v=d.data(), status=String(v.status||'').toLowerCase();
+        return v.excluido!==true&&!status.startsWith('cancelad')&&!['concluido','finalizado','feito'].includes(status);
+      });
+      if(jaAtivo) return { ok:false, motivo:'já avisei sobre esta data fixa' };
 
       const nomes = doDia.map(x => '• ' + String(x.it.name||'sem nome').trim()
         + (precisaGravarAinda(x.it) ? '  ← ainda não foi gravado' : '  (' + (x.it.posted ? 'já publicado' : x.it.agendado ? 'já programado no Instagram' : 'já gravado') + ')')).join('\n');
@@ -10134,21 +10174,23 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         const existente = await tx.get(avisoRef);
         if(existente.exists() && !String(existente.data().status||'').startsWith('cancelad')) return;
         tx.set(avisoRef, {
-        titulo: '📆 ' + (nomeCliente || slug) + ' tem ' + doDia.length + ' conteúdos no mesmo dia ' + dia,
-        descricao: 'O calendário de ' + (nomeCliente || slug) + ' ficou com ' + doDia.length + ' conteúdos marcados pro dia ' + dia + '.\n\n' + nomes +
-          '\n\nO QUE FAZER: move pra outra data o que ainda não foi gravado. O outro já está no ar ou programado — mexer nele é retrabalho.' +
-          '\n\nAbre o calendário do cliente, clica no conteúdo marcado acima e troca o dia. Se a data já estava combinada com o cliente, fala com a Amanda antes.',
+        titulo: '📆 ' + (nomeCliente || slug) + ' tem ' + doDia.length + ' campanhas na data fixa ' + dataISO.split('-').reverse().join('/'),
+        descricao: 'O calendário de ' + (nomeCliente || slug) + ' tem ' + doDia.length + ' conteúdos com publicação obrigatória em ' + dataISO.split('-').reverse().join('/') + '.\n\n' + nomes +
+          '\n\nO QUE FAZER: confirme com a Amanda qual campanha deve mudar. Conteúdo comum, sem data obrigatória, não gera este alerta.' +
+          '\n\nAbra o calendário do cliente e altere o campo “Data fixa de publicação” somente após alinhar a nova data.',
         destinatario: 'Cecília', origem: 'sistema', ehAviso: true,
         prazoData: hojeLocal(), prazoHora: '19:00', prioridade: 'alta',
         tipoEspecial: 'choque_de_data', chaveChoque: chave,
         clienteNome: nomeCliente || slug, clienteSlugRef: slug,
-        status: 'pendente', criadoEm: serverTimestamp(), atualizadoEm: serverTimestamp()
+        status: 'pendente', excluido:false,
+        excluidoEm:deleteField(), excluidoPor:deleteField(), motivoCancelamento:deleteField(),
+        criadoEm: serverTimestamp(), atualizadoEm: serverTimestamp()
         }, {merge:true});
         criado = true;
       });
-      if(!criado) return { ok:false, motivo:'já avisei sobre este dia' };
-      registrarLogAutomacao('choque_de_data', slug, doDia.length + ' conteúdos no dia ' + dia);
-      return { ok:true, quantos: doDia.length, moveEste: paraMover.map(x=>x.it.name) };
+      if(!criado) return { ok:false, motivo:'já avisei sobre esta data fixa' };
+      registrarLogAutomacao('choque_de_data', slug, doDia.length + ' campanhas na data fixa ' + dataISO);
+      return { ok:true, chave, quantos: doDia.length, moveEste: paraMover.map(x=>x.it.name) };
     }catch(e){ console.error('Falha ao avisar choque de data:', e); return { ok:false, motivo:'erro: ' + e.message }; }
   }
 
@@ -10159,15 +10201,35 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const snap = await obterCalendariosCompartilhados();
       const cals = []; snap.forEach(d => cals.push({ slug:d.id, ...d.data() }));
+      const chavesValidas=new Set();
       for(const c of cals){
         const items = c.items || [];
-        const chaves = [...new Set(items.filter(Boolean).map(it => String(it.mes||'') + '|' + Number(it.day)))];
-        for(const ch of chaves){
-          const [mes, dia] = ch.split('|');
-          const r = await avisarChoqueDeData(c.slug, c.client || c.slug, dia, items, mes || '');
+        const datasFixas=[...new Set(items.map(dataFixaDoItemCalendario).filter(Boolean))];
+        for(const dataISO of datasFixas){
+          const mesmos=itensDaDataFixa(items,dataISO);
+          if(mesmos.length<2||!mesmos.some(x=>precisaGravarAinda(x.it))) continue;
+          chavesValidas.add(c.slug+'_'+dataISO);
+          const r = await avisarChoqueDeData(c.slug, c.client || c.slug, dataISO, items);
           if(r && r.ok) achados++;
         }
       }
+      /* Alertas antigos baseados no quadrinho da grade deixam de ser
+         trabalho ativo. O documento e o motivo ficam preservados. */
+      const alertas=await getDocs(query(collection(db,'demandas'),where('tipoEspecial','==','choque_de_data')));
+      let cancelados=0;
+      for(const alerta of alertas.docs){
+        const v=alerta.data(), status=String(v.status||'').toLowerCase();
+        const ativo=v.excluido!==true&&!status.startsWith('cancelad')&&!['concluido','finalizado','feito'].includes(status);
+        if(!ativo||chavesValidas.has(String(v.chaveChoque||''))) continue;
+        await updateDoc(alerta.ref,{
+          status:'cancelado_automaticamente', excluido:true,
+          excluidoEm:serverTimestamp(), excluidoPor:'sistema_regra_data_fixa',
+          motivoCancelamento:'O aviso usava posição da grade editorial, não uma data fixa de publicação.',
+          atualizadoEm:serverTimestamp()
+        });
+        cancelados++;
+      }
+      if(cancelados) registrarLogAutomacao('choque_de_data_limpeza','sistema',cancelados+' alerta(s) antigo(s) arquivado(s) por soft-delete');
     }catch(e){ console.error('Varredura de choques falhou:', e); }
     return achados;
   };
@@ -13388,7 +13450,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      e estava certo. Agora move TUDO e mexe no campo que a tela le. */
   window.fundirClientes = async function(DE, PARA){
     if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa.', false); return; }
-    if(!DE || !PARA || DE === PARA){ _jlog('Use: fundirClientes("duplicado","queFica")', false); return; }
+    DE=String(DE||'').trim();
+    PARA=slugClienteCanonico(PARA);
+    if(!DE || !PARA || DE === PARA){
+      _jlog('Fusão bloqueada: o destino canônico não pode ser arquivado. Use fundirClientes("alias-duplicado","cliente-correto").', false);
+      return;
+    }
     window.__logJuncao = [];
     const agora = new Date().toISOString();
     const selo = { fundidoDe: DE, fundidoEm: agora, fundidoPor: usuarioAtual };
@@ -13493,7 +13560,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.juntarZeens = async function(){
     if(usuarioAtual !== 'Chris'){ _jlog('Só o Chris executa junção.', false); return; }
     window.__logJuncao = [];
-    const DE = 'otica-visao-araucaria', PARA = 'zeens';
+    const DE = 'otica-visao-araucaria', PARA = 'zeiss';
     try{
       _jlog('Lendo o que está pendurado em ' + DE + '…');
       const vids = await getDocs(collection(db,'videos_producao'));
@@ -22705,10 +22772,14 @@ window.setGerenciaSub = function(qual, el){
 
   let calendarioFerramentasAbertoSlug = null;
 
-  window.abrirCalendarioFerramentas = function(slug, nome){
-    calendarioFerramentasAbertoSlug = slug;
+  window.abrirCalendarioFerramentas = async function(slug, nome){
+    const slugCanonico=slugClienteCanonico(slug);
     document.getElementById('nomeClienteFerramentasAberto').textContent = nome;
-    garantirTokensDoCliente(slug, 'equipe').then(t => {
+    document.getElementById('calendarioFerramentasAberto').style.display = 'block';
+    try{
+      const slugDocumento=await resolverSlugCalendarioExistente(slugCanonico);
+      calendarioFerramentasAbertoSlug = slugDocumento;
+      const t=await garantirTokensDoCliente(slugDocumento, 'equipe');
       /* 02/08/2026 — QUEBRA-CACHE NO IFRAME.
              Ao subir um `calendario.html` novo, quem já tinha o antigo no
              navegador continuava vendo o velho AQUI DENTRO, mesmo depois
@@ -22716,15 +22787,14 @@ window.setGerenciaSub = function(qual, el){
              URL não mudava. Perdi tempo investigando isto como possível
              causa do painel de gravações não aparecer (não era, mas o
              problema é real). `v=` muda a cada carga e mata o cache. */
-      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + encodeURIComponent(slug) + '&e=' + encodeURIComponent(t.tokenEquipe) + (window.__auditoriaPapelAtiva?'&auditoria=1':'') + '&v=' + Date.now();
-    }).catch(e=>{
+      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&e=' + encodeURIComponent(t.tokenEquipe) + (window.__auditoriaPapelAtiva?'&auditoria=1':'') + '&v=' + Date.now();
+    }catch(e){
       console.error('Falha ao abrir calendário interno:',e);
       const iframe=document.getElementById('iframeCalendarioFerramentas');
       if(iframe) iframe.removeAttribute('src');
       mostrarToast('Não consegui abrir o calendário: '+(e?.message||'tente novamente.'),'erro');
-    });
-    document.getElementById('calendarioFerramentasAberto').style.display = 'block';
-    renderRefsPerfilCliente(slug, nome);
+    }
+    renderRefsPerfilCliente(slugCanonico, nome);
   };
 
   /* ===== REFERENCIAS DE PERFIL POR CLIENTE, POR SEMANA (24/07/2026) =====
@@ -23600,7 +23670,7 @@ window.setGerenciaSub = function(qual, el){
     let cals = {};
     try{
       const snap = await obterCalendariosCompartilhados();
-      snap.forEach(d => { cals[d.id] = d.data(); });
+      cals = mapaCalendariosPorIdentidade(snap);
     }catch(e){
       console.error('Falha ao ler calendários:', e);
       box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui confirmar os calendários', e);
@@ -23960,9 +24030,10 @@ window.setGerenciaSub = function(qual, el){
 
   window.copiarLinkCalendarioEquipe = async function(slug, btn){
     try{
-      const t = await garantirTokensDoCliente(slug, 'equipe');
+      const slugDocumento=await resolverSlugCalendarioExistente(slug);
+      const t = await garantirTokensDoCliente(slugDocumento, 'equipe');
       if(!t.tokenEquipe) throw new Error('Token interno não disponível.');
-      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slug) + '&e=' + encodeURIComponent(t.tokenEquipe);
+      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&e=' + encodeURIComponent(t.tokenEquipe);
       await navigator.clipboard.writeText(link);
       if(btn){ const o = btn.textContent; btn.textContent = '✓ Copiado'; setTimeout(()=>btn.textContent=o, 2000); }
       mostrarToast('Link de EDIÇÃO copiado — esse é interno, não manda pro cliente.');
@@ -23974,9 +24045,10 @@ window.setGerenciaSub = function(qual, el){
 
   window.copiarLinkCalendarioDireto = async function(slug, btn){
     try{
-      const t = await garantirTokensDoCliente(slug, 'cliente');
+      const slugDocumento=await resolverSlugCalendarioExistente(slug);
+      const t = await garantirTokensDoCliente(slugDocumento, 'cliente');
       if(!t.token) throw new Error('Token do cliente não disponível.');
-      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slug) + '&t=' + encodeURIComponent(t.token);
+      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&t=' + encodeURIComponent(t.token);
       await navigator.clipboard.writeText(link);
       const original = btn?.textContent || '';
       if(btn) btn.textContent = '✓ Copiado!';
@@ -27890,7 +27962,7 @@ window.salvarPrazoVideo = async function(id){
     const pagamentosDoContrato = [];
     pagamentosSnap.forEach(d => {
       const p=d.data();
-      if(registroOperacionalAtivo(p) && (p.cliente === slug || p.clienteSlug === slug || String(d.id).startsWith(slug+'_'))) pagamentosDoContrato.push({ref:d.ref,dados:p});
+      if(registroOperacionalAtivo(p) && pagamentoPertenceAoCliente(p,d.id,slug)) pagamentosDoContrato.push({ref:d.ref,dados:p});
     });
     const lote = writeBatch(db);
     lote.set(contratoRef, {
@@ -28426,11 +28498,11 @@ window.salvarPrazoVideo = async function(id){
 
     // ---- 1. o que entrou no mes ----
     const doMes = pagamentos.filter(p => p.competencia === comp);
-    const quitadoMensal = doMes.filter(p => statusMensalidadeCanonico(p)==='pago').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
+    const mensalidadesQuitadas = doMes.filter(p => statusMensalidadeCanonico(p)==='pago');
+    const quitadoMensal = mensalidadesQuitadas.reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
     const recebidoRecorrenteAgencia = doMes.filter(p => statusMensalidadeCanonico(p)==='pago'&&p.origemRecebimento!=='entrada_contrato'&&p.foraCaixaAgencia!==true).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
     const recebidoMensalAgencia = recebidoRecorrenteAgencia + resumoEntradas.totalAgencia;
     const previstoMensal = doMes.filter(p => !['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-    const cortesias = doMes.filter(p => statusMensalidadeCanonico(p)==='isento').reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
 
     // avulso: lancamentos de receita daquele mes (editaveis, ver secao propria)
     const avulsosDoMes = receitasAvulsas.filter(r => r.competencia === comp);
@@ -28459,9 +28531,7 @@ window.salvarPrazoVideo = async function(id){
     const extrasAbertosDaFolha = extrasDaFolha.filter(e => !e.pago);
     const extrasAtrasados = extrasEmAberto(extras).filter(e => mesDoPagamentoExtra(e) < comp);
     const somaExtra = e => valorDeTexto(e.valorExtra) + valorDeTexto(e.valorUber);
-    const despesaFilmagem = extrasDaFolha.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
-    const despesaUber     = extrasDaFolha.reduce((s,e)=>s+valorDeTexto(e.valorUber),0);
-    const despesaExtras = despesaFilmagem + despesaUber;
+    const despesaExtras = extrasDaFolha.reduce((s,e)=>s+somaExtra(e),0);
     const despesaExtrasPagas = extrasDaFolha.filter(e=>e.pago).reduce((s,e)=>s+somaExtra(e),0);
     const despesaExtrasAPagar = extrasAbertosDaFolha.reduce((s,e)=>s+somaExtra(e),0);
     const filmagemAPagar = extrasAbertosDaFolha.reduce((s,e)=>s+valorDeTexto(e.valorExtra),0);
@@ -28475,89 +28545,26 @@ window.salvarPrazoVideo = async function(id){
     const aguardandoConferencia = { qtd: naoConferidos.length, total: somarExtras(naoConferidos).total };
 
     const totalEntrou = recebidoMensalAgencia + receitaAvulsa;
-    const totalMes = totalEntrou - despesaExtras;
-    const emAberto = previstoMensal - quitadoMensal;
+    const emAberto = Math.max(0, previstoMensal - quitadoMensal);
     const mensalidadesEmAberto = doMes.filter(p => statusMensalidadeCanonico(p)==='aberto');
-    const avulsosEmAberto = avulsosDoMes.filter(r=>!r.recebido);
-    const previstoTotal = previstoMensal + receitaAvulsa + avulsoAReceber;
-
-    // ---- 2. movimento da receita recorrente ----
-    const compAnterior = mesAnterior(comp);
-    const doMesAnterior = pagamentos.filter(p => p.competencia === compAnterior);
-    const baseAnterior = doMesAnterior.filter(p=>!['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-    const clientesAnterior = new Set(doMesAnterior.filter(p=>statusMensalidadeCanonico(p)!=='cancelado').map(p=>p.cliente));
-    const clientesAgora = new Set(doMes.filter(p=>statusMensalidadeCanonico(p)!=='cancelado').map(p=>p.cliente));
-    /* Entrada é a primeira competência real do cliente, não apenas a
-       ausência no mês anterior. Assim cortesia, mês sem cobrança e um
-       apelido duplicado não fazem o mesmo mensalista "entrar" de novo. */
-    const primeiraCompetenciaPorCliente = {};
-    pagamentos.filter(p=>statusMensalidadeCanonico(p)!=='cancelado').forEach(p=>{
-      if(!p.cliente || !/^\d{4}-\d{2}$/.test(String(p.competencia||''))) return;
-      if(!primeiraCompetenciaPorCliente[p.cliente] || p.competencia < primeiraCompetenciaPorCliente[p.cliente]) primeiraCompetenciaPorCliente[p.cliente]=p.competencia;
-    });
-    const entraram = [...clientesAgora].filter(c => primeiraCompetenciaPorCliente[c] === comp);
-    /* ===== "SAÍRAM 0" COM DUAS SAÍDAS — 03/08/2026 ==================
-       O Chris: "acredito que no segundo print esteja errado também, pois
-       em julho saíram duas empresas".
-
-       Ele está certo. Esta conta era `quem era cobrado no mês passado e
-       não é mais` — ela enxerga saída só pelo rastro da cobrança. Como
-       junho não tem nenhum registro de mensalidade no banco, o mês
-       anterior é vazio e ninguém "sai" nunca.
-
-       A saída de verdade está registrada em `clientes_encerrados`:
-       Suellen e ELLIZ NOIVAS, as duas com dataSaida 27/07/2026. É o
-       registro autoritativo — quem preenche a tela de "Clientes que
-       Saíram" está dizendo exatamente isso.
-
-       Agora as duas fontes se somam: quem sumiu da cobrança E quem foi
-       registrado como encerrado no mês. Sem duplicar, se aparecer nas
-       duas. */
-    const sairamPelaCobranca = [...clientesAnterior].filter(c => !clientesAgora.has(c));
-    const sairamRegistrados = (encerrados || [])
-      .filter(e => !e.excluido && String(e.dataSaida||'').slice(0,7) === comp)
-      .map(e => e.slug || normNomeCliente(e.nome||''))
-      .filter(Boolean);
-    const sairam = [...new Set([...sairamPelaCobranca, ...sairamRegistrados])];
-    const valorEntraram = doMes.filter(p=>entraram.includes(p.cliente) && !['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-    const valorSairam = doMesAnterior.filter(p=>sairam.includes(p.cliente) && !['isento','cancelado'].includes(statusMensalidadeCanonico(p))).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
     const saidasRegistradas = encerrados.filter(e => (e.dataSaida||'').slice(0,7) === comp);
     const perdaRegistrada = saidasRegistradas.reduce((s,e)=>s+(Number(e.valorMensal)||0),0);
-    const variacao = previstoMensal - baseAnterior;
 
     // ---- 3. por tipo de servico ----
     const porPlano = {};
     doMes.filter(p=>statusMensalidadeCanonico(p)==='pago'&&p.origemRecebimento!=='entrada_contrato'&&p.foraCaixaAgencia!==true).forEach(p => {
-      const ct = contratos.find(c=>c.slug===p.cliente);
+      const ct = contratos.find(c=>slugClienteCanonico(c.slug)===p.cliente);
       const plano = ct?.plano || 'Sem plano';
       porPlano[plano] = (porPlano[plano]||0) + (Number(p.valorDevido)||0);
     });
     resumoEntradas.agencia.forEach(p=>{
-      const ct=contratos.find(c=>c.slug===p.cliente);
+      const ct=contratos.find(c=>slugClienteCanonico(c.slug)===p.cliente);
       const plano=(ct?.plano||'Sem plano')+' · entrada';
       porPlano[plano]=(porPlano[plano]||0)+(Number(p.valorConfirmado??p.valorPrevisto)||0);
     });
     if(receitaAvulsa) porPlano['Avulso / projeto'] = receitaAvulsa;
     // extras NAO entram aqui: este bloco e so de receita. Eles tem secao propria de saida.
     const maxPlano = Math.max(...Object.values(porPlano), 1);
-
-    // ---- 4. evolucao 6 meses ----
-    const evolucao = [];
-    let cursor = comp;
-    for(let i=0;i<6;i++){
-      const c2 = cursor;
-      const recorrentes = pagamentos.filter(p=>p.competencia===c2 && statusMensalidadeCanonico(p)==='pago'&&p.origemRecebimento!=='entrada_contrato'&&p.foraCaixaAgencia!==true).reduce((s,p)=>s+(Number(p.valorDevido)||0),0);
-      const entradasAgencia=resumoRecebimentosEntradaNoMes(recebimentosEntrada,c2).totalAgencia;
-      evolucao.unshift({ comp:c2, valor: recorrentes+entradasAgencia });
-      cursor = mesAnterior(cursor);
-    }
-    const maxEvo = Math.max(...evolucao.map(e=>e.valor), 1);
-
-    // ---- 5. concentracao ----
-    const porCliente = doMes.filter(p=>!['isento','cancelado'].includes(statusMensalidadeCanonico(p))).map(p=>({ nome:p.clienteNome, valor:Number(p.valorDevido)||0 }))
-      .sort((a,b)=>b.valor-a.valor);
-    const top5 = porCliente.slice(0,5);
-    const pctTop5 = previstoMensal>0 ? Math.round(top5.reduce((s,c)=>s+c.valor,0)/previstoMensal*100) : 0;
 
     const pagamentosPorId=new Map(pagamentos.map(p=>[p.id,p]));
     const controlesEntrada=recebimentosEntradaOperacionais(recebimentosEntrada);
@@ -28580,26 +28587,16 @@ window.salvarPrazoVideo = async function(id){
       const chave=v.slug+'_'+v.competencia, pago=statusMensalidadeCanonico(v.mensalidade)==='pago';
       return `<div class="item" style="border-left:3px solid #8a8a8d;"><div class="top"><div class="nome">${esc(v.mensalidade.clienteNome||v.ct.clienteNome||v.slug)}</div><span class="selo pendente">SEM CLASSIFICAÇÃO</span></div><div class="meta">Primeira competência ${esc(v.competencia)} · ${brl(v.mensalidade.valorDevido)} · ${pago?'já consta paga, falta dizer onde entrou':'ainda em aberto'}</div><div class="row2" style="margin-top:9px;"><div class="field"><label>Conta correta</label><select id="entradaLegadoDestino_${escAttr(chave)}"><option value="">Selecione sem adivinhar...</option><option value="conta_pessoal_chris">Conta pessoal do Chris</option><option value="conta_agencia">Conta da agência</option></select></div><div class="field"><label>Data real ${pago?'do pagamento':'(use quando confirmar depois)'}</label><input type="date" id="entradaLegadoData_${escAttr(chave)}" max="${hojeLocal()}" value="${pago?escAttr(String(v.mensalidade.pagoEm||'').slice(0,10)):''}"></div></div><button class="btn secondary" style="width:auto;" onclick="vincularRecebimentoEntradaLegado('${escJs(v.slug)}','${escJs(v.competencia)}','${escJs(v.mensalidade.id)}')">Vincular sem duplicar receita</button></div>`;
     };
-    const controleEntradasHTML=`<div class="card" style="border:2px solid #8ab4f8;"><h2 style="margin-top:0;">💳 Primeiros pagamentos — entrada de clientes</h2><div class="desc"><b>Controle exclusivo do Chris.</b> O primeiro pagamento quita a primeira mensalidade, mas fica separado pelo destino real. Conta pessoal nunca entra no caixa da agência; conta da agência entra pela data efetiva do recebimento.</div><div class="painelResumo" style="margin:14px 0;"><div class="resumoCard ${pendentesEntrada.length?'yellow':'green'}"><div class="num">${pendentesEntrada.length}</div><div class="lbl">entrada(s) aguardando confirmação</div></div><div class="resumoCard"><div class="num" style="font-size:17px;">${brl(resumoEntradas.totalPessoal)}</div><div class="lbl">recebido na conta pessoal em ${nomeMes(comp)} · fora do caixa</div></div><div class="resumoCard green"><div class="num" style="font-size:17px;">${brl(resumoEntradas.totalAgencia)}</div><div class="lbl">entradas recebidas na agência em ${nomeMes(comp)}</div></div></div>${pendentesEntrada.length?'<h3 style="font-size:13px;color:var(--yellow);">Confirmar agora</h3>'+pendentesEntrada.map(htmlPendenteEntrada).join(''):'<div class="empty">Nenhum primeiro pagamento novo aguardando.</div>'}${resumoEntradas.pagos.length?'<details style="margin-top:12px;"><summary style="cursor:pointer;font-weight:800;">Recebimentos confirmados neste mês ('+resumoEntradas.pagos.length+')</summary><div style="margin-top:9px;">'+resumoEntradas.pagos.map(htmlPagoEntrada).join('')+'</div></details>':''}${legadosSemEntrada.length?'<details style="margin-top:12px;"><summary style="cursor:pointer;font-weight:800;color:var(--yellow2);">Cadastros antigos sem destino confirmado ('+legadosSemEntrada.length+')</summary><div class="desc" style="margin:8px 0;">O sistema não presume onde pagamentos antigos entraram. Classifique uma vez; lançamento e mensalidade permanecem únicos.</div>'+legadosSemEntrada.map(htmlLegadoEntrada).join('')+'</details>':''}</div>`;
+    const controleEntradasHTML=`<div class="card" style="border:2px solid #8ab4f8;"><h2 style="margin-top:0;">💳 Primeiros pagamentos</h2><div class="meta" style="margin-bottom:12px;"><b>${pendentesEntrada.length}</b> aguardando confirmação · <b>${brl(resumoEntradas.totalPessoal)}</b> na conta pessoal · <b>${brl(resumoEntradas.totalAgencia)}</b> na agência em ${nomeMes(comp)}.</div>${pendentesEntrada.length?'<h3 style="font-size:13px;color:var(--yellow);">Confirmar agora</h3>'+pendentesEntrada.map(htmlPendenteEntrada).join(''):'<div class="empty">Nenhum primeiro pagamento aguardando.</div>'}${resumoEntradas.pagos.length?'<details style="margin-top:12px;"><summary style="cursor:pointer;font-weight:800;">Recebimentos confirmados neste mês ('+resumoEntradas.pagos.length+')</summary><div style="margin-top:9px;">'+resumoEntradas.pagos.map(htmlPagoEntrada).join('')+'</div></details>':''}${legadosSemEntrada.length?'<details style="margin-top:12px;"><summary style="cursor:pointer;font-weight:800;color:var(--yellow2);">Cadastros antigos sem destino confirmado ('+legadosSemEntrada.length+')</summary><div class="desc" style="margin:8px 0;">Classifique a conta real uma vez; nenhum valor é presumido.</div>'+legadosSemEntrada.map(htmlLegadoEntrada).join('')+'</details>':''}</div>`;
 
     const avisoControleEntradaHTML=entradaSnap?'':'<div class="card" style="border:2px solid var(--red);"><b>Controle privado de entradas indisponível.</b><div class="desc">Publique primeiro o firestore.rules V28. O restante do Financeiro continua visível; falha de permissão não vira contador zero nem altera dados.</div></div>';
     const competenciaRealizacaoDaFolha = deslocarCompetenciaExtra(comp, -1);
-    let html = `<div class="card" style="border-color:var(--line);margin-bottom:12px;">
-      <div class="desc"><b>Leitura do mês:</b> “Recebido no caixa da agência” soma somente o dinheiro que entrou na conta da empresa. Primeiro pagamento recebido na conta pessoal aparece no controle azul e nunca infla este caixa. “Em aberto” usa o que foi quitado, independentemente da conta.</div>
-    </div><div class="painelResumo" style="margin-bottom:16px;">
-      <div class="resumoCard green" style="border-width:2px;"><div class="num" style="font-size:17px;">${brl(totalEntrou)}</div><div class="lbl">Recebido no caixa da agência em ${nomeMes(comp)}</div></div>
-      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(recebidoRecorrenteAgencia)}</div><div class="lbl">Mensalidades recorrentes recebidas na agência</div></div>
-      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(resumoEntradas.totalAgencia)}</div><div class="lbl">Primeiros pagamentos recebidos na agência</div></div>
-      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(resumoEntradas.totalPessoal)}</div><div class="lbl">Conta pessoal do Chris · fora do caixa</div></div>
-      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(receitaAvulsa)}</div><div class="lbl">Avulsos recebidos · parte do caixa</div></div>
-      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(previstoTotal)}</div><div class="lbl">Previsto total em ${nomeMes(comp)}</div></div>
-      <div class="resumoCard ${(emAberto+avulsoAReceber)>0?'yellow':'green'} clicavel" onclick="irPara('mensalidades',document.getElementById('navMensalidades'))"><div class="num" style="font-size:17px;">${brl(emAberto+avulsoAReceber)}</div><div class="lbl">Em aberto neste mês · ${mensalidadesEmAberto.length} mensalidade(s) + ${avulsosEmAberto.length} avulso(s) →</div></div>
-      <div class="resumoCard ${despesaExtras?'red':''}"><div class="num" style="font-size:17px;">${despesaExtras?'−':''}${brl(despesaExtras)}</div><div class="lbl">Extras a pagar em ${nomeMes(comp)}</div></div>
-      <div class="resumoCard"><div class="num" style="font-size:14px;">🎥 ${brl(despesaFilmagem)}</div><div class="lbl">filmagens de ${nomeMes(competenciaRealizacaoDaFolha)}</div></div>
-      <div class="resumoCard"><div class="num" style="font-size:14px;">🚗 ${brl(despesaUber)}</div><div class="lbl">Uber de ${nomeMes(competenciaRealizacaoDaFolha)}</div></div>
-      <div class="resumoCard ${totalMes>=0?'green':'red'}" style="border-width:2px;"><div class="num" style="font-size:17px;">${brl(totalMes)}</div><div class="lbl">Caixa recebido menos folha prevista</div></div>
-      <div class="resumoCard ${variacao<0?'red':variacao>0?'green':''}"><div class="num" style="font-size:17px;">${variacao>=0?'+':''}${brl(variacao)}</div><div class="lbl">Base recorrente vs. ${nomeMes(compAnterior)}</div></div>
-    </div>${avisoControleEntradaHTML}${controleEntradasHTML}`;
+    let html = `<div class="painelResumo financeiroResumoMes" style="margin-bottom:8px;">
+      <div class="resumoCard green" style="border-width:2px;"><div class="num" style="font-size:17px;">${brl(quitadoMensal)}</div><div class="lbl">Mensalidades pagas em ${nomeMes(comp)} · ${mensalidadesQuitadas.length} cliente(s)</div></div>
+      <div class="resumoCard ${emAberto>0?'yellow':'green'} clicavel" onclick="irPara('mensalidades',document.getElementById('navMensalidades'))"><div class="num" style="font-size:17px;">${brl(emAberto)}</div><div class="lbl">Mensalidades em aberto · ${mensalidadesEmAberto.length} cliente(s) →</div></div>
+      <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(totalEntrou)}</div><div class="lbl">Entrou no caixa da agência em ${nomeMes(comp)}</div></div>
+      <div class="resumoCard ${despesaExtrasAPagar?'red':'green'}"><div class="num" style="font-size:17px;">${brl(despesaExtrasAPagar)}</div><div class="lbl">Extras ainda a pagar neste mês</div></div>
+    </div><div class="meta" style="margin:0 0 16px 2px;">Pagas = clientes quitados. Caixa = somente dinheiro recebido na conta da agência.</div>${avisoControleEntradaHTML}${controleEntradasHTML}`;
 
     /* Seção própria de saída — antes esse dinheiro estava escondido dentro
        da receita, então o custo com a equipe simplesmente não aparecia. */
@@ -28660,25 +28657,12 @@ window.salvarPrazoVideo = async function(id){
       </div>`;
     }
 
-    // movimento
-    html += `<div class="card metaSec">
-      <div class="metaSecTit">🔄 O que mudou em relação ao mês passado</div>
-      <div class="desc" style="margin-bottom:10px;">Comparação da <b>base recorrente prevista</b>, não do dinheiro recebido. Ela explica entradas, saídas e cortesias sem misturar caixa com contrato.</div>
-      <div class="item" style="border-left:3px solid var(--line);"><div class="top"><div class="nome">Base de ${nomeMes(compAnterior)}</div><b>${brl(baseAnterior)}</b></div></div>
-      <div class="item" style="border-left:3px solid var(--green);"><div class="top"><div class="nome">➕ Entraram (${entraram.length} cliente(s))</div><b style="color:var(--green);">+${brl(valorEntraram)}</b></div>
-        ${entraram.length ? '<div class="meta" style="margin-top:4px;">'+entraram.map(slug=>esc((doMes.find(p=>p.cliente===slug)||{}).clienteNome||slug)).join(', ')+'</div>' : ''}</div>
-      <div class="item" style="border-left:3px solid var(--red);"><div class="top"><div class="nome">➖ Saíram (${sairam.length} cliente(s))</div><b style="color:var(--red);">−${brl(valorSairam)}</b></div>
-        ${sairam.length ? '<div class="meta" style="margin-top:4px;">'+sairam.map(slug=>esc((doMesAnterior.find(p=>p.cliente===slug)||{}).clienteNome || ((encerrados||[]).find(e=>e.slug===slug)||{}).nome || slug)).join(', ')+'</div>' : ''}</div>
-      ${cortesias ? '<div class="item" style="border-left:3px solid var(--yellow2);"><div class="top"><div class="nome">🎁 Em cortesia este mês</div><b style="color:var(--yellow2);">'+brl(cortesias)+'</b></div><div class="meta" style="margin-top:4px;">Não entra como perda — foi combinado.</div></div>' : ''}
-      <div class="item" style="border-left:3px solid var(--yellow);"><div class="top"><div class="nome"><b>Base de ${nomeMes(comp)}</b></div><b>${brl(previstoMensal)}</b></div></div>
-    </div>`;
-
     // por tipo de servico
-    html += `<div class="card metaSec"><div class="metaSecTit">🧾 De onde veio o dinheiro</div>`;
+    html += `<details class="card metaSec"><summary class="metaSecTit" style="cursor:pointer;">🧾 Ver composição do caixa deste mês</summary><div style="margin-top:12px;">`;
     const cores = ['var(--yellow)','var(--green)','#8ab4f8','#e0a86a','#b98ae0','#8a8a8d'];
     Object.entries(porPlano).sort((a,b)=>b[1]-a[1]).forEach(([k,v],i) => { html += barraFin(k, v, maxPlano, cores[i%cores.length]); });
     if(!Object.keys(porPlano).length) html += '<div class="empty" style="font-size:11px;">Nada recebido ainda neste mês.</div>';
-    html += `</div>`;
+    html += `</div></details>`;
 
     // ---- avulsos do mes: ver e lancar ----
     html += `<div class="card metaSec" style="border:2px solid var(--yellow);">
@@ -28755,20 +28739,6 @@ window.salvarPrazoVideo = async function(id){
         </div>`).join('');
     }
     html += `</div>`;
-
-    // evolucao
-    html += `<div class="card metaSec"><div class="metaSecTit">📈 Últimos 6 meses (recebido)</div>`;
-    evolucao.forEach(e => { html += barraFin(nomeMes(e.comp), e.valor, maxEvo, e.comp===comp ? 'var(--yellow)' : '#4a4a4d'); });
-    html += `</div>`;
-
-    // concentracao — o risco que ninguem ve
-    if(top5.length){
-      html += `<div class="card metaSec" style="${pctTop5>=60?'border-color:var(--red);':''}">
-        <div class="metaSecTit">⚠️ Concentração de receita</div>
-        <div class="desc" style="margin-bottom:10px;">Seus 5 maiores clientes representam <b style="color:${pctTop5>=60?'var(--red)':'var(--yellow)'};">${pctTop5}%</b> do faturamento do mês. ${pctTop5>=60?'Isso é risco alto: perder um deles dói muito.':'Quanto mais espalhado, mais seguro.'}</div>`;
-      top5.forEach((cl,i) => { html += barraFin(cl.nome + ' (' + Math.round(cl.valor/previstoMensal*100) + '%)', cl.valor, top5[0].valor, cores[i%cores.length]); });
-      html += `</div>`;
-    }
 
     // saidas do mes — a aba de ex-clientes integrada aqui
     html += `<div class="card metaSec" style="${saidasRegistradas.length?'border-color:var(--red);':''}">
@@ -32167,9 +32137,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       postSnap.forEach(d => { const v = d.data();
         if(v.excluido || v.status !== 'agendado' || !v.dataAgendada) return;
         if(!calc[v.cliente] || v.dataAgendada > calc[v.cliente]) calc[v.cliente] = v.dataAgendada; });
-      calSnap.forEach(d => { ((d.data()||{}).items||[]).forEach(i => {
+      calSnap.forEach(d => { const slug=slugClienteCanonico(d.id); ((d.data()||{}).items||[]).forEach(i => {
         if(!i || !i.dataPostagem) return;
-        if(!calc[d.id] || i.dataPostagem > calc[d.id]) calc[d.id] = i.dataPostagem; }); });
+        if(!calc[slug] || i.dataPostagem > calc[slug]) calc[slug] = i.dataPostagem; }); });
 
       const alvo = await clientesDeConteudoRecorrente();
       const linhas = alvo.map(c => {
@@ -32233,7 +32203,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
       // calendários
       let liberados = 0, montando = 0, semCal = 0;
-      const mapaCal = {}; cals.forEach(d => { mapaCal[d.id] = d.data(); });
+      const mapaCal = mapaCalendariosPorIdentidade(cals);
       alvo.forEach(c => {
         const cal = mapaCal[c.slug] || {};
         const itens = (cal.items||[]).length;

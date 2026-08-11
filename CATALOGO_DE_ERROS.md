@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30915891/CATALOGO_DE_ERROS.md)
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30937434/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -595,3 +595,39 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] V52 cria Stories antes de `await autoVerificarChecklist()` e preserva o mesmo nó ao concluir o restante.
 - [x] Calendários, aprovação, papéis, login, Firestore, financeiro e soft-delete permanecem cobertos pela suíte completa.
 - [ ] V52 depende de novo upload manual; o domínio continua em V51 até essa publicação.
+
+---
+
+## 28. ERROS E INTERCEPTAÇÕES — V53 (11/08/2026)
+
+### 28.1 O link de Story parava no escritório e nunca chegava ao Portal
+**O que existia:** Gabi salvava os documentos diários em `stories_links`, enquanto o Portal lia somente `stories_semanais`; as regras também classificavam `stories_links` como coleção exclusiva da equipe.
+**O que aconteceu:** a equipe via link salvo, mas o cliente não tinha caminho de leitura. Era a mesma família já registrada em 29/07: um lado da cadeia mudou e a ponta do cliente ficou na fonte antiga.
+**Como consertei:** o link alterado entra em revisão da Amanda; a tela dela mostra os documentos e permite liberar/devolver. O Portal lê somente o documento determinístico do próprio cliente e semana e só renderiza quando `revisaoInterna=liberado` e `liberadoCliente=true`. A regra Firestore exige os mesmos campos e o mesmo cliente da sessão.
+> **LEI:** conteúdo destinado ao cliente precisa de prova ponta a ponta — escritor, revisão, regra e leitor do Portal. “Salvo pela equipe” nunca prova “visível ao cliente”.
+
+### 28.2 Aviso de choque usava consulta seguida de criação não atômica
+**O que existia:** duas abas podiam consultar `chaveChoque`, ambas encontrar vazio e criar documentos diferentes. A limpeza fazia soft-cancel, mas a lista operacional continuava exibindo status iniciados por `cancelad`.
+**O que aconteceu:** Cecília recebeu duas demandas iguais da Dra Júlia, como no registro de 11/08.
+**Como consertei:** novos avisos usam ID determinístico derivado da chave e transação; a consulta antiga permanece só para compatibilidade. Demandas canceladas deixam de ser operacionais em todas as telas que usam o filtro central, sem apagar histórico.
+> **LEI:** alerta único por fato de negócio exige chave estável e escrita atômica; consulta antes de `addDoc` não impede corrida. Soft-cancelado nunca permanece em fila ativa.
+
+### 28.3 Campanha detectada perdia a data completa
+**O que existia:** a janela de campanhas guardava somente `mes` e `day`, ignorando `dataPostagem`, e mostrava “dia N” fora de uma data completa. Itens manuais e detectados também podiam aparecer repetidos.
+**Como consertei:** a data segue prioridade `dataPostagem` válida → mês real do item + dia validado; o quadro mostra DD/MM/AAAA, sinaliza data ausente, coloca a pauta detectada no calendário mensal e deduplica contra a postagem estruturada por cliente+título+data, sem copiar ou migrar dados.
+> **LEI:** toda data operacional precisa carregar competência e dia validados; nunca exiba um número de dia desacoplado do mês real. Uma janela compatível deduplica, mas não cria terceira verdade.
+
+### 28.4 Painel editorial somava conteúdo arquivado e priorizava número gigante
+**O que existia:** a tela já recortava o mês, mas ainda aceitava itens `excluido:true` no denominador e destacava totais globais de roteiros, difíceis de relacionar a um cliente.
+**Como consertei:** itens arquivados são retirados de todas as contagens. O resumo passa a contar calendários completos, em andamento e sem roteiro; cada cliente explica “X de Y” e quantos faltam, com legenda e referência como informação secundária.
+> **LEI:** acompanhamento editorial é por cliente e competência; agregado só pode resumir estados comparáveis. Item em soft-delete fica no histórico, nunca no trabalho em aberto.
+
+## 29. CHECKLIST EXECUTADO NA V53
+
+- [x] Link de Story alterado volta para revisão; Amanda/Chris têm handlers explícitos de liberar e devolver.
+- [x] Portal consulta apenas `{cliente}_{semana}` e não lista links de outros clientes.
+- [x] Firestore condiciona leitura do cliente ao slug da sessão e à liberação explícita.
+- [x] Choque de data usa transação e documento determinístico; status cancelado é filtrado centralmente.
+- [x] Campanhas mostram data completa validada e são deduplicadas sem nova escrita.
+- [x] Painel editorial ignora itens arquivados e mostra progresso por calendário.
+- [ ] Liberação real de links existentes e gravação de alertas não foram executadas em produção: isso alteraria operação real antes do upload e da conferência da Amanda.

@@ -73,10 +73,17 @@ const leisV53 = [
   'Campanha detectada perdia a data completa',
   'Painel editorial somava conteúdo arquivado e priorizava número gigante'
 ];
+const leisV54 = [
+  'Posição na grade editorial virou data fixa de publicação',
+  'Caixa da agência apareceu como total de mensalidades pagas'
+];
+const leisV55 = [
+  'Alias financeiro retirou a Zeiss da operação da Gabi'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V53');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V53');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V55');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V55');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -307,7 +314,8 @@ const barreiraDuplicidade = escritorio.slice(
   escritorio.indexOf('async function diagnosticarIdentidadeCliente'),
   escritorio.indexOf('function dataOperacionalISO')
 );
-if (!barreiraDuplicidade.includes("getDoc(doc(db,'contratos_cliente',slug))") ||
+if (!barreiraDuplicidade.includes("lerPrimeiroExistente('contratos_cliente')") ||
+    !barreiraDuplicidade.includes('slugsCompatibilidadeCliente(slug)') ||
     !barreiraDuplicidade.includes("getDocs(collection(db,'clientes_extras'))") ||
     !barreiraDuplicidade.includes("getDocs(collection(db,'cadastros_clientes'))") ||
     !barreiraDuplicidade.includes("getDocs(collection(db,'clientes_encerrados'))") ||
@@ -326,7 +334,7 @@ const renderArquivoClientes = escritorio.slice(
   escritorio.indexOf('const htmlArquivado=v=>'),
   escritorio.indexOf('box.innerHTML=', escritorio.indexOf('const htmlArquivado=v=>'))
 );
-if (!escritorio.includes("const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef'}") ||
+if (!escritorio.includes("const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef','zeiss':'Zeiss'}") ||
     !reparoIdentidade.includes("doc(db,'clientes_portal_tokens',atual.token)") ||
     !reparoIdentidade.includes("doc(db,'calendarios',slug)") ||
     !reparoIdentidade.includes('identidadeCanonicaCorrigidaEm') ||
@@ -334,6 +342,13 @@ if (!escritorio.includes("const NOMES_CLIENTES_CANONICOS = {'master-chef':'Maste
     !renderArquivoClientes.includes('!aliasOuFusao')) {
   falhar('nome canônico/Portal ainda pode herdar alias ou arquivo de fusão pode oferecer reativação');
 } else provar('identidade canônica corrige Portal e calendário; alias arquivado permanece somente histórico');
+if (!escritorio.includes("'zeens': 'zeiss'") ||
+    !escritorio.includes('{nome:"Zeiss", slug:"zeiss"}') ||
+    !escritorio.includes('function mapaCalendariosPorIdentidade(snapshot)') ||
+    !escritorio.includes('async function resolverSlugCalendarioExistente(slug)') ||
+    !escritorio.includes('cals = mapaCalendariosPorIdentidade(snap)')) {
+  falhar('Zeiss pode voltar a sumir da carteira ou perder o calendário salvo sob alias legado');
+} else provar('Zeiss é identidade operacional estável e calendários legados permanecem acessíveis sem migração destrutiva');
 
 const saldoCaptacao = escritorio.slice(
   escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'),
@@ -400,7 +415,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-11-stories-campanhas-v53') ||
+if (!calendarioEditor.includes('2026-08-11-zeiss-preservada-v55') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -531,9 +546,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-11-stories-campanhas-v53') {
-  falhar(`build V53 inesperado: ${build || 'ausente'}`);
-} else provar('V53 preserva a V52 e corrige Stories, campanhas, alertas únicos e progresso editorial');
+if (build !== '2026-08-11-zeiss-preservada-v55') {
+  falhar(`build V55 inesperado: ${build || 'ausente'}`);
+} else provar('V55 preserva a V54 e recupera a identidade operacional da Zeiss sem migrar dados');
 
 const cofreCecilia = escritorio.slice(
   escritorio.indexOf('async function renderCofreCecilia'),
@@ -603,11 +618,22 @@ if (!salvarLinksStories.includes("revisaoInterna='aguardando_interna'") ||
   falhar('cadeia de links de Stories não fecha revisão Amanda → regra isolada → Portal do próprio cliente');
 } else provar('links de Stories chegam ao Portal somente após revisão e com isolamento por cliente/semana');
 
-const choqueData = escritorio.slice(escritorio.indexOf('async function avisarChoqueDeData'), escritorio.indexOf('window.varrerChoquesDeData'));
+const choqueData = escritorio.slice(escritorio.indexOf('function dataFixaDoItemCalendario'), escritorio.indexOf('/* ===== ALERTAS DE GARGALO'));
 if (!choqueData.includes("const avisoId = 'choque_'") || !choqueData.includes('await runTransaction') ||
-    choqueData.includes('await criarDemandaSegura') || !escritorio.includes("startsWith('cancelad')")) {
-  falhar('choque de data ainda pode duplicar ou manter demanda cancelada na fila operacional');
-} else provar('alerta de choque usa ID determinístico/transação e cancelados saem da fila sem hard-delete');
+    choqueData.includes('await criarDemandaSegura') || !choqueData.includes('it.dataPostagem') ||
+    !choqueData.includes('it.dataFlexivel===true') || !choqueData.includes("excluido:true") ||
+    !choqueData.includes("excluidoPor:'sistema_regra_data_fixa'") || choqueData.includes('Number(it.day)')) {
+  falhar('choque ainda usa a grade como data fixa, duplica ou não arquiva alertas antigos por soft-delete');
+} else provar('alerta usa somente dataPostagem não flexível, transação determinística e arquiva avisos antigos sem apagar');
+
+const financeiroV54 = escritorio.slice(escritorio.indexOf('let html = `<div class="painelResumo financeiroResumoMes"'), escritorio.indexOf('/* Seção própria de saída'));
+if ((financeiroV54.match(/resumoCard/g)||[]).length !== 4 ||
+    !financeiroV54.includes('${brl(quitadoMensal)}') ||
+    !financeiroV54.includes('Mensalidades pagas em') ||
+    !financeiroV54.includes('${brl(totalEntrou)}') ||
+    escritorio.includes('📈 Últimos 6 meses (recebido)') || escritorio.includes('⚠️ Concentração de receita')) {
+  falhar('Financeiro não está limitado aos quatro indicadores atuais ou voltou a confundir caixa com mensalidades pagas');
+} else provar('Financeiro mostra quatro indicadores do mês e separa mensalidades quitadas do caixa da agência');
 
 const campanhasDetectadas = escritorio.slice(escritorio.indexOf('window.detectarCampanhas'), escritorio.indexOf('function montarPipelineCampanhas'));
 if (!campanhasDetectadas.includes('it.dataPostagem') || !campanhasDetectadas.includes('dataCampanha') ||

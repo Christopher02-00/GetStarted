@@ -1152,6 +1152,44 @@ async function testarIdentidadeClienteSandbox() {
     'registro arquivado de alias/unificação voltou a oferecer reativação');
 }
 
+function testarV53Sandbox() {
+  const progressoFonte=trecho(escritorio,'function progressoEditorialCalendario','  const MESES_CAL');
+  const progressoApi=executarSandbox('progresso-editorial-v53.js',`${progressoFonte}\nglobalThis.api={progressoEditorialCalendario};`);
+  const progresso=progressoApi.progressoEditorialCalendario([
+    {desc:'Roteiro',legenda:'Legenda',ref:'https://ref'},
+    {desc:'',legenda:'',ref:''},
+    {desc:'Não contar',legenda:'Não contar',ref:'x',excluido:true}
+  ]);
+  exigir(progresso.total===2&&progresso.roteiros===1&&progresso.legendas===1&&progresso.referencias===1,
+    'progresso editorial voltou a contar item em soft-delete ou inflar roteiros');
+
+  const detectarFonte=trecho(escritorio,'window.detectarCampanhas = function','  function montarPipelineCampanhas');
+  const detectarApi=executarSandbox('campanhas-datas-v53.js',
+    `const PALAVRAS_CAMPANHA=['campanha'];function mesDoItemCalendario(cal,it){return it.mes||'';}function mesDoTextoConf(){return '';}function dataLocal(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}${detectarFonte}\nglobalThis.api={detectar:window.detectarCampanhas};`);
+  const detectadas=detectarApi.detectar([{id:'cliente',client:'Cliente',items:[
+    {name:'Campanha A',mes:'2026-08',day:17,dataPostagem:'2026-08-18'},
+    {name:'Campanha B',mes:'2026-08',day:22},
+    {name:'Campanha inválida',mes:'2026-02',day:31},
+    {name:'Campanha arquivada',mes:'2026-08',day:5,excluido:true}
+  ]}]);
+  exigir(detectadas.length===3&&detectadas[0].dataCampanha==='2026-08-18'&&detectadas[1].dataCampanha==='2026-08-22'&&detectadas[2].dataCampanha==='',
+    'campanha detectada perdeu dataPostagem, derivou data inválida ou voltou a contar arquivada');
+
+  const demandaFonte=trecho(escritorio,'function demandaOperacionalVisivel','  window.demandaOperacionalVisivel');
+  const demandaApi=executarSandbox('demandas-canceladas-v53.js',
+    `let usuarioAtual='Cecília';function demandaDeExtraJaResolvida(){return false;}function hojeLocal(){return '2026-08-11';}${demandaFonte}\nglobalThis.api={visivel:demandaOperacionalVisivel};`);
+  exigir(!demandaApi.visivel({status:'cancelada'})&&!demandaApi.visivel({status:'cancelada_video_trafego'})&&demandaApi.visivel({status:'pendente'}),
+    'demanda cancelada voltou a aparecer como trabalho operacional');
+
+  const portal=fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8');
+  const regras=fs.readFileSync(path.join(raiz,'firestore.rules'),'utf8');
+  const storiesPortal=trecho(portal,'async function carregarStories','  /* ===== SUA PROPOSTA');
+  exigir(storiesPortal.includes("clienteAtual.slug+'_'+semana")&&storiesPortal.includes("revisaoInterna==='liberado'")&&storiesPortal.includes('liberadoCliente===true'),
+    'Portal voltou a listar ou mostrar links de Stories sem liberação explícita');
+  exigir(regras.includes('resource.data.cliente == clienteDaSessao()')&&regras.includes('resource.data.liberadoCliente == true'),
+    'Firestore voltou a permitir Stories de outro cliente ou ainda não liberados');
+}
+
 try {
   await testarLoginSandbox();
   testarFinanceiroSandbox();
@@ -1168,6 +1206,7 @@ try {
   testarCofreCeciliaSandbox();
   await testarCentralClientesAmandaSandbox();
   await testarIdentidadeClienteSandbox();
+  testarV53Sandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

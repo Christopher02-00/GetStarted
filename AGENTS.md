@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30915885/AGENTS.md)
+[Uploading AGENTS.md…]()
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -93,6 +93,10 @@ O acompanhamento editorial também deve manter recorte único: estado, total de 
 O checklist diário de Stories usa o slug persistido como identidade semanal, não o nome visível. Leituras independentes são paralelas; `☐/☑`, autoria e erro de gravação precisam aparecer na própria ação. Nunca mostrar sucesso antes de o `setDoc` concluir, nunca transformar falha em check local e nunca considerar a simples presença tardia da seção como prova de que Gabi consegue utilizá-la.
 
 A auditoria publicada da V51 mostrou que acelerar somente as leituras de Stories ainda deixou o controle 11,6 segundos atrás de `autoVerificarChecklist()` e `calcularStreak()`. O tempo obrigatório é do clique até o primeiro controle acionável, não apenas da função final. `storiesDiariosBox` deve nascer antes dessas verificações independentes e o mesmo nó deve ser preservado quando o restante do checklist terminar; nunca recriar o bloco, duplicar leituras ou bloquear Stories por streak.
+
+Em 11/08/2026, os links diários de Stories revelaram novamente uma cadeia incompleta: `stories_links` era gravado pela Gabi, mas o Portal lia apenas `stories_semanais` e as regras impediam o cliente de ler a coleção dos links. Todo artefato destinado ao cliente precisa atravessar escritor → revisão Amanda → regra por slug → leitor determinístico do Portal. Link alterado volta para `aguardando_interna`; o cliente só lê quando `revisaoInterna=liberado` e `liberadoCliente=true`. Nunca listar `stories_links` no Portal nem liberar `stories_clientes`/`stories_diarios_execucoes`.
+
+No mesmo incidente, alertas de colisão repetiram porque consulta seguida de `addDoc` não é unicidade. Alertas únicos usam ID determinístico e transação; status com prefixo `cancelad` nunca entra em fila operacional, embora o documento permaneça por soft-delete. Campanhas detectadas preservam `dataPostagem` completa ou derivam mês+dia validado e deduplicam por cliente+título+data, sem criar cópia. Progresso editorial exclui `excluido:true` e comunica primeiro o estado por calendário/cliente, não um agregado gigante de itens heterogêneos.
 
 Antes de entregar qualquer mudança, faça também a checagem curta do catálogo: confirme a base mais recente, procure substituições globais e prefixos `async` alterados, compare contagens/escopo das ocorrências, valide variáveis no escopo que as declara, normalize apenas o formato de linha esperado e carregue a versão nova em documento/iframe limpo. Essa checagem complementa, não substitui, `preflight` e `regression-critical`.
 

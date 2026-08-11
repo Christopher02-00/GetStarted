@@ -1,4 +1,4 @@
-[AGENTS.md](https://github.com/user-attachments/files/30942432/AGENTS.md)
+[Uploading AGENTS.md…]()
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -113,6 +113,12 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 3. Execute `scripts/preflight.mjs` e `scripts/regression-critical.mjs` com Node.js, além dos testes específicos do fluxo alterado em sandbox, com funções nomeadas próprias. Não chame uma função nua já carregada na página para provar código novo.
 4. Para UI, valide carregamento, erro/vazio, desktop e mobile e, quando possível, o DOM real. Para dados, diferencie teste local, leitura de produção e gravação de produção.
 5. Segurança, papéis, Firestore, login, financeiro e privacidade são sempre regressões obrigatórias, mesmo quando não forem o tema principal.
+
+### Invariante de alteração de contratos
+
+- Mudança de valor de mensalidade nunca reescreve a competência já aberta nem um pagamento confirmado. Ela é registrada no contrato com valor, competência de início, motivo, autoria e histórico; o gerador e o Financeiro calculam o valor pela competência consultada.
+- A ficha geral do cliente não é um segundo escritor de valor financeiro. Alterações comerciais ficam em `Contratos`; a ficha pode atualizar dados cadastrais, vencimento e cortesia sem substituir `valorVigente` ou `valorDevido`.
+- Cobrança futura já criada pode ser sincronizada somente se estiver aberta ou isenta. Pagamentos `pago` e `cancelado` permanecem históricos e imutáveis.
 
 ## Evidência e entrega
 

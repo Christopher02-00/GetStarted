@@ -114,7 +114,7 @@ function testarMensalidadesSandbox() {
   const identidadeClientes = trecho(escritorio, 'const APELIDOS_DE_CONTRATO', '  function dataOperacionalISO');
   const fonte = trecho(escritorio, 'function statusMensalidadeCanonico', '  window.marcarMensalidade = async function');
   const api = executarSandbox('mensalidades-sandbox.js',
-    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,destinoRecebimentoEntradaValido,recebimentosEntradaOperacionais,resumoRecebimentosEntradaNoMes,competenciaFinanceiraValida,pagamentoPertenceAoCliente,analisarPagamentosParaSaida,contratoVigenteNaCompetencia,ajusteCortesiaMensalidade,situacaoMensalidade};`);
+    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,destinoRecebimentoEntradaValido,recebimentosEntradaOperacionais,resumoRecebimentosEntradaNoMes,competenciaFinanceiraValida,pagamentoPertenceAoCliente,analisarPagamentosParaSaida,contratoVigenteNaCompetencia,competenciaSeguinte,valorContratoNaCompetencia,ajusteValorProgramadoMensalidade,ajusteCortesiaMensalidade,situacaoMensalidade};`);
   exigir(api.statusMensalidadeCanonico({status:' ISENTO '}) === 'isento' &&
     api.mensalidadeResolvida({status:'cortesia'}) === true,
     'cortesia legada/normalizada voltou a ser tratada como cobrança');
@@ -172,6 +172,21 @@ function testarMensalidadesSandbox() {
     api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08',ultimaCompetenciaPagamento:'2026-09'},'2026-10')===false &&
     api.contratoVigenteNaCompetencia({},'2026-01')===true,
     'primeira/última competência não limita a cobrança ou apagou compatibilidade de contrato legado');
+  const vitalle={valorVigente:1700,valorProgramado:1000,valorProgramadoEm:'2026-09'};
+  exigir(api.competenciaSeguinte('2026-08')==='2026-09'&&api.competenciaSeguinte('2026-12')==='2027-01',
+    'cálculo do próximo mês falhou na troca comum ou na virada do ano');
+  exigir(api.valorContratoNaCompetencia(vitalle,'2026-08')===1700&&
+    api.valorContratoNaCompetencia(vitalle,'2026-09')===1000&&
+    api.valorContratoNaCompetencia(vitalle,'2026-10')===1000,
+    'alteração programada da Vitalle reescreveu agosto ou não perdurou após setembro');
+  const vitalleComNovaMudanca={...vitalle,valorProgramado:900,valorProgramadoEm:'2026-11',historicoAlteracoesValor:[{acao:'programada',novoValor:1000,inicio:'2026-09',em:'2026-08-11T12:00:00.000Z'}]};
+  exigir(api.valorContratoNaCompetencia(vitalleComNovaMudanca,'2026-10')===1000&&api.valorContratoNaCompetencia(vitalleComNovaMudanca,'2026-11')===900,
+    'uma segunda alteração futura apagou a vigência intermediária já registrada');
+  exigir(api.ajusteValorProgramadoMensalidade({status:'aberto',valorDevido:1700},'2026-09',1000,'2026-09')?.valorDevido===1000&&
+    api.ajusteValorProgramadoMensalidade({status:'isento',valorDevido:1700},'2026-09',1000,'2026-09')?.valorDevido===1000&&
+    api.ajusteValorProgramadoMensalidade({status:'aberto',valorDevido:1700},'2026-08',1000,'2026-09')===null&&
+    api.ajusteValorProgramadoMensalidade({status:'pago',valorDevido:1700},'2026-09',1000,'2026-09')===null,
+    'sincronização do novo valor alterou mês anterior/pago ou ignorou cobrança futura aberta/isenta');
   const analiseSaida=api.analisarPagamentosParaSaida([
     {id:'zeiss_2026-08',cliente:'zeiss',competencia:'2026-08',status:'pago'},
     {id:'zeens_2026-09',cliente:'zeens',competencia:'2026-09',status:'aberto'},
@@ -199,7 +214,8 @@ function testarMensalidadesSandbox() {
 
   const salvarContrato = trecho(escritorio, 'window.salvarContrato = async function', '  window.novoContrato');
   exigir(salvarContrato.includes('const lote = writeBatch(db);') &&
-    salvarContrato.includes('ajusteCortesiaMensalidade') && salvarContrato.includes('await lote.commit()'),
+    salvarContrato.includes('ajusteCortesiaMensalidade') && salvarContrato.includes('ajusteValorProgramadoMensalidade') &&
+    salvarContrato.includes('historicoAlteracoesValor') && salvarContrato.includes('await lote.commit()'),
     'contrato e mensalidades voltaram a ser salvos em estados divergentes');
   const acoes = trecho(escritorio, 'dias.forEach(dia => {', '    box.innerHTML = html;');
   exigir(acoes.includes("l.sit.k==='isento' && !l.cortesiaPermanente") &&
@@ -220,6 +236,7 @@ function testarMensalidadesSandbox() {
     'Financeiro voltou a confundir caixa com mensalidades quitadas ou a exibir mais de quatro indicadores principais');
   const geradorMensal = trecho(escritorio, 'window.renderMensalidades = async function', '  function atualizarBadgeMensalidades');
   exigir(geradorMensal.includes('if(!contratoVigenteNaCompetencia(ct, competencia)) continue;') &&
+    geradorMensal.includes('valorDevido: valorContratoNaCompetencia(ct,competencia)') &&
     geradorMensal.includes("!['isento','cancelado'].includes(l.sit.k)") &&
     geradorMensal.includes("!['pago','isento','cancelado'].includes(l.sit.k)"),
     'gerador/grade mensal voltou a criar ou contar cobrança fora do contrato/cancelada');
@@ -251,6 +268,9 @@ function testarMensalidadesSandbox() {
     editarFicha.includes('cortesiaMeses:dados.cortesiaMeses') &&
     editarFicha.includes("!['pago','cancelado'].includes(statusMensalidadeCanonico(p))") && editarFicha.includes('if(mudou) tx.set(ref,atualizacao'),
     'editar ficha ativa não sincroniza contrato e mensalidades');
+  exigir(!editarFicha.includes('valorVigente:dados.valorMensal')&&!editarFicha.includes('valorDevido:dados.valorMensal')&&
+    escritorio.includes('id="ecaValor" value="${Number(v.valorMensal||0)}" readonly'),
+    'ficha geral voltou a criar um segundo caminho retroativo para alterar mensalidade');
 
   const painelFinanceiro=trecho(escritorio,'window.confirmarRecebimentoEntrada=async function','  window.renderMensalidades = async function');
   exigir(painelFinanceiro.includes("usuarioAtual!=='Chris'")&&

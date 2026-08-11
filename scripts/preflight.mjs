@@ -80,10 +80,14 @@ const leisV54 = [
 const leisV55 = [
   'Alias financeiro retirou a Zeiss da operação da Gabi'
 ];
+const leisV56 = [
+  'Alteração de contrato reescrevia a competência já aberta',
+  'Ficha geral mantinha um segundo escritor de valor financeiro'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V55');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V55');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V56');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V56');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -546,9 +550,26 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-11-zeiss-preservada-v55') {
-  falhar(`build V55 inesperado: ${build || 'ausente'}`);
-} else provar('V55 preserva a V54 e recupera a identidade operacional da Zeiss sem migrar dados');
+if (build !== '2026-08-11-valor-contrato-programado-v56') {
+  falhar(`build V56 inesperado: ${build || 'ausente'}`);
+} else provar('V56 preserva a competência aberta e programa o novo valor para o mês seguinte');
+
+const salvarContratoProgramado = escritorio.slice(
+  escritorio.indexOf('window.salvarContrato = async function'),
+  escritorio.indexOf('window.novoContrato')
+);
+const fichaClienteAtivo = escritorio.slice(
+  escritorio.indexOf('window.salvarClienteAtivoCentral=async function'),
+  escritorio.indexOf('window.arquivarEntradaPendente')
+);
+if (!escritorio.includes('function valorContratoNaCompetencia') ||
+    !escritorio.includes('function ajusteValorProgramadoMensalidade') ||
+    !salvarContratoProgramado.includes('historicoAlteracoesValor') ||
+    !salvarContratoProgramado.includes('A alteração deve começar no próximo mês ou depois') ||
+    fichaClienteAtivo.includes('valorVigente:dados.valorMensal') ||
+    fichaClienteAtivo.includes('valorDevido:dados.valorMensal')) {
+  falhar('mudança programada de contrato perdeu competência, histórico ou fonte financeira única');
+} else provar('alteração de contrato tem vigência futura, histórico e não reescreve o valor pela ficha geral');
 
 const cofreCecilia = escritorio.slice(
   escritorio.indexOf('async function renderCofreCecilia'),

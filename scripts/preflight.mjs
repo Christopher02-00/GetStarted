@@ -24,6 +24,7 @@ if (erros.length) finalizar();
 
 const escritorio = ler('escritorio.html');
 const escritorioLf = escritorio.replace(/\r\n/g, '\n');
+const portal = ler('portal-cliente.html');
 const catalogoErros = ler('CATALOGO_DE_ERROS.md');
 
 const leisV45 = [
@@ -66,10 +67,16 @@ const leisV51 = [
 const leisV52 = [
   'Stories esperava verificações sem relação antes de existir no DOM'
 ];
+const leisV53 = [
+  'O link de Story parava no escritório e nunca chegava ao Portal',
+  'Aviso de choque usava consulta seguida de criação não atômica',
+  'Campanha detectada perdia a data completa',
+  'Painel editorial somava conteúdo arquivado e priorizava número gigante'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V52');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V52');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V53');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V53');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -393,7 +400,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-10-stories-imediatos-v52') ||
+if (!calendarioEditor.includes('2026-08-11-stories-campanhas-v53') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -524,9 +531,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-10-stories-imediatos-v52') {
-  falhar(`build V52 inesperado: ${build || 'ausente'}`);
-} else provar('V52 preserva a V51 e mostra Stories antes das verificações independentes do checklist');
+if (build !== '2026-08-11-stories-campanhas-v53') {
+  falhar(`build V53 inesperado: ${build || 'ausente'}`);
+} else provar('V53 preserva a V52 e corrige Stories, campanhas, alertas únicos e progresso editorial');
 
 const cofreCecilia = escritorio.slice(
   escritorio.indexOf('async function renderCofreCecilia'),
@@ -582,6 +589,38 @@ if (!centralDemandas.includes('Central de Demandas') ||
     !centralDemandas.includes('<details class="distribuicaoDemandas">')) {
   falhar('Demandas ainda não expõe cartões, filtros identificados e distribuição recolhível');
 } else provar('Demandas expõe central, filtros nomeados e distribuição por pessoa recolhível');
+
+const salvarLinksStories = escritorio.slice(escritorio.indexOf('window.salvarLinkStory'), escritorio.indexOf('window.renderStoriesCliente'));
+const carregarStoriesPortal = portal.slice(portal.indexOf('async function carregarStories'), portal.indexOf('/* ===== SUA PROPOSTA'));
+if (!salvarLinksStories.includes("revisaoInterna='aguardando_interna'") ||
+    !salvarLinksStories.includes('window.liberarLinksStory') ||
+    !salvarLinksStories.includes('window.devolverLinksStory') ||
+    !salvarLinksStories.includes('window.enviarLinksStoryParaRevisao') ||
+    !carregarStoriesPortal.includes("doc(db,'stories_links',clienteAtual.slug+'_'+semana)") ||
+    !carregarStoriesPortal.includes("linksDaSemana?.revisaoInterna==='liberado'") ||
+    !regras.includes('resource.data.liberadoCliente == true') ||
+    !regras.includes("resource.data.revisaoInterna == 'liberado'")) {
+  falhar('cadeia de links de Stories não fecha revisão Amanda → regra isolada → Portal do próprio cliente');
+} else provar('links de Stories chegam ao Portal somente após revisão e com isolamento por cliente/semana');
+
+const choqueData = escritorio.slice(escritorio.indexOf('async function avisarChoqueDeData'), escritorio.indexOf('window.varrerChoquesDeData'));
+if (!choqueData.includes("const avisoId = 'choque_'") || !choqueData.includes('await runTransaction') ||
+    choqueData.includes('await criarDemandaSegura') || !escritorio.includes("startsWith('cancelad')")) {
+  falhar('choque de data ainda pode duplicar ou manter demanda cancelada na fila operacional');
+} else provar('alerta de choque usa ID determinístico/transação e cancelados saem da fila sem hard-delete');
+
+const campanhasDetectadas = escritorio.slice(escritorio.indexOf('window.detectarCampanhas'), escritorio.indexOf('function montarPipelineCampanhas'));
+if (!campanhasDetectadas.includes('it.dataPostagem') || !campanhasDetectadas.includes('dataCampanha') ||
+    !escritorio.includes('chavesManuais') || !escritorio.includes('data ainda não definida no calendário')) {
+  falhar('quadro de campanhas ainda perde data completa ou duplica a janela do calendário');
+} else provar('campanhas preservam data completa, sinalizam ausência e deduplicam sem criar nova fonte');
+
+const progressoEditorialV53 = escritorio.slice(escritorio.indexOf('function progressoEditorialCalendario'), escritorio.indexOf('const MESES_CAL'));
+const visaoCalendariosV53 = escritorio.slice(escritorio.indexOf('window.renderVisaoCalendarios = async function'), escritorio.indexOf('/* ===== REFEITA — 28/07/2026'));
+if (!progressoEditorialV53.includes('i.excluido!==true') || !visaoCalendariosV53.includes('calendariosCompletos') ||
+    !visaoCalendariosV53.includes('Roteiros: ${l.roteiros} de ${l.total} prontos') || visaoCalendariosV53.includes('roteiros preenchidos')) {
+  falhar('painel editorial ainda conta arquivados ou apresenta agregado global confuso');
+} else provar('painel editorial conta somente itens ativos e explica progresso real por calendário');
 
 finalizar();
 

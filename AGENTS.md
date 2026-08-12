@@ -120,6 +120,12 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - A ficha geral do cliente não é um segundo escritor de valor financeiro. Alterações comerciais ficam em `Contratos`; a ficha pode atualizar dados cadastrais, vencimento e cortesia sem substituir `valorVigente` ou `valorDevido`.
 - Cobrança futura já criada pode ser sincronizada somente se estiver aberta ou isenta. Pagamentos `pago` e `cancelado` permanecem históricos e imutáveis.
 
+### Invariantes de workflow e arquivo operacional
+
+- A confirmação de um workflow (enviar calendário, aprovar, devolver) não deve falhar apenas porque o eco do próprio autosave mudou `updatedAt`. Só é permitido tolerar a versão diferente quando a assinatura do conteúdo de negócio é idêntica e nenhuma decisão posterior substituiu a ação. Conteúdo concorrente continua bloqueado.
+- Documento preservado por soft-delete ou `status=cancelado` é histórico, não trabalho ativo. Grades, contadores, régua de cobrança e seletores operacionais devem filtrar o estado central e a vigência; telas de arquivo continuam lendo o registro.
+- Uma funcionalidade do Portal do Cliente só está completa quando existem, na mesma entrega, entrada visível, escritor do cliente, regra isolada pelo slug da sessão e leitor da equipe. Não anunciar no Escritório um recurso que o cliente não consegue executar.
+
 ## Evidência e entrega
 
 - Nunca declare uma correção validada sem informar comando ou método, resultado e limite do teste.

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-12-calendario-mes-isolado-stories-v59">
+<meta name="gs-build" content="2026-08-12-stories-cadeia-real-v60">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -11749,26 +11749,38 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      (cobrança de sexta, checklist, painel) lê ESTE registro — então
      adicionar um cliente aqui já liga a automação pra ele, sem mexer em
      código. Coleção: `stories_clientes`. */
-  const STORY_CLIENTES_SEED = [
-    { slug:'juliane-nerone', nome:'Juliane Nerone', porSemana:5, dias:[1,2,3,4,5], combinado:'Story todo dia útil, de segunda a sexta.', ativo:true },
-    { slug:'vitalle-odonto', nome:'Vitalle', porSemana:5, dias:[1,2,3,4,5], combinado:'Story todo dia útil, de segunda a sexta.', ativo:true }
-  ];
   let __storyClientesCache = null;
 
   window.carregarClientesDeStory = async function(forcar){
     if(__storyClientesCache && !forcar) return __storyClientesCache;
     const snap = await getDocs(collection(db,'stories_clientes'));
-    /* Ler a tela nunca pode gravar no banco. O bootstrap anterior tentava
-       criar os dois registros seed durante a leitura; em auditoria, cota ou
-       permissão parcial isso transformava a lista inteira em vazia. A base
-       contratual conhecida entra apenas como fallback em memória, e um
-       documento real (inclusive `ativo:false`) sempre prevalece. */
-    const porSlug = new Map(STORY_CLIENTES_SEED.map(c => [c.slug,{id:c.slug,...c,origemFallback:true}]));
-    snap.forEach(d => porSlug.set(d.id,{ id:d.id, ...d.data() }));
-    const lista = [...porSlug.values()];
+    /* A coleção é a única verdade operacional. A V59 ainda misturava
+       registros reais com nomes seed em memória; isso fazia um nome
+       conhecido parecer contratado mesmo sem provar a ficha ativa.
+       Abertura continua somente leitura e nunca reativa cliente. */
+    const lista = [];
+    snap.forEach(d => lista.push({ id:d.id, ...d.data() }));
     __storyClientesCache = lista.filter(c => c.ativo !== false).sort((a,b) => (a.nome||'').localeCompare(b.nome||''));
     return __storyClientesCache;
   };
+
+  function estadoCadeiaStoriesCliente(slug, semana, stories, linkDoc){
+    const doCliente = (stories||[]).filter(s => s.cliente === slug && s.semana === semana && !s.excluido);
+    const links = Object.values((linkDoc&&linkDoc.dias)||{}).filter(d => String(d&&d.link||'').trim());
+    const emAjuste = doCliente.some(s => (s.revisaoInterna||'liberado') === 'ajuste_interno') ||
+      (!!links.length && linkDoc&&linkDoc.revisaoInterna === 'ajuste_interno');
+    const aguardandoAmanda = doCliente.some(s => (s.revisaoInterna||'liberado') === 'aguardando_interna') ||
+      (!!links.length && linkDoc&&linkDoc.revisaoInterna === 'aguardando_interna');
+    const liberados = doCliente.filter(s => (s.revisaoInterna||'liberado') === 'liberado').length;
+    const linksLiberados = !!links.length && linkDoc&&linkDoc.revisaoInterna === 'liberado' && linkDoc.liberadoCliente === true;
+    const totalSalvo = doCliente.length + links.length;
+    if(!totalSalvo) return {codigo:'nao_criado',titulo:'Ainda não foi enviado nesta semana',detalhe:'A Gabi precisa montar o roteiro ou colar os links e enviar para a Amanda.'};
+    if(emAjuste) return {codigo:'ajuste',titulo:'Ajuste solicitado',detalhe:'A Amanda devolveu este material. A Gabi precisa corrigir e reenviar.'};
+    if(aguardandoAmanda) return {codigo:'aguardando_amanda',titulo:'Esperando a Amanda',detalhe:'O material foi salvo e enviado, mas ainda não está visível no Portal do Cliente.'};
+    if(liberados || linksLiberados) return {codigo:'liberado_portal',titulo:'Liberado no Portal',detalhe:'A Amanda liberou o material desta semana para o cliente.'};
+    return {codigo:'salvo',titulo:'Salvo, mas sem liberação confirmada',detalhe:'Confira a revisão antes de considerar este material entregue ao cliente.'};
+  }
+  window.estadoCadeiaStoriesCliente = estadoCadeiaStoriesCliente;
 
   window.salvarClienteDeStory = async function(slug){
     const nome = (document.getElementById('scNome_'+slug)?.value || '').trim();
@@ -12004,6 +12016,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       cont.innerHTML = `<div class="card" style="border:2px solid var(--red);"><b>⚠️ Não consegui confirmar os clientes de Stories.</b><div class="desc" style="margin-top:6px;">A leitura falhou; isso não significa que os dados sumiram. Recarregue a tela ou tente novamente em instantes.</div></div>`;
       return;
     }
+    if(!clientesStory.some(c=>c.slug===window.__storyClienteSel)){
+      window.__storyClienteSel=clientesStory[0]?.slug||'';
+    }
     const semStory = CLIENTES_LISTA.filter(c => !clientesStory.some(x => x.slug === c.slug));
 
     /* A Gabi pediu: um botão por cliente no topo, e ao clicar aparece a
@@ -12123,14 +12138,34 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     const snap = await getDocs(collection(db,'stories_semanais'));
     const todos = []; snap.forEach(d => todos.push({id:d.id, ...d.data()}));
-    const daSemana = todos.filter(s => s.semana === semana);
+    const clienteStorySelecionado=window.__storyClienteSel||'';
+    const daSemana = todos.filter(s => s.semana === semana && (!clienteStorySelecionado || s.cliente === clienteStorySelecionado));
     // órfãos: têm semana mas nenhum dia legível — antes desapareciam da tela
-    const semSemana = todos.filter(s => !s.semana || (s.semana === semana && !Number(s.diaSemana ?? s.dia)));
+    const semSemana = todos.filter(s => (!clienteStorySelecionado || s.cliente === clienteStorySelecionado) &&
+      (!s.semana || (s.semana === semana && !Number(s.diaSemana ?? s.dia))));
 
     /* Campo ausente = story anterior a 29/07 = já estava com o cliente. */
     const revisaoStory = s => s.revisaoInterna || 'liberado';
     const esperandoAmanda = todos.filter(s => revisaoStory(s) === 'aguardando_interna');
     const linksEsperandoAmanda=Object.values(window.__linksStoryDocs||{}).filter(x=>(x.revisaoInterna||'aguardando_interna')==='aguardando_interna'&&Object.values(x.dias||{}).some(d=>String(d?.link||'').trim()));
+
+    /* O status da cadeia fica visível por cliente. Isso impede que
+       “cliente cadastrado” seja confundido com “conteúdo liberado”. */
+    if(clientesStory.length){
+      html += `<div class="card" data-cadeia-stories="true">
+        <h2>🔎 Onde está o Story desta semana</h2>
+        <div class="desc">A mesma semana, da Gabi até o Portal. “Ainda não enviado” não é erro do cliente: significa que não há roteiro nem link salvo para a Amanda revisar.</div>
+        ${clientesStory.map(c=>{
+          const chave=c.slug+'_'+semana;
+          const estado=estadoCadeiaStoriesCliente(c.slug,semana,todos,(window.__linksStoryDocs||{})[chave]);
+          const cor=estado.codigo==='liberado_portal'?'var(--green)':estado.codigo==='ajuste'?'var(--red)':'var(--yellow)';
+          return `<div class="item" data-story-cadeia-cliente="${escAttr(c.slug)}" data-story-cadeia-estado="${escAttr(estado.codigo)}" style="border-left:3px solid ${cor};">
+            <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo ${estado.codigo==='liberado_portal'?'aprovada':estado.codigo==='ajuste'?'atrasado':'pendente'}">${esc(estado.titulo)}</span></div>
+            <div class="meta" style="margin-top:5px;">${esc(estado.detalhe)}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
 
     const rotuloStatus = s => revisaoStory(s) === 'aguardando_interna' ? 'Esperando a Amanda liberar' :
                               revisaoStory(s) === 'ajuste_interno' ? 'A Amanda pediu ajuste: ' + esc(s.motivoAjusteInterno||'') :

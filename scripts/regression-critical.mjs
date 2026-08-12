@@ -518,7 +518,8 @@ async function testarCalendariosSandbox() {
   const fonteFila = trecho(escritorio, 'function mesDoItemCalendario', 'window.linhasCalendariosAguardandoRevisao');
   const fila = executarSandbox('calendarios-aprovacao-sandbox.js',
     `function mesDoTextoConf(txt){const m=String(txt||'').match(/(20\\d{2})-(\\d{2})/);return m?m[1]+'-'+m[2]:'';}\n` +
-    `${fonteFila}\nglobalThis.api={estadoMesCal,itensDoMesCalendario,linhasCalendariosAguardandoRevisao};`);
+    `function slugClienteCanonico(slug){return ({zeens:'zeiss','otica-visao-araucaria':'zeiss'}[slug]||slug);}\n` +
+    `${fonteFila}\nglobalThis.api={estadoMesCal,itensDoMesCalendario,linhasCalendariosAguardandoRevisao,mesHistoricoForaDaRevisao};`);
   const registro = (id, dados) => ({ id, data:()=>dados });
   const agostoPendente = registro('cliente-x', {
     client:'Cliente X', items:[{mes:'2026-08',name:'A',ref:'https://ref'}],
@@ -530,9 +531,9 @@ async function testarCalendariosSandbox() {
     client:'Legado', mesLegado:'2026-07', items:[{name:'antigo'},{mes:'2026-08',name:'novo'}],
     aprovacaoMeses:{'2026-07':{status:'aguardando_interna',por:'Gabrielle'},'2026-08':{status:'rascunho'}}
   });
-  const filaLegado = fila.linhasCalendariosAguardandoRevisao([mistoLegado]);
-  exigir(filaLegado.length === 1 && filaLegado[0].itens === 1 && filaLegado[0].mesKey === '2026-07',
-    'conteúdo legado sumiu da fila mensal da Amanda');
+  const filaLegado = fila.linhasCalendariosAguardandoRevisao([mistoLegado],new Date(2026,7,12,12));
+  exigir(filaLegado.length === 0 && fila.mesHistoricoForaDaRevisao('2026-07',new Date(2026,7,12,12))===true,
+    'mês histórico explicitamente contaminado continuou na fila operacional da Amanda');
   exigir(fila.linhasCalendariosAguardandoRevisao([registro('ok', {
     items:[{mes:'2026-08',name:'A'}], aprovacaoMeses:{'2026-08':{status:'liberado'}}
   })]).length === 0, 'calendário já liberado continuou pedindo aprovação');
@@ -549,6 +550,24 @@ async function testarCalendariosSandbox() {
   exigir(filaJulhoSetembro.length === 1 && filaJulhoSetembro[0].mesKey === '2026-09' &&
     fila.estadoMesCal(julhoSetembro.data(),'2026-07') === 'liberado',
     'status global de setembro voltou a duplicar julho na fila da Amanda');
+  const vipContaminado=registro('vip',{
+    client:'VIP',mesLegado:'2026-07',items:[
+      ...Array.from({length:6},(_,i)=>({mes:'2026-07',name:'Julho '+i})),
+      ...Array.from({length:15},(_,i)=>({mes:'2026-09',name:'Setembro '+i}))
+    ],aprovacaoMeses:{
+      '2026-07':{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-12T10:00:00Z'},
+      '2026-09':{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-12T10:00:01Z'}
+    }
+  });
+  const vipFila=fila.linhasCalendariosAguardandoRevisao([vipContaminado],new Date(2026,7,12,12));
+  exigir(vipFila.length===1&&vipFila[0].mesKey==='2026-09'&&vipFila[0].itens===15,
+    'VIP voltou a mostrar julho e setembro juntos na fila da Amanda');
+  const aliasesMesmoMes=fila.linhasCalendariosAguardandoRevisao([
+    registro('zeens',{client:'Zeens',items:[{mes:'2026-09',name:'A'}],aprovacaoMeses:{'2026-09':{status:'aguardando_interna',em:'2026-08-12T10:00:00Z'}}}),
+    registro('zeiss',{client:'Zeiss',items:[{mes:'2026-09',name:'A'}],aprovacaoMeses:{'2026-09':{status:'aguardando_interna',em:'2026-08-12T10:00:00Z'}}})
+  ],new Date(2026,7,12,12));
+  exigir(aliasesMesmoMes.length===1&&aliasesMesmoMes[0].slug==='zeiss',
+    'aliases do mesmo cliente/mês voltaram a criar duas decisões para Amanda');
   const barreiraHistorico=trecho(calendario,'function mesAnteriorAoAtual','/* ===== REABRIR ANTES DO ENVIO');
   exigir(barreiraHistorico.includes("if(mesAnteriorAoAtual(mesVisivel))") &&
     barreiraHistorico.includes('não pode ser reenviado junto com o calendário novo'),

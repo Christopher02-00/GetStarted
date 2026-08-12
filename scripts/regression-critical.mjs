@@ -114,7 +114,7 @@ function testarMensalidadesSandbox() {
   const identidadeClientes = trecho(escritorio, 'const APELIDOS_DE_CONTRATO', '  function dataOperacionalISO');
   const fonte = trecho(escritorio, 'function statusMensalidadeCanonico', '  window.marcarMensalidade = async function');
   const api = executarSandbox('mensalidades-sandbox.js',
-    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,destinoRecebimentoEntradaValido,recebimentosEntradaOperacionais,resumoRecebimentosEntradaNoMes,competenciaFinanceiraValida,pagamentoPertenceAoCliente,analisarPagamentosParaSaida,contratoVigenteNaCompetencia,competenciaSeguinte,valorContratoNaCompetencia,ajusteValorProgramadoMensalidade,ajusteCortesiaMensalidade,situacaoMensalidade};`);
+    `${identidadeClientes}\n${fonte}\nglobalThis.api={statusMensalidadeCanonico,mensalidadeResolvida,mensalidadesOperacionaisCanonicas,contratosOperacionaisCanonicos,destinoRecebimentoEntradaValido,recebimentosEntradaOperacionais,resumoRecebimentosEntradaNoMes,competenciaFinanceiraValida,pagamentoPertenceAoCliente,analisarPagamentosParaSaida,contratoVigenteNaCompetencia,mensalidadeVisivelNaGradeOperacional,competenciaSeguinte,valorContratoNaCompetencia,ajusteValorProgramadoMensalidade,ajusteCortesiaMensalidade,situacaoMensalidade};`);
   exigir(api.statusMensalidadeCanonico({status:' ISENTO '}) === 'isento' &&
     api.mensalidadeResolvida({status:'cortesia'}) === true,
     'cortesia legada/normalizada voltou a ser tratada como cobrança');
@@ -172,6 +172,10 @@ function testarMensalidadesSandbox() {
     api.contratoVigenteNaCompetencia({primeiraCompetencia:'2026-08',ultimaCompetenciaPagamento:'2026-09'},'2026-10')===false &&
     api.contratoVigenteNaCompetencia({},'2026-01')===true,
     'primeira/última competência não limita a cobrança ou apagou compatibilidade de contrato legado');
+  exigir(api.mensalidadeVisivelNaGradeOperacional({status:'cancelado'},{ultimaCompetenciaPagamento:'2026-08'},'2026-09')===false &&
+    api.mensalidadeVisivelNaGradeOperacional({status:'aberto'},{ultimaCompetenciaPagamento:'2026-08'},'2026-09')===false &&
+    api.mensalidadeVisivelNaGradeOperacional({status:'pago'},{ultimaCompetenciaPagamento:'2026-08'},'2026-08')===true,
+    'cliente encerrado reaparece na grade operacional após a última competência ou some do histórico válido');
   const vitalle={valorVigente:1700,valorProgramado:1000,valorProgramadoEm:'2026-09'};
   exigir(api.competenciaSeguinte('2026-08')==='2026-09'&&api.competenciaSeguinte('2026-12')==='2027-01',
     'cálculo do próximo mês falhou na troca comum ou na virada do ano');
@@ -561,6 +565,18 @@ async function testarCalendariosSandbox() {
   exigir(envioApi.gravacoes() === 1 && envioApi.recusas() === 1 &&
     envioApi.dados().aprovacaoMeses['2026-08'].status === 'liberado',
     'exceção do legado desbloqueou calendário realmente enviado ao cliente');
+
+  const assinaturaConflitoFonte = trecho(calendario,'function assinaturaConteudoCalendario','/* ===== O QUE ACONTECEU COM A GABI');
+  const conflitoApi = executarSandbox('envio-calendario-autosave-v57.js',
+    `${assinaturaConflitoFonte}\nglobalThis.api={deveBloquearConflitoCalendario};`);
+  const servidorEco={client:'Cliente',items:[{name:'A'}],updatedAt:'servidor',aprovacaoInterna:{status:'rascunho'}};
+  const envioLocal={client:'Cliente',items:[{name:'A'}],updatedAt:'local',aprovacaoInterna:{status:'aguardando_interna',em:'envio-1'}};
+  exigir(conflitoApi.deveBloquearConflitoCalendario(true,true,servidorEco,envioLocal,'envio-1','envio-1')===false,
+    'eco idêntico do autosave continua impedindo a Gabi de enviar para Amanda');
+  exigir(conflitoApi.deveBloquearConflitoCalendario(true,true,{...servidorEco,items:[{name:'Outra edição'}]},envioLocal,'envio-1','envio-1')===true &&
+    conflitoApi.deveBloquearConflitoCalendario(true,false,servidorEco,envioLocal,'','')===true &&
+    conflitoApi.deveBloquearConflitoCalendario(true,true,servidorEco,envioLocal,'envio-1','decisao-amanda')===true,
+    'exceção do envio formal permitiu sobrescrever conteúdo concorrente ou decisão mais recente');
 
   const progressoFonte = trecho(escritorio,
     'function progressoEditorialCalendario',
@@ -1249,6 +1265,14 @@ function testarV54Sandbox() {
     'Portal voltou a listar ou mostrar links de Stories sem liberação explícita');
   exigir(regras.includes('resource.data.cliente == clienteDaSessao()')&&regras.includes('resource.data.liberadoCliente == true'),
     'Firestore voltou a permitir Stories de outro cliente ou ainda não liberados');
+  const avaliacaoPortal=trecho(portal,'async function carregarAvaliacaoCliente','/* ===== PROGRAMADOS');
+  const regraAvaliacao=trecho(regras,'match /avaliacoes_clientes/{docId}','match /demandas_cliente/{docId}');
+  exigir(portal.includes('data-tab="avaliacao"')&&avaliacaoPortal.includes("doc(db,'avaliacoes_clientes',idAvaliacaoPortal())")&&
+    avaliacaoPortal.includes("cliente:clienteAtual.slug")&&avaliacaoPortal.includes("origem:'portal_cliente'")&&
+    regraAvaliacao.includes('resource.data.cliente == clienteDaSessao()')&&
+    regraAvaliacao.includes("affectedKeys().hasOnly(['clienteNome','nota','mes','comentario','origem','atualizadoEm'])")&&
+    regraAvaliacao.includes('allow delete: if false;'),
+    'avaliação do Portal não está ligada ao próprio cliente ou ampliou escrita/exclusão');
 }
 
 try {

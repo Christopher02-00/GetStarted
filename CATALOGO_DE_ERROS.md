@@ -794,3 +794,64 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 - [x] Calendários singular e plural permanecem byte a byte idênticos.
 - [ ] Estados incorretos já exibidos são corrigidos por leitura na V59; nenhuma gravação automática foi feita em produção.
 - [ ] A confirmação visual pelo cliente Vitalle continua dependente de abrir o link privado dele após a publicação; a auditoria não publicou nem aprovou Stories em nome do cliente.
+
+---
+
+## 42. ERRO DE DIAGNÓSTICO APÓS A V59 (12/08/2026)
+
+### 42.1 Confundi cliente conhecido com cliente operacional ativo de Stories
+**O que fiz:** tratei Vitalle e Juliane como fallback conhecido em memória e considerei isso suficiente para afirmar que a tela voltaria a oferecer os dois clientes.
+**O que aconteceu:** os documentos reais de `stories_clientes` continuaram prevalecendo, como deveriam. Quando o registro persistido estava inativo ou incoerente, ele anulava corretamente o fallback, e a tela publicada continuava em “Nenhum cliente com story ainda”.
+**Como o Chris viu:** o Portal da Vitalle continuou vazio e a auditoria real da Gabi confirmou que Vitalle aparecia somente entre os clientes que poderiam ser adicionados, não entre os clientes ativos de Stories.
+**Por que passou:** o teste automático cobria coleção vazia e renderização do fallback, mas não cobria o estado real mais importante: documento existente com `ativo:false`, Story semanal inexistente e link ainda não liberado. Eu também usei presença do nome no HTML como evidência, sem provar em qual lista ele aparecia.
+**Como deve ser corrigido:** a ativação contratual precisa ter uma fonte canônica e a interface deve distinguir explicitamente `contratado`, `inativo`, `aguardando Amanda` e `liberado ao cliente`. A validação deve percorrer o registro do cliente, a criação semanal, a revisão da Amanda e a leitura do Portal na mesma competência.
+> **LEI:** nome presente na página não prova disponibilidade operacional. Para declarar um fluxo de publicação resolvido, prove a mesma chave de cliente e semana nos quatro elos: configuração ativa → conteúdo salvo → revisão/liberação → Portal.
+
+### 42.2 Teste estrutural aceitou um fluxo sem dado real
+**O que fiz:** o gate da V59 verificava que `carregarClientesDeStory()` tinha fallback e que o Portal filtrava por cliente/semana, mas não exigia um cenário integrado com documento real inativo, reativação e conteúdo aguardando revisão.
+**O que aconteceu:** 534 asserções passaram e, mesmo assim, a jornada real da Vitalle permaneceu vazia.
+**Como consertei o processo:** o teste de regressão passa a ter estados explícitos por semana e cliente e não aprova a área somente por marcador, texto ou função existente. A verificação publicada precisa abrir a tela da Gabi e confirmar a seção operacional, não a lista geral de cadastro.
+> **LEI:** teste de fluxo precisa conter o estado que causou o incidente. Sintaxe, marcador de versão e presença nominal são pré-condições; nunca são prova de ponta a ponta.
+
+## 43. CHECKLIST OBRIGATÓRIO PARA STORIES APÓS A V59
+
+- [ ] O contrato/ficha e `stories_clientes` concordam sobre `incluiStories` e `ativo`.
+- [ ] Gabi enxerga o cliente no bloco “Escolhe o cliente”, não apenas no seletor “Adicionar”.
+- [ ] A semana consultada é a mesma em `stories_semanais`, `stories_links`, aprovação da Amanda e Portal.
+- [ ] Conteúdo salvo aparece para a Gabi antes de qualquer aprovação; falha de leitura não vira zero.
+- [ ] `aguardando_interna` aparece para Amanda e continua invisível ao cliente.
+- [ ] Somente `liberadoCliente:true`/revisão liberada aparece no Portal do mesmo slug.
+- [ ] Documento inativo não é reativado por fallback silencioso; divergência contratual aparece para gestão corrigir.
+- [ ] A prova publicada identifica o bloco/estado onde o nome aparece e registra a contagem real da semana.
+
+## 44. DIAGNÓSTICO E CORREÇÃO — V60 (12/08/2026)
+
+### 44.1 A ficha real da Vitalle estava com Stories desativados
+**Prova publicada:** a Central de Clientes mostrou `Vitalle Odonto · Stories: não`; na auditoria da Gabi, o cliente aparecia somente no seletor de adicionar, com zero clientes ativos, zero Stories semanais e zero links na semana de 10/08.
+**Causa:** `stories_clientes/vitalle-odonto` estava inativo. O Portal estava correto ao não mostrar material inexistente ou não liberado.
+**Correção de dado:** usei a própria tela oficial da Central de Clientes, no perfil Chris, para marcar Stories como incluídos. A transação atualizou a ficha e reativou `stories_clientes` sem criar conteúdo, aprovar em nome da Amanda ou apagar histórico.
+**Resultado real:** a Central confirmou `Stories: sim` e a auditoria da Gabi passou a exibir Vitalle no bloco operacional. O contador da semana permaneceu zero, provando que nenhum Story foi inventado e que a Gabi ainda precisa enviar o material real.
+> **LEI:** correção de configuração não pode fabricar conteúdo. Primeiro reative o contrato pela porta oficial; depois mostre claramente se o material não foi criado, aguarda Amanda ou já chegou ao Portal.
+
+### 44.2 Seeds em código eram uma segunda verdade sobre contrato
+**O que existia:** uma constante dizia que Vitalle e Juliane possuíam Stories, enquanto a ficha e `stories_clientes` podiam dizer o contrário.
+**Como consertei:** a lista operacional passa a vir somente de `stories_clientes`. A Central continua sendo a porta oficial para Amanda/Chris ativarem ou desativarem o serviço e sincroniza ficha + coleção na mesma transação.
+> **LEI:** contrato ativo não pode ser inferido por lista fixa no HTML. Fallback pode preservar leitura legada, mas nunca contradizer uma decisão persistida nem simular serviço contratado.
+
+### 44.3 O bloco “desta semana” misturava clientes
+**O que existia:** mesmo depois de escolher um cliente no topo, `daSemana` filtrava apenas a semana e reunia Stories de todos os clientes. Com vários contratos ativos, a Gabi poderia enxergar conteúdo de outro cliente no bloco da Vitalle.
+**Como consertei:** a seleção agora é revalidada contra a lista ativa e o histórico semanal/legado é filtrado por `cliente + semana`. O painel de diagnóstico geral continua separado e pode resumir todos sem misturar o conteúdo editável.
+> **LEI:** seletor de cliente precisa governar toda leitura abaixo dele. Filtrar somente por período em tela nominal produz vazamento operacional entre clientes, mesmo dentro da equipe.
+
+## 45. CHECKLIST EXECUTADO NA V60
+
+- [x] Catálogo atualizado antes da correção do código.
+- [x] Vitalle confirmada como mensalista ativa com `Stories: não` antes da correção.
+- [x] Ativação feita pela transação oficial da Central; nenhuma escrita direta no console.
+- [x] Vitalle confirmada com `Stories: sim` na Central e visível no bloco operacional da Gabi.
+- [x] Semana de 10/08 continua com zero conteúdo e zero link; nenhum dado fictício foi criado.
+- [x] Tela da equipe distingue `não criado`, `aguardando Amanda`, `ajuste` e `liberado no Portal` pela mesma chave cliente+semana.
+- [x] O conteúdo detalhado da semana é filtrado pela seleção de cliente e não mistura outras empresas.
+- [x] Portal explica que conteúdo vazio ainda depende de preparação e revisão, sem acusar perda.
+- [x] Seed fixo de contrato removido; `stories_clientes` é a fonte única operacional.
+- [ ] O Story real da semana ainda precisa ser montado ou ter os links colados pela Gabi e depois liberado pela Amanda. O sistema não pode fabricar esse trabalho.

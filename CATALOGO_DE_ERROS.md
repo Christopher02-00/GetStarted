@@ -1,3 +1,4 @@
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30991049/CATALOGO_DE_ERROS.md)
 [Uploading CATALOGO_DE_ERROS.md…]()
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30964009/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
@@ -936,3 +937,25 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 **Correção:** `consolidarClientesAtivosPorIdentidade()` roda na fronteira final, depois de todas as fontes serem unidas e antes da ordenação/renderização. Ela não grava, não apaga e não funde documentos; escolhe a ficha operacional mais rica, preserva token/cadastro complementar e produz um cartão por slug canônico.
 **Gate novo:** a regressão agora executa a função com `zeiss`, `zeens` e `otica-visao-araucaria`, exige uma única Zeiss, preservação da ficha oficial e reaproveitamento seguro do token legado. O preflight também exige que a Central realmente chame a consolidação final.
 > **LEI:** normalizar uma fonte intermediária não prova deduplicação da interface. Quando várias origens alimentam um painel, a identidade deve ser consolidada depois da última união e o teste deve executar a saída final com aliases concorrentes.
+
+## 51. REGRESSÃO — MÊS HISTÓRICO AINDA APARECIA NA FILA DA AMANDA (12/08/2026)
+
+### 51.1 Bloqueei o reenvio novo, mas não neutralizei o estado antigo já contaminado
+**Prova real:** no painel da Amanda, VIP apareceu duas vezes: setembro/2026 com 15 conteúdos e julho/2026 com 6, ambos registrados como enviados por Gabrielle em 12/08. Julho já era histórico e não podia voltar a pedir decisão.
+**O que eu fiz errado:** a correção anterior impedia a Gabi de clicar novamente em “Enviar” num mês passado e impedia setembro de herdar o campo global de julho. Porém, `linhasCalendariosAguardandoRevisao()` ainda confiava num `aprovacaoMeses['2026-07'].status='aguardando_interna'` já gravado por uma versão antiga. O teste anterior, pior, exigia que esse julho contaminado continuasse aparecendo.
+**Correção:** a fonte única da fila rejeita qualquer competência anterior ao mês vigente, independentemente do estado residual. Isso não modifica nem apaga o calendário: julho continua no histórico, no documento e nas versões; só deixa de ser tratado como decisão pendente. A mesma fonte alimenta fila, badge e painel de Chris/Amanda.
+> **LEI:** estado explícito incorreto não transforma mês anterior em trabalho atual. Fila operacional aplica primeiro a janela temporal; histórico permanece consultável, mas não recebe ação de aprovar, devolver ou enviar.
+
+### 51.2 A fila ainda precisava deduplicar aliases no resultado final
+**Risco:** se dois documentos históricos do mesmo cliente mantivessem a mesma competência pendente, cada um poderia virar uma decisão separada, mesmo depois da canonicalização usada em outras telas.
+**Correção:** depois do filtro de estado e competência, a fila consolida por `slug canônico + mês` e prefere a submissão mais recente; empate prefere o documento canônico. Não há fusão ou exclusão no Firestore.
+> **LEI:** fila operacional consolida cliente e competência depois de todos os filtros. Uma decisão real não pode virar dois cartões por causa da estrutura histórica do banco.
+
+### 51.3 Gate obrigatório
+- [x] VIP contaminado com julho + setembro produz somente setembro.
+- [x] Julho anterior fica fora mesmo com `aguardando_interna` explícito.
+- [x] Competência vigente e futura continuam entrando normalmente.
+- [x] `zeiss` + `zeens` no mesmo mês produzem uma única linha canônica.
+- [x] `calendario.html` e `calendarios.html` continuam idênticos e bloqueiam novos reenvios de mês anterior.
+- [x] “Prontos para enviar”, envio unitário e envio em lote usam a mesma barreira temporal.
+- [x] Aprovar, devolver ou disparar por um DOM antigo também rejeita mês histórico antes de escrever.

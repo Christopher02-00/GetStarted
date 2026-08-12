@@ -110,10 +110,14 @@ const leisV61 = [
 const leisV62 = [
   'normalizar uma fonte intermediária não prova deduplicação da interface'
 ];
+const leisV63 = [
+  'estado explícito incorreto não transforma mês anterior em trabalho atual',
+  'fila operacional consolida cliente e competência depois de todos os filtros'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V62');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V62');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V63');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V63');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -282,6 +286,13 @@ if (!escritorio.includes('function consolidarClientesAtivosPorIdentidade(registr
     !escritorio.includes('const ativos=consolidarClientesAtivosPorIdentidade([...unicos.values()])')) {
   falhar('Central não consolida fichas oficiais/legadas pela identidade canônica antes de renderizar');
 } else provar('Central consolida aliases de todas as origens antes de renderizar um único cartão ativo');
+if (!escritorio.includes('if(m && mesHistoricoForaDaRevisao(m, referencia)) return;') ||
+    !escritorio.includes("const chave=canonico+'|'+m;") ||
+    !escritorio.includes('const fila=[...porIdentidadeMes.values()]') ||
+    !escritorio.includes('const esperando = linhasCalendariosAguardandoRevisao(snap);') ||
+    !escritorio.includes("console.error('Envio de calendário abortado: mês histórico', a.slug, a.mes);")) {
+  falhar('fila ou porta de envio da Amanda pode voltar a incluir mês histórico ou duplicar cliente+mês por alias');
+} else provar('fila, contador e envio da Amanda excluem histórico e consolidam uma decisão por cliente+mês');
 
 const regraEntradaPessoal = regras.match(/match \/recebimentos_entrada_pessoal\/\{docId\} \{[\s\S]*?allow delete:\s*if false;[\s\S]*?\n    \}/)?.[0] || '';
 if (!regraEntradaPessoal.includes('allow read, update: if ehChris()') ||
@@ -592,9 +603,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-12-portal-cliente-auditado-v62') {
-  falhar(`build V62 inesperado: ${build || 'ausente'}`);
-} else provar('V62 identifica a auditoria autenticada e a consolidação final de aliases');
+if (build !== '2026-08-12-fila-calendarios-sem-historico-v63') {
+  falhar(`build V63 inesperado: ${build || 'ausente'}`);
+} else provar('V63 identifica a fila de calendários sem meses históricos ou aliases duplicados');
 
 const salvarContratoProgramado = escritorio.slice(
   escritorio.indexOf('window.salvarContrato = async function'),

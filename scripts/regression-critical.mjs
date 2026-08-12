@@ -1193,7 +1193,7 @@ async function testarIdentidadeClienteSandbox() {
     `async function getDocs(ref){if(globalThis.__falharLeitura)throw new Error('sem leitura');const itens=colecoes.get(ref.col)||[];return {docs:itens.map(v=>({id:v.id,data:()=>v.dados}))};}\n`+
     `function clienteInativoEfetivo(v){return v.clienteInativo===true;}\n`+
     `${identidadeFonte}\n`+
-    `globalThis.api={diagnosticar:diagnosticarIdentidadeCliente,mensagem:mensagemIdentidadeClienteExistente,nome:nomeClienteCanonico,slug:slugClienteCanonico,mapa:mapaCalendariosPorIdentidade};`,
+    `globalThis.api={diagnosticar:diagnosticarIdentidadeCliente,mensagem:mensagemIdentidadeClienteExistente,nome:nomeClienteCanonico,slug:slugClienteCanonico,mapa:mapaCalendariosPorIdentidade,consolidar:consolidarClientesAtivosPorIdentidade};`,
     {filename:'identidade-cliente-sandbox.js'}
   ).runInContext(contexto);
   const api=contexto.api;
@@ -1215,6 +1215,17 @@ async function testarIdentidadeClienteSandbox() {
   }});
   exigir(mapaCanonico.zeiss?.__documentoId==='zeiss'&&mapaCanonico.zeiss.items[0].name==='Atual',
     'alias legado voltou a substituir um calendário canônico preenchido');
+  const ativosConsolidados=api.consolidar([
+    {slug:'zeens',nome:'Zeens',origem:'legado',valorMensal:1700,token:'token-legado'},
+    {slug:'otica-visao-araucaria',nome:'Ótica Visão',origem:'legado'},
+    {slug:'zeiss',nome:'Zeiss',cadastroId:'ficha-oficial',valorMensal:1700},
+    {slug:'bluefit',nome:'Bluefit',cadastroId:'bluefit-oficial'}
+  ]);
+  exigir(ativosConsolidados.length===2&&ativosConsolidados.filter(v=>v.slug==='zeiss').length===1&&
+    ativosConsolidados.find(v=>v.slug==='zeiss')?.nome==='Zeiss'&&
+    ativosConsolidados.find(v=>v.slug==='zeiss')?.cadastroId==='ficha-oficial'&&
+    ativosConsolidados.find(v=>v.slug==='zeiss')?.token==='token-legado',
+    'Central voltou a renderizar aliases Zeiss como clientes ativos distintos ou perdeu campos preservados');
   banco.clear();
   banco.set('contratos_cliente/master-chef',{clienteNome:'Master Chef',status:'ativo'});
   const ativa=await api.diagnosticar('Master Chefe');

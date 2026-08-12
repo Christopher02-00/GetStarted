@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-11-valor-contrato-programado-v56">
+<meta name="gs-build" content="2026-08-11-estabilidade-clientes-v57">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -28159,6 +28159,18 @@ window.salvarPrazoVideo = async function(id){
   }
   window.contratoVigenteNaCompetencia = contratoVigenteNaCompetencia;
 
+  /* Uma cobrança cancelada pela saída continua no banco como histórico,
+     mas não é uma obrigação operacional. O mesmo vale para competência
+     posterior ao último mês do contrato. Centralizar esta decisão evita
+     que Joaquin/Açougue reapareçam na grade só porque existe documento
+     antigo em `pagamentos_mensais`. */
+  function mensalidadeVisivelNaGradeOperacional(pagamento, contrato, competencia){
+    if(statusMensalidadeCanonico(pagamento)==='cancelado') return false;
+    if(contrato && !contratoVigenteNaCompetencia(contrato,competencia)) return false;
+    return true;
+  }
+  window.mensalidadeVisivelNaGradeOperacional=mensalidadeVisivelNaGradeOperacional;
+
   /* V56 — mudança comercial nunca reescreve o mês já aberto. O contrato
      conserva o valor atual e alterações futuras datadas. Todo
      leitor financeiro pergunta qual valor vale NA competência consultada. */
@@ -28834,6 +28846,12 @@ window.salvarPrazoVideo = async function(id){
     const ctSnap = await getDocs(collection(db,'contratos_cliente'));
     const contratosBrutos = []; ctSnap.forEach(d => contratosBrutos.push({slug:d.id, ...d.data()}));
     const contratos = contratosOperacionaisCanonicos(contratosBrutos);
+    const contratosHistoricosPorSlug={};
+    contratosBrutos.forEach(ct=>{
+      const slug=slugClienteCanonico(ct.slug);
+      const atual=contratosHistoricosPorSlug[slug];
+      if(!atual || ct.slug===slug) contratosHistoricosPorSlug[slug]=ct;
+    });
     if(!contratos.length){
       box.innerHTML = '<div class="card"><div class="empty">Nenhum contrato ativo ainda. Cadastra em <b>Contratos</b> primeiro — é de lá que este mês é montado.</div></div>';
       return;
@@ -28844,7 +28862,10 @@ window.salvarPrazoVideo = async function(id){
     const pagamentosBrutos = []; pgSnap.forEach(d=>pagamentosBrutos.push({id:d.id,...d.data()}));
     const existentes = {};
     mensalidadesOperacionaisCanonicas(pagamentosBrutos).forEach(v=>{
-      if(v.competencia===competencia) existentes[v.cliente+'_'+competencia]={...v};
+      if(v.competencia!==competencia) return;
+      const slug=slugClienteCanonico(v.cliente);
+      if(!mensalidadeVisivelNaGradeOperacional(v,contratosHistoricosPorSlug[slug],competencia)) return;
+      existentes[slug+'_'+competencia]={...v,cliente:slug};
     });
     let criados = 0;
     for(const ct of contratos){

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-12-portal-cliente-auditado-v61">
+<meta name="gs-build" content="2026-08-12-portal-cliente-auditado-v62">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3291,7 +3291,41 @@
   function nomeClienteCanonico(slug,nome){
     return NOMES_CLIENTES_CANONICOS[slugClienteCanonico(slug)] || String(nome||'').trim();
   }
+  /* A Central recebe registros de origens diferentes (ficha oficial,
+     contrato, carteira legada e acesso ao Portal). Canonizar apenas tokens
+     não basta: aliases históricos ainda poderiam virar dois cartões ativos.
+     Esta consolidação é somente de leitura, preserva o registro mais rico e
+     entrega uma única identidade operacional para a interface. */
+  function consolidarClientesAtivosPorIdentidade(registros){
+    const porIdentidade=new Map();
+    (Array.isArray(registros)?registros:[]).forEach((registro,indice)=>{
+      const atual={...(registro||{})};
+      const slugOriginal=String(atual.slug||'').trim();
+      const slug=slugClienteCanonico(slugOriginal);
+      if(!slug) return;
+      const pontuacao=(slugOriginal===slug?100:0)+(atual.origem==='legado'?0:40)+(atual.token?10:0)+
+        (Number(atual.valorMensal||0)>0?5:0)+(atual.cadastroId?4:0)+(atual.extraId?2:0)-indice/100000;
+      const anterior=porIdentidade.get(slug);
+      if(!anterior){
+        porIdentidade.set(slug,{...atual,slug,nome:nomeClienteCanonico(slug,atual.nome),__pontuacaoCentral:pontuacao});
+        return;
+      }
+      const preferirAtual=pontuacao>anterior.__pontuacaoCentral;
+      const principal=preferirAtual?atual:anterior;
+      const complemento=preferirAtual?anterior:atual;
+      porIdentidade.set(slug,{...complemento,...principal,
+        token:principal.token||complemento.token||'',
+        cadastroId:principal.cadastroId||complemento.cadastroId||'',
+        extraId:principal.extraId||complemento.extraId||'',
+        onboardingId:principal.onboardingId||complemento.onboardingId||'',
+        slug,nome:nomeClienteCanonico(slug,principal.nome||complemento.nome),
+        identidadeDivergente:false,__pontuacaoCentral:Math.max(pontuacao,anterior.__pontuacaoCentral)
+      });
+    });
+    return [...porIdentidade.values()].map(({__pontuacaoCentral,...registro})=>registro);
+  }
   window.nomeClienteCanonico=nomeClienteCanonico;
+  window.consolidarClientesAtivosPorIdentidade=consolidarClientesAtivosPorIdentidade;
   function registroOperacionalAtivo(registro){
     const v = registro || {};
     return v.excluido !== true && v.arquivado !== true && v.cancelado !== true;
@@ -16799,7 +16833,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           observacoes:ctr.observacao||extra.observacoes||'',extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'',
           token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null});
       });
-      const ativos=[...unicos.values()].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      const ativos=consolidarClientesAtivosPorIdentidade([...unicos.values()]).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
       window.__entradaClientesAtivos=Object.fromEntries(ativos.map(v=>[v.slug,v]));
       const itemMensal=v=>`<div class="card" style="border-left:4px solid var(--yellow);">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;"><div><h2 style="margin:0 0 4px;">${esc(v.nome||'Cliente sem nome')}</h2><div class="meta">MENSALISTA · aguardando conferência</div></div><span class="pill warn">NOVO</span></div>

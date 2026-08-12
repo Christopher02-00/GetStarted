@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-<meta name="gs-build" content="2026-08-11-estabilidade-clientes-v57">
+<meta name="gs-build" content="2026-08-11-avaliacao-primeiro-envio-v58">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -480,13 +480,14 @@
     if(nome==='avaliacao') carregarAvaliacaoCliente();
   };
 
-  /* ===== AVALIAÇÃO DO CLIENTE — V57 ================================
+  /* ===== AVALIAÇÃO DO CLIENTE — V58 ================================
      A Gerência já lia `avaliacoes_clientes`, mas o Portal não tinha o
      escritor prometido. A avaliação usa um documento determinístico por
      cliente e competência: repetir o clique atualiza a resposta do mês,
      em vez de criar avaliações duplicadas. A consulta continua limitada
      pelo slug da sessão; nenhum cliente lista respostas de outro. */
   let notaAvaliacaoPortal = 0;
+  let avaliacaoPortalExiste = false;
   function competenciaAvaliacaoPortal(){ return dataLocalPortal().slice(0,7); }
   function idAvaliacaoPortal(){ return clienteAtual.slug + '_' + competenciaAvaliacaoPortal(); }
   function pintarEstrelasAvaliacao(){
@@ -505,9 +506,14 @@
     if(!cont) return;
     cont.innerHTML = '<div class="card"><div class="empty">Carregando sua avaliação...</div></div>';
     try{
-      const ref = doc(db,'avaliacoes_clientes',idAvaliacaoPortal());
-      const snap = await getDoc(ref);
-      const atual = snap.exists() && snap.data().cliente === clienteAtual.slug && snap.data().excluido !== true ? snap.data() : {};
+      // Um getDoc direto de um documento ainda inexistente é negado pela
+      // regra segura, porque não há resource.data para comprovar o cliente.
+      // A consulta restringida pelo próprio slug pode retornar zero itens sem
+      // abrir leitura de avaliações de outro Portal.
+      const lista = await getDocs(query(collection(db,'avaliacoes_clientes'), where('cliente','==',clienteAtual.slug)));
+      const snap = lista.docs.find(d=>d.id===idAvaliacaoPortal());
+      const atual = snap && snap.data().excluido !== true ? snap.data() : {};
+      avaliacaoPortalExiste = !!snap;
       notaAvaliacaoPortal = Number(atual.nota)||0;
       cont.innerHTML = `<div class="card" style="border:2px solid var(--yellow);">
         <h2 style="margin-top:0;">⭐ Como foi nosso atendimento neste mês?</h2>
@@ -516,8 +522,8 @@
           ${[1,2,3,4,5].map(n=>`<button class="btn secondary" type="button" aria-label="${n} estrela${n>1?'s':''}" aria-pressed="false" onclick="selecionarNotaAvaliacao(${n})" style="width:auto;min-width:52px;padding:10px 12px;font-size:23px;">⭐</button>`).join('')}
         </div>
         <div class="field"><label>Comentário (opcional)</label><textarea id="comentarioAvaliacaoPortal" rows="4" maxlength="1200" placeholder="Conte o que funcionou bem ou o que podemos melhorar.">${esc(atual.comentario||'')}</textarea></div>
-        <button class="btn" id="btnSalvarAvaliacaoPortal" type="button" onclick="salvarAvaliacaoCliente(this)">${snap.exists()?'Atualizar avaliação':'Enviar avaliação'}</button>
-        <div id="estadoAvaliacaoPortal" class="sub" style="margin-top:10px;">${snap.exists()?'Avaliação deste mês já recebida. Você pode ajustá-la acima.':'Nenhuma avaliação enviada neste mês.'}</div>
+        <button class="btn" id="btnSalvarAvaliacaoPortal" type="button" onclick="salvarAvaliacaoCliente(this)">${avaliacaoPortalExiste?'Atualizar avaliação':'Enviar avaliação'}</button>
+        <div id="estadoAvaliacaoPortal" class="sub" style="margin-top:10px;">${avaliacaoPortalExiste?'Avaliação deste mês já recebida. Você pode ajustá-la acima.':'Nenhuma avaliação enviada neste mês.'}</div>
       </div>`;
       pintarEstrelasAvaliacao();
     }catch(e){
@@ -532,10 +538,10 @@
     const estado = document.getElementById('estadoAvaliacaoPortal');
     if(btn){ btn.disabled=true; btn.textContent='Salvando...'; }
     try{
-      const atual = await getDoc(ref);
       const registro = {cliente:clienteAtual.slug,clienteNome:clienteAtual.nome,nota:notaAvaliacaoPortal,mes:competenciaAvaliacaoPortal(),comentario,origem:'portal_cliente',atualizadoEm:serverTimestamp()};
-      if(!atual.exists()) registro.criadoEm = serverTimestamp();
+      if(!avaliacaoPortalExiste) registro.criadoEm = serverTimestamp();
       await setDoc(ref,registro,{merge:true});
+      avaliacaoPortalExiste = true;
       if(estado) estado.textContent='Avaliação salva. Obrigado — a Amanda já consegue acompanhá-la na Gerência.';
       if(btn) btn.textContent='Atualizar avaliação';
     }catch(e){

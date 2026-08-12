@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-<meta name="gs-build" content="2026-08-11-avaliacao-primeiro-envio-v58">
+<meta name="gs-build" content="2026-08-12-calendario-mes-isolado-stories-v59">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1586,11 +1586,29 @@ function docJaUsaMeses(){
   return (data.items||[]).some(i => i && i.mes) || !!data.aprovacaoMeses || !!data.mesLegado;
 }
 
-function estadoDoMes(mes){
+/* O campo global e antigo só representa o mês escrito nele. A V58 ainda
+   o reutilizava como fallback de qualquer mês legado: ao enviar setembro,
+   julho recebia na tela o mesmo status e o mesmo horário. Em documento
+   realmente antigo, sem mapa mensal e sem `ap.mes`, ele continua valendo
+   apenas para a âncora legada (ou para o documento de mês único). */
+function aprovacaoCompativelDoMes(mes){
   const porMes = (data.aprovacaoMeses||{})[mes];
-  if(porMes && porMes.status) return porMes.status;
+  if(porMes && porMes.status) return porMes;
   const ap = data.aprovacaoInterna;
-  if(ap && ap.status && ap.mes && ap.mes === mes) return ap.status;
+  if(!ap || !ap.status) return null;
+  if(ap.mes) return ap.mes === mes ? ap : null;
+  const temMapa = Object.keys(data.aprovacaoMeses||{}).length > 0;
+  const legado = data.mesLegado || (docJaUsaMeses() ? '' : mesDoTexto(data.month));
+  return !temMapa && (!mes || !docJaUsaMeses() || (legado && mes === legado)) ? ap : null;
+}
+function mesUsaCampoLegadoLocal(mes){
+  if(!docJaUsaMeses()) return true;
+  return !!mes && !!data.mesLegado && mes === data.mesLegado;
+}
+
+function estadoDoMes(mes){
+  const aprovacao = aprovacaoCompativelDoMes(mes);
+  if(aprovacao) return aprovacao.status;
 
   /* ===== O FURO QUE O TESTE PEGOU — 29/07/2026 ====================
      A primeira versão disto perguntava "esse mês é o mês do documento?"
@@ -1608,10 +1626,14 @@ function estadoDoMes(mes){
   const heraldaRegraAntiga = !mes || (legado && mes === legado);
   if(!heraldaRegraAntiga) return 'rascunho';
 
-  if(ap && ap.status) return ap.status;
   return (data.items && data.items.length) ? 'liberado' : 'rascunho';
 }
 function estadoAprovacao(){ return estadoDoMes(mesVisivel); }
+function mesAnteriorAoAtual(mes){
+  const hoje = new Date();
+  const atual = hoje.getFullYear()+'-'+String(hoje.getMonth()+1).padStart(2,'0');
+  return /^\d{4}-\d{2}$/.test(String(mes||'')) && mes < atual;
+}
 function edicaoBloqueadaPorRevisao(){
   if(window.__modoCal !== 'equipe') return false;
   const st = estadoAprovacao();
@@ -1642,9 +1664,7 @@ function atualizarTravaVisualDoMes(){
   return travado;
 }
 function ehCalendarioLegado(){
-  const porMes = (data.aprovacaoMeses||{})[mesVisivel];
-  if(porMes && porMes.status) return false;
-  return !(data.aprovacaoInterna && data.aprovacaoInterna.status);
+  return !aprovacaoCompativelDoMes(mesVisivel);
 }
 /* Os meses que o CLIENTE pode ver: só os liberados. */
 function mesesLiberados(){ return mesesExistentes().filter(m => estadoDoMes(m) === 'liberado'); }
@@ -1661,18 +1681,20 @@ function renderAprovacaoInterna(){
   }
   const st = estadoAprovacao();
   const r = ROTULO_APROVACAO[st] || ROTULO_APROVACAO.rascunho;
-  const info = (data.aprovacaoMeses||{})[mesVisivel] || data.aprovacaoInterna || {};
+  const info = aprovacaoCompativelDoMes(mesVisivel) || {};
   const ehEquipe = window.__modoCal === 'equipe';
   atualizarTravaVisualDoMes();
 
   const legado = ehCalendarioLegado();
+  const historico = mesAnteriorAoAtual(mesVisivel);
   box.style.background = 'rgba(255,255,255,.03)';
   box.style.border = '1px solid ' + r.cor;
   box.innerHTML = `<div style="font-weight:800;color:${r.cor};">${r.txt}</div>
     ${legado && ehEquipe ? '<div style="margin-top:6px;opacity:.75;">Calendário montado antes do ciclo de revisão existir — segue visível pro cliente, como sempre foi. Ele pode entrar agora no ciclo formal da Amanda pelo botão abaixo.</div>' : ''}
     ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
     ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
-    ${ehEquipe && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">' + (legado ? 'Enviar calendário legado para a Amanda →' : 'Enviar pra aprovação interna →') + '</button>' : ''}
+    ${ehEquipe && historico ? '<div style="margin-top:7px;opacity:.75;">Mês anterior preservado no histórico — não pode ser reenviado como calendário novo.</div>' : ''}
+    ${ehEquipe && !historico && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">' + (legado ? 'Enviar calendário legado para a Amanda →' : 'Enviar pra aprovação interna →') + '</button>' : ''}
     ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição e o cliente ainda não vê.</div>' : ''}
     ${ehEquipe && st === 'aprovado_interno' ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente ainda não recebeu.</b> A Gabi pode reabrir para melhorar; depois precisa enviar novamente para a Amanda aprovar.</div>' : ''}
     ${ehEquipe && st === 'liberado' && !legado ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente já recebeu este mês.</b> A edição fica fechada para não mudar silenciosamente o que foi enviado.</div>' : ''}
@@ -1684,6 +1706,10 @@ window.enviarParaAprovacaoInterna = async function(btn){
   if(window.__modoCal !== 'equipe') return;
   if(window.__enviandoAprovacaoInterna) return;
   const legado = ehCalendarioLegado();
+  if(mesAnteriorAoAtual(mesVisivel)){
+    avisarTela('Este é um mês anterior e está preservado no histórico. Ele não pode ser reenviado junto com o calendário novo.', 'erro');
+    return;
+  }
   /* Um calendário legado é implicitamente `liberado`, mas nunca passou
      pelo ciclo de revisão. A V49 aplicava a trava de calendário já enviado
      antes desta exceção e, contraditoriamente, mostrava um botão impossível
@@ -1699,7 +1725,10 @@ window.enviarParaAprovacaoInterna = async function(btn){
   const updatedAtAntes = data.updatedAt;
   const marca = { status:'aguardando_interna', por: quem || 'equipe', em: new Date().toISOString(), motivoAjuste:'', mes: alvo };
   if(alvo){ data.aprovacaoMeses = data.aprovacaoMeses || {}; data.aprovacaoMeses[alvo] = marca; }
-  data.aprovacaoInterna = marca;   // o campo antigo continua valendo, pra nada quebrar
+  /* Não sobrescreve o espelho global ao enviar um mês moderno. Foi essa
+     escrita que fez setembro reaparecer como julho no Mochi e em outros
+     calendários mistos. O campo antigo só acompanha o mês legado. */
+  if(mesUsaCampoLegadoLocal(alvo)) data.aprovacaoInterna = marca;
   const pacoteEnvioPendente = { data:JSON.parse(JSON.stringify(data)), em:marca.em, mes:alvo, por:marca.por };
   window.__enviandoAprovacaoInterna = true;
   if(btn){ btn.disabled = true; btn.textContent = 'Enviando e confirmando…'; }

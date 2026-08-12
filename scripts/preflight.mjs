@@ -90,10 +90,13 @@ const leisV57 = [
   'A Gerência prometia avaliação, mas o Portal não tinha como enviá-la',
   'Cancelar uma saída precisa restaurar a cadeia inteira'
 ];
+const leisV58 = [
+  'Leitura direta de avaliação inexistente bloqueava o primeiro envio'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V57');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V57');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V58');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V58');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -425,7 +428,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-11-estabilidade-clientes-v57') ||
+if (!calendarioEditor.includes('2026-08-11-avaliacao-primeiro-envio-v58') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -558,9 +561,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-11-estabilidade-clientes-v57') {
-  falhar(`build V57 inesperado: ${build || 'ausente'}`);
-} else provar('V57 fecha envio de calendário, saída operacional e avaliação do Portal');
+if (build !== '2026-08-11-avaliacao-primeiro-envio-v58') {
+  falhar(`build V58 inesperado: ${build || 'ausente'}`);
+} else provar('V58 preserva a V57 e libera a primeira avaliação sem ampliar leitura');
 
 const salvarContratoProgramado = escritorio.slice(
   escritorio.indexOf('window.salvarContrato = async function'),
@@ -652,16 +655,19 @@ if (!salvarLinksStories.includes("revisaoInterna='aguardando_interna'") ||
 } else provar('links de Stories chegam ao Portal somente após revisão e com isolamento por cliente/semana');
 
 const avaliacaoPortal = portal.slice(portal.indexOf('async function carregarAvaliacaoCliente'), portal.indexOf('/* ===== PROGRAMADOS'));
+const carregarAvaliacaoPortal = avaliacaoPortal.slice(0, avaliacaoPortal.indexOf('window.salvarAvaliacaoCliente'));
 const regraAvaliacao = regras.slice(regras.indexOf('match /avaliacoes_clientes/{docId}'), regras.indexOf('match /demandas_cliente/{docId}'));
 if (!portal.includes('data-tab="avaliacao"') ||
     !avaliacaoPortal.includes("doc(db,'avaliacoes_clientes',idAvaliacaoPortal())") ||
+    !carregarAvaliacaoPortal.includes("getDocs(query(collection(db,'avaliacoes_clientes'), where('cliente','==',clienteAtual.slug)))") ||
+    carregarAvaliacaoPortal.includes('getDoc(') ||
     !avaliacaoPortal.includes("cliente:clienteAtual.slug") ||
     !avaliacaoPortal.includes("origem:'portal_cliente'") ||
     !regraAvaliacao.includes('resource.data.cliente == clienteDaSessao()') ||
     !regraAvaliacao.includes("affectedKeys().hasOnly(['clienteNome','nota','mes','comentario','origem','atualizadoEm'])") ||
     regraAvaliacao.includes('allow delete: if true')) {
   falhar('avaliação do Portal não fecha escritor, isolamento e soft-delete');
-} else provar('cliente avalia no próprio Portal; Firestore limita leitura/escrita ao slug da sessão');
+} else provar('primeira avaliação consulta somente o slug da sessão e não depende de ler documento inexistente');
 
 const choqueData = escritorio.slice(escritorio.indexOf('function dataFixaDoItemCalendario'), escritorio.indexOf('/* ===== ALERTAS DE GARGALO'));
 if (!choqueData.includes("const avisoId = 'choque_'") || !choqueData.includes('await runTransaction') ||

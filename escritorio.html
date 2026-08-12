@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-12-portal-cliente-auditado-v62">
+<meta name="gs-build" content="2026-08-12-fila-calendarios-sem-historico-v63">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -32741,15 +32741,31 @@ Observações do cliente: ${l.observacoes||'—'}`;
   /* Fonte única do contador e das duas filas (Amanda e Chris). Aceita
      tanto QuerySnapshot do Firestore quanto o array já normalizado dos
      indicadores, para nenhuma tela precisar reimplementar o filtro. */
-  function linhasCalendariosAguardandoRevisao(fonte){
-    const fila = [];
-    if(!fonte || typeof fonte.forEach !== 'function') return fila;
+  function competenciaCalendarioAtual(referencia){
+    const d = referencia instanceof Date ? referencia : new Date(referencia || Date.now());
+    if(Number.isNaN(d.getTime())) return '';
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  }
+  function mesHistoricoForaDaRevisao(mes, referencia){
+    const alvo=String(mes||'').trim();
+    if(!/^\d{4}-\d{2}$/.test(alvo)) return false;
+    const atual=competenciaCalendarioAtual(referencia);
+    return !!atual && alvo < atual;
+  }
+  function linhasCalendariosAguardandoRevisao(fonte, referencia){
+    const porIdentidadeMes = new Map();
+    if(!fonte || typeof fonte.forEach !== 'function') return [];
     fonte.forEach(registro => {
       const temData = registro && typeof registro.data === 'function';
       const v = temData ? (registro.data()||{}) : (registro||{});
       const slug = registro.id || v.id || '';
       const meses = mesesDeCalendario(v);
       (meses.length ? meses : ['']).forEach(m => {
+        /* Um mês anterior é histórico, mesmo que uma gravação antiga e
+           incorreta ainda diga `aguardando_interna`. A tela da Gabi já
+           impede novos reenvios retroativos; esta barreira trata os estados
+           contaminados que ficaram no banco sem apagar conteúdo nem versão. */
+        if(m && mesHistoricoForaDaRevisao(m, referencia)) return;
         if(estadoMesCal(v, m) !== 'aguardando_interna') return;
         const doMes = itensDoMesCalendario(v, m);
         if(!doMes.length) return;
@@ -32759,13 +32775,24 @@ Observações do cliente: ${l.observacoes||'—'}`;
         ) ? v.aprovacaoInterna : null;
         const ap = ((v.aprovacaoMeses||{})[m]) || globalCompativel || {};
         const nomesMeses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-        fila.push({
+        const linha = {
           slug, mesKey:m, nome:v.client || slug,
           mes: m ? ((nomesMeses[Number(m.split('-')[1])-1]||m)+' '+m.split('-')[0]) : (v.month||''),
           itens:doMes.length, por:ap.por||'?', em:ap.em||'', refs:doMes.filter(i=>i&&i.ref).length
-        });
+        };
+        /* Cadastros legados podem manter documentos em aliases diferentes.
+           A fila é uma decisão operacional: um cliente+mês gera uma linha.
+           Preferimos a submissão mais recente; no empate, o documento já
+           canônico, sem fundir ou excluir qualquer histórico. */
+        const canonico=slugClienteCanonico(slug)||slug;
+        const chave=canonico+'|'+m;
+        const anterior=porIdentidadeMes.get(chave);
+        const atualMaisNovo=String(linha.em||'')>String(anterior?.em||'');
+        const empateCanonico=String(linha.em||'')===String(anterior?.em||'') && slug===canonico && anterior?.slug!==canonico;
+        if(!anterior || atualMaisNovo || empateCanonico) porIdentidadeMes.set(chave,linha);
       });
     });
+    const fila=[...porIdentidadeMes.values()];
     fila.sort((a,b)=>String(a.em).localeCompare(String(b.em)) || String(a.nome).localeCompare(String(b.nome),'pt-BR'));
     return fila;
   }
@@ -32796,11 +32823,16 @@ Observações do cliente: ${l.observacoes||'—'}`;
     box.innerHTML = '<div class="desc">Carregando…</div>';
     try{
       const snap = await obterCalendariosCompartilhados();
-      const represados = [], jaEnviados = [], esperando = [];
+      /* A contagem de revisão usa rigorosamente a mesma fonte da fila da
+         Amanda. Assim um estado histórico contaminado não reaparece aqui
+         como uma segunda fila divergente. */
+      const esperando = linhasCalendariosAguardandoRevisao(snap);
+      const represados = [], jaEnviados = [];
       snap.forEach(d => {
         const cal = d.data();
         const meses = mesesDeCalendario(cal);
         (meses.length ? meses : ['']).forEach(m => {
+          if(m && mesHistoricoForaDaRevisao(m)) return;
           const st = estadoMesCal(cal, m);
           const qtd = itensDoMesCalendario(cal, m).length;
           if(!qtd) return;
@@ -32808,7 +32840,6 @@ Observações do cliente: ${l.observacoes||'—'}`;
                           quando: ((cal.aprovacaoMeses||{})[m]||{}).em || '' };
           if(st === 'aprovado_interno') represados.push(linha);
           else if(st === 'liberado') jaEnviados.push(linha);
-          else if(st === 'aguardando_interna') esperando.push(linha);
         });
       });
       represados.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
@@ -32850,6 +32881,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
   window.enviarUmCalendario = async function(slug, mes, btn){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('A decisão e o envio de calendários são da Amanda.', 'erro'); return; }
+    if(mes && mesHistoricoForaDaRevisao(mes)){
+      mostrarToast('Esse mês já é histórico e não pode voltar para o fluxo operacional.', 'erro'); return;
+    }
     if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
     const n = await dispararCalendarios([{slug, mes}]);
     mostrarToast(n ? 'Enviado — o cliente já vê.' : 'Não consegui enviar.', n ? 'ok' : 'erro');
@@ -32864,7 +32898,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     snap.forEach(d => { const cal = d.data();
       const meses = mesesDeCalendario(cal);
       (meses.length ? meses : ['']).forEach(m => {
-        if(estadoMesCal(cal, m) === 'aprovado_interno' && itensDoMesCalendario(cal, m).length){
+        if((!m || !mesHistoricoForaDaRevisao(m)) && estadoMesCal(cal, m) === 'aprovado_interno' && itensDoMesCalendario(cal, m).length){
           alvos.push({ slug:d.id, mes:m });
         }
       });
@@ -32882,6 +32916,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
     let n = 0;
     for(const a of alvos){
       try{
+        if(a.mes && mesHistoricoForaDaRevisao(a.mes)){
+          console.error('Envio de calendário abortado: mês histórico', a.slug, a.mes);
+          continue;
+        }
         const ref = doc(db,'calendarios', a.slug);
         const snap = await getDoc(ref);
         if(!snap.exists()) continue;
@@ -32929,6 +32967,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cal = snap.data();
     const nome = cal.client || nomeDeSlugSeguro(slug);
     const alvo = (mes !== undefined && mes !== null && mes !== '') ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    if(alvo && mesHistoricoForaDaRevisao(alvo)){
+      mostrarToast('Esse mês já é histórico e não pode voltar para aprovação ou envio.', 'erro'); return;
+    }
     const qtd = itensDoMesCalendario(cal, alvo).length;
     if(!qtd){ mostrarToast('Este mês está sem conteúdo. Nada foi enviado.', 'erro'); return; }
     if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
@@ -32958,6 +32999,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cal = snap.data();
     const nome = cal.client || slug;
     const alvo = (mes !== undefined && mes !== null) ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    if(alvo && mesHistoricoForaDaRevisao(alvo)){
+      mostrarToast('Esse mês já é histórico e não pode voltar para aprovação.', 'erro'); return;
+    }
     if(!itensDoMesCalendario(cal, alvo).length){ mostrarToast('Este mês está sem conteúdo. Nada foi aprovado.', 'erro'); return; }
     if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
       mostrarToast('O estado deste calendário mudou. Recarregue a fila antes de decidir.','erro'); return;
@@ -32985,6 +33029,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const cal = snap.data();
     const nome = cal.client || slug;
     const alvo = (mes !== undefined && mes !== null) ? mes : (mesesDeCalendario(cal).slice(-1)[0] || '');
+    if(alvo && mesHistoricoForaDaRevisao(alvo)){
+      mostrarToast('Esse mês já é histórico e não pode voltar para ajustes operacionais.', 'erro'); return;
+    }
     if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
       mostrarToast('O estado deste calendário mudou. Recarregue a fila antes de devolver.','erro'); return;
     }

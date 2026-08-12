@@ -428,7 +428,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-11-avaliacao-primeiro-envio-v58') ||
+if (!calendarioEditor.includes('2026-08-12-calendario-mes-isolado-stories-v59') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -561,9 +561,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-11-avaliacao-primeiro-envio-v58') {
-  falhar(`build V58 inesperado: ${build || 'ausente'}`);
-} else provar('V58 preserva a V57 e libera a primeira avaliação sem ampliar leitura');
+if (build !== '2026-08-12-calendario-mes-isolado-stories-v59') {
+  falhar(`build V59 inesperado: ${build || 'ausente'}`);
+} else provar('V59 isola a aprovação por competência e preserva a primeira avaliação');
 
 const salvarContratoProgramado = escritorio.slice(
   escritorio.indexOf('window.salvarContrato = async function'),

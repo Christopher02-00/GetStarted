@@ -1,3 +1,4 @@
+[Uploading CATALOGO_DE_ERROS.md…]()
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30964009/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
@@ -764,3 +765,32 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Carregamento corrigido não usa `getDoc()` de documento inexistente.
 - [x] Consulta exige `where` pelo slug do próprio cliente; regras não foram ampliadas.
 - [ ] Envio real de uma avaliação permanece não executado, pois criaria feedback em nome do cliente.
+
+---
+
+## 40. ERROS E INTERCEPTAÇÕES — V59 (12/08/2026)
+
+### 40.1 Status global de um mês moderno contaminava o mês legado
+**Reprodução real:** o calendário do Mochi continha julho (1 item), agosto (4) e setembro (24). Depois de a Gabi enviar setembro em 10/08 às 16:55, julho passou a mostrar o mesmo estado, a mesma autora e o mesmo horário de “esperando aprovação”.
+**Causa:** o envio escrevia corretamente `aprovacaoMeses['2026-09']`, mas também substituía sempre `aprovacaoInterna`. Os leitores usavam esse campo global como fallback do mês legado sem conferir `aprovacaoInterna.mes`.
+**Como consertei:** mês moderno grava somente seu mapa; o campo antigo acompanha apenas o mês legado. Editor, fila da Amanda e Portal só aceitam o global quando a marca declara a mesma competência ou quando o documento é realmente antigo, sem mapa mensal.
+> **LEI:** em documento multicompetência, fallback legado precisa provar a competência. Nunca espelhar ou consumir estado global de setembro como estado de julho.
+
+Como segunda barreira, mês anterior permanece consultável, mas o editor não oferece nem aceita “Enviar para aprovação” nele. O histórico continua intacto e não volta à operação por clique acidental.
+
+### 40.2 Abrir Stories tentava gravar dados seed e podia mostrar lista vazia
+**Reprodução real:** na auditoria como Gabi, “Fazer stories do cliente” mostrou “Nenhum cliente com story ainda”, embora Vitalle e Juliane façam parte da configuração conhecida.
+**Causa:** `carregarClientesDeStory()` misturava leitura com bootstrap de escrita. Em modo somente leitura, cota ou permissão parcial, a própria abertura da tela podia falhar antes de montar a lista.
+**Como consertei:** os seeds viraram fallback somente em memória; documentos reais sempre prevalecem, inclusive `ativo:false`. Falha de leitura agora aparece como indisponibilidade e nunca como zero clientes.
+> **LEI:** leitura de tela não cria configuração. Falha do Firestore nunca pode virar coleção vazia nem apagar visualmente um contrato conhecido.
+
+## 41. CHECKLIST EXECUTADO NA V59
+
+- [x] Cenário exato julho legado + setembro enviado gera uma única linha de revisão para setembro.
+- [x] Julho sem estado mensal explícito não herda mais autor/horário/status de setembro.
+- [x] Portal do Cliente usa a mesma compatibilidade por competência.
+- [x] Amanda, Cecília e filmmakers continuam consumindo os itens pelo mês da sessão; nenhum item foi removido ou migrado.
+- [x] Abrir Stories não contém `setDoc` e mantém Vitalle/Juliane como fallback quando a coleção está vazia.
+- [x] Calendários singular e plural permanecem byte a byte idênticos.
+- [ ] Estados incorretos já exibidos são corrigidos por leitura na V59; nenhuma gravação automática foi feita em produção.
+- [ ] A confirmação visual pelo cliente Vitalle continua dependente de abrir o link privado dele após a publicação; a auditoria não publicou nem aprovou Stories em nome do cliente.

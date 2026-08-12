@@ -84,10 +84,16 @@ const leisV56 = [
   'Alteração de contrato reescrevia a competência já aberta',
   'Ficha geral mantinha um segundo escritor de valor financeiro'
 ];
+const leisV57 = [
+  'O próprio autosave impedia a Gabi de enviar o calendário',
+  'Cobrança cancelada continuava aparecendo como mensalidade operacional',
+  'A Gerência prometia avaliação, mas o Portal não tinha como enviá-la',
+  'Cancelar uma saída precisa restaurar a cadeia inteira'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V56');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V56');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V57');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V57');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -419,7 +425,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-11-zeiss-preservada-v55') ||
+if (!calendarioEditor.includes('2026-08-11-estabilidade-clientes-v57') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -435,9 +441,11 @@ const envioCalendario = calendarioEditor.slice(
 if (!envioCalendario.includes('const legado = ehCalendarioLegado()') ||
     !envioCalendario.includes('edicaoBloqueadaPorRevisao() && !legado') ||
     !envioCalendario.includes("status:'aguardando_interna'") ||
-    !calendarioEditor.includes('Enviar calendário legado para a Amanda')) {
+    !calendarioEditor.includes('Enviar calendário legado para a Amanda') ||
+    !calendarioEditor.includes('function deveBloquearConflitoCalendario') ||
+    !calendarioEditor.includes('assinaturaConteudoCalendario(servidor)!==assinaturaConteudoCalendario(local)')) {
   falhar('calendário legado voltou a exibir envio que a própria trava impede');
-} else provar('calendário legado entra no ciclo formal; calendário explicitamente liberado continua travado');
+} else provar('envio formal tolera só o eco idêntico do autosave; edição concorrente e calendário liberado continuam travados');
 const storiesChecklist = escritorio.slice(
   escritorio.indexOf('async function renderStoriesDiarios'),
   escritorio.indexOf('// ===== BIT — CENTRAL DE DUVIDAS')
@@ -550,9 +558,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-11-valor-contrato-programado-v56') {
-  falhar(`build V56 inesperado: ${build || 'ausente'}`);
-} else provar('V56 preserva a competência aberta e programa o novo valor para o mês seguinte');
+if (build !== '2026-08-11-estabilidade-clientes-v57') {
+  falhar(`build V57 inesperado: ${build || 'ausente'}`);
+} else provar('V57 fecha envio de calendário, saída operacional e avaliação do Portal');
 
 const salvarContratoProgramado = escritorio.slice(
   escritorio.indexOf('window.salvarContrato = async function'),
@@ -570,6 +578,10 @@ if (!escritorio.includes('function valorContratoNaCompetencia') ||
     fichaClienteAtivo.includes('valorDevido:dados.valorMensal')) {
   falhar('mudança programada de contrato perdeu competência, histórico ou fonte financeira única');
 } else provar('alteração de contrato tem vigência futura, histórico e não reescreve o valor pela ficha geral');
+if (!escritorio.includes('function mensalidadeVisivelNaGradeOperacional') ||
+    !escritorio.includes('mensalidadeVisivelNaGradeOperacional(v,contratosHistoricosPorSlug[slug],competencia)')) {
+  falhar('grade de mensalidades voltou a exibir cancelado ou competência posterior à saída');
+} else provar('mensalidade cancelada/pós-saída permanece só no histórico, fora da grade operacional');
 
 const cofreCecilia = escritorio.slice(
   escritorio.indexOf('async function renderCofreCecilia'),
@@ -638,6 +650,18 @@ if (!salvarLinksStories.includes("revisaoInterna='aguardando_interna'") ||
     !regras.includes("resource.data.revisaoInterna == 'liberado'")) {
   falhar('cadeia de links de Stories não fecha revisão Amanda → regra isolada → Portal do próprio cliente');
 } else provar('links de Stories chegam ao Portal somente após revisão e com isolamento por cliente/semana');
+
+const avaliacaoPortal = portal.slice(portal.indexOf('async function carregarAvaliacaoCliente'), portal.indexOf('/* ===== PROGRAMADOS'));
+const regraAvaliacao = regras.slice(regras.indexOf('match /avaliacoes_clientes/{docId}'), regras.indexOf('match /demandas_cliente/{docId}'));
+if (!portal.includes('data-tab="avaliacao"') ||
+    !avaliacaoPortal.includes("doc(db,'avaliacoes_clientes',idAvaliacaoPortal())") ||
+    !avaliacaoPortal.includes("cliente:clienteAtual.slug") ||
+    !avaliacaoPortal.includes("origem:'portal_cliente'") ||
+    !regraAvaliacao.includes('resource.data.cliente == clienteDaSessao()') ||
+    !regraAvaliacao.includes("affectedKeys().hasOnly(['clienteNome','nota','mes','comentario','origem','atualizadoEm'])") ||
+    regraAvaliacao.includes('allow delete: if true')) {
+  falhar('avaliação do Portal não fecha escritor, isolamento e soft-delete');
+} else provar('cliente avalia no próprio Portal; Firestore limita leitura/escrita ao slug da sessão');
 
 const choqueData = escritorio.slice(escritorio.indexOf('function dataFixaDoItemCalendario'), escritorio.indexOf('/* ===== ALERTAS DE GARGALO'));
 if (!choqueData.includes("const avisoId = 'choque_'") || !choqueData.includes('await runTransaction') ||

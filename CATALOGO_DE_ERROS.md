@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30946616/CATALOGO_DE_ERROS.md)
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30962654/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -705,3 +705,43 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Contrato registra motivo, autoria e histórico da programação.
 - [x] A ficha geral não grava mais `valorVigente` nem `valorDevido`.
 - [ ] A programação real da Vitalle não foi gravada no Firestore durante o teste local; após o upload, Chris deve confirmar R$ 1.000 com início em 2026-09 na aba Contratos.
+
+---
+
+## 36. ERROS E INTERCEPTAÇÕES — V57 (11/08/2026)
+
+### 36.1 O próprio autosave impedia a Gabi de enviar o calendário
+**O que existia:** o envio para a Amanda reutilizava a trava de versão da edição comum. Quando o `onSnapshot` ainda não tinha refletido o eco do autosave, o carimbo remoto mudava e a transição formal era classificada como conflito, mesmo com conteúdo idêntico.
+**O que acontecia:** a Gabi via o botão, o calendário estava salvo, mas “Enviar pra aprovação interna” voltava ao estado anterior e não confirmava a fila da Amanda.
+**Como consertei:** a transição formal compara a assinatura do conteúdo sem campos de aprovação. Só o eco idêntico pode passar; conteúdo realmente alterado em outra aba ou decisão mais nova da Amanda continua bloqueado.
+> **LEI:** transição de workflow não pode ser recusada apenas pelo eco do próprio autosave. A exceção exige conteúdo idêntico e nunca pode vencer edição concorrente nem decisão posterior.
+
+### 36.2 Cobrança cancelada continuava aparecendo como mensalidade operacional
+**O que existia:** a saída cancelava competências posteriores por soft-delete financeiro, mas `renderMensalidades()` recolocava todo documento daquela competência no mapa, inclusive `status=cancelado` e competência posterior a `ultimaCompetenciaPagamento`.
+**O que acontecia:** Joaquin Assados e Açougue São Joaquim, com último mês financeiro em agosto, ainda podiam aparecer na grade de setembro.
+**Como consertei:** a grade operacional ignora cancelados e aplica a vigência histórica do contrato. Agosto permanece consultável; setembro e meses posteriores ficam apenas no histórico/arquivo.
+> **LEI:** preservar documento financeiro não significa exibi-lo como obrigação ativa. `cancelado` e competência fora da vigência ficam no arquivo, nunca em grade, régua, contador ou cobrança operacional.
+
+### 36.3 A Gerência prometia avaliação, mas o Portal não tinha como enviá-la
+**O que existia:** o Escritório lia `avaliacoes_clientes`, porém não havia aba nem escritor no Portal; as regras permitiam a coleção somente à equipe.
+**O que acontecia:** o texto indicava que o cliente avaliaria no Portal, mas a funcionalidade não existia para ele, exatamente como a Amanda relatou no áudio.
+**Como consertei:** o Portal ganhou “Avaliar a Get Started”, com nota de 1 a 5 e comentário. Há um documento determinístico por cliente e mês, permitindo atualização sem duplicar. As regras limitam leitura e escrita ao slug da própria sessão e proíbem exclusão física.
+> **LEI:** qualquer recurso prometido ao cliente precisa fechar quatro pontos na mesma entrega: entrada visível no Portal, escritor, regra isolada e leitor da equipe. Um painel interno sem caminho do cliente é funcionalidade inexistente.
+
+### 36.4 Cancelar uma saída precisa restaurar a cadeia inteira
+**Estado real encontrado:** Dra. Monique estava programada para sair em 31/08/2026, último mês financeiro 2026-08.
+**Ação executada:** a saída foi cancelada pela transação oficial; ela voltou a `ATIVO`, com contrato, Portal, calendário e cobranças futuras recuperados. O registro de saída ficou preservado como cancelado, sem exclusão física.
+> **LEI:** desistência de saída usa somente a rotina de reativação transacional. Nunca reativar apenas o cartão visual ou editar documentos isolados no console.
+
+## 37. CHECKLIST EXECUTADO NA V57
+
+- [x] Eco idêntico do autosave permite envio formal da Gabi.
+- [x] Edição concorrente, envio comum e decisão posterior da Amanda continuam bloqueados.
+- [x] Calendários singular e plural permanecem byte a byte idênticos.
+- [x] Mensalidade cancelada ou posterior ao último mês não aparece na grade operacional; competência histórica válida permanece.
+- [x] Portal contém a nova entrada de avaliação e navega para um painel próprio.
+- [x] Regra de avaliação exige sessão do próprio cliente, nota de 1 a 5 e `delete:false`.
+- [x] Monique foi confirmada no sistema publicado como `ATIVO` depois do cancelamento oficial da saída.
+- [x] Preflight aprovado e regressão crítica aprovada com 529 asserções.
+- [ ] A gravação real de uma avaliação não foi executada: depende da publicação das novas regras e criaria um feedback real de cliente.
+- [ ] O envio de um calendário real da Gabi não foi disparado no teste: o sandbox validou a transição sem alterar calendário de produção.

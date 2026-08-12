@@ -1312,6 +1312,25 @@ function testarV54Sandbox() {
   exigir(escritorio.includes('data-story-cadeia-cliente=')&&escritorio.includes('data-story-cadeia-estado=')&&
     portal.includes('data-stories-estado="aguardando-equipe"'),
     'estado ponta a ponta de Stories deixou de ficar explícito para equipe ou cliente');
+  const escopoPortalFonte=trecho(portal,'function nomeLegivelPortal','function aplicarEscopoPortal');
+  const escopoPortalApi=executarSandbox('portal-escopo-v61.js',
+    `const CLIENTES_SO_EDICAO=['rodrigo'];\n${escopoPortalFonte}\nglobalThis.api={nomeLegivelPortal,escopoPortalDaFicha};`);
+  exigir(escopoPortalApi.nomeLegivelPortal('vitalle-odonto','')==='Vitalle Odonto' &&
+    escopoPortalApi.escopoPortalDaFicha('vitalle-odonto',{nome:'slug antigo'},{nome:'Vitalle Odonto',incluiStories:true},false).nome==='Vitalle Odonto',
+    'Portal voltou a exibir slug técnico quando a ficha privada tem identidade legível');
+  exigir(escopoPortalApi.escopoPortalDaFicha('bluefit',{nome:'Bluefit'},{incluiStories:false},true).incluiStories===false &&
+    escopoPortalApi.escopoPortalDaFicha('legado',{nome:'Legado'},{},true).incluiStories===true &&
+    escopoPortalApi.escopoPortalDaFicha('legado',{nome:'Legado'},{},false).incluiStories===false &&
+    escopoPortalApi.escopoPortalDaFicha('rodrigo',{nome:'Rodrigo'},{incluiStories:true},true).incluiStories===false,
+    'escopo do Portal voltou a liberar Stories por ausência de regra, contrariar false explícito ou expor plano só edição');
+  const entradaPortal=trecho(portal,"window.entrarPortal = function",'window.sairPortal');
+  exigir(entradaPortal.includes('aplicarEscopoPortal()')&&entradaPortal.includes("if(clienteAtual.escopo.incluiStories===true) carregarStories()"),
+    'Portal voltou a carregar Stories antes de confirmar que o serviço pertence ao cliente');
+  exigir(portal.includes("where('slug','==',slug)")&&portal.includes('escopoPortalDaFicha(slug,dadosAcesso,fichaPortal,temHistoricoStories)'),
+    'entrada autenticada deixou de resolver nome e escopo pela ficha privada do próprio cliente');
+  exigir(escritorio.includes('const canonico=slugClienteCanonico(v.cliente)')&&
+    escritorio.includes('if(!tokenPorCliente[canonico] || v.cliente===canonico) tokenPorCliente[canonico]=v;'),
+    'Central voltou a indexar tokens por alias bruto e duplicar a identidade canônica do cliente');
   const renderStoriesFonte=trecho(escritorio,'window.renderStoriesCliente = async function','  // guarda onde o painel foi desenhado');
   exigir(renderStoriesFonte.includes('clientesStory.some(c=>c.slug===window.__storyClienteSel)')&&
     renderStoriesFonte.includes("s.cliente === clienteStorySelecionado")&&

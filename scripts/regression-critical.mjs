@@ -1266,13 +1266,16 @@ function testarV54Sandbox() {
   exigir(regras.includes('resource.data.cliente == clienteDaSessao()')&&regras.includes('resource.data.liberadoCliente == true'),
     'Firestore voltou a permitir Stories de outro cliente ou ainda não liberados');
   const avaliacaoPortal=trecho(portal,'async function carregarAvaliacaoCliente','/* ===== PROGRAMADOS');
+  const carregarAvaliacaoPortal=trecho(avaliacaoPortal,'async function carregarAvaliacaoCliente','window.salvarAvaliacaoCliente');
   const regraAvaliacao=trecho(regras,'match /avaliacoes_clientes/{docId}','match /demandas_cliente/{docId}');
   exigir(portal.includes('data-tab="avaliacao"')&&avaliacaoPortal.includes("doc(db,'avaliacoes_clientes',idAvaliacaoPortal())")&&
+    carregarAvaliacaoPortal.includes("getDocs(query(collection(db,'avaliacoes_clientes'), where('cliente','==',clienteAtual.slug)))")&&
+    !carregarAvaliacaoPortal.includes('getDoc(')&&
     avaliacaoPortal.includes("cliente:clienteAtual.slug")&&avaliacaoPortal.includes("origem:'portal_cliente'")&&
     regraAvaliacao.includes('resource.data.cliente == clienteDaSessao()')&&
     regraAvaliacao.includes("affectedKeys().hasOnly(['clienteNome','nota','mes','comentario','origem','atualizadoEm'])")&&
     regraAvaliacao.includes('allow delete: if false;'),
-    'avaliação do Portal não está ligada ao próprio cliente ou ampliou escrita/exclusão');
+    'primeira avaliação voltou a depender de documento existente ou ampliou leitura/escrita');
 }
 
 try {

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-11-avaliacao-primeiro-envio-v58">
+<meta name="gs-build" content="2026-08-12-calendario-mes-isolado-stories-v59">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -11758,13 +11758,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.carregarClientesDeStory = async function(forcar){
     if(__storyClientesCache && !forcar) return __storyClientesCache;
     const snap = await getDocs(collection(db,'stories_clientes'));
-    let lista = []; snap.forEach(d => lista.push({ id:d.id, ...d.data() }));
-    if(!lista.length){
-      for(const c of STORY_CLIENTES_SEED){
-        await setDoc(doc(db,'stories_clientes', c.slug), { ...c, criadoPor:'sistema', criadoEm: serverTimestamp() });
-      }
-      lista = STORY_CLIENTES_SEED.map(c => ({ id:c.slug, ...c }));
-    }
+    /* Ler a tela nunca pode gravar no banco. O bootstrap anterior tentava
+       criar os dois registros seed durante a leitura; em auditoria, cota ou
+       permissão parcial isso transformava a lista inteira em vazia. A base
+       contratual conhecida entra apenas como fallback em memória, e um
+       documento real (inclusive `ativo:false`) sempre prevalece. */
+    const porSlug = new Map(STORY_CLIENTES_SEED.map(c => [c.slug,{id:c.slug,...c,origemFallback:true}]));
+    snap.forEach(d => porSlug.set(d.id,{ id:d.id, ...d.data() }));
+    const lista = [...porSlug.values()];
     __storyClientesCache = lista.filter(c => c.ativo !== false).sort((a,b) => (a.nome||'').localeCompare(b.nome||''));
     return __storyClientesCache;
   };
@@ -11995,7 +11996,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     /* 27/07/2026 — o seletor listava os 20+ clientes da agência, sendo que
        só dois têm story em contrato. A Gabi tinha que saber de cabeça
        quem e o quê. Agora vem do registro, com o combinado escrito. */
-    const clientesStory = await carregarClientesDeStory();
+    let clientesStory;
+    try{
+      clientesStory = await carregarClientesDeStory();
+    }catch(e){
+      console.error('Falha ao confirmar os clientes de Stories:',e);
+      cont.innerHTML = `<div class="card" style="border:2px solid var(--red);"><b>⚠️ Não consegui confirmar os clientes de Stories.</b><div class="desc" style="margin-top:6px;">A leitura falhou; isso não significa que os dados sumiram. Recarregue a tela ou tente novamente em instantes.</div></div>`;
+      return;
+    }
     const semStory = CLIENTES_LISTA.filter(c => !clientesStory.some(x => x.slug === c.slug));
 
     /* A Gabi pediu: um botão por cliente no topo, e ao clicar aparece a
@@ -23559,8 +23567,14 @@ window.setGerenciaSub = function(qual, el){
     if(ap && ap.status) return ap.status;
     return 'liberado';
   }
-  function ehCalendarioLegado(cal){
-    return !((cal && cal.aprovacaoInterna && cal.aprovacaoInterna.status));
+  function ehCalendarioLegado(cal, mes){
+    if(!cal) return false;
+    const alvo = mes || (mesesDeCalendario(cal).slice(-1)[0] || '');
+    const porMes = alvo ? ((cal.aprovacaoMeses||{})[alvo]||null) : null;
+    if(porMes && porMes.status) return false;
+    const ap = cal.aprovacaoInterna;
+    if(ap && ap.status && ap.mes) return ap.mes !== alvo;
+    return !(ap && ap.status);
   }
   window.estadoDoCalendario = estadoDoCalendario;
 
@@ -23693,7 +23707,7 @@ window.setGerenciaSub = function(qual, el){
         comDataPost: itens.filter(i=>i.dataPostagem).length,
         ...progressoEditorial,
         estado: mesAtual ? estadoMesCal(cal, mesAtual) : estadoDoCalendario(cal),
-        legado: !(aprovacaoMes.status || cal.aprovacaoInterna?.status), itens };
+        legado: ehCalendarioLegado(cal,mesAtual), itens };
     });
 
     const prontos = linhas.filter(l => l.estado === 'liberado').length;
@@ -32616,10 +32630,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
   }
   function mesUsaCampoLegadoCalendario(cal, mes){
     const itens = (cal&&cal.items)||[];
-    const ap = cal&&cal.aprovacaoInterna;
-    return !mes || mes === ((cal&&cal.mesLegado)||'') ||
-      !!(ap&&ap.mes&&ap.mes===mes) ||
-      (!((cal&&cal.mesLegado)||'') && !itens.some(i => i&&i.mes));
+    const usaMeses = itens.some(i => i&&i.mes) || !!(cal&&cal.aprovacaoMeses) || !!(cal&&cal.mesLegado);
+    return !usaMeses || (!!mes && mes === ((cal&&cal.mesLegado)||''));
   }
   function mesesDeCalendario(cal){
     const its = (cal && cal.items) || [];
@@ -32644,7 +32656,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const legado = (cal&&cal.mesLegado) || '';
     const heraldaAntiga = !mes || (legado && mes === legado) || !usaMeses;
     if(!heraldaAntiga) return 'rascunho';
-    if(ap && ap.status) return ap.status;
+    const temMapa = Object.keys((cal&&cal.aprovacaoMeses)||{}).length > 0;
+    if(ap && ap.status && !ap.mes && !temMapa && heraldaAntiga) return ap.status;
     return ((cal&&cal.items)||[]).length ? 'liberado' : 'rascunho';
   }
 
@@ -32663,7 +32676,11 @@ Observações do cliente: ${l.observacoes||'—'}`;
         if(estadoMesCal(v, m) !== 'aguardando_interna') return;
         const doMes = itensDoMesCalendario(v, m);
         if(!doMes.length) return;
-        const ap = ((v.aprovacaoMeses||{})[m]) || v.aprovacaoInterna || {};
+        const globalCompativel = v.aprovacaoInterna && (
+          v.aprovacaoInterna.mes === m ||
+          (!v.aprovacaoInterna.mes && !Object.keys(v.aprovacaoMeses||{}).length && mesUsaCampoLegadoCalendario(v,m))
+        ) ? v.aprovacaoInterna : null;
+        const ap = ((v.aprovacaoMeses||{})[m]) || globalCompativel || {};
         const nomesMeses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
         fila.push({
           slug, mesKey:m, nome:v.client || slug,

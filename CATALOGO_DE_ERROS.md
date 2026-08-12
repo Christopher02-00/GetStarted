@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30962654/CATALOGO_DE_ERROS.md)
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30964009/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -745,3 +745,22 @@ Nunca remova entrada. **Erro repetido com regra escrita é pior que erro novo** 
 - [x] Preflight aprovado e regressão crítica aprovada com 529 asserções.
 - [ ] A gravação real de uma avaliação não foi executada: depende da publicação das novas regras e criaria um feedback real de cliente.
 - [ ] O envio de um calendário real da Gabi não foi disparado no teste: o sandbox validou a transição sem alterar calendário de produção.
+
+---
+
+## 38. ERRO INTERCEPTADO NA VERIFICAÇÃO PUBLICADA — V58 (11/08/2026)
+
+### 38.1 Leitura direta de avaliação inexistente bloqueava o primeiro envio
+**O que existia:** o Portal fazia `getDoc()` no documento determinístico antes de mostrar o formulário. Na primeira avaliação esse documento ainda não existe; por segurança, a regra não possui `resource.data.cliente` para provar a propriedade e recusa a leitura.
+**O que acontecia:** a aba aparecia, mas mostrava “Não consegui carregar sua avaliação agora” para o cliente que ainda nunca avaliou.
+**Como consertei:** a carga passou a consultar `avaliacoes_clientes` com `where('cliente','==',clienteAtual.slug)`. A consulta segura pode retornar zero documentos e então exibir o formulário de primeiro envio. A gravação continua no ID determinístico e leitura de outro cliente continua proibida.
+> **LEI:** formulário de criação não pode depender da leitura autorizada de um recurso que ainda não existe. Quando a autorização depende de campos do recurso, o estado vazio deve ser obtido por consulta restrita à identidade da sessão ou por outra prova segura — nunca ampliando `allow get`.
+
+## 39. CHECKLIST EXECUTADO NA V58
+
+- [x] V57 confirmada na `main` e no domínio com cache-busting e espera de inicialização.
+- [x] Portal real abriu com sessão válida e exibiu a entrada de avaliação.
+- [x] Falha do primeiro carregamento foi reproduzida antes da correção, sem gravar dados.
+- [x] Carregamento corrigido não usa `getDoc()` de documento inexistente.
+- [x] Consulta exige `where` pelo slug do próprio cliente; regras não foram ampliadas.
+- [ ] Envio real de uma avaliação permanece não executado, pois criaria feedback em nome do cliente.

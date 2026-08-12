@@ -536,6 +536,34 @@ async function testarCalendariosSandbox() {
   exigir(fila.linhasCalendariosAguardandoRevisao([registro('ok', {
     items:[{mes:'2026-08',name:'A'}], aprovacaoMeses:{'2026-08':{status:'liberado'}}
   })]).length === 0, 'calendário já liberado continuou pedindo aprovação');
+  /* Incidente Mochi (12/08): julho era a âncora legada, mas setembro
+     enviado também era espelhado em `aprovacaoInterna`. O fallback global
+     fazia julho entrar junto na fila com o mesmo horário de setembro. */
+  const julhoSetembro = registro('mochi', {
+    client:'Mochi', mesLegado:'2026-07',
+    items:[{mes:'2026-07',name:'Julho concluído'},{mes:'2026-09',name:'Setembro novo'}],
+    aprovacaoInterna:{status:'aguardando_interna',mes:'2026-09',por:'Gabrielle',em:'2026-08-10T19:55:11Z'},
+    aprovacaoMeses:{'2026-09':{status:'aguardando_interna',mes:'2026-09',por:'Gabrielle',em:'2026-08-10T19:55:11Z'}}
+  });
+  const filaJulhoSetembro = fila.linhasCalendariosAguardandoRevisao([julhoSetembro]);
+  exigir(filaJulhoSetembro.length === 1 && filaJulhoSetembro[0].mesKey === '2026-09' &&
+    fila.estadoMesCal(julhoSetembro.data(),'2026-07') === 'liberado',
+    'status global de setembro voltou a duplicar julho na fila da Amanda');
+  const barreiraHistorico=trecho(calendario,'function mesAnteriorAoAtual','/* ===== REABRIR ANTES DO ENVIO');
+  exigir(barreiraHistorico.includes("if(mesAnteriorAoAtual(mesVisivel))") &&
+    barreiraHistorico.includes('não pode ser reenviado junto com o calendário novo'),
+    'mês anterior voltou a poder ser reenviado para a fila da Amanda');
+  const historicoApi=executarSandbox('mes-historico-v59.js',
+    `${trecho(calendario,'function mesAnteriorAoAtual','function exigirRetiradaAntesDeEditar')}\nglobalThis.api={mesAnteriorAoAtual};`);
+  exigir(historicoApi.mesAnteriorAoAtual('2026-07')===true &&
+    historicoApi.mesAnteriorAoAtual('2099-01')===false && historicoApi.mesAnteriorAoAtual('Julho')===false,
+    'barreira de reenvio não diferencia mês passado, futuro e rótulo inválido');
+  const portalFonte=trecho(fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8'),
+    'function estadoDoMesPortal(mes)','const mesesDoDoc');
+  const portalMesApi=executarSandbox('portal-mes-isolado-v59.js',
+    `const aprMeses={'2026-09':{status:'aguardando_interna',mes:'2026-09'}};const todosItens=[{mes:'2026-07'},{mes:'2026-09'}];const usaMeses=true,legado='2026-07';const dadosCal={aprovacaoMeses:aprMeses,mesLegado:legado,items:todosItens,aprovacaoInterna:{status:'aguardando_interna',mes:'2026-09'}};\n${portalFonte}\nglobalThis.api={estadoDoMesPortal};`);
+  exigir(portalMesApi.estadoDoMesPortal('2026-07')==='liberado' && portalMesApi.estadoDoMesPortal('2026-09')==='aguardando_interna',
+    'Portal voltou a herdar a aprovação de setembro no mês legado de julho');
 
   /* A compatibilidade legada não pode oferecer um botão impossível:
      ausência de status explícito permite entrar no ciclo formal, mas um
@@ -547,6 +575,8 @@ async function testarCalendariosSandbox() {
     `let data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Legado'}]};let mesVisivel='2026-08',gravacoes=0,recusas=0,confirmacoes=0,saveTimer=null,temNaoSalvo=false;\n` +
     `window.__modoCal='equipe';window.__enviandoAprovacaoInterna=false;\n` +
     `function ehCalendarioLegado(){const m=data.aprovacaoMeses?.[mesVisivel];return !(m?.status||data.aprovacaoInterna?.status);}\n` +
+    `function mesUsaCampoLegadoLocal(mes){const usa=(data.items||[]).some(i=>i&&i.mes)||!!data.aprovacaoMeses||!!data.mesLegado;return !usa||!!mes&&!!data.mesLegado&&mes===data.mesLegado;}\n` +
+    `function mesAnteriorAoAtual(){return false;}\n` +
     `function estadoAprovacao(){return data.aprovacaoMeses?.[mesVisivel]?.status||data.aprovacaoInterna?.status||(data.items.length?'liberado':'rascunho');}\n` +
     `function edicaoBloqueadaPorRevisao(){return ['aguardando_interna','aprovado_interno','liberado'].includes(estadoAprovacao());}\n` +
     `function exigirRetiradaAntesDeEditar(){recusas++;return true;}function itensDoMes(m){return data.items.filter(i=>!i.mes||i.mes===m);}\n` +
@@ -1265,6 +1295,11 @@ function testarV54Sandbox() {
     'Portal voltou a listar ou mostrar links de Stories sem liberação explícita');
   exigir(regras.includes('resource.data.cliente == clienteDaSessao()')&&regras.includes('resource.data.liberadoCliente == true'),
     'Firestore voltou a permitir Stories de outro cliente ou ainda não liberados');
+  const cadastroStories=trecho(escritorio,'window.carregarClientesDeStory = async function','window.salvarClienteDeStory');
+  exigir(cadastroStories.includes('new Map(STORY_CLIENTES_SEED.map') &&
+    cadastroStories.includes('snap.forEach(d => porSlug.set') &&
+    !cadastroStories.includes('await setDoc('),
+    'abrir Stories voltou a depender de escrita automática de seed ou a esconder Vitalle quando a coleção está vazia');
   const avaliacaoPortal=trecho(portal,'async function carregarAvaliacaoCliente','/* ===== PROGRAMADOS');
   const carregarAvaliacaoPortal=trecho(avaliacaoPortal,'async function carregarAvaliacaoCliente','window.salvarAvaliacaoCliente');
   const regraAvaliacao=trecho(regras,'match /avaliacoes_clientes/{docId}','match /demandas_cliente/{docId}');

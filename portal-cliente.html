@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-<meta name="gs-build" content="2026-08-12-stories-cadeia-real-v60">
+<meta name="gs-build" content="2026-08-12-portal-cliente-auditado-v61">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -70,6 +70,13 @@
   .gpLeg i{width:9px;height:9px;border-radius:2px;display:inline-block;}
   .gpNada{margin-top:10px;font-size:11.5px;color:var(--muted);}
   @media(max-width:640px){
+    .wrap{padding:16px 12px 44px;}
+    h1{font-size:22px;overflow-wrap:anywhere;}
+    .tabs{margin-left:-2px;margin-right:-2px;scrollbar-width:thin;}
+    .tab{padding:9px 12px;}
+    .card{padding:15px;}
+    .btn{white-space:normal;overflow-wrap:anywhere;}
+    input,textarea,select{font-size:16px;} /* evita zoom automático do Safari */
     .gpDia{min-height:56px;padding:3px;}
     .gpPost{font-size:8.5px;}
     .gpCab div{font-size:9px;}
@@ -227,6 +234,50 @@
      Vídeos", e os números mostram ENTREGA (não publicação). */
   const CLIENTES_SO_EDICAO = ['rodrigo'];
   function ehSoEdicao(){ return !!clienteAtual && CLIENTES_SO_EDICAO.includes(clienteAtual.slug); }
+
+  function nomeLegivelPortal(slug,nome){
+    const bruto=String(nome||'').trim();
+    if(bruto && bruto!==slug) return bruto;
+    return String(slug||'Cliente').split('-').filter(Boolean)
+      .map(p=>p.charAt(0).toUpperCase()+p.slice(1)).join(' ');
+  }
+
+  /* ===== ESCOPO REAL DO PORTAL — V61 (12/08/2026) ==================
+     O Portal não pode inventar o plano do cliente. Antes, todo mensalista
+     (exceto o Rodrigo fixo) recebia a aba Stories, mesmo quando a ficha
+     dizia que o serviço não estava incluído. O mesmo carregamento também
+     começava antes de confirmar o nome da ficha, deixando o slug técnico
+     no cabeçalho de links legados.
+
+     A ficha já é privada e já pode ser lida somente pela própria sessão.
+     Ela passa a definir nome, Stories e modalidade. O histórico liberado
+     é um fallback apenas para cadastros antigos sem o campo `incluiStories`:
+     preserva quem já recebeu Stories, mas nunca faz um `false` explícito
+     voltar a ser verdadeiro. */
+  function escopoPortalDaFicha(slug, dadosToken, ficha, temHistoricoStories){
+    const dados=ficha||{};
+    const temCampoStories=typeof dados.incluiStories==='boolean';
+    const somenteEdicao=CLIENTES_SO_EDICAO.includes(slug) ||
+      String(dados.tipoServico||dados.modalidade||dados.plano||'').toLowerCase().includes('só edição') ||
+      String(dados.tipoServico||dados.modalidade||dados.plano||'').toLowerCase().includes('so edicao');
+    return {
+      nome:nomeLegivelPortal(slug,dados.nome||dados.clienteNome||dadosToken?.nome),
+      incluiStories:!somenteEdicao && (temCampoStories ? dados.incluiStories===true : temHistoricoStories===true),
+      somenteEdicao
+    };
+  }
+  window.escopoPortalDaFicha=escopoPortalDaFicha;
+
+  function aplicarEscopoPortal(){
+    const escopo=clienteAtual?.escopo||{};
+    ['minhaAgenda','ideias','stories'].forEach(t=>{
+      const el=document.querySelector('#menuMais .tab[data-tab="'+t+'"]');
+      if(!el) return;
+      const permitido=!escopo.somenteEdicao && (t!=='stories'||escopo.incluiStories===true);
+      el.style.display=permitido?'':'none';
+      if(!permitido) el.classList.remove('active');
+    });
+  }
 
   function esc(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function dataLocalPortal(d){
@@ -409,8 +460,8 @@
     CLIENTES_LISTA = todos.filter((c,i)=>todos.findIndex(x=>x.slug===c.slug)===i).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
   }
 
-  window.entrarPortal = function(slug, nome){
-    clienteAtual = { slug, nome };
+  window.entrarPortal = function(slug, nome, escopo){
+    clienteAtual = { slug, nome, escopo:escopo||{} };
     localStorage.setItem('portalClienteSlug', slug);
     localStorage.setItem('portalClienteToken', new URLSearchParams(location.search).get('t')||'');
     document.getElementById('telaSelecao').style.display = 'none';
@@ -418,7 +469,8 @@
     document.getElementById('nomeClientePortal').innerHTML = esc(clienteAtual.nome);
     mostrarLembretePagamento();   // faixa suave, so a partir de 1 dia antes do vencimento
 
-    if(ehSoEdicao()){
+    aplicarEscopoPortal();
+    if(ehSoEdicao() || clienteAtual.escopo.somenteEdicao){
       // Esconde o que não existe no plano só-edição
       const tabCal = document.querySelector('.tabs .tab[data-tab="calendario"]');
       if(tabCal) tabCal.style.display = 'none';
@@ -442,7 +494,7 @@
     } else {
       carregarCalendario();
       carregarIdeias();
-      carregarStories();
+      if(clienteAtual.escopo.incluiStories===true) carregarStories();
     }
     carregarDemandas();
     carregarDrive();
@@ -2169,7 +2221,20 @@
       return;
     }
     const dadosAcesso = tokenNovoValido ? tokenSnap.data() : {nome:slug};
-    window.entrarPortal(slug, dadosAcesso.nome || slug);
+    let fichaPortal={};
+    try{
+      const fichaSnap=await getDocs(query(collection(db,'cadastros_clientes'),where('slug','==',slug)));
+      fichaSnap.forEach(d=>{ if(!Object.keys(fichaPortal).length) fichaPortal=d.data()||{}; });
+    }catch(e){ console.warn('Ficha privada do Portal não pôde ser confirmada:',e.code||e.message); }
+    let temHistoricoStories=false;
+    if(typeof fichaPortal.incluiStories!=='boolean'){
+      try{
+        const storySnap=await getDocs(query(collection(db,'stories_semanais'),where('cliente','==',slug)));
+        storySnap.forEach(d=>{ const s=d.data()||{}; if(!s.excluido&&(s.revisaoInterna||'liberado')==='liberado') temHistoricoStories=true; });
+      }catch(e){ console.warn('Histórico de Stories não pôde ser confirmado:',e.code||e.message); }
+    }
+    const escopo=escopoPortalDaFicha(slug,dadosAcesso,fichaPortal,temHistoricoStories);
+    window.entrarPortal(slug, escopo.nome, escopo);
   });
 </script>
 </body>

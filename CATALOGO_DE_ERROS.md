@@ -855,3 +855,75 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 - [x] Portal explica que conteúdo vazio ainda depende de preparação e revisão, sem acusar perda.
 - [x] Seed fixo de contrato removido; `stories_clientes` é a fonte única operacional.
 - [ ] O Story real da semana ainda precisa ser montado ou ter os links colados pela Gabi e depois liberado pela Amanda. O sistema não pode fabricar esse trabalho.
+
+---
+
+## 46. ERRO DE VALIDAÇÃO REPETIDO — PORTAL DO CLIENTE (12/08/2026)
+
+### 46.1 Validei a cadeia interna, mas chamei isso de teste do Portal
+**O que fiz:** confirmei a configuração da Vitalle na Central, entrei em auditoria como Gabi e Amanda, contei Stories e links e validei o HTML público sem sessão. Depois tratei essas provas como se o cliente tivesse usado o próprio Portal.
+**O que faltou:** abrir o link privado vigente pela porta oficial, entrar como o cliente, percorrer cada aba visível, conferir estados cheio/vazio/erro, navegar entre semanas e validar o conteúdo efetivamente liberado. Um Portal sem token só prova carregamento público e isolamento; não prova a experiência autenticada.
+**Por que o Chris precisou pedir pela terceira vez:** eu respondi à pergunta “por que a semana está vazia?” e parei quando a causa interna ficou demonstrada. Não executei o requisito maior já explícito: agir como o cliente e conferir o produto inteiro que ele usa.
+> **LEI:** validar Gabi + Amanda + HTML público não equivale a validar o Portal. A aprovação ponta a ponta exige link privado vigente aberto pela interface oficial, sessão do cliente confirmada, todas as abas visíveis percorridas e ausência de escrita operacional durante a auditoria.
+
+### 46.2 Confundi vazio da semana atual com ausência total de conteúdo
+**O que fiz:** inicialmente informei apenas que a semana 10/08–14/08 tinha zero conteúdo.
+**O que ainda precisava ser provado:** ao navegar para 03/08–07/08, encontrei 1 Story da Vitalle com estado `liberado_portal`. Isso demonstrou que o histórico não havia sumido e que o vazio era restrito à semana atual.
+> **LEI:** qualquer diagnóstico semanal precisa comparar ao menos a competência anterior preservada. “Zero nesta semana” nunca pode ser resumido como “cliente sem conteúdo” sem verificar o histórico.
+
+### 46.3 Teste automatizado não substitui inspeção visual autenticada
+**O que aconteceu:** preflight e 537 asserções passaram, mas nenhum deles prova ordem das abas, clareza dos textos, botões visíveis, conteúdo cortado no celular ou coerência entre áreas para um cliente real.
+**Correção de processo:** a matriz do Portal passa a registrar, por cliente e aba: visibilidade real no DOM, carregamento concluído, conteúdo ou vazio explicado, ausência de erro, isolamento de identidade, ação disponível e comportamento móvel.
+> **LEI:** testes de código são gates obrigatórios, não certificado de usabilidade. Portal em produção exige inspeção autenticada e responsiva com evidência por aba.
+
+## 47. CHECKLIST OBRIGATÓRIO — AUDITORIA REAL DO PORTAL
+
+- [ ] Abrir cada Portal exclusivamente pelo botão oficial da Central; não copiar, imprimir ou expor token.
+- [ ] Confirmar no cabeçalho que o slug/nome pertence ao cliente esperado.
+- [ ] Registrar `Array.from(document.querySelectorAll(...)).filter(n => n.offsetParent !== null)` para as abas realmente visíveis.
+- [ ] Abrir cada aba visível e classificar: carregou com dados, vazio legítimo explicado, erro de leitura ou ação quebrada.
+- [ ] Conferir pelo menos um cliente com Stories e um sem Stories; cliente sem o serviço não recebe a aba nem dados de outro cliente.
+- [ ] Para Stories, comparar semana atual e anterior e provar que só material liberado aparece.
+- [ ] Conferir calendário, acompanhamento, demandas, programados, Drive, vídeos, agenda, ideias, atas, informações, briefing, referências, proposta, pagamento e avaliação quando existirem para o papel.
+- [ ] Validar celular e desktop: sem corte horizontal, sobreposição que bloqueie ação ou conteúdo inacessível.
+- [ ] Não aprovar, comentar, avaliar, publicar, marcar pagamento nem criar demanda em nome do cliente durante a auditoria.
+- [ ] Não declarar o Portal aprovado se alguma aba crítica não foi aberta por falta de sessão, dado ou permissão; registrar o limite pelo nome.
+
+## 48. ACHADOS DA VARREDURA CLIENTE POR CLIENTE — V61 (12/08/2026)
+
+### 48.1 Token válido ainda podia exibir o slug como nome da empresa
+**Prova real:** 26 links privados existentes foram abertos pela Central. Vários cabeçalhos mostraram `vitalle-odonto`, `bluefit`, `cookiery` e outros slugs, embora a empresa tivesse nome legível na ficha ou na própria Central.
+**Causa:** links legados validavam a sessão, mas o fallback de `dadosAcesso` usava somente `{nome:slug}`. A ficha privada era carregada depois, apenas dentro de Informações, e nunca corrigia a identidade do cabeçalho.
+**Correção:** a entrada do Portal consulta a ficha do próprio slug, deriva um nome legível quando o legado ainda não tem nome e só então monta a tela.
+> **LEI:** token aceito prova autorização, não qualidade da identidade. O cabeçalho deve vir da ficha privada do próprio cliente; slug técnico é apenas último fallback e precisa ser humanizado.
+
+### 48.2 Stories aparecia para clientes sem o serviço contratado
+**Prova real:** a aba Stories apareceu nos Portais de Açougue São Joaquim, Bluefit, Mayk Leão e demais acessos, apesar de a Central registrar Stories apenas para a carteira contratada. A exceção fixa do Rodrigo escondia a aba, mas os outros planos não eram consultados.
+**Causa:** `entrarPortal()` chamava `carregarStories()` e mantinha a aba no DOM visível para todo cliente que não estivesse na constante `CLIENTES_SO_EDICAO`.
+**Correção:** o escopo do Portal agora usa `incluiStories` da ficha privada. `false` explícito vence qualquer histórico; cadastro legado sem o campo preserva a aba somente se existir Story liberado daquele mesmo cliente. Cliente sem o serviço não carrega nem vê a aba.
+> **LEI:** ausência numa lista fixa não concede funcionalidade. Aba contratual exige permissão positiva da ficha ou compatibilidade legada comprovada pelo histórico do próprio cliente.
+
+### 48.3 Identidades canônicas ainda geravam cartões de Portal duplicados
+**Prova real:** a Central expôs 28 botões de Portal, incluindo duas entradas chamadas Zeiss (`zeens` e `otica-visao-araucaria`), embora ambas sejam aliases declarados de `zeiss` no próprio sistema.
+**Causa:** os tokens eram indexados pelo slug bruto, enquanto contratos e outros leitores já normalizavam pelo slug canônico. A leitura remontava duas identidades sem criar dados novos.
+**Correção:** a Central indexa tokens por `slugClienteCanonico()` e prefere o token cuja origem já é canônica. O alias continua preservado para auditoria e não é fundido automaticamente.
+> **LEI:** normalização de cliente deve acontecer antes de montar listas, contadores e links. Preservar alias no banco não autoriza duplicá-lo na operação; fusão de histórico continua sendo uma ação separada e auditada.
+
+### 48.4 “Página abriu” não é aprovação de todas as abas
+**Prova real:** a Vitalle passou por todas as 16 áreas do Portal. Calendário atual está em preparação; Acompanhamento carregou; Programados e Drive carregaram; Vídeos mostrou números; Agenda mostrou histórico; Stories atual está vazio, mas a semana 03/08–07/08 contém o roteiro liberado; Pagamento mostrou a competência; Avaliação concluiu após a leitura assíncrona. A primeira captura feita cedo demais ainda mostrava “Carregando sua avaliação...”.
+**Correção de processo:** cada aba assíncrona recebe espera própria e nova leitura antes de ser classificada. Um texto transitório não pode virar falso erro nem falso sucesso.
+> **LEI:** auditar portal é testar estados finais e transições. Registre carregamento inicial, aguarde a operação e prove o estado terminal; nunca conclua pelo primeiro retrato.
+
+## 49. MATRIZ EXECUTADA — PORTAL DO CLIENTE V61
+
+- [x] 26 links privados existentes foram abertos pela porta oficial, sem expor a carteira a um cliente e sem executar aprovação, comentário, avaliação, pagamento ou nova demanda.
+- [x] Nenhum dos 26 links auditados retornou “Link inválido ou expirado”.
+- [x] Vitalle foi validada na V61 com identidade `Vitalle Odonto`, 16 áreas carregadas até o estado terminal e zero erro de console.
+- [x] Stories da Vitalle: semana atual 10/08–14/08 corretamente vazia; semana anterior 03/08–07/08 preserva e exibe o roteiro liberado.
+- [x] Bluefit foi validada como caso sem Stories: a aba não está visível e o painel não é carregado.
+- [x] Rodrigo foi validado como plano só edição: Calendário, Agenda, Ideias e Stories não ficam visíveis; `Meus Vídeos` é a entrada principal.
+- [x] V61 autenticada em 390×844: nome e seis ações principais visíveis, sem rolagem horizontal e sem erro de console.
+- [x] Ficha com `incluiStories:false` vence histórico; ficha legada sem o campo só preserva a aba quando existe histórico liberado do próprio slug.
+- [x] Central passou a montar tokens por identidade canônica e não repete alias como segundo cliente operacional.
+- [x] Preflight e regressão crítica passam com gates específicos para identidade, escopo de Stories e aliases.
+- [ ] O domínio público ainda serve a V60 até o usuário subir este pacote V61; portanto, a validação publicada da correção só pode ocorrer após o upload e a propagação.

@@ -93,10 +93,15 @@ const leisV57 = [
 const leisV58 = [
   'Leitura direta de avaliação inexistente bloqueava o primeiro envio'
 ];
+const leisV60 = [
+  'nome presente na página não prova disponibilidade operacional',
+  'correção de configuração não pode fabricar conteúdo',
+  'seletor de cliente precisa governar toda leitura abaixo dele'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V58');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V58');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V60');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V60');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -561,9 +566,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-12-calendario-mes-isolado-stories-v59') {
-  falhar(`build V59 inesperado: ${build || 'ausente'}`);
-} else provar('V59 isola a aprovação por competência e preserva a primeira avaliação');
+if (build !== '2026-08-12-stories-cadeia-real-v60') {
+  falhar(`build V60 inesperado: ${build || 'ausente'}`);
+} else provar('V60 explicita a cadeia real de Stories sem seed paralelo');
 
 const salvarContratoProgramado = escritorio.slice(
   escritorio.indexOf('window.salvarContrato = async function'),

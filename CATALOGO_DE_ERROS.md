@@ -924,6 +924,15 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 - [x] Rodrigo foi validado como plano só edição: Calendário, Agenda, Ideias e Stories não ficam visíveis; `Meus Vídeos` é a entrada principal.
 - [x] V61 autenticada em 390×844: nome e seis ações principais visíveis, sem rolagem horizontal e sem erro de console.
 - [x] Ficha com `incluiStories:false` vence histórico; ficha legada sem o campo só preserva a aba quando existe histórico liberado do próprio slug.
-- [x] Central passou a montar tokens por identidade canônica e não repete alias como segundo cliente operacional.
+- [x] Central passou a montar tokens por identidade canônica e consolida também fichas oficiais/legadas antes de renderizar um único cartão operacional.
 - [x] Preflight e regressão crítica passam com gates específicos para identidade, escopo de Stories e aliases.
-- [ ] O domínio público ainda serve a V60 até o usuário subir este pacote V61; portanto, a validação publicada da correção só pode ocorrer após o upload e a propagação.
+- [x] O domínio publicado foi confirmado na V61 por `innerHTML.includes()` após cache-busting e espera de 3 segundos; os HTMLs servidos têm o mesmo conteúdo do `main` (diferença apenas de finais de linha no escritório).
+
+## 50. REGRESSÃO ENCONTRADA NA VALIDAÇÃO PÓS-PUBLICAÇÃO — ALIASES NA CENTRAL
+
+### 50.1 Canonizei o token, mas não a lista final de cartões
+**O que eu fiz errado:** a primeira V61 agrupou `clientes_portal_tokens` pela identidade canônica e o teste apenas procurava essa implementação. A Central, porém, une ficha oficial, contrato e carteira legada depois dessa etapa. `zeens` e `otica-visao-araucaria` voltaram a entrar no `Map` com as chaves brutas e foram exibidos como dois cartões ativos chamados Zeiss.
+**Como foi descoberto:** após o upload, a inspeção real da Central autenticada encontrou os dois cartões, embora o arquivo histórico também estivesse correto. Portanto, o checkbox anterior “não repete alias” era uma conclusão maior do que a prova disponível.
+**Correção:** `consolidarClientesAtivosPorIdentidade()` roda na fronteira final, depois de todas as fontes serem unidas e antes da ordenação/renderização. Ela não grava, não apaga e não funde documentos; escolhe a ficha operacional mais rica, preserva token/cadastro complementar e produz um cartão por slug canônico.
+**Gate novo:** a regressão agora executa a função com `zeiss`, `zeens` e `otica-visao-araucaria`, exige uma única Zeiss, preservação da ficha oficial e reaproveitamento seguro do token legado. O preflight também exige que a Central realmente chame a consolidação final.
+> **LEI:** normalizar uma fonte intermediária não prova deduplicação da interface. Quando várias origens alimentam um painel, a identidade deve ser consolidada depois da última união e o teste deve executar a saída final com aliases concorrentes.

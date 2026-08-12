@@ -96,12 +96,21 @@ const leisV58 = [
 const leisV60 = [
   'nome presente na página não prova disponibilidade operacional',
   'correção de configuração não pode fabricar conteúdo',
-  'seletor de cliente precisa governar toda leitura abaixo dele'
+  'seletor de cliente precisa governar toda leitura abaixo dele',
+  'validar Gabi + Amanda + HTML público não equivale a validar o Portal',
+  'qualquer diagnóstico semanal precisa comparar ao menos a competência anterior preservada',
+  'testes de código são gates obrigatórios, não certificado de usabilidade'
+];
+const leisV61 = [
+  'token aceito prova autorização, não qualidade da identidade',
+  'ausência numa lista fixa não concede funcionalidade',
+  'normalização de cliente deve acontecer antes de montar listas, contadores e links',
+  'auditar portal é testar estados finais e transições'
 ];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V60');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V60');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V61');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V61');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -256,6 +265,16 @@ for (const provaSeguranca of [
 ]) {
   if (!provaSeguranca[1]) falhar(provaSeguranca[0]); else provar(provaSeguranca[0]);
 }
+
+if (!portal.includes("where('slug','==',slug)") ||
+    !portal.includes('escopoPortalDaFicha(slug,dadosAcesso,fichaPortal,temHistoricoStories)') ||
+    !portal.includes("if(clienteAtual.escopo.incluiStories===true) carregarStories()")) {
+  falhar('Portal não confirma identidade/escopo privado antes de carregar Stories');
+} else provar('Portal resolve nome e Stories pela ficha do próprio cliente antes de montar as abas');
+if (!escritorio.includes('const canonico=slugClienteCanonico(v.cliente)') ||
+    !escritorio.includes('if(!tokenPorCliente[canonico] || v.cliente===canonico) tokenPorCliente[canonico]=v;')) {
+  falhar('Central pode voltar a criar cartões de Portal duplicados por alias');
+} else provar('Central monta um Portal por identidade canônica sem apagar aliases históricos');
 
 const regraEntradaPessoal = regras.match(/match \/recebimentos_entrada_pessoal\/\{docId\} \{[\s\S]*?allow delete:\s*if false;[\s\S]*?\n    \}/)?.[0] || '';
 if (!regraEntradaPessoal.includes('allow read, update: if ehChris()') ||
@@ -566,9 +585,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-12-stories-cadeia-real-v60') {
-  falhar(`build V60 inesperado: ${build || 'ausente'}`);
-} else provar('V60 explicita a cadeia real de Stories sem seed paralelo');
+if (build !== '2026-08-12-portal-cliente-auditado-v61') {
+  falhar(`build V61 inesperado: ${build || 'ausente'}`);
+} else provar('V61 identifica a auditoria autenticada do Portal do Cliente');
 
 const salvarContratoProgramado = escritorio.slice(
   escritorio.indexOf('window.salvarContrato = async function'),

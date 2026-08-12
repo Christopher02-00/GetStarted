@@ -125,6 +125,7 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - A confirmação de um workflow (enviar calendário, aprovar, devolver) não deve falhar apenas porque o eco do próprio autosave mudou `updatedAt`. Só é permitido tolerar a versão diferente quando a assinatura do conteúdo de negócio é idêntica e nenhuma decisão posterior substituiu a ação. Conteúdo concorrente continua bloqueado.
 - Documento preservado por soft-delete ou `status=cancelado` é histórico, não trabalho ativo. Grades, contadores, régua de cobrança e seletores operacionais devem filtrar o estado central e a vigência; telas de arquivo continuam lendo o registro.
 - Uma funcionalidade do Portal do Cliente só está completa quando existem, na mesma entrega, entrada visível, escritor do cliente, regra isolada pelo slug da sessão e leitor da equipe. Não anunciar no Escritório um recurso que o cliente não consegue executar.
+- Se a autorização de leitura depende de `resource.data`, o primeiro uso não pode começar com `getDoc()` de um documento ainda inexistente. Valide o estado vazio com consulta que imponha a identidade da sessão (por exemplo `where('cliente','==',clienteDaSessao)`) e mantenha `list` seguro; nunca corrija ampliando leitura pontual para IDs adivinháveis.
 
 ## Evidência e entrega
 

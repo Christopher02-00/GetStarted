@@ -1296,10 +1296,27 @@ function testarV54Sandbox() {
   exigir(regras.includes('resource.data.cliente == clienteDaSessao()')&&regras.includes('resource.data.liberadoCliente == true'),
     'Firestore voltou a permitir Stories de outro cliente ou ainda não liberados');
   const cadastroStories=trecho(escritorio,'window.carregarClientesDeStory = async function','window.salvarClienteDeStory');
-  exigir(cadastroStories.includes('new Map(STORY_CLIENTES_SEED.map') &&
-    cadastroStories.includes('snap.forEach(d => porSlug.set') &&
+  exigir(cadastroStories.includes("getDocs(collection(db,'stories_clientes'))") &&
+    cadastroStories.includes('lista.filter(c => c.ativo !== false)') &&
+    !cadastroStories.includes('STORY_CLIENTES_SEED') &&
     !cadastroStories.includes('await setDoc('),
-    'abrir Stories voltou a depender de escrita automática de seed ou a esconder Vitalle quando a coleção está vazia');
+    'abrir Stories voltou a depender de seed paralelo, escrita automática ou registro inativo');
+  const estadoStoriesFonte=trecho(escritorio,'function estadoCadeiaStoriesCliente','window.estadoCadeiaStoriesCliente');
+  const estadoStoriesApi=executarSandbox('stories-cadeia-v60.js',
+    `${estadoStoriesFonte}\nglobalThis.api={estadoCadeiaStoriesCliente};`);
+  exigir(estadoStoriesApi.estadoCadeiaStoriesCliente('vitalle-odonto','2026-08-10',[],null).codigo==='nao_criado' &&
+    estadoStoriesApi.estadoCadeiaStoriesCliente('vitalle-odonto','2026-08-10',[{cliente:'vitalle-odonto',semana:'2026-08-10',revisaoInterna:'aguardando_interna'}],null).codigo==='aguardando_amanda' &&
+    estadoStoriesApi.estadoCadeiaStoriesCliente('vitalle-odonto','2026-08-10',[{cliente:'vitalle-odonto',semana:'2026-08-10',revisaoInterna:'liberado'}],null).codigo==='liberado_portal' &&
+    estadoStoriesApi.estadoCadeiaStoriesCliente('outro','2026-08-10',[{cliente:'vitalle-odonto',semana:'2026-08-10',revisaoInterna:'liberado'}],null).codigo==='nao_criado',
+    'cadeia de Stories voltou a confundir cliente cadastrado, semana errada, revisão da Amanda e liberação no Portal');
+  exigir(escritorio.includes('data-story-cadeia-cliente=')&&escritorio.includes('data-story-cadeia-estado=')&&
+    portal.includes('data-stories-estado="aguardando-equipe"'),
+    'estado ponta a ponta de Stories deixou de ficar explícito para equipe ou cliente');
+  const renderStoriesFonte=trecho(escritorio,'window.renderStoriesCliente = async function','  // guarda onde o painel foi desenhado');
+  exigir(renderStoriesFonte.includes('clientesStory.some(c=>c.slug===window.__storyClienteSel)')&&
+    renderStoriesFonte.includes("s.cliente === clienteStorySelecionado")&&
+    renderStoriesFonte.includes('s.semana === semana'),
+    'seleção de Stories voltou a misturar conteúdo semanal de clientes diferentes');
   const avaliacaoPortal=trecho(portal,'async function carregarAvaliacaoCliente','/* ===== PROGRAMADOS');
   const carregarAvaliacaoPortal=trecho(avaliacaoPortal,'async function carregarAvaliacaoCliente','window.salvarAvaliacaoCliente');
   const regraAvaliacao=trecho(regras,'match /avaliacoes_clientes/{docId}','match /demandas_cliente/{docId}');

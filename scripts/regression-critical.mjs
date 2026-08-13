@@ -27,6 +27,85 @@ function executarSandbox(nome, codigo) {
   return contexto.api;
 }
 
+function testarCoberturaPostagensSandbox() {
+  const fonte = trecho(escritorio,
+    'function diasCivisEntreISO',
+    '  /* ===== REDE DE SEGURANÇA COMPLETA DO CICLO DE POSTAGEM');
+  const api = executarSandbox('cobertura-postagens-v64.js',
+    `const APELIDOS={zeens:'zeiss'};\n`+
+    `function slugClienteCanonico(v){return APELIDOS[v]||String(v||'');}\n`+
+    `function nomeClienteCanonico(slug,nome){return nome||slug;}\n`+
+    `function normNomeCliente(v){return String(v||'').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').trim();}\n`+
+    `${fonte}\n`+
+    `globalThis.api={calcularCoberturaPostagens,alertaCoberturaAindaValido,idAlertaCoberturaPostagem};`);
+  const clientes=[
+    {slug:'vitalle-odonto',nome:'Vitalle Odonto'},
+    {slug:'divina-cantina',nome:'Divina Cantina'},
+    {slug:'bluefit',nome:'Bluefit'},
+    {slug:'zeiss',nome:'Zeiss'}
+  ];
+  const posts=[
+    {cliente:'vitalle-odonto',clienteNome:'Vitalle Odonto',status:'agendado',dataAgendada:'2026-08-13',formato:'foto'},
+    {cliente:'vitalle-odonto',clienteNome:'Vitalle Odonto',status:'postado',dataAgendada:'2026-08-12',formato:'video'},
+    {cliente:'divina-cantina',status:'postado',dataAgendada:'2026-08-10',formato:'arte'},
+    {cliente:'bluefit',status:'agendado',dataAgendada:'2026-08-16',formato:'carrossel'},
+    {cliente:'zeiss',status:'agendado',dataAgendada:'2026-08-13',formato:'foto'},
+    {cliente:'zeens',status:'agendado',dataAgendada:'2026-08-13',formato:'video'},
+    {cliente:'cliente-encerrado',status:'agendado',dataAgendada:'2026-08-13'},
+    {cliente:'divina-cantina',status:'agendado',dataAgendada:'2026-08-20',excluido:true},
+    {cliente:'divina-cantina',status:'aguardando_agendamento',dataAgendada:'2026-08-20'}
+  ];
+  const cobertura=api.calcularCoberturaPostagens(posts,clientes,'2026-08-13');
+  const porSlug=Object.fromEntries(cobertura.map(e=>[e.slug,e]));
+  exigir(cobertura.length===4 && !porSlug['cliente-encerrado'],
+    'alerta de cobertura voltou a incluir cliente fora da carteira recorrente');
+  exigir(porSlug['vitalle-odonto'].evento==='ultima_postagem' && porSlug['vitalle-odonto'].qtdNaUltimaData===1,
+    'última postagem do dia não gerou o evento único independentemente do formato');
+  const retroativo=api.calcularCoberturaPostagens([
+    {cliente:'vitalle-odonto',status:'postado',dataAgendada:'2026-08-12',formato:'foto'}
+  ],[clientes[0]],'2026-08-13')[0];
+  exigir(retroativo.evento==='ultima_postagem' && retroativo.diasSemPostagem===1,
+    'motor desligado no último dia perdeu o alerta antes de completar três dias');
+  exigir(porSlug['divina-cantina'].evento==='tres_dias_sem_postagem' && porSlug['divina-cantina'].diasSemPostagem===3,
+    'terceiro dia sem postagem não gerou o alerta correto');
+  exigir(porSlug.bluefit.evento==='' && porSlug.bluefit.temCoberturaFutura===true,
+    'cliente com postagem futura recebeu falso alerta');
+  exigir(porSlug.zeiss.evento==='ultima_postagem' && porSlug.zeiss.qtdNaUltimaData===2,
+    'aliases ou formatos diferentes criaram duas coberturas para o mesmo cliente');
+  exigir(api.alertaCoberturaAindaValido({etapaCobertura:'ultima_postagem',ultimaPostagemProgramada:'2026-08-13'},
+      {...porSlug['vitalle-odonto'],diasSemPostagem:2})===true &&
+    api.alertaCoberturaAindaValido({etapaCobertura:'ultima_postagem',ultimaPostagemProgramada:'2026-08-10'},porSlug['divina-cantina'])===false &&
+    api.alertaCoberturaAindaValido({etapaCobertura:'tres_dias_sem_postagem',ultimaPostagemProgramada:'2026-08-10'},porSlug['divina-cantina'])===true,
+    'transição da última postagem para três dias deixou alertas simultâneos ou encerrou cedo');
+  exigir(api.idAlertaCoberturaPostagem(porSlug.zeiss)===api.idAlertaCoberturaPostagem({...porSlug.zeiss,nome:'Outro nome'}),
+    'identidade do alerta depende do nome visual e pode duplicar');
+
+  const verificador=trecho(escritorio,'async function verificarCoberturaPostagensAmanda','window.verificarCoberturaPostagensAmanda');
+  exigir(verificador.includes("destinatario:'Amanda'") && verificador.includes('runTransaction') &&
+    verificador.includes("status:'cancelado_automaticamente',excluido:true") &&
+    !verificador.includes("'capsulas_clientes'") && !verificador.includes('acionarCapsulaAmanda'),
+    'alerta não é atômico/soft-delete, vazou para terceiro ou voltou a acionar cápsula automaticamente');
+  exigir(escritorio.includes("{ nome: 'coberturaPostagensAmanda', fn: verificarCoberturaPostagensAmanda }") &&
+    escritorio.includes("'Amanda': ['navCentral','navAprovacoes','navAgendamento','navVideos','navStories','navPostagens','navControlePostagem'") &&
+    escritorio.includes("if(nome === 'controlePostagem' && !papelPodeControlePostagem(usuarioAtual))"),
+    'motor ou acesso real da Amanda ao controle de postagem não foi ligado com guarda por papel');
+  const papelFonte=trecho(escritorio,'function papelPodeControlePostagem','window.papelPodeControlePostagem');
+  const papelApi=executarSandbox('papel-controle-postagens-v64.js',`${papelFonte}\nglobalThis.api={papelPodeControlePostagem};`);
+  exigir(['Chris','Amanda','Cecília'].every(p=>papelApi.papelPodeControlePostagem(p)) &&
+    ['Gabrielle','Helo','João Victor','Nathan','Luís','Yas',''].every(p=>!papelApi.papelPodeControlePostagem(p)),
+    'guarda do controle de postagem liberou outro papel ou bloqueou Amanda/Cecília/Chris');
+  const controle=trecho(escritorio,'window.renderControlePostagem = async function','window.salvarControlePostagem');
+  exigir(controle.includes('clientes = await clientesControlePostagemPorPapel()') &&
+    controle.includes('calcularCoberturaPostagens') && controle.includes('irParaCapsulaAmanda()'),
+    'painel voltou à lista bruta, ao cálculo só de vídeo ou perdeu o caminho manual da Amanda');
+  const carteiraControle=trecho(escritorio,'async function clientesControlePostagemPorPapel','window.clientesControlePostagemPorPapel');
+  exigir(carteiraControle.includes("if(['Chris','Amanda'].includes(usuarioAtual)) return clientesDeConteudoRecorrente()") &&
+    carteiraControle.includes("getDocs(collection(db,'clientes_config'))") &&
+    !carteiraControle.includes("'contratos_cliente'") && !carteiraControle.includes("'pagamentos_mensais'") &&
+    !carteiraControle.includes("'clientes_encerrados'"),
+    'controle operacional da Cecília voltou a consultar contratos, mensalidades ou arquivo gerencial');
+}
+
 async function testarLoginSandbox() {
   exigir(escritorio.includes("'heloisaksc@gmail.com':'Helo'") &&
     escritorio.includes("'yasmocelin@gmail.com':'Yas'") &&
@@ -1380,6 +1459,7 @@ function testarV54Sandbox() {
 }
 
 try {
+  testarCoberturaPostagensSandbox();
   await testarLoginSandbox();
   testarFinanceiroSandbox();
   testarMensalidadesSandbox();

@@ -864,6 +864,50 @@ async function testarCalendariosSandbox() {
   revisaoInlineApi.campo.value='Comentário indevido';
   exigir(await revisaoInlineApi.comentar('cliente-x','2026-08',null) === false,
     'papel fora da Amanda conseguiu comentar na revisão interna');
+
+  /* O incidente V65 só aparece no trajeto completo: no mobile, o painel era
+     renderizado depois de todos os botões. Este gate gera o cartão real,
+     extrai seu onclick e executa esse atributo com `this`, em vez de chamar
+     o handler diretamente como a cobertura anterior fazia. */
+  const htmlFilaRevisao = trecho(escritorio, 'window.htmlCalendariosParaRevisar = async function', '  function idAnaliseCalendarioRevisao');
+  const aberturaRevisao = trecho(escritorio, 'function idAnaliseCalendarioRevisao', '  const __comentariosCalendarioEmCurso');
+  const cliqueRevisaoApi = executarSandbox('clique-real-analise-calendario-v65.js',
+    `let usuarioAtual='Amanda';let __erroCalendariosCompartilhado=null;let scrolls=0;\n`+
+    `const linha={slug:'bluefit',mesKey:'2026-09',nome:'Bluefit',mes:'Setembro 2026',itens:2,refs:1,por:'Gabrielle',em:'2026-08-13T12:00:00.000Z'};const linhas=[linha,{...linha,slug:'mochi',nome:'Mochi'},{...linha,slug:"cliente-d'ouro",nome:"Cliente d'Ouro"}];\n`+
+    `const cal={client:'Bluefit',items:[{mes:'2026-09',name:'Roteiro Bluefit',day:10,fmt:'Reel',desc:'Texto real do roteiro',legenda:'Legenda',ref:'https://example.com/bluefit'}],comments:[]};\n`+
+    `const alvo={dataset:{},innerHTML:'',scrollIntoView:()=>{scrolls++;}};const attrs={};const botao={disabled:false,textContent:'📝 Analisar roteiro e comentar',setAttribute:(k,v)=>{attrs[k]=v;}};\n`+
+    `const elementos={'analiseCal_bluefit_2026-09':alvo,'btn_analiseCal_bluefit_2026-09':botao};const document={getElementById:id=>elementos[id]||null};\n`+
+    `const obterCalendariosCompartilhados=async()=>[];const linhasCalendariosAguardandoRevisao=()=>linhas;const esc=v=>String(v??'');const escAttr=esc;const escJs=v=>String(v??'').replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'");\n`+
+    `let falharLeitura=false;const db={};const doc=(...p)=>p.join('/');const getDoc=async()=>({exists:()=>!falharLeitura,data:()=>cal});const itensDoMesCalendario=(c,m)=>(c.items||[]).filter(i=>i.mes===m);function mostrarToast(){}\n`+
+    `class URL{constructor(v){this.href=String(v);this.protocol=this.href.startsWith('https:')?'https:':'x:';}}\n`+
+    `${htmlFilaRevisao}\n${aberturaRevisao}\n`+
+    `globalThis.abrirAnaliseCalendarioRevisao=window.abrirAnaliseCalendarioRevisao;\n`+
+    `globalThis.api={gerar:window.htmlCalendariosParaRevisar,alvo,botao,attrs,scrolls:()=>scrolls,setFalha:v=>{falharLeitura=v;},clicar:codigo=>Function('abrirAnaliseCalendarioRevisao',codigo).call(botao,window.abrirAnaliseCalendarioRevisao)};`);
+  const filaRenderizada = await cliqueRevisaoApi.gerar();
+  const botaoMatch = filaRenderizada.match(/<button[^>]+id="btn_analiseCal_bluefit_2026-09"[^>]+onclick="([^"]+)"[^>]*>/);
+  exigir(!!botaoMatch && botaoMatch[1].includes('this') && botaoMatch[1].includes("'bluefit','2026-09'"),
+    'botão renderizado da Bluefit perdeu handler, mês correto ou referência ao próprio controle');
+  exigir(filaRenderizada.includes('btn_analiseCal_mochi_2026-09') &&
+    filaRenderizada.includes("abrirAnaliseCalendarioRevisao('cliente-d\\'ouro','2026-09',this)"),
+    'Mochi ou identidade com apóstrofo gerou alvo/onclick inválido na fila da Amanda');
+  exigir(filaRenderizada.indexOf('btn_analiseCal_bluefit_2026-09') < filaRenderizada.indexOf('analiseCal_bluefit_2026-09') &&
+    filaRenderizada.indexOf('analiseCal_bluefit_2026-09') < filaRenderizada.indexOf('↗ Abrir calendário completo'),
+    'painel da análise voltou a nascer depois das decisões, fora do campo visível no mobile');
+  exigir(await cliqueRevisaoApi.clicar(botaoMatch[1]) === true &&
+    cliqueRevisaoApi.alvo.innerHTML.includes('Texto real do roteiro') &&
+    cliqueRevisaoApi.attrs['aria-expanded'] === 'true' &&
+    cliqueRevisaoApi.botao.textContent.includes('Fechar análise') && cliqueRevisaoApi.scrolls() >= 2,
+    'clique do botão HTML não abriu/expôs a análise real da Bluefit no campo visível');
+  exigir(await cliqueRevisaoApi.clicar(botaoMatch[1]) === true &&
+    cliqueRevisaoApi.alvo.innerHTML === '' && cliqueRevisaoApi.attrs['aria-expanded'] === 'false' &&
+    cliqueRevisaoApi.botao.textContent.includes('Analisar roteiro'),
+    'segundo clique não fechou a análise nem restaurou o botão');
+  cliqueRevisaoApi.setFalha(true);
+  exigir(await cliqueRevisaoApi.clicar(botaoMatch[1]) === false &&
+    cliqueRevisaoApi.alvo.innerHTML.includes('Não consegui carregar a análise') &&
+    cliqueRevisaoApi.attrs['aria-expanded'] === 'true' &&
+    cliqueRevisaoApi.botao.textContent.includes('Tentar abrir análise novamente'),
+    'erro de leitura voltou a parecer clique morto, fila vazia ou calendário apagado');
   const feedbackCalendario = trecho(calendario, 'async function salvarComentarioEquipeDuranteRevisao', '/* ===== O AVISO QUE NÃO EXISTIA');
   exigir(feedbackCalendario.includes('runTransaction') && feedbackCalendario.includes("comments:[registro,...(atual.comments||[])]") &&
     !feedbackCalendario.includes('exigirRetiradaAntesDeEditar()'),

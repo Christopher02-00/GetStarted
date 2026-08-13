@@ -999,3 +999,21 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 - [x] Falha de leitura interrompe a rodada e registra erro; nunca vira lista vazia nem encerra alertas existentes.
 
 Os itens acima foram aprovados por inspeção de fonte, preflight e sandbox nomeado. A criação real de um alerta no Firestore só pode ser observada depois do upload da V64, quando existir um cliente que alcance uma das duas condições; nenhum dado de produção foi fabricado para antecipar essa prova.
+
+## 54. REGRESSÃO — BOTÃO DE ANÁLISE PARECIA NÃO CLICAR NO CELULAR (13/08/2026)
+
+### 54.1 Testar o handler diretamente não provou o trajeto visual do toque
+**Prova real:** na fila móvel da Amanda, “Analisar roteiro e comentar” era o primeiro de cinco botões empilhados. O painel de resposta era inserido somente depois do último botão, abaixo de “Aprovar e enviar HOJE”. O toque executava sem mudar o rótulo nem levar a tela ao resultado, portanto a análise nascia fora do campo visível e parecia não abrir.
+
+**O que eu fiz errado:** o gate anterior chamou `abrirAnaliseCalendarioRevisao()` diretamente com um alvo fabricado e confirmou roteiro, legenda e comentário. Ele não clicou o botão renderizado, não verificou a ordem real do painel no DOM móvel e não exigiu retorno visual no próprio controle.
+
+**Correção obrigatória:** o botão de análise e seu painel ficam adjacentes, antes das decisões de devolver/aprovar. O controle usa `type="button"`, `aria-controls` e `aria-expanded`, muda o rótulo durante a abertura/fechamento e desloca a tela para a análise ou para o erro. Ausência do alvo deixa de falhar silenciosamente e produz aviso explícito.
+
+> **LEI:** ação assíncrona visível precisa ser testada desde o elemento renderizado até o estado terminal visível. Chamar o handler por nome não prova clique, posição do resultado, retorno de carregamento, acessibilidade nem comportamento móvel.
+
+### 54.2 Gate obrigatório
+- [x] O HTML real coloca o painel imediatamente depois do botão “Analisar roteiro e comentar” e antes de “Pedir ajuste”.
+- [x] O clique renderizado abre o mês correto, altera `aria-expanded` e mostra o resultado no campo visível.
+- [x] Fechar restaura o rótulo e o estado do botão; erro de leitura fica visível e não é confundido com calendário vazio.
+- [x] Bluefit, Mochi e nomes com apóstrofo/alias geram `onclick` válido e alvo único.
+- [x] Comentário continua exclusivo da Amanda e persiste somente `comments` e `updatedAt`.

@@ -1,4 +1,4 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30991049/CATALOGO_DE_ERROS.md)
+[Uploading CATALOGO_DE_ERROS.md…]()
 [Uploading CATALOGO_DE_ERROS.md…]()
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30964009/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
@@ -959,3 +959,43 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 - [x] `calendario.html` e `calendarios.html` continuam idênticos e bloqueiam novos reenvios de mês anterior.
 - [x] “Prontos para enviar”, envio unitário e envio em lote usam a mesma barreira temporal.
 - [x] Aprovar, devolver ou disparar por um DOM antigo também rejeita mês histórico antes de escrever.
+
+## 52. REGRESSÃO — COBERTURA DE POSTAGENS SEM ALERTA PARA A AMANDA (13/08/2026)
+
+### 52.1 A permissão existia na função, mas a porta sumiu da matriz do papel
+**Prova:** `irPara('controlePostagem')` e `renderControlePostagem()` já autorizavam Amanda, Chris e Cecília. Porém, `VISIBILIDADE_POR_FUNCAO.Amanda` e `DIA_A_DIA_POR_FUNCAO.Amanda` não continham `navControlePostagem`, portanto a Amanda não conseguia abrir pela navegação normal.
+**Causa:** autorização, navegação e organização da sidebar foram alteradas em pontos separados e o teste anterior não cruzava as três camadas.
+> **LEI:** uma tela não está disponível só porque o renderer aceita o papel. A aprovação exige, para cada papel autorizado: item visível na matriz, posição operacional, guarda de navegação e guarda do renderer; papéis não autorizados continuam bloqueados.
+
+### 52.2 O alerta antigo de “3 dias” respondia outra pergunta
+**Prova:** a automação existente tratava conteúdo parado, confirmação de publicação ou tempo sem gravação. Nenhuma delas calculava a cobertura real das postagens por cliente nem avisava a Amanda quando a última programação terminava.
+**Risco:** reaproveitar o alerta de gravação produziria falso positivo para clientes abastecidos por foto, arte, carrossel ou outro formato sem filmagem.
+> **LEI:** cobertura de postagem é calculada pelos registros ativos de `postagens`, independentemente do formato do conteúdo. Gravação, vídeo em edição e anotação manual são sinais auxiliares, nunca substitutos da data programada.
+
+### 52.3 Avisar sobre cápsula não autoriza dispará-la
+**Regra operacional confirmada no áudio:** ao receber o alerta, a Amanda avalia o caso e decide manualmente se usa o Protocolo Cápsula.
+**Barreira:** a verificação de cobertura não escreve em `capsulas_clientes`, não chama `acionarCapsulaAmanda()` e não cria demanda para terceiros.
+> **LEI:** o sistema alerta exclusivamente a Amanda e oferece o caminho para o painel manual; nenhuma ausência de postagem pode selecionar, acionar ou registrar cápsula automaticamente.
+
+### 52.4 Um mesmo buraco não pode inflar a fila
+**Risco:** o motor roda várias vezes ao dia. Criar uma demanda por execução transformaria um cliente sem cobertura em dezenas de alertas.
+**Correção exigida:** cada evento usa identidade estável por `cliente canônico + última data + etapa`. Como o motor depende de uma sessão de gestão aberta, o primeiro aviso pode nascer retroativamente no primeiro ou segundo dia quando ninguém abriu o sistema na data exata; no terceiro dia ele é substituído pelo aviso urgente. Nova cobertura encerra o alerta por soft-delete operacional. Histórico concluído não é apagado.
+> **LEI:** automação recorrente precisa provar idempotência, transição de estado e encerramento automático. Consulta seguida de `addDoc()` sem identidade determinística não é prevenção de duplicidade.
+
+### 52.5 A carteira do controle precisa ser a mesma carteira mensal ativa
+**Risco:** montar “Postagem Até Quando” diretamente de `CLIENTES_LISTA` mantém ex-clientes, avulsos e clientes sem conteúdo recorrente no alerta da Amanda.
+**Correção exigida:** o motor da gestão parte de `clientesDeConteudoRecorrente()`, normaliza aliases e ignora soft-deletes. Na mesma tela, a Cecília recebe uma projeção operacional equivalente baseada somente em `clientes_config`, sem consultar contrato, mensalidade ou financeiro. Registros históricos permanecem preservados no banco.
+> **LEI:** alertas de conteúdo mensal usam a fonte canônica da carteira recorrente; a projeção para papel operacional não consulta coleções financeiras, nunca ressuscita cliente encerrado e nunca apaga histórico para fazê-lo desaparecer.
+
+## 53. GATE OBRIGATÓRIO — ALERTAS DE COBERTURA V64
+
+- [x] Amanda enxerga “Postagem Até Quando” no dia a dia; Chris e Cecília continuam autorizados; demais papéis não navegam nem renderizam a tela.
+- [x] A última data programada do cliente gera no máximo um alerta para Amanda no próprio dia, sem destinatário secundário.
+- [x] Ao completar três dias sem nova postagem, nasce um único alerta mais urgente e o aviso anterior deixa de ficar simultaneamente aberto.
+- [x] Nova postagem futura encerra o alerta aberto por soft-delete operacional; nenhum documento histórico é apagado.
+- [x] Foto, arte, vídeo e outros formatos contam igualmente quando possuem postagem ativa e data programada.
+- [x] Alias do mesmo cliente não gera dois alertas; cliente encerrado, avulso, entrega direta ou sem conteúdo recorrente não entra.
+- [x] O alerta aponta para a avaliação manual da Amanda e não há escritor novo em `capsulas_clientes`.
+- [x] Falha de leitura interrompe a rodada e registra erro; nunca vira lista vazia nem encerra alertas existentes.
+
+Os itens acima foram aprovados por inspeção de fonte, preflight e sandbox nomeado. A criação real de um alerta no Firestore só pode ser observada depois do upload da V64, quando existir um cliente que alcance uma das duas condições; nenhum dado de produção foi fabricado para antecipar essa prova.

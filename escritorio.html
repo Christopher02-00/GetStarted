@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-12-fila-calendarios-sem-historico-v63">
+<meta name="gs-build" content="2026-08-13-alerta-cobertura-postagens-v64">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -16116,7 +16116,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       mostrarToast('A Entrada de Clientes é exclusiva da gerência.', 'erro');
       return;
     }
-    if(nome === 'controlePostagem' && !['Chris','Amanda','Cecília'].includes(usuarioAtual)){
+    if(nome === 'controlePostagem' && !papelPodeControlePostagem(usuarioAtual)){
       mostrarToast('Postagem Até Quando é uma ferramenta da Cecília e da gestão.', 'erro');
       return;
     }
@@ -18670,7 +18670,7 @@ window.setGerenciaSub = function(qual, el){
        de fora da lista e perdeu o acesso por completo: o botão de criar
        story pro cliente simplesmente sumiu pra ela. Ela é a Social Media
        chefe — é a dona natural disso. */
-    'Amanda': ['navAcompCampanhas','navMetas','navExtras','navRoteiros','navCentral','navAprovacoes','navChecklist','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos'],
+    'Amanda': ['navAcompCampanhas','navMetas','navExtras','navRoteiros','navCentral','navAprovacoes','navChecklist','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos','navControlePostagem'],
     'Cecília': ['navAcompCampanhas','navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem','navCofreCecilia'],
     'Gabrielle': ['navAcompCampanhas','navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
@@ -18679,6 +18679,10 @@ window.setGerenciaSub = function(qual, el){
     'Luís': ['navVideos','navChecklist','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Yas': ['navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
   };
+  function papelPodeControlePostagem(pessoa){
+    return ['Chris','Amanda','Cecília'].includes(String(pessoa||''));
+  }
+  window.papelPodeControlePostagem=papelPodeControlePostagem;
   const ITENS_CONTROLADOS = [
     'navAcompCampanhas',
     'navMetas',
@@ -18706,7 +18710,7 @@ window.setGerenciaSub = function(qual, el){
     'Chris': ['navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes','navExtras'],
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
-    'Amanda': ['navCentral','navAprovacoes','navAgendamento','navVideos','navStories','navPostagens','navReferencias','navAcompCampanhas','navFuncoesFixas'],
+    'Amanda': ['navCentral','navAprovacoes','navAgendamento','navVideos','navStories','navPostagens','navControlePostagem','navReferencias','navAcompCampanhas','navFuncoesFixas'],
     'Cecília': ['navAcompCampanhas','navControlePostagem','navAgendamento','navPostagens','navVideos','navCofreCecilia'],
     'Gabrielle': ['navPostagens','navAcompCampanhas','navReferencias'],
     'Helo': ['navVideos'],
@@ -26100,6 +26104,7 @@ window.setGerenciaSub = function(qual, el){
       { nome: 'migracaoFuncoesFixasMensalV11', fn: migrarFuncoesFixasParaRenovacaoMensalV11 },
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
       { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
+      { nome: 'coberturaPostagensAmanda', fn: verificarCoberturaPostagensAmanda },
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
@@ -26705,6 +26710,149 @@ window.setGerenciaSub = function(qual, el){
     }
     return limpos;
   }
+
+  /* ===== COBERTURA REAL DE POSTAGENS — ALERTA EXCLUSIVO DA AMANDA ====
+     Pedido de 13/08/2026: avisar quando a última postagem programada de
+     um cliente sair e, se nada novo entrar, avisar de novo ao completar
+     três dias sem postagem.
+
+     A fonte é `postagens`, sem filtrar formato: foto, arte, carrossel e
+     vídeo contam do mesmo jeito. Gravação não é cobertura de postagem.
+     A função abaixo é pura para poder ser executada no sandbox dos testes. */
+  function diasCivisEntreISO(inicio, fim){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(inicio||'')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(fim||''))) return null;
+    const [ai,mi,di]=inicio.split('-').map(Number), [af,mf,df]=fim.split('-').map(Number);
+    return Math.floor((Date.UTC(af,mf-1,df)-Date.UTC(ai,mi-1,di))/86400000);
+  }
+  function calcularCoberturaPostagens(postagens, clientes, hoje){
+    const ativos=new Map(), porNome=new Map();
+    (Array.isArray(clientes)?clientes:[]).forEach(c=>{
+      const slug=slugClienteCanonico(c?.slug||'');
+      if(!slug || ativos.has(slug)) return;
+      const nome=nomeClienteCanonico(slug,c?.nome||slug);
+      ativos.set(slug,{slug,nome});
+      porNome.set(normNomeCliente(nome),slug);
+    });
+    const porSlug=new Map();
+    (Array.isArray(postagens)?postagens:[]).forEach(p=>{
+      if(!p || p.excluido===true || !['agendado','postado'].includes(String(p.status||''))) return;
+      const data=String(p.dataAgendada||'').slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(data)) return;
+      const bruto=p.cliente||p.clienteSlug||'';
+      let slug=slugClienteCanonico(bruto);
+      if(!ativos.has(slug)) slug=porNome.get(normNomeCliente(p.clienteNome||bruto))||'';
+      if(!ativos.has(slug)) return;
+      const anterior=porSlug.get(slug);
+      if(!anterior || data>anterior.ultimaData) porSlug.set(slug,{...ativos.get(slug),ultimaData:data,qtdNaUltimaData:1});
+      else if(data===anterior.ultimaData) anterior.qtdNaUltimaData++;
+    });
+    return [...ativos.values()].map(cliente=>{
+      const registro=porSlug.get(cliente.slug)||cliente;
+      const ultimaData=registro.ultimaData||'';
+      const diferenca=ultimaData?diasCivisEntreISO(ultimaData,hoje):null;
+      const temCoberturaFutura=!!ultimaData&&ultimaData>hoje;
+      const diasSemPostagem=diferenca===null?null:Math.max(0,diferenca);
+      const evento=!!ultimaData&&!temCoberturaFutura&&diferenca>=0&&diferenca<3?'ultima_postagem':
+        (!!ultimaData&&!temCoberturaFutura&&diferenca>=3?'tres_dias_sem_postagem':'');
+      return {...cliente,ultimaData,qtdNaUltimaData:registro.qtdNaUltimaData||0,
+        temCoberturaFutura,diasSemPostagem,evento};
+    });
+  }
+  window.calcularCoberturaPostagens=calcularCoberturaPostagens;
+
+  /* A Cecília também usa a planilha, mas não pode ler contratos,
+     mensalidades nem arquivo gerencial para montar a carteira. A gestão
+     usa a fonte canônica completa; o papel operacional usa somente a
+     carteira já carregada e `clientes_config`, que suas regras permitem. */
+  async function clientesControlePostagemPorPapel(){
+    if(['Chris','Amanda'].includes(usuarioAtual)) return clientesDeConteudoRecorrente();
+    if(usuarioAtual!=='Cecília') return [];
+    const config={};
+    const snap=await getDocs(collection(db,'clientes_config'));
+    snap.forEach(d=>{ config[slugClienteCanonico(d.id)]=d.data()||{}; });
+    return CLIENTES_LISTA.filter(c=>{
+      const slug=slugClienteCanonico(c.slug), cfg=config[slug]||{};
+      return !SLUGS_INTERNOS.includes(slug) && !ehClienteSoEdicao(slug) &&
+        !clienteInativoEfetivo(cfg) && cfg.semConteudoRecorrente!==true &&
+        cfg.tipoCliente!=='avulso' && cfg.tipoEntrega!=='entrega_direta';
+    });
+  }
+  window.clientesControlePostagemPorPapel=clientesControlePostagemPorPapel;
+
+  function idAlertaCoberturaPostagem(estado){
+    return ('alerta_cobertura_'+estado.slug+'_'+estado.ultimaData+'_'+estado.evento)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,180);
+  }
+  function alertaCoberturaAindaValido(alerta, estado){
+    if(!estado || !estado.ultimaData || alerta.ultimaPostagemProgramada!==estado.ultimaData || estado.temCoberturaFutura) return false;
+    if(alerta.etapaCobertura==='ultima_postagem') return estado.diasSemPostagem!==null && estado.diasSemPostagem<3;
+    if(alerta.etapaCobertura==='tres_dias_sem_postagem') return estado.diasSemPostagem>=3;
+    return false;
+  }
+  async function verificarCoberturaPostagensAmanda(){
+    const hoje=hojeLocal();
+    /* Falha de qualquer leitura aborta a rodada. Não existe catch que
+       converta erro do Firestore em carteira vazia e feche alertas reais. */
+    const [postSnap,clientes]=await Promise.all([
+      snapshotOperacional('postagens'), clientesDeConteudoRecorrente()
+    ]);
+    const postagens=postSnap.docs.map(d=>({id:d.id,...(d.data()||{})}));
+    const cobertura=calcularCoberturaPostagens(postagens,clientes,hoje);
+    const porSlug=new Map(cobertura.map(e=>[e.slug,e]));
+    const demandasSnap=await snapshotOperacional('demandas');
+    const alertasAbertos=demandasSnap.docs.filter(d=>{
+      const v=d.data()||{};
+      return v.tipoEspecial==='alerta_cobertura_postagem' && v.destinatario==='Amanda' &&
+        v.status==='pendente' && v.excluido!==true;
+    });
+
+    for(const registro of alertasAbertos){
+      const alerta=registro.data()||{};
+      const estado=porSlug.get(slugClienteCanonico(alerta.clienteSlugRef||alerta.cliente||''));
+      if(alertaCoberturaAindaValido(alerta,estado)) continue;
+      const motivo=estado?.temCoberturaFutura
+        ? 'Nova cobertura programada até '+formatarDataBR(estado.ultimaData)+'.'
+        : alerta.etapaCobertura==='ultima_postagem' && estado?.diasSemPostagem>=3
+          ? 'Substituído pelo alerta de três dias sem postagem.'
+          : 'Cobertura recalculada; este aviso não representa mais o estado atual.';
+      await updateDoc(registro.ref||doc(db,'demandas',registro.id),{
+        status:'cancelado_automaticamente',excluido:true,excluidoPor:'sistema — cobertura de postagens',
+        excluidoEm:serverTimestamp(),motivoExclusao:motivo,atualizadoEm:serverTimestamp()
+      });
+      registrarHistorico('demandas',registro.id,'Alerta de cobertura encerrado automaticamente — '+motivo);
+    }
+
+    for(const estado of cobertura.filter(e=>e.evento)){
+      const id=idAlertaCoberturaPostagem(estado), ref=doc(db,'demandas',id);
+      const titulo=estado.evento==='ultima_postagem'
+        ? '📲 '+(estado.diasSemPostagem===0?'Hoje sai':'Saiu o')+' último conteúdo programado — '+estado.nome
+        : '🥶 '+estado.nome+' está há '+estado.diasSemPostagem+' dias sem postagem programada';
+      const descricao=(estado.evento==='ultima_postagem'
+        ? (estado.diasSemPostagem===0?'A última data com conteúdo programado para este cliente é hoje':'A última data com conteúdo programado para este cliente foi há '+estado.diasSemPostagem+' dia(s)')+' ('+formatarDataBR(estado.ultimaData)+'), com '+estado.qtdNaUltimaData+' conteúdo(s).'
+        : 'A última postagem registrada para este cliente estava programada para '+formatarDataBR(estado.ultimaData)+'. Já são '+estado.diasSemPostagem+' dias sem nova cobertura.')+
+        '\n\nConfira em “Postagem Até Quando” e organize a próxima programação. Se o caso pedir, a Amanda pode avaliar e acionar manualmente o Protocolo Cápsula. Nenhuma cápsula foi acionada por este aviso.';
+      const criada=await runTransaction(db,async tx=>{
+        const existente=await tx.get(ref);
+        if(existente.exists()) return false;
+        tx.set(ref,{
+          titulo,descricao,origem:'sistema',destinatario:'Amanda',cliente:estado.slug,
+          clienteNome:estado.nome,clienteSlugRef:estado.slug,tipoEspecial:'alerta_cobertura_postagem',
+          etapaCobertura:estado.evento,ultimaPostagemProgramada:estado.ultimaData,
+          diasSemPostagem:estado.diasSemPostagem,qtdNaUltimaData:estado.qtdNaUltimaData,
+          chaveCobertura:estado.slug+'|'+estado.ultimaData+'|'+estado.evento,
+          prazoData:hoje,prazoHora:estado.evento==='ultima_postagem'?'19:00':'12:00',
+          status:'pendente',provaTexto:'',provaImagemUrl:'',emailEnviado:false,
+          criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()
+        });
+        return true;
+      });
+      if(criada){
+        registrarLogAutomacao('alerta_cobertura_postagem',id,estado.slug+' · '+estado.evento+' · '+estado.ultimaData);
+        if(usuarioAtual==='Amanda') dispararNotificacaoNavegador(titulo,'Abra “Postagem Até Quando” para conferir. A decisão de cápsula continua manual.');
+      }
+    }
+  }
+  window.verificarCoberturaPostagensAmanda=verificarCoberturaPostagensAmanda;
 
   /* ===== REDE DE SEGURANÇA COMPLETA DO CICLO DE POSTAGEM =====
      Cobre as 3 etapas onde algo pode ser esquecido:
@@ -33210,7 +33358,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
      Salva sozinho ao sair do campo — planilha em que se clica em "salvar"
      a cada linha ninguém mantém atualizada. */
   window.renderControlePostagem = async function(soFiltrar){
-    if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)){
+    if(!papelPodeControlePostagem(usuarioAtual)){
       const controlePostagemNegado = document.getElementById('controlePostagemBox');
       if(controlePostagemNegado) controlePostagemNegado.replaceChildren();
       return;
@@ -33226,37 +33374,39 @@ Observações do cliente: ${l.observacoes||'—'}`;
         snap.forEach(d => { manual[d.id] = d.data(); });
       }catch(e){ console.error('Falha ao ler o controle:', e); }
 
-      // o que o sistema calcula sozinho, pra comparação
-      const calculado = {};
+      // Cobertura real: todos os formatos que chegaram a uma data de
+      // postagem, e não somente vídeos/gravações.
+      let cobertura = [], clientes = [];
       try{
         const snap = await getDocs(collection(db,'postagens'));
-        snap.forEach(d => { const v = d.data();
-          if(v.excluido || v.status !== 'agendado' || !v.dataAgendada) return;
-          if(!calculado[v.cliente] || v.dataAgendada > calculado[v.cliente]) calculado[v.cliente] = v.dataAgendada;
-        });
+        clientes = await clientesControlePostagemPorPapel();
+        cobertura = calcularCoberturaPostagens(snap.docs.map(d=>({id:d.id,...(d.data()||{})})),clientes,hojeLocal());
       }catch(e){ console.error('Falha ao calcular:', e); }
 
       const entregaDireta = await obterSlugsEntregaDireta().catch(()=>new Set());
-      window.__ctrlPostCache = { manual, calculado, entregaDireta };
+      window.__ctrlPostCache = { manual, cobertura, clientes, entregaDireta };
     }
 
-    const { manual, calculado, entregaDireta } = window.__ctrlPostCache;
+    const { manual, cobertura, clientes, entregaDireta } = window.__ctrlPostCache;
+    const coberturaPorSlug = new Map((cobertura||[]).map(e=>[e.slug,e]));
     const hoje = hojeLocal();
     const busca = (document.getElementById('buscaControlePost')?.value||'').trim().toLowerCase();
 
-    let linhas = CLIENTES_LISTA
-      .filter(c => !ehClienteSoEdicao(c.slug) && !entregaDireta.has(c.slug))
+    let linhas = (clientes||[])
+      .filter(c => !ehClienteSoEdicao(c.slug) && !entregaDireta.has(slugClienteCanonico(c.slug)))
       .filter(c => !busca || c.nome.toLowerCase().includes(busca))
       .map(c => {
-        const m = manual[c.slug] || {};
+        const slug=slugClienteCanonico(c.slug), m = manual[slug] || manual[c.slug] || {};
         const ate = m.postagemAte || '';
-        const calc = calculado[c.slug] || '';
+        const estado=coberturaPorSlug.get(slug)||{};
+        const calc = estado.ultimaData || '';
         let dias = null, cor = 'cinza';
         if(ate){
           dias = Math.floor((new Date(ate + 'T12:00:00') - new Date(hoje + 'T12:00:00')) / 86400000);
           cor = dias < 0 ? 'vermelho' : dias <= 3 ? 'vermelho' : dias <= 7 ? 'amarelo' : 'verde';
         }
-        return { ...c, ate, calc, dias, cor,
+        const alertaCobertura=calc&&!estado.temCoberturaFutura&&estado.diasSemPostagem<3?'ultima_postagem':(calc&&estado.diasSemPostagem>=3?'tres_dias_sem_postagem':'');
+        return { ...c, slug, ate, calc, dias, cor, estado, alertaCobertura,
           videos: m.videosParaAgendar ?? '', obs: m.observacoes || '',
           divergente: ate && calc && ate !== calc,
           atualizadoPor: m.atualizadoPor, atualizadoEm: m.atualizadoEm };
@@ -33267,8 +33417,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
     const conta = c => linhas.filter(l => l.cor === c).length;
     const semData = linhas.filter(l => !l.ate).length;
+    const alertasReais = linhas.filter(l=>l.alertaCobertura);
 
-    box.innerHTML = `<div class="painelResumo" style="margin-bottom:16px;">
+    box.innerHTML = `${alertasReais.length?`<div class="card" style="border:2px solid var(--red);margin-bottom:16px;">
+      <h2>🚨 ${alertasReais.length} cliente(s) exigem atenção da Amanda</h2>
+      <div class="desc">Calculado pelas postagens programadas de qualquer formato. O aviso não aciona cápsula automaticamente.</div>
+      ${alertasReais.map(l=>`<div class="meta" style="margin-top:7px;"><b>${esc(l.nome)}:</b> ${l.alertaCobertura==='ultima_postagem'?(l.estado.diasSemPostagem===0?'o último conteúdo programado sai hoje':'o último conteúdo programado saiu há '+l.estado.diasSemPostagem+' dia(s)'):l.estado.diasSemPostagem+' dias sem nova postagem programada'}.</div>`).join('')}
+    </div>`:''}<div class="painelResumo" style="margin-bottom:16px;">
       <div class="resumoCard ${conta('vermelho')?'red':'green'}"><div class="num">${conta('vermelho')}</div><div class="lbl">🔴 acaba em até 3 dias</div></div>
       <div class="resumoCard ${conta('amarelo')?'yellow':''}"><div class="num">${conta('amarelo')}</div><div class="lbl">🟡 acaba nesta semana</div></div>
       <div class="resumoCard green"><div class="num">${conta('verde')}</div><div class="lbl">🟢 com folga</div></div>
@@ -33301,6 +33456,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <input type="text" id="cpObs_${l.slug}" value="${esc(l.obs)}" placeholder="Ex: esperando material do cliente" onchange="salvarControlePostagem('${l.slug}','${escJs(l.nome)}')">
         </div>
 
+        ${l.alertaCobertura?`<div style="margin-top:10px;padding:10px 12px;border-radius:9px;background:var(--redbg);border-left:3px solid var(--red);">
+          <div class="meta" style="color:var(--red);font-weight:800;">${l.alertaCobertura==='ultima_postagem'
+            ? (l.estado.diasSemPostagem===0?'🚨 Hoje sai':'🚨 Saiu há '+l.estado.diasSemPostagem+' dia(s) o')+' último conteúdo programado ('+l.estado.qtdNaUltimaData+' nesta data).'
+            : '🥶 '+l.estado.diasSemPostagem+' dias sem nova postagem programada.'}</div>
+          ${usuarioAtual==='Amanda'?'<button class="btn secondary" style="width:auto;margin-top:8px;padding:6px 12px;font-size:11px;" onclick="irParaCapsulaAmanda()">Avaliar Protocolo Cápsula manualmente</button>':''}
+        </div>`:''}
+
         ${l.calc ? `<div class="meta" style="margin-top:10px;${l.divergente?'color:var(--yellow2);':''}">
           ${l.divergente
             ? '⚠️ O sistema tem postagem agendada até <b>' + formatarDataBR(l.calc) + '</b> — diferente do que você anotou. Confere qual está certo.'
@@ -33314,7 +33476,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.salvarControlePostagem = async function(slug, nome){
-    if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)){
+    if(!papelPodeControlePostagem(usuarioAtual)){
       mostrarToast('Só a Cecília e a gestão podem alterar este controle.', 'erro');
       return;
     }
@@ -33334,7 +33496,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.adotarCalculado = async function(slug, data, nome){
-    if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)){
+    if(!papelPodeControlePostagem(usuarioAtual)){
       mostrarToast('Só a Cecília e a gestão podem alterar este controle.', 'erro');
       return;
     }

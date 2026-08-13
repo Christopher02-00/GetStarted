@@ -114,10 +114,17 @@ const leisV63 = [
   'estado explícito incorreto não transforma mês anterior em trabalho atual',
   'fila operacional consolida cliente e competência depois de todos os filtros'
 ];
+const leisV64 = [
+  'uma tela não está disponível só porque o renderer aceita o papel',
+  'cobertura de postagem é calculada pelos registros ativos de `postagens`',
+  'o sistema alerta exclusivamente a Amanda e oferece o caminho para o painel manual',
+  'automação recorrente precisa provar idempotência, transição de estado e encerramento automático',
+  'alertas de conteúdo mensal usam a fonte canônica da carteira recorrente'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V63');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V63');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V64');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V64');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -603,9 +610,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-12-fila-calendarios-sem-historico-v63') {
-  falhar(`build V63 inesperado: ${build || 'ausente'}`);
-} else provar('V63 identifica a fila de calendários sem meses históricos ou aliases duplicados');
+if (build !== '2026-08-13-alerta-cobertura-postagens-v64') {
+  falhar(`build V64 inesperado: ${build || 'ausente'}`);
+} else provar('V64 identifica o alerta de cobertura de postagens sem automatizar cápsula');
 
 const salvarContratoProgramado = escritorio.slice(
   escritorio.indexOf('window.salvarContrato = async function'),

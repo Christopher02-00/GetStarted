@@ -124,10 +124,15 @@ const leisV64 = [
 const leisV65 = [
   'ação assíncrona visível precisa ser testada desde o elemento renderizado até o estado terminal visível'
 ];
+const leisV66 = [
+  'painel de controle é projeção da fonte operacional, não nova fonte',
+  'histórico editorial consolida por cliente canônico e mês depois da leitura',
+  'uma central compartilhada por dois papéis nasce somente nesses dois DOMs'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V65');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V65');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V66');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V66');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -613,9 +618,41 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-13-analise-calendario-clicavel-v65') {
-  falhar(`build V65 inesperado: ${build || 'ausente'}`);
-} else provar('V65 identifica a análise de calendário acionável e visível no mobile');
+if (build !== '2026-08-14-central-editorial-calendarios-v66') {
+  falhar(`build V66 inesperado: ${build || 'ausente'}`);
+} else provar('V66 identifica a Central Editorial isolada da Amanda e da Gabi');
+
+const centralEditorialV66 = escritorio.slice(
+  escritorio.indexOf('function papelPodeControleEditorialCalendarios'),
+  escritorio.indexOf('  /* ===== FRENTE C1 — VISIBILIDADE TOTAL DA SIDEBAR')
+);
+const renderCentralEditorialV66 = escritorio.slice(
+  escritorio.indexOf('window.renderControleEditorialCalendarios = async function'),
+  escritorio.indexOf('  /* ===== FRENTE C1 — VISIBILIDADE TOTAL DA SIDEBAR')
+);
+if (!centralEditorialV66.includes("return ['Amanda','Gabrielle'].includes") ||
+    !centralEditorialV66.includes("nav.id = 'navControleEditorialCalendarios'") ||
+    !centralEditorialV66.includes("view.id = 'view-controleEditorialCalendarios'") ||
+    !centralEditorialV66.includes('desmontarControleEditorialCalendarios()') ||
+    !escritorio.includes("if(nome === 'controleEditorialCalendarios' && !papelPodeControleEditorialCalendarios(usuarioAtual))") ||
+    !escritorio.includes("if(viewAtiva === 'controleEditorialCalendarios') renderControleEditorialCalendarios()")) {
+  falhar('Central Editorial perdeu criação/remoção real do DOM, guarda de navegação ou atualização em tempo real');
+} else provar('Central Editorial existe no DOM somente para Amanda/Gabi e acompanha o snapshot em tempo real');
+if (!centralEditorialV66.includes('consolidarMesesControleEditorial') ||
+    !centralEditorialV66.includes('slugClienteCanonico(d.id)') ||
+    !centralEditorialV66.includes('itensDoMesCalendario(cal,mes)') ||
+    !centralEditorialV66.includes('estadoMesCal(cal,mes)') ||
+    !renderCentralEditorialV66.includes("getDocs(collection(db,'clientes_config'))") ||
+    !renderCentralEditorialV66.includes("getDocs(collection(db,'clientes_extras'))") ||
+    renderCentralEditorialV66.includes("'contratos_cliente'") ||
+    renderCentralEditorialV66.includes("'pagamentos_mensais'") ||
+    renderCentralEditorialV66.includes("'clientes_encerrados'")) {
+  falhar('Central Editorial criou lógica paralela de mês/estado ou consultou dados gerenciais no perfil da Gabi');
+} else provar('Central Editorial reutiliza mês/estado canônicos e somente fontes operacionais permitidas à Gabi');
+if (!renderCentralEditorialV66.includes("htmlFalhaLeituraCalendarios('Não consegui confirmar a Central de Calendários'") ||
+    !centralEditorialV66.includes('Itens arquivados não entram') && !renderCentralEditorialV66.includes('Itens arquivados não entram')) {
+  falhar('Central Editorial voltou a converter erro em vazio ou não explica o tratamento de soft-delete');
+} else provar('Central Editorial diferencia falha de leitura e preserva soft-delete/histórico');
 
 const filaAnaliseV65 = escritorio.slice(
   escritorio.indexOf('window.htmlCalendariosParaRevisar = async function'),

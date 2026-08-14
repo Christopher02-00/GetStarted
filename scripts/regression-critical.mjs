@@ -1502,6 +1502,83 @@ function testarV54Sandbox() {
     'primeira avaliação voltou a depender de documento existente ou ampliou leitura/escrita');
 }
 
+function testarCentralEditorialCalendariosSandbox(){
+  const papelFonte=trecho(escritorio,'function papelPodeControleEditorialCalendarios','  window.papelPodeControleEditorialCalendarios');
+  const papelApi=executarSandbox('central-editorial-papeis-v66.js',
+    `${papelFonte}\nglobalThis.api={papelPodeControleEditorialCalendarios};`);
+  exigir(papelApi.papelPodeControleEditorialCalendarios('Amanda')===true &&
+    papelApi.papelPodeControleEditorialCalendarios('Gabrielle')===true &&
+    ['Chris','Cecília','Luís','Nathan','Helo','Yas',''].every(p=>papelApi.papelPodeControleEditorialCalendarios(p)===false),
+    'Central Editorial deixou de ser exclusiva da Amanda e da Gabi');
+
+  const montagemFonte=trecho(escritorio,'function papelPodeControleEditorialCalendarios','  function instanteControleCalendario');
+  const montagemApi=executarSandbox('central-editorial-dom-v66.js',
+    `class E{constructor(tag,id=''){this.tagName=tag;this.id=id;this.children=[];this.parentElement=null;this.attrs={};this._classes=new Set();this.classList={add:(...v)=>v.forEach(x=>this._classes.add(x)),remove:(...v)=>v.forEach(x=>this._classes.delete(x)),contains:v=>this._classes.has(v)};this.innerHTML='';}}\n`+
+    `E.prototype.appendChild=function(e){e.parentElement=this;this.children.push(e);return e;};\n`+
+    `E.prototype.insertBefore=function(e,b){e.parentElement=this;const i=this.children.indexOf(b);if(i<0)this.children.push(e);else this.children.splice(i,0,e);return e;};\n`+
+    `E.prototype.remove=function(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(x=>x!==this);this.parentElement=null;};\n`+
+    `E.prototype.setAttribute=function(k,v){this.attrs[k]=v;if(k==='class')String(v).split(/\\s+/).forEach(x=>this._classes.add(x));};\n`+
+    `const grupo=new E('div','navgroupDia'),label=new E('div','labelNavDia'),main=new E('main','main'),inicio=new E('div','view-inicio'),navInicio=new E('div','navInicio');grupo.appendChild(label);main.appendChild(inicio);grupo.appendChild(navInicio);\n`+
+    `function achar(no,id){if(no.id===id)return no;for(const f of no.children){const r=achar(f,id);if(r)return r;}return null;}\n`+
+    `globalThis.document={getElementById:id=>achar(grupo,id)||achar(main,id),createElement:t=>new E(t),querySelector:q=>q==='.main'?main:null};\n`+
+    `let usuarioAtual='',viewAtiva='inicio';function mostrarToast(){}function irPara(){}\n`+
+    `${montagemFonte}\n`+
+    `function estado(p){usuarioAtual=p;montarControleEditorialCalendariosPorPapel();return {nav:!!document.getElementById('navControleEditorialCalendarios'),view:!!document.getElementById('view-controleEditorialCalendarios'),navs:grupo.children.filter(x=>x.id==='navControleEditorialCalendarios').length,views:main.children.filter(x=>x.id==='view-controleEditorialCalendarios').length};}\n`+
+    `globalThis.api={estado};`);
+  const domAmanda=montagemApi.estado('Amanda'),domGabi=montagemApi.estado('Gabrielle'),domChris=montagemApi.estado('Chris');
+  exigir(domAmanda.nav&&domAmanda.view&&domAmanda.navs===1&&domAmanda.views===1&&
+    domGabi.nav&&domGabi.view&&domGabi.navs===1&&domGabi.views===1&&
+    !domChris.nav&&!domChris.view&&domChris.navs===0&&domChris.views===0,
+    'botão/view da Central Editorial duplicou ou permaneceu no DOM de Chris/outro papel');
+
+  const consolidarFonte=trecho(escritorio,'function consolidarMesesControleEditorial','  window.consolidarMesesControleEditorial');
+  const consolidarApi=executarSandbox('central-editorial-identidade-v66.js',
+    `const aliases={zeens:'zeiss'};\n`+
+    `function slugClienteCanonico(v){return aliases[v]||v;}\n`+
+    `function nomeDeSlugSeguro(v){return v;}\n`+
+    `function mesesDeCalendario(c){return [...new Set((c.items||[]).map(i=>i.mes).filter(Boolean))].sort();}\n`+
+    `function itensDoMesCalendario(c,m){return (c.items||[]).filter(i=>i.mes===m);}\n`+
+    `function estadoMesCal(c,m){return c.aprovacaoMeses?.[m]?.status||'rascunho';}\n`+
+    `function estadoDoCalendario(){return 'liberado';}\n`+
+    `function instanteControleCalendario(v){return v?new Date(v).getTime():0;}\n`+
+    `${consolidarFonte}\n`+
+    `globalThis.api={consolidarMesesControleEditorial};`);
+  const doc=(id,dados)=>({id,data:()=>dados});
+  const docs=[
+    doc('zeiss',{client:'Zeiss',items:[{mes:'2026-09',name:'Setembro canônico'}],aprovacaoMeses:{'2026-09':{status:'aguardando_interna',em:'2026-08-13T10:00:00Z'}}}),
+    doc('zeens',{client:'Zeiss antigo',items:[{mes:'2026-07',name:'Julho preservado'},{mes:'2026-09',name:'Setembro alias antigo'}],aprovacaoMeses:{'2026-07':{status:'liberado',em:'2026-07-01T10:00:00Z'},'2026-09':{status:'rascunho',em:'2026-08-12T10:00:00Z'}}}),
+    doc('zeiss-arquivado',{client:'Não deve entrar',excluido:true,items:[{mes:'2026-09',name:'Apagado'}]})
+  ];
+  const consolidado=consolidarApi.consolidarMesesControleEditorial({forEach:fn=>docs.forEach(fn)});
+  exigir(Object.keys(consolidado).length===1 && Object.keys(consolidado.zeiss.meses).sort().join(',')==='2026-07,2026-09',
+    'Central Editorial perdeu competência histórica, duplicou alias ou incluiu calendário arquivado');
+  exigir(consolidado.zeiss.meses['2026-09'].itens.length===1 &&
+    consolidado.zeiss.meses['2026-09'].itens[0].name==='Setembro canônico' &&
+    consolidado.zeiss.meses['2026-07'].itens[0].name==='Julho preservado',
+    'Central Editorial somou aliases no mesmo mês ou escolheu um documento inteiro e perdeu o histórico');
+
+  const renderFonte=trecho(escritorio,'window.renderControleEditorialCalendarios = async function','  /* ===== FRENTE C1 — VISIBILIDADE TOTAL DA SIDEBAR');
+  exigir(renderFonte.includes("getDocs(collection(db,'clientes_config'))") &&
+    renderFonte.includes("getDocs(collection(db,'clientes_extras'))") &&
+    !renderFonte.includes("'contratos_cliente'") && !renderFonte.includes("'pagamentos_mensais'") &&
+    renderFonte.includes("htmlFalhaLeituraCalendarios('Não consegui confirmar a Central de Calendários'"),
+    'Central Editorial consultou finanças no papel da Gabi ou transformou falha de leitura em lista vazia');
+
+  const filtroFonte=trecho(escritorio,'window.aplicarFiltrosControleEditorialCalendarios = function','  /* ===== FRENTE C1 — VISIBILIDADE TOTAL DA SIDEBAR');
+  const filtroApi=executarSandbox('central-editorial-render-v66.js',
+    `const els={controleEditorialCalendariosBox:{innerHTML:''},centralCalBusca:{value:''},centralCalMes:{value:'2026-09'},centralCalSituacao:{value:'todos'},centralCalCarteira:{value:'ativos'}};\n`+
+    `globalThis.document={getElementById:id=>els[id]||null};let usuarioAtual='Amanda';\n`+
+    `function normNomeCliente(v){return String(v||'').toLowerCase();}function competenciaCalendarioAtual(){return '2026-09';}function atualizarBadgeControleEditorial(){}function rotuloCompetenciaControleEditorial(){return 'Setembro de 2026';}function rotuloFaseControleEditorial(f){return f;}function esc(v){return String(v??'');}function escAttr(v){return esc(v);}function escJs(v){return esc(v).replace(/'/g,"\\\\'");}\n`+
+    `window.__controleEditorialCalendariosDados={linhas:[{slug:'bluefit',nome:'Bluefit',ativo:true,mes:'2026-09',fase:'revisao',total:1,roteiros:1,legendas:0,referencias:1,itens:[{day:4,name:'Campanha de setembro',fmt:'Reel',desc:'Roteiro',ref:'https://exemplo.test'}]},{slug:'vip-antigo',nome:'VIP histórico',ativo:false,mes:'2026-09',fase:'liberado',total:1,roteiros:1,legendas:1,referencias:1,itens:[{day:8,name:'Título preservado'}]}]};\n`+
+    `${filtroFonte}\n`+
+    `function render(){window.aplicarFiltrosControleEditorialCalendarios();return els.controleEditorialCalendariosBox.innerHTML;}function carteira(v){els.centralCalCarteira.value=v;return render();}function situacao(v){els.centralCalSituacao.value=v;return render();}globalThis.api={render,carteira,situacao};`);
+  const htmlAtivos=filtroApi.render();
+  exigir(htmlAtivos.includes('Bluefit')&&htmlAtivos.includes('Campanha de setembro')&&htmlAtivos.includes('1/1')&&!htmlAtivos.includes('VIP histórico'),
+    'Central Editorial não exibiu título/progresso real ou misturou arquivo na carteira ativa');
+  exigir(filtroApi.carteira('todos').includes('VIP histórico')&&filtroApi.situacao('faltando').includes('Nenhum cliente corresponde'),
+    'filtros de carteira/situação não alteraram o conjunto renderizado de forma compreensível');
+}
+
 try {
   testarCoberturaPostagensSandbox();
   await testarLoginSandbox();
@@ -1520,6 +1597,7 @@ try {
   await testarCentralClientesAmandaSandbox();
   await testarIdentidadeClienteSandbox();
   testarV54Sandbox();
+  testarCentralEditorialCalendariosSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

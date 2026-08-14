@@ -1017,3 +1017,34 @@ Os itens acima foram aprovados por inspeção de fonte, preflight e sandbox nome
 - [x] Fechar restaura o rótulo e o estado do botão; erro de leitura fica visível e não é confundido com calendário vazio.
 - [x] Bluefit, Mochi e nomes com apóstrofo/alias geram `onclick` válido e alvo único.
 - [x] Comentário continua exclusivo da Amanda e persiste somente `comments` e `updatedAt`.
+
+## 55. BARREIRAS — CENTRAL EDITORIAL DE CALENDÁRIOS (14/08/2026)
+
+### 55.1 Um painel novo não pode criar uma segunda verdade sobre o calendário
+**Risco encontrado antes da implementação:** a tela antiga de visão escolhe somente o mês mais recente de cada cliente. Copiar esse cálculo para uma nova aba faria histórico, fila da Amanda e edição da Gabi divergirem novamente.
+**Barreira:** a Central Editorial lê o mesmo snapshot compartilhado de `calendarios`, usa `mesesDeCalendario()`, `itensDoMesCalendario()` e `estadoMesCal()` e apenas projeta esses dados por cliente e competência. Ela não grava estado, não cria coleção e não mantém listener próprio.
+> **LEI:** painel de controle é projeção da fonte operacional, não nova fonte. Mês, itens e aprovação continuam determinados pelos helpers canônicos da cadeia de calendários.
+
+### 55.2 “Todos os calendários” exige competência explícita e identidade canônica
+**Risco encontrado antes da implementação:** escolher o documento inteiro “mais forte” por slug pode esconder um mês preservado apenas num alias legado; somar aliases, por outro lado, duplica cliente e conteúdo.
+**Barreira:** a consolidação é feita por `cliente canônico + competência`. Em cada competência vence um único retrato, sem fundir itens e sem escrever no Firestore; aliases permanecem preservados no banco e aparecem como um único cliente na Central.
+> **LEI:** histórico editorial consolida por cliente canônico e mês depois da leitura. Nunca somar documentos aliases nem escolher um documento inteiro quando o produto precisa mostrar todas as competências.
+
+### 55.3 Isolamento da Central precisa existir no DOM e na navegação
+**Requisito confirmado para esta entrega:** a porta pertence somente à Amanda e à Gabrielle. Chris e os demais papéis não devem receber botão nem view no DOM.
+**Barreira:** botão e view são montados dinamicamente apenas para os dois papéis, removidos na troca de usuário e protegidos também em `irPara()`. A projeção operacional usa `clientes_extras`/`clientes_config` e calendários; não consulta contratos, mensalidades ou financeiro no perfil da Gabi.
+> **LEI:** uma central compartilhada por dois papéis nasce somente nesses dois DOMs e usa a interseção segura de dados permitidos aos dois; acesso gerencial mais amplo não pode vazar para o papel operacional.
+
+### 55.4 Gate obrigatório da V66
+- [x] Amanda e Gabrielle recebem exatamente um botão verde e uma view; Chris, Cecília, Luís, Nathan, editoras e sessão sem papel ficam com zero nós no DOM.
+- [x] A navegação direta para `controleEditorialCalendarios` também recusa qualquer outro papel e remove eventual nó residual.
+- [x] Alias concorrente gera um cliente por competência; um mês histórico existente somente no alias continua consultável sem somar itens do mesmo mês.
+- [x] Soft-delete de calendário/item não entra na operação e não é apagado do banco.
+- [x] Competência atual aparece mesmo quando ainda não existe calendário, permitindo distinguir “não iniciado” de falha de leitura.
+- [x] Busca, situação e carteira alteram a lista; cartão mostra título, roteiro, legenda e referência com números do mês selecionado.
+- [x] Amanda recebe ação para a fila de revisão; Gabi e Amanda abrem o calendário oficial, sem escritor ou coleção paralela.
+- [x] Mudança do snapshot compartilhado redesenha a Central sem listener adicional.
+- [x] Falha de `calendarios`, `clientes_config` ou `clientes_extras` mostra indisponibilidade; nunca vira zero ou carteira vazia confirmada.
+- [x] Layout possui quebras específicas para desktop, tablet e celular, sem grade de duas colunas forçada no mobile.
+
+Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserções, incluindo sandboxes nomeados de papel/DOM, aliases por competência e render/filtros. O navegador local confirmou o marcador V66 após carregamento com cache-busting e confirmou ausência do botão/view antes de autenticar. A validação autenticada com dados reais de Amanda/Gabi permanece para depois do upload, sem fabricação de sessão ou escrita em produção.

@@ -1,5 +1,6 @@
 [Uploading CATALOGO_DE_ERROS.md…]()
 [Uploading CATALOGO_DE_ERROS.md…]()
+[Uploading CATALOGO_DE_ERROS.md…]()
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30964009/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
@@ -1048,3 +1049,25 @@ Os itens acima foram aprovados por inspeção de fonte, preflight e sandbox nome
 - [x] Layout possui quebras específicas para desktop, tablet e celular, sem grade de duas colunas forçada no mobile.
 
 Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserções, incluindo sandboxes nomeados de papel/DOM, aliases por competência e render/filtros. O navegador local confirmou o marcador V66 após carregamento com cache-busting e confirmou ausência do botão/view antes de autenticar. A validação autenticada com dados reais de Amanda/Gabi permanece para depois do upload, sem fabricação de sessão ou escrita em produção.
+
+## 56. REGRESSÕES — COMPETÊNCIA DA JULIANE E FONTE DE STORIES (16/08/2026)
+
+### 56.1 Aprovação única de setembro absorvia conteúdo legado de agosto
+**Prova real:** `calendarios/juliane-nerone` possuía 29 conteúdos: cinco sem `mes`, quatro com `mes=2026-08` e vinte com `mes=2026-09`. O documento ainda declarava `month="Agosto 2026"`, não tinha `mesLegado` e possuía somente `aprovacaoMeses['2026-09']`.
+**O que acontecia:** `mesDoItemCalendario()` consultava a única chave de aprovação antes do rótulo do documento. A análise da Amanda classificava 25 conteúdos como setembro e somente quatro como agosto; os cinco antigos já programados/publicados reapareciam na decisão de setembro.
+**Como foi corrigido:** a competência explícita do item continua soberana; em item legado, `mesLegado` e o mês escrito no documento vencem qualquer metadado de aprovação. A mesma ordem foi aplicada no Escritório, nos dois endereços do editor e no Portal, sem migrar nem regravar dados.
+> **LEI:** metadado de aprovação não define a competência de conteúdo legado. A aprovação decide o estado do mês; nunca transfere conteúdo antigo para esse mês.
+
+### 56.2 Fallbacks antigos ainda contradiziam a fonte única de Stories
+**Prova no código:** apesar da V60 declarar `stories_clientes` como fonte operacional única, a cobrança semanal ainda possuía `CLIENTES_COM_STORY`, e o painel de Stories Diários consultava/escrevia `stories_diarios_config` quando não encontrava cliente ativo.
+**Risco:** uma carteira corretamente vazia poderia ressuscitar Juliane/Vitalle por lista fixa, criar configuração durante a abertura da tela ou cobrar clientes que o registro persistido marcava como inativos.
+**Como foi corrigido:** os seeds e a coleção paralela foram removidos dos leitores. Falha de leitura mostra indisponibilidade; leitura confirmada com zero ativos mostra o estado vazio e não cria, reativa nem cobra ninguém.
+> **LEI:** zero clientes ativos de Stories é um estado válido. Leitura vazia confirmada não autoriza seed, segunda coleção ou escrita automática.
+
+### 56.3 Gate obrigatório da V67
+- [x] Cenário Juliane com 5 legados + 4 de agosto + 20 de setembro produz agosto 9 e setembro 20.
+- [x] A fila da Amanda mantém uma única decisão de setembro com exatamente 20 conteúdos.
+- [x] Editor singular/plural e Portal usam a mesma precedência de competência.
+- [x] `CLIENTES_COM_STORY`, `STORIES_CLIENTES_PADRAO` e leituras/escritas de `stories_diarios_config` não existem mais no fluxo operacional.
+- [x] Falha do Firestore continua diferente de zero clientes ativos.
+- [x] Nenhum calendário, cliente, Story ou configuração de produção foi gravado durante a correção local.

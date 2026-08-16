@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-14-central-editorial-calendarios-v66">
+<meta name="gs-build" content="2026-08-16-competencia-calendarios-stories-v67">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -15725,32 +15725,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return d.getUTCFullYear() + '-W' + String(semanaNum).padStart(2,'0');
   }
 
-  const STORIES_CLIENTES_PADRAO = [
-    { clienteNome: 'Joaquin Assados', dias: ['quarta','quinta','sexta','sabado'] },
-    { clienteNome: 'Divina Cantina', dias: ['terca','quarta','quinta','sexta','sabado','domingo'] },
-  ];
-
-  async function garantirConfigStoriesDiarios(){
-    const snap = await getDocs(collection(db,'stories_diarios_config'));
-    if(snap.empty){
-      for(const c of STORIES_CLIENTES_PADRAO){
-        await addDoc(collection(db,'stories_diarios_config'), c);
-      }
-    }
-  }
-
   async function renderStoriesDiarios(){
     const box = document.getElementById('storiesDiariosBox');
     if(!box) return;
     box.innerHTML = '<div class="card"><div class="desc">Carregando stories diários...</div></div>';
 
-    /* ===== 27/07/2026 — UMA LISTA SÓ DE CLIENTES DE STORY ================
-       Este painel tinha a PRÓPRIA lista (`stories_diarios_config`, com
-       Joaquin e Divina) enquanto a tela de Stories tinha outra. Duas
-       verdades sobre a mesma pergunta — o mesmo erro que já corrigimos no
-       Financeiro. Agora os dois leem `stories_clientes`. A Gabi edita num
-       lugar só e vale pra tudo. A config antiga fica como reserva se o
-       registro estiver vazio. */
+    /* Uma lista só de clientes de Story. `stories_clientes` é a fonte
+       operacional inclusive quando não há nenhum ativo: vazio confirmado
+       não autoriza ressuscitar seeds nem consultar uma segunda coleção. */
     let clientes = [];
     try{
       const reg = await carregarClientesDeStory();
@@ -15758,11 +15740,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         id: c.slug, clienteNome: c.nome, combinado: c.combinado || '',
         dias: (Array.isArray(c.dias) && c.dias.length ? c.dias : [1,2,3,4,5]).map(n => DIAS_SEMANA_ORDEM[n])
       }));
-    }catch(e){ console.error('Falha ao ler registro de story:', e); }
+    }catch(e){
+      console.error('Falha ao ler registro de story:', e);
+      box.innerHTML = '<div class="card" style="border:2px solid var(--red);"><b>⚠️ Não consegui confirmar os clientes de Stories.</b><div class="desc" style="margin-top:6px;">A leitura falhou; isso não significa que a lista esteja vazia. Tente novamente em instantes.</div></div>';
+      return;
+    }
     if(!clientes.length){
-      await garantirConfigStoriesDiarios();
-      const configSnap = await getDocs(collection(db,'stories_diarios_config'));
-      configSnap.forEach(d => clientes.push({id:d.id, ...d.data()}));
+      box.innerHTML = '<div class="card"><div class="empty">Nenhum cliente ativo de Stories. A configuração oficial fica em “Quem tem story”.</div></div>';
+      return;
     }
 
     const semanaChave = obterChaveSemanaAtual();
@@ -25869,9 +25854,6 @@ window.setGerenciaSub = function(qual, el){
     }
   }
 
-  /* Quem tem story semanal contratado. Mexer aqui é o único lugar. */
-  const CLIENTES_COM_STORY = ['juliane-nerone','vitalle-odonto'];
-
   async function cobrarStoriesDaSemana(){
     const hoje = new Date();
     if(hoje.getDay() !== 5) return;                  // sexta — é quando a Gabi monta
@@ -25885,25 +25867,10 @@ window.setGerenciaSub = function(qual, el){
     const cobertos = new Set();
     stSnap.forEach(d => { const v=d.data(); if(v.semana === semana && v.cliente) cobertos.add(v.cliente); });
 
-    /* ===== CORRIGIDO 27/07/2026 =====
-       A cobrança pegava TODOS os clientes e dizia "faltam 24" — mas story
-       não é de todo mundo: só quem contratou. O Chris confirmou: Juliane,
-       Vitalle, Divina Cantina e Joaquin. Agora o alvo sai da configuração
-       de dias de story de cada cliente (stories_diarios_config). Cliente
-       sem configuração simplesmente não é cobrado. */
-    /* ===== 27/07/2026 — STORY É ADITIVO DE PLANO, NÃO É DE TODO MUNDO =====
-       Confirmado pelo Chris: só Juliane Nerone e Vitalle têm story semanal,
-       como adicional do plano deles. A Gabi monta toda SEXTA, a semana
-       inteira de uma vez. Antes o sistema cobrava 24 clientes e cobrava
-       toda segunda — errado nos dois eixos. */
-    /* ===== 27/07/2026 (final) — O ALVO SAI DO REGISTRO, NÃO DO CÓDIGO ====
-       A lista estava fixa aqui dentro: pra ligar story num cliente novo
-       alguém teria que editar o arquivo. Agora vem de `stories_clientes`,
-       que a Gabi edita pela tela. Ela adiciona o cliente lá e a cobrança
-       de sexta passa a valer pra ele no mesmo instante. A constante fica
-       só como semente, pra primeira vez que o registro estiver vazio. */
+    /* O alvo sai exclusivamente de `stories_clientes`. Zero clientes
+       ativos é um estado válido e nunca reativa contrato por lista fixa. */
     const registrados = await carregarClientesDeStory(true);
-    const slugsStory = registrados.length ? registrados.map(c => c.slug) : CLIENTES_COM_STORY;
+    const slugsStory = registrados.map(c => c.slug);
     const alvo = CLIENTES_LISTA.filter(c => slugsStory.includes(c.slug));
     if(!alvo.length) return;
     const faltando = alvo.filter(c => !cobertos.has(c.slug));
@@ -33188,6 +33155,12 @@ Observações do cliente: ${l.observacoes||'—'}`;
   function mesDoItemCalendario(cal, item){
     if(item && item.mes) return item.mes;
     if(cal && cal.mesLegado) return cal.mesLegado;
+    /* O rótulo do documento é a âncora usada pelo próprio editor para
+       carimbar conteúdo antigo. Ele precisa vencer metadados de aprovação:
+       aprovação de setembro não pode transformar conteúdo legado de agosto
+       em conteúdo de setembro. */
+    const mesDoDocumento = mesDoTextoConf((cal&&cal.month)||'');
+    if(mesDoDocumento) return mesDoDocumento;
     const ap = cal && cal.aprovacaoInterna;
     if(ap && ap.mes) return ap.mes;
     /* Algumas versões chegaram a gravar o mês somente na aprovação por
@@ -33195,7 +33168,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
        conteúdos antigos que ainda não têm `item.mes`. */
     const chavesAprovacao = Object.keys((cal&&cal.aprovacaoMeses)||{}).filter(Boolean);
     if(chavesAprovacao.length === 1) return chavesAprovacao[0];
-    return mesDoTextoConf((cal&&cal.month)||'');
+    return '';
   }
   function itensDoMesCalendario(cal, mes){
     const itens = (cal&&cal.items)||[];

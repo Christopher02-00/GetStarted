@@ -1,5 +1,4 @@
 [Uploading AGENTS.md…]()
-[Uploading AGENTS.md…]()
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.

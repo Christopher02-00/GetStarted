@@ -596,7 +596,7 @@ async function testarCalendariosSandbox() {
      alimentar a lista/contador da Amanda, inclusive em documentos legados. */
   const fonteFila = trecho(escritorio, 'function mesDoItemCalendario', 'window.linhasCalendariosAguardandoRevisao');
   const fila = executarSandbox('calendarios-aprovacao-sandbox.js',
-    `function mesDoTextoConf(txt){const m=String(txt||'').match(/(20\\d{2})-(\\d{2})/);return m?m[1]+'-'+m[2]:'';}\n` +
+    `function mesDoTextoConf(txt){const s=String(txt||'');const iso=s.match(/(20\\d{2})-(\\d{2})/);if(iso)return iso[1]+'-'+iso[2];const t=s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();const nomes=['janeiro','fevereiro','marco','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];const i=nomes.findIndex(n=>t.includes(n)),ano=(t.match(/(20\\d{2})/)||[])[1];return i>=0&&ano?ano+'-'+String(i+1).padStart(2,'0'):'';}\n` +
     `function slugClienteCanonico(slug){return ({zeens:'zeiss','otica-visao-araucaria':'zeiss'}[slug]||slug);}\n` +
     `${fonteFila}\nglobalThis.api={estadoMesCal,itensDoMesCalendario,linhasCalendariosAguardandoRevisao,mesHistoricoForaDaRevisao};`);
   const registro = (id, dados) => ({ id, data:()=>dados });
@@ -606,6 +606,34 @@ async function testarCalendariosSandbox() {
   });
   exigir(fila.linhasCalendariosAguardandoRevisao([agostoPendente]).length === 1,
     'envio mensal da Gabi não chegou à fila da Amanda');
+  /* Incidente Juliane (14/08): cinco conteúdos antigos não tinham `mes`,
+     o documento ainda dizia Agosto 2026 e somente setembro possuía uma
+     aprovação mensal. A chave de setembro não pode reclassificar agosto. */
+  const itensJuliane = [
+    ...Array.from({length:5},(_,i)=>({name:'Legado '+i})),
+    ...Array.from({length:4},(_,i)=>({mes:'2026-08',name:'Agosto '+i})),
+    ...Array.from({length:20},(_,i)=>({mes:'2026-09',name:'Setembro '+i}))
+  ];
+  const julianeSemAncora = registro('juliane-nerone', {
+    client:'Juliane Nerone', month:'Agosto 2026', items:itensJuliane,
+    aprovacaoInterna:{status:'aguardando_interna',mes:'2026-09',por:'Gabrielle',em:'2026-08-14T12:00:00Z'},
+    aprovacaoMeses:{'2026-09':{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-14T12:00:00Z'}}
+  });
+  exigir(fila.itensDoMesCalendario(julianeSemAncora.data(),'2026-08').length===9 &&
+    fila.itensDoMesCalendario(julianeSemAncora.data(),'2026-09').length===20,
+    'conteúdo legado de agosto voltou a ser classificado pela aprovação única de setembro');
+  const filaJuliane=fila.linhasCalendariosAguardandoRevisao([julianeSemAncora],new Date(2026,7,16,12));
+  exigir(filaJuliane.length===1&&filaJuliane[0].mesKey==='2026-09'&&filaJuliane[0].itens===20,
+    'análise da Amanda voltou a misturar os cinco conteúdos antigos no calendário de setembro');
+
+  const mesItemEditorFonte=trecho(calendario,'function mesDoItem(it)','/* ===== A ARMADILHA');
+  const mesItemEditorApi=executarSandbox('calendario-competencia-juliane-v67.js',
+    `let data={month:'Agosto 2026',aprovacaoInterna:{mes:'2026-09'},aprovacaoMeses:{'2026-09':{status:'aguardando_interna'}}};`+
+    `function mesDoTexto(txt){return txt==='Agosto 2026'?'2026-08':'';}`+
+    `${mesItemEditorFonte}\nglobalThis.api={mesDoItem};`);
+  exigir(mesItemEditorApi.mesDoItem({name:'Legado'})==='2026-08'&&
+    mesItemEditorApi.mesDoItem({mes:'2026-09',name:'Novo'})==='2026-09',
+    'editor oficial voltou a deixar aprovação moderna vencer a competência do documento legado');
   const mistoLegado = registro('cliente-legado', {
     client:'Legado', mesLegado:'2026-07', items:[{name:'antigo'},{mes:'2026-08',name:'novo'}],
     aprovacaoMeses:{'2026-07':{status:'aguardando_interna',por:'Gabrielle'},'2026-08':{status:'rascunho'}}
@@ -662,6 +690,14 @@ async function testarCalendariosSandbox() {
     `const aprMeses={'2026-09':{status:'aguardando_interna',mes:'2026-09'}};const todosItens=[{mes:'2026-07'},{mes:'2026-09'}];const usaMeses=true,legado='2026-07';const dadosCal={aprovacaoMeses:aprMeses,mesLegado:legado,items:todosItens,aprovacaoInterna:{status:'aguardando_interna',mes:'2026-09'}};\n${portalFonte}\nglobalThis.api={estadoDoMesPortal};`);
   exigir(portalMesApi.estadoDoMesPortal('2026-07')==='liberado' && portalMesApi.estadoDoMesPortal('2026-09')==='aguardando_interna',
     'Portal voltou a herdar a aprovação de setembro no mês legado de julho');
+  const portalCompetenciaFonte=trecho(fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8'),
+    'const mesDoRotuloPortal = txt =>','    /* A MESMA função do calendário');
+  const portalCompetenciaApi=executarSandbox('portal-competencia-juliane-v67.js',
+    `const todosItens=[...Array.from({length:5},(_,i)=>({name:'Legado '+i})),...Array.from({length:4},(_,i)=>({mes:'2026-08',name:'Agosto '+i})),...Array.from({length:20},(_,i)=>({mes:'2026-09',name:'Setembro '+i}))];`+
+    `const dadosCal={month:'Agosto 2026',items:todosItens,aprovacaoInterna:{mes:'2026-09'},aprovacaoMeses:{'2026-09':{status:'aguardando_interna'}}};const aprMeses=dadosCal.aprovacaoMeses;`+
+    `${portalCompetenciaFonte}\nglobalThis.api={mesDoItemPortal,contar:m=>todosItens.filter(i=>mesDoItemPortal(i)===m).length};`);
+  exigir(portalCompetenciaApi.contar('2026-08')===9&&portalCompetenciaApi.contar('2026-09')===20,
+    'Portal voltou a esconder legado de agosto ou mostrá-lo junto de setembro');
 
   /* A compatibilidade legada não pode oferecer um botão impossível:
      ausência de status explícito permite entrar no ciclo formal, mas um
@@ -1391,7 +1427,7 @@ async function testarIdentidadeClienteSandbox() {
     'registro arquivado de alias/unificação voltou a oferecer reativação');
 }
 
-function testarV54Sandbox() {
+async function testarV54Sandbox() {
   const progressoFonte=trecho(escritorio,'function progressoEditorialCalendario','  const MESES_CAL');
   const progressoApi=executarSandbox('progresso-editorial-v53.js',`${progressoFonte}\nglobalThis.api={progressoEditorialCalendario};`);
   const progresso=progressoApi.progressoEditorialCalendario([
@@ -1454,6 +1490,30 @@ function testarV54Sandbox() {
     !cadastroStories.includes('STORY_CLIENTES_SEED') &&
     !cadastroStories.includes('await setDoc('),
     'abrir Stories voltou a depender de seed paralelo, escrita automática ou registro inativo');
+  const storiesDiariosFonte=trecho(escritorio,'async function renderStoriesDiarios','  window.toggleStoryDiario');
+  const cobrancaStoriesFonte=trecho(escritorio,'async function cobrarStoriesDaSemana','  async function lembrarExtrasDosFilmmakers');
+  exigir(!escritorio.includes('CLIENTES_COM_STORY')&&!escritorio.includes('STORIES_CLIENTES_PADRAO')&&
+    !escritorio.includes("collection(db,'stories_diarios_config')")&&
+    storiesDiariosFonte.includes('Nenhum cliente ativo de Stories')&&
+    !storiesDiariosFonte.includes('addDoc(')&&!storiesDiariosFonte.includes('setDoc(')&&
+    cobrancaStoriesFonte.includes('const slugsStory = registrados.map(c => c.slug)')&&
+    !cobrancaStoriesFonte.includes('registrados.length ?'),
+    'Stories voltou a reativar contrato por seed, segunda coleção ou escrita durante leitura');
+  const clientesStoriesApi=executarSandbox('stories-clientes-ativos-v67.js',
+    `let __storyClientesCache=null,documentos=[],falhar=false;const db={};function collection(){return {};}`+
+    `async function getDocs(){if(falhar)throw new Error('leitura indisponível');return {forEach:fn=>documentos.forEach((v,i)=>fn({id:v.slug||String(i),data:()=>v}))};}`+
+    `${cadastroStories}\nglobalThis.api={listar:window.carregarClientesDeStory,definir:v=>{documentos=v;falhar=false;__storyClientesCache=null;},indisponivel:()=>{falhar=true;__storyClientesCache=null;}};`);
+  clientesStoriesApi.definir([{slug:'juliane-nerone',nome:'Juliane',ativo:false},{slug:'vitalle-odonto',nome:'Vitalle',ativo:true}]);
+  const apenasAtivos=await clientesStoriesApi.listar(true);
+  exigir(apenasAtivos.length===1&&apenasAtivos[0].slug==='vitalle-odonto',
+    'documento inativo de Stories voltou ao seletor operacional da Gabi');
+  clientesStoriesApi.definir([{slug:'juliane-nerone',nome:'Juliane',ativo:false}]);
+  exigir((await clientesStoriesApi.listar(true)).length===0,
+    'zero clientes ativos voltou a ser preenchido por seed silencioso');
+  clientesStoriesApi.indisponivel();
+  let leituraStoriesFalhou=false;
+  try{await clientesStoriesApi.listar(true);}catch(e){leituraStoriesFalhou=String(e.message).includes('indisponível');}
+  exigir(leituraStoriesFalhou,'falha de leitura de Stories voltou a ser convertida em lista vazia');
   const estadoStoriesFonte=trecho(escritorio,'function estadoCadeiaStoriesCliente','window.estadoCadeiaStoriesCliente');
   const estadoStoriesApi=executarSandbox('stories-cadeia-v60.js',
     `${estadoStoriesFonte}\nglobalThis.api={estadoCadeiaStoriesCliente};`);
@@ -1596,7 +1656,7 @@ try {
   testarCofreCeciliaSandbox();
   await testarCentralClientesAmandaSandbox();
   await testarIdentidadeClienteSandbox();
-  testarV54Sandbox();
+  await testarV54Sandbox();
   testarCentralEditorialCalendariosSandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {

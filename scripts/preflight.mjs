@@ -129,10 +129,14 @@ const leisV66 = [
   'histórico editorial consolida por cliente canônico e mês depois da leitura',
   'uma central compartilhada por dois papéis nasce somente nesses dois DOMs'
 ];
+const leisV67 = [
+  'metadado de aprovação não define a competência de conteúdo legado',
+  'zero clientes ativos de Stories é um estado válido'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V66');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V66');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V67');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V67');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -485,7 +489,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-12-calendario-mes-isolado-stories-v59') ||
+if (!calendarioEditor.includes('2026-08-16-competencia-calendarios-v67') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -618,9 +622,35 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-14-central-editorial-calendarios-v66') {
-  falhar(`build V66 inesperado: ${build || 'ausente'}`);
-} else provar('V66 identifica a Central Editorial isolada da Amanda e da Gabi');
+if (build !== '2026-08-16-competencia-calendarios-stories-v67') {
+  falhar(`build V67 inesperado: ${build || 'ausente'}`);
+} else provar('V67 identifica a separação de competências e a fonte única de Stories');
+
+const competenciaCalendariosV67 = escritorio.slice(
+  escritorio.indexOf('function mesDoItemCalendario'),
+  escritorio.indexOf('  function mesUsaCampoLegadoCalendario')
+);
+const mesEditorV67 = ler('calendario.html').slice(
+  ler('calendario.html').indexOf('function mesDoItem(it)'),
+  ler('calendario.html').indexOf('/* ===== A ARMADILHA')
+);
+if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-16-competencia-calendarios-v67">') ||
+    !portal.includes('<meta name="gs-build" content="2026-08-16-competencia-calendarios-portal-v67">') ||
+    !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
+    competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
+    !mesEditorV67.includes('const mesDoDocumento = mesDoTexto(data.month)') ||
+    !portal.includes('function mesDoItemPortal(item)') ||
+    !portal.includes('todosItens.map(mesDoItemPortal)') ||
+    !portal.includes('todosItens.filter(i => mesDoItemPortal(i)')) {
+  falhar('competência legada voltou a ser definida por aprovação moderna ou divergiu entre Escritório, editor e Portal');
+} else provar('competência legada usa a âncora do documento antes da aprovação moderna nos três consumidores');
+
+if (escritorio.includes('CLIENTES_COM_STORY') || escritorio.includes('STORIES_CLIENTES_PADRAO') ||
+    escritorio.includes("collection(db,'stories_diarios_config')") ||
+    !escritorio.includes('const slugsStory = registrados.map(c => c.slug)') ||
+    !escritorio.includes('Nenhum cliente ativo de Stories')) {
+  falhar('Stories voltou a usar seed, segunda coleção ou fallback contratual fora de stories_clientes');
+} else provar('Stories usa somente stories_clientes e preserva zero ativos sem reativação silenciosa');
 
 const centralEditorialV66 = escritorio.slice(
   escritorio.indexOf('function papelPodeControleEditorialCalendarios'),

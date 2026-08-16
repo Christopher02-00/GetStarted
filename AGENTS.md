@@ -1,7 +1,16 @@
 [Uploading AGENTS.md…]()
+[Uploading AGENTS.md…]()
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
+
+## Autonomia e padrão de confirmação
+
+- Um relato de erro, ajuste ou atualização autoriza investigar e implementar imediatamente as mudanças locais necessárias, sem pedir uma nova confirmação para continuar.
+- Valide cada etapa antes de avançar: reprodução do incidente, teste dirigido do fluxo alterado, preflight, regressão crítica, revisão de diff e verificação visual quando houver interface.
+- Só declare `corrigido + validado` quando o comportamento anterior falhar na reprodução e o mesmo cenário passar depois da mudança. Teste parcial, sintaxe ou marcador de versão não autorizam certeza maior que a evidência.
+- Push, publicação e alterações no Firebase/produção continuam fora da mudança local e exigem autorização específica, salvo quando o pedido atual nomear inequivocamente essa ação externa.
+- Toda entrega com arquivos alterados termina com um único pacote ZIP clicável, criado também como pasta descompactada em `Downloads`, preservando a estrutura relativa dos arquivos. Antes de entregar, liste o ZIP, confira seu conteúdo e informe seu SHA-256; o usuário não deve precisar baixar arquivo por arquivo.
 
 ## Antes de editar
 

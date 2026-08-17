@@ -1,53 +1,50 @@
-# Entrega V70 — Stories, calendários e controle de gravações
+[RELATORIO_ENTREGA_V71.md](https://github.com/user-attachments/files/31149737/RELATORIO_ENTREGA_V71.md)
+# Entrega V71 — recibo de demandas e mensagens para clientes
 
 Data: 17/08/2026  
-Base oficial analisada: `main` em `a67f166fd3a840a4815da311e32ff6990f950b23`
+Base oficial: `main` em `8ad88b13d051d6845221a8f9e6be3caaa7969aef`
 
-## O que foi comprovado
+## Incidente recuperado
 
-- O Story da Vitalle com conteúdo de 17–22/08 estava liberado, mas armazenado na semana técnica de 10/08. Na semana atual do Portal ele aparecia vazio e, ao voltar uma semana, o conteúdo estava presente.
-- Um calendário aprovado bloqueava `openEdit()` antes de abrir o modal. Por isso a Cecília conseguia abrir a referência externa, mas não o roteiro, a legenda e o direcionamento interno.
-- Os links de calendário não levavam a competência do mês. O leitor escolhia o mês padrão, então um link copiado durante setembro podia abrir agosto.
-- Baixas antigas de gravação registravam quantidade sem títulos individuais. O Controle não conseguia associar a quantidade aos itens do calendário e mantinha saldo aparente.
+- Gabi recebeu confirmação visual de uma demanda para Chris, mas não existe hoje uma demanda aberta correspondente na fila dele.
+- O escritor antigo mostrava sucesso depois de `addDoc()`, sem reler a referência, conferir o roteamento ou atualizar a fila local.
+- Demandas colaborativas eram escritas em várias etapas e podiam ficar parciais.
 
-## Correções preparadas
+## Correção preparada
 
-- Stories novos gravam competência explícita e não são salvos quando as datas DD/MM do roteiro pertencem inequivocamente a outra semana.
-- O registro legado da Vitalle é recuperado em leitura na semana correta, sem migração ou regravação automática.
-- Calendário aprovado abre todos os campos em consulta; salvar, excluir e alterar continuam bloqueados.
-- O link do calendário inclui `mes=AAAA-MM`, valida conteúdo existente e exige que o mês esteja liberado para o cliente.
-- A competência escolhida dentro do calendário sincroniza com o campo usado para copiar o link.
-- Cecília ou o filmmaker da própria sessão pode conciliar baixa antiga selecionando exatamente os títulos correspondentes. A transação não cria vídeo duplicado e não altera a quantidade já registrada.
+- Reserva todos os IDs e grava principal + colaboradores em um lote atômico.
+- Relê cada ID e valida protocolo, título, origem, destinatário e estado antes de anunciar sucesso.
+- Em falha de confirmação, mantém os mesmos IDs para nova leitura sem duplicação.
+- Mostra um protocolo curto de confirmação e atualiza a fila local.
+- Inclui o destinatário principal na notificação posterior ao recibo.
+
+## Mensagens para clientes
+
+- Novo item **Mensagens para clientes**, logo abaixo de **Régua de Cobrança**, exclusivo do DOM e da porta do Chris.
+- Lista derivada da Central única de clientes, incluindo compatibilidade legada e exclusão correta de saídas efetivas.
+- Contato brasileiro validado com DDD; sem contato válido, o botão é bloqueado e aponta para a Central.
+- Mensagem aceita `{cliente}` ou `{nome}` e abre `wa.me` com o texto pronto.
+- A tela informa que o WhatsApp Web deve estar conectado ao número (41) 99908-8357. O clique final de envio continua manual.
 
 ## Arquivos da entrega
 
 - `escritorio.html`
-- `portal-cliente.html`
-- `calendario.html`
-- `calendarios.html`
 - `scripts/preflight.mjs`
-- `scripts/regression-critical.mjs`
+- `scripts/regression-v71.mjs`
 - `CATALOGO_DE_ERROS.md`
 - `AGENTS.md`
-- `RELATORIO_ENTREGA_V70.md`
+- `RELATORIO_ENTREGA_V71.md`
 
 ## Validação concluída
 
-- `scripts/preflight.mjs`: aprovado.
-- `scripts/regression-critical.mjs`: aprovado com 604 asserções.
-- Sintaxe: 9/9 scripts inline aprovados pelo preflight.
-- `calendario.html` e `calendarios.html`: byte a byte idênticos.
-- Git diff: sem erro de whitespace.
-- Página local: carregou o HTML e montou o DOM sem erro de sintaxe; a validação de dados autenticados pós-upload ainda depende da versão publicada.
-
-## Verificação após o upload
-
-- A branch `main` avançou até `9b897d628a686c906965016c1be24bffb9b5d642`.
-- Os quatro HTMLs operacionais publicados no domínio possuem os mesmos hashes dos arquivos correspondentes na `main`.
-- O preflight executado sobre a árvore recebida do GitHub foi aprovado com 9/9 scripts inline válidos.
-- A regressão crítica executada sobre a árvore recebida foi aprovada com 604 asserções.
-- Nenhuma regra do Firebase nem dado de produção foi alterado nesta entrega.
+- `scripts/regression-v71.mjs`: aprovado com 18 asserções dirigidas, incluindo commit atômico, falha de releitura, retentativa no mesmo ID, validação de destinatário e normalização do WhatsApp.
+- `scripts/preflight.mjs`: aprovado; 9/9 scripts inline têm sintaxe válida e o build é `2026-08-17-demandas-whatsapp-clientes-v71`.
+- `scripts/regression-critical.mjs`: aprovado com 604 asserções de regressão.
+- `calendario.html` e `calendarios.html`: byte a byte idênticos; nenhum arquivo da cadeia de calendários foi modificado.
+- DOM real sem login: Financeiro, botão e view de mensagens não existem no documento.
+- Layout: conferido em desktop 1280×900 e mobile 390×844; menu, cartões, busca, indicadores e botão permaneceram legíveis, sem sobreposição.
+- Git diff: aprovado com CRLF reconhecido como terminação de linha; não há exclusão física nem mudança em `firestore.rules`.
 
 ## Limite real
 
-Código presente no GitHub e servido pelo domínio não prova, sozinho, cada ação autenticada com dados reais. A validação restante é comportamental: Vitalle visualizar Stories na semana correta, Cecília consultar e compartilhar o mês escolhido e Cecília/Luís conciliarem uma baixa antiga autorizada.
+Os testes locais comprovam lógica, DOM, isolamento por papel, retentativa e URLs. A existência da correção em produção só pode ser afirmada após o upload e a comparação do build publicado. Nenhuma demanda real nem mensagem real foi criada durante esta etapa.

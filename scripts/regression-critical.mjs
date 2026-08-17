@@ -834,7 +834,7 @@ async function testarCalendariosSandbox() {
     `let usuarioAtual='Gabrielle',gravacoes=[],renders=0;const db={};const atual={dias:{segunda:false},detalhes:{}};\n`+
     `function doc(_db,c,id){return {c,id};}async function getDoc(){return {exists:()=>true,data:()=>atual};}\n`+
     `async function setDoc(ref,dados,opts){gravacoes.push({ref,dados,opts});}function serverTimestamp(){return 'SERVIDOR';}\n`+
-    `function mostrarToast(){}async function renderStoriesDiarios(){renders++;}\n${storiesFonte}\n`+
+    `function mostrarToast(){}async function renderStoriesDiarios(){renders++;}async function sincronizarChecklistStoriesGabrielle(){}\n${storiesFonte}\n`+
     `globalThis.api={marcar:window.toggleStoryDiario,gravacoes,renders:()=>renders,papel:v=>{usuarioAtual=v;}};`);
   const btnStory = {disabled:false};
   exigir(await storiesApi.marcar('vitalle-odonto_2026-W33','segunda',true,btnStory) === true &&
@@ -847,7 +847,8 @@ async function testarCalendariosSandbox() {
     'papel diferente da Gabi conseguiu alterar o checklist diário de Stories');
   const renderStoriesFonte = trecho(escritorio, 'async function renderStoriesDiarios', 'window.toggleStoryDiario');
   exigir(renderStoriesFonte.includes('Promise.all(clientes.map') &&
-    renderStoriesFonte.includes('String(c.id || c.slug || c.clienteNome') &&
+    renderStoriesFonte.includes('slugEstavelStory(c)') &&
+    escritorio.includes('function slugEstavelStory(cliente)') &&
     renderStoriesFonte.includes('data-story-check='),
     'check de Stories voltou a carregar em série, derivar identidade do nome ou esconder o controle');
   const aberturaChecklistFonte = trecho(escritorio,
@@ -1255,7 +1256,7 @@ function testarPermissoesAcoesSandbox() {
   exigir(aplicar.indexOf('limparIdentidadeEquipeAnterior') < aplicar.indexOf('await pessoaAutorizadaPeloGoogle'),
     'troca de conta valida a nova pessoa antes de limpar dados da anterior');
   const videosSub = trecho(escritorio, 'window.setVideosSub = function', '/* ===== FRENTE B5');
-  exigir(videosSub.includes("qual==='lancar' && CAMPO_MAIS_CHRIS.includes(usuarioAtual)") &&
+  exigir(videosSub.includes("qual==='lancar' && podeLancarVideo(usuarioAtual)") &&
     videosSub.includes("qual==='meus' && [...EDITORES_SELECIONAVEIS,'Chris'].includes(usuarioAtual)"),
     'sub-abas de vídeo voltaram a confiar só em display:none');
   const excluir = trecho(escritorio, 'window.excluirVideoComMotivo', 'window.excluirVideoGerencia');
@@ -1706,6 +1707,78 @@ function testarCentralEditorialCalendariosSandbox(){
     'filtros de carteira/situação não alteraram o conjunto renderizado de forma compreensível');
 }
 
+async function testarChecklistViradaStoriesEVideosV69Sandbox(){
+  const chaveFonte=trecho(escritorio,'function chaveExecucao','  let checklistExecAtual');
+  const chaveApi=executarSandbox('checklist-virada-v69.js',
+    `function dataLocal(d){const dt=d?new Date(d):new Date();return new Date(dt.getTime()-dt.getTimezoneOffset()*60000).toISOString().slice(0,10);}\n`+
+    `${chaveFonte}\nglobalThis.api={chaveExecucao};`);
+  const dia=new Date(2026,7,17,19,0,0),antesMeiaNoite=new Date(2026,7,17,23,59,59),depoisMeiaNoite=new Date(2026,7,18,0,0,0);
+  exigir(chaveApi.chaveExecucao('Gabrielle','Diário',dia)==='Gabrielle_diario_2026-08-17' &&
+    chaveApi.chaveExecucao('Gabrielle','Diário',antesMeiaNoite)==='Gabrielle_diario_2026-08-17' &&
+    chaveApi.chaveExecucao('Gabrielle','Diário',depoisMeiaNoite)==='Gabrielle_diario_2026-08-18',
+    'checklist diário ainda troca às 19h ou não cria uma chave nova depois da meia-noite');
+
+  const edicaoChecklist=trecho(escritorio,'let checklistExecAtual','  function contarStreakDiario');
+  exigir(edicaoChecklist.includes("if(!checklistChaveAtual || checklistChaveAtual !== chaveAgora)") &&
+    edicaoChecklist.includes("throw new Error('CHECKLIST_DIA_MUDOU')") &&
+    edicaoChecklist.includes('if(!await garantirChecklistAtualAntesDeEditar()) return false;') &&
+    edicaoChecklist.includes('if(!await salvarChecklistProtegendoVirada()) return false;') &&
+    edicaoChecklist.includes("new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1, 0, 0, 0, 150)"),
+    'aba aberta pode voltar a gravar o estado antigo no documento do dia novo');
+
+  const resumoFonte=trecho(escritorio,'function pendenciasChecklistDoResumo','  /* Resumo das 19h por e-mail');
+  const resumoApi=executarSandbox('checklist-resumo-19h-v69.js',
+    `${resumoFonte}\nglobalThis.api={pendenciasChecklistDoResumo,textoPendenciasChecklist};`);
+  const pendencias=resumoApi.pendenciasChecklistDoResumo([
+    {nome:'Gabrielle',feitos:8,total:10,concluido:false},
+    {nome:'Luís',feitos:18,total:18,concluido:true},
+    {nome:'Nathan',feitos:0,total:18,concluido:false}
+  ]);
+  exigir(JSON.stringify(pendencias)===JSON.stringify([{nome:'Gabrielle',abertos:2},{nome:'Nathan',abertos:18}]) &&
+    resumoApi.textoPendenciasChecklist(pendencias)==='Gabrielle: 2 em aberto · Nathan: 18 em aberto',
+    'aviso das 19h não lista somente quem ficou pendente com a quantidade aberta');
+  const envio19h=trecho(escritorio,'async function enviarResumoChecklist19h','  async function renderDemandasAtrasadasDetalhe');
+  exigir(!envio19h.includes("'checklist_execucoes'") && envio19h.includes('if(!pendencias.length) return;') &&
+    envio19h.includes("titulo: '📋 Pendências dos checklists — ' + resumo"),
+    'rotina das 19h voltou a limpar checklist, avisar concluídos ou enviar mensagem sem pendência');
+
+  const historiasFonte=trecho(escritorio,'const DIAS_SEMANA_ORDEM','  async function renderStoriesDiarios');
+  const historiasApi=executarSandbox('stories-checklist-diario-v69.js',
+    `let falhar=false;const db={};\n`+
+    `async function carregarClientesDeStory(){return [{slug:'juliane-nerone',nome:'Juliane',dias:[1,2,3,4,5]},{slug:'vitalle-odonto',nome:'Vitalle',dias:[1]}];}\n`+
+    `function doc(_db,_col,id){return {id};}async function getDoc(ref){if(falhar)throw new Error('indisponivel');const feito=ref.id.startsWith('juliane-nerone');return {data:()=>({dias:{segunda:feito}})};}\n`+
+    `async function setDoc(){}let usuarioAtual='',checklistPeriodoAtual='',checklistChaveAtual='',checklistExecAtual={itensFeitos:{}};function chaveExecucao(){return '';}function renderChecklist(){}\n`+
+    `${historiasFonte}\nglobalThis.api={estadoStoriesPrevistosNoDia,falhar:v=>{falhar=v;}};`);
+  const estadoStories=await historiasApi.estadoStoriesPrevistosNoDia(new Date(2026,7,17,12,0,0));
+  exigir(estadoStories.total===2 && estadoStories.feitos===1 && estadoStories.abertos===1 && estadoStories.completo===false,
+    'item diário da Gabi não deriva corretamente os Stories previstos e confirmados na fonte existente');
+  historiasApi.falhar(true);
+  let falhouFechado=false;
+  try{await historiasApi.estadoStoriesPrevistosNoDia(new Date(2026,7,17,12,0,0));}catch(e){falhouFechado=true;}
+  exigir(falhouFechado,'falha ao ler checks de Stories virou zero ou conclusão automática');
+  exigir(escritorio.includes("id:'g_d_10'") && escritorio.includes("'g_d_10': { desc:") &&
+    escritorio.includes('await sincronizarChecklistStoriesGabrielle(new Date())') &&
+    escritorio.includes("{ itensFeitos:{ g_d_10:execucao.itensFeitos.g_d_10 } }") &&
+    escritorio.includes("{ itensFeitos:{ g_d_10:deleteField() } }"),
+    'Stories não foi ligado ao checklist diário efetivo e à confirmação granular da Gabi');
+
+  const permissaoVideoFonte=trecho(escritorio,'const PESSOAS_QUE_LANCAM_VIDEO','  /* ===== FRENTE C3');
+  const permissaoVideoApi=executarSandbox('video-amanda-v69.js',
+    `const PESSOAS_DE_CAMPO=['Luís','Nathan'];const CAMPO_MAIS_CHRIS=['Chris',...PESSOAS_DE_CAMPO];let usuarioAtual='';\n`+
+    `${permissaoVideoFonte}\nglobalThis.api={podeLancarVideo};`);
+  exigir(['Amanda','Chris','Luís','Nathan'].every(p=>permissaoVideoApi.podeLancarVideo(p)) &&
+    ['Gabrielle','Cecília','Helo','João Victor','Yas',''].every(p=>!permissaoVideoApi.podeLancarVideo(p)) &&
+    !escritorio.includes("const CAMPO_MAIS_CHRIS = ['Chris', 'Amanda'"),
+    'Amanda não recebeu a permissão própria ou foi indevidamente promovida a papel de campo');
+  const lancamento=trecho(escritorio,'window.lancarVideos = async function','  /* ===== O QUE ENTREGAR, POR DIA');
+  exigir(lancamento.indexOf('if(!podeLancarVideo(usuarioAtual))') < lancamento.indexOf("const sel = document.getElementById('videoCliente')") &&
+    escritorio.includes("const temLancar = podeLancarVideo(usuarioAtual);") &&
+    escritorio.includes("(qual==='lancar' && podeLancarVideo(usuarioAtual))") &&
+    escritorio.includes("{ rot:'Subir vídeo de cliente', acao:\"irParaSubirEdicao()\" }") &&
+    lancamento.includes("origemMaterial === 'recebido'") && lancamento.includes("soEdicao: origemMaterial === 'recebido'"),
+    'Amanda não tem o caminho completo protegido para material recebido ou o fluxo voltou a contar como gravação');
+}
+
 try {
   testarCoberturaPostagensSandbox();
   await testarLoginSandbox();
@@ -1725,6 +1798,7 @@ try {
   await testarIdentidadeClienteSandbox();
   await testarV54Sandbox();
   testarCentralEditorialCalendariosSandbox();
+  await testarChecklistViradaStoriesEVideosV69Sandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

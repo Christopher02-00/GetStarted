@@ -1,3 +1,4 @@
+[Uploading AGENTS.md…]()
 [AGENTS.md](https://github.com/user-attachments/files/31139829/AGENTS.md)
 [Uploading AGENTS.md…]()
 # Get Started — regra de trabalho para mudanças no sistema
@@ -112,6 +113,12 @@ Em 11/08/2026, os links diários de Stories revelaram novamente uma cadeia incom
 No mesmo incidente, alertas de colisão repetiram porque consulta seguida de `addDoc` não é unicidade. Alertas únicos usam ID determinístico e transação; status com prefixo `cancelad` nunca entra em fila operacional, embora o documento permaneça por soft-delete. Campanhas detectadas preservam `dataPostagem` completa ou derivam mês+dia validado e deduplicam por cliente+título+data, sem criar cópia. Progresso editorial exclui `excluido:true` e comunica primeiro o estado por calendário/cliente, não um agregado gigante de itens heterogêneos.
 
 A unificação Zeiss/Zeens mostrou que identidade financeira legada não pode substituir a identidade operacional. `zeiss` é o slug canônico; `zeens` e `otica-visao-araucaria` são aliases de leitura. Zeiss permanece na carteira-base e calendários sob aliases são resolvidos sem cópia ou migração automática. Se canônico e alias estiverem ativos e preenchidos, o canônico vence; um alias preenchido só vence um canônico vazio. Uma fusão nunca pode arquivar o próprio destino depois de canonicalizar os slugs.
+
+O incidente Vitalle de 17/08/2026 mostrou que a semana selecionada no formulário e as datas escritas no roteiro de Stories podem divergir. Todo Story novo grava competência explícita e roteiro com datas inequivocamente de outra semana para antes da primeira escrita. Compatibilidade de leitura pode recuperar legado somente quando todas as datas DD/MM convergem para uma semana; texto sem data ou ambíguo permanece na chave original. Escritório, automação e Portal usam a mesma decisão.
+
+Calendário aprovado continua integralmente consultável por quem revisa e executa: trava de workflow esconde escritores e deixa campos somente leitura; nunca bloqueia roteiro, legenda, solicitação especial ou referência. Link enviado ao cliente carrega a competência `AAAA-MM` e o leitor revalida se ela existe e está liberada. Não copiar link mensal sem competência nem permitir que o parâmetro exponha rascunho.
+
+Baixa antiga que possui somente quantidade não prova quais títulos foram gravados. A conciliação exige seleção humana exatamente igual à quantidade registrada, revalidação transacional de papel/sessão/mês/item e nunca cria `videos_producao` nem toma conteúdo vinculado a outra gravação. Saldo de captação deriva de títulos resolvidos, não da soma bruta de registros sem identidade.
 
 Antes de entregar qualquer mudança, faça também a checagem curta do catálogo: confirme a base mais recente, procure substituições globais e prefixos `async` alterados, compare contagens/escopo das ocorrências, valide variáveis no escopo que as declara, normalize apenas o formato de linha esperado e carregue a versão nova em documento/iframe limpo. Essa checagem complementa, não substitui, `preflight` e `regression-critical`.
 

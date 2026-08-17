@@ -1,55 +1,53 @@
-[RELATORIO_ENTREGA_V72.md](https://github.com/user-attachments/files/31150975/RELATORIO_ENTREGA_V72.md)
-# Entrega V72 — Régua de Cobrança e contatos do WhatsApp
+# Entrega V70 — Stories, calendários e controle de gravações
 
 Data: 17/08/2026  
-Base oficial: `main` em `23cf4a5fcc015af9d99f8e92a2179fc236bf6d96`
+Base oficial analisada: `main` em `a67f166fd3a840a4815da311e32ff6990f950b23`
 
-## Incidentes comprovados
+## O que foi comprovado
 
-- A Central de mensagens preservava apenas o telefone do cadastro escolhido como principal; um campo vazio podia apagar o contato válido da ficha complementar.
-- A Central não reutilizava `whatsappCobranca`, embora esse fosse o número específico já usado no Financeiro.
-- A Régua chamava `window.open()` depois de leituras assíncronas, sujeitando a nova aba ao bloqueio de pop-up.
-- Abrir a conversa já incrementava `cobrancasFeitas`, atualizava `ultimaCobranca` e gravava log, sem confirmação de envio.
-- Régua e Mensalidades possuíam dois montadores diferentes, com emojis e estruturas diferentes.
-- O upload V71 colocou o teste dirigido no caminho `scripts/regression-critical.mjs`, reduzindo a suíte crítica de 1.856 para 92 linhas. `scripts/regression-v71.mjs` e `RELATORIO_ENTREGA_V71.md` ficaram ausentes.
+- O Story da Vitalle com conteúdo de 17–22/08 estava liberado, mas armazenado na semana técnica de 10/08. Na semana atual do Portal ele aparecia vazio e, ao voltar uma semana, o conteúdo estava presente.
+- Um calendário aprovado bloqueava `openEdit()` antes de abrir o modal. Por isso a Cecília conseguia abrir a referência externa, mas não o roteiro, a legenda e o direcionamento interno.
+- Os links de calendário não levavam a competência do mês. O leitor escolhia o mês padrão, então um link copiado durante setembro podia abrir agosto.
+- Baixas antigas de gravação registravam quantidade sem títulos individuais. O Controle não conseguia associar a quantidade aos itens do calendário e mantinha saldo aparente.
 
-## Correção preparada
+## Correções preparadas
 
-- Uma função central escolhe contato válido na ordem: número específico de cobrança, telefone da ficha e WhatsApp legado.
-- A consolidação canônica preserva telefone e `whatsappCobranca` não vazios entre ficha oficial, legado e aliases.
-- Central, Mensalidades e Régua usam a mesma normalização brasileira com DDD e abrem `https://web.whatsapp.com/send` para o número confirmado.
-- A Régua cria a aba em branco no gesto do clique, relê mensalidade/contato e somente então navega para a conversa correta; qualquer falha fecha a aba.
-- As cinco mensagens financeiras usam parágrafos e linhas separadas para referência, valor, vencimento, PIX, pedido e comprovante, sem emoji decorativo.
-- Abrir conversa não grava nada. O contador e o histórico mudam somente após “Confirmar que enviei”, em transação e com revalidação do estado.
-- Mensalidades delega para a mesma função da Régua; o segundo redator foi removido.
-- Falha de leitura da Régua mostra indisponibilidade e `!`, sem transformar erro em fila vazia.
-- A suíte crítica foi restaurada do histórico; os artefatos V71 foram recolocados nos nomes corretos.
+- Stories novos gravam competência explícita e não são salvos quando as datas DD/MM do roteiro pertencem inequivocamente a outra semana.
+- O registro legado da Vitalle é recuperado em leitura na semana correta, sem migração ou regravação automática.
+- Calendário aprovado abre todos os campos em consulta; salvar, excluir e alterar continuam bloqueados.
+- O link do calendário inclui `mes=AAAA-MM`, valida conteúdo existente e exige que o mês esteja liberado para o cliente.
+- A competência escolhida dentro do calendário sincroniza com o campo usado para copiar o link.
+- Cecília ou o filmmaker da própria sessão pode conciliar baixa antiga selecionando exatamente os títulos correspondentes. A transação não cria vídeo duplicado e não altera a quantidade já registrada.
 
 ## Arquivos da entrega
 
 - `escritorio.html`
+- `portal-cliente.html`
+- `calendario.html`
+- `calendarios.html`
 - `scripts/preflight.mjs`
 - `scripts/regression-critical.mjs`
-- `scripts/regression-v71.mjs`
-- `scripts/regression-v72.mjs`
 - `CATALOGO_DE_ERROS.md`
 - `AGENTS.md`
-- `RELATORIO_ENTREGA_V71.md`
-- `RELATORIO_ENTREGA_V72.md`
+- `RELATORIO_ENTREGA_V70.md`
 
 ## Validação concluída
 
-- `scripts/regression-v72.mjs`: aprovado com 50 asserções dirigidas.
-- `scripts/regression-v71.mjs`: aprovado com 18 asserções dirigidas.
-- `scripts/preflight.mjs`: aprovado com 9/9 scripts inline válidos, 950 handlers diretos resolvidos e build V72 correto.
-- `scripts/regression-critical.mjs`: restaurado e aprovado com 604 asserções.
-- Desktop 1280×900: Régua e Central renderizadas com os controles esperados.
-- Mobile 390×844: as duas telas ficaram com `scrollWidth === clientWidth === 390`; os botões permaneceram legíveis e empilhados.
-- WhatsApp Business real foi confirmado aberto e conectado no Chrome, apenas em leitura. Nenhuma conversa de cliente foi aberta e nenhuma mensagem foi enviada.
-- `firestore.rules`, calendários, Portal e dados de produção não foram alterados.
+- `scripts/preflight.mjs`: aprovado.
+- `scripts/regression-critical.mjs`: aprovado com 604 asserções.
+- Sintaxe: 9/9 scripts inline aprovados pelo preflight.
+- `calendario.html` e `calendarios.html`: byte a byte idênticos.
+- Git diff: sem erro de whitespace.
+- Página local: carregou o HTML e montou o DOM sem erro de sintaxe; a validação de dados autenticados pós-upload ainda depende da versão publicada.
 
-## Limites reais
+## Verificação após o upload
 
-- Clientes sem telefone válido em nenhuma fonte continuam bloqueados: o sistema não inventa contato. O cartão direciona para a Central de Clientes para cadastrar o número.
-- Os testes comprovam código, links, destinatários distintos, mensagens, transação e responsividade local. A V72 só poderá ser chamada de publicada depois do upload e da verificação do build no domínio.
-- O teste não enviou cobrança real nem atualizou `ultimaCobranca`; essa escrita só acontece por ação humana explícita depois da publicação.
+- A branch `main` avançou até `9b897d628a686c906965016c1be24bffb9b5d642`.
+- Os quatro HTMLs operacionais publicados no domínio possuem os mesmos hashes dos arquivos correspondentes na `main`.
+- O preflight executado sobre a árvore recebida do GitHub foi aprovado com 9/9 scripts inline válidos.
+- A regressão crítica executada sobre a árvore recebida foi aprovada com 604 asserções.
+- Nenhuma regra do Firebase nem dado de produção foi alterado nesta entrega.
+
+## Limite real
+
+Código presente no GitHub e servido pelo domínio não prova, sozinho, cada ação autenticada com dados reais. A validação restante é comportamental: Vitalle visualizar Stories na semana correta, Cecília consultar e compartilhar o mês escolhido e Cecília/Luís conciliarem uma baixa antiga autorizada.

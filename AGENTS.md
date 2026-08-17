@@ -1,4 +1,3 @@
-[AGENTS.md](https://github.com/user-attachments/files/31150953/AGENTS.md)
 [AGENTS.md](https://github.com/user-attachments/files/31149714/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 

@@ -1,4 +1,3 @@
-[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31150960/CATALOGO_DE_ERROS.md)
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31149725/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 

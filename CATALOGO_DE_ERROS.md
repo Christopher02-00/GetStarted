@@ -1,3 +1,4 @@
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31147848/CATALOGO_DE_ERROS.md)
 [Uploading CATALOGO_DE_ERROS.md…]()
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31139833/CATALOGO_DE_ERROS.md)
 [Uploading CATALOGO_DE_ERROS.md…]()
@@ -1135,3 +1136,45 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Amanda abre e executa edição avulsa; Gabrielle, Cecília, editoras e papéis sem campo não ganham o escritor.
 - [x] Amanda não foi adicionada à lista de filmmakers, e material recebido continua fora da produtividade de gravação.
 - [x] Nenhuma regra, dado, usuário ou configuração de produção foi alterado durante a correção local.
+
+## 59. REGRESSÕES — SEMANA DE STORIES, CONSULTA DO CALENDÁRIO E BAIXA LEGADA (17/08/2026)
+
+### 59.1 Vitalle foi aprovada, mas apareceu na semana anterior
+**Prova real em produção, somente leitura:** a pauta “Semana 17 á 22/08” estava liberada pela Amanda, porém gravada com `semana=2026-08-10`. O Portal da Vitalle em 17/08 mostrou a semana atual vazia e exibiu essa mesma pauta ao navegar para 10/08.
+
+**Causa:** o escritor confiava exclusivamente na semana selecionada na tela e aceitava datas internas pertencentes à semana seguinte. Na virada da segunda-feira, o Portal consultava a chave correta e o conteúdo parecia ter sumido. Testes antigos conferiam somente o filtro pela chave armazenada, não a coerência entre chave e roteiro.
+
+**Como foi corrigido:** registros novos gravam `semanaConteudo` explícita e a criação é bloqueada antes de qualquer escrita quando todas as datas DD/MM do roteiro apontam para outra semana. Registros antigos são recuperados em leitura quando, e somente quando, todas as datas convergem inequivocamente para uma única segunda-feira. Escritório, cobrança semanal e Portal usam a mesma decisão; texto sem data ou ambíguo continua na chave original.
+
+> **LEI:** a competência de Story é parte do dado, não uma consequência do dia em que a tela foi aberta. Roteiro com datas inequivocamente divergentes não pode ser salvo, e compatibilidade legada nunca pode adivinhar texto ambíguo.
+
+### 59.2 A trava de aprovação bloqueava também a consulta da Cecília
+**Prova no código e no print:** `openEdit()` chamava `exigirRetiradaAntesDeEditar()` antes de preencher o modal. Em mês aprovado, roteiro, legenda e solicitação especial ficavam inacessíveis; apenas a referência, que era um link independente, abria.
+
+**Como foi corrigido:** mês aprovado continua fechado para escrita, exclusão e alteração de aprovação, mas o item abre em modo de consulta. Campos ficam somente leitura e botões de salvar/excluir somem. Roteiro, legenda e “Ver conteúdo completo” são ações explícitas na lista.
+
+> **LEI:** bloqueio de workflow impede mutação, nunca leitura necessária à revisão ou execução. Consulta e edição precisam de guardas distintas.
+
+### 59.3 Link de setembro não carregava setembro
+**Prova no código:** os geradores copiavam apenas `cliente+t/e`; `calendario.html` ignorava competência solicitada e escolhia o mês padrão. Assim, copiar enquanto se revisava setembro podia abrir agosto.
+
+**Como foi corrigido:** o link do cliente recebe `mes=AAAA-MM`, o gerador exige conteúdo existente e estado `liberado`, e os dois endereços do calendário só aceitam o mês pedido dentro dos meses autorizados. Ao trocar de mês, a URL é atualizada. O Portal embutido passa a competência liberada que já escolheu.
+
+> **LEI:** link mensal precisa carregar identidade do cliente, permissão e competência. O leitor revalida a competência; nunca confia no parâmetro para mostrar mês não liberado.
+
+### 59.4 Baixa antiga guardava quantidade sem títulos e criava saldo fantasma
+**Prova real em produção, somente leitura:** o Controle de Gravações mostrou registros como Master Chef com quantidade realizada, mas “registro antigo sem lista individual dos títulos”. Sem vínculo por item, o painel continuava classificando conteúdos como faltantes e podia sugerir outra captação embora o trabalho já tivesse sido executado.
+
+**Como foi corrigido:** Cecília ou o filmmaker da própria sessão pode conciliar uma baixa antiga escolhendo exatamente a quantidade já registrada. Uma transação revalida papel, sessão, mês, índice/`itemId` e vínculo anterior; marca os títulos correspondentes e enriquece o agendamento. Não cria `videos_producao`, não altera a quantidade e não toma item de outra gravação.
+
+> **LEI:** quantidade legada não autoriza adivinhar títulos nem criar produção duplicada. A conciliação exige seleção humana exata e revalidação transacional de cada vínculo.
+
+### 59.5 Gate obrigatório da V70
+- [x] O caso Vitalle armazenado em 10/08 com datas 17–22/08 aparece em 17/08 no Escritório e no Portal.
+- [x] Texto sem data ou com datas de duas semanas permanece na chave original; campo explícito novo vence compatibilidade.
+- [x] Criação com datas de outra semana para antes da primeira escrita.
+- [x] Mês aprovado abre roteiro, legenda, solicitação e referência em consulta, sem salvar/excluir.
+- [x] Link mensal inclui competência e recusa mês inexistente ou ainda não liberado.
+- [x] `calendario.html` e `calendarios.html` permanecem byte a byte idênticos.
+- [x] Conciliação antiga exige quantidade exata, não cria vídeo e não reaproveita item de outra gravação.
+- [x] Nenhum dado, regra, usuário ou serviço de produção foi alterado durante a correção local.

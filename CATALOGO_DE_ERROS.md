@@ -1,3 +1,4 @@
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31149725/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
 > **Instrução para mim mesmo, obrigatória.**
@@ -1172,3 +1173,29 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] `calendario.html` e `calendarios.html` permanecem byte a byte idênticos.
 - [x] Conciliação antiga exige quantidade exata, não cria vídeo e não reaproveita item de outra gravação.
 - [x] Nenhum dado, regra, usuário ou serviço de produção foi alterado durante a correção local.
+
+## 60. REGRESSÕES — RECIBO DE DEMANDAS E MENSAGENS PARA CLIENTES (17/08/2026)
+
+### 60.1 A tela confirmava a demanda sem confirmar a fila do destinatário
+**Prova no código e na produção:** Gabi relatou que o site mostrou a demanda como enviada, mas ela não apareceu para Chris. Na leitura de produção não havia demanda aberta da Gabi para Chris. No escritor, `addDoc()` era seguido imediatamente pelo toast de sucesso: o documento não era relido, o destinatário não era validado e a fila local não era atualizada. Em colaboração, a principal era criada, atualizada e os demais documentos eram criados um por vez, permitindo grupo parcial.
+
+**Como foi corrigido:** a principal e todas as partes recebem referências previamente reservadas e são gravadas num único `writeBatch`. Depois do commit, cada referência é relida e precisa confirmar protocolo, título, origem, destinatário, status pendente e ausência de exclusão. Só então a tela mostra sucesso e protocolo. Se a escrita terminou mas a releitura falhou, a tela não afirma sucesso; uma nova tentativa relê os mesmos IDs e não grava cópia. O destinatário principal também entra na notificação, e a memória de demandas é atualizada depois da confirmação.
+
+> **LEI:** sucesso de demanda exige recibo legível da mesma referência e validação dos campos que governam a fila. Falha depois do commit vira confirmação pendente; retentativa relê os mesmos IDs e nunca cria outra demanda.
+
+### 60.2 Uma lista paralela de WhatsApp poderia incluir cliente já encerrado
+**Risco interceptado:** montar o botão solicitado a partir de `CLIENTES_LISTA`, de contatos isolados ou de nomes fixos repetiria clientes legados, perderia aliases e poderia oferecer mensagem para quem já saiu da agência.
+
+**Como foi evitado:** a nova tela exclusiva do Chris consome exatamente o resultado confirmado da Central única de clientes, que cruza cadastros, configuração, contratos, saídas e identidade canônica. Se essa leitura falhar, nenhuma lista antiga aparece. Telefone sem DDD ou fora do formato brasileiro é bloqueado. O site abre uma conversa com texto preenchido; não registra “enviado” e não tenta controlar ou simular o clique final no WhatsApp.
+
+> **LEI:** comunicação com clientes usa a carteira ativa confirmada e a mesma identidade canônica da Central. Falha de leitura não reaproveita lista antiga; abrir WhatsApp não significa mensagem enviada.
+
+### 60.3 Gate obrigatório da V71
+- [x] Demanda individual e grupo usam lote atômico e referências pré-reservadas.
+- [x] Sucesso só aparece após releitura e validação de protocolo, destinatário, origem, título e status.
+- [x] Falha de confirmação preserva os mesmos IDs; retentativa não executa outro commit.
+- [x] Destinatário principal e colaboradores entram no aviso somente após o recibo.
+- [x] Botão de mensagens fica abaixo da Régua de Cobrança e menu/view/porta existem somente no DOM do Chris.
+- [x] Carteira vem da Central única; erro não vira lista vazia nem cache antigo.
+- [x] Número brasileiro exige DDD; conversa recebe texto personalizado e continua exigindo confirmação no WhatsApp.
+- [x] Nenhum dado, regra, usuário, mensagem ou configuração de produção foi alterado durante a correção local.

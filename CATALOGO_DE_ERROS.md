@@ -1,3 +1,4 @@
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31150960/CATALOGO_DE_ERROS.md)
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31149725/CATALOGO_DE_ERROS.md)
 # CATÁLOGO DE ERROS — lei permanente
 
@@ -1199,3 +1200,42 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Carteira vem da Central única; erro não vira lista vazia nem cache antigo.
 - [x] Número brasileiro exige DDD; conversa recebe texto personalizado e continua exigindo confirmação no WhatsApp.
 - [x] Nenhum dado, regra, usuário, mensagem ou configuração de produção foi alterado durante a correção local.
+
+## 61. REGRESSÕES — CONTATOS E RÉGUA DE COBRANÇA (17/08/2026)
+
+### 61.1 A consolidação apagava telefones válidos
+**Prova no código e na tela publicada:** a Central escolhia um cadastro principal por identidade e espalhava seus campos vazios por cima do registro complementar. Apenas dois clientes ficaram com botão de WhatsApp utilizável, embora outras fontes pudessem guardar `telefone`, `whatsapp` ou `whatsappCobranca`.
+**Como foi corrigido:** a consolidação preserva explicitamente telefone e número de cobrança não vazios. A comunicação usa uma única prioridade: `whatsappCobranca`, telefone da ficha e WhatsApp legado, sempre normalizados e validados com DDD.
+> **LEI:** consolidação de identidade não pode deixar campo vazio do vencedor apagar um contato válido da fonte complementar; comunicação usa uma única prioridade explícita e testada.
+
+### 61.2 A leitura assíncrona podia fazer o navegador bloquear o WhatsApp
+**Prova no código:** `abrirCobranca()` aguardava Firestore antes de chamar `window.open()`. Depois do primeiro `await`, o clique já não era necessariamente reconhecido como gesto direto do usuário e o navegador podia bloquear a nova aba.
+**Como foi corrigido:** a aba em branco nasce como primeira ação do clique; só depois o sistema relê mensalidade e contato, fecha em qualquer falha e navega para `web.whatsapp.com/send` com número e texto confirmados.
+> **LEI:** abertura de aplicativo externo iniciada por clique acontece antes do primeiro `await`; toda validação posterior falha fechada e nunca redireciona sem destinatário confirmado.
+
+### 61.3 Abrir conversa era registrado como cobrança enviada
+**Prova no código:** a versão anterior atualizava `ultimaCobranca`, incrementava o contador e gravava log logo depois de abrir `wa.me`, embora o usuário ainda pudesse fechar a aba sem enviar.
+**Como foi corrigido:** abrir e confirmar são ações separadas. O registro só nasce em transação depois de “Confirmar que enviei”, relendo o estado e recusando mensalidade já resolvida. Mensagens passaram a ter parágrafos, rótulos e linhas bancárias sem emoji decorativo.
+> **LEI:** abrir WhatsApp não prova envio. Histórico, contador e supressão diária só mudam após confirmação humana explícita e revalidação transacional.
+
+### 61.4 O upload trocou o teste crítico pelo teste dirigido
+**Prova no GitHub:** `scripts/regression-critical.mjs` caiu de 1.856 para 92 linhas e passou a terminar como “asserções V71”; `scripts/regression-v71.mjs` não existia. O relatório V71 também foi enviado sob o nome V70.
+**Como foi corrigido:** a suíte crítica foi restaurada do pai do commit que a substituiu; o teste V71 foi mantido em seu caminho próprio e o relatório correto foi acrescentado, preservando o arquivo antigo sem exclusão.
+> **LEI:** upload de testes é conferido por caminho, tamanho e assinatura final; um teste dirigido nunca substitui a suíte crítica, mesmo que ambos terminem com sucesso.
+
+### 61.5 Uma edição curta atingiu um template vizinho durante a manutenção
+**Erro real interceptado localmente:** uma substituição ampla feita durante a V72 removeu temporariamente o fechamento `: ''` de um template não relacionado. O primeiro preflight recusou a entrega ao encontrar somente 8 de 9 scripts válidos. A linha foi restaurada por contexto semântico e a nova execução confirmou 9 de 9 scripts válidos antes do empacotamento; a versão defeituosa nunca foi publicada nem incluída no pacote.
+**Prevenção permanente:** alterações em templates extensos usam âncoras semânticas do próprio fluxo, seguidas de compilação de todos os scripts inline e inspeção do diff fora do trecho-alvo.
+> **LEI:** uma substituição textual em HTML/JavaScript não é aceita apenas porque o trecho-alvo parece correto; todos os scripts inline precisam compilar e o diff deve provar que blocos vizinhos permaneceram intactos.
+
+### 61.6 Gate obrigatório da V72
+- [x] Contato canônico preserva ficha, legado e número específico de cobrança sem duplicar cliente.
+- [x] Cliente A e cliente B geram URLs com destinatários diferentes; número sem DDD não gera URL.
+- [x] Central e Régua usam `web.whatsapp.com/send` e a mesma normalização brasileira.
+- [x] A abertura ocorre antes da primeira leitura assíncrona e não grava histórico.
+- [x] Somente a confirmação explícita usa transação, contador e log.
+- [x] Mensalidades reutiliza a mesma cadeia da Régua; não há segundo redator financeiro.
+- [x] Mensagens das cinco fases preservam parágrafos, linhas de dados e não contêm emoji decorativo.
+- [x] Falha de leitura mostra indisponibilidade e `!`; nunca vira lista vazia nem quitação.
+- [x] Suíte crítica restaurada e testes V71/V72 mantidos em arquivos próprios.
+- [x] Nenhuma mensagem, cobrança, mensalidade, regra ou dado de produção foi alterado nos testes locais.

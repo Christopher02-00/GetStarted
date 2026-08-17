@@ -1,3 +1,4 @@
+[CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31139833/CATALOGO_DE_ERROS.md)
 [Uploading CATALOGO_DE_ERROS.md…]()
 [Uploading CATALOGO_DE_ERROS.md…]()
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/30964009/CATALOGO_DE_ERROS.md)
@@ -1070,3 +1071,26 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] `CLIENTES_COM_STORY`, `STORIES_CLIENTES_PADRAO` e leituras/escritas de `stories_diarios_config` não existem mais no fluxo operacional.
 - [x] Falha do Firestore continua diferente de zero clientes ativos.
 - [x] Nenhum calendário, cliente, Story ou configuração de produção foi gravado durante a correção local.
+
+## 57. REGRESSÃO — “SALVO NA NUVEM, MAS NÃO ENVIADO” (17/08/2026)
+
+### 57.1 O envio formal ainda disputava com o autosave
+**Prova real:** Gabrielle relatou em 17/08/2026 que o editor confirmava “salvo na nuvem”, mas não confirmava o envio para Amanda. A V57 já ignorava o eco idêntico do autosave, porém o handler de envio ainda colocava a aprovação dentro de `data` e chamava a mesma gravação completa usada pelo autosave. Uma gravação iniciada antes do clique podia terminar depois da transição, ou a transição podia encontrar a versão intermediária e falhar.
+
+**Causa:** salvamento de conteúdo e mudança de workflow eram dois escritores concorrentes do documento inteiro. O teste antigo validava apenas a função pura de conflito; não executava a ordem real das gravações, a transação nem a retentativa. A caixa de saída também restaurava o pacote completo da tentativa antiga, com risco de sobrepor edição mais nova.
+
+**Como foi corrigido:** os autosaves do calendário entram numa fila serial. O envio fecha essa fila, confirma o conteúdo na nuvem e somente então executa uma transação que relê o documento, compara a assinatura de conteúdo e grava com `merge` apenas `aprovacaoMeses`, o espelho legado quando aplicável e `updatedAt`. Repetir um envio já confirmado é idempotente; conteúdo concorrente e decisão posterior permanecem bloqueados. Tentativas guardadas pela V67 continuam legíveis, mas nunca substituem o `data` atual nem regravam o documento inteiro.
+
+> **LEI:** envio formal de calendário é uma transição estreita e transacional. Salvamento de conteúdo precisa terminar antes; aprovação nunca volta a usar `setDoc(docRef,data)`.
+>
+> **LEI:** retentativa nunca restaura pacote antigo sobre conteúdo novo. Ela confirma a mesma assinatura ou para com conflito, mês inválido ou decisão posterior.
+
+### 57.2 Gate obrigatório da V68
+- [x] `calendario.html` e `calendarios.html` permanecem byte a byte idênticos.
+- [x] Dois autosaves não executam em paralelo, e o snapshot não aplica eco durante a fila.
+- [x] A transação escreve somente o patch de workflow com `merge:true`; itens, cliente e campos desconhecidos não entram no patch.
+- [x] Repetição de `aguardando_interna` com o mesmo conteúdo confirma sucesso sem nova escrita.
+- [x] Conteúdo concorrente, mês vazio/antigo, calendário ausente e decisão posterior falham fechados.
+- [x] Pacote pendente da V67 continua compatível sem restaurar o documento antigo.
+- [x] A fila da Amanda continua derivada de `linhasCalendariosAguardandoRevisao`; nenhuma fila paralela foi criada.
+- [x] Nenhuma regra, calendário ou dado de produção foi gravado durante a correção local.

@@ -143,10 +143,14 @@ const leisV69 = [
   'lembrete agregado de Stories deriva dos checks operacionais por cliente',
   'permitir uma ação compartilhada não concede o papel inteiro'
 ];
+const leisV71 = [
+  'sucesso de demanda exige recibo legível da mesma referência e validação dos campos que governam a fila',
+  'comunicação com clientes usa a carteira ativa confirmada e a mesma identidade canônica da Central'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V69');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V69');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V71');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V71');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -652,9 +656,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-17-stories-calendarios-gravacoes-v70') {
-  falhar(`build V70 inesperado: ${build || 'ausente'}`);
-} else provar('V70 identifica Stories, calendários por mês e conciliação de gravações');
+if (build !== '2026-08-17-demandas-whatsapp-clientes-v71') {
+  falhar(`build V71 inesperado: ${build || 'ausente'}`);
+} else provar('V71 identifica confirmação forte de demandas e mensagens para clientes');
 
 const checklistV69 = escritorio.slice(escritorio.indexOf('function chaveExecucao'), escritorio.indexOf('function contarStreakDiario'));
 const resumoChecklistV69 = escritorio.slice(escritorio.indexOf('function pendenciasChecklistDoResumo'), escritorio.indexOf('async function renderDemandasAtrasadasDetalhe'));

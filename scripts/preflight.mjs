@@ -652,9 +652,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-17-checklist-videos-amanda-v69') {
-  falhar(`build V69 inesperado: ${build || 'ausente'}`);
-} else provar('V69 identifica a virada do checklist e o lançamento de vídeos pela Amanda');
+if (build !== '2026-08-17-stories-calendarios-gravacoes-v70') {
+  falhar(`build V70 inesperado: ${build || 'ausente'}`);
+} else provar('V70 identifica Stories, calendários por mês e conciliação de gravações');
 
 const checklistV69 = escritorio.slice(escritorio.indexOf('function chaveExecucao'), escritorio.indexOf('function contarStreakDiario'));
 const resumoChecklistV69 = escritorio.slice(escritorio.indexOf('function pendenciasChecklistDoResumo'), escritorio.indexOf('async function renderDemandasAtrasadasDetalhe'));
@@ -876,6 +876,33 @@ if (!progressoEditorialV53.includes('i.excluido!==true') || !visaoCalendariosV53
     !visaoCalendariosV53.includes('Roteiros: ${l.roteiros} de ${l.total} prontos') || visaoCalendariosV53.includes('roteiros preenchidos')) {
   falhar('painel editorial ainda conta arquivados ou apresenta agregado global confuso');
 } else provar('painel editorial conta somente itens ativos e explica progresso real por calendário');
+
+const calendarioAtual=ler('calendario.html');
+const calendariosAtual=ler('calendarios.html');
+const storiesSemana=escritorio.slice(escritorio.indexOf('function semanaStoryDerivadaDoTexto'),escritorio.indexOf('window.salvarClienteDeStory'));
+const storiesPortal=portal.slice(portal.indexOf('function semanaStoryDerivadaPortal'),portal.indexOf('async function carregarStories'));
+if (!storiesSemana.includes('semanaEfetivaStory') || !storiesSemana.includes('validarSemanaDoRoteiroStory') ||
+    !escritorio.includes('semanaConteudo:semana, semanaVersao:1') || !escritorio.includes('semanaEfetivaStory(s) === semana') ||
+    !storiesPortal.includes('semanaEfetivaStoryPortal') || !portal.includes('semanaEfetivaStoryPortal(s) === semana')) {
+  falhar('Stories não protege a competência escrita nem recupera o registro Vitalle na mesma semana do Portal');
+} else provar('Stories grava competência explícita, bloqueia divergência e lê legado inequivocamente no Escritório e Portal');
+if (calendarioAtual !== calendariosAtual || !calendarioAtual.includes("const mesSolicitado = params.get('mes') || ''") ||
+    !calendarioAtual.includes('pedido && lib.includes(pedido)') || !calendarioAtual.includes("u.searchParams.set('mes',m)") ||
+    !escritorio.includes("(mes?'&mes='+encodeURIComponent(mes):'')") || !escritorio.includes("estadoMesCal(calSnap.data()||{},mes)!=='liberado'")) {
+  falhar('link mensal do calendário não preserva competência, liberação do cliente ou paridade dos dois endereços');
+} else provar('link carrega mês explícito, valida liberação e mantém calendario/calendarios byte a byte idênticos');
+const consultaCalendario=calendarioAtual.slice(calendarioAtual.indexOf('function openEdit'),calendarioAtual.indexOf('function saveItem'));
+if (!consultaCalendario.includes('const somenteConsulta=edicaoBloqueadaPorRevisao()') ||
+    consultaCalendario.includes('if(exigirRetiradaAntesDeEditar())return') || !consultaCalendario.includes('aplicarModoConsultaItem(true)') ||
+    !calendarioAtual.includes('Ver conteúdo completo')) {
+  falhar('calendário aprovado continua bloqueando leitura de roteiro/legenda/direcionamento ou libera escrita indevida');
+} else provar('calendário aprovado abre conteúdo completo em consulta e mantém salvar/excluir bloqueados');
+const conciliacaoLegada=escritorio.slice(escritorio.indexOf('window.abrirConciliacaoGravacaoAntiga'),escritorio.indexOf('function popularClientesAgendamento'));
+if (!conciliacaoLegada.includes('marcados.length!==alvo') || !conciliacaoLegada.includes('await runTransaction') ||
+    !conciliacaoLegada.includes("vinculoSessao:'conciliacao_legada'") || conciliacaoLegada.includes("collection(db,'videos_producao')") ||
+    !conciliacaoLegada.includes('item.agendamentoId&&item.agendamentoId!==agId')) {
+  falhar('conciliação de baixa antiga pode inventar quantidade, duplicar vídeo ou tomar item de outra gravação');
+} else provar('baixa antiga exige quantidade exata, revalida item/sessão e não cria vídeo duplicado');
 
 finalizar();
 

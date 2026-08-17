@@ -137,10 +137,16 @@ const leisV68 = [
   'envio formal de calendário é uma transição estreita e transacional',
   'retentativa nunca restaura pacote antigo sobre conteúdo novo'
 ];
+const leisV69 = [
+  'estado diário em memória precisa carregar e preservar a identidade do dia que o originou',
+  'aviso de pendência lista somente quem precisa agir e a quantidade realmente aberta',
+  'lembrete agregado de Stories deriva dos checks operacionais por cliente',
+  'permitir uma ação compartilhada não concede o papel inteiro'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V68');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V68');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V69');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V69');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -538,7 +544,8 @@ const storiesChecklist = escritorio.slice(
   escritorio.indexOf('// ===== BIT — CENTRAL DE DUVIDAS')
 );
 if (!storiesChecklist.includes('Promise.all(clientes.map') ||
-    !storiesChecklist.includes('String(c.id || c.slug || c.clienteNome') ||
+    !storiesChecklist.includes('slugEstavelStory(c)') ||
+    !escritorio.includes("function slugEstavelStory(cliente)") ||
     !storiesChecklist.includes('data-story-check=') ||
     !storiesChecklist.includes("usuarioAtual !== 'Gabrielle'") ||
     !storiesChecklist.includes('Nada foi marcado.')) {
@@ -645,9 +652,24 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-16-competencia-calendarios-stories-v67') {
-  falhar(`build V67 inesperado: ${build || 'ausente'}`);
-} else provar('V67 identifica a separação de competências e a fonte única de Stories');
+if (build !== '2026-08-17-checklist-videos-amanda-v69') {
+  falhar(`build V69 inesperado: ${build || 'ausente'}`);
+} else provar('V69 identifica a virada do checklist e o lançamento de vídeos pela Amanda');
+
+const checklistV69 = escritorio.slice(escritorio.indexOf('function chaveExecucao'), escritorio.indexOf('function contarStreakDiario'));
+const resumoChecklistV69 = escritorio.slice(escritorio.indexOf('function pendenciasChecklistDoResumo'), escritorio.indexOf('async function renderDemandasAtrasadasDetalhe'));
+const lancarVideosV69 = escritorio.slice(escritorio.indexOf('window.lancarVideos = async function'), escritorio.indexOf('/* ===== O QUE ENTREGAR, POR DIA'));
+if (!checklistV69.includes('let checklistChaveAtual') ||
+    !checklistV69.includes("throw new Error('CHECKLIST_DIA_MUDOU')") ||
+    !checklistV69.includes('garantirChecklistAtualAntesDeEditar') ||
+    resumoChecklistV69.includes("'checklist_execucoes'") ||
+    !resumoChecklistV69.includes('if(!pendencias.length) return;') ||
+    !escritorio.includes("id:'g_d_10'") ||
+    !escritorio.includes("const PESSOAS_QUE_LANCAM_VIDEO = ['Amanda', ...CAMPO_MAIS_CHRIS]") ||
+    !lancarVideosV69.includes('if(!podeLancarVideo(usuarioAtual))') ||
+    !lancarVideosV69.includes("soEdicao: origemMaterial === 'recebido'")) {
+  falhar('V69 perdeu a trava de virada, o aviso apenas de pendências, o Story diário ou a permissão isolada da Amanda');
+} else provar('V69 mantém checklist por dia, resumo de pendências, Stories da Gabi e vídeo recebido da Amanda');
 
 const competenciaCalendariosV67 = escritorio.slice(
   escritorio.indexOf('function mesDoItemCalendario'),

@@ -326,13 +326,13 @@ function testarMensalidadesSandbox() {
 
   const ficha = trecho(escritorio, 'const ETAPAS_ONBOARDING_LOCAL', '  window.registrarClienteDaReuniao');
   const fichaApi = executarSandbox('ficha-cortesia-cliente-sandbox.js',
-    `function slugClienteCanonico(s){return s;}function mesesCortesiaValidos(meses){return (meses||[]).every(m=>/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(m)));}\n${ficha}\nglobalThis.api={validarEntradaClienteMensalista,modelarClienteMensalistaUnificado};`);
+    `function slugClienteCanonico(s){return s;}function mesesCortesiaValidos(meses){return (meses||[]).every(m=>/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(m)));}function numeroWhatsAppBrasil(valor){let digitos=String(valor||'').replace(/\\D/g,'');if(digitos.length===10||digitos.length===11)digitos='55'+digitos;return /^55\\d{10,11}$/.test(digitos)?digitos:'';}\n${ficha}\nglobalThis.api={validarEntradaClienteMensalista,modelarClienteMensalistaUnificado};`);
   const base={nome:'Cliente Teste',instagram:'@teste',telefone:'41999999999',plano:'Intermediário',planoDetalhes:'',valorMensal:1700,diaVencimento:10,primeiraCompetencia:'2026-08',tipoEntrega:'postagem_completa',incluiStories:false,contrato:'',cortesiaTipo:'meses',cortesiaMeses:['2026-08'],cortesiaPermanente:false,cortesiaInicial:true};
   exigir(fichaApi.validarEntradaClienteMensalista(base).length === 0,
     'ficha da Amanda recusou uma cortesia mensal válida');
   const mensal=fichaApi.modelarClienteMensalistaUnificado(base,'2026-08-07T12:00:00.000Z','token','entrada-isenta');
-  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.contrato.primeiraCompetencia==='2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true && mensal.recebimentoEntrada===null,
-    'cortesia escolhida na ficha não chegou ao contrato e à primeira mensalidade');
+  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.contrato.primeiraCompetencia==='2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true && mensal.recebimentoEntrada===null && mensal.config.whatsappCobranca==='5541999999999',
+    'cortesia ou WhatsApp da ficha não chegou à configuração operacional e à primeira mensalidade');
   const futura=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaMeses:['2026-09'],cortesiaInicial:false},'2026-08-07T12:00:00.000Z','token','entrada-cliente-teste');
   exigir(futura.contrato.cortesiaMeses[0] === '2026-09' && futura.mensalidade.status === 'aberto' &&
     futura.mensalidade.recebimentoEntradaId==='entrada-cliente-teste' && futura.mensalidade.pagamentoEntradaPendente===true &&
@@ -346,6 +346,18 @@ function testarMensalidadesSandbox() {
     'cortesia permanente da ficha não chegou ao financeiro');
   exigir(fichaApi.validarEntradaClienteMensalista({...base,cortesiaMeses:['08/2026']}).some(e=>e.includes('formato 2026-08')),
     'ficha aceitou mês de cortesia ambíguo');
+  exigir(fichaApi.validarEntradaClienteMensalista({...base,telefone:'9999-9999'}).some(e=>e.includes('WhatsApp brasileiro válido')),
+    'ficha aceitou WhatsApp sem DDD ou fora do formato brasileiro');
+  const ativacaoAvulso=trecho(escritorio,'window.ativarAvulsoRecebido=async function','  const ETAPAS_ONBOARDING_LOCAL');
+  exigir(ativacaoAvulso.includes('lead.whatsappCobranca||lead.whatsappNormalizado||lead.whatsapp||lead.telefone') &&
+    ativacaoAvulso.includes('whatsappCobranca,semConteudoRecorrente:true') &&
+    ativacaoAvulso.indexOf('if(!whatsappCobranca)')<ativacaoAvulso.indexOf('runTransaction'),
+    'ativação de cliente avulso voltou a perder o WhatsApp coletado no link');
+  const formularioPublico=fs.readFileSync(path.join(raiz, 'avulso.html'), 'utf8');
+  exigir(formularioPublico.includes('function normalizarWhatsAppBrasilCadastro') &&
+    (formularioPublico.match(/whatsappNormalizado=normalizarWhatsAppBrasilCadastro\(whatsapp\)/g)||[]).length===3 &&
+    formularioPublico.includes('nome, slug, instagram, telefone, whatsappCobranca, aniversario, contatos'),
+    'algum caminho público voltou a aceitar ou encaminhar contato sem normalização');
   const editarFicha = trecho(escritorio, 'window.salvarClienteAtivoCentral=async function', '  window.arquivarEntradaPendente');
   exigir(editarFicha.includes('ajusteCortesiaMensalidade') && editarFicha.includes('cortesiaPermanente:dados.cortesiaPermanente') &&
     editarFicha.includes('cortesiaMeses:dados.cortesiaMeses') &&
@@ -1316,12 +1328,12 @@ function testarPermissoesAcoesSandbox() {
     acessoCentral.includes('ativo:true'),
     'recuperação do Portal não confirma as duas fontes de autorização no slug canônico');
   const reativacaoArquivado = trecho(escritorio, 'window.cancelarProgramacaoSaidaCentral=async function', 'async function efetivarSaidasProgramadas');
-  exigir(escritorio.includes('Reativar cliente e recuperar Portal') &&
+  exigir(escritorio.includes('Reativar esta ficha e recuperar Portal') &&
     reativacaoArquivado.includes('reativarEfetiva') &&
     reativacaoArquivado.includes("status:'ativo',encerrado:false,excluido:false,ativo:true") &&
-    reativacaoArquivado.includes('status:p.statusAntesSaida') &&
+    reativacaoArquivado.includes('status:statusRestaurado') &&
     reativacaoArquivado.includes('ultimaCompetenciaPagamento:deleteField()') &&
-    reativacaoArquivado.includes("statusSaida:'cancelada',excluido:true") &&
+    /statusSaida:'cancelada'[\s\S]*?excluido:true/.test(reativacaoArquivado) &&
     reativacaoArquivado.includes('await window.garantirPortalClienteCentral(slug)') &&
     !reativacaoArquivado.includes('deleteDoc('),
     'arquivo de clientes não reativa mensalista e Portal preservando o histórico');
@@ -1329,6 +1341,12 @@ function testarPermissoesAcoesSandbox() {
     reativacaoArquivado.includes('clienteNome:nomeReativado') &&
     reativacaoArquivado.includes('nome:nomeReativado,ativo:true'),
     'reativação voltou a promover o nome legado do alias para a identidade canônica');
+  exigir(reativacaoArquivado.includes('normalizarDadosReativacaoMensalista(dadosReativacao)') &&
+    reativacaoArquivado.includes('valorProgramadoEm:reativacao.primeiraCompetencia') &&
+    reativacaoArquivado.includes("origem:'reativacao'") &&
+    reativacaoArquivado.includes('origemAindaArquivada') &&
+    escritorio.includes('Conferir valor e ativar'),
+    'entrada/reativação mensalista pode voltar a ignorar valor, competência ou recibo do arquivo');
   const fusao = trecho(escritorio, 'window.fundirClientes = async function', 'window.arquivarClienteDuplicado');
   exigir(fusao.indexOf("doc(db,'clientes_acesso', PARA)") >= 0 &&
     fusao.indexOf('portal preservado em ') < fusao.indexOf("updateDoc(doc(db,'clientes_acesso', DE)"),
@@ -1817,9 +1835,11 @@ function testarIncidentesStoriesCalendarioGravacaoV70Sandbox(){
     !abrirItem.includes('if(exigirRetiradaAntesDeEditar())return') && abrirItem.includes('aplicarModoConsultaItem(true)'),
     'mês aprovado voltou a impedir consulta ou a liberar edição silenciosa');
 
-  const linkCliente=trecho(escritorio,'window.copiarLinkCalendarioDireto = async function','window.abrirLinkCliente');
+  const linkCliente=trecho(escritorio,'async function prepararLinkCalendarioCliente','window.prepararLinkCalendarioCliente');
+  const copiarLinkCliente=trecho(escritorio,'window.copiarLinkCalendarioDireto = async function','window.abrirLinkCliente');
   exigir(linkCliente.includes("estadoMesCal(calSnap.data()||{},mes)!=='liberado'") &&
-    linkCliente.includes("(mes?'&mes='+encodeURIComponent(mes):'')"),
+    linkCliente.includes("(mes?'&mes='+encodeURIComponent(mes):'')") &&
+    copiarLinkCliente.includes('prepararLinkCalendarioCliente(slug,mesEscolhido)'),
     'link mensal pode copiar mês inexistente/não liberado ou perder a competência na URL');
   const conciliacao=trecho(escritorio,'window.abrirConciliacaoGravacaoAntiga','  function popularClientesAgendamento');
   exigir(conciliacao.includes('marcados.length!==alvo') && conciliacao.includes('await runTransaction') &&

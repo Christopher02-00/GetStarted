@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-17-regua-whatsapp-contatos-v72">
+<meta name="gs-build" content="2026-08-17-valor-ativacao-reativacao-v75">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1458,7 +1458,7 @@
           </div>
           <div class="field"><label>Detalhes do plano <span style="color:var(--muted);font-weight:400;">— opcionais</span></label><input type="text" id="rrPlanoDetalhes" placeholder="Ex: drone, 2 captações, condição especial"></div>
           <div class="row2">
-            <div class="field"><label>Valor mensal (R$)</label><input type="number" id="rrValorMensal" min="0" step="0.01" placeholder="1700,00"></div>
+            <div class="field"><label>Valor mensal (R$)</label><input type="number" id="rrValorMensal" min="0.01" step="0.01" placeholder="1700,00"></div>
             <div class="field"><label>Dia de vencimento</label><input type="number" id="rrDiaVencimento" min="1" max="31" value="10"></div>
           </div>
           <div class="row2">
@@ -3311,7 +3311,7 @@
      vídeos entregues, não por gravações). O lançamento de vídeos pra
      edição continua normal — é exatamente o serviço dele. */
   const CLIENTES_SO_EDICAO = ['rodrigo'];
-  function ehClienteSoEdicao(slug){ return CLIENTES_SO_EDICAO.includes(slug); }
+  function ehClienteSoEdicao(slug){ return CLIENTES_SO_EDICAO.includes(slugClienteCanonico(slug)); }
 
   /* ===== QUEM DEVE APARECER NA META DE REFERÊNCIAS — 29/07/2026 ======
      Reclamação da Gabi, e ela está certa: a lista de clientes que
@@ -3409,7 +3409,10 @@
     'zeens': 'zeiss',
     'otica-visao-araucaria': 'zeiss',
     'master-chefe': 'master-chef',
-    'master-chef-pizzaria': 'master-chef'
+    'master-chef-pizzaria': 'master-chef',
+    'emanuelle': 'emanuelle-bernaski-nutri',
+    'hitech': 'rodrigo',
+    'cliente-rodrigo': 'rodrigo'
   };
 
   /* Um apelido não pode virar uma segunda identidade no Financeiro. A
@@ -3425,7 +3428,12 @@
     }
     return atual;
   }
-  const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef','zeiss':'Zeiss'};
+  const NOMES_CLIENTES_CANONICOS = {
+    'master-chef':'Master Chef',
+    'zeiss':'Zeiss',
+    'emanuelle-bernaski-nutri':'Emanuelle Bernaski Nutri',
+    'rodrigo':'Rodrigo / Hitech'
+  };
   function nomeClienteCanonico(slug,nome){
     return NOMES_CLIENTES_CANONICOS[slugClienteCanonico(slug)] || String(nome||'').trim();
   }
@@ -3488,6 +3496,14 @@
     const canonico=slugClienteCanonico(slug);
     return [canonico,...Object.keys(APELIDOS_DE_CONTRATO).filter(alias=>alias!==canonico&&slugClienteCanonico(alias)===canonico)];
   }
+  function whatsappCobrancaPorIdentidade(configs,slug){
+    for(const id of slugsCompatibilidadeCliente(slug)){
+      const valor=String(configs?.[id]?.whatsappCobranca||'').trim();
+      if(valor) return valor;
+    }
+    return '';
+  }
+  window.whatsappCobrancaPorIdentidade=whatsappCobrancaPorIdentidade;
   function mapaCalendariosPorIdentidade(snapshot){
     const mapa={};
     snapshot.forEach(d=>{
@@ -5088,6 +5104,39 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return { modoAprovacaoCliente: 'manual', prazoTacitaHorasUteis: 24, whatsappCobranca: '', tipoEntrega: 'postagem_completa' };
   }
 
+  const ORDEM_STATUS_POSTAGEM={
+    aguardando_legenda:10, legenda_pronta:15, aguardando_agendamento:20,
+    agendado:30, confirmando_postagem:35, postado:40, finalizado:50,
+    arquivado_sem_postagem:60
+  };
+  function instantePostagem(valor){
+    if(valor?.toMillis) return valor.toMillis();
+    const numero=Date.parse(String(valor||''));
+    return Number.isFinite(numero)?numero:0;
+  }
+  function escolherPostagemCanonicaPorVideo(registros,postagemIdPreferida){
+    return (Array.isArray(registros)?registros:[]).filter(v=>v&&v.excluido!==true).sort((a,b)=>{
+      const estado=(ORDEM_STATUS_POSTAGEM[b.status]||0)-(ORDEM_STATUS_POSTAGEM[a.status]||0);
+      if(estado) return estado;
+      if(postagemIdPreferida){
+        const aPreferida=a.id===postagemIdPreferida?1:0,bPreferida=b.id===postagemIdPreferida?1:0;
+        if(aPreferida!==bPreferida) return bPreferida-aPreferida;
+      }
+      const tempo=instantePostagem(a.criadoEm)-instantePostagem(b.criadoEm);
+      return tempo||String(a.id||'').localeCompare(String(b.id||''));
+    })[0]||null;
+  }
+  function idPostagemDeterministicaDoVideo(videoId){
+    return 'video_'+String(videoId||'').replace(/[^a-zA-Z0-9_-]/g,'_');
+  }
+  window.escolherPostagemCanonicaPorVideo=escolherPostagemCanonicaPorVideo;
+  window.idPostagemDeterministicaDoVideo=idPostagemDeterministicaDoVideo;
+
+  async function localizarPostagemExistenteDoVideo(videoId,postagemIdPreferida){
+    const snap=await getDocs(query(collection(db,'postagens'),where('videoId','==',videoId)));
+    return escolherPostagemCanonicaPorVideo(snap.docs.map(d=>({id:d.id,...d.data()})),postagemIdPreferida);
+  }
+
   /* ===== NÚCLEO DA APROVAÇÃO DO CLIENTE (Melhoria 1) =====
      Usado por: clique manual (Chris/Amanda), modo automático (na aprovação
      interna), modo tácita (motor, sem objeção em X horas úteis), e
@@ -5095,7 +5144,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      criada, demanda de legenda pra Gabrielle na hora (Melhoria 2) — nunca
      mais assimetria entre o que a Cecília recebe e o que a Gabi recebe. */
   async function confirmarAprovacaoClienteCore(videoId, confirmadoPor){
-    const videoSnap = await getDoc(doc(db,'videos_producao', videoId));
+    const videoRef=doc(db,'videos_producao',videoId);
+    const videoSnap = await getDoc(videoRef);
     if(!videoSnap.exists()) return null;
     const v = videoSnap.data();
 
@@ -5118,17 +5168,32 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       return 'finalizado';
     }
 
-    await updateDoc(doc(db,'videos_producao', videoId), { status:'aprovado', clienteAprovou: true, clienteAprovouEm: new Date().toISOString(), clienteAprovouPor: confirmadoPor });
-    registrarHistorico('videos_producao', videoId, 'Cliente confirmou aprovação — liberado pra postagem', 'Confirmado por: ' + confirmadoPor);
+    const existente=await localizarPostagemExistenteDoVideo(videoId,v.postagemId||'');
+    if(existente){
+      await updateDoc(videoRef,{status:'aprovado',clienteAprovou:true,clienteAprovouEm:new Date().toISOString(),
+        clienteAprovouPor:confirmadoPor,postagemId:existente.id});
+      return existente.id;
+    }
 
-    const postagemRef = await addDoc(collection(db,'postagens'), {
-      videoId, cliente: v.cliente, clienteNome: v.clienteNome, titulo: v.titulo,
-      linkVideo: v.linkFinalizado, legenda: '', legendaPor: '', legendaEm: '',
-      calendarItemIdx: v.calendarItemIdx ?? null, calendarClienteSlug: v.calendarClienteSlug || null,
-      dataAgendada: '', horaAgendada: '', agendadoPor: '', agendadoEm: '',
-      aprovadoPor: v.aprovadoPor, aprovadoEm: v.aprovadoInternoEm,
-      status: 'aguardando_legenda', demandaLegendaCriada: true, criadoEm: serverTimestamp()
+    const postagemRef=doc(db,'postagens',idPostagemDeterministicaDoVideo(videoId));
+    await runTransaction(db,async tx=>{
+      const [videoAtual,postagemAtual]=await Promise.all([tx.get(videoRef),tx.get(postagemRef)]);
+      if(!videoAtual.exists()) throw new Error('Vídeo não encontrado durante a confirmação.');
+      if(postagemAtual.exists() && postagemAtual.data().videoId!==videoId) throw new Error('Conflito de identidade da postagem.');
+      if(!postagemAtual.exists()) tx.set(postagemRef,{
+        videoId,cliente:v.cliente,clienteNome:v.clienteNome,titulo:v.titulo,
+        linkVideo:v.linkFinalizado,legenda:'',legendaPor:'',legendaEm:'',
+        calendarItemIdx:v.calendarItemIdx??null,calendarClienteSlug:v.calendarClienteSlug||null,
+        dataAgendada:'',horaAgendada:'',agendadoPor:'',agendadoEm:'',
+        aprovadoPor:v.aprovadoPor,aprovadoEm:v.aprovadoInternoEm,
+        status:'aguardando_legenda',demandaLegendaCriada:true,criadoEm:serverTimestamp()
+      });
+      tx.update(videoRef,{status:'aprovado',clienteAprovou:true,clienteAprovouEm:new Date().toISOString(),
+        clienteAprovouPor:confirmadoPor,postagemId:postagemRef.id});
     });
+    const reciboPostagem=await getDoc(postagemRef);
+    if(!reciboPostagem.exists()||reciboPostagem.data().videoId!==videoId) throw new Error('A postagem não pôde ser confirmada após a aprovação.');
+    registrarHistorico('videos_producao',videoId,'Cliente confirmou aprovação — liberado pra postagem','Confirmado por: '+confirmadoPor);
 
     /* ===== A LEGENDA DEIXOU DE VIRAR DEMANDA — 29/07/2026 ===========
        Cada vídeo aprovado criava uma demanda "✍️ Escrever legenda" na
@@ -9508,12 +9573,40 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      agora pode ser puxada com 1 clique direto pro vídeo certo.
      Formato (b): legenda avulsa, direto no vídeo — pros atrasados/backlog,
      sem precisar do calendário. Os dois nessa mesma tela agora. */
+  async function consolidarFilaLegendaConfirmada(pendentes){
+    const semVideo=(pendentes||[]).filter(p=>!p.videoId);
+    const videos=[...new Set((pendentes||[]).map(p=>p.videoId).filter(Boolean))];
+    const todas=[];
+    for(let i=0;i<videos.length;i+=10){
+      const lote=videos.slice(i,i+10);
+      const snap=await getDocs(query(collection(db,'postagens'),where('videoId','in',lote)));
+      snap.forEach(d=>todas.push({id:d.id,...d.data()}));
+    }
+    const porVideo=new Map();
+    todas.forEach(p=>{ const lista=porVideo.get(p.videoId)||[]; lista.push(p); porVideo.set(p.videoId,lista); });
+    const canonicas=[];
+    videos.forEach(videoId=>{
+      const escolhida=escolherPostagemCanonicaPorVideo(porVideo.get(videoId)||pendentes.filter(p=>p.videoId===videoId));
+      if(escolhida?.status==='aguardando_legenda') canonicas.push(escolhida);
+    });
+    return [...semVideo,...canonicas];
+  }
+  window.consolidarFilaLegendaConfirmada=consolidarFilaLegendaConfirmada;
+
   async function renderLegendasPendentes(){
     const cont = document.getElementById('postagensConteudo');
     /* A Gabi precisa apenas da fila de legenda. Ler todas as postagens aqui
        fazia cada abertura pagar também por agendadas, publicadas e arquivo. */
-    const snap = await getDocs(query(collection(db,'postagens'), where('status','==','aguardando_legenda')));
-    const pendentes = []; snap.forEach(d => { if(!d.data().excluido) pendentes.push({id:d.id, ...d.data()}); });
+    let snap,pendentes;
+    try{
+      snap=await getDocs(query(collection(db,'postagens'),where('status','==','aguardando_legenda')));
+      const candidatas=[]; snap.forEach(d=>{ if(!d.data().excluido) candidatas.push({id:d.id,...d.data()}); });
+      pendentes=await consolidarFilaLegendaConfirmada(candidatas);
+    }catch(e){
+      console.error('Falha ao confirmar a fila de legendas:',e);
+      cont.innerHTML='<div class="card" style="border-color:var(--red);"><h2>Fila indisponível</h2><div class="desc">Não consegui confirmar agora quais legendas ainda estão com a Gabi. Nada foi tratado como vazio e nenhum item foi movido.</div></div>';
+      return;
+    }
     if(!pendentes.length){ cont.innerHTML = '<div class="card"><div class="desc" style="margin-bottom:0;">📥 Todo vídeo aprovado — de cliente mensalista, avulso, extra ou vindo do Protocolo Cápsula — cai aqui automaticamente, sem exceção.</div></div><div class="empty">Nenhum vídeo aguardando legenda agora. 🎉</div>'; return; }
 
     // Busca o calendário de cada cliente envolvido, 1 vez só por cliente
@@ -9711,60 +9804,88 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   window.salvarLegenda = async function(id){
-    const postSnap = await getDoc(doc(db,'postagens', id));
-    const cliente = postSnap.exists() ? postSnap.data().cliente : '';
-    const dadosLegenda = { legendaPor: usuarioAtual||'Gabrielle', legendaEm: new Date().toISOString(), status: 'aguardando_agendamento' };
+    window.__salvandoLegendas=window.__salvandoLegendas||new Set();
+    if(window.__salvandoLegendas.has(id)) return;
+    window.__salvandoLegendas.add(id);
+    try{
+      const postagemRef=doc(db,'postagens',id);
+      const postSnap=await getDoc(postagemRef);
+      if(!postSnap.exists()) throw new Error('Esta postagem não existe mais. A fila será recarregada.');
+      const cliente=postSnap.data().cliente||'';
+      const dadosLegenda={legendaPor:usuarioAtual||'Gabrielle',legendaEm:new Date().toISOString(),status:'aguardando_agendamento'};
 
-    if(ehClienteMultiPlataforma(cliente)){
-      let preenchidas = 0;
-      PLATAFORMAS_LEGENDA.forEach(p => {
-        const val = document.getElementById('legenda_'+id+'_'+p.campo)?.value.trim() || '';
-        dadosLegenda[p.campo] = val;
-        if(val) preenchidas++;
-      });
-      if(!preenchidas){ mostrarToast('Escreve pelo menos uma das 3 legendas antes de salvar.', 'erro'); return; }
-      // legenda "geral" (usada em telas antigas) recebe a do Instagram como referência principal
-      dadosLegenda.legenda = dadosLegenda.legendaInstagram || dadosLegenda.legendaTiktok || dadosLegenda.legendaYoutube || dadosLegenda.legendaLinkedin;
-    } else {
-      const legenda = document.getElementById('legenda_'+id).value.trim();
-      if(!legenda){ mostrarToast('Escreve a legenda antes de salvar.', 'erro'); return; }
-      dadosLegenda.legenda = legenda;
-    }
+      if(ehClienteMultiPlataforma(cliente)){
+        let preenchidas=0;
+        PLATAFORMAS_LEGENDA.forEach(p=>{
+          const val=document.getElementById('legenda_'+id+'_'+p.campo)?.value.trim()||'';
+          dadosLegenda[p.campo]=val;
+          if(val) preenchidas++;
+        });
+        if(!preenchidas){ mostrarToast('Escreve pelo menos uma das 3 legendas antes de salvar.','erro'); return; }
+        dadosLegenda.legenda=dadosLegenda.legendaInstagram||dadosLegenda.legendaTiktok||dadosLegenda.legendaYoutube||dadosLegenda.legendaLinkedin;
+      }else{
+        const legenda=document.getElementById('legenda_'+id)?.value.trim()||'';
+        if(!legenda){ mostrarToast('Escreve a legenda antes de salvar.','erro'); return; }
+        dadosLegenda.legenda=legenda;
+      }
 
-    await updateDoc(doc(db,'postagens', id), dadosLegenda);
-
-    // Prevenção de reuso: se essa legenda veio de um item do calendário
-    // (vínculo direto ou puxada manualmente), marca esse item como usado —
-    // ele some das opções pra qualquer outro vídeo daqui pra frente.
-    const escolha = window.__legendaCalendarioEscolhida?.[id];
-    if(escolha){
-      try{
-        const calRef = doc(db,'calendarios', escolha.clienteSlug);
-        const calSnap = await getDoc(calRef);
-        if(calSnap.exists()){
-          const dadosCal = calSnap.data();
-          if(dadosCal.items && dadosCal.items[escolha.idxOriginal]){
-            dadosCal.items[escolha.idxOriginal].legendaUsadaEm = new Date().toISOString();
-            dadosCal.items[escolha.idxOriginal].legendaUsadaPostagemId = id;
-            await setDoc(calRef, dadosCal);
-            /* ===== 27/07/2026 — o vinculo agora fica GRAVADO na postagem =====
-               Antes ele so existia em window.__legendaCalendarioEscolhida, ou
-               seja, na memoria da aba: fechou o navegador, perdeu. E era
-               justamente esse vinculo que faltava pro agendamento saber que
-               aquele video JA tem um lugar no calendario da Gabi. */
-            await updateDoc(doc(db,'postagens', id), {
-              calendarioSlug: escolha.clienteSlug, calendarioIdx: escolha.idxOriginal
-            });
+      const camposConteudo=Object.keys(dadosLegenda).filter(k=>!['legendaPor','legendaEm','status'].includes(k));
+      await runTransaction(db,async tx=>{
+        const atualSnap=await tx.get(postagemRef);
+        if(!atualSnap.exists()) throw new Error('Esta postagem não existe mais.');
+        const atual=atualSnap.data()||{},videoId=atual.videoId||'';
+        const videoRef=videoId?doc(db,'videos_producao',videoId):null;
+        const videoSnap=videoRef?await tx.get(videoRef):null;
+        const postagemPreferida=videoSnap?.exists()?String(videoSnap.data().postagemId||''):'';
+        if(postagemPreferida&&postagemPreferida!==id) throw new Error('Existe outra postagem canônica para este vídeo. Esta cópia não será movimentada.');
+        const conteudoIgual=camposConteudo.every(campo=>String(atual[campo]||'')===String(dadosLegenda[campo]||''));
+        if(atual.status!=='aguardando_legenda'){
+          if(atual.status==='aguardando_agendamento'&&conteudoIgual){
+            if(videoSnap?.exists()&&!postagemPreferida) tx.update(videoRef,{postagemId:id});
+            return;
           }
+          throw new Error('A postagem já avançou para '+String(atual.status||'outra etapa')+' e não será regredida.');
         }
-      }catch(e){ console.error('Falha ao marcar legenda do calendário como usada:', e); }
-      delete window.__legendaCalendarioEscolhida[id];
-    }
+        tx.update(postagemRef,dadosLegenda);
+        if(videoSnap?.exists()) tx.update(videoRef,{postagemId:id});
+      });
+      const recibo=await getDoc(postagemRef);
+      if(!recibo.exists()||recibo.data().status!=='aguardando_agendamento'||
+         !camposConteudo.every(campo=>String(recibo.data()[campo]||'')===String(dadosLegenda[campo]||''))){
+        throw new Error('A legenda foi gravada, mas a passagem para a fila da Cecília não pôde ser confirmada.');
+      }
 
-    darBaixaDemandaLegenda(id).catch(e => console.error('Melhoria 2: falha ao dar baixa na demanda de legenda', e));
-    criarDemandaAgendamentoAutomatica(id).catch(e => console.error('Fase 6: falha ao criar demanda automática de agendamento', e));
-    mostrarToast('Legenda salva! Já caiu na fila da Cecília.');
-    renderLegendasPendentes();
+      // Prevenção de reuso: se essa legenda veio de um item do calendário
+      // (vínculo direto ou puxada manualmente), marca esse item como usado.
+      const escolha=window.__legendaCalendarioEscolhida?.[id];
+      if(escolha){
+        try{
+          const calRef=doc(db,'calendarios',escolha.clienteSlug);
+          const calSnap=await getDoc(calRef);
+          if(calSnap.exists()){
+            const dadosCal=calSnap.data();
+            if(dadosCal.items&&dadosCal.items[escolha.idxOriginal]){
+              dadosCal.items[escolha.idxOriginal].legendaUsadaEm=new Date().toISOString();
+              dadosCal.items[escolha.idxOriginal].legendaUsadaPostagemId=id;
+              await setDoc(calRef,dadosCal);
+              await updateDoc(postagemRef,{calendarioSlug:escolha.clienteSlug,calendarioIdx:escolha.idxOriginal});
+            }
+          }
+        }catch(e){ console.error('Falha ao marcar legenda do calendário como usada:',e); }
+        delete window.__legendaCalendarioEscolhida[id];
+      }
+
+      darBaixaDemandaLegenda(id).catch(e=>console.error('Melhoria 2: falha ao dar baixa na demanda de legenda',e));
+      criarDemandaAgendamentoAutomatica(id).catch(e=>console.error('Fase 6: falha ao criar demanda automática de agendamento',e));
+      mostrarToast('Legenda salva e confirmada na fila da Cecília.');
+      renderLegendasPendentes();
+    }catch(e){
+      console.error('Falha ao confirmar a passagem da legenda:',e);
+      mostrarToast(e?.message||'Não foi possível confirmar a passagem da legenda.','erro');
+      renderLegendasPendentes();
+    }finally{
+      window.__salvandoLegendas.delete(id);
+    }
   };
 
   /* ===================================================================
@@ -16668,7 +16789,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const mensal=v.tipo==='mensalista';
     return `<div class="card" style="border:2px solid var(--yellow);" id="editorClienteAtivoCentral">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;"><div><h2 style="margin:0;">Editar ${esc(v.nome)}</h2><div class="meta">O identificador ${esc(v.slug)} não muda, para não quebrar vídeos, calendário, Portal ou histórico.</div></div><button class="btn secondary" style="width:auto;padding:7px 12px;" onclick="cancelarEdicaoClienteAtivoCentral()">Fechar</button></div>
-      <div class="row2" style="margin-top:14px;"><div class="field"><label>Instagram</label><input id="ecaInstagram" value="${escAttr(v.instagram||'')}"></div><div class="field"><label>WhatsApp</label><input id="ecaTelefone" value="${escAttr(v.telefone||'')}"></div></div>
+      <div class="row2" style="margin-top:14px;"><div class="field"><label>Instagram</label><input id="ecaInstagram" value="${escAttr(v.instagram||'')}"></div><div class="field"><label>WhatsApp</label><input id="ecaTelefone" value="${escAttr(v.telefone||v.whatsappCobranca||'')}"></div></div>
       ${mensal?`<div class="row2"><div class="field"><label>Aniversário da empresa/responsável</label><input type="date" id="ecaAniversario" value="${escAttr(v.aniversario||'')}"></div><div class="field"><label>Outros contatos</label><input id="ecaContatos" value="${escAttr(v.contatos||'')}"></div></div><div class="row2"><div class="field"><label>Plano</label><select id="ecaPlano"><option ${String(v.plano).startsWith('Básico')?'selected':''}>Básico</option><option ${String(v.plano).startsWith('Intermediário')?'selected':''}>Intermediário</option><option ${String(v.plano).startsWith('Premium')?'selected':''}>Premium</option></select></div><div class="field"><label>Detalhes do plano</label><input id="ecaPlanoDetalhes" value="${escAttr(v.planoDetalhes||'')}"></div></div>
       <div class="row2"><div class="field"><label>Valor mensal vigente</label><input type="number" step="0.01" id="ecaValor" value="${Number(v.valorMensal||0)}" readonly><div class="desc" style="margin:5px 0 0;">Para não alterar o mês já aberto, mudanças de valor são programadas em <b>Contratos</b> pelo Chris.</div></div><div class="field"><label>Dia de vencimento</label><input type="number" min="1" max="31" id="ecaVencimento" value="${Number(v.diaVencimento||0)}"></div></div>
       <div class="row2"><div class="field"><label>Tipo de entrega</label><select id="ecaEntrega"><option value="postagem_completa" ${v.tipoEntrega!=='entrega_direta'?'selected':''}>Agência agenda e publica</option><option value="entrega_direta" ${v.tipoEntrega==='entrega_direta'?'selected':''}>Entrega direta ao cliente</option></select></div><div class="field"><label>Stories semanais</label><select id="ecaStories"><option value="sim" ${v.incluiStories?'selected':''}>Incluídos</option><option value="nao" ${!v.incluiStories?'selected':''}>Não incluídos</option></select></div></div>`:''}
@@ -16790,8 +16911,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     };
     dados.cortesiaPermanente=mensal&&dados.cortesiaTipo==='permanente';
     if(dados.cortesiaTipo!=='meses') dados.cortesiaMeses=[];
-    const fone=String(dados.telefone||'').replace(/\D/g,'');
-    if(fone && (fone.length<10||fone.length>13)){ mostrarToast('Confira o WhatsApp com DDD.','erro'); return; }
+    const fone=numeroWhatsAppBrasil(dados.telefone);
+    if(dados.telefone && !fone){ mostrarToast('Confira o WhatsApp brasileiro com DDD.','erro'); return; }
     if(mensal && (!(dados.valorMensal>0)||dados.diaVencimento<1||dados.diaVencimento>31)){ mostrarToast('Confira o valor e o dia de vencimento.','erro'); return; }
     if(mensal && dados.cortesiaTipo==='meses' && (!dados.cortesiaMeses.length||!mesesCortesiaValidos(dados.cortesiaMeses))){ mostrarToast('Informe o mês da cortesia no formato 2026-08.','erro'); return; }
     try{
@@ -16956,17 +17077,52 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }catch(e){ console.error('Falha ao programar saída:',e); mostrarToast('Nada foi alterado: '+(e.message||e),'erro'); }
   };
 
-  window.cancelarProgramacaoSaidaCentral=async function(slug, saidaId, reativarEfetiva){
+  function idCampoReativacaoCliente(saidaId,sufixo){
+    const chave=String(saidaId||'').replace(/[^a-zA-Z0-9_-]/g,'_');
+    return 'reativar'+sufixo+'_'+chave;
+  }
+
+  function normalizarDadosReativacaoMensalista(dados){
+    const valorMensal=Number(dados?.valorMensal||0);
+    const diaVencimento=Number(dados?.diaVencimento||0);
+    const primeiraCompetencia=String(dados?.primeiraCompetencia||'').trim();
+    if(!(valorMensal>0)) return {ok:false,erro:'Informe o valor mensal da reativação.'};
+    if(!Number.isInteger(diaVencimento)||diaVencimento<1||diaVencimento>31) return {ok:false,erro:'Informe um dia de vencimento entre 1 e 31.'};
+    if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(primeiraCompetencia)) return {ok:false,erro:'Informe o primeiro mês da reativação.'};
+    return {ok:true,valorMensal,diaVencimento,primeiraCompetencia};
+  }
+  window.normalizarDadosReativacaoMensalista=normalizarDadosReativacaoMensalista;
+
+  window.confirmarReativacaoClienteCentral=function(slug,saidaId){
+    if(!['Amanda','Chris'].includes(usuarioAtual)){ mostrarToast('Área exclusiva da gerência.','erro'); return; }
+    const dados=normalizarDadosReativacaoMensalista({
+      valorMensal:document.getElementById(idCampoReativacaoCliente(saidaId,'Valor'))?.value,
+      diaVencimento:document.getElementById(idCampoReativacaoCliente(saidaId,'Vencimento'))?.value,
+      primeiraCompetencia:document.getElementById(idCampoReativacaoCliente(saidaId,'Competencia'))?.value
+    });
+    if(!dados.ok){ mostrarToast(dados.erro,'erro'); return; }
+    return window.cancelarProgramacaoSaidaCentral(slug,saidaId,true,dados);
+  };
+
+  window.cancelarProgramacaoSaidaCentral=async function(slug, saidaId, reativarEfetiva, dadosReativacao){
     if(!['Amanda','Chris'].includes(usuarioAtual)) return;
     slug=slugClienteCanonico(slug);
     const saida=reativarEfetiva?(window.__clientesArquivadosCentral||{})[saidaId]:(window.__saidasProgramadasPorSlug||{})[slug];
     if(!saida?.id){ mostrarToast('Não encontrei o registro de saída. Atualize a Central e tente novamente.','erro'); return; }
+    const arquivoColecao=['clientes_encerrados','cadastros_clientes','leads_avulsos','leads_pessoa_fisica'].includes(saida.arquivoColecao)?saida.arquivoColecao:'clientes_encerrados';
+    const cadastroId=saida.cadastroId||(arquivoColecao==='cadastros_clientes'?saida.id:'');
+    const leadColecao=saida.leadColecao||(arquivoColecao==='leads_pessoa_fisica'?'leads_pessoa_fisica':(arquivoColecao==='leads_avulsos'?'leads_avulsos':''));
+    const leadId=saida.leadId||(leadColecao?saida.id:'');
     if(saidaClienteJaEfetiva(saida)&&!reativarEfetiva){ mostrarToast('Esta saída já está efetiva. Use “Reativar cliente” no arquivo se a saída foi registrada por engano.','erro'); return; }
     const mensalista=saida.tipoCliente==='mensalista'||saida.fichaSnapshot?.tipo==='mensalista';
     const nomeReativado=nomeClienteCanonico(slug,saida.fichaSnapshot?.nome||saida.nome||nomeDeSlugSeguro(slug));
-    const pergunta=reativarEfetiva
-      ? 'Reativar este cliente? O registro de saída continuará preservado como cancelado e o Portal será recuperado.'
-      : 'Cancelar a saída programada e manter o cliente ativo? O registro continuará no histórico como cancelado.';
+    const reativacao=reativarEfetiva&&mensalista?normalizarDadosReativacaoMensalista(dadosReativacao):null;
+    if(reativarEfetiva&&mensalista&&!reativacao?.ok){ mostrarToast(reativacao?.erro||'Confira os dados financeiros da reativação.','erro'); return; }
+    const pergunta=reativarEfetiva&&mensalista
+      ? 'Reativar este cliente por '+brl(reativacao.valorMensal)+' ao mês, com vencimento dia '+reativacao.diaVencimento+' e início em '+reativacao.primeiraCompetencia+'? O registro de saída continuará preservado como cancelado e o Portal será recuperado.'
+      : (reativarEfetiva
+        ? 'Reativar este cliente? O registro de saída continuará preservado como cancelado.'
+        : 'Cancelar a saída programada e manter o cliente ativo? O registro continuará no histórico como cancelado.');
     if(!confirm(pergunta)) return;
     const atual=(window.__entradaClientesAtivos||{})[slug]||{};
     try{
@@ -16979,8 +17135,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const refs=__validarReferenciasFirestore([
         doc(db,'clientes_config',slug),
         extraRef,
-        saida.cadastroId?doc(db,'cadastros_clientes',saida.cadastroId):null,
-        saida.leadId?doc(db,saida.leadColecao==='leads_pessoa_fisica'?'leads_pessoa_fisica':'leads_avulsos',saida.leadId):null,
+        cadastroId?doc(db,'cadastros_clientes',cadastroId):null,
+        leadId?doc(db,leadColecao,leadId):null,
         saida.onboardingId?doc(db,'onboarding_processos',saida.onboardingId):null,
         (atual.tipo==='mensalista'||mensalista)?doc(db,'contratos_cliente',slug):null,
         (atual.tipo==='mensalista'||mensalista)?doc(db,'clientes_acesso',slug):null
@@ -16991,25 +17147,45 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         const pagamentosSnap=await getDocs(collection(db,'pagamentos_mensais'));
         pagamentosSnap.forEach(d=>{ const p=d.data(); if(pagamentoPertenceAoCliente(p,d.id,slug)&&(p.canceladoPorSaidaId===saida.id||p.saidaFinanceiraId===saida.id)) pagamentosDaSaidaFinanceira.push({id:d.id,ref:d.ref,...p}); });
       }
+      const arquivoOrigemRef=doc(db,arquivoColecao,saida.id);
+      const historicoSaidaId=arquivoColecao==='clientes_encerrados'?saida.id:('legado_'+arquivoColecao+'_'+saida.id).replace(/[^a-zA-Z0-9_-]/g,'_');
+      const saidaRef=doc(db,'clientes_encerrados',historicoSaidaId);
       await runTransaction(db,async tx=>{
-        const todos=__validarReferenciasFirestore([...refs,...tokens,...pagamentosDaSaidaFinanceira.map(p=>p.ref)],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()]));
+        const todos=__validarReferenciasFirestore([...refs,...tokens,...pagamentosDaSaidaFinanceira.map(p=>p.ref),arquivoOrigemRef,saidaRef],reativarEfetiva?'a reativação do cliente':'o cancelamento da saída'); const snaps=await Promise.all(todos.map(r=>tx.get(r))); const existe=new Map(todos.map((r,i)=>[r.path,snaps[i].exists()])); const snapshotPorCaminho=new Map(todos.map((r,i)=>[r.path,snaps[i]]));
+        const origemConfirmada=snapshotPorCaminho.get(arquivoOrigemRef.path);
+        const origemDados=origemConfirmada?.exists()?origemConfirmada.data():{};
+        const origemAindaArquivada=origemDados.excluido===true||['arquivado','finalizado','cancelado','recusado'].includes(String(origemDados.statusGerencia||origemDados.status||''))||['encerrada','programada'].includes(String(origemDados.statusSaida||''));
+        if(!origemConfirmada?.exists()||!origemAindaArquivada) throw new Error('O arquivo deste cliente mudou em outra aba. Atualize a Central antes de reativar.');
         refs.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),saidaAtualizadaPor:deleteField(),saidaAtualizadaEm:deleteField(),ativoAte:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true}); });
         tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado,clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
         if(extraRef&&(existe.get(extraRef.path)||reativarEfetiva)) tx.set(extraRef,{slug,nome:nomeReativado,casta:mensalista?'mensalista':(atual.tipo||'avulso'),excluido:false,ativo:true,arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField(),motivoExclusao:deleteField(),excluidoEm:deleteField(),excluidoPor:deleteField()},{merge:true});
-        if(saida.cadastroId){ const ref=doc(db,'cadastros_clientes',saida.cadastroId); if(existe.get(ref.path)) tx.set(ref,{nome:nomeReativado,slugAtivado:slug,excluido:false,statusGerencia:'oficializado',arquivadoEm:deleteField(),arquivadoPor:deleteField()},{merge:true}); }
+        if(cadastroId){ const ref=doc(db,'cadastros_clientes',cadastroId); if(existe.get(ref.path)) tx.set(ref,{nome:nomeReativado,slugAtivado:slug,excluido:false,status:'convertido',statusGerencia:'oficializado',arquivadoEm:deleteField(),arquivadoPor:deleteField(),motivoArquivamento:deleteField(),motivoExclusao:deleteField(),excluidoEm:deleteField(),excluidoPor:deleteField(),...(reativacao?.ok?{valorMensal:reativacao.valorMensal,diaVencimento:reativacao.diaVencimento,reativacaoCompetencia:reativacao.primeiraCompetencia}: {})},{merge:true}); }
         const contratoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'contratos_cliente',slug):null;
-        if(contratoRef&&existe.get(contratoRef.path)) tx.set(contratoRef,{clienteNome:nomeReativado,status:'ativo',encerrado:false,excluido:false,ativo:true,ultimaCompetenciaPagamento:deleteField(),encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        if(contratoRef){
+          const contratoAnterior=snapshotPorCaminho.get(contratoRef.path)?.data?.()||{};
+          const atualizacaoContrato={clienteNome:nomeReativado,status:'ativo',encerrado:false,excluido:false,ativo:true,ultimaCompetenciaPagamento:deleteField(),encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()};
+          if(reativacao?.ok){
+            Object.assign(atualizacaoContrato,{diaVencimento:reativacao.diaVencimento,reativacaoCompetencia:reativacao.primeiraCompetencia,reativadoPor:usuarioAtual,reativadoEm:serverTimestamp()});
+            if(existe.get(contratoRef.path)) Object.assign(atualizacaoContrato,{valorProgramado:reativacao.valorMensal,valorProgramadoEm:reativacao.primeiraCompetencia,valorProgramadoMotivo:'Reativação do cliente',valorProgramadoPor:usuarioAtual,valorProgramadoAtualizadoEm:serverTimestamp(),historicoAlteracoesValor:arrayUnion({acao:'programada',origem:'reativacao',valorAnterior:valorContratoNaCompetencia(contratoAnterior,reativacao.primeiraCompetencia),novoValor:reativacao.valorMensal,inicio:reativacao.primeiraCompetencia,motivo:'Reativação do cliente',por:usuarioAtual||'?',em:new Date().toISOString()})});
+            else Object.assign(atualizacaoContrato,{plano:saida.fichaSnapshot?.plano||'Mensalista',planoDetalhes:saida.fichaSnapshot?.planoDetalhes||'',valorCheio:reativacao.valorMensal,valorVigente:reativacao.valorMensal,primeiraCompetencia:reativacao.primeiraCompetencia,observacao:saida.fichaSnapshot?.observacoes||'Contrato recuperado na reativação'});
+          }
+          tx.set(contratoRef,atualizacaoContrato,{merge:true});
+        }
         const acessoRef=(atual.tipo==='mensalista'||mensalista)?doc(db,'clientes_acesso',slug):null;
         if(acessoRef&&existe.get(acessoRef.path)) tx.set(acessoRef,{nome:nomeReativado,ativo:true,desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true});
         tokens.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{cliente:slug,nome:nomeReativado,ativo:true,ativoAte:deleteField(),saidaProgramadaPara:deleteField(),desativadoEm:deleteField(),desativadoPor:deleteField()},{merge:true}); });
         pagamentosDaSaidaFinanceira.forEach(p=>{
           const restauracao={ultimaCompetenciaDoContrato:deleteField(),saidaFinanceiraId:deleteField(),atualizadoEm:serverTimestamp(),atualizadoPor:usuarioAtual};
-          if(p.canceladoPorSaida===true&&p.canceladoPorSaidaId===saida.id) Object.assign(restauracao,{status:p.statusAntesSaida||'aberto',canceladoPorSaida:deleteField(),canceladoPorSaidaId:deleteField(),statusAntesSaida:deleteField(),motivoCancelamento:deleteField(),canceladoEm:deleteField(),canceladoPor:deleteField()});
+          if(p.canceladoPorSaida===true&&p.canceladoPorSaidaId===saida.id){
+            const statusRestaurado=p.statusAntesSaida||'aberto';
+            Object.assign(restauracao,{status:statusRestaurado,canceladoPorSaida:deleteField(),canceladoPorSaidaId:deleteField(),statusAntesSaida:deleteField(),motivoCancelamento:deleteField(),canceladoEm:deleteField(),canceladoPor:deleteField()});
+            if(reativacao?.ok&&String(p.competencia||'')>=reativacao.primeiraCompetencia&&!['pago','cancelado'].includes(String(statusRestaurado))) restauracao.valorDevido=reativacao.valorMensal;
+          }
           tx.set(p.ref,restauracao,{merge:true});
         });
-        tx.set(doc(db,'clientes_encerrados',saida.id),{statusSaida:'cancelada',excluido:true,excluidoPor:usuarioAtual,excluidoEm:serverTimestamp(),motivoExclusao:reativarEfetiva?'Arquivamento cancelado; cliente reativado sem apagar histórico':'Saída programada cancelada; cliente mantido ativo'},{merge:true});
+        tx.set(saidaRef,{nome:nomeReativado,slug,tipoCliente:mensalista?'mensalista':(atual.tipo||''),statusSaida:'cancelada',origemArquivoColecao:arquivoColecao,origemArquivoId:saida.id,fichaSnapshot:saida.fichaSnapshot||saida,excluido:true,excluidoPor:usuarioAtual,excluidoEm:serverTimestamp(),motivoExclusao:reativarEfetiva?'Arquivamento cancelado; cliente reativado sem apagar histórico':'Saída programada cancelada; cliente mantido ativo'},{merge:true});
       });
-      window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras(); mostrarToast(reativarEfetiva?'Cliente reativado; agora vou confirmar o Portal.':'Saída cancelada; cliente continua ativo.'); await window.renderCentralEntradaClientes();
+      window.__saidaClienteEditando=''; window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras(); mostrarToast(reativarEfetiva?'Cliente reativado com valor registrado; agora vou confirmar o Portal.':'Saída cancelada; cliente continua ativo.'); await window.renderCentralEntradaClientes();
       if(reativarEfetiva&&mensalista) await window.garantirPortalClienteCentral(slug);
     }catch(e){ console.error('Falha ao cancelar/reativar cliente:',e); mostrarToast('Não consegui concluir; nenhum histórico foi apagado: '+(e.message||e),'erro'); }
   };
@@ -17081,7 +17257,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const porId=snap=>Object.fromEntries(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
       const extrasPorId=porId(extrasSnap), configs=porId(configsSnap), contratos=porId(contratosSnap), acessos=porId(acessosSnap), tokens=porId(tokensSnap), stories=porId(storiesSnap);
       const onboardingTodos=onboardingsSnap.docs.map(d=>({id:d.id,...d.data()}));
-      const encerrados=encerradosSnap.docs.map(d=>({id:d.id,...d.data()})).filter(v=>!v.excluido).sort((a,b)=>String(b.dataSaida||b.criadoEm||'').localeCompare(String(a.dataSaida||a.criadoEm||'')));
+      const encerrados=encerradosSnap.docs.map(d=>({id:d.id,arquivoColecao:'clientes_encerrados',...d.data()})).filter(v=>!v.excluido).sort((a,b)=>String(b.dataSaida||b.criadoEm||'').localeCompare(String(a.dataSaida||a.criadoEm||'')));
       const saidasProgramadasPorSlug={};
       encerrados.forEach(v=>{ if(v.slug && v.statusSaida==='programada' && !saidaClienteJaEfetiva(v)) saidasProgramadasPorSlug[v.slug]=v; });
       window.__saidasProgramadasPorSlug=saidasProgramadasPorSlug;
@@ -17112,7 +17288,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       }).map(v=>{
         const slug=slugDo(v), ctr=contratos[slug]||{}, acesso=acessos[slug]||{}, extra=extrasPorSlug[slug]||{}, onboarding=onboardingPorSlug[slug]||{};
         const nomeOriginal=v.nome||ctr.clienteNome||extra.nome||slug, nome=nomeClienteCanonico(slug,nomeOriginal);
-        return {tipo:'mensalista',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,instagram:v.instagram||'',telefone:v.telefone||'',whatsappCobranca:configs[slug]?.whatsappCobranca||'',aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(valorContratoNaCompetencia(ctr,hojeLocal().slice(0,7))||v.valorMensal||ctr.valorCheio||0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||ctr.primeiraCompetencia||'',ultimaCompetenciaPagamento:ctr.ultimaCompetenciaPagamento||saidasProgramadasPorSlug[slug]?.ultimaCompetenciaPagamento||'',tipoEntrega:v.tipoEntrega||configs[slug]?.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
+        return {tipo:'mensalista',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,instagram:v.instagram||'',telefone:v.telefone||'',whatsappCobranca:whatsappCobrancaPorIdentidade(configs,slug),aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(valorContratoNaCompetencia(ctr,hojeLocal().slice(0,7))||v.valorMensal||ctr.valorCheio||0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||ctr.primeiraCompetencia||'',ultimaCompetenciaPagamento:ctr.ultimaCompetenciaPagamento||saidasProgramadasPorSlug[slug]?.ultimaCompetenciaPagamento||'',tipoEntrega:v.tipoEntrega||configs[slug]?.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
       });
       const avulsosAtivos=[
         ...avulsosEmpresaSnap.docs.map(d=>({id:d.id,colecaoOrigem:'leads_avulsos',...d.data()})),
@@ -17123,9 +17299,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       }).map(v=>{
         const slug=slugDo(v), extra=extrasPorSlug[slug]||{};
         const escopoAvulso=[v.totalVideos?String(v.totalVideos)+' vídeo(s)':'',v.tipoVideo||'',...(Array.isArray(v.ocasioes)?v.ocasioes:[]),...(Array.isArray(v.pacotesNomes)?v.pacotesNomes:[])].filter(Boolean).join(' · ');
-        return {tipo:'avulso',slug,nome:v.nome||extra.nome||slug,instagram:v.instagram||'',telefone:v.whatsapp||v.telefone||'',whatsappCobranca:configs[slug]?.whatsappCobranca||'',plano:'Projeto avulso',planoDetalhes:escopoAvulso,valorMensal:0,diaVencimento:0,primeiraCompetencia:'',tipoEntrega:'entrega_direta',incluiStories:false,observacoes:v.observacoes||'',leadId:v.id,leadColecao:v.colecaoOrigem,extraId:extra.id||'',token:'',saida:saidasProgramadasPorSlug[slug]||null};
+        return {tipo:'avulso',slug,nome:v.nome||extra.nome||slug,instagram:v.instagram||'',telefone:v.whatsapp||v.telefone||'',whatsappCobranca:whatsappCobrancaPorIdentidade(configs,slug),plano:'Projeto avulso',planoDetalhes:escopoAvulso,valorMensal:0,diaVencimento:0,primeiraCompetencia:'',tipoEntrega:'entrega_direta',incluiStories:false,observacoes:v.observacoes||'',leadId:v.id,leadColecao:v.colecaoOrigem,extraId:extra.id||'',token:'',saida:saidasProgramadasPorSlug[slug]||null};
       });
-      const unicos=new Map(); [...mensalistasAtivos,...avulsosAtivos].forEach(v=>{ if(v.slug) unicos.set(v.slug,v); });
+      const unicos=new Map();
+      consolidarClientesAtivosPorIdentidade([...mensalistasAtivos,...avulsosAtivos]).forEach(v=>{ if(v.slug) unicos.set(v.slug,v); });
 
       /* Clientes anteriores ao link oficial também precisam aparecer para
          Amanda encerrar. A versão anterior limitava a Central aos cadastros
@@ -17144,7 +17321,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         const mensal=cfg.tipoCliente==='avulso'?false:(cfg.tipoCliente==='mensalista'||extra.casta==='mensalista'||!!acesso.token||Object.keys(ctr).length>1||CLIENTES_BASE.some(c=>c.slug===slug));
         const nomeOriginal=extra.nome||ctr.clienteNome||slug, nome=nomeClienteCanonico(slug,nomeOriginal);
         unicos.set(slug,{tipo:mensal?'mensalista':'avulso',origem:'legado',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,
-          instagram:extra.instagram||'',telefone:extra.telefone||extra.whatsapp||'',whatsappCobranca:cfg.whatsappCobranca||'',aniversario:'',contatos:'',
+          instagram:extra.instagram||'',telefone:extra.telefone||extra.whatsapp||'',whatsappCobranca:whatsappCobrancaPorIdentidade(configs,slug),aniversario:'',contatos:'',
           plano:mensal?(ctr.plano||extra.plano||'Mensalista legado'):'Projeto avulso',planoDetalhes:ctr.planoDetalhes||extra.planoDetalhes||'',
           valorMensal:Number(valorContratoNaCompetencia(ctr,hojeLocal().slice(0,7))),diaVencimento:Number(ctr.diaVencimento||0),primeiraCompetencia:ctr.primeiraCompetencia||'',ultimaCompetenciaPagamento:ctr.ultimaCompetenciaPagamento||saidasProgramadasPorSlug[slug]?.ultimaCompetenciaPagamento||'',
           tipoEntrega:cfg.tipoEntrega||(mensal?'postagem_completa':'entrega_direta'),incluiStories:stories[slug]?.ativo===true,
@@ -17157,7 +17334,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const itemMensal=v=>`<div class="card" style="border-left:4px solid var(--yellow);">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;"><div><h2 style="margin:0 0 4px;">${esc(v.nome||'Cliente sem nome')}</h2><div class="meta">MENSALISTA · aguardando conferência</div></div><span class="pill warn">NOVO</span></div>
         <div class="desc" style="margin-top:12px;line-height:1.75;"><b>Instagram:</b> ${esc(v.instagram||'—')} · <b>WhatsApp:</b> ${esc(v.telefone||'—')}${v.aniversario?' · <b>Aniversário:</b> '+esc(v.aniversario):''}${v.contatos?'<br><b>Outros contatos:</b> '+esc(v.contatos):''}<br><b>Plano:</b> ${esc(v.plano||'—')} ${v.planoDetalhes&&!String(v.plano||'').includes(v.planoDetalhes)?'· '+esc(v.planoDetalhes):''}<br><b>Mensalidade:</b> ${brl(Number(v.valorMensal||0))} · vence dia ${esc(String(v.diaVencimento||'—'))} · primeiro mês ${esc(v.primeiraCompetencia||'—')}<br><b>Entrega:</b> ${v.tipoEntrega==='entrega_direta'?'cliente recebe e publica':'agência agenda e publica'} · <b>Stories:</b> ${v.incluiStories?'incluídos':'não incluídos'}${v.contrato?'<br><b>Observações:</b> '+esc(v.contrato):''}</div>
-        <div class="btnrow" style="margin-top:12px;"><button class="btn" style="width:auto;" onclick="ativarMensalistaRecebido('${escJs(v.id)}')">Confirmar e ativar tudo</button><button class="btn secondary" style="width:auto;" onclick="editarMensalistaRecebido('${escJs(v.id)}')">Conferir / corrigir</button><button class="btn red" style="width:auto;" onclick="arquivarEntradaPendente('mensalista','${escJs(v.id)}')">Arquivar</button></div>
+        <div class="btnrow" style="margin-top:12px;"><button class="btn" style="width:auto;" onclick="ativarMensalistaRecebido('${escJs(v.id)}')">Conferir valor e ativar</button><button class="btn secondary" style="width:auto;" onclick="editarMensalistaRecebido('${escJs(v.id)}')">Conferir / corrigir</button><button class="btn red" style="width:auto;" onclick="arquivarEntradaPendente('mensalista','${escJs(v.id)}')">Arquivar</button></div>
       </div>`;
       const itemAvulso=v=>`<div class="card" style="border-left:4px solid #7e8aa6;">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;"><div><h2 style="margin:0 0 4px;">${esc(v.nome||'Solicitação sem nome')}</h2><div class="meta">AVULSO · não entra no Portal nem nas rotinas mensais</div></div><span class="pill">PENDENTE</span></div>
@@ -17181,9 +17358,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         </div>
       </div>`; };
       const arquivadosDeOrigem=[
-        ...mensalistasSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'cadastro mensalista'})),
-        ...avulsosEmpresaSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'projeto avulso'})),
-        ...avulsosPessoalSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'projeto pessoal'}))
+        ...mensalistasSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'cadastro mensalista',arquivoColecao:'cadastros_clientes'})),
+        ...avulsosEmpresaSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'projeto avulso',arquivoColecao:'leads_avulsos'})),
+        ...avulsosPessoalSnap.docs.map(d=>({id:d.id,...d.data(),origemArquivo:'projeto pessoal',arquivoColecao:'leads_pessoa_fisica'}))
       ].filter(registroArquivado);
       const slugsAtivosNaCentral=new Set(ativos.map(v=>v.slug));
       const arquivoUnico=new Map();
@@ -17194,8 +17371,31 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const arquivadosDoLink=[...arquivoUnico.values()].sort((a,b)=>String(b.dataSaida||b.arquivadoEm||b.dataFinalizacao||'').localeCompare(String(a.dataSaida||a.arquivadoEm||a.dataFinalizacao||'')));
       const saidasProgramadas=arquivadosDoLink.filter(v=>v.statusSaida==='programada'&&!saidaClienteJaEfetiva(v));
       const arquivoEfetivo=arquivadosDoLink.filter(v=>!saidasProgramadas.includes(v));
-      window.__clientesArquivadosCentral=Object.fromEntries(arquivoEfetivo.map(v=>[v.id,v]));
-      const htmlArquivado=v=>{ const f=v.fichaSnapshot||v; const slugBruto=String(v.slug||f.slug||''), slug=slugClienteCanonico(slugBruto); const mensalista=v.tipoCliente==='mensalista'||f.tipo==='mensalista'||!!contratos[slug]; const aliasOuFusao=(slugBruto&&slugBruto!==slug)||!!v.unificadoEm||!!f.unificadoEm||/duplicad|unificad/i.test(String(v.motivoDetalhe||v.motivoArquivamento||'')); const podeReativar=mensalista&&v.statusSaida!=='programada'&&!aliasOuFusao; const ultima=v.ultimaCompetenciaPagamento||f.ultimaCompetenciaPagamento||''; return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${ultima?' · último mês financeiro '+esc(ultima):''}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}${ultima?'<br><b>Último mês no Financeiro:</b> '+esc(ultima):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${podeReativar?`<button class="btn" style="width:auto;margin-top:10px;" onclick="cancelarProgramacaoSaidaCentral('${escJs(slug)}','${escJs(v.id)}',true)">Reativar cliente e recuperar Portal</button>`:'<div class="meta" style="margin-top:9px;">Registro histórico preservado; não cria outra identidade.</div>'}</details>`; };
+      const chaveArquivoCliente=v=>(v.arquivoColecao||'clientes_encerrados')+'__'+v.id;
+      window.__clientesArquivadosCentral=Object.fromEntries(arquivoEfetivo.map(v=>[chaveArquivoCliente(v),v]));
+      const htmlArquivado=v=>{
+        const f=v.fichaSnapshot||v;
+        const slugBruto=String(v.slug||f.slug||''), slug=slugClienteCanonico(slugBruto);
+        const mensalista=v.tipoCliente==='mensalista'||f.tipo==='mensalista'||!!contratos[slug];
+        const aliasOuFusao=(slugBruto&&slugBruto!==slug)||!!v.unificadoEm||!!f.unificadoEm||/duplicad|unificad/i.test(String(v.motivoDetalhe||v.motivoArquivamento||''));
+        const podeReativar=mensalista&&v.statusSaida!=='programada'&&!aliasOuFusao;
+        const ultima=v.ultimaCompetenciaPagamento||f.ultimaCompetenciaPagamento||'';
+        const contrato=contratos[slug]||{};
+        const valorPreservado=Number(valorContratoNaCompetencia(contrato,hojeLocal().slice(0,7))||f.valorMensal||v.valorMensal||0);
+        const vencimentoPreservado=Number(contrato.diaVencimento||f.diaVencimento||v.diaVencimento||0);
+        const chaveArquivo=chaveArquivoCliente(v);
+        const camposReativacao=podeReativar?`<div class="card" style="margin-top:12px;border-color:var(--yellow);background:rgba(255,193,7,.06);">
+          <b>Dados financeiros da nova entrada</b>
+          <div class="desc">Amanda confere estes dados antes de recuperar a mesma ficha e o mesmo Portal. Nenhum cadastro novo será criado.</div>
+          <div class="row2" style="margin-top:10px;">
+            <div class="field"><label>Valor mensal (R$)</label><input type="number" min="0.01" step="0.01" inputmode="decimal" id="${escAttr(idCampoReativacaoCliente(chaveArquivo,'Valor'))}" value="${valorPreservado>0?escAttr(String(valorPreservado)):''}" placeholder="Ex.: 1500,00"></div>
+            <div class="field"><label>Dia de vencimento</label><input type="number" min="1" max="31" step="1" inputmode="numeric" id="${escAttr(idCampoReativacaoCliente(chaveArquivo,'Vencimento'))}" value="${vencimentoPreservado>=1&&vencimentoPreservado<=31?escAttr(String(vencimentoPreservado)):''}" placeholder="1 a 31"></div>
+          </div>
+          <div class="field"><label>Primeiro mês após reativação</label><input type="month" id="${escAttr(idCampoReativacaoCliente(chaveArquivo,'Competencia'))}" value="${escAttr(hojeLocal().slice(0,7))}"></div>
+          <button class="btn" style="width:auto;margin-top:10px;" onclick="confirmarReativacaoClienteCentral('${escJs(slug)}','${escJs(chaveArquivo)}')">Reativar esta ficha e recuperar Portal</button>
+        </div>`:'<div class="meta" style="margin-top:9px;">Registro histórico preservado; não cria outra identidade.</div>';
+        return `<details class="item" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.clienteNome||v.slug||'Cliente')}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${ultima?' · último mês financeiro '+esc(ultima):''}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Contato preservado:</b> ${esc(f.instagram||'—')} · ${esc(f.telefone||'—')}<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}${ultima?'<br><b>Último mês no Financeiro:</b> '+esc(ultima):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${camposReativacao}</details>`;
+      };
       box.innerHTML=`<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Central única de clientes</h2><div class="desc">O link é a porta de entrada. Aqui a gerência confere, ativa, abre o Portal, edita dados e arquiva sem apagar histórico.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="setCadastroSub('form',document.querySelectorAll('#view-cadastro .subtab')[1])">Abrir link para enviar</button></div>
         <div class="card" id="centralSaidasClientes" style="border:2px solid var(--red);"><h2 style="margin-top:0;">Registrar saída de cliente</h2><div class="desc">Só <b>mensalistas</b> aparecem aqui — é quem tem contrato recorrente e portanto pode sair da agência. Cliente avulso não sai: o projeto dele termina. Ele continua operando até a data definida; depois sai das listas e do Portal, e todo o histórico fica no arquivo abaixo.</div><div class="row2" style="margin-top:12px;"><div class="field"><label>Cliente</label><select id="saidaRapidaCliente"><option value="">Selecione...</option>${(ativos.filter(v=>v.tipo==='mensalista')).map(v=>`<option value="${escAttr(v.slug)}">${esc(v.nome)}</option>`).join('')}</select></div><button class="btn red" style="align-self:end;" onclick="abrirSaidaRapidaCentral()">Programar saída</button></div></div>
         ${formularioEdicao}${formularioSaida}
@@ -17356,7 +17556,7 @@ Escreva sua mensagem aqui.</textarea></div>
     const snap=await getDoc(doc(db,'cadastros_clientes',id));
     if(!snap.exists() || !entradaClientePendente(snap.data())) throw new Error('Este cadastro não está mais aguardando validação.');
     const v=snap.data();
-    const valores={rrNome:v.nome,rrInstagram:v.instagram,rrTelefone:v.telefone,rrPlano:v.plano,rrPlanoDetalhes:v.planoDetalhes,rrValorMensal:v.valorMensal,rrDiaVencimento:v.diaVencimento,rrPrimeiraCompetencia:v.primeiraCompetencia,rrTipoEntrega:v.tipoEntrega,rrContrato:v.contrato};
+    const valores={rrNome:v.nome,rrInstagram:v.instagram,rrTelefone:v.telefone||v.whatsappCobranca,rrPlano:v.plano,rrPlanoDetalhes:v.planoDetalhes,rrValorMensal:v.valorMensal,rrDiaVencimento:v.diaVencimento,rrPrimeiraCompetencia:v.primeiraCompetencia,rrTipoEntrega:v.tipoEntrega,rrContrato:v.contrato};
     Object.entries(valores).forEach(([idCampo,valor])=>{ const el=document.getElementById(idCampo); if(el) el.value=valor??''; });
     const tipoCortesia=v.cortesiaPermanente?'permanente':((Array.isArray(v.cortesiaMeses)&&v.cortesiaMeses.length)||v.cortesiaInicial?'meses':'nenhuma');
     const campoTipo=document.getElementById('rrCortesiaTipo'); if(campoTipo) campoTipo.value=tipoCortesia;
@@ -17373,7 +17573,15 @@ Escreva sua mensagem aqui.</textarea></div>
   };
 
   window.ativarMensalistaRecebido=async function(id){
-    try{ await carregarMensalistaRecebidoNosCampos(id); await window.registrarClienteDaReuniao(); }
+    try{
+      await carregarMensalistaRecebidoNosCampos(id);
+      const box=document.getElementById('registroRapidoBox');
+      if(box){ box.style.display='block'; box.scrollIntoView({behavior:'smooth',block:'start'}); }
+      window.previsualizarCadastroMensalista();
+      const valor=document.getElementById('rrValorMensal');
+      if(valor){ valor.focus(); valor.select(); }
+      mostrarToast('Confira o valor mensal e os dados antes de ativar. Nada foi criado ainda.');
+    }
     catch(e){ mostrarToast(e.message||String(e),'erro'); }
   };
 
@@ -17392,6 +17600,8 @@ Escreva sua mensagem aqui.</textarea></div>
       if(!leadSnap.exists() || !entradaClientePendente(leadSnap.data())) throw new Error('Esta solicitação não está mais pendente.');
       const lead=leadSnap.data(); const slug=slugClienteMensalista(lead.nome);
       if(!slug) throw new Error('O nome do cliente não gera um identificador válido.');
+      const whatsappCobranca=numeroWhatsAppBrasil(lead.whatsappCobranca||lead.whatsappNormalizado||lead.whatsapp||lead.telefone);
+      if(!whatsappCobranca) throw new Error('Este cadastro não possui um WhatsApp brasileiro válido com DDD. Corrija o contato antes de ativar.');
       const diag=await identidadeClienteParaNovoTrabalho(lead.nome);
       if(diag.ativo) throw new Error(mensagemIdentidadeClienteExistente(diag)+' Vincule o novo trabalho à ficha existente.');
       const extrasSnap=await getDocs(collection(db,'clientes_extras'));
@@ -17403,7 +17613,7 @@ Escreva sua mensagem aqui.</textarea></div>
         if(!leadAtual.exists() || !entradaClientePendente(leadAtual.data())) throw new Error('Solicitação atualizada em outra aba.');
         if(configAtual.exists() && configAtual.data().tipoCliente==='mensalista' && !clienteInativoEfetivo(configAtual.data())) throw new Error('Este nome já pertence a um mensalista ativo.');
         tx.set(extraRef,{nome:lead.nome,slug,casta:'avulso',excluido:false,atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp(),...(extraAtual.exists()?{}:{criadoPor:usuarioAtual,criadoEm:serverTimestamp()})},{merge:true});
-        tx.set(configRef,{tipoCliente:'avulso',tipoEntrega:'entrega_direta',semConteudoRecorrente:true,motivoSemConteudo:'Cliente avulso: só entra em trabalhos contratados individualmente',clienteInativo:false,atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true});
+        tx.set(configRef,{tipoCliente:'avulso',tipoEntrega:'entrega_direta',whatsappCobranca,semConteudoRecorrente:true,motivoSemConteudo:'Cliente avulso: só entra em trabalhos contratados individualmente',clienteInativo:false,atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true});
         tx.update(leadRef,{status:'convertido',statusGerencia:'oficializado',slugAtivado:slug,oficializadoPor:usuarioAtual,oficializadoEm:serverTimestamp()});
       });
       window.limparCacheDeClientes();
@@ -17453,8 +17663,8 @@ Escreva sua mensagem aqui.</textarea></div>
     const erros=[];
     if(!entrada.nome) erros.push('Informe o nome da empresa.');
     if(!slugClienteMensalista(entrada.nome)) erros.push('O nome não gera um identificador válido.');
-    const telefone=String(entrada.telefone||'').replace(/\D/g,'');
-    if(telefone.length<10 || telefone.length>13) erros.push('Informe um WhatsApp válido, com DDD.');
+    const telefone=numeroWhatsAppBrasil(entrada.telefone);
+    if(!telefone) erros.push('Informe um WhatsApp brasileiro válido, com DDD.');
     if(!(Number(entrada.valorMensal)>0)) erros.push('O valor mensal deve ser maior que zero.');
     if(!Number.isInteger(Number(entrada.diaVencimento)) || Number(entrada.diaVencimento)<1 || Number(entrada.diaVencimento)>31) erros.push('O vencimento deve ser um dia entre 1 e 31.');
     if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(entrada.primeiraCompetencia||''))) erros.push('Escolha o primeiro mês cobrado.');
@@ -17508,7 +17718,7 @@ Escreva sua mensagem aqui.</textarea></div>
       slug,
       cadastro:{ nome:entrada.nome, slug, instagram:entrada.instagram, telefone:entrada.telefone, plano:entrada.plano, planoDetalhes:entrada.planoDetalhes, contrato:entrada.contrato, tipoEntrega:entrada.tipoEntrega, cortesiaTipo:entrada.cortesiaTipo, cortesiaMeses, cortesiaPermanente, origem:'reuniao_amanda_unificada' },
       extra:{ nome:entrada.nome, slug, excluido:false, casta:'mensalista' },
-      config:{ tipoCliente:'mensalista', tipoEntrega:entrada.tipoEntrega, modoAprovacaoCliente:'manual', prazoTacitaHorasUteis:24, clienteInativo:false, semConteudoRecorrente:!temConteudoRecorrente, motivoSemConteudo:temConteudoRecorrente?'':'Plano com entrega direta: fora das rotinas recorrentes de postagem', castaDefinidaPor:'Amanda (cadastro unificado)', castaDefinidaEm:agoraIso },
+      config:{ tipoCliente:'mensalista', tipoEntrega:entrada.tipoEntrega, whatsappCobranca:numeroWhatsAppBrasil(entrada.telefone), modoAprovacaoCliente:'manual', prazoTacitaHorasUteis:24, clienteInativo:false, semConteudoRecorrente:!temConteudoRecorrente, motivoSemConteudo:temConteudoRecorrente?'':'Plano com entrega direta: fora das rotinas recorrentes de postagem', castaDefinidaPor:'Amanda (cadastro unificado)', castaDefinidaEm:agoraIso },
       onboarding:{ clienteSlug:slug, clienteNome:entrada.nome, instagram:entrada.instagram, telefone:entrada.telefone, plano:planoDetalhado, contrato:entrada.contrato, etapas, status:'em_andamento' },
       acesso:{ token:tokenPortal, nome:entrada.nome },
       contrato:{ clienteNome:entrada.nome, plano:entrada.plano, planoDetalhes:entrada.planoDetalhes, valorCheio:entrada.valorMensal, valorVigente:entrada.valorMensal, voltaAoCheioEm:'', diaVencimento:entrada.diaVencimento, primeiraCompetencia:competencia, recebimentoEntradaId:cortesia?'':recebimentoEntradaId, status:'ativo', observacao:entrada.contrato, cortesiaPermanente, cortesiaMeses },
@@ -24869,15 +25079,62 @@ window.setGerenciaSub = function(qual, el){
     return { token: novo.token || atual.token, tokenEquipe: novo.tokenEquipe || atual.tokenEquipe };
   }
 
-  window.copiarLinkCalendarioEquipe = async function(slug, btn){
+  function copiarTextoLegado(texto){
+    const campo=document.createElement('textarea');
+    campo.value=String(texto||'');
+    campo.setAttribute('readonly','');
+    campo.style.position='fixed'; campo.style.left='-9999px'; campo.style.opacity='0';
+    document.body.appendChild(campo); campo.select(); campo.setSelectionRange(0,campo.value.length);
+    let copiado=false;
+    try{ copiado=document.execCommand('copy')===true; }catch(e){ copiado=false; }
+    campo.remove();
+    return copiado;
+  }
+  async function copiarTextoPreparadoDuranteClique(promessaTexto){
+    const textoP=Promise.resolve(promessaTexto);
+    if(navigator.clipboard?.write&&typeof ClipboardItem!=='undefined'){
+      try{
+        await navigator.clipboard.write([new ClipboardItem({'text/plain':textoP.then(texto=>new Blob([texto],{type:'text/plain'}))})]);
+        return {texto:await textoP,automatico:true};
+      }catch(e){ console.warn('Clipboard assíncrono indisponível; tentando compatibilidade:',e); }
+    }
+    const texto=await textoP;
     try{
-      const slugDocumento=await resolverSlugCalendarioExistente(slug);
-      const t = await garantirTokensDoCliente(slugDocumento, 'equipe');
-      if(!t.tokenEquipe) throw new Error('Token interno não disponível.');
-      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&e=' + encodeURIComponent(t.tokenEquipe);
-      await navigator.clipboard.writeText(link);
+      if(navigator.clipboard?.writeText){ await navigator.clipboard.writeText(texto); return {texto,automatico:true}; }
+    }catch(e){ console.warn('Clipboard moderno bloqueado; tentando cópia legada:',e); }
+    if(copiarTextoLegado(texto)) return {texto,automatico:true};
+    window.prompt('Seu navegador bloqueou a cópia automática. O link está pronto: selecione e copie.',texto);
+    return {texto,automatico:false};
+  }
+  window.copiarTextoPreparadoDuranteClique=copiarTextoPreparadoDuranteClique;
+
+  async function prepararLinkCalendarioEquipe(slug){
+    const slugDocumento=await resolverSlugCalendarioExistente(slug);
+    const t=await garantirTokensDoCliente(slugDocumento,'equipe');
+    if(!t.tokenEquipe) throw new Error('Token interno não disponível.');
+    return 'https://get-started.agency/calendario.html?cliente='+encodeURIComponent(slugDocumento)+'&e='+encodeURIComponent(t.tokenEquipe);
+  }
+
+  async function prepararLinkCalendarioCliente(slug,mesEscolhido){
+    const slugDocumento=await resolverSlugCalendarioExistente(slug);
+    const mes=/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mesEscolhido||''))?String(mesEscolhido):'';
+    if(mes){
+      const calSnap=await getDoc(doc(db,'calendarios',slugDocumento));
+      if(!calSnap.exists()||!itensDoMesCalendario(calSnap.data()||{},mes).filter(i=>i&&!i.excluido).length) throw new Error('Não existe conteúdo neste mês para este cliente.');
+      if(estadoMesCal(calSnap.data()||{},mes)!=='liberado') throw new Error('Este mês ainda não foi liberado ao cliente.');
+    }
+    const t=await garantirTokensDoCliente(slugDocumento,'cliente');
+    if(!t.token) throw new Error('Token do cliente não disponível.');
+    return 'https://get-started.agency/calendario.html?cliente='+encodeURIComponent(slugDocumento)+'&t='+encodeURIComponent(t.token)+(mes?'&mes='+encodeURIComponent(mes):'');
+  }
+  window.prepararLinkCalendarioCliente=prepararLinkCalendarioCliente;
+
+  window.copiarLinkCalendarioEquipe = async function(slug, btn){
+    const copia=copiarTextoPreparadoDuranteClique(prepararLinkCalendarioEquipe(slug));
+    try{
+      const resultado=await copia;
       if(btn){ const o = btn.textContent; btn.textContent = '✓ Copiado'; setTimeout(()=>btn.textContent=o, 2000); }
-      mostrarToast('Link de EDIÇÃO copiado — esse é interno, não manda pro cliente.');
+      mostrarToast(resultado.automatico?'Link de EDIÇÃO copiado — esse é interno, não manda pro cliente.':'Link de edição preparado para cópia manual.');
     }catch(e){
       console.error('Falha ao preparar link interno do calendário:',e);
       mostrarToast('Não consegui preparar o link de edição: '+(e?.message||'tente novamente.'), 'erro');
@@ -24885,21 +25142,12 @@ window.setGerenciaSub = function(qual, el){
   };
 
   window.copiarLinkCalendarioDireto = async function(slug, btn, mesEscolhido){
+    const copia=copiarTextoPreparadoDuranteClique(prepararLinkCalendarioCliente(slug,mesEscolhido));
     try{
-      const slugDocumento=await resolverSlugCalendarioExistente(slug);
-      const mes=/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mesEscolhido||'')) ? String(mesEscolhido) : '';
-      if(mes){
-        const calSnap=await getDoc(doc(db,'calendarios',slugDocumento));
-        if(!calSnap.exists() || !itensDoMesCalendario(calSnap.data()||{},mes).filter(i=>i&&!i.excluido).length) throw new Error('Não existe conteúdo neste mês para este cliente.');
-        if(estadoMesCal(calSnap.data()||{},mes)!=='liberado') throw new Error('Este mês ainda não foi liberado ao cliente.');
-      }
-      const t = await garantirTokensDoCliente(slugDocumento, 'cliente');
-      if(!t.token) throw new Error('Token do cliente não disponível.');
-      const link = 'https://get-started.agency/calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&t=' + encodeURIComponent(t.token) + (mes?'&mes='+encodeURIComponent(mes):'');
-      await navigator.clipboard.writeText(link);
+      const resultado=await copia;
       const original = btn?.textContent || '';
-      if(btn) btn.textContent = '✓ Copiado!';
-      mostrarToast('Link do cliente copiado — ele lê, comenta e aprova, mas não edita.');
+      if(btn) btn.textContent = resultado.automatico?'✓ Copiado!':'Link pronto';
+      mostrarToast(resultado.automatico?'Link do cliente copiado — ele lê, comenta e aprova, mas não edita.':'O navegador bloqueou a área de transferência; o link correto foi exibido para copiar.');
       if(btn) setTimeout(()=>{ btn.textContent = original; }, 2000);
     }catch(e){
       console.error('Falha ao preparar link do cliente:',e);

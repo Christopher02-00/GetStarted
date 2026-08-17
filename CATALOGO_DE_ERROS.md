@@ -1238,3 +1238,95 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Falha de leitura mostra indisponibilidade e `!`; nunca vira lista vazia nem quitação.
 - [x] Suíte crítica restaurada e testes V71/V72 mantidos em arquivos próprios.
 - [x] Nenhuma mensagem, cobrança, mensalidade, regra ou dado de produção foi alterado nos testes locais.
+
+## 62. WHATSAPP SE PERDIA ENTRE O CADASTRO E A ATIVAÇÃO (17/08/2026)
+
+### 62.1 O formulário coletava o telefone, mas a configuração operacional nascia vazia
+**Prova no código e na tela publicada:** o link de entrada gravava `telefone`/`whatsapp`, porém `modelarClienteMensalistaUnificado().config` e `ativarAvulsoRecebido()` criavam `clientes_config` sem `whatsappCobranca`. A Central mostrava clientes ativos sem número mesmo quando a ficha recebida possuía o contato.
+
+**Como foi corrigido:** todos os quatro caminhos públicos validam e preservam um número brasileiro canônico. Na confirmação gerencial, mensalista e avulso propagam esse mesmo número para `clientes_config.whatsappCobranca`. A edição da ficha usa a mesma normalização e não esvazia um número operacional quando a ficha legada está vazia. O formulário anônimo continua sem permissão para escrever diretamente na configuração interna.
+
+> **LEI:** dado obrigatório coletado na entrada precisa de teste ponta a ponta até cada consumidor operacional. Guardar na ficha não prova que Mensagens e Cobrança receberam o contato.
+
+### 62.2 Gate obrigatório da V73
+- [x] Cadastro final, lead mensal, avulso e pessoa física recusam WhatsApp brasileiro inválido.
+- [x] Cadastro final preserva telefone legível e versão canônica com DDI.
+- [x] Ativação mensal grava o número canônico em `clientes_config.whatsappCobranca`.
+- [x] Ativação avulsa aceita compatibilidade por `whatsappCobranca`, `whatsappNormalizado`, `whatsapp` ou `telefone` e bloqueia valor inválido antes da transação.
+- [x] Edição posterior reutiliza a mesma normalização e exibe o número operacional quando a ficha antiga está vazia.
+- [x] Central de Mensagens, Mensalidades e Régua continuam lendo a mesma configuração; nenhuma lista fixa foi criada.
+- [x] Nenhuma regra Firestore foi ampliada e o formulário anônimo não escreve em `clientes_config`.
+
+## 63. IDENTIDADE, REFERÊNCIAS, LEGENDAS E CÓPIA DE LINK — V74 (17/08/2026)
+
+### 63.1 A deduplicação final recebia uma lista já sobrescrita
+**Prova no código e na tela publicada:** Emanuelle e Emanuelle Bernaski apareciam juntas apesar da observação de migração; Hitech, Rodrigo e Cliente Rodrigo também apareciam como clientes diferentes. A Central canonizava o slug antes de inserir num `Map`, então a última origem podia substituir a anterior antes de `consolidarClientesAtivosPorIdentidade()` preservar ficha e telefone. Zeiss exibia número na configuração, mas podia chegar sem ele à Central.
+
+**Como foi corrigido:** Emanuelle legada converge para `emanuelle-bernaski-nutri`; Hitech e Cliente Rodrigo convergem para `rodrigo`; a lista mensal é consolidada antes do `Map`; e o contato procura primeiro o canônico e depois aliases conhecidos. Tudo é projeção de leitura: nenhum cadastro, token, contrato, calendário ou histórico é criado, apagado ou fundido automaticamente.
+
+> **LEI:** alias preservado no banco não pode sobreviver como segunda identidade operacional. Consolidar a interface nunca autoriza criar, apagar ou migrar documento automaticamente.
+
+### 63.2 Aprovação repetida criava uma nova postagem do mesmo vídeo
+**Causa encontrada:** `confirmarAprovacaoClienteCore()` usava `addDoc()` em toda confirmação. Dois cliques, uma retentativa ou duas portas concorrentes podiam deixar uma postagem na fila da Cecília e outra ainda na fila da Gabi, produzindo o relato “enviei para a Cecília e voltou para mim”.
+
+**Como foi corrigido:** postagem nova usa ID determinístico por vídeo e transação; registro legado existente é localizado e reutilizado sem regredir status. A fila da Gabi compara todas as postagens do mesmo vídeo e só exibe a canônica se ela ainda estiver realmente em `aguardando_legenda`. Salvar legenda trava duplo clique, revalida a etapa em transação, vincula a postagem ao vídeo e só confirma a Cecília depois da releitura.
+
+> **LEI:** um vídeo possui no máximo uma postagem canônica. Retentativa reutiliza a mesma identidade e uma cópia atrasada nunca vence uma etapa mais avançada.
+
+### 63.3 Referência salva podia parecer falha por causa do aviso
+**Causa encontrada:** o Portal usava `addDoc()` e, depois, aguardava a criação do aviso para Gabi. Se o aviso falhasse após a gravação, o cliente podia reenviar e duplicar a referência; também não havia recibo que provasse cliente, conteúdo e status gravados.
+
+**Como foi corrigido:** a referência usa ID determinístico do cliente+conteúdo, transação, trava anterior ao primeiro `await` e releitura completa. O Hub interno continua lendo `referencias_cliente` diretamente; o aviso é secundário e só é tentado na primeira criação.
+
+> **LEI:** referência confirmada e aviso da equipe são efeitos separados. Falha de aviso não invalida a fonte já gravada nem autoriza criar outra referência.
+
+### 63.4 A cópia do link perdia o gesto no navegador da Cecília
+**Causa encontrada:** o clique aguardava calendário, tokens e competência antes de chamar `navigator.clipboard.writeText()`. Navegadores que exigem gesto transitório recusavam a área de transferência e mostravam apenas “não consegui preparar/copiar”.
+
+**Como foi corrigido:** a operação de clipboard nasce imediatamente no clique com `ClipboardItem` e recebe o link quando as validações terminam. Há fallback para `writeText`, cópia legada e, por último, campo manual com o link correto. A validação do mês liberado, do conteúdo existente e do token continua obrigatória.
+
+> **LEI:** cópia assíncrona precisa preservar o gesto do clique e oferecer fallback verificável sem remover as travas de autorização ou competência.
+
+### 63.5 Gate obrigatório da V74
+- [x] Emanuelle, Hitech/Rodrigo e Zeiss consolidam contato sem criar novo cadastro.
+- [x] Aliases continuam preservados no banco e não viram segundo cartão operacional.
+- [x] Aprovação repetida reutiliza postagem legada ou o mesmo ID determinístico.
+- [x] Postagem mais avançada não reaparece na fila da Gabi.
+- [x] Legenda só confirma Cecília após transação e recibo do status.
+- [x] Referência do cliente é idempotente, relida e aparece no Hub pela coleção original.
+- [x] Aviso da referência não controla o sucesso da gravação.
+- [x] Link mensal mantém cliente, token e `AAAA-MM`, com três fallbacks de cópia.
+- [x] Nenhum dado de produção foi criado, excluído ou migrado nos testes locais.
+
+## 64. VALOR NA ATIVAÇÃO E REATIVAÇÃO DE MENSALISTA — V75 (17/08/2026)
+
+### 64.1 O botão principal pulava a conferência financeira
+**Causa encontrada:** a ficha recebida já possuía o campo editável de valor, mas o botão principal da fila chamava `registrarClienteDaReuniao()` imediatamente depois de carregar os dados. Quando o valor vinha vazio ou precisava de correção, Amanda recebia erro sem passar pela tela em que poderia conferir o valor.
+
+**Como foi corrigido:** o botão principal agora abre a mesma conferência oficial, monta a prévia e foca o valor. Nenhuma escrita ocorre nesse clique; a ativação acontece apenas no botão final do formulário, depois da conferência explícita.
+
+> **LEI:** ativação de mensalista nunca pula a conferência humana do valor. Carregar uma ficha e gravá-la são ações separadas e visíveis.
+
+### 64.2 Reativar recuperava a ficha sem registrar a nova condição financeira
+**Causa encontrada:** o arquivo tinha apenas “Reativar cliente e recuperar Portal”. O fluxo restaurava configuração, contrato e acesso, mas não pedia valor, vencimento ou competência de reinício. Em arquivo legado sem contrato, a reativação podia voltar sem base financeira completa.
+
+**Como foi corrigido:** o cartão arquivado coleta valor mensal, dia e primeiro mês. A transação relê a origem arquivada, reutiliza o slug e a ficha existentes, recupera ou atualiza o contrato e preserva a saída como histórico cancelado. Contrato existente recebe alteração datada e auditável; contrato ausente é recuperado no mesmo ID canônico. Mensalidade paga ou cancelada não é sobrescrita.
+
+> **LEI:** reativar cliente arquivado reutiliza a identidade e exige a nova condição financeira. Nunca recadastrar o cliente para contornar o arquivo.
+
+### 64.3 IDs iguais em arquivos diferentes podiam selecionar o registro errado
+**Causa encontrada:** o mapa da interface usava somente `documentId`, apesar de reunir `clientes_encerrados`, `cadastros_clientes` e leads. IDs iguais em coleções diferentes poderiam colidir antes do clique de reativação.
+
+**Como foi corrigido:** a chave da interface passou a ser `coleção + ID`. A origem é validada por lista fechada e relida dentro da transação. Arquivo legado recebe registro histórico determinístico, sem `addDoc()` e sem criar outra identidade operacional.
+
+> **LEI:** arquivo legado e saída central possuem chaves de interface distintas. A reativação deve provar coleção, documento e estado antes de qualquer escrita.
+
+### 64.4 Gate obrigatório da V75
+- [x] Cadastro novo abre conferência e não grava no primeiro clique.
+- [x] Valor da entrada permanece editável para Amanda; ficha ativa continua somente leitura para valor.
+- [x] Reativação exige valor positivo, vencimento inteiro de 1 a 31 e competência `AAAA-MM`.
+- [x] Cadastro mensalista legado reutiliza a mesma ficha e o mesmo slug.
+- [x] Contrato existente recebe valor programado e histórico; contrato ausente é recuperado no ID canônico.
+- [x] Pagamentos confirmados e cancelados não são reescritos.
+- [x] Saída permanece preservada por soft-delete; não existe `deleteDoc()` nem `addDoc()` no fluxo.
+- [x] iPhone Campo Largo não foi reativado, recriado ou alterado em produção.

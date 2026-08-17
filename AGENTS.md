@@ -118,6 +118,14 @@ O relato de demanda perdida da Gabi em 17/08/2026 mostrou que `addDoc()` seguido
 
 A V72 consolidou o contato de WhatsApp entre ficha, cadastro legado e `whatsappCobranca`: o número específico de cobrança vence e telefone vazio de uma fonte nunca apaga um número válido de outra. Central de mensagens, Mensalidades e Régua usam a mesma validação brasileira e abrem `web.whatsapp.com/send` para o número confirmado; ausência de DDD ou leitura indisponível não abre conversa genérica. A nova aba precisa nascer no gesto do clique antes de qualquer `await`, para o navegador não bloqueá-la. Abrir a conversa prepara a mensagem, mas somente a ação separada “Confirmar que enviei” registra `ultimaCobranca` em transação. Mensagens financeiras usam blocos e quebras de linha estáveis, sem emoji decorativo.
 
+O WhatsApp informado no link de entrada é obrigatório e atravessa a mesma ativação que cria a ficha. Formulários públicos preservam o texto legível e guardam também a versão brasileira canônica; a confirmação gerencial grava `clientes_config.whatsappCobranca` tanto para mensalista quanto para avulso. Edição posterior mantém ficha e configuração sincronizadas. Nunca autorize o formulário anônimo a escrever diretamente em `clientes_config`, nunca ative cliente com contato inválido e nunca crie uma lista fixa de telefones no HTML.
+
+Aliases de clientes são compatibilidade de leitura, nunca autorização para um segundo cartão ou cadastro. Emanuelle legada converge para `emanuelle-bernaski-nutri`; Hitech e Cliente Rodrigo convergem para `rodrigo`; Zeens continua convergindo para Zeiss. A consolidação acontece antes de qualquer `Map` que possa sobrescrever origens e preserva contato não vazio do canônico ou de seus aliases. Não criar, migrar, arquivar ou apagar documentos para corrigir apenas a lista.
+
+Cada vídeo possui uma postagem canônica. Aprovação repetida localiza o legado ou usa ID determinístico em transação; nunca usar `addDoc()` por clique. A fila da Gabi compara as postagens do mesmo `videoId`, prefere a etapa mais avançada e não deixa cópia atrasada reaparecer. Salvar legenda revalida `aguardando_legenda`, grava a ligação no vídeo e relê `aguardando_agendamento` antes de afirmar que chegou à Cecília.
+
+Referência enviada pelo cliente permanece em `referencias_cliente`, que o Hub lê diretamente. A gravação tem identidade determinística e recibo; o alerta para a equipe é secundário e falha dele não pode induzir nova referência. Links de calendário iniciam a cópia no gesto do clique, mantêm validação de token/mês liberado e oferecem fallback moderno, legado e manual; nunca aliviar a autorização para contornar bloqueio do clipboard.
+
 Calendário aprovado continua integralmente consultável por quem revisa e executa: trava de workflow esconde escritores e deixa campos somente leitura; nunca bloqueia roteiro, legenda, solicitação especial ou referência. Link enviado ao cliente carrega a competência `AAAA-MM` e o leitor revalida se ela existe e está liberada. Não copiar link mensal sem competência nem permitir que o parâmetro exponha rascunho.
 
 Baixa antiga que possui somente quantidade não prova quais títulos foram gravados. A conciliação exige seleção humana exatamente igual à quantidade registrada, revalidação transacional de papel/sessão/mês/item e nunca cria `videos_producao` nem toma conteúdo vinculado a outra gravação. Saldo de captação deriva de títulos resolvidos, não da soma bruta de registros sem identidade.
@@ -137,6 +145,7 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - Mudança de valor de mensalidade nunca reescreve a competência já aberta nem um pagamento confirmado. Ela é registrada no contrato com valor, competência de início, motivo, autoria e histórico; o gerador e o Financeiro calculam o valor pela competência consultada.
 - A ficha geral do cliente não é um segundo escritor de valor financeiro. Alterações comerciais ficam em `Contratos`; a ficha pode atualizar dados cadastrais, vencimento e cortesia sem substituir `valorVigente` ou `valorDevido`.
 - Cobrança futura já criada pode ser sincronizada somente se estiver aberta ou isenta. Pagamentos `pago` e `cancelado` permanecem históricos e imutáveis.
+- Na ativação inicial e na reativação, Amanda precisa conferir valor, vencimento e competência antes da escrita. O primeiro clique nunca confirma automaticamente. Reativação reutiliza ficha, slug e Portal existentes; contrato ausente é recuperado no mesmo ID canônico, e arquivo legado é relido na transação. Depois que o cliente está ativo, mudança de valor volta a ser exclusiva de `Contratos`.
 
 ### Invariantes de workflow e arquivo operacional
 
@@ -153,6 +162,8 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - Não invente arquivos para upload. Informe nome, caminho absoluto, hash, estado Git, estado de publicação e se existe ação manual.
 - Uma entrega com vários arquivos só pode ser chamada de publicada depois de consultar cada caminho anunciado na branch de publicação. HTML no ar não comprova scripts, catálogo, instruções nem `firestore.rules`; regra no Firebase também não comprova que o backup equivalente está no GitHub.
 - O usuário faz o upload manual para o GitHub, salvo autorização explícita diferente. Não diga que algo está no ar sem comparação da versão publicada.
+- A entrega local tem um único destino: `/Users/christopherbrito/site Get — atualizado`. Cada versão cria ali somente uma subpasta `ATUALIZACAO_ATUAL_VNN`, contendo o conjunto completo e atual para upload, e um ZIP equivalente na raiz. Depois de validar o pacote novo, versões anteriores desse destino são movidas para a Lixeira; nunca espalhar novas entregas em Documentos ou Downloads.
+- A pasta `/Users/christopherbrito/Documents/site get` é referência histórica e não é fonte de código nem destino de novas entregas. Preserve-a sem alteração até autorização explícita para descartá-la.
 - Entregue sempre em cinco blocos curtos: **Entendimento**, **Alterações**, **Provas de validação**, **Riscos/pendências**, **Próximo passo**.
 
 O objetivo não é prometer perfeição; é tornar regressões raras, pequenas e diagnosticáveis.

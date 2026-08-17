@@ -16,7 +16,8 @@ const obrigatorios = [
   'escritorio.html', 'portal-cliente.html', 'calendario.html',
   'calendarios.html', 'cadastro.html', 'cadastros.html',
   'avulso.html', 'firestore.rules', 'CATALOGO_DE_ERROS.md',
-  'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs'
+  'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
+  'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -154,10 +155,24 @@ const leisV72 = [
   'abrir WhatsApp não prova envio',
   'upload de testes é conferido por caminho, tamanho e assinatura final'
 ];
+const leisV73 = [
+  'dado obrigatório coletado na entrada precisa de teste ponta a ponta até cada consumidor operacional'
+];
+const leisV74 = [
+  'alias preservado no banco não pode sobreviver como segunda identidade operacional',
+  'um vídeo possui no máximo uma postagem canônica',
+  'referência confirmada e aviso da equipe são efeitos separados',
+  'cópia assíncrona precisa preservar o gesto do clique'
+];
+const leisV75 = [
+  'ativação de mensalista nunca pula a conferência humana do valor',
+  'reativar cliente arquivado reutiliza a identidade e exige a nova condição financeira',
+  'arquivo legado e saída central possuem chaves de interface distintas'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V72');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V72');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V75');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V75');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -395,10 +410,10 @@ const reativacaoCliente = escritorio.slice(
   escritorio.indexOf('window.cancelarProgramacaoSaidaCentral=async function'),
   escritorio.indexOf('async function efetivarSaidasProgramadas')
 );
-if (!escritorio.includes('Reativar cliente e recuperar Portal') ||
-    !reativacaoCliente.includes("statusSaida:'cancelada',excluido:true") ||
+if (!escritorio.includes('Reativar esta ficha e recuperar Portal') ||
+    !/statusSaida:'cancelada'[\s\S]*?excluido:true/.test(reativacaoCliente) ||
     !reativacaoCliente.includes("status:'ativo',encerrado:false,excluido:false,ativo:true") ||
-    !reativacaoCliente.includes('status:p.statusAntesSaida') ||
+    !reativacaoCliente.includes('status:statusRestaurado') ||
     !reativacaoCliente.includes('ultimaCompetenciaPagamento:deleteField()') ||
     !reativacaoCliente.includes('await window.garantirPortalClienteCentral(slug)') ||
     reativacaoCliente.includes('deleteDoc(')) {
@@ -429,7 +444,8 @@ const renderArquivoClientes = escritorio.slice(
   escritorio.indexOf('const htmlArquivado=v=>'),
   escritorio.indexOf('box.innerHTML=', escritorio.indexOf('const htmlArquivado=v=>'))
 );
-if (!escritorio.includes("const NOMES_CLIENTES_CANONICOS = {'master-chef':'Master Chef','zeiss':'Zeiss'}") ||
+if (!escritorio.includes("'master-chef':'Master Chef'") ||
+    !escritorio.includes("'zeiss':'Zeiss'") ||
     !reparoIdentidade.includes("doc(db,'clientes_portal_tokens',atual.token)") ||
     !reparoIdentidade.includes("doc(db,'calendarios',slug)") ||
     !reparoIdentidade.includes('identidadeCanonicaCorrigidaEm') ||
@@ -663,9 +679,18 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-17-regua-whatsapp-contatos-v72') {
-  falhar(`build V72 inesperado: ${build || 'ausente'}`);
-} else provar('V72 identifica contatos canônicos e Régua integrada ao WhatsApp Web');
+if (build !== '2026-08-17-valor-ativacao-reativacao-v75') {
+  falhar(`build V75 inesperado: ${build || 'ausente'}`);
+} else provar('V75 exige conferência financeira na ativação/reativação sem duplicar identidade');
+
+if (!escritorio.includes("'emanuelle': 'emanuelle-bernaski-nutri'") ||
+    !escritorio.includes("'hitech': 'rodrigo'") ||
+    !escritorio.includes("'cliente-rodrigo': 'rodrigo'") ||
+    !escritorio.includes('consolidarFilaLegendaConfirmada') ||
+    !escritorio.includes('copiarTextoPreparadoDuranteClique') ||
+    !portal.includes('idReferenciaClienteDeterministico')) {
+  falhar('V74 perdeu deduplicação de identidade, fila de legenda, referência idempotente ou cópia compatível');
+} else provar('V74 mantém as quatro barreiras novas contra duplicação e falha silenciosa');
 
 const checklistV69 = escritorio.slice(escritorio.indexOf('function chaveExecucao'), escritorio.indexOf('function contarStreakDiario'));
 const resumoChecklistV69 = escritorio.slice(escritorio.indexOf('function pendenciasChecklistDoResumo'), escritorio.indexOf('async function renderDemandasAtrasadasDetalhe'));

@@ -185,7 +185,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, serverTimestamp, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, serverTimestamp, query, where, orderBy, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -232,7 +232,7 @@
      ele envia. O portal dele esconde Calendário, Minha Agenda, Stories e
      Banco de Ideias (não existem no plano), a aba principal vira "Meus
      Vídeos", e os números mostram ENTREGA (não publicação). */
-  const CLIENTES_SO_EDICAO = ['rodrigo'];
+  const CLIENTES_SO_EDICAO = ['rodrigo','hitech','cliente-rodrigo'];
   function ehSoEdicao(){ return !!clienteAtual && CLIENTES_SO_EDICAO.includes(clienteAtual.slug); }
 
   function nomeLegivelPortal(slug,nome){
@@ -1532,25 +1532,71 @@
     cont.innerHTML = html;
   }
 
+  function hashReferenciaCliente(valor){
+    let hash=2166136261;
+    for(const caractere of String(valor||'').normalize('NFC')){
+      hash^=caractere.codePointAt(0);
+      hash=Math.imul(hash,16777619);
+    }
+    return (hash>>>0).toString(36);
+  }
+  function idReferenciaClienteDeterministico(dados){
+    const identidade=[dados.cliente,dados.link,dados.imagemCapa,dados.descricao,dados.observacoes]
+      .map(v=>String(v||'').trim().normalize('NFC')).join('|');
+    return 'portal_'+String(dados.cliente||'cliente').replace(/[^a-zA-Z0-9_-]/g,'_')+'_'+hashReferenciaCliente(identidade);
+  }
+  function referenciaClienteConfirmada(snapshot,id,dados){
+    if(!snapshot?.exists?.() || snapshot.id!==id) return false;
+    const salva=snapshot.data()||{};
+    return salva.cliente===dados.cliente && salva.link===dados.link &&
+      salva.imagemCapa===dados.imagemCapa && salva.descricao===dados.descricao &&
+      salva.observacoes===dados.observacoes && salva.status==='nao_utilizada' &&
+      salva.criadoPorTipo==='cliente' && salva.excluido!==true;
+  }
+  window.idReferenciaClienteDeterministico=idReferenciaClienteDeterministico;
+  window.referenciaClienteConfirmada=referenciaClienteConfirmada;
+
   window.enviarReferenciaCliente = async function(){
-    const link = document.getElementById('novaRefLink').value.trim();
-    const descricao = document.getElementById('novaRefDesc').value.trim();
-    if(!link && !descricao){ alert('Cola o link ou escreve a descrição.'); return; }
-    await addDoc(collection(db,'referencias_cliente'), {
-      cliente: clienteAtual.slug, clienteNome: clienteAtual.nome,
-      link, imagemCapa: document.getElementById('novaRefCapa').value.trim(),
-      descricao, observacoes: document.getElementById('novaRefObs').value.trim(),
-      status: 'nao_utilizada', aprovadaCliente: false,
-      criadoPor: clienteAtual.nome, criadoPorTipo: 'cliente', criadoEm: serverTimestamp()
-    });
-    /* Vai pra Gabi: e ela quem monta o calendario e usa a referencia.
-       A referencia ja fica guardada em referencias_cliente com data e
-       status, e aparece no Hub dela com o selo "o cliente mandou".
-       Quando ela marcar como Concluida, aí sim cai no painel da Amanda
-       pro ok final. */
-    await alertarEquipe('🔗 ' + clienteAtual.nome + ' mandou uma referência nova', link || descricao, 'Gabrielle');
-    ['novaRefLink','novaRefCapa','novaRefDesc','novaRefObs'].forEach(id => document.getElementById(id).value = '');
-    carregarReferenciasCliente();
+    if(window.__enviandoReferenciaCliente) return;
+    window.__enviandoReferenciaCliente=true;
+    try{
+      const dados={
+        cliente:clienteAtual.slug, clienteNome:clienteAtual.nome,
+        link:document.getElementById('novaRefLink').value.trim(),
+        imagemCapa:document.getElementById('novaRefCapa').value.trim(),
+        descricao:document.getElementById('novaRefDesc').value.trim(),
+        observacoes:document.getElementById('novaRefObs').value.trim()
+      };
+      if(!dados.link && !dados.descricao){ alert('Cola o link ou escreve a descrição.'); return; }
+      const referenciaId=idReferenciaClienteDeterministico(dados);
+      const referenciaRef=doc(db,'referencias_cliente',referenciaId);
+      const criada=await runTransaction(db,async tx=>{
+        const existente=await tx.get(referenciaRef);
+        if(existente.exists()){
+          if(!referenciaClienteConfirmada(existente,referenciaId,dados)) throw new Error('A identidade desta referência já pertence a outro conteúdo.');
+          return false;
+        }
+        tx.set(referenciaRef,{...dados,status:'nao_utilizada',aprovadaCliente:false,
+          criadoPor:clienteAtual.nome,criadoPorTipo:'cliente',criadoEm:serverTimestamp()});
+        return true;
+      });
+      const recibo=await getDoc(referenciaRef);
+      if(!referenciaClienteConfirmada(recibo,referenciaId,dados)) throw new Error('A referência foi gravada, mas a confirmação ainda não pôde ser validada. Tente confirmar novamente; o sistema reutilizará o mesmo registro.');
+      /* O Hub de Referências já lê `referencias_cliente` diretamente. O
+         aviso é secundário: se falhar, a referência confirmada continua no
+         lugar certo e não parece ter falhado, evitando reenvio duplicado. */
+      if(criada){
+        try{ await alertarEquipe('🔗 '+clienteAtual.nome+' mandou uma referência nova',dados.link||dados.descricao,'Gabrielle'); }
+        catch(e){ console.error('Referência confirmada; apenas o aviso para a equipe falhou:',e); }
+      }
+      ['novaRefLink','novaRefCapa','novaRefDesc','novaRefObs'].forEach(id=>document.getElementById(id).value='');
+      await carregarReferenciasCliente();
+    }catch(e){
+      console.error('Falha ao confirmar referência do cliente:',e);
+      alert(e?.message||'Não foi possível confirmar a referência agora. Nada será duplicado numa nova tentativa.');
+    }finally{
+      window.__enviandoReferenciaCliente=false;
+    }
   };
 
   window.aprovarReferenciaCliente = async function(id){

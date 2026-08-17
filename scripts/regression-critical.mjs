@@ -1583,8 +1583,11 @@ async function testarV54Sandbox() {
   try{await clientesStoriesApi.listar(true);}catch(e){leituraStoriesFalhou=String(e.message).includes('indisponível');}
   exigir(leituraStoriesFalhou,'falha de leitura de Stories voltou a ser convertida em lista vazia');
   const estadoStoriesFonte=trecho(escritorio,'function estadoCadeiaStoriesCliente','window.estadoCadeiaStoriesCliente');
+  const semanaStoriesFonte=trecho(escritorio,'function semanaStoryDerivadaDoTexto','  window.validarSemanaDoRoteiroStory=validarSemanaDoRoteiroStory;');
   const estadoStoriesApi=executarSandbox('stories-cadeia-v60.js',
-    `${estadoStoriesFonte}\nglobalThis.api={estadoCadeiaStoriesCliente};`);
+    `function dataLocal(d){const dt=new Date(d);return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');}`+
+    `function segundaDaSemana(d){const data=new Date(d);const dow=data.getDay(),recuo=dow===0?6:dow-1;data.setDate(data.getDate()-recuo);return dataLocal(data);}`+
+    `${semanaStoriesFonte}${estadoStoriesFonte}\nglobalThis.api={estadoCadeiaStoriesCliente};`);
   exigir(estadoStoriesApi.estadoCadeiaStoriesCliente('vitalle-odonto','2026-08-10',[],null).codigo==='nao_criado' &&
     estadoStoriesApi.estadoCadeiaStoriesCliente('vitalle-odonto','2026-08-10',[{cliente:'vitalle-odonto',semana:'2026-08-10',revisaoInterna:'aguardando_interna'}],null).codigo==='aguardando_amanda' &&
     estadoStoriesApi.estadoCadeiaStoriesCliente('vitalle-odonto','2026-08-10',[{cliente:'vitalle-odonto',semana:'2026-08-10',revisaoInterna:'liberado'}],null).codigo==='liberado_portal' &&
@@ -1615,7 +1618,7 @@ async function testarV54Sandbox() {
   const renderStoriesFonte=trecho(escritorio,'window.renderStoriesCliente = async function','  // guarda onde o painel foi desenhado');
   exigir(renderStoriesFonte.includes('clientesStory.some(c=>c.slug===window.__storyClienteSel)')&&
     renderStoriesFonte.includes("s.cliente === clienteStorySelecionado")&&
-    renderStoriesFonte.includes('s.semana === semana'),
+    renderStoriesFonte.includes('semanaEfetivaStory(s) === semana'),
     'seleção de Stories voltou a misturar conteúdo semanal de clientes diferentes');
   const avaliacaoPortal=trecho(portal,'async function carregarAvaliacaoCliente','/* ===== PROGRAMADOS');
   const carregarAvaliacaoPortal=trecho(avaliacaoPortal,'async function carregarAvaliacaoCliente','window.salvarAvaliacaoCliente');
@@ -1779,6 +1782,52 @@ async function testarChecklistViradaStoriesEVideosV69Sandbox(){
     'Amanda não tem o caminho completo protegido para material recebido ou o fluxo voltou a contar como gravação');
 }
 
+function testarIncidentesStoriesCalendarioGravacaoV70Sandbox(){
+  const storyFonte=trecho(escritorio,'function semanaStoryDerivadaDoTexto','  window.validarSemanaDoRoteiroStory=validarSemanaDoRoteiroStory;');
+  const storyApi=executarSandbox('stories-semana-vitalle-v70.js',
+    `function dataLocal(d){const dt=new Date(d);return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');}\n`+
+    `function segundaDaSemana(d){const data=new Date(d);const dow=data.getDay(),recuo=dow===0?6:dow-1;data.setDate(data.getDate()-recuo);return dataLocal(data);}\n`+
+    `${storyFonte}\nglobalThis.api={semanaStoryDerivadaDoTexto,semanaEfetivaStory,validarSemanaDoRoteiroStory};`);
+  const vitalle={semana:'2026-08-10',titulo:'Vitalle — Semana 17 á 22/08',descricao:'17/08 bastidor\n19/08 enquete\n22/08 chamada'};
+  exigir(storyApi.semanaEfetivaStory(vitalle)==='2026-08-17',
+    'registro real da Vitalle não foi recuperado na semana de 17/08');
+  exigir(storyApi.semanaEfetivaStory({semana:'2026-08-10',titulo:'Bastidores',descricao:'Sem datas fechadas'})==='2026-08-10' &&
+    storyApi.semanaEfetivaStory({semana:'2026-08-10',titulo:'17/08 e 24/08',descricao:''})==='2026-08-10',
+    'compatibilidade de Stories tentou adivinhar texto sem data ou roteiro ambíguo');
+  exigir(storyApi.validarSemanaDoRoteiroStory('2026-08-10',vitalle.titulo,vitalle.descricao).ok===false &&
+    storyApi.validarSemanaDoRoteiroStory('2026-08-17',vitalle.titulo,vitalle.descricao).ok===true &&
+    storyApi.semanaEfetivaStory({...vitalle,semanaConteudo:'2026-08-24'})==='2026-08-24',
+    'nova gravação de Story aceita competência contraditória ou ignora campo explícito');
+
+  const portal=fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8');
+  const portalFonte=trecho(portal,'function semanaStoryDerivadaPortal','  window.semanaEfetivaStoryPortal=semanaEfetivaStoryPortal;');
+  const portalApi=executarSandbox('stories-portal-vitalle-v70.js',
+    `function dataLocal(d){const dt=new Date(d);return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');}\n`+
+    `function segundaDaSemanaPortal(d){const data=new Date(d);const dow=data.getDay(),recuo=dow===0?6:dow-1;data.setDate(data.getDate()-recuo);return dataLocal(data);}\n`+
+    `${portalFonte}\nglobalThis.api={semanaEfetivaStoryPortal};`);
+  exigir(portalApi.semanaEfetivaStoryPortal(vitalle)===storyApi.semanaEfetivaStory(vitalle),
+    'Escritório e Portal voltaram a discordar sobre a semana efetiva do mesmo Story');
+
+  exigir(calendario===fs.readFileSync(path.join(raiz,'calendarios.html'),'utf8') &&
+    calendario.includes("const mesSolicitado = params.get('mes') || ''") &&
+    calendario.includes('pedido && lib.includes(pedido)') && calendario.includes("u.searchParams.set('mes',m)"),
+    'dois endereços do calendário divergiram ou o mês explícito deixou de ser respeitado');
+  const abrirItem=trecho(calendario,'function openEdit','function saveItem');
+  exigir(abrirItem.includes('const somenteConsulta=edicaoBloqueadaPorRevisao()') &&
+    !abrirItem.includes('if(exigirRetiradaAntesDeEditar())return') && abrirItem.includes('aplicarModoConsultaItem(true)'),
+    'mês aprovado voltou a impedir consulta ou a liberar edição silenciosa');
+
+  const linkCliente=trecho(escritorio,'window.copiarLinkCalendarioDireto = async function','window.abrirLinkCliente');
+  exigir(linkCliente.includes("estadoMesCal(calSnap.data()||{},mes)!=='liberado'") &&
+    linkCliente.includes("(mes?'&mes='+encodeURIComponent(mes):'')"),
+    'link mensal pode copiar mês inexistente/não liberado ou perder a competência na URL');
+  const conciliacao=trecho(escritorio,'window.abrirConciliacaoGravacaoAntiga','  function popularClientesAgendamento');
+  exigir(conciliacao.includes('marcados.length!==alvo') && conciliacao.includes('await runTransaction') &&
+    conciliacao.includes("vinculoSessao:'conciliacao_legada'") && !conciliacao.includes("collection(db,'videos_producao')") &&
+    conciliacao.includes('item.agendamentoId&&item.agendamentoId!==agId'),
+    'conciliação antiga pode duplicar vídeo, alterar quantidade ou tomar item de outra sessão');
+}
+
 try {
   testarCoberturaPostagensSandbox();
   await testarLoginSandbox();
@@ -1799,6 +1848,7 @@ try {
   await testarV54Sandbox();
   testarCentralEditorialCalendariosSandbox();
   await testarChecklistViradaStoriesEVideosV69Sandbox();
+  testarIncidentesStoriesCalendarioGravacaoV70Sandbox();
   console.log(`REGRESSÃO CRÍTICA: APROVADA (${total} asserções)`);
 } catch (erro) {
   console.error(`REGRESSÃO CRÍTICA: FALHOU — ${erro.stack || erro.message}`);

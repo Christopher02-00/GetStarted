@@ -1,3 +1,4 @@
+[Uploading CATALOGO_DE_ERROS.md…]()
 [CATALOGO_DE_ERROS.md](https://github.com/user-attachments/files/31139833/CATALOGO_DE_ERROS.md)
 [Uploading CATALOGO_DE_ERROS.md…]()
 [Uploading CATALOGO_DE_ERROS.md…]()
@@ -1094,3 +1095,43 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Pacote pendente da V67 continua compatível sem restaurar o documento antigo.
 - [x] A fila da Amanda continua derivada de `linhasCalendariosAguardandoRevisao`; nenhuma fila paralela foi criada.
 - [x] Nenhuma regra, calendário ou dado de produção foi gravado durante a correção local.
+
+## 58. REGRESSÕES — VIRADA DO CHECKLIST, STORIES E VÍDEOS DA AMANDA (17/08/2026)
+
+### 58.1 A chave mudava à meia-noite, mas a aba aberta continuava com o estado de ontem
+**Prova no código:** `salvarExecucaoChecklist()` calculava a chave no instante da gravação, enquanto `checklistExecAtual` podia ter sido carregado no dia anterior. Se a tela permanecesse aberta na virada, o primeiro clique depois de 00:00 podia escrever no documento novo todas as marcações antigas que ainda estavam em memória.
+
+**Como foi corrigido:** a execução carregada agora guarda a própria chave. Antes de qualquer marcação ou confirmação de prova, o código compara essa chave com o dia atual; se mudou, carrega o documento novo e exige que a pessoa confirme o item novamente. Um temporizador também redesenha o checklist depois da meia-noite. O resumo das 19h não escreve em `checklist_execucoes`.
+
+> **LEI:** estado diário em memória precisa carregar e preservar a identidade do dia que o originou. Nunca recalcular apenas o destino da gravação quando o conteúdo ainda pode pertencer ao dia anterior.
+
+### 58.2 O aviso das 19h mostrava progresso, não a pendência pedida
+**Prova no código:** o e-mail listava `feitos/total` e era enviado mesmo quando todos haviam concluído. Isso exigia que Amanda calculasse mentalmente o número aberto e criava um aviso sem ação quando não havia pendência.
+
+**Como foi corrigido:** a rodada mantém seu registro idempotente, mas só envia e-mail quando existe alguém pendente. O texto contém exclusivamente `pessoa: N em aberto`, e o log guarda pessoas, quantidade total de itens abertos e o retrato das 19h. Checklists continuam editáveis até 23:59 e ganham chave nova apenas após 00:00.
+
+> **LEI:** aviso de pendência lista somente quem precisa agir e a quantidade realmente aberta; uma rotina de notificação nunca pode encerrar, limpar ou alterar o trabalho que mede.
+
+### 58.3 Stories da Gabi não participavam do checklist diário geral
+**Prova no código:** os checks granulares por cliente já existiam em `stories_diarios_execucoes`, mas o template diário e o resumo de disciplina não tinham um item correspondente. Assim, era possível o checklist geral aparecer completo enquanto ainda havia Story previsto sem confirmação.
+
+**Como foi corrigido:** o Diário efetivo da Gabrielle recebe um item fixo de Stories mesmo quando há template personalizado antigo. Esse item deriva da fonte oficial `stories_clientes` e dos checks já existentes, sem criar coleção paralela. Marcar ou desmarcar um Story sincroniza o item geral; falha de leitura permanece falha e não vira conclusão automática.
+
+> **LEI:** lembrete agregado de Stories deriva dos checks operacionais por cliente. Não criar segundo cadastro, seed ou confirmação independente para representar o mesmo trabalho.
+
+### 58.4 Amanda precisava registrar material recebido sem virar filmmaker
+**Prova no código:** a tela já possuía o modo `recebido`, que envia o material direto à edição com `soEdicao=true`, mas a Amanda era bloqueada na subaba de lançamento e não tinha atalho. Adicioná-la a `CAMPO_MAIS_CHRIS` contaminaria agenda e produtividade de filmagem.
+
+**Como foi corrigido:** foi criada uma permissão exclusiva de lançamento para Amanda + papéis que já lançavam. A mesma guarda protege navegação, subaba e escritor. Amanda ganha o atalho “Subir vídeo de cliente”, pré-selecionando edição avulsa; ela continua fora de `PESSOAS_DE_CAMPO` e de todas as métricas de filmmaker. As regras Firestore já autorizavam membros da equipe em `videos_producao`, portanto não foram ampliadas.
+
+> **LEI:** permitir uma ação compartilhada não concede o papel inteiro. A autorização da ação deve ser própria e aplicada também no escritor, sem reutilizar listas que governam agenda, privacidade ou produtividade.
+
+### 58.5 Gate obrigatório da V69
+- [x] 18:59, 19:00 e 23:59 usam a mesma chave diária; 00:00 usa a chave do dia seguinte.
+- [x] Uma aba antiga não consegue salvar seu estado na chave nova; clique e prova revalidam a chave antes da mutação.
+- [x] A rotina das 19h não escreve no checklist e não envia e-mail quando não há pendência.
+- [x] O resumo retorna somente pessoas incompletas e o número exato de itens abertos.
+- [x] O item de Stories da Gabi deriva da fonte única, acompanha marcar/desmarcar e falha fechado.
+- [x] Amanda abre e executa edição avulsa; Gabrielle, Cecília, editoras e papéis sem campo não ganham o escritor.
+- [x] Amanda não foi adicionada à lista de filmmakers, e material recebido continua fora da produtividade de gravação.
+- [x] Nenhuma regra, dado, usuário ou configuração de produção foi alterado durante a correção local.

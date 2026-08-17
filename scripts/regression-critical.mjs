@@ -626,7 +626,7 @@ async function testarCalendariosSandbox() {
   exigir(filaJuliane.length===1&&filaJuliane[0].mesKey==='2026-09'&&filaJuliane[0].itens===20,
     'análise da Amanda voltou a misturar os cinco conteúdos antigos no calendário de setembro');
 
-  const mesItemEditorFonte=trecho(calendario,'function mesDoItem(it)','/* ===== A ARMADILHA');
+  const mesItemEditorFonte=trecho(calendario,'function mesDoItemNoCalendario','/* ===== A ARMADILHA');
   const mesItemEditorApi=executarSandbox('calendario-competencia-juliane-v67.js',
     `let data={month:'Agosto 2026',aprovacaoInterna:{mes:'2026-09'},aprovacaoMeses:{'2026-09':{status:'aguardando_interna'}}};`+
     `function mesDoTexto(txt){return txt==='Agosto 2026'?'2026-08':'';}`+
@@ -706,27 +706,31 @@ async function testarCalendariosSandbox() {
     'window.enviarParaAprovacaoInterna = async function',
     '/* ===== REABRIR ANTES DO ENVIO');
   const envioApi = executarSandbox('envio-calendario-legado-sandbox.js',
-    `let data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Legado'}]};let mesVisivel='2026-08',gravacoes=0,recusas=0,confirmacoes=0,saveTimer=null,temNaoSalvo=false;\n` +
+    `let data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Legado'}]};let mesVisivel='2026-08',confirmacoesConteudo=0,transacoes=0,recusas=0,confirmacoes=0;\n` +
     `window.__modoCal='equipe';window.__enviandoAprovacaoInterna=false;\n` +
+    `const document={body:{classList:{add(){},remove(){}}}};\n` +
     `function ehCalendarioLegado(){const m=data.aprovacaoMeses?.[mesVisivel];return !(m?.status||data.aprovacaoInterna?.status);}\n` +
     `function mesUsaCampoLegadoLocal(mes){const usa=(data.items||[]).some(i=>i&&i.mes)||!!data.aprovacaoMeses||!!data.mesLegado;return !usa||!!mes&&!!data.mesLegado&&mes===data.mesLegado;}\n` +
     `function mesAnteriorAoAtual(){return false;}\n` +
     `function estadoAprovacao(){return data.aprovacaoMeses?.[mesVisivel]?.status||data.aprovacaoInterna?.status||(data.items.length?'liberado':'rascunho');}\n` +
     `function edicaoBloqueadaPorRevisao(){return ['aguardando_interna','aprovado_interno','liberado'].includes(estadoAprovacao());}\n` +
     `function exigirRetiradaAntesDeEditar(){recusas++;return true;}function itensDoMes(m){return data.items.filter(i=>!i.mes||i.mes===m);}\n` +
-    `function confirm(){confirmacoes++;return true;}function prompt(){return 'Gabrielle';}function mesDoTexto(){return '2026-08';}function save(){}\n` +
-    `async function gravarComSeguranca(){gravacoes++;return {ok:true};}function limparEnvioPendente(){}function renderAprovacaoInterna(){}function avisarTela(){}\n` +
+    `function confirm(){confirmacoes++;return true;}function prompt(){return 'Gabrielle';}function mesDoTexto(){return '2026-08';}\n` +
+    `async function confirmarConteudoAntesDoEnvio(){confirmacoesConteudo++;return {ok:true};}\n` +
+    `async function confirmarEnvioAprovacaoNoBanco(p){transacoes++;return {ok:true,marca:p.marca,updatedAt:'confirmado'};}\n` +
+    `function aplicarEnvioAprovacaoConfirmado(p,r){data.aprovacaoMeses={...(data.aprovacaoMeses||{}),[p.mes]:r.marca};data.updatedAt=r.updatedAt;}\n` +
+    `function limparEnvioPendente(){}function renderAprovacaoInterna(){}function avisarTela(){}\n` +
     `function guardarEnvioPendente(){}function guardarRascunho(){}function pintarEstado(){}function mostrarEnvioPendente(){}function agendarEnvioPendente(){}\n` +
     `${envioFonte}\n` +
-    `globalThis.api={enviar:window.enviarParaAprovacaoInterna,dados:()=>data,gravacoes:()=>gravacoes,recusas:()=>recusas,confirmacoes:()=>confirmacoes,explicito:()=>{data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Enviado'}],aprovacaoMeses:{'2026-08':{status:'liberado'}},aprovacaoInterna:{status:'liberado'}};}};`);
+    `globalThis.api={enviar:window.enviarParaAprovacaoInterna,dados:()=>data,confirmacoesConteudo:()=>confirmacoesConteudo,transacoes:()=>transacoes,recusas:()=>recusas,confirmacoes:()=>confirmacoes,explicito:()=>{data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Enviado'}],aprovacaoMeses:{'2026-08':{status:'liberado'}},aprovacaoInterna:{status:'liberado'}};}};`);
   const btnEnvio = {disabled:false,textContent:'',isConnected:true};
   await envioApi.enviar(btnEnvio);
-  exigir(envioApi.gravacoes() === 1 && envioApi.confirmacoes() === 1 &&
+  exigir(envioApi.confirmacoesConteudo() === 1 && envioApi.transacoes() === 1 && envioApi.confirmacoes() === 1 &&
     envioApi.dados().aprovacaoMeses['2026-08'].status === 'aguardando_interna',
     'calendário legado continuou bloqueado ou não entrou na fila da Amanda');
   envioApi.explicito();
   await envioApi.enviar(btnEnvio);
-  exigir(envioApi.gravacoes() === 1 && envioApi.recusas() === 1 &&
+  exigir(envioApi.transacoes() === 1 && envioApi.recusas() === 1 &&
     envioApi.dados().aprovacaoMeses['2026-08'].status === 'liberado',
     'exceção do legado desbloqueou calendário realmente enviado ao cliente');
 
@@ -741,6 +745,69 @@ async function testarCalendariosSandbox() {
     conflitoApi.deveBloquearConflitoCalendario(true,false,servidorEco,envioLocal,'','')===true &&
     conflitoApi.deveBloquearConflitoCalendario(true,true,servidorEco,envioLocal,'envio-1','decisao-amanda')===true,
     'exceção do envio formal permitiu sobrescrever conteúdo concorrente ou decisão mais recente');
+
+  const filaGravacaoFonte=trecho(calendario,'function gravarComSeguranca()','async function executarGravacaoComSeguranca');
+  const filaGravacaoApi=executarSandbox('fila-gravacao-calendario-v68.js',
+    `let pendingWrite=false,gravacoesCalendarioNaFila=0,filaGravacaoCalendario=Promise.resolve({ok:true}),inicios=[],resolucoes=[];\n`+
+    `function executarGravacaoComSeguranca(){inicios.push(inicios.length+1);return new Promise(resolve=>resolucoes.push(resolve));}\n`+
+    `${filaGravacaoFonte}\n`+
+    `globalThis.api={gravar:gravarComSeguranca,inicios:()=>inicios.slice(),resolver:i=>resolucoes[i]({ok:true}),fila:()=>gravacoesCalendarioNaFila,pendente:()=>pendingWrite};`);
+  const primeiraGravacao=filaGravacaoApi.gravar();
+  const segundaGravacao=filaGravacaoApi.gravar();
+  await Promise.resolve();await Promise.resolve();
+  exigir(filaGravacaoApi.inicios().length===1 && filaGravacaoApi.fila()===2 && filaGravacaoApi.pendente()===true,
+    'fila V68 iniciou dois autosaves em paralelo');
+  filaGravacaoApi.resolver(0);await primeiraGravacao;await Promise.resolve();
+  exigir(filaGravacaoApi.inicios().length===2,
+    'fila V68 não iniciou o segundo autosave depois da confirmação do primeiro');
+  filaGravacaoApi.resolver(1);await segundaGravacao;
+  exigir(filaGravacaoApi.fila()===0 && filaGravacaoApi.pendente()===false,
+    'fila V68 permaneceu marcada como pendente depois de todas as confirmações');
+
+  /* Reproduz a operação real da V68: a fila da Amanda só muda depois de
+     reler o documento, conferir o conteúdo e gravar um patch com merge.
+     O teste também prova reenvio idempotente, conflito e compatibilidade
+     com a caixa de saída criada pela V67. */
+  const envioTransacionalFonte =
+    trecho(calendario,'function assinaturaConteudoCalendario','/* ===== O QUE ACONTECEU COM A GABI') + '\n' +
+    trecho(calendario,'function mesDoItemNoCalendario','/* ===== A ARMADILHA') + '\n' +
+    trecho(calendario,'function docJaUsaMesesNoCalendario','function estadoDoMes') + '\n' +
+    trecho(calendario,'async function confirmarEnvioAprovacaoNoBanco','function aplicarEnvioAprovacaoConfirmado');
+  const envioTransacionalApi=executarSandbox('envio-calendario-transacional-v68.js',
+    `let servidor={client:'Cliente',month:'Setembro 2026',items:[{mes:'2026-09',name:'Conteúdo A'}],aprovacaoMeses:{'2026-09':{status:'rascunho'}},campoDesconhecido:'preservar',updatedAt:'antes'};let patches=[];\n`+
+    `function mesDoTexto(){return '2026-09';}function mesAnteriorAoAtual(){return false;}\n`+
+    `window.__fb={db:{},docRef:{path:'calendarios/cliente'},runTransaction:async(_db,fn)=>fn({get:async()=>({exists:()=>true,data:()=>servidor}),set:(_ref,patch,opts)=>patches.push({patch,opts})})};\n`+
+    `${envioTransacionalFonte}\n`+
+    `const pacote=()=>({mes:'2026-09',por:'Gabrielle',em:'2026-08-17T10:30:00.000Z',marca:{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-17T10:30:00.000Z',mes:'2026-09'},data:{...servidor,aprovacaoMeses:{...servidor.aprovacaoMeses}}});\n`+
+    `globalThis.api={confirmar:confirmarEnvioAprovacaoNoBanco,pacote,servidor:v=>{servidor=v;},ler:()=>servidor,patches:()=>patches,limpar:()=>{patches=[];}};`);
+  const pacoteV68=envioTransacionalApi.pacote();
+  const confirmadoV68=await envioTransacionalApi.confirmar(pacoteV68);
+  const patchesV68=envioTransacionalApi.patches();
+  exigir(confirmadoV68.ok===true && confirmadoV68.jaConfirmado===false && patchesV68.length===1 &&
+    patchesV68[0].opts.merge===true && patchesV68[0].patch.aprovacaoMeses['2026-09'].status==='aguardando_interna' &&
+    !Object.hasOwn(patchesV68[0].patch,'items') && !Object.hasOwn(patchesV68[0].patch,'client') &&
+    !Object.hasOwn(patchesV68[0].patch,'campoDesconhecido'),
+    'envio V68 não permaneceu estreito, transacional ou preservador de campos desconhecidos');
+  envioTransacionalApi.limpar();
+  envioTransacionalApi.servidor({...pacoteV68.data,aprovacaoMeses:{'2026-09':pacoteV68.marca}});
+  const repetidoV68=await envioTransacionalApi.confirmar(pacoteV68);
+  exigir(repetidoV68.ok===true && repetidoV68.jaConfirmado===true && envioTransacionalApi.patches().length===0,
+    'reenvio V68 deixou de ser idempotente ou regravou aprovação confirmada');
+  envioTransacionalApi.servidor({...pacoteV68.data,items:[{mes:'2026-09',name:'Edição concorrente'}]});
+  const conflitoV68=await envioTransacionalApi.confirmar(pacoteV68);
+  exigir(conflitoV68.ok===false && conflitoV68.motivo==='conflito' && envioTransacionalApi.patches().length===0,
+    'envio V68 sobrescreveu conteúdo concorrente');
+  envioTransacionalApi.servidor({...pacoteV68.data,aprovacaoMeses:{'2026-09':{status:'liberado',mes:'2026-09'}}});
+  const decisaoV68=await envioTransacionalApi.confirmar(pacoteV68);
+  exigir(decisaoV68.ok===false && decisaoV68.motivo==='decisao-posterior' && envioTransacionalApi.patches().length===0,
+    'envio V68 sobrescreveu decisão posterior da Amanda/cliente');
+  envioTransacionalApi.limpar();
+  envioTransacionalApi.servidor({...pacoteV68.data,aprovacaoMeses:{'2026-09':{status:'rascunho'}}});
+  const pacoteV67={mes:'2026-09',por:'Gabrielle',em:'2026-08-17T10:30:00.000Z',data:{...pacoteV68.data,aprovacaoMeses:{'2026-09':pacoteV68.marca}}};
+  const compatibilidadeV67=await envioTransacionalApi.confirmar(pacoteV67);
+  exigir(compatibilidadeV67.ok===true && envioTransacionalApi.patches().length===1 &&
+    envioTransacionalApi.patches()[0].patch.aprovacaoMeses['2026-09'].status==='aguardando_interna',
+    'V68 deixou órfã a tentativa pendente criada pela V67');
 
   const progressoFonte = trecho(escritorio,
     'function progressoEditorialCalendario',

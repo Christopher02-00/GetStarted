@@ -181,6 +181,7 @@
   const clienteId = params.get('cliente') || '';
   const tokenCliente = params.get('t') || '';
   const tokenEquipe  = params.get('e') || '';
+  const mesSolicitado = params.get('mes') || '';
   const modoAuditoria = params.get('auditoria') === '1';
   const docRef = clienteId ? doc(db, 'calendarios', clienteId) : null;
 
@@ -276,6 +277,7 @@
 
   window.__fb = { docRef, doc, getDoc, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
+  window.__mesSolicitadoCal = /^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) ? mesSolicitado : '';
 </script>
 </head>
 <body>
@@ -390,10 +392,10 @@
       <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">É isto que o filmmaker vê no dia da gravação. No automático, o sistema parte a lista no meio.</div>
     </div>
     <div class="modalbtns">
-      <button class="btn btn-r" onclick="delItem()">Excluir</button>
+      <button class="btn btn-r" id="delBtn" onclick="delItem()">Excluir</button>
       <div style="display:flex;gap:8px;">
-        <button class="btn btn-o" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-y" onclick="saveItem()">Salvar</button>
+        <button class="btn btn-o" id="btnCancelarItem" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-y" id="btnSalvarItem" onclick="saveItem()">Salvar</button>
       </div>
     </div>
     <!-- ===== 03/08/2026 — O CAMPO DO CLIENTE =========================
@@ -1260,14 +1262,16 @@ async function load(){
     const carimbou = carimbarMesDosAntigos();
     ultimaAssinaturaSalva = assinaturaRecebida;
     if(!mesVisivel){
+      const pedido=String(window.__mesSolicitadoCal||'');
       if(window.__modoCal === 'cliente'){
         /* O cliente NUNCA abre no mês que a equipe está montando. Ele
            abre no último mês liberado pra ele — e se não houver nenhum,
            fica no mês do documento, que cai na tela de "em preparação". */
         const lib = mesesLiberados();
-        mesVisivel = lib.length ? lib[lib.length-1] : (mesDoTexto(data.month) || '');
+        mesVisivel = pedido && lib.includes(pedido) ? pedido : (lib.length ? lib[lib.length-1] : (mesDoTexto(data.month) || ''));
       } else {
-        mesVisivel = mesDoTexto(data.month) || '';
+        const existentes=mesesExistentes();
+        mesVisivel = pedido && existentes.includes(pedido) ? pedido : (mesDoTexto(data.month) || '');
       }
     }
     itensNoBanco=(data.items||[]).length;
@@ -1288,6 +1292,7 @@ async function load(){
        da Gabi de verdade, pelo iframe do escritório. Fica a regra: tela
        nova tem que ser vista carregando do zero, não só depois de mexer. */
     renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderFeedback();renderBlocos();
+    avisarMesVisivelAoPai();
     carregarRefsDoCliente();
 
     /* ===== A ORDEM AQUI NÃO É DETALHE — 29/07/2026 ==================
@@ -1782,6 +1787,19 @@ function exigirRetiradaAntesDeEditar(){
       : 'A Amanda está revisando este mês. Para alterar, retire da revisão e volte a editar.', 'erro');
   return true;
 }
+function aplicarModoConsultaItem(ativo){
+  ['mDay','mName','mObs','mDesc','mLegenda','mRef','mDataPost','mFmt'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.readOnly=!!ativo;
+  });
+  ['mFlex','mStage','mBloco','mRefSelect'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.disabled=!!ativo;
+  });
+  const salvar=document.getElementById('btnSalvarItem'); if(salvar) salvar.style.display=ativo?'none':'';
+  const excluir=document.getElementById('delBtn'); if(excluir) excluir.style.display=ativo?'none':'';
+  const cancelar=document.getElementById('btnCancelarItem'); if(cancelar) cancelar.textContent=ativo?'Fechar':'Cancelar';
+  document.querySelector('.modal')?.classList.toggle('somenteConsulta',!!ativo);
+}
+window.aplicarModoConsultaItem=aplicarModoConsultaItem;
 function atualizarTravaVisualDoMes(){
   const travado = edicaoBloqueadaPorRevisao();
   document.body.classList.toggle('calRevisaoTravada', travado);
@@ -2106,14 +2124,22 @@ function renderSeletorMes(){
       : '') +
     '</div>';
 }
+function avisarMesVisivelAoPai(){
+  try{ if(window.parent!==window) window.parent.postMessage({tipo:'gs-calendario-mes',cliente:window.__clienteId||'',mes:mesVisivel||''},window.location.origin); }catch(e){}
+}
 window.verMes = function(m){
   /* Trocar de mês é só mudar a VISTA. Não reescreve o rótulo do
      documento nem move conteúdo nenhum de lugar — cada um já está
      carimbado com o mês dele. */
   mesVisivel = m;
+  try{
+    const u=new URL(window.location.href); u.searchParams.set('mes',m);
+    window.history.replaceState({},'',u.toString());
+  }catch(e){}
   const campo=document.getElementById('monthName');
   if(campo) campo.value = textoDoMes(m);
   renderGrid();renderWeek();renderKanban();renderProgress();renderSeletorMes();renderAprovacaoInterna();renderBlocos();
+  avisarMesVisivelAoPai();
 };
 
 function renderMeta(){
@@ -2384,8 +2410,8 @@ function renderWeek(){
       const hasScript=(it.desc||'').trim().length>0;
       const hasLegenda=(it.legenda||'').trim().length>0;
       const refLink=it.ref?'<a href="'+esc(normalizeUrl(it.ref))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="minitag mt-fmt" style="text-decoration:none;">🔗 referência</a>':'';
-      const scriptTag=hasScript?'<span class="minitag mt-fmt">📄 roteiro</span>':'';
-      const legendaTag=hasLegenda?'<span class="minitag" style="background:#1e3428;color:#7fd99f;">📝 legenda pronta</span>':'<span class="minitag" style="background:#3a2323;color:#ff8080;">⚠️ sem legenda</span>';
+      const scriptTag=hasScript?'<button type="button" class="minitag mt-fmt" style="border:0;cursor:pointer;" onclick="event.stopPropagation();openEdit('+idx+')">📄 roteiro</button>':'';
+      const legendaTag=hasLegenda?'<button type="button" class="minitag" style="border:0;cursor:pointer;background:#1e3428;color:#7fd99f;" onclick="event.stopPropagation();openEdit('+idx+')">📝 legenda pronta</button>':'<span class="minitag" style="background:#3a2323;color:#ff8080;">⚠️ sem legenda</span>';
       const gravadoTag=it.gravado?'<span class="minitag" style="background:#1e3428;color:#7fd99f;">🎥 já gravado</span>':'';
       const preview=(it.desc||'').slice(0,90).replace(/\n/g,' ');
       /* A solicitação especial aparece INTEIRA, não cortada: é instrução
@@ -2393,7 +2419,7 @@ function renderWeek(){
       const obsBloco=(it.obs||'').trim()
         ? '<div style="margin-top:7px;background:#4a3a12;border-left:3px solid #e0c56a;border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.5;color:#ffe9a8;white-space:pre-wrap;"><b>\ud83d\udccc Solicita\u00e7\u00e3o especial:</b> '+esc(it.obs.trim())+'</div>'
         : '';
-      html+='<div class="listitem" onclick="openEdit('+idx+')"><div class="date"><div class="d">'+it.day+'</div><div class="m">'+shortMonth()+'</div></div><div class="body"><div class="ttl">'+(it.apr?'✅ ':'')+esc(it.name)+'</div><div class="desc">'+esc(preview)+(it.desc.length>90?'…':'')+'</div>'+obsBloco+'<div class="tags"><span class="minitag mt-'+it.stage+'">'+stageLabel(it.stage)+'</span><span class="minitag mt-fmt">'+esc(it.fmt)+'</span>'+scriptTag+legendaTag+gravadoTag+refLink+(it.apr?'<span class="aprbadge">aprovado</span>':'')+'</div></div></div>';
+      html+='<div class="listitem" onclick="openEdit('+idx+')"><div class="date"><div class="d">'+it.day+'</div><div class="m">'+shortMonth()+'</div></div><div class="body"><div class="ttl">'+(it.apr?'✅ ':'')+esc(it.name)+'</div><div class="desc">'+esc(preview)+(it.desc.length>90?'…':'')+'</div>'+obsBloco+'<div class="tags"><span class="minitag mt-'+it.stage+'">'+stageLabel(it.stage)+'</span><span class="minitag mt-fmt">'+esc(it.fmt)+'</span>'+scriptTag+legendaTag+gravadoTag+refLink+(it.apr?'<span class="aprbadge">aprovado</span>':'')+'<button type="button" class="minitag" style="border:1px solid var(--yellow);cursor:pointer;color:var(--yellow);" onclick="event.stopPropagation();openEdit('+idx+')">Ver conteúdo completo</button></div></div></div>';
     });
     html+='</div>';
   });
@@ -2426,7 +2452,7 @@ function quickPost(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].post
 function quickUnpost(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
 
 // MODAL
-function openModal(day){if(exigirRetiradaAntesDeEditar())return;editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
+function openModal(day){if(exigirRetiradaAntesDeEditar())return;aplicarModoConsultaItem(false);editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
   document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=day;document.getElementById('mName').value='';document.getElementById('mDesc').value='';
   document.getElementById('mRef').value='';
   const mo=document.getElementById('mObs'); if(mo) mo.value='';
@@ -2441,7 +2467,7 @@ function openModal(day){if(exigirRetiradaAntesDeEditar())return;editIdx=null;doc
   document.getElementById('aprBtn').style.display='none';
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
-function openEdit(i){if(exigirRetiradaAntesDeEditar())return;editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent='Editar conteúdo';
+function openEdit(i){const somenteConsulta=edicaoBloqueadaPorRevisao();aplicarModoConsultaItem(false);editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent=somenteConsulta?'Consultar conteúdo completo':'Editar conteúdo';
   document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
   document.getElementById('mLegenda').value=it.legenda||'';
   const moE=document.getElementById('mObs'); if(moE) moE.value=it.obs||'';
@@ -2489,9 +2515,13 @@ function openEdit(i){if(exigirRetiradaAntesDeEditar())return;editIdx=i;const it=
   /* o cliente também não apaga o que já está no ar */
   const btnDel = document.getElementById('delBtn');
   if(btnDel && ehCli) btnDel.style.display = 'none';
+  if(somenteConsulta){
+    aplicarModoConsultaItem(true);
+    b.style.display='none';
+  }
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
-function closeModal(){document.getElementById('overlay').classList.remove('show');}
+function closeModal(){document.getElementById('overlay').classList.remove('show');aplicarModoConsultaItem(false);}
 function saveItem(){
   if(exigirRetiradaAntesDeEditar()) return;
   const diaEscolhido=parseInt(document.getElementById('mDay').value)||1;

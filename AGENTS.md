@@ -1,3 +1,4 @@
+[AGENTS.md](https://github.com/user-attachments/files/31149714/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
@@ -112,6 +113,8 @@ No mesmo incidente, alertas de colisão repetiram porque consulta seguida de `ad
 A unificação Zeiss/Zeens mostrou que identidade financeira legada não pode substituir a identidade operacional. `zeiss` é o slug canônico; `zeens` e `otica-visao-araucaria` são aliases de leitura. Zeiss permanece na carteira-base e calendários sob aliases são resolvidos sem cópia ou migração automática. Se canônico e alias estiverem ativos e preenchidos, o canônico vence; um alias preenchido só vence um canônico vazio. Uma fusão nunca pode arquivar o próprio destino depois de canonicalizar os slugs.
 
 O incidente Vitalle de 17/08/2026 mostrou que a semana selecionada no formulário e as datas escritas no roteiro de Stories podem divergir. Todo Story novo grava competência explícita e roteiro com datas inequivocamente de outra semana para antes da primeira escrita. Compatibilidade de leitura pode recuperar legado somente quando todas as datas DD/MM convergem para uma semana; texto sem data ou ambíguo permanece na chave original. Escritório, automação e Portal usam a mesma decisão.
+
+O relato de demanda perdida da Gabi em 17/08/2026 mostrou que `addDoc()` seguido de toast não prova que a fila do destinatário ficou utilizável. Demandas novas, inclusive colaborações, reservam as referências, gravam o conjunto atomicamente e só exibem sucesso depois de reler cada ID e validar protocolo, origem, destinatário, título e status. Se a releitura falhar depois do commit, a tentativa permanece pendente e confirma os mesmos IDs; nunca cria cópia. Comunicação com clientes usa a carteira ativa confirmada pela Central única, falha fechada e não confunde abrir WhatsApp com mensagem enviada.
 
 Calendário aprovado continua integralmente consultável por quem revisa e executa: trava de workflow esconde escritores e deixa campos somente leitura; nunca bloqueia roteiro, legenda, solicitação especial ou referência. Link enviado ao cliente carrega a competência `AAAA-MM` e o leitor revalida se ela existe e está liberada. Não copiar link mensal sem competência nem permitir que o parâmetro exponha rascunho.
 

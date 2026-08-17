@@ -133,10 +133,14 @@ const leisV67 = [
   'metadado de aprovação não define a competência de conteúdo legado',
   'zero clientes ativos de Stories é um estado válido'
 ];
+const leisV68 = [
+  'envio formal de calendário é uma transição estreita e transacional',
+  'retentativa nunca restaura pacote antigo sobre conteúdo novo'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V67');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V67');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V68');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V68');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -489,7 +493,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-16-competencia-calendarios-v67') ||
+if (!calendarioEditor.includes('2026-08-17-envio-calendario-transacional-v68') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -510,6 +514,25 @@ if (!envioCalendario.includes('const legado = ehCalendarioLegado()') ||
     !calendarioEditor.includes('assinaturaConteudoCalendario(servidor)!==assinaturaConteudoCalendario(local)')) {
   falhar('calendário legado voltou a exibir envio que a própria trava impede');
 } else provar('envio formal tolera só o eco idêntico do autosave; edição concorrente e calendário liberado continuam travados');
+const transacaoEnvioV68 = calendarioEditor.slice(
+  calendarioEditor.indexOf('async function confirmarEnvioAprovacaoNoBanco'),
+  calendarioEditor.indexOf('function aplicarEnvioAprovacaoConfirmado')
+);
+const retentativaEnvioV68 = calendarioEditor.slice(
+  calendarioEditor.indexOf('window.tentarEnvioPendente = async function'),
+  calendarioEditor.indexOf('window.cancelarEnvioPendente = function')
+);
+if (!calendarioEditor.includes('let filaGravacaoCalendario=Promise.resolve') ||
+    !calendarioEditor.includes('gravacoesCalendarioNaFila>0') ||
+    !envioCalendario.includes('await confirmarConteudoAntesDoEnvio()') ||
+    !envioCalendario.includes('await confirmarEnvioAprovacaoNoBanco(pacoteEnvioPendente)') ||
+    !transacaoEnvioV68.includes('fb.runTransaction') ||
+    !transacaoEnvioV68.includes('transacao.set(fb.docRef,patch,{merge:true})') ||
+    transacaoEnvioV68.includes('setDoc(docRef,data)') ||
+    retentativaEnvioV68.includes('data=JSON.parse(JSON.stringify(pacote.data))') ||
+    retentativaEnvioV68.includes('gravarComSeguranca()')) {
+  falhar('envio V68 perdeu serialização, transação estreita ou proteção contra pacote antigo');
+} else provar('envio V68 serializa autosaves, confirma conteúdo e altera apenas o workflow em transação');
 const storiesChecklist = escritorio.slice(
   escritorio.indexOf('async function renderStoriesDiarios'),
   escritorio.indexOf('// ===== BIT — CENTRAL DE DUVIDAS')
@@ -630,15 +653,15 @@ const competenciaCalendariosV67 = escritorio.slice(
   escritorio.indexOf('function mesDoItemCalendario'),
   escritorio.indexOf('  function mesUsaCampoLegadoCalendario')
 );
-const mesEditorV67 = ler('calendario.html').slice(
-  ler('calendario.html').indexOf('function mesDoItem(it)'),
+const mesEditorV68 = ler('calendario.html').slice(
+  ler('calendario.html').indexOf('function mesDoItemNoCalendario'),
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
-if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-16-competencia-calendarios-v67">') ||
+if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-17-envio-calendario-transacional-v68">') ||
     !portal.includes('<meta name="gs-build" content="2026-08-16-competencia-calendarios-portal-v67">') ||
     !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
-    !mesEditorV67.includes('const mesDoDocumento = mesDoTexto(data.month)') ||
+    !mesEditorV68.includes('const mesDoDocumento = mesDoTexto(cal && cal.month)') ||
     !portal.includes('function mesDoItemPortal(item)') ||
     !portal.includes('todosItens.map(mesDoItemPortal)') ||
     !portal.includes('todosItens.filter(i => mesDoItemPortal(i)')) {

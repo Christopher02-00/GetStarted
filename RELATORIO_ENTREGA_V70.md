@@ -1,50 +1,55 @@
-[RELATORIO_ENTREGA_V71.md](https://github.com/user-attachments/files/31149737/RELATORIO_ENTREGA_V71.md)
-# Entrega V71 — recibo de demandas e mensagens para clientes
+[RELATORIO_ENTREGA_V72.md](https://github.com/user-attachments/files/31150975/RELATORIO_ENTREGA_V72.md)
+# Entrega V72 — Régua de Cobrança e contatos do WhatsApp
 
 Data: 17/08/2026  
-Base oficial: `main` em `8ad88b13d051d6845221a8f9e6be3caaa7969aef`
+Base oficial: `main` em `23cf4a5fcc015af9d99f8e92a2179fc236bf6d96`
 
-## Incidente recuperado
+## Incidentes comprovados
 
-- Gabi recebeu confirmação visual de uma demanda para Chris, mas não existe hoje uma demanda aberta correspondente na fila dele.
-- O escritor antigo mostrava sucesso depois de `addDoc()`, sem reler a referência, conferir o roteamento ou atualizar a fila local.
-- Demandas colaborativas eram escritas em várias etapas e podiam ficar parciais.
+- A Central de mensagens preservava apenas o telefone do cadastro escolhido como principal; um campo vazio podia apagar o contato válido da ficha complementar.
+- A Central não reutilizava `whatsappCobranca`, embora esse fosse o número específico já usado no Financeiro.
+- A Régua chamava `window.open()` depois de leituras assíncronas, sujeitando a nova aba ao bloqueio de pop-up.
+- Abrir a conversa já incrementava `cobrancasFeitas`, atualizava `ultimaCobranca` e gravava log, sem confirmação de envio.
+- Régua e Mensalidades possuíam dois montadores diferentes, com emojis e estruturas diferentes.
+- O upload V71 colocou o teste dirigido no caminho `scripts/regression-critical.mjs`, reduzindo a suíte crítica de 1.856 para 92 linhas. `scripts/regression-v71.mjs` e `RELATORIO_ENTREGA_V71.md` ficaram ausentes.
 
 ## Correção preparada
 
-- Reserva todos os IDs e grava principal + colaboradores em um lote atômico.
-- Relê cada ID e valida protocolo, título, origem, destinatário e estado antes de anunciar sucesso.
-- Em falha de confirmação, mantém os mesmos IDs para nova leitura sem duplicação.
-- Mostra um protocolo curto de confirmação e atualiza a fila local.
-- Inclui o destinatário principal na notificação posterior ao recibo.
-
-## Mensagens para clientes
-
-- Novo item **Mensagens para clientes**, logo abaixo de **Régua de Cobrança**, exclusivo do DOM e da porta do Chris.
-- Lista derivada da Central única de clientes, incluindo compatibilidade legada e exclusão correta de saídas efetivas.
-- Contato brasileiro validado com DDD; sem contato válido, o botão é bloqueado e aponta para a Central.
-- Mensagem aceita `{cliente}` ou `{nome}` e abre `wa.me` com o texto pronto.
-- A tela informa que o WhatsApp Web deve estar conectado ao número (41) 99908-8357. O clique final de envio continua manual.
+- Uma função central escolhe contato válido na ordem: número específico de cobrança, telefone da ficha e WhatsApp legado.
+- A consolidação canônica preserva telefone e `whatsappCobranca` não vazios entre ficha oficial, legado e aliases.
+- Central, Mensalidades e Régua usam a mesma normalização brasileira com DDD e abrem `https://web.whatsapp.com/send` para o número confirmado.
+- A Régua cria a aba em branco no gesto do clique, relê mensalidade/contato e somente então navega para a conversa correta; qualquer falha fecha a aba.
+- As cinco mensagens financeiras usam parágrafos e linhas separadas para referência, valor, vencimento, PIX, pedido e comprovante, sem emoji decorativo.
+- Abrir conversa não grava nada. O contador e o histórico mudam somente após “Confirmar que enviei”, em transação e com revalidação do estado.
+- Mensalidades delega para a mesma função da Régua; o segundo redator foi removido.
+- Falha de leitura da Régua mostra indisponibilidade e `!`, sem transformar erro em fila vazia.
+- A suíte crítica foi restaurada do histórico; os artefatos V71 foram recolocados nos nomes corretos.
 
 ## Arquivos da entrega
 
 - `escritorio.html`
 - `scripts/preflight.mjs`
+- `scripts/regression-critical.mjs`
 - `scripts/regression-v71.mjs`
+- `scripts/regression-v72.mjs`
 - `CATALOGO_DE_ERROS.md`
 - `AGENTS.md`
 - `RELATORIO_ENTREGA_V71.md`
+- `RELATORIO_ENTREGA_V72.md`
 
 ## Validação concluída
 
-- `scripts/regression-v71.mjs`: aprovado com 18 asserções dirigidas, incluindo commit atômico, falha de releitura, retentativa no mesmo ID, validação de destinatário e normalização do WhatsApp.
-- `scripts/preflight.mjs`: aprovado; 9/9 scripts inline têm sintaxe válida e o build é `2026-08-17-demandas-whatsapp-clientes-v71`.
-- `scripts/regression-critical.mjs`: aprovado com 604 asserções de regressão.
-- `calendario.html` e `calendarios.html`: byte a byte idênticos; nenhum arquivo da cadeia de calendários foi modificado.
-- DOM real sem login: Financeiro, botão e view de mensagens não existem no documento.
-- Layout: conferido em desktop 1280×900 e mobile 390×844; menu, cartões, busca, indicadores e botão permaneceram legíveis, sem sobreposição.
-- Git diff: aprovado com CRLF reconhecido como terminação de linha; não há exclusão física nem mudança em `firestore.rules`.
+- `scripts/regression-v72.mjs`: aprovado com 50 asserções dirigidas.
+- `scripts/regression-v71.mjs`: aprovado com 18 asserções dirigidas.
+- `scripts/preflight.mjs`: aprovado com 9/9 scripts inline válidos, 950 handlers diretos resolvidos e build V72 correto.
+- `scripts/regression-critical.mjs`: restaurado e aprovado com 604 asserções.
+- Desktop 1280×900: Régua e Central renderizadas com os controles esperados.
+- Mobile 390×844: as duas telas ficaram com `scrollWidth === clientWidth === 390`; os botões permaneceram legíveis e empilhados.
+- WhatsApp Business real foi confirmado aberto e conectado no Chrome, apenas em leitura. Nenhuma conversa de cliente foi aberta e nenhuma mensagem foi enviada.
+- `firestore.rules`, calendários, Portal e dados de produção não foram alterados.
 
-## Limite real
+## Limites reais
 
-Os testes locais comprovam lógica, DOM, isolamento por papel, retentativa e URLs. A existência da correção em produção só pode ser afirmada após o upload e a comparação do build publicado. Nenhuma demanda real nem mensagem real foi criada durante esta etapa.
+- Clientes sem telefone válido em nenhuma fonte continuam bloqueados: o sistema não inventa contato. O cartão direciona para a Central de Clientes para cadastrar o número.
+- Os testes comprovam código, links, destinatários distintos, mensagens, transação e responsividade local. A V72 só poderá ser chamada de publicada depois do upload e da verificação do build no domínio.
+- O teste não enviou cobrança real nem atualizou `ultimaCobranca`; essa escrita só acontece por ação humana explícita depois da publicação.

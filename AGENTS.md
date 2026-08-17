@@ -1,3 +1,4 @@
+[AGENTS.md](https://github.com/user-attachments/files/31150953/AGENTS.md)
 [AGENTS.md](https://github.com/user-attachments/files/31149714/AGENTS.md)
 # Get Started — regra de trabalho para mudanças no sistema
 
@@ -115,6 +116,8 @@ A unificação Zeiss/Zeens mostrou que identidade financeira legada não pode su
 O incidente Vitalle de 17/08/2026 mostrou que a semana selecionada no formulário e as datas escritas no roteiro de Stories podem divergir. Todo Story novo grava competência explícita e roteiro com datas inequivocamente de outra semana para antes da primeira escrita. Compatibilidade de leitura pode recuperar legado somente quando todas as datas DD/MM convergem para uma semana; texto sem data ou ambíguo permanece na chave original. Escritório, automação e Portal usam a mesma decisão.
 
 O relato de demanda perdida da Gabi em 17/08/2026 mostrou que `addDoc()` seguido de toast não prova que a fila do destinatário ficou utilizável. Demandas novas, inclusive colaborações, reservam as referências, gravam o conjunto atomicamente e só exibem sucesso depois de reler cada ID e validar protocolo, origem, destinatário, título e status. Se a releitura falhar depois do commit, a tentativa permanece pendente e confirma os mesmos IDs; nunca cria cópia. Comunicação com clientes usa a carteira ativa confirmada pela Central única, falha fechada e não confunde abrir WhatsApp com mensagem enviada.
+
+A V72 consolidou o contato de WhatsApp entre ficha, cadastro legado e `whatsappCobranca`: o número específico de cobrança vence e telefone vazio de uma fonte nunca apaga um número válido de outra. Central de mensagens, Mensalidades e Régua usam a mesma validação brasileira e abrem `web.whatsapp.com/send` para o número confirmado; ausência de DDD ou leitura indisponível não abre conversa genérica. A nova aba precisa nascer no gesto do clique antes de qualquer `await`, para o navegador não bloqueá-la. Abrir a conversa prepara a mensagem, mas somente a ação separada “Confirmar que enviei” registra `ultimaCobranca` em transação. Mensagens financeiras usam blocos e quebras de linha estáveis, sem emoji decorativo.
 
 Calendário aprovado continua integralmente consultável por quem revisa e executa: trava de workflow esconde escritores e deixa campos somente leitura; nunca bloqueia roteiro, legenda, solicitação especial ou referência. Link enviado ao cliente carrega a competência `AAAA-MM` e o leitor revalida se ela existe e está liberada. Não copiar link mensal sem competência nem permitir que o parâmetro exponha rascunho.
 

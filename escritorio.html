@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-<meta name="gs-build" content="2026-08-16-competencia-calendarios-stories-v67">
+<meta name="gs-build" content="2026-08-17-checklist-videos-amanda-v69">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -2643,6 +2643,13 @@
      exatamente pra isso que ele existe. */
   const PESSOAS_DE_CAMPO = ['Luís','Nathan'];
   const CAMPO_MAIS_CHRIS = ['Chris', ...PESSOAS_DE_CAMPO];
+  /* Amanda registra materiais que clientes enviaram para edição, mas isso
+     não a transforma em filmmaker. A permissão própria evita que ela entre
+     em agenda, produtividade ou qualquer outro cálculo de campo. */
+  const PESSOAS_QUE_LANCAM_VIDEO = ['Amanda', ...CAMPO_MAIS_CHRIS];
+  function podeLancarVideo(pessoa = usuarioAtual){
+    return PESSOAS_QUE_LANCAM_VIDEO.includes(pessoa);
+  }
 
   /* ===== FRENTE C3 — ATALHOS DA HOME =====
      Antes duplicavam a sidebar inteira (Cecilia: 9 atalhos + 9 itens
@@ -2770,6 +2777,9 @@
            O placar sobe conforme ela abastece; ninguém cobra por dia. */
         { bloco: "Referências (sem cobrança diária)", itens: [
           { id:"g_d_9", texto:"Referências: quando achar um perfil bom, arquiva pro cliente em Referências → Perfis. Sem meta por dia — o painel vai somando conforme você abastece." }
+        ]},
+        { bloco: "Stories do dia", itens: [
+          { id:"g_d_10", texto:"Conferir e concluir os Stories previstos para hoje no bloco Stories Diários", critico:true }
         ]}
       ],
       /* 28/07/2026 — pedido da Gabi: as três coisas que ela faz toda
@@ -2886,8 +2896,8 @@
     }
   };
 
-  function chaveExecucao(funcionario, periodo){
-    const hoje = new Date();
+  function chaveExecucao(funcionario, periodo, referencia){
+    const hoje = referencia ? new Date(referencia) : new Date();
     if(periodo === "Diário") return funcionario + "_diario_" + dataLocal(hoje);
     if(periodo.startsWith("Semanal")){
       const d = new Date(hoje);
@@ -2900,6 +2910,33 @@
 
   let checklistExecAtual = { itensFeitos: {} };
   let checklistPeriodoAtual = "";
+  let checklistChaveAtual = "";
+  let timerViradaChecklist = null;
+
+  function cancelarViradaChecklist(){
+    if(timerViradaChecklist) clearTimeout(timerViradaChecklist);
+    timerViradaChecklist = null;
+  }
+
+  function programarViradaChecklist(){
+    cancelarViradaChecklist();
+    if(checklistPeriodoAtual !== 'Diário') return;
+    const agora = new Date();
+    const proxima = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1, 0, 0, 0, 150);
+    timerViradaChecklist = setTimeout(async () => {
+      timerViradaChecklist = null;
+      if(viewAtiva !== 'checklist' || checklistPeriodoAtual !== 'Diário' || !usuarioAtual) return;
+      try{
+        await carregarExecucaoChecklist();
+        renderChecklist();
+        mostrarToast('Novo dia iniciado — o checklist de ontem foi preservado e o de hoje está limpo.');
+        programarViradaChecklist();
+      }catch(e){
+        console.error('Falha ao abrir o checklist do novo dia:', e);
+        mostrarToast('O dia virou, mas não consegui carregar o novo checklist. Reabra a tela antes de marcar itens.', 'erro');
+      }
+    }, Math.max(250, proxima.getTime() - agora.getTime()));
+  }
 
   window.abrirChecklistPeriodo = async function(periodo, el){
     document.querySelectorAll('.checklistTabs .subtab').forEach(t=>t.classList.remove('active'));
@@ -2907,6 +2944,7 @@
     checklistPeriodoAtual = periodo;
     await carregarExecucaoChecklist();
     renderChecklist();
+    programarViradaChecklist();
   };
 
   async function carregarExecucaoChecklist(){
@@ -2914,14 +2952,44 @@
     const ref = doc(db, 'checklist_execucoes', chave);
     const snap = await getDoc(ref);
     checklistExecAtual = snap.exists() ? snap.data() : { itensFeitos: {} };
+    checklistExecAtual.itensFeitos = checklistExecAtual.itensFeitos || {};
+    checklistChaveAtual = chave;
   }
 
   async function salvarExecucaoChecklist(){
-    const chave = chaveExecucao(usuarioAtual, checklistPeriodoAtual);
-    await setDoc(doc(db, 'checklist_execucoes', chave), checklistExecAtual);
+    const chaveAgora = chaveExecucao(usuarioAtual, checklistPeriodoAtual);
+    if(!checklistChaveAtual || checklistChaveAtual !== chaveAgora){
+      throw new Error('CHECKLIST_DIA_MUDOU');
+    }
+    await setDoc(doc(db, 'checklist_execucoes', checklistChaveAtual), checklistExecAtual);
+  }
+
+  async function salvarChecklistProtegendoVirada(){
+    try{
+      await salvarExecucaoChecklist();
+      return true;
+    }catch(e){
+      if(e?.message !== 'CHECKLIST_DIA_MUDOU') throw e;
+      await carregarExecucaoChecklist();
+      renderChecklist();
+      programarViradaChecklist();
+      mostrarToast('O dia virou durante a marcação. O checklist novo foi carregado sem copiar o anterior.', 'erro');
+      return false;
+    }
+  }
+
+  async function garantirChecklistAtualAntesDeEditar(){
+    const chaveAgora = chaveExecucao(usuarioAtual, checklistPeriodoAtual);
+    if(checklistChaveAtual === chaveAgora) return true;
+    await carregarExecucaoChecklist();
+    renderChecklist();
+    programarViradaChecklist();
+    mostrarToast('O dia virou: carreguei o checklist novo. Confirme o item novamente.', 'erro');
+    return false;
   }
 
   window.toggleItemChecklist = async function(itemId, critico){
+    if(!await garantirChecklistAtualAntesDeEditar()) return false;
     const jaFeito = !!checklistExecAtual.itensFeitos[itemId]?.feito;
     if(!jaFeito && critico){
       abrirModalProvaChecklist(itemId);
@@ -2932,8 +3000,9 @@
     } else {
       checklistExecAtual.itensFeitos[itemId] = { feito:true, prova:'', em: new Date().toISOString() };
     }
-    await salvarExecucaoChecklist();
+    if(!await salvarChecklistProtegendoVirada()) return false;
     renderChecklist();
+    return true;
   };
 
   window.abrirModalProvaChecklist = function(itemId){
@@ -2949,11 +3018,19 @@
   };
 
   window.confirmarProvaChecklist = async function(itemId){
+    if(!await garantirChecklistAtualAntesDeEditar()){
+      fecharModal();
+      return false;
+    }
     const prova = document.getElementById('provaChecklistInput').value.trim();
     checklistExecAtual.itensFeitos[itemId] = { feito:true, prova, em: new Date().toISOString() };
-    await salvarExecucaoChecklist();
+    if(!await salvarChecklistProtegendoVirada()){
+      fecharModal();
+      return false;
+    }
     fecharModal();
     renderChecklist();
+    return true;
   };
 
   function contarStreakDiario(funcionario, diasHistorico){
@@ -2980,12 +3057,26 @@
 
   let templatesEfetivos = {};
 
+  function incluirItemStoriesObrigatorio(funcionario, periodos){
+    if(funcionario !== 'Gabrielle' || !Array.isArray(periodos?.['Diário'])) return periodos;
+    const copia = JSON.parse(JSON.stringify(periodos));
+    const jaExiste = copia['Diário'].some(bloco => (bloco.itens || []).some(item => item.id === 'g_d_10'));
+    if(!jaExiste){
+      copia['Diário'].push({ bloco:'Stories do dia', itens:[{
+        id:'g_d_10',
+        texto:'Conferir e concluir os Stories previstos para hoje no bloco Stories Diários',
+        critico:true
+      }]});
+    }
+    return copia;
+  }
+
   async function obterTemplatesEfetivos(funcionario){
     const customSnap = await getDoc(doc(db,'checklist_templates_custom', funcionario));
     if(customSnap.exists() && customSnap.data().excluido!==true && customSnap.data().periodos){
-      return customSnap.data().periodos;
+      return incluirItemStoriesObrigatorio(funcionario, customSnap.data().periodos);
     }
-    return CHECKLIST_TEMPLATES[funcionario] || null;
+    return incluirItemStoriesObrigatorio(funcionario, CHECKLIST_TEMPLATES[funcionario] || null);
   }
 
   /* ===== MELHORIA 7 — PAINEL DE DISCIPLINA OPERACIONAL =====
@@ -3036,6 +3127,9 @@
       const snapV = await getDocs(collection(db,'videos_producao'));
       let sem = 0; snapV.forEach(dd => { const v = dd.data(); if(!v.excluido && v.status === 'aguardando_edicao' && !v.editorAtribuido) sem++; });
       return sem === 0; } },
+    'g_d_10': { desc: 'todos os Stories previstos para hoje foram confirmados', fn: async () => {
+      const estado = await estadoStoriesPrevistosNoDia(new Date());
+      return estado.completo; } },
     'g_d_9': { desc: 'todos os clientes com pelo menos 2 perfis de referência nesta semana', fn: async () => {
       // Antes media volume do dia (5 links quaisquer). Agora mede COBERTURA:
       // só marca quando nenhum cliente está descoberto na semana.
@@ -3120,6 +3214,7 @@
     cont.innerHTML = `<div id="streakBox"></div>` + tabsHtml + `<div id="checklistItens"></div>`;
     await carregarExecucaoChecklist();
     renderChecklist();
+    programarViradaChecklist();
     if(templates["Diário"]){
       const streak = await calcularStreak(usuarioAtual);
       const box = document.getElementById('streakBox');
@@ -3735,7 +3830,7 @@
   }
 
   window.setVideosSub = function(qual, el){
-    const permitido = (qual==='lancar' && CAMPO_MAIS_CHRIS.includes(usuarioAtual)) ||
+    const permitido = (qual==='lancar' && podeLancarVideo(usuarioAtual)) ||
       (qual==='meus' && [...EDITORES_SELECIONAVEIS,'Chris'].includes(usuarioAtual)) ||
       (qual==='finalizados' && ['Chris','Amanda','Cecília'].includes(usuarioAtual));
     if(!permitido){ mostrarToast('Essa ferramenta não pertence ao seu papel.', 'erro'); return false; }
@@ -3911,6 +4006,10 @@
   };
 
   window.lancarVideos = async function(){
+    if(!podeLancarVideo(usuarioAtual)){
+      mostrarToast('Seu papel não pode registrar materiais para edição.', 'erro');
+      return false;
+    }
     const sel = document.getElementById('videoCliente');
     let clienteSlug = sel.value;
     let clienteNome;
@@ -15715,14 +15814,69 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   const DIAS_SEMANA_ORDEM = ['domingo','segunda','terca','quarta','quinta','sexta','sabado'];
   const DIAS_SEMANA_LABEL = { domingo:'Domingo', segunda:'Segunda', terca:'Terça', quarta:'Quarta', quinta:'Quinta', sexta:'Sexta', sabado:'Sábado' };
 
-  function obterChaveSemanaAtual(){
-    const hoje = new Date();
+  function obterChaveSemanaAtual(referencia){
+    const hoje = referencia ? new Date(referencia) : new Date();
     const d = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()));
     const diaSemana = d.getUTCDay() || 7;
     d.setUTCDate(d.getUTCDate() + 4 - diaSemana);
     const anoInicio = new Date(Date.UTC(d.getUTCFullYear(),0,1));
     const semanaNum = Math.ceil((((d - anoInicio) / 86400000) + 1)/7);
     return d.getUTCFullYear() + '-W' + String(semanaNum).padStart(2,'0');
+  }
+
+  function slugEstavelStory(cliente){
+    return String(cliente?.slug || cliente?.id || cliente?.clienteNome || cliente?.nome || '')
+      .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  }
+
+  async function estadoStoriesPrevistosNoDia(referencia){
+    const dataRef = referencia ? new Date(referencia) : new Date();
+    const diaIdx = dataRef.getDay();
+    const diaChave = DIAS_SEMANA_ORDEM[diaIdx];
+    const semanaChave = obterChaveSemanaAtual(dataRef);
+    const clientes = await carregarClientesDeStory();
+    const previstos = clientes.filter(c => {
+      const dias = Array.isArray(c.dias) && c.dias.length ? c.dias : [1,2,3,4,5];
+      return dias.some(d => Number.isInteger(Number(d)) ? Number(d) === diaIdx : String(d) === diaChave);
+    });
+    const execucoes = await Promise.all(previstos.map(async c => {
+      const docId = slugEstavelStory(c) + '_' + semanaChave;
+      const snap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
+      return { cliente:c.nome || c.clienteNome || c.slug, feito:!!snap.data()?.dias?.[diaChave] };
+    }));
+    const feitos = execucoes.filter(e => e.feito).length;
+    return {
+      dia:diaChave, semana:semanaChave, total:execucoes.length, feitos,
+      abertos:Math.max(0, execucoes.length - feitos), completo:feitos === execucoes.length
+    };
+  }
+
+  async function sincronizarChecklistStoriesGabrielle(referencia){
+    const dataRef = referencia ? new Date(referencia) : new Date();
+    const estado = await estadoStoriesPrevistosNoDia(dataRef);
+    const chave = chaveExecucao('Gabrielle', 'Diário', dataRef);
+    const ref = doc(db,'checklist_execucoes', chave);
+    const snap = await getDoc(ref);
+    const execucao = snap.exists() ? snap.data() : { itensFeitos:{} };
+    execucao.itensFeitos = execucao.itensFeitos || {};
+    const estavaFeito = !!execucao.itensFeitos.g_d_10?.feito;
+    if(estado.completo && !estavaFeito){
+      execucao.itensFeitos.g_d_10 = {
+        feito:true,
+        prova:'✔ Verificado automaticamente pelos checks de Stories Diários',
+        em:new Date().toISOString(), automatico:true, origem:'stories_diarios'
+      };
+      await setDoc(ref, { itensFeitos:{ g_d_10:execucao.itensFeitos.g_d_10 } }, { merge:true });
+    }else if(!estado.completo && estavaFeito){
+      delete execucao.itensFeitos.g_d_10;
+      await setDoc(ref, { itensFeitos:{ g_d_10:deleteField() } }, { merge:true });
+    }
+    if(usuarioAtual === 'Gabrielle' && checklistPeriodoAtual === 'Diário' && checklistChaveAtual === chave){
+      checklistExecAtual.itensFeitos = execucao.itensFeitos;
+      renderChecklist();
+    }
+    return estado;
   }
 
   async function renderStoriesDiarios(){
@@ -15767,9 +15921,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let execucoes;
     try{
       execucoes = await Promise.all(clientes.map(async c => {
-        const slugEstavel = String(c.id || c.slug || c.clienteNome || '')
-          .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-          .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+        const slugEstavel = slugEstavelStory(c);
         const docId = slugEstavel + '_' + semanaChave;
         const execSnap = await getDoc(doc(db,'stories_diarios_execucoes', docId));
         return { c, docId, execucao: execSnap.exists() ? execSnap.data() : {} };
@@ -15850,7 +16002,16 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         dias: diasAtuais, detalhes,
         atualizadoPor:'Gabrielle', atualizadoEm: serverTimestamp()
       }, { merge: true });
-      mostrarToast(valor ? '☑ Story verificado e salvo!' : 'Check do Story retirado.');
+      let checklistSincronizado = true;
+      try{
+        await sincronizarChecklistStoriesGabrielle(new Date());
+      }catch(e){
+        checklistSincronizado = false;
+        console.error('Story salvo, mas falhou a sincronização com o checklist diário:', e);
+      }
+      mostrarToast(checklistSincronizado
+        ? (valor ? '☑ Story verificado e checklist atualizado!' : 'Check do Story retirado e checklist atualizado.')
+        : 'O Story foi salvo, mas o item do checklist não sincronizou. Reabra Meu Checklist.', checklistSincronizado ? undefined : 'erro');
       await renderStoriesDiarios();
       return true;
     }catch(e){
@@ -16212,7 +16373,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
     if(nome === 'checklist') abrirChecklist();
     if(nome === 'videos'){
-      const temLancar = CAMPO_MAIS_CHRIS.includes(usuarioAtual);
+      const temLancar = podeLancarVideo(usuarioAtual);
       /* 03/08/2026 — era a lista de editores escrita à mão pela segunda
        vez. Foi uma dessas que escondeu 8 vídeos da Cecília no Meu Dia.
        Deriva da lista oficial: quem edita, tem a aba. */
@@ -19251,6 +19412,7 @@ window.setGerenciaSub = function(qual, el){
                     { rot:'Clientes — entrada e saída', acao:"irParaCentralClientes()" },
                     { rot:'Registrar saída de cliente', acao:"irParaSaidaClientes()" },
                     { id:'navCapsulaAmanda', rot:'Protocolo Cápsula', acao:"irParaCapsulaAmanda()" },
+                    { rot:'Subir vídeo de cliente', acao:"irParaSubirEdicao()" },
                     { rot:'Distribuir vídeos',     acao:"irParaDistribuirVideos()", contador:'distribuir' },
                     { rot:'Aprovar e enviar stories',  acao:"irParaStories('aprovar')" }]
     /* 28/07/2026 — o Chris não tem atalho: o painel de gerência dele já
@@ -20154,6 +20316,10 @@ window.setGerenciaSub = function(qual, el){
   };
 
   window.irParaSubirEdicao = function(){
+    if(!podeLancarVideo(usuarioAtual)){
+      mostrarToast('Seu papel não pode registrar materiais para edição.', 'erro');
+      return false;
+    }
     const nav = document.getElementById('navVideos');
     if(nav) irPara('videos', nav);
     setTimeout(() => {
@@ -20165,6 +20331,7 @@ window.setGerenciaSub = function(qual, el){
         if(box) box.scrollIntoView({ behavior:'smooth', block:'center' });
       }, 200);
     }, 300);
+    return true;
   };
 
   window.irParaMeusExtras = function(){
@@ -20473,7 +20640,7 @@ window.setGerenciaSub = function(qual, el){
       const totalItens = templates["Diário"].reduce((s,b)=>s+b.itens.length, 0);
       const feitos = templates["Diário"].reduce((s,b)=> s + b.itens.filter(it => feitosObj[it.id]?.feito).length, 0);
       return Math.max(0, totalItens - feitos);
-    }catch(e){ console.error('Meu Dia: falha ao checar checklist', e); return 0; }
+    }catch(e){ console.error('Meu Dia: falha ao checar checklist', e); return null; }
   }
 
   function meuDiaItemHtml(item){
@@ -20610,7 +20777,12 @@ window.setGerenciaSub = function(qual, el){
 
     // 3) Checklist diário pendente (1 item agregado)
     const pendentesChecklist = await contarChecklistDiarioPendente();
-    if(pendentesChecklist > 0){
+    if(pendentesChecklist === null){
+      itens.push({
+        icone:'⚠️', titulo:'Checklist indisponível para conferência', meta:'Leitura não confirmada',
+        desc:'Não considerei como vazio. Abra o checklist para tentar novamente.', urgencia:'hoje', acao:`meuDiaAbrirChecklist()`
+      });
+    }else if(pendentesChecklist > 0){
       itens.push({
         icone: '📋', titulo: pendentesChecklist + ' item(ns) do checklist diário', meta: 'Rotina de hoje',
         desc: 'Ainda não marcados como feitos.', urgencia: 'hoje', acao: `meuDiaAbrirChecklist()`
@@ -30659,7 +30831,19 @@ window.salvarPrazoVideo = async function(id){
     cont.innerHTML = html;
   };
 
-  /* Resumo das 19h por e-mail — so pra Chris/Amanda, uma vez por dia. */
+  function pendenciasChecklistDoResumo(resultados){
+    return resultados.filter(r => !r.concluido).map(r => ({
+      nome:r.nome,
+      abertos:Math.max(0, Number(r.total || 0) - Number(r.feitos || 0))
+    }));
+  }
+
+  function textoPendenciasChecklist(pendencias){
+    return pendencias.map(p => p.nome + ': ' + p.abertos + ' em aberto').join(' · ');
+  }
+
+  /* Resumo das 19h por e-mail — só para pendências, uma vez por dia.
+     Esta função não escreve em checklist_execucoes e não encerra o dia. */
   async function enviarResumoChecklist19h(){
     if(!['Chris','Amanda'].includes(usuarioAtual)) return;
     const agora = new Date();
@@ -30672,16 +30856,18 @@ window.salvarPrazoVideo = async function(id){
       const resultados = await calcularDisciplinaHoje();
       if(!resultados.length) return;
       const concluidos = resultados.filter(r => r.concluido);
-      const faltando = resultados.filter(r => !r.concluido);
-      const resumo = faltando.length
-        ? faltando.map(r => r.nome + ' (' + r.feitos + '/' + r.total + ')').join(', ')
-        : 'todo mundo entregou';
+      const pendencias = pendenciasChecklistDoResumo(resultados);
+      const resumo = textoPendenciasChecklist(pendencias);
       await setDoc(doc(db,'log_automacoes', chave), {
         tipo: 'resumo_checklist_19h', quando: agora.toISOString(),
-        entregaram: concluidos.length, total: resultados.length, faltando: resumo
+        entregaram: concluidos.length, total: resultados.length,
+        pessoasComPendencia: pendencias.length,
+        totalItensAbertos: pendencias.reduce((s,p) => s + p.abertos, 0),
+        pendencias, faltando: resumo
       });
+      if(!pendencias.length) return; // às 19h, ninguém em aberto: registra a rodada e não incomoda Amanda
       dispararEmailIndividual('Amanda', 'resumo_checklist', {
-        titulo: '📋 Checklists de hoje — ' + concluidos.length + '/' + resultados.length + ' entregues' + (faltando.length ? ' · pendente: ' + resumo : ' · todo mundo em dia'),
+        titulo: '📋 Pendências dos checklists — ' + resumo,
         itemId: chave, colecao: 'log_automacoes'
       }).catch(()=>{});
     }catch(e){ console.error('Resumo de checklist 19h:', e); }

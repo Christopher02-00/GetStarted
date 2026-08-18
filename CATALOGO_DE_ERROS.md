@@ -1382,3 +1382,60 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Erro de leitura deixa a Central indisponível e não zera métricas.
 - [x] WhatsApp institucional substitui o contato pessoal nas páginas públicas.
 - [x] A abertura da conversa preserva o gesto; nenhuma mensagem é marcada como enviada automaticamente.
+
+## 67. CONTATOS ATIVOS E ARQUIVO ÚNICO — V78 (18/08/2026)
+
+### 67.1 A lista de contatos podia continuar exibindo quem já saiu
+**Causa encontrada:** a área de mensagens montava a carteira ativa ao abrir, mas não observava uma saída registrada por Amanda em outra sessão. Um cartão já aberto também podia navegar ao WhatsApp sem confirmar novamente o estado operacional.
+
+**Como foi corrigido:** a área exclusiva de Chris observa `clientes_encerrados`, atualiza a lista quando a saída muda e relê a Central antes de salvar número ou abrir conversa. Falha de leitura fecha o fluxo e nunca reutiliza a lista antiga como se estivesse confirmada.
+
+> **LEI:** planilha de contatos usa somente a carteira ativa confirmada; abrir WhatsApp exige revalidar que o cliente continua ativo.
+
+### 67.2 O arquivo existia, mas aparecia misturado com a operação ativa
+**Causa encontrada:** saídas efetivas, saídas programadas e fichas ativas eram renderizadas no mesmo painel extenso. Isso dava aparência de vários arquivos e aumentava o risco de procurar ou reativar a origem errada.
+
+**Como foi corrigido:** a Entrada de Clientes passou a ter uma subaba única de arquivo e reativação. Ela projeta `clientes_encerrados` e legados compatíveis depois da deduplicação canônica, preserva ficha, contrato, Portal e histórico e reutiliza a identidade existente na reativação.
+
+> **LEI:** arquivo de clientes é uma projeção única por identidade canônica. Arquivar e reativar nunca criam uma segunda ficha.
+
+### 67.3 O telefone aparecia fora do ponto financeiro solicitado
+**Causa encontrada:** cartões compartilhados da Central exibiam contato de clientes ativos e arquivados, embora a operação de mensagens devesse ser exclusiva de Chris.
+
+**Como foi corrigido:** telefone de carteira ativa e arquivada deixou de ser montado na Central compartilhada. Consulta, correção e abertura de WhatsApp ficam em `Financeiro → Contatos ativos e mensagens`, cuja view e navegação são removidas do DOM para os demais papéis. O telefone informado no onboarding permanece visível para Amanda somente durante a conferência inicial.
+
+### 67.4 Gate obrigatório da V78
+- [x] Nenhuma coleção paralela ou cópia de cliente foi criada.
+- [x] Saída efetiva remove o cliente da lista ativa e o preserva no arquivo.
+- [x] Saída programada permanece separada de saída efetiva.
+- [x] Arquivo deduplica por identidade canônica e conserva reativação.
+- [x] Cartões ativos e arquivados compartilhados não montam telefone.
+- [x] Área de contatos existe no DOM somente para Chris.
+- [x] Salvar contato e abrir WhatsApp revalidam a carteira ativa.
+- [x] Falha de leitura não vira lista vazia confirmada nem ação permitida.
+
+## 68. ENVIO DO CALENDÁRIO DO PRÓXIMO MÊS — V79 (18/08/2026)
+
+### 68.1 Cecília recebia “mês ainda não liberado” depois da aprovação
+**Causa encontrada:** o botão de copiar aceitava apenas `liberado`, mas a decisão da Amanda termina em `aprovado_interno`. A única transição de `aprovado_interno` para `liberado` estava escondida numa fila exclusiva da Amanda, embora a rotina real seja Cecília enviar o link ao cliente.
+
+**Como foi corrigido:** ao copiar uma competência aprovada, Cecília, Amanda ou Chris confirma a mesma competência em transação. O sistema relê documento, itens e estado, muda somente aquele mês para `liberado` e prepara a URL com `&mes=AAAA-MM`. Rascunho, ajuste ou revisão pendente continuam bloqueados.
+
+> **LEI:** competência de envio é a competência selecionada, mesmo quando pertence ao mês seguinte. Aprovar e entregar continuam etapas separadas; copiar nunca libera rascunho.
+
+### 68.2 Alguns calendários pareciam vazios para Cecília
+**Causa encontrada:** na abertura interna sem `&mes`, a tela confiava primeiro no rótulo global `month`. Esse rótulo pode ficar em agosto enquanto os itens reais já estão em setembro, fazendo a grade abrir numa competência sem conteúdo.
+
+**Como foi corrigido:** a abertura interna usa o mês solicitado quando ele existe; sem solicitação, usa o mês mais recente que possui item confirmado. A ferramenta abre inicialmente no próximo mês, exibe a quantidade e o estado lidos do Firestore e distingue “realmente sem conteúdos” de “documento não confirmado”.
+
+> **LEI:** calendário da equipe abre no mês mais recente que possui conteúdo confirmado; tela vazia só pode ser declarada depois de leitura confirmada do documento.
+
+### 68.3 Gate obrigatório da V79
+- [x] Agosto pode preparar e enviar setembro sem cair no mês do relógio.
+- [x] A URL do cliente mantém `&mes=2026-09`.
+- [x] Só `aprovado_interno` pode virar `liberado` durante a cópia.
+- [x] A transação relê itens e estado antes de liberar.
+- [x] Cecília, Amanda e Chris podem concluir; demais papéis não ganham a decisão.
+- [x] Mês realmente vazio não é liberado nem recebe link.
+- [x] Falha de leitura não é apresentada como mês vazio.
+- [x] `calendario.html` e `calendarios.html` permanecem idênticos.

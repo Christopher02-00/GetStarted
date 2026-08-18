@@ -18,7 +18,9 @@ const obrigatorios = [
   'avulso.html', 'firestore.rules', 'CATALOGO_DE_ERROS.md',
   'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
   'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs',
-  'scripts/regression-v76.mjs', 'scripts/regression-v77.mjs', 'RELATORIO_ENTREGA_V77.md'
+  'scripts/regression-v76.mjs', 'scripts/regression-v77.mjs', 'scripts/regression-v78.mjs',
+  'scripts/regression-v79.mjs', 'RELATORIO_ENTREGA_V77.md', 'RELATORIO_ENTREGA_V78.md',
+  'RELATORIO_ENTREGA_V79.md'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -186,10 +188,20 @@ const leisV77 = [
   'formulário público só mostra sucesso após recibo do mesmo documento',
   'pré-cadastro registra interesse; cadastro final ativa a operação somente após conferência'
 ];
+const leisV78 = [
+  'planilha de contatos usa somente a carteira ativa confirmada',
+  'arquivo de clientes é uma projeção única por identidade canônica',
+  'abrir WhatsApp exige revalidar que o cliente continua ativo'
+];
+const leisV79 = [
+  'competência de envio é a competência selecionada, mesmo quando pertence ao mês seguinte',
+  'calendário da equipe abre no mês mais recente que possui conteúdo confirmado',
+  'tela vazia só pode ser declarada depois de leitura confirmada do documento'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V77');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V77');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V79');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V79');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -696,9 +708,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-17-central-vendas-v77') {
-  falhar(`build V77 inesperado: ${build || 'ausente'}`);
-} else provar('V77 preserva a base autenticada e acrescenta a Central de Vendas');
+if (build !== '2026-08-18-calendario-proximo-mes-v79') {
+  falhar(`build V79 inesperado: ${build || 'ausente'}`);
+} else provar('V79 preserva contatos/arquivo e corrige o envio do próximo mês');
 
 if (!escritorio.includes("'emanuelle': 'emanuelle-bernaski-nutri'") ||
     !escritorio.includes("'hitech': 'rodrigo'") ||
@@ -932,6 +944,7 @@ if (!progressoEditorialV53.includes('i.excluido!==true') || !visaoCalendariosV53
 
 const calendarioAtual=ler('calendario.html');
 const calendariosAtual=ler('calendarios.html');
+const prepararLinkCalendarioV79=escritorio.slice(escritorio.indexOf('async function prepararLinkCalendarioCliente'),escritorio.indexOf('window.prepararLinkCalendarioCliente'));
 const storiesSemana=escritorio.slice(escritorio.indexOf('function semanaStoryDerivadaDoTexto'),escritorio.indexOf('window.salvarClienteDeStory'));
 const storiesPortal=portal.slice(portal.indexOf('function semanaStoryDerivadaPortal'),portal.indexOf('async function carregarStories'));
 if (!storiesSemana.includes('semanaEfetivaStory') || !storiesSemana.includes('validarSemanaDoRoteiroStory') ||
@@ -941,7 +954,10 @@ if (!storiesSemana.includes('semanaEfetivaStory') || !storiesSemana.includes('va
 } else provar('Stories grava competência explícita, bloqueia divergência e lê legado inequivocamente no Escritório e Portal');
 if (calendarioAtual !== calendariosAtual || !calendarioAtual.includes("const mesSolicitado = params.get('mes') || ''") ||
     !calendarioAtual.includes('pedido && lib.includes(pedido)') || !calendarioAtual.includes("u.searchParams.set('mes',m)") ||
-    !escritorio.includes("(mes?'&mes='+encodeURIComponent(mes):'')") || !escritorio.includes("estadoMesCal(calSnap.data()||{},mes)!=='liberado'")) {
+    !escritorio.includes("(mes?'&mes='+encodeURIComponent(mes):'')") ||
+    !prepararLinkCalendarioV79.includes("estado!=='liberado'&&estado!=='aprovado_interno'") ||
+    !prepararLinkCalendarioV79.includes("if(estado!=='aprovado_interno')") ||
+    !prepararLinkCalendarioV79.includes("status:'liberado',mes")) {
   falhar('link mensal do calendário não preserva competência, liberação do cliente ou paridade dos dois endereços');
 } else provar('link carrega mês explícito, valida liberação e mantém calendario/calendarios byte a byte idênticos');
 const consultaCalendario=calendarioAtual.slice(calendarioAtual.indexOf('function openEdit'),calendarioAtual.indexOf('function saveItem'));

@@ -48,7 +48,10 @@ ok(avulso.includes("tx.set(configRef,{tipoCliente:'avulso',tipoEntrega:'entrega_
 const edicao=trecho(escritorio,'window.salvarClienteAtivoCentral=async function','  window.arquivarEntradaPendente');
 ok(edicao.includes('const fone=numeroWhatsAppBrasil(dados.telefone)'),'edição ativa usa outra normalização');
 ok(edicao.includes('whatsappCobranca:fone'),'edição ativa não sincroniza o contato');
-ok(escritorio.includes("value=\"${escAttr(v.telefone||v.whatsappCobranca||'')}\""),'editor pode apagar contato operacional de ficha legada');
+const editorCompartilhado=trecho(escritorio,'function htmlEditorClienteAtivoCentral','  window.editarClienteAtivoCentral');
+ok(escritorio.includes("value=\"${escAttr(v.telefone||v.whatsappCobranca||'')}\"") ||
+  (edicao.includes("telefone:String(atual.telefone||atual.whatsappCobranca||'').trim()")&&!editorCompartilhado.includes('id="ecaTelefone"')),
+  'editor pode apagar contato operacional de ficha legada');
 ok(!escritorio.includes('const CLIENTES_WHATSAPP_FIXOS'),'foi reintroduzida lista fixa paralela');
 
 console.log(`RESULTADO: APROVADO (${total} asserções V73)`);

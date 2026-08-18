@@ -1837,7 +1837,8 @@ function testarIncidentesStoriesCalendarioGravacaoV70Sandbox(){
 
   const linkCliente=trecho(escritorio,'async function prepararLinkCalendarioCliente','window.prepararLinkCalendarioCliente');
   const copiarLinkCliente=trecho(escritorio,'window.copiarLinkCalendarioDireto = async function','window.abrirLinkCliente');
-  exigir(linkCliente.includes("estadoMesCal(calSnap.data()||{},mes)!=='liberado'") &&
+  exigir(linkCliente.includes("estado!=='liberado'&&estado!=='aprovado_interno'") &&
+    linkCliente.includes("if(estado!=='aprovado_interno')") && linkCliente.includes("status:'liberado',mes") &&
     linkCliente.includes("(mes?'&mes='+encodeURIComponent(mes):'')") &&
     copiarLinkCliente.includes('prepararLinkCalendarioCliente(slug,mesEscolhido)'),
     'link mensal pode copiar mês inexistente/não liberado ou perder a competência na URL');

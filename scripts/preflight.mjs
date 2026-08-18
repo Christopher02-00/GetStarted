@@ -17,10 +17,19 @@ const obrigatorios = [
   'calendarios.html', 'cadastro.html', 'cadastros.html',
   'avulso.html', 'firestore.rules', 'CATALOGO_DE_ERROS.md',
   'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
-  'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs'
+  'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs',
+  'scripts/regression-v76.mjs', 'RELATORIO_ENTREGA_V76.md'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
+}
+
+const copiasAntigasNaRaiz = ['preflight.mjs', 'regression-critical.mjs'];
+for (const arquivo of copiasAntigasNaRaiz) {
+  if (fs.existsSync(path.join(raiz, arquivo))) falhar(`cópia antiga voltou à raiz: ${arquivo}`);
+}
+if (!copiasAntigasNaRaiz.some(arquivo => fs.existsSync(path.join(raiz, arquivo)))) {
+  provar('suítes antigas ausentes da raiz; fonte única preservada em scripts/');
 }
 if (erros.length) finalizar();
 
@@ -169,10 +178,13 @@ const leisV75 = [
   'reativar cliente arquivado reutiliza a identidade e exige a nova condição financeira',
   'arquivo legado e saída central possuem chaves de interface distintas'
 ];
+const leisV76 = [
+  'declarar uma função de leitura não autoriza executá-la durante a avaliação do módulo'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V75');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V75');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V76');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V76');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -679,9 +691,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-17-valor-ativacao-reativacao-v75') {
-  falhar(`build V75 inesperado: ${build || 'ausente'}`);
-} else provar('V75 exige conferência financeira na ativação/reativação sem duplicar identidade');
+if (build !== '2026-08-17-auth-carteira-limpeza-v76') {
+  falhar(`build V76 inesperado: ${build || 'ausente'}`);
+} else provar('V76 preserva V75 e impede leitura da carteira antes da autenticação');
 
 if (!escritorio.includes("'emanuelle': 'emanuelle-bernaski-nutri'") ||
     !escritorio.includes("'hitech': 'rodrigo'") ||

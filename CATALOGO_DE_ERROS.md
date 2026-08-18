@@ -1330,3 +1330,20 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Pagamentos confirmados e cancelados não são reescritos.
 - [x] Saída permanece preservada por soft-delete; não existe `deleteDoc()` nem `addDoc()` no fluxo.
 - [x] iPhone Campo Largo não foi reativado, recriado ou alterado em produção.
+
+## 65. PAINÉIS OPERACIONAIS CONSULTAVAM FIRESTORE ANTES DO LOGIN — V76 (17/08/2026)
+
+### 65.1 A carga do módulo disparava uma leitura sem identidade confirmada
+**Prova no site publicado:** em sessão limpa, `escritorio.html` mostrou corretamente o portão Google, mas o console registrou duas negativas `Missing or insufficient permissions`. O código executava `carregarClientesExtras()` e `renderFuncionarioMesInicio()` imediatamente depois de declarar os blocos, antes de `onAuthStateChanged`, identidade, isolamento do DOM e abertura da sessão.
+
+**Como foi corrigido:** as duas chamadas soltas foram removidas. As cargas permanecem no ponto protegido de `mudarUsuarioGlobal()`, depois de `abrirSessaoDeEquipe`, usando `etapaSegura`. A sessão anônima não consulta `clientes_extras`, `clientes_config` nem `funcionario_do_mes`; uma sessão autenticada atualiza os dois painéis antes das telas consumidoras.
+
+> **LEI:** declarar uma função de leitura não autoriza executá-la durante a avaliação do módulo. Toda coleção operacional espera a identidade e possui um ponto de carga autenticado e testado.
+
+### 65.2 Gate obrigatório da V76
+- [x] Não existe chamada nua de `carregarClientesExtras()` na carga do módulo.
+- [x] Não existe chamada nua de `renderFuncionarioMesInicio()` na carga do módulo.
+- [x] `mudarUsuarioGlobal()` mantém a carga protegida depois da abertura da sessão.
+- [x] O build identifica explicitamente a V76.
+- [x] Sessão anônima permanece no portão Google sem depender de leitura operacional.
+- [x] Preflight, regressão crítica e testes V71–V76 continuam aprovados.

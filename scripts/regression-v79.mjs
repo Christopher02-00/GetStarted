@@ -13,7 +13,7 @@ let total=0;
 function exigir(condicao,mensagem){ total++; if(!condicao) throw new Error('FALHOU: '+mensagem); console.log('PASS ',mensagem); }
 function trecho(fonte,inicio,fim){ const a=fonte.indexOf(inicio),b=fonte.indexOf(fim,a); if(a<0||b<0) throw new Error('Trecho ausente: '+inicio); return fonte.slice(a,b); }
 
-exigir(escritorio.includes('<meta name="gs-build" content="2026-08-18-calendario-proximo-mes-v79">'),'build V79 identificado');
+exigir(/<meta name="gs-build" content="2026-08-18-(?:calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80)">/.test(escritorio),'build V79 ou sucessor identificado');
 exigir(calendario===calendarios,'endereços singular e plural permanecem idênticos');
 exigir(escritorio.includes('const mesPadrao=competenciaSeguinte(hojeLocal().slice(0,7))')&&escritorio.includes('mesLink.value=competenciaSeguinte(hojeLocal().slice(0,7))'),'ferramentas começam no mês seguinte');
 exigir(escritorio.includes("'&mes=' + encodeURIComponent(mesLink?.value||'')"),'iframe recebe a competência escolhida explicitamente');

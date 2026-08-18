@@ -16,7 +16,7 @@ let total=0;
 function exigir(condicao,mensagem){ total++; if(!condicao) throw new Error('FALHOU: '+mensagem); console.log('PASS ',mensagem); }
 function trecho(fonte,inicio,fim){ const a=fonte.indexOf(inicio),b=fonte.indexOf(fim,a); if(a<0||b<0) throw new Error('Trecho ausente: '+inicio); return fonte.slice(a,b); }
 
-exigir(/<meta name="gs-build" content="2026-08-(?:17-central-vendas-v77|18-(?:contatos-arquivo-unico-v78|calendario-proximo-mes-v79))">/.test(escritorio),'build V77 ou sucessor identificado');
+exigir(/<meta name="gs-build" content="2026-08-(?:17-central-vendas-v77|18-(?:contatos-arquivo-unico-v78|calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80))">/.test(escritorio),'build V77 ou sucessor identificado');
 exigir(escritorio.includes('id="navCentralVendas"')&&escritorio.includes('id="view-centralVendas"'),'Central de Vendas possui navegação e view');
 exigir(escritorio.includes("definirItemExclusivoNoDOM('view-centralVendas',usuarioAtual==='Chris')")&&escritorio.includes("'centralVendas','cobranca'"),'view comercial sai do DOM e a porta continua exclusiva do Chris');
 exigir(escritorio.includes("if(nome === 'centralVendas') renderCentralVendas()")&&escritorio.includes("centralVendas:'navCentralVendas'"),'navegação renderiza a Central pelo destino oficial');

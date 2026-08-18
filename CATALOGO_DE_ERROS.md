@@ -1439,3 +1439,27 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Mês realmente vazio não é liberado nem recebe link.
 - [x] Falha de leitura não é apresentada como mês vazio.
 - [x] `calendario.html` e `calendarios.html` permanecem idênticos.
+
+## 69. CATÁLOGO COMERCIAL E NOVOS PLANOS — V80 (18/08/2026)
+
+### 69.1 O PDF novo e o cadastro final descreviam carteiras diferentes
+**Causa encontrada:** o `Planos.pdf` publicado ainda possuía cinco páginas e somente Básico, Intermediário e Premium. O catálogo comercial correto acrescenta Premium Presença 2x, Premium Presença 3x e Premium Conteúdos Vivos, mas o cadastro final, a conferência da Amanda e a edição de ficha aceitavam apenas os três nomes antigos.
+
+**Como foi corrigido:** o PDF oficial foi substituído pela versão correta de nove páginas e otimizado para upload sem retirar páginas. Site, página de links, pré-cadastro e onboarding usam o mesmo arquivo com versão de cache. Os seis planos passaram a existir nos escritores e editores da ficha; valores de catálogo são sugeridos, enquanto Premium Conteúdos Vivos permanece “sob consulta” e exige o valor realmente fechado.
+
+> **LEI:** catálogo, formulário e ficha ativa usam a mesma lista canônica. Plano sob consulta nunca recebe preço presumido, e opção legada desconhecida é preservada em vez de ser convertida silenciosamente para Premium.
+
+### 69.2 Um PDF operacional interno podia ser confundido com material comercial
+**Causa encontrada:** havia também um documento chamado “Plano de conteúdo orgânico”, com pautas, pessoas e instruções internas. Ele não é catálogo de serviços e não pode ser exposto no link de cadastro.
+
+**Como foi corrigido:** a seleção foi feita pelo conteúdo e metadados, não apenas pela palavra “Plano” no nome. Somente `Planos_GetStarted_com_Premium_Conteudos_Vivos.pdf` originou o `Planos.pdf`; o calendário orgânico foi desconsiderado e não entrou no repositório nem nos links públicos.
+
+### 69.3 Gate obrigatório da V80
+- [x] `Planos.pdf` possui nove páginas e inclui as três novas modalidades.
+- [x] PDF otimizado permanece abaixo do limite de upload pelo navegador.
+- [x] Pré-cadastro apresenta Premium Presença e Premium Conteúdos Vivos.
+- [x] Cadastro final aceita os seis nomes canônicos e sugere somente preços explícitos.
+- [x] Básico, Intermediário e Premium preservam compatibilidade.
+- [x] Conferência e edição da ficha aceitam as novas opções sem perder plano legado.
+- [x] Site, perfil, cadastro e área interna apontam ao mesmo PDF versionado.
+- [x] Documento de conteúdo orgânico não foi publicado como catálogo comercial.

@@ -19,8 +19,9 @@ const obrigatorios = [
   'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
   'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs',
   'scripts/regression-v76.mjs', 'scripts/regression-v77.mjs', 'scripts/regression-v78.mjs',
-  'scripts/regression-v79.mjs', 'RELATORIO_ENTREGA_V77.md', 'RELATORIO_ENTREGA_V78.md',
-  'RELATORIO_ENTREGA_V79.md'
+  'scripts/regression-v79.mjs', 'scripts/regression-v80.mjs', 'Planos.pdf',
+  'RELATORIO_ENTREGA_V77.md', 'RELATORIO_ENTREGA_V78.md', 'RELATORIO_ENTREGA_V79.md',
+  'RELATORIO_ENTREGA_V80.md'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -708,9 +709,20 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-18-calendario-proximo-mes-v79') {
-  falhar(`build V79 inesperado: ${build || 'ausente'}`);
-} else provar('V79 preserva contatos/arquivo e corrige o envio do próximo mês');
+if (build !== '2026-08-18-planos-premium-conteudos-vivos-v80') {
+  falhar(`build V80 inesperado: ${build || 'ausente'}`);
+} else provar('V80 preserva o envio mensal e alinha catálogo, cadastro e Central de Clientes');
+
+const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
+const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
+if (paginasPdf !== 9 || pdfPlanos.length >= 25*1024*1024) {
+  falhar(`catálogo comercial inválido: ${paginasPdf} página(s), ${pdfPlanos.length} bytes`);
+} else provar('catálogo comercial possui 9 páginas e cabe no upload pelo navegador');
+if (!ler('avulso.html').includes('Premium Conteúdos Vivos') ||
+    !ler('avulso.html').includes('Premium Presença 2x') ||
+    !ler('avulso.html').includes('Premium Presença 3x')) {
+  falhar('cadastro final não contém todas as modalidades do catálogo V80');
+} else provar('cadastro final contém Premium Presença e Premium Conteúdos Vivos');
 
 if (!escritorio.includes("'emanuelle': 'emanuelle-bernaski-nutri'") ||
     !escritorio.includes("'hitech': 'rodrigo'") ||

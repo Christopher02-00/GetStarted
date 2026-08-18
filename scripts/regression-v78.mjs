@@ -12,7 +12,7 @@ let total=0;
 function exigir(condicao,mensagem){ total++; if(!condicao) throw new Error('FALHOU: '+mensagem); console.log('PASS ',mensagem); }
 function trecho(inicio,fim){ const a=escritorio.indexOf(inicio),b=escritorio.indexOf(fim,a); if(a<0||b<0) throw new Error('Trecho ausente: '+inicio); return escritorio.slice(a,b); }
 
-exigir(/<meta name="gs-build" content="2026-08-18-(?:contatos-arquivo-unico-v78|calendario-proximo-mes-v79)">/.test(escritorio),'build V78 ou sucessor identificado');
+exigir(/<meta name="gs-build" content="2026-08-18-(?:contatos-arquivo-unico-v78|calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80)">/.test(escritorio),'build V78 ou sucessor identificado');
 exigir(escritorio.includes('Contatos ativos e mensagens')&&escritorio.includes('Área exclusiva do Chris dentro do Financeiro'),'contatos ficam explicitamente no Financeiro do Chris');
 exigir(escritorio.includes("definirItemExclusivoNoDOM('navMensagensClientesChris',usuarioAtual==='Chris')")&&escritorio.includes("definirItemExclusivoNoDOM('view-mensagensClientesChris',usuarioAtual==='Chris')"),'menu e view de contatos saem do DOM dos demais papéis');
 exigir(escritorio.includes("const VIEWS_SO_CHRIS = ['mensalidades','contratos','financeiro','centralVendas','cobranca','mensagensClientesChris']"),'porta de navegação mantém contatos exclusiva do Chris');

@@ -1629,3 +1629,10 @@ O conciliador reconhece pontual **antes** de status/postagem/configuração e nu
 **Como foi corrigido:** a interface deixou de sugerir qualquer frase literal. Ela orienta a criar uma frase inédita, que nunca tenha aparecido no site, na tela, em conversa ou na documentação. A manutenção não altera credenciais nem dados publicados.
 
 > **LEI:** exemplo de senha em código cliente é senha pública. Nunca sugerir, registrar ou repetir uma credencial concreta no HTML, nos testes, no catálogo ou no relatório.
+
+### 70.21 A Central de Vendas era exclusiva no DOM, mas não nas regras
+**Defeito comprovado após a publicação da V81:** a navegação e as views de propostas e reuniões eram removidas para Amanda e demais papéis, porém `negocios` e `reunioes_vendas` ainda aceitavam `ehGerencia()` no Firestore. Amanda não via a tela, mas uma chamada direta autenticada ainda podia ler, criar ou alterar esses documentos.
+
+**Como foi corrigido na V82:** a fronteira gerencial dessas duas coleções passou de `ehGerencia()` para `ehChris()`. A sessão do cliente conserva somente as duas operações já estreitas e validadas sobre a própria proposta: responder uma etapa comercial elegível e enviar um comprovante HTTPS. Contratos, onboarding, saída de clientes e demais tarefas legítimas da Amanda não foram alterados.
+
+> **LEI:** exclusividade por papel precisa coincidir em três lugares: navegação, existência no DOM e regra do Firestore. Esconder ou remover a tela sem estreitar o backend não é autorização.

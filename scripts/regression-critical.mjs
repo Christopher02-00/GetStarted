@@ -436,7 +436,7 @@ function testarCampanhasMensaisSandbox(){
   exigir((escritorio.match(/id="navAcompCampanhas"/g)||[]).length===1&&!escritorio.includes('id="navCampanhas"'),
     'duas portas de Campanhas voltaram ao menu lateral');
   const registroDomExclusivo=trecho(escritorio,
-    "['navCadastro','navAprovacoes','navExtras'",
+    'const __sidebarExclusivos',
     'function definirItemExclusivoNoDOM');
   exigir(['navAcompCampanhas','view-campanhas','navVideos','view-videos'].every(id=>registroDomExclusivo.includes(`'${id}'`)) &&
     escritorio.includes("definirItemExclusivoNoDOM('navAcompCampanhas',podeCampanhas)") &&

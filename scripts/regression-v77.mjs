@@ -65,7 +65,7 @@ for(const colecao of ['leads_avulsos','leads_mensalista','leads_pessoa_fisica'])
   exigir(regra.includes('allow get: if ehGerencia() || (logado() && resource.data.criadoPorUid == request.auth.uid)')&&regra.includes('allow list, update: if ehGerencia()'),colecao+' permite recibo próprio sem liberar listagem pública');
 }
 const regraReuniao=trecho(regras,'match /reunioes_vendas/{docId}', 'allow delete: if false;');
-exigir(regraReuniao.includes('allow read, create, update: if ehGerencia()'),'reuniões comerciais são privadas da gerência');
+exigir(regraReuniao.includes('allow read, create, update: if ehChris()'),'reuniões comerciais são privadas do Chris');
 
 for(const [arquivo,fonte] of [['avulso.html',avulso],['index.html',index],['links.html',links],['portal-cliente.html',portal]]) exigir(!fonte.includes('5541996443046')&&!fonte.includes('99644-3046'),arquivo+' não contém o contato pessoal antigo');
 exigir(index.includes('avulso.html')&&links.includes('Peça sua proposta — pré-cadastro comercial'),'site e perfil apontam para o pré-cadastro oficial');

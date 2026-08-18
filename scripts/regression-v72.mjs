@@ -85,7 +85,11 @@ exigir(cobrarMensalidade.includes('return abrirCobranca(id)'),'Mensalidades reut
 exigir(!abrir.includes('https://wa.me/')&&!render.includes('https://wa.me/'),'fluxo da Régua não usa redirecionamento genérico wa.me');
 
 const central=trecho('/* ===== MENSAGENS PARA CLIENTES — V71','  async function carregarMensalistaRecebidoNosCampos');
-exigir(central.includes('whatsappFinanceiro:contatoFinanceiroPorIdentidade(contatos,v.slug)')&&central.includes('const contato=contatoWhatsAppCliente(cliente)'),'Central usa somente a agenda privada pela mesma validação');
+exigir(central.includes('const privado=contatoFinanceiroPorIdentidade(contatos,v.slug)')&&
+  central.includes('contatoLegadoPorIdentidade(legados,v.slug)')&&
+  central.includes("contatoOrigem:privado?'agenda financeira privada'")&&
+  central.includes('const contato=contatoWhatsAppCliente(cliente)'),
+  'Central prefere a agenda privada e só usa legado inequívoco pela mesma validação');
 exigir(central.includes('urlWhatsAppWeb(numero,mensagem)'),'Central abre WhatsApp Web pela função compartilhada');
 exigir(central.includes('Cadastre o WhatsApp nesta área financeira')&&!central.includes("'https://wa.me/'+numero"),'Central bloqueia contato ausente sem abrir conversa genérica');
 

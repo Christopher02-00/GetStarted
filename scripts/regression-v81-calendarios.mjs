@@ -54,15 +54,16 @@ new vm.Script(`
 `).runInContext(contexto);
 
 const agosto='2026-08-18T12:00:00';
-const varios={items:[{mes:'2026-08',name:'Agosto'},{mes:'2026-09',name:'Setembro'},{mes:'2026-10',name:'Outubro'}],aprovacaoMeses:{'2026-09':{status:'aprovado_interno'},'2026-10':{status:'liberado'}}};
+const varios={items:[{mes:'2026-08',name:'Agosto'},{mes:'2026-09',name:'Setembro'},{mes:'2026-10',name:'Outubro'}],aprovacaoMeses:{'2026-08':{status:'liberado'},'2026-09':{status:'aprovado_interno'},'2026-10':{status:'liberado'}}};
 exigir(contexto.api(varios,'',agosto)==='2026-09','sem escolha explícita, a operação corrente aponta para o próximo mês');
 exigir(contexto.api(varios,'2026-09',agosto)==='2026-09','escolha explícita só é aceita quando coincide com o mês operacional');
-exigir(falhaQualquer(()=>contexto.api(varios,'2026-08',agosto)),'mês vigente fica no arquivo e não volta ao fluxo operacional');
-exigir(falhaQualquer(()=>contexto.api(varios,'2026-10',agosto)),'outro mês futuro não pode furar a competência operacional');
+exigir(contexto.api(varios,'2026-08',agosto)==='2026-08','mês histórico já liberado recebe link atual sem nova liberação');
+exigir(contexto.api(varios,'2026-10',agosto)==='2026-10','outro mês já liberado pode ser reaberto pelo próprio cliente');
+exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-08'}],aprovacaoMeses:{'2026-08':{status:'aprovado_interno'}}},'2026-08',agosto)),'mês histórico ainda não liberado não fura o ciclo operacional');
 exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-10'}],aprovacaoMeses:{'2026-10':{status:'liberado'}}},'',agosto)),'documento com um único mês fora do ciclo não cria fallback operacional');
 exigir(contexto.api({items:[{mes:'2027-01'}],aprovacaoMeses:{'2027-01':{status:'aprovado_interno'}}},'','2026-12-18T12:00:00')==='2027-01','resolução do link respeita dezembro para janeiro');
 exigir(falhaQualquer(()=>contexto.api({items:[]},'',agosto)),'documento confirmado sem itens não vira link ambíguo');
-exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-07'},{mes:'2026-10'}],aprovacaoMeses:{'2026-07':{status:'liberado'},'2026-10':{status:'liberado'}}},'',agosto)),'fallback não escolhe silenciosamente entre meses fora da competência');
+exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-07'},{mes:'2026-10'}],aprovacaoMeses:{'2026-07':{status:'liberado'},'2026-10':{status:'liberado'}}},'',agosto)),'sem mês explícito, fallback não escolhe silenciosamente entre arquivos liberados');
 exigir(deveFalhar(()=>contexto.api(varios,'setembro',agosto),'competência válida'),'valor de mês inválido é recusado em vez de perder o parâmetro');
 
 const preparar=trecho(escritorio,'async function prepararLinkCalendarioCliente','  window.prepararLinkCalendarioCliente');

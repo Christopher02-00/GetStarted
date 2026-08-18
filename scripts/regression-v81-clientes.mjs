@@ -50,8 +50,10 @@ function cancelarSaidaSimulado({preservados,acessos,tokens}){
 
 function sessaoPortalValidaSimulada({acesso,tokenDoc,cliente,token,agora}){
   const vigente=d=>!d?.ativoAte||agora<d.ativoAte;
-  if(acesso) return acesso.ativo!==false&&vigente(acesso)&&acesso.token===token;
-  return !!tokenDoc&&tokenDoc.cliente===cliente&&tokenDoc.ativo!==false&&vigente(tokenDoc);
+  const acessoAtivo=!!acesso&&acesso.ativo!==false&&vigente(acesso);
+  const canonico=acessoAtivo&&acesso.token===token;
+  const historico=!!tokenDoc&&tokenDoc.cliente===cliente&&tokenDoc.ativo!==false&&vigente(tokenDoc)&&(!acesso||acessoAtivo);
+  return canonico||historico;
 }
 
 exigir(escritorio.includes('2026-08-18-ciclo-clientes-propostas-v81'),'build V81 identificado');
@@ -119,10 +121,12 @@ exigir(escritorio.includes('window.novoContrato = async function(){')&&escritori
 const sessaoRules=trecho(rules,'function temSessaoCliente()','function ehDonoExtra');
 exigir(sessaoRules.includes('tokenPortalValido(')&&sessaoRules.includes('tokenCalendarioEquipeValido('),'cada leitura de sessão revalida token e vigência');
 exigir(sessaoRules.includes("get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.token == token"),'acesso canônico define o token válido');
-exigir(sessaoRules.includes('!exists(/databases/$(database)/documents/clientes_acesso/$(cliente))'),'token avulso só é fallback quando não existe acesso canônico');
+exigir(sessaoRules.includes('tokenPortalHistoricoAtivo(cliente, token)')&&sessaoRules.includes('acessoPortalCanonicoAtivo(cliente)'),'token histórico ativo permanece limitado ao mesmo cliente ativo');
 exigir(sessaoRules.includes('request.time < dados.ativoAte'),'vigência do acesso é aplicada pelas regras');
 
-exigir(sessaoPortalValidaSimulada({acesso:{ativo:true,token:'novo'},tokenDoc:{cliente:'c',ativo:true},cliente:'c',token:'antigo',agora:10})===false,'sandbox: token histórico não vence o acesso canônico');
+exigir(sessaoPortalValidaSimulada({acesso:{ativo:true,token:'novo'},tokenDoc:{cliente:'c',ativo:true},cliente:'c',token:'antigo',agora:10})===true,'sandbox: cliente ativo conserva link histórico ativo do próprio cliente');
+exigir(sessaoPortalValidaSimulada({acesso:{ativo:false,token:'novo'},tokenDoc:{cliente:'c',ativo:true},cliente:'c',token:'antigo',agora:10})===false,'sandbox: saída canônica revoga também o link histórico');
+exigir(sessaoPortalValidaSimulada({acesso:{ativo:true,token:'novo'},tokenDoc:{cliente:'c',ativo:false},cliente:'c',token:'antigo',agora:10})===false,'sandbox: reativação não ressuscita token histórico revogado');
 exigir(sessaoPortalValidaSimulada({acesso:{ativo:true,token:'novo',ativoAte:10},cliente:'c',token:'novo',agora:11})===false,'sandbox: sessão já aberta perde acesso após a vigência');
 exigir(sessaoPortalValidaSimulada({acesso:{ativo:true,token:'novo',ativoAte:20},cliente:'c',token:'novo',agora:11})===true,'sandbox: token canônico dentro da vigência continua válido');
 

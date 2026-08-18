@@ -99,12 +99,16 @@ exigir(salvarRapido.includes("doc(db,'contatos_clientes_financeiro'")&&
 const regua=trecho(escritorio,'async function numeroCobrancaConfirmado','window.confirmarEnvioCobranca=async function');
 exigir(regua.includes("getDoc(doc(db,'contatos_clientes_financeiro'")&&
   regua.includes('slugsCompatibilidadeCliente(canonico)')&&
-  !regua.includes("getDoc(doc(db,'clientes_config'"),
-  'consulta individual da cobrança usa coleção privada e aliases');
+  regua.includes("getDoc(doc(db,'clientes_config'")&&
+  regua.indexOf("contatos_clientes_financeiro")<regua.indexOf("clientes_config")&&
+  regua.includes('numeros.size===1')&&regua.includes('conflito:numeros.size>1'),
+  'consulta individual prefere agenda privada e só aceita legado inequívoco');
 const renderRegua=trecho(escritorio,'window.renderCobranca = async function','function atualizarBadgeCobranca');
 exigir(renderRegua.includes("_getDocsFB(collection(db,'contatos_clientes_financeiro'))")&&
-  !renderRegua.includes("getDocs(collection(db,'clientes_config')"),
-  'Régua inteira carrega contatos privados sem cache compartilhado');
+  renderRegua.includes("_getDocsFB(collection(db,'clientes_config'))")&&
+  renderRegua.includes('if(whatsPorCliente.has(slug)) return;')&&
+  renderRegua.includes('contatoLegadoPorIdentidade(configs,slug)'),
+  'Régua inteira prefere contatos privados e usa compatibilidade sem cache compartilhado');
 exigir(renderRegua.includes('const pessoaDaTela=usuarioAtual')&&
   renderRegua.includes("if(usuarioAtual!==pessoaDaTela){ box.replaceChildren(); window.__cobrancasFila={}; return false; }"),
   'Régua revalida Chris após leituras assíncronas');
@@ -118,14 +122,18 @@ exigir(['clientes_encerrados','clientes_config','contatos_clientes_financeiro'].
   'lista aberta reage a saída, reativação e alteração da agenda privada');
 
 const referenciasConfig=[...escritorio.matchAll(/whatsappCobranca/g)].map(m=>m.index);
+const compatInicio=escritorio.indexOf('function contatoLegadoPorIdentidade');
+const compatFim=escritorio.indexOf('async function carregarMensalistaRecebidoNosCampos',compatInicio);
+const reguaInicio=escritorio.indexOf('async function numeroCobrancaConfirmado');
+const reguaFim=escritorio.indexOf('function atualizarBadgeCobranca',reguaInicio);
 const migracaoInicio=escritorio.indexOf('window.migrarContatosFinanceirosLegados=async function');
 const migracaoFim=escritorio.indexOf('function contatoWhatsAppCliente',migracaoInicio);
 const entradaInicio=escritorio.indexOf('async function carregarMensalistaRecebidoNosCampos');
 const entradaFim=escritorio.indexOf('window.ativarMensalistaRecebido',entradaInicio);
 const avulsoInicio=escritorio.indexOf('window.ativarAvulsoRecebido');
 const avulsoFim=escritorio.indexOf('function modelarClienteMensalistaUnificado',avulsoInicio);
-exigir(referenciasConfig.every(i=>(i>=migracaoInicio&&i<migracaoFim)||(i>=entradaInicio&&i<entradaFim)||(i>=avulsoInicio&&i<avulsoFim)),
-  'campo legado só permanece na migração explícita e na compatibilidade de entradas pendentes');
+exigir(referenciasConfig.every(i=>(i>=compatInicio&&i<compatFim)||(i>=migracaoInicio&&i<migracaoFim)||(i>=reguaInicio&&i<reguaFim)||(i>=entradaInicio&&i<entradaFim)||(i>=avulsoInicio&&i<avulsoFim)),
+  'campo legado só permanece em leitura compatível, migração explícita e entradas pendentes');
 
 const plano=planoMigracaoSimulado({
   hitech:{whatsappCobranca:'41 99820-1999'},

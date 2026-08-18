@@ -15,7 +15,9 @@ function trecho(inicio,fim){ const a=escritorio.indexOf(inicio),b=escritorio.ind
 exigir(/<meta name="gs-build" content="2026-08-18-(?:contatos-arquivo-unico-v78|calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80|ciclo-clientes-propostas-v81)">/.test(escritorio),'build V78 ou sucessor identificado');
 exigir(escritorio.includes('Contatos ativos e mensagens')&&escritorio.includes('Área exclusiva do Chris dentro do Financeiro'),'contatos ficam explicitamente no Financeiro do Chris');
 exigir(escritorio.includes("definirItemExclusivoNoDOM('navMensagensClientesChris',usuarioAtual==='Chris')")&&escritorio.includes("definirItemExclusivoNoDOM('view-mensagensClientesChris',usuarioAtual==='Chris')"),'menu e view de contatos saem do DOM dos demais papéis');
-exigir(escritorio.includes("const VIEWS_SO_CHRIS = ['mensalidades','contratos','financeiro','centralVendas','cobranca','mensagensClientesChris']"),'porta de navegação mantém contatos exclusiva do Chris');
+exigir(escritorio.includes("const VIEWS_SO_CHRIS = ['mensalidades','financeiro','centralVendas','cobranca','mensagensClientesChris']")&&
+  escritorio.includes("nome === 'contratos' && !['Chris','Amanda'].includes(usuarioAtual)"),
+  'porta de navegação mantém contatos exclusiva do Chris e contratos na gerência');
 
 const cadastro=trecho("window.setCadastroSub = function","  function entradaClientePendente");
 exigir(cadastro.includes("qual === 'central' || qual === 'arquivo'")&&cadastro.includes("window.__centralClientesModo=qual"),'Entrada e arquivo usam a mesma Central, sem segunda implementação');
@@ -30,13 +32,13 @@ exigir(!trecho('window.salvarClienteAtivoCentral','  window.ativarMensalistaRece
 exigir(escritorio.includes('data-arquivo-cliente=')&&escritorio.includes('window.filtrarArquivoClientesUnico=function'),'arquivo único oferece busca sem criar outra coleção');
 
 const mensagens=trecho('/* ===== MENSAGENS PARA CLIENTES','  async function carregarMensalistaRecebidoNosCampos');
-exigir(mensagens.includes('window.__mensagensClientesLista=ativos.map'),'planilha de contatos nasce somente do retrato ativo confirmado');
+exigir(mensagens.includes("window.__mensagensClientesLista=ativos.filter(cliente=>cliente?.tipo==='mensalista').map"),'planilha de contatos nasce somente do retrato mensalista ativo confirmado');
 exigir(mensagens.includes('window.salvarContatoFinanceiroCliente=async function')&&mensagens.includes("if(usuarioAtual!=='Chris')"),'edição do número é bloqueada fora do perfil Chris');
-exigir(mensagens.includes('const ativos=await window.renderCentralEntradaClientes()')&&mensagens.includes("if(!cliente){ mostrarToast('Contato não salvo: o cliente não está mais na carteira ativa"),'salvar contato relê a carteira e bloqueia cliente encerrado');
+exigir(mensagens.includes('const ativos=await window.renderCentralEntradaClientes()')&&mensagens.includes("v.slug===slug&&v.tipo==='mensalista'")&&mensagens.includes("if(!cliente){ mostrarToast('Contato não salvo: esta agenda aceita somente mensalistas ativos"),'salvar contato relê a carteira e bloqueia avulso/encerrado');
 exigir(mensagens.includes('const recibo=await getDoc(ref)')&&mensagens.includes('recibo.data().whatsapp'),'salvar contato privado confirma o mesmo número por recibo');
 const abrir=trecho('window.abrirWhatsAppClienteAtivo=async function','  window.abrirArquivoClientesUnico');
 exigir(abrir.indexOf("window.open('about:blank','_blank')")<abrir.indexOf('await window.renderCentralEntradaClientes()'),'aba do WhatsApp nasce no gesto antes da revalidação');
-exigir(abrir.includes('Este cliente saiu da carteira ativa')&&abrir.includes('aba.close()'),'cliente encerrado não recebe conversa por cache antigo');
+exigir(abrir.includes('Esta agenda inclui somente mensalistas ativos')&&abrir.includes('aba.close()'),'avulso ou cliente encerrado não recebe conversa por cache antigo');
 exigir(abrir.includes('aba.location.replace(url)'),'WhatsApp só navega depois de contato e atividade confirmados');
 
 const listeners=trecho('function pararListenersTempoReal','    /* A liberação não depende');

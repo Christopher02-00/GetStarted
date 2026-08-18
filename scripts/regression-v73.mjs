@@ -31,7 +31,7 @@ for(const [entrada,esperado] of [
 ok((formulario.match(/whatsappNormalizado=normalizarWhatsAppBrasilCadastro\(whatsapp\)/g)||[]).length===3,'os três formulários de lead não usam a normalização');
 ok((formulario.match(/nome, whatsapp, whatsappNormalizado/g)||[]).length===3,'algum lead não preserva o número canônico');
 ok(formulario.includes('nome, slug, instagram, telefone, whatsappCobranca, aniversario, contatos'),'cadastro final não preserva o número canônico');
-ok(formulario.indexOf('if(!whatsappCobranca)')<formulario.indexOf("await addDoc(collection(db, 'cadastros_clientes')"),'cadastro final valida o contato depois da escrita');
+ok(formulario.indexOf('if(!whatsappCobranca)')<formulario.indexOf("await salvarComRecibo('cadastros_clientes'"),'cadastro final valida o contato antes da escrita confirmada');
 
 const ficha=trecho(escritorio,'const ETAPAS_ONBOARDING_LOCAL','  window.registrarClienteDaReuniao');
 const apiFicha=executar(`function slugClienteCanonico(s){return s;}function mesesCortesiaValidos(m){return true;}function numeroWhatsAppBrasil(v){let d=String(v||'').replace(/\\D/g,'');if(d.length===10||d.length===11)d='55'+d;return /^55\\d{10,11}$/.test(d)?d:'';}\n${ficha}`,'globalThis.api={validarEntradaClienteMensalista,modelarClienteMensalistaUnificado};');

@@ -14,7 +14,7 @@ function trecho(inicio,fim){
   return html.slice(a,b);
 }
 
-exigir(/2026-08-17-(?:regua-whatsapp-contatos-v72|cadastro-whatsapp-v73|identidade-filas-links-v74|valor-ativacao-reativacao-v75|auth-carteira-limpeza-v76)/.test(html),'build mantém a V72 ou uma sucessora validada');
+exigir(/2026-08-17-(?:regua-whatsapp-contatos-v72|cadastro-whatsapp-v73|identidade-filas-links-v74|valor-ativacao-reativacao-v75|auth-carteira-limpeza-v76|central-vendas-v77)/.test(html),'build mantém a V72 ou uma sucessora validada');
 
 const contatoFonte=trecho('function numeroWhatsAppBrasil','  function textoMensagemCliente')+
   '\nthis.numeroWhatsAppBrasil=numeroWhatsAppBrasil;this.contatoWhatsAppCliente=contatoWhatsAppCliente;this.urlWhatsAppWeb=urlWhatsAppWeb;';

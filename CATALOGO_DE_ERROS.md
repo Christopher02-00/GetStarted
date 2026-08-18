@@ -1347,3 +1347,38 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] O build identifica explicitamente a V76.
 - [x] Sessão anônima permanece no portão Google sem depender de leitura operacional.
 - [x] Preflight, regressão crítica e testes V71–V76 continuam aprovados.
+
+## 66. PRÉ-CADASTRO, FUNIL E PROPOSTAS COMERCIAIS — V77 (17/08/2026)
+
+### 66.1 O funil comercial ignorava mensalistas e podia duplicar um lead
+**Causa encontrada:** `sincronizarLeadsParaFunil()` lia avulsos e pessoa física, mas não `leads_mensalista`. A deduplicação usava somente `leadId` e a criação usava `addDoc()`, portanto IDs iguais em coleções distintas podiam colidir e duas execuções concorrentes podiam criar dois negócios.
+
+**Como foi corrigido:** `negocios` permanece como fonte única, mas a chave de importação passou a ser `origem + leadId` e o documento derivado usa ID determinístico. Mensalistas entram no mesmo acompanhamento; registros antigos continuam preservados e reconhecidos sem migração destrutiva.
+
+> **LEI:** lead comercial é identificado por origem e ID, e sua projeção no funil é idempotente. Não criar uma segunda coleção de propostas nem usar `addDoc()` numa sincronização repetível.
+
+### 66.2 O formulário afirmava sucesso sem recibo e apontava ao número pessoal antigo
+**Causa encontrada:** os quatro formulários usavam `addDoc()` e mostravam sucesso logo depois da promessa de escrita, sem reler protocolo, autoria ou origem. O resumo e os pontos públicos do site ainda direcionavam ao contato pessoal anterior.
+
+**Como foi corrigido:** cada envio reserva um ID na sessão, grava a mesma referência e só confirma depois de relê protocolo e UID anônimo. Retentativa reutiliza o ID. A aba do WhatsApp nasce no clique antes do primeiro `await`, recebe o resumo confirmado e continua exigindo que a pessoa clique em Enviar. Site, perfil, formulário e Portal usam o número institucional.
+
+> **LEI:** formulário público só mostra sucesso após recibo do mesmo documento. Abrir conversa não prova envio, e contato institucional não pode divergir entre páginas públicas.
+
+### 66.3 O cadastro final aparecia como escolha para quem ainda era prospect
+**Causa encontrada:** `avulso.html` mostrava “Já fechei — finalizar cadastro” junto das opções comerciais. Um interessado podia preencher a ficha de onboarding, que contém valor e contrato, antes de existir fechamento.
+
+**Como foi corrigido:** a página pública exibe apenas as três modalidades de interesse. O onboarding permanece no endereço compatível `?modo=cadastro`, acessível pela Central somente como “Cadastro final — cliente já fechado”. Mensalista sem identidade ativa não pode ir para produção pelo funil e nunca é convertido em cliente avulso.
+
+> **LEI:** pré-cadastro registra interesse; cadastro final ativa a operação somente após conferência. Nenhuma etapa comercial cria ou reativa cliente automaticamente.
+
+### 66.4 Gate obrigatório da V77
+- [x] Pré-cadastro coleta origem, reserva protocolo e confirma a mesma referência.
+- [x] Retentativa reutiliza ID; não há `addDoc()` nos quatro formulários públicos.
+- [x] Leitura do recibo público é restrita ao UID criador e não libera listagem.
+- [x] Funil inclui mensalistas e usa `origem + leadId` com documento determinístico.
+- [x] Proposta manual cruza a identidade existente sem cadastrar ou reativar cliente.
+- [x] Mensalista só entra em produção se a identidade ativa já existir.
+- [x] Reuniões comerciais são privadas, persistentes, resumíveis e protegidas por soft-delete.
+- [x] Erro de leitura deixa a Central indisponível e não zera métricas.
+- [x] WhatsApp institucional substitui o contato pessoal nas páginas públicas.
+- [x] A abertura da conversa preserva o gesto; nenhuma mensagem é marcada como enviada automaticamente.

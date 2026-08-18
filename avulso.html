@@ -117,7 +117,7 @@
     <div class="opt sel" id="modoOptAvulso" onclick="setModo('avulso')"><span class="ico">🎬</span>Projeto avulso / pontual (empresa)</div>
     <div class="opt" id="modoOptPessoal" onclick="setModo('pessoal')"><span class="ico">🎉</span>Evento pessoal / família</div>
     <div class="opt" id="modoOptMensal" onclick="setModo('mensal')"><span class="ico">📅</span>Plano mensal completo</div>
-    <div class="opt" id="modoOptCadastro" onclick="setModo('cadastro')"><span class="ico">✅</span>Já fechei — finalizar cadastro</div>
+    <div class="opt" id="modoOptCadastro" onclick="setModo('cadastro')" style="display:none;"><span class="ico">✅</span>Já fechei — finalizar cadastro</div>
   </div>
 
   <div id="modoAvulso">
@@ -131,6 +131,7 @@
         <div class="field"><label>Instagram (opcional)</label><input type="text" id="instagram" placeholder="@seuinstagram"></div>
       </div>
       <div class="field"><label>Qual é o seu ramo?</label><input type="text" id="segmento" placeholder="Ex: restaurante, clínica, loja, empresa..."></div>
+      <div class="field"><label>Como você conheceu a Get?</label><select id="canalOrigem"><option value="instagram">Instagram</option><option value="indicacao">Indicação</option><option value="google">Google</option><option value="whatsapp">WhatsApp</option><option value="evento">Evento</option><option value="outro">Outro</option></select></div>
     </div>
 
     <div class="card">
@@ -215,6 +216,7 @@
         <div class="field"><label>WhatsApp</label><input type="tel" id="pWhatsapp" required placeholder="(41) 99999-9999"></div>
         <div class="field"><label>Instagram (opcional)</label><input type="text" id="pInstagram" placeholder="@seuinstagram"></div>
       </div>
+      <div class="field"><label>Como você conheceu a Get?</label><select id="pCanalOrigem"><option value="instagram">Instagram</option><option value="indicacao">Indicação</option><option value="google">Google</option><option value="whatsapp">WhatsApp</option><option value="evento">Evento</option><option value="outro">Outro</option></select></div>
     </div>
 
     <div class="card">
@@ -302,6 +304,7 @@
           <div class="field"><label>Instagram (opcional)</label><input type="text" id="mInstagram" placeholder="@seuinstagram"></div>
         </div>
         <div class="field"><label>Qual é o seu ramo?</label><input type="text" id="mSegmento" placeholder="Ex: restaurante, clínica, loja..."></div>
+        <div class="field"><label>Como você conheceu a Get?</label><select id="mCanalOrigem"><option value="instagram">Instagram</option><option value="indicacao">Indicação</option><option value="google">Google</option><option value="whatsapp">WhatsApp</option><option value="evento">Evento</option><option value="outro">Outro</option></select></div>
       </div>
       <div class="card">
         <h2><span class="stepnum">2</span>O que você mais precisa hoje?</h2>
@@ -409,13 +412,13 @@
     <a href="#" id="waLinkAvulso" target="_blank" class="btn" style="display:block;text-align:center;text-decoration:none;margin-top:16px;">💬 Continuar no WhatsApp agora</a>
   </div>
 
-  <div class="foot">Get Started Produções · Seus dados ficam privados, acessíveis apenas pela nossa equipe.<br>Prefere falar direto? <a href="https://wa.me/5541996443046" target="_blank">WhatsApp (41) 99644-3046 ↗</a></div>
+  <div class="foot">Get Started Produções · Seus dados ficam privados, acessíveis apenas pela nossa equipe.<br>Prefere falar direto? <a href="https://wa.me/5541999088357" target="_blank">WhatsApp (41) 99908-8357 ↗</a></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -436,6 +439,43 @@
   window.__authPronta = signInAnonymously(getAuth(app)).catch(e => { console.error('Falha na autenticação:', e); return null; });
   const db = getFirestore(app);
   emailjs.init("KGz2pOcMvsAwtMyUW");
+  const WHATSAPP_AGENCIA = '5541999088357';
+
+  /* V77 — um clique gera no máximo uma ficha. O ID reservado fica na
+     sessão até a releitura confirmar a mesma ficha; erro ou timeout nunca
+     vira sucesso e a tentativa seguinte reutiliza a referência. */
+  async function salvarComRecibo(colecaoNome, dados, chaveSessao){
+    const credencial=await window.__authPronta;
+    const uid=credencial?.user?.uid||'';
+    if(!uid) throw new Error('auth/anonymous-unavailable');
+    let id=sessionStorage.getItem(chaveSessao)||'';
+    const tentativaAnterior=!!id;
+    const ref=id?doc(db,colecaoNome,id):doc(collection(db,colecaoNome));
+    if(!id){ id=ref.id; sessionStorage.setItem(chaveSessao,id); }
+    let recibo=null;
+    if(tentativaAnterior){
+      try{ const anterior=await getDoc(ref); if(anterior.exists()) recibo=anterior; }
+      catch(e){ /* referência ainda não criada ou regra antiga: tenta criar abaixo */ }
+    }
+    if(!recibo){
+      await setDoc(ref,{...dados,protocolo:id,criadoPorUid:uid});
+      recibo=await getDoc(ref);
+    }
+    const salvo=recibo.exists()?recibo.data():null;
+    const telefoneEsperado=String(dados.whatsappNormalizado||dados.whatsappCobranca||'').replace(/\D/g,'');
+    const telefoneSalvo=String(salvo?.whatsappNormalizado||salvo?.whatsappCobranca||'').replace(/\D/g,'');
+    if(!salvo||salvo.protocolo!==id||salvo.criadoPorUid!==uid||salvo.origemLead!==dados.origemLead||String(salvo.nome||'').trim()!==String(dados.nome||'').trim()||(telefoneEsperado&&telefoneSalvo!==telefoneEsperado)){
+      throw new Error('receipt/not-confirmed');
+    }
+    sessionStorage.removeItem(chaveSessao);
+    return id;
+  }
+
+  function abrirResumoNoWhatsApp(aba, texto){
+    const url='https://wa.me/'+WHATSAPP_AGENCIA+'?text='+encodeURIComponent(texto);
+    if(aba&&!aba.closed) aba.location.replace(url);
+    return url;
+  }
 
   function slugify(nome){
     return nome.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
@@ -866,6 +906,7 @@
     }
     erroMsg.style.display = 'none';
     btn.disabled = true; btn.textContent = 'Enviando...';
+    const abaWhatsApp=window.open('about:blank','_blank');
 
     const referencias = [];
     document.querySelectorAll('#refRows input').forEach(inp => { if(inp.value.trim()) referencias.push(inp.value.trim()); });
@@ -904,6 +945,7 @@
       nome, whatsapp, whatsappNormalizado,
       instagram: document.getElementById('instagram').value.trim(),
       segmento: document.getElementById('segmento').value.trim(),
+      canalOrigem: document.getElementById('canalOrigem').value,
       ideiaLivre: document.getElementById('ideiaLivre').value.trim(),
       estilosDetalhe, totalVideos, descontoAplicado: tierDesconto(totalVideos),
       modificadoresCaptacao,
@@ -927,7 +969,7 @@
     };
 
     try {
-      await addDoc(collection(db, 'leads_avulsos'), dados);
+      const protocolo=await salvarComRecibo('leads_avulsos',dados,'gs_lead_avulso_pendente');
       /* V17 — solicitar um projeto avulso não transforma a pessoa em
          cliente ativo. A gerência valida primeiro na Central de Entrada;
          só a confirmação cria clientes_extras/clientes_config como
@@ -958,13 +1000,14 @@
         to_email: "getstartedagenciademarketing@gmail.com"
       }).catch(err => console.error('Erro ao enviar e-mail:', err));
 
-      const waTextoAvulso = 'Oi! Acabei de enviar um pedido pelo site, meu nome é ' + nome + '.\n\n' + resumoTexto;
-      document.getElementById('waLinkAvulso').href = 'https://wa.me/5541996443046?text=' + encodeURIComponent(waTextoAvulso);
+      const waTextoAvulso = 'Olá, equipe Get! Concluí meu pré-cadastro comercial.\n\nProtocolo: ' + protocolo + '\nNome: ' + nome + '\nInteresse: projeto avulso\nOrigem: ' + dados.canalOrigem + '\n\n' + resumoTexto + '\n\nSei que um vendedor da agência continuará meu atendimento por aqui.';
+      document.getElementById('waLinkAvulso').href = abrirResumoNoWhatsApp(abaWhatsApp,waTextoAvulso);
 
       form.style.display = 'none';
       document.getElementById('status').classList.add('show');
     } catch(err){
       console.error('Erro ao salvar lead:', err);
+      if(abaWhatsApp&&!abaWhatsApp.closed) abaWhatsApp.close();
       alert('Algo deu errado ao enviar. Tenta de novo ou chama a gente no WhatsApp.');
       btn.disabled = false; btn.textContent = 'Enviar pedido';
     }
@@ -981,11 +1024,13 @@
     const whatsappNormalizado=normalizarWhatsAppBrasilCadastro(whatsapp);
     if(!nome || !whatsappNormalizado){ alert('Preenche o nome e um WhatsApp válido com DDD.'); return; }
     btnMensal.disabled = true; btnMensal.textContent = 'Enviando...';
+    const abaWhatsApp=window.open('about:blank','_blank');
 
     const dados = {
       nome, whatsapp, whatsappNormalizado,
       instagram: document.getElementById('mInstagram').value.trim(),
       segmento: document.getElementById('mSegmento').value.trim(),
+      canalOrigem: document.getElementById('mCanalOrigem').value,
       necessidades: necessidadesSelecionadas,
       frequencia: document.getElementById('mFrequencia').value,
       observacoes: document.getElementById('mObservacoes').value.trim(),
@@ -993,7 +1038,7 @@
     };
 
     try{
-      await addDoc(collection(db, 'leads_mensalista'), dados);
+      const protocolo=await salvarComRecibo('leads_mensalista',dados,'gs_lead_mensal_pendente');
 
       const rotuloNivel = { comecando:'Começando agora — presença ativa e consistente', crescer:'Já tem base — quer crescer com mais ritmo', referencia:'Quer ser referência no nicho — presença completa', naosei:'Não sabe ainda — quer ver as opções' };
       const resumoTexto = 'Necessidades: ' + (necessidadesSelecionadas.join(', ')||'—') + '\n' +
@@ -1010,13 +1055,14 @@
         to_email: "getstartedagenciademarketing@gmail.com"
       }).catch(err => console.error('Erro ao enviar e-mail:', err));
 
-      const waTextoMensal = 'Oi! Acabei de mandar meu interesse no plano mensal pelo site, meu nome é ' + nome + '.\n\n' + resumoTexto;
-      document.getElementById('waLinkMensal').href = 'https://wa.me/5541996443046?text=' + encodeURIComponent(waTextoMensal);
+      const waTextoMensal = 'Olá, equipe Get! Concluí meu pré-cadastro comercial.\n\nProtocolo: ' + protocolo + '\nNome: ' + nome + '\nInteresse: plano mensal\nOrigem: ' + dados.canalOrigem + '\n\n' + resumoTexto + '\n\nSei que um vendedor da agência continuará meu atendimento por aqui.';
+      document.getElementById('waLinkMensal').href = abrirResumoNoWhatsApp(abaWhatsApp,waTextoMensal);
 
       formMensal.style.display = 'none';
       document.getElementById('statusMensal').classList.add('show');
     }catch(err){
       console.error('Erro ao salvar lead mensal:', err);
+      if(abaWhatsApp&&!abaWhatsApp.closed) abaWhatsApp.close();
       alert('Algo deu errado ao enviar. Tenta de novo ou chama a gente no WhatsApp.');
       btnMensal.disabled = false; btnMensal.textContent = 'Quero conhecer o plano mensal';
     }
@@ -1040,6 +1086,7 @@
     }
     erroMsgPessoal.style.display = 'none';
     btnPessoal.disabled = true; btnPessoal.textContent = 'Enviando...';
+    const abaWhatsApp=window.open('about:blank','_blank');
 
     const referenciasPessoal = [];
     document.querySelectorAll('#refRowsPessoal input').forEach(inp => { if(inp.value.trim()) referenciasPessoal.push(inp.value.trim()); });
@@ -1049,6 +1096,7 @@
     const dados = {
       nome, whatsapp, whatsappNormalizado,
       instagram: document.getElementById('pInstagram').value.trim(),
+      canalOrigem: document.getElementById('pCanalOrigem').value,
       ocasioes: ocasioesSelecionadas,
       ideiaLivre: document.getElementById('pIdeiaLivre').value.trim(),
       dataEvento: document.getElementById('pData').value,
@@ -1068,7 +1116,7 @@
     };
 
     try {
-      await addDoc(collection(db, 'leads_pessoa_fisica'), dados);
+      const protocolo=await salvarComRecibo('leads_pessoa_fisica',dados,'gs_lead_pessoal_pendente');
 
       const rotuloTipoEntregaPessoal = {video:'Só vídeo', foto:'Só fotografia', ambos:'Vídeo + fotografia'};
       const resumoTexto =
@@ -1094,13 +1142,14 @@
         to_email: "getstartedagenciademarketing@gmail.com"
       }).catch(err => console.error('Erro ao enviar e-mail:', err));
 
-      const waTextoPessoal = 'Oi! Acabei de enviar um pedido pelo site pra um evento pessoal, meu nome é ' + nome + '.\n\n' + resumoTexto;
-      document.getElementById('waLinkPessoal').href = 'https://wa.me/5541996443046?text=' + encodeURIComponent(waTextoPessoal);
+      const waTextoPessoal = 'Olá, equipe Get! Concluí meu pré-cadastro comercial.\n\nProtocolo: ' + protocolo + '\nNome: ' + nome + '\nInteresse: evento pessoal\nOrigem: ' + dados.canalOrigem + '\n\n' + resumoTexto + '\n\nSei que um vendedor da agência continuará meu atendimento por aqui.';
+      document.getElementById('waLinkPessoal').href = abrirResumoNoWhatsApp(abaWhatsApp,waTextoPessoal);
 
       formPessoal.style.display = 'none';
       document.getElementById('statusPessoal').classList.add('show');
     } catch(err){
       console.error('Erro ao salvar lead pessoa física:', err);
+      if(abaWhatsApp&&!abaWhatsApp.closed) abaWhatsApp.close();
       alert('Algo deu errado ao enviar. Tenta de novo ou chama a gente no WhatsApp.');
       btnPessoal.disabled = false; btnPessoal.textContent = 'Enviar pedido';
     }
@@ -1130,10 +1179,11 @@
     const whatsappCobranca=normalizarWhatsAppBrasilCadastro(telefone);
     if(!whatsappCobranca){ alert('Inclui um WhatsApp brasileiro válido com DDD.'); return; }
     btnCadastroFinal.disabled = true; btnCadastroFinal.textContent = 'Enviando com segurança...';
+    const abaWhatsApp=window.open('about:blank','_blank');
 
     try{
       const slug = slugify(nome);
-      await addDoc(collection(db, 'cadastros_clientes'), {
+      const protocolo=await salvarComRecibo('cadastros_clientes',{
         nome, slug, instagram, telefone, whatsappCobranca, aniversario, contatos,
         plano, planoDetalhes, valorMensal, diaVencimento, primeiraCompetencia,
         tipoEntrega, contrato, incluiStories:incluiStoriesResposta==='sim',
@@ -1141,15 +1191,16 @@
         statusGerencia:'aguardando_validacao', origem:'formulario_privado_cliente_v17',
         tipoClienteDeclarado:'mensalista', excluido:false,
         criadoEm: serverTimestamp()
-      });
+      },'gs_cadastro_final_pendente');
 
-      const waTextoCadastro = 'Oi! Acabei de preencher meu cadastro privado de boas-vindas pelo site — ' + nome + '. Só confirmando o envio por aqui!';
-      document.getElementById('waLinkCadastro').href = 'https://wa.me/5541996443046?text=' + encodeURIComponent(waTextoCadastro);
+      const waTextoCadastro = 'Olá, equipe Get! Concluí meu cadastro final de cliente.\n\nProtocolo: ' + protocolo + '\nCliente: ' + nome + '\nPlano: ' + plano + '\n\nAguardo a confirmação do início pela equipe.';
+      document.getElementById('waLinkCadastro').href = abrirResumoNoWhatsApp(abaWhatsApp,waTextoCadastro);
 
       formCadastroFinal.style.display = 'none';
       document.getElementById('statusCadastroFinal').classList.add('show');
     }catch(err){
       console.error('Erro ao salvar cadastro final:', err);
+      if(abaWhatsApp&&!abaWhatsApp.closed) abaWhatsApp.close();
       alert('Algo deu errado ao enviar. Tenta de novo ou chama a gente no WhatsApp.');
       btnCadastroFinal.disabled = false; btnCadastroFinal.textContent = 'Enviar cadastro';
     }

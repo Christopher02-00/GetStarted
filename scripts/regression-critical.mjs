@@ -331,8 +331,9 @@ function testarMensalidadesSandbox() {
   exigir(fichaApi.validarEntradaClienteMensalista(base).length === 0,
     'ficha da Amanda recusou uma cortesia mensal válida');
   const mensal=fichaApi.modelarClienteMensalistaUnificado(base,'2026-08-07T12:00:00.000Z','token','entrada-isenta');
-  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.contrato.primeiraCompetencia==='2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true && mensal.recebimentoEntrada===null && mensal.config.whatsappCobranca==='5541999999999',
-    'cortesia ou WhatsApp da ficha não chegou à configuração operacional e à primeira mensalidade');
+  exigir(mensal.contrato.cortesiaMeses[0] === '2026-08' && mensal.contrato.primeiraCompetencia==='2026-08' && mensal.mensalidade.status === 'isento' && mensal.mensalidade.cortesiaDoMes === true && mensal.recebimentoEntrada===null &&
+    mensal.contatoFinanceiro.whatsapp==='5541999999999' && !Object.prototype.hasOwnProperty.call(mensal.config,'whatsappCobranca'),
+    'cortesia ou WhatsApp privado da ficha não chegou ao destino correto e à primeira mensalidade');
   const futura=fichaApi.modelarClienteMensalistaUnificado({...base,cortesiaMeses:['2026-09'],cortesiaInicial:false},'2026-08-07T12:00:00.000Z','token','entrada-cliente-teste');
   exigir(futura.contrato.cortesiaMeses[0] === '2026-09' && futura.mensalidade.status === 'aberto' &&
     futura.mensalidade.recebimentoEntradaId==='entrada-cliente-teste' && futura.mensalidade.pagamentoEntradaPendente===true &&
@@ -350,9 +351,11 @@ function testarMensalidadesSandbox() {
     'ficha aceitou WhatsApp sem DDD ou fora do formato brasileiro');
   const ativacaoAvulso=trecho(escritorio,'window.ativarAvulsoRecebido=async function','  const ETAPAS_ONBOARDING_LOCAL');
   exigir(ativacaoAvulso.includes('lead.whatsappCobranca||lead.whatsappNormalizado||lead.whatsapp||lead.telefone') &&
-    ativacaoAvulso.includes('whatsappCobranca,semConteudoRecorrente:true') &&
+    ativacaoAvulso.includes("doc(db,'contatos_clientes_financeiro',slug)") &&
+    ativacaoAvulso.includes("origem:'ativacao_avulso'") &&
+    !ativacaoAvulso.includes('whatsappCobranca,semConteudoRecorrente:true') &&
     ativacaoAvulso.indexOf('if(!whatsappCobranca)')<ativacaoAvulso.indexOf('runTransaction'),
-    'ativação de cliente avulso voltou a perder o WhatsApp coletado no link');
+    'ativação de cliente avulso voltou a perder o WhatsApp privado coletado no link');
   const formularioPublico=fs.readFileSync(path.join(raiz, 'avulso.html'), 'utf8');
   exigir(formularioPublico.includes('function normalizarWhatsAppBrasilCadastro') &&
     (formularioPublico.match(/whatsappNormalizado=normalizarWhatsAppBrasilCadastro\(whatsapp\)/g)||[]).length===3 &&
@@ -432,7 +435,10 @@ function testarCampanhasMensaisSandbox(){
     'riscos de Campanhas só aparecem depois de abrir a tela e não alertam no menu');
   exigir((escritorio.match(/id="navAcompCampanhas"/g)||[]).length===1&&!escritorio.includes('id="navCampanhas"'),
     'duas portas de Campanhas voltaram ao menu lateral');
-  exigir(escritorio.includes("'navAcompCampanhas','view-campanhas','navCofreCecilia','view-cofreCecilia'].forEach") &&
+  const registroDomExclusivo=trecho(escritorio,
+    "['navCadastro','navAprovacoes','navExtras'",
+    'function definirItemExclusivoNoDOM');
+  exigir(['navAcompCampanhas','view-campanhas','navVideos','view-videos'].every(id=>registroDomExclusivo.includes(`'${id}'`)) &&
     escritorio.includes("definirItemExclusivoNoDOM('navAcompCampanhas',podeCampanhas)") &&
     escritorio.includes("definirItemExclusivoNoDOM('view-campanhas',podeCampanhas)"),
     'Campanhas voltou a permanecer escondida no DOM de papéis sem acesso');
@@ -508,7 +514,8 @@ async function testarOrcamentoLeiturasFirestoreSandbox() {
   exigir(api.backend()===1, 'fallback do banco não voltou depois da falha do listener');
 
   const parar = trecho(escritorio, 'function pararListenersTempoReal', 'function iniciarListenersTempoReal');
-  exigir(parar.includes('if(limparCachesColecoes !== false) __limparCacheColecoes();'),
+  exigir(parar.includes('if(limparCachesColecoes !== false){') && parar.includes('__limparCacheColecoes();') &&
+    parar.includes('window.__mensagensClientesLista=[]') && parar.includes('window.__cobrancasFila={}'),
     'troca de papel não limpa o cache completo da pessoa anterior');
   exigir(escritorio.includes("if(ehGestao) __alimentarCacheTempoReal('demandas',snap);"),
     'listener de gestão não reaproveita demandas já lidas');
@@ -606,18 +613,22 @@ async function testarCalendariosSandbox() {
 
   /* A mesma implementação precisa reconhecer a marca gravada pela Gabi e
      alimentar a lista/contador da Amanda, inclusive em documentos legados. */
+  const fonteCompetenciaSeguinte = trecho(escritorio,
+    'function competenciaSeguinte(competencia)',
+    'function valorContratoNaCompetencia');
   const fonteFila = trecho(escritorio, 'function mesDoItemCalendario', 'window.linhasCalendariosAguardandoRevisao');
   const fila = executarSandbox('calendarios-aprovacao-sandbox.js',
     `function mesDoTextoConf(txt){const s=String(txt||'');const iso=s.match(/(20\\d{2})-(\\d{2})/);if(iso)return iso[1]+'-'+iso[2];const t=s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();const nomes=['janeiro','fevereiro','marco','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];const i=nomes.findIndex(n=>t.includes(n)),ano=(t.match(/(20\\d{2})/)||[])[1];return i>=0&&ano?ano+'-'+String(i+1).padStart(2,'0'):'';}\n` +
+    `function competenciaFinanceiraValida(v){return /^\\d{4}-(0[1-9]|1[0-2])$/.test(String(v||''));}\n${fonteCompetenciaSeguinte}\n` +
     `function slugClienteCanonico(slug){return ({zeens:'zeiss','otica-visao-araucaria':'zeiss'}[slug]||slug);}\n` +
     `${fonteFila}\nglobalThis.api={estadoMesCal,itensDoMesCalendario,linhasCalendariosAguardandoRevisao,mesHistoricoForaDaRevisao};`);
   const registro = (id, dados) => ({ id, data:()=>dados });
-  const agostoPendente = registro('cliente-x', {
-    client:'Cliente X', items:[{mes:'2026-08',name:'A',ref:'https://ref'}],
-    aprovacaoMeses:{'2026-08':{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-06T01:00:00Z'}}
+  const setembroPendente = registro('cliente-x', {
+    client:'Cliente X', items:[{mes:'2026-09',name:'A',ref:'https://ref'}],
+    aprovacaoMeses:{'2026-09':{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-06T01:00:00Z'}}
   });
-  exigir(fila.linhasCalendariosAguardandoRevisao([agostoPendente]).length === 1,
-    'envio mensal da Gabi não chegou à fila da Amanda');
+  exigir(fila.linhasCalendariosAguardandoRevisao([setembroPendente],new Date(2026,7,16,12)).length === 1,
+    'envio do mês seguinte da Gabi não chegou à fila da Amanda');
   /* Incidente Juliane (14/08): cinco conteúdos antigos não tinham `mes`,
      o documento ainda dizia Agosto 2026 e somente setembro possuía uma
      aprovação mensal. A chave de setembro não pode reclassificar agosto. */
@@ -687,15 +698,18 @@ async function testarCalendariosSandbox() {
   ],new Date(2026,7,12,12));
   exigir(aliasesMesmoMes.length===1&&aliasesMesmoMes[0].slug==='zeiss',
     'aliases do mesmo cliente/mês voltaram a criar duas decisões para Amanda');
-  const barreiraHistorico=trecho(calendario,'function mesAnteriorAoAtual','/* ===== REABRIR ANTES DO ENVIO');
-  exigir(barreiraHistorico.includes("if(mesAnteriorAoAtual(mesVisivel))") &&
-    barreiraHistorico.includes('não pode ser reenviado junto com o calendário novo'),
-    'mês anterior voltou a poder ser reenviado para a fila da Amanda');
-  const historicoApi=executarSandbox('mes-historico-v59.js',
-    `${trecho(calendario,'function mesAnteriorAoAtual','function exigirRetiradaAntesDeEditar')}\nglobalThis.api={mesAnteriorAoAtual};`);
-  exigir(historicoApi.mesAnteriorAoAtual('2026-07')===true &&
-    historicoApi.mesAnteriorAoAtual('2099-01')===false && historicoApi.mesAnteriorAoAtual('Julho')===false,
-    'barreira de reenvio não diferencia mês passado, futuro e rótulo inválido');
+  const barreiraHistorico=trecho(calendario,
+    'window.enviarParaAprovacaoInterna = async function',
+    'window.retirarDaAprovacaoInterna = async function');
+  exigir(barreiraHistorico.includes('if(!mesEhCompetenciaOperacional(mesVisivel))') &&
+    barreiraHistorico.includes('Os outros meses ficam apenas no arquivo'),
+    'mês fora da competência seguinte voltou a poder ser reenviado para a fila da Amanda');
+  const historicoApi=executarSandbox('mes-historico-v81.js',
+    `${trecho(calendario,'function competenciaAtualDoCalendario','/* O mês que está sendo visto agora.')}\nglobalThis.api={competenciaOperacionalDoCalendario,mesEhCompetenciaOperacional};`);
+  exigir(historicoApi.competenciaOperacionalDoCalendario('2026-08-12T12:00:00')==='2026-09' &&
+    historicoApi.competenciaOperacionalDoCalendario('2026-12-12T12:00:00')==='2027-01' &&
+    historicoApi.mesEhCompetenciaOperacional('2026-10','2026-08-12T12:00:00')===false,
+    'barreira operacional não diferencia mês seguinte, virada de ano e outro mês futuro');
   const portalFonte=trecho(fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8'),
     'function estadoDoMesPortal(mes)','const mesesDoDoc');
   const portalMesApi=executarSandbox('portal-mes-isolado-v59.js',
@@ -718,32 +732,32 @@ async function testarCalendariosSandbox() {
     'window.enviarParaAprovacaoInterna = async function',
     '/* ===== REABRIR ANTES DO ENVIO');
   const envioApi = executarSandbox('envio-calendario-legado-sandbox.js',
-    `let data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Legado'}]};let mesVisivel='2026-08',confirmacoesConteudo=0,transacoes=0,recusas=0,confirmacoes=0;\n` +
+    `let data={month:'Setembro 2026',items:[{mes:'2026-09',name:'Legado'}]};let mesVisivel='2026-09',confirmacoesConteudo=0,transacoes=0,recusas=0,confirmacoes=0;\n` +
     `window.__modoCal='equipe';window.__enviandoAprovacaoInterna=false;\n` +
     `const document={body:{classList:{add(){},remove(){}}}};\n` +
     `function ehCalendarioLegado(){const m=data.aprovacaoMeses?.[mesVisivel];return !(m?.status||data.aprovacaoInterna?.status);}\n` +
     `function mesUsaCampoLegadoLocal(mes){const usa=(data.items||[]).some(i=>i&&i.mes)||!!data.aprovacaoMeses||!!data.mesLegado;return !usa||!!mes&&!!data.mesLegado&&mes===data.mesLegado;}\n` +
-    `function mesAnteriorAoAtual(){return false;}\n` +
+    `function mesEhCompetenciaOperacional(m){return m==='2026-09';}function competenciaOperacionalDoCalendario(){return '2026-09';}function textoDoMes(){return 'Setembro 2026';}\n` +
     `function estadoAprovacao(){return data.aprovacaoMeses?.[mesVisivel]?.status||data.aprovacaoInterna?.status||(data.items.length?'liberado':'rascunho');}\n` +
     `function edicaoBloqueadaPorRevisao(){return ['aguardando_interna','aprovado_interno','liberado'].includes(estadoAprovacao());}\n` +
     `function exigirRetiradaAntesDeEditar(){recusas++;return true;}function itensDoMes(m){return data.items.filter(i=>!i.mes||i.mes===m);}\n` +
-    `function confirm(){confirmacoes++;return true;}function prompt(){return 'Gabrielle';}function mesDoTexto(){return '2026-08';}\n` +
+    `function confirm(){confirmacoes++;return true;}function prompt(){return 'Gabrielle';}function mesDoTexto(){return '2026-09';}\n` +
     `async function confirmarConteudoAntesDoEnvio(){confirmacoesConteudo++;return {ok:true};}\n` +
     `async function confirmarEnvioAprovacaoNoBanco(p){transacoes++;return {ok:true,marca:p.marca,updatedAt:'confirmado'};}\n` +
     `function aplicarEnvioAprovacaoConfirmado(p,r){data.aprovacaoMeses={...(data.aprovacaoMeses||{}),[p.mes]:r.marca};data.updatedAt=r.updatedAt;}\n` +
     `function limparEnvioPendente(){}function renderAprovacaoInterna(){}function avisarTela(){}\n` +
     `function guardarEnvioPendente(){}function guardarRascunho(){}function pintarEstado(){}function mostrarEnvioPendente(){}function agendarEnvioPendente(){}\n` +
     `${envioFonte}\n` +
-    `globalThis.api={enviar:window.enviarParaAprovacaoInterna,dados:()=>data,confirmacoesConteudo:()=>confirmacoesConteudo,transacoes:()=>transacoes,recusas:()=>recusas,confirmacoes:()=>confirmacoes,explicito:()=>{data={month:'Agosto 2026',items:[{mes:'2026-08',name:'Enviado'}],aprovacaoMeses:{'2026-08':{status:'liberado'}},aprovacaoInterna:{status:'liberado'}};}};`);
+    `globalThis.api={enviar:window.enviarParaAprovacaoInterna,dados:()=>data,confirmacoesConteudo:()=>confirmacoesConteudo,transacoes:()=>transacoes,recusas:()=>recusas,confirmacoes:()=>confirmacoes,explicito:()=>{data={month:'Setembro 2026',items:[{mes:'2026-09',name:'Enviado'}],aprovacaoMeses:{'2026-09':{status:'liberado'}},aprovacaoInterna:{status:'liberado'}};}};`);
   const btnEnvio = {disabled:false,textContent:'',isConnected:true};
   await envioApi.enviar(btnEnvio);
   exigir(envioApi.confirmacoesConteudo() === 1 && envioApi.transacoes() === 1 && envioApi.confirmacoes() === 1 &&
-    envioApi.dados().aprovacaoMeses['2026-08'].status === 'aguardando_interna',
+    envioApi.dados().aprovacaoMeses['2026-09'].status === 'aguardando_interna',
     'calendário legado continuou bloqueado ou não entrou na fila da Amanda');
   envioApi.explicito();
   await envioApi.enviar(btnEnvio);
   exigir(envioApi.transacoes() === 1 && envioApi.recusas() === 1 &&
-    envioApi.dados().aprovacaoMeses['2026-08'].status === 'liberado',
+    envioApi.dados().aprovacaoMeses['2026-09'].status === 'liberado',
     'exceção do legado desbloqueou calendário realmente enviado ao cliente');
 
   const assinaturaConflitoFonte = trecho(calendario,'function assinaturaConteudoCalendario','/* ===== O QUE ACONTECEU COM A GABI');
@@ -787,7 +801,7 @@ async function testarCalendariosSandbox() {
     trecho(calendario,'async function confirmarEnvioAprovacaoNoBanco','function aplicarEnvioAprovacaoConfirmado');
   const envioTransacionalApi=executarSandbox('envio-calendario-transacional-v68.js',
     `let servidor={client:'Cliente',month:'Setembro 2026',items:[{mes:'2026-09',name:'Conteúdo A'}],aprovacaoMeses:{'2026-09':{status:'rascunho'}},campoDesconhecido:'preservar',updatedAt:'antes'};let patches=[];\n`+
-    `function mesDoTexto(){return '2026-09';}function mesAnteriorAoAtual(){return false;}\n`+
+    `function mesDoTexto(){return '2026-09';}function mesEhCompetenciaOperacional(m){return m==='2026-09';}function competenciaOperacionalDoCalendario(){return '2026-09';}\n`+
     `window.__fb={db:{},docRef:{path:'calendarios/cliente'},runTransaction:async(_db,fn)=>fn({get:async()=>({exists:()=>true,data:()=>servidor}),set:(_ref,patch,opts)=>patches.push({patch,opts})})};\n`+
     `${envioTransacionalFonte}\n`+
     `const pacote=()=>({mes:'2026-09',por:'Gabrielle',em:'2026-08-17T10:30:00.000Z',marca:{status:'aguardando_interna',por:'Gabrielle',em:'2026-08-17T10:30:00.000Z',mes:'2026-09'},data:{...servidor,aprovacaoMeses:{...servidor.aprovacaoMeses}}});\n`+
@@ -1044,7 +1058,7 @@ async function testarCalendariosSandbox() {
     'function edicaoBloqueadaPorRevisao()',
     'function atualizarTravaVisualDoMes()');
   const travaApi = executarSandbox('trava-calendario-enviado-sandbox.js',
-    `let status='rascunho',ultimoAviso='';window.__modoCal='equipe';function estadoAprovacao(){return status;}function avisarTela(m){ultimoAviso=m;}\n` +
+    `let status='rascunho',ultimoAviso='',mesVisivel='2026-09';window.__modoCal='equipe';function estadoAprovacao(){return status;}function mesEhCompetenciaOperacional(){return true;}function avisarTela(m){ultimoAviso=m;}\n` +
     `${travaEdicaoCalendario}\n` +
     `globalThis.api={travada:edicaoBloqueadaPorRevisao,exigir:exigirRetiradaAntesDeEditar,status:v=>{status=v;},modo:v=>{window.__modoCal=v;},aviso:()=>ultimoAviso};`);
   travaApi.status('rascunho');
@@ -1322,11 +1336,15 @@ function testarPermissoesAcoesSandbox() {
     centralClientes.includes('Criar/recuperar Portal'),
     'Central voltou a expor alias como cliente separado ou não oferece recuperação do Portal');
   const acessoCentral = trecho(escritorio, 'function linkPortalClienteCentral', 'window.salvarClienteAtivoCentral');
+  const tokensCalendario = trecho(escritorio, 'async function garantirTokensDoCliente', 'function copiarTextoLegado');
   exigir(acessoCentral.includes('window.garantirPortalClienteCentral=async function') &&
-    acessoCentral.includes("doc(db,'clientes_acesso',canonico)") &&
-    acessoCentral.includes("doc(db,'clientes_portal_tokens',token)") &&
-    acessoCentral.includes('ativo:true'),
-    'recuperação do Portal não confirma as duas fontes de autorização no slug canônico');
+    acessoCentral.includes("garantirTokensDoCliente(canonico,'cliente')") &&
+    tokensCalendario.includes("const ref=doc(db,'clientes_acesso',slug)") &&
+    tokensCalendario.includes("collection(db,'clientes_portal_tokens')") &&
+    tokensCalendario.includes('await runTransaction(db,async tx=>') &&
+    tokensCalendario.includes('tokensAtivos.size>1') &&
+    tokensCalendario.includes('reciboConfirmado:true'),
+    'recuperação do Portal não preserva/adota a autorização legada com recibo canônico');
   const reativacaoArquivado = trecho(escritorio, 'window.cancelarProgramacaoSaidaCentral=async function', 'async function efetivarSaidasProgramadas');
   exigir(escritorio.includes('Reativar esta ficha e recuperar Portal') &&
     reativacaoArquivado.includes('reativarEfetiva') &&
@@ -1339,8 +1357,10 @@ function testarPermissoesAcoesSandbox() {
     'arquivo de clientes não reativa mensalista e Portal preservando o histórico');
   exigir(reativacaoArquivado.includes('nomeClienteCanonico(slug') &&
     reativacaoArquivado.includes('clienteNome:nomeReativado') &&
-    reativacaoArquivado.includes('nome:nomeReativado,ativo:true'),
-    'reativação voltou a promover o nome legado do alias para a identidade canônica');
+    reativacaoArquivado.includes("tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado") &&
+    reativacaoArquivado.includes('nome:ref.path===credencialRestaurada.acessoPath?nomeReativado:(snap.data().nome||nomeReativado)') &&
+    !reativacaoArquivado.includes('nome:saida.nome'),
+    'reativação deixou de fixar o nome canônico na ficha/credencial escolhida ou passou a sobrescrever aliases com nome legado');
   exigir(reativacaoArquivado.includes('normalizarDadosReativacaoMensalista(dadosReativacao)') &&
     reativacaoArquivado.includes('valorProgramadoEm:reativacao.primeiraCompetencia') &&
     reativacaoArquivado.includes("origem:'reativacao'") &&
@@ -1424,23 +1444,22 @@ async function testarCentralClientesAmandaSandbox() {
 
   const recuperarPortalFonte = trecho(escritorio, 'window.garantirPortalClienteCentral=async function', '  window.abrirPortalClienteCentral');
   const portalApi = executarSandbox('portal-master-chef-sandbox.js',
-    `let usuarioAtual='Amanda';const gravacoes=[];const avisos=[];const db={};\n`+
+    `let usuarioAtual='Amanda';const chamadas=[];const avisos=[];const db={};\n`+
     `function slugClienteCanonico(s){return {'master-chefe':'master-chef','master-chef-pizzaria':'master-chef'}[s]||s;}\n`+
     `function nomeClienteCanonico(s,n){return slugClienteCanonico(s)==='master-chef'?'Master Chef':n;}\n`+
     `function doc(b,c,id){return {path:c+'/'+id};}function serverTimestamp(){return 'SERVIDOR';}\n`+
     `async function getDoc(){return {exists:()=>false,data:()=>({})};}\n`+
-    `async function setDoc(ref,dados,opts){gravacoes.push({ref,dados,opts});}\n`+
+    `async function garantirTokensDoCliente(slug,tipo){chamadas.push({slug,tipo});return {token:'token-legado-preservado',adotouLegado:false,reciboConfirmado:true};}\n`+
     `function mostrarToast(m,t){avisos.push({m,t});}\n`+
     `window.__entradaClientesAtivos={'master-chef':{slug:'master-chef',nome:'Master Chef',tipo:'mensalista',token:''}};\n`+
     `window.renderCentralEntradaClientes=async()=>true;\n${recuperarPortalFonte}\n`+
-    `globalThis.api={recuperar:window.garantirPortalClienteCentral,gravacoes,avisos,ativos:window.__entradaClientesAtivos};`);
+    `globalThis.api={recuperar:window.garantirPortalClienteCentral,chamadas,avisos,ativos:window.__entradaClientesAtivos};`);
   await portalApi.recuperar('master-chefe');
-  exigir(portalApi.gravacoes.length===2 &&
-    portalApi.gravacoes[0].ref.path==='clientes_acesso/master-chef' &&
-    portalApi.gravacoes[1].ref.path.startsWith('clientes_portal_tokens/') &&
-    portalApi.gravacoes[1].dados.cliente==='master-chef' &&
-    portalApi.ativos['master-chef'].token,
-    'recuperação do Portal de Master Chef não escreveu acesso e token na identidade canônica');
+  exigir(portalApi.chamadas.length===1 &&
+    portalApi.chamadas[0].slug==='master-chef' &&
+    portalApi.chamadas[0].tipo==='cliente' &&
+    portalApi.ativos['master-chef'].token==='token-legado-preservado',
+    'recuperação do Portal de Master Chef não delegou a adoção transacional na identidade canônica');
 }
 
 async function testarIdentidadeClienteSandbox() {
@@ -1572,12 +1591,13 @@ async function testarV54Sandbox() {
     'Firestore voltou a permitir Stories de outro cliente ou ainda não liberados');
   const cadastroStories=trecho(escritorio,'window.carregarClientesDeStory = async function','window.salvarClienteDeStory');
   exigir(cadastroStories.includes("getDocs(collection(db,'stories_clientes'))") &&
-    cadastroStories.includes('lista.filter(c => c.ativo !== false)') &&
+    cadastroStories.includes('c.ativo !== false') && cadastroStories.includes('!saidaClienteJaEfetiva(c)') &&
     !cadastroStories.includes('STORY_CLIENTES_SEED') &&
     !cadastroStories.includes('await setDoc('),
     'abrir Stories voltou a depender de seed paralelo, escrita automática ou registro inativo');
   const storiesDiariosFonte=trecho(escritorio,'async function renderStoriesDiarios','  window.toggleStoryDiario');
   const cobrancaStoriesFonte=trecho(escritorio,'async function cobrarStoriesDaSemana','  async function lembrarExtrasDosFilmmakers');
+  const saidaEfetivaStoriesFonte=trecho(escritorio,'function dataOperacionalISO','  function clienteInativoEfetivo');
   exigir(!escritorio.includes('CLIENTES_COM_STORY')&&!escritorio.includes('STORIES_CLIENTES_PADRAO')&&
     !escritorio.includes("collection(db,'stories_diarios_config')")&&
     storiesDiariosFonte.includes('Nenhum cliente ativo de Stories')&&
@@ -1588,7 +1608,7 @@ async function testarV54Sandbox() {
   const clientesStoriesApi=executarSandbox('stories-clientes-ativos-v67.js',
     `let __storyClientesCache=null,documentos=[],falhar=false;const db={};function collection(){return {};}`+
     `async function getDocs(){if(falhar)throw new Error('leitura indisponível');return {forEach:fn=>documentos.forEach((v,i)=>fn({id:v.slug||String(i),data:()=>v}))};}`+
-    `${cadastroStories}\nglobalThis.api={listar:window.carregarClientesDeStory,definir:v=>{documentos=v;falhar=false;__storyClientesCache=null;},indisponivel:()=>{falhar=true;__storyClientesCache=null;}};`);
+    `function hojeLocal(){return '2026-08-18';}${saidaEfetivaStoriesFonte}${cadastroStories}\nglobalThis.api={listar:window.carregarClientesDeStory,definir:v=>{documentos=v;falhar=false;__storyClientesCache=null;},indisponivel:()=>{falhar=true;__storyClientesCache=null;}};`);
   clientesStoriesApi.definir([{slug:'juliane-nerone',nome:'Juliane',ativo:false},{slug:'vitalle-odonto',nome:'Vitalle',ativo:true}]);
   const apenasAtivos=await clientesStoriesApi.listar(true);
   exigir(apenasAtivos.length===1&&apenasAtivos[0].slug==='vitalle-odonto',
@@ -1628,8 +1648,12 @@ async function testarV54Sandbox() {
   const entradaPortal=trecho(portal,"window.entrarPortal = function",'window.sairPortal');
   exigir(entradaPortal.includes('aplicarEscopoPortal()')&&entradaPortal.includes("if(clienteAtual.escopo.incluiStories===true) carregarStories()"),
     'Portal voltou a carregar Stories antes de confirmar que o serviço pertence ao cliente');
-  exigir(portal.includes("where('slug','==',slug)")&&portal.includes('escopoPortalDaFicha(slug,dadosAcesso,fichaPortal,temHistoricoStories)'),
-    'entrada autenticada deixou de resolver nome e escopo pela ficha privada do próprio cliente');
+  exigir(portal.includes('carregarFichaPortalSegura(slug,dadosAcesso)')&&
+    portal.includes("getDoc(doc(db,'cadastros_clientes',id))")&&
+    portal.includes("getDoc(doc(db,'contratos_cliente',slug))")&&
+    !portal.includes("query(collection(db,'cadastros_clientes')")&&
+    portal.includes('escopoPortalDaFicha(slug,dadosAcesso,fichaPortal,temHistoricoStories)'),
+    'entrada autenticada deixou de resolver nome e escopo por leitura pontual da ficha/contrato do próprio cliente');
   exigir(escritorio.includes('const canonico=slugClienteCanonico(v.cliente)')&&
     escritorio.includes('if(!tokenPorCliente[canonico] || v.cliente===canonico) tokenPorCliente[canonico]=v;'),
     'Central voltou a indexar tokens por alias bruto e duplicar a identidade canônica do cliente');

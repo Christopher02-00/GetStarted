@@ -29,7 +29,7 @@ exigir(ler('AGENTS.md').includes('Cópias com esses nomes na raiz são legado re
   'regra permanente contra reintrodução das cópias não foi documentada');
 
 const escritorio = ler('escritorio.html');
-exigir(/<meta name="gs-build" content="2026-08-(?:17-(?:auth-carteira-limpeza-v76|central-vendas-v77)|18-(?:contatos-arquivo-unico-v78|calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80))">/.test(escritorio),
+exigir(/<meta name="gs-build" content="2026-08-(?:17-(?:auth-carteira-limpeza-v76|central-vendas-v77)|18-(?:contatos-arquivo-unico-v78|calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80|ciclo-clientes-propostas-v81))">/.test(escritorio),
   'marcador do build V76 ou sucessor validado ausente');
 exigir(!/^\s*carregarClientesExtras\(\);\s*$/m.test(escritorio),
   'a carteira operacional voltou a consultar o Firebase antes da autenticação');

@@ -13,17 +13,17 @@ let total=0;
 function exigir(condicao,mensagem){ total++; if(!condicao) throw new Error('FALHOU: '+mensagem); console.log('PASS ',mensagem); }
 function trecho(fonte,inicio,fim){ const a=fonte.indexOf(inicio),b=fonte.indexOf(fim,a); if(a<0||b<0) throw new Error('Trecho ausente: '+inicio); return fonte.slice(a,b); }
 
-exigir(/<meta name="gs-build" content="2026-08-18-(?:calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80)">/.test(escritorio),'build V79 ou sucessor identificado');
+exigir(/<meta name="gs-build" content="2026-08-18-(?:calendario-proximo-mes-v79|planos-premium-conteudos-vivos-v80|ciclo-clientes-propostas-v81)">/.test(escritorio),'build V79 ou sucessor identificado');
 exigir(calendario===calendarios,'endereços singular e plural permanecem idênticos');
 exigir(escritorio.includes('const mesPadrao=competenciaSeguinte(hojeLocal().slice(0,7))')&&escritorio.includes('mesLink.value=competenciaSeguinte(hojeLocal().slice(0,7))'),'ferramentas começam no mês seguinte');
 exigir(escritorio.includes("'&mes=' + encodeURIComponent(mesLink?.value||'')"),'iframe recebe a competência escolhida explicitamente');
 
 const escolha=trecho(calendario,'function mesInicialEquipe','let saveTimer');
 const ctx={}; vm.createContext(ctx);
-new vm.Script("function mesDoItem(i){return i.mes||''}function mesDoTexto(t){return t==='Agosto 2026'?'2026-08':t==='Outubro 2026'?'2026-10':''}"+escolha+';this.api=mesInicialEquipe;').runInContext(ctx);
+new vm.Script("function mesDoItem(i){return i.mes||''}function mesDoTexto(t){return t==='Agosto 2026'?'2026-08':t==='Outubro 2026'?'2026-10':''}function competenciaOperacionalDoCalendario(){return '2026-09';}"+escolha+';this.api=mesInicialEquipe;').runInContext(ctx);
 exigir(ctx.api({month:'Agosto 2026',items:[{mes:'2026-09',name:'Setembro'}]},'')==='2026-09','rótulo antigo não abre vazio quando setembro possui conteúdo');
 exigir(ctx.api({month:'Agosto 2026',items:[{mes:'2026-08'},{mes:'2026-09'}]},'2026-08')==='2026-08','pedido explícito continua vencendo o mês mais recente');
-exigir(ctx.api({month:'Outubro 2026',items:[{mes:'2026-09'}]},'2026-10')==='2026-10','pedido explícito de mês ainda vazio permanece visível para produção');
+exigir(ctx.api({month:'Outubro 2026',items:[{mes:'2026-09'}]},'2026-11')==='2026-09','pedido vazio fora da competência não cria mês futuro arbitrário');
 
 const diagnostico=trecho(escritorio,'function atualizarDiagnosticoCalendarioFerramentas','  window.addEventListener');
 exigir(diagnostico.includes('Calendário não confirmado')&&diagnostico.includes('Não considere a tela vazia'),'falha/ausência de leitura não é declarada como vazio');

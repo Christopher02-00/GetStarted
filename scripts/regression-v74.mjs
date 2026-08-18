@@ -13,13 +13,16 @@ function trecho(texto,inicio,fim){ const a=texto.indexOf(inicio),b=texto.indexOf
 function executar(codigo,exportacao){ const ctx={window:{}}; ctx.window=ctx; vm.createContext(ctx); vm.runInContext(codigo+'\n'+exportacao,ctx); return ctx.api; }
 
 const identidadeFonte=trecho(escritorio,'const APELIDOS_DE_CONTRATO','  function mapaCalendariosPorIdentidade');
-const identidade=executar(identidadeFonte,'globalThis.api={slugClienteCanonico,nomeClienteCanonico,consolidarClientesAtivosPorIdentidade,whatsappCobrancaPorIdentidade};');
+const identidade=executar(identidadeFonte,'globalThis.api={slugClienteCanonico,nomeClienteCanonico,consolidarClientesAtivosPorIdentidade,slugsCompatibilidadeCliente};');
 ok(identidade.slugClienteCanonico('emanuelle')==='emanuelle-bernaski-nutri','Emanuelle legada não converge para o cadastro canônico existente');
 ok(['hitech','cliente-rodrigo','rodrigo'].every(s=>identidade.slugClienteCanonico(s)==='rodrigo'),'Hitech/Cliente Rodrigo não convergem para Rodrigo');
 ok(identidade.slugClienteCanonico('zeens')==='zeiss','alias financeiro da Zeiss foi perdido');
-const configs={hitech:{whatsappCobranca:'5541999999999'},zeens:{whatsappCobranca:'5541888888888'},'emanuelle-bernaski-nutri':{whatsappCobranca:'5541777777777'}};
-ok(identidade.whatsappCobrancaPorIdentidade(configs,'cliente-rodrigo')==='5541999999999','contato de alias não chega à identidade Rodrigo');
-ok(identidade.whatsappCobrancaPorIdentidade(configs,'zeiss')==='5541888888888','contato legado da Zeiss não chega à identidade canônica');
+const contatoFonte=trecho(escritorio,'function contatoFinanceiroPorIdentidade','  window.contatoFinanceiroPorIdentidade');
+const contatoCtx={window:{},slugsCompatibilidadeCliente:identidade.slugsCompatibilidadeCliente,numeroWhatsAppBrasil:v=>/^55\d{10,11}$/.test(String(v||''))?String(v):''};
+contatoCtx.window=contatoCtx; vm.createContext(contatoCtx); vm.runInContext(contatoFonte+'\nglobalThis.api=contatoFinanceiroPorIdentidade;',contatoCtx);
+const contatos={hitech:{whatsapp:'5541999999999'},zeens:{whatsapp:'5541888888888'},'emanuelle-bernaski-nutri':{whatsapp:'5541777777777'}};
+ok(contatoCtx.api(contatos,'cliente-rodrigo')==='5541999999999','contato privado de alias não chega à identidade Rodrigo');
+ok(contatoCtx.api(contatos,'zeiss')==='5541888888888','contato privado legado da Zeiss não chega à identidade canônica');
 const consolidados=identidade.consolidarClientesAtivosPorIdentidade([
   {slug:'emanuelle',nome:'Emanuelle',origem:'legado',telefone:''},
   {slug:'emanuelle-bernaski-nutri',nome:'Emanuelle Bernaski nutri',cadastroId:'cad',whatsappCobranca:'5541777777777'},

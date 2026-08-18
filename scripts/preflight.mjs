@@ -199,10 +199,23 @@ const leisV79 = [
   'calendário da equipe abre no mês mais recente que possui conteúdo confirmado',
   'tela vazia só pode ser declarada depois de leitura confirmada do documento'
 ];
+const leisV80 = [
+  'catálogo, formulário e ficha ativa usam a mesma lista canônica',
+  'a seleção foi feita pelo conteúdo e metadados, não apenas pela palavra “Plano” no nome'
+];
+const leisV81 = [
+  'isolamento por papel pode desmontar conteúdo privado recriável, mas nunca destruir um formulário estático',
+  'saída possui um único protocolo canônico por identidade',
+  'sessão é um vínculo revogável, não uma autorização eterna',
+  'falha, permissão negada ou timeout nunca vira zero, lista vazia ou ausência de cliente',
+  'arquivo preparado não prova envio, aceite ou pagamento',
+  'cliente, mês, estado e conteúdo formam uma única decisão transacional',
+  'cliente fechado nasce ou é reativado por um escritor oficial'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V79');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V79');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V81');
+} else provar('catálogo mestre preserva o checklist e as leis registradas até a V81');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -358,11 +371,14 @@ for (const provaSeguranca of [
   if (!provaSeguranca[1]) falhar(provaSeguranca[0]); else provar(provaSeguranca[0]);
 }
 
-if (!portal.includes("where('slug','==',slug)") ||
+if (!portal.includes('carregarFichaPortalSegura(slug,dadosAcesso)') ||
+    !portal.includes("getDoc(doc(db,'cadastros_clientes',id))") ||
+    !portal.includes("getDoc(doc(db,'contratos_cliente',slug))") ||
+    portal.includes("query(collection(db,'cadastros_clientes')") ||
     !portal.includes('escopoPortalDaFicha(slug,dadosAcesso,fichaPortal,temHistoricoStories)') ||
     !portal.includes("if(clienteAtual.escopo.incluiStories===true) carregarStories()")) {
-  falhar('Portal não confirma identidade/escopo privado antes de carregar Stories');
-} else provar('Portal resolve nome e Stories pela ficha do próprio cliente antes de montar as abas');
+  falhar('Portal não confirma identidade/escopo privado por leitura pontual antes de carregar Stories');
+} else provar('Portal resolve nome e Stories por leitura pontual da ficha/contrato do próprio cliente, sem listar cadastros');
 if (!escritorio.includes('const canonico=slugClienteCanonico(v.cliente)') ||
     !escritorio.includes('if(!tokenPorCliente[canonico] || v.cliente===canonico) tokenPorCliente[canonico]=v;')) {
   falhar('Central pode voltar a criar cartões de Portal duplicados por alias');
@@ -371,13 +387,14 @@ if (!escritorio.includes('function consolidarClientesAtivosPorIdentidade(registr
     !escritorio.includes('const ativos=consolidarClientesAtivosPorIdentidade([...unicos.values()])')) {
   falhar('Central não consolida fichas oficiais/legadas pela identidade canônica antes de renderizar');
 } else provar('Central consolida aliases de todas as origens antes de renderizar um único cartão ativo');
-if (!escritorio.includes('if(m && mesHistoricoForaDaRevisao(m, referencia)) return;') ||
+if (!escritorio.includes('if(mesForaDaCompetenciaOperacional(m, referencia)) return;') ||
     !escritorio.includes("const chave=canonico+'|'+m;") ||
     !escritorio.includes('const fila=[...porIdentidadeMes.values()]') ||
     !escritorio.includes('const esperando = linhasCalendariosAguardandoRevisao(snap);') ||
-    !escritorio.includes("console.error('Envio de calendário abortado: mês histórico', a.slug, a.mes);")) {
-  falhar('fila ou porta de envio da Amanda pode voltar a incluir mês histórico ou duplicar cliente+mês por alias');
-} else provar('fila, contador e envio da Amanda excluem histórico e consolidam uma decisão por cliente+mês');
+    (escritorio.match(/mesForaDaCompetenciaOperacional\(/g)||[]).length < 8 ||
+    !escritorio.includes('Arquivo histórico')) {
+  falhar('fila ou porta de envio da Amanda pode incluir mês fora da competência operacional, ocultar o arquivo ou duplicar cliente+mês por alias');
+} else provar('fila, contador e envio da Amanda usam somente o mês seguinte, preservam arquivo e consolidam uma decisão por cliente+mês');
 
 const regraEntradaPessoal = regras.match(/match \/recebimentos_entrada_pessoal\/\{docId\} \{[\s\S]*?allow delete:\s*if false;[\s\S]*?\n    \}/)?.[0] || '';
 if (!regraEntradaPessoal.includes('allow read, update: if ehChris()') ||
@@ -454,13 +471,22 @@ const barreiraDuplicidade = escritorio.slice(
   escritorio.indexOf('async function diagnosticarIdentidadeCliente'),
   escritorio.indexOf('function dataOperacionalISO')
 );
+const producaoAvulsaAtomica = escritorio.slice(
+  escritorio.indexOf('function idReceitaAvulsaPorNegocio'),
+  escritorio.indexOf('window.moverNegocio = async function')
+);
+const escritorExtraDeterministico = escritorio.includes("setDoc(doc(db,'clientes_extras',slug)") || (
+  producaoAvulsaAtomica.includes("const extraRef=doc(db,'clientes_extras',slug)") &&
+  producaoAvulsaAtomica.includes('tx.set(extraRef') &&
+  producaoAvulsaAtomica.includes('await runTransaction(db,async tx=>')
+);
 if (!barreiraDuplicidade.includes("lerPrimeiroExistente('contratos_cliente')") ||
     !barreiraDuplicidade.includes('slugsCompatibilidadeCliente(slug)') ||
     !barreiraDuplicidade.includes("getDocs(collection(db,'clientes_extras'))") ||
     !barreiraDuplicidade.includes("getDocs(collection(db,'cadastros_clientes'))") ||
     !barreiraDuplicidade.includes("getDocs(collection(db,'clientes_encerrados'))") ||
     escritorio.includes("addDoc(collection(db,'clientes_extras')") ||
-    !escritorio.includes("setDoc(doc(db,'clientes_extras',slug)") ||
+    !escritorExtraDeterministico ||
     !escritorio.includes('existentes.add(slugClienteCanonico(d.id))') ||
     !escritorio.includes('return slugClienteMensalista(nome);')) {
   falhar('barreira sistêmica contra cliente duplicado não cobre todas as entradas ou voltou a usar ID aleatório');
@@ -709,9 +735,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-18-planos-premium-conteudos-vivos-v80') {
-  falhar(`build V80 inesperado: ${build || 'ausente'}`);
-} else provar('V80 preserva o envio mensal e alinha catálogo, cadastro e Central de Clientes');
+if (build !== '2026-08-18-ciclo-clientes-propostas-v81') {
+  falhar(`build V81 inesperado: ${build || 'ausente'}`);
+} else provar('V81 preserva o catálogo V80 e centraliza ciclo de clientes, propostas e calendários');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
@@ -757,15 +783,17 @@ const mesEditorV68 = ler('calendario.html').slice(
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
 if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-17-envio-calendario-transacional-v68">') ||
-    !portal.includes('<meta name="gs-build" content="2026-08-16-competencia-calendarios-portal-v67">') ||
+    !portal.includes('<meta name="gs-build" content="2026-08-18-central-vendas-propostas-v81">') ||
     !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
     !mesEditorV68.includes('const mesDoDocumento = mesDoTexto(cal && cal.month)') ||
     !portal.includes('function mesDoItemPortal(item)') ||
-    !portal.includes('todosItens.map(mesDoItemPortal)') ||
-    !portal.includes('todosItens.filter(i => mesDoItemPortal(i)')) {
+    !portal.includes('todosItens.map((item,indiceBanco)=>({...item,__indiceBanco:indiceBanco}))') ||
+    !portal.includes('.filter(i => !usaMeses || mesDoItemPortal(i) ===') ||
+    !portal.includes('mesPedidoValido&&!mesesLib.includes(mesPedidoValido)') ||
+    !portal.includes('O Portal não trocou silenciosamente para outro mês')) {
   falhar('competência legada voltou a ser definida por aprovação moderna ou divergiu entre Escritório, editor e Portal');
-} else provar('competência legada usa a âncora do documento antes da aprovação moderna nos três consumidores');
+} else provar('competência legada mantém a âncora e o Portal V81 honra o mês explícito sem fallback silencioso');
 
 if (escritorio.includes('CLIENTES_COM_STORY') || escritorio.includes('STORIES_CLIENTES_PADRAO') ||
     escritorio.includes("collection(db,'stories_diarios_config')") ||

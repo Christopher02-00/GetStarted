@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-<meta name="gs-build" content="2026-08-16-competencia-calendarios-portal-v67">
+<meta name="gs-build" content="2026-08-18-central-vendas-propostas-v81">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -185,7 +185,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, serverTimestamp, query, where, orderBy, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, orderBy, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -257,13 +257,19 @@
   function escopoPortalDaFicha(slug, dadosToken, ficha, temHistoricoStories){
     const dados=ficha||{};
     const temCampoStories=typeof dados.incluiStories==='boolean';
+    const historicoIndisponivel=!temCampoStories&&temHistoricoStories===null;
     const somenteEdicao=CLIENTES_SO_EDICAO.includes(slug) ||
       String(dados.tipoServico||dados.modalidade||dados.plano||'').toLowerCase().includes('só edição') ||
       String(dados.tipoServico||dados.modalidade||dados.plano||'').toLowerCase().includes('so edicao');
     return {
       nome:nomeLegivelPortal(slug,dados.nome||dados.clienteNome||dadosToken?.nome),
-      incluiStories:!somenteEdicao && (temCampoStories ? dados.incluiStories===true : temHistoricoStories===true),
-      somenteEdicao
+      /* Falha ao confirmar o histórico não equivale a plano sem Stories.
+         Mantemos a aba para ela poder mostrar o estado indisponível; um
+         `false` confirmado na ficha ou no último retrato continua soberano. */
+      incluiStories:!somenteEdicao && (temCampoStories ? dados.incluiStories===true : temHistoricoStories!==false),
+      storiesIndisponiveis:!somenteEdicao&&historicoIndisponivel,
+      somenteEdicao,
+      ficha:dados
     };
   }
   window.escopoPortalDaFicha=escopoPortalDaFicha;
@@ -422,14 +428,115 @@
     return m[3] + '/' + m[2] + '/' + m[1];
   }
 
+  function urlHttpsSeguraPortal(valor){
+    const original=String(valor||'').trim();
+    if(!original || original.length>2048 || /[\s"'<>]/.test(original)) return '';
+    try{
+      const url=new URL(original);
+      if(url.protocol!=='https:' || !url.hostname || url.username || url.password) return '';
+      return url.href;
+    }catch(e){ return ''; }
+  }
+
+  async function carregarFichaPortalSegura(slug,dadosToken){
+    /* `cadastros_clientes` não pode ser consultada por lista pelo cliente.
+       O ID confirmado no token permite getDoc pontual; o slug cobre fichas
+       determinísticas. Contrato é o fallback canônico dos cadastros legados. */
+    const ids=[...new Set([String(dadosToken?.cadastroId||'').trim(),String(slug||'').trim()]
+      .filter(id=>/^[A-Za-z0-9_-]{1,200}$/.test(id)))];
+    for(const id of ids){
+      try{
+        const snap=await getDoc(doc(db,'cadastros_clientes',id));
+        if(!snap.exists()) continue;
+        const ficha=snap.data()||{};
+        if(String(ficha.slug||'').trim()===slug) return ficha;
+      }catch(e){
+        /* Um ID legado inexistente pode ser negado porque a regra segura
+           depende do conteúdo. Isso não autoriza query nem invalida a sessão. */
+        if(!acessoPortalFoiNegado(e)) console.warn('Ficha pontual não pôde ser lida:',e.code||e.message);
+      }
+    }
+    const contratoSnap=await getDoc(doc(db,'contratos_cliente',slug));
+    if(!contratoSnap.exists()) return {};
+    const c=contratoSnap.data()||{};
+    return {
+      nome:c.clienteNome||dadosToken?.nome||slug,
+      clienteNome:c.clienteNome||'', instagram:c.instagram||'', telefone:c.telefone||'',
+      plano:c.plano||'', planoDetalhes:c.planoDetalhes||'',
+      valorMensal:Number(c.valorVigente??c.valorCheio??0), diaVencimento:Number(c.diaVencimento||0),
+      primeiraCompetencia:c.primeiraCompetencia||'', contrato:c.observacao||'',
+      ...(typeof c.tipoEntrega==='string'?{tipoEntrega:c.tipoEntrega}:{}),
+      ...(typeof c.incluiStories==='boolean'?{incluiStories:c.incluiStories}: {})
+    };
+  }
+
   function meusDocs(colecao, campo){
     return getDocs(query(collection(db, colecao), where(campo || 'cliente', '==', clienteAtual.slug)));
+  }
+  function comTimeoutPortal(promessa,rotulo,limiteMs){
+    let timer=null;
+    const limite=Number(limiteMs)||12000;
+    return Promise.race([
+      Promise.resolve(promessa),
+      new Promise((_,rejeitar)=>{timer=setTimeout(()=>{const e=new Error((rotulo||'Leitura')+' excedeu '+limite+' ms.');e.code='gs/timeout-leitura';rejeitar(e);},limite);})
+    ]).finally(()=>{if(timer)clearTimeout(timer);});
   }
 
   const auth = getAuth(app);
   window.__authPronta = signInAnonymously(auth)
     .then(c => c.user.uid)
     .catch(e => { console.error('Falha na autenticação:', e); return null; });
+
+  let __invalidacaoSessaoPortalEmCurso=null;
+  function acessoPortalFoiNegado(erro){
+    const codigo=String(erro?.code||'').toLowerCase();
+    const mensagem=String(erro?.message||'').toLowerCase();
+    return codigo.includes('permission-denied') || mensagem.includes('permission-denied') || mensagem.includes('missing or insufficient permissions');
+  }
+  function mostrarAcessoPortalInvalido(){
+    const selecao=document.getElementById('telaSelecao');
+    const portal=document.getElementById('telaPortal');
+    if(selecao) selecao.style.display='block';
+    if(portal) portal.style.display='none';
+    const card=document.getElementById('cardAcessoInvalido');
+    if(card) card.innerHTML=`<div style="text-align:center;padding:10px 0;">
+      <div style="font-size:14px;font-weight:700;margin-bottom:8px;color:var(--red);">Link inválido ou expirado</div>
+      <div class="sub" style="margin-bottom:0;">Pede um link novo pra sua agência.</div>
+    </div>`;
+  }
+  function mostrarPortalIndisponivelSemInvalidar(){
+    const selecao=document.getElementById('telaSelecao');
+    const portal=document.getElementById('telaPortal');
+    if(selecao) selecao.style.display='block';
+    if(portal) portal.style.display='none';
+    const card=document.getElementById('cardAcessoInvalido');
+    if(card) card.innerHTML=`<div style="text-align:center;padding:10px 0;">
+      <div style="font-size:14px;font-weight:700;margin-bottom:8px;color:var(--yellow);">Não consegui confirmar o Portal agora</div>
+      <div class="sub" style="margin-bottom:0;">Seu link foi preservado. Recarregue a página quando a conexão voltar.</div>
+    </div>`;
+  }
+  async function invalidarSessaoPortalLocal(uid){
+    if(__invalidacaoSessaoPortalEmCurso) return __invalidacaoSessaoPortalEmCurso;
+    __invalidacaoSessaoPortalEmCurso=(async()=>{
+      const uidEfetivo=uid||auth.currentUser?.uid||'';
+      if(uidEfetivo){
+        try{ await deleteDoc(doc(db,'sessoes_cliente',uidEfetivo)); }
+        catch(e){ console.warn('A sessão expirada não pôde ser removida do servidor:',e.code||e.message); }
+      }
+      localStorage.removeItem('portalClienteSlug');
+      localStorage.removeItem('portalClienteToken');
+      delete window.__storiesPortalConfirmado;
+      delete window.__semanaStoriesPortal;
+      clienteAtual=null;
+      mostrarAcessoPortalInvalido();
+    })().finally(()=>{ __invalidacaoSessaoPortalEmCurso=null; });
+    return __invalidacaoSessaoPortalEmCurso;
+  }
+  window.addEventListener('unhandledrejection',evento=>{
+    if(!acessoPortalFoiNegado(evento.reason)) return;
+    evento.preventDefault();
+    invalidarSessaoPortalLocal().catch(e=>console.error('Falha ao invalidar sessão recusada:',e));
+  });
 
   /* ===== A LISTA DE CLIENTES SAIU DO PORTAL — 28/07/2026 =============
      Isto carregava a agência inteira: 16 nomes fixos no arquivo mais
@@ -460,10 +567,13 @@
     CLIENTES_LISTA = todos.filter((c,i)=>todos.findIndex(x=>x.slug===c.slug)===i).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
   }
 
-  window.entrarPortal = function(slug, nome, escopo){
+  window.entrarPortal = function(slug, nome, escopo, tokenConfirmado){
     clienteAtual = { slug, nome, escopo:escopo||{} };
     localStorage.setItem('portalClienteSlug', slug);
-    localStorage.setItem('portalClienteToken', new URLSearchParams(location.search).get('t')||'');
+    /* Reabrir o Portal sem parâmetros usa a sessão local já validada. A
+       versão anterior substituía o token por string vazia neste ponto. */
+    const tokenPersistir=String(tokenConfirmado||new URLSearchParams(location.search).get('t')||localStorage.getItem('portalClienteToken')||'');
+    if(tokenPersistir) localStorage.setItem('portalClienteToken',tokenPersistir);
     document.getElementById('telaSelecao').style.display = 'none';
     document.getElementById('telaPortal').style.display = 'block';
     document.getElementById('nomeClientePortal').innerHTML = esc(clienteAtual.nome);
@@ -833,8 +943,29 @@
   async function carregarCalendario(){
     const cont = document.getElementById('painelCalendario');
     cont.innerHTML = '<div class="empty">Carregando calendário...</div>';
-    const snap = await getDoc(doc(db,'calendarios', clienteAtual.slug));
-    const dadosCal = snap.exists() ? snap.data() : {};
+    let dadosCal=null;
+    let leituraEmCache=false;
+    try{
+      const snap=await comTimeoutPortal(getDoc(doc(db,'calendarios',clienteAtual.slug)),'Calendário do Portal');
+      if(!snap.exists()){
+        window.__calendarioPortalConfirmado=null;
+        cont.innerHTML='<div class="card"><div class="empty"><b>Nenhum calendário foi criado para este cliente.</b><br>A leitura do Firestore terminou e confirmou que o documento ainda não existe.</div></div>';
+        return;
+      }
+      dadosCal=snap.data()||{};
+      window.__calendarioPortalConfirmado={cliente:clienteAtual.slug,dados:dadosCal};
+    }catch(e){
+      console.error('Falha ao confirmar calendário do Portal:',e);
+      const cache=window.__calendarioPortalConfirmado;
+      if(cache&&cache.cliente===clienteAtual.slug&&cache.dados){
+        dadosCal=cache.dados;
+        leituraEmCache=true;
+      }else{
+        cont.innerHTML='<div class="card" style="border-color:var(--red);"><div style="padding:18px;"><div style="font-weight:900;margin-bottom:7px;">Calendário temporariamente indisponível</div><div class="sub" style="margin:0;">O Firestore não confirmou os dados agora. Isso não significa que o calendário esteja vazio ou apagado; tente recarregar esta área.</div></div></div>';
+        return;
+      }
+    }
+    const avisoLeitura=leituraEmCache?'<div class="card" style="border-color:var(--yellow);"><div class="sub" style="margin:0;"><b>Exibindo a última versão confirmada neste aparelho.</b> A atualização do Firestore falhou agora; nenhum erro foi convertido em calendário vazio.</div></div>':'';
     /* ===== O PORTAL TAMBÉM PASSA A ENTENDER MESES — 29/07/2026 ======
        A mesma regra do calendário, escrita igual: o cliente só enxerga
        mês liberado. Mês que a equipe está montando não chega aqui.
@@ -879,12 +1010,22 @@
     }
     const mesesDoDoc = [...new Set(todosItens.map(mesDoItemPortal).filter(Boolean))].sort();
     const mesesLib = (mesesDoDoc.length ? mesesDoDoc : ['']).filter(m => estadoDoMesPortal(m) === 'liberado');
-    let mesEscolhido = window.__mesPortal;
-    if(!mesEscolhido || !mesesLib.includes(mesEscolhido)) mesEscolhido = mesesLib[mesesLib.length-1];
+    const mesPedido=new URLSearchParams(location.search).get('mes')||'';
+    const mesPedidoValido=/^20\d{2}-(0[1-9]|1[0-2])$/.test(mesPedido)?mesPedido:'';
+    let mesEscolhido=mesPedidoValido||window.__mesPortal;
+    if(mesPedidoValido&&!mesesLib.includes(mesPedidoValido)){
+      const existeConteudoPedido=todosItens.some(i=>mesDoItemPortal(i)===mesPedidoValido);
+      cont.innerHTML=avisoLeitura+`<div class="card"><div style="padding:26px 10px;text-align:center;">
+        <div style="font-size:15px;font-weight:800;margin-bottom:8px;">${existeConteudoPedido?'Calendário de '+esc(mesPedidoValido)+' em preparação':'Mês solicitado ainda sem conteúdo confirmado'}</div>
+        <div class="sub" style="margin-bottom:0;">O link pediu exatamente ${esc(mesPedidoValido)}. O Portal não trocou silenciosamente para outro mês; esta competência aparecerá quando for liberada pela equipe.</div>
+      </div></div>`;
+      return;
+    }
+    if(!mesEscolhido||!mesesLib.includes(mesEscolhido)) mesEscolhido=mesesLib[mesesLib.length-1];
     window.__mesPortal = mesEscolhido;
 
-    const items = !usaMeses ? todosItens
-      : todosItens.filter(i => mesDoItemPortal(i) === (mesEscolhido || ''));
+    const items = todosItens.map((item,indiceBanco)=>({...item,__indiceBanco:indiceBanco}))
+      .filter(i => !usaMeses || mesDoItemPortal(i) === (mesEscolhido || ''));
 
     /* 28/07/2026 — o portal também respeita a revisão interna. Antes, tudo
        que a Gabi montava aparecia pro cliente na hora, inclusive mês pela
@@ -899,27 +1040,27 @@
     /* Se nenhum mês está liberado, o cliente lê "em preparação" — nunca
        um mês em branco, e nunca um mês que a equipe ainda está montando. */
     if(usaMeses && !mesEscolhido){
-      cont.innerHTML = `<div class="card"><div style="padding:26px 10px;text-align:center;">
+      cont.innerHTML = avisoLeitura+`<div class="card"><div style="padding:26px 10px;text-align:center;">
         <div style="font-size:15px;font-weight:800;margin-bottom:8px;">Calendário em preparação</div>
         <div class="sub" style="margin-bottom:0;">Nossa equipe está finalizando o conteúdo do mês. Assim que estiver pronto ele aparece aqui pra você aprovar — e avisamos você.</div>
       </div></div>`;
       return;
     }
-    const apr = snap.exists() ? (snap.data().aprovacaoInterna || {}) : {};
+    const apr = dadosCal.aprovacaoInterna || {};
     if(!usaMeses && items.length && apr.status && apr.status !== 'liberado'){
-      cont.innerHTML = `<div class="card"><div style="padding:26px 10px;text-align:center;">
+      cont.innerHTML = avisoLeitura+`<div class="card"><div style="padding:26px 10px;text-align:center;">
         <div style="font-size:15px;font-weight:800;margin-bottom:8px;">Calendário em preparação</div>
         <div class="sub" style="margin-bottom:0;">Nossa equipe está finalizando o conteúdo do mês. Assim que estiver pronto ele aparece aqui pra você aprovar — e avisamos você.</div>
       </div></div>`;
       return;
     }
 
-    if(!items.length){ cont.innerHTML = '<div class="card"><div class="empty">Nenhum conteúdo planejado ainda esse mês.</div></div>'; return; }
+    if(!items.length){ cont.innerHTML = avisoLeitura+'<div class="card"><div class="empty">Nenhum conteúdo planejado ainda esse mês — vazio confirmado no documento carregado.</div></div>'; return; }
     items.sort((a,b)=>(a.day||0)-(b.day||0));
     /* CORRIGIDO 27/07/2026 — o portal ignorava o campo "Mês" do calendario
        e escrevia o mes do relogio. Calendario de agosto aberto em julho
        aparecia como "Calendário de Julho". */
-    const mesDoCal = (snap.exists() ? (snap.data().month||'') : '').trim();
+    const mesDoCal = String(dadosCal.month||'').trim();
     const mesAtual = mesEscolhido ? (()=>{ const [a,m]=mesEscolhido.split('-'); return (MESES[Number(m)-1]||mesEscolhido)+' '+a; })() : (mesDoCal || MESES[new Date().getMonth()]);
     /* ===== CORRIGIDO 27/07/2026 — DUAS COISAS GRAVES =====
        1. O portal mostrava o campo `desc`, que é o ROTEIRO INTERNO de
@@ -965,7 +1106,7 @@
         </div>
       </div>` : '';
 
-    cont.innerHTML = blocoCalendario + `<div class="card"><h2>Aprovação — ${mesAtual}</h2>
+    cont.innerHTML = avisoLeitura+blocoCalendario + `<div class="card"><h2>Aprovação — ${mesAtual}</h2>
         <div class="sub" style="margin-bottom:0;">${pendentes ? 'Dá uma olhada em cada conteúdo e aprova o que estiver certo. Se algo precisar mudar, é só falar com a gente.' : 'Acompanhe aqui a evolução de cada conteúdo do mês.'}</div>
       </div>` +
       '<div class="card">' + items.map((it, idx) => `
@@ -984,44 +1125,57 @@
             ${(it.legenda||'').trim()
               ? '<div class="meta" style="white-space:pre-wrap;margin-top:4px;">'+esc((it.legenda||'').trim().slice(0,320))+((it.legenda||'').trim().length>320?'…':'')+'</div>'
               : ((it.desc||'').trim() ? '<div class="meta" style="margin-top:4px;">'+esc((it.desc||'').slice(0,160))+'</div>' : '')}
-            ${(it.ref||'').trim() ? '<a href="'+esc(it.ref)+'" target="_blank" rel="noopener" class="meta" style="display:inline-block;margin-top:6px;color:var(--yellow);text-decoration:none;">🎬 Ver a referência ↗</a>' : ''}
+            ${urlHttpsSeguraPortal(it.ref) ? '<a href="'+escAttr(urlHttpsSeguraPortal(it.ref))+'" target="_blank" rel="noopener noreferrer" class="meta" style="display:inline-block;margin-top:6px;color:var(--yellow);text-decoration:none;">🎬 Ver a referência ↗</a>' : ''}
             <div style="margin-top:8px;">
               <span class="selo ${situacaoItem(it).cls}">${situacaoItem(it).txt}</span>${FUNIL_LABEL[it.stage] ? '<span class="selo planejamento" style="margin-left:6px;opacity:.65;">'+FUNIL_LABEL[it.stage]+'</span>' : ''}
             </div>
-            ${(!it.apr && !it.posted) ? `<button class="btn" style="margin-top:9px;width:auto;padding:7px 18px;font-size:12px;" onclick="aprovarConteudoCalendario(${idx}, ${Number(it.day)||0})">✓ Aprovar este conteúdo</button>` : ''}
+            ${(!it.apr && !it.posted) ? `<button class="btn" style="margin-top:9px;width:auto;padding:7px 18px;font-size:12px;" data-item-id="${escAttr(it.itemId||'')}" data-item-dia="${Number(it.day)||0}" data-item-nome="${escAttr(it.name||'')}" data-item-indice="${Number(it.__indiceBanco)}" data-item-mes="${escAttr(mesEscolhido||it.mes||'')}" onclick="aprovarConteudoCalendario(this)">✓ Aprovar este conteúdo</button>` : ''}
           </div>
         </div>
       `).join('') + '</div>';
   }
 
-  /* O cliente aprovando de dentro do portal — antes só dava pra aprovar
-     pelo link do calendário editorial, que é outra página. */
-  /* CORRIGIDO 27/07/2026 — o `idx` vinha da lista JÁ ORDENADA por dia,
-     e era usado contra o array cru do banco, que está na ordem de criação.
-     O cliente clicava em "aprovar" no dia 5 e o sistema aprovava outro
-     conteúdo qualquer. Agora identifica pelo dia + título, não pela
-     posição, e só cai no índice se não achar. */
-  window.aprovarConteudoCalendario = async function(idx, dia){
+  /* A identidade principal é `itemId`. Legado sem ID só usa índice quando
+     dia e nome ainda conferem; nunca escolhe o primeiro conteúdo do dia. */
+  function nomeItemLegadoPortal(valor){
+    return String(valor||'').normalize('NFC').replace(/\s+/g,' ').trim();
+  }
+  window.aprovarConteudoCalendario = async function(botao){
     try{
-      const ref = doc(db,'calendarios', clienteAtual.slug);
-      const snap = await getDoc(ref);
-      if(!snap.exists()) return;
-      const dados = snap.data();
-      const items = dados.items || [];
-      // casa pelo dia (só número no atributo — título com aspas quebraria o onclick)
-      let alvo = Number(dia) ? items.findIndex(it => it && Number(it.day) === Number(dia) && !it.apr && !it.posted) : -1;
-      if(alvo < 0) alvo = idx;
-      if(!items[alvo]) return;
-      idx = alvo;
-      items[idx].apr = true;
-      items[idx].aprovadoPeloClienteEm = new Date().toISOString();
-      await setDoc(ref, { ...dados, items, updatedAt: new Date().toISOString() });
+      if(!(botao instanceof Element)) throw new Error('Identidade do conteúdo não recebida.');
+      if(botao.disabled) return;
+      botao.disabled=true;botao.textContent='Aprovando…';
+      const itemId=String(botao.dataset.itemId||''),dia=Number(botao.dataset.itemDia||0);
+      const nome=nomeItemLegadoPortal(botao.dataset.itemNome||''),indice=Number(botao.dataset.itemIndice);
+      const mesAlvo=String(botao.dataset.itemMes||'');
+      const ref=doc(db,'calendarios',clienteAtual.slug);
+      const confirmado=await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists()) throw new Error('Calendário não encontrado.');
+        const dados=snap.data()||{},items=(dados.items||[]).map(item=>({...item}));
+        const estado=((dados.aprovacaoMeses||{})[mesAlvo]||{}).status||
+          ((dados.aprovacaoInterna||{}).mes===mesAlvo?(dados.aprovacaoInterna||{}).status:'');
+        if(estado&&estado!=='liberado') throw new Error('Este mês deixou de estar liberado.');
+        let alvo=itemId?items.findIndex(item=>String(item?.itemId||'')===itemId):-1;
+        if(alvo<0&&Number.isInteger(indice)&&items[indice]&&Number(items[indice].day)===dia&&nomeItemLegadoPortal(items[indice].name)===nome) alvo=indice;
+        if(alvo<0){
+          const candidatos=items.map((item,i)=>({item,i})).filter(({item})=>Number(item?.day)===dia&&nomeItemLegadoPortal(item?.name)===nome);
+          if(candidatos.length===1) alvo=candidatos[0].i;
+        }
+        if(alvo<0||!items[alvo]) throw new Error('O conteúdo mudou de posição ou identidade. Recarregue antes de aprovar.');
+        if(items[alvo].apr) return {item:items[alvo],items};
+        const agora=new Date().toISOString();
+        items[alvo].apr=true;items[alvo].aprPor='cliente';items[alvo].aprEm=agora;items[alvo].aprovadoPeloClienteEm=agora;
+        tx.set(ref,{items,updatedAt:agora},{merge:true});
+        return {item:items[alvo],items};
+      });
+      const itemConfirmado=confirmado.item,items=confirmado.items;
       /* 30/07/2026 — ia só pra Gabi. A Amanda precisa saber também: é ela
          que acompanha o ciclo e cobra o próximo passo. */
       await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou um conteúdo do calendário',
-        (items[idx].name||'') + ' — dia ' + (items[idx].day||''), 'Gabrielle');
+        (itemConfirmado.name||'') + ' — dia ' + (itemConfirmado.day||''), 'Gabrielle');
       await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou um conteúdo do calendário',
-        (items[idx].name||'') + ' — dia ' + (items[idx].day||''), 'Amanda');
+        (itemConfirmado.name||'') + ' — dia ' + (itemConfirmado.day||''), 'Amanda');
 
       /* ===== O GATILHO DA CECÍLIA — 29/07/2026 =======================
          Decisão do Chris: quando o MÊS inteiro é aprovado, a Cecília
@@ -1030,7 +1184,7 @@
          conteúdo é o dia de POSTAR, não de gravar, e inventar uma regra
          de "grava tantos dias antes" erraria toda hora. Ela continua
          decidindo; o sistema só avisa que o mês liberou. */
-      const mesDoItem = (items[idx] && items[idx].mes) || '';
+      const mesDoItem = itemConfirmado.mes || mesAlvo || '';
       const irmaos = items.filter(i => (((i&&i.mes)||'') === mesDoItem));
       const faltam = irmaos.filter(i => !i.apr && !i.posted).length;
       if(!faltam && irmaos.length){
@@ -1044,7 +1198,12 @@
         }
       }
       carregarCalendario();
-    }catch(e){ console.error('Falha ao aprovar conteúdo:', e); alert('Não consegui registrar agora. Tenta de novo em instantes.'); }
+    }catch(e){ console.error('Falha ao aprovar conteúdo:', e); alert('Não consegui registrar agora: '+(e?.message||'tenta de novo em instantes.')); }
+    finally{
+      if(botao instanceof Element&&botao.isConnected&&botao.textContent==='Aprovando…'){
+        botao.disabled=false;botao.textContent='✓ Aprovar este conteúdo';
+      }
+    }
   };
 
   async function carregarDemandas(){
@@ -1723,18 +1882,48 @@
     const semanaAtual = segundaDaSemanaPortal(new Date());
     const semana = window.__semanaStoriesPortal || semanaAtual;
     window.__semanaStoriesPortal = semana;
-    let snap, linksDaSemana=null;
-    try{
-      [snap,linksDaSemana]=await Promise.all([
-        meusDocs('stories_semanais'),
-        getDoc(doc(db,'stories_links',clienteAtual.slug+'_'+semana)).then(s=>s.exists()?{id:s.id,...s.data()}:null).catch(e=>{console.warn('Links de Stories ainda não liberados ou indisponíveis:',e.code||e.message);return null;})
-      ]);
-    }catch(e){
-      console.error('Falha ao carregar Stories do portal:',e);
-      cont.innerHTML='<div class="card" style="border-color:var(--red);"><div class="empty">Não consegui confirmar seus Stories agora. Recarregue a página; nenhum conteúdo foi tratado como vazio.</div></div>';
+    const cacheAnterior=window.__storiesPortalConfirmado;
+    const cacheDaSemana=cacheAnterior&&cacheAnterior.cliente===clienteAtual.slug&&cacheAnterior.semana===semana
+      ? cacheAnterior : null;
+    const [resultadoStories,resultadoLinks]=await Promise.allSettled([
+      comTimeoutPortal(meusDocs('stories_semanais'),'Stories do Portal',12000),
+      comTimeoutPortal(getDoc(doc(db,'stories_links',clienteAtual.slug+'_'+semana)),'Links de Stories do Portal',12000)
+    ]);
+    let todosMeus=[];
+    let linksDaSemana=null;
+    let linksConfirmados=false;
+    const avisos=[];
+    if(resultadoStories.status==='fulfilled'){
+      resultadoStories.value.forEach(d=>todosMeus.push({id:d.id,...d.data()}));
+    }else if(cacheDaSemana&&Array.isArray(cacheDaSemana.todosMeus)){
+      console.error('Falha ao atualizar Stories; mantendo o último retrato confirmado:',resultadoStories.reason);
+      todosMeus=cacheDaSemana.todosMeus.map(s=>({...s}));
+      avisos.push('Não consegui atualizar os Stories agora. Abaixo está o último retrato confirmado nesta sessão; nada foi tratado como apagado.');
+    }else{
+      console.error('Falha ao carregar Stories do portal:',resultadoStories.reason);
+      cont.innerHTML='<div class="card" data-stories-estado="indisponivel" style="border-color:var(--red);"><div class="empty">Não consegui confirmar seus Stories agora. Recarregue a página; nenhum conteúdo foi tratado como vazio ou apagado.</div></div>';
       return;
     }
-    const todosMeus = []; snap.forEach(d => todosMeus.push({id:d.id, ...d.data()}));
+    if(resultadoLinks.status==='fulfilled'){
+      const snapLinks=resultadoLinks.value;
+      linksDaSemana=snapLinks.exists()?{id:snapLinks.id,...snapLinks.data()}:null;
+      linksConfirmados=true;
+    }else if(cacheDaSemana&&cacheDaSemana.linksConfirmados===true){
+      console.warn('Falha ao atualizar links de Stories; mantendo o último retrato confirmado:',resultadoLinks.reason);
+      linksDaSemana=cacheDaSemana.linksDaSemana?{...cacheDaSemana.linksDaSemana}:null;
+      linksConfirmados=true;
+      avisos.push('Os links não puderam ser atualizados. Se aparecerem abaixo, são o último retrato confirmado nesta sessão.');
+    }else{
+      console.warn('Links de Stories não puderam ser confirmados:',resultadoLinks.reason);
+      avisos.push('Não consegui confirmar os links desta semana agora. Isso não significa que estejam ausentes.');
+    }
+    window.__storiesPortalConfirmado={
+      cliente:clienteAtual.slug,
+      semana,
+      todosMeus:todosMeus.map(s=>({...s})),
+      linksDaSemana:linksDaSemana?{...linksDaSemana}:null,
+      linksConfirmados
+    };
     /* Story ainda na revisão interna não chega aqui. Campo ausente =
        story anterior a 29/07 = continua visível, como sempre foi. */
     const meus = todosMeus.filter(s => (s.revisaoInterna || 'liberado') === 'liberado');
@@ -1742,7 +1931,7 @@
     const daSemana = meus.filter(s => semanaEfetivaStoryPortal(s) === semana);
     const semSemana = meus.filter(s => !s.semana);
 
-    let html = `<div class="card">
+    let html = `${avisos.length?`<div class="card" data-stories-estado="retrato-preservado" style="border-color:var(--yellow);"><div class="empty">${avisos.map(esc).join('<br>')}</div></div>`:''}<div class="card">
       <h2><svg class="ic"><use href="#i-image"/></svg>Seus Stories</h2>
       <div class="sub" style="margin-bottom:10px;">O que nossa equipe preparou pra você postar essa semana. Aprova, comenta, e marca como publicado depois que subir.</div>
       <div style="display:flex;align-items:center;gap:10px;">
@@ -1755,18 +1944,21 @@
       </div>
     </div>`;
 
-    const linksLiberados=linksDaSemana?.revisaoInterna==='liberado'&&linksDaSemana?.liberadoCliente===true
-      ? Object.entries(linksDaSemana.dias||{}).filter(([,d])=>String(d?.link||'').trim()).sort((a,b)=>Number(a[0])-Number(b[0])) : [];
+    const linksLiberados=linksConfirmados&&linksDaSemana?.revisaoInterna==='liberado'&&linksDaSemana?.liberadoCliente===true
+      ? Object.entries(linksDaSemana.dias||{}).map(([dia,d])=>[dia,{...(d||{}),linkSeguro:urlHttpsSeguraPortal(d?.link)}])
+        .filter(([,d])=>d.linkSeguro).sort((a,b)=>Number(a[0])-Number(b[0])) : [];
     if(linksLiberados.length){
       const seg=new Date(semana+'T12:00:00');
-      html+=`<div class="card" data-stories-links-liberados="true" style="border:2px solid var(--yellow);"><h2>🔗 Stories prontos para você</h2><div class="sub" style="margin-bottom:10px;">Estes documentos foram conferidos pela equipe e estão liberados.</div>${linksLiberados.map(([dia,d])=>{const info=DIAS_STORY_PORTAL.find(x=>String(x.n)===String(dia));const dt=new Date(seg);dt.setDate(dt.getDate()+Number(dia)-1);return `<a href="${esc(d.link)}" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:left;text-decoration:none;margin-top:7px;">${esc(info?.nome||('Dia '+dia))} · ${dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} — abrir ↗</a>`;}).join('')}</div>`;
+      html+=`<div class="card" data-stories-links-liberados="true" style="border:2px solid var(--yellow);"><h2>🔗 Stories prontos para você</h2><div class="sub" style="margin-bottom:10px;">Estes documentos foram conferidos pela equipe e estão liberados.</div>${linksLiberados.map(([dia,d])=>{const info=DIAS_STORY_PORTAL.find(x=>String(x.n)===String(dia));const dt=new Date(seg);dt.setDate(dt.getDate()+Number(dia)-1);return `<a href="${escAttr(d.linkSeguro)}" target="_blank" rel="noopener noreferrer" class="btn secondary" style="display:block;text-align:left;text-decoration:none;margin-top:7px;">${esc(info?.nome||('Dia '+dia))} · ${dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} — abrir ↗</a>`;}).join('')}</div>`;
     }
 
-    const cardStory = s => `
+    const cardStory = s => {
+      const referenciaSegura=urlHttpsSeguraPortal(s.linkReferencia);
+      return `
       <div class="card" id="story_${s.id}" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow)':'var(--line)'};transition:opacity .2s;">
         <div class="nome" style="font-size:14px;">${esc(tituloLimpo(s.titulo))}</div>
         ${s.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(s.descricao)+'</div>' : ''}
-        ${s.linkReferencia ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(s.linkReferencia)+'" target="_blank" style="color:var(--yellow);">Ver referência ↗</a></div>' : ''}
+        ${referenciaSegura ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+escAttr(referenciaSegura)+'" target="_blank" rel="noopener noreferrer" style="color:var(--yellow);">Ver referência ↗</a></div>' : ''}
         ${s.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.85;">📝 '+esc(s.observacoes)+'</div>' : ''}
         ${s.comentarioCliente ? '<div class="meta" style="margin-top:6px;color:var(--yellow);">💬 Seu comentário: '+esc(s.comentarioCliente)+'</div>' : ''}
         <div style="margin-top:8px;">
@@ -1779,6 +1971,7 @@
         <div class="btn" style="margin-top:6px;padding:10px;text-align:center;cursor:pointer;" onclick="marcarStoryPublicado('${s.id}')">✔ Já publiquei esse story</div>
         ` : ''}
       </div>`;
+    };
 
     /* ===== POR QUE OS STORIES SUMIRAM DO PORTAL — 29/07/2026 =========
        O Chris pediu, em 28/07, que os stories deixassem de ser lançados
@@ -1839,10 +2032,14 @@
        fechar isto, e é o preço certo. */
     const snap = await meusDocs('negocios','clienteSlug');
     const meus = [];
-    const nomeAlvo = (clienteAtual.nome||'').trim().toLowerCase();
     snap.forEach(d => {
       const n = d.data();
-      if(n.clienteSlug === clienteAtual.slug) meus.push({ id:d.id, ...n });
+      const slugs=Array.isArray(n.clienteSlugs)?n.clienteSlugs.map(v=>String(v||'').trim()).filter(Boolean):[];
+      const vinculado=n.clienteSlug===clienteAtual.slug||slugs.includes(clienteAtual.slug);
+      /* `preparada` e rascunho interno: não houve envio real e, portanto,
+         não pode existir nem como cartão bloqueado no Portal. As etapas
+         posteriores continuam visíveis para preservar o acompanhamento. */
+      if(vinculado&&n.estagio!=='preparada') meus.push({ id:d.id, ...n });
     });
     meus.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
     return meus;
@@ -1852,7 +2049,9 @@
     const digitado = so4Digitos(document.getElementById('propDigitos')?.value);
     if(digitado.length < 4){ alert('Digita os 4 últimos números do seu WhatsApp.'); return; }
     const negocios = await buscarNegociosDoCliente();
-    const bate = negocios.some(n => so4Digitos(n.whatsapp) === digitado);
+    const confirmaveis=negocios.filter(n=>so4Digitos(n.whatsapp).length===4);
+    if(!confirmaveis.length){ alert('Esta proposta não tem WhatsApp de confirmação. Peça à agência para enviar o documento diretamente.'); return; }
+    const bate = confirmaveis.some(n => so4Digitos(n.whatsapp) === digitado);
     if(!bate){ alert('Esses números não batem com o WhatsApp do seu pedido. Confere com a gente se precisar.'); return; }
     __propostaLiberada = true;
     carregarPropostaCliente();
@@ -1869,6 +2068,11 @@
     }
 
     if(!__propostaLiberada){
+      const temWhatsappConfirmacao=negocios.some(n=>so4Digitos(n.whatsapp).length===4);
+      if(!temWhatsappConfirmacao){
+        cont.innerHTML=`<div class="card"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">A proposta foi registrada sem um WhatsApp de confirmação. Para proteger os valores, peça à agência que envie o documento diretamente.</div></div>`;
+        return;
+      }
       cont.innerHTML = `<div class="card">
         <h2>📄 Sua Proposta</h2>
         <div class="sub" style="margin-bottom:10px;">Como aqui tem valores, confirma rapidinho que é você: digita os <b>4 últimos números do WhatsApp</b> que você deixou no pedido.</div>
@@ -1886,6 +2090,7 @@
     for(const n of negocios){
       const est = n.estagio || 'recebido';
       const venceu = n.propostaValidade && n.propostaValidade < dataLocalPortal();
+      const linkSeguro=urlHttpsSeguraPortal(n.propostaLink);
       html += `<div class="card">
         <h2>📄 ${esc(LBL[est] || 'Seu pedido')}</h2>`;
 
@@ -1894,8 +2099,11 @@
       }
       else if(['proposta','analise','ajuste'].includes(est)){
         html += `<div class="sub" style="margin-bottom:10px;">Dá uma olhada com calma. Qualquer coisa que quiser diferente, é só pedir ajuste — sem compromisso.</div>`;
+        if(n.propostaPlano) html += `<div class="meta" style="margin-bottom:8px;"><b>Plano / escopo:</b> ${esc(n.propostaPlano)}</div>`;
         if(n.propostaValor) html += `<div class="item"><div class="nome" style="font-size:16px;">${esc(n.propostaValor)}</div>${n.propostaValidade ? '<div class="meta" style="margin-top:4px;">Válida até ' + esc(n.propostaValidade.split('-').reverse().join('/')) + (venceu ? ' — <b style="color:var(--red);">vencida</b>' : '') + '</div>' : ''}</div>`;
-        if(n.propostaLink) html += `<a href="${esc(n.propostaLink)}" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:10px;padding:12px;">📄 Abrir a proposta completa ↗</a>`;
+        if(n.propostaCondicoes) html += `<div class="meta" style="margin-top:8px;white-space:pre-wrap;"><b>Condições:</b> ${esc(n.propostaCondicoes)}</div>`;
+        if(linkSeguro) html += `<a href="${escAttr(linkSeguro)}" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:10px;padding:12px;">📄 Abrir a proposta completa ↗</a>`;
+        else if(n.propostaLink) html += `<div class="meta" style="margin-top:10px;color:var(--red);">O link antigo foi bloqueado por segurança. Peça à agência um endereço HTTPS atualizado.</div>`;
         if(n.respostaTexto) html += `<div class="meta" style="margin-top:10px;color:var(--yellow);">Você pediu: ${esc(n.respostaTexto)}</div>`;
         if(venceu){
           html += `<div class="meta" style="margin-top:12px;color:var(--red);">Essa proposta passou da validade. Fala com a gente que a gente atualiza pra você.</div>`;
@@ -1908,7 +2116,7 @@
       else if(est === 'aceita'){
         html += `<div class="sub" style="margin-bottom:10px;">Que bom que fechou! Agora é só o pagamento pra gente começar.</div>
           ${n.propostaValor ? '<div class="item"><div class="nome" style="font-size:16px;">'+esc(n.propostaValor)+'</div></div>' : ''}
-          <div class="field" style="margin-top:10px;"><label>Link do comprovante (opcional)</label><input type="text" id="compLink_${n.id}" value="${esc(n.pagamentoComprovante||'')}" placeholder="Cola aqui o link do comprovante"></div>
+          <div class="field" style="margin-top:10px;"><label>Link do comprovante (opcional)</label><input type="url" inputmode="url" id="compLink_${n.id}" value="${escAttr(n.pagamentoComprovante||'')}" placeholder="https://..."></div>
           <div class="btn secondary" style="margin-top:8px;padding:12px;text-align:center;cursor:pointer;" onclick="salvarComprovante('${n.id}')">Salvar comprovante</div>
           <div class="btn" style="margin-top:8px;padding:13px;text-align:center;cursor:pointer;" onclick="enviarComprovanteWhats('${n.id}')">💬 Mandar comprovante no WhatsApp</div>
           <div class="meta" style="margin-top:10px;opacity:.8;">Assim que a gente conferir o pagamento, seu serviço entra em produção e você acompanha por aqui.</div>`;
@@ -2022,10 +2230,12 @@
   window.enviarComprovanteMensal = async function(id){
     const link = (document.getElementById('compMensal_'+id)?.value||'').trim();
     if(!link){ alert('Cola o link do comprovante, ou usa o botão do WhatsApp abaixo.'); return; }
+    const linkSeguro=urlHttpsSeguraPortal(link);
+    if(!linkSeguro){ alert('Use um link HTTPS válido para o comprovante.'); return; }
     await updateDoc(doc(db,'pagamentos_mensais', id), {
-      comprovante: link, comprovanteEnviadoEm: new Date().toISOString()
+      comprovante: linkSeguro, comprovanteEnviadoEm: new Date().toISOString()
     });
-    await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante da mensalidade', link);
+    await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante da mensalidade', linkSeguro);
     alert('Comprovante enviado! Assim que a gente conferir, aparece como pago aqui.');
     carregarPagamentoCliente();
   };
@@ -2144,8 +2354,8 @@
     const ref = doc(db,'negocios', id);
     const snap = await getDoc(ref);
     const n = snap.exists() ? snap.data() : {};
-    const hist = Array.isArray(n.historico) ? n.historico : [];
-    hist.push({ estagio: resposta, em: new Date().toISOString(), por: clienteAtual.nome + ' (cliente)' });
+    const hist = Array.isArray(n.historico) ? [...n.historico] : [];
+    hist.push({ estagio: resposta, em: new Date().toISOString(), por: clienteAtual.slug + ' (cliente)' });
     await updateDoc(ref, { estagio: resposta, respostaCliente: resposta, respostaTexto: texto.trim(), historico: hist, atualizadoEm: serverTimestamp() });
     const aviso = resposta === 'aceita' ? '✅ ' + clienteAtual.nome + ' ACEITOU a proposta' :
                   resposta === 'ajuste' ? '🔄 ' + clienteAtual.nome + ' pediu ajuste na proposta' :
@@ -2157,8 +2367,10 @@
   window.salvarComprovante = async function(id){
     const link = (document.getElementById('compLink_'+id)?.value||'').trim();
     if(!link){ alert('Cola o link do comprovante primeiro.'); return; }
-    await updateDoc(doc(db,'negocios', id), { pagamentoComprovante: link, pagamentoEnviadoEm: new Date().toISOString(), atualizadoEm: serverTimestamp() });
-    await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante de pagamento', link);
+    const linkSeguro=urlHttpsSeguraPortal(link);
+    if(!linkSeguro){ alert('Use um link HTTPS válido para o comprovante.'); return; }
+    await updateDoc(doc(db,'negocios', id), { pagamentoComprovante: linkSeguro, pagamentoEnviadoEm: new Date().toISOString(), atualizadoEm: serverTimestamp() });
+    await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante de pagamento', linkSeguro);
     alert('Comprovante enviado! Assim que a gente conferir, seu serviço entra em produção.');
     carregarPropostaCliente();
   };
@@ -2243,12 +2455,9 @@
 
   async function carregarInfo(){
     const cont = document.getElementById('painelInfo');
-    const [snap,cadastrosSnap] = await Promise.all([
-      getDoc(doc(db,'info_extras_cliente', clienteAtual.slug)),
-      meusDocs('cadastros_clientes','slug').catch(()=>null)
-    ]);
+    const snap = await getDoc(doc(db,'info_extras_cliente', clienteAtual.slug));
     const dados = snap.exists() ? snap.data() : {};
-    let ficha={}; if(cadastrosSnap) cadastrosSnap.forEach(d=>{ if(!ficha.nome) ficha=d.data(); });
+    const ficha=clienteAtual?.escopo?.ficha||{};
     const plano=[ficha.plano,ficha.planoDetalhes].filter(Boolean).join(' — ');
     const resumoFicha=ficha.nome ? `<div class="card" style="border:2px solid var(--yellow);">
       <h2>🏢 Dados da sua empresa</h2>
@@ -2299,38 +2508,54 @@
     try{ tokenSnap = await getDoc(doc(db,'clientes_portal_tokens', token)); }catch(e){}
     const tokenNovoValido = tokenSnap && tokenSnap.exists() && tokenSnap.data().ativo !== false && tokenSnap.data().cliente === slug;
     let sessaoClienteAberta=false;
+    let uidSessao='';
+    let erroAberturaSessao=null;
     try{
       const uid = await window.__authPronta;
+      uidSessao=uid||'';
       if(uid){
         await setDoc(doc(db,'sessoes_cliente', uid), {cliente:slug,token,abertaEm:new Date().toISOString()});
         sessaoClienteAberta=true;
       }
-    }catch(e){ console.error('Link recusado ao abrir sessão do cliente:',e); }
+    }catch(e){
+      console.error('Link recusado ao abrir sessão do cliente:',e);
+      erroAberturaSessao=e;
+    }
     /* A regra que abriu a sessão já validou também os links legados. O
        Portal não lê `clientes_acesso`: esse documento contém as chaves e
        não deve ser entregue ao navegador do cliente. */
     if(!sessaoClienteAberta){
-      document.getElementById('cardAcessoInvalido').innerHTML = `<div style="text-align:center;padding:10px 0;">
-        <div style="font-size:14px;font-weight:700;margin-bottom:8px;color:var(--red);">Link inválido ou expirado</div>
-        <div class="sub" style="margin-bottom:0;">Pede um link novo pra sua agência.</div>
-      </div>`;
+      if(acessoPortalFoiNegado(erroAberturaSessao)) await invalidarSessaoPortalLocal(uidSessao);
+      else mostrarPortalIndisponivelSemInvalidar();
       return;
     }
     const dadosAcesso = tokenNovoValido ? tokenSnap.data() : {nome:slug};
     let fichaPortal={};
     try{
-      const fichaSnap=await getDocs(query(collection(db,'cadastros_clientes'),where('slug','==',slug)));
-      fichaSnap.forEach(d=>{ if(!Object.keys(fichaPortal).length) fichaPortal=d.data()||{}; });
-    }catch(e){ console.warn('Ficha privada do Portal não pôde ser confirmada:',e.code||e.message); }
-    let temHistoricoStories=false;
+      fichaPortal=await carregarFichaPortalSegura(slug,dadosAcesso);
+    }catch(e){
+      console.warn('Ficha privada do Portal não pôde ser confirmada:',e.code||e.message);
+      if(acessoPortalFoiNegado(e)){ await invalidarSessaoPortalLocal(uidSessao); return; }
+    }
+    let temHistoricoStories=null;
     if(typeof fichaPortal.incluiStories!=='boolean'){
+      const chaveEscopoStories='gs_portal_stories_escopo_'+slug;
       try{
-        const storySnap=await getDocs(query(collection(db,'stories_semanais'),where('cliente','==',slug)));
+        const storySnap=await comTimeoutPortal(
+          getDocs(query(collection(db,'stories_semanais'),where('cliente','==',slug))),
+          'Histórico de Stories do Portal',12000
+        );
+        temHistoricoStories=false;
         storySnap.forEach(d=>{ const s=d.data()||{}; if(!s.excluido&&(s.revisaoInterna||'liberado')==='liberado') temHistoricoStories=true; });
-      }catch(e){ console.warn('Histórico de Stories não pôde ser confirmado:',e.code||e.message); }
+        localStorage.setItem(chaveEscopoStories,temHistoricoStories?'1':'0');
+      }catch(e){
+        console.warn('Histórico de Stories não pôde ser confirmado:',e.code||e.message);
+        const ultimo=localStorage.getItem(chaveEscopoStories);
+        if(ultimo==='1'||ultimo==='0') temHistoricoStories=ultimo==='1';
+      }
     }
     const escopo=escopoPortalDaFicha(slug,dadosAcesso,fichaPortal,temHistoricoStories);
-    window.entrarPortal(slug, escopo.nome, escopo);
+    window.entrarPortal(slug, escopo.nome, escopo, token);
   });
 </script>
 </body>

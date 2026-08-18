@@ -51,7 +51,7 @@ ok(/id="rrValorMensal"(?![^>]*readonly)/.test(entradaHtml),'valor da entrada men
 ok(entradaHtml.includes('onclick="registrarClienteDaReuniao()"'),'confirmação explícita final da entrada desapareceu');
 const editorAtivo=trecho(escritorio,'function htmlEditorClienteAtivoCentral','  window.editarClienteAtivoCentral');
 ok(/id="ecaValor"[^>]*readonly/.test(editorAtivo),'ficha ativa voltou a ser um segundo escritor de valor financeiro');
-ok(editorAtivo.includes('mudanças de valor são programadas em <b>Contratos</b>'),'ficha ativa não orienta a fonte financeira correta');
+ok(editorAtivo.includes('mudanças futuras são programadas em <b>Contratos</b>'),'ficha ativa não orienta a fonte financeira correta');
 
 const renderArquivo=trecho(escritorio,'const htmlArquivado=v=>','      box.innerHTML=',);
 ok(renderArquivo.includes('Valor mensal (R$)')&&renderArquivo.includes('Dia de vencimento')&&renderArquivo.includes('Primeiro mês após reativação'),'arquivo não coleta a condição financeira completa');

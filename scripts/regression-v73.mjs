@@ -38,20 +38,20 @@ const apiFicha=executar(`function slugClienteCanonico(s){return s;}function mese
 const entrada={nome:'Cliente Teste',instagram:'',telefone:'41 99999-9999',plano:'Intermediário',planoDetalhes:'',valorMensal:1700,diaVencimento:10,primeiraCompetencia:'2026-08',tipoEntrega:'postagem_completa',incluiStories:false,contrato:'',cortesiaTipo:'permanente',cortesiaMeses:[],cortesiaPermanente:true,cortesiaInicial:true};
 ok(apiFicha.validarEntradaClienteMensalista(entrada).length===0,'ficha interna recusou contato válido');
 ok(apiFicha.validarEntradaClienteMensalista({...entrada,telefone:'9999-9999'}).some(x=>x.includes('WhatsApp brasileiro válido')),'ficha interna aceitou contato inválido');
-ok(apiFicha.modelarClienteMensalistaUnificado(entrada,'2026-08-17T00:00:00.000Z','token','entrada').config.whatsappCobranca==='5541999999999','ativação mensal não propagou o contato');
+const modeloMensal=apiFicha.modelarClienteMensalistaUnificado(entrada,'2026-08-17T00:00:00.000Z','token','entrada');
+ok(modeloMensal.contatoFinanceiro.whatsapp==='5541999999999'&&!Object.hasOwn(modeloMensal.config,'whatsappCobranca'),'ativação mensal não separou o contato na agenda privada');
 
 const avulso=trecho(escritorio,'window.ativarAvulsoRecebido=async function','  const ETAPAS_ONBOARDING_LOCAL');
 ok(avulso.includes('lead.whatsappCobranca||lead.whatsappNormalizado||lead.whatsapp||lead.telefone'),'ativação avulsa perdeu compatibilidade das fontes');
 ok(avulso.indexOf('if(!whatsappCobranca)')<avulso.indexOf('runTransaction'),'ativação avulsa valida depois de iniciar a transação');
-ok(avulso.includes("tx.set(configRef,{tipoCliente:'avulso',tipoEntrega:'entrega_direta',whatsappCobranca"),'ativação avulsa não grava a configuração operacional');
+ok(avulso.includes("doc(db,'contatos_clientes_financeiro',slug)")&&avulso.includes("origem:'ativacao_avulso'")&&!avulso.includes("tipoEntrega:'entrega_direta',whatsappCobranca"),'ativação avulsa não grava a agenda privada separada');
 
 const edicao=trecho(escritorio,'window.salvarClienteAtivoCentral=async function','  window.arquivarEntradaPendente');
-ok(edicao.includes('const fone=numeroWhatsAppBrasil(dados.telefone)'),'edição ativa usa outra normalização');
-ok(edicao.includes('whatsappCobranca:fone'),'edição ativa não sincroniza o contato');
+ok(!edicao.includes('numeroWhatsAppBrasil(dados.telefone)'),'edição ativa voltou a derivar contato privado de ficha legada');
+ok(!edicao.includes('whatsappCobranca:fone'),'edição ativa voltou a gravar contato em configuração operacional');
 const editorCompartilhado=trecho(escritorio,'function htmlEditorClienteAtivoCentral','  window.editarClienteAtivoCentral');
-ok(escritorio.includes("value=\"${escAttr(v.telefone||v.whatsappCobranca||'')}\"") ||
-  (edicao.includes("telefone:String(atual.telefone||atual.whatsappCobranca||'').trim()")&&!editorCompartilhado.includes('id="ecaTelefone"')),
-  'editor pode apagar contato operacional de ficha legada');
+ok(!editorCompartilhado.includes('id="ecaTelefone"')&&!editorCompartilhado.includes('id="ecaContatoFinanceiro"'),
+  'editor compartilhado voltou a expor o contato financeiro no DOM');
 ok(!escritorio.includes('const CLIENTES_WHATSAPP_FIXOS'),'foi reintroduzida lista fixa paralela');
 
 console.log(`RESULTADO: APROVADO (${total} asserções V73)`);

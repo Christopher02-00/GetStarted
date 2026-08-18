@@ -1463,3 +1463,169 @@ Evidência: preflight V66 aprovado; regressão crítica aprovada com 571 asserç
 - [x] Conferência e edição da ficha aceitam as novas opções sem perder plano legado.
 - [x] Site, perfil, cadastro e área interna apontam ao mesmo PDF versionado.
 - [x] Documento de conteúdo orgânico não foi publicado como catálogo comercial.
+
+## 70. CICLO ÚNICO DE CLIENTES, PROPOSTAS E CALENDÁRIOS — V81 (18/08/2026)
+
+### 70.1 A troca de papel destruía o formulário de entrada
+**Defeito comprovado no código:** ao sair do perfil de Gerência, `registroRapidoBox.replaceChildren()` removia permanentemente os campos do DOM. Voltar para Amanda ou Chris não reconstruía o formulário, fazendo o valor e os demais dados parecerem indisponíveis.
+
+**Como foi corrigido:** a troca de papel limpa valores e estado transitório, mas preserva a estrutura do formulário. Cadastro vindo do link e cadastro manual já fechado abrem a mesma conferência e terminam no mesmo escritor unificado.
+
+> **LEI:** isolamento por papel pode desmontar conteúdo privado recriável, mas nunca destruir um formulário estático necessário quando a mesma sessão volta ao papel autorizado.
+
+### 70.2 Saídas concorrentes podiam criar dois arquivos do mesmo cliente
+**Defeito comprovado no código:** a saída usava ID aleatório e não mantinha um ponteiro canônico na configuração do cliente. Duas abas podiam registrar duas saídas; a projeção visual escondia a duplicação sem impedir o dado duplicado.
+
+**Como foi corrigido:** o protocolo passou a ser determinístico por `slug + data`, `clientes_config.saidaAtivaId` é relido e atualizado na mesma transação, a trava nasce antes da primeira espera e o sucesso depende do recibo do arquivo e do ponteiro. A mesma transação atualiza ficha, contrato, mensalidades futuras, Portal, tokens compatíveis e Stories. Nenhum histórico é apagado.
+
+> **LEI:** saída possui um único protocolo canônico por identidade. Deduplicar cartões na interface não substitui impedir a segunda escrita na transação.
+
+### 70.3 Desativar token não encerrava uma sessão já aberta
+**Defeito comprovado nas regras:** `temSessaoCliente()` verificava somente a existência de `sessoes_cliente/{uid}`. Depois da saída, uma sessão emitida antes do bloqueio ainda satisfazia leituras do Portal; reativação também ligava todos os tokens históricos.
+
+**Como foi corrigido:** cada operação protegida revalida o token canônico, o estado ativo e `ativoAte`. Quando existe `clientes_acesso`, token histórico nunca prevalece. O Portal apaga sua sessão local ao receber negação; a reativação recupera somente o acesso e token canônicos, mantendo aliases e tokens antigos revogados.
+
+> **LEI:** sessão é um vínculo revogável, não uma autorização eterna. Toda leitura do cliente revalida identidade, token canônico e vigência; reativar nunca ressuscita credenciais históricas.
+
+### 70.4 Contador de entrada transformava falha em zero aparente
+**Defeito comprovado no código:** erro ao ler as três fontes de entrada podia esconder o badge, levando a equipe a interpretar “indisponível” como “nenhum cliente aguardando”.
+
+**Como foi corrigido:** o último total confirmado é preservado e o badge mostra `!` com explicação. A Central inteira continua falhando fechada quando a projeção não pôde ser confirmada.
+
+> **LEI:** falha, permissão negada ou timeout nunca vira zero, lista vazia ou ausência de cliente.
+
+### 70.5 Propostas manuais não eram idempotentes e renovação podia virar avulso
+**Defeitos comprovados no código:** cada salvamento usava ID aleatório, marcava a proposta como enviada naquele instante e permitia repetir o mesmo documento. `renovacao` caía no ramo de projeto avulso ao mover para produção, podendo criar cliente extra e receita avulsa para um mensalista existente.
+
+**Como foi corrigido:** proposta nasce como `preparada`, com família e ID determinísticos, hash/versão e recibo; data de envio só aparece após confirmação real. Renovação exige cliente mensalista ativo e nunca percorre `clientes_extras` ou `receitas_avulsas`. Métricas separam MRR potencial de projeto único.
+
+> **LEI:** arquivo preparado não prova envio, aceite ou pagamento. Nova versão atualiza a família; retentativa do mesmo documento não cria outro negócio; renovação nunca é projeto avulso.
+
+### 70.6 Portas antigas da cópia do calendário omitiam o mês
+**Causa-raiz do relato da Cecília:** quatro botões chamavam o copiador sem competência. O helper então podia gerar URL sem `&mes=`; o Portal escolhia outro mês silenciosamente e um calendário real podia parecer agosto, vazio ou “ainda não liberado” enquanto a equipe trabalhava setembro.
+
+**Como foi corrigido:** toda porta visível passa `AAAA-MM`, com próximo mês como padrão operacional. A cópia relê documento, itens e estado; somente `aprovado_interno` vira `liberado` em transação. O envio da Amanda também relê o mesmo mês em transação e exige recibo. O Portal respeita o mês pedido, preserva o último retrato confirmado e diferencia documento ausente, mês confirmado vazio e leitura indisponível.
+
+> **LEI:** cliente, mês, estado e conteúdo formam uma única decisão transacional. Nunca omitir a competência, escolher outro mês por fallback ou anunciar vazio depois de falha de leitura.
+
+### 70.7 Escritores parciais criavam caminhos paralelos de cliente e Portal
+**Defeitos comprovados no código:** o cadastro técnico de extra, “novo contrato” e a lista antiga de links podiam iniciar pedaços diferentes da estrutura. Isso deixava a origem de ficha, contrato, cobrança, calendário e Portal obscura e aumentava o risco de duplicação.
+
+**Como foi corrigido:** “novo contrato” e cadastro manual redirecionam à Central única; a lista de links somente exibe acessos já confirmados; o escritor técnico antigo foi removido. A projeção confirmada alimenta pendentes, ativos, saída programada, arquivo e histórico cancelado.
+
+> **LEI:** cliente fechado nasce ou é reativado por um escritor oficial. Diagnóstico, lista de links e contrato não podem criar identidades implicitamente.
+
+### 70.8 Gate obrigatório da V81
+- [x] Formulário de entrada sobrevive à troca de papel e Amanda informa valor na entrada/reativação.
+- [x] Ficha ativa não ganhou edição retroativa de mensalidade.
+- [x] Saída usa ID determinístico, ponteiro transacional, recibo e soft-delete.
+- [x] Stories, acesso canônico, tokens históricos e sessões abertas obedecem à saída/reativação.
+- [x] Histórico cancelado fica consultável sem contar como arquivo ativo.
+- [x] Propostas preparadas não fingem envio e retentativa não duplica a família.
+- [x] Renovação não cria receita ou cliente avulso.
+- [x] Amanda, Gabi e Cecília usam a mesma competência e fonte do calendário.
+- [x] Copiar e enviar calendário relê estado/conteúdo em transação e confirma por recibo.
+- [x] Portal não troca mês explícito nem converte erro do Firestore em vazio.
+- [x] Nenhum dado, cliente, proposta, calendário ou regra foi publicado durante os testes locais.
+
+### 70.9 O Portal consultava a ficha com uma operação que as regras proibiam
+**Defeito comprovado no código e nas regras:** o Portal usava `getDocs(query(... where('slug')))`, que é uma operação `list`, enquanto `cadastros_clientes` concede à sessão do cliente somente `get`. A exceção era convertida em ficha vazia, podendo remover nome, plano e escopo explícito de Stories sem dizer que a autorização falhou.
+
+**Como foi corrigido:** a coleção não ganhou permissão de listagem. O Portal tenta apenas IDs pontuais não enumeráveis/determinísticos e usa `contratos_cliente/{slug}` como retrato canônico compatível dos legados. A aba de informações reutiliza o mesmo retrato já autorizado; nenhuma segunda consulta à coleção privada é feita.
+
+> **LEI:** regra de `get` não autoriza query. Dados do cliente no Portal usam documento determinístico ou ID previamente confirmado; nunca ampliar `list` para resolver uma consulta incompatível.
+
+### 70.10 Comprovante mensal aceitava texto executável em um atributo de link
+**Defeito comprovado no código e nas regras:** o cliente podia gravar qualquer texto em `pagamentos_mensais.comprovante`. O Financeiro interpolava esse valor em `href` usando `esc()`, que não escapa aspas nem valida protocolo. Um valor `javascript:` ou com atributo injetado podia virar navegação perigosa na sessão do Chris.
+
+**Como foi corrigido:** Portal e regras aceitam somente URL HTTPS normalizada e limitada. O Financeiro revalida a URL, usa `escAttr`, `rel="noopener"` e mostra o legado inválido como bloqueado em vez de gerar um link. A mesma validação é aplicada somente quando o comprovante da proposta muda, para não impedir resposta a documento legado inalterado.
+
+> **LEI:** texto informado pelo cliente nunca entra diretamente em `href`. Segurança de URL existe no escritor, nas regras e no consumidor; valor legado inválido permanece visível como bloqueado, não é executado nem apagado.
+
+### 70.11 Papéis fixos ignoravam a revogação registrada
+**Defeito comprovado nas regras:** `ehGerencia`, `ehAmanda`, `ehChris` e outros papéis especiais conferiam apenas o e-mail fixo. Marcar a conta-semente como inativa/excluída em `usuarios_equipe` revogava `ehEquipe`, mas preservava os privilégios especiais.
+
+**Como foi corrigido:** todos os papéis fixos passam também por `emailDaSementeNaoRevogado()`. A ausência do documento continua liberando o bootstrap legítimo; um documento explícito inativo/excluído bloqueia o papel.
+
+> **LEI:** e-mail fixo define identidade, não uma autorização irrevogável. Toda função especial deve respeitar a mesma fonte de revogação usada pelo portão da equipe.
+
+### 70.12 Resposta de proposta podia reescrever histórico e regredir produção
+**Defeito comprovado nas regras:** a sessão do cliente podia substituir todo o array `historico` e mudar a etapa para aceita, ajuste ou perdido partindo de qualquer estado, inclusive produção ou entrega. A interface também aceitava vários slugs, embora consulta e regra autorizassem somente o primeiro.
+
+**Como foi corrigido:** respostas partem somente de proposta/análise/ajuste, acrescentam exatamente uma decisão identificada do próprio slug e preservam todas as entradas anteriores. Novas propostas aceitam um único vínculo explícito; outro cliente exige outro registro. A autorização de `negocios` e `reunioes_vendas` no backend ainda precisa ser alinhada à exclusividade do Chris mostrada no DOM antes de declarar este gate completo.
+
+> **LEI:** histórico comercial é crescente e transição de cliente não volta produção/entrega. Uma proposta do Portal possui uma identidade autorizada explícita; exclusividade visual e regra Firestore precisam coincidir.
+
+### 70.13 Trabalho pontual de vídeo não é cadastro de cliente
+**Defeito comprovado no histórico:** o commit `49a5861` ofereceu “Cliente novo” em Vídeos, mas o lançamento criava `clientes_extras`, adicionava a identidade à carteira e a classificava como cliente. O commit `0195f08` eliminou essa escrita indevida e, junto com ela, removeu a possibilidade operacional de Luís/Nathan lançarem uma gravação ou material recebido de alguém fora da carteira.
+
+**Como foi corrigido:** Vídeos → Lançar ganhou “Trabalho externo/pontual”. Nome normalizado e identidade prefixada vivem somente no documento de `videos_producao`; não nasce ficha, contrato, Portal, calendário, mensalidade, `clientes_extras`, `clientes_config` ou afinidade de cliente. A origem do material continua distinguindo gravação da equipe de material recebido. Edição, distribuição e aprovação permanecem na esteira existente; depois da confirmação do cliente, o vídeo termina em Entregas Finalizadas sem criar postagem, legenda ou agendamento. O conciliador reconhece a classificação antes de qualquer atalho e impede que um legado externo gere postagem.
+
+**Revisão adversarial:** a primeira entrega ainda dependia de duas leituras da carteira para desenhar o seletor, deixava a view no DOM de papéis sem função de vídeo e misturava pontuais nos contadores “por cliente”. A opção pontual agora nasce antes das leituras e preserva o último retrato com aviso explícito quando a carteira não é confirmada. Troca de pessoa/logout limpa campos, links e resultados; Gabi/Yas não recebem menu nem view e as regras restringem criação aos quatro lançadores e atualização aos papéis operacionais de vídeo. Chris volta a ter a porta visível. Arquivo, esteira, fila de confirmação e Entregas Finalizadas agrupam pela identidade prefixada e mostram trabalhos pontuais em bloco próprio; cobrança pontual apenas copia uma mensagem e nunca procura telefone financeiro.
+
+O conciliador reconhece pontual **antes** de status/postagem/configuração e nunca cria postagem para ele. Registros novos terminam pelo núcleo transacional de confirmação. Resíduos legados já ligados a uma postagem ficam fora dos contadores e são sinalizados para conferência; esta manutenção local não exclui nem reescreve esses documentos automaticamente.
+
+> **LEI:** trabalho externo de vídeo é uma entrega pontual, não uma identidade de cliente. O nome percorre `videos_producao`, mas nenhum consumidor pode promovê-lo implicitamente à carteira ou à cadeia mensal.
+
+**Gate de regressão:**
+- [x] Luís, Nathan, Amanda e Chris continuam passando pela única porta `podeLancarVideo`.
+- [x] Nome vazio, controle invisível e nome acima de 80 caracteres são recusados; a identidade externa é determinística e não colide com slug real.
+- [x] Material gravado conta como gravação; material recebido mantém `soEdicao` e não altera produtividade de campo.
+- [x] Filmmaker envia sem apropriar editor; Amanda/Chris distribuem sem gravar afinidade de cliente externo.
+- [x] Aprovação externa não consulta `clientes_config` e não cria `postagens`.
+- [x] Falha de `clientes_extras`/`clientes_config` não remove a opção pontual nem é exibida como carteira vazia.
+- [x] Entregas Finalizadas, Arquivo e Esteira preservam nome/identidade e não contam pontual como cliente.
+- [x] Troca/logout limpa a view; Gabi/Yas ficam sem DOM, rota e mutação de vídeo.
+- [x] Regras foram estreitadas: só Luís, Nathan, Amanda e Chris criam; editores/gestão preservam atualização; exclusão física continua proibida.
+- [x] Cobrança de pontual não consulta telefone; conciliador classifica antes do atalho por postagem e não cria fluxo mensal.
+
+### 70.14 Gerar o link interno podia trocar o token do Portal do cliente
+**Defeito comprovado no código:** quando `clientes_acesso/{slug}` ainda não existia, `garantirTokensDoCliente()` criava dois tokens aleatórios sem procurar primeiro o token legado ativo em `clientes_portal_tokens` ou em um alias de acesso. Como as regras passam a preferir `clientes_acesso` assim que o documento existe, um clique da equipe podia invalidar imediatamente o link antigo do cliente — a mesma classe da regressão recorrente da Vitalle.
+
+**Como foi corrigido:** a gerência confirma aliases e tokens legados, a transação relê todas as referências conhecidas e adota o único token ativo antes de criar o acesso. Dois tokens divergentes bloqueiam sem escrita. Cecília pode completar somente um acesso canônico já seguro; quando a descoberta de legado exigiria listagem proibida pelas regras, recebe uma orientação fechada para a gerência preparar o primeiro link. Todo sucesso exige recibo do mesmo acesso.
+
+> **LEI:** criar token interno nunca pode rotacionar o token do cliente. Ausência de permissão para conferir o legado bloqueia a criação; não autoriza adivinhar uma credencial nova.
+
+### 70.15 Saída futura reativava aliases e uma falha interrompia todas as demais
+**Defeitos comprovados no código:** programar uma saída gravava `ativo:true` em todos os acessos, tokens e Stories compatíveis, ressuscitando credenciais históricas. O cancelamento mantinha apenas o documento canônico e podia revogar um Portal que existia somente no alias. A fotografia compartilhada de `clientes_encerrados` copiava telefone. No motor diário, a falha de um cliente abortava os seguintes e, ainda assim, o dia era carimbado como concluído.
+
+**Como foi corrigido:** programação futura altera somente vigência e preserva o estado ativo anterior. Cancelamento novo conserva exatamente esse estado; legado escolhe acesso canônico ou a única credencial ativa alias-only e bloqueia divergência. O recibo confirma arquivo, ponteiro e credencial restaurada. Telefone saiu da fotografia gerencial. O motor isola cada cliente, processa os demais, agrega falhas e impede `ultimaManutencaoDia` quando qualquer rotina diária falha.
+
+> **LEI:** agendar não reativa credencial; cancelar não rotaciona Portal; erro parcial nunca vira conclusão diária.
+
+### 70.16 Produção avulsa podia ficar parcialmente criada e mesmo assim anunciar sucesso
+**Defeito comprovado no código:** o funil atualizava primeiro `negocios`, depois criava cliente/configuração e por último tentava `addDoc()` em `receitas_avulsas`. A exceção financeira era apenas registrada no console e o toast afirmava que tudo entrou no Financeiro. Duplo clique ou duas abas também podiam criar duas receitas.
+
+**Como foi corrigido:** o ramo avulso usa trava antes da primeira espera, receita determinística por `negocioId` para registros novos e uma transação que relê/grava negócio, ficha, configuração e receita. Receita legada única é adotada; duas ativas bloqueiam. Só o recibo dos quatro documentos permite o sucesso; o ramo parcial antigo foi removido.
+
+> **LEI:** mover para produção é uma unidade atômica. Negócio, cliente e receita não podem divergir nem ser confirmados por exceção engolida.
+
+### 70.17 O envio em lote escondia quais calendários falharam
+**Defeito comprovado no código:** `dispararCalendarios()` capturava a exceção por cliente e retornava somente um número. A tela sempre exibia “N calendários enviados” sem nomear os que falharam; um lote parcial parecia concluído.
+
+**Como foi corrigido:** o resultado agora possui `enviados[]` e `falhas[]`, com cliente, mês e erro. Envio individual mostra a causa; lote mostra quantidade confirmada e nomes das falhas, registra o erro agregado e continua exigindo recibo de cada competência liberada.
+
+> **LEI:** lote parcial é parcial. A interface deve dizer quem foi confirmado e quem falhou; contagem isolada nunca prova conclusão total.
+
+### 70.18 A ficha ativa mantinha um escritor financeiro invisível e inalcançável
+**Defeito comprovado no código:** `salvarClienteAtivoCentral()` procurava `ecaContatoFinanceiro`, mas o campo havia sido removido do DOM. O ramo nunca podia receber valor e ainda descrevia uma origem `edicao_financeiro_explicita` que não existia na tela.
+
+**Como foi corrigido:** o ramo, a referência e a escrita foram removidos. Contato privado nasce somente na entrada/reativação autorizada ou na agenda exclusiva do Chris.
+
+> **LEI:** escritor sem controle visível é código morto, não uma barreira de privacidade. Remova-o e mantenha uma única porta real por evento autorizado.
+
+### 70.19 Bloqueio estrutural: rascunho e mês liberado ainda vivem no mesmo documento
+**Limite comprovado no modelo atual:** `calendarios/{slug}` guarda vários meses e todos os itens no mesmo documento. As regras do Firestore autorizam ou negam o documento inteiro; filtrar `items` no navegador não impede que uma sessão autorizada receba também um rascunho de outro mês. Pelo mesmo motivo, uma regra baseada em `affectedKeys()` confirma que o array `items` mudou, mas não consegue provar com segurança qual elemento interno foi alterado numa aprovação legada.
+
+**Contenção aplicada sem migrar produção:** montagem, revisão, cópia, liberação e envio operacional aceitam somente a competência imediatamente seguinte; os demais meses aparecem como arquivo histórico separado. O Portal atualiza por `itemId` e mantém fallback legado estrito por índice + dia + nome. Isso reduz mistura e sobrescrita, mas **não transforma o filtro do frontend em confidencialidade**.
+
+**Correção definitiva ainda bloqueada:** exige uma projeção publicada por `cliente + competência` (ou item), regras testadas no Firestore Emulator e migração com recibo antes de trocar leitores. A mesma migração precisa definir uma identidade canônica para aliases: tentar vários documentos a partir do navegador do cliente sem uma regra/projeção comprovada pode ampliar acesso entre clientes. Nenhuma coleção pública, alias automático ou migração de produção foi criada nesta manutenção local.
+
+> **LEI:** segurança do calendário é decidida pelo documento entregue, não pelo que a interface esconde. Rascunho e conteúdo liberado só terão sigilo independente quando forem documentos autorizáveis independentemente.
+
+### 70.20 Uma sugestão literal de senha podia virar a senha real
+**Defeito comprovado no código:** a mensagem de troca de senha ensinava corretamente que um segredo escrito no HTML não protege nada, mas em seguida mostrava duas frases literais como exemplos. Se alguém escolhesse uma delas, a senha passaria a estar exposta no próprio código público.
+
+**Como foi corrigido:** a interface deixou de sugerir qualquer frase literal. Ela orienta a criar uma frase inédita, que nunca tenha aparecido no site, na tela, em conversa ou na documentação. A manutenção não altera credenciais nem dados publicados.
+
+> **LEI:** exemplo de senha em código cliente é senha pública. Nunca sugerir, registrar ou repetir uma credencial concreta no HTML, nos testes, no catálogo ou no relatório.

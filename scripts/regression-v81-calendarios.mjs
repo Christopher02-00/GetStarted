@@ -18,6 +18,13 @@ function falhaQualquer(fn){ try{ fn(); }catch(e){ return true; } return false; }
 
 exigir(calendario===calendarios,'calendario.html e calendarios.html continuam byte a byte idênticos');
 
+const aberturaInterna=trecho(escritorio,'window.abrirCalendarioFerramentas = async function','  /* ===== REFERENCIAS DE PERFIL');
+exigir(aberturaInterna.includes("'&interno=1&mes='")&&!aberturaInterna.includes('garantirTokensDoCliente('),'editor aberto no Escritório usa a sessão Google da equipe e não depende da credencial externa do cliente');
+const portaCalendario=trecho(calendario,'const firebaseConfig =','</script>');
+exigir(portaCalendario.includes("const modoInternoEquipe = params.get('interno') === '1'")&&portaCalendario.includes('? initializeApp(firebaseConfig)')&&portaCalendario.includes('aguardarEquipeAutenticada()'),'calendário interno reutiliza o app padrão e espera uma sessão Google não anônima');
+exigir(portaCalendario.includes("initializeApp(firebaseConfig, 'getstarted-public')")&&portaCalendario.includes('signInAnonymously(auth)')&&portaCalendario.includes('if(!tokenCliente && !tokenEquipe)'),'links externos continuam isolados, anônimos e obrigatoriamente protegidos por token');
+exigir(portaCalendario.indexOf('if(modoInternoEquipe)')<portaCalendario.indexOf('await autenticarCalendarioComRetry()'),'modo interno é resolvido antes de qualquer autenticação anônima');
+
 const competenciaCalendario=trecho(calendario,'function competenciaAtualDoCalendario','/* O mês que está sendo visto agora.');
 const contextoCompetencia={};
 vm.createContext(contextoCompetencia);

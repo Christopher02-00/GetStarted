@@ -147,7 +147,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -157,8 +157,14 @@
     messagingSenderId: "27813235721",
     appId: "1:27813235721:web:38c8e840153e2ae3853cd8"
   };
-  /* App nomeado: abrir um calendário público não desconecta a equipe. */
-  const app = initializeApp(firebaseConfig, 'getstarted-public');
+  const params = new URLSearchParams(window.location.search);
+  const modoInternoEquipe = params.get('interno') === '1';
+  /* O link público continua num app isolado e anônimo. Dentro do
+     Escritório, porém, o iframe reutiliza o app padrão: assim a Gabi usa
+     a própria sessão Google e não depende da chave externa do cliente. */
+  const app = modoInternoEquipe
+    ? initializeApp(firebaseConfig)
+    : initializeApp(firebaseConfig, 'getstarted-public');
   const db = getFirestore(app);
 
   /* ===== O CALENDÁRIO GANHOU PORTA — 28/07/2026 =======================
@@ -168,7 +174,8 @@
      o calendário, que é a página que mais circula por WhatsApp, não
      exigia coisa nenhuma.
 
-     Agora existem três modos:
+     Agora existem quatro modos:
+       • ?cliente=X&interno=1 → equipe já autenticada no Escritório
        • ?cliente=X&e=TOKEN_EQUIPE  → equipe, edita tudo
        • ?cliente=X&t=TOKEN_CLIENTE → cliente, LÊ, comenta e aprova
        • sem token                  → não abre
@@ -177,7 +184,6 @@
      que o escritório gera. Assim, mesmo que o link do cliente vaze, quem
      tem ele não consegue apagar o mês. */
   const auth = getAuth(app);
-  const params = new URLSearchParams(window.location.search);
   const clienteId = params.get('cliente') || '';
   const tokenCliente = params.get('t') || '';
   const tokenEquipe  = params.get('e') || '';
@@ -240,8 +246,36 @@
     throw ultimoErro;
   }
 
+  function aguardarEquipeAutenticada(){
+    return new Promise((resolve,reject)=>{
+      let terminou=false;
+      let cancelar=()=>{};
+      const concluir=(erro,usuario)=>{
+        if(terminou) return;
+        terminou=true; clearTimeout(timer); cancelar();
+        if(erro) reject(erro); else resolve(usuario);
+      };
+      const timer=setTimeout(()=>concluir(new Error('A sessão Google da equipe não respondeu a tempo.')),12000);
+      cancelar=onAuthStateChanged(auth,usuario=>{
+        if(usuario && !usuario.isAnonymous) concluir(null,usuario);
+        else concluir(new Error('Entre no Escritório com o Google da equipe antes de abrir este calendário.'));
+      },erro=>concluir(erro));
+    });
+  }
+
   window.__modoCal = 'bloqueado';
   window.__calPronto = (async () => {
+    if(modoInternoEquipe){
+      try{ await aguardarEquipeAutenticada(); }
+      catch(e){
+        console.error('Falha na sessão interna da equipe:',e);
+        barrar('Sessão da equipe não confirmada',e?.message||'Volte ao Escritório, entre com seu Google e tente novamente.');
+        return false;
+      }
+      if(!clienteId){ barrar('Link interno incompleto','O Escritório não informou qual calendário abrir.'); return false; }
+      window.__modoCal='equipe';
+      return true;
+    }
     try{ await autenticarCalendarioComRetry(); }
     catch(e){
       console.error('Falha na autenticação:', e);

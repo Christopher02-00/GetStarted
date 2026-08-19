@@ -1760,3 +1760,15 @@ O período válido do produto foi fixado em **julho de 2026 em diante**, pois fo
 > **LEI:** erro de Stories não é ausência, e contrato avulso não é candidato a Story recorrente. Entrada, saída e reativação alteram apenas a elegibilidade operacional; roteiros e histórico permanecem preservados.
 
 **Gate de regressão:** `scripts/regression-v89-stories-operacao.mjs` cobre timeout, cache, carteira, URL, troca de papel e ciclo de elegibilidade. `scripts/regression-v89-ui-stories.mjs` abre a tela, ativa e retira logicamente um mensalista fictício, preserva a Vitalle, bloqueia URL inválida e verifica falha com e sem retrato em Chrome isolado.
+
+### 70.34 A V89 carregava a tela, mas ainda retirava mensalistas reais e fundia Hitech com Rodrigo
+
+**Defeito reproduzido na versão publicada em 19/08/2026:** a Central de Clientes confirmou 23 mensalistas ativos, mas Calendários mostrou somente 16 clientes. Ficaram fora Açougue São Joaquim, Cookiery, Dra. Júlia, Emanuelle Bernaski Nutri, iPhone Campo Largo e Joaquin Assados. Açougue e Joaquin ainda operavam até a saída programada de 15/09/2026. A mesma Central exibia um único cartão `Rodrigo / Hitech`, embora o responsável tenha confirmado que são clientes diferentes: Hitech é a empresa recorrente; Rodrigo recebe somente edição de vídeos.
+
+**Causa comprovada:** a V89 criou a carteira operacional, porém ainda deixava uma casta genérica de `clientes_extras` (por exemplo, legado diferente de `mensalista`) vencer a compatibilidade mensalista confirmada. Três clientes recorrentes adicionais nem estavam nessa compatibilidade. Separadamente, `APELIDOS_DE_CONTRATO` convertia `hitech` em `rodrigo`, e o Portal incluía Hitech na lista fixa de clientes só edição. Por isso Hitech herdava as exclusões operacionais do Rodrigo em calendário e Portal.
+
+**Correção local V90:** a compatibilidade inclui os mensalistas reais confirmados e vence somente castas legadas ambíguas. `avulso`, `interno`, `encerrado`, entrega direta, saída efetiva e as exceções IKN/X Joias continuam soberanas. Hitech deixou de ser alias de Rodrigo; `cliente-rodrigo` continua como alias verdadeiro de Rodrigo. O Portal considera somente Rodrigo/cliente-rodrigo como plano só edição. Nenhum documento foi criado, movido, fundido ou apagado.
+
+> **LEI:** classificação operacional antiga e genérica não pode retirar um mensalista confirmado. Compatibilidade nunca pode fundir duas pessoas/empresas que a operação confirmou como distintas. Hitech e Rodrigo possuem carteiras, contatos, calendários, Portal e históricos independentes.
+
+**Prova de regressão:** `scripts/regression-v90-carteira-mensalistas-reais.mjs` falha contra o `escritorio.html` publicado da V89 já no Açougue São Joaquim e passa 12/12 na V90. Cobre os sete mensalistas ausentes/mesclados, IKN/X Joias, entrega direta, saída efetiva, avulso explícito e a separação Hitech/Rodrigo. A V90 permanece **local** até o upload do usuário e a repetição da contagem na versão publicada.

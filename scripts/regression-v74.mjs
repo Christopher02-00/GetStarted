@@ -15,24 +15,27 @@ function executar(codigo,exportacao){ const ctx={window:{}}; ctx.window=ctx; vm.
 const identidadeFonte=trecho(escritorio,'const APELIDOS_DE_CONTRATO','  function mapaCalendariosPorIdentidade');
 const identidade=executar(identidadeFonte,'globalThis.api={slugClienteCanonico,nomeClienteCanonico,consolidarClientesAtivosPorIdentidade,slugsCompatibilidadeCliente};');
 ok(identidade.slugClienteCanonico('emanuelle')==='emanuelle-bernaski-nutri','Emanuelle legada não converge para o cadastro canônico existente');
-ok(['hitech','cliente-rodrigo','rodrigo'].every(s=>identidade.slugClienteCanonico(s)==='rodrigo'),'Hitech/Cliente Rodrigo não convergem para Rodrigo');
+ok(identidade.slugClienteCanonico('hitech')==='hitech','Hitech foi fundida indevidamente com Rodrigo');
+ok(['cliente-rodrigo','rodrigo'].every(s=>identidade.slugClienteCanonico(s)==='rodrigo'),'alias verdadeiro de Rodrigo deixou de convergir');
 ok(identidade.slugClienteCanonico('zeens')==='zeiss','alias financeiro da Zeiss foi perdido');
 const contatoFonte=trecho(escritorio,'function contatoFinanceiroPorIdentidade','  window.contatoFinanceiroPorIdentidade');
 const contatoCtx={window:{},slugsCompatibilidadeCliente:identidade.slugsCompatibilidadeCliente,numeroWhatsAppBrasil:v=>/^55\d{10,11}$/.test(String(v||''))?String(v):''};
 contatoCtx.window=contatoCtx; vm.createContext(contatoCtx); vm.runInContext(contatoFonte+'\nglobalThis.api=contatoFinanceiroPorIdentidade;',contatoCtx);
-const contatos={hitech:{whatsapp:'5541999999999'},zeens:{whatsapp:'5541888888888'},'emanuelle-bernaski-nutri':{whatsapp:'5541777777777'}};
-ok(contatoCtx.api(contatos,'cliente-rodrigo')==='5541999999999','contato privado de alias não chega à identidade Rodrigo');
+const contatos={rodrigo:{whatsapp:'5541999999999'},hitech:{whatsapp:'5541991111111'},zeens:{whatsapp:'5541888888888'},'emanuelle-bernaski-nutri':{whatsapp:'5541777777777'}};
+ok(contatoCtx.api(contatos,'cliente-rodrigo')==='5541999999999','contato privado do alias verdadeiro não chega à identidade Rodrigo');
+ok(contatoCtx.api(contatos,'hitech')==='5541991111111','contato da Hitech foi misturado com Rodrigo');
 ok(contatoCtx.api(contatos,'zeiss')==='5541888888888','contato privado legado da Zeiss não chega à identidade canônica');
 const consolidados=identidade.consolidarClientesAtivosPorIdentidade([
   {slug:'emanuelle',nome:'Emanuelle',origem:'legado',telefone:''},
   {slug:'emanuelle-bernaski-nutri',nome:'Emanuelle Bernaski nutri',cadastroId:'cad',whatsappCobranca:'5541777777777'},
-  {slug:'hitech',nome:'Hitech',whatsappCobranca:'5541999999999'},
+  {slug:'hitech',nome:'Hitech',whatsappCobranca:'5541991111111'},
   {slug:'cliente-rodrigo',nome:'Cliente Rodrigo'},
-  {slug:'rodrigo',nome:'Rodrigo'}
+  {slug:'rodrigo',nome:'Rodrigo',whatsappCobranca:'5541999999999'}
 ]);
-ok(consolidados.length===2,'aliases ainda geram cartões/cadastros operacionais duplicados');
+ok(consolidados.length===3,'identidades verdadeiramente distintas foram fundidas ou aliases reais duplicaram cartões');
 ok(consolidados.find(v=>v.slug==='emanuelle-bernaski-nutri')?.whatsappCobranca==='5541777777777','consolidação apagou telefone da Emanuelle canônica');
-ok(consolidados.find(v=>v.slug==='rodrigo')?.whatsappCobranca==='5541999999999','consolidação apagou telefone de Rodrigo/Hitech');
+ok(consolidados.find(v=>v.slug==='rodrigo')?.whatsappCobranca==='5541999999999','consolidação apagou telefone de Rodrigo');
+ok(consolidados.find(v=>v.slug==='hitech')?.whatsappCobranca==='5541991111111','consolidação apagou telefone próprio da Hitech');
 ok(!trecho(escritorio,'function consolidarClientesAtivosPorIdentidade','  window.nomeClienteCanonico').match(/(?:setDoc|addDoc|updateDoc|runTransaction)\s*\(/),'consolidação de leitura passou a gravar ou criar cliente');
 
 const postagemFonte=trecho(escritorio,'const ORDEM_STATUS_POSTAGEM','  async function localizarPostagemExistenteDoVideo');
@@ -85,6 +88,6 @@ const prepararLink=trecho(escritorio,'async function prepararLinkCalendarioClien
 ok(prepararLink.includes("if(estado!=='liberado')")&&!prepararLink.includes("status:'liberado',mes")&&
   prepararLink.includes("'&mes='+encodeURIComponent(mes)"),'cópia voltou a publicar ou perdeu a competência mensal já liberada');
 
-ok(portal.includes("const CLIENTES_SO_EDICAO = ['rodrigo','hitech','cliente-rodrigo']"),'Portal pode liberar áreas indevidas em alias de Rodrigo/Hitech');
+ok(portal.includes("const CLIENTES_SO_EDICAO = ['rodrigo','cliente-rodrigo']")&&!portal.includes("['rodrigo','hitech','cliente-rodrigo']"),'Portal ainda trata Hitech como plano só edição do Rodrigo');
 
 console.log(`RESULTADO: APROVADO (${total} asserções V74)`);

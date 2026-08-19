@@ -52,14 +52,22 @@ try{
         const erro=new Error('coleção gerencial não permitida'); erro.code='permission-denied'; throw erro;
       }
       if(nome==='clientes_config') return __docsFake([
-        ['iphone-campo-largo',{tipoCliente:'mensalista',nome:'iPhone Campo Largo'}],
         ['novo-mensalista',{tipoCliente:'mensalista',nome:'Novo Mensalista'}],
         ['ikn-brasil',{tipoCliente:'avulso',nome:'IKN Brasil'}],
         ['x-joias',{tipoCliente:'avulso',nome:'X Joias'}]
       ]);
+      if(nome==='clientes_extras') return __docsFake([
+        ['acougue-sao-joaquim',{slug:'acougue-sao-joaquim',nome:'Açougue São Joaquim',casta:'outro'}],
+        ['cookiery',{slug:'cookiery',nome:'Cookiery',casta:'outro'}],
+        ['dra-julia',{slug:'dra-julia',nome:'Dra Júlia',casta:'outro'}],
+        ['emanuelle',{slug:'emanuelle',nome:'Emanuelle Bernaski Nutri',casta:'outro'}],
+        ['hitech',{slug:'hitech',nome:'Hitech',casta:'outro'}],
+        ['iphone-campo-largo',{slug:'iphone-campo-largo',nome:'iPhone Campo Largo',casta:'outro'}],
+        ['joaquin-assados',{slug:'joaquin-assados',nome:'Joaquin Assados',casta:'outro'}]
+      ]);
       return __docsFake([]);
     };
-    window.slugClienteCanonico=slug=>({hitech:'rodrigo'}[String(slug||'')]||String(slug||''));
+    window.slugClienteCanonico=slug=>({'cliente-rodrigo':'rodrigo'}[String(slug||'')]||String(slug||''));
     window.nomeClienteCanonico=(_slug,nome)=>String(nome||'');
     window.nomeDeSlugSeguro=slug=>String(slug||'').replace(/-/g,' ');
     window.clienteInativoEfetivo=dados=>dados?.clienteInativo===true;
@@ -92,20 +100,22 @@ try{
   await page.locator('#tabEditar').click();
   await page.waitForFunction(()=>document.querySelector('#listaCalendariosFerramentas')?.textContent.includes('iPhone Campo Largo'));
   let texto=await page.locator('#listaCalendariosFerramentas').innerText();
-  exigir(texto.includes('iPhone Campo Largo')&&texto.includes('Novo Mensalista'),'clique real em Montar e editar exibe a carteira mensalista');
+  const mensalistasReais=['Açougue São Joaquim','Cookiery','Dra Júlia','Emanuelle Bernaski Nutri','Hitech','iPhone Campo Largo','Joaquin Assados'];
+  exigir(mensalistasReais.every(nome=>texto.includes(nome))&&texto.includes('Novo Mensalista'),'clique real em Montar e editar exibe todos os mensalistas reais com casta legada ambígua');
   exigir(!texto.includes('IKN Brasil')&&!texto.includes('X Joias'),'clique real não exibe avulsos na carteira');
+  exigir(texto.includes('Hitech')&&!texto.includes('Rodrigo'),'Hitech permanece separada e o cliente só edição não entra na carteira');
 
   await page.locator('#tabVisao').click();
   await page.waitForFunction(()=>!document.querySelector('#visaoCalendariosBox2')?.textContent.includes('Lendo os calendários'));
   texto=await page.locator('#visaoCalendariosBox2').innerText();
-  exigir(texto.includes('iPhone Campo Largo'),'clique real em Visão do mês termina e exibe a iPhone Campo Largo');
+  exigir(mensalistasReais.every(nome=>texto.includes(nome)),'clique real em Visão do mês termina e exibe todos os mensalistas reais');
   exigir(!(await page.evaluate(()=>__leituras.some(n=>['contratos_cliente','pagamentos_mensais','clientes_encerrados'].includes(n)))),'os cliques da Gabi não tentam ler coleções gerenciais');
 
   await page.evaluate(()=>{ window.__modoLeitura='falha'; });
   await page.locator('#tabEditar').click();
   await page.waitForFunction(()=>document.querySelector('#listaCalendariosFerramentas')?.textContent.includes('último retrato confirmado'));
   texto=await page.locator('#listaCalendariosFerramentas').innerText();
-  exigir(texto.includes('iPhone Campo Largo')&&texto.includes('último retrato confirmado'),'falha posterior preserva clientes e mostra indisponibilidade');
+  exigir(mensalistasReais.every(nome=>texto.includes(nome))&&texto.includes('último retrato confirmado'),'falha posterior preserva toda a carteira real e mostra indisponibilidade');
 
   await page.evaluate(()=>{ window.__limparCarteiraTeste(); document.querySelector('#listaCalendariosFerramentas').innerHTML=''; });
   await page.locator('#tabEditar').click();

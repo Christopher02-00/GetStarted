@@ -582,7 +582,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-19-calendarios-stories-v89') ||
+if (!calendarioEditor.includes('2026-08-19-calendarios-stories-v90') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado' || st === 'arquivado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -735,9 +735,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-19-calendarios-stories-v89') {
-  falhar(`build V89 inesperado: ${build || 'ausente'}`);
-} else provar('V89 preserva a base anterior e isola calendários e Stories por papel, estado e cliente');
+if (build !== '2026-08-19-calendarios-stories-v90') {
+  falhar(`build V90 inesperado: ${build || 'ausente'}`);
+} else provar('V90 preserva a base anterior, separa Hitech/Rodrigo e corrige a carteira mensalista real');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
@@ -751,13 +751,13 @@ if (!ler('avulso.html').includes('Premium Conteúdos Vivos') ||
 } else provar('cadastro final contém Premium Presença e Premium Conteúdos Vivos');
 
 if (!escritorio.includes("'emanuelle': 'emanuelle-bernaski-nutri'") ||
-    !escritorio.includes("'hitech': 'rodrigo'") ||
+    escritorio.includes("'hitech': 'rodrigo'") ||
     !escritorio.includes("'cliente-rodrigo': 'rodrigo'") ||
     !escritorio.includes('consolidarFilaLegendaConfirmada') ||
     !escritorio.includes('copiarTextoPreparadoDuranteClique') ||
     !portal.includes('idReferenciaClienteDeterministico')) {
-  falhar('V74 perdeu deduplicação de identidade, fila de legenda, referência idempotente ou cópia compatível');
-} else provar('V74 mantém as quatro barreiras novas contra duplicação e falha silenciosa');
+  falhar('V90 perdeu separação Hitech/Rodrigo, deduplicação legítima, fila de legenda, referência idempotente ou cópia compatível');
+} else provar('V90 separa Hitech/Rodrigo e mantém as barreiras contra duplicação e falha silenciosa');
 
 const checklistV69 = escritorio.slice(escritorio.indexOf('function chaveExecucao'), escritorio.indexOf('function contarStreakDiario'));
 const resumoChecklistV69 = escritorio.slice(escritorio.indexOf('function pendenciasChecklistDoResumo'), escritorio.indexOf('async function renderDemandasAtrasadasDetalhe'));
@@ -782,8 +782,8 @@ const mesEditorV68 = ler('calendario.html').slice(
   ler('calendario.html').indexOf('function mesDoItemNoCalendario'),
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
-if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v89">') ||
-    !portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v89">') ||
+if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v90">') ||
+    !portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v90">') ||
     !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
     !mesEditorV68.includes('const mesDoDocumento = mesDoTexto(cal && cal.month)') ||

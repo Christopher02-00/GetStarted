@@ -43,7 +43,7 @@ Os números abaixo preservam os IDs 37–83 da matriz anterior para manter rastr
 | 57 | Registro rápido de reunião e resumo | Teste local de versão anterior | Validado apenas em versão anterior | Repetir tela real e recibo |
 | 58 | Proposta nascer “preparada”, sem fingir envio | Modelo local diferencia preparação/envio | Validado localmente | Criar proposta fictícia e conferir datas/estágio |
 | 59 | Proposta idempotente | Família determinística existe; colisão SHA entre famílias não foi eliminada | Parcial | Teste concorrente de duas abas/mesmo documento |
-| 60 | HiTech/Rodrigo ser renovação mensal, nunca avulso | Tratamento local anterior | Não validado com dado real | Conferir cadastro/contrato/proposta sem gerar receita avulsa |
+| 60 | Hitech e Rodrigo permanecerem identidades separadas: Hitech empresa mensalista; Rodrigo somente edição | V90 removeu a fusão local; a versão publicada V89 ainda mostra `Rodrigo / Hitech` | Pronto para publicar; não validado em produção | Após upload V90, conferir dois cartões, dois contatos e dois Portais sem mover dados automaticamente |
 | 61 | Proposta iPhone R$ 800/mês com compensação preservada | Documento foi auditado; status comercial não comprovado | Desconhecido | Confirmar aceite/status e somente então integrar |
 | 62 | IKN ser projeto avulso | Classificação V88 aprovada localmente | Validado localmente | Conferir consumidores publicados fora de mensalistas |
 | 63 | Formatura Júlio Nerone ser evento institucional | Documento auditado, não cadastrado | Pendente | Confirmar status e dados comerciais antes de cadastrar |

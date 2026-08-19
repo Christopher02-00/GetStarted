@@ -63,7 +63,7 @@ const contexto={
     if(nome==='clientes_extras') return docsFake([]);
     return docsFake([]);
   },
-  slugClienteCanonico:slug=>({hitech:'rodrigo',zeens:'zeiss'}[String(slug||'')]||String(slug||'')),
+  slugClienteCanonico:slug=>({'cliente-rodrigo':'rodrigo',zeens:'zeiss'}[String(slug||'')]||String(slug||'')),
   nomeClienteCanonico:(_slug,nome)=>String(nome||''),
   nomeDeSlugSeguro:slug=>String(slug||'').replace(/-/g,' '),
   clienteInativoEfetivo:dados=>dados?.clienteInativo===true,

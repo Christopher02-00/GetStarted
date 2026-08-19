@@ -23,7 +23,7 @@ function trecho(fonte,inicio,fim){
 }
 
 exigir(calendario===calendarios,'calendario.html e calendarios.html continuam byte a byte idênticos');
-for(const fonte of [escritorio,calendario,portal]) exigir(fonte.includes('2026-08-19-calendarios-stories-v89'),'todos os consumidores identificam a mesma V89');
+for(const fonte of [escritorio,calendario,portal]) exigir(fonte.includes('2026-08-19-calendarios-stories-v90'),'todos os consumidores identificam a mesma V90');
 
 const helper=trecho(escritorio,"const PRIMEIRA_COMPETENCIA_ARQUIVO_AUTOMATICO='2026-10';",'  window.estadoPublicadoEfetivoCalendario');
 const contexto={Date};

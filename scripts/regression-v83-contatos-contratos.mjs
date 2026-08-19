@@ -17,7 +17,7 @@ function trecho(fonte,inicio,fim){
 }
 
 const contatos=trecho(escritorio,'function numeroWhatsAppBrasil','async function carregarContatosFinanceirosChris');
-const caixa={window:{},slugsCompatibilidadeCliente:slug=>slug==='rodrigo'?['rodrigo','hitech']:[slug]};
+const caixa={window:{},slugsCompatibilidadeCliente:slug=>[slug]};
 vm.createContext(caixa);
 vm.runInContext(`${contatos}\nglobalThis.api={numeroWhatsAppBrasil,contatoLegadoPorIdentidade};`,caixa);
 const api=caixa.api;
@@ -25,16 +25,16 @@ const api=caixa.api;
 exigir(api.numeroWhatsAppBrasil('41 99268-8449')==='5541992688449','normalização mantém DDD e acrescenta DDI brasileiro');
 exigir(api.numeroWhatsAppBrasil('123')==='','número incompleto continua bloqueado');
 exigir(api.contatoLegadoPorIdentidade({rodrigo:{whatsappCobranca:'41 99820-1999'},hitech:{whatsappCobranca:'41 99820-1999'}},'rodrigo').numero==='5541998201999',
-  'aliases com o mesmo número produzem uma compatibilidade inequívoca');
+  'Rodrigo usa somente o próprio contato, mesmo quando Hitech possui outro cadastro');
 const conflito=api.contatoLegadoPorIdentidade({rodrigo:{whatsappCobranca:'41 99820-1999'},hitech:{whatsappCobranca:'41 99999-0000'}},'rodrigo');
-exigir(!conflito.numero&&conflito.conflito===true,'aliases divergentes são bloqueados sem escolha automática');
+exigir(conflito.numero==='5541998201999'&&conflito.conflito===false,'número diferente da Hitech não cria conflito no contato do Rodrigo');
 
 const fonteConsulta=trecho(escritorio,'async function numeroCobrancaConfirmado','function revelarConfirmacaoCobranca');
 async function consultar(banco,slug='rodrigo'){
   const contexto={
     usuarioAtual:'Chris',db:{},
     slugClienteCanonico:v=>v,
-    slugsCompatibilidadeCliente:v=>v==='rodrigo'?['rodrigo','hitech']:[v],
+    slugsCompatibilidadeCliente:v=>[v],
     numeroWhatsAppBrasil:api.numeroWhatsAppBrasil,
     doc:(_db,col,id)=>col+'/'+id,
     getDoc:async ref=>({exists:()=>Object.hasOwn(banco,ref),data:()=>banco[ref]||{}})
@@ -51,7 +51,7 @@ exigir(privado.numero==='5541991111111'&&privado.origem==='agenda financeira pri
 const legado=await consultar({'clientes_config/rodrigo':{whatsappCobranca:'41 99820-1999'},'clientes_config/hitech':{whatsappCobranca:'41 99820-1999'}});
 exigir(legado.numero==='5541998201999'&&/compatibilidade/.test(legado.origem),'clique funciona antes da migração quando o legado é inequívoco');
 const legadoConflitante=await consultar({'clientes_config/rodrigo':{whatsappCobranca:'41 99820-1999'},'clientes_config/hitech':{whatsappCobranca:'41 99999-0000'}});
-exigir(!legadoConflitante.numero&&legadoConflitante.conflito===true,'clique continua desativado diante de conflito real');
+exigir(legadoConflitante.numero==='5541998201999'&&legadoConflitante.conflito!==true,'contato próprio do Rodrigo continua ativo sem misturar Hitech');
 
 const renderMensagens=trecho(escritorio,'window.renderMensagensClientesChris=async function','async function carregarMensalistaRecebidoNosCampos');
 exigir(renderMensagens.indexOf('contatos=await carregarContatosFinanceirosChris()')<renderMensagens.indexOf('legados=await carregarContatosLegadosChris()'),

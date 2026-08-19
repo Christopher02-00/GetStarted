@@ -1784,3 +1784,15 @@ O período válido do produto foi fixado em **julho de 2026 em diante**, pois fo
 > **LEI:** ficha oficial ativa e saída futura não podem ser anuladas silenciosamente por classificação residual. Listagem de calendário público é projeção da carteira recorrente canônica, nunca varredura bruta de toda a coleção.
 
 **Prova de regressão:** `scripts/regression-v91-carteira-publicados.mjs` cobre iPhone com casta/flag legada, Açougue e Joaquin com saída futura, saída efetiva, Hitech/Rodrigo, IKN/X Joias, aliases Zeiss/Zeens, remoção do teste V87 e preservação da cópia mais completa.
+
+### 70.36 Rodrigo saiu da carteira editorial, mas a Central ainda oferecia um atalho de calendário
+
+**Defeito reproduzido por clique na V91 publicada em 19/08/2026:** as cinco telas operacionais de Calendários já excluíam Rodrigo e mantinham Hitech como empresa mensalista independente. Porém o cartão mensal de Rodrigo na Central de Clientes ainda recebia o botão genérico `Calendário`, capaz de abrir uma porta editorial que o plano somente edição não utiliza.
+
+**Causa comprovada:** o cartão condicionava o atalho apenas a `tipo === mensalista`; não reutilizava `ehClienteSoEdicao`, barreira que já protegia carteira, montagem, links, resgate e central editorial.
+
+**Correção local V91.1:** o atalho da Central exige mensalista que não seja cliente somente edição. Hitech preserva o botão e Rodrigo mantém Portal, ficha, edição cadastral, financeiro e saída, mas não oferece criação/abertura de calendário. Nenhum dado ou regra Firebase foi alterado.
+
+> **LEI:** classificação somente edição precisa ser respeitada em toda porta editorial, inclusive atalhos gerenciais; esconder o cliente na lista principal não basta se outro consumidor ainda consegue abrir a mesma função.
+
+**Prova de regressão:** `scripts/regression-v91-1-rodrigo-central.mjs` extrai o renderer real da Central, monta cartões de Hitech e Rodrigo em Chrome isolado, clica no calendário da Hitech e confirma que não existe botão equivalente no cartão do Rodrigo.

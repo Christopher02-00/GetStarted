@@ -389,11 +389,12 @@ if (!escritorio.includes('mapaAprovacaoAposPublicar') ||
     !escritorio.includes("const chave=canonico+'|'+m;") ||
     !escritorio.includes('const fila=[...porIdentidadeMes.values()]') ||
     !escritorio.includes('const esperando = linhasCalendariosAguardandoRevisao(snap);') ||
-    (escritorio.match(/mesForaDaCompetenciaOperacional\(/g)||[]).length < 8 ||
+    escritorio.includes('mesForaDaCompetenciaOperacional(') ||
+    !escritorio.includes("if(!/^20\\d{2}-(0[1-9]|1[0-2])$/.test(String(m||''))) return;") ||
     !escritorio.includes('Calendários arquivados') ||
     !escritorio.includes('Abrir para conferência')) {
-  falhar('fila ou porta de envio da Amanda pode incluir mês fora da competência operacional, ocultar o arquivo ou duplicar cliente+mês por alias');
-} else provar('fila, contador e envio da Amanda usam somente o mês seguinte, preservam arquivo e consolidam uma decisão por cliente+mês');
+  falhar('fila ou porta de envio da Amanda pode bloquear meses válidos, ocultar o arquivo ou duplicar cliente+mês por alias');
+} else provar('fila, contador e envio da Amanda aceitam qualquer competência válida, preservam arquivo e consolidam uma decisão por cliente+mês');
 
 const regraEntradaPessoal = regras.match(/match \/recebimentos_entrada_pessoal\/\{docId\} \{[\s\S]*?allow delete:\s*if false;[\s\S]*?\n    \}/)?.[0] || '';
 if (!regraEntradaPessoal.includes('allow read, update: if ehChris()') ||
@@ -581,8 +582,8 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-17-envio-calendario-transacional-v68') ||
-    !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado'") ||
+if (!calendarioEditor.includes('2026-08-19-calendarios-arquivo-v88') ||
+    !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado' || st === 'arquivado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
     !reabrirCalendario.includes("code:'gs/calendario-ja-enviado'") ||
@@ -734,9 +735,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-18-ciclo-clientes-propostas-v81') {
-  falhar(`build V81 inesperado: ${build || 'ausente'}`);
-} else provar('V81 preserva o catálogo V80 e centraliza ciclo de clientes, propostas e calendários');
+if (build !== '2026-08-19-calendarios-arquivo-v88') {
+  falhar(`build V88 inesperado: ${build || 'ausente'}`);
+} else provar('V88 preserva a base anterior e isola publicação, arquivo e reabertura por competência');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
@@ -781,8 +782,8 @@ const mesEditorV68 = ler('calendario.html').slice(
   ler('calendario.html').indexOf('function mesDoItemNoCalendario'),
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
-if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-17-envio-calendario-transacional-v68">') ||
-    !portal.includes('<meta name="gs-build" content="2026-08-18-central-vendas-propostas-v81">') ||
+if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-19-calendarios-arquivo-v88">') ||
+    !portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-arquivo-v88">') ||
     !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
     !mesEditorV68.includes('const mesDoDocumento = mesDoTexto(cal && cal.month)') ||

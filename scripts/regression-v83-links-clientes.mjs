@@ -38,11 +38,13 @@ exigir(helper.includes(".data.ativo != false")&&helper.includes('acessoDentroDaV
 
 exigir(calendario.includes('function mesesLiberados()'),'calendario mantem seletor de competencias liberadas');
 exigir(calendario.includes('const meses = equipe ? mesesExistentes() : mesesLiberados()'),'cliente navega somente entre meses liberados, sem ver rascunhos');
-exigir(calendario.includes("pedido && lib.includes(pedido) ? pedido"),'mes solicitado abre quando esta liberado');
+exigir(calendario.includes("mesVisivel = pedido || (lib.length ? lib[lib.length-1]") &&
+  calendario.includes("window.__modoCal==='cliente'&&!mesesLiberados().includes(m)"),
+  'mês solicitado permanece explícito e a navegação do cliente continua limitada aos publicados');
 
 const resolver=trecho(escritorio,'function resolverMesParaLinkCalendario','  window.resolverMesParaLinkCalendario');
-exigir(resolver.includes("estadoMesCal(cal,pedido)==='liberado'")&&resolver.includes('return pedido'),'copiador aceita qualquer competência explicitamente já liberada');
-exigir(resolver.includes('A primeira liberação operacional é somente'),'mês não liberado continua sujeito ao próximo ciclo operacional');
-exigir(resolver.indexOf("estadoMesCal(cal,pedido)==='liberado'")<resolver.indexOf('pedido!==operacional'),'arquivo liberado é reconhecido antes da barreira de primeira liberação');
+exigir(resolver.includes("estado!=='liberado'")&&resolver.includes('return pedido'),'copiador aceita qualquer competência explicitamente já liberada');
+exigir(resolver.includes("estado==='arquivado'")&&resolver.includes('Calendário arquivado'),'mês arquivado recebe a mensagem isolada e não é reaberto ao cliente');
+exigir(!resolver.includes('pedido!==operacional')&&!resolver.includes('A primeira liberação operacional é somente'),'barreira temporal antiga não voltou ao copiador');
 
 console.log(`REGRESSAO V83 LINKS DE CLIENTES: OK (${total} verificacoes)`);

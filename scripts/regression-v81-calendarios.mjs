@@ -154,8 +154,8 @@ exigir(auditoriaVisibilidade.includes('const mesOperacional=competenciaOperacion
 const aprovacao=trecho(escritorio,'window.liberarCalendario = async function','  window.devolverCalendario');
 exigir(aprovacao.includes('dispararCalendarios([{slug,mes:alvo,aprovarAgora:true}])')&&aprovacao.includes('já está vendo'),'aprovação da Amanda usa o único fluxo que publica e confirma ao cliente');
 const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovar NÃO envia mais.');
-exigir(disparo.includes('runTransaction')&&disparo.includes('const snap=await tx.get(ref)')&&disparo.includes('mapaAprovacaoAposPublicar'),'publicação relê estado/conteúdo e arquiva o ativo anterior na mesma transação');
-exigir(disparo.includes('const recibo=await getDoc(ref)')&&disparo.includes("estadoMesCal(dadosRecibo,a.mes)!=='liberado'")&&disparo.includes('outrosAtivos.length'),'aprovação só confirma depois do recibo com um único mês público');
+exigir(disparo.includes('runTransaction')&&disparo.includes('const snap=await tx.get(ref)')&&disparo.includes('mapaAprovacaoAposPublicar'),'publicação relê estado/conteúdo e preserva outros meses na mesma transação');
+exigir(disparo.includes('const recibo=await getDoc(ref)')&&disparo.includes("estadoMesCal(dadosRecibo,a.mes)!=='liberado'")&&!disparo.includes('outrosAtivos.length'),'aprovação confirma o próprio mês sem exigir um único mês público');
 exigir(disparo.includes('const resultado={enviados:[],falhas:[]}')&&disparo.includes('resultado.falhas.push')&&disparo.includes('return resultado'),'disparo em lote devolve recibos enviados e falhas individualizadas');
 const lote=trecho(escritorio,'window.enviarTodosOsCalendarios = async function','  async function dispararCalendarios');
 exigir(lote.includes('resultado.falhas.map')&&lote.includes("Falharam ")&&lote.includes('resultado.enviados.length'),'lote informa nomes/erros parciais e não exibe falso sucesso agregado');

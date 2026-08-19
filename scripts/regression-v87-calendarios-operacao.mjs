@@ -60,7 +60,7 @@ async function testarCarteiraEditorialReal(){
 
 await testarCarteiraEditorialReal();
 
-contem(escritorio, '2026-08-19-calendarios-multimes-v87', 'build V87 identificado');
+contem(escritorio, '2026-08-19-calendarios-arquivo-v88', 'build V88 identificado');
 contem(escritorio, 'somente um mensalista comprovado pode aparecer', 'política editorial explícita');
 contem(escritorio, "if((casta[slug]||{}).tipo!=='mensalista') return;", 'filtro exige mensalista comprovado');
 contem(escritorio, "if(!__cacheCastaConfirmada) throw new Error", 'falha de classificação não vira lista geral');

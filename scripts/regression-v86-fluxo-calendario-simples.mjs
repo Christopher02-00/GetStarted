@@ -35,14 +35,14 @@ const mapa=contexto.api({
   '2026-10':{status:'rascunho',mes:'2026-10',em:'rascunho'}
 },'2026-09','Amanda',agora,['2026-08']);
 exigir(mapa['2026-09'].status==='liberado','aprovação da Amanda publica imediatamente o mês escolhido');
-exigir(mapa['2026-08'].status==='arquivado','mês público anterior passa a arquivo quando o novo é publicado');
+exigir(mapa['2026-08'].status==='liberado','publicar o mês novo preserva o mês público anterior');
 exigir(mapa['2026-10'].status==='rascunho','publicação não altera outro mês em produção');
-exigir(mapa['2026-08'].arquivadoPor==='Amanda'&&mapa['2026-08'].substituidoPor==='2026-09','arquivo registra a troca sem apagar o histórico');
+exigir(mapa['2026-08'].em==='antes'&&!mapa['2026-08'].substituidoPor,'publicação não regrava nem vincula o histórico anterior');
 
 const aprovacao=trecho(escritorio,'window.liberarCalendario = async function','  window.devolverCalendario');
 const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovar NÃO envia mais.');
 exigir(aprovacao.includes('dispararCalendarios([{slug,mes:alvo,aprovarAgora:true}])')&&disparo.includes('mapaAprovacaoAposPublicar')&&disparo.includes('const snap=await tx.get(ref)'),'Amanda usa uma única transação que relê o estado e aplica a transição centralizada');
-exigir(disparo.includes("estadoMesCal(dadosRecibo,a.mes)!=='liberado'")&&disparo.includes('outrosAtivos.length'),'aprovação só confirma após recibo do mês publicado e ausência de outro público');
+exigir(disparo.includes("estadoMesCal(dadosRecibo,a.mes)!=='liberado'")&&!disparo.includes('outrosAtivos.length'),'aprovação confirma o próprio mês sem exigir que os demais estejam fechados');
 exigir(!aprovacao.includes("status:'aprovado_interno'"),'aprovação não cria a etapa adicional de envio manual');
 
 const fila=trecho(escritorio,'window.htmlCalendariosParaRevisar = async function','  function idAnaliseCalendarioRevisao');
@@ -58,6 +58,7 @@ const arquivoInterno=trecho(escritorio,'async function abrirCalendarioArquivoInt
 exigir(!/setDoc|updateDoc|runTransaction|deleteDoc|addDoc/.test(arquivoInterno),'abrir arquivo para conferência é estritamente somente leitura');
 const renderArquivo=trecho(escritorio,'window.renderFilaEnvioCalendarios = async function','  window.enviarUmCalendario');
 exigir(renderArquivo.includes('Abrir para conferência')&&renderArquivo.includes('abrirCalendarioArquivoInterno'),'Amanda abre o arquivo sem trocar o calendário público ativo');
+exigir(renderArquivo.includes('Reabrir por 30 dias')&&escritorio.includes('window.reabrirCalendarioArquivado'),'Amanda ou Chris pode reabrir somente o mês escolhido');
 
 const carga=trecho(calendario,'async function load()','function save(){');
 exigir(carga.includes("mesVisivel = pedido ||"),'link individual nunca troca silenciosamente o mês explícito por outro mês liberado');

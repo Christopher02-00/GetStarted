@@ -82,8 +82,8 @@ ok(copiaCliente.indexOf('copiarTextoPreparadoDuranteClique')<copiaCliente.indexO
 ok(copiaEquipe.indexOf('copiarTextoPreparadoDuranteClique')<copiaEquipe.indexOf('await copia'),'link interno perde o gesto antes de preparar a cópia');
 ok(clipboard.includes('ClipboardItem')&&clipboard.includes("document.execCommand('copy')")&&clipboard.includes("window.prompt('Seu navegador bloqueou"),'cópia não possui cadeias moderna, legada e manual');
 const prepararLink=trecho(escritorio,'async function prepararLinkCalendarioCliente','  window.prepararLinkCalendarioCliente');
-ok(prepararLink.includes("estado!=='liberado'&&estado!=='aprovado_interno'")&&prepararLink.includes("if(estado!=='aprovado_interno')")&&
-  prepararLink.includes("status:'liberado',mes")&&prepararLink.includes("'&mes='+encodeURIComponent(mes)"),'fallback de cópia perdeu a validação/competência mensal');
+ok(prepararLink.includes("if(estado!=='liberado')")&&!prepararLink.includes("status:'liberado',mes")&&
+  prepararLink.includes("'&mes='+encodeURIComponent(mes)"),'cópia voltou a publicar ou perdeu a competência mensal já liberada');
 
 ok(portal.includes("const CLIENTES_SO_EDICAO = ['rodrigo','hitech','cliente-rodrigo']"),'Portal pode liberar áreas indevidas em alias de Rodrigo/Hitech');
 

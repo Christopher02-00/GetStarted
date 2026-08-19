@@ -19,9 +19,7 @@ const obrigatorios = [
   'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
   'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs',
   'scripts/regression-v76.mjs', 'scripts/regression-v77.mjs', 'scripts/regression-v78.mjs',
-  'scripts/regression-v79.mjs', 'scripts/regression-v80.mjs', 'Planos.pdf',
-  'RELATORIO_ENTREGA_V77.md', 'RELATORIO_ENTREGA_V78.md', 'RELATORIO_ENTREGA_V79.md',
-  'RELATORIO_ENTREGA_V80.md'
+  'scripts/regression-v79.mjs', 'scripts/regression-v80.mjs', 'Planos.pdf'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -387,12 +385,13 @@ if (!escritorio.includes('function consolidarClientesAtivosPorIdentidade(registr
     !escritorio.includes('const ativos=consolidarClientesAtivosPorIdentidade([...unicos.values()])')) {
   falhar('Central não consolida fichas oficiais/legadas pela identidade canônica antes de renderizar');
 } else provar('Central consolida aliases de todas as origens antes de renderizar um único cartão ativo');
-if (!escritorio.includes('if(mesForaDaCompetenciaOperacional(m, referencia)) return;') ||
+if (!escritorio.includes('mapaAprovacaoAposPublicar') ||
     !escritorio.includes("const chave=canonico+'|'+m;") ||
     !escritorio.includes('const fila=[...porIdentidadeMes.values()]') ||
     !escritorio.includes('const esperando = linhasCalendariosAguardandoRevisao(snap);') ||
     (escritorio.match(/mesForaDaCompetenciaOperacional\(/g)||[]).length < 8 ||
-    !escritorio.includes('Arquivo histórico')) {
+    !escritorio.includes('Calendários arquivados') ||
+    !escritorio.includes('Abrir para conferência')) {
   falhar('fila ou porta de envio da Amanda pode incluir mês fora da competência operacional, ocultar o arquivo ou duplicar cliente+mês por alias');
 } else provar('fila, contador e envio da Amanda usam somente o mês seguinte, preservam arquivo e consolidam uma decisão por cliente+mês');
 
@@ -993,11 +992,11 @@ if (!storiesSemana.includes('semanaEfetivaStory') || !storiesSemana.includes('va
   falhar('Stories não protege a competência escrita nem recupera o registro Vitalle na mesma semana do Portal');
 } else provar('Stories grava competência explícita, bloqueia divergência e lê legado inequivocamente no Escritório e Portal');
 if (calendarioAtual !== calendariosAtual || !calendarioAtual.includes("const mesSolicitado = params.get('mes') || ''") ||
-    !calendarioAtual.includes('pedido && lib.includes(pedido)') || !calendarioAtual.includes("u.searchParams.set('mes',m)") ||
+    !calendarioAtual.includes('mesVisivel = pedido ||') || !calendarioAtual.includes("u.searchParams.set('mes',m)") ||
     !escritorio.includes("(mes?'&mes='+encodeURIComponent(mes):'')") ||
-    !prepararLinkCalendarioV79.includes("estado!=='liberado'&&estado!=='aprovado_interno'") ||
-    !prepararLinkCalendarioV79.includes("if(estado!=='aprovado_interno')") ||
-    !prepararLinkCalendarioV79.includes("status:'liberado',mes")) {
+    !prepararLinkCalendarioV79.includes('resolverMesParaLinkCalendario') ||
+    !prepararLinkCalendarioV79.includes("if(estado!=='liberado')") ||
+    prepararLinkCalendarioV79.includes('runTransaction') || prepararLinkCalendarioV79.includes('updateDoc(')) {
   falhar('link mensal do calendário não preserva competência, liberação do cliente ou paridade dos dois endereços');
 } else provar('link carrega mês explícito, valida liberação e mantém calendario/calendarios byte a byte idênticos');
 const consultaCalendario=calendarioAtual.slice(calendarioAtual.indexOf('function openEdit'),calendarioAtual.indexOf('function saveItem'));

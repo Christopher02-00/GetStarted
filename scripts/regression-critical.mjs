@@ -711,9 +711,9 @@ async function testarCalendariosSandbox() {
     historicoApi.mesEhCompetenciaOperacional('2026-10','2026-08-12T12:00:00')===false,
     'barreira operacional não diferencia mês seguinte, virada de ano e outro mês futuro');
   const portalFonte=trecho(fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8'),
-    'function estadoDoMesPortal(mes)','const mesesDoDoc');
+    'function mesHistoricoAnteriorAoControlePortal(mes)','const mesesDoDoc');
   const portalMesApi=executarSandbox('portal-mes-isolado-v59.js',
-    `const aprMeses={'2026-09':{status:'aguardando_interna',mes:'2026-09'}};const todosItens=[{mes:'2026-07'},{mes:'2026-09'}];const usaMeses=true,legado='2026-07';const dadosCal={aprovacaoMeses:aprMeses,mesLegado:legado,items:todosItens,aprovacaoInterna:{status:'aguardando_interna',mes:'2026-09'}};\n${portalFonte}\nglobalThis.api={estadoDoMesPortal};`);
+    `const aprMeses={'2026-09':{status:'aguardando_interna',mes:'2026-09'}};const todosItens=[{mes:'2026-07'},{mes:'2026-09'}];const usaMeses=true,legado='2026-07';const dadosCal={aprovacaoMeses:aprMeses,mesLegado:legado,items:todosItens,aprovacaoInterna:{status:'aguardando_interna',mes:'2026-09'}};function mesDoItemPortal(item){return item?.mes||legado;}\n${portalFonte}\nglobalThis.api={estadoDoMesPortal};`);
   exigir(portalMesApi.estadoDoMesPortal('2026-07')==='liberado' && portalMesApi.estadoDoMesPortal('2026-09')==='aguardando_interna',
     'Portal voltou a herdar a aprovação de setembro no mês legado de julho');
   const portalCompetenciaFonte=trecho(fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8'),
@@ -1852,7 +1852,7 @@ function testarIncidentesStoriesCalendarioGravacaoV70Sandbox(){
 
   exigir(calendario===fs.readFileSync(path.join(raiz,'calendarios.html'),'utf8') &&
     calendario.includes("const mesSolicitado = params.get('mes') || ''") &&
-    calendario.includes('pedido && lib.includes(pedido)') && calendario.includes("u.searchParams.set('mes',m)"),
+    calendario.includes('mesVisivel = pedido ||') && calendario.includes("u.searchParams.set('mes',m)"),
     'dois endereços do calendário divergiram ou o mês explícito deixou de ser respeitado');
   const abrirItem=trecho(calendario,'function openEdit','function saveItem');
   exigir(abrirItem.includes('const somenteConsulta=edicaoBloqueadaPorRevisao()') &&
@@ -1861,8 +1861,8 @@ function testarIncidentesStoriesCalendarioGravacaoV70Sandbox(){
 
   const linkCliente=trecho(escritorio,'async function prepararLinkCalendarioCliente','window.prepararLinkCalendarioCliente');
   const copiarLinkCliente=trecho(escritorio,'window.copiarLinkCalendarioDireto = async function','window.abrirLinkCliente');
-  exigir(linkCliente.includes("estado!=='liberado'&&estado!=='aprovado_interno'") &&
-    linkCliente.includes("if(estado!=='aprovado_interno')") && linkCliente.includes("status:'liberado',mes") &&
+  exigir(linkCliente.includes('resolverMesParaLinkCalendario') &&
+    linkCliente.includes("if(estado!=='liberado')") && !linkCliente.includes('runTransaction') && !linkCliente.includes('updateDoc(') &&
     linkCliente.includes("(mes?'&mes='+encodeURIComponent(mes):'')") &&
     copiarLinkCliente.includes('prepararLinkCalendarioCliente(slug,mesEscolhido)'),
     'link mensal pode copiar mês inexistente/não liberado ou perder a competência na URL');

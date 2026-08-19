@@ -1676,3 +1676,21 @@ Na agenda de contatos, a projeção e as guardas de salvar/abrir passaram a acei
 > **LEI:** criar o primeiro estado mensal não pode reclassificar retroativamente uma competência já entregue. Arquivo anterior ao controle exige conteúdo confirmado e ausência de estado explícito; novas competências continuam fechadas até liberação formal. Código publicado e regra publicada são entregas distintas e devem ser comparados no ambiente real.
 
 **Gate de regressão:** `scripts/regression-v85-acesso-calendarios-clientes.mjs` executa as funções reais com o formato da Vitalle, confirma agosto liberado, setembro em revisão, estado explícito prioritário, futuro oculto, mês vazio não inventado, igualdade dos dois calendários, mês solicitado no link/Portal e assinatura das regras compatíveis com token histórico.
+
+### 70.26 Copiar e publicar eram duas decisões concorrentes no calendário
+**Defeito comprovado no código:** o link individual ainda podia participar da transição de estado, enquanto a revisão da Amanda possuía mais de uma ação de aprovação/envio. O mês explícito também podia cair silenciosamente em outro mês liberado. Isso tornava a rotina Gabi → Amanda → cliente dependente da Cecília e permitia que conferir um arquivo interferisse no calendário público atual.
+
+**Como foi corrigido localmente na V86:** a aprovação da Amanda é a única transação que publica. Ela relê o mês, publica o alvo e arquiva somente o mês público anterior no mesmo recibo. A Cecília apenas copia um mês já publicado; copiar não grava nem libera. O Portal e o link individual respeitam sempre o mês explícito. Um mês `arquivado` não renderiza conteúdo ao cliente e mostra somente **“Calendário arquivado”**. Amanda abre esse arquivo por uma porta interna somente leitura, sem trocar ou arquivar o calendário público atual.
+
+> **LEI:** aprovação publica; cópia transporta o endereço; conferência de arquivo só lê. Essas três ações nunca compartilham escritor nem mudam o mês ativo umas das outras.
+
+**Gate de regressão:** `scripts/regression-v86-fluxo-calendario-simples.mjs` cobre transição do ativo para arquivo, recibo único, ausência de segundo botão, cópia sem escrita, arquivo interno somente leitura, mês explícito sem fallback e mensagem pública isolada. As suítes V81 e V85 continuam cobrindo os dois endereços byte a byte, timeout, compatibilidade histórica e tokens.
+
+### 70.27 Stories podiam anunciar ausência ou liberação sem estado confirmado
+**Defeitos comprovados no código:** a tela interna limpava os mapas de `stories_links` quando a leitura falhava, fazendo erro/cota parecer ausência. Criação semanal usava ID aleatório e não travava o primeiro clique; repetição podia duplicar cliente+semana. Aprovar/devolver roteiro e links usava leitura e atualização separadas, permitindo que uma aba antiga sobrescrevesse uma etapa mais recente. Links internos eram interpolados em `href` sem validação HTTPS/escape de atributo. As regras permitiam que a sessão do cliente alterasse qualquer campo do próprio documento de Story, inclusive roteiro, autoria e semana.
+
+**Como foi corrigido localmente na V86:** novo Story usa identidade determinística por cliente+semana, trava antes da primeira espera e bloqueia legado duplicado em vez de inventar outro. Reenvio só aceita o estado de ajuste. Amanda libera ou devolve roteiro/links em transação, relendo a etapa, com operação idempotente e recibo posterior. A tela da equipe preserva o último retrato confirmado e mostra indisponibilidade quando não existe cache; nunca chama falha de lista vazia. URLs precisam ser HTTPS e usam `escAttr` + `noopener noreferrer`. A regra do cliente passou a aceitar somente comentário, aprovação/ajuste e confirmação de postagem; cliente, semana, roteiro e autoria ficam imutáveis.
+
+> **LEI:** Story é uma cadeia única por cliente+semana: Gabi prepara, Amanda confirma e somente material liberado aparece no Portal. Falha de leitura é indisponibilidade, não ausência; resposta do cliente nunca reescreve conteúdo da equipe.
+
+**Gate de regressão:** `scripts/regression-v86-cadeia-stories.mjs` cobre 19 invariantes da cadeia; `scripts/regression-v81-portal-stories.mjs` mantém 24 verificações de escopo, timeout, cache, isolamento e URL segura. A correção permanece **local** até o usuário publicar HTML e regras e confirmar o fluxo real autenticado.

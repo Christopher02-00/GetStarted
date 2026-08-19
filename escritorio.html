@@ -1220,7 +1220,7 @@
         <div class="subtab" data-calsub="refs" onclick="setCalSub('refs', this)">Perfis de referência</div>
         <div class="subtab" data-calsub="links" onclick="setCalSub('links', this)">Links e envio</div>
         <div class="subtab" data-calsub="campo" onclick="setCalSub('campo', this)">Modo gravação</div>
-        <div class="subtab" data-calsub="envio" onclick="setCalSub('envio', this)">Prontos pra enviar</div>
+        <div class="subtab" data-calsub="envio" onclick="setCalSub('envio', this)">Publicados e arquivo</div>
         <div class="subtab" data-calsub="resgate" onclick="setCalSub('resgate', this)">Resgatar</div>
       </div>
 
@@ -1256,7 +1256,7 @@
       <div id="calendarioFerramentasAberto" style="display:none;">
         <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
           <div><b id="nomeClienteFerramentasAberto"></b></div>
-          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;"><div class="field" style="margin:0;"><label>Mês do link</label><input type="month" id="mesLinkCalFerramentas"></div><button class="btn" style="width:auto;" id="btnCopiarCalFerramentas" onclick="copiarLinkCalendarioFerramentasAtual()">⧉ Liberar e copiar este mês</button></div>
+          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;"><div class="field" style="margin:0;"><label>Mês publicado</label><input type="month" id="mesLinkCalFerramentas"></div><button class="btn" style="width:auto;" id="btnCopiarCalFerramentas" onclick="copiarLinkCalendarioFerramentasAtual()">⧉ Copiar link publicado</button></div>
         </div>
         <div id="diagnosticoCalFerramentas" class="desc" style="margin:10px 0;padding:10px 12px;border-left:3px solid var(--yellow);background:var(--deep);border-radius:8px;">Escolha um cliente para confirmar o conteúdo do próximo mês.</div>
         <!-- `src=""` recarregava o próprio escritorio.html dentro deste
@@ -1295,8 +1295,8 @@
 
       <div id="calSubEnvio" style="display:none;">
         <div class="card" style="border:2px solid var(--yellow);">
-          <h2>📤 Prontos pra enviar — o disparo do dia 15</h2>
-          <div class="desc">Calendário que você aprova <b>não vai pro cliente na hora</b>: fica guardado aqui. No dia 15 você manda todos de uma vez, e todo cliente recebe o mês seguinte no mesmo dia.</div>
+          <h2>✅ Publicados e arquivo</h2>
+          <div class="desc">Quando a Amanda aprova, o novo mês aparece imediatamente no Portal do cliente. O anterior fica arquivado e pode ser aberto aqui para conferência, sem substituir o calendário público atual.</div>
           <div id="filaEnvioCalendarios" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -12373,9 +12373,28 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const detectada=semanaStoryDerivadaDoTexto({semana,titulo,descricao});
     return {ok:!detectada||detectada===semana,detectada};
   }
+  function urlHttpsSeguraStoryInterno(valor){
+    const bruto=String(valor||'').trim();
+    if(!bruto) return '';
+    try{
+      const url=new URL(bruto);
+      if(url.protocol!=='https:'||!url.hostname||url.username||url.password) return '';
+      return url.href;
+    }catch(_){ return ''; }
+  }
+  function storySemanalId(slug,semana){
+    return String(slug||'').trim()+'_'+String(semana||'').trim();
+  }
+  function linksStoryPodemSerLiberados(dias){
+    const valores=Object.values(dias||{}).map(d=>String(d&&d.link||'').trim()).filter(Boolean);
+    return valores.length>0&&valores.every(v=>!!urlHttpsSeguraStoryInterno(v));
+  }
   window.semanaStoryDerivadaDoTexto=semanaStoryDerivadaDoTexto;
   window.semanaEfetivaStory=semanaEfetivaStory;
   window.validarSemanaDoRoteiroStory=validarSemanaDoRoteiroStory;
+  window.urlHttpsSeguraStoryInterno=urlHttpsSeguraStoryInterno;
+  window.storySemanalId=storySemanalId;
+  window.linksStoryPodemSerLiberados=linksStoryPodemSerLiberados;
 
   /* ===== REGISTRO DE CLIENTES DE STORY (27/07/2026) ==================
      Antes: o seletor listava TODOS os clientes da agência, e a Gabi tinha
@@ -12403,8 +12422,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return __storyClientesCache;
   };
 
-  function estadoCadeiaStoriesCliente(slug, semana, stories, linkDoc){
+  function estadoCadeiaStoriesCliente(slug, semana, stories, linkDoc, linksConfirmados=true){
     const doCliente = (stories||[]).filter(s => s.cliente === slug && semanaEfetivaStory(s) === semana && !s.excluido);
+    if(!doCliente.length&&!linksConfirmados) return {codigo:'indisponivel',titulo:'Links não confirmados',detalhe:'A leitura falhou. Isso não significa que o material esteja ausente; tente atualizar a tela.'};
     const links = Object.values((linkDoc&&linkDoc.dias)||{}).filter(d => String(d&&d.link||'').trim());
     const emAjuste = doCliente.some(s => (s.revisaoInterna||'liberado') === 'ajuste_interno') ||
       (!!links.length && linkDoc&&linkDoc.revisaoInterna === 'ajuste_interno');
@@ -12470,8 +12490,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     renderStoriesCliente();
   };
 
+  let __salvandoStorySemana=false;
   window.criarSemanaStories = async function(){
+    if(__salvandoStorySemana) return mostrarToast('O envio desta semana já está em andamento.','erro');
+    __salvandoStorySemana=true;
+    const botao=document.getElementById('btnEnviarSemanaStories');
+    if(botao) botao.disabled=true;
+    try{
     const sel = document.getElementById('storyCliente');
+    if(!sel?.value) throw new Error('Escolha um cliente antes de enviar.');
     const slug = sel.value, nome = sel.selectedOptions[0]?.dataset.nome || slug;
     const semana = window.__semanaStories || segundaDaSemana(new Date());
     /* Um registro por semana, não cinco por dia. `dia:0` marca "semana
@@ -12480,11 +12507,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const tit = (document.getElementById('stTit_1')?.value||'').trim();
     const desc = (document.getElementById('stDesc_1')?.value||'').trim();
     const ref = (document.getElementById('stRef_1')?.value||'').trim();
-    if(!tit && !desc){ mostrarToast('Escreve pelo menos o tema ou o roteiro da semana.', 'erro'); return; }
+    if(!tit && !desc) throw new Error('Escreva pelo menos o tema ou o roteiro da semana.');
     const validacaoSemana=validarSemanaDoRoteiroStory(semana,tit,desc);
     if(!validacaoSemana.ok){
-      mostrarToast('As datas do roteiro pertencem à semana de '+rotuloSemana(validacaoSemana.detectada)+'. Navegue até essa semana antes de enviar — nada foi salvo.', 'erro');
-      return;
+      throw new Error('As datas do roteiro pertencem à semana de '+rotuloSemana(validacaoSemana.detectada)+'. Navegue até essa semana antes de enviar — nada foi salvo.');
     }
     const criar = [{ dia:0, diaNome:'Semana toda', titulo: tit || 'Stories da semana', descricao: desc, linkRef: ref }];
     /* ===== O BUG QUE FAZIA O STORY SUMIR (achado em 27/07/2026) =========
@@ -12503,17 +12529,35 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        Story antigo não tem o campo — e continua valendo o que valia:
        visível pro cliente. Mesma lição do calendário da Monique. */
     const gestor = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
-    for(const st of criar){
-      await addDoc(collection(db,'stories_semanais'), {
+    const candidatos=await getDocs(query(collection(db,'stories_semanais'),where('cliente','==',slug)));
+    const existentes=[];
+    candidatos.forEach(d=>{ const v=d.data()||{}; if(!v.excluido&&semanaEfetivaStory(v)===semana) existentes.push({id:d.id,...v}); });
+    if(existentes.length>1) throw new Error('Há mais de um Story para este cliente nesta semana. Nada foi sobrescrito; a Amanda precisa conferir os registros existentes.');
+    const existente=existentes[0]||null;
+    if(existente&&(existente.revisaoInterna||'liberado')!=='ajuste_interno'){
+      throw new Error('Este cliente já possui Story salvo nesta semana. Abra o registro existente em vez de criar outro.');
+    }
+    const st=criar[0];
+    const storyRef=doc(db,'stories_semanais',existente?.id||storySemanalId(slug,semana));
+    await runTransaction(db,async tx=>{
+      const atualSnap=await tx.get(storyRef);
+      if(atualSnap.exists()){
+        const atual=atualSnap.data()||{};
+        if(atual.cliente!==slug||semanaEfetivaStory(atual)!==semana) throw new Error('A identidade do Story mudou durante o envio.');
+        if((atual.revisaoInterna||'liberado')!=='ajuste_interno') throw new Error('O Story já saiu do estado de ajuste. Atualize a tela antes de reenviar.');
+      }
+      tx.set(storyRef,{
         cliente: slug, clienteNome: nome, semana, semanaConteudo:semana, semanaVersao:1,
         dia: st.dia, diaSemana: st.dia, diaNome: st.diaNome,
         titulo: st.titulo, descricao: st.descricao,
         linkRef: st.linkRef, linkReferencia: st.linkRef, observacoes: '',
         revisaoInterna: gestor ? 'liberado' : 'aguardando_interna',
         enviadoPor: usuarioAtual || '?',
-        status: 'aguardando', criadoPor: usuarioAtual||'?', criadoEm: serverTimestamp()
-      });
-    }
+        status: 'aguardando', criadoPor: atualSnap.exists()?(atualSnap.data().criadoPor||usuarioAtual||'?'):(usuarioAtual||'?'),
+        criadoEm: atualSnap.exists()?(atualSnap.data().criadoEm||serverTimestamp()):serverTimestamp(),
+        atualizadoEm:serverTimestamp(), motivoAjusteInterno:deleteField()
+      },{merge:true});
+    });
     DIAS_STORY.forEach(d => { ['stTit_','stDesc_','stRef_'].forEach(pre => { const el=document.getElementById(pre+d.n); if(el) el.value=''; }); });
     if(gestor){
       mostrarToast('Story da semana de ' + nome + ' já liberado pro cliente aprovar!');
@@ -12523,21 +12567,37 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         'Confere e libera em 📸 Stories → "Esperando sua aprovação". O cliente só vê depois que você liberar.', 'Amanda');
       mostrarToast('Story da semana de ' + nome + ' enviado pra Amanda aprovar.');
     }
-    renderStoriesCliente();
+    await renderStoriesCliente();
+    }catch(e){
+      console.error('Falha ao enviar Story semanal:',e);
+      mostrarToast(e.message||'Não consegui enviar o Story desta semana.','erro');
+    }finally{
+      __salvandoStorySemana=false;
+      if(botao) botao.disabled=false;
+    }
   };
 
   window.liberarStory = async function(id){
     if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Somente Amanda ou Chris pode liberar Stories para o cliente.', 'erro'); return false; }
     try{
-      const snap = await getDoc(doc(db,'stories_semanais', id));
-      const st = snap.exists() ? snap.data() : {};
-      await updateDoc(doc(db,'stories_semanais', id), {
-        revisaoInterna: 'liberado', liberadoPor: usuarioAtual || '?', liberadoEm: new Date().toISOString(),
-        motivoAjusteInterno: '', status: st.status === 'ajuste' ? 'aguardando' : (st.status || 'aguardando')
+      const ref=doc(db,'stories_semanais',id);
+      let st={};
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists()) throw new Error('Este Story não existe mais. Atualize a tela.');
+        st=snap.data()||{};
+        if(st.revisaoInterna==='liberado') return;
+        if(st.revisaoInterna !== 'aguardando_interna') throw new Error('O Story mudou de etapa. Atualize a tela antes de liberar.');
+        tx.update(ref,{
+          revisaoInterna:'liberado',liberadoPor:usuarioAtual||'?',liberadoEm:new Date().toISOString(),
+          motivoAjusteInterno:'',status:st.status==='ajuste'?'aguardando':(st.status||'aguardando'),atualizadoEm:serverTimestamp()
+        });
       });
+      const recibo=await getDoc(ref);
+      if(!recibo.exists()||recibo.data().revisaoInterna!=='liberado') throw new Error('A liberação não foi confirmada pelo banco.');
       registrarHistorico('stories_semanais', id, 'Stories liberados pro cliente por ' + (usuarioAtual||'?'));
       mostrarToast('Liberado — ' + (st.clienteNome||'o cliente') + ' já vê no portal.');
-      renderStoriesCliente();
+      await renderStoriesCliente();
     }catch(e){ mostrarToast('Não consegui liberar: ' + e.message, 'erro'); }
   };
 
@@ -12547,18 +12607,26 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(motivo === null) return;
     if(!motivo.trim()){ mostrarToast('Escreve o motivo — sem ele a Gabi não sabe o que corrigir.', 'erro'); return; }
     try{
-      const snap = await getDoc(doc(db,'stories_semanais', id));
-      const st = snap.exists() ? snap.data() : {};
-      await updateDoc(doc(db,'stories_semanais', id), {
-        revisaoInterna: 'ajuste_interno', motivoAjusteInterno: motivo.trim(),
-        devolvidoPor: usuarioAtual || '?', devolvidoEm: new Date().toISOString()
+      const ref=doc(db,'stories_semanais',id);
+      let st={};
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists()) throw new Error('Este Story não existe mais. Atualize a tela.');
+        st=snap.data()||{};
+        if(st.revisaoInterna !== 'aguardando_interna') throw new Error('O Story mudou de etapa. Atualize a tela antes de devolver.');
+        tx.update(ref,{
+          revisaoInterna:'ajuste_interno',motivoAjusteInterno:motivo.trim(),
+          devolvidoPor:usuarioAtual||'?',devolvidoEm:new Date().toISOString(),atualizadoEm:serverTimestamp()
+        });
       });
+      const recibo=await getDoc(ref);
+      if(!recibo.exists()||recibo.data().revisaoInterna!=='ajuste_interno') throw new Error('A devolução não foi confirmada pelo banco.');
       registrarHistorico('stories_semanais', id, 'Stories devolvidos pra ajuste por ' + (usuarioAtual||'?'), motivo.trim());
       await criarAvisoParaGestao('📸 Ajustar os stories de ' + (st.clienteNome||st.cliente||'cliente'),
         (usuarioAtual||'A Amanda') + ' pediu ajuste no roteiro de stories da semana:\n\n"' + motivo.trim() + '"\n\n' +
         'Corrige em 📸 Stories e reenvia.', st.enviadoPor || st.criadoPor || 'Gabrielle');
       mostrarToast('Devolvido pra ' + (st.enviadoPor || st.criadoPor || 'Gabrielle') + ' com o motivo.');
-      renderStoriesCliente();
+      await renderStoriesCliente();
     }catch(e){ mostrarToast('Não consegui devolver: ' + e.message, 'erro'); }
   };
 
@@ -12567,23 +12635,30 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const el = document.getElementById('lkStory_'+slug+'_'+dia);
     if(!el) return;
     const link = (el.value||'').trim();
+    const linkSeguro=link?urlHttpsSeguraStoryInterno(link):'';
+    if(link&&!linkSeguro) return mostrarToast('Use um link HTTPS válido. O link não foi salvo.','erro');
     const chave = slug + '_' + semana;
     try{
       const ref = doc(db,'stories_links', chave);
-      const snap = await getDoc(ref);
-      const anterior = snap.exists() ? snap.data() : {};
-      const dias = anterior.dias || {};
-      const mudou = String(dias[dia]?.link||'').trim() !== link;
-      dias[dia] = { link, por: usuarioAtual || '?', em: new Date().toISOString() };
-      const patch = { cliente: slug, semana, dias, atualizadoEm: serverTimestamp() };
-      if(mudou){
-        patch.revisaoInterna='aguardando_interna'; patch.liberadoCliente=false;
-        patch.enviadoPor=usuarioAtual||'?'; patch.enviadoEm=serverTimestamp();
-        patch.motivoAjusteInterno=deleteField(); patch.liberadoEm=deleteField(); patch.liberadoPor=deleteField();
-      }
-      await setDoc(ref, patch, { merge:true });
+      let diasConfirmados={};
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        const anterior=snap.exists()?(snap.data()||{}):{};
+        if(snap.exists()&&(anterior.cliente!==slug||anterior.semana!==semana)) throw new Error('A identidade destes links mudou. Atualize a tela.');
+        const dias={...(anterior.dias||{})};
+        const mudou=String(dias[dia]?.link||'').trim()!==linkSeguro;
+        dias[dia]={link:linkSeguro,por:usuarioAtual||'?',em:new Date().toISOString()};
+        const patch={cliente:slug,semana,dias,atualizadoEm:serverTimestamp()};
+        if(mudou){
+          patch.revisaoInterna='aguardando_interna';patch.liberadoCliente=false;
+          patch.enviadoPor=usuarioAtual||'?';patch.enviadoEm=serverTimestamp();
+          patch.motivoAjusteInterno=deleteField();patch.liberadoEm=deleteField();patch.liberadoPor=deleteField();
+        }
+        tx.set(ref,patch,{merge:true});
+        diasConfirmados=dias;
+      });
       window.__linksStorySemana = window.__linksStorySemana || {};
-      window.__linksStorySemana[chave] = dias;
+      window.__linksStorySemana[chave] = diasConfirmados;
       el.style.borderColor = link ? 'var(--green)' : 'var(--line)';
       if(link) mostrarToast('Link salvo.');
     }catch(e){ console.error('Falha ao salvar o link:', e); mostrarToast('Não consegui salvar o link.', 'erro'); }
@@ -12592,7 +12667,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.liberarLinksStory = async function(chave){
     if(!['Amanda','Chris'].includes(usuarioAtual)) return mostrarToast('Somente Amanda pode liberar estes links.','erro');
     try{
-      await updateDoc(doc(db,'stories_links',chave),{revisaoInterna:'liberado',liberadoCliente:true,liberadoPor:usuarioAtual,liberadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      const ref=doc(db,'stories_links',chave);
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists()) throw new Error('Estes links não existem mais. Atualize a tela.');
+        const atual=snap.data()||{};
+        if(atual.revisaoInterna==='liberado'&&atual.liberadoCliente===true) return;
+        if(atual.revisaoInterna !== 'aguardando_interna') throw new Error('Os links mudaram de etapa. Atualize a tela antes de liberar.');
+        if(!linksStoryPodemSerLiberados(atual.dias)) throw new Error('Há link ausente ou sem HTTPS válido. Corrija antes de liberar.');
+        tx.update(ref,{revisaoInterna:'liberado',liberadoCliente:true,liberadoPor:usuarioAtual,liberadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      });
+      const recibo=await getDoc(ref);
+      if(!recibo.exists()||recibo.data().revisaoInterna!=='liberado'||recibo.data().liberadoCliente!==true) throw new Error('A liberação dos links não foi confirmada pelo banco.');
       mostrarToast('Links liberados no Portal do Cliente.'); await renderStoriesCliente();
     }catch(e){ mostrarToast('Não consegui liberar os links: '+e.message,'erro'); }
   };
@@ -12600,7 +12686,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!['Amanda','Chris'].includes(usuarioAtual)) return mostrarToast('Somente Amanda pode devolver estes links.','erro');
     const motivo=prompt('O que a Gabi precisa ajustar nestes links?'); if(!motivo?.trim()) return;
     try{
-      await updateDoc(doc(db,'stories_links',chave),{revisaoInterna:'ajuste_interno',liberadoCliente:false,motivoAjusteInterno:motivo.trim(),devolvidoPor:usuarioAtual,devolvidoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      const ref=doc(db,'stories_links',chave);
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists()) throw new Error('Estes links não existem mais. Atualize a tela.');
+        if(snap.data().revisaoInterna !== 'aguardando_interna') throw new Error('Os links mudaram de etapa. Atualize a tela antes de devolver.');
+        tx.update(ref,{revisaoInterna:'ajuste_interno',liberadoCliente:false,motivoAjusteInterno:motivo.trim(),devolvidoPor:usuarioAtual,devolvidoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      });
+      const recibo=await getDoc(ref);
+      if(!recibo.exists()||recibo.data().revisaoInterna!=='ajuste_interno') throw new Error('A devolução dos links não foi confirmada pelo banco.');
       mostrarToast('Links devolvidos para ajuste.'); await renderStoriesCliente();
     }catch(e){ mostrarToast('Não consegui devolver os links: '+e.message,'erro'); }
   };
@@ -12608,10 +12702,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(usuarioAtual!=='Gabrielle') return mostrarToast('Somente a Gabi envia estes links para revisão.','erro');
     const chave=slug+'_'+semana;
     try{
-      const snap=await getDoc(doc(db,'stories_links',chave));
-      const temLink=snap.exists()&&Object.values(snap.data().dias||{}).some(d=>String(d?.link||'').trim());
-      if(!temLink) return mostrarToast('Cole pelo menos um link antes de enviar.','erro');
-      await updateDoc(doc(db,'stories_links',chave),{revisaoInterna:'aguardando_interna',liberadoCliente:false,enviadoPor:usuarioAtual,enviadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      const ref=doc(db,'stories_links',chave);
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists()||!linksStoryPodemSerLiberados(snap.data().dias)) throw new Error('Cole pelo menos um link HTTPS válido antes de enviar.');
+        tx.update(ref,{revisaoInterna:'aguardando_interna',liberadoCliente:false,enviadoPor:usuarioAtual,enviadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+      });
+      const recibo=await getDoc(ref);
+      if(!recibo.exists()||recibo.data().revisaoInterna!=='aguardando_interna'||recibo.data().liberadoCliente!==false) throw new Error('O envio dos links não foi confirmado pelo banco.');
       mostrarToast('Links enviados para a Amanda revisar.'); await renderStoriesCliente();
     }catch(e){ mostrarToast('Não consegui enviar os links: '+e.message,'erro'); }
   };
@@ -12619,11 +12717,24 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.renderStoriesCliente = async function(){
     const cont = document.getElementById('storiesConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+    let linksConfirmadosEquipe=true;
+    let avisoLeituraLinks='';
     try{
       const snapL = await getDocs(collection(db,'stories_links'));
       window.__linksStorySemana = {}; window.__linksStoryDocs = {};
       snapL.forEach(d => { window.__linksStoryDocs[d.id]={id:d.id,...d.data()}; window.__linksStorySemana[d.id] = d.data().dias || {}; });
-    }catch(e){ console.error('Falha ao ler os links:', e); window.__linksStorySemana = {}; window.__linksStoryDocs={}; }
+      window.__linksStoryDocsConfirmados={docs:{...window.__linksStoryDocs},semanas:{...window.__linksStorySemana}};
+    }catch(e){
+      console.error('Falha ao ler os links:',e);
+      const anterior=window.__linksStoryDocsConfirmados;
+      if(anterior){
+        window.__linksStoryDocs={...anterior.docs};window.__linksStorySemana={...anterior.semanas};
+        avisoLeituraLinks='Não consegui atualizar os links agora. A tela preservou o último retrato confirmado; isso não significa que os links sumiram.';
+      }else{
+        window.__linksStoryDocs={};window.__linksStorySemana={};linksConfirmadosEquipe=false;
+        avisoLeituraLinks='Não consegui confirmar os links agora. Isso não significa que os links sumiram; os estados dependentes deles aparecem como indisponíveis.';
+      }
+    }
 
     const semanaAtual = segundaDaSemana(new Date());
     const semana = window.__semanaStories || semanaAtual;
@@ -12780,8 +12891,25 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       <div class="meta" style="margin-top:6px;">Vai primeiro pra revisão da Amanda. Assim que ela liberar, o cliente vê no portal dele e pode aprovar.</div>
     </div>`;
 
-    const snap = await getDocs(collection(db,'stories_semanais'));
-    const todos = []; snap.forEach(d => todos.push({id:d.id, ...d.data()}));
+    let todos=[];
+    let avisoLeituraStories='';
+    try{
+      const snap=await getDocs(collection(db,'stories_semanais'));
+      snap.forEach(d=>todos.push({id:d.id,...d.data()}));
+      window.__storiesEquipeConfirmado=todos.map(s=>({...s}));
+    }catch(e){
+      console.error('Falha ao confirmar os roteiros de Stories:',e);
+      if(Array.isArray(window.__storiesEquipeConfirmado)){
+        todos=window.__storiesEquipeConfirmado.map(s=>({...s}));
+        avisoLeituraStories='Não consegui atualizar os roteiros agora. A tela preservou o último retrato confirmado; nenhum Story foi tratado como apagado.';
+      }else{
+        cont.innerHTML='<div class="card" data-stories-equipe-estado="indisponivel" style="border-color:var(--red);"><b>Não consegui confirmar os Stories.</b><div class="desc">A leitura falhou; isso não significa que os dados sumiram. Atualize a tela e tente novamente.</div></div>';
+        return;
+      }
+    }
+    if(avisoLeituraLinks||avisoLeituraStories){
+      html=`<div class="card" data-stories-equipe-estado="retrato-preservado" style="border-color:var(--yellow);"><div class="desc">${[avisoLeituraLinks,avisoLeituraStories].filter(Boolean).map(esc).join('<br>')}</div></div>`+html;
+    }
     const clienteStorySelecionado=window.__storyClienteSel||'';
     const daSemana = todos.filter(s => semanaEfetivaStory(s) === semana && (!clienteStorySelecionado || s.cliente === clienteStorySelecionado));
     // órfãos: têm semana mas nenhum dia legível — antes desapareciam da tela
@@ -12801,7 +12929,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         <div class="desc">A mesma semana, da Gabi até o Portal. “Ainda não enviado” não é erro do cliente: significa que não há roteiro nem link salvo para a Amanda revisar.</div>
         ${clientesStory.map(c=>{
           const chave=c.slug+'_'+semana;
-          const estado=estadoCadeiaStoriesCliente(c.slug,semana,todos,(window.__linksStoryDocs||{})[chave]);
+          const estado=estadoCadeiaStoriesCliente(c.slug,semana,todos,(window.__linksStoryDocs||{})[chave],linksConfirmadosEquipe);
           const cor=estado.codigo==='liberado_portal'?'var(--green)':estado.codigo==='ajuste'?'var(--red)':'var(--yellow)';
           return `<div class="item" data-story-cadeia-cliente="${escAttr(c.slug)}" data-story-cadeia-estado="${escAttr(estado.codigo)}" style="border-left:3px solid ${cor};">
             <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo ${estado.codigo==='liberado_portal'?'aprovada':estado.codigo==='ajuste'?'atrasado':'pendente'}">${esc(estado.titulo)}</span></div>
@@ -12825,29 +12953,30 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       blocoAmanda = `<div class="card" style="border:2px solid var(--yellow2);">
         <h2>📸 Esperando sua aprovação (${esperandoAmanda.length})</h2>
         <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. Confere o roteiro e libera — ou devolve pra Gabi com o motivo.</div>
-        ${esperandoAmanda.map(st => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow2);">
+        ${esperandoAmanda.map(st => { const refSegura=urlHttpsSeguraStoryInterno(st.linkReferencia||st.linkRef); return `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow2);">
           <div class="top"><div class="nome">${esc(st.clienteNome||st.cliente)} — ${esc(st.titulo||'Stories da semana')}</div>
             <span class="selo pendente">semana de ${esc(semanaEfetivaStory(st)||'?')}</span></div>
           ${semanaEfetivaStory(st)!==st.semana?'<div class="meta" style="margin-top:5px;color:var(--yellow2);">⚠️ Registro antigo recuperado pelas datas do roteiro; estava arquivado tecnicamente em '+esc(st.semana||'?')+'.</div>':''}
           ${st.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;max-height:190px;overflow:auto;">'+esc(st.descricao)+'</div>' : ''}
-          ${(st.linkReferencia||st.linkRef) ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(st.linkReferencia||st.linkRef)+'" target="_blank" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
+          ${refSegura ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+escAttr(refSegura)+'" target="_blank" rel="noopener noreferrer" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
           <div class="meta" style="margin-top:4px;">montado por ${esc(st.enviadoPor||st.criadoPor||'?')}</div>
           <div class="btnrow" style="margin-top:10px;">
             <button class="btn red" style="font-size:11.5px;" onclick="devolverStory('${st.id}')">↩️ Pedir ajuste</button>
             <button class="btn green" style="font-size:11.5px;" onclick="liberarStory('${st.id}')">✅ Liberar pro cliente</button>
           </div>
-        </div>`).join('')}
+        </div>`; }).join('')}
       </div>`;
     }
     if(linksEsperandoAmanda.length && (usuarioAtual === 'Amanda' || usuarioAtual === 'Chris')){
-      blocoAmanda += `<div class="card" data-aprovacao-links-stories="true" style="border:2px solid var(--yellow2);"><h2>🔗 Links de Stories esperando liberação (${linksEsperandoAmanda.length})</h2><div class="desc">Confira os documentos. O cliente só vê depois de você liberar.</div>${linksEsperandoAmanda.map(st=>`<div class="item" style="margin-top:10px;"><div class="nome">${esc((clientesStory.find(c=>c.slug===st.cliente)||{}).nome||st.cliente)} · semana ${esc(st.semana||'?')}</div>${Object.entries(st.dias||{}).filter(([,d])=>String(d?.link||'').trim()).map(([dia,d])=>`<div class="meta" style="margin-top:6px;">${esc((DIAS_STORY.find(x=>String(x.n)===String(dia))||{}).nome||('Dia '+dia))}: <a href="${esc(d.link)}" target="_blank" rel="noopener" style="color:var(--yellow);">abrir documento ↗</a></div>`).join('')}<div class="btnrow" style="margin-top:10px;"><button class="btn red" onclick="devolverLinksStory('${escJs(st.id)}')">↩️ Pedir ajuste</button><button class="btn green" onclick="liberarLinksStory('${escJs(st.id)}')">✅ Liberar no portal</button></div></div>`).join('')}</div>`;
+      blocoAmanda += `<div class="card" data-aprovacao-links-stories="true" style="border:2px solid var(--yellow2);"><h2>🔗 Links de Stories esperando liberação (${linksEsperandoAmanda.length})</h2><div class="desc">Confira os documentos. O cliente só vê depois de você liberar.</div>${linksEsperandoAmanda.map(st=>`<div class="item" style="margin-top:10px;"><div class="nome">${esc((clientesStory.find(c=>c.slug===st.cliente)||{}).nome||st.cliente)} · semana ${esc(st.semana||'?')}</div>${Object.entries(st.dias||{}).map(([dia,d])=>[dia,urlHttpsSeguraStoryInterno(d?.link)]).filter(([,link])=>link).map(([dia,link])=>`<div class="meta" style="margin-top:6px;">${esc((DIAS_STORY.find(x=>String(x.n)===String(dia))||{}).nome||('Dia '+dia))}: <a href="${escAttr(link)}" target="_blank" rel="noopener noreferrer" style="color:var(--yellow);">abrir documento ↗</a></div>`).join('')}<div class="btnrow" style="margin-top:10px;"><button class="btn red" onclick="devolverLinksStory('${escJs(st.id)}')">↩️ Pedir ajuste</button><button class="btn green" onclick="liberarLinksStory('${escJs(st.id)}')">✅ Liberar no portal</button></div></div>`).join('')}</div>`;
     }
 
     function itemStory(s){
+      const refSegura=urlHttpsSeguraStoryInterno(s.linkReferencia||s.linkRef);
       return `<div class="item" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow2)':'var(--line)'};">
         <div class="top"><div class="nome">${esc(s.clienteNome)} — ${esc(s.titulo)}</div><span class="selo ${corStatus(s)}">${rotuloStatus(s)}</span></div>
         ${s.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(s.descricao)+'</div>' : ''}
-        ${(s.linkReferencia || s.linkRef) ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+esc(s.linkReferencia || s.linkRef)+'" target="_blank" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
+        ${refSegura ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+escAttr(refSegura)+'" target="_blank" rel="noopener noreferrer" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
         ${s.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(s.observacoes)+'</div>' : ''}
         ${s.comentarioCliente ? '<div class="meta" style="margin-top:6px;color:var(--yellow2);">💬 Cliente: '+esc(s.comentarioCliente)+'</div>' : ''}
         ${s.status==='aprovado' ? `<button class="btn secondary" style="margin-top:8px;width:auto;padding:5px 10px;font-size:10.5px;" onclick="marcarStoryPostado('${s.id}')">Marcar como já postado</button>` : ''}
@@ -25269,7 +25398,7 @@ window.setGerenciaSub = function(qual, el){
      que não usa. */
   const CAL_SUBS_POR_PESSOA = {
     'Gabrielle': ['visao','editar','refs','resgate'],   // ela mantém o atalho de lá
-    'Cecília': ['visao','editar','resgate'],
+    'Cecília': ['visao','editar','links','resgate'],
     'Amanda': ['navMetas','navExtras','navRoteiros','visao','editar','envio','links','resgate'],
     'Chris':     ['visao','editar','envio','links','resgate'],
     'Luís':      ['campo'],
@@ -25898,24 +26027,17 @@ window.setGerenciaSub = function(qual, el){
   function resolverMesParaLinkCalendario(cal,mesEscolhido,referencia){
     const pedido=String(mesEscolhido||'').trim();
     if(pedido&&!/^20\d{2}-(0[1-9]|1[0-2])$/.test(pedido)) throw new Error('Escolha uma competência válida no formato ano e mês.');
-    const operacional=competenciaOperacionalCalendario(referencia);
-    if(!operacional) throw new Error('Não consegui determinar a competência operacional seguinte.');
-    /* Mês já liberado é arquivo do próprio cliente, não uma nova entrega.
-       Ele pode receber um link atual para qualquer competência liberada,
-       inclusive agosto, sem reabrir aprovação nem alterar o calendário. */
-    if(pedido&&estadoMesCal(cal,pedido)==='liberado'){
-      if(!itensDoMesCalendario(cal,pedido).some(i=>i&&!i.excluido)){
-        throw new Error('O mês '+pedido+' está marcado como liberado, mas não possui conteúdo ativo confirmado.');
-      }
+    if(pedido){
+      const estado=estadoMesCal(cal,pedido);
+      if(estado==='arquivado') throw new Error('O calendário de '+pedido+' está arquivado. O cliente verá somente “Calendário arquivado”.');
+      if(estado!=='liberado') throw new Error('O calendário de '+pedido+' ainda aguarda a aprovação da Amanda para aparecer ao cliente.');
+      if(!itensDoMesCalendario(cal,pedido).some(i=>i&&!i.excluido)) throw new Error('O mês publicado está sem conteúdo confirmado. O link não foi preparado.');
       return pedido;
     }
-    if(pedido&&pedido!==operacional){
-      throw new Error('Este mês ainda não foi liberado ao cliente. A primeira liberação operacional é somente '+operacional+'.');
-    }
-    if(!itensDoMesCalendario(cal,operacional).some(i=>i&&!i.excluido)){
-      throw new Error('O calendário de '+operacional+' ainda está sem conteúdo confirmado. Nenhum mês anterior ou posterior foi escolhido por suposição.');
-    }
-    return operacional;
+    const publicados=mesesDeCalendario(cal).filter(m=>estadoMesCal(cal,m)==='liberado'&&itensDoMesCalendario(cal,m).some(i=>i&&!i.excluido));
+    if(!publicados.length) throw new Error('Nenhum calendário está publicado. Aguarde a aprovação da Amanda.');
+    if(publicados.length>1) throw new Error('Há mais de um mês marcado como público. A Amanda precisa confirmar qual é o atual antes de copiar.');
+    return publicados[0];
   }
   window.resolverMesParaLinkCalendario=resolverMesParaLinkCalendario;
 
@@ -25937,39 +26059,11 @@ window.setGerenciaSub = function(qual, el){
     if(!calSnap.exists()) throw new Error('O calendário deste cliente ainda não existe.');
     const calConfirmado=calSnap.data()||{};
     const mes=resolverMesParaLinkCalendario(calConfirmado,mesEscolhido);
-    if(mes){
-      if(!itensDoMesCalendario(calConfirmado,mes).filter(i=>i&&!i.excluido).length) throw new Error('Não existe conteúdo confirmado em '+mes+' para este cliente.');
-      const estado=estadoMesCal(calConfirmado,mes);
-      if(estado!=='liberado'&&estado!=='aprovado_interno'){
-        if(estado==='aguardando_interna') throw new Error('Este mês ainda está na revisão da Amanda.');
-        if(estado==='ajuste_interno') throw new Error('Este mês voltou para ajustes e precisa de nova aprovação.');
-        throw new Error('Este mês ainda não foi aprovado pela Amanda.');
-      }
-      if(estado==='aprovado_interno'&&!['Chris','Amanda','Cecília'].includes(usuarioAtual)) throw new Error('Somente Cecília ou a gerência pode liberar um mês já aprovado.');
-    }
+    if(!itensDoMesCalendario(calConfirmado,mes).filter(i=>i&&!i.excluido).length) throw new Error('Não existe conteúdo confirmado em '+mes+' para este cliente.');
+    const estado=estadoMesCal(calConfirmado,mes);
+    if(estado!=='liberado') throw new Error('Este calendário ainda aguarda a aprovação da Amanda para aparecer ao cliente.');
     const t=await garantirTokensDoCliente(slugDocumento,'cliente');
     if(!t.token) throw new Error('Token do cliente não disponível.');
-    if(mes){
-      const liberouAgora=await runTransaction(db,async tx=>{
-        const ref=doc(db,'calendarios',slugDocumento);
-        const snap=await tx.get(ref);
-        if(!snap.exists()) throw new Error('Calendário não encontrado durante a confirmação.');
-        const cal=snap.data()||{};
-        if(!itensDoMesCalendario(cal,mes).filter(i=>i&&!i.excluido).length) throw new Error('O mês ficou sem conteúdo antes da liberação.');
-        const estado=estadoMesCal(cal,mes);
-        if(estado==='liberado') return false;
-        if(estado!=='aprovado_interno') throw new Error('O estado mudou. Reabra o mês antes de copiar.');
-        if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)) throw new Error('Somente Cecília ou a gerência pode liberar um mês já aprovado.');
-        const agora=new Date().toISOString();
-        const marca={...((cal.aprovacaoMeses||{})[mes]||{}),status:'liberado',mes,enviadoPor:usuarioAtual,enviadoEm:agora,em:agora,motivoAjuste:''};
-        const mapa={...(cal.aprovacaoMeses||{}),[mes]:marca};
-        const patch={aprovacaoMeses:mapa,updatedAt:agora};
-        if(mesUsaCampoLegadoCalendario(cal,mes)) patch.aprovacaoInterna=marca;
-        tx.set(ref,patch,{merge:true});
-        return true;
-      });
-      if(liberouAgora) registrarHistorico('calendarios',slugDocumento,'Calendário de '+mes+' liberado e link preparado por '+(usuarioAtual||'?'));
-    }
     return 'https://get-started.agency/calendario.html?cliente='+encodeURIComponent(slugDocumento)+'&t='+encodeURIComponent(t.token)+(mes?'&mes='+encodeURIComponent(mes):'');
   }
   window.prepararLinkCalendarioCliente=prepararLinkCalendarioCliente;
@@ -26000,7 +26094,7 @@ window.setGerenciaSub = function(qual, el){
       const mesConfirmado=(()=>{ try{return new URL(resultado.texto).searchParams.get('mes')||'';}catch(e){return '';} })();
       if(btn) btn.textContent = resultado.automatico?'✓ Copiado!':'Link pronto';
       manterConfirmacao=true;
-      mostrarToast(resultado.automatico?'Mês '+mesConfirmado+' liberado e link exato copiado — o cliente abrirá esta competência.':'O mês '+mesConfirmado+' foi liberado; o link exato está aberto para cópia manual.');
+      mostrarToast(resultado.automatico?'Link do mês publicado '+mesConfirmado+' copiado — nenhum estado foi alterado.':'O link do mês publicado '+mesConfirmado+' está aberto para cópia manual; nenhum estado foi alterado.');
     }catch(e){
       console.error('Falha ao preparar link do cliente:',e);
       mostrarToast('Não consegui preparar o link do cliente: '+(e?.message||'tente novamente.'), 'erro');
@@ -35093,10 +35187,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       return `<div class="card" id="filaCalendariosRevisao" style="border:2px solid var(--yellow2);">
         <h2>🗓️ ${somenteLeitura ? 'Calendários esperando revisão da Amanda' : 'Calendários esperando sua revisão'}</h2>
         ${__erroCalendariosCompartilhado ? '<div style="background:var(--redbg);border-left:3px solid var(--red);padding:9px 11px;border-radius:7px;margin-bottom:10px;font-size:12px;"><b>⚠️ Mostrando o último retrato disponível.</b> O Firebase não confirmou se houve mudança depois dele.</div>' : ''}
-        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. ${somenteLeitura ? 'Aqui é acompanhamento: a decisão continua exclusivamente no painel da Amanda.' : 'Confere o mês e escolhe o caminho:'}</div>
+        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. ${somenteLeitura ? 'Aqui é acompanhamento: a decisão continua exclusivamente no painel da Amanda.' : 'Confira o mês e escolha entre publicar ou pedir ajuste.'}</div>
         ${somenteLeitura ? '' : `<div class="desc" style="margin-top:6px;line-height:1.7;">
-          <b style="color:var(--green);">✅ Guardar pro dia 15</b> — o de sempre: fica represado e vai junto com todos no disparo.<br>
-          <b style="color:var(--yellow);">⚡ Enviar HOJE</b> — pro calendário fora de data, ou quando o cliente precisa ver agora. Vai direto pro portal dele.<br>
+          <b style="color:var(--green);">✅ Aprovar e publicar</b> — aparece imediatamente no Portal; o mês público anterior vira arquivo.<br>
           <b style="color:var(--red);">↩️ Pedir ajuste</b> — volta pra Gabi com o motivo escrito.
         </div>`}
         ${fila.map(c => `<div class="item" style="margin-top:10px;border-left:3px solid var(--yellow2);">
@@ -35109,8 +35202,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <div class="btnrow" style="margin-top:10px;">
             <button type="button" class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${escJs(c.slug)}','${escJs(c.nome)}')">↗ Abrir calendário completo</button>
             ${somenteLeitura ? '' : `<button type="button" class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${escJs(c.slug)}','${escJs(c.mesKey||'')}')">↩️ Pedir ajuste</button>
-            <button type="button" class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${escJs(c.slug)}','${escJs(c.mesKey||'')}')">✅ Aprovar e guardar pro dia 15</button>
-            <button type="button" class="btn" style="font-size:11.5px;" onclick="aprovarEEnviarAgora('${escJs(c.slug)}','${escJs(c.mesKey||'')}', this)">⚡ Aprovar e enviar HOJE</button>`}
+            <button type="button" class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${escJs(c.slug)}','${escJs(c.mesKey||'')}',this)">✅ Aprovar e publicar</button>`}
           </div>
         </div>`).join('')}
       </div>`;
@@ -35371,6 +35463,27 @@ Observações do cliente: ${l.observacoes||'—'}`;
     return ((cal&&cal.items)||[]).length ? 'liberado' : 'rascunho';
   }
 
+  /* Publicar um mês é uma única decisão da Amanda. O mês que já estava
+     visível vira arquivo do cliente; os demais rascunhos e ajustes não são
+     tocados. `mesesAtivosAntes` inclui também calendários legados que eram
+     públicos antes de existir `aprovacaoMeses`, evitando deixá-los ativos
+     por um fallback invisível. Abrir o arquivo internamente não chama esta
+     função e, portanto, nunca substitui o mês público atual. */
+  function mapaAprovacaoAposPublicar(mapaAtual, alvo, pessoa, agora, mesesAtivosAntes){
+    const mapa={...(mapaAtual||{})};
+    const operador=String(pessoa||'Amanda');
+    const instante=String(agora||new Date().toISOString());
+    (mesesAtivosAntes||[]).filter(m=>m&&m!==alvo).forEach(m=>{
+      mapa[m]={...(mapa[m]||{}),status:'arquivado',mes:m,arquivadoPor:operador,
+        arquivadoEm:instante,substituidoPor:alvo,em:instante};
+    });
+    mapa[alvo]={...(mapa[alvo]||{}),status:'liberado',mes:alvo,por:operador,
+      aprovadoPor:operador,aprovadoEm:instante,enviadoPor:operador,enviadoEm:instante,
+      em:instante,motivoAjuste:''};
+    return mapa;
+  }
+  window.mapaAprovacaoAposPublicar=mapaAprovacaoAposPublicar;
+
   /* Fonte única do contador e das duas filas (Amanda e Chris). Aceita
      tanto QuerySnapshot do Firestore quanto o array já normalizado dos
      indicadores, para nenhuma tela precisar reimplementar o filtro. */
@@ -35465,11 +35578,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     box.innerHTML = '<div class="desc">Carregando…</div>';
     try{
       const snap = await obterCalendariosCompartilhados();
-      /* A contagem de revisão usa rigorosamente a mesma fonte da fila da
-         Amanda. Assim um estado histórico contaminado não reaparece aqui
-         como uma segunda fila divergente. */
       const esperando = linhasCalendariosAguardandoRevisao(snap);
-      const represados = [], jaEnviados = [], historicos = [];
+      const ativos = [], arquivados = [], legadosAprovados = [], internos = [];
       snap.forEach(d => {
         const cal = d.data();
         const meses = mesesDeCalendario(cal);
@@ -35479,51 +35589,39 @@ Observações do cliente: ${l.observacoes||'—'}`;
           if(!qtd) return;
           const linha = { slug:d.id, nome: cal.client || nomeDeSlugSeguro(d.id), mes:m, qtd,
                           estado:st, quando: ((cal.aprovacaoMeses||{})[m]||{}).em || '' };
-          if(mesForaDaCompetenciaOperacional(m)){ historicos.push(linha); return; }
-          if(st === 'aprovado_interno') represados.push(linha);
-          else if(st === 'liberado') jaEnviados.push(linha);
+          if(st==='liberado') ativos.push(linha);
+          else if(st==='arquivado') arquivados.push(linha);
+          else if(st==='aprovado_interno') legadosAprovados.push(linha);
+          else if(mesForaDaCompetenciaOperacional(m)) internos.push(linha);
         });
       });
-      represados.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
-      historicos.sort((a,b)=>String(b.mes).localeCompare(String(a.mes))||a.nome.localeCompare(b.nome,'pt-BR'));
-
-      const hoje = new Date();
-      const ehDia15 = hoje.getDate() >= 15;
+      ativos.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      arquivados.sort((a,b)=>String(b.mes).localeCompare(String(a.mes))||a.nome.localeCompare(b.nome,'pt-BR'));
+      legadosAprovados.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      internos.sort((a,b)=>String(b.mes).localeCompare(String(a.mes))||a.nome.localeCompare(b.nome,'pt-BR'));
       const rotMes = m => { const n=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
         if(!m) return 'mês único'; const [a,mm]=m.split('-'); return (n[Number(mm)-1]||'')+' '+a; };
-
       box.innerHTML =
         (esperando.length ? `<div class="card" style="border-color:var(--yellow2);">
-          <div class="desc"><b>${esperando.length}</b> ainda esperando sua aprovação — aparecem no seu painel, em "Calendários esperando sua revisão".</div>
+          <div class="desc"><b>${esperando.length}</b> esperando sua aprovação. Ao aprovar no painel, o novo mês aparece imediatamente ao cliente.</div>
         </div>` : '') +
-        (represados.length
-          ? `<div class="card" style="border:2px solid var(--green);">
-              <div class="desc" style="font-weight:800;color:var(--green);">${represados.length} calendário(s) prontos, guardados esperando o dia 15.</div>
-              <div class="desc" style="margin-top:4px;">${ehDia15
-                ? 'Hoje é dia ' + hoje.getDate() + ' — pode disparar.'
-                : 'Hoje é dia ' + hoje.getDate() + '. O combinado é enviar no dia 15, mas o botão não trava: se precisar mandar antes, mande.'}</div>
-              <button class="btn green" style="margin-top:12px;" onclick="enviarTodosOsCalendarios(this)">📤 Enviar os ${represados.length} pros clientes agora</button>
-            </div>` +
-            represados.map(r => `<div class="item" style="margin-top:8px;border-left:3px solid var(--green);">
-              <div class="top"><div class="nome">${esc(r.nome)}</div><span class="selo aprovada">${esc(rotMes(r.mes))} · ${r.qtd} conteúdo(s)</span></div>
-              <div class="meta" style="margin-top:4px;">Aprovado${r.quando ? ' em ' + new Date(r.quando).toLocaleDateString('pt-BR') : ''} · o cliente ainda não vê</div>
-              <div class="btnrow" style="margin-top:8px;">
-                <button class="btn secondary" style="font-size:11px;" onclick="enviarUmCalendario('${escJs(r.slug)}','${escJs(r.mes)}', this)">Enviar só este</button>
-              </div>
-            </div>`).join('')
-          : '<div class="card"><div class="empty">Nenhum calendário represado. Quando você aprovar um, ele aparece aqui esperando o dia 15.</div></div>') +
-        (jaEnviados.length ? `<div class="card" style="margin-top:14px;border-color:var(--line);">
-          <div class="desc"><b>Já enviados (${jaEnviados.length})</b> — o cliente está vendo.</div>
-          <div class="meta" style="margin-top:6px;line-height:1.8;">${jaEnviados.map(r => esc(r.nome)+' · '+esc(rotMes(r.mes))).join('<br>')}</div>
-        </div>` : '') +
-        (historicos.length ? `<details class="card" data-calendarios-arquivo-historico="true" style="margin-top:14px;border-color:var(--line);">
-          <summary class="desc" style="cursor:pointer;font-weight:800;">Arquivo histórico (${historicos.length})</summary>
-          <div class="meta" style="margin-top:8px;">Somente consulta. Estes meses não entram em revisão, liberação nem envio operacional.</div>
-          <div class="meta" style="margin-top:6px;line-height:1.8;">${historicos.map(r=>esc(r.nome)+' · '+esc(rotMes(r.mes))+' · '+esc(r.estado||'rascunho')).join('<br>')}</div>
-        </details>` : '');
+        (legadosAprovados.length ? `<div class="card" style="border:2px solid var(--yellow);">
+          <div class="desc"><b>${legadosAprovados.length} aprovação(ões) da versão anterior ainda aguardam publicação.</b></div>
+          ${legadosAprovados.map(r=>`<div class="item" style="margin-top:8px;"><div class="top"><div class="nome">${esc(r.nome)}</div><span class="selo">${esc(rotMes(r.mes))}</span></div><button class="btn green" style="width:auto;margin-top:8px;" onclick="enviarUmCalendario('${escJs(r.slug)}','${escJs(r.mes)}',this)">Concluir publicação</button></div>`).join('')}
+        </div>`:'')+
+        `<div class="card" style="margin-top:12px;border:2px solid var(--green);">
+          <div class="desc"><b>Calendários públicos agora (${ativos.length})</b></div>
+          <div class="meta" style="margin-top:6px;line-height:1.8;">${ativos.length?ativos.map(r=>esc(r.nome)+' · '+esc(rotMes(r.mes))).join('<br>'):'Nenhum calendário público confirmado.'}</div>
+        </div>`+
+        (arquivados.length ? `<details class="card" data-calendarios-arquivo-historico="true" style="margin-top:14px;border-color:var(--line);">
+          <summary class="desc" style="cursor:pointer;font-weight:800;">Calendários arquivados (${arquivados.length})</summary>
+          <div class="meta" style="margin-top:8px;">Abrir é somente leitura e não substitui o calendário público atual. O cliente vê apenas “Calendário arquivado”.</div>
+          ${arquivados.map(r=>`<div class="item" style="margin-top:8px;"><div class="top"><div class="nome">${esc(r.nome)}</div><span class="selo">${esc(rotMes(r.mes))}</span></div><button class="btn secondary" style="width:auto;margin-top:8px;" onclick="abrirCalendarioArquivoInterno('${escJs(r.slug)}','${escJs(r.mes)}')">Abrir para conferência</button></div>`).join('')}
+        </details>` : '')+
+        (internos.length ? `<details class="card" style="margin-top:14px;border-color:var(--line);"><summary class="desc" style="cursor:pointer;font-weight:800;">Histórico interno não publicado (${internos.length})</summary><div class="meta" style="margin-top:8px;">Rascunhos e ajustes antigos permanecem preservados e não aparecem ao cliente.</div></details>`:'');
     }catch(e){
       console.error('Falha na fila de envio:', e);
-      box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui confirmar os calendários prontos para envio', e);
+      box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui confirmar os calendários publicados e arquivados', e);
     }
   };
 
@@ -35582,15 +35680,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
           nome=cal.client||nome;
           if(!itensDoMesCalendario(cal,a.mes).length) throw new Error('O mês está sem conteúdo confirmado.');
           const estado=estadoMesCal(cal,a.mes);
-          if(estado==='liberado') return;
-          const podeAprovarEEnviar=a.aprovarAgora===true&&estado==='aguardando_interna';
-          if(estado!=='aprovado_interno'&&!podeAprovarEEnviar){
-            throw new Error('O mês mudou para '+(estado||'rascunho')+' antes do envio. Atualize a fila; nada foi liberado.');
+          if(!['aguardando_interna','aprovado_interno','liberado'].includes(estado)){
+            throw new Error('O mês mudou para '+(estado||'rascunho')+' antes da publicação. Atualize a fila; nada foi publicado.');
           }
           const agora=new Date().toISOString();
-          const mapa={...(cal.aprovacaoMeses||{})};
-          mapa[a.mes]={...(mapa[a.mes]||{}),status:'liberado',por:mapa[a.mes]?.por||(usuarioAtual||'?'),enviadoPor:usuarioAtual||'?',enviadoEm:agora,em:agora,motivoAjuste:''};
-          const patch={aprovacaoMeses:mapa};
+          const ativosAntes=mesesDeCalendario(cal).filter(m=>m!==a.mes&&estadoMesCal(cal,m)==='liberado');
+          const mapa=mapaAprovacaoAposPublicar(cal.aprovacaoMeses,a.mes,usuarioAtual||'Amanda',agora,ativosAntes);
+          const patch={aprovacaoMeses:mapa,updatedAt:agora};
           /* Se é o mês legado, o campo antigo acompanha — senão as telas
              que ainda leem `aprovacaoInterna` divergiriam. */
           if(mesUsaCampoLegadoCalendario(cal,a.mes)) patch.aprovacaoInterna=mapa[a.mes];
@@ -35598,10 +35694,12 @@ Observações do cliente: ${l.observacoes||'—'}`;
           alterou=true;
         });
         const recibo=await getDoc(ref);
-        if(!recibo.exists()||estadoMesCal(recibo.data()||{},a.mes)!=='liberado'||!itensDoMesCalendario(recibo.data()||{},a.mes).length){
+        const dadosRecibo=recibo.exists()?(recibo.data()||{}):{};
+        const outrosAtivos=mesesDeCalendario(dadosRecibo).filter(m=>m!==a.mes&&estadoMesCal(dadosRecibo,m)==='liberado');
+        if(!recibo.exists()||estadoMesCal(dadosRecibo,a.mes)!=='liberado'||!itensDoMesCalendario(dadosRecibo,a.mes).length||outrosAtivos.length){
           throw new Error('A transação terminou, mas o recibo do mesmo mês não confirmou a liberação. Não repita; atualize a fila.');
         }
-        if(alterou) registrarHistorico('calendarios',a.slug,'Calendário de '+(a.mes||'mês único')+' enviado pro cliente por '+(usuarioAtual||'?'));
+        if(alterou) registrarHistorico('calendarios',a.slug,'Calendário de '+(a.mes||'mês único')+' aprovado e publicado por '+(usuarioAtual||'?')+'; mês público anterior arquivado');
         resultado.enviados.push({slug:a.slug,mes:a.mes||'',nome});
       }catch(e){
         console.error('Falha ao enviar ' + a.slug + ':', e);
@@ -35609,7 +35707,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       }
     }
     if(resultado.enviados.length){
-      registrarLogAutomacao('calendarios_enviados', '', resultado.enviados.length + ' calendário(s) liberados pros clientes');
+      registrarLogAutomacao('calendarios_enviados', '', resultado.enviados.length + ' calendário(s) aprovados e publicados pros clientes');
       await sincronizarBadgeAposDecisaoDeCalendario();
     }
     if(resultado.falhas.length) registrarLogAutomacao('erro_envio_calendarios','',resultado.falhas.map(f=>f.nome+': '+f.erro).join(' | '));
@@ -35629,75 +35727,36 @@ Observações do cliente: ${l.observacoes||'—'}`;
      lugar — `dispararCalendarios`, a única função que libera calendário
      pro cliente. Não existe segundo caminho de liberação, então não há
      como um divergir do outro. */
-  window.aprovarEEnviarAgora = async function(slug, mes, btn){
-    if(usuarioAtual !== 'Amanda'){ mostrarToast('A aprovação de calendários é exclusiva da Amanda.', 'erro'); return; }
-    const snap = await getDoc(doc(db,'calendarios', slug));
-    if(!snap.exists()){ mostrarToast('Não achei esse calendário.', 'erro'); return; }
-    const cal = snap.data();
-    const nome = cal.client || nomeDeSlugSeguro(slug);
-    const alvo = (mes !== undefined && mes !== null && mes !== '') ? mes : competenciaOperacionalCalendario();
-    if(mesForaDaCompetenciaOperacional(alvo)){
-      mostrarToast('A aprovação e o envio operacional aceitam somente '+competenciaOperacionalCalendario()+'.', 'erro'); return;
-    }
-    const qtd = itensDoMesCalendario(cal, alvo).length;
-    if(!qtd){ mostrarToast('Este mês está sem conteúdo. Nada foi enviado.', 'erro'); return; }
-    if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
-      mostrarToast('O estado deste calendário mudou. Recarregue a fila antes de decidir.','erro'); return;
-    }
-    if(!confirm('Aprovar e ENVIAR AGORA o calendário de ' + nome + '?\n\n' +
-      qtd + ' conteúdo(s). Ela passa a ver no portal dela imediatamente e já pode aprovar.\n\n' +
-      'Se preferir que vá junto com os outros no dia 15, use o botão verde.')) return;
-    if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
-    const resultado = await dispararCalendarios([{ slug, mes: alvo, aprovarAgora:true }]);
-    if(resultado.enviados.length){
-      registrarHistorico('calendarios', slug, 'Aprovado e enviado no mesmo dia por ' + (usuarioAtual||'?') + ' — fora do disparo do dia 15');
-      mostrarToast(nome + ' já está vendo o calendário no portal dela.');
-    } else {
-      mostrarToast('Não consegui enviar: '+(resultado.falhas[0]?.erro||'nada foi alterado.'), 'erro');
-      if(btn){ btn.disabled = false; btn.textContent = '⚡ Aprovar e enviar HOJE'; }
-    }
-    renderGerenciaAmanda();
-    try{ renderFilaEnvioCalendarios(); }catch(e){}
+  /* Compatibilidade para uma aba antiga ainda aberta. Não mantém uma
+     segunda regra: qualquer clique antigo cai no único fluxo atual. */
+  window.aprovarEEnviarAgora = function(slug, mes, btn){
+    return window.liberarCalendario(slug,mes,btn);
   };
 
-  window.liberarCalendario = async function(slug, mes){
-    if(usuarioAtual !== 'Amanda'){ mostrarToast('A aprovação de calendários é exclusiva da Amanda.', 'erro'); return; }
-    const ref = doc(db,'calendarios', slug);
-    const snap = await getDoc(ref);
-    if(!snap.exists()) return;
-    const cal = snap.data();
-    const nome = cal.client || slug;
-    const alvo = (mes !== undefined && mes !== null && mes !== '') ? mes : competenciaOperacionalCalendario();
+  window.liberarCalendario = async function(slug, mes, btn){
+    if(usuarioAtual !== 'Amanda'){ mostrarToast('A aprovação de calendários é exclusiva da Amanda.', 'erro'); return false; }
+    const alvo=(mes!==undefined&&mes!==null&&mes!=='')?mes:competenciaOperacionalCalendario();
     if(mesForaDaCompetenciaOperacional(alvo)){
-      mostrarToast('A aprovação operacional aceita somente '+competenciaOperacionalCalendario()+'.', 'erro'); return;
+      mostrarToast('A aprovação operacional aceita somente '+competenciaOperacionalCalendario()+'.','erro'); return false;
     }
-    if(!itensDoMesCalendario(cal, alvo).length){ mostrarToast('Este mês está sem conteúdo. Nada foi aprovado.', 'erro'); return; }
-    if(estadoMesCal(cal,alvo) !== 'aguardando_interna'){
-      mostrarToast('O estado deste calendário mudou. Recarregue a fila antes de decidir.','erro'); return;
+    if(btn?.dataset.publicandoCalendario==='1') return false;
+    const original=btn?.textContent||'';
+    if(btn){btn.dataset.publicandoCalendario='1';btn.disabled=true;btn.textContent='Publicando e confirmando…';}
+    try{
+      const resultado=await dispararCalendarios([{slug,mes:alvo,aprovarAgora:true}]);
+      if(!resultado.enviados.length) throw new Error(resultado.falhas[0]?.erro||'A publicação não foi confirmada.');
+      const publicado=resultado.enviados[0];
+      mostrarToast((publicado.nome||slug)+' já está vendo '+alvo+' no Portal. O calendário público anterior foi arquivado.');
+      renderGerenciaAmanda();
+      try{await renderFilaEnvioCalendarios();}catch(e){console.error('Publicou, mas não atualizou o arquivo visual:',e);}
+      return true;
+    }catch(e){
+      console.error('Falha ao aprovar e publicar calendário:',e);
+      mostrarToast('Nada foi publicado: '+(e?.message||'atualize a fila e tente novamente.'),'erro');
+      return false;
+    }finally{
+      if(btn&&btn.isConnected){btn.disabled=false;btn.textContent=original||'✅ Aprovar e publicar';delete btn.dataset.publicandoCalendario;}
     }
-    try{ await runTransaction(db,async tx=>{
-      const servidorSnap=await tx.get(ref);
-      if(!servidorSnap.exists()) throw new Error('Calendário não encontrado durante a aprovação.');
-      const servidor=servidorSnap.data()||{};
-      if(!itensDoMesCalendario(servidor,alvo).some(i=>i&&!i.excluido)) throw new Error('O mês ficou sem conteúdo antes da aprovação.');
-      const estado=estadoMesCal(servidor,alvo);
-      if(estado==='aprovado_interno') return;
-      if(estado!=='aguardando_interna') throw new Error('O estado mudou para '+estado+'. Atualize a fila antes de decidir.');
-      const agora=new Date().toISOString();
-      const marca={status:'aprovado_interno',mes:alvo,por:usuarioAtual||'?',em:agora,motivoAjuste:''};
-      const mapa={...(servidor.aprovacaoMeses||{}),[alvo]:marca};
-      const patch={aprovacaoMeses:mapa,updatedAt:agora};
-      if(mesUsaCampoLegadoCalendario(servidor,alvo)) patch.aprovacaoInterna=marca;
-      tx.set(ref,patch,{merge:true});
-    }); }catch(e){
-      console.error('Falha ao aprovar calendário:',e);
-      mostrarToast('Nada foi aprovado: '+(e?.message||'atualize a fila e tente novamente.'),'erro');
-      return;
-    }
-    await sincronizarBadgeAposDecisaoDeCalendario();
-    registrarHistorico('calendarios', slug, 'Calendário de ' + (alvo||'mês único') + ' aprovado internamente por ' + (usuarioAtual||'?') + ' — guardado pro envio do dia 15');
-    mostrarToast('Aprovado e guardado. Vai pro cliente no disparo do dia 15 — em Calendários → "Prontos pra enviar".');
-    renderGerenciaAmanda();
   };
 
   window.devolverCalendario = async function(slug, mes){

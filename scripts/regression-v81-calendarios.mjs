@@ -61,23 +61,23 @@ new vm.Script(`
 `).runInContext(contexto);
 
 const agosto='2026-08-18T12:00:00';
-const varios={items:[{mes:'2026-08',name:'Agosto'},{mes:'2026-09',name:'Setembro'},{mes:'2026-10',name:'Outubro'}],aprovacaoMeses:{'2026-08':{status:'liberado'},'2026-09':{status:'aprovado_interno'},'2026-10':{status:'liberado'}}};
-exigir(contexto.api(varios,'',agosto)==='2026-09','sem escolha explícita, a operação corrente aponta para o próximo mês');
-exigir(contexto.api(varios,'2026-09',agosto)==='2026-09','escolha explícita só é aceita quando coincide com o mês operacional');
-exigir(contexto.api(varios,'2026-08',agosto)==='2026-08','mês histórico já liberado recebe link atual sem nova liberação');
-exigir(contexto.api(varios,'2026-10',agosto)==='2026-10','outro mês já liberado pode ser reaberto pelo próprio cliente');
-exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-08'}],aprovacaoMeses:{'2026-08':{status:'aprovado_interno'}}},'2026-08',agosto)),'mês histórico ainda não liberado não fura o ciclo operacional');
-exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-10'}],aprovacaoMeses:{'2026-10':{status:'liberado'}}},'',agosto)),'documento com um único mês fora do ciclo não cria fallback operacional');
-exigir(contexto.api({items:[{mes:'2027-01'}],aprovacaoMeses:{'2027-01':{status:'aprovado_interno'}}},'','2026-12-18T12:00:00')==='2027-01','resolução do link respeita dezembro para janeiro');
+const varios={items:[{mes:'2026-08',name:'Agosto'},{mes:'2026-09',name:'Setembro'},{mes:'2026-10',name:'Outubro'}],aprovacaoMeses:{'2026-08':{status:'liberado'},'2026-09':{status:'aguardando_interna'},'2026-10':{status:'arquivado'}}};
+exigir(contexto.api(varios,'',agosto)==='2026-08','sem escolha explícita, Cecília recebe o único mês já publicado');
+exigir(contexto.api(varios,'2026-08',agosto)==='2026-08','escolha explícita do mês público preserva a competência exata');
+exigir(deveFalhar(()=>contexto.api(varios,'2026-09',agosto),'aprovação da Amanda'),'mês em revisão não é publicado pelo ato de copiar');
+exigir(deveFalhar(()=>contexto.api(varios,'2026-10',agosto),'arquivado'),'arquivo não é confundido com calendário público atual');
+exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-08'}],aprovacaoMeses:{'2026-08':{status:'aprovado_interno'}}},'2026-08',agosto)),'estado intermediário legado não fura a aprovação da Amanda');
+exigir(contexto.api({items:[{mes:'2026-10'}],aprovacaoMeses:{'2026-10':{status:'liberado'}}},'',agosto)==='2026-10','o único mês efetivamente publicado é resolvido sem depender do relógio');
+exigir(contexto.api({items:[{mes:'2027-01'}],aprovacaoMeses:{'2027-01':{status:'liberado'}}},'','2026-12-18T12:00:00')==='2027-01','resolução do link preserva dezembro para janeiro quando publicado');
 exigir(falhaQualquer(()=>contexto.api({items:[]},'',agosto)),'documento confirmado sem itens não vira link ambíguo');
 exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-07'},{mes:'2026-10'}],aprovacaoMeses:{'2026-07':{status:'liberado'},'2026-10':{status:'liberado'}}},'',agosto)),'sem mês explícito, fallback não escolhe silenciosamente entre arquivos liberados');
 exigir(deveFalhar(()=>contexto.api(varios,'setembro',agosto),'competência válida'),'valor de mês inválido é recusado em vez de perder o parâmetro');
 
 const preparar=trecho(escritorio,'async function prepararLinkCalendarioCliente','  window.prepararLinkCalendarioCliente');
 exigir(preparar.includes("getDoc(doc(db,'calendarios',slugDocumento))")&&preparar.includes('resolverMesParaLinkCalendario(calConfirmado,mesEscolhido)'),'link nasce somente depois de leitura confirmada do calendário e resolução exata do mês');
-exigir(preparar.includes("estado!=='liberado'&&estado!=='aprovado_interno'")&&preparar.includes("if(estado!=='aprovado_interno')"),'revisão, ajuste e rascunho continuam bloqueados nas duas leituras');
-exigir(preparar.includes('tx.get(ref)')&&preparar.includes("status:'liberado',mes")&&preparar.includes("'&mes='+encodeURIComponent(mes)"),'liberação relê a competência em transação e a URL preserva o mês');
-exigir(!preparar.includes('deleteDoc(')&&!preparar.includes('addDoc('),'cópia não apaga nem duplica calendários');
+exigir(preparar.includes("if(estado!=='liberado')")&&preparar.includes('aprovação da Amanda'),'revisão, ajuste, arquivo e rascunho continuam bloqueados na cópia');
+exigir(!preparar.includes('runTransaction')&&!preparar.includes("status:'liberado'")&&preparar.includes("'&mes='+encodeURIComponent(mes)"),'Cecília copia a URL exata sem alterar a publicação');
+exigir(!preparar.includes('deleteDoc(')&&!preparar.includes('addDoc(')&&!preparar.includes('setDoc('),'cópia não apaga, duplica nem regrava calendários');
 
 const contextoLink={window:{},console,URL,Blob,encodeURIComponent}; contextoLink.window=contextoLink;
 const DateReal=Date;
@@ -88,7 +88,7 @@ contextoLink.Date=class DateFixa extends DateReal{
 vm.createContext(contextoLink);
 new vm.Script(`
   let usuarioAtual='Cecília',gravacoes=0,historicos=0;
-  let cal={client:'Cliente Teste',items:[{mes:'2026-09',name:'Setembro'}],aprovacaoMeses:{'2026-09':{status:'aprovado_interno'}}};
+  let cal={client:'Cliente Teste',items:[{mes:'2026-09',name:'Setembro'}],aprovacaoMeses:{'2026-09':{status:'liberado'}}};
   const db={};
   const doc=(...partes)=>({path:partes.slice(1).join('/')});
   const snapshot=()=>({exists:()=>true,data:()=>cal});
@@ -111,14 +111,14 @@ new vm.Script(`
     cenario:(status,itens=true)=>{gravacoes=0;historicos=0;cal={client:'Cliente Teste',items:itens?[{mes:'2026-09',name:'Setembro'}]:[],aprovacaoMeses:{'2026-09':{status}}};}};
 `).runInContext(contextoLink);
 const linkPreparado=await contextoLink.api.preparar('cliente-teste','2026-09');
-exigir(new URL(linkPreparado).searchParams.get('mes')==='2026-09'&&contextoLink.api.cal().aprovacaoMeses['2026-09'].status==='liberado','Cecília transforma somente o mês aprovado em liberado e recebe URL exata');
-exigir(contextoLink.api.gravacoes()===1&&contextoLink.api.historicos()===1,'primeira liberação grava e registra uma única vez');
+exigir(new URL(linkPreparado).searchParams.get('mes')==='2026-09'&&contextoLink.api.cal().aprovacaoMeses['2026-09'].status==='liberado','Cecília recebe a URL exata do mês que Amanda já publicou');
+exigir(contextoLink.api.gravacoes()===0&&contextoLink.api.historicos()===0,'cópia do link não grava nem muda histórico do calendário');
 const linkRepetido=await contextoLink.api.preparar('cliente-teste','2026-09');
-exigir(new URL(linkRepetido).searchParams.get('mes')==='2026-09'&&contextoLink.api.gravacoes()===1,'retentativa já liberada é idempotente');
+exigir(new URL(linkRepetido).searchParams.get('mes')==='2026-09'&&contextoLink.api.gravacoes()===0,'retentativa de cópia continua sem escrita');
 contextoLink.api.cenario('aguardando_interna');
 let erroRevisao=''; try{ await contextoLink.api.preparar('cliente-teste','2026-09'); }catch(e){ erroRevisao=String(e?.message||e); }
-exigir(erroRevisao.includes('revisão da Amanda')&&contextoLink.api.gravacoes()===0,'mês ainda na fila da Amanda não é liberado pela cópia');
-contextoLink.api.cenario('aprovado_interno',false);
+exigir(erroRevisao.includes('aprovação da Amanda')&&contextoLink.api.gravacoes()===0,'mês ainda na fila da Amanda não é liberado pela cópia');
+contextoLink.api.cenario('liberado',false);
 let erroVazio=''; try{ await contextoLink.api.preparar('cliente-teste','2026-09'); }catch(e){ erroVazio=String(e?.message||e); }
 exigir(/(?:não existe|sem) conteúdo confirmado/i.test(erroVazio)&&contextoLink.api.gravacoes()===0,'mês vazio confirmado não recebe link nem escrita');
 
@@ -146,7 +146,7 @@ exigir(contextoCompetenciaEscritorio.api('2026-09','2026-08-18T12:00:00')===fals
 exigir(contextoCompetenciaEscritorio.api('2027-01','2026-12-18T12:00:00')===false,'escritório reconhece janeiro como operação de dezembro');
 
 const renderFila=trecho(escritorio,'window.renderFilaEnvioCalendarios = async function','  window.enviarUmCalendario');
-exigir(renderFila.includes('mesForaDaCompetenciaOperacional')&&renderFila.includes('Arquivo histórico'),'meses liberados fora do ciclo permanecem visíveis em bloco histórico separado');
+exigir(renderFila.includes("st==='arquivado'")&&renderFila.includes('Abrir para conferência')&&renderFila.includes('abrirCalendarioArquivoInterno'),'arquivo da Amanda é separado do mês público e abre somente para conferência');
 const visaoOperacional=trecho(escritorio,'window.renderVisaoCalendarios = async function','  function etapaDoConteudo');
 exigir(visaoOperacional.includes('const mesAtual = competenciaOperacionalCalendario()')&&
   !visaoOperacional.includes('meses[meses.length-1]'),'visão principal não mistura outro mês mais recente com a competência operacional');
@@ -154,10 +154,10 @@ const auditoriaVisibilidade=trecho(escritorio,'window.varrerVisibilidadeClientes
 exigir(auditoriaVisibilidade.includes('const mesOperacional=competenciaOperacionalCalendario()')&&
   auditoriaVisibilidade.includes('itensDoMesCalendario(cal,mesOperacional)'),'auditoria de visibilidade e seu botão de envio conferem o mesmo mês seguinte');
 const aprovacao=trecho(escritorio,'window.liberarCalendario = async function','  window.devolverCalendario');
-exigir(aprovacao.includes('runTransaction')&&aprovacao.includes("estado!=='aguardando_interna'")&&aprovacao.includes("status:'aprovado_interno',mes:alvo"),'aprovação da Amanda relê itens e estado em transação');
+exigir(aprovacao.includes('dispararCalendarios([{slug,mes:alvo,aprovarAgora:true}])')&&aprovacao.includes('já está vendo'),'aprovação da Amanda usa o único fluxo que publica e confirma ao cliente');
 const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovar NÃO envia mais.');
-exigir(disparo.includes('runTransaction')&&disparo.includes('const snap=await tx.get(ref)')&&disparo.includes("estado!=='aprovado_interno'&&!podeAprovarEEnviar"),'envio da Amanda relê estado e conteúdo do mesmo mês em transação');
-exigir(disparo.includes('const recibo=await getDoc(ref)')&&disparo.includes("estadoMesCal(recibo.data()||{},a.mes)!=='liberado'")&&escritorio.includes("{ slug, mes: alvo, aprovarAgora:true }"),'aprovar e enviar usa permissão explícita e só confirma depois do recibo do mês liberado');
+exigir(disparo.includes('runTransaction')&&disparo.includes('const snap=await tx.get(ref)')&&disparo.includes('mapaAprovacaoAposPublicar'),'publicação relê estado/conteúdo e arquiva o ativo anterior na mesma transação');
+exigir(disparo.includes('const recibo=await getDoc(ref)')&&disparo.includes("estadoMesCal(dadosRecibo,a.mes)!=='liberado'")&&disparo.includes('outrosAtivos.length'),'aprovação só confirma depois do recibo com um único mês público');
 exigir(disparo.includes('const resultado={enviados:[],falhas:[]}')&&disparo.includes('resultado.falhas.push')&&disparo.includes('return resultado'),'disparo em lote devolve recibos enviados e falhas individualizadas');
 const lote=trecho(escritorio,'window.enviarTodosOsCalendarios = async function','  async function dispararCalendarios');
 exigir(lote.includes('resultado.falhas.map')&&lote.includes("Falharam ")&&lote.includes('resultado.enviados.length'),'lote informa nomes/erros parciais e não exibe falso sucesso agregado');
@@ -166,7 +166,6 @@ for(const [rotulo,bloco] of [
   ['envio individual',trecho(escritorio,'window.enviarUmCalendario = async function','  window.enviarTodosOsCalendarios')],
   ['envio em lote',lote],
   ['disparo',disparo],
-  ['aprovar e enviar',trecho(escritorio,'window.aprovarEEnviarAgora = async function','  window.liberarCalendario')],
   ['aprovação interna',aprovacao]
 ]) exigir(bloco.includes('mesForaDaCompetenciaOperacional'),rotulo+' aplica a mesma competência operacional');
 
@@ -177,6 +176,7 @@ exigir(!devolucao.includes('updateDoc(')&&!devolucao.includes('getDoc(')&&devolu
 
 const carregarPortal=trecho(portal,'async function carregarCalendario()','  window.aprovarConteudoCalendario');
 exigir(carregarPortal.includes("new URLSearchParams(location.search).get('mes')")&&carregarPortal.includes('mesPedidoValido&&!mesesLib.includes(mesPedidoValido)'),'Portal honra o mês pedido e bloqueia troca silenciosa por outra competência');
+exigir(carregarPortal.includes("estadoDoMesPortal(mesPedidoValido)==='arquivado'")&&carregarPortal.includes('Calendário arquivado'),'Portal mostra somente a mensagem correta para mês arquivado');
 exigir(carregarPortal.indexOf('mesPedidoValido&&!mesesLib.includes')<carregarPortal.indexOf('mesesLib[mesesLib.length-1]'),'fallback para o último mês ocorre somente quando não existe pedido explícito');
 exigir(carregarPortal.includes('Calendário temporariamente indisponível')&&carregarPortal.includes('não significa que o calendário esteja vazio ou apagado'),'falha do Firestore não vira calendário vazio');
 exigir(carregarPortal.includes('__calendarioPortalConfirmado')&&carregarPortal.includes('última versão confirmada'),'Portal preserva o último retrato confirmado quando a leitura seguinte falha');

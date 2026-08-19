@@ -40,7 +40,7 @@ exigir(mapa['2026-10'].status==='rascunho','publicação não altera outro mês 
 exigir(mapa['2026-08'].em==='antes'&&!mapa['2026-08'].substituidoPor,'publicação não regrava nem vincula o histórico anterior');
 
 const aprovacao=trecho(escritorio,'window.liberarCalendario = async function','  window.devolverCalendario');
-const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovar NÃO envia mais.');
+const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovação e publicação são uma única decisão da Amanda.');
 exigir(aprovacao.includes('dispararCalendarios([{slug,mes:alvo,aprovarAgora:true}])')&&disparo.includes('mapaAprovacaoAposPublicar')&&disparo.includes('const snap=await tx.get(ref)'),'Amanda usa uma única transação que relê o estado e aplica a transição centralizada');
 exigir(disparo.includes("estadoMesCal(dadosRecibo,a.mes)!=='liberado'")&&!disparo.includes('outrosAtivos.length'),'aprovação confirma o próprio mês sem exigir que os demais estejam fechados');
 exigir(!aprovacao.includes("status:'aprovado_interno'"),'aprovação não cria a etapa adicional de envio manual');

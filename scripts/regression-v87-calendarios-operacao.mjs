@@ -25,49 +25,40 @@ async function testarCarteiraEditorialReal(){
   const codigo = extrairAtribuicaoAsync('clientesCalendarioRecorrentesConfirmados');
   const contexto = {
     window: {},
-    __cacheCastaConfirmada: true,
-    carregarClientesExtras: async()=>true,
-    clientesDeConteudoRecorrente: async()=>[
-      {slug:'iphone-campo-largo',nome:'iPhone Campo Largo'},
-      {slug:'ikn',nome:'IKN'},
-      {slug:'get-started',nome:'Get Started'},
-      {slug:'hitech',nome:'HiTech'},
-      {slug:'rodrigo',nome:'Rodrigo'}
+    __carteiraCalendarioOperacionalConfirmada: [
+      {slug:'iphone-campo-largo',nome:'iPhone Campo Largo'}
     ],
-    castaDosClientes: async()=>({
-      'iphone-campo-largo':{tipo:'mensalista'},
-      ikn:{tipo:'avulso'},
-      'get-started':{tipo:'interno'},
-      rodrigo:{tipo:'mensalista'}
-    }),
-    slugClienteCanonico: slug=>slug==='hitech'?'rodrigo':slug
+    carregarClientesExtras: async()=>true,
+    slugClienteCanonico: slug=>slug
   };
   vm.runInNewContext(codigo, contexto);
   const lista = await contexto.window.clientesCalendarioRecorrentesConfirmados();
-  assert.deepEqual(Array.from(lista, c=>c.slug), ['iphone-campo-largo','rodrigo']);
+  assert.deepEqual(Array.from(lista, c=>c.slug), ['iphone-campo-largo']);
   verificacoes++;
   ok(!lista.some(c=>c.slug==='ikn'), 'IKN avulso não pode entrar na carteira de calendário');
   ok(!lista.some(c=>c.slug==='get-started'), 'cliente interno não pode entrar na carteira de calendário');
-  ok(lista.filter(c=>c.slug==='rodrigo').length===1, 'alias canônico não pode duplicar cliente');
+  ok(!lista.some(c=>c.slug==='rodrigo'), 'plano só edição não pode entrar na carteira de calendário');
 
-  contexto.__cacheCastaConfirmada = false;
+  contexto.__carteiraCalendarioOperacionalConfirmada = null;
   await assert.rejects(
     contexto.window.clientesCalendarioRecorrentesConfirmados(),
-    /confirmar a classificação mensalista/
+    /carteira operacional/
   );
   verificacoes++;
 }
 
 await testarCarteiraEditorialReal();
 
-contem(escritorio, '2026-08-19-calendarios-arquivo-v88', 'build V88 identificado');
-contem(escritorio, 'somente um mensalista comprovado pode aparecer', 'política editorial explícita');
-contem(escritorio, "if((casta[slug]||{}).tipo!=='mensalista') return;", 'filtro exige mensalista comprovado');
-contem(escritorio, "if(!__cacheCastaConfirmada) throw new Error", 'falha de classificação não vira lista geral');
+contem(escritorio, '2026-08-19-calendarios-stories-v89', 'build V89 identificado');
+contem(escritorio, '__carteiraCalendarioOperacionalConfirmada', 'carteira editorial possui retrato operacional confirmado');
+contem(escritorio, 'CLIENTES_SEM_CALENDARIO_OPERACIONAL', 'exclusões operacionais são centralizadas');
+naoContem(extrairAtribuicaoAsync('clientesCalendarioRecorrentesConfirmados'), 'castaDosClientes()', 'carteira editorial não consulta classificação financeira');
 naoContem(escritorio, 'renderListaCalendariosFerramentas(CLIENTES_LISTA)', 'lista geral não alimenta calendário principal');
 contem(escritorio, 'const lista=await clientesCalendarioRecorrentesConfirmados();', 'carteira principal usa fonte confirmada');
 contem(escritorio, "castaOperacional[slug]!=='avulso'", 'Cecília também exclui avulso operacional');
 contem(escritorio, "getDocs(collection(db,'clientes_extras'))", 'casta de clientes extras é consultada');
+const central=escritorio.slice(escritorio.indexOf('window.renderControleEditorialCalendarios = async function(){'),escritorio.indexOf('window.aplicarFiltrosControleEditorialCalendarios = function(){'));
+naoContem(central, 'castaDosClientes()', 'Central Editorial da Gabi não consulta financeiro');
 
 contem(escritorio, "calendarioFerramentasLeituraEstado='ausente';", 'documento ausente tem estado próprio');
 contem(escritorio, 'Este calendário ainda não foi iniciado.', 'ausência real gera orientação correta');

@@ -1609,9 +1609,9 @@ async function testarV54Sandbox() {
     !cobrancaStoriesFonte.includes('registrados.length ?'),
     'Stories voltou a reativar contrato por seed, segunda coleção ou escrita durante leitura');
   const clientesStoriesApi=executarSandbox('stories-clientes-ativos-v67.js',
-    `let __storyClientesCache=null,documentos=[],falhar=false;const db={};function collection(){return {};}`+
+    `let __storyClientesCache=null,__storyClientesAtualizadoEm=0,__storyClientesErro=null,__storyClientesLeituraEmCurso=null,documentos=[],falhar=false;const db={};function collection(){return {};}`+
     `async function getDocs(){if(falhar)throw new Error('leitura indisponível');return {forEach:fn=>documentos.forEach((v,i)=>fn({id:v.slug||String(i),data:()=>v}))};}`+
-    `function hojeLocal(){return '2026-08-18';}${saidaEfetivaStoriesFonte}${cadastroStories}\nglobalThis.api={listar:window.carregarClientesDeStory,definir:v=>{documentos=v;falhar=false;__storyClientesCache=null;},indisponivel:()=>{falhar=true;__storyClientesCache=null;}};`);
+    `function comTimeoutStoriesEquipe(p){return Promise.resolve(p);}function hojeLocal(){return '2026-08-18';}${saidaEfetivaStoriesFonte}${cadastroStories}\nglobalThis.api={listar:window.carregarClientesDeStory,definir:v=>{documentos=v;falhar=false;__storyClientesCache=null;__storyClientesAtualizadoEm=0;__storyClientesErro=null;__storyClientesLeituraEmCurso=null;},indisponivel:()=>{falhar=true;__storyClientesCache=null;__storyClientesAtualizadoEm=0;__storyClientesErro=null;__storyClientesLeituraEmCurso=null;}};`);
   clientesStoriesApi.definir([{slug:'juliane-nerone',nome:'Juliane',ativo:false},{slug:'vitalle-odonto',nome:'Vitalle',ativo:true}]);
   const apenasAtivos=await clientesStoriesApi.listar(true);
   exigir(apenasAtivos.length===1&&apenasAtivos[0].slug==='vitalle-odonto',

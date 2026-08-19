@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-19-calendarios-arquivo-v88">
+  <meta name="gs-build" content="2026-08-19-calendarios-stories-v89">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1256,7 +1256,7 @@
       <div id="calendarioFerramentasAberto" style="display:none;">
         <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
           <div><b id="nomeClienteFerramentasAberto"></b></div>
-          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;"><div class="field" style="margin:0;"><label>Mês publicado</label><input type="month" id="mesLinkCalFerramentas"></div><button class="btn" style="width:auto;" id="btnCopiarCalFerramentas" onclick="copiarLinkCalendarioFerramentasAtual()">⧉ Copiar link publicado</button></div>
+          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;"><div class="field" style="margin:0;"><label>Mês para conferir ou copiar</label><input type="month" id="mesLinkCalFerramentas"></div><button class="btn" style="width:auto;" id="btnCopiarCalFerramentas" onclick="copiarLinkCalendarioFerramentasAtual()">⧉ Copiar link do mês</button></div>
         </div>
         <div id="diagnosticoCalFerramentas" class="desc" style="margin:10px 0;padding:10px 12px;border-left:3px solid var(--yellow);background:var(--deep);border-radius:8px;">Escolha um cliente para confirmar o conteúdo do próximo mês.</div>
         <!-- `src=""` recarregava o próprio escritorio.html dentro deste
@@ -3325,9 +3325,16 @@
     {nome:"Fior Restaurante", slug:"fior-restaurante"}, {nome:"Zeiss", slug:"zeiss"}
   ].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
   const CLIENTES_LISTA = CLIENTES_BASE.map(c=>({...c}));
+  const CLIENTES_SEM_CALENDARIO_OPERACIONAL = new Set(['get-started','rodrigo']);
+  let __carteiraCalendarioOperacionalConfirmada = null;
+  let __erroCarteiraCalendarioOperacional = null;
+  let __carregarClientesExtrasEmCurso = null;
+  let __versaoCarteiraCalendario = 0;
 
   async function carregarClientesExtras(){
-    try{
+    if(__carregarClientesExtrasEmCurso) return __carregarClientesExtrasEmCurso;
+    const versaoDaLeitura=__versaoCarteiraCalendario;
+    __carregarClientesExtrasEmCurso=(async()=>{ try{
       const [snap,cfgSnap] = await Promise.all([
         getDocs(collection(db,'clientes_extras')),
         getDocs(collection(db,'clientes_config'))
@@ -3339,7 +3346,7 @@
       const porSlug=new Map();
       CLIENTES_BASE.forEach(c=>{
         const slug=slugClienteCanonico(c.slug);
-        if(!porSlug.has(slug)) porSlug.set(slug,{nome:nomeClienteCanonico(slug,c.nome),slug});
+        if(!porSlug.has(slug)) porSlug.set(slug,{nome:nomeClienteCanonico(slug,c.nome),slug,base:true});
       });
       /* Um cliente ativado pelo fluxo novo pode existir somente em
          clientes_config. Antes, essa ficha era usada para classificar, mas
@@ -3349,7 +3356,8 @@
       Object.entries(configuracoes).forEach(([slug,dados])=>{
         if(dados?.tipoCliente!=='mensalista'||clienteInativoEfetivo(dados)) return;
         const nome=dados.nome||dados.clienteNome||MENSALISTAS_OPERACIONAIS_CONFIRMADOS.get(slug)||nomeDeSlugSeguro(slug);
-        if(!porSlug.has(slug)) porSlug.set(slug,{nome:nomeClienteCanonico(slug,nome),slug,config:true});
+        const anterior=porSlug.get(slug)||{};
+        porSlug.set(slug,{...anterior,nome:nomeClienteCanonico(slug,nome),slug,config:true});
       });
       MENSALISTAS_OPERACIONAIS_CONFIRMADOS.forEach((nome,slug)=>{
         if(!porSlug.has(slug)) porSlug.set(slug,{nome,slug,compatibilidade:true});
@@ -3359,15 +3367,41 @@
         if(v.excluido||!v.slug) return;
         const slug=slugClienteCanonico(v.slug);
         const anterior=porSlug.get(slug);
-        if(!anterior||v.slug===slug) porSlug.set(slug,{nome:v.slug===slug?(v.nome||nomeDeSlugSeguro(slug)):(anterior?.nome||nomeDeSlugSeguro(slug)),slug,extra:true});
+        if(!anterior||v.slug===slug) porSlug.set(slug,{
+          ...(anterior||{}),
+          nome:v.slug===slug?(v.nome||nomeDeSlugSeguro(slug)):(anterior?.nome||nomeDeSlugSeguro(slug)),
+          slug,
+          extra:true,
+          tipoOperacionalExtra:String(v.casta||v.tipoCliente||v.tipo||'').toLowerCase()
+        });
       });
       const ativos=[...porSlug.values()].filter(c=>!clienteInativoEfetivo(configuracoes[c.slug])).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      const carteiraCalendarios=ativos.filter(c=>{
+        const slug=slugClienteCanonico(c.slug);
+        if(CLIENTES_SEM_CALENDARIO_OPERACIONAL.has(slug)) return false;
+        const cfg=configuracoes[slug]||{};
+        if(clienteInativoEfetivo(cfg)||cfg.semConteudoRecorrente===true||String(cfg.tipoEntrega||'')==='entrega_direta') return false;
+        const tipoCfg=String(cfg.tipoCliente||'').toLowerCase();
+        if(tipoCfg&&tipoCfg!=='mensalista') return false;
+        const tipoExtra=String(c.tipoOperacionalExtra||'').toLowerCase();
+        if(!tipoCfg&&tipoExtra&&tipoExtra!=='mensalista') return false;
+        if(FORA_DA_META_SEMENTE[normNomeCliente(c.nome)]==='cliente avulso') return false;
+        if(tipoCfg==='mensalista'||tipoExtra==='mensalista'||c.config||c.compatibilidade) return true;
+        return c.base===true;
+      }).map(c=>({nome:c.nome,slug:slugClienteCanonico(c.slug)}));
+      if(versaoDaLeitura!==__versaoCarteiraCalendario) return false;
       CLIENTES_LISTA.splice(0,CLIENTES_LISTA.length,...ativos);
+      __carteiraCalendarioOperacionalConfirmada=carteiraCalendarios;
+      __erroCarteiraCalendarioOperacional=null;
       return true;
     }catch(e){
+      __erroCarteiraCalendarioOperacional=e;
       console.error('Não consegui atualizar a carteira operacional; mantive a última lista confirmada.',e);
       return false;
-    }
+    } finally {
+      if(versaoDaLeitura===__versaoCarteiraCalendario) __carregarClientesExtrasEmCurso=null;
+    }})();
+    return __carregarClientesExtrasEmCurso;
   }
   /* ===== CLIENTE "SÓ EDIÇÃO" (plano do Rodrigo) =====
      Plano em que a agência APENAS edita os vídeos que o cliente envia.
@@ -3411,6 +3445,10 @@
   window.limparCacheDeClientes = function(){
     __cacheAlvoConteudo = null;
     __cacheCasta = null;
+    __versaoCarteiraCalendario++;
+    __carteiraCalendarioOperacionalConfirmada = null;
+    __erroCarteiraCalendarioOperacional = null;
+    __carregarClientesExtrasEmCurso = null;
     try{ __cacheTipoCliente = null; }catch(e){}
   };
   window.limparCacheAlvoConteudo = function(){ window.limparCacheDeClientes(); };
@@ -3854,18 +3892,10 @@
      a tela exibir indisponibilidade, em vez de voltar para CLIENTES_LISTA. */
   window.clientesCalendarioRecorrentesConfirmados = async function(){
     await carregarClientesExtras();
-    const [recorrentes, casta] = await Promise.all([
-      clientesDeConteudoRecorrente(),
-      castaDosClientes()
-    ]);
-    if(!__cacheCastaConfirmada) throw new Error('Não foi possível confirmar a classificação mensalista dos clientes.');
-    const porSlug = new Map();
-    (recorrentes||[]).forEach(c=>{
-      const slug=slugClienteCanonico(c.slug);
-      if((casta[slug]||{}).tipo!=='mensalista') return;
-      if(!porSlug.has(slug) || c.slug===slug) porSlug.set(slug,{...c,slug});
-    });
-    return [...porSlug.values()];
+    if(!Array.isArray(__carteiraCalendarioOperacionalConfirmada)){
+      throw new Error('Não foi possível confirmar a carteira operacional dos calendários.');
+    }
+    return __carteiraCalendarioOperacionalConfirmada.map(c=>({...c}));
   };
 
   /* ===== VÍDEO DE TRÁFEGO (22/07/2026, pedido do Chris) =====
@@ -12491,18 +12521,61 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      adicionar um cliente aqui já liga a automação pra ele, sem mexer em
      código. Coleção: `stories_clientes`. */
   let __storyClientesCache = null;
+  let __storyClientesAtualizadoEm = 0;
+  let __storyClientesErro = null;
+  let __storyClientesLeituraEmCurso = null;
+
+  function comTimeoutStoriesEquipe(promessa,rotulo,limiteMs=12000){
+    let timer=null;
+    const limite=new Promise((_,rejeitar)=>{
+      timer=setTimeout(()=>{
+        const erro=new Error('Tempo excedido ao confirmar '+rotulo+'.');
+        erro.code='gs/timeout-stories';
+        rejeitar(erro);
+      },limiteMs);
+    });
+    return Promise.race([promessa,limite]).finally(()=>{ if(timer) clearTimeout(timer); });
+  }
+  window.comTimeoutStoriesEquipe=comTimeoutStoriesEquipe;
+
+  function limparRetratosStoriesEquipe(){
+    __storyClientesCache=null;
+    __storyClientesAtualizadoEm=0;
+    __storyClientesErro=null;
+    __storyClientesLeituraEmCurso=null;
+    window.__linksStorySemana={};
+    window.__linksStoryDocs={};
+    window.__linksStoryDocsConfirmados=null;
+    window.__storiesEquipeConfirmado=null;
+    window.__storyClienteSel='';
+  }
+  window.limparRetratosStoriesEquipe=limparRetratosStoriesEquipe;
 
   window.carregarClientesDeStory = async function(forcar){
-    if(__storyClientesCache && !forcar) return __storyClientesCache;
-    const snap = await getDocs(collection(db,'stories_clientes'));
-    /* A coleção é a única verdade operacional. A V59 ainda misturava
-       registros reais com nomes seed em memória; isso fazia um nome
-       conhecido parecer contratado mesmo sem provar a ficha ativa.
-       Abertura continua somente leitura e nunca reativa cliente. */
-    const lista = [];
-    snap.forEach(d => lista.push({ id:d.id, ...d.data() }));
-    __storyClientesCache = lista.filter(c => c.ativo !== false && !saidaClienteJaEfetiva(c)).sort((a,b) => (a.nome||'').localeCompare(b.nome||''));
-    return __storyClientesCache;
+    if(__storyClientesLeituraEmCurso) return __storyClientesLeituraEmCurso;
+    if(__storyClientesCache && !forcar && Date.now()-__storyClientesAtualizadoEm<30000){
+      return __storyClientesCache.map(c=>({...c}));
+    }
+    __storyClientesLeituraEmCurso=(async()=>{ try{
+      const snap = await comTimeoutStoriesEquipe(getDocs(collection(db,'stories_clientes')),'os clientes de Stories');
+      /* A coleção é a única verdade operacional. A V59 ainda misturava
+         registros reais com nomes seed em memória; isso fazia um nome
+         conhecido parecer contratado mesmo sem provar a ficha ativa.
+         Abertura continua somente leitura e nunca reativa cliente. */
+      const lista = [];
+      snap.forEach(d => lista.push({ id:d.id, ...d.data() }));
+      __storyClientesCache = lista.filter(c => c.ativo !== false && !saidaClienteJaEfetiva(c)).sort((a,b) => (a.nome||'').localeCompare(b.nome||''));
+      __storyClientesAtualizadoEm=Date.now();
+      __storyClientesErro=null;
+      return __storyClientesCache.map(c=>({...c}));
+    }catch(e){
+      __storyClientesErro=e;
+      if(__storyClientesCache) return __storyClientesCache.map(c=>({...c}));
+      throw e;
+    }finally{
+      __storyClientesLeituraEmCurso=null;
+    }})();
+    return __storyClientesLeituraEmCurso;
   };
 
   function estadoCadeiaStoriesCliente(slug, semana, stories, linkDoc, linksConfirmados=true){
@@ -12803,7 +12876,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let linksConfirmadosEquipe=true;
     let avisoLeituraLinks='';
     try{
-      const snapL = await getDocs(collection(db,'stories_links'));
+      const snapL = await comTimeoutStoriesEquipe(getDocs(collection(db,'stories_links')),'os links de Stories');
       window.__linksStorySemana = {}; window.__linksStoryDocs = {};
       snapL.forEach(d => { window.__linksStoryDocs[d.id]={id:d.id,...d.data()}; window.__linksStorySemana[d.id] = d.data().dias || {}; });
       window.__linksStoryDocsConfirmados={docs:{...window.__linksStoryDocs},semanas:{...window.__linksStorySemana}};
@@ -12847,8 +12920,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        só dois têm story em contrato. A Gabi tinha que saber de cabeça
        quem e o quê. Agora vem do registro, com o combinado escrito. */
     let clientesStory;
+    let avisoLeituraClientes='';
     try{
       clientesStory = await carregarClientesDeStory();
+      if(__storyClientesErro){
+        avisoLeituraClientes='Não consegui atualizar a lista de clientes de Stories. A tela preservou o último retrato confirmado; nenhum cliente foi tratado como removido.';
+      }
     }catch(e){
       console.error('Falha ao confirmar os clientes de Stories:',e);
       cont.innerHTML = `<div class="card" style="border:2px solid var(--red);"><b>⚠️ Não consegui confirmar os clientes de Stories.</b><div class="desc" style="margin-top:6px;">A leitura falhou; isso não significa que os dados sumiram. Recarregue a tela ou tente novamente em instantes.</div></div>`;
@@ -12857,7 +12934,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(!clientesStory.some(c=>c.slug===window.__storyClienteSel)){
       window.__storyClienteSel=clientesStory[0]?.slug||'';
     }
-    const semStory = CLIENTES_LISTA.filter(c => !clientesStory.some(x => x.slug === c.slug));
+    let semStory=[];
+    let avisoCarteiraStories='';
+    try{
+      const mensalistas=await clientesCalendarioRecorrentesConfirmados();
+      semStory=mensalistas.filter(c=>!clientesStory.some(x=>slugClienteCanonico(x.slug)===slugClienteCanonico(c.slug)));
+    }catch(e){
+      console.error('Falha ao confirmar mensalistas candidatos a Stories:',e);
+      avisoCarteiraStories='Não consegui confirmar novos mensalistas agora. Os clientes de Stories já registrados continuam disponíveis, mas a opção de adicionar outro ficou bloqueada para não oferecer avulsos por engano.';
+    }
 
     /* A Gabi pediu: um botão por cliente no topo, e ao clicar aparece a
        semana daquele cliente. Antes o cliente ficava num select no meio
@@ -12927,12 +13012,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
             const dt = new Date(seg); dt.setDate(dt.getDate() + (d.n - 1));
             const rot = dt.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
             const v = salvos[d.n] || {};
+            const linkSeguro=urlHttpsSeguraStoryInterno(v.link||'');
             return `<div style="display:flex;gap:10px;align-items:center;padding:11px 0;border-top:1px solid var(--line);flex-wrap:wrap;">
               <div style="min-width:110px;font-size:12.5px;font-weight:800;">${d.nome} <span class="meta">${rot}</span></div>
-              <input type="text" id="lkStory_${sel.slug}_${d.n}" value="${esc(v.link||'')}" placeholder="Cola o link do documento deste dia"
-                style="flex:1;min-width:200px;background:var(--deep);border:1px solid ${v.link?'var(--green)':'var(--line)'};color:#fff;padding:10px 12px;border-radius:8px;font-size:12.5px;"
+              <input type="url" id="lkStory_${sel.slug}_${d.n}" value="${escAttr(v.link||'')}" placeholder="Cola o link HTTPS do documento deste dia"
+                style="flex:1;min-width:200px;background:var(--deep);border:1px solid ${linkSeguro?'var(--green)':v.link?'var(--red)':'var(--line)'};color:#fff;padding:10px 12px;border-radius:8px;font-size:12.5px;"
                 onblur="salvarLinkStory('${sel.slug}','${semana}',${d.n})">
-              ${v.link ? '<a href="'+esc(v.link)+'" target="_blank" rel="noopener" class="btn secondary" style="width:auto;padding:9px 13px;font-size:11px;text-decoration:none;">abrir ↗</a>' : ''}
+              ${linkSeguro ? `<a href="${escAttr(linkSeguro)}" target="_blank" rel="noopener noreferrer" class="btn secondary" style="width:auto;padding:9px 13px;font-size:11px;text-decoration:none;">abrir ↗</a>` : v.link ? '<span class="meta" data-story-link-invalido="true" style="color:var(--red);font-weight:800;">Link inválido — corrija antes de abrir</span>' : ''}
             </div>`;
           }).join('');
         })()}
@@ -12977,7 +13063,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let todos=[];
     let avisoLeituraStories='';
     try{
-      const snap=await getDocs(collection(db,'stories_semanais'));
+      const snap=await comTimeoutStoriesEquipe(getDocs(collection(db,'stories_semanais')),'os roteiros de Stories');
       snap.forEach(d=>todos.push({id:d.id,...d.data()}));
       window.__storiesEquipeConfirmado=todos.map(s=>({...s}));
     }catch(e){
@@ -12990,8 +13076,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         return;
       }
     }
-    if(avisoLeituraLinks||avisoLeituraStories){
-      html=`<div class="card" data-stories-equipe-estado="retrato-preservado" style="border-color:var(--yellow);"><div class="desc">${[avisoLeituraLinks,avisoLeituraStories].filter(Boolean).map(esc).join('<br>')}</div></div>`+html;
+    if(avisoLeituraClientes||avisoCarteiraStories||avisoLeituraLinks||avisoLeituraStories){
+      html=`<div class="card" data-stories-equipe-estado="retrato-preservado" style="border-color:var(--yellow);"><div class="desc">${[avisoLeituraClientes,avisoCarteiraStories,avisoLeituraLinks,avisoLeituraStories].filter(Boolean).map(esc).join('<br>')}</div></div>`+html;
     }
     const clienteStorySelecionado=window.__storyClienteSel||'';
     const daSemana = todos.filter(s => semanaEfetivaStory(s) === semana && (!clienteStorySelecionado || s.cliente === clienteStorySelecionado));
@@ -19511,7 +19597,7 @@ window.setGerenciaSub = function(qual, el){
     const numeroRevisaoCal = errosLeitura.some(x=>x.startsWith('calendários')) && !cals.length ? '—' : espRevisao;
     lista.push(I('calRevisao', rotuloRevisaoCal, numeroRevisaoCal,
       numeroRevisaoCal === '—' ? 'alto' : espRevisao?'alto':'ok', "irParaRevisaoCalendarios()", dicaRevisaoCal));
-    lista.push(I('calRepresados', 'Guardados pro dia 15', represados, 'info', "irParaEnvioCalendarios()", 'Aprovados, esperando o disparo.'));
+    lista.push(I('calRepresados', 'Aprovações antigas a publicar', represados, 'info', "irParaEnvioCalendarios()", 'Registros da versão anterior que ainda precisam ser publicados pela Amanda.'));
     lista.push(I('semCal', 'Cliente sem nada montado', semCal, semCal?'alto':'ok', "irParaAtalho('calendarios')",
       semCal ? ('Nem calendário, nem vídeo, nem gravação: ' + nomesSemCal.join(', ') + '. Este é o caso grave — ninguém começou.')
              : 'Todo mensalista tem calendário ou produção andando.'));
@@ -20269,12 +20355,19 @@ window.setGerenciaSub = function(qual, el){
   }
   window.consolidarMesesControleEditorial = consolidarMesesControleEditorial;
 
-  function clienteAtivoNoControleEditorial(config, slug){
+  function clienteForaDoControleEditorial(config, slug, nome){
     const cfg = config || {};
-    if(slug === 'get-started' || ehClienteSoEdicao(slug)) return false;
+    if(CLIENTES_SEM_CALENDARIO_OPERACIONAL.has(slugClienteCanonico(slug)) || ehClienteSoEdicao(slug)) return true;
+    if(cfg.semConteudoRecorrente === true || cfg.tipoEntrega === 'entrega_direta') return true;
+    if(['avulso','interno'].includes(String(cfg.tipoCliente||'').toLowerCase())) return true;
+    return FORA_DA_META_SEMENTE[normNomeCliente(nome||cfg.nome||cfg.clienteNome||'')] === 'cliente avulso';
+  }
+
+  function clienteAtivoNoControleEditorial(config, slug, nome){
+    const cfg = config || {};
+    if(clienteForaDoControleEditorial(cfg,slug,nome)) return false;
     if(cfg.excluido === true || cfg.ativo === false || clienteInativoEfetivo(cfg)) return false;
-    if(cfg.semConteudoRecorrente === true || cfg.tipoEntrega === 'entrega_direta') return false;
-    return !['avulso','interno','encerrado'].includes(String(cfg.tipoCliente||'').toLowerCase());
+    return String(cfg.tipoCliente||'').toLowerCase() !== 'encerrado';
   }
 
   function faseControleEditorial(estado, total){
@@ -20287,7 +20380,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function rotuloFaseControleEditorial(fase){
-    return ({faltando:'Ainda não iniciado',montagem:'Em montagem',ajuste:'Ajuste solicitado',revisao:'Esperando Amanda',aprovado:'Aprovado · aguarda envio',liberado:'Cliente já vê'})[fase] || 'Em montagem';
+    return ({faltando:'Ainda não iniciado',montagem:'Em montagem',ajuste:'Ajuste solicitado',revisao:'Esperando Amanda',aprovado:'Aprovado na versão antiga · falta publicar',liberado:'Publicado · cliente já vê'})[fase] || 'Em montagem';
   }
 
   function rotuloCompetenciaControleEditorial(mes){
@@ -20314,12 +20407,11 @@ window.setGerenciaSub = function(qual, el){
     if(!box) return;
     box.innerHTML = '<div class="card"><div class="desc">Confirmando calendários e carteira operacional...</div></div>';
     try{
-      const [snapCalendarios, snapConfig, snapExtras, clientesRecorrentes, castaAtual] = await Promise.all([
+      const [snapCalendarios, snapConfig, snapExtras, clientesRecorrentes] = await Promise.all([
         obterCalendariosCompartilhados(),
         getDocs(collection(db,'clientes_config')),
         getDocs(collection(db,'clientes_extras')),
-        clientesCalendarioRecorrentesConfirmados(),
-        castaDosClientes()
+        clientesCalendarioRecorrentesConfirmados()
       ]);
       const configs = {};
       snapConfig.forEach(d=>{ const slug=slugClienteCanonico(d.id); if(!configs[slug] || d.id===slug) configs[slug]=d.data()||{}; });
@@ -20340,7 +20432,7 @@ window.setGerenciaSub = function(qual, el){
       const ativos = new Map();
       candidatosAtivos.forEach(c=>{
         const slug=slugClienteCanonico(c.slug);
-        if(clienteAtivoNoControleEditorial(configs[slug],slug)) ativos.set(slug,{slug,nome:c.nome,ativo:true});
+        if(clienteAtivoNoControleEditorial(configs[slug],slug,c.nome)) ativos.set(slug,{slug,nome:c.nome,ativo:true});
       });
       const meses = new Set([competenciaCalendarioAtual()]);
       Object.values(consolidados).forEach(c=>Object.keys(c.meses).forEach(m=>meses.add(m)));
@@ -20355,8 +20447,7 @@ window.setGerenciaSub = function(qual, el){
       });
       Object.values(consolidados).forEach(c=>{
         if(ativos.has(c.slug)) return;
-        const tipo=String((castaAtual[c.slug]||{}).tipo||'').toLowerCase();
-        if(tipo==='avulso'||tipo==='interno'||ehClienteSoEdicao(c.slug)) return;
+        if(clienteForaDoControleEditorial(configs[c.slug],c.slug,c.nome)) return;
         Object.values(c.meses).forEach(registro=>{
           const progresso=progressoEditorialCalendario(registro.itens);
           linhas.push({slug:c.slug,nome:c.nome,ativo:false,mes:registro.mes,itens:registro.itens,estado:registro.estado,fase:faseControleEditorial(registro.estado,registro.itens.length),...progresso,origemId:registro.origemId});
@@ -24633,6 +24724,9 @@ window.setGerenciaSub = function(qual, el){
       calendarioFerramentasClientesEstado='confirmado';
       preencherSeletoresCalendariosRecorrentes(calendarioFerramentasClientesConfirmados);
       renderListaCalendariosFerramentas(calendarioFerramentasClientesConfirmados);
+      if(__erroCarteiraCalendarioOperacional&&cont){
+        cont.insertAdjacentHTML('afterbegin',htmlFalhaLeituraCalendarios('A carteira não atualizou; exibindo o último retrato confirmado',__erroCarteiraCalendarioOperacional));
+      }
       return calendarioFerramentasClientesConfirmados;
     }catch(e){
       console.error('Falha ao confirmar clientes mensalistas dos calendários:',e);
@@ -24669,7 +24763,7 @@ window.setGerenciaSub = function(qual, el){
         <div><div class="nome">${esc(c.nome)}</div><div class="meta">Escolha a competência exata. O cliente pode reabrir qualquer mês já liberado; somente a primeira liberação continua no próximo mês operacional. A equipe consulta o arquivo pelo Escritório autenticado.</div></div>
         <div style="display:flex;gap:7px;align-items:end;flex-wrap:wrap;"><div class="field" style="margin:0;"><label>Mês</label><input type="month" min="2026-07" id="mesLinkCal_${escAttr(c.slug)}" value="${mesPadrao}"></div>
         <button class="btn secondary" style="width:auto;padding:9px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${escJs(c.slug)}',this,document.getElementById('mesLinkCal_${escAttr(c.slug)}').value)">👁 Copiar para a equipe</button>
-        <button class="btn secondary" style="width:auto;padding:9px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${escJs(c.slug)}',this,document.getElementById('mesLinkCal_${escAttr(c.slug)}').value)">⧉ Liberar e copiar para cliente</button></div>
+        <button class="btn secondary" style="width:auto;padding:9px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${escJs(c.slug)}',this,document.getElementById('mesLinkCal_${escAttr(c.slug)}').value)">⧉ Copiar para o cliente</button></div>
       </div>`).join('');
     }
   }
@@ -24711,7 +24805,7 @@ window.setGerenciaSub = function(qual, el){
     const estado=estadoMesCal(calendarioFerramentasDadosConfirmados,alvo);
     box.style.borderLeftColor=itens.length?'var(--green)':'var(--red)';
     box.innerHTML=itens.length
-      ? '<b>'+esc(alvo)+': '+itens.length+' conteúdo(s) confirmado(s) no Firestore.</b> Estado: '+esc(estado||'rascunho')+'. Se estiver aprovado pela Amanda, Cecília pode liberar e copiar o link deste mesmo mês.'
+      ? '<b>'+esc(alvo)+': '+itens.length+' conteúdo(s) confirmado(s) no Firestore.</b> Estado: '+esc(estado||'rascunho')+'. A Amanda publica ao aprovar; a Cecília apenas copia o link quando este mês já está publicado.'
       : '<b>'+esc(alvo||'Mês selecionado')+' está realmente sem conteúdos no documento confirmado.</b> Este mês ainda não foi produzido; conteúdo de outra competência não será misturado aqui.';
   }
 
@@ -25199,7 +25293,7 @@ window.setGerenciaSub = function(qual, el){
         let ve, cor, txt;
         if(!cal || !itens){ ve = false; cor = 'var(--red)'; txt = 'não tem calendário montado — o cliente vê "em preparação"'; }
         else if(st === 'liberado'){ ve = true; cor = 'var(--green)'; txt = 'vê os ' + itens + ' conteúdos' + (legado ? ' (montado antes da revisão existir)' : ''); }
-        else if(st === 'aprovado_interno'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — aprovado, guardado pro envio do dia 15'; }
+        else if(st === 'aprovado_interno'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — aprovação da versão antiga ainda precisa ser publicada pela Amanda'; }
         else if(st === 'aguardando_interna'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — esperando a Amanda liberar'; }
         else if(st === 'ajuste_interno'){ ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — devolvido pra ajuste'; }
         else { ve = false; cor = 'var(--yellow2)'; txt = 'NÃO vê — ainda marcado como rascunho'; }
@@ -25643,16 +25737,16 @@ window.setGerenciaSub = function(qual, el){
     box.innerHTML = '<div class="card"><div class="desc">Lendo os calendários...</div></div>';
 
     let cals = {};
+    let alvo = [];
     try{
-      const snap = await obterCalendariosCompartilhados();
+      const [snap,clientesConfirmados] = await Promise.all([obterCalendariosCompartilhados(),clientesCalendarioRecorrentesConfirmados()]);
       cals = mapaCalendariosPorIdentidade(snap);
+      alvo = clientesConfirmados;
     }catch(e){
-      console.error('Falha ao ler calendários:', e);
-      box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui confirmar os calendários', e);
+      console.error('Falha ao ler calendários ou confirmar a carteira operacional:', e);
+      box.innerHTML = htmlFalhaLeituraCalendarios('Não consegui confirmar os calendários e seus clientes', e);
       return;
     }
-
-    const alvo = await clientesCalendarioRecorrentesConfirmados();
 
     const linhas = alvo.map(c => {
       const cal = cals[c.slug] || {};
@@ -25680,14 +25774,17 @@ window.setGerenciaSub = function(qual, el){
     const calendariosSemRoteiro=linhas.filter(l=>!l.total||l.roteiros===0).length;
 
     window.__calSufixo = sufixo || '';
-    box.innerHTML = `<div class="painelResumo" style="margin-bottom:16px;">
+    const avisoCarteira=__erroCarteiraCalendarioOperacional
+      ? htmlFalhaLeituraCalendarios('A carteira não atualizou; exibindo o último retrato confirmado',__erroCarteiraCalendarioOperacional)
+      : '';
+    box.innerHTML = `${avisoCarteira}<div class="painelResumo" style="margin-bottom:16px;">
       <div class="resumoCard green"><div class="num">${prontos}</div><div class="lbl">✅ liberados pro cliente</div></div>
       <div class="resumoCard ${emMontagem?'yellow':''}"><div class="num">${emMontagem}</div><div class="lbl">📝 em montagem</div></div>
       <div class="resumoCard ${vazios?'red':'green'}"><div class="num">${vazios}</div><div class="lbl">⚠️ sem calendário</div></div>
     </div>
     ${podeAcompanharRoteiros ? `<div class="card" data-calendarios-progresso-editorial="true" style="border:2px solid var(--yellow);">
       <h2>🧭 Calendários: o que falta fazer</h2>
-      <div class="desc">Um calendário por cliente, usando somente o mês mais recente. Cada conteúdo ativo conta uma vez; itens arquivados não entram.</div>
+      <div class="desc">Um calendário por cliente na competência operacional que a equipe está preparando. Cada conteúdo ativo conta uma vez; itens arquivados não entram.</div>
       <div class="painelResumo" style="margin-top:12px;">
         <div class="resumoCard green"><div class="num">${calendariosCompletos}</div><div class="lbl">calendários com todos os roteiros</div></div>
         <div class="resumoCard ${calendariosEmAndamento?'yellow':'green'}"><div class="num">${calendariosEmAndamento}</div><div class="lbl">calendários em andamento</div></div>
@@ -25705,7 +25802,7 @@ window.setGerenciaSub = function(qual, el){
           const pct = l.total ? Math.round(l.postados/l.total*100) : 0;
           const estadoTxt = !l.total ? 'sem calendário montado'
             : l.estado === 'liberado' ? (l.legado ? 'o cliente já vê (montado antes da revisão existir)' : 'liberado — o cliente já vê')
-            : l.estado === 'aprovado_interno' ? 'aprovado — guardado pro envio do dia 15'
+            : l.estado === 'aprovado_interno' ? 'aprovação da versão antiga — ainda precisa publicar'
             : l.estado === 'aguardando_interna' ? 'esperando revisão interna'
             : l.estado === 'ajuste_interno' ? 'devolvido pra ajuste'
             : 'em montagem — o cliente ainda não vê';
@@ -28427,6 +28524,7 @@ window.setGerenciaSub = function(qual, el){
        ainda está no mesmo papel e só está recriando os ouvintes. */
     if(limparCachesColecoes !== false){
       __limparCacheColecoes();
+      limparRetratosStoriesEquipe();
       window.__mensagensClientesLista=[];
       window.__cobrancasFila={};
       window.__cobrancasPreparadas={};
@@ -35585,21 +35683,17 @@ Observações do cliente: ${l.observacoes||'—'}`;
     atualizarTodosOsBadges();
   }
 
-  /* ===== O REPRESAMENTO DO DIA 15 — 29/07/2026 ======================
-     Pedido do Chris, e a razão dele é operacional, não técnica: se cada
-     calendário fosse pro cliente assim que a Amanda aprova, um cliente
-     receberia dia 3 e outro dia 12. O combinado da agência é que todo
-     mundo recebe o mês seguinte no MESMO dia.
-
-     Então "aprovar" e "enviar" viraram dois atos. A Amanda aprova no
-     ritmo dela; os aprovados ficam represados aqui; no dia 15 ela
-     dispara todos com um clique.
+  /* ===== ESTADO ÚNICO DE PUBLICAÇÃO — 19/08/2026 =====================
+     O fluxo atual não separa aprovação e envio: quando a Amanda aprova,
+     a mesma transação publica exatamente aquele mês. `aprovado_interno`
+     existe somente para recuperar documentos criados pela versão antiga;
+     a tela o apresenta como legado pendente, nunca como etapa normal.
 
      Estado do mês:
        aguardando_interna → esperando a Amanda
-       aprovado_interno   → ela aprovou, ESTÁ REPRESADO (cliente não vê)
-       liberado           → foi enviado, o cliente vê e pode aprovar
-       ajuste_interno     → devolvido pra Gabi */
+       liberado           → Amanda aprovou; o cliente já vê e pode responder
+       ajuste_interno     → devolvido pra Gabi
+       aprovado_interno   → legado que ainda precisa ser publicado */
   /* ===== O MÊS NÃO PODE FAZER O CALENDÁRIO SUMIR — 04/08/2026 =====
      A fila da Amanda filtrava apenas `item.mes === mes`. Num documento
      misto, bastava um conteúdo novo ter `mes` e os antigos não terem:
@@ -35954,19 +36048,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
     return resultado;
   }
 
-  /* Aprovar NÃO envia mais. Aprovar guarda; o envio é o disparo do dia 15.
-     A demanda pra Gabi "mandar o link" morreu junto: o cliente passou a
-     receber pelo portal dele, não por link no WhatsApp. */
-  /* ===== O CAMINHO RÁPIDO — 29/07/2026 ===============================
-     Ponto da Amanda, e é um caso real: existem calendários montados fora
-     da data do ciclo (o Master Chef é um) que precisam ir pro cliente no
-     dia em que ela aprova, não no dia 15.
-
-     Em vez de criar exceção no código, virou escolha na tela: aprovar e
-     guardar, ou aprovar e enviar. Os dois caminhos terminam no MESMO
-     lugar — `dispararCalendarios`, a única função que libera calendário
-     pro cliente. Não existe segundo caminho de liberação, então não há
-     como um divergir do outro. */
+  /* Aprovação e publicação são uma única decisão da Amanda. O cliente
+     recebe o mês no Portal; a Cecília pode copiar o mesmo link já
+     publicado, sem alterar estado nem criar outra porta de liberação. */
   /* Compatibilidade para uma aba antiga ainda aberta. Não mantém uma
      segunda regra: qualquer clique antigo cai no único fluxo atual. */
   window.aprovarEEnviarAgora = function(slug, mes, btn){

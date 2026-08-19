@@ -582,7 +582,7 @@ const reabrirCalendario = calendarioEditor.slice(
   calendarioEditor.indexOf('window.retirarDaAprovacaoInterna = async function'),
   calendarioEditor.indexOf('/* Esconde da visão do cliente')
 );
-if (!calendarioEditor.includes('2026-08-19-calendarios-arquivo-v88') ||
+if (!calendarioEditor.includes('2026-08-19-calendarios-stories-v89') ||
     !calendarioEditor.includes("return st === 'aguardando_interna' || st === 'aprovado_interno' || st === 'liberado' || st === 'arquivado'") ||
     !reabrirCalendario.includes('fb.runTransaction') ||
     !reabrirCalendario.includes("estadoServidor === 'liberado'") ||
@@ -735,9 +735,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-19-calendarios-arquivo-v88') {
-  falhar(`build V88 inesperado: ${build || 'ausente'}`);
-} else provar('V88 preserva a base anterior e isola publicação, arquivo e reabertura por competência');
+if (build !== '2026-08-19-calendarios-stories-v89') {
+  falhar(`build V89 inesperado: ${build || 'ausente'}`);
+} else provar('V89 preserva a base anterior e isola calendários e Stories por papel, estado e cliente');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
@@ -782,8 +782,8 @@ const mesEditorV68 = ler('calendario.html').slice(
   ler('calendario.html').indexOf('function mesDoItemNoCalendario'),
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
-if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-19-calendarios-arquivo-v88">') ||
-    !portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-arquivo-v88">') ||
+if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v89">') ||
+    !portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v89">') ||
     !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
     !mesEditorV68.includes('const mesDoDocumento = mesDoTexto(cal && cal.month)') ||

@@ -23,7 +23,7 @@ function trecho(fonte,inicio,fim){
 }
 
 exigir(calendario===calendarios,'calendario.html e calendarios.html continuam byte a byte idênticos');
-for(const fonte of [escritorio,calendario,portal]) exigir(fonte.includes('2026-08-19-calendarios-arquivo-v88'),'todos os consumidores identificam a mesma V88');
+for(const fonte of [escritorio,calendario,portal]) exigir(fonte.includes('2026-08-19-calendarios-stories-v89'),'todos os consumidores identificam a mesma V89');
 
 const helper=trecho(escritorio,"const PRIMEIRA_COMPETENCIA_ARQUIVO_AUTOMATICO='2026-10';",'  window.estadoPublicadoEfetivoCalendario');
 const contexto={Date};
@@ -52,7 +52,7 @@ exigir(reabrir.includes("estadoMesCal(cal,mes,agora)!=='arquivado'")&&reabrir.in
 exigir(reabrir.includes('const recibo=await getDoc(ref)')&&reabrir.includes("estadoMesCal(recibo.data()||{},mes)!=='liberado'"),'reabertura exige recibo de liberação');
 exigir(!/deleteDoc|\.delete\(/.test(reabrir),'reabertura não apaga calendário nem outro mês');
 
-const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovar NÃO envia mais.');
+const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovação e publicação são uma única decisão da Amanda.');
 exigir(!disparo.includes('outrosAtivos')&&!disparo.includes('ativosAntes'),'publicação não impõe mais um único mês público');
 exigir(disparo.includes('outros meses preservados'),'histórico registra a preservação dos outros meses');
 
@@ -96,7 +96,9 @@ const contextoCarteira={
   slugClienteCanonico:slug=>String(slug||''),
   nomeClienteCanonico:(_slug,nome)=>String(nome||''),
   nomeDeSlugSeguro:slug=>String(slug||'').replace(/-/g,' '),
-  clienteInativoEfetivo:dados=>dados?.clienteInativo===true
+  clienteInativoEfetivo:dados=>dados?.clienteInativo===true,
+  normNomeCliente:v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim(),
+  FORA_DA_META_SEMENTE:{ikn:'cliente avulso','ikn brasil':'cliente avulso','x joias':'cliente avulso'}
 };
 vm.createContext(contextoCarteira);
 new vm.Script(`${fonteCarteira}\nglobalThis.executarCarteira=carregarClientesExtras;globalThis.lista=CLIENTES_LISTA;`).runInContext(contextoCarteira);

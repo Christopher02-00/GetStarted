@@ -153,7 +153,7 @@ exigir(auditoriaVisibilidade.includes('const mesOperacional=competenciaOperacion
   auditoriaVisibilidade.includes('itensDoMesCalendario(cal,mesOperacional)'),'auditoria de visibilidade e seu botão de envio conferem o mesmo mês seguinte');
 const aprovacao=trecho(escritorio,'window.liberarCalendario = async function','  window.devolverCalendario');
 exigir(aprovacao.includes('dispararCalendarios([{slug,mes:alvo,aprovarAgora:true}])')&&aprovacao.includes('já está vendo'),'aprovação da Amanda usa o único fluxo que publica e confirma ao cliente');
-const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovar NÃO envia mais.');
+const disparo=trecho(escritorio,'async function dispararCalendarios','  /* Aprovação e publicação são uma única decisão da Amanda.');
 exigir(disparo.includes('runTransaction')&&disparo.includes('const snap=await tx.get(ref)')&&disparo.includes('mapaAprovacaoAposPublicar'),'publicação relê estado/conteúdo e preserva outros meses na mesma transação');
 exigir(disparo.includes('const recibo=await getDoc(ref)')&&disparo.includes("estadoMesCal(dadosRecibo,a.mes)!=='liberado'")&&!disparo.includes('outrosAtivos.length'),'aprovação confirma o próprio mês sem exigir um único mês público');
 exigir(disparo.includes('const resultado={enviados:[],falhas:[]}')&&disparo.includes('resultado.falhas.push')&&disparo.includes('return resultado'),'disparo em lote devolve recibos enviados e falhas individualizadas');

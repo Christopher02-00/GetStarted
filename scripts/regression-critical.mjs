@@ -99,8 +99,10 @@ function testarCoberturaPostagensSandbox() {
     controle.includes('calcularCoberturaPostagens') && controle.includes('irParaCapsulaAmanda()'),
     'painel voltou à lista bruta, ao cálculo só de vídeo ou perdeu o caminho manual da Amanda');
   const carteiraControle=trecho(escritorio,'async function clientesControlePostagemPorPapel','window.clientesControlePostagemPorPapel');
-  exigir(carteiraControle.includes("if(['Chris','Amanda'].includes(usuarioAtual)) return clientesDeConteudoRecorrente()") &&
+  exigir(carteiraControle.includes("if(['Chris','Amanda'].includes(usuarioAtual)) return clientesCalendarioRecorrentesConfirmados()") &&
     carteiraControle.includes("getDocs(collection(db,'clientes_config'))") &&
+    carteiraControle.includes("getDocs(collection(db,'clientes_extras'))") &&
+    carteiraControle.includes("castaOperacional[slug]!=='avulso'") &&
     !carteiraControle.includes("'contratos_cliente'") && !carteiraControle.includes("'pagamentos_mensais'") &&
     !carteiraControle.includes("'clientes_encerrados'"),
     'controle operacional da Cecília voltou a consultar contratos, mensalidades ou arquivo gerencial');
@@ -621,7 +623,7 @@ async function testarCalendariosSandbox() {
     `function mesDoTextoConf(txt){const s=String(txt||'');const iso=s.match(/(20\\d{2})-(\\d{2})/);if(iso)return iso[1]+'-'+iso[2];const t=s.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();const nomes=['janeiro','fevereiro','marco','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];const i=nomes.findIndex(n=>t.includes(n)),ano=(t.match(/(20\\d{2})/)||[])[1];return i>=0&&ano?ano+'-'+String(i+1).padStart(2,'0'):'';}\n` +
     `function competenciaFinanceiraValida(v){return /^\\d{4}-(0[1-9]|1[0-2])$/.test(String(v||''));}\n${fonteCompetenciaSeguinte}\n` +
     `function slugClienteCanonico(slug){return ({zeens:'zeiss','otica-visao-araucaria':'zeiss'}[slug]||slug);}\n` +
-    `${fonteFila}\nglobalThis.api={estadoMesCal,itensDoMesCalendario,linhasCalendariosAguardandoRevisao,mesHistoricoForaDaRevisao};`);
+    `${fonteFila}\nglobalThis.api={estadoMesCal,itensDoMesCalendario,linhasCalendariosAguardandoRevisao};`);
   const registro = (id, dados) => ({ id, data:()=>dados });
   const setembroPendente = registro('cliente-x', {
     client:'Cliente X', items:[{mes:'2026-09',name:'A',ref:'https://ref'}],
@@ -662,8 +664,8 @@ async function testarCalendariosSandbox() {
     aprovacaoMeses:{'2026-07':{status:'aguardando_interna',por:'Gabrielle'},'2026-08':{status:'rascunho'}}
   });
   const filaLegado = fila.linhasCalendariosAguardandoRevisao([mistoLegado],new Date(2026,7,12,12));
-  exigir(filaLegado.length === 0 && fila.mesHistoricoForaDaRevisao('2026-07',new Date(2026,7,12,12))===true,
-    'mês histórico explicitamente contaminado continuou na fila operacional da Amanda');
+  exigir(filaLegado.length === 1 && filaLegado[0].mesKey === '2026-07',
+    'mês explicitamente enviado pela Gabi foi ocultado da fila da Amanda por causa da data');
   exigir(fila.linhasCalendariosAguardandoRevisao([registro('ok', {
     items:[{mes:'2026-08',name:'A'}], aprovacaoMeses:{'2026-08':{status:'liberado'}}
   })]).length === 0, 'calendário já liberado continuou pedindo aprovação');
@@ -690,8 +692,8 @@ async function testarCalendariosSandbox() {
     }
   });
   const vipFila=fila.linhasCalendariosAguardandoRevisao([vipContaminado],new Date(2026,7,12,12));
-  exigir(vipFila.length===1&&vipFila[0].mesKey==='2026-09'&&vipFila[0].itens===15,
-    'VIP voltou a mostrar julho e setembro juntos na fila da Amanda');
+  exigir(vipFila.length===2&&vipFila.some(v=>v.mesKey==='2026-07'&&v.itens===6)&&vipFila.some(v=>v.mesKey==='2026-09'&&v.itens===15),
+    'fila da Amanda ocultou uma competência explicitamente enviada pela Gabi');
   const aliasesMesmoMes=fila.linhasCalendariosAguardandoRevisao([
     registro('zeens',{client:'Zeens',items:[{mes:'2026-09',name:'A'}],aprovacaoMeses:{'2026-09':{status:'aguardando_interna',em:'2026-08-12T10:00:00Z'}}}),
     registro('zeiss',{client:'Zeiss',items:[{mes:'2026-09',name:'A'}],aprovacaoMeses:{'2026-09':{status:'aguardando_interna',em:'2026-08-12T10:00:00Z'}}})
@@ -701,15 +703,15 @@ async function testarCalendariosSandbox() {
   const barreiraHistorico=trecho(calendario,
     'window.enviarParaAprovacaoInterna = async function',
     'window.retirarDaAprovacaoInterna = async function');
-  exigir(barreiraHistorico.includes('if(!mesEhCompetenciaOperacional(mesVisivel))') &&
-    barreiraHistorico.includes('Os outros meses ficam apenas no arquivo'),
-    'mês fora da competência seguinte voltou a poder ser reenviado para a fila da Amanda');
+  exigir(!barreiraHistorico.includes('mesEhCompetenciaOperacional(mesVisivel)') &&
+    barreiraHistorico.includes("if(!/^20\\d{2}-(0[1-9]|1[0-2])$/.test(String(mesVisivel||'')))"),
+    'editor ainda bloqueia mês válido diferente do mês seguinte ou aceita competência malformada');
   const historicoApi=executarSandbox('mes-historico-v81.js',
     `${trecho(calendario,'function competenciaAtualDoCalendario','/* O mês que está sendo visto agora.')}\nglobalThis.api={competenciaOperacionalDoCalendario,mesEhCompetenciaOperacional};`);
   exigir(historicoApi.competenciaOperacionalDoCalendario('2026-08-12T12:00:00')==='2026-09' &&
     historicoApi.competenciaOperacionalDoCalendario('2026-12-12T12:00:00')==='2027-01' &&
     historicoApi.mesEhCompetenciaOperacional('2026-10','2026-08-12T12:00:00')===false,
-    'barreira operacional não diferencia mês seguinte, virada de ano e outro mês futuro');
+    'sugestão automática não calcula mês seguinte/virada de ano corretamente');
   const portalFonte=trecho(fs.readFileSync(path.join(raiz,'portal-cliente.html'),'utf8'),
     'function mesHistoricoAnteriorAoControlePortal(mes)','const mesesDoDoc');
   const portalMesApi=executarSandbox('portal-mes-isolado-v59.js',
@@ -775,6 +777,7 @@ async function testarCalendariosSandbox() {
   const filaGravacaoFonte=trecho(calendario,'function gravarComSeguranca()','async function executarGravacaoComSeguranca');
   const filaGravacaoApi=executarSandbox('fila-gravacao-calendario-v68.js',
     `let pendingWrite=false,gravacoesCalendarioNaFila=0,filaGravacaoCalendario=Promise.resolve({ok:true}),inicios=[],resolucoes=[];\n`+
+    `function pintarEstado(){}\n`+
     `function executarGravacaoComSeguranca(){inicios.push(inicios.length+1);return new Promise(resolve=>resolucoes.push(resolve));}\n`+
     `${filaGravacaoFonte}\n`+
     `globalThis.api={gravar:gravarComSeguranca,inicios:()=>inicios.slice(),resolver:i=>resolucoes[i]({ok:true}),fila:()=>gravacoesCalendarioNaFila,pendente:()=>pendingWrite};`);

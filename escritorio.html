@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-18-ciclo-clientes-propostas-v81">
+  <meta name="gs-build" content="2026-08-19-calendarios-multimes-v87">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3180,7 +3180,7 @@
       const dRef = new Date();
       dRef.setDate(dRef.getDate() - (dRef.getDay() === 0 ? 6 : dRef.getDay() - 1));
       const semanaR = dataLocal(dRef);
-      const alvoR = await clientesDeConteudoRecorrente();
+      const alvoR = await clientesCalendarioRecorrentesConfirmados();
       if(!alvoR.length) return false;
       /* 27/07/2026 — não filtra mais por semana. Perfil é registro
          permanente; filtrar por semana fazia todo cliente aparecer
@@ -3628,7 +3628,8 @@
   window.clienteInativoEfetivo = clienteInativoEfetivo;
 
   let __cacheCasta = null;
-  window.limparCacheCasta = function(){ __cacheCasta = null; };
+  let __cacheCastaConfirmada = false;
+  window.limparCacheCasta = function(){ __cacheCasta = null; __cacheCastaConfirmada = false; };
 
   /* tipo: 'interno' | 'mensalista' | 'avulso' | 'encerrado' | 'indefinido'
      `origem` diz DE ONDE veio a conclusao, pra ninguem ter que adivinhar
@@ -3638,16 +3639,22 @@
     const m = {};
     const marca = (slug, tipo, origem) => { m[slugClienteCanonico(slug)] = { tipo, origem }; };
     try{
-      const [cfgSnap, contratoSnap, encSnap, mensSnap] = await Promise.all([
+      const [cfgSnap, contratoSnap, encSnap, mensSnap, extrasSnap] = await Promise.all([
         getDocs(collection(db,'clientes_config')),
         getDocs(collection(db,'contratos_cliente')),
         getDocs(collection(db,'clientes_encerrados')),
-        getDocs(collection(db,'pagamentos_mensais'))
+        getDocs(collection(db,'pagamentos_mensais')),
+        getDocs(collection(db,'clientes_extras'))
       ]);
 
       const explicito = {};
       cfgSnap.forEach(d => { const t = d.data().tipoCliente;
         if(t === 'mensalista' || t === 'avulso' || t === 'interno') explicito[slugClienteCanonico(d.id)] = t; });
+      extrasSnap.forEach(d=>{ const v=d.data()||{};
+        const t=String(v.casta||v.tipoCliente||v.tipo||'').toLowerCase();
+        const slug=slugClienteCanonico(v.slug||d.id);
+        if(!explicito[slug]&&['mensalista','avulso','interno'].includes(t)) explicito[slug]=t;
+      });
 
       const contratoAtivo = new Set(), contratoPorNome = {};
       contratoSnap.forEach(d => { const v = d.data();
@@ -3667,23 +3674,24 @@
 
       const encerrados = new Set(), encPorNome = new Set();
       encSnap.forEach(d => { const v = d.data(); if(!saidaClienteJaEfetiva(v)) return;
-        if(v.slug) encerrados.add(v.slug);
+        if(v.slug) encerrados.add(slugClienteCanonico(v.slug));
         if(v.nome) encPorNome.add(normNomeCliente(v.nome)); });
 
       CLIENTES_LISTA.forEach(c => {
         const slug = c.slug, nome = normNomeCliente(c.nome);
         const apelido = slugClienteCanonico(slug);
         if(SLUGS_INTERNOS.includes(slug))        return marca(slug, 'interno', 'é a própria agência');
-        if(encerrados.has(slug) || encPorNome.has(nome)) return marca(slug, 'encerrado', 'saiu da carteira');
-        if(explicito[slug])                      return marca(slug, explicito[slug], 'marcado à mão');
+        if(encerrados.has(apelido) || encPorNome.has(nome)) return marca(slug, 'encerrado', 'saiu da carteira');
         if(contratoAtivo.has(slug))              return marca(slug, 'mensalista', 'tem contrato ativo');
         if(apelido !== slug && contratoAtivo.has(apelido)) return marca(slug, 'mensalista', 'contrato registrado como "' + apelido + '"');
         if(contratoPorNome[nome])                return marca(slug, 'mensalista', 'contrato pelo nome');
         if(temMensalidade.has(slug))             return marca(slug, 'mensalista', 'tem mensalidade lançada');
         if(apelido !== slug && temMensalidade.has(apelido)) return marca(slug, 'mensalista', 'mensalidade registrada como "' + apelido + '"');
+        if(explicito[apelido])                   return marca(slug, explicito[apelido], 'marcado à mão');
         return marca(slug, 'indefinido', 'sem contrato e sem mensalidade');
       });
-    }catch(e){ console.error('Não consegui classificar as castas:', e); }
+      __cacheCastaConfirmada = true;
+    }catch(e){ __cacheCastaConfirmada = false; console.error('Não consegui classificar as castas:', e); }
     __cacheCasta = m;
     return m;
   };
@@ -3751,6 +3759,7 @@
 
   window.clientesForaDoConteudo = async function(){
     const fora = new Map();   // slug -> motivo
+    const configuracoesConteudo = new Map();
     const entrega = await obterSlugsEntregaDireta().catch(()=>new Set());
     CLIENTES_LISTA.forEach(c => {
       const chave = normNomeCliente(c.nome);
@@ -3771,8 +3780,10 @@
     try{
       const cfg = await getDocs(collection(db,'clientes_config'));
       cfg.forEach(d => { const v = d.data();
-        if(v.semConteudoRecorrente) fora.set(d.id, v.motivoSemConteudo || 'marcado à mão');
-        else if(v.semConteudoRecorrente === false) fora.delete(d.id); });
+        const slugCfg=slugClienteCanonico(d.id);
+        configuracoesConteudo.set(slugCfg,v||{});
+        if(v.semConteudoRecorrente) fora.set(slugCfg, v.motivoSemConteudo || 'marcado à mão');
+        else if(v.semConteudoRecorrente === false) fora.delete(slugCfg); });
     }catch(e){ console.error('Não consegui ler as configurações de cliente:', e); }
 
     /* ===== O CONSERTO DE 03/08/2026, NA FONTE =======================
@@ -3785,8 +3796,15 @@
     try{
       const casta = await castaDosClientes();
       Object.entries(casta).forEach(([slug, c]) => {
-        if(fora.has(slug)) return;                 /* motivo mais especifico ganha */
-        if(castaSemProcessoMensal(c.tipo)) fora.set(slug, c.tipo + ' — ' + c.origem);
+        if(castaSemProcessoMensal(c.tipo)){
+          fora.set(slug, c.tipo + ' — ' + c.origem);
+          return;
+        }
+        /* Contrato/mensalidade ativos vencem uma classificação manual
+           antiga. A única exceção mensalista é entrega direta explícita,
+           que realmente não deve calendário editorial recorrente. */
+        const cfg=configuracoesConteudo.get(slug)||{};
+        if(c.tipo==='mensalista'&&String(cfg.tipoEntrega||'')!=='entrega_direta') fora.delete(slug);
       });
     }catch(e){ console.error('Não consegui aplicar a casta do cliente:', e); }
     return fora;
@@ -3796,8 +3814,29 @@
   window.clientesDeConteudoRecorrente = async function(){
     if(__cacheAlvoConteudo) return __cacheAlvoConteudo;
     const fora = await clientesForaDoConteudo();
-    __cacheAlvoConteudo = CLIENTES_LISTA.filter(c => !fora.has(c.slug));
+    __cacheAlvoConteudo = CLIENTES_LISTA.filter(c => !fora.has(slugClienteCanonico(c.slug)));
     return __cacheAlvoConteudo;
+  };
+
+  /* Calendário não usa a política tolerante da meta geral. Nesta área,
+     somente um mensalista comprovado pode aparecer. Assim, um prospect,
+     projeto avulso ou cadastro ainda sem classificação nunca ganha por
+     acidente uma obrigação editorial. Falha de leitura é propagada para
+     a tela exibir indisponibilidade, em vez de voltar para CLIENTES_LISTA. */
+  window.clientesCalendarioRecorrentesConfirmados = async function(){
+    await carregarClientesExtras();
+    const [recorrentes, casta] = await Promise.all([
+      clientesDeConteudoRecorrente(),
+      castaDosClientes()
+    ]);
+    if(!__cacheCastaConfirmada) throw new Error('Não foi possível confirmar a classificação mensalista dos clientes.');
+    const porSlug = new Map();
+    (recorrentes||[]).forEach(c=>{
+      const slug=slugClienteCanonico(c.slug);
+      if((casta[slug]||{}).tipo!=='mensalista') return;
+      if(!porSlug.has(slug) || c.slug===slug) porSlug.set(slug,{...c,slug});
+    });
+    return [...porSlug.values()];
   };
 
   /* ===== VÍDEO DE TRÁFEGO (22/07/2026, pedido do Chris) =====
@@ -7156,7 +7195,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       }else{
         const [calSnap,recorrentes]=await Promise.all([
           obterCalendariosCompartilhados(),
-          clientesDeConteudoRecorrente().catch(()=>CLIENTES_LISTA.filter(c=>!ehClienteSoEdicao(c.slug)))
+          clientesCalendarioRecorrentesConfirmados()
         ]);
         Object.assign(calendariosPorSlug,mapaCalendariosPorIdentidade(calSnap));
         clientesBase=recorrentes;
@@ -8424,10 +8463,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      "Tentar novamente" não encontrava o destino quando mais precisava. */
   window.renderMinhaAgendaFilmmaker = renderMinhaAgendaFilmmaker;
 
-  function popularFiltroClientesCalendario(){
+  async function popularFiltroClientesCalendario(){
     const sel = document.getElementById('calFiltroTodos');
     if(!sel) return;
-    sel.innerHTML = '<option value="todos">Todos os clientes</option>' + CLIENTES_LISTA.filter(c => !ehClienteSoEdicao(c.slug)).map(c => `<option value="${c.slug}">${esc(c.nome)}</option>`).join('');
+    try{
+      const lista=await clientesCalendarioRecorrentesConfirmados();
+      sel.innerHTML = '<option value="todos">Todos os mensalistas</option>' + lista.filter(c => !ehClienteSoEdicao(c.slug)).map(c => `<option value="${c.slug}">${esc(c.nome)}</option>`).join('');
+    }catch(e){
+      console.error('Falha ao confirmar filtro mensalista de gravações:',e);
+      sel.innerHTML='<option value="">Carteira mensalista indisponível</option>';
+      sel.disabled=true;
+    }
   }
 
   /* ===== NAVEGACAO DE MES (Prompt Mestre 2 - P4, 23/07/2026) =====
@@ -9014,7 +9060,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const principal = padroesAtuais[0];
     if(!principal) throw new Error('Não foi possível criar/localizar a demanda mensal única de calendários.');
 
-    const clientesFixos = await window.clientesDeConteudoRecorrente();
+    const clientesFixos = await window.clientesCalendarioRecorrentesConfirmados();
     const legadasAbertas = demandas.filter(d=>abertas(d) && ehCalendarioCustomLegado(d));
     const legadasDaCompetencia = legadasAbertas.filter(d=>mesDaDemandaFixa(d)===mesAtual);
     const checklistConsolidado = consolidarChecklistCalendariosV13(clientesFixos,padroesAtuais,legadasDaCompetencia,tiposPorId);
@@ -9151,7 +9197,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
     // Clientes só-edição ficam fora das funções fixas: não têm reunião de
     // calendário nem entrega de calendário mensal por contrato.
-    const clientesFixos = await window.clientesDeConteudoRecorrente();
+    const clientesFixos = await window.clientesCalendarioRecorrentesConfirmados();
     const configsPrazosCalendario = await configsPrazoCalendarioCliente();
     const diasCecilia = uteis.slice(0, Math.ceil(clientesFixos.length/2));
     const diasGabi = uteisAntesLimite.slice(diasCecilia.length, diasCecilia.length + Math.ceil(clientesFixos.length/2));
@@ -9643,11 +9689,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const slug = window.__gradeClienteCecilia || '';
     const [gAno, gMes] = mesRef.split('-').map(Number);
 
+    let clientesMensalistas=[];
+    try{ clientesMensalistas=await clientesCalendarioRecorrentesConfirmados(); }
+    catch(e){ cont.innerHTML=htmlFalhaLeituraCalendarios('Não consegui confirmar a carteira mensalista das postagens',e); return; }
+    const slugsMensalistas=new Set(clientesMensalistas.map(c=>slugClienteCanonico(c.slug)));
     const seletor = `<div class="field" style="margin-bottom:0;">
       <label>Cliente</label>
       <select onchange="gradeTrocarClienteCecilia(this.value)">
-        <option value="">Todos os clientes</option>
-        ${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" ${c.slug===slug?'selected':''}>${esc(c.nome)}</option>`).join('')}
+        <option value="">Todos os mensalistas</option>
+        ${clientesMensalistas.map(c=>`<option value="${c.slug}" ${c.slug===slug?'selected':''}>${esc(c.nome)}</option>`).join('')}
       </select></div>`;
 
     cont.innerHTML = `<div class="card"><h2>Calendário de Postagem</h2>
@@ -9657,6 +9707,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try{
       const snap = await getDocs(collection(db,'postagens'));
       snap.forEach(d => { const v = d.data(); if(v.excluido) return;
+        if(!slugsMensalistas.has(slugClienteCanonico(v.cliente||''))) return;
         if(slug && v.cliente !== slug) return;
         posts.push({id:d.id, ...v}); });
     }catch(e){
@@ -9684,12 +9735,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function renderLegendasDoCalendario(){
     const cont = document.getElementById('postagensConteudo');
+    let clientesMensalistas=[];
+    try{ clientesMensalistas=await clientesCalendarioRecorrentesConfirmados(); }
+    catch(e){ cont.innerHTML=htmlFalhaLeituraCalendarios('Não consegui confirmar os mensalistas com calendário',e); return; }
     let html = `<div class="card">
       <h2>📖 Legendas do Calendário — por cliente</h2>
       <div class="desc">A Gabi escreve a legenda direto no calendário editorial, no momento em que planeja o mês. Aqui você consulta tudo organizado, sem precisar esperar o vídeo passar pela aprovação inteira — é referência rápida pra você já saber o que vai em cada post.</div>
       <div class="field"><label>Cliente</label><select id="legCalCliente" onchange="carregarLegendasCliente()">
         <option value="">Selecione...</option>
-        ${CLIENTES_LISTA.map(c=>`<option value="${c.slug}">${esc(c.nome)}</option>`).join('')}
+        ${clientesMensalistas.map(c=>`<option value="${c.slug}">${esc(c.nome)}</option>`).join('')}
       </select></div>
     </div>
     <div id="legCalLista"></div>`;
@@ -13690,18 +13744,19 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const snap = await getDoc(doc(db,'calendarios_enviados', docId));
     const enviados = snap.exists() ? (snap.data().clientes || {}) : {};
 
-    const totalEnviados = CLIENTES_LISTA.filter(c => enviados[c.slug]).length;
+    const clientesMensalistas=await clientesCalendarioRecorrentesConfirmados();
+    const totalEnviados = clientesMensalistas.filter(c => enviados[c.slug]).length;
 
     let html = `<div class="card">
       <h2><svg class="ic"><use href="#i-calendar"/></svg>Calendários Enviados — ${mesChave}</h2>
       <div class="desc">Marca aqui conforme for mandando o calendário editorial de cada cliente esse mês. No mês que vira, a lista já começa vazia de novo sozinha.</div>
       <div style="background:var(--deep);border-radius:7px;height:12px;overflow:hidden;margin-top:10px;">
-        <div style="background:${totalEnviados===CLIENTES_LISTA.length?'#4caf72':'#FBBC19'};height:100%;width:${(totalEnviados/CLIENTES_LISTA.length)*100}%;"></div>
+        <div style="background:${totalEnviados===clientesMensalistas.length?'#4caf72':'#FBBC19'};height:100%;width:${clientesMensalistas.length?((totalEnviados/clientesMensalistas.length)*100):0}%;"></div>
       </div>
-      <div class="meta" style="margin-top:6px;">${totalEnviados} de ${CLIENTES_LISTA.length} enviados</div>
+      <div class="meta" style="margin-top:6px;">${totalEnviados} de ${clientesMensalistas.length} mensalistas enviados</div>
     </div>`;
 
-    html += CLIENTES_LISTA.map(c => {
+    html += clientesMensalistas.map(c => {
       const feito = !!enviados[c.slug];
       return `<label style="display:flex;align-items:center;gap:10px;background:var(--deep);border:1px solid ${feito?'#4caf72':'var(--line)'};border-radius:9px;padding:10px 14px;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" ${feito?'checked':''} onchange="toggleCalendarioEnviado('${docId}','${c.slug}', this.checked)">
@@ -13764,7 +13819,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }catch(e){ console.error('Não consegui ler datas flexíveis:', e); }
 
     const hoje = hojeLocal();
-    const linhas = (await clientesDeConteudoRecorrente()).map(c => {
+    const linhas = (await clientesCalendarioRecorrentesConfirmados()).map(c => {
       const dele = postagens.filter(p => p.cliente === c.slug && p.status === 'agendado' && p.dataAgendada);
       let ultimaData = null;
       dele.forEach(p => { if(!ultimaData || p.dataAgendada > ultimaData) ultimaData = p.dataAgendada; });
@@ -17025,7 +17080,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(nome === 'duvidasBit') popularPerguntasFrequentes();
     if(nome === 'calendarios'){
       document.getElementById('buscaCalFerramentas').value = '';
-      renderListaCalendariosFerramentas(CLIENTES_LISTA);
+      carregarClientesCalendariosFerramentas();
     }
     if(nome === 'conteudoAteQuando') renderConteudoAteQuando();
     if(nome === 'arquivoEntregas'){ popularClientesArquivoEntregas(); renderArquivoEntregas(); }
@@ -17508,6 +17563,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(saidaClienteJaEfetiva(saida)&&!reativarEfetiva){ mostrarToast('Esta saída já está efetiva. Use “Reativar cliente” no arquivo se a saída foi registrada por engano.','erro'); return; }
     const mensalista=saida.tipoCliente==='mensalista'||saida.fichaSnapshot?.tipo==='mensalista';
     const nomeReativado=nomeClienteCanonico(slug,saida.fichaSnapshot?.nome||saida.nome||nomeDeSlugSeguro(slug));
+    const tipoEntregaReativada=String(saida.fichaSnapshot?.tipoEntrega||saida.tipoEntrega||'postagem_completa');
     const reativacao=reativarEfetiva&&mensalista?normalizarDadosReativacaoMensalista(dadosReativacao):null;
     if(reativarEfetiva&&mensalista&&!reativacao?.ok){ mostrarToast(reativacao?.erro||'Confira os dados financeiros da reativação.','erro'); return; }
     const pergunta=reativarEfetiva&&mensalista
@@ -17573,7 +17629,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         const tokenEscolhidoDoc=tokensConhecidos.find(v=>v.ref.id===tokenEscolhido);
         credencialRestaurada={acessoPath:acessoEscolhido?.ref.path||'',tokenPath:tokenEscolhidoDoc?.ref.path||''};
         refs.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),saidaAtualizadaPor:deleteField(),saidaAtualizadaEm:deleteField(),ativoAte:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true}); });
-        tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado,saidaAtivaId:deleteField(),clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado,saidaAtivaId:deleteField(),clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),...(mensalista?{tipoEntrega:tipoEntregaReativada,semConteudoRecorrente:tipoEntregaReativada==='entrega_direta',motivoSemConteudo:tipoEntregaReativada==='entrega_direta'?'Plano com entrega direta: fora das rotinas recorrentes de postagem':deleteField()}:{}),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
         /* Contato histórico é preservado quando o campo fica vazio. Quando
            Amanda informa um novo número, ela grava sem ler o documento. */
         if(contatoFinanceiroRef) tx.set(contatoFinanceiroRef,{slug,whatsapp:reativacao.whatsapp,nome:nomeReativado,origem:'reativacao',atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true});
@@ -19374,7 +19430,7 @@ window.setGerenciaSub = function(qual, el){
     const nomesMesVelho = [], nomesSemCal = [], nomesSemPlano = [];
     try{
       const mesAgora = hojeLocal().slice(0,7);
-      const alvo = await clientesDeConteudoRecorrente();
+      const alvo = await clientesCalendarioRecorrentesConfirmados();
       const mapa = {}; cals.forEach(c => mapa[c.id] = c);
       const temProducao = c => {
         const s = c.slug, n = String(c.nome||'').toLowerCase();
@@ -20221,25 +20277,28 @@ window.setGerenciaSub = function(qual, el){
     if(!box) return;
     box.innerHTML = '<div class="card"><div class="desc">Confirmando calendários e carteira operacional...</div></div>';
     try{
-      const [snapCalendarios, snapConfig, snapExtras] = await Promise.all([
+      const [snapCalendarios, snapConfig, snapExtras, clientesRecorrentes, castaAtual] = await Promise.all([
         obterCalendariosCompartilhados(),
         getDocs(collection(db,'clientes_config')),
-        getDocs(collection(db,'clientes_extras'))
+        getDocs(collection(db,'clientes_extras')),
+        clientesCalendarioRecorrentesConfirmados(),
+        castaDosClientes()
       ]);
       const configs = {};
       snapConfig.forEach(d=>{ const slug=slugClienteCanonico(d.id); if(!configs[slug] || d.id===slug) configs[slug]=d.data()||{}; });
       const consolidados = consolidarMesesControleEditorial(snapCalendarios);
       const candidatosAtivos = new Map();
-      CLIENTES_LISTA.forEach(c=>candidatosAtivos.set(slugClienteCanonico(c.slug),{slug:slugClienteCanonico(c.slug),nome:c.nome}));
+      clientesRecorrentes.forEach(c=>candidatosAtivos.set(slugClienteCanonico(c.slug),{slug:slugClienteCanonico(c.slug),nome:c.nome}));
       snapExtras.forEach(d=>{
         const v=d.data()||{};
         if(v.excluido===true || !v.slug) return;
         const slug=slugClienteCanonico(v.slug);
+        if(!candidatosAtivos.has(slug)) return;
         candidatosAtivos.set(slug,{slug,nome:v.nome||candidatosAtivos.get(slug)?.nome||nomeDeSlugSeguro(slug)});
       });
       snapConfig.forEach(d=>{
         const v=d.data()||{}, slug=slugClienteCanonico(d.id);
-        if(v.nome && !candidatosAtivos.has(slug)) candidatosAtivos.set(slug,{slug,nome:v.nome});
+        if(v.nome && candidatosAtivos.has(slug)) candidatosAtivos.set(slug,{slug,nome:v.nome});
       });
       const ativos = new Map();
       candidatosAtivos.forEach(c=>{
@@ -20259,6 +20318,8 @@ window.setGerenciaSub = function(qual, el){
       });
       Object.values(consolidados).forEach(c=>{
         if(ativos.has(c.slug)) return;
+        const tipo=String((castaAtual[c.slug]||{}).tipo||'').toLowerCase();
+        if(tipo==='avulso'||tipo==='interno'||ehClienteSoEdicao(c.slug)) return;
         Object.values(c.meses).forEach(registro=>{
           const progresso=progressoEditorialCalendario(registro.itens);
           linhas.push({slug:c.slug,nome:c.nome,ativo:false,mes:registro.mes,itens:registro.itens,estado:registro.estado,fase:faseControleEditorial(registro.estado,registro.itens.length),...progresso,origemId:registro.origemId});
@@ -20772,7 +20833,7 @@ window.setGerenciaSub = function(qual, el){
     try{
       const [perfis, alvo] = await Promise.all([
         getDocs(collection(db,'refs_perfil_semana')),
-        clientesDeConteudoRecorrente()
+        clientesCalendarioRecorrentesConfirmados()
       ]);
       const porCliente = {};
       perfis.forEach(d => { const v = d.data();
@@ -24509,6 +24570,47 @@ window.setGerenciaSub = function(qual, el){
 
   let calendarioClienteAbertoSlug = null;
 
+  let calendarioFerramentasClientesConfirmados=[];
+  let calendarioFerramentasClientesEstado='nao-carregado';
+
+  function preencherSeletoresCalendariosRecorrentes(lista){
+    ['resgateCalCliente','resgateCalCliente2'].forEach(id=>{
+      const sel=document.getElementById(id);
+      if(!sel) return;
+      const anterior=sel.value;
+      sel.innerHTML='<option value="">Escolhe o cliente mensalista...</option>'+
+        (lista||[]).map(c=>'<option value="'+escAttr(c.slug)+'">'+esc(c.nome)+'</option>').join('');
+      if((lista||[]).some(c=>c.slug===anterior)) sel.value=anterior;
+    });
+  }
+
+  async function carregarClientesCalendariosFerramentas(){
+    const cont=document.getElementById('listaCalendariosFerramentas');
+    const pessoaDaLeitura=usuarioAtual;
+    calendarioFerramentasClientesEstado='carregando';
+    if(cont&&!calendarioFerramentasClientesConfirmados.length) cont.innerHTML='<div class="empty">Confirmando a carteira mensalista...</div>';
+    try{
+      const lista=await clientesCalendarioRecorrentesConfirmados();
+      if(usuarioAtual!==pessoaDaLeitura) return [];
+      calendarioFerramentasClientesConfirmados=(lista||[]).filter(c=>!ehClienteSoEdicao(c.slug));
+      calendarioFerramentasClientesEstado='confirmado';
+      preencherSeletoresCalendariosRecorrentes(calendarioFerramentasClientesConfirmados);
+      renderListaCalendariosFerramentas(calendarioFerramentasClientesConfirmados);
+      return calendarioFerramentasClientesConfirmados;
+    }catch(e){
+      console.error('Falha ao confirmar clientes mensalistas dos calendários:',e);
+      calendarioFerramentasClientesEstado='falha';
+      if(calendarioFerramentasClientesConfirmados.length){
+        renderListaCalendariosFerramentas(calendarioFerramentasClientesConfirmados);
+        if(cont) cont.insertAdjacentHTML('afterbegin',htmlFalhaLeituraCalendarios('A carteira não atualizou; exibindo o último retrato confirmado',e));
+      }else if(cont){
+        cont.innerHTML=htmlFalhaLeituraCalendarios('Não consegui confirmar quais clientes são mensalistas',e);
+      }
+      return [];
+    }
+  }
+  window.carregarClientesCalendariosFerramentas=carregarClientesCalendariosFerramentas;
+
   function renderListaCalendariosFerramentas(lista){
     lista = (lista || []).filter(c => !ehClienteSoEdicao(c.slug)); // só edição não tem calendário
     const cont = document.getElementById('listaCalendariosFerramentas');
@@ -24520,7 +24622,7 @@ window.setGerenciaSub = function(qual, el){
         <div style="display:flex;gap:6px;">
           <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="abrirCalendarioFerramentas('${c.slug}','${escJs(c.nome)}')">Ver calendário</button>
           <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${c.slug}', this, '${mesPadrao}')">⧉ Próximo mês</button>
-          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${c.slug}', this)">✏️ Link de edição</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${c.slug}', this, '${mesPadrao}')">👁 Próximo mês interno</button>
         </div>
       </div>
     `).join('');
@@ -24528,7 +24630,7 @@ window.setGerenciaSub = function(qual, el){
     if(links){
       links.innerHTML=lista.map(c=>`<div class="item" style="display:flex;justify-content:space-between;align-items:end;flex-wrap:wrap;gap:10px;">
         <div><div class="nome">${esc(c.nome)}</div><div class="meta">Escolha a competência exata. O cliente pode reabrir qualquer mês já liberado; somente a primeira liberação continua no próximo mês operacional. A equipe consulta o arquivo pelo Escritório autenticado.</div></div>
-        <div style="display:flex;gap:7px;align-items:end;flex-wrap:wrap;"><div class="field" style="margin:0;"><label>Mês</label><input type="month" id="mesLinkCal_${escAttr(c.slug)}" value="${mesPadrao}"></div>
+        <div style="display:flex;gap:7px;align-items:end;flex-wrap:wrap;"><div class="field" style="margin:0;"><label>Mês</label><input type="month" min="2026-07" id="mesLinkCal_${escAttr(c.slug)}" value="${mesPadrao}"></div>
         <button class="btn secondary" style="width:auto;padding:9px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${escJs(c.slug)}',this,document.getElementById('mesLinkCal_${escAttr(c.slug)}').value)">👁 Copiar para a equipe</button>
         <button class="btn secondary" style="width:auto;padding:9px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${escJs(c.slug)}',this,document.getElementById('mesLinkCal_${escAttr(c.slug)}').value)">⧉ Liberar e copiar para cliente</button></div>
       </div>`).join('');
@@ -24537,19 +24639,34 @@ window.setGerenciaSub = function(qual, el){
 
   window.filtrarCalendariosFerramentas = function(){
     const q = document.getElementById('buscaCalFerramentas').value.toLowerCase().trim();
-    const filtrados = CLIENTES_LISTA.filter(c => c.nome.toLowerCase().includes(q));
+    if(calendarioFerramentasClientesEstado==='nao-carregado'){
+      carregarClientesCalendariosFerramentas();
+      return;
+    }
+    const filtrados = calendarioFerramentasClientesConfirmados.filter(c => c.nome.toLowerCase().includes(q));
     renderListaCalendariosFerramentas(filtrados);
   };
 
   let calendarioFerramentasAbertoSlug = null;
   let calendarioFerramentasDadosConfirmados = null;
+  let calendarioFerramentasLeituraEstado='nao-iniciada';
 
   function atualizarDiagnosticoCalendarioFerramentas(mes){
     const box=document.getElementById('diagnosticoCalFerramentas');
     if(!box) return;
-    if(!calendarioFerramentasDadosConfirmados){
+    if(calendarioFerramentasLeituraEstado==='carregando'){
       box.style.borderLeftColor='var(--red)';
-      box.innerHTML='<b>Calendário não confirmado.</b> Não considere a tela vazia até a leitura do Firestore terminar.';
+      box.innerHTML='<b>Confirmando o calendário no Firestore...</b> A tela não será tratada como vazia antes da resposta.';
+      return;
+    }
+    if(calendarioFerramentasLeituraEstado==='ausente'){
+      box.style.borderLeftColor='var(--yellow)';
+      box.innerHTML='<b>Este calendário ainda não foi iniciado.</b> O editor abriu vazio para a equipe criar '+esc(rotuloCompetenciaControleEditorial(mes||competenciaOperacionalCalendario()))+'. Nada é gravado até a Gabi adicionar ou salvar o primeiro conteúdo.';
+      return;
+    }
+    if(calendarioFerramentasLeituraEstado==='falha'||!calendarioFerramentasDadosConfirmados){
+      box.style.borderLeftColor='var(--red)';
+      box.innerHTML='<b>Não foi possível confirmar o calendário agora.</b> Isso não significa que esteja vazio ou apagado; nenhuma gravação foi liberada por esta leitura.';
       return;
     }
     const alvo=/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))?String(mes):'';
@@ -24578,13 +24695,22 @@ window.setGerenciaSub = function(qual, el){
     const mesLink=document.getElementById('mesLinkCalFerramentas');
     if(mesLink) mesLink.value=competenciaSeguinte(hojeLocal().slice(0,7));
     calendarioFerramentasDadosConfirmados=null;
+    calendarioFerramentasLeituraEstado='carregando';
     atualizarDiagnosticoCalendarioFerramentas(mesLink?.value||'');
     try{
       const slugDocumento=await resolverSlugCalendarioExistente(slugCanonico);
       calendarioFerramentasAbertoSlug = slugDocumento;
-      const calSnap=await getDoc(doc(db,'calendarios',slugDocumento));
-      if(!calSnap.exists()) throw new Error('O documento do calendário ainda não existe.');
-      calendarioFerramentasDadosConfirmados=calSnap.data()||{};
+      const calSnap=await comTimeoutCalendarioOperacional(
+        getDoc(doc(db,'calendarios',slugDocumento)),
+        'A abertura do calendário interno',12000
+      );
+      if(calSnap.exists()){
+        calendarioFerramentasDadosConfirmados=calSnap.data()||{};
+        calendarioFerramentasLeituraEstado='confirmado';
+      }else{
+        calendarioFerramentasDadosConfirmados=null;
+        calendarioFerramentasLeituraEstado='ausente';
+      }
       atualizarDiagnosticoCalendarioFerramentas(mesLink?.value||'');
       /* 02/08/2026 — QUEBRA-CACHE NO IFRAME.
              Ao subir um `calendario.html` novo, quem já tinha o antigo no
@@ -24599,6 +24725,7 @@ window.setGerenciaSub = function(qual, el){
       const iframe=document.getElementById('iframeCalendarioFerramentas');
       if(iframe) iframe.removeAttribute('src');
       calendarioFerramentasDadosConfirmados=null;
+      calendarioFerramentasLeituraEstado='falha';
       atualizarDiagnosticoCalendarioFerramentas(mesLink?.value||'');
       mostrarToast('Não consegui abrir o calendário: '+(e?.message||'tente novamente.'),'erro');
     }
@@ -24695,7 +24822,7 @@ window.setGerenciaSub = function(qual, el){
     if(btn){ btn.disabled = true; btn.textContent = 'Procurando...'; }
     await carregarLegadoPerfis(true);
     let achados = 0;
-    for(const c of await clientesDeConteudoRecorrente()){
+    for(const c of await clientesCalendarioRecorrentesConfirmados()){
       const r = await carregarPerfisDeCliente(c.slug, false);
       if(r.recuperadoDe) achados++;
     }
@@ -24786,7 +24913,7 @@ window.setGerenciaSub = function(qual, el){
   function popularSeletorPerfis(){
     const sel = document.getElementById('refPerfilClienteSel');
     if(!sel) return;
-    clientesDeConteudoRecorrente().then(lista => {
+    clientesCalendarioRecorrentesConfirmados().then(lista => {
       sel.innerHTML = '<option value="">Escolhe o cliente...</option>' +
         lista.map(c => '<option value="'+c.slug+'" data-nome="'+esc(c.nome)+'">'+esc(c.nome)+'</option>').join('');
     });
@@ -25021,7 +25148,7 @@ window.setGerenciaSub = function(qual, el){
       const [cals, acessos, alvo] = await Promise.all([
         obterCalendariosCompartilhados(),
         getDocs(collection(db,'clientes_acesso')),
-        clientesDeConteudoRecorrente()
+        clientesCalendarioRecorrentesConfirmados()
       ]);
       const mapa = {}; cals.forEach(d => mapa[d.id] = d.data());
       const temAcesso = new Set(); acessos.forEach(d => { if(d.data().token) temAcesso.add(d.id); });
@@ -25456,11 +25583,8 @@ window.setGerenciaSub = function(qual, el){
     if(qual === 'campo') renderCalendarioDeCampo();
     if(qual === 'envio') renderFilaEnvioCalendarios();
     if(qual === 'resgate'){
-      const sel = document.getElementById('resgateCalCliente2');
-      if(sel && !sel.options.length){
-        sel.innerHTML = '<option value="">Escolhe o cliente...</option>' +
-          CLIENTES_LISTA.map(c => '<option value="'+c.slug+'">'+esc(c.nome)+'</option>').join('');
-      }
+      if(calendarioFerramentasClientesEstado!=='confirmado') carregarClientesCalendariosFerramentas();
+      else preencherSeletoresCalendariosRecorrentes(calendarioFerramentasClientesConfirmados);
     }
     return true;
   };
@@ -25491,7 +25615,7 @@ window.setGerenciaSub = function(qual, el){
       return;
     }
 
-    const alvo = await clientesDeConteudoRecorrente();
+    const alvo = await clientesCalendarioRecorrentesConfirmados();
 
     const linhas = alvo.map(c => {
       const cal = cals[c.slug] || {};
@@ -25736,7 +25860,7 @@ window.setGerenciaSub = function(qual, el){
     setTimeout(() => { abrirCalendarioFerramentas(slug, nome); }, 200);
   };
 
-  window.abrirCalendariosPorCliente = function(){
+  window.abrirCalendariosPorCliente = async function(){
     document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
     const itens = Array.from(document.querySelectorAll('.navitem'));
     const alvo = itens.find(n=>n.textContent.includes('Calendários dos Clientes'));
@@ -25744,12 +25868,8 @@ window.setGerenciaSub = function(qual, el){
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById('view-calendariosClientes').classList.add('active');
     document.getElementById('buscaCalCliente').value = '';
-    const selR = document.getElementById('resgateCalCliente');
-    if(selR && !selR.options.length){
-      selR.innerHTML = '<option value="">Escolhe o cliente...</option>' +
-        CLIENTES_LISTA.map(c => '<option value="'+c.slug+'">'+esc(c.nome)+'</option>').join('');
-    }
-    renderListaCalendariosClientes(CLIENTES_LISTA);
+    const lista=await carregarClientesCalendariosFerramentas();
+    renderListaCalendariosClientes(lista.length?lista:calendarioFerramentasClientesConfirmados);
     renderVisaoCalendarios();
   };
 
@@ -25764,7 +25884,7 @@ window.setGerenciaSub = function(qual, el){
         <div style="display:flex;gap:6px;">
           <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="abrirCalendarioDeCliente('${c.slug}','${escJs(c.nome)}')">Ver calendário</button>
           <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${c.slug}', this, '${mesPadrao}')">⧉ Próximo mês</button>
-          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${c.slug}', this)">✏️ Link de edição</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${c.slug}', this, '${mesPadrao}')">👁 Próximo mês interno</button>
         </div>
       </div>
     `).join('');
@@ -25772,7 +25892,7 @@ window.setGerenciaSub = function(qual, el){
 
   window.filtrarCalendariosClientes = function(){
     const q = document.getElementById('buscaCalCliente').value.toLowerCase().trim();
-    const filtrados = CLIENTES_LISTA.filter(c => c.nome.toLowerCase().includes(q));
+    const filtrados = calendarioFerramentasClientesConfirmados.filter(c => c.nome.toLowerCase().includes(q));
     renderListaCalendariosClientes(filtrados);
   };
 
@@ -25952,7 +26072,7 @@ window.setGerenciaSub = function(qual, el){
       throw new Error('Entre com o Google da equipe antes de abrir o arquivo.');
     }
     mes=String(mes||'').trim();
-    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)) throw new Error('O link não informa uma competência histórica válida.');
+    if(!mesPertenceAoPeriodoDoSite(mes)) throw new Error('Os calendários pelo site começam em julho de 2026. Não há arquivo anterior para abrir.');
     const slugDocumento=await resolverSlugCalendarioExistente(slug);
     const snap=await comTimeoutCalendarioOperacional(
       getDoc(doc(db,'calendarios',slugDocumento)),
@@ -26007,7 +26127,7 @@ window.setGerenciaSub = function(qual, el){
   async function prepararLinkCalendarioEquipe(slug,mesEscolhido){
     const slugDocumento=await resolverSlugCalendarioExistente(slug);
     const mes=String(mesEscolhido||competenciaOperacionalCalendario()).trim();
-    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)) throw new Error('Escolha uma competência válida para a equipe.');
+    if(!mesPertenceAoPeriodoDoSite(mes)) throw new Error('Os calendários pelo site começam em julho de 2026. Escolha julho de 2026 ou um mês posterior.');
     const calSnap=await comTimeoutCalendarioOperacional(
       getDoc(doc(db,'calendarios',slugDocumento)),
       'A confirmação do calendário interno',12000
@@ -26016,17 +26136,15 @@ window.setGerenciaSub = function(qual, el){
     if(!itensDoMesCalendario(calSnap.data()||{},mes).some(i=>i&&!i.excluido)){
       throw new Error('O documento respondeu, mas '+mes+' não possui conteúdos ativos confirmados.');
     }
-    if(mes!==competenciaOperacionalCalendario()){
-      return 'https://get-started.agency/escritorio.html?calArquivo='+encodeURIComponent(slugDocumento)+'&mes='+encodeURIComponent(mes);
-    }
-    const t=await garantirTokensDoCliente(slugDocumento,'equipe');
-    if(!t.tokenEquipe) throw new Error('Token interno não disponível.');
-    return 'https://get-started.agency/calendario.html?cliente='+encodeURIComponent(slugDocumento)+'&e='+encodeURIComponent(t.tokenEquipe)+'&mes='+encodeURIComponent(mes);
+    /* A Cecília consulta qualquer competência já existente pelo próprio
+       Escritório autenticado. O endereço interno é sempre somente leitura:
+       não cria token compartilhável, não publica e não altera o mês atual. */
+    return 'https://get-started.agency/escritorio.html?calArquivo='+encodeURIComponent(slugDocumento)+'&mes='+encodeURIComponent(mes);
   }
 
   function resolverMesParaLinkCalendario(cal,mesEscolhido,referencia){
     const pedido=String(mesEscolhido||'').trim();
-    if(pedido&&!/^20\d{2}-(0[1-9]|1[0-2])$/.test(pedido)) throw new Error('Escolha uma competência válida no formato ano e mês.');
+    if(pedido&&!mesPertenceAoPeriodoDoSite(pedido)) throw new Error('Os calendários pelo site começam em julho de 2026. Escolha julho de 2026 ou um mês posterior.');
     if(pedido){
       const estado=estadoMesCal(cal,pedido);
       if(estado==='arquivado') throw new Error('O calendário de '+pedido+' está arquivado. O cliente verá somente “Calendário arquivado”.');
@@ -26897,7 +27015,7 @@ window.setGerenciaSub = function(qual, el){
     const hojeStr = dataLocal(agora);
 
     // só cobra clientes mensais de verdade (avulso/entrega direta não tem calendário nosso)
-    const alvo = await clientesDeConteudoRecorrente();
+    const alvo = await clientesCalendarioRecorrentesConfirmados();
     if(!alvo.length) return;
 
     const snap = await getDocs(collection(db,'refs_perfil_semana'));
@@ -27880,7 +27998,7 @@ window.setGerenciaSub = function(qual, el){
     /* 3. Calendário parado no mês passado — parece pronto e não está. */
     try{
       const mesAgora = hoje.slice(0,7);
-      const alvo = await clientesDeConteudoRecorrente();
+      const alvo = await clientesCalendarioRecorrentesConfirmados();
       const velhos = [];
       alvo.forEach(c => {
         const cal = cals[c.slug]; if(!cal || !((cal.items||[]).length)) return;
@@ -28732,16 +28850,24 @@ window.setGerenciaSub = function(qual, el){
      usa a fonte canônica completa; o papel operacional usa somente a
      carteira já carregada e `clientes_config`, que suas regras permitem. */
   async function clientesControlePostagemPorPapel(){
-    if(['Chris','Amanda'].includes(usuarioAtual)) return clientesDeConteudoRecorrente();
+    if(['Chris','Amanda'].includes(usuarioAtual)) return clientesCalendarioRecorrentesConfirmados();
     if(usuarioAtual!=='Cecília') return [];
-    const config={};
-    const snap=await getDocs(collection(db,'clientes_config'));
+    const config={}, castaOperacional={};
+    const [snap,extrasSnap]=await Promise.all([
+      getDocs(collection(db,'clientes_config')),
+      getDocs(collection(db,'clientes_extras'))
+    ]);
     snap.forEach(d=>{ config[slugClienteCanonico(d.id)]=d.data()||{}; });
+    extrasSnap.forEach(d=>{ const v=d.data()||{}, slug=slugClienteCanonico(v.slug||d.id);
+      const tipo=String(v.casta||v.tipoCliente||v.tipo||'').toLowerCase();
+      if(['mensalista','avulso','interno'].includes(tipo)) castaOperacional[slug]=tipo;
+    });
     return CLIENTES_LISTA.filter(c=>{
       const slug=slugClienteCanonico(c.slug), cfg=config[slug]||{};
       return !SLUGS_INTERNOS.includes(slug) && !ehClienteSoEdicao(slug) &&
         !clienteInativoEfetivo(cfg) && cfg.semConteudoRecorrente!==true &&
-        cfg.tipoCliente!=='avulso' && cfg.tipoEntrega!=='entrega_direta';
+        cfg.tipoCliente!=='avulso' && castaOperacional[slug]!=='avulso' &&
+        castaOperacional[slug]!=='interno' && cfg.tipoEntrega!=='entrega_direta';
     });
   }
   window.clientesControlePostagemPorPapel=clientesControlePostagemPorPapel;
@@ -28761,7 +28887,7 @@ window.setGerenciaSub = function(qual, el){
     /* Falha de qualquer leitura aborta a rodada. Não existe catch que
        converta erro do Firestore em carteira vazia e feche alertas reais. */
     const [postSnap,clientes]=await Promise.all([
-      snapshotOperacional('postagens'), clientesDeConteudoRecorrente()
+      snapshotOperacional('postagens'), clientesCalendarioRecorrentesConfirmados()
     ]);
     const postagens=postSnap.docs.map(d=>({id:d.id,...(d.data()||{})}));
     const cobertura=calcularCoberturaPostagens(postagens,clientes,hoje);
@@ -35015,7 +35141,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         if(!i || !i.dataPostagem) return;
         if(!calc[slug] || i.dataPostagem > calc[slug]) calc[slug] = i.dataPostagem; }); });
 
-      const alvo = await clientesDeConteudoRecorrente();
+      const alvo = await clientesCalendarioRecorrentesConfirmados();
       const linhas = alvo.map(c => {
         const ate = (manual[c.slug]||{}).postagemAte || calc[c.slug] || '';
         const dias = ate ? Math.floor((new Date(ate+'T12:00:00') - new Date(hoje+'T12:00:00'))/86400000) : null;
@@ -35050,7 +35176,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         obterCalendariosCompartilhados()
       ]);
 
-      const alvo = await clientesDeConteudoRecorrente();
+      const alvo = await clientesCalendarioRecorrentesConfirmados();
 
       // perfis por cliente (a meta de 3)
       const porCliente = {};
@@ -35430,6 +35556,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(!mes) return itens.filter(i => !mesDoItemCalendario(cal, i));
     return itens.filter(i => mesDoItemCalendario(cal, i) === mes);
   }
+  const PRIMEIRA_COMPETENCIA_CALENDARIO_SITE='2026-07';
+  function mesPertenceAoPeriodoDoSite(mes){
+    return /^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||'')) && String(mes)>=PRIMEIRA_COMPETENCIA_CALENDARIO_SITE;
+  }
   function mesUsaCampoLegadoCalendario(cal, mes){
     const itens = (cal&&cal.items)||[];
     const usaMeses = itens.some(i => i&&i.mes) || !!(cal&&cal.aprovacaoMeses) || !!(cal&&cal.mesLegado);
@@ -35445,7 +35575,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       if(ap && ap.mes) ms.push(ap.mes);
       Object.keys((cal&&cal.aprovacaoMeses)||{}).forEach(m => { if(m && !ms.includes(m)) ms.push(m); });
     }
-    return ms.sort();
+    return ms.filter(mesPertenceAoPeriodoDoSite).sort();
   }
   function estadoMesCal(cal, mes){
     const porMes = ((cal&&cal.aprovacaoMeses)||{})[mes];
@@ -35460,6 +35590,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(!heraldaAntiga) return 'rascunho';
     const temMapa = Object.keys((cal&&cal.aprovacaoMeses)||{}).length > 0;
     if(ap && ap.status && !ap.mes && !temMapa && heraldaAntiga) return ap.status;
+    const mesesExplicitos=[...new Set(((cal&&cal.items)||[]).filter(i=>i&&!i.excluido&&i.mes).map(i=>i.mes))];
+    if(ap && ap.status && !ap.mes && !temMapa && mesesExplicitos.length===1 && mesesExplicitos[0]===mes) return ap.status;
     return ((cal&&cal.items)||[]).length ? 'liberado' : 'rascunho';
   }
 
@@ -35496,18 +35628,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const atual=competenciaCalendarioAtual(referencia);
     return atual?competenciaSeguinte(atual):'';
   }
-  function mesForaDaCompetenciaOperacional(mes, referencia){
-    const alvo=String(mes||'').trim();
-    const operacional=competenciaOperacionalCalendario(referencia);
-    return !/^\d{4}-(0[1-9]|1[0-2])$/.test(alvo)||!operacional||alvo!==operacional;
-  }
   window.competenciaOperacionalCalendario=competenciaOperacionalCalendario;
-  function mesHistoricoForaDaRevisao(mes, referencia){
-    const alvo=String(mes||'').trim();
-    if(!/^\d{4}-\d{2}$/.test(alvo)) return false;
-    const atual=competenciaCalendarioAtual(referencia);
-    return !!atual && alvo < atual;
-  }
   function linhasCalendariosAguardandoRevisao(fonte, referencia){
     const porIdentidadeMes = new Map();
     if(!fonte || typeof fonte.forEach !== 'function') return [];
@@ -35517,10 +35638,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       const slug = registro.id || v.id || '';
       const meses = mesesDeCalendario(v);
       (meses.length ? meses : ['']).forEach(m => {
-        /* A operação é sempre o mês imediatamente seguinte. Tanto meses
-           anteriores quanto futuros fora da vez ficam no arquivo e nunca
-           entram por acidente na fila da Amanda. */
-        if(mesForaDaCompetenciaOperacional(m, referencia)) return;
+        /* A Gabi pode preparar antecipadamente qualquer competência. A fila
+           nasce do estado confirmado, não da data do relógio. */
+        if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(m||''))) return;
         if(estadoMesCal(v, m) !== 'aguardando_interna') return;
         const doMes = itensDoMesCalendario(v, m);
         if(!doMes.length) return;
@@ -35592,7 +35712,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           if(st==='liberado') ativos.push(linha);
           else if(st==='arquivado') arquivados.push(linha);
           else if(st==='aprovado_interno') legadosAprovados.push(linha);
-          else if(mesForaDaCompetenciaOperacional(m)) internos.push(linha);
+          else if(['rascunho','ajuste_interno','aguardando_interna'].includes(st)) internos.push(linha);
         });
       });
       ativos.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
@@ -35627,9 +35747,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
 
   window.enviarUmCalendario = async function(slug, mes, btn){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('A decisão e o envio de calendários são da Amanda.', 'erro'); return; }
-    if(mesForaDaCompetenciaOperacional(mes)){
-      mostrarToast('O fluxo operacional aceita somente '+competenciaOperacionalCalendario()+'. Os demais meses ficam no arquivo histórico.', 'erro'); return;
-    }
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))){ mostrarToast('Escolha uma competência válida.','erro'); return; }
     if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
     const resultado = await dispararCalendarios([{slug, mes}]);
     const falha=resultado.falhas[0];
@@ -35645,7 +35763,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     snap.forEach(d => { const cal = d.data();
       const meses = mesesDeCalendario(cal);
       (meses.length ? meses : ['']).forEach(m => {
-        if(!mesForaDaCompetenciaOperacional(m) && estadoMesCal(cal, m) === 'aprovado_interno' && itensDoMesCalendario(cal, m).length){
+        if(/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(m||'')) && estadoMesCal(cal, m) === 'aprovado_interno' && itensDoMesCalendario(cal, m).length){
           alvos.push({ slug:d.id, mes:m });
         }
       });
@@ -35667,10 +35785,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     for(const a of alvos){
       let nome=nomeDeSlugSeguro(a.slug);
       try{
-        if(mesForaDaCompetenciaOperacional(a.mes)){
-          console.error('Envio de calendário abortado: fora da competência operacional', a.slug, a.mes);
-          throw new Error('somente '+competenciaOperacionalCalendario()+' pode seguir no fluxo operacional');
-        }
+        if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(a.mes||''))) throw new Error('competência inválida');
         const ref = doc(db,'calendarios', a.slug);
         let alterou=false;
         await runTransaction(db,async tx=>{
@@ -35736,9 +35851,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.liberarCalendario = async function(slug, mes, btn){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('A aprovação de calendários é exclusiva da Amanda.', 'erro'); return false; }
     const alvo=(mes!==undefined&&mes!==null&&mes!=='')?mes:competenciaOperacionalCalendario();
-    if(mesForaDaCompetenciaOperacional(alvo)){
-      mostrarToast('A aprovação operacional aceita somente '+competenciaOperacionalCalendario()+'.','erro'); return false;
-    }
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(alvo||''))){ mostrarToast('Escolha uma competência válida.','erro'); return false; }
     if(btn?.dataset.publicandoCalendario==='1') return false;
     const original=btn?.textContent||'';
     if(btn){btn.dataset.publicandoCalendario='1';btn.disabled=true;btn.textContent='Publicando e confirmando…';}
@@ -35766,9 +35879,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(!String(motivo).trim()){ mostrarToast('Escreve o que precisa mudar — sem isso ela não sabe o que fazer.', 'erro'); return; }
     const ref = doc(db,'calendarios', slug);
     const alvo = (mes !== undefined && mes !== null && mes !== '') ? mes : competenciaOperacionalCalendario();
-    if(mesForaDaCompetenciaOperacional(alvo)){
-      mostrarToast('A devolução operacional aceita somente '+competenciaOperacionalCalendario()+'.', 'erro'); return;
-    }
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(alvo||''))){ mostrarToast('Escolha uma competência válida.','erro'); return; }
     let nome=slug;
     try{
       await runTransaction(db,async tx=>{

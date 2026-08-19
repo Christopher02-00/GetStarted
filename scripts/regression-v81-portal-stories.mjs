@@ -51,6 +51,7 @@ exigir(stories.includes('Promise.allSettled'),'falha dos links é separada da fa
 exigir(stories.includes('__storiesPortalConfirmado')&&stories.includes('cacheDaSemana')&&/últim[oa] (?:versão|retrato) confirmad[oa]/i.test(stories),'falha do Firestore reutiliza o último retrato confirmado sem declarar vazio');
 exigir(/linksConfirmad|falhaLinks|leituraLinks/.test(stories)&&/links[^<\n]*(indispon|confirm)/i.test(stories),'estado indisponível dos links aparece explicitamente e não é tratado como ausência');
 exigir(!/getDoc\(doc\(db,'stories_links'[\s\S]{0,300}catch\([\s\S]{0,180}return null/.test(stories),'erro ao ler links não é convertido em documento inexistente');
+exigir(stories.includes("codigoLinks.includes('permission-denied')")&&stories.includes('Os links desta semana ainda não foram liberados')&&stories.includes('Não consegui confirmar os links desta semana agora'),'Portal distingue link interno não liberado de falha real de rede sem declarar ausência');
 
 exigir(/urlHttpsSeguraPortal\(d\?*\.link\)/.test(stories)&&stories.includes('urlHttpsSeguraPortal(s.linkReferencia)'),'links de documentos e referências passam pelo mesmo validador HTTPS');
 exigir(stories.includes('escAttr(')&&(stories.match(/rel="noopener noreferrer"/g)||[]).length>=2,'URLs de Stories são escapadas como atributo e abrem sem acesso à janela de origem');

@@ -34,7 +34,10 @@ exigir(contextoCompetencia.api.operacional('2026-12-18T12:00:00')==='2027-01','d
 exigir(contextoCompetencia.api.ehOperacional('2026-09','2026-08-18T12:00:00')===true&&contextoCompetencia.api.ehOperacional('2026-10','2026-08-18T12:00:00')===false,'calendário distingue mês seguinte de outros meses futuros');
 
 const mesInicial=trecho(calendario,'function mesInicialEquipe','let saveTimer=');
-exigir(mesInicial.includes('competenciaOperacionalDoCalendario()')&&mesInicial.includes('existentes.has(pedido)||pedido===operacional'),'a equipe abre o mês seguinte e só navega fora dele quando o mês já existe como arquivo');
+exigir(mesInicial.includes('competenciaOperacionalDoCalendario()')&&
+  mesInicial.includes('if(mesPertenceAoPeriodoDoSite(pedido)) return pedido')&&
+  mesInicial.includes('PRIMEIRA_COMPETENCIA_CALENDARIO_SITE'),
+  'a equipe usa o próximo mês como sugestão, abre qualquer competência válida solicitada e respeita julho de 2026');
 
 const salvarCliente=trecho(calendario,'async function salvarComoCliente','/* Redesenha sem passar pelo save()');
 const patchCliente=(salvarCliente.match(/transacao\.set\(docRef,\{([\s\S]*?)\},\{merge:true\}\)/)||[])[1]||'';
@@ -53,6 +56,7 @@ new vm.Script(`
   function competenciaCalendarioAtual(ref){const d=ref instanceof Date?ref:new Date(ref||Date.now());return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
   function competenciaSeguinte(m){const [a,mm]=m.split('-').map(Number);const d=new Date(a,mm,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
   function competenciaOperacionalCalendario(ref){return competenciaSeguinte(competenciaCalendarioAtual(ref));}
+  function mesPertenceAoPeriodoDoSite(mes){return /^20\\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))&&String(mes)>='2026-07';}
   function mesesDeCalendario(cal){return [...new Set((cal.items||[]).map(i=>i.mes).filter(Boolean))].sort();}
   function itensDoMesCalendario(cal,mes){return (cal.items||[]).filter(i=>i.mes===mes);}
   function estadoMesCal(cal,mes){return cal.aprovacaoMeses?.[mes]?.status||'rascunho';}
@@ -71,7 +75,7 @@ exigir(contexto.api({items:[{mes:'2026-10'}],aprovacaoMeses:{'2026-10':{status:'
 exigir(contexto.api({items:[{mes:'2027-01'}],aprovacaoMeses:{'2027-01':{status:'liberado'}}},'','2026-12-18T12:00:00')==='2027-01','resolução do link preserva dezembro para janeiro quando publicado');
 exigir(falhaQualquer(()=>contexto.api({items:[]},'',agosto)),'documento confirmado sem itens não vira link ambíguo');
 exigir(falhaQualquer(()=>contexto.api({items:[{mes:'2026-07'},{mes:'2026-10'}],aprovacaoMeses:{'2026-07':{status:'liberado'},'2026-10':{status:'liberado'}}},'',agosto)),'sem mês explícito, fallback não escolhe silenciosamente entre arquivos liberados');
-exigir(deveFalhar(()=>contexto.api(varios,'setembro',agosto),'competência válida'),'valor de mês inválido é recusado em vez de perder o parâmetro');
+exigir(deveFalhar(()=>contexto.api(varios,'setembro',agosto),'começam em julho de 2026'),'valor de mês inválido é recusado em vez de perder o parâmetro');
 
 const preparar=trecho(escritorio,'async function prepararLinkCalendarioCliente','  window.prepararLinkCalendarioCliente');
 exigir(preparar.includes("getDoc(doc(db,'calendarios',slugDocumento))")&&preparar.includes('resolverMesParaLinkCalendario(calConfirmado,mesEscolhido)'),'link nasce somente depois de leitura confirmada do calendário e resolução exata do mês');
@@ -101,6 +105,7 @@ new vm.Script(`
   function competenciaCalendarioAtual(ref){const d=new Date(ref||Date.now());return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
   function competenciaSeguinte(m){const [a,mm]=m.split('-').map(Number);const d=new Date(a,mm,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
   function competenciaOperacionalCalendario(ref){return competenciaSeguinte(competenciaCalendarioAtual(ref));}
+  function mesPertenceAoPeriodoDoSite(mes){return /^20\\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))&&String(mes)>='2026-07';}
   function mesesDeCalendario(v){return [...new Set((v.items||[]).map(i=>i.mes).filter(Boolean))].sort();}
   function itensDoMesCalendario(v,mes){return (v.items||[]).filter(i=>i.mes===mes);}
   function estadoMesCal(v,mes){return v.aprovacaoMeses?.[mes]?.status||'rascunho';}
@@ -135,15 +140,8 @@ const clipboard=trecho(escritorio,'function copiarTextoLegado','  async function
 exigir(clipboard.includes('ClipboardItem')&&clipboard.includes("document.execCommand('copy')")&&clipboard.includes('mostrarLinkCalendarioParaCopiaManual'),'desktop, compatibilidade legada e seleção manual móvel permanecem disponíveis');
 
 const fila=trecho(escritorio,'function linhasCalendariosAguardandoRevisao','  window.linhasCalendariosAguardandoRevisao');
-exigir((escritorio.match(/function linhasCalendariosAguardandoRevisao/g)||[]).length===1&&fila.includes("estadoMesCal(v, m) !== 'aguardando_interna'")&&fila.includes('mesForaDaCompetenciaOperacional'),'Amanda continua com uma única fila e somente o mês seguinte entra em revisão');
-const fonteCompetenciaEscritorio=trecho(escritorio,'function competenciaCalendarioAtual','function linhasCalendariosAguardandoRevisao');
-exigir(fonteCompetenciaEscritorio.includes('function mesForaDaCompetenciaOperacional'),'escritório centraliza a barreira da competência operacional');
-const contextoCompetenciaEscritorio={window:{}}; contextoCompetenciaEscritorio.window=contextoCompetenciaEscritorio; vm.createContext(contextoCompetenciaEscritorio);
-new vm.Script(`function competenciaSeguinte(m){const [a,mm]=String(m||'').split('-').map(Number);const d=new Date(a,mm,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}\n${fonteCompetenciaEscritorio}\nglobalThis.api=mesForaDaCompetenciaOperacional;`).runInContext(contextoCompetenciaEscritorio);
-exigir(contextoCompetenciaEscritorio.api('2026-09','2026-08-18T12:00:00')===false&&
-  contextoCompetenciaEscritorio.api('2026-08','2026-08-18T12:00:00')===true&&
-  contextoCompetenciaEscritorio.api('2026-10','2026-08-18T12:00:00')===true,'escritório bloqueia tanto o mês vigente quanto outro mês futuro fora de setembro');
-exigir(contextoCompetenciaEscritorio.api('2027-01','2026-12-18T12:00:00')===false,'escritório reconhece janeiro como operação de dezembro');
+exigir((escritorio.match(/function linhasCalendariosAguardandoRevisao/g)||[]).length===1&&fila.includes("estadoMesCal(v, m) !== 'aguardando_interna'")&&!fila.includes('mesForaDaCompetenciaOperacional'),'Amanda continua com uma única fila e não perde outubro ou outro mês válido enviado pela Gabi');
+exigir(!escritorio.includes('function mesForaDaCompetenciaOperacional'),'a barreira temporal antiga foi removida em vez de permanecer como regra paralela');
 
 const renderFila=trecho(escritorio,'window.renderFilaEnvioCalendarios = async function','  window.enviarUmCalendario');
 exigir(renderFila.includes("st==='arquivado'")&&renderFila.includes('Abrir para conferência')&&renderFila.includes('abrirCalendarioArquivoInterno'),'arquivo da Amanda é separado do mês público e abre somente para conferência');
@@ -167,12 +165,12 @@ for(const [rotulo,bloco] of [
   ['envio em lote',lote],
   ['disparo',disparo],
   ['aprovação interna',aprovacao]
-]) exigir(bloco.includes('mesForaDaCompetenciaOperacional'),rotulo+' aplica a mesma competência operacional');
+]) exigir(!bloco.includes('mesForaDaCompetenciaOperacional')&&bloco.includes('20\\d{2}-(0[1-9]|1[0-2])'),rotulo+' aceita qualquer competência válida e rejeita formato inválido');
 
 const devolucao=trecho(escritorio,'window.devolverCalendario = async function','  /* ===== 👥 EQUIPE');
 exigir(devolucao.includes('runTransaction')&&/await\s+tx\.get\(ref\)/.test(devolucao),'devolução relê documento e estado dentro da transação');
 exigir(devolucao.includes("estado!=='aguardando_interna'")&&devolucao.indexOf("estado!=='aguardando_interna'")<Math.max(devolucao.indexOf('tx.set('),devolucao.indexOf('tx.update(')),'devolução recusa qualquer estado concorrente antes de gravar, inclusive liberado');
-exigir(!devolucao.includes('updateDoc(')&&!devolucao.includes('getDoc(')&&devolucao.includes('mesForaDaCompetenciaOperacional'),'devolução não usa leitura obsoleta nem escrita fora da transação e respeita o mês seguinte');
+exigir(!devolucao.includes('updateDoc(')&&!devolucao.includes('getDoc(')&&!devolucao.includes('mesForaDaCompetenciaOperacional'),'devolução não usa leitura obsoleta nem reintroduz bloqueio temporal');
 
 const carregarPortal=trecho(portal,'async function carregarCalendario()','  window.aprovarConteudoCalendario');
 exigir(carregarPortal.includes("new URLSearchParams(location.search).get('mes')")&&carregarPortal.includes('mesPedidoValido&&!mesesLib.includes(mesPedidoValido)'),'Portal honra o mês pedido e bloqueia troca silenciosa por outra competência');

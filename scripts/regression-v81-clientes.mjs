@@ -56,7 +56,7 @@ function sessaoPortalValidaSimulada({acesso,tokenDoc,cliente,token,agora}){
   return canonico||historico;
 }
 
-exigir(escritorio.includes('2026-08-19-calendarios-stories-v90'),'base V81 preservada no build V90 identificado');
+exigir(escritorio.includes('2026-08-19-calendarios-stories-v91'),'base V81 preservada no build V91 identificado');
 exigir(escritorio.includes('Central única de clientes')&&escritorio.includes('Interesse → proposta → fechamento → ficha final → conferência da Amanda → ativo → saída programada → arquivo → reativação.'),'ciclo completo está explicitado numa única Central');
 exigir(!escritorio.includes('registroRapidoBox.replaceChildren'),'troca de papel não destrói mais o formulário de entrada');
 exigir(!escritorio.includes('cadastro-final-onboarding'),'iframe parcial de cadastro final foi removido da Central');

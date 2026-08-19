@@ -1384,7 +1384,8 @@ function testarPermissoesAcoesSandbox() {
     'cache voltou a entregar referência undefined às transações da Amanda');
   const cargaClientes = trecho(escritorio, 'async function carregarClientesExtras', 'carregarClientesExtras();');
   exigir(cargaClientes.includes("getDocs(collection(db,'clientes_config'))") &&
-    cargaClientes.includes('filter(c=>!clienteInativoEfetivo(configuracoes[c.slug]))'),
+    cargaClientes.includes('mensalistaConfirmadoDisponivelNoCalendario(c.slug,cfg)||!clienteInativoEfetivo(cfg)') &&
+    escritorio.includes('if(cfg.excluido===true||cfg.ativo===false||saidaClienteJaEfetiva(cfg)) return false;'),
     'cliente encerrado pode reaparecer nos seletores gerais após recarregar');
   const regras = fs.readFileSync(path.join(raiz, 'firestore.rules'), 'utf8');
   exigir(regras.includes('function acessoDentroDaVigencia(dados)') &&

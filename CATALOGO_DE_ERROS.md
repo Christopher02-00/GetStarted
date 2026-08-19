@@ -1772,3 +1772,15 @@ O período válido do produto foi fixado em **julho de 2026 em diante**, pois fo
 > **LEI:** classificação operacional antiga e genérica não pode retirar um mensalista confirmado. Compatibilidade nunca pode fundir duas pessoas/empresas que a operação confirmou como distintas. Hitech e Rodrigo possuem carteiras, contatos, calendários, Portal e históricos independentes.
 
 **Prova de regressão:** `scripts/regression-v90-carteira-mensalistas-reais.mjs` falha contra o `escritorio.html` publicado da V89 já no Açougue São Joaquim e passa 12/12 na V90. Cobre os sete mensalistas ausentes/mesclados, IKN/X Joias, entrega direta, saída efetiva, avulso explícito e a separação Hitech/Rodrigo. A V90 permanece **local** até o upload do usuário e a repetição da contagem na versão publicada.
+
+### 70.35 A V90 separou Hitech/Rodrigo, mas a configuração legada ainda retirava três mensalistas e duplicava o arquivo visual
+
+**Defeitos reproduzidos por cliques na V90 publicada em 19/08/2026:** Hitech e Rodrigo passaram a aparecer como identidades diferentes e Hitech entrou em Calendários. Porém iPhone Campo Largo, Açougue São Joaquim e Joaquin Assados continuaram ausentes das listas gerais de montagem, links e resgate. A Central confirmava os três como mensalistas ativos — Açougue e Joaquin com saída futura em 15/09 — e o botão Calendário da ficha do iPhone conseguia abrir o editor vazio. No arquivo visual, `AUDITORIA V87 — NÃO É CLIENTE` aparecia como calendário público e Zeiss/Agosto aparecia duas vezes por aliases legados.
+
+**Causa comprovada:** a compatibilidade mensalista da V90 ainda era avaliada depois de `clienteInativo`, `tipoCliente`, `semConteudoRecorrente` e `tipoEntrega` do `clientes_config` antigo. Portanto, uma ficha oficial reativada/corrigida na Central podia continuar invisível por uma classificação residual. O arquivo percorria todos os documentos brutos de `calendarios` sem cruzar a carteira recorrente nem consolidar `slug canônico + competência`.
+
+**Correção local V91:** para o conjunto mensalista confirmado, casta e flag legadas não retiram a porta de Calendários enquanto não existir saída efetiva, `ativo:false`, soft-delete ou `inativoDesde` já alcançado. Saída futura permanece na operação até a data. Rodrigo continua fora por ser somente edição; IKN e X Joias continuam fora por serem avulsos. Publicados/arquivo agora cruza a carteira mensalista confirmada e consolida aliases por identidade e mês, escolhendo o retrato com mais conteúdo; isso remove o teste V87 e a duplicação visual da Zeiss sem excluir nenhum documento do Firestore.
+
+> **LEI:** ficha oficial ativa e saída futura não podem ser anuladas silenciosamente por classificação residual. Listagem de calendário público é projeção da carteira recorrente canônica, nunca varredura bruta de toda a coleção.
+
+**Prova de regressão:** `scripts/regression-v91-carteira-publicados.mjs` cobre iPhone com casta/flag legada, Açougue e Joaquin com saída futura, saída efetiva, Hitech/Rodrigo, IKN/X Joias, aliases Zeiss/Zeens, remoção do teste V87 e preservação da cópia mais completa.

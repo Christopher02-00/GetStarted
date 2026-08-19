@@ -53,6 +53,12 @@ const contexto={
   slugClienteCanonico:slug=>({emanuelle:'emanuelle-bernaski-nutri','cliente-rodrigo':'rodrigo'}[String(slug||'')]||String(slug||'')),
   nomeClienteCanonico:(_slug,nome)=>String(nome||''),
   nomeDeSlugSeguro:slug=>String(slug||'').replace(/-/g,' '),
+  hojeLocal:()=> '2026-08-19',
+  dataOperacionalISO:valor=>String(valor||'').slice(0,10),
+  saidaClienteJaEfetiva:(dados,hoje='2026-08-19')=>{
+    const data=String(dados?.dataSaida||dados?.saidaProgramadaPara||'').slice(0,10);
+    return !!data&&data<=hoje;
+  },
   clienteInativoEfetivo:dados=>dados?.clienteInativo===true,
   normNomeCliente:v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim(),
   FORA_DA_META_SEMENTE:{ikn:'cliente avulso','ikn brasil':'cliente avulso','x joias':'cliente avulso'},

@@ -53,6 +53,9 @@ try{
       }
       if(nome==='clientes_config') return __docsFake([
         ['novo-mensalista',{tipoCliente:'mensalista',nome:'Novo Mensalista'}],
+        ['iphone-campo-largo',{tipoCliente:'avulso',clienteInativo:true,nome:'iPhone Campo Largo'}],
+        ['acougue-sao-joaquim',{tipoCliente:'mensalista',clienteInativo:true,saidaProgramadaPara:'2026-09-15',nome:'Açougue São Joaquim'}],
+        ['joaquin-assados',{tipoCliente:'mensalista',clienteInativo:true,saidaProgramadaPara:'2026-09-15',nome:'Joaquin Assados'}],
         ['ikn-brasil',{tipoCliente:'avulso',nome:'IKN Brasil'}],
         ['x-joias',{tipoCliente:'avulso',nome:'X Joias'}]
       ]);
@@ -71,6 +74,11 @@ try{
     window.nomeClienteCanonico=(_slug,nome)=>String(nome||'');
     window.nomeDeSlugSeguro=slug=>String(slug||'').replace(/-/g,' ');
     window.clienteInativoEfetivo=dados=>dados?.clienteInativo===true;
+    window.dataOperacionalISO=valor=>String(valor||'').slice(0,10);
+    window.saidaClienteJaEfetiva=(dados,hoje='2026-08-19')=>{
+      const data=String(dados?.dataSaida||dados?.saidaProgramadaPara||'').slice(0,10);
+      return !!data&&data<=hoje;
+    };
     window.normNomeCliente=v=>String(v||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/\\s+/g,' ').trim();
     window.FORA_DA_META_SEMENTE={ikn:'cliente avulso','ikn brasil':'cliente avulso','x joias':'cliente avulso'};
     window.ehClienteSoEdicao=slug=>slugClienteCanonico(slug)==='rodrigo';

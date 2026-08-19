@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-19-calendarios-stories-v90">
+  <meta name="gs-build" content="2026-08-19-calendarios-stories-v91">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3319,6 +3319,21 @@
     ['zeiss','Zeiss']
   ]);
 
+  /* A Central pode ter corrigido a ficha oficial enquanto um
+     `clientes_config` legado ainda carrega a casta/flag antiga. Para estes
+     mensalistas confirmados, a configuração velha não pode tirar o botão da
+     Gabi nem os links da Cecília. Saída realmente efetiva, `ativo:false` e
+     soft-delete continuam soberanos. Saída futura permanece operacional até
+     a data combinada. */
+  function mensalistaConfirmadoDisponivelNoCalendario(slug,config){
+    const canonico=slugClienteCanonico(slug), cfg=config||{};
+    if(!MENSALISTAS_OPERACIONAIS_CONFIRMADOS.has(canonico)) return false;
+    if(cfg.excluido===true||cfg.ativo===false||saidaClienteJaEfetiva(cfg)) return false;
+    const inativoDesde=dataOperacionalISO(cfg.inativoDesde);
+    if(inativoDesde&&inativoDesde<=hojeLocal()) return false;
+    return true;
+  }
+
   const CLIENTES_BASE = [
     {nome:"Get Started (conteúdo interno)", slug:"get-started"},
     {nome:"Bluefit", slug:"bluefit"}, {nome:"Camargo's", slug:"camargos"}, {nome:"Juliane Nerone", slug:"juliane-nerone"},
@@ -3358,7 +3373,9 @@
          recebia nem o botão para começar o mês. A projeção abaixo inclui
          somente mensalistas ativos e não cria nem altera dados. */
       Object.entries(configuracoes).forEach(([slug,dados])=>{
-        if(dados?.tipoCliente!=='mensalista'||clienteInativoEfetivo(dados)) return;
+        const confirmadoDisponivel=mensalistaConfirmadoDisponivelNoCalendario(slug,dados);
+        if((dados?.tipoCliente!=='mensalista'&&!confirmadoDisponivel)||
+           (clienteInativoEfetivo(dados)&&!confirmadoDisponivel)) return;
         const nome=dados.nome||dados.clienteNome||MENSALISTAS_OPERACIONAIS_CONFIRMADOS.get(slug)||nomeDeSlugSeguro(slug);
         const anterior=porSlug.get(slug)||{};
         porSlug.set(slug,{...anterior,nome:nomeClienteCanonico(slug,nome),slug,config:true});
@@ -3379,16 +3396,20 @@
           tipoOperacionalExtra:String(v.casta||v.tipoCliente||v.tipo||'').toLowerCase()
         });
       });
-      const ativos=[...porSlug.values()].filter(c=>!clienteInativoEfetivo(configuracoes[c.slug])).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      const ativos=[...porSlug.values()].filter(c=>{
+        const cfg=configuracoes[c.slug]||{};
+        return mensalistaConfirmadoDisponivelNoCalendario(c.slug,cfg)||!clienteInativoEfetivo(cfg);
+      }).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
       const carteiraCalendarios=ativos.filter(c=>{
         const slug=slugClienteCanonico(c.slug);
         if(CLIENTES_SEM_CALENDARIO_OPERACIONAL.has(slug)) return false;
         const cfg=configuracoes[slug]||{};
-        if(clienteInativoEfetivo(cfg)||cfg.semConteudoRecorrente===true||String(cfg.tipoEntrega||'')==='entrega_direta') return false;
+        const mensalistaOperacionalConfirmado=mensalistaConfirmadoDisponivelNoCalendario(slug,cfg);
+        if(!mensalistaOperacionalConfirmado&&
+           (clienteInativoEfetivo(cfg)||cfg.semConteudoRecorrente===true||String(cfg.tipoEntrega||'')==='entrega_direta')) return false;
         const tipoCfg=String(cfg.tipoCliente||'').toLowerCase();
-        if(tipoCfg&&tipoCfg!=='mensalista') return false;
+        if(tipoCfg&&tipoCfg!=='mensalista'&&!mensalistaOperacionalConfirmado) return false;
         const tipoExtra=String(c.tipoOperacionalExtra||'').toLowerCase();
-        const mensalistaOperacionalConfirmado=MENSALISTAS_OPERACIONAIS_CONFIRMADOS.has(slug);
         /* `clientes_extras` antigos usavam castas genéricas como "outro".
            Isso não pode retirar um mensalista confirmado da Gabi. Avulso,
            interno e encerrado explícitos continuam soberanos. */
@@ -35888,28 +35909,53 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }catch(e){ console.error('Falha ao sinalizar fila de calendarios:', e); }
   }
 
+  function consolidarCalendariosPublicadosDaCarteira(snapshot,clientesConfirmados){
+    const nomes=new Map((clientesConfirmados||[]).map(c=>[
+      slugClienteCanonico(c.slug),String(c.nome||nomeDeSlugSeguro(c.slug))
+    ]));
+    const porChave=new Map();
+    const prioridade={liberado:60,arquivado:50,aprovado_interno:40,aguardando_interna:30,ajuste_interno:20,rascunho:10};
+    snapshot.forEach(d=>{
+      const cal=d.data()||{}, slug=slugClienteCanonico(d.id);
+      if(cal.excluido===true||!nomes.has(slug)) return;
+      const meses=mesesDeCalendario(cal);
+      (meses.length?meses:['']).forEach(mes=>{
+        const itens=itensDoMesCalendario(cal,mes).filter(i=>i&&!i.excluido);
+        if(!itens.length) return;
+        const estado=estadoMesCal(cal,mes), chave=slug+'|'+mes;
+        const linha={slug,documentoId:d.id,nome:nomes.get(slug),mes,qtd:itens.length,estado,
+          quando:((cal.aprovacaoMeses||{})[mes]||{}).em||''};
+        const pontos=itens.length*1000+(prioridade[estado]||0)+(d.id===slug?1:0);
+        if(!porChave.has(chave)||pontos>porChave.get(chave).__pontos) porChave.set(chave,{...linha,__pontos:pontos});
+      });
+    });
+    return [...porChave.values()].map(({__pontos,...linha})=>linha);
+  }
+
   window.renderFilaEnvioCalendarios = async function(){
     const box = document.getElementById('filaEnvioCalendarios');
     if(!box) return;
     box.innerHTML = '<div class="desc">Carregando…</div>';
     try{
-      const snap = await obterCalendariosCompartilhados();
-      const esperando = linhasCalendariosAguardandoRevisao(snap);
+      const [snap,clientesConfirmados] = await Promise.all([
+        obterCalendariosCompartilhados(),clientesCalendarioRecorrentesConfirmados()
+      ]);
+      const permitidos=new Set(clientesConfirmados.map(c=>slugClienteCanonico(c.slug)));
+      const esperandoPorChave=new Map();
+      linhasCalendariosAguardandoRevisao(snap).forEach(linha=>{
+        const slug=slugClienteCanonico(linha.slug||linha.cliente||'');
+        if(!permitidos.has(slug)) return;
+        const chave=slug+'|'+String(linha.mesKey||linha.mes||'');
+        if(!esperandoPorChave.has(chave)) esperandoPorChave.set(chave,{...linha,slug});
+      });
+      const esperando=[...esperandoPorChave.values()];
       const ativos = [], arquivados = [], legadosAprovados = [], internos = [];
-      snap.forEach(d => {
-        const cal = d.data();
-        const meses = mesesDeCalendario(cal);
-        (meses.length ? meses : ['']).forEach(m => {
-          const st = estadoMesCal(cal, m);
-          const qtd = itensDoMesCalendario(cal, m).length;
-          if(!qtd) return;
-          const linha = { slug:d.id, nome: cal.client || nomeDeSlugSeguro(d.id), mes:m, qtd,
-                          estado:st, quando: ((cal.aprovacaoMeses||{})[m]||{}).em || '' };
-          if(st==='liberado') ativos.push(linha);
-          else if(st==='arquivado') arquivados.push(linha);
-          else if(st==='aprovado_interno') legadosAprovados.push(linha);
-          else if(['rascunho','ajuste_interno','aguardando_interna'].includes(st)) internos.push(linha);
-        });
+      consolidarCalendariosPublicadosDaCarteira(snap,clientesConfirmados).forEach(linha=>{
+        const st=linha.estado;
+        if(st==='liberado') ativos.push(linha);
+        else if(st==='arquivado') arquivados.push(linha);
+        else if(st==='aprovado_interno') legadosAprovados.push(linha);
+        else if(['rascunho','ajuste_interno','aguardando_interna'].includes(st)) internos.push(linha);
       });
       ativos.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
       arquivados.sort((a,b)=>String(b.mes).localeCompare(String(a.mes))||a.nome.localeCompare(b.nome,'pt-BR'));

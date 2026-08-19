@@ -20,7 +20,7 @@ function trecho(inicio,fim){
   return fonte.slice(a,b);
 }
 
-exigir(fonte.includes('<meta name="gs-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">'),'marcador do patch está presente');
+exigir(fonte.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">'),'marcador do patch-base V91.1 está presente');
 exigir(fonte.includes("v.tipo==='mensalista'&&!ehClienteSoEdicao(v.slug)?'<button"),'atalho real reutiliza a barreira de cliente somente edição');
 
 const renderer=trecho('      const itemAtivo=v=>{','      const arquivadosDeOrigem=[')

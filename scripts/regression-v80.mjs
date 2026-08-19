@@ -15,7 +15,7 @@ let total=0;
 function exigir(condicao,mensagem){ total++; if(!condicao) throw new Error('FALHOU: '+mensagem); console.log('PASS ',mensagem); }
 function trecho(fonte,inicio,fim){ const a=fonte.indexOf(inicio),b=fonte.indexOf(fim,a); if(a<0||b<0) throw new Error('Trecho ausente: '+inicio); return fonte.slice(a,b); }
 
-exigir(/<meta name="gs-build" content="2026-08-18-(?:planos-premium-conteudos-vivos-v80|ciclo-clientes-propostas-v81)">/.test(escritorio),'build V80 ou sucessor identificado no Escritório');
+exigir(/<meta name="gs-build" content="2026-08-(?:18-(?:planos-premium-conteudos-vivos-v80|ciclo-clientes-propostas-v81)|19-calendarios-stories-v91)">/.test(escritorio),'build V80 ou sucessor identificado no Escritório');
 exigir(avulso.includes('<meta name="gs-build" content="2026-08-18-planos-premium-conteudos-vivos-v80">'),'build V80 identificado no cadastro');
 exigir((pdf.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length===9,'PDF final preserva as nove páginas');
 exigir(pdf.length<25*1024*1024,'PDF final cabe no limite de upload pelo navegador');

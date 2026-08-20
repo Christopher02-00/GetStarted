@@ -34,22 +34,23 @@ for(const colecao of ['clientes_acesso','calendarios','stories_clientes','client
 
 function snapshot(valor){ return {exists:()=>valor!==undefined,data:()=>valor}; }
 function criarLaboratorio({pagamentoInicial,contratoInicial,tipo='mensalista'}={}){
+  const DELETE_FIELD={__deleteField:true};
   const banco=new Map([
-    ['clientes_config/iphone-campo-largo',{tipoCliente:'mensalista',clienteInativo:false}],
+    ['clientes_config/iphone-campo-largo',{tipoCliente:'mensalista',clienteInativo:false,semConteudoRecorrente:true,motivoSemConteudo:'saiu da carteira'}],
     ['clientes_extras/iphone-campo-largo',{slug:'iphone-campo-largo',nome:'iPhone Campo Largo',excluido:false}],
     ['clientes_acesso/iphone-campo-largo',{token:'preservado',ativo:true}],
-    ...(pagamentoInicial===undefined?[]:[['pagamentos_mensais/iphone-campo-largo_2026-08',pagamentoInicial]]),
+    ...(pagamentoInicial===undefined?[]:[['pagamentos_mensais/iphone-campo-largo_2026-09',pagamentoInicial]]),
     ...(contratoInicial===undefined?[]:[['contratos_cliente/iphone-campo-largo',contratoInicial]])
   ]);
   const elementos=new Map([
     ['ctValorCheio_iphone-campo-largo',{value:'800'}],
-    ['ctDia_iphone-campo-largo',{value:'10'}],
-    ['ctPrimeiraCompetencia_iphone-campo-largo',{value:'2026-08'}],
+    ['ctDia_iphone-campo-largo',{value:'15'}],
+    ['ctPrimeiraCompetencia_iphone-campo-largo',{value:'2026-09'}],
     ['ctPlano_iphone-campo-largo',{value:'Básico'}],
     ['ctObs_iphone-campo-largo',{value:'Plano básico mensal'}],
     ['ctConfirmarMensalista_iphone-campo-largo',{checked:true}],
     ['ctCortesiaPerm_iphone-campo-largo',{checked:false}],
-    ['ctCortesiaMeses_iphone-campo-largo',{value:'2026-08\n2026-09'}],
+    ['ctCortesiaMeses_iphone-campo-largo',{value:''}],
     ['btnCompletarContrato_iphone-campo-largo',{disabled:false,textContent:'',isConnected:true}]
   ]);
   const toasts=[];
@@ -65,6 +66,7 @@ function criarLaboratorio({pagamentoInicial,contratoInicial,tipo='mensalista'}={
     doc:(_db,col,id)=>({path:col+'/'+id}),
     __validarReferenciasFirestore:refs=>refs.filter(Boolean),
     serverTimestamp:()=>({server:true}),
+    deleteField:()=>DELETE_FIELD,
     mostrarToast:(msg,tipoToast)=>toasts.push({msg,tipo:tipoToast}),
     limparCacheIndicadores:()=>{},renderContratos:async()=>true,
     console,
@@ -76,7 +78,14 @@ function criarLaboratorio({pagamentoInicial,contratoInicial,tipo='mensalista'}={
         set:(ref,dados,opcoes)=>operacoes.push({ref,dados,merge:opcoes?.merge===true})
       };
       await fn(tx);
-      for(const op of operacoes){ const atual=op.merge?(banco.get(op.ref.path)||{}):{}; banco.set(op.ref.path,{...atual,...op.dados}); }
+      for(const op of operacoes){
+        const atual=op.merge?{...(banco.get(op.ref.path)||{})}:{};
+        for(const [chave,valor] of Object.entries(op.dados)){
+          if(valor===DELETE_FIELD) delete atual[chave];
+          else atual[chave]=valor;
+        }
+        banco.set(op.ref.path,atual);
+      }
     }
   };
   ctx.window.window=ctx.window;
@@ -90,7 +99,7 @@ function criarLaboratorio({pagamentoInicial,contratoInicial,tipo='mensalista'}={
   const lab=criarLaboratorio();
   lab.elementos.get('ctConfirmarMensalista_iphone-campo-largo').checked=false;
   const ok=await lab.ctx.window.salvarContratoClienteIncompleto('iphone-campo-largo');
-  exigir(ok===false&&!lab.banco.has('contratos_cliente/iphone-campo-largo')&&!lab.banco.has('pagamentos_mensais/iphone-campo-largo_2026-08'),
+  exigir(ok===false&&!lab.banco.has('contratos_cliente/iphone-campo-largo')&&!lab.banco.has('pagamentos_mensais/iphone-campo-largo_2026-09'),
     'sem confirmação humana de mensalista, nenhuma estrutura financeira é criada');
   exigir(lab.toasts.some(t=>/Confirme que esta identidade/.test(t.msg)),
     'interface explica a confirmação necessária sem transformar ausência em sucesso');
@@ -102,11 +111,14 @@ function criarLaboratorio({pagamentoInicial,contratoInicial,tipo='mensalista'}={
   const ok=await lab.ctx.window.salvarContratoClienteIncompleto('iphone-campo-largo');
   exigir(ok===true,'Amanda conclui a estrutura financeira ausente');
   const contrato=lab.banco.get('contratos_cliente/iphone-campo-largo');
-  const mensalidade=lab.banco.get('pagamentos_mensais/iphone-campo-largo_2026-08');
-  exigir(contrato.valorVigente===800&&contrato.plano==='Básico'&&contrato.diaVencimento===10&&contrato.primeiraCompetencia==='2026-08',
-    'contrato recebe valor, plano, vencimento e competência informados');
-  exigir(mensalidade.valorDevido===800&&mensalidade.status==='isento'&&mensalidade.cliente==='iphone-campo-largo',
-    'primeira mensalidade nasce vinculada e respeita a cortesia informada');
+  const mensalidade=lab.banco.get('pagamentos_mensais/iphone-campo-largo_2026-09');
+  exigir(contrato.valorVigente===800&&contrato.plano==='Básico'&&contrato.diaVencimento===15&&contrato.primeiraCompetencia==='2026-09',
+    'contrato recebe R$ 800, vencimento dia 15 e primeira cobrança em setembro');
+  exigir(mensalidade.valorDevido===800&&mensalidade.status==='aberto'&&mensalidade.competencia==='2026-09'&&mensalidade.cliente==='iphone-campo-largo',
+    'primeira mensalidade nasce aberta em setembro, sem cortesia indevida');
+  const config=lab.banco.get('clientes_config/iphone-campo-largo');
+  exigir(config.semConteudoRecorrente===false&&!Object.hasOwn(config,'motivoSemConteudo'),
+    'mensalista confirmado deixa de carregar a marca antiga de fora da carteira na mesma transação');
   exigir(JSON.stringify(lab.banco.get('clientes_acesso/iphone-campo-largo'))===JSON.stringify(acessoAntes),
     'Portal existente permanece byte a byte inalterado no laboratório');
   exigir(![...lab.banco.keys()].some(k=>k.startsWith('calendarios/')||k.startsWith('stories_clientes/')||k.startsWith('clientes_portal_tokens/')),
@@ -118,11 +130,11 @@ function criarLaboratorio({pagamentoInicial,contratoInicial,tipo='mensalista'}={
 }
 
 {
-  const lab=criarLaboratorio({pagamentoInicial:{cliente:'iphone-campo-largo',competencia:'2026-08',valorDevido:900,status:'aberto'}});
+  const lab=criarLaboratorio({pagamentoInicial:{cliente:'iphone-campo-largo',competencia:'2026-09',valorDevido:900,status:'aberto'}});
   const ok=await lab.ctx.window.salvarContratoClienteIncompleto('iphone-campo-largo');
   exigir(ok===false&&!lab.banco.has('contratos_cliente/iphone-campo-largo'),
     'mensalidade preexistente com valor divergente bloqueia a transação inteira');
-  exigir(lab.banco.get('pagamentos_mensais/iphone-campo-largo_2026-08').valorDevido===900,
+  exigir(lab.banco.get('pagamentos_mensais/iphone-campo-largo_2026-09').valorDevido===900,
     'valor financeiro divergente é preservado para conferência humana');
 }
 

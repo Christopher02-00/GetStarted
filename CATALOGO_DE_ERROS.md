@@ -1808,3 +1808,35 @@ O período válido do produto foi fixado em **julho de 2026 em diante**, pois fo
 > **LEI:** cliente recorrente ativo e contrato financeiro precisam ser reconciliados pela mesma identidade. Ausência de contrato é um estado explícito e reparável; nunca é lista vazia, autorização para duplicar cliente ou motivo para bloquear edição operacional. Reparo financeiro cria somente os documentos ausentes com ID determinístico e recibo.
 
 **Evidência local:** `scripts/regression-v92-ciclo-clientes.mjs` executa a transação com iPhone Campo Largo sintético a R$ 800, prova contrato + primeira mensalidade, repetição sem duplicata, conflito preservado, bloqueio de avulso e acesso/Calendário/Stories intocados. `scripts/regression-v92-ui-contrato-incompleto.mjs` abre a tela em Chrome isolado, clica como Amanda, preenche os campos e confirma os recibos em desktop e mobile. A correção permanece **local**; nenhum dado real de iPhone Campo Largo foi escrito por estes testes.
+
+### 70.38 O contrato do iPhone foi corrigido, mas a marca antiga de saída continuava ativa
+
+**Defeito comprovado no dado publicado em 20/08/2026:** `clientes_config/iphone-campo-largo` estava ativo, mensalista e com contrato financeiro confirmado, mas ainda carregava `semConteudoRecorrente: true` e `motivoSemConteudo: "saiu da carteira"`. O Financeiro e a Central o tratavam como cliente recorrente; consumidores operacionais que confiam na configuração podiam retirá-lo de calendário, contatos ou postagem.
+
+**Correção aplicada ao dado real com autorização:** somente a marca residual foi saneada: `semConteudoRecorrente` passou a `false` e `motivoSemConteudo` foi removido. Contrato, Portal, calendário, Stories, contato e identidade não foram recriados nem alterados. A leitura posterior confirmou iPhone ativo, mensalista, Básico, R$ 800, vencimento dia 15 e primeira cobrança em setembro de 2026.
+
+**Prevenção local V93:** concluir a estrutura financeira de um mensalista limpa os mesmos dois campos dentro da própria transação. O teste visual usa o caso real — R$ 800, dia 15, competência `2026-09`, sem cortesia — em desktop e mobile.
+
+> **LEI:** confirmar ou reativar contrato recorrente precisa retirar, na mesma transação, classificações residuais que afirmam que o cliente saiu da carteira. Financeiro ativo e operação inativa nunca podem coexistir silenciosamente.
+
+**Gate de regressão:** `scripts/regression-v92-ciclo-clientes.mjs` cobre a limpeza atômica; `scripts/regression-v92-ui-contrato-incompleto.mjs` clica no formulário real, confirma setembro, vencimento 15, acesso preservado e remoção do motivo antigo.
+
+### 70.39 Zeiss desaparecia da Central porque o estado ativo estava no alias Zeens
+
+**Defeito comprovado nos dados e na interface publicados:** a identidade canônica `zeiss` possuía contrato, configuração e acesso encerrados, enquanto `zeens` continuava ativo. Agosto também tinha duas mensalidades incompatíveis — `zeiss_2026-08` isenta e `zeens_2026-08` aberta — e o token vigente do Portal estava no alias. A Central canonicalizava o slug cedo, escolhia o documento canônico encerrado e retirava Zeiss tanto dos ativos quanto do arquivo.
+
+**Correção local V93:** a projeção de leitura primeiro consolida documentos por identidade e prefere o estado operacional ativo; a Central deixa de esconder Zeiss e mostra um aviso explícito de divergência. O saneamento dedicado relê todas as fontes, bloqueia calendários com conteúdos diferentes, preserva o token vigente, mantém a mensalidade resolvida, cancela logicamente a duplicata aberta e arquiva os aliases sem exclusão física. Tudo ocorre numa única transação e somente Chris pode confirmar a ação.
+
+> **LEI:** alias ativo vence canônico arquivado somente para leitura e diagnóstico. A consolidação persistente precisa ser explícita, transacional, preservar credencial e dados resolvidos e nunca usar a fusão genérica quando existem colisões financeiras.
+
+**Gate de regressão:** `scripts/regression-v93-consistencia-clientes.mjs` executa o saneamento contra um banco sintético que reproduz exatamente o conflito auditado e confirma contrato, Portal, agosto, calendário e configuração canônicos.
+
+### 70.40 Trabalho avulso ativo recebia ações de Portal e saída de mensalista
+
+**Defeito reproduzido na Central publicada:** IKN e outros trabalhos avulsos apareciam corretamente como `AVULSO`, mas o cartão reutilizava ações genéricas de cliente ativo e oferecia Portal e programação de saída. Isso contradizia a própria explicação da tela e podia criar um caminho mensal indevido para um projeto pontual.
+
+**Correção local V93:** Portal, Calendário e saída contratual são renderizados somente para mensalista. Um avulso originado no funil recebe apenas **Finalizar projeto e arquivar**; avulso legado permanece consultável/editável e explica que não possui Portal nem saída mensalista. O seletor de saída continua aceitando apenas mensalistas.
+
+> **LEI:** cliente avulso não “sai da agência” pelo motor recorrente; o projeto é finalizado e arquivado no próprio funil. Nenhum botão mensal pode existir no cartão avulso.
+
+**Gate de regressão:** `scripts/regression-v93-ui-central-clientes.mjs` extrai o renderer real, monta mensalista, IKN e avulso legado e clica nas ações em desktop e mobile; `scripts/regression-v93-consistencia-clientes.mjs` verifica as guardas e o seletor mensalista.

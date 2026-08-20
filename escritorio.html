@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-19-calendarios-stories-v91">
+  <meta name="gs-build" content="2026-08-20-consistencia-clientes-v93">
   <meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">
-  <meta name="gs-patch" content="2026-08-19-ciclo-clientes-v92">
+  <meta name="gs-parent-patch" content="2026-08-19-ciclo-clientes-v92">
+  <meta name="gs-patch" content="2026-08-20-consistencia-clientes-v93">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -3612,6 +3613,31 @@
   }
   window.nomeClienteCanonico=nomeClienteCanonico;
   window.consolidarClientesAtivosPorIdentidade=consolidarClientesAtivosPorIdentidade;
+
+  /* V93 — uma identidade canônica pode ter documentos físicos antigos em
+     aliases. A Central não pode escolher simplesmente `documento[slug]`:
+     no caso real Zeiss, o canônico estava arquivado e o alias `zeens`
+     continuava ativo. A pontuação abaixo prefere sempre o registro ativo;
+     o ID canônico só desempata estados equivalentes. Nenhum dado é gravado
+     por este helper. */
+  function consolidarDocumentosClientePorIdentidade(snapshot,tipo){
+    const mapa={};
+    (snapshot?.docs||[]).forEach(d=>{
+      const dados={id:d.id,...(d.data()||{})};
+      const slug=slugClienteCanonico(d.id);
+      if(!slug) return;
+      const ativo=tipo==='contrato'?contratoOperacionalAtivo(dados)
+        : tipo==='config'?!clienteInativoEfetivo(dados)&&dados.excluido!==true&&dados.ativo!==false
+        : dados.ativo!==false&&dados.excluido!==true;
+      const pontos=(ativo?1000:0)+(d.id===slug?10:0)+Object.keys(dados).filter(k=>dados[k]!==''&&dados[k]!=null).length;
+      if(!mapa[slug]||pontos>mapa[slug].__pontosIdentidade){
+        mapa[slug]={...dados,__documentoOrigem:d.id,__pontosIdentidade:pontos};
+      }
+    });
+    Object.values(mapa).forEach(v=>delete v.__pontosIdentidade);
+    return mapa;
+  }
+  window.consolidarDocumentosClientePorIdentidade=consolidarDocumentosClientePorIdentidade;
   function registroOperacionalAtivo(registro){
     const v = registro || {};
     return v.excluido !== true && v.arquivado !== true && v.cancelado !== true;
@@ -17440,6 +17466,140 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     }catch(e){ console.error('Falha ao corrigir identidade canônica:',e); mostrarToast('Nada foi alterado: '+(e.message||e),'erro'); }
   };
 
+  /* V93 — saneamento específico do incidente Zeiss/Zeens. A rotina antiga
+     `fundirClientes` não pode ser usada neste caso: agosto existe nos dois
+     slugs com estados diferentes e o Portal ativo está no alias. Esta rotina
+     primeiro lê todas as fontes, bloqueia divergência de conteúdo e somente
+     então executa uma transação única. Registros antigos são arquivados por
+     campos; nenhum documento é excluído fisicamente. */
+  function jsonEstavel(valor){
+    if(Array.isArray(valor)) return '['+valor.map(jsonEstavel).join(',')+']';
+    if(valor&&typeof valor==='object') return '{'+Object.keys(valor).sort().map(k=>JSON.stringify(k)+':'+jsonEstavel(valor[k])).join(',')+'}';
+    return JSON.stringify(valor);
+  }
+  function assinaturaItensZeiss(cal){
+    return jsonEstavel((Array.isArray(cal?.items)?cal.items:[]).filter(i=>i&&i.excluido!==true));
+  }
+  function mensalidadeResolvidaParaFusao(v){ return ['pago','isento'].includes(statusMensalidadeCanonico(v||{})); }
+
+  async function prepararSaneamentoZeissZeens(){
+    const fixos={
+      configC:doc(db,'clientes_config','zeiss'),configA:doc(db,'clientes_config','zeens'),configO:doc(db,'clientes_config','otica-visao-araucaria'),
+      contratoC:doc(db,'contratos_cliente','zeiss'),contratoA:doc(db,'contratos_cliente','zeens'),
+      acessoC:doc(db,'clientes_acesso','zeiss'),acessoA:doc(db,'clientes_acesso','zeens'),
+      calC:doc(db,'calendarios','zeiss'),calA:doc(db,'calendarios','zeens'),
+      storyC:doc(db,'stories_clientes','zeiss'),storyA:doc(db,'stories_clientes','zeens'),
+      contatoC:doc(db,'contatos_clientes_financeiro','zeiss'),contatoA:doc(db,'contatos_clientes_financeiro','zeens')
+    };
+    const [snapsFixos,pagamentosSnap,extrasSnap,cadastrosSnap,onboardingSnap]=await Promise.all([
+      Promise.all(Object.values(fixos).map(getDoc)),getDocs(collection(db,'pagamentos_mensais')),
+      getDocs(collection(db,'clientes_extras')),getDocs(collection(db,'cadastros_clientes')),getDocs(collection(db,'onboarding_processos'))
+    ]);
+    const porChave=Object.fromEntries(Object.keys(fixos).map((k,i)=>[k,snapsFixos[i]]));
+    const dados=k=>porChave[k].exists()?porChave[k].data():{};
+    const aliasAtivo=contratoOperacionalAtivo(dados('contratoA'))||
+      (!clienteInativoEfetivo(dados('configA'))&&dados('configA').excluido!==true&&dados('configA').ativo!==false)||
+      (porChave.acessoA.exists()&&dados('acessoA').ativo!==false);
+    if(!aliasAtivo) throw new Error('Zeens já não está ativa nas fontes principais; atualize a Central antes de repetir.');
+    const itensC=(dados('calC').items||[]).filter(i=>i&&i.excluido!==true), itensA=(dados('calA').items||[]).filter(i=>i&&i.excluido!==true);
+    if(itensC.length&&itensA.length&&assinaturaItensZeiss(dados('calC'))!==assinaturaItensZeiss(dados('calA'))){
+      throw new Error('Os dois calendários possuem conteúdos diferentes. Nada foi alterado; a fusão exige revisão humana dos itens.');
+    }
+    const pagamentos=[]; pagamentosSnap.forEach(d=>{ const v=d.data()||{}, dono=slugClienteCanonico(v.cliente||String(d.id).split('_')[0]); if(dono==='zeiss') pagamentos.push({ref:d.ref,id:d.id,...v}); });
+    const porCompetencia={}; pagamentos.forEach(p=>{ const mes=String(p.competencia||p.id.match(/\d{4}-\d{2}/)?.[0]||''); if(!mes) return; (porCompetencia[mes]||(porCompetencia[mes]=[])).push(p); });
+    for(const [mes,lista] of Object.entries(porCompetencia)){
+      const c=lista.find(p=>p.id==='zeiss_'+mes), aliases=lista.filter(p=>p.id!=='zeiss_'+mes);
+      for(const a of aliases){
+        if(!c) continue;
+        const mesmoEstado=statusMensalidadeCanonico(c)===statusMensalidadeCanonico(a);
+        const mesmoValor=Number(c.valorDevido??c.valor??0)===Number(a.valorDevido??a.valor??0);
+        if(!(mesmoEstado&&mesmoValor) && !(mensalidadeResolvidaParaFusao(c)&&!mensalidadeResolvidaParaFusao(a)) && !(!mensalidadeResolvidaParaFusao(c)&&mensalidadeResolvidaParaFusao(a))){
+          throw new Error('Conflito financeiro em '+mes+': os dois registros têm estados incompatíveis. Nada foi alterado.');
+        }
+      }
+    }
+    const aliases=new Set(['zeens','otica-visao-araucaria']);
+    const refsRelacionadas=[];
+    extrasSnap.forEach(d=>{ const v=d.data()||{}; if(aliases.has(d.id)||aliases.has(String(v.slug||''))) refsRelacionadas.push({tipo:'extra',ref:d.ref,dados:v}); });
+    cadastrosSnap.forEach(d=>{ const v=d.data()||{}; if(aliases.has(String(v.slug||v.slugAtivado||''))) refsRelacionadas.push({tipo:'cadastro',ref:d.ref,dados:v}); });
+    onboardingSnap.forEach(d=>{ const v=d.data()||{}; if(aliases.has(String(v.clienteSlug||v.slug||''))) refsRelacionadas.push({tipo:'onboarding',ref:d.ref,dados:v}); });
+    const tokenC=String(dados('acessoC').token||''), tokenA=String(dados('acessoA').token||'');
+    const tokenRefs=[...new Set([tokenC,tokenA].filter(Boolean))].map(id=>doc(db,'clientes_portal_tokens',id));
+    return {fixos,porChave,pagamentos,porCompetencia,refsRelacionadas,tokenC,tokenA,tokenRefs,itensC,itensA};
+  }
+  window.prepararSaneamentoZeissZeens=prepararSaneamentoZeissZeens;
+
+  window.sanearIdentidadeZeissZeens=async function(){
+    if(usuarioAtual!=='Chris'){ mostrarToast('Somente Chris pode consolidar identidade e financeiro.','erro'); return false; }
+    let plano;
+    try{ plano=await prepararSaneamentoZeissZeens(); }
+    catch(e){ mostrarToast(e.message||String(e),'erro'); return false; }
+    const meses=[...new Set(plano.pagamentos.map(p=>String(p.competencia||p.id.match(/\d{4}-\d{2}/)?.[0]||'')).filter(Boolean))].sort();
+    if(!confirm('Consolidar Zeiss/Zeens agora?\n\nSerão preservados: '+plano.itensC.length+' item(ns) no calendário canônico, '+meses.length+' competência(s) financeira(s) e o token de Portal que hoje está ativo. Os aliases serão apenas arquivados, nunca apagados.')) return false;
+    const refsBase=[...Object.values(plano.fixos),...plano.tokenRefs,...plano.refsRelacionadas.map(v=>v.ref)];
+    const destinosPag=[];
+    Object.entries(plano.porCompetencia).forEach(([mes,lista])=>{ if(!lista.some(p=>p.id==='zeiss_'+mes)) destinosPag.push(doc(db,'pagamentos_mensais','zeiss_'+mes)); });
+    const todas=[...new Map([...refsBase,...plano.pagamentos.map(p=>p.ref),...destinosPag].map(r=>[r.path,r])).values()];
+    try{
+      await runTransaction(db,async tx=>{
+        const snaps=await Promise.all(todas.map(r=>tx.get(r)));
+        const snapPorPath=new Map(todas.map((r,i)=>[r.path,snaps[i]]));
+        const snap=r=>snapPorPath.get(r.path), dados=r=>snap(r)?.exists()?(snap(r).data()||{}):{};
+        const f=plano.fixos, contratoA=dados(f.contratoA), configA=dados(f.configA), acessoA=dados(f.acessoA), acessoC=dados(f.acessoC);
+        if(!contratoOperacionalAtivo(contratoA)&&!(acessoA&&acessoA.ativo!==false)) throw new Error('O estado de Zeens mudou depois da auditoria; nada foi aplicado.');
+        const calC=dados(f.calC), calA=dados(f.calA), itensC=(calC.items||[]).filter(i=>i&&!i.excluido), itensA=(calA.items||[]).filter(i=>i&&!i.excluido);
+        if(itensC.length&&itensA.length&&assinaturaItensZeiss(calC)!==assinaturaItensZeiss(calA)) throw new Error('O calendário mudou durante o saneamento; nada foi aplicado.');
+        const carimbo={identidadeCanonica:'zeiss',saneadoPor:usuarioAtual,saneadoEm:serverTimestamp()};
+        tx.set(f.contratoC,{...contratoA,clienteNome:'Zeiss',status:'ativo',ativo:true,encerrado:false,excluido:false,unificadoEm:deleteField(),fundidoPara:deleteField(),...carimbo},{merge:true});
+        tx.set(f.contratoA,{status:'encerrado',ativo:false,encerrado:true,excluido:true,unificadoEm:'zeiss',motivoEncerramento:'Alias financeiro consolidado em Zeiss',...carimbo},{merge:true});
+        tx.set(f.configC,{...configA,nome:'Zeiss',tipoCliente:'mensalista',ativo:true,clienteInativo:false,encerrado:false,excluido:false,semConteudoRecorrente:false,motivoSemConteudo:deleteField(),unificadoEm:deleteField(),...carimbo},{merge:true});
+        tx.set(f.configA,{ativo:false,clienteInativo:true,excluido:true,unificadoEm:'zeiss',inativoMotivo:'Alias consolidado em Zeiss',...carimbo},{merge:true});
+        if(snap(f.configO)?.exists()) tx.set(f.configO,{ativo:false,clienteInativo:true,excluido:true,unificadoEm:'zeiss',...carimbo},{merge:true});
+        const tokenAtivo=String((acessoA.ativo!==false&&acessoA.token)||acessoC.token||'');
+        if(!tokenAtivo) throw new Error('Nenhum token ativo pôde ser preservado; nada foi aplicado.');
+        tx.set(f.acessoC,{...acessoA,nome:'Zeiss',token:tokenAtivo,ativo:true,desativadoEm:deleteField(),desativadoPor:deleteField(),unificadoEm:deleteField(),...carimbo},{merge:true});
+        tx.set(f.acessoA,{ativo:false,unificadoEm:'zeiss',desativadoPor:'Alias consolidado em Zeiss',desativadoEm:serverTimestamp(),...carimbo},{merge:true});
+        plano.tokenRefs.forEach(ref=>{
+          if(!snap(ref)?.exists()) return;
+          const manter=ref.id===tokenAtivo;
+          tx.set(ref,{cliente:'zeiss',nome:'Zeiss',ativo:manter,...(manter?{desativadoEm:deleteField(),desativadoPor:deleteField()}:{desativadoEm:serverTimestamp(),desativadoPor:'Token histórico do alias'}),...carimbo},{merge:true});
+        });
+        if(!itensC.length&&itensA.length) tx.set(f.calC,{...calA,client:'Zeiss',excluido:false,unificadoEm:deleteField(),...carimbo},{merge:true});
+        else if(snap(f.calC)?.exists()) tx.set(f.calC,{client:'Zeiss',excluido:false,unificadoEm:deleteField(),...carimbo},{merge:true});
+        if(snap(f.calA)?.exists()) tx.set(f.calA,{excluido:true,unificadoEm:'zeiss',arquivadoPor:'Saneamento de identidade',...carimbo},{merge:true});
+        if(snap(f.storyA)?.exists()){
+          if(!snap(f.storyC)?.exists()) tx.set(f.storyC,{...dados(f.storyA),slug:'zeiss',nome:'Zeiss',ativo:dados(f.storyA).ativo!==false,unificadoEm:deleteField(),...carimbo},{merge:true});
+          tx.set(f.storyA,{ativo:false,excluido:true,unificadoEm:'zeiss',...carimbo},{merge:true});
+        }
+        if(snap(f.contatoA)?.exists()){
+          if(!snap(f.contatoC)?.exists()) tx.set(f.contatoC,{...dados(f.contatoA),slug:'zeiss',nome:'Zeiss',...carimbo},{merge:true});
+          tx.set(f.contatoA,{unificadoEm:'zeiss',...carimbo},{merge:true});
+        }
+        plano.refsRelacionadas.forEach(item=>{
+          if(!snap(item.ref)?.exists()) return;
+          if(item.tipo==='extra') tx.set(item.ref,{excluido:true,ativo:false,unificadoEm:'zeiss',...carimbo},{merge:true});
+          else if(item.tipo==='cadastro') tx.set(item.ref,{slug:'zeiss',slugAtivado:'zeiss',nome:'Zeiss',...carimbo},{merge:true});
+          else tx.set(item.ref,{clienteSlug:'zeiss',clienteNome:'Zeiss',...carimbo},{merge:true});
+        });
+        for(const [mes,lista] of Object.entries(plano.porCompetencia)){
+          const canRef=doc(db,'pagamentos_mensais','zeiss_'+mes), canSnap=snapPorPath.get(canRef.path);
+          let can=canSnap?.exists()?canSnap.data():null;
+          const aliases=lista.filter(p=>p.ref.path!==canRef.path);
+          for(const alias of aliases){
+            const a=dados(alias.ref); if(!Object.keys(a).length) continue;
+            if(!can){ tx.set(canRef,{...a,cliente:'zeiss',clienteNome:'Zeiss',competencia:mes,excluido:false,unificadoEm:deleteField(),...carimbo}); can=a; }
+            else if(!mensalidadeResolvidaParaFusao(can)&&mensalidadeResolvidaParaFusao(a)){ tx.set(canRef,{...a,cliente:'zeiss',clienteNome:'Zeiss',competencia:mes,excluido:false,unificadoEm:deleteField(),...carimbo},{merge:true}); can=a; }
+            tx.set(alias.ref,{status:'cancelado',excluido:true,unificadoEm:'zeiss',motivoCancelamento:'Duplicata financeira preservada no saneamento Zeiss/Zeens',...carimbo},{merge:true});
+          }
+        }
+      });
+      const [contratoOk,configOk,acessoOk]=await Promise.all([getDoc(doc(db,'contratos_cliente','zeiss')),getDoc(doc(db,'clientes_config','zeiss')),getDoc(doc(db,'clientes_acesso','zeiss'))]);
+      if(!contratoOk.exists()||!contratoOperacionalAtivo(contratoOk.data())||!configOk.exists()||clienteInativoEfetivo(configOk.data())||!acessoOk.exists()||acessoOk.data().ativo===false) throw new Error('A transação terminou, mas o recibo canônico não confirmou toda a cadeia. Não repita; atualize a Central.');
+      window.limparCacheDeClientes(); limparCacheIndicadores(); mostrarToast('Zeiss consolidada: contrato, Portal, calendário e mensalidades confirmados no slug canônico.');
+      await window.renderCentralEntradaClientes(); return true;
+    }catch(e){ console.error('Falha no saneamento Zeiss/Zeens:',e); mostrarToast('Nada foi consolidado: '+(e.message||e),'erro'); return false; }
+  };
+
   window.salvarClienteAtivoCentral=async function(slug){
     if(!['Amanda','Chris'].includes(usuarioAtual)){ mostrarToast('Área exclusiva da gerência.','erro'); return; }
     const atual=(window.__entradaClientesAtivos||{})[slug];
@@ -17915,7 +18075,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const porMaisNovo=(a,b)=>String(b.criadoEm?.toDate?.()?.toISOString?.()||b.criadoEm||'').localeCompare(String(a.criadoEm?.toDate?.()?.toISOString?.()||a.criadoEm||''));
       mensalistas.sort(porMaisNovo); avulsos.sort(porMaisNovo);
       const porId=snap=>Object.fromEntries(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
-      const extrasPorId=porId(extrasSnap), configs=porId(configsSnap), contratos=porId(contratosSnap), acessos=porId(acessosSnap), tokens=porId(tokensSnap), stories=porId(storiesSnap);
+      const extrasPorId=porId(extrasSnap), tokens=porId(tokensSnap);
+      const configsBrutos=porId(configsSnap), contratosBrutos=porId(contratosSnap), acessosBrutos=porId(acessosSnap);
+      const configs=consolidarDocumentosClientePorIdentidade(configsSnap,'config');
+      const contratos=consolidarDocumentosClientePorIdentidade(contratosSnap,'contrato');
+      const acessos=consolidarDocumentosClientePorIdentidade(acessosSnap,'acesso');
+      const stories=consolidarDocumentosClientePorIdentidade(storiesSnap,'acesso');
+      const divergenciaZeissZeens=contratoOperacionalAtivo(contratosBrutos.zeens||{})||
+        (!clienteInativoEfetivo(configsBrutos.zeens||{})&&configsBrutos.zeens?.excluido!==true&&configsBrutos.zeens?.ativo!==false)||
+        (acessosBrutos.zeens&&acessosBrutos.zeens.ativo!==false);
       const onboardingTodos=onboardingsSnap.docs.map(d=>({id:d.id,...d.data()}));
       const encerradosTodos=encerradosSnap.docs.map(d=>({id:d.id,arquivoColecao:'clientes_encerrados',...d.data()})).sort((a,b)=>String(b.dataSaida||b.atualizadoEm||b.criadoEm||'').localeCompare(String(a.dataSaida||a.atualizadoEm||a.criadoEm||'')));
       const encerrados=encerradosTodos.filter(v=>!v.excluido&&v.statusSaida!=='cancelada');
@@ -18019,13 +18187,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         ${saidaFinanceiraPendente?'<div class="card" style="border-color:var(--red);margin:11px 0 0;background:rgba(255,93,93,.08);"><b style="color:var(--red);">Defina o último mês cobrado.</b><div class="desc">Enquanto faltar esse dado, a saída não está conciliada com as mensalidades. Clique em “Definir último mês” abaixo.</div></div>':''}
         <div class="desc" style="margin-top:11px;line-height:1.7;"><b>Instagram:</b> ${esc(v.instagram||'—')}<br><b>Contato financeiro:</b> preservado na área exclusiva do Chris${v.aniversario?' · aniversário '+esc(v.aniversario):''}${v.contatos?'<br><b>Outros contatos operacionais:</b> '+esc(v.contatos):''}<br><b>Plano/escopo:</b> ${esc([v.plano,(!v.planoDetalhes||String(v.plano||'').includes(v.planoDetalhes))?'':v.planoDetalhes].filter(Boolean).join(' — ')||'—')}${v.tipo==='mensalista'?'<br><b>Mensalidade:</b> '+brl(v.valorMensal)+' · vence dia '+esc(String(v.diaVencimento||'—'))+' · primeira cobrança '+esc(v.primeiraCompetencia||'—')+(v.ultimaCompetenciaPagamento?' · <b>último mês no Financeiro:</b> '+esc(v.ultimaCompetenciaPagamento):'')+' · <b>entrega:</b> '+(v.tipoEntrega==='entrega_direta'?'direta':'agência publica')+' · <b>Stories:</b> '+(v.incluiStories?'sim':'não')+'<br><b>Cortesia:</b> '+(v.cortesiaPermanente?'permanente':(v.cortesiaMeses||[]).length?(v.cortesiaMeses||[]).map(esc).join(', '):'não')+'<br><b>Onboarding:</b> '+esc(v.onboardingStatus):''}${v.observacoes?'<br><b>Observações:</b> '+esc(v.observacoes):''}</div>
         <div class="btnrow" style="margin-top:11px;flex-wrap:wrap;">
-          ${v.token?'<button class="btn" style="width:auto;" onclick="abrirPortalClienteCentral(\''+escJs(v.slug)+'\')">Abrir Portal ↗</button><button class="btn secondary" style="width:auto;" onclick="copiarPortalClienteCentral(\''+escJs(v.slug)+'\')">Copiar Portal</button>':'<button class="btn" style="width:auto;" onclick="garantirPortalClienteCentral(\''+escJs(v.slug)+'\')">Criar/recuperar Portal</button>'}
+          ${v.tipo==='mensalista'?(v.token?'<button class="btn" style="width:auto;" onclick="abrirPortalClienteCentral(\''+escJs(v.slug)+'\')">Abrir Portal ↗</button><button class="btn secondary" style="width:auto;" onclick="copiarPortalClienteCentral(\''+escJs(v.slug)+'\')">Copiar Portal</button>':'<button class="btn" style="width:auto;" onclick="garantirPortalClienteCentral(\''+escJs(v.slug)+'\')">Criar/recuperar Portal</button>'):''}
           ${v.tipo==='mensalista'&&!ehClienteSoEdicao(v.slug)?'<button class="btn secondary" style="width:auto;" onclick="abrirCalendarioDeCliente(\''+escJs(v.slug)+'\',\''+escJs(v.nome)+'\')">Calendário</button>':''}
           ${v.onboardingId&&v.onboardingStatus!=='concluido'?'<button class="btn secondary" style="width:auto;" onclick="abrirOnboardingCentral(\''+escJs(v.onboardingId)+'\')">Onboarding</button>':''}
           <button class="btn secondary" style="width:auto;" onclick="navegarGerenciaSub('saudeClientes')">Ficha operacional</button>
           <button class="btn secondary" style="width:auto;" onclick="editarClienteAtivoCentral('${escJs(v.slug)}')">Editar dados</button>
           ${v.identidadeDivergente?'<button class="btn" style="width:auto;" onclick="repararIdentidadeClienteCentral(\''+escJs(v.slug)+'\')">Corrigir identidade para '+esc(nomeClienteCanonico(v.slug,v.nome))+'</button>':''}
-          <button class="btn red" style="width:auto;" onclick="abrirSaidaClienteCentral('${escJs(v.slug)}')">${saidaFinanceiraPendente?'Definir último mês':(v.saida?'Revisar saída':'Programar saída')}</button>
+          ${v.tipo==='mensalista'?`<button class="btn red" style="width:auto;" onclick="abrirSaidaClienteCentral('${escJs(v.slug)}')">${saidaFinanceiraPendente?'Definir último mês':(v.saida?'Revisar saída':'Programar saída')}</button>`:(v.leadColecao==='leads_avulsos'&&v.leadId?`<button class="btn red" style="width:auto;" onclick="finalizarLeadAvulso('${escJs(v.leadId)}')">Finalizar projeto e arquivar</button>`:'<span class="meta">Projeto pontual: não possui Portal nem saída mensalista.</span>')}
         </div>
       </div>`; };
       const arquivadosDeOrigem=[
@@ -18076,9 +18244,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const ativosAvulsos=ativos.filter(v=>v.tipo==='avulso').length;
       const resumoCiclo=`<div class="painelResumo"><div class="resumoCard"><div class="num">${mensalistas.length}</div><div class="lbl">fichas mensais aguardando</div></div><div class="resumoCard"><div class="num">${avulsos.length}</div><div class="lbl">pedidos avulsos aguardando</div></div><div class="resumoCard green"><div class="num">${ativosMensais}</div><div class="lbl">mensalistas ativos</div></div><div class="resumoCard"><div class="num">${ativosAvulsos}</div><div class="lbl">trabalhos avulsos ativos</div></div><div class="resumoCard"><div class="num">${saidasProgramadas.length}</div><div class="lbl">saídas programadas</div></div><div class="resumoCard"><div class="num">${arquivoEfetivo.length}</div><div class="lbl">clientes arquivados</div></div></div>`;
       window.__projecaoCicloClientes={confirmadaEm:Date.now(),pendentesMensalistas:mensalistas,pendentesAvulsos:avulsos,ativos,saidasProgramadas,arquivados:arquivoEfetivo,historicoCancelado:historicoSaidasCanceladas};
-      const cabecalhoCentral=modoArquivo
+      const avisoIdentidadeZeiss=divergenciaZeissZeens?`<div class="card" style="border:2px solid var(--red);background:rgba(255,93,93,.07);"><h2 style="margin-top:0;color:var(--red);">Zeiss está dividida em dois registros físicos</h2><div class="desc">A Central recuperou a leitura ativa de <b>zeens</b> como <b>Zeiss</b>, mas bloqueia a falsa aparência de normalidade: contrato, Portal, configuração e mensalidades ainda precisam ser consolidados sem duplicar agosto. Somente Chris pode executar o saneamento auditado.</div>${usuarioAtual==='Chris'?'<button class="btn red" style="width:auto;margin-top:10px;" onclick="sanearIdentidadeZeissZeens()">Auditar e consolidar Zeiss/Zeens</button>':'<div class="meta" style="margin-top:8px;">Peça ao Chris para concluir o saneamento financeiro.</div>'}</div>`:'';
+      const cabecalhoCentral=(modoArquivo
         ? `<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Arquivo único de clientes</h2><div class="desc">Uma única fonte reúne saídas efetivas, fichas preservadas e reativação. Nenhum calendário, contrato ou histórico é apagado. Telefones não são exibidos aqui; ficam na área exclusiva do Chris dentro do Financeiro.</div><div class="field" style="margin-top:12px;"><label>Buscar no arquivo</label><input id="arquivoClientesBusca" type="search" placeholder="Nome, serviço ou motivo" oninput="filtrarArquivoClientesUnico()"></div></div>`
-        : `<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Central única de clientes</h2><div class="desc"><b>Interesse → proposta → fechamento → ficha final → conferência da Amanda → ativo → saída programada → arquivo → reativação.</b> O link é o caminho preferencial; o cadastro manual abaixo usa o mesmo escritor e a mesma trava contra duplicação.</div><div class="btnrow" style="margin-top:10px;"><button class="btn" style="width:auto;" onclick="setCadastroSub('form',document.querySelectorAll('#view-cadastro .subtab')[2])">Abrir links oficiais</button><button class="btn secondary" style="width:auto;" onclick="abrirCadastroManualMensalista()">Cadastrar mensalista manualmente</button></div></div>`;
+        : `<div class="card" style="border:2px solid var(--yellow);"><h2 style="margin-top:0;">Central única de clientes</h2><div class="desc"><b>Interesse → proposta → fechamento → ficha final → conferência da Amanda → ativo → saída programada → arquivo → reativação.</b> O link é o caminho preferencial; o cadastro manual abaixo usa o mesmo escritor e a mesma trava contra duplicação.</div><div class="btnrow" style="margin-top:10px;"><button class="btn" style="width:auto;" onclick="setCadastroSub('form',document.querySelectorAll('#view-cadastro .subtab')[2])">Abrir links oficiais</button><button class="btn secondary" style="width:auto;" onclick="abrirCadastroManualMensalista()">Cadastrar mensalista manualmente</button></div></div>`)+avisoIdentidadeZeiss;
       const blocoOperacao=`
         <div class="card" id="centralSaidasClientes" style="border:2px solid var(--red);"><h2 style="margin-top:0;">Registrar saída de cliente</h2><div class="desc">Só <b>mensalistas</b> aparecem aqui — é quem tem contrato recorrente e portanto pode sair da agência. Cliente avulso não sai: o projeto dele termina. Ele continua operando até a data definida; depois sai das listas e do Portal, e todo o histórico fica no arquivo abaixo.</div><div class="row2" style="margin-top:12px;"><div class="field"><label>Cliente</label><select id="saidaRapidaCliente"><option value="">Selecione...</option>${(ativos.filter(v=>v.tipo==='mensalista')).map(v=>`<option value="${escAttr(v.slug)}">${esc(v.nome)}</option>`).join('')}</select></div><button class="btn red" style="align-self:end;" onclick="abrirSaidaRapidaCentral()">Programar saída</button></div></div>
         ${formularioEdicao}${formularioSaida}
@@ -30877,7 +31046,14 @@ window.salvarPrazoVideo = async function(id){
         }
         if(refs.cadastro&&cadastroAtual?.exists()) tx.set(refs.cadastro,{plano,valorMensal:valor,diaVencimento:dia,primeiraCompetencia,cortesiaPermanente,cortesiaMeses,...carimbo},{merge:true});
         if(refs.extra&&extraAtual?.exists()) tx.set(refs.extra,{casta:'mensalista',...carimbo},{merge:true});
-        if(configAtual?.exists()) tx.set(refs.config,{tipoCliente:'mensalista',contratoFinanceiroConfirmado:true,contratoFinanceiroConfirmadoPor:usuarioAtual,contratoFinanceiroConfirmadoEm:serverTimestamp(),...carimbo},{merge:true});
+        /* O contrato mensal confirmado tambem encerra a classificacao
+           operacional antiga de "fora da carteira". Deixar esses campos
+           vivos criava duas verdades: o Financeiro tratava como mensalista,
+           enquanto calendarios, postagem e outras rotinas podiam exclui-lo
+           por `semConteudoRecorrente`. A limpeza ocorre na MESMA transacao e
+           somente para mensalista recorrente; entrega direta continua sendo
+           tratada pelo fluxo proprio de reativacao/classificacao. */
+        if(configAtual?.exists()) tx.set(refs.config,{tipoCliente:'mensalista',semConteudoRecorrente:false,motivoSemConteudo:deleteField(),contratoFinanceiroConfirmado:true,contratoFinanceiroConfirmadoPor:usuarioAtual,contratoFinanceiroConfirmadoEm:serverTimestamp(),...carimbo},{merge:true});
       });
       transacaoConcluida=true;
       const [reciboContrato,reciboMensalidade]=await Promise.all([getDoc(refs.contrato),getDoc(refs.mensalidade)]);

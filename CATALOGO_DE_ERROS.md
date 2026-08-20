@@ -1852,3 +1852,15 @@ O período válido do produto foi fixado em **julho de 2026 em diante**, pois fo
 > **LEI:** qualquer teste transacional que use sentinelas do Firestore precisa reproduzir as restrições do SDK, inclusive `deleteField()` com merge. Cenários de consolidação devem cobrir tanto colisão canônico+alias quanto competência existente apenas no alias.
 
 **Gate de regressão:** `scripts/regression-v93-consistencia-clientes.mjs` passa a criar `zeens_2026-10`, exige `zeiss_2026-10` sem campo `unificadoEm`, confirma o alias cancelado e falha contra o código V93 anterior.
+
+### 70.42 Salvar a legenda tentava escrever também no vídeo e o Firebase negava toda a transação da Gabi
+
+**Defeito reproduzido na V94 publicada em 20/08/2026:** depois que o vídeo aprovado gerava a postagem canônica em `aguardando_legenda`, o botão **Salvar legenda e enviar pra Cecília agendar** executava uma transação sobre `postagens` e também tentava atualizar `videos_producao.postagemId`. As regras permitem que a Gabi atualize a postagem, mas não concedem a ela operação geral sobre vídeos. Como a transação é atômica, a escrita adicional negada cancelava também a legenda e o botão terminava sem avançar a fila.
+
+**Causa comprovada:** a aprovação do cliente já grava o `postagemId` canônico no vídeo. O salvamento da legenda repetia essa escrita como uma garantia redundante. A regressão V74 verificava trava, estado e recibo, mas não exercitava a função sob a fronteira real de permissão da Gabi e, por isso, não detectava o `permission-denied` cruzado.
+
+**Correção local V95:** o salvamento continua lendo o vídeo para recusar uma cópia não canônica, porém grava somente a postagem: texto, autoria, horário e transição para `aguardando_agendamento`. Nenhuma permissão de `videos_producao` foi ampliada. A transação continua idempotente, bloqueia duplo clique, relê o recibo e só então confirma a passagem para a Cecília.
+
+> **LEI:** uma etapa operacional deve escrever somente a entidade que aquele papel possui autorização para alterar. Uma ligação já criada na aprovação não pode ser regravada por uma etapa posterior se isso ampliar a fronteira de permissão ou cancelar a unidade principal.
+
+**Gate de regressão:** `scripts/regression-v95-legendas.mjs` executa o handler real como Gabrielle, aplica uma fronteira que recusa qualquer escrita em `videos_producao`, clica duas vezes simultaneamente, confirma uma única atualização em `postagens`, persistência do texto/autoria, vídeo intacto, transição para Cecília e toast de sucesso. O teste falha contra a V94 exatamente na escrita indevida do vídeo.

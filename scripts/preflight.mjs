@@ -738,11 +738,11 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-20-saneamento-zeiss-v94' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-20-consistencia-clientes-v93">') ||
+if (build !== '2026-08-20-legendas-v95' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-20-saneamento-zeiss-v94">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V94 inesperada: ${build || 'ausente'}`);
-} else provar('V94 preserva V93, a separação Hitech/Rodrigo e corrige o saneamento transacional Zeiss/Zeens');
+  falhar(`cadeia de build V95 inesperada: ${build || 'ausente'}`);
+} else provar('V95 preserva V94 e remove a escrita de vídeo que bloqueava o salvamento da legenda pela Gabi');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

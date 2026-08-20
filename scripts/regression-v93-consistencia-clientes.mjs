@@ -10,7 +10,8 @@ let total=0;
 function exigir(condicao,mensagem){ total++; if(!condicao) throw new Error('V93 consistência: '+mensagem); console.log('PASS ',mensagem); }
 function trecho(inicio,fim){ const a=fonte.indexOf(inicio),b=fonte.indexOf(fim,a+inicio.length); if(a<0||b<0) throw new Error('Trecho ausente: '+inicio); return fonte.slice(a,b); }
 
-exigir(fonte.includes('2026-08-20-consistencia-clientes-v93'),'build identifica inequivocamente a entrega V93');
+exigir(fonte.includes('2026-08-20-consistencia-clientes-v93'),'build preserva a entrega-base V93 na cadeia de patches');
+exigir(fonte.includes('2026-08-20-saneamento-zeiss-v94'),'build identifica inequivocamente a correção V94');
 const helper=trecho('  function consolidarDocumentosClientePorIdentidade','  window.consolidarDocumentosClientePorIdentidade');
 const ctx={
   slugClienteCanonico:s=>({'zeens':'zeiss','otica-visao-araucaria':'zeiss'}[String(s||'')]||String(s||'')),
@@ -64,6 +65,7 @@ exigir(central.includes("ativos.filter(v=>v.tipo==='mensalista')"),'seletor de s
     ['calendarios/zeens',{client:'Zeens',items:[{itemId:'a',mes:'2026-08',name:'Conteúdo'}]}],
     ['pagamentos_mensais/zeiss_2026-08',{cliente:'zeiss',competencia:'2026-08',valorDevido:1700,status:'isento'}],
     ['pagamentos_mensais/zeens_2026-08',{cliente:'zeens',competencia:'2026-08',valorDevido:1700,status:'aberto'}],
+    ['pagamentos_mensais/zeens_2026-10',{cliente:'zeens',competencia:'2026-10',valorDevido:1700,status:'aberto',unificadoEm:'legado'}],
     ['clientes_extras/zeens',{slug:'zeens',nome:'Zeens',ativo:true,excluido:false}]
   ]);
   const ref=(colecao,id)=>({path:colecao+'/'+id,id});
@@ -78,7 +80,11 @@ exigir(central.includes("ativos.filter(v=>v.tipo==='mensalista')"),'seletor de s
     window:{},usuarioAtual:'Chris',db:{},console,confirm:()=>true,
     doc:(_db,c,id)=>ref(c,id),collection:(_db,c)=>c,
     getDoc:async r=>snap(r),getDocs:async c=>listar(c),
-    runTransaction:async(_db,fn)=>fn({get:async r=>snap(r),set:(r,d,o)=>aplicar(r,d,o?.merge===true)}),
+    runTransaction:async(_db,fn)=>fn({get:async r=>snap(r),set:(r,d,o)=>{
+      const merge=o?.merge===true;
+      if(!merge&&Object.values(d).some(v=>v&&v.__delete)) throw new Error('deleteField() exige set com merge');
+      aplicar(r,d,merge);
+    }}),
     deleteField:()=>DEL,serverTimestamp:()=>({__server:true}),
     statusMensalidadeCanonico:v=>['pago','isento','cancelado'].includes(v?.status)?v.status:'aberto',
     contratoOperacionalAtivo:v=>v?.status==='ativo'&&v?.ativo!==false&&v?.encerrado!==true&&v?.excluido!==true,
@@ -93,6 +99,7 @@ exigir(central.includes("ativos.filter(v=>v.tipo==='mensalista')"),'seletor de s
   exigir(banco.get('contratos_cliente/zeiss').status==='ativo'&&banco.get('contratos_cliente/zeens').status==='encerrado','contrato canônico ativa e alias encerra na mesma transação');
   exigir(banco.get('clientes_acesso/zeiss').token==='token-vigente'&&banco.get('clientes_portal_tokens/token-vigente').cliente==='zeiss'&&banco.get('clientes_portal_tokens/token-vigente').ativo===true,'Portal vigente é transferido para Zeiss sem rotação de token');
   exigir(banco.get('pagamentos_mensais/zeiss_2026-08').status==='isento'&&banco.get('pagamentos_mensais/zeens_2026-08').status==='cancelado','agosto canônico isento é preservado e duplicata aberta é cancelada');
+  exigir(banco.get('pagamentos_mensais/zeiss_2026-10').status==='aberto'&&!Object.hasOwn(banco.get('pagamentos_mensais/zeiss_2026-10'),'unificadoEm')&&banco.get('pagamentos_mensais/zeens_2026-10').status==='cancelado','competência existente apenas no alias cria o canônico com merge válido e arquiva a duplicata');
   exigir(banco.get('calendarios/zeiss').items.length===1&&banco.get('calendarios/zeens').items.length===1&&banco.get('calendarios/zeens').excluido===true,'calendário canônico permanece íntegro e alias vira arquivo sem perder itens');
   exigir(banco.get('clientes_config/zeiss').semConteudoRecorrente===false&&!Object.hasOwn(banco.get('clientes_config/zeiss'),'motivoSemConteudo'),'configuração canônica volta à recorrência sem motivo legado');
 }

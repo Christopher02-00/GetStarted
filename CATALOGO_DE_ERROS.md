@@ -1840,3 +1840,15 @@ O período válido do produto foi fixado em **julho de 2026 em diante**, pois fo
 > **LEI:** cliente avulso não “sai da agência” pelo motor recorrente; o projeto é finalizado e arquivado no próprio funil. Nenhum botão mensal pode existir no cartão avulso.
 
 **Gate de regressão:** `scripts/regression-v93-ui-central-clientes.mjs` extrai o renderer real, monta mensalista, IKN e avulso legado e clica nas ações em desktop e mobile; `scripts/regression-v93-consistencia-clientes.mjs` verifica as guardas e o seletor mensalista.
+
+### 70.41 O saneamento Zeiss/Zeens abortava quando uma competência existia somente no alias
+
+**Defeito reproduzido na V93 publicada em 20/08/2026:** o botão exclusivo do Chris relia todos os dados e exibia a confirmação correta, mas a transação era abortada ao criar `pagamentos_mensais/zeiss_2026-10`. O Firestore recusou `deleteField()` dentro de `Transaction.set()` sem `{merge:true}`. A atomicidade impediu escrita parcial e a Central confirmou: “Nada foi consolidado”.
+
+**Causa comprovada:** agosto já possuía o documento canônico e seguia o ramo de atualização com merge, coberto pelo teste V93. Outubro existia somente como `zeens_2026-10`; o ramo que criava o canônico usava `deleteField()` sem merge. O laboratório anterior não reproduzia uma competência presente apenas no alias e seu falso Firestore aceitava uma combinação que o SDK real rejeita.
+
+**Correção local V94:** toda competência criada no ID canônico usa `tx.set(...,{merge:true})`; isso permite remover o marcador legado e criar o documento determinístico na mesma transação. O laboratório agora contém outubro somente no alias e rejeita explicitamente `deleteField()` em `set()` sem merge, reproduzindo o contrato real do SDK.
+
+> **LEI:** qualquer teste transacional que use sentinelas do Firestore precisa reproduzir as restrições do SDK, inclusive `deleteField()` com merge. Cenários de consolidação devem cobrir tanto colisão canônico+alias quanto competência existente apenas no alias.
+
+**Gate de regressão:** `scripts/regression-v93-consistencia-clientes.mjs` passa a criar `zeens_2026-10`, exige `zeiss_2026-10` sem campo `unificadoEm`, confirma o alias cancelado e falha contra o código V93 anterior.

@@ -19,7 +19,9 @@ const obrigatorios = [
   'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
   'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs',
   'scripts/regression-v76.mjs', 'scripts/regression-v77.mjs', 'scripts/regression-v78.mjs',
-  'scripts/regression-v79.mjs', 'scripts/regression-v80.mjs', 'Planos.pdf'
+  'scripts/regression-v79.mjs', 'scripts/regression-v80.mjs',
+  'scripts/regression-v96-operacao-perfis-chris.mjs',
+  'scripts/regression-v96-ui-operacao-perfis-chris.mjs', 'Planos.pdf'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -655,11 +657,12 @@ if (!visaoCalendarios.includes('itensDoMesCalendario(cal, mesAtual)') ||
     !escritorio.includes("['Chris','Amanda','Gabrielle','Cecília'].includes(pessoaDoOuvinte)")) {
   falhar('acompanhamento editorial não está mensal, isolado para Amanda/Gabi ou atualizado pelo listener comum');
 } else provar('Amanda e Gabi acompanham roteiros do mês correto pela fonte em tempo real');
-if (!calendarioEditor.includes("const modoAuditoria = params.get('auditoria') === '1'") ||
-    !calendarioEditor.includes('function impedirEscritaAuditoria(ref)') ||
-    !escritorio.includes("window.__auditoriaPapelAtiva?'&auditoria=1':''")) {
-  falhar('iframe do calendário não preserva o modo somente leitura da auditoria');
-} else provar('auditoria mantém calendário em modo somente leitura');
+if (!calendarioEditor.includes("const modoOperacaoChrisSolicitado = modoInternoEquipe && params.get('operacaoChris') === '1'") ||
+    !calendarioEditor.includes("email!=='christopherveloso0@gmail.com'") ||
+    !calendarioEditor.includes("collection(db,'log_operacoes_delegadas')") ||
+    !escritorio.includes("'&operacaoChris=1&papelOperado='")) {
+  falhar('iframe do calendário não confirma Chris nem registra atomicamente a operação delegada');
+} else provar('calendário delegado confirma o Chris real e anexa a autoria à gravação');
 if (!calendarioEditor.includes('const it={...anterior,itemId:anterior.itemId||') ||
     !calendarioEditor.includes('excluido:true,excluidoPor:')) {
   falhar('item de calendário não preserva campos/ID ou perdeu soft-delete');
@@ -690,12 +693,24 @@ if (!escritorio.includes("definirItemExclusivoNoDOM('navCadastro'") ||
   falhar('itens privados de clientes/financeiro não são removidos do DOM por papel');
 } else provar('itens privados e Campanhas são removidos do DOM por papel');
 
-if (!escritorio.includes('function __impedirGravacaoDuranteAuditoria') ||
+const operacaoDelegada = escritorio.slice(
+  escritorio.indexOf('const PAPEIS_OPERAVEIS_POR_CHRIS'),
+  escritorio.indexOf('const auth = getAuth(app)')
+);
+if (!operacaoDelegada.includes("window.__pessoaAutenticadaReal!=='Chris'") ||
+    !operacaoDelegada.includes("collection(db,'log_operacoes_delegadas')") ||
     !['addDoc','setDoc','updateDoc','deleteDoc','runTransaction','writeBatch'].every(nome =>
-      new RegExp(`(?:function|async function) ${nome}\\([^)]*\\)\\{\\s*__impedirGravacaoDuranteAuditoria\\(\\)`).test(escritorio)) ||
-    !escritorio.includes("window.__pessoaAutenticadaReal !== 'Chris'")) {
-  falhar('auditoria de perfis não está exclusiva do Chris ou não é integralmente somente leitura');
-} else provar('auditoria de perfis exclusiva do Chris e sem gravação Firestore');
+      operacaoDelegada.includes(`function ${nome}`) || operacaoDelegada.includes(`async function ${nome}`)) ||
+    !operacaoDelegada.includes("atorReal:'Chris'") ||
+    !operacaoDelegada.includes('await lote.commit()')) {
+  falhar('operação delegada não está exclusiva do Chris ou perdeu o log atômico');
+} else provar('operação delegada do Chris cobre todos os escritores e conserva autoria atômica');
+const regraLogDelegado=regras.slice(regras.indexOf('match /log_operacoes_delegadas/'),regras.indexOf('// Coleções exclusivamente operacionais'));
+if(!regraLogDelegado.includes('allow create: if ehChris()') ||
+   !regraLogDelegado.includes('allow update, delete: if false') ||
+   !regras.includes('allow create, update: if ehAmanda() || ehChris();')) {
+  falhar('backend da operação delegada não está append-only ou deixou portas Amanda-only fechadas ao Chris');
+} else provar('backend concede as duas portas necessárias apenas ao Chris e mantém o log imutável');
 
 if (!escritorio.includes('producaoPorFilmmaker') || !escritorio.includes('conteudosRealizados') ||
     !escritorio.includes('function producaoDetalhadaDoAgendamento') ||
@@ -738,11 +753,12 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-20-legendas-v95' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-20-saneamento-zeiss-v94">') ||
+if (build !== '2026-08-21-operacao-perfis-chris-v96' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-20-legendas-v95">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-20-saneamento-zeiss-v94">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V95 inesperada: ${build || 'ausente'}`);
-} else provar('V95 preserva V94 e remove a escrita de vídeo que bloqueava o salvamento da legenda pela Gabi');
+  falhar(`cadeia de build V96 inesperada: ${build || 'ausente'}`);
+} else provar('V96 preserva V95/V94 e adiciona a operação exclusiva dos perfis pelo Chris');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
@@ -787,7 +803,8 @@ const mesEditorV68 = ler('calendario.html').slice(
   ler('calendario.html').indexOf('function mesDoItemNoCalendario'),
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
-if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v91">') ||
+if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-21-operacao-perfis-chris-v96">') ||
+    !ler('calendario.html').includes('<meta name="gs-parent-patch" content="2026-08-19-calendarios-stories-v91">') ||
     !portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v91">') ||
     !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||

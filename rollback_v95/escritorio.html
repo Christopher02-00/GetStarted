@@ -4,10 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-21-operacao-perfis-chris-v96">
-  <meta name="gs-parent-patch" content="2026-08-20-legendas-v95">
+  <meta name="gs-build" content="2026-08-20-legendas-v95">
   <meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">
-  <meta name="gs-grandparent-patch" content="2026-08-20-saneamento-zeiss-v94">
+  <meta name="gs-parent-patch" content="2026-08-20-saneamento-zeiss-v94">
   <meta name="gs-patch" content="2026-08-20-legendas-v95">
 <style>
   :root{
@@ -1996,121 +1995,27 @@
     return lista;
   }
 
-  /* V96 — Chris opera o papel escolhido sem perder a identidade real.
-     O documento de negócio e o recibo mínimo de autoria entram no MESMO
-     batch/transação: se o log não for permitido, nada é alterado. O log
-     nunca leva payload, legenda, telefone ou valor financeiro; só os
-     caminhos técnicos necessários à auditoria, visíveis apenas ao Chris. */
-  const PAPEIS_OPERAVEIS_POR_CHRIS = Object.freeze(['Amanda','Cecília','Gabrielle','Helo','João Victor','Luís','Nathan','Yas']);
-  function __operacaoDelegadaChrisAtiva(){
-    const papel=String(window.__operacaoDelegadaChris||'');
-    if(!papel) return false;
-    if(window.__pessoaAutenticadaReal!=='Chris' || !PAPEIS_OPERAVEIS_POR_CHRIS.includes(papel)){
-      const erro=new Error('Operação delegada inválida. Volte ao perfil confirmado pelo Google.');
-      erro.code='gs/operacao-delegada-invalida';
-      try{ mostrarToast(erro.message,'erro'); }catch(e){}
-      throw erro;
-    }
-    return true;
-  }
-  function __alvosLogOperacaoDelegada(refs){
-    return [...new Set((refs||[]).map(ref=>String(ref?.path||'')).filter(Boolean))];
-  }
-  function __dadosLogOperacaoDelegada(operacao,refs,origem){
-    const alvos=__alvosLogOperacaoDelegada(refs);
-    return {
-      atorReal:'Chris',papelOperado:String(window.__operacaoDelegadaChris),
-      operacao:String(operacao),origem:origem||'escritorio',versao:'V96',
-      alvos:alvos.slice(0,40),totalAlvos:alvos.length,executadoEm:serverTimestamp()
-    };
-  }
-  function __anexarLogOperacaoDelegada(lote,operacao,refs,origem){
-    const logRef=doc(collection(db,'log_operacoes_delegadas'));
-    lote.set(logRef,__dadosLogOperacaoDelegada(operacao,refs,origem));
-  }
-  async function __gravarUnicaComLog(operacao,ref,aplicar){
-    const lote=_writeBatchFB(db);
-    aplicar(lote);
-    __anexarLogOperacaoDelegada(lote,operacao,[ref]);
-    await lote.commit();
-  }
-
   /* Toda gravação invalida o cache — sem isso a tela mostraria o estado
-     anterior por até 10 segundos depois de você mudar algo. */
-  async function addDoc(ref,dados){
-    if(!__operacaoDelegadaChrisAtiva()){
-      const r=await _addDocFB(ref,dados); __invalidarCacheDoRef(ref); return r;
-    }
-    const novoRef=doc(ref);
-    await __gravarUnicaComLog('addDoc',novoRef,lote=>lote.set(novoRef,dados));
-    __invalidarCacheDoRef(ref);
-    return novoRef;
+     anterior por até 10 segundos depois de você mudar algo, que é
+     exatamente o tipo de bug que faz alguém clicar duas vezes. */
+  function __impedirGravacaoDuranteAuditoria(){
+    if(!window.__auditoriaPapelAtiva) return;
+    const erro = new Error('Modo de auditoria é somente leitura. Volte ao perfil Chris para alterar dados.');
+    erro.code = 'gs/auditoria-somente-leitura';
+    try{ mostrarToast(erro.message, 'erro'); }catch(e){}
+    throw erro;
   }
-  async function setDoc(ref,...a){
-    if(!__operacaoDelegadaChrisAtiva()){
-      const r=await _setDocFB(ref,...a); __invalidarCacheDoRef(ref); return r;
-    }
-    await __gravarUnicaComLog('setDoc',ref,lote=>lote.set(ref,...a));
-    __invalidarCacheDoRef(ref);
-  }
-  async function updateDoc(ref,...a){
-    if(!__operacaoDelegadaChrisAtiva()){
-      const r=await _updateDocFB(ref,...a); __invalidarCacheDoRef(ref); return r;
-    }
-    await __gravarUnicaComLog('updateDoc',ref,lote=>lote.update(ref,...a));
-    __invalidarCacheDoRef(ref);
-  }
-  async function deleteDoc(ref){
-    if(!__operacaoDelegadaChrisAtiva()){
-      const r=await _deleteDocFB(ref); __invalidarCacheDoRef(ref); return r;
-    }
-    await __gravarUnicaComLog('deleteDoc',ref,lote=>lote.delete(ref));
-    __invalidarCacheDoRef(ref);
-  }
-  async function runTransaction(dbAlvo,executar,...opcoes){
-    if(!__operacaoDelegadaChrisAtiva()){
-      const r=await _runTransactionFB(dbAlvo,executar,...opcoes); __limparCacheColecoes(); return r;
-    }
-    const logRef=doc(collection(db,'log_operacoes_delegadas'));
-    const r=await _runTransactionFB(dbAlvo,async transacao=>{
-      const refs=[];
-      let proxy;
-      proxy=new Proxy(transacao,{get(alvo,prop){
-        if(['set','update','delete'].includes(prop)) return (...a)=>{
-          refs.push(a[0]);
-          const retorno=alvo[prop](...a);
-          return retorno===alvo ? proxy : retorno;
-        };
-        const valor=alvo[prop];
-        return typeof valor==='function' ? valor.bind(alvo) : valor;
-      }});
-      const resultado=await executar(proxy);
-      if(refs.length) transacao.set(logRef,__dadosLogOperacaoDelegada('runTransaction',refs));
-      return resultado;
-    },...opcoes);
+  async function addDoc(...a){ __impedirGravacaoDuranteAuditoria(); const r = await _addDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
+  async function setDoc(...a){ __impedirGravacaoDuranteAuditoria(); const r = await _setDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
+  async function updateDoc(...a){ __impedirGravacaoDuranteAuditoria(); const r = await _updateDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
+  async function deleteDoc(...a){ __impedirGravacaoDuranteAuditoria(); const r = await _deleteDocFB(...a); __invalidarCacheDoRef(a[0]); return r; }
+  async function runTransaction(...a){
+    __impedirGravacaoDuranteAuditoria();
+    const r=await _runTransactionFB(...a);
     __limparCacheColecoes();
     return r;
   }
-  function writeBatch(dbAlvo){
-    if(!__operacaoDelegadaChrisAtiva()) return _writeBatchFB(dbAlvo);
-    const lote=_writeBatchFB(dbAlvo);
-    const refs=[];
-    let proxy;
-    proxy=new Proxy(lote,{get(alvo,prop){
-      if(['set','update','delete'].includes(prop)) return (...a)=>{
-        refs.push(a[0]);
-        const retorno=alvo[prop](...a);
-        return retorno===alvo ? proxy : retorno;
-      };
-      if(prop==='commit') return async ()=>{
-        if(refs.length) __anexarLogOperacaoDelegada(alvo,'writeBatch',refs);
-        const r=await alvo.commit(); __limparCacheColecoes(); return r;
-      };
-      const valor=alvo[prop];
-      return typeof valor==='function' ? valor.bind(alvo) : valor;
-    }});
-    return proxy;
-  }
+  function writeBatch(...a){ __impedirGravacaoDuranteAuditoria(); return _writeBatchFB(...a); }
 
   const auth = getAuth(app);
   /* Safari móvel exige que `signInWithPopup` seja chamado diretamente no
@@ -2147,7 +2052,7 @@
   let __identidadeEquipeAplicada = '';
   let __autorizacoesEquipeSincronizadas = false;
   window.__pessoaAutenticadaReal = '';
-  window.__operacaoDelegadaChris = '';
+  window.__auditoriaPapelAtiva = '';
 
   function mostrarGateEquipe(mensagem){
     const gate = document.getElementById('authEquipeGate');
@@ -2180,10 +2085,10 @@
     window.__emailEquipe = '';
     window.__uid = '';
     window.__pessoaAutenticadaReal = '';
-    window.__operacaoDelegadaChris = '';
-    document.getElementById('painelOperacaoPerfisChris')?.remove();
-    document.getElementById('bannerOperacaoPerfilChris')?.remove();
-    document.body.classList.remove('modoOperacaoPerfilChris');
+    window.__auditoriaPapelAtiva = '';
+    document.getElementById('painelAuditoriaPerfisChris')?.remove();
+    document.getElementById('bannerAuditoriaPapelChris')?.remove();
+    document.body.classList.remove('modoAuditoriaPapel');
     usuarioAtual = '';
     const seletor = document.getElementById('euSouGlobal');
     if(seletor){ seletor.value=''; seletor.disabled=true; seletor.title=''; }
@@ -2205,7 +2110,7 @@
     window.__emailEquipe = autorizado.email;
     window.__uid = user.uid;
     window.__pessoaAutenticadaReal = autorizado.pessoa;
-    window.__operacaoDelegadaChris = '';
+    window.__auditoriaPapelAtiva = '';
     if(!__uidEquipeResolvido){ __uidEquipeResolvido=user.uid; __resolverAuthEquipe(user.uid); }
     const seletor=document.getElementById('euSouGlobal');
     if(seletor){
@@ -4655,7 +4560,7 @@ window.renderCentral = function(){
     const todos  = (cacheVideosProducao||[]).filter(v => !v.excluido);
     const ativos = todos.filter(v => ['aguardando_edicao','correcao'].includes(String(v.status||'')));
     const ehGestao = ['Amanda','Chris'].includes(usuarioAtual);
-    if(!ehGestao){
+    if(!ehGestao && !window.__auditoriaPapelAtiva){
       /* Nem monta. Se alguem chegar aqui por um caminho que eu nao previ,
          nao ha o que vazar: a lista de gestao so existe abaixo desta linha. */
       box.innerHTML = '<div class="card"><div class="empty">Essa área é da gerência. O que você precisa entregar está no <b>Início</b>.</div></div>';
@@ -18082,7 +17987,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   async function efetivarSaidasProgramadas(){
-    if(!['Amanda','Chris'].includes(usuarioAtual) || window.__operacaoDelegadaChris) return {processadas:[],falhas:[]};
+    if(!['Amanda','Chris'].includes(usuarioAtual) || window.__auditoriaPapelAtiva) return {processadas:[],falhas:[]};
     const snap=await getDocs(collection(db,'clientes_encerrados'));
     const vencidas=snap.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.statusSaida==='programada'&&saidaClienteJaEfetiva(v));
     const resultado={processadas:[],falhas:[]};
@@ -20489,7 +20394,7 @@ window.setGerenciaSub = function(qual, el){
     await etapaSegura('carregar clientes extras', carregarClientesExtras);
 
     await etapaSegura('carregar demandas', carregarTodasDemandas);
-    const ehGestaoNoLogin = !window.__operacaoDelegadaChris && (usuarioAtual === 'Amanda' || usuarioAtual === 'Chris');
+    const ehGestaoNoLogin = !window.__auditoriaPapelAtiva && (usuarioAtual === 'Amanda' || usuarioAtual === 'Chris');
 
     /* 04/08/2026 — a manutenção global não roda mais dentro do login.
        Todas essas rotinas ficam no motor com lock compartilhado: uma rodada
@@ -20507,7 +20412,7 @@ window.setGerenciaSub = function(qual, el){
       if(ehGestaoNoLogin) iniciarMotorAutomacoes();
       else pararMotorAutomacoes();
     }catch(e){ console.error('mudarUsuarioGlobal: falha ao ajustar motor:', e); } // Fase 1
-    if(!window.__operacaoDelegadaChris){
+    if(!window.__auditoriaPapelAtiva){
       try{ pedirPermissaoNotificacao(); }catch(e){ console.error('mudarUsuarioGlobal: falha ao pedir permissão de notificação:', e); }
     } // Fase 5
 
@@ -21096,7 +21001,7 @@ window.setGerenciaSub = function(qual, el){
     'Chris':       [{ rot:'Painel de controle',   acao:"irParaPainelDeControle()" },
                     { rot:'Financeiro completo',   acao:"irParaFinanceiroCompleto()" },
                     { rot:'Referências do dia',     acao:"irParaReferenciasDoDia()", contador:'refsHoje', rotNumero: n => ' — ' + n + ' hoje' },
-                    { id:'navOperacaoPerfisChris', rot:'Operar perfil da equipe', acao:"abrirOperacaoPerfisChris()" }],
+                    { id:'navAuditoriaPerfisChris', rot:'Auditar perfil da equipe', acao:"abrirAuditoriaPerfisChris()" }],
     'Amanda': [{ rot:'Painel de controle',   acao:"irParaPainelDeControle()" },
                     { rot:'Clientes — entrada e saída', acao:"irParaCentralClientes()" },
                     { rot:'Registrar saída de cliente', acao:"irParaSaidaClientes()" },
@@ -21148,47 +21053,46 @@ window.setGerenciaSub = function(qual, el){
     },500);
   };
 
-  function atualizarBannerOperacaoPerfilChris(){
-    let banner = document.getElementById('bannerOperacaoPerfilChris');
-    if(window.__pessoaAutenticadaReal !== 'Chris' || !window.__operacaoDelegadaChris){
+  function atualizarBannerAuditoriaChris(){
+    let banner = document.getElementById('bannerAuditoriaPapelChris');
+    if(window.__pessoaAutenticadaReal !== 'Chris' || !window.__auditoriaPapelAtiva){
       if(banner) banner.remove();
-      document.body.classList.remove('modoOperacaoPerfilChris');
+      document.body.classList.remove('modoAuditoriaPapel');
       return;
     }
     if(!banner){
       banner = document.createElement('div');
-      banner.id = 'bannerOperacaoPerfilChris';
-      banner.style.cssText = 'position:fixed;z-index:10050;top:10px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 24px);background:#594100;color:#fff;border:2px solid #FBBC19;border-radius:12px;padding:10px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);display:flex;align-items:center;gap:12px;font-size:12px;font-weight:800;';
+      banner.id = 'bannerAuditoriaPapelChris';
+      banner.style.cssText = 'position:fixed;z-index:10050;top:10px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 24px);background:#7b1d1d;color:#fff;border:2px solid #ff8b8b;border-radius:12px;padding:10px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);display:flex;align-items:center;gap:12px;font-size:12px;font-weight:800;';
       document.body.appendChild(banner);
     }
-    banner.innerHTML = `<span>🔐 CHRIS OPERANDO COMO ${esc(window.__operacaoDelegadaChris)} · ALTERAÇÕES ATIVAS E REGISTRADAS</span><button type="button" onclick="sairOperacaoPerfilChris()" style="border:0;border-radius:8px;background:#fff;color:#594100;padding:7px 10px;font-weight:900;cursor:pointer;">Voltar ao Chris</button>`;
-    document.body.classList.add('modoOperacaoPerfilChris');
+    banner.innerHTML = `<span>🧪 AUDITORIA COMO ${esc(window.__auditoriaPapelAtiva)} · SOMENTE LEITURA</span><button type="button" onclick="sairAuditoriaPerfilChris()" style="border:0;border-radius:8px;background:#fff;color:#7b1d1d;padding:7px 10px;font-weight:900;cursor:pointer;">Voltar ao Chris</button>`;
+    document.body.classList.add('modoAuditoriaPapel');
   }
 
-  window.abrirOperacaoPerfisChris = function(){
-    if(window.__pessoaAutenticadaReal !== 'Chris' || window.__operacaoDelegadaChris) return;
-    document.getElementById('painelOperacaoPerfisChris')?.remove();
+  window.abrirAuditoriaPerfisChris = function(){
+    if(window.__pessoaAutenticadaReal !== 'Chris' || window.__auditoriaPapelAtiva) return;
+    document.getElementById('painelAuditoriaPerfisChris')?.remove();
     const painel = document.createElement('div');
-    painel.id = 'painelOperacaoPerfisChris';
+    painel.id = 'painelAuditoriaPerfisChris';
     painel.style.cssText = 'position:fixed;z-index:10060;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px;';
     painel.innerHTML = `<div class="card" style="width:min(520px,100%);border:2px solid var(--yellow);margin:0;">
-      <h2>🔐 Operar perfil da equipe</h2>
-      <div class="desc">Abre a jornada do papel escolhido com edição ativa. A autenticação continua sendo Chris; o dado de negócio conserva o papel operado e cada gravação recebe um recibo técnico imutável de que foi feita pelo Chris.</div>
-      <div class="field" style="margin-top:12px;"><label>Perfil para operar</label><select id="operacaoPapelEscolhido">
-        ${PAPEIS_OPERAVEIS_POR_CHRIS.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')}
+      <h2>🧪 Auditar perfil da equipe</h2>
+      <div class="desc">Abre menus, abas, carregamentos e permissões exatamente pelo papel escolhido. A conta autenticada continua sendo Chris e <b>toda gravação no Firestore fica bloqueada</b> até voltar.</div>
+      <div class="field" style="margin-top:12px;"><label>Perfil para visualizar</label><select id="auditoriaPapelEscolhido">
+        ${['Amanda','Cecília','Gabrielle','Helo','João Victor','Luís','Nathan','Yas'].map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')}
       </select></div>
-      <div class="desc" style="margin-top:10px;color:var(--yellow);"><b>Atenção:</b> as ações serão reais quando esta versão estiver publicada. Confirme o perfil no banner antes de salvar.</div>
-      <div class="btnrow"><button class="btn" onclick="entrarOperacaoPerfilChris()">Operar este perfil</button><button class="btn secondary" onclick="document.getElementById('painelOperacaoPerfisChris')?.remove()">Cancelar</button></div>
+      <div class="btnrow"><button class="btn" onclick="entrarAuditoriaPerfilChris()">Entrar em modo somente leitura</button><button class="btn secondary" onclick="document.getElementById('painelAuditoriaPerfisChris')?.remove()">Cancelar</button></div>
     </div>`;
     document.body.appendChild(painel);
   };
 
-  window.entrarOperacaoPerfilChris = async function(){
+  window.entrarAuditoriaPerfilChris = async function(){
     if(window.__pessoaAutenticadaReal !== 'Chris') return;
-    const papel = document.getElementById('operacaoPapelEscolhido')?.value || '';
-    if(!PAPEIS_OPERAVEIS_POR_CHRIS.includes(papel)) return;
-    window.__operacaoDelegadaChris = papel;
-    document.getElementById('painelOperacaoPerfisChris')?.remove();
+    const papel = document.getElementById('auditoriaPapelEscolhido')?.value || '';
+    if(!papel || papel === 'Chris') return;
+    window.__auditoriaPapelAtiva = papel;
+    document.getElementById('painelAuditoriaPerfisChris')?.remove();
     try{ pararMotorAutomacoes(); }catch(e){}
     const seletor = document.getElementById('euSouGlobal');
     if(seletor){
@@ -21196,16 +21100,16 @@ window.setGerenciaSub = function(qual, el){
       if(!opcao){ opcao = new Option(papel,papel); seletor.add(opcao); }
       seletor.value = papel;
     }
-    atualizarBannerOperacaoPerfilChris();
+    atualizarBannerAuditoriaChris();
     await window.mudarUsuarioGlobal();
   };
 
-  window.sairOperacaoPerfilChris = async function(){
+  window.sairAuditoriaPerfilChris = async function(){
     if(window.__pessoaAutenticadaReal !== 'Chris') return;
-    window.__operacaoDelegadaChris = '';
+    window.__auditoriaPapelAtiva = '';
     const seletor = document.getElementById('euSouGlobal');
     if(seletor) seletor.value = 'Chris';
-    atualizarBannerOperacaoPerfilChris();
+    atualizarBannerAuditoriaChris();
     await window.mudarUsuarioGlobal();
   };
 
@@ -25146,10 +25050,7 @@ window.setGerenciaSub = function(qual, el){
              URL não mudava. Perdi tempo investigando isto como possível
              causa do painel de gravações não aparecer (não era, mas o
              problema é real). `v=` muda a cada carga e mata o cache. */
-      const operacaoChris=window.__operacaoDelegadaChris
-        ? '&operacaoChris=1&papelOperado='+encodeURIComponent(window.__operacaoDelegadaChris)
-        : '';
-      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&interno=1&mes=' + encodeURIComponent(mesLink?.value||'') + operacaoChris + '&v=' + Date.now();
+      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&interno=1&mes=' + encodeURIComponent(mesLink?.value||'') + (window.__auditoriaPapelAtiva?'&auditoria=1':'') + '&v=' + Date.now();
     }catch(e){
       console.error('Falha ao abrir calendário interno:',e);
       const iframe=document.getElementById('iframeCalendarioFerramentas');

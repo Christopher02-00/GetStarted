@@ -1296,20 +1296,22 @@ function testarPermissoesAcoesSandbox() {
   exigir((stories.match(/\!\['Chris','Amanda'\]\.includes\(usuarioAtual\)/g)||[]).length === 2,
     'liberar/devolver Stories perdeu a guarda de gestão');
 
-  const auditoria = trecho(escritorio, 'function __impedirGravacaoDuranteAuditoria', 'const auth = getAuth(app)');
+  const operacaoDelegada = trecho(escritorio, 'const PAPEIS_OPERAVEIS_POR_CHRIS', 'const auth = getAuth(app)');
   exigir(['addDoc','setDoc','updateDoc','deleteDoc','runTransaction','writeBatch'].every(nome=>
-    new RegExp(`(?:function|async function) ${nome}\\([^)]*\\)\\{\\s*__impedirGravacaoDuranteAuditoria\\(\\)`).test(auditoria)),
-    'modo de auditoria não bloqueia todos os caminhos Firestore de gravação');
-  const perfis = trecho(escritorio, 'window.abrirAuditoriaPerfisChris', 'window.sairAuditoriaPerfilChris');
+    operacaoDelegada.includes(`function ${nome}`) || operacaoDelegada.includes(`async function ${nome}`)) &&
+    operacaoDelegada.includes("collection(db,'log_operacoes_delegadas')") &&
+    operacaoDelegada.includes("atorReal:'Chris'") && operacaoDelegada.includes("papelOperado:String(window.__operacaoDelegadaChris)"),
+    'operação delegada perdeu escritor, ator real ou log atômico');
+  const perfis = trecho(escritorio, 'window.abrirOperacaoPerfisChris', 'window.sairOperacaoPerfilChris');
   exigir(perfis.includes("window.__pessoaAutenticadaReal !== 'Chris'") &&
-    escritorio.includes("{ id:'navAuditoriaPerfisChris', rot:'Auditar perfil da equipe'") &&
-    !escritorio.includes("'Amanda': [{ id:'navAuditoriaPerfisChris'"),
-    'auditoria por perfil deixou de ser exclusiva da identidade Google real do Chris');
-  exigir(calendario.includes("const modoAuditoria = params.get('auditoria') === '1'") &&
-    calendario.includes("startsWith('sessoes_cliente/')") &&
-    calendario.includes("impedirEscritaAuditoria(doc(db,'calendarios','auditoria'))") &&
-    escritorio.includes("window.__auditoriaPapelAtiva?'&auditoria=1':''"),
-    'auditoria permitiu gravação pelo iframe do calendário ou bloqueou a sessão necessária à leitura');
+    escritorio.includes("{ id:'navOperacaoPerfisChris', rot:'Operar perfil da equipe'") &&
+    !escritorio.includes("'Amanda': [{ id:'navOperacaoPerfisChris'"),
+    'operação por perfil deixou de ser exclusiva da identidade Google real do Chris');
+  exigir(calendario.includes("const modoOperacaoChrisSolicitado = modoInternoEquipe && params.get('operacaoChris') === '1'") &&
+    calendario.includes("email!=='christopherveloso0@gmail.com'") &&
+    calendario.includes("collection(db,'log_operacoes_delegadas')") &&
+    escritorio.includes("'&operacaoChris=1&papelOperado='"),
+    'operação delegada do calendário perdeu autenticação real ou log atômico');
 
   const saida = trecho(escritorio, 'window.salvarSaidaClienteCentral', 'window.cancelarProgramacaoSaidaCentral');
   const marcadorFinalExistente=trecho(saida,'const baseFinal=','if(!snapFinal?.exists())');

@@ -4,8 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-  <meta name="gs-build" content="2026-08-21-operacao-perfis-chris-v96">
-  <meta name="gs-parent-patch" content="2026-08-19-calendarios-stories-v91">
+  <meta name="gs-build" content="2026-08-19-calendarios-stories-v91">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -147,7 +146,7 @@
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -189,71 +188,18 @@
   const tokenCliente = params.get('t') || '';
   const tokenEquipe  = params.get('e') || '';
   const mesSolicitado = params.get('mes') || '';
-  const PAPEIS_OPERAVEIS_POR_CHRIS = Object.freeze(['Amanda','Cecília','Gabrielle','Helo','João Victor','Luís','Nathan','Yas']);
-  const modoOperacaoChrisSolicitado = modoInternoEquipe && params.get('operacaoChris') === '1';
-  const papelOperadoSolicitado = params.get('papelOperado') || '';
-  let modoOperacaoChrisAtivo = false;
+  const modoAuditoria = params.get('auditoria') === '1';
   const docRef = clienteId ? doc(db, 'calendarios', clienteId) : null;
 
-  function operacaoChrisCalendarioAtiva(){
-    if(!modoOperacaoChrisSolicitado) return false;
-    if(!modoOperacaoChrisAtivo){
-      const erro=new Error('A identidade real do Chris ainda não foi confirmada para esta operação.');
-      erro.code='gs/operacao-delegada-nao-confirmada';
-      throw erro;
-    }
-    return true;
+  function impedirEscritaAuditoria(ref){
+    if(!modoAuditoria || String(ref?.path||'').startsWith('sessoes_cliente/')) return;
+    const erro=new Error('Auditoria do Chris é somente leitura. Volte ao perfil Chris para alterar o calendário.');
+    erro.code='gs/auditoria-somente-leitura';
+    throw erro;
   }
-  function alvosLogOperacaoCalendario(refs){
-    return [...new Set((refs||[]).map(ref=>String(ref?.path||'')).filter(Boolean))];
-  }
-  function dadosLogOperacaoCalendario(operacao,refs){
-    const alvos=alvosLogOperacaoCalendario(refs);
-    return {
-      atorReal:'Chris',papelOperado:papelOperadoSolicitado,
-      operacao:String(operacao),origem:'calendario',versao:'V96',
-      alvos:alvos.slice(0,40),totalAlvos:alvos.length,executadoEm:serverTimestamp()
-    };
-  }
-  function anexarLogOperacaoCalendario(lote,operacao,refs){
-    lote.set(doc(collection(db,'log_operacoes_delegadas')),dadosLogOperacaoCalendario(operacao,refs));
-  }
-  async function setDoc(ref,...a){
-    if(!operacaoChrisCalendarioAtiva()) return _setDocFB(ref,...a);
-    const lote=_writeBatchFB(db);
-    lote.set(ref,...a);
-    anexarLogOperacaoCalendario(lote,'setDoc',[ref]);
-    return lote.commit();
-  }
-  async function addDoc(ref,dados){
-    if(!operacaoChrisCalendarioAtiva()) return _addDocFB(ref,dados);
-    const novoRef=doc(ref);
-    const lote=_writeBatchFB(db);
-    lote.set(novoRef,dados);
-    anexarLogOperacaoCalendario(lote,'addDoc',[novoRef]);
-    await lote.commit();
-    return novoRef;
-  }
-  async function runTransaction(dbAlvo,executar,...opcoes){
-    if(!operacaoChrisCalendarioAtiva()) return _runTransactionFB(dbAlvo,executar,...opcoes);
-    const logRef=doc(collection(db,'log_operacoes_delegadas'));
-    return _runTransactionFB(dbAlvo,async transacao=>{
-      const refs=[];
-      let proxy;
-      proxy=new Proxy(transacao,{get(alvo,prop){
-        if(['set','update','delete'].includes(prop)) return (...a)=>{
-          refs.push(a[0]);
-          const retorno=alvo[prop](...a);
-          return retorno===alvo ? proxy : retorno;
-        };
-        const valor=alvo[prop];
-        return typeof valor==='function' ? valor.bind(alvo) : valor;
-      }});
-      const resultado=await executar(proxy);
-      if(refs.length) transacao.set(logRef,dadosLogOperacaoCalendario('runTransaction',refs));
-      return resultado;
-    },...opcoes);
-  }
+  async function setDoc(ref,...args){ impedirEscritaAuditoria(ref); return _setDocFB(ref,...args); }
+  async function addDoc(ref,...args){ impedirEscritaAuditoria(ref); return _addDocFB(ref,...args); }
+  async function runTransaction(...args){ if(modoAuditoria) impedirEscritaAuditoria(doc(db,'calendarios','auditoria')); return _runTransactionFB(...args); }
 
   function barrar(titulo, texto){
     document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:30px;font-family:system-ui;background:#141414;color:#F0EEE8;">' +
@@ -324,26 +270,13 @@
       return false;
     }
     if(modoInternoEquipe){
-      let usuarioEquipe;
-      try{ usuarioEquipe=await aguardarEquipeAutenticada(); }
+      try{ await aguardarEquipeAutenticada(); }
       catch(e){
         console.error('Falha na sessão interna da equipe:',e);
         barrar('Sessão da equipe não confirmada',e?.message||'Volte ao Escritório, entre com seu Google e tente novamente.');
         return false;
       }
       if(!clienteId){ barrar('Link interno incompleto','O Escritório não informou qual calendário abrir.'); return false; }
-      if(modoOperacaoChrisSolicitado){
-        const email=String(usuarioEquipe?.email||'').trim().toLowerCase();
-        if(email!=='christopherveloso0@gmail.com' || !PAPEIS_OPERAVEIS_POR_CHRIS.includes(papelOperadoSolicitado)){
-          barrar('Operação delegada não autorizada','Somente a conta Google real do Chris pode operar um perfil da equipe. Volte ao Escritório e entre novamente.');
-          return false;
-        }
-        modoOperacaoChrisAtivo=true;
-        const aviso=document.createElement('div');
-        aviso.style.cssText='position:sticky;top:0;z-index:9999;background:#594100;color:#fff;padding:10px 14px;text-align:center;font:800 12px system-ui;border-bottom:2px solid #FBBC19;';
-        aviso.textContent='🔐 CHRIS OPERANDO COMO '+papelOperadoSolicitado+' · ALTERAÇÕES ATIVAS E REGISTRADAS';
-        document.body.prepend(aviso);
-      }
       window.__modoCal='equipe';
       return true;
     }
@@ -371,6 +304,12 @@
     /* A sessão só é criada se as regras confirmarem a chave. Não lemos o
        documento que guarda os dois segredos para o navegador. */
     window.__modoCal = tokenEquipe ? 'equipe' : 'cliente';
+    if(modoAuditoria){
+      const aviso=document.createElement('div');
+      aviso.style.cssText='position:sticky;top:0;z-index:9999;background:#7b1d1d;color:#fff;padding:10px 14px;text-align:center;font:800 12px system-ui;border-bottom:2px solid #ff8b8b;';
+      aviso.textContent='🧪 AUDITORIA DO CHRIS · SOMENTE LEITURA';
+      document.body.prepend(aviso);
+    }
     return true;
   })();
 

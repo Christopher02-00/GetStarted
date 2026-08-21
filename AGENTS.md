@@ -130,6 +130,8 @@ Calendário aprovado continua integralmente consultável por quem revisa e execu
 
 Baixa antiga que possui somente quantidade não prova quais títulos foram gravados. A conciliação exige seleção humana exatamente igual à quantidade registrada, revalidação transacional de papel/sessão/mês/item e nunca cria `videos_producao` nem toma conteúdo vinculado a outra gravação. Saldo de captação deriva de títulos resolvidos, não da soma bruta de registros sem identidade.
 
+Quantidade planejada também não autoriza uma sessão nova. Uma sessão moderna existe somente quando `sessaoPlanejamentoVersao === 1` e `sessaoItensPlanejados` é array, inclusive vazio; registro com apenas um marcador permanece legado isolado no próprio agendamento. Plano moderno vazio ou malformado nunca ganha texto livre nem compatibilidade automática: Amanda, Cecília ou Chris precisa reler o calendário e confirmar, em transação, os títulos exatos. Extras exigem `permitirCaptacoesExtras === true`; valores truthy legados não ampliam a autorização. O escritor deve falhar antes da primeira gravação quando calendário, competência, bloco, identidade ou lista exata estiverem ausentes, ambíguos ou divergentes.
+
 Antes de entregar qualquer mudança, faça também a checagem curta do catálogo: confirme a base mais recente, procure substituições globais e prefixos `async` alterados, compare contagens/escopo das ocorrências, valide variáveis no escopo que as declara, normalize apenas o formato de linha esperado e carregue a versão nova em documento/iframe limpo. Essa checagem complementa, não substitui, `preflight` e `regression-critical`.
 
 ## Depois de editar

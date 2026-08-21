@@ -31,9 +31,10 @@ function sha256(texto){
   return crypto.createHash('sha256').update(texto).digest('hex');
 }
 
-exigir(escritorio.includes('2026-08-21-restaura-perfil-chris-v98'), 'build V98 presente');
-exigir(escritorio.includes('gs-parent-patch" content="2026-08-21-login-google-redirect-v97'), 'V98 preserva V97 como pai');
-exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-21-operacao-perfis-chris-v96'), 'V98 preserva V96 como avô');
+exigir(escritorio.includes('2026-08-21-restaura-perfil-chris-v98'), 'correção V98 presente na cadeia');
+exigir(escritorio.includes('gs-parent-patch" content="2026-08-21-restaura-perfil-chris-v98'), 'V99 preserva V98 como pai');
+exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-21-login-google-redirect-v97'), 'V99 preserva V97 como avô');
+exigir(escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-operacao-perfis-chris-v96'), 'V99 preserva V96 como bisavô');
 exigir(!escritorio.includes('atualizarBannerAuditoriaChris'), 'identificador removido da auditoria V95 não reapareceu');
 exigir((escritorio.match(/function atualizarBannerOperacaoPerfilChris\s*\(/g) || []).length === 1, 'banner operacional possui uma definição canônica');
 

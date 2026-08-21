@@ -25,7 +25,9 @@ const obrigatorios = [
   'scripts/regression-v97-login-google.mjs',
   'scripts/regression-v97-ui-login-google.mjs',
   'scripts/regression-v98-perfil-chris.mjs',
-  'scripts/regression-v98-ui-perfil-chris.mjs', 'Planos.pdf'
+  'scripts/regression-v98-ui-perfil-chris.mjs',
+  'scripts/regression-v99-captacoes-videomaker.mjs',
+  'scripts/regression-v99-ui-captacoes-videomaker.mjs', 'Planos.pdf'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -216,10 +218,14 @@ const leisV81 = [
   'cliente, mês, estado e conteúdo formam uma única decisão transacional',
   'cliente fechado nasce ou é reativado por um escritor oficial'
 ];
+const leisV99 = [
+  'quantidade planejada não é autorização de captação',
+  'Snapshot moderno vazio já existente nunca vira legado automaticamente'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist e todas as leis registradas até a V81');
-} else provar('catálogo mestre preserva o checklist e as leis registradas até a V81');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81, ...leisV99].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist, as leis históricas e a barreira V99');
+} else provar('catálogo mestre preserva o checklist, as leis históricas e a barreira V99');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -757,13 +763,13 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-21-restaura-perfil-chris-v98' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-login-google-redirect-v97">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-operacao-perfis-chris-v96">') ||
-    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-20-legendas-v95">') ||
+if (build !== '2026-08-21-planejamento-sessoes-v99' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-restaura-perfil-chris-v98">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-login-google-redirect-v97">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-operacao-perfis-chris-v96">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V98 inesperada: ${build || 'ausente'}`);
-} else provar('V98 preserva V97/V96 e restaura a inicialização normal do Chris');
+  falhar(`cadeia de build V99 inesperada: ${build || 'ausente'}`);
+} else provar('V99 preserva V98/V97/V96 e fecha a sessão vazia sem ampliar regras');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

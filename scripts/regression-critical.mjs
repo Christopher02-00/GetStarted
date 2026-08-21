@@ -1175,9 +1175,11 @@ function testarSessoesGravacaoSandbox() {
   const vitalParcialmenteEnriquecida = {...agDivina,mesCalendario:'2026-08',sessaoOrdem:1,sessaoChave:'vital-seg|2026-08|S01'};
   exigir(api.sessaoLegadaSemVinculo(agDivina) === true &&
     api.sessaoLegadaSemVinculo(vitalParcialmenteEnriquecida) === true &&
+    api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoPlanejamentoVersao:1}) === true &&
+    api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoItensPlanejados:[]}) === true &&
     api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[]}) === false,
     'compatibilidade não cobre o legado parcialmente enriquecido ou vazou para sessões modernas');
-  const sessaoLegadaFonte = trecho(escritorio, 'function sessaoLegadaSemVinculo', 'window.sessaoLegadaSemVinculo');
+  const sessaoLegadaFonte = trecho(escritorio, 'function sessaoModernaComPlano', 'window.sessaoLegadaSemVinculo');
   const materiaisFonte = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');
   const materiais = executarSandbox('materiais-pos-filmagem-sandbox.js',
     `const CAMPO_MAIS_CHRIS=['Chris','Luís','Nathan'];\n`+
@@ -1191,7 +1193,7 @@ function testarSessoesGravacaoSandbox() {
   const declaradoVital = materiais.prepararMateriaisDeclaradosSessao([], 'Conteúdo institucional\nBastidores', vitalParcialmenteEnriquecida, 'Luís');
   exigir(declaradoVital.ok && declaradoVital.videos.length === 2 && declaradoVital.videos.every(v=>v.vinculoSessao==='declarado_legado' && v.calendarItemId===null),
     'Vital Seg parcialmente enriquecida continuou sem porta segura de envio');
-  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Extra sem autorização', {...agDivina,sessaoPlanejamentoVersao:1,sessaoChave:'nova'}, 'Luís').ok === false,
+  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Extra sem autorização', {...agDivina,sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[],sessaoChave:'nova'}, 'Luís').ok === false,
     'sessão moderna ganhou texto livre sem autorização');
   exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Vídeo Único\nvideo unico', agDivina, 'Luís').ok === false,
     'nomes duplicados com acento/capitalização passariam a criar vídeos repetidos');

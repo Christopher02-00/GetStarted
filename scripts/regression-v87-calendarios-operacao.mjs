@@ -49,7 +49,7 @@ async function testarCarteiraEditorialReal(){
 
 await testarCarteiraEditorialReal();
 
-contem(escritorio, '2026-08-19-calendarios-stories-v91', 'build V91 identificado');
+contem(escritorio, '2026-08-21-planejamento-sessoes-v99', 'build vigente V99 identificado para reensaiar a cadeia V87');
 contem(escritorio, '__carteiraCalendarioOperacionalConfirmada', 'carteira editorial possui retrato operacional confirmado');
 contem(escritorio, 'CLIENTES_SEM_CALENDARIO_OPERACIONAL', 'exclusões operacionais são centralizadas');
 naoContem(extrairAtribuicaoAsync('clientesCalendarioRecorrentesConfirmados'), 'castaDosClientes()', 'carteira editorial não consulta classificação financeira');

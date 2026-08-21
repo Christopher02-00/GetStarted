@@ -18,10 +18,10 @@ function trecho(fonte,inicio,fim){
   return fonte.slice(a,b);
 }
 
-exigir(escritorio.includes('2026-08-21-registro-autonomo-filmmaker-v100')&&
-  escritorio.includes('2026-08-21-login-google-redirect-v97')&&
+exigir(escritorio.includes('2026-08-21-controle-conclusao-calendarios-v101')&&
+  escritorio.includes('2026-08-21-registro-autonomo-filmmaker-v100')&&
   escritorio.includes('PAPEIS_OPERAVEIS_POR_CHRIS'),
-  'V100 não preserva a cadeia e o contrato operacional introduzidos na V96');
+  'V101 não preserva a cadeia e o contrato operacional introduzidos na V96');
 exigir(calendario.includes('2026-08-21-operacao-perfis-chris-v96'),'build V96 ausente no calendário');
 exigir(calendario===calendarios,'calendario.html e calendarios.html divergiram');
 exigir(!escritorio.includes('__auditoriaPapelAtiva')&&!calendario.includes('modoAuditoria'),'contrato antigo de somente leitura continua ativo');

@@ -15,7 +15,9 @@ function trecho(inicio,fim){
   return escritorio.slice(a,b);
 }
 
-exigir(escritorio.includes('2026-08-21-login-google-redirect-v97'),'build V97 ausente');
+exigir(escritorio.includes('2026-08-21-controle-conclusao-calendarios-v101')&&
+  escritorio.includes('signInWithPopup(auth,provedor)')&&escritorio.includes('signInWithRedirect(auth,provedor)'),
+  'V101 preserva integralmente o fluxo de login introduzido na V97');
 exigir(escritorio.includes('signInWithPopup, signInWithRedirect, getRedirectResult'),'SDK Auth não importa popup, redirect e retorno juntos');
 exigir(escritorio.includes('id="btnLoginRedirectEquipe"')&&escritorio.includes('Entrar nesta aba'),'fallback explícito não existe no gate');
 

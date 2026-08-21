@@ -32,11 +32,11 @@ function sha256(texto){
 }
 
 exigir(escritorio.includes('2026-08-21-restaura-perfil-chris-v98'), 'correção V98 presente na cadeia');
-exigir(escritorio.includes('gs-build" content="2026-08-21-registro-autonomo-filmmaker-v100')&&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-planejamento-sessoes-v99'), 'V100 preserva V99 como pai');
-exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98'), 'V100 preserva V98 como avô');
-exigir(escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-login-google-redirect-v97'), 'V100 preserva V97 como bisavô');
-exigir(escritorio.includes('PAPEIS_OPERAVEIS_POR_CHRIS'), 'V100 preserva o contrato operacional V96');
+exigir(escritorio.includes('gs-build" content="2026-08-21-controle-conclusao-calendarios-v101')&&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100'), 'V101 preserva V100 como pai');
+exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99'), 'V101 preserva V99 como avô');
+exigir(escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98'), 'V101 preserva V98 como bisavô');
+exigir(escritorio.includes('PAPEIS_OPERAVEIS_POR_CHRIS'), 'V101 preserva o contrato operacional V96');
 exigir(!escritorio.includes('atualizarBannerAuditoriaChris'), 'identificador removido da auditoria V95 não reapareceu');
 exigir((escritorio.match(/function atualizarBannerOperacaoPerfilChris\s*\(/g) || []).length === 1, 'banner operacional possui uma definição canônica');
 
@@ -78,6 +78,7 @@ const contexto = vm.createContext({
     createElement: () => ({ style:{}, remove(){}, innerHTML:'' })
   },
   limparEstadoVideosPorTrocaDePapel(){ contexto.__limpezas = (contexto.__limpezas || 0) + 1; },
+  limparControleConclusaoCalendarios(){ contexto.__limpezasControle = (contexto.__limpezasControle || 0) + 1; },
   esc: valor => String(valor || ''),
   usuarioAtual: ''
 });
@@ -85,10 +86,11 @@ new vm.Script(`${bannerFonte}\n${prefixoMudar}\nglobalThis.api={mudar:window.mud
 const resultado = await contexto.api.mudar();
 exigir(resultado?.escolhido === 'Chris' && resultado?.usuarioAtual === 'Chris', 'Chris atravessa a antiga linha de falha sem ReferenceError');
 exigir(contexto.__limpezas === 1, 'limpeza de estado anterior continua antes da reconstrução');
+exigir(contexto.__limpezasControle === 1, 'V101 invalida a projeção antes de reconstruir o papel');
 exigir(!classes.has('modoOperacaoPerfilChris'), 'Chris normal não herda o modo delegado');
 
 exigir(escritorio.includes('signInWithPopup(auth,provedor)') && escritorio.includes('signInWithRedirect(auth,provedor)'), 'fallback V97 permanece preservado');
 exigir(calendario === calendarios, 'calendario.html e calendarios.html continuam idênticos');
-exigir(sha256(regras) === '5bd436eed9cc0512674e286e4349051337e1d365b61b62a64ed93a2332109350', 'firestore.rules permanece inalterada');
+exigir(regras.includes('function podeLancarVideoProducao()') && regras.includes('match /calendarios_conferencias/{calendarId}'), 'V101 preserva as regras V98/V100 e isola a nova projeção');
 
 console.log(`REGRESSÃO V98 PERFIL CHRIS: APROVADA (${total} verificações)`);

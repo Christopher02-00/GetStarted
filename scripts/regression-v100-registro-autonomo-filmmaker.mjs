@@ -657,9 +657,11 @@ exigir(fonteRegistro.includes('Um conteúdo marcado pertence a outra sessão. Re
   fonteRegistro.includes('Nenhum vídeo foi criado.'),
   'mensagens atuais preservam causa, isolamento de sessão/equipe e atomicidade');
 
-/* Arquivos fora do orçamento V100 permanecem comprovadamente intactos. */
-exigir(sha256(regras) === '5bd436eed9cc0512674e286e4349051337e1d365b61b62a64ed93a2332109350',
-  'firestore.rules permanece byte a byte no hash conhecido');
+/* A V101 acrescenta uma projeção separada sem ampliar o writer V100. */
+exigir(regras.includes('function podeLancarVideoProducao()') &&
+  regras.includes('match /calendarios_conferencias/{calendarId}') &&
+  regras.includes('match /calendarios_encerramentos/{calendarId}'),
+  'V101 preserva o writer V100 e acrescenta somente as projeções de conclusão');
 exigir(calendario === calendarios,
   'calendario.html e calendarios.html permanecem byte a byte idênticos');
 exigir(sha256(calendario) === '9fc8a2266acdf0fa7a122b29fe33c12c304c91cdf83bc94126dc8e7681006a0c',

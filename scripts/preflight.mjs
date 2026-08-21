@@ -15,7 +15,7 @@ const ler = arquivo => fs.readFileSync(path.join(raiz, arquivo), 'utf8');
 const obrigatorios = [
   'escritorio.html', 'portal-cliente.html', 'calendario.html',
   'calendarios.html', 'cadastro.html', 'cadastros.html',
-  'avulso.html', 'firestore.rules', 'CATALOGO_DE_ERROS.md',
+  'avulso.html', 'firestore.rules', '_config.yml', 'CATALOGO_DE_ERROS.md',
   'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
   'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs',
   'scripts/regression-v76.mjs', 'scripts/regression-v77.mjs', 'scripts/regression-v78.mjs',
@@ -27,7 +27,9 @@ const obrigatorios = [
   'scripts/regression-v98-perfil-chris.mjs',
   'scripts/regression-v98-ui-perfil-chris.mjs',
   'scripts/regression-v99-captacoes-videomaker.mjs',
-  'scripts/regression-v99-ui-captacoes-videomaker.mjs', 'Planos.pdf'
+  'scripts/regression-v99-ui-captacoes-videomaker.mjs',
+  'scripts/regression-v101-controle-conclusao.mjs',
+  'scripts/regression-v101-ui-controle-conclusao.mjs', 'Planos.pdf'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -226,10 +228,15 @@ const leisV100 = [
   'calendário editorial orienta e concilia, mas não autoriza o registro factual',
   'Filmmaker não cria sessão nem escolhe cliente transversalmente'
 ];
+const leisV101 = [
+  'progresso operacional e conferência administrativa são estados independentes',
+  'Renderizar o controle nunca cria documento',
+  'Produção V100 sem vínculo nunca é ligada à pauta por título'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81, ...leisV99, ...leisV100].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist, as leis históricas e a decisão V100');
-} else provar('catálogo mestre preserva o checklist, as leis históricas e a decisão V100');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81, ...leisV99, ...leisV100, ...leisV101].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist, as leis históricas e a decisão V101');
+} else provar('catálogo mestre preserva o checklist, as leis históricas e a decisão V101');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -294,6 +301,7 @@ if (exclusoesProibidas.length) falhar(`deleteDoc operacional encontrado: ${[...n
 else provar('nenhuma exclusão física operacional no escritório');
 
 const regras = ler('firestore.rules');
+const configPages = ler('_config.yml');
 
 // O Console do Firebase rejeita um único delimitador residual. Esta checagem
 // ignora comentários e strings e garante que o arquivo entregue fecha todos os
@@ -333,6 +341,10 @@ if (!/^rules_version\s*=\s*'2';/.test(regras)) falhar(`firestore.rules: a linha 
 else provar(`firestore.rules começa por rules_version = '2'; na linha 1`);
 if (!delimitadoresBalanceados(regras)) falhar('firestore.rules contém delimitadores desbalanceados');
 else provar('firestore.rules com delimitadores balanceados');
+for(const reservado of ['AGENTS.md','firestore.rules','scripts/','regression-critical.mjs','regression-v85-acesso-calendarios-clientes.mjs','rollback_v95/','rollback_v96/','rollback_v97/','rollback_v98/','rollback_v99/','rollback_v100/']){
+  if(!configPages.includes('- '+reservado)) falhar(`_config.yml não exclui artefato interno: ${reservado}`);
+}
+if(!erros.some(e=>e.startsWith('_config.yml'))) provar('Pages exclui regras, testes e rollbacks históricos sem apagar as fontes');
 
 for (const colecao of ['pagamentos_extra', 'pagamentos_mensais', 'calendarios', 'clientes_config']) {
   const inicio = regras.indexOf(`match /${colecao}/`);
@@ -765,13 +777,13 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-21-registro-autonomo-filmmaker-v100' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-planejamento-sessoes-v99">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98">') ||
-    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-login-google-redirect-v97">') ||
+if (build !== '2026-08-21-controle-conclusao-calendarios-v101' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V100 inesperada: ${build || 'ausente'}`);
-} else provar('V100 preserva V99/V98/V97 e torna o calendário opcional sem ampliar regras');
+  falhar(`cadeia de build V101 inesperada: ${build || 'ausente'}`);
+} else provar('V101 preserva V100/V99/V98 e mantém o registro autônomo separado da conferência');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

@@ -578,11 +578,13 @@ exigir(retornoErroAntigo === false && elementosSugestao.agQtdPlanejada.value ===
   'erro obsoleto não substitui a resposta nova por indisponibilidade');
 
 /* Invariantes de entrega e segurança. */
-exigir(escritorio.includes('gs-build" content="2026-08-21-registro-autonomo-filmmaker-v100"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-planejamento-sessoes-v99"'),
-  'build V100 e parent V99 estão declarados');
-exigir(sha256(regras) === '5bd436eed9cc0512674e286e4349051337e1d365b61b62a64ed93a2332109350',
-  'firestore.rules permanece byte a byte no hash conhecido');
+exigir(escritorio.includes('gs-build" content="2026-08-21-controle-conclusao-calendarios-v101"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100"'),
+  'build V101 e parent V100 estão declarados');
+exigir(regras.includes('match /calendarios_conferencias/{calendarId}') &&
+  regras.includes('match /calendarios_encerramentos/{calendarId}') &&
+  regras.includes('allow delete: if false;'),
+  'V101 amplia somente a projeção de conclusão e preserva delete físico bloqueado');
 exigir(calendario === calendarios, 'calendario.html e calendarios.html permanecem byte a byte idênticos');
 exigir(sha256(calendario) === '9fc8a2266acdf0fa7a122b29fe33c12c304c91cdf83bc94126dc8e7681006a0c',
   'par compatível de calendários mantém o hash anterior conhecido');

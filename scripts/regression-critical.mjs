@@ -123,6 +123,9 @@ async function testarLoginSandbox() {
 
   exigir(escritorio.includes('id="btnLoginGoogleEquipe" onclick="entrarComGoogleEquipe()" disabled>Preparando login…</button>'),
     'botão Google voltou a aceitar clique antes de a persistência estar pronta');
+  exigir(escritorio.includes('id="btnLoginRedirectEquipe" onclick="entrarComRedirectEquipe()"') &&
+    escritorio.includes('signInWithPopup, signInWithRedirect, getRedirectResult'),
+    'fallback explícito por redirect desapareceu do login');
   const login = trecho(escritorio, 'window.entrarComGoogleEquipe = async function', '  window.sairDoEscritorio');
   exigir(!login.includes('await setPersistence(') &&
     login.indexOf('signInWithPopup(auth,provedor)') >= 0 &&
@@ -139,7 +142,11 @@ async function testarLoginSandbox() {
     `const document={getElementById:id=>id==='btnLoginGoogleEquipe'?botao:erro};const auth={};\n` +
     `class GoogleAuthProvider{setCustomParameters(v){this.parametros=v;}}\n` +
     `function signInWithPopup(){chamadasPopup++;return Promise.resolve({user:{uid:'luis'}});}\n` +
-    `async function aplicarUsuarioGoogle(){aplicacoes++;return true;}\n` +
+    `function signInWithRedirect(){throw new Error('redirect não deveria ser chamado no popup normal');}\n` +
+    `function getRedirectResult(){return Promise.resolve(null);}\n` +
+    `function limparSentinelaRedirectEquipe(){}function ocultarFallbackRedirectEquipe(){}function mostrarFallbackRedirectEquipe(){}\n` +
+    `async function aplicarUsuarioGoogleCoordenado(){aplicacoes++;return true;}\n` +
+    `const __preparoPersistenciaAuthEquipe=Promise.resolve();\n` +
     `function mostrarGateEquipe(msg){gate=msg;}\n` +
     `${loginFonte}\n` +
     `globalThis.api={entrar:()=>window.entrarComGoogleEquipe(),chamadas:()=>chamadasPopup,aplicacoes:()=>aplicacoes,botao,erro,gate:()=>gate,mensagemErroLoginGoogleEquipe};`);

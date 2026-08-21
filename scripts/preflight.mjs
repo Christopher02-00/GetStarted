@@ -23,7 +23,9 @@ const obrigatorios = [
   'scripts/regression-v96-operacao-perfis-chris.mjs',
   'scripts/regression-v96-ui-operacao-perfis-chris.mjs',
   'scripts/regression-v97-login-google.mjs',
-  'scripts/regression-v97-ui-login-google.mjs', 'Planos.pdf'
+  'scripts/regression-v97-ui-login-google.mjs',
+  'scripts/regression-v98-perfil-chris.mjs',
+  'scripts/regression-v98-ui-perfil-chris.mjs', 'Planos.pdf'
 ];
 for (const arquivo of obrigatorios) {
   if (!fs.existsSync(path.join(raiz, arquivo))) falhar(`arquivo obrigatório ausente: ${arquivo}`);
@@ -755,12 +757,13 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-21-login-google-redirect-v97' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-operacao-perfis-chris-v96">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-20-legendas-v95">') ||
+if (build !== '2026-08-21-restaura-perfil-chris-v98' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-login-google-redirect-v97">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-operacao-perfis-chris-v96">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-20-legendas-v95">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V97 inesperada: ${build || 'ausente'}`);
-} else provar('V97 preserva V96/V95 e adiciona somente o fallback controlado do login Google');
+  falhar(`cadeia de build V98 inesperada: ${build || 'ausente'}`);
+} else provar('V98 preserva V97/V96 e restaura a inicialização normal do Chris');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

@@ -168,10 +168,14 @@ async function testarLoginSandbox() {
 
   const mudar = trecho(escritorio, 'window.mudarUsuarioGlobal = async function', '/* ===== FRENTE C1');
   const identidade = mudar.indexOf('usuarioAtual = escolhido');
+  const bannerOperacao = mudar.indexOf('atualizarBannerOperacaoPerfilChris()');
   const isolamento = mudar.indexOf('atualizarVisibilidadeMenuPorFuncao()');
   const primeiraLeitura = mudar.indexOf("await etapaSegura('abrir sessão da equipe'");
-  exigir(identidade >= 0 && isolamento > identidade && primeiraLeitura > isolamento,
+  exigir(identidade >= 0 && bannerOperacao > identidade && isolamento > bannerOperacao && primeiraLeitura > isolamento,
     'uma leitura remota voltou a bloquear identidade ou isolamento do DOM');
+  exigir(!escritorio.includes('atualizarBannerAuditoriaChris') &&
+    escritorio.includes('function atualizarBannerOperacaoPerfilChris()'),
+    'inicialização do perfil Chris voltou a chamar o banner removido da auditoria V95');
 
   const etapaFonte = trecho(escritorio, 'const LIMITE_ETAPA_INICIALIZACAO_MS', '/* ===== AUTORIZAÇÃO DA EQUIPE');
   const api = executarSandbox('login-timeout-sandbox.js',

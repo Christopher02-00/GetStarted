@@ -30,13 +30,14 @@ function trecho(inicio, fim){
    HTML. Os mocks abaixo substituem apenas DOM, relógio e leituras Firestore;
    nenhuma regra visual paralela decide se a sessão é moderna, legada ou
    executável. Se o código real mudar de nome ou limite, a extração falha. */
+const funcaoContador = trecho('  window.atualizarContadorVideos = function', '  /* ===== AGENDA DE REUNIÕES');
 const funcoesEquipe = trecho('  function equipeDoAgendamento', '  function garantirLinhaEquipe');
 const funcoesBlocos = trecho('  function itemNaoPrecisaGravar', '  /* ===== GRADE DE POSTAGENS');
 const funcoesSessaoEAgenda = trecho('  function itensDoMesComIndiceGlobal', '  async function popularFiltroClientesCalendario');
 
 exigir(fonte.includes('data-planejamento-vazio='), 'HTML real identifica o card de ordem vazia');
-exigir(fonte.includes('data-replanejar-vazio='), 'HTML real identifica a ação gerencial de replanejamento');
-exigir(fonte.includes("const confirmacaoBloqueada = falhouCalendarioAgenda || planejamentoInconsistente || semExecucaoPermitida || !podeExecutarSessao;"), 'bloqueio do envio deriva dos estados reais da sessão');
+exigir(fonte.includes('permiteDeclaracaoSessao') && fonte.includes('não depende de organização prévia da Amanda ou da Cecília'), 'V100 substitui o bloqueio V99 por declaração factual autônoma');
+exigir(!fonte.includes('data-replanejar-vazio='), 'ordem vazia deixou de exigir ação gerencial obrigatória');
 
 const baseSintetica = {
   id:'ag-sintetico',
@@ -158,7 +159,6 @@ async function criarPagina(viewport){
     function mesDoItemCalendario(_cal,item){return item?.mes||'';}
     function itensDoMesCalendario(cal,mes){return (cal?.items||[]).filter(item=>!mes||mesDoItemCalendario(cal,item)===mes);}
     function mesesDeCalendario(cal){return [...new Set((cal?.items||[]).map(item=>mesDoItemCalendario(cal,item)).filter(Boolean))].sort();}
-    function atualizarContadorVideos(){}
     function trocarFilmmakerAgendamento(){}
     function toggleFormGravacao(){}
     function toggleFaixaDemandas(){}
@@ -170,7 +170,7 @@ async function criarPagina(viewport){
     function replanejarSessaoGravacao(id){__acoes.push({acao:'replanejar',id});}
     function abrirCalendarioDeCliente(slug,nome){__acoes.push({acao:'calendario',slug,nome});}
   `;
-  await page.addScriptTag({ content:suporte + '\n' + funcoesEquipe + '\n' + funcoesBlocos + '\n' + funcoesSessaoEAgenda });
+  await page.addScriptTag({ content:suporte + '\n' + funcaoContador + '\n' + funcoesEquipe + '\n' + funcoesBlocos + '\n' + funcoesSessaoEAgenda });
   const renderCarregado = await page.evaluate(() => typeof window.renderMinhaAgendaFilmmaker === 'function');
   if(!renderCarregado) throw new Error('V99 UI CAPTAÇÕES: render real não carregou: ' + errosPagina.join(' | '));
   return { page, errosPagina };
@@ -201,35 +201,44 @@ async function executarViewport(viewport){
   try{
     await renderizar(page, 'Luís', cenarios.modernoVazio);
     const cardVazio = page.locator('[data-planejamento-vazio="ag-sintetico"]');
-    exigir(await cardVazio.isVisible(), `${rotulo}: sessão moderna vazia mostra card de bloqueio`);
+    exigir(await cardVazio.isVisible(), `${rotulo}: sessão moderna vazia mostra aviso de calendário ainda sem títulos`);
     const corBorda = await cardVazio.evaluate(el => getComputedStyle(el).borderTopColor);
-    exigir(corBorda === 'rgb(255, 102, 109)', `${rotulo}: card da ordem vazia usa a sinalização vermelha`);
+    exigir(corBorda === 'rgb(244, 202, 98)', `${rotulo}: card da ordem vazia usa aviso amarelo, não erro fatal`);
     const confirmarVazio = page.locator('[data-confirmar-gravacao="ag-sintetico"]');
-    exigir(await confirmarVazio.count() === 1 && await confirmarVazio.isDisabled(), `${rotulo}: envio da sessão moderna vazia fica desabilitado`);
+    exigir(await confirmarVazio.count() === 1 && await confirmarVazio.isDisabled(), `${rotulo}: zero títulos ainda não conclui a sessão`);
+    const textoVazio = page.locator('#extras_ag-sintetico');
+    exigir(await textoVazio.isVisible(), `${rotulo}: Luís recebe declaração factual na sessão moderna vazia`);
+    await textoVazio.fill('Conteúdo factual sintético');
+    await page.evaluate(() => window.atualizarContadorVideos('ag-sintetico',5));
+    exigir(await confirmarVazio.isEnabled(), `${rotulo}: um título factual habilita o envio sem replanejamento`);
     exigir(await page.locator('[data-replanejar-vazio]').count() === 0, `${rotulo}: Luís não recebe o controle gerencial de replanejar`);
     exigir(await page.getByRole('button', { name:'Abrir calendário deste cliente' }).count() === 0, `${rotulo}: Luís não recebe o controle gerencial de abrir calendário`);
     await salvarEvidencia(page, `V99_CAPTACOES_${rotulo.toUpperCase()}_MODERNO_VAZIO_LUIS_SINTETICO.png`);
 
     for(const papel of ['Chris','Amanda','Cecília']){
       await renderizar(page, papel, cenarios.modernoVazio);
-      exigir(await page.locator('[data-replanejar-vazio="ag-sintetico"]').isVisible(), `${rotulo}: ${papel} vê replanejamento da ordem vazia`);
-      exigir(await page.getByRole('button', { name:'Abrir calendário deste cliente' }).isVisible(), `${rotulo}: ${papel} vê abertura do calendário correto`);
-      await page.locator('[data-replanejar-vazio="ag-sintetico"]').click();
-      await page.getByRole('button', { name:'Abrir calendário deste cliente' }).click();
-      const acoes = await page.evaluate(() => structuredClone(__acoes));
-      exigir(acoes.length === 2 && acoes[0].acao === 'replanejar' && acoes[1].acao === 'calendario', `${rotulo}: ações gerenciais de ${papel} estão conectadas aos handlers`);
+      exigir(await page.locator('[data-replanejar-vazio]').count() === 0 && await page.getByRole('button', { name:'Abrir calendário deste cliente' }).count() === 0,
+        `${rotulo}: ${papel} não recebe aprovação/replanejamento obrigatório da ordem vazia`);
+      if(papel === 'Cecília'){
+        exigir(await page.locator('#extras_ag-sintetico').count() === 0, `${rotulo}: Cecília não recebe campo de execução do filmmaker`);
+        exigir(await page.locator('[data-confirmar-gravacao="ag-sintetico"]').count() === 0, `${rotulo}: Cecília não recebe botão de concluir a sessão`);
+        exigir((await page.locator('#formGrav_ag-sintetico').innerText()).includes('Visão de controle'), `${rotulo}: Cecília permanece em leitura de controle`);
+      }
     }
 
     await renderizar(page, 'Luís', cenarios.legadoParcial);
     const textareaLegado = page.locator('#extras_ag-legado-sintetico');
     exigir(await textareaLegado.isVisible(), `${rotulo}: legado parcialmente enriquecido mantém declaração textual isolada`);
-    exigir((await page.locator('#formGrav_ag-legado-sintetico').innerText()).includes('não marcará pauta de outra semana'), `${rotulo}: legado explica que não marca conteúdo de outra sessão`);
+    exigir((await page.locator('#formGrav_ag-legado-sintetico').innerText()).includes('não marcam item algum do calendário'), `${rotulo}: legado explica que não marca conteúdo de outra sessão`);
     exigir(await page.locator('[data-planejamento-vazio="ag-legado-sintetico"]').count() === 0, `${rotulo}: legado parcial não é confundido com moderno vazio`);
 
     await renderizar(page, 'Luís', cenarios.modernoValido);
     exigir(await page.locator('.chkVideoCalendario_ag-moderno-valido').count() === 5, `${rotulo}: sessão moderna válida mostra os cinco títulos congelados`);
     const confirmarValido = page.locator('[data-confirmar-gravacao="ag-moderno-valido"]');
-    exigir(await confirmarValido.count() === 1 && await confirmarValido.isEnabled(), `${rotulo}: sessão moderna válida habilita o envio`);
+    exigir(await confirmarValido.count() === 1 && await confirmarValido.isDisabled(), `${rotulo}: sessão moderna válida exige selecionar ao menos um título`);
+    await page.locator('.chkVideoCalendario_ag-moderno-valido').first().check();
+    await page.evaluate(() => window.atualizarContadorVideos('ag-moderno-valido',5));
+    exigir(await confirmarValido.isEnabled(), `${rotulo}: seleção exata habilita o envio`);
     exigir(await page.locator('[data-planejamento-vazio="ag-moderno-valido"]').count() === 0, `${rotulo}: sessão moderna válida não mostra falso vazio`);
     await salvarEvidencia(page, `V99_CAPTACOES_${rotulo.toUpperCase()}_MODERNO_VALIDO_LUIS_SINTETICO.png`);
 
@@ -238,7 +247,11 @@ async function executarViewport(viewport){
     exigir(textoIndisponivel.includes('Calendário indisponível agora'), `${rotulo}: falha de leitura aparece como indisponibilidade`);
     exigir(!textoIndisponivel.includes('A ordem desta sessão está vazia'), `${rotulo}: indisponibilidade não é convertida em vazio`);
     exigir(await page.locator('[data-planejamento-vazio="ag-indisponivel"]').count() === 0, `${rotulo}: falha de leitura não recebe marcador de vazio`);
-    exigir(await page.locator('[data-confirmar-gravacao="ag-indisponivel"]').isDisabled(), `${rotulo}: falha de leitura bloqueia o envio sem apagar a agenda`);
+    const confirmarIndisponivel=page.locator('[data-confirmar-gravacao="ag-indisponivel"]');
+    exigir(await confirmarIndisponivel.isDisabled(), `${rotulo}: falha de leitura não permite concluir com zero`);
+    await page.locator('#extras_ag-indisponivel').fill('Título factual com calendário indisponível');
+    await page.evaluate(() => window.atualizarContadorVideos('ag-indisponivel',5));
+    exigir(await confirmarIndisponivel.isEnabled(), `${rotulo}: falha de calendário não bloqueia a declaração isolada`);
 
     const largura = await page.evaluate(() => ({ scroll:document.documentElement.scrollWidth, cliente:document.documentElement.clientWidth }));
     exigir(largura.scroll <= largura.cliente + 1, `${rotulo}: agenda sintética permanece dentro do viewport ${viewport.width}x${viewport.height}`);

@@ -58,6 +58,7 @@ const fonteDominio = [
   trecho(escritorio, 'function nomeItemSessaoCanonico', 'function chaveItemSessao'),
   trecho(escritorio, 'function chaveSessaoGravacao', '/* Agendamentos criados antes da V32'),
   trecho(escritorio, 'function sessaoModernaComPlano', 'window.sessaoModernaComPlano'),
+  trecho(escritorio, 'function sessaoRegistroAutonomo', 'window.sessaoRegistroAutonomo'),
   trecho(escritorio, 'function sessaoLegadaSemVinculo', 'window.sessaoLegadaSemVinculo'),
   trecho(escritorio, 'function avaliarPlanejamentoSessaoParaPersistir', 'window.avaliarPlanejamentoSessaoParaPersistir'),
   trecho(escritorio, 'function snapshotItensPlanejadosSessao', 'window.snapshotItensPlanejadosSessao'),
@@ -66,7 +67,7 @@ const fonteDominio = [
   trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao'),
   `globalThis.api={
     equipeDoAgendamento,nomeOperacionalCanonico,filmmakersDaSessao,
-    sessaoModernaComPlano,sessaoLegadaSemVinculo,
+    sessaoModernaComPlano,sessaoRegistroAutonomo,sessaoLegadaSemVinculo,
     avaliarPlanejamentoSessaoParaPersistir,snapshotItensPlanejadosSessao,
     assinaturaReplanejamentoSessao,planejarSessaoGravacao,
     prepararMateriaisDeclaradosSessao
@@ -84,71 +85,73 @@ const tabelaSessao = [
   [{sessaoItensPlanejados:[]}, false, true, 'array sem versão'],
   [{sessaoPlanejamentoVersao:1,sessaoItensPlanejados:{}}, false, true, 'versão com tipo inválido'],
   [{sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[]}, true, false, 'versão 1 com array vazio'],
-  [{sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[{idx:0}]}, true, false, 'versão 1 com item congelado']
+  [{sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[{idx:0}]}, true, false, 'versão 1 com item congelado'],
+  [{sessaoPlanejamentoVersao:2,sessaoRegistroModo:'calendario_opcional',sessaoItensPlanejados:[]}, false, false, 'versão 2 de registro autônomo']
 ];
 tabelaSessao.forEach(([ag, moderna, legada, rotulo]) => {
   exigir(api.sessaoModernaComPlano(ag) === moderna && api.sessaoLegadaSemVinculo(ag) === legada,
     'truth table moderna/legada — ' + rotulo);
 });
 
-/* Portão V99: quantidade esperada nunca substitui uma lista exata. */
+/* V100 substitui o portão V99: a lista exata vira checklist opcional e a
+   quantidade permanece expectativa, sem bloquear a declaração factual. */
 let resultado = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:[{idx:0},{idx:1}],inconsistencias:[]},
   {calendarioDisponivel:true,permitirExtras:false,quantidadeEsperada:99}
 );
-exigir(resultado.ok && resultado.codigo === 'plano_exato' && resultado.quantidade === 2,
-  'gate aceita somente a quantidade derivada dos itens exatos');
+exigir(resultado.ok && resultado.codigo === 'checklist_calendario_disponivel' && resultado.quantidade === 99 && resultado.usarChecklist,
+  'checklist exato preserva a estimativa e continua disponível');
 
 resultado = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:[],inconsistencias:[]},
   {calendarioDisponivel:true,permitirExtras:false,quantidadeEsperada:5}
 );
-exigir(!resultado.ok && resultado.codigo === 'sem_itens_liberados' && resultado.quantidade === 0,
-  'contador positivo não libera plano vazio');
-exigir(resultado.mensagem.includes('Nenhum título exato'), 'plano vazio orienta conferir títulos, mês e bloco');
+exigir(resultado.ok && resultado.codigo === 'declaracao_ordem_vazia' && resultado.quantidade === 5 && !resultado.usarChecklist,
+  'plano vazio abre declaração factual sem inventar título de calendário');
+exigir(resultado.mensagem.includes('ordem está vazia'), 'plano vazio permanece identificado honestamente');
 
 resultado = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:[],inconsistencias:[]},
   {calendarioDisponivel:false,permitirExtras:false,quantidadeEsperada:5}
 );
-exigir(!resultado.ok && resultado.codigo === 'sem_calendario' && resultado.mensagem.includes('ainda não tem calendário'),
-  'calendário ausente não vira pauta vazia');
+exigir(resultado.ok && resultado.codigo === 'declaracao_sem_calendario' && resultado.mensagem.includes('ainda não tem calendário'),
+  'calendário ausente é distinto de pauta vazia e não bloqueia');
 
 resultado = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:[],inconsistencias:[{motivo:'O título congelado mudou.'}]},
   {calendarioDisponivel:true,permitirExtras:false,quantidadeEsperada:5}
 );
-exigir(!resultado.ok && resultado.codigo === 'plano_inconsistente' && resultado.mensagem === 'O título congelado mudou.',
-  'inconsistência preserva a causa específica');
+exigir(resultado.ok && resultado.codigo === 'declaracao_pauta_inconsistente' && resultado.mensagem === 'O título congelado mudou.' && !resultado.usarChecklist,
+  'inconsistência preserva a causa e cai em declaração isolada');
 
 resultado = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:[{idx:0}],inconsistencias:[{motivo:'O snapshot não corresponde mais à pauta.'}]},
   {calendarioDisponivel:true,permitirExtras:true,quantidadeEsperada:5}
 );
-exigir(!resultado.ok && resultado.codigo === 'plano_inconsistente' && resultado.quantidade === 0,
-  'inconsistência bloqueia mesmo com item e extras autorizados');
+exigir(resultado.ok && resultado.codigo === 'declaracao_pauta_inconsistente' && resultado.quantidade === 5 && !resultado.usarChecklist,
+  'inconsistência nunca usa item duvidoso no checklist');
 
 resultado = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:[],inconsistencias:[]},
   {calendarioDisponivel:true,permitirExtras:true,quantidadeEsperada:5}
 );
-exigir(resultado.ok && resultado.codigo === 'extras_explicitas' && resultado.quantidade === 5,
-  'extras só liberam o vazio quando a autorização é explícita');
+exigir(resultado.ok && resultado.codigo === 'declaracao_ordem_vazia' && resultado.quantidade === 5,
+  'flag histórica de extras não é mais uma aprovação necessária');
 
 resultado = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:[],inconsistencias:[]},
   {calendarioDisponivel:true,permitirExtras:'false',quantidadeEsperada:5}
 );
-exigir(!resultado.ok && resultado.codigo === 'sem_itens_liberados' && resultado.quantidade === 0,
-  'gate trata permitirExtras string "false" como desativado');
+exigir(resultado.ok && resultado.codigo === 'declaracao_ordem_vazia' && resultado.quantidade === 5,
+  'string histórica de extras não muda o modo autônomo');
 
 [-7, 0, Number.NaN, 'não é número'].forEach(valor => {
   const normalizado = api.avaliarPlanejamentoSessaoParaPersistir(
     {permitidos:[],inconsistencias:[]},
     {calendarioDisponivel:true,permitirExtras:true,quantidadeEsperada:valor}
   );
-  exigir(normalizado.ok && normalizado.codigo === 'extras_explicitas' && normalizado.quantidade === 1,
-    'extras normalizam quantidade inválida para 1 — ' + String(valor));
+  exigir(normalizado.ok && normalizado.codigo === 'declaracao_ordem_vazia' && normalizado.quantidade === 1,
+    'declaração normaliza quantidade inválida para 1 — ' + String(valor));
 });
 
 const snapshot = api.snapshotItensPlanejadosSessao({
@@ -199,7 +202,8 @@ resultado = api.avaliarPlanejamentoSessaoParaPersistir(planoModernoVazio, {
 });
 exigir(planoModernoVazio.planejamentoCongelado === true && planoModernoVazio.permitidos.length === 0,
   'v1 + array vazio continua moderno e não deriva itens por conveniência');
-exigir(!resultado.ok && resultado.codigo === 'sem_itens_liberados', 'v1 + array vazio permanece bloqueado pelo gate');
+exigir(resultado.ok && resultado.codigo === 'declaracao_ordem_vazia' && !resultado.usarChecklist,
+  'v1 + array vazio permanece sem checklist, mas aceita declaração factual isolada');
 
 /* Corrupção parcial do array moderno não pode derrubar a tela nem reabrir a
    compatibilidade legada. Cada variante permanece moderna, vira
@@ -249,8 +253,8 @@ snapshotsModernosMalformados.forEach(caso => {
     permitirExtras:true,
     quantidadeEsperada:5
   });
-  exigir((planoMalformado.inconsistencias||[]).length >= 1 && !gateMalformado.ok && gateMalformado.codigo === 'plano_inconsistente',
-    'snapshot malformado produz inconsistência e bloqueia até extras — ' + caso.rotulo);
+  exigir((planoMalformado.inconsistencias||[]).length >= 1 && gateMalformado.ok && gateMalformado.codigo === 'declaracao_pauta_inconsistente' && !gateMalformado.usarChecklist,
+    'snapshot malformado produz inconsistência e nunca libera checklist duvidoso — ' + caso.rotulo);
   const textoMalformado = api.prepararMateriaisDeclaradosSessao([], 'Texto livre não autorizado', agMalformado, 'Luís');
   exigir(!textoMalformado.ok && textoMalformado.videos.length === 0,
     'snapshot malformado jamais cai em legado ou texto livre — ' + caso.rotulo);
@@ -276,31 +280,95 @@ exigir(preparadoEnriquecido.ok && preparadoEnriquecido.registroLegado === true &
 
 const textoEmModernoVazio = api.prepararMateriaisDeclaradosSessao([], 'Texto livre indevido', agModernoVazio, 'Luís');
 exigir(!textoEmModernoVazio.ok && textoEmModernoVazio.videos.length === 0,
-  'sessão moderna vazia não ganha texto livre para contornar o bloqueio');
+  'helper não abre declaração moderna sem a autorização explícita do executor');
 
-const extraAutorizado = api.prepararMateriaisDeclaradosSessao([], 'Captação autorizada', {...agModernoVazio,permitirCaptacoesExtras:true}, 'Luiz');
-exigir(extraAutorizado.ok && extraAutorizado.videos[0].vinculoSessao === 'captacao_extra_autorizada',
-  'extra moderno explícito recebe vínculo próprio sem tocar calendário');
+const extraAutorizado = api.prepararMateriaisDeclaradosSessao([], 'Captação declarada', agModernoVazio, 'Luiz', {declaracaoAutorizada:true});
+exigir(extraAutorizado.ok && extraAutorizado.videos[0].vinculoSessao === 'declarado_em_campo' &&
+  extraAutorizado.videos[0].calendarItemId === null && extraAutorizado.videos[0].calendarClienteSlug === null,
+  'declaração do executor recebe vínculo próprio sem tocar calendário');
 
 const extraStringFalse = api.prepararMateriaisDeclaradosSessao(
   [], 'Texto não autorizado', {...agModernoVazio,permitirCaptacoesExtras:'false'}, 'Luís'
 );
 exigir(!extraStringFalse.ok && extraStringFalse.videos.length === 0,
-  'preparação trata string "false" como extras desativados');
+  'campo histórico de extras não substitui a autorização do executor');
 
-/* O escritor de criação precisa avaliar antes do primeiro addDoc. */
+/* V100 preserva a disciplina V99 de quantidade e sessão, mas calendário
+   agora é checklist opcional. Quantidade explícita continua obrigatória. */
 const fonteAgendar = trecho(escritorio, 'window.agendarGravacao = async function(){', '  async function renderListaAgendamentos');
+const blocoQuantidadeObrigatoria = trecho(
+  fonteAgendar,
+  "const qtdPlanejadaLida = parseInt(document.getElementById('agQtdPlanejada').value);",
+  '    const qtdPlanejada = qtdPlanejadaLida;'
+);
+const executarQuantidadeObrigatoria = new vm.Script(
+  `(function(valor){
+    let focos=0; const avisos=[];
+    const document={getElementById:()=>({value:valor,focus:()=>{focos++;}})};
+    const mostrarToast=(mensagem,tipo)=>avisos.push({mensagem,tipo});
+    ${blocoQuantidadeObrigatoria}
+    return {ok:true,qtdPlanejadaLida,focos,avisos};
+  })`,
+  {filename:'v100-quantidade-obrigatoria-sandbox.js'}
+).runInNewContext();
+exigir(executarQuantidadeObrigatoria('') === false && executarQuantidadeObrigatoria('0') === false,
+  'escritor recusa quantidade vazia ou menor que 1');
+const quantidadeValida = executarQuantidadeObrigatoria('5');
+exigir(quantidadeValida.ok === true && quantidadeValida.qtdPlanejadaLida === 5,
+  'escritor aceita quantidade esperada explícita');
+
 const posAvaliacao = fonteAgendar.indexOf('avaliarPlanejamentoSessaoParaPersistir(planoInicial');
-const posGate = fonteAgendar.indexOf('if(!avaliacaoPlanejamento.ok)');
+const posPortaFilmmaker = fonteAgendar.indexOf('if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !avaliacaoPlanejamento.usarChecklist)');
 const posPrimeiroAdd = fonteAgendar.indexOf("addDoc(collection(db,'agendamentos')");
-exigir(posAvaliacao >= 0 && posGate > posAvaliacao && posPrimeiroAdd > posGate,
-  'criação avalia e bloqueia antes do primeiro addDoc de agendamento');
-exigir(!fonteAgendar.slice(0, posGate).includes('addDoc('), 'nenhuma escrita addDoc antecede o gate de criação');
-exigir(fonteAgendar.includes('calendarioDisponivel:calendarioPlanejamentoSnap.exists()') &&
-  fonteAgendar.includes("mostrarToast('Não agendei:") && fonteAgendar.includes('Nenhum registro foi criado.'),
-  'falha de criação diferencia calendário e informa que nada foi criado');
-exigir(fonteAgendar.includes('qtdVideosPlanejados: qtdPlanejadaFinal') && fonteAgendar.includes('sessaoItensPlanejados,'),
-  'contador persistido nasce da mesma decisão do snapshot');
+exigir(fonteAgendar.includes("if(!['Chris','Amanda','Cecília'].includes(usuarioAtual))") &&
+  !fonteAgendar.includes("if(!['Chris','Amanda','Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual))"),
+  'escritor de nova sessão pertence só à coordenação; filmmaker opera apenas sessão atribuída');
+exigir(posAvaliacao >= 0 && posPortaFilmmaker > posAvaliacao && posPrimeiroAdd > posPortaFilmmaker &&
+  !fonteAgendar.slice(0,posPortaFilmmaker).includes('addDoc('),
+  'criação avalia checklist e aplica a porta do filmmaker antes da primeira escrita');
+
+const blocoPortaFilmmaker = trecho(
+  fonteAgendar,
+  'if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !avaliacaoPlanejamento.usarChecklist){',
+  '      const sessaoItensPlanejados = '
+);
+const executarPortaFilmmaker = new vm.Script(
+  `(function(usuarioAtual,PESSOAS_DE_CAMPO,usarChecklist){
+    const avaliacaoPlanejamento={usarChecklist}; const avisos=[];
+    const mostrarToast=(mensagem,tipo)=>avisos.push({mensagem,tipo});
+    ${blocoPortaFilmmaker}
+    return true;
+  })`,
+  {filename:'v100-porta-filmmaker-sandbox.js'}
+).runInNewContext();
+exigir(executarPortaFilmmaker('Luís',['Luís','Nathan'],false) === false &&
+  executarPortaFilmmaker('Nathan',['Luís','Nathan'],false) === false &&
+  executarPortaFilmmaker('Luís',['Luís','Nathan'],true) === true,
+  'defesa interna também impede autoabertura sem checklist antes da primeira escrita');
+
+const expressaoItensCriacao = trecho(
+  fonteAgendar,
+  'const sessaoItensPlanejados = ',
+  ';\n      const qtdPlanejadaFinal = '
+).slice('const sessaoItensPlanejados = '.length).trim();
+const itensSemChecklist = new vm.Script(`(${expressaoItensCriacao})`, {filename:'v100-itens-criacao-sandbox.js'}).runInNewContext({
+  avaliacaoPlanejamento:{usarChecklist:false},
+  planoInicial:{permitidos:[{idx:99}]},
+  snapshotItensPlanejadosSessao:()=>{ throw new Error('snapshot não deveria ser chamado'); }
+});
+const expressaoVersaoCriacao = trecho(
+  fonteAgendar,
+  'sessaoPlanejamentoVersao:',
+  ', sessaoItensPlanejados'
+).slice('sessaoPlanejamentoVersao:'.length).trim();
+const versaoSemChecklist = new vm.Script(`(${expressaoVersaoCriacao})`, {filename:'v100-versao-criacao-sandbox.js'}).runInNewContext({
+  avaliacaoPlanejamento:{usarChecklist:false}
+});
+exigir(executarPortaFilmmaker('Cecília',['Luís','Nathan'],false) === true &&
+  versaoSemChecklist === 2 && Array.isArray(itensSemChecklist) && itensSemChecklist.length === 0 &&
+  fonteAgendar.includes("sessaoRegistroModo:'calendario_opcional'") &&
+  fonteAgendar.includes('calendarioObrigatorioParaRegistro:false'),
+  'coordenação pode criar V2 calendário-opcional sem inventar snapshot vazio');
 
 const expressaoQtdCriacao = trecho(
   fonteAgendar,
@@ -311,13 +379,15 @@ const planoCincoItens = api.avaliarPlanejamentoSessaoParaPersistir(
   {permitidos:Array.from({length:5}, (_,idx)=>({idx})),inconsistencias:[]},
   {calendarioDisponivel:true,permitirExtras:true,quantidadeEsperada:2}
 );
-const qtdCriacao = new vm.Script(`(${expressaoQtdCriacao})`, {filename:'v99-qtd-criacao-sandbox.js'}).runInNewContext({
-  permitirExtrasFinal:true,
-  qtdPlanejada:2,
-  avaliacaoPlanejamento:planoCincoItens
-});
-exigir(planoCincoItens.quantidade === 5 && qtdCriacao === 5,
-  'criação com extras e cinco itens nunca persiste contagem menor que cinco');
+const executarQtdCriacao = contextoQtd => new vm.Script(`(${expressaoQtdCriacao})`, {
+  filename:'v100-qtd-criacao-sandbox.js'
+}).runInNewContext(contextoQtd);
+exigir(planoCincoItens.quantidade === 5 && executarQtdCriacao({
+  qtdPlanejada:2, sessaoItensPlanejados:Array.from({length:5},(_,idx)=>({idx}))
+}) === 5, 'checklist nunca reduz a quantidade abaixo dos itens exatos');
+exigir(executarQtdCriacao({qtdPlanejada:4,sessaoItensPlanejados:[]}) === 4 &&
+  fonteAgendar.includes('qtdVideosPlanejados: qtdPlanejadaFinal'),
+  'V2 sem checklist persiste a quantidade explícita como estimativa');
 
 /* Replanejamento: uma transação, revalidação e nenhuma escrita solta. */
 const fonteReplanejar = trecho(escritorio, 'async function replanejarSessaoGravacaoNucleo', '  const __replanejamentosSessaoEmCurso');
@@ -333,70 +403,54 @@ exigir(fonteReplanejar.includes('JSON.stringify(listaAtual) !== JSON.stringify(l
 exigir(!/(^|[^.])\bupdateDoc\s*\(/m.test(fonteReplanejar) && !fonteReplanejar.includes('addDoc(') && !fonteReplanejar.includes('setDoc('),
   'replanejamento não possui updateDoc/addDoc/setDoc fora da transação');
 
-/* Firestore legado pode conter a string "false". Ela é truthy em
-   JavaScript, então cada fronteira operacional precisa comparar === true. */
-const fonteRenderAgenda = trecho(
-  escritorio,
-  'async function renderMinhaAgendaFilmmaker',
-  'window.renderMinhaAgendaFilmmaker = renderMinhaAgendaFilmmaker'
-);
-const marcadorExtrasRender = 'const permiteExtrasSessao = ';
-const expressaoExtrasRender = trecho(
-  fonteRenderAgenda,
-  marcadorExtrasRender,
-  ';\n      const planejamentoInconsistente'
-).slice(marcadorExtrasRender.length).trim();
-const extrasRenderStringFalse = new vm.Script(`(${expressaoExtrasRender})`, {filename:'v99-extras-render-sandbox.js'}).runInNewContext({
-  a:{permitirCaptacoesExtras:'false'},
-  registroLegado:false
-});
-exigir(extrasRenderStringFalse === false && expressaoExtrasRender.includes('=== true'),
-  'render trata string "false" como extras desativados');
+/* Replanejamento continua opcional e só congela listas exatas não vazias. */
+const posGuardaLista = fonteReplanejar.indexOf('if(!avaliacao.ok || !avaliacao.usarChecklist || !lista.length)');
+const posListaAtual = fonteReplanejar.indexOf('const listaAtual = snapshotItensPlanejadosSessao(planoAtual)');
+const posGuardaListaAtual = fonteReplanejar.indexOf('if(!avaliacaoAtual.ok || !avaliacaoAtual.usarChecklist || !listaAtual.length)');
+exigir(posGuardaLista >= 0 && posGuardaLista < posTransacao &&
+  posListaAtual > posTransacao && posGuardaListaAtual > posListaAtual && posGuardaListaAtual < posAtualizacao,
+  'replanejamento recusa lista vazia antes e dentro da transação');
+exigir(fonteReplanejar.includes('Não salvei uma ordem vazia.') &&
+  fonteReplanejar.includes('sessaoItensPlanejados:listaAtual') &&
+  !fonteReplanejar.includes('sessaoItensPlanejados:[]'),
+  'replanejamento opcional jamais persiste snapshot vazio');
 
-const marcadorExtrasReplanejar = 'const permiteExtras = ';
-const expressaoExtrasReplanejar = trecho(
-  fonteReplanejar,
-  marcadorExtrasReplanejar,
-  ';\n    const avaliacao ='
-).slice(marcadorExtrasReplanejar.length).trim();
-const extrasReplanejarStringFalse = new vm.Script(`(${expressaoExtrasReplanejar})`, {filename:'v99-extras-replanejar-sandbox.js'}).runInNewContext({
-  ag:{permitirCaptacoesExtras:'false'}
-});
-exigir(extrasReplanejarStringFalse === false &&
-  fonteReplanejar.includes('const permiteExtrasAtual = agAtual.permitirCaptacoesExtras === true;'),
-  'replanejamento inicial e transacional tratam string "false" como desativada');
-
+/* Declaração manual é uma ação explícita do executor e não toca a pauta. */
 const fonteConfirmacao = trecho(
   escritorio,
   'async function registrarGravacaoRealizadaNucleo',
   '  const __confirmacoesGravacaoEmCurso'
 );
-const guardaExtrasConfirmacao = fonteConfirmacao.split('\n').find(linha => linha.includes('if(videosExtras.length &&'))?.trim() || '';
-const executarGuardaConfirmacao = new vm.Script(
-  `(function(videosExtras,dadosAtuais,sessaoLegadaSemVinculo){${guardaExtrasConfirmacao}\nreturn true;})`,
-  {filename:'v99-extras-confirmacao-sandbox.js'}
-).runInNewContext();
-let erroExtrasStringFalse = null;
-try{
-  executarGuardaConfirmacao([{}], {permitirCaptacoesExtras:'false'}, () => false);
-}catch(erro){
-  erroExtrasStringFalse = erro;
-}
-exigir(guardaExtrasConfirmacao.includes('permitirCaptacoesExtras === true') &&
-  erroExtrasStringFalse?.message === 'Captações extras não estão autorizadas nesta sessão.',
-  'confirmação bloqueia extras quando o campo contém a string "false"');
+const posLeituraCalendarioCondicional = fonteConfirmacao.indexOf('if(videosDoCalendario.length){');
+const posLeituraCalendario = fonteConfirmacao.indexOf("getDoc(doc(db,'calendarios',clienteSlug))", posLeituraCalendarioCondicional);
+const posTextoManual = fonteConfirmacao.indexOf('const textoExtras =', posLeituraCalendarioCondicional);
+exigir(posLeituraCalendarioCondicional >= 0 && posLeituraCalendario > posLeituraCalendarioCondicional &&
+  posTextoManual > posLeituraCalendario &&
+  fonteConfirmacao.includes('{ declaracaoAutorizada:true, motivoDeclaracao:'),
+  'baixa abre declaração manual explicitamente; calendário só é pré-lido quando há checkbox');
+exigir(fonteConfirmacao.includes("const calRef = videosDoCalendario.length ? doc(db,'calendarios', clienteSlug) : null") &&
+  fonteConfirmacao.includes('const calAtual = calRef ? await transacao.get(calRef) : null') &&
+  fonteConfirmacao.includes('if(calRef && calAtual && calAtual.exists())'),
+  'baixa exclusivamente manual não lê nem escreve calendário dentro da transação');
 
-const expressaoQtdReplanejamento = trecho(
-  fonteReplanejar,
-  'qtdVideosPlanejados:',
-  '\n          sessaoPlanejamentoVersao:'
-).slice('qtdVideosPlanejados:'.length).trim().replace(/,$/, '');
-const qtdReplanejamento = new vm.Script(`(${expressaoQtdReplanejamento})`, {filename:'v99-qtd-replanejamento-sandbox.js'}).runInNewContext({
-  permiteExtrasAtual:true,
-  agAtual:{qtdVideosPlanejados:2},
-  listaAtual:Array.from({length:5}, (_,idx)=>({idx}))
-});
-exigir(qtdReplanejamento === 5, 'replanejamento com extras e cinco itens nunca reduz a contagem abaixo de cinco');
+const blocoPapelConfirmacao = trecho(
+  fonteConfirmacao,
+  'if(!PESSOAS_DE_CAMPO.includes(usuarioAtual)){',
+  '    const agRef = '
+);
+const executarPapelConfirmacao = new vm.Script(
+  `(function(usuarioAtual,PESSOAS_DE_CAMPO){
+    const avisos=[]; const mostrarToast=(mensagem,tipo)=>avisos.push({mensagem,tipo});
+    ${blocoPapelConfirmacao}
+    return true;
+  })`,
+  {filename:'v100-papel-confirmacao-sandbox.js'}
+).runInNewContext();
+exigir(executarPapelConfirmacao('Cecília',['Luís','Nathan']) === false &&
+  executarPapelConfirmacao('Luís',['Luís','Nathan']) === true &&
+  executarPapelConfirmacao('Nathan',['Luís','Nathan']) === true &&
+  fonteConfirmacao.includes('Cecília acompanha pelo controle, sem executar a baixa.'),
+  'Cecília permanece read-only; Luís e Nathan chegam à validação da sessão');
 
 /* Executa a trava real: dois cliques/duas chamadas concorrentes do mesmo ID
    não entram no núcleo, e o finally libera uma tentativa posterior. */
@@ -524,9 +578,9 @@ exigir(retornoErroAntigo === false && elementosSugestao.agQtdPlanejada.value ===
   'erro obsoleto não substitui a resposta nova por indisponibilidade');
 
 /* Invariantes de entrega e segurança. */
-exigir(escritorio.includes('gs-build" content="2026-08-21-planejamento-sessoes-v99"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-restaura-perfil-chris-v98"'),
-  'build V99 e ancestral V98 estão declarados');
+exigir(escritorio.includes('gs-build" content="2026-08-21-registro-autonomo-filmmaker-v100"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-planejamento-sessoes-v99"'),
+  'build V100 e parent V99 estão declarados');
 exigir(sha256(regras) === '5bd436eed9cc0512674e286e4349051337e1d365b61b62a64ed93a2332109350',
   'firestore.rules permanece byte a byte no hash conhecido');
 exigir(calendario === calendarios, 'calendario.html e calendarios.html permanecem byte a byte idênticos');

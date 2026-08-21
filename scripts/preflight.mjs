@@ -222,10 +222,14 @@ const leisV99 = [
   'quantidade planejada não é autorização de captação',
   'Snapshot moderno vazio já existente nunca vira legado automaticamente'
 ];
+const leisV100 = [
+  'calendário editorial orienta e concilia, mas não autoriza o registro factual',
+  'Filmmaker não cria sessão nem escolhe cliente transversalmente'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81, ...leisV99].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist, as leis históricas e a barreira V99');
-} else provar('catálogo mestre preserva o checklist, as leis históricas e a barreira V99');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81, ...leisV99, ...leisV100].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist, as leis históricas e a decisão V100');
+} else provar('catálogo mestre preserva o checklist, as leis históricas e a decisão V100');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -531,16 +535,6 @@ if (!escritorio.includes("'zeens': 'zeiss'") ||
   falhar('Zeiss pode voltar a sumir da carteira ou perder o calendário salvo sob alias legado');
 } else provar('Zeiss é identidade operacional estável e calendários legados permanecem acessíveis sem migração destrutiva');
 
-const saldoCaptacao = escritorio.slice(
-  escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'),
-  escritorio.indexOf('    } else {', escritorio.indexOf('if(qtdRealizada < qtdPlanejada)'))
-);
-if (!saldoCaptacao.includes("tipoPendencia: 'saldo_captacao'") ||
-    !saldoCaptacao.includes('NÃO dependem de aprovação da Cecília') ||
-    saldoCaptacao.includes('qtdVideosPlanejados: increment(')) {
-  falhar('saldo de captação voltou a bloquear vídeos na Cecília ou alterar contador sem itens exatos');
-} else provar('Cecília recebe apenas planejamento do saldo; vídeos realizados seguem para Amanda');
-
 const confirmacaoGravacao = escritorio.slice(
   escritorio.indexOf('async function registrarGravacaoRealizadaNucleo'),
   escritorio.indexOf('function popularClientesReferencia')
@@ -551,9 +545,17 @@ const preparacaoMateriaisGravacao = escritorio.slice(
 );
 if (!escritorio.includes('NÃO GRAVAR HOJE') || !escritorio.includes('sessaoItensPlanejados') ||
     !confirmacaoGravacao.includes("dadosAtuais.status !== 'agendado'") ||
-    !confirmacaoGravacao.includes('permitidosAgora.has(chave)')) {
-  falhar('ordem da sessão ou revalidação atômica da gravação ausente');
-} else provar('gravação limitada à ordem planejada da sessão');
+    !confirmacaoGravacao.includes('permitidosAgora.has(chave)') ||
+    !preparacaoMateriaisGravacao.includes("vinculoSessao:registroLegado ? 'declarado_legado' : 'declarado_em_campo'") ||
+    !confirmacaoGravacao.includes('registroProducaoVersao:3')) {
+  falhar('checklist exato ou declaração factual isolada perdeu a revalidação atômica');
+} else provar('checklist exato marca somente sua sessão; declaração factual segue isolada do calendário');
+if (!confirmacaoGravacao.includes('qtdVideosFaltantes = Math.max(0,qtdPlanejada-qtdRealizada)') ||
+    !confirmacaoGravacao.includes('qtdVideosDeclaradosCampo') ||
+    confirmacaoGravacao.includes("tipoPendencia: 'saldo_captacao'") ||
+    confirmacaoGravacao.includes('prompt(`Faltaram')) {
+  falhar('saldo voltou a criar tarefa obrigatória para Cecília ou perdeu os contadores factuais');
+} else provar('diferença planejado × realizado fica no agendamento/controle sem aprovação da Cecília');
 if (!escritorio.includes('function chaveItemSessao(item)') ||
     !escritorio.includes('nomeItemSessaoCanonico(itemAtual.name) === nomeItemSessaoCanonico(videoSelecionado.nome)') ||
     !escritorio.includes('data-nome="${escAttr(it.name)}"')) {
@@ -566,12 +568,12 @@ if (!escritorio.includes('function __snapshotFalso(itens, colecao)') ||
     !escritorio.includes('function __validarReferenciasFirestore(refs, contexto)')) {
   falhar('cache do Firestore perdeu DocumentReference e quebra transações da Central de Clientes');
 } else provar('cache preserva DocumentReference usado ao salvar/ativar clientes');
-if (!escritorio.includes('Registro compatível da sessão antiga') ||
-    !preparacaoMateriaisGravacao.includes("vinculoSessao:registroLegado ? 'declarado_legado'") ||
-    !confirmacaoGravacao.includes('sessaoLegadaSemVinculo(dadosAtuais)') ||
+if (!escritorio.includes('Vídeos realmente gravados nesta sessão') ||
+    !preparacaoMateriaisGravacao.includes("vinculoSessao:registroLegado ? 'declarado_legado' : 'declarado_em_campo'") ||
+    !preparacaoMateriaisGravacao.includes('calendarClienteSlug:null') ||
     !preparacaoMateriaisGravacao.includes('Há um vídeo sem nome ou repetido nesta sessão.')) {
-  falhar('compatibilidade pós-filmagem anterior à V32 está ausente ou sem proteções');
-} else provar('pós-filmagem legado registra material sem vincular pauta de outra sessão');
+  falhar('declaração pós-filmagem autônoma está ausente ou sem isolamento/duplicidade');
+} else provar('pós-filmagem registra títulos no próprio agendamento sem vincular pauta de outra sessão');
 const trocaResponsavelGravacao = escritorio.slice(
   escritorio.indexOf('window.trocarFilmmakerAgendamento'),
   escritorio.indexOf('/* ===== A CECÍLIA PRECISA PODER DESFAZER')
@@ -763,13 +765,13 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-21-planejamento-sessoes-v99' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-restaura-perfil-chris-v98">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-login-google-redirect-v97">') ||
-    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-operacao-perfis-chris-v96">') ||
+if (build !== '2026-08-21-registro-autonomo-filmmaker-v100' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-planejamento-sessoes-v99">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-login-google-redirect-v97">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V99 inesperada: ${build || 'ausente'}`);
-} else provar('V99 preserva V98/V97/V96 e fecha a sessão vazia sem ampliar regras');
+  falhar(`cadeia de build V100 inesperada: ${build || 'ausente'}`);
+} else provar('V100 preserva V99/V98/V97 e torna o calendário opcional sem ampliar regras');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

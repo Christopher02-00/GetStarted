@@ -1177,7 +1177,8 @@ function testarSessoesGravacaoSandbox() {
     api.sessaoLegadaSemVinculo(vitalParcialmenteEnriquecida) === true &&
     api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoPlanejamentoVersao:1}) === true &&
     api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoItensPlanejados:[]}) === true &&
-    api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[]}) === false,
+    api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[]}) === false &&
+    api.sessaoLegadaSemVinculo({...vitalParcialmenteEnriquecida,sessaoPlanejamentoVersao:2,sessaoRegistroModo:'calendario_opcional',sessaoItensPlanejados:[]}) === false,
     'compatibilidade não cobre o legado parcialmente enriquecido ou vazou para sessões modernas');
   const sessaoLegadaFonte = trecho(escritorio, 'function sessaoModernaComPlano', 'window.sessaoLegadaSemVinculo');
   const materiaisFonte = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');
@@ -1193,8 +1194,10 @@ function testarSessoesGravacaoSandbox() {
   const declaradoVital = materiais.prepararMateriaisDeclaradosSessao([], 'Conteúdo institucional\nBastidores', vitalParcialmenteEnriquecida, 'Luís');
   exigir(declaradoVital.ok && declaradoVital.videos.length === 2 && declaradoVital.videos.every(v=>v.vinculoSessao==='declarado_legado' && v.calendarItemId===null),
     'Vital Seg parcialmente enriquecida continuou sem porta segura de envio');
-  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Extra sem autorização', {...agDivina,sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[],sessaoChave:'nova'}, 'Luís').ok === false,
-    'sessão moderna ganhou texto livre sem autorização');
+  const modernoVazio={...agDivina,sessaoPlanejamentoVersao:1,sessaoItensPlanejados:[],sessaoChave:'nova'};
+  exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Declaração fora do executor', modernoVazio, 'Luís').ok === false &&
+    materiais.prepararMateriaisDeclaradosSessao([], 'Vídeo realmente gravado', modernoVazio, 'Luís', {declaracaoAutorizada:true}).videos[0].vinculoSessao === 'declarado_em_campo',
+    'declaração moderna exige a porta do executor e permanece isolada do calendário');
   exigir(materiais.prepararMateriaisDeclaradosSessao([], 'Vídeo Único\nvideo unico', agDivina, 'Luís').ok === false,
     'nomes duplicados com acento/capitalização passariam a criar vídeos repetidos');
   const equipeDupla={...agDivina,equipe:[{nome:'Luís',papel:'Filmmaker'},{nome:'Nathan',papel:'2º Filmmaker'}]};
@@ -1208,13 +1211,13 @@ function testarSessoesGravacaoSandbox() {
 
   const agenda = trecho(escritorio, 'async function renderMinhaAgendaFilmmaker', 'window.renderMinhaAgendaFilmmaker = renderMinhaAgendaFilmmaker');
   exigir(agenda.includes('FAZER HOJE') && agenda.includes('NÃO GRAVAR HOJE') &&
-    agenda.includes('confirmacaoBloqueada') && agenda.includes('planoSessao.permitidos'),
-    'Minha sessão perdeu grupos visuais ou desbloqueou pauta não planejada');
+    agenda.includes('permiteDeclaracaoSessao') && agenda.includes('planoSessao.permitidos'),
+    'Minha sessão perdeu o checklist seguro ou a declaração factual do executor');
   exigir(agenda.includes('data-nome="${escAttr(it.name)}"') && agenda.includes('aria-label="Quem gravou ${escAttr(it.name'),
     'título com aspas voltou a quebrar o checkbox da sessão do filmmaker');
-  exigir(agenda.includes('Registro compatível da sessão antiga') &&
-    agenda.includes('não marcará pauta de outra semana') && agenda.includes('sessaoLegadaSemVinculo(a)'),
-    'sessão anterior à V32 não recuperou a declaração segura do material gravado');
+  exigir(agenda.includes('Vídeos realmente gravados nesta sessão') &&
+    agenda.includes('não marcam item algum do calendário') && agenda.includes('não depende de organização prévia da Amanda ou da Cecília'),
+    'declaração factual deixou de ser visível ou voltou a depender da coordenação');
   exigir(agenda.includes('Responsável que realmente realizou esta sessão') &&
     agenda.includes("const podePlanejarSessao = ['Chris','Amanda','Cecília'].includes(usuarioAtual)") &&
     agenda.includes("PESSOAS_DE_CAMPO.map(p=>"),
@@ -1224,22 +1227,21 @@ function testarSessoesGravacaoSandbox() {
     confirmar.includes('pessoaNaEquipe(dadosAtuais,usuarioAtual)') && confirmar.includes('permitidosAgora.has(chave)') &&
     confirmar.includes('new Set(planoAntes.permitidos.map(chaveItemSessao))') &&
     confirmar.includes('nomeItemSessaoCanonico(itemAtual.name) === nomeItemSessaoCanonico(videoSelecionado.nome)') &&
-    confirmar.includes('Captações extras não estão autorizadas nesta sessão.'),
-    'transação de confirmação não revalida status, equipe, aprovação, sessão e extras');
+    confirmar.includes('if(videosDoCalendario.length)') && confirmar.includes('{ declaracaoAutorizada:true'),
+    'transação de confirmação não revalida status/equipe/aprovação/checklist ou perdeu a declaração autônoma');
   const prepararMateriais = trecho(escritorio, 'function prepararMateriaisDeclaradosSessao', 'window.prepararMateriaisDeclaradosSessao');
-  exigir(prepararMateriais.includes("vinculoSessao:registroLegado ? 'declarado_legado'") &&
+  exigir(prepararMateriais.includes("vinculoSessao:registroLegado ? 'declarado_legado' : 'declarado_em_campo'") &&
+    prepararMateriais.includes('calendarClienteSlug:null') &&
     prepararMateriais.includes('Há um vídeo sem nome ou repetido nesta sessão.') &&
     confirmar.includes('agendamentoId:agId') && confirmar.includes("status: 'aguardando_edicao'"),
     'pós-filmagem legado perdeu vínculo, proteção contra duplicata ou entrada na fila de edição');
   exigir(confirmar.includes('producaoPorFilmmaker') && confirmar.includes('conteudosRealizados') &&
     confirmar.includes('dataProducao = agDadosAntes.data || hojeRegistro') && confirmar.includes('filmmaker:v.responsavel'),
     'baixa da gravação não preserva dia real, títulos e filmmaker de cada conteúdo');
-  const saldoCaptacao = confirmar.slice(confirmar.indexOf('if(qtdRealizada < qtdPlanejada)'), confirmar.indexOf('    } else {', confirmar.indexOf('if(qtdRealizada < qtdPlanejada)')));
-  exigir(saldoCaptacao.includes("tipoPendencia: 'saldo_captacao'") &&
-    saldoCaptacao.includes('NÃO dependem de aprovação da Cecília') &&
-    saldoCaptacao.includes('vincule nela os conteúdos exatos') &&
-    !saldoCaptacao.includes('qtdVideosPlanejados: increment('),
-    'Cecília voltou a ser aprovação dos vídeos ou o saldo alterou uma sessão sem itens exatos');
+  exigir(confirmar.includes('qtdVideosFaltantes = Math.max(0,qtdPlanejada-qtdRealizada)') &&
+    confirmar.includes('qtdVideosDeclaradosCampo') && confirmar.includes('registroProducaoVersao:3') &&
+    !confirmar.includes("tipoPendencia: 'saldo_captacao'") && !confirmar.includes('prompt(`Faltaram'),
+    'saldo factual não ficou atômico no agendamento ou voltou a criar tarefa obrigatória para Cecília');
 
   const fonteProducao = trecho(escritorio, 'function producaoDetalhadaDoAgendamento', 'window.calcularProducaoHojePorFilmmaker');
   const producao = executarSandbox('producao-cecilia-sandbox.js',

@@ -687,69 +687,9 @@ service cloud.firestore {
       allow get: if ehEquipe() || ((temSessaoCliente() || temSessaoCalendarioEquipe()) && slug == clienteDaSessao());
       allow list: if ehEquipe();
       allow create: if ehEquipe() || (temSessaoCalendarioEquipe() && slug == clienteDaSessao());
-      allow update: if (ehEquipe() && (
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'itemIdMigracaoVersao','itemIdMigradoEm','itemIdMigradoPor','itemIdMigracaoUltimaOperacao'
-          ]) || (
-            ehChris() &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'items','updatedAt','itemIdMigracaoVersao','itemIdMigradoEm',
-              'itemIdMigradoPor','itemIdMigracaoUltimaOperacao'
-            ]) &&
-            request.resource.data.itemIdMigracaoVersao == 1 &&
-            request.resource.data.itemIdMigradoEm == request.time &&
-            request.resource.data.itemIdMigradoPor == 'Chris' &&
-            request.resource.data.itemIdMigracaoUltimaOperacao.matches('mig_[A-Za-z0-9_-]{12,156}') &&
-            existsAfter(/databases/$(database)/documents/calendarios_itemid_migracoes/$(slug)/operacoes/$(request.resource.data.itemIdMigracaoUltimaOperacao))
-          )
-        )) || (temSessaoCalendarioEquipe() && slug == clienteDaSessao()) || (temSessaoCliente() && slug == clienteDaSessao() &&
+      allow update: if ehEquipe() || (temSessaoCalendarioEquipe() && slug == clienteDaSessao()) || (temSessaoCliente() && slug == clienteDaSessao() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['items','comments','updatedAt','aprovacaoMeses','aprovacaoCliente','aprovacaoInterna']));
       allow delete: if false;
-    }
-
-    // V102 — recibo mínimo e append-only da normalização explícita de IDs
-    // antigos. A leitura do painel nunca cria este documento; ele só nasce
-    // no mesmo commit que o backup e a atualização do calendário.
-    match /calendarios_itemid_migracoes/{calendarId} {
-      allow read, write: if false;
-      match /operacoes/{operationId} {
-        allow read: if ehChris();
-        allow create: if ehChris() &&
-          request.resource.data.keys().hasOnly([
-            'schemaVersion','calendarId','operationId','status','quantidade',
-            'totalItens','hashAntes','hashDepois','backupId','autorUid',
-            'atorRealPapel','papelOperado','criadoEm'
-          ]) &&
-          request.resource.data.keys().hasAll([
-            'schemaVersion','calendarId','operationId','status','quantidade',
-            'totalItens','hashAntes','hashDepois','backupId','autorUid',
-            'atorRealPapel','papelOperado','criadoEm'
-          ]) &&
-          request.resource.data.schemaVersion == 1 &&
-          request.resource.data.calendarId == calendarId &&
-          request.resource.data.operationId == operationId &&
-          operationId.matches('mig_[A-Za-z0-9_-]{12,156}') &&
-          request.resource.data.status == 'aplicada' &&
-          request.resource.data.quantidade is int &&
-          request.resource.data.quantidade >= 1 &&
-          request.resource.data.quantidade <= 5000 &&
-          request.resource.data.totalItens is int &&
-          request.resource.data.totalItens >= request.resource.data.quantidade &&
-          request.resource.data.totalItens <= 5000 &&
-          request.resource.data.hashAntes.matches('[a-f0-9]{64}') &&
-          request.resource.data.hashDepois.matches('[a-f0-9]{64}') &&
-          request.resource.data.hashAntes != request.resource.data.hashDepois &&
-          request.resource.data.backupId == calendarId + '__v102_itemids__' + operationId &&
-          request.resource.data.autorUid == request.auth.uid &&
-          request.resource.data.atorRealPapel == 'Chris' &&
-          request.resource.data.papelOperado == 'Chris' &&
-          request.resource.data.criadoEm == request.time &&
-          existsAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)) &&
-          getAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)).data.__cliente == calendarId &&
-          getAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)).data.__tipo == 'antes_itemids_v102' &&
-          getAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)).data.__operationId == operationId;
-        allow update, delete: if false;
-      }
     }
 
     // V101 — projeção mínima da conferência administrativa de Cecília.
@@ -1023,10 +963,7 @@ service cloud.firestore {
 
     // Coleções exclusivamente operacionais. Sem sessão de equipe, não há leitura.
     match /{colecao}/{docId} {
-      // A coleção é filtrada antes do gate de e-mail. Além de manter o mesmo
-      // contrato, isso evita gastar centenas de expressões em caminhos V102
-      // que nunca pertencem a esta lista.
-      allow read, create, update: if colecao in [
+      allow read, create, update: if ehEquipe() && colecao in [
         'agenda_reunioes','anotacoes_pessoais','ausencias',
         'calendarios_backup','calendarios_backup_20260727',
         'calendarios_enviados','calendarios_versoes',
@@ -1037,7 +974,7 @@ service cloud.firestore {
         'ranking_historico','resumos_diarios',
         'rfv_clientes','sistema','stories_clientes','stories_diarios_config',
         'stories_diarios_execucoes'
-      ] && ehEquipe();
+      ];
       // Dados operacionais nunca são apagados fisicamente. As telas usam
       // `excluido:true`, preservando histórico e permitindo auditoria.
       allow delete: if false;

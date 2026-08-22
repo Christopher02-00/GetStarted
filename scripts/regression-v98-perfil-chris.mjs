@@ -32,10 +32,10 @@ function sha256(texto){
 }
 
 exigir(escritorio.includes('2026-08-21-restaura-perfil-chris-v98'), 'correção V98 presente na cadeia');
-exigir(escritorio.includes('gs-build" content="2026-08-21-controle-conclusao-calendarios-v101')&&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100'), 'V101 preserva V100 como pai');
-exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99'), 'V101 preserva V99 como avô');
-exigir(escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98'), 'V101 preserva V98 como bisavô');
+exigir(escritorio.includes('gs-build" content="2026-08-21-itemids-calendarios-legados-v102')&&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'), 'V102 preserva V101 como pai');
+exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100'), 'V102 preserva V100 como avô');
+exigir(escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99'), 'V102 preserva V99 como bisavô e o código V98 continua presente');
 exigir(escritorio.includes('PAPEIS_OPERAVEIS_POR_CHRIS'), 'V101 preserva o contrato operacional V96');
 exigir(!escritorio.includes('atualizarBannerAuditoriaChris'), 'identificador removido da auditoria V95 não reapareceu');
 exigir((escritorio.match(/function atualizarBannerOperacaoPerfilChris\s*\(/g) || []).length === 1, 'banner operacional possui uma definição canônica');

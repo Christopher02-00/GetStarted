@@ -189,7 +189,7 @@ async function prepararAlvo(api, estado, alteracoes = {}){
 }
 
 /* Estrutura, escopo de papel e integração com V100. */
-exigir(escritorio.includes('gs-build" content="2026-08-21-controle-conclusao-calendarios-v101'), 'build V101 identifica a entrega');
+exigir(escritorio.includes('gs-build" content="2026-08-21-itemids-calendarios-legados-v102') && escritorio.includes('gs-parent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'), 'build V102 preserva a entrega V101 como pai direto');
 exigir(escritorio.includes('data-calsub="conclusao"') && escritorio.includes('id="calSubConclusao"'), 'aba e painel de conclusão existem na experiência atual de Calendários');
 const papeisCalendario = trecho(escritorio, '  const CAL_SUBS_POR_PESSOA = {', '  /* As ferramentas de edição');
 exigir(/'Cecília':\s*\[[^\]]*'conclusao'/.test(papeisCalendario), 'Cecília recebe a subseção de conclusão');
@@ -198,7 +198,7 @@ exigir(!/'Gabrielle':\s*\[[^\]]*'conclusao'/.test(papeisCalendario), 'Gabi não 
 exigir(!/'Amanda':\s*\[[^\]]*'conclusao'/.test(papeisCalendario), 'Amanda não recebe nova obrigação nem DOM de conclusão');
 exigir(!/'Luís':\s*\[[^\]]*'conclusao'/.test(papeisCalendario) && !/'Nathan':\s*\[[^\]]*'conclusao'/.test(papeisCalendario), 'videomakers não recebem a subseção');
 exigir(escritorio.includes('Object.keys({visao:1,conclusao:1,editar:1') && escritorio.includes("definirNoCalendarioPorPapel(id, permitidas.includes(chave))"), 'isolamento remove botão e painel do DOM de papéis indevidos');
-exigir(escritorio.includes("if(qual === 'conclusao') renderControleConclusaoCalendarios()"), 'roteador da aba aciona o único renderizador V101');
+exigir(escritorio.includes("if(qual === 'conclusao'){") && escritorio.includes('renderControleConclusaoCalendarios();'), 'roteador da aba continua acionando o renderizador V101');
 
 const sincronizacao = trecho(escritorio, '  async function sincronizarItemDoCalendario', '  window.salvarAgendamentoPostagem = async function');
 exigir(sincronizacao.indexOf('postagemEhDeclaracaoSemPauta(p)') < sincronizacao.indexOf("doc(db,'calendarios'"), 'V100 manual sem vínculo sai antes de ler ou alterar calendário');

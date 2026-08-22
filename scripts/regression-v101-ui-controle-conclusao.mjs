@@ -53,7 +53,7 @@ const blocoControle = trecho(
   '  window.renderVisaoCalendarios = async function'
 );
 
-exigir(fonte.includes('2026-08-21-controle-conclusao-calendarios-v101'), 'build V101 identifica a entrega do controle de conclusão');
+exigir(fonte.includes('2026-08-21-itemids-calendarios-legados-v102') && fonte.includes('2026-08-21-controle-conclusao-calendarios-v101'), 'build V102 preserva a entrega do controle de conclusão V101');
 exigir(fonte.includes('data-calsub="conclusao"'), 'subaba Controle de conclusão existe na tela real de Calendários');
 exigir(fonte.includes("'Cecília': ['visao','conclusao'"), 'Cecília recebe a subaba no mapa real de papéis');
 exigir(fonte.includes("'Chris':     ['visao','conclusao'"), 'Chris recebe a subaba no mapa real de papéis');
@@ -108,6 +108,7 @@ async function criarPagina(viewport){
             <div class="ccToolbar"><div class="field"><label>Competência principal</label><select id="ccCompetencia" onchange="selecionarCompetenciaConclusao(this.value)"></select></div></div>
             <div id="ccEstadoFonte" class="ccEstadoFonte">O painel só lê quando esta seção é aberta.</div>
           </div>
+          <div id="ccMigracaoItemIdsSlot"></div>
           <div id="controleConclusaoCalendariosBox" aria-live="polite"></div>
         </div>
         <div id="calSubEditar" style="display:none"></div><div id="calSubRefs" style="display:none"></div>

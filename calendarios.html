@@ -1299,7 +1299,9 @@ window.juntarComOBanco = function(){
   const juntos = doBanco.slice();
   let novos = 0;
   meus.forEach(it => { if(!vistos.has(chaveItem(it))){ juntos.push(it); vistos.add(chaveItem(it)); novos++; } });
-  data.items = juntos;
+  /* Conteúdo que só existia num rascunho antigo pode ainda não ter ID.
+     A fusão é uma ação explícita; cada item novo passa a nascer moderno. */
+  data.items = juntos.map(it=>it&&String(it.itemId||'').trim()?it:{...it,itemId:'calitem_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,14)});
   fecharBarraDecisao();
   bloqueadoPorConflito=false; apagouDePropósito=true;   // a fusão é intencional
   avisarTela('Juntei as duas versões: ' + juntos.length + ' conteúdo(s) no total (' + novos + ' vieram desta aba).');
@@ -1663,6 +1665,9 @@ async function executarGravacaoComSeguranca(){
       if(srvAp && srvAp.em && (!meuAp || !meuAp.em || String(srvAp.em) > String(meuAp.em))){
         data.aprovacaoInterna = srvAp;
       }
+      ['itemIdMigracaoVersao','itemIdMigradoEm','itemIdMigradoPor','itemIdMigracaoUltimaOperacao'].forEach(chave=>{
+        if(srv[chave]!==undefined) data[chave]=srv[chave];
+      });
     }
 
     /* TRAVA 2 — não deixa uma aba desatualizada apagar o trabalho de
@@ -1673,7 +1678,10 @@ async function executarGravacaoComSeguranca(){
     const carimboEnvioAtual=String(((data.aprovacaoMeses||{})[mesVisivel]||data.aprovacaoInterna||{}).em||'');
     const conflitoDeVersao = deveBloquearConflitoCalendario(mudouEmOutraAba,
       window.__enviandoAprovacaoInterna,atual.exists()?atual.data():{},data,carimboEnvioSolicitado,carimboEnvioAtual);
-    if(!apagouDePropósito && ((antes.length > 0 && depois.length < antes.length) || conflitoDeVersao)){
+    const idsServidor=new Set(antes.map(i=>String(i?.itemId||'').trim()).filter(Boolean));
+    const idsDepois=new Set(depois.map(i=>String(i?.itemId||'').trim()).filter(Boolean));
+    const removeriaItemId=[...idsServidor].some(id=>!idsDepois.has(id));
+    if(removeriaItemId || (!apagouDePropósito && ((antes.length > 0 && depois.length < antes.length) || conflitoDeVersao))){
       pendingWrite=false;
       /* NÃO manda mais atualizar a página. O rascunho já está guardado,
          e a decisão vira botão: juntar as duas versões ou ficar com a
@@ -1681,7 +1689,8 @@ async function executarGravacaoComSeguranca(){
       bloqueadoPorConflito=true;
       window.__versaoDoBanco = atual.data();
       mostrarConflito(depois.length, antes.length);
-      return {ok:false, motivo:'conflito'};
+      if(removeriaItemId) avisarTela('O banco recebeu identidades permanentes que esta aba antiga ainda não conhece. Junte com o banco ou use a versão do banco; nenhum ID foi removido.','erro');
+      return {ok:false, motivo:removeriaItemId?'itemids-protegidos':'conflito'};
     }
 
     /* TRAVA 3 — guarda a versão anterior antes de sobrescrever. A cópia

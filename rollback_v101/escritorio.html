@@ -4,13 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-21-itemids-calendarios-legados-v102">
-  <meta name="gs-parent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">
+  <meta name="gs-build" content="2026-08-21-controle-conclusao-calendarios-v101">
+  <meta name="gs-parent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100">
   <meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">
-  <meta name="gs-grandparent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100">
-  <meta name="gs-great-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99">
-  <meta name="gs-v98-patch" content="2026-08-21-restaura-perfil-chris-v98">
-  <meta name="gs-patch" content="2026-08-21-itemids-calendarios-legados-v102">
+  <meta name="gs-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99">
+  <meta name="gs-great-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98">
+  <meta name="gs-patch" content="2026-08-21-controle-conclusao-calendarios-v101">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -1293,7 +1292,6 @@
           </div>
           <div id="ccEstadoFonte" class="ccEstadoFonte">O painel só lê quando esta seção é aberta.</div>
         </div>
-        <div id="ccMigracaoItemIdsSlot"></div>
         <div id="controleConclusaoCalendariosBox" aria-live="polite"></div>
       </div>
 
@@ -26336,12 +26334,11 @@ window.setGerenciaSub = function(qual, el){
         if(btn){ btn.textContent = '✓ Já estava lá'; }
         return;
       }
-      const combinado=await normalizarItensCalendarioV102(p.slug,{...atual,items:[...(atual.items||[]),...acrescentar]});
       await setDoc(doc(db,'calendarios', p.slug), {
         ...atual,
         client: atual.client || nomeDeSlugSeguro(p.slug),
         month: atual.month || p.guardado.dados.month || '',
-        items: combinado.itens,
+        items: [...(atual.items||[]), ...acrescentar],
         updatedAt: new Date().toISOString(),
         devolvidoPor: usuarioAtual || '?', devolvidoDe: p.guardado.fonte + '/' + p.guardado.id, devolvidoEm: new Date().toISOString()
       });
@@ -26450,12 +26447,11 @@ window.setGerenciaSub = function(qual, el){
          ainda perder a divisão usada pelo filmmaker. */
       const dadosDaCopia = Object.fromEntries(Object.entries(v.dados)
         .filter(([chave]) => !['__cliente','__salvoEm','__itens'].includes(chave)));
-      const normalizado=await normalizarItensCalendarioV102(slug,{...dadosDaCopia,items:itens});
       const dadosRestaurados = {
         ...dadosDaCopia,
         client: v.dados.client || nomeDeSlugSeguro(slug),
         month: v.dados.month || '',
-        items: normalizado.itens,
+        items: itens,
         comments: v.dados.comments || [],
         updatedAt: new Date().toISOString(),
         restauradoPor: usuarioAtual || '?', restauradoDe: v.fonte + '/' + v.id, restauradoEm: new Date().toISOString()
@@ -26594,10 +26590,7 @@ window.setGerenciaSub = function(qual, el){
     document.querySelectorAll('#subtabsCalendario .subtab').forEach(t => t.classList.remove('active'));
     if(el) el.classList.add('active');
     if(qual === 'visao') renderVisaoCalendarios('2');
-    if(qual === 'conclusao'){
-      renderFerramentaItemIdsLegadosV102();
-      renderControleConclusaoCalendarios();
-    }
+    if(qual === 'conclusao') renderControleConclusaoCalendarios();
     if(qual === 'links' || qual === 'editar') filtrarCalendariosFerramentas();
     if(qual === 'campo') renderCalendarioDeCampo();
     if(qual === 'envio') renderFilaEnvioCalendarios();
@@ -26635,15 +26628,12 @@ window.setGerenciaSub = function(qual, el){
   function limparControleConclusaoCalendarios(){
     __ccGeracao++;
     __ccCache=null;
-    __ccMigracaoV102Preview=null;
     __ccAcoesPorToken.clear();
     __ccAcoesEmCurso.clear();
     const box=document.getElementById('controleConclusaoCalendariosBox');
     if(box) box.replaceChildren();
     const fonte=document.getElementById('ccEstadoFonte');
     if(fonte) fonte.textContent='O painel só lê quando esta seção é aberta.';
-    const migracao=document.getElementById('ccMigracaoItemIdsSlot');
-    if(migracao) migracao.replaceChildren();
   }
   window.limparControleConclusaoCalendarios=limparControleConclusaoCalendarios;
 
@@ -26876,173 +26866,6 @@ window.setGerenciaSub = function(qual, el){
   async function assinaturaFonteItemConclusao(alvo,incluirEncerramento){
     return sha256Controle(serializarFonteItemConclusao(alvo,incluirEncerramento));
   }
-
-  /* ===== NORMALIZAÇÃO EXPLÍCITA DE ITEM IDs LEGADOS V102 ============
-     O painel V101 acertou ao não relacionar legado por título. A V102
-     corrige a fonte uma única vez: Chris vê a prévia, confirma e cada
-     calendário é migrado numa transação com backup e recibo. Abrir ou
-     renderizar esta tela continua sem escrever nada. */
-  let __ccMigracaoV102Preview=null;
-  let __ccMigracaoV102EmCurso=false;
-
-  function podeMigrarItemIdsLegadosV102(){
-    const ator=atorControleConclusao();
-    return ator.real==='Chris' && ator.operado==='Chris' && !!ator.uid;
-  }
-  function analisarCalendarioItemIdsV102(calendarId,cal){
-    const itens=Array.isArray(cal?.items)?cal.items:[];
-    const contagem=new Map();
-    const invalidos=[];
-    itens.forEach((item,indice)=>{
-      const id=String(item?.itemId||'').trim();
-      if(!id) return;
-      if(!itemIdValidoControle(id)) invalidos.push(indice);
-      contagem.set(id,(contagem.get(id)||0)+1);
-    });
-    const duplicados=[...contagem.entries()].filter(([,qtd])=>qtd>1).map(([id])=>id);
-    const faltantes=itens.reduce((total,item)=>total+(!String(item?.itemId||'').trim()?1:0),0);
-    return {calendarId:String(calendarId||''),total:itens.length,faltantes,invalidos,duplicados,bloqueado:invalidos.length>0||duplicados.length>0};
-  }
-  function analisarSnapshotItemIdsV102(snapshot){
-    const calendarios=[];
-    snapshot.forEach(d=>{
-      const linha=analisarCalendarioItemIdsV102(d.id,d.data()||{});
-      if(linha.faltantes||linha.bloqueado) calendarios.push(linha);
-    });
-    return {calendarios,totalCalendarios:calendarios.filter(c=>c.faltantes>0).length,
-      totalItens:calendarios.reduce((t,c)=>t+c.faltantes,0),bloqueados:calendarios.filter(c=>c.bloqueado)};
-  }
-  async function normalizarItensCalendarioV102(calendarId,cal){
-    const analise=analisarCalendarioItemIdsV102(calendarId,cal);
-    if(analise.bloqueado){
-      throw Object.assign(new Error('O calendário possui itemId inválido ou duplicado; nenhuma alteração foi feita.'),{code:'gs/itemid-inconsistente'});
-    }
-    const usados=new Set((Array.isArray(cal?.items)?cal.items:[]).map(i=>String(i?.itemId||'').trim()).filter(Boolean));
-    const itens=[];
-    for(let indice=0;indice<(Array.isArray(cal?.items)?cal.items:[]).length;indice++){
-      const original=cal.items[indice];
-      if(!original || String(original.itemId||'').trim()){itens.push(original);continue;}
-      const semId={...original}; delete semId.itemId;
-      const competencia=mesDoItemCalendario(cal,original)||'sem-competencia';
-      let novoId='';
-      for(let tentativa=0;tentativa<16;tentativa++){
-        const hash=await sha256Controle(jsonEstavel({schema:1,calendarId:String(calendarId),competencia,indice,item:semId,tentativa}));
-        const candidato='legacy_'+hash;
-        if(!usados.has(candidato)){novoId=candidato;break;}
-      }
-      if(!novoId) throw Object.assign(new Error('Não foi possível gerar uma identidade sem colisão.'),{code:'gs/itemid-colisao'});
-      usados.add(novoId);
-      itens.push({...original,itemId:novoId});
-    }
-    const hashAntes=await sha256Controle(jsonEstavel(Array.isArray(cal?.items)?cal.items:[]));
-    const hashDepois=await sha256Controle(jsonEstavel(itens));
-    return {itens,adicionados:analise.faltantes,hashAntes,hashDepois};
-  }
-  function novoOperationIdMigracaoV102(){
-    try{if(typeof crypto?.randomUUID==='function') return 'mig_'+crypto.randomUUID().replace(/-/g,'');}catch(e){}
-    return 'mig_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,16);
-  }
-  async function migrarCalendarioItemIdsV102(calendarId,deps){
-    if(!podeMigrarItemIdsLegadosV102()) throw Object.assign(new Error('Somente Chris, no próprio perfil, pode normalizar IDs antigos.'),{code:'permission-denied'});
-    const api={runTransaction,getDoc,...(deps||{})};
-    const ator=atorControleConclusao();
-    const operationId=novoOperationIdMigracaoV102();
-    const calRef=doc(db,'calendarios',calendarId);
-    let esperado=null;
-    await api.runTransaction(db,async tx=>{
-      const snap=await tx.get(calRef);
-      if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'not-found'});
-      const atual=snap.data()||{};
-      const normalizado=await normalizarItensCalendarioV102(calendarId,atual);
-      if(!normalizado.adicionados){esperado={...normalizado,semAlteracao:true,total:(atual.items||[]).length};return;}
-      const backupId=String(calendarId)+'__v102_itemids__'+operationId;
-      const backupRef=doc(db,'calendarios_versoes',backupId);
-      const reciboRef=doc(db,'calendarios_itemid_migracoes',calendarId,'operacoes',operationId);
-      const agora=serverTimestamp();
-      tx.set(backupRef,{...atual,__cliente:calendarId,__salvoEm:agora,__itens:(atual.items||[]).length,
-        __tipo:'antes_itemids_v102',__operationId:operationId});
-      tx.set(calRef,{items:normalizado.itens,updatedAt:new Date().toISOString(),itemIdMigracaoVersao:1,
-        itemIdMigradoEm:agora,itemIdMigradoPor:'Chris',itemIdMigracaoUltimaOperacao:operationId},{merge:true});
-      tx.set(reciboRef,{schemaVersion:1,calendarId,operationId,status:'aplicada',quantidade:normalizado.adicionados,
-        totalItens:normalizado.itens.length,hashAntes:normalizado.hashAntes,hashDepois:normalizado.hashDepois,
-        backupId,autorUid:ator.uid,atorRealPapel:'Chris',papelOperado:'Chris',criadoEm:agora});
-      esperado={...normalizado,total:normalizado.itens.length,backupId,operationId,reciboRef};
-    });
-    if(esperado?.semAlteracao) return {ok:true,...esperado};
-    const [calDepois,reciboDepois]=await Promise.all([api.getDoc(calRef),api.getDoc(esperado.reciboRef)]);
-    if(!calDepois.exists()||!reciboDepois.exists()) throw Object.assign(new Error('A gravação não pôde ser confirmada; tente a prévia novamente.'),{code:'gs/recibo-ausente'});
-    const analise=analisarCalendarioItemIdsV102(calendarId,calDepois.data()||{});
-    const recibo=reciboDepois.data()||{};
-    const hashDepois=await sha256Controle(jsonEstavel((calDepois.data()||{}).items||[]));
-    if(analise.faltantes||analise.bloqueado||hashDepois!==esperado.hashDepois||recibo.hashDepois!==esperado.hashDepois||recibo.quantidade!==esperado.adicionados){
-      throw Object.assign(new Error('O recibo não corresponde ao calendário final.'),{code:'gs/recibo-divergente'});
-    }
-    return {ok:true,...esperado,confirmado:true};
-  }
-  function renderFerramentaItemIdsLegadosV102(){
-    const slot=document.getElementById('ccMigracaoItemIdsSlot');
-    if(!slot) return false;
-    if(!podeMigrarItemIdsLegadosV102()){slot.replaceChildren();return false;}
-    slot.innerHTML=`<div class="card" data-cc-migracao-v102 style="border:1px solid var(--line);">
-      <h2>🔐 Corrigir identidades de calendários antigos</h2>
-      <div class="desc">A prévia apenas conta. A aplicação adiciona IDs permanentes, com backup e recibo; não muda título, estado ou produção.</div>
-      <div id="ccMigracaoV102Estado" class="ccEstadoFonte">Nenhuma verificação executada.</div>
-      <div class="btnrow" style="margin-top:10px;"><button class="btn secondary" onclick="preverMigracaoItemIdsV102()">Ver prévia</button><button class="btn green" id="ccMigracaoV102Aplicar" disabled onclick="aplicarMigracaoItemIdsV102()">Aplicar correção segura</button></div>
-    </div>`;
-    return true;
-  }
-  window.renderFerramentaItemIdsLegadosV102=renderFerramentaItemIdsLegadosV102;
-  window.preverMigracaoItemIdsV102=async function(){
-    if(!podeMigrarItemIdsLegadosV102()) return false;
-    const estado=document.getElementById('ccMigracaoV102Estado');
-    const aplicar=document.getElementById('ccMigracaoV102Aplicar');
-    if(estado) estado.textContent='Lendo calendários; nenhuma gravação será feita...';
-    if(aplicar) aplicar.disabled=true;
-    try{
-      const snap=await getDocs(collection(db,'calendarios'));
-      const previa=analisarSnapshotItemIdsV102(snap);
-      __ccMigracaoV102Preview=previa;
-      const bloqueio=previa.bloqueados.length?` ${previa.bloqueados.length} calendário(s) possuem ID inválido/duplicado e bloquearam a aplicação.`:'';
-      if(estado) estado.textContent=previa.totalItens
-        ? `${previa.totalItens} item(ns) sem ID em ${previa.totalCalendarios} calendário(s).${bloqueio}`
-        : 'Todos os itens já possuem identidade. Nenhuma gravação é necessária.';
-      if(aplicar) aplicar.disabled=!previa.totalItens||previa.bloqueados.length>0;
-      return previa;
-    }catch(e){
-      __ccMigracaoV102Preview=null;
-      if(estado) estado.textContent='Prévia indisponível; nada foi alterado. Código: '+String(e?.code||e?.message||e);
-      return false;
-    }
-  };
-  window.aplicarMigracaoItemIdsV102=async function(){
-    if(__ccMigracaoV102EmCurso||!podeMigrarItemIdsLegadosV102()) return false;
-    const previa=__ccMigracaoV102Preview;
-    if(!previa?.totalItens||previa.bloqueados.length) return false;
-    if(!confirm(`Adicionar identidade permanente a ${previa.totalItens} item(ns) em ${previa.totalCalendarios} calendário(s)?\n\nCada calendário terá backup e recibo. Títulos, estados e produção não serão alterados.`)) return false;
-    __ccMigracaoV102EmCurso=true;
-    const estado=document.getElementById('ccMigracaoV102Estado');
-    const aplicar=document.getElementById('ccMigracaoV102Aplicar');
-    if(aplicar) aplicar.disabled=true;
-    let concluidos=0,itens=0; const falhas=[];
-    try{
-      for(const linha of previa.calendarios.filter(c=>c.faltantes>0&&!c.bloqueado)){
-        if(estado) estado.textContent=`Corrigindo ${concluidos+1} de ${previa.totalCalendarios}; aguarde...`;
-        try{const r=await migrarCalendarioItemIdsV102(linha.calendarId);concluidos++;itens+=r.adicionados||0;}
-        catch(e){falhas.push({calendarId:linha.calendarId,codigo:String(e?.code||e?.message||e)});}
-      }
-      __ccCache=null;
-      __ccMigracaoV102Preview=null;
-      if(falhas.length){
-        if(estado) estado.textContent=`Aplicação parcial: ${concluidos} calendário(s) e ${itens} item(ns) confirmados; ${falhas.length} falharam sem gravação confirmada. Execute a prévia novamente.`;
-        mostrarToast('Parte da normalização ficou pendente. Os calendários confirmados têm backup e recibo.','erro');
-      }else{
-        if(estado) estado.textContent=`Concluído e confirmado: ${itens} item(ns) em ${concluidos} calendário(s).`;
-        mostrarToast('Identidades antigas corrigidas com backup e recibo.');
-      }
-      await renderControleConclusaoCalendarios(true);
-      return {ok:falhas.length===0,concluidos,itens,falhas};
-    }finally{__ccMigracaoV102EmCurso=false;}
-  };
 
   async function carregarControleConclusaoCalendarios(forcar){
     if(__ccLoaderSintetico) return __ccLoaderSintetico(forcar);
@@ -27418,8 +27241,6 @@ window.setGerenciaSub = function(qual, el){
     limparLoaderSintetico(){__ccLoaderSintetico=null;__ccCache=null;},
     estado(){return {geracao:__ccGeracao,competencia:__ccCompetencia,acoes:__ccAcoesPorToken.size};}
   };
-  window.__itemIdsLegadosV102Teste={analisarCalendarioItemIdsV102,analisarSnapshotItemIdsV102,
-    normalizarItensCalendarioV102,migrarCalendarioItemIdsV102,podeMigrarItemIdsLegadosV102};
 
   window.renderVisaoCalendarios = async function(sufixo){
     const box = document.getElementById('visaoCalendariosBox' + (sufixo||''));

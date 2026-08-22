@@ -578,15 +578,16 @@ exigir(retornoErroAntigo === false && elementosSugestao.agQtdPlanejada.value ===
   'erro obsoleto não substitui a resposta nova por indisponibilidade');
 
 /* Invariantes de entrega e segurança. */
-exigir(escritorio.includes('gs-build" content="2026-08-21-controle-conclusao-calendarios-v101"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100"'),
-  'build V101 e parent V100 estão declarados');
+exigir(escritorio.includes('gs-build" content="2026-08-21-itemids-calendarios-legados-v102"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-controle-conclusao-calendarios-v101"') &&
+  escritorio.includes('gs-grandparent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100"'),
+  'build V102 preserva V101 e V100 na cadeia direta');
 exigir(regras.includes('match /calendarios_conferencias/{calendarId}') &&
   regras.includes('match /calendarios_encerramentos/{calendarId}') &&
   regras.includes('allow delete: if false;'),
   'V101 amplia somente a projeção de conclusão e preserva delete físico bloqueado');
 exigir(calendario === calendarios, 'calendario.html e calendarios.html permanecem byte a byte idênticos');
-exigir(sha256(calendario) === '9fc8a2266acdf0fa7a122b29fe33c12c304c91cdf83bc94126dc8e7681006a0c',
-  'par compatível de calendários mantém o hash anterior conhecido');
+exigir(sha256(calendario) === '451d6cb3ee6d2b01ca40c62b648dbe2856c3321d303ef8b5f6c06a1b66c5ee45',
+  'par de calendários contém a trava V102 sem divergência entre aliases');
 
 console.log(`REGRESSÃO V99 CAPTAÇÕES VIDEOMAKER: APROVADA (${total} verificações)`);

@@ -67,6 +67,7 @@ const contextos = {
 
 const db = Object.fromEntries(Object.entries(contextos).map(([papel, contexto]) => [papel, contexto.firestore()]));
 const calendarId = "calendario-sintetico-v101";
+const calendarIdMigracao = "calendario-sintetico-v102";
 const competencia = "2026-08";
 const assinaturaA = "a".repeat(64);
 const assinaturaB = "b".repeat(64);
@@ -247,6 +248,52 @@ function batchEncerramento(database, principal, tipo) {
   );
   return batch;
 }
+function operacaoMigracao(sufixo) {
+  return `mig_${String(sufixo).replace(/[^A-Za-z0-9_-]/g, "_").padEnd(20, "0")}`;
+}
+function caminhoReciboMigracao(calendarIdAlvo, operationId) {
+  return `calendarios_itemid_migracoes/${calendarIdAlvo}/operacoes/${operationId}`;
+}
+function dadosReciboMigracao(calendarIdAlvo, operationId, extra = {}) {
+  return {
+    schemaVersion: 1,
+    calendarId: calendarIdAlvo,
+    operationId,
+    status: "aplicada",
+    quantidade: 2,
+    totalItens: 3,
+    hashAntes: "c".repeat(64),
+    hashDepois: "d".repeat(64),
+    backupId: `${calendarIdAlvo}__v102_itemids__${operationId}`,
+    autorUid: "uid-sintetico-chris-v101",
+    atorRealPapel: "Chris",
+    papelOperado: "Chris",
+    criadoEm: serverTimestamp(),
+    ...extra
+  };
+}
+function batchMigracao(database, calendarIdAlvo, operationId, extraRecibo = {}, opcoes = {}) {
+  const recibo = dadosReciboMigracao(calendarIdAlvo, operationId, extraRecibo);
+  const batch = writeBatch(database);
+  if (!opcoes.semCalendario) batch.set(doc(database, "calendarios", calendarIdAlvo), {
+    items: [{ itemId: "legacy_" + "a".repeat(64), name: "Fixture sintética V102" }],
+    updatedAt: "2026-08-21T20:00:00.000Z",
+    itemIdMigracaoVersao: 1,
+    itemIdMigradoEm: serverTimestamp(),
+    itemIdMigradoPor: "Chris",
+    itemIdMigracaoUltimaOperacao: operationId
+  }, { merge: true });
+  if (!opcoes.semBackup) batch.set(doc(database, "calendarios_versoes", recibo.backupId), {
+    items: [{ name: "Fixture sintética V102" }],
+    __cliente: calendarIdAlvo,
+    __tipo: "antes_itemids_v102",
+    __operationId: operationId,
+    __salvoEm: serverTimestamp(),
+    __itens: 1
+  });
+  if (!opcoes.semRecibo) batch.set(doc(database, caminhoReciboMigracao(calendarIdAlvo, operationId)), recibo);
+  return batch;
+}
 async function lerAdmin(caminho) {
   let resultado;
   await env.withSecurityRulesDisabled(async (contexto) => {
@@ -271,6 +318,12 @@ async function semearBase() {
         { itemId: "item-sintetico-v101", mes: competencia, nome: "Conteúdo sintético" }
       ]
     });
+    for (const sufixo of ["ok","cecilia","outro","semrecibo","sembackup","campo","timestamp","delete"]) {
+      await setDoc(doc(admin, "calendarios", `${calendarIdMigracao}-${sufixo}`), {
+        cliente: "Cliente sintético V102",
+        items: [{ nome: "Conteúdo legado sintético" }]
+      });
+    }
     await setDoc(doc(admin, caminhoConferencia("item-leitura-v101")), {
       fixture: true,
       calendarId,
@@ -709,11 +762,57 @@ try {
     assert.equal(snap.exists(), true);
     await assertFails(updateDoc(doc(db.cecilia, caminhoEncerramento("enc-chris-v101")), { motivo: "Não permitido." }));
   });
+
+  await caso("V102 Chris migra calendário com backup e recibo no mesmo commit", async () => {
+    const alvo = `${calendarIdMigracao}-ok`;
+    const op = operacaoMigracao("sucesso");
+    await assertSucceeds(batchMigracao(db.chris, alvo, op).commit());
+    const recibo = await assertSucceeds(getDoc(doc(db.chris, caminhoReciboMigracao(alvo, op))));
+    assert.equal(recibo.data().quantidade, 2);
+  });
+  await caso("V102 Cecília não lê nem executa migração", async () => {
+    const alvo = `${calendarIdMigracao}-cecilia`;
+    const op = operacaoMigracao("cecilia");
+    await assertFails(batchMigracao(db.cecilia, alvo, op).commit());
+    await assertFails(getDoc(doc(db.cecilia, caminhoReciboMigracao(`${calendarIdMigracao}-ok`, operacaoMigracao("sucesso")))));
+  });
+  await caso("V102 papel indevido e anônimo não leem recibo", async () => {
+    const caminho = caminhoReciboMigracao(`${calendarIdMigracao}-ok`, operacaoMigracao("sucesso"));
+    await assertFails(getDoc(doc(db.outro, caminho)));
+    await assertFails(getDoc(doc(db.anonimo, caminho)));
+  });
+  await caso("V102 Amanda não executa migração", async () => {
+    const alvo = `${calendarIdMigracao}-outro`;
+    await assertFails(batchMigracao(db.outro, alvo, operacaoMigracao("outro")).commit());
+  });
+  await caso("V102 calendário sem recibo atômico é negado", async () => {
+    const alvo = `${calendarIdMigracao}-semrecibo`;
+    await assertFails(batchMigracao(db.chris, alvo, operacaoMigracao("semrecibo"), {}, { semRecibo: true }).commit());
+  });
+  await caso("V102 recibo sem backup atômico é negado", async () => {
+    const alvo = `${calendarIdMigracao}-sembackup`;
+    await assertFails(batchMigracao(db.chris, alvo, operacaoMigracao("sembackup"), {}, { semBackup: true }).commit());
+  });
+  await caso("V102 campo extra e hash inválido são negados", async () => {
+    const alvo = `${calendarIdMigracao}-campo`;
+    await assertFails(batchMigracao(db.chris, alvo, operacaoMigracao("campo"), { tituloCopiado: "proibido" }).commit());
+    await assertFails(batchMigracao(db.chris, alvo, operacaoMigracao("hash"), { hashDepois: "invalido" }).commit());
+  });
+  await caso("V102 autoria e timestamp divergentes são negados", async () => {
+    const alvo = `${calendarIdMigracao}-timestamp`;
+    await assertFails(batchMigracao(db.chris, alvo, operacaoMigracao("autor"), { atorRealPapel: "Cecília" }).commit());
+    await assertFails(batchMigracao(db.chris, alvo, operacaoMigracao("tempo"), { criadoEm: "2026-08-21" }).commit());
+  });
+  await caso("V102 recibo é append-only", async () => {
+    const caminho = caminhoReciboMigracao(`${calendarIdMigracao}-ok`, operacaoMigracao("sucesso"));
+    await assertFails(updateDoc(doc(db.chris, caminho), { quantidade: 3 }));
+    await assertFails(deleteDoc(doc(db.chris, caminho)));
+  });
 } finally {
   await env.cleanup();
 }
 
-console.log(`V101_RULES_SUMMARY passed=${aprovados} failed=${reprovados} rules_sha256=${rulesHash}`);
+console.log(`V101_V102_RULES_SUMMARY passed=${aprovados} failed=${reprovados} rules_sha256=${rulesHash}`);
 if (falhas.length > 0) {
   process.exitCode = 1;
 }

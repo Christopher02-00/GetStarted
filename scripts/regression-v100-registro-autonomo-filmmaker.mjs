@@ -664,7 +664,7 @@ exigir(regras.includes('function podeLancarVideoProducao()') &&
   'V101 preserva o writer V100 e acrescenta somente as projeções de conclusão');
 exigir(calendario === calendarios,
   'calendario.html e calendarios.html permanecem byte a byte idênticos');
-exigir(sha256(calendario) === '9fc8a2266acdf0fa7a122b29fe33c12c304c91cdf83bc94126dc8e7681006a0c',
-  'par de calendários mantém o hash conhecido');
+exigir(sha256(calendario) === '451d6cb3ee6d2b01ca40c62b648dbe2856c3321d303ef8b5f6c06a1b66c5ee45',
+  'par de calendários mantém a paridade e a proteção V102');
 
 console.log(`REGRESSÃO V100 REGISTRO AUTÔNOMO FILMMAKER: APROVADA (${total} verificações)`);

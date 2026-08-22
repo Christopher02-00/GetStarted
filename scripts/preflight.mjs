@@ -233,10 +233,15 @@ const leisV101 = [
   'Renderizar o controle nunca cria documento',
   'Produção V100 sem vínculo nunca é ligada à pauta por título'
 ];
+const leisV102 = [
+  'compatibilidade de leitura não substitui migração de identidade',
+  'Normalização de `itemId` é uma ação explícita, auditável, idempotente e reversível por backup',
+  'nunca acontece durante renderização e nunca usa título como vínculo'
+];
 if (!catalogoErros.includes('CHECKLIST DE 30 SEGUNDOS — ANTES DE CADA EDIÇÃO') ||
-    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81, ...leisV99, ...leisV100, ...leisV101].some(lei => !catalogoErros.includes(lei))) {
-  falhar('catálogo mestre não contém o checklist, as leis históricas e a decisão V101');
-} else provar('catálogo mestre preserva o checklist, as leis históricas e a decisão V101');
+    [...leisV45, ...leisV47, ...leisV48, ...leisV49, ...leisV50, ...leisV51, ...leisV52, ...leisV53, ...leisV54, ...leisV55, ...leisV56, ...leisV57, ...leisV58, ...leisV60, ...leisV61, ...leisV62, ...leisV63, ...leisV64, ...leisV65, ...leisV66, ...leisV67, ...leisV68, ...leisV69, ...leisV71, ...leisV72, ...leisV73, ...leisV74, ...leisV75, ...leisV76, ...leisV77, ...leisV78, ...leisV79, ...leisV80, ...leisV81, ...leisV99, ...leisV100, ...leisV101, ...leisV102].some(lei => !catalogoErros.includes(lei))) {
+  falhar('catálogo mestre não contém o checklist, as leis históricas e a decisão V102');
+} else provar('catálogo mestre preserva o checklist, as leis históricas e a decisão V102');
 
 // Os dois endereços são compatibilidade pública e precisam servir o mesmo código.
 if (ler('calendario.html') !== ler('calendarios.html')) {
@@ -348,7 +353,7 @@ if(!erros.some(e=>e.startsWith('_config.yml'))) provar('Pages exclui regras, tes
 
 for (const colecao of ['pagamentos_extra', 'pagamentos_mensais', 'calendarios', 'clientes_config']) {
   const inicio = regras.indexOf(`match /${colecao}/`);
-  const trecho = inicio >= 0 ? regras.slice(inicio, inicio + 650) : '';
+  const trecho = inicio >= 0 ? regras.slice(inicio, inicio + (colecao === 'calendarios' ? 3000 : 650)) : '';
   if (!trecho || !/allow delete:\s*if false/.test(trecho)) falhar(`regra de soft-delete ausente ou não comprovada: ${colecao}`);
 }
 const regraOperacional = regras.match(/match \/\{colecao\}\/\{docId\} \{[\s\S]*?allow delete:\s*if false;[\s\S]*?\n    \}/)?.[0] || '';
@@ -777,13 +782,13 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-21-controle-conclusao-calendarios-v101' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99">') ||
-    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-restaura-perfil-chris-v98">') ||
+if (build !== '2026-08-21-itemids-calendarios-legados-v102' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-planejamento-sessoes-v99">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V101 inesperada: ${build || 'ausente'}`);
-} else provar('V101 preserva V100/V99/V98 e mantém o registro autônomo separado da conferência');
+  falhar(`cadeia de build V102 inesperada: ${build || 'ausente'}`);
+} else provar('V102 preserva V101/V100/V99 e mantém migração, conferência e registro autônomo separados');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

@@ -16,7 +16,7 @@ const obrigatorios = [
   'escritorio.html', 'portal-cliente.html', 'calendario.html',
   'calendarios.html', 'cadastro.html', 'cadastros.html',
   'avulso.html', 'firestore.rules', '_config.yml', 'CATALOGO_DE_ERROS.md',
-  'financeiro-core.mjs', 'financeiro-ui-v103.mjs',
+  'financeiro-core.mjs', 'financeiro-ui-v103.mjs', 'financeiro-ui-v104.mjs',
   'scripts/regression-critical.mjs', 'scripts/regression-v71.mjs', 'scripts/regression-v72.mjs',
   'scripts/regression-v73.mjs', 'scripts/regression-v74.mjs', 'scripts/regression-v75.mjs',
   'scripts/regression-v76.mjs', 'scripts/regression-v77.mjs', 'scripts/regression-v78.mjs',
@@ -35,6 +35,8 @@ const obrigatorios = [
   'scripts/regression-v103-portal-financeiro.mjs',
   'scripts/regression-v103-ui-financeiro-competencias.mjs',
   'scripts/regression-v103-correcao-financeira-real.mjs',
+  'scripts/regression-v104-ui-regua-cobranca.mjs',
+  'scripts/regression-v104-correcao-financeira-real.mjs',
   'scripts/firebase-emulator-v103-financeiro/firebase.json',
   'scripts/firebase-emulator-v103-financeiro/run-emulator-tests.mjs',
   'scripts/firebase-emulator-v103-financeiro/rules-v103-financeiro.test.mjs',
@@ -292,7 +294,7 @@ let totalChamadas = 0;
 for (const arquivo of htmls) {
   const fonte = ler(arquivo);
   const fonteHandlers = arquivo === 'escritorio.html'
-    ? `${fonte}\n${ler('financeiro-ui-v103.mjs')}`
+    ? `${fonte}\n${ler('financeiro-ui-v103.mjs')}\n${ler('financeiro-ui-v104.mjs')}`
     : fonte;
   const atributos = [...fonte.matchAll(/\bon(?:click|change|input|submit)="([^"]+)"/g)].map(m => m[1]);
   const chamadas = atributos.flatMap(a => [...a.matchAll(/(?:^|;)\s*(?:return\s+)?([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1]))
@@ -795,13 +797,13 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-21-financeiro-por-competencia-v103' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
-    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-registro-autonomo-filmmaker-v100">') ||
+if (build !== '2026-08-22-correcao-financeiro-real-v104' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-financeiro-por-competencia-v103">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V103 inesperada: ${build || 'ausente'}`);
-} else provar('V103 preserva V102/V101/V100 e mantém finanças, migração, conferência e registro autônomo separados');
+  falhar(`cadeia de build V104 inesperada: ${build || 'ausente'}`);
+} else provar('V104 preserva V103/V102/V101 e mantém correção real, finanças, migração e conferência separadas');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

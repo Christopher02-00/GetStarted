@@ -1334,12 +1334,14 @@ function testarPermissoesAcoesSandbox() {
     'operação delegada do calendário perdeu autenticação real ou log atômico');
 
   const saida = trecho(escritorio, 'window.salvarSaidaClienteCentral', 'window.cancelarProgramacaoSaidaCentral');
-  const marcadorFinalExistente=trecho(saida,'const baseFinal=','if(!snapFinal?.exists())');
+  const tratamentoMensalidadeFinal=trecho(saida,'if(mensalidadeFinalRef){','const fichaSnapshot=');
   exigir(saida.includes('saidaProgramadaPara:dataSaida') && saida.includes('clienteInativo:imediata') &&
     saida.includes('ativoAte:limiteAcesso') && saida.includes('statusSaida:imediata') && saida.includes('fichaSnapshot') &&
     saida.includes('ultimaCompetenciaPagamento') && saida.includes('analisarPagamentosParaSaida') &&
     saida.includes('pagosPosteriores.length') && saida.includes("status:'cancelado',canceladoPorSaida:true") &&
-    saida.includes('ultimaCompetenciaDoContrato:true') && !marcadorFinalExistente.includes('valorDevido'),
+    saida.includes('ultimaCompetenciaDoContrato:true') &&
+    tratamentoMensalidadeFinal.includes("if(!['pago','isento','cancelado'].includes(estadoFinal))") &&
+    !tratamentoMensalidadeFinal.slice(tratamentoMensalidadeFinal.indexOf('const estadoFinal=')).includes('valorDevido'),
     'saída futura ainda encerra imediatamente ou não limita o Portal na data');
   const efetivar = trecho(escritorio, 'async function efetivarSaidasProgramadas', 'window.efetivarSaidasProgramadas');
   exigir(efetivar.includes("statusSaida==='programada'&&saidaClienteJaEfetiva(v)") &&

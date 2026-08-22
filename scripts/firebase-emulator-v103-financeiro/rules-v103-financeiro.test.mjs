@@ -15,6 +15,7 @@ const {
 } = requireDeps("@firebase/rules-unit-testing");
 const {
   collection,
+  deleteField,
   deleteDoc,
   doc,
   getDoc,
@@ -1448,6 +1449,101 @@ try {
     };
     await assertSucceeds(batchLancamento(db.chris, docId, depois, "cancelamento").commit());
     assert.equal((await lerAdmin(caminhoLancamento(docId))).data().status, "cancelado");
+  });
+  await caso("configuração da Régua é privada e administrada somente pelo Chris", async () => {
+    const caminho = "config_financeiro/regua_cobranca";
+    await assertSucceeds(setDoc(doc(db.chris, caminho), {
+      schemaVersion: 1,
+      inicioOperacao: "2026-07",
+      competenciasQuitadasAte: "2026-08",
+      criterioHistorico: "fixture_sintetica",
+      atualizadoPorUid: uids.chris,
+      atualizadoEm: serverTimestamp()
+    }));
+    await assertSucceeds(getDoc(doc(db.chris, caminho)));
+    await assertFails(getDoc(doc(db.amanda, caminho)));
+    await assertFails(getDoc(doc(db.outro, caminho)));
+    await assertFails(getDoc(doc(db.cliente, caminho)));
+    await assertFails(deleteDoc(doc(db.chris, caminho)));
+  });
+  await caso("Fedalto cancelada por saída volta somente para cortesia com ledger atômico", async () => {
+    const id = "fedalto-eletro-comercial_2026-09";
+    const cliente = "fedalto-eletro-comercial";
+    const op = operationId("fedalto-cortesia");
+    await semearMensalidade(id, dadosMensalidade({
+      cliente,
+      status: "cancelado",
+      valor: 1700,
+      extra: {
+        canceladoPorSaida: true,
+        canceladoPorSaidaId: "saida-fedalto-sintetica",
+        statusAntesSaida: "aberto",
+        motivoCancelamento: "Saída sintética anterior",
+        canceladoEm: new Date("2026-09-01T12:00:00.000Z"),
+        canceladoPor: uids.chris
+      }
+    }));
+    const batch = writeBatch(db.chris);
+    batch.update(doc(db.chris, `pagamentos_mensais/${id}`), {
+      status: "isento",
+      canceladoPorSaida: deleteField(),
+      canceladoPorSaidaId: deleteField(),
+      statusAntesSaida: deleteField(),
+      motivoCancelamento: deleteField(),
+      canceladoEm: deleteField(),
+      canceladoPor: deleteField(),
+      cortesiaDoMes: true,
+      motivoIsencao: "Cortesia promocional sintética de setembro",
+      financeiroOperationId: op,
+      atualizadoEm: serverTimestamp(),
+      atualizadoPor: uids.chris
+    });
+    batch.set(doc(db.chris, caminhoLedger(op)), dadosLedger({
+      op,
+      clienteId: cliente,
+      tipo: "reativacao",
+      competenciaInicio: "2026-09",
+      valor: null,
+      sourceType: "migracao",
+      sourceId: cliente
+    }));
+    await assertSucceeds(batch.commit());
+    const depois = (await lerAdmin(`pagamentos_mensais/${id}`)).data();
+    assert.equal(depois.status, "isento");
+    assert.equal(depois.cortesiaDoMes, true);
+    assert.equal(depois.canceladoPorSaida, undefined);
+  });
+  await caso("reativação de mensalidade cancelada sem ledger é negada", async () => {
+    const id = "fedalto-sem-ledger_2026-09";
+    const cliente = "fedalto-sem-ledger";
+    const op = operationId("fedalto-sem-ledger");
+    await semearMensalidade(id, dadosMensalidade({
+      cliente,
+      status: "cancelado",
+      valor: 1700,
+      extra: {
+        canceladoPorSaida: true,
+        canceladoPorSaidaId: "saida-fedalto-sintetica",
+        statusAntesSaida: "aberto",
+        motivoCancelamento: "Saída sintética anterior",
+        canceladoEm: new Date("2026-09-01T12:00:00.000Z"),
+        canceladoPor: uids.chris
+      }
+    }));
+    await assertFails(updateDoc(doc(db.chris, `pagamentos_mensais/${id}`), {
+      status: "isento",
+      canceladoPorSaida: deleteField(),
+      canceladoPorSaidaId: deleteField(),
+      statusAntesSaida: deleteField(),
+      motivoCancelamento: deleteField(),
+      canceladoEm: deleteField(),
+      canceladoPor: deleteField(),
+      cortesiaDoMes: true,
+      motivoIsencao: "Cortesia promocional sintética de setembro",
+      financeiroOperationId: op,
+      atualizadoEm: serverTimestamp(),
+      atualizadoPor: uids.chris
+    }));
   });
 } finally {
   await env.cleanup();

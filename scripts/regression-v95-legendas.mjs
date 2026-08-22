@@ -22,9 +22,10 @@ exigir(permissaoVideo.includes('amandachamorrosm@gmail.com'),'Amanda perdeu a op
 exigir(!permissaoVideo.includes('gabrielleromaomarketing@gmail.com'),'a correção ampliou indevidamente a permissão geral da Gabi sobre vídeos');
 exigir(!salvar.includes('tx.update(videoRef'),'salvar legenda ainda tenta escrever em videos_producao e será negado para a Gabi');
 exigir(
-  escritorio.includes('gs-build" content="2026-08-21-financeiro-por-competencia-v103"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-itemids-calendarios-legados-v102"'),
-  'build vigente V103 e pai V102 não foram identificados para reensaiar a correção V95'
+  escritorio.includes('gs-build" content="2026-08-22-correcao-financeiro-real-v104"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-financeiro-por-competencia-v103"') &&
+  escritorio.includes('gs-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102"'),
+  'build vigente V104, pai V103 e avô V102 não foram identificados para reensaiar a correção V95'
 );
 exigir(salvar.includes("tx.update(postagemRef,dadosLegenda)"),'a legenda deixou de ser gravada na postagem canônica');
 exigir(salvar.includes("atual.status!=='aguardando_legenda'"),'a transição deixou de revalidar a etapa atual');

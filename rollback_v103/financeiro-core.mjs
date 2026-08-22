@@ -913,8 +913,6 @@ export function projetarReguaCobranca({
   competencia,
   hoje,
   carenciaDias = 5,
-  competenciaInicialOperacao = '',
-  competenciasQuitadasAte = '',
 } = {}) {
   if (!competenciaValida(competencia) || !dataValida(hoje)) {
     return resultadoIndisponivel('RELOGIO_OU_COMPETENCIA_INVALIDA', { competencia, hoje });
@@ -922,17 +920,9 @@ export function projetarReguaCobranca({
   const fonte = linhasDeObrigacoes(obrigacoes);
   if (fonte.estado === 'indisponivel') return fonte;
   const conflitos = [...fonte.conflitos];
-  if (competenciaInicialOperacao && !competenciaValida(competenciaInicialOperacao)) {
-    return resultadoIndisponivel('INICIO_DA_REGUA_INVALIDO', { competenciaInicialOperacao });
-  }
-  if (competenciasQuitadasAte && !competenciaValida(competenciasQuitadasAte)) {
-    return resultadoIndisponivel('CORTE_HISTORICO_INVALIDO', { competenciasQuitadasAte });
-  }
   const candidatas = fonte.linhas.filter(item =>
     item.estado === 'confirmado' &&
     statusMensalidade(item) === 'aberto' &&
-    (!competenciaInicialOperacao || item.competencia >= competenciaInicialOperacao) &&
-    (!competenciasQuitadasAte || item.competencia > competenciasQuitadasAte) &&
     // Uma obrigação histórica só vira atraso quando há documento materializado.
     // A ausência de documento antigo não prova que uma cobrança existia.
     (item.competencia >= competencia || item.materializada === true));
@@ -973,8 +963,6 @@ export function projetarReguaCobranca({
     estado: bloqueios.length ? 'parcial' : abertas.length ? 'confirmado' : 'vazio',
     competencia,
     hoje,
-    competenciaInicialOperacao,
-    competenciasQuitadasAte,
     anterioresVencidos: { itens: anterior, quantidade: anterior.length, total: somar(anterior) },
     competenciaSelecionada: {
       itens: selecionada,
@@ -1159,8 +1147,6 @@ export function projetarFinanceiroCompetencia({
   contextosVigencia = {},
   competenciasRegua = [],
   carenciaDias = 5,
-  competenciaInicialOperacao = '',
-  competenciasQuitadasAte = '',
   destinosPessoais = ['conta_pessoal'],
 } = {}) {
   if (!competenciaValida(competencia) || !competenciaValida(mesCaixa)) {
@@ -1203,8 +1189,6 @@ export function projetarFinanceiroCompetencia({
       competencia,
       hoje,
       carenciaDias,
-      competenciaInicialOperacao,
-      competenciasQuitadasAte,
     })
     : { estado: 'nao_solicitado', conflitos: [] };
   const componentes = [obrigacoes, movimentos, reconciliacao, regua];

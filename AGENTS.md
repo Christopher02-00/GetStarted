@@ -172,6 +172,17 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - Correção dirigida de dados reais começa por prévia zero-write, relê todos os alvos na transação e confirma recibos depois do commit. Divergência bloqueia; publicação de frontend/regra nunca executa a correção automaticamente.
 - A frente financeira não toca calendário, captação, vídeo ou postagem. Em especial, não altera `sessaoPlanejamentoVersao`, `sessaoItensPlanejados`, `calendarItemId` ou `calendarItemIdx`, preservando a fronteira V100/Place.
 
+### Invariantes V104 — cobrança real, cortesia e saída
+
+- A Régua de Cobrança começou operacionalmente em julho de 2026. Competências anteriores não podem ser fabricadas como dívida e julho/agosto de 2026, quando confirmados como já cobrados e quitados, ficam fora da fila acionável sem inventar datas de pagamento.
+- A Régua prioriza uma lista curta de ações. Contato, mês, vencimento, estado e ação ficam na própria linha; comprovantes em análise, cobranças já confirmadas hoje e previsões futuras permanecem separados e recolhíveis. Abrir WhatsApp não confirma envio.
+- O contato da Zeiss é PII financeira: aparece para o Chris na Régua e é persistido somente em `contatos_clientes_financeiro/zeiss`. O número real nunca entra em HTML, módulo, teste, relatório, catálogo, manifesto, Central compartilhada ou Portal.
+- Fedalto Eletro Comercial permanece cliente ativo. Setembro de 2026 é cortesia promocional da agência: a mensalidade fica `isento`, com motivo explícito e recibo; o contrato e as competências posteriores não são encerrados.
+- Saída de cliente preserva mensalidade terminal do último mês. Documento pago, isento ou cancelado não é reescrito apenas para concluir a saída; cobranças posteriores ainda abertas são canceladas com histórico, nunca apagadas.
+- Contrato legado com `vigencias` ausente ou array vazio usa a compatibilidade direcional segura. A prévia pode fechar o intervalo legado quando identidade e competência são inequívocas; ambiguidade ou sobreposição continua bloqueando.
+- A correção dirigida V104 é composta por etapas atômicas e recibos determinísticos. Prévia e renderização fazem zero writes; clique duplo, retry e duas abas convergem; publicação do código e das regras não altera dados automaticamente.
+- `config_financeiro/regua_cobranca` é configuração privada do Chris. Guarda apenas o marco operacional e competências historicamente confirmadas, sem copiar pagamentos, contatos ou contratos.
+
 ### Invariantes de workflow e arquivo operacional
 
 - A confirmação de um workflow (enviar calendário, aprovar, devolver) não deve falhar apenas porque o eco do próprio autosave mudou `updatedAt`. Só é permitido tolerar a versão diferente quando a assinatura do conteúdo de negócio é idêntica e nenhuma decisão posterior substituiu a ação. Conteúdo concorrente continua bloqueado.

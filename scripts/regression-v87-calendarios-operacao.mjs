@@ -50,9 +50,10 @@ async function testarCarteiraEditorialReal(){
 await testarCarteiraEditorialReal();
 
 ok(
-  escritorio.includes('gs-build" content="2026-08-21-financeiro-por-competencia-v103"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-itemids-calendarios-legados-v102"'),
-  'build vigente V103 e pai V102 identificados para reensaiar a cadeia V87'
+  escritorio.includes('gs-build" content="2026-08-22-correcao-financeiro-real-v104"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-financeiro-por-competencia-v103"') &&
+  escritorio.includes('gs-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102"'),
+  'build vigente V104, pai V103 e avô V102 identificados para reensaiar a cadeia V87'
 );
 contem(escritorio, '__carteiraCalendarioOperacionalConfirmada', 'carteira editorial possui retrato operacional confirmado');
 contem(escritorio, 'CLIENTES_SEM_CALENDARIO_OPERACIONAL', 'exclusões operacionais são centralizadas');

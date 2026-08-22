@@ -155,6 +155,23 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - Cobrança futura já criada pode ser sincronizada somente se estiver aberta ou isenta. Pagamentos `pago` e `cancelado` permanecem históricos e imutáveis.
 - Na ativação inicial e na reativação, Amanda precisa conferir valor, vencimento e competência antes da escrita. O primeiro clique nunca confirma automaticamente. Reativação reutiliza ficha, slug e Portal existentes; contrato ausente é recuperado no mesmo ID canônico, e arquivo legado é relido na transação. Depois que o cliente está ativo, mudança de valor volta a ser exclusiva de `Contratos`.
 
+### Invariantes V103 — financeiro por competência
+
+- Competência contratual, quitação e caixa são dimensões diferentes. Uma mensalidade recebida depois permanece na competência original e entra no caixa pela data real; não mover nem duplicar receita para fazer os totais coincidirem.
+- Contratos, Mensalidades, Financeiro e Régua de Cobrança usam a mesma projeção canônica. Total equivalente precisa derivar da mesma carteira, competência, valor e estado; nenhuma tela mantém um cálculo paralelo para o mesmo conceito.
+- Renderização é somente leitura. Abrir, recarregar, trocar de competência ou projetar a próxima cobrança nunca cria `pagamentos_mensais`, contrato, saída, lançamento, contato ou evento. O primeiro documento nasce apenas de uma ação financeira explícita.
+- Obrigação virtual é previsão, não documento confirmado. A interface distingue `materializada` de `derivada`; somente documento real vencido pode entrar no passivo anterior ou receber confirmação de cobrança enviada.
+- `vigencias[]` é a linha temporal autoritativa quando existe e pode conter múltiplos intervalos. Saída fecha o ciclo correto; reativação abre outro sem faturar o hiato. Legado continua legível por compatibilidade direcional, mas nunca é migrado ao abrir a tela.
+- Identidade financeira canônica é resolvida antes de qualquer soma ou `Map`. Alias, duplicata, vigência sobreposta, status inválido ou dois contratos concorrentes geram conflito e bloqueiam ação; nunca escolher por título, nome parecido, posição ou ordem de leitura.
+- Pago, isento, cancelado, encerrado, arquivado, excluído ou finalizado são terminais conforme o contrato de origem. Writer comum não reabre nem altera valor de estado terminal. Soft-delete preserva documentos duplicados e delete físico continua proibido.
+- Alteração programada de contrato exige novo valor, competência inicial, motivo, revisão monotônica, `financeiroOperationId` e evento correspondente em `clientes_ciclo_financeiro`. Mensalidade futura só acompanha quando aberta ou isenta; pago e cancelado não mudam.
+- `clientes_ciclo_financeiro` é ledger mínimo, exclusivo do Chris e append-only; prova transição, não substitui contrato, mensalidade, saída ou lançamento como fonte. Retry, clique duplo e duas abas usam operação determinística e não criam segundo evento.
+- `financeiro_lancamentos` separa salários, custos e ajustes das mensalidades e dos extras. Previsão pertence à competência; baixa exige data real e somente então afeta o caixa. Cancelamento preserva principal e histórico.
+- Régua separa passivo anterior, competência selecionada e próxima previsão. Erro, timeout, cota, permissão, relógio inválido ou fonte parcial produzem indisponibilidade, nunca zero, ausência de cliente, atraso inventado ou mensagem de cobrança.
+- Dados e DOM de Financeiro, Mensalidades, Régua, agenda financeira, lançamentos e correção dirigida pertencem somente ao Chris. Amanda conserva apenas a visão restrita de Contratos necessária ao cadastro, sem caixa, ledger, contatos privados ou totais monetários do Chris. Contato financeiro permanece em `contatos_clientes_financeiro`; não copiar telefone para código, fixture, relatório público, Central compartilhada ou Portal.
+- Correção dirigida de dados reais começa por prévia zero-write, relê todos os alvos na transação e confirma recibos depois do commit. Divergência bloqueia; publicação de frontend/regra nunca executa a correção automaticamente.
+- A frente financeira não toca calendário, captação, vídeo ou postagem. Em especial, não altera `sessaoPlanejamentoVersao`, `sessaoItensPlanejados`, `calendarItemId` ou `calendarItemIdx`, preservando a fronteira V100/Place.
+
 ### Invariantes de workflow e arquivo operacional
 
 - A confirmação de um workflow (enviar calendário, aprovar, devolver) não deve falhar apenas porque o eco do próprio autosave mudou `updatedAt`. Só é permitido tolerar a versão diferente quando a assinatura do conteúdo de negócio é idêntica e nenhuma decisão posterior substituiu a ação. Conteúdo concorrente continua bloqueado.

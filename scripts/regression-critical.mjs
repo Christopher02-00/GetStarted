@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import * as FinanceiroCore from '../financeiro-core.mjs';
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const escritorio = fs.readFileSync(path.join(raiz, 'escritorio.html'), 'utf8');
@@ -22,7 +23,10 @@ function trecho(fonte, inicio, fim) {
 }
 
 function executarSandbox(nome, codigo) {
-  const contexto = vm.createContext({ Date, console, window: {}, setTimeout, clearTimeout });
+  // O HTML delega estados financeiros ao mesmo núcleo usado pelo runtime.
+  // Injete o módulo real no sandbox; copiar a normalização aqui criaria uma
+  // terceira regra que poderia passar enquanto produção diverge.
+  const contexto = vm.createContext({ Date, console, window: {}, setTimeout, clearTimeout, FinanceiroCore });
   new vm.Script(codigo, { filename: nome }).runInContext(contexto);
   return contexto.api;
 }
@@ -223,8 +227,8 @@ function testarMensalidadesSandbox() {
     'salvar contrato não sincroniza mensalidade já criada com o mês de cortesia');
   const retirarContrato = api.ajusteCortesiaMensalidade(
     {status:'isento',cortesiaDoMes:true,motivoIsencao:'cortesia combinada para este mês'},'2026-08',false,[]);
-  exigir(retirarContrato?.status === 'aberto',
-    'retirar cortesia do contrato não reabre a mensalidade criada por ele');
+  exigir(retirarContrato === null,
+    'editar a ficha voltou a reabrir silenciosamente uma isenção terminal sem correção auditada');
   exigir(api.ajusteCortesiaMensalidade(
     {status:'isento',cortesiaDoMes:false,motivoIsencao:'cortesia manual'},'2026-08',false,[]) === null,
     'editar contrato sobrescreve uma cortesia manual legítima');
@@ -279,10 +283,10 @@ function testarMensalidadesSandbox() {
   exigir(api.valorContratoNaCompetencia(vitalleComNovaMudanca,'2026-10')===1000&&api.valorContratoNaCompetencia(vitalleComNovaMudanca,'2026-11')===900,
     'uma segunda alteração futura apagou a vigência intermediária já registrada');
   exigir(api.ajusteValorProgramadoMensalidade({status:'aberto',valorDevido:1700},'2026-09',1000,'2026-09')?.valorDevido===1000&&
-    api.ajusteValorProgramadoMensalidade({status:'isento',valorDevido:1700},'2026-09',1000,'2026-09')?.valorDevido===1000&&
+    api.ajusteValorProgramadoMensalidade({status:'isento',valorDevido:1700},'2026-09',1000,'2026-09')===null&&
     api.ajusteValorProgramadoMensalidade({status:'aberto',valorDevido:1700},'2026-08',1000,'2026-09')===null&&
     api.ajusteValorProgramadoMensalidade({status:'pago',valorDevido:1700},'2026-09',1000,'2026-09')===null,
-    'sincronização do novo valor alterou mês anterior/pago ou ignorou cobrança futura aberta/isenta');
+    'helper legado alterou mês anterior ou estado terminal; isenta é sincronizada somente pelo writer V103 auditado');
   const analiseSaida=api.analisarPagamentosParaSaida([
     {id:'zeiss_2026-08',cliente:'zeiss',competencia:'2026-08',status:'pago'},
     {id:'zeens_2026-09',cliente:'zeens',competencia:'2026-09',status:'aberto'},
@@ -377,7 +381,8 @@ function testarMensalidadesSandbox() {
   const editarFicha = trecho(escritorio, 'window.salvarClienteAtivoCentral=async function', '  window.arquivarEntradaPendente');
   exigir(editarFicha.includes('ajusteCortesiaMensalidade') && editarFicha.includes('cortesiaPermanente:dados.cortesiaPermanente') &&
     editarFicha.includes('cortesiaMeses:dados.cortesiaMeses') &&
-    editarFicha.includes("!['pago','cancelado'].includes(statusMensalidadeCanonico(p))") && editarFicha.includes('if(mudou) tx.set(ref,atualizacao'),
+    editarFicha.includes("statusMensalidadeCanonico(p)==='aberto'") && editarFicha.includes("String(p.competencia||'')>=hojeLocal().slice(0,7)") &&
+    editarFicha.includes('if(mudou) tx.set(ref,atualizacao'),
     'editar ficha ativa não sincroniza contrato e mensalidades');
   exigir(!editarFicha.includes('valorVigente:dados.valorMensal')&&!editarFicha.includes('valorDevido:dados.valorMensal')&&
     escritorio.includes('id="ecaValor" value="${Number(v.valorMensal||0)}" readonly'),

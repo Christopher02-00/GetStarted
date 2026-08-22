@@ -21,7 +21,11 @@ const permissaoVideo=trecho(regras,'function podeOperarVideoProducao()','    fun
 exigir(permissaoVideo.includes('amandachamorrosm@gmail.com'),'Amanda perdeu a operação legítima de vídeo');
 exigir(!permissaoVideo.includes('gabrielleromaomarketing@gmail.com'),'a correção ampliou indevidamente a permissão geral da Gabi sobre vídeos');
 exigir(!salvar.includes('tx.update(videoRef'),'salvar legenda ainda tenta escrever em videos_producao e será negado para a Gabi');
-exigir(escritorio.includes('2026-08-21-planejamento-sessoes-v99'),'build vigente V99 não foi identificado para reensaiar a correção V95');
+exigir(
+  escritorio.includes('gs-build" content="2026-08-21-financeiro-por-competencia-v103"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-itemids-calendarios-legados-v102"'),
+  'build vigente V103 e pai V102 não foram identificados para reensaiar a correção V95'
+);
 exigir(salvar.includes("tx.update(postagemRef,dadosLegenda)"),'a legenda deixou de ser gravada na postagem canônica');
 exigir(salvar.includes("atual.status!=='aguardando_legenda'"),'a transição deixou de revalidar a etapa atual');
 exigir(salvar.includes('const recibo=await getDoc(postagemRef)'),'o sucesso deixou de depender da releitura da postagem');

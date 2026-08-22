@@ -49,7 +49,11 @@ async function testarCarteiraEditorialReal(){
 
 await testarCarteiraEditorialReal();
 
-contem(escritorio, '2026-08-21-planejamento-sessoes-v99', 'build vigente V99 identificado para reensaiar a cadeia V87');
+ok(
+  escritorio.includes('gs-build" content="2026-08-21-financeiro-por-competencia-v103"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-21-itemids-calendarios-legados-v102"'),
+  'build vigente V103 e pai V102 identificados para reensaiar a cadeia V87'
+);
 contem(escritorio, '__carteiraCalendarioOperacionalConfirmada', 'carteira editorial possui retrato operacional confirmado');
 contem(escritorio, 'CLIENTES_SEM_CALENDARIO_OPERACIONAL', 'exclusões operacionais são centralizadas');
 naoContem(extrairAtribuicaoAsync('clientesCalendarioRecorrentesConfirmados'), 'castaDosClientes()', 'carteira editorial não consulta classificação financeira');

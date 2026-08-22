@@ -30,7 +30,7 @@ exigir(avulso.includes('idReceitaAvulsaPorNegocio')&&avulso.includes('await runT
 const mover=trecho('window.moverNegocio = async function','  /* Conferencia manual do comprovante');
 exigir(mover.indexOf('__negociosMovendo.add(id)')<mover.indexOf('await getDoc(ref)')&&mover.includes('__negociosMovendo.delete(id)')&&!mover.includes("addDoc(collection(db,'receitas_avulsas')"),'trava de produção antecede espera e ramo parcial antigo foi removido');
 
-const lote=trecho('async function dispararCalendarios','  /* Aprovar NÃO envia mais.');
+const lote=trecho('async function dispararCalendarios(alvos)','  /* Aprovação e publicação são uma única decisão da Amanda.');
 exigir(lote.includes('const resultado={enviados:[],falhas:[]}')&&lote.includes('resultado.falhas.push')&&lote.includes('return resultado'),'lote de calendários devolve enviados e falhas por alvo');
 exigir(!escritorio.includes('ecaContatoFinanceiro')&&!escritorio.includes("origem:'edicao_financeiro_explicita'"),'escritor financeiro invisível foi removido por completo');
 

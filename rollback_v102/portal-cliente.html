@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
   <meta name="gs-build" content="2026-08-19-calendarios-stories-v91">
-  <meta name="gs-patch" content="2026-08-21-portal-financeiro-v103">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -2252,77 +2251,14 @@
   const PIX_GET = { chave:'56.062.119.0001-43', tipo:'CNPJ', banco:'Banco C6', titular:'Christopher Brito' };
   const brlPortal = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
 
-  /* V103 — o documento mensal é a fonte da competência, do valor e do
-     estado mostrado ao cliente. O contrato descreve o plano, mas uma mudança
-     no valor vigente não pode reescrever visualmente um mês histórico. */
-  function statusPagamentoPortal(pagamento){
-    const p=pagamento||{};
-    if(p.excluido===true||p.excluida===true) return 'excluido';
-    if(p.encerrado===true||p.encerrada===true) return 'encerrado';
-    if(p.cancelado===true||p.cancelada===true) return 'cancelado';
-    const status=String(p.status||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-    if(['pago','paga','quitado','quitada','recebido','recebida'].includes(status)) return 'pago';
-    if(['isento','isenta','cortesia'].includes(status)) return 'isento';
-    if(['cancelado','cancelada'].includes(status)) return 'cancelado';
-    if(['excluido','excluida','arquivado','arquivada'].includes(status)) return 'excluido';
-    if(['encerrado','encerrada','finalizado','finalizada'].includes(status)) return 'encerrado';
-    if(['aberto','pendente'].includes(status)) return 'aberto';
-    return 'indisponivel';
-  }
-
-  function competenciaPagamentoPortal(pagamento){
-    const competencia=String(pagamento?.competencia||'').trim();
-    return /^\d{4}-(0[1-9]|1[0-2])$/.test(competencia)?competencia:'';
-  }
-
-  function valorPagamentoPortal(pagamento){
-    // O documento mensal é a fonte do valor histórico. `valorDevido` vence o
-    // campo legado `valor`; assim Portal e Financeiro nunca exibem cifras
-    // diferentes depois de uma alteração contratual por competência.
-    const valores=[];
-    for(const campo of ['valorCobrado','valorDevido','valor']){
-      const bruto=pagamento?.[campo];
-      if(bruto===null||bruto===undefined||bruto==='') continue;
-      const valor=Number(bruto);
-      if(!Number.isFinite(valor)||valor<0) return null;
-      valores.push(valor);
-    }
-    const distintos=[...new Set(valores)];
-    return distintos.length===1?distintos[0]:null;
-  }
-
-  function rotuloCompetenciaPagamentoPortal(competencia){
-    const valor=String(competencia||'');
-    const match=valor.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
-    if(!match) return 'competência indisponível';
-    return MESES[Number(match[2])-1].toLowerCase()+' de '+match[1];
-  }
-
-  function prepararPagamentosPortal(lista){
-    const preparados=(Array.isArray(lista)?lista:[]).map((pagamento,indice)=>({
-      ...pagamento,
-      __ordemOriginal:indice,
-      __statusPortal:statusPagamentoPortal(pagamento),
-      __competenciaPortal:competenciaPagamentoPortal(pagamento),
-      __valorPortal:valorPagamentoPortal(pagamento)
-    })).sort((a,b)=>a.__competenciaPortal.localeCompare(b.__competenciaPortal)||
-      String(a.id||a.__ordemOriginal).localeCompare(String(b.id||b.__ordemOriginal)));
-    const indisponiveis=preparados.filter(p=>p.__statusPortal==='indisponivel'||!p.__competenciaPortal||p.__valorPortal===null);
-    const confirmados=preparados.filter(p=>!indisponiveis.includes(p));
-    return {
-      abertos:confirmados.filter(p=>p.__statusPortal==='aberto'),
-      historico:confirmados.filter(p=>p.__statusPortal!=='aberto').sort((a,b)=>b.__competenciaPortal.localeCompare(a.__competenciaPortal)||String(a.id||'').localeCompare(String(b.id||''))),
-      indisponiveis
-    };
-  }
-
   async function dadosPagamentoCliente(){
     const [ctSnap, pgSnap] = await Promise.all([
-      comTimeoutPortal(getDoc(doc(db,'contratos_cliente', clienteAtual.slug)),'Contrato do Portal',12000),
-      comTimeoutPortal(meusDocs('pagamentos_mensais'),'Mensalidades do Portal',12000)
+      getDoc(doc(db,'contratos_cliente', clienteAtual.slug)),
+      meusDocs('pagamentos_mensais')
     ]);
     const contrato = ctSnap.exists() ? ctSnap.data() : null;
     const meus = []; pgSnap.forEach(d => meus.push({id:d.id, ...d.data()}));
+    meus.sort((a,b)=>(b.competencia||'').localeCompare(a.competencia||''));
     return { contrato, pagamentos: meus };
   }
 
@@ -2369,76 +2305,68 @@
 
   async function carregarPagamentoCliente(){
     const cont = document.getElementById('painelPagamento');
-    if(!cont) return;
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    try{
-      const { contrato, pagamentos } = await dadosPagamentoCliente();
-      const {abertos,historico,indisponiveis}=prepararPagamentosPortal(pagamentos);
-      const atual=abertos[0]||null;
-      const dias=atual?diasParaVencer({...atual,competencia:atual.__competenciaPortal}):null;
-      const plano=String(contrato?.plano||'').trim();
-      const vencimentoPadrao=Number(contrato?.diaVencimento||0);
+    const { contrato, pagamentos } = await dadosPagamentoCliente();
 
-      let html = `<div class="card">
-        <h2>💳 Pagamento</h2>
-        <div class="sub" style="margin-bottom:0;">${plano?'Seu plano <b>'+esc(plano)+'</b>. ':''}Cada competência abaixo usa o valor confirmado no próprio lançamento mensal${vencimentoPadrao?' · vencimento padrão dia '+esc(String(vencimentoPadrao)):''}.</div>
-      </div>`;
-
-      if(indisponiveis.length){
-        html += `<div class="card" style="border-color:var(--red);"><div style="font-weight:800;margin-bottom:5px;">Parte do financeiro está indisponível</div><div class="sub" style="margin:0;">${indisponiveis.length} lançamento(s) não trouxe(ram) competência, valor ou estado confirmável. Eles não foram tratados como cobrança em aberto. Fale com a Get Started antes de pagar.</div></div>`;
-      }
-
-      if(atual){
-        const situacao = dias === null ? {txt:'Vencimento indisponível',cor:'var(--yellow)'}
-          : dias > 1 ? { txt:'Vence em ' + dias + ' dias', cor:'var(--line)' }
-          : dias === 1 ? { txt:'Vence amanhã', cor:'var(--yellow)' }
-          : dias === 0 ? { txt:'Vence hoje', cor:'var(--yellow)' }
-          : { txt:'Venceu há ' + Math.abs(dias) + ' dia(s)', cor:'var(--red)' };
-        html += `<div class="card" style="border:2px solid ${situacao.cor};">
-          <div class="nome" style="font-size:20px;">${brlPortal(atual.__valorPortal)}</div>
-          <div class="meta" style="margin-top:4px;">Referente a ${esc(rotuloCompetenciaPagamentoPortal(atual.__competenciaPortal))} · ${situacao.txt}${abertos.length>1?' · '+abertos.length+' competências em aberto':''}</div>
-          ${atual.comprovante ? '<div class="meta" style="margin-top:10px;color:var(--yellow);">📎 Comprovante enviado — estamos conferindo. Obrigado!</div>' : `
-          <div style="background:var(--deep);border-radius:10px;padding:12px;margin-top:12px;">
-            <div class="meta" style="margin-bottom:6px;">Chave PIX (${PIX_GET.tipo})</div>
-            <div class="nome" style="font-size:16px;word-break:break-all;">${PIX_GET.chave}</div>
-            <div class="meta" style="margin-top:4px;">${PIX_GET.banco} · ${PIX_GET.titular}</div>
-            <div class="btn" style="margin-top:10px;padding:12px;text-align:center;cursor:pointer;" onclick="copiarPix()">📋 Copiar chave PIX</div>
-            <div id="avisoPix" class="meta" style="display:none;margin-top:8px;color:var(--green);"></div>
-          </div>
-          <div class="field" style="margin-top:12px;"><label>Já pagou? Cola o link do comprovante</label><input type="text" id="compMensal_${escAttr(atual.id)}" placeholder="Link do comprovante"></div>
-          <div class="btn secondary" style="margin-top:8px;padding:11px;text-align:center;cursor:pointer;" onclick="enviarComprovanteMensal('${atual.id}')">Enviar comprovante</div>
-          <div class="btn secondary" style="margin-top:8px;padding:11px;text-align:center;cursor:pointer;" onclick="comprovantePeloWhats('${atual.__competenciaPortal}', ${atual.__valorPortal})">💬 Prefiro mandar pelo WhatsApp</div>`}
-        </div>`;
-      }else if(pagamentos.length){
-        html += `<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhuma mensalidade confirmada está em aberto.</div></div>`;
-      }else{
-        html += `<div class="card"><div class="empty">Nenhuma cobrança mensal foi registrada para este acesso.</div></div>`;
-      }
-
-      if(historico.length){
-        const rotulos={pago:'Pago',isento:'Cortesia',cancelado:'Cancelado',encerrado:'Encerrado',excluido:'Arquivado'};
-        html += `<div class="card"><h2 style="font-size:14px;">Histórico por competência</h2>` +
-          historico.slice(0,12).map(p => `<div class="item">
-            <div class="top"><div class="nome">${esc(rotuloCompetenciaPagamentoPortal(p.__competenciaPortal))}</div><span class="selo ${p.__statusPortal==='pago'?'publicado':p.__statusPortal==='isento'?'roteiro':'planejamento'}">${esc(rotulos[p.__statusPortal]||'Encerrado')}</span></div>
-            <div class="meta" style="margin-top:4px;">${brlPortal(p.__valorPortal)}${p.pagoEm?' · em '+esc(formatarDataBR(p.pagoEm)):''}</div>
-          </div>`).join('') + `</div>`;
-      }
-      cont.innerHTML = html;
-    }catch(e){
-      console.error('Financeiro do Portal indisponível:',e?.code||e?.message||e);
-      cont.innerHTML='<div class="card" style="border-color:var(--red);"><div style="font-weight:900;margin-bottom:7px;">Financeiro temporariamente indisponível</div><div class="sub" style="margin:0;">Não foi possível confirmar contrato e mensalidades agora. Isso não significa que não exista cobrança; tente novamente quando a conexão voltar.</div></div>';
+    if(!contrato){
+      cont.innerHTML = `<div class="card"><h2>💳 Pagamento</h2><div class="sub" style="margin-bottom:0;">Seu plano ainda não tem cobrança configurada por aqui. Qualquer dúvida sobre valores, é só chamar a gente no WhatsApp.</div></div>`;
+      return;
     }
+
+    const abertos = pagamentos.filter(p => p.status !== 'pago' && p.status !== 'isento');
+    const atual = abertos.length ? abertos[abertos.length-1] : null;  // o mais antigo em aberto
+    const dias = atual ? diasParaVencer(atual) : null;
+
+    let html = `<div class="card">
+      <h2>💳 Pagamento</h2>
+      <div class="sub" style="margin-bottom:10px;">Seu plano <b>${esc(contrato.plano||'')}</b> · ${brlPortal(contrato.valorVigente)} por mês · vence todo dia ${contrato.diaVencimento}.</div>
+    </div>`;
+
+    if(atual){
+      const situacao = dias > 1 ? { txt:'Vence em ' + dias + ' dias', cor:'var(--line)' }
+        : dias === 1 ? { txt:'Vence amanhã', cor:'var(--yellow)' }
+        : dias === 0 ? { txt:'Vence hoje', cor:'var(--yellow)' }
+        : { txt:'Venceu há ' + Math.abs(dias) + ' dia(s)', cor:'var(--red)' };
+      html += `<div class="card" style="border:2px solid ${situacao.cor};">
+        <div class="nome" style="font-size:20px;">${brlPortal(atual.valorDevido)}</div>
+        <div class="meta" style="margin-top:4px;">Referente a ${esc(atual.competencia||'')} · ${situacao.txt}</div>
+        ${atual.comprovante ? '<div class="meta" style="margin-top:10px;color:var(--yellow);">📎 Comprovante enviado — estamos conferindo. Obrigado!</div>' : `
+        <div style="background:var(--deep);border-radius:10px;padding:12px;margin-top:12px;">
+          <div class="meta" style="margin-bottom:6px;">Chave PIX (${PIX_GET.tipo})</div>
+          <div class="nome" style="font-size:16px;word-break:break-all;">${PIX_GET.chave}</div>
+          <div class="meta" style="margin-top:4px;">${PIX_GET.banco} · ${PIX_GET.titular}</div>
+          <div class="btn" style="margin-top:10px;padding:12px;text-align:center;cursor:pointer;" onclick="copiarPix()">📋 Copiar chave PIX</div>
+          <div id="avisoPix" class="meta" style="display:none;margin-top:8px;color:var(--green);"></div>
+        </div>
+        <div class="field" style="margin-top:12px;"><label>Já pagou? Cola o link do comprovante</label><input type="text" id="compMensal_${atual.id}" placeholder="Link do comprovante"></div>
+        <div class="btn secondary" style="margin-top:8px;padding:11px;text-align:center;cursor:pointer;" onclick="enviarComprovanteMensal('${atual.id}')">Enviar comprovante</div>
+        <div class="btn secondary" style="margin-top:8px;padding:11px;text-align:center;cursor:pointer;" onclick="comprovantePeloWhats('${String(atual.competencia||'').replace(/[^0-9-]/g,'')}', ${atual.valorDevido||0})">💬 Prefiro mandar pelo WhatsApp</div>`}
+      </div>`;
+    } else {
+      html += `<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Tudo em dia por aqui. Obrigado!</div></div>`;
+    }
+
+    const historico = pagamentos.filter(p => p.status === 'pago' || p.status === 'isento').slice(0,12);
+    if(historico.length){
+      html += `<div class="card"><h2 style="font-size:14px;">Histórico</h2>` +
+        historico.map(p => `<div class="item">
+          <div class="top"><div class="nome">${esc(p.competencia||'')}</div><span class="selo ${p.status==='isento'?'roteiro':'publicado'}">${p.status==='isento'?'Cortesia':'Pago'}</span></div>
+          <div class="meta" style="margin-top:4px;">${brlPortal(p.valorDevido)}${p.pagoEm?' · em '+new Date(p.pagoEm+'T12:00:00').toLocaleDateString('pt-BR'):''}</div>
+        </div>`).join('') + `</div>`;
+    }
+    cont.innerHTML = html;
   }
 
   /* Faixa suave no topo do portal — so a partir de 1 dia antes, e some
      sozinha quando o pagamento e conferido. */
   async function mostrarLembretePagamento(){
     try{
-      const { pagamentos } = await dadosPagamentoCliente();
-      const abertos = prepararPagamentosPortal(pagamentos).abertos.filter(p=>!p.comprovante);
+      const { contrato, pagamentos } = await dadosPagamentoCliente();
+      if(!contrato) return;
+      const abertos = pagamentos.filter(p => p.status !== 'pago' && p.status !== 'isento' && !p.comprovante);
       if(!abertos.length) return;
-      const p = abertos[0];
-      const dias = diasParaVencer({...p,competencia:p.__competenciaPortal});
+      const p = abertos[abertos.length-1];
+      const dias = diasParaVencer(p);
       if(dias === null || dias > 1) return;
       const texto = dias === 1 ? 'Sua mensalidade vence amanhã 🙂'
         : dias === 0 ? 'Sua mensalidade vence hoje 🙂'
@@ -2451,7 +2379,7 @@
          literal, e o JS gerado fica invalido). addEventListener nao tem
          esse problema. */
       const txtFaixa = document.createElement('span');
-      txtFaixa.textContent = '💛 ' + texto + ' ' + brlPortal(p.__valorPortal) + ' · ' + rotuloCompetenciaPagamentoPortal(p.__competenciaPortal);
+      txtFaixa.textContent = '💛 ' + texto + ' ' + brlPortal(p.valorDevido);
       const linkFaixa = document.createElement('span');
       linkFaixa.textContent = 'Ver como pagar →';
       linkFaixa.style.cssText = 'color:var(--yellow);cursor:pointer;font-weight:700;';

@@ -17,25 +17,25 @@ import { instalarFinanceiroV104 } from '../financeiro-ui-v104.mjs';
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fonteUi = fs.readFileSync(path.join(raiz, 'financeiro-ui-v104.mjs'), 'utf8');
-const TELEFONE_SINTETICO_VISIVEL = '+55 11 98888-7777';
-const TELEFONE_SINTETICO_CANONICO = '5511988887777';
+export const TELEFONE_SINTETICO_VISIVEL = '+55 11 98888-7777';
+export const TELEFONE_SINTETICO_CANONICO = '5511988887777';
 const AGORA = new Date('2026-08-22T12:00:00-03:00');
 
 let total = 0;
 
-function verificar(condicao, mensagem) {
+export function verificar(condicao, mensagem) {
   total += 1;
   assert.ok(condicao, `V104 CORRECAO FINANCEIRA: ${mensagem}`);
   console.log('PASS ', mensagem);
 }
 
-function igual(atual, esperado, mensagem) {
+export function igual(atual, esperado, mensagem) {
   total += 1;
   assert.deepEqual(atual, esperado, `V104 CORRECAO FINANCEIRA: ${mensagem}`);
   console.log('PASS ', mensagem);
 }
 
-function clonar(valor) {
+export function clonar(valor) {
   if (valor instanceof Date) return new Date(valor.getTime());
   if (Array.isArray(valor)) return valor.map(clonar);
   if (valor && typeof valor === 'object') {
@@ -44,7 +44,7 @@ function clonar(valor) {
   return valor;
 }
 
-function assinatura(valor) {
+export function assinatura(valor) {
   const normalizar = item => {
     if (item instanceof Date) return { __date: item.toISOString() };
     if (Array.isArray(item)) return item.map(normalizar);
@@ -106,7 +106,7 @@ function aplicarSet(db, ref, dados, merge) {
   db.dados.set(ref.path, base);
 }
 
-function criarBanco(documentos) {
+export function criarBanco(documentos) {
   return {
     dados: new Map(Object.entries(documentos).map(([chave, valor]) => [chave, clonar(valor)])),
     filaTransacoes: Promise.resolve(),
@@ -196,7 +196,7 @@ function canonicalizarSlug(valor) {
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-function criarDom() {
+export function criarDom() {
   const elementos = new Map([
     ['financeiroCorrecoesV104Status', { id: 'financeiroCorrecoesV104Status', innerHTML: '', value: '' }],
     ['financeiroCorrecoesV103Status', { id: 'financeiroCorrecoesV103Status', innerHTML: '', value: '' }],
@@ -213,7 +213,7 @@ function criarDom() {
   };
 }
 
-function instalarRuntime(db, papel = 'Chris') {
+export function instalarRuntime(db, papel = 'Chris') {
   const dom = criarDom();
   globalThis.document = dom.document;
   globalThis.confirm = () => true;
@@ -236,6 +236,10 @@ function instalarRuntime(db, papel = 'Chris') {
   const api = {
     prever: globalThis.preverCorrecaoFinanceiraV104,
     aplicar: globalThis.aplicarCorrecaoFinanceiraV104,
+    preverCarteira: globalThis.preverCorrecaoFinanceiraSetembroV103,
+    aplicarCarteira: globalThis.aplicarCorrecaoFinanceiraSetembroV103,
+    preverFedalto: globalThis.preverCorrecaoFedaltoReguaV104,
+    aplicarFedalto: globalThis.aplicarCorrecaoFedaltoReguaV104,
   };
   globalThis.renderFinanceiro = async () => true;
   globalThis.renderMensalidades = async () => true;
@@ -271,7 +275,7 @@ function pagamento(cliente, competencia, valor, status = 'aberto', extras = {}) 
   };
 }
 
-function fixtureInicial() {
+export function fixtureInicial() {
   const documentos = {};
   const principais = [
     ['vitalle-odonto', 1500],
@@ -349,14 +353,14 @@ function fixtureInicial() {
   return documentos;
 }
 
-function documentosDaColecao(db, colecao) {
+export function documentosDaColecao(db, colecao) {
   const prefixo = `${colecao}/`;
   return [...db.dados.entries()]
     .filter(([chave]) => chave.startsWith(prefixo) && !chave.slice(prefixo.length).includes('/'))
     .map(([chave, dados]) => ({ id: chave.slice(prefixo.length), ...clonar(dados) }));
 }
 
-function movimentos(db, competencia) {
+export function movimentos(db, competencia) {
   return Core.projetarMovimentosCompetencia({
     contratos: documentosDaColecao(db, 'contratos_cliente'),
     saidas: documentosDaColecao(db, 'clientes_encerrados'),
@@ -364,7 +368,7 @@ function movimentos(db, competencia) {
   });
 }
 
-function obter(db, caminho) {
+export function obter(db, caminho) {
   return clonar(db.dados.get(caminho));
 }
 
@@ -443,17 +447,20 @@ async function testarAplicacaoCompleta() {
   igual(db.commits.filter(v => v.tipo === 'transaction').length, 2, 'as duas etapas independentes concluem em transações atômicas com recibo');
   verificar(db.dados.size >= docsAntes, 'nenhum documento é apagado fisicamente');
 
-  const recibosObrigatorios = [
-    'contratos_cliente/vitalle-odonto',
-    'contratos_cliente/dra-monique',
-    'contratos_cliente/joaquin-assados',
-    'contratos_cliente/acougue-sao-joaquim',
-    'clientes_encerrados/saida_dra-monique_2026-09-15',
-    'clientes_encerrados/saida_joaquin_2026-09-15',
-    'clientes_encerrados/saida_acougue_2026-09-15',
-    'contatos_clientes_financeiro/zeiss',
+  const colecoesReconciliadas = [
+    'contratos_cliente',
+    'pagamentos_mensais',
+    'clientes_encerrados',
+    'contatos_clientes_financeiro',
   ];
-  verificar(recibosObrigatorios.every(caminho => db.getDocCalls.includes(caminho)), 'runtime relê contratos, saídas e contato antes de afirmar sucesso');
+  verificar(colecoesReconciliadas.every(colecao => db.getDocsCalls.filter(chamada => chamada === colecao).length >= 2), 'runtime relê as coleções conciliadas depois da transação antes de afirmar sucesso');
+  const recibosFedalto = [
+    'contratos_cliente/fedalto-eletro-comercial',
+    'pagamentos_mensais/fedalto-eletro-comercial_2026-09',
+    'config_financeiro/regua_cobranca',
+    'clientes_ciclo_financeiro/fin_v104_fedalto_cortesia_2026_09',
+  ];
+  verificar(recibosFedalto.every(caminho => db.getDocCalls.includes(caminho)), 'etapa Fedalto relê os quatro recibos físicos antes de afirmar sucesso');
 
   const commitsAntesRetry = db.commits.length;
   const historicoAntesRetry = assinatura(vitalle.historicoAlteracoesValor || []);
@@ -491,7 +498,7 @@ async function testarReciboVitalleIsentaDivergente() {
   });
   const commitsAntes = db.commits.length;
   const tentativa = await capturarErroEsperado(() => runtime.aplicar());
-  verificar(!tentativa.resultado && tentativa.erros.some(erro => erro.includes('recibos não confirmaram todos os alvos')), 'UI/recibo recusa sucesso quando Vitalle isenta volta ao valor antigo');
+  verificar(!tentativa.resultado && tentativa.erros.some(erro => erro.includes('Existe recibo anterior, mas a prévia ainda vê o alvo como pendente')), 'UI/recibo recusa sucesso quando Vitalle isenta diverge de um evento já confirmado');
   igual(db.commits.length, commitsAntes, 'recibo divergente não tenta corrigir silenciosamente nem cria outro commit');
   igual(Core.statusMensalidade(obter(db, caminho)), 'isento', 'falha do recibo preserva o estado isento para auditoria explícita');
 }
@@ -530,11 +537,16 @@ async function testarPapelIndevido() {
   igual(db.commits.length, 0, 'papel indevido produz zero writes');
 }
 
-await testarAplicacaoCompleta();
-await testarReciboVitalleIsentaDivergente();
-await testarPrecondicao();
-await testarAtomicidade();
-await testarDuasAbas();
-await testarPapelIndevido();
+export async function executarRegressaoV104() {
+  await testarAplicacaoCompleta();
+  await testarReciboVitalleIsentaDivergente();
+  await testarPrecondicao();
+  await testarAtomicidade();
+  await testarDuasAbas();
+  await testarPapelIndevido();
+  console.log(`REGRESSAO V104 CORRECAO FINANCEIRA REAL: OK (${total} verificacoes)`);
+}
 
-console.log(`REGRESSAO V104 CORRECAO FINANCEIRA REAL: OK (${total} verificacoes)`);
+const executadoDiretamente = process.argv[1]
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (executadoDiretamente) await executarRegressaoV104();

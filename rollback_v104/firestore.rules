@@ -1,0 +1,1427 @@
+rules_version = '2';
+    // Get Started — regras V103 (21/08/2026)
+// Login da equipe por Google verificado; Portal/formulários continuam anônimos e isolados.
+    // IMPORTANTE: publicar junto com calendario.html, calendarios.html e portal-cliente.html V85.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function logado() { return request.auth != null; }
+    function temEmailVerificado() {
+      return logado() && request.auth.token.email is string &&
+        request.auth.token.email_verified == true;
+    }
+    function emailDaEquipeSemente() {
+      return temEmailVerificado() && request.auth.token.email in [
+        'christopherveloso0@gmail.com','amandachamorrosm@gmail.com',
+        'vitoriaboaron215@gmail.com','gabrielleromaomarketing@gmail.com','yasmocelin@gmail.com',
+        'heloisaksc@gmail.com','luissouza280507@gmail.com',
+        'nathanocosta652@gmail.com','victorvieiraj814@gmail.com'
+      ];
+    }
+    function emailDaEquipeCadastrado() {
+      return temEmailVerificado() &&
+        exists(/databases/$(database)/documents/usuarios_equipe/$(request.auth.token.email)) &&
+        get(/databases/$(database)/documents/usuarios_equipe/$(request.auth.token.email)).data.ativo == true &&
+        get(/databases/$(database)/documents/usuarios_equipe/$(request.auth.token.email)).data.excluido != true;
+    }
+    function emailDaSementeNaoRevogado() {
+      return emailDaEquipeSemente() && (
+        !exists(/databases/$(database)/documents/usuarios_equipe/$(request.auth.token.email)) ||
+        (
+          get(/databases/$(database)/documents/usuarios_equipe/$(request.auth.token.email)).data.ativo != false &&
+          get(/databases/$(database)/documents/usuarios_equipe/$(request.auth.token.email)).data.excluido != true
+        )
+      );
+    }
+    function ehEquipe() {
+      return emailDaSementeNaoRevogado() || emailDaEquipeCadastrado();
+    }
+    function ehGerencia() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email in [
+        'christopherveloso0@gmail.com','amandachamorrosm@gmail.com'
+      ];
+    }
+    function ehAmanda() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email == 'amandachamorrosm@gmail.com';
+    }
+    function ehChris() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email == 'christopherveloso0@gmail.com';
+    }
+    function ehGabi() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email == 'gabrielleromaomarketing@gmail.com';
+    }
+    function ehCecilia() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email == 'vitoriaboaron215@gmail.com';
+    }
+
+    // V103 — núcleo financeiro por competência.
+    //
+    // O ledger é append-only e usa operationId como identidade determinística.
+    // Lançamentos de custos/receitas internas são privados do Chris e toda
+    // criação/transição exige o evento correspondente no mesmo commit.
+    function competenciaFinanceiraValida(valor) {
+      return valor is string && valor.matches('[0-9]{4}-(0[1-9]|1[0-2])');
+    }
+    function idFinanceiroValido(valor) {
+      return valor is string && valor.matches('[A-Za-z0-9][A-Za-z0-9._:-]{0,159}');
+    }
+    function operationIdFinanceiroValido(valor) {
+      return valor is string && valor.matches('fin_[A-Za-z0-9_-]{12,156}');
+    }
+    function hashFinanceiroValido(valor) {
+      return valor is string && valor.matches('[a-f0-9]{64}');
+    }
+    function textoFinanceiroValido(valor, minimo, maximo) {
+      return valor is string && valor.size() >= minimo && valor.size() <= maximo;
+    }
+    function mensalidadeTemFlagTerminal(dados) {
+      return dados.get('cancelado', false) == true || dados.get('cancelada', false) == true ||
+        dados.get('encerrado', false) == true || dados.get('encerrada', false) == true ||
+        dados.get('excluido', false) == true || dados.get('excluida', false) == true ||
+        dados.get('arquivado', false) == true || dados.get('arquivada', false) == true;
+    }
+    function mensalidadeFinanceiraTerminal(dados) {
+      return dados.get('status', '') in [
+          'pago','paga','quitado','quitada','recebido','recebida',
+          'isento','isenta','cortesia','cancelado','cancelada','encerrado','encerrada',
+          'excluido','excluida','arquivado','arquivada','finalizado','finalizada'
+        ] || mensalidadeTemFlagTerminal(dados);
+    }
+    function mensalidadeFinanceiraIsenta(dados) {
+      return dados.get('status', '') in ['isento','isenta','cortesia'] &&
+        !mensalidadeTemFlagTerminal(dados);
+    }
+    function mensalidadeFinanceiraAberta(dados) {
+      return dados.get('status', '') in ['aberto','aberta','pendente'] &&
+        !mensalidadeTemFlagTerminal(dados);
+    }
+    function mensalidadeTerminalImutavel(antes, depois) {
+      return mensalidadeFinanceiraTerminal(antes) &&
+        depois.diff(antes).affectedKeys().hasOnly([]);
+    }
+    function cancelamentoMensalidadePorSaidaValido(antes, depois) {
+      return (mensalidadeFinanceiraAberta(antes) || mensalidadeFinanceiraIsenta(antes)) &&
+        depois.get('status', '') == 'cancelado' &&
+        depois.get('canceladoPorSaida', false) == true &&
+        depois.get('canceladoPorSaidaId', '') is string &&
+        depois.get('canceladoPorSaidaId', '').size() >= 3 &&
+        depois.diff(antes).affectedKeys().hasOnly([
+          'status','canceladoPorSaida','canceladoPorSaidaId','statusAntesSaida',
+          'motivoCancelamento','canceladoEm','canceladoPor','atualizadoEm','atualizadoPor'
+        ]);
+    }
+    function atualizacaoMensalidadeAbertaValida(antes, depois) {
+      return mensalidadeFinanceiraAberta(antes) &&
+        !depois.diff(antes).affectedKeys().hasAny([
+          'cliente','clienteSlug','canonicalId','competencia',
+          'valorDevido','valor','valorCobrado','financeiroOperationId',
+          'valorContratoProgramado','valorContratoProgramadoEm',
+          'cancelado','cancelada','encerrado','encerrada',
+          'excluido','excluida','arquivado','arquivada'
+        ]) &&
+        depois.get('status', '') in [
+          'aberto','aberta','pendente','pago','paga','quitado','quitada',
+          'recebido','recebida','isento','isenta','cortesia'
+        ];
+    }
+    function clienteMensalidadeFinanceira(dados) {
+      return dados.get('canonicalId', dados.get('cliente', dados.get('clienteSlug', '')));
+    }
+    function atualizacaoValorMensalidadeProgramadaValida(antes, depois) {
+      let alterados = depois.diff(antes).affectedKeys();
+      let cliente = clienteMensalidadeFinanceira(depois);
+      let contratoAntes = get(/databases/$(database)/documents/contratos_cliente/$(cliente)).data;
+      let contratoDepois = getAfter(/databases/$(database)/documents/contratos_cliente/$(cliente)).data;
+      return ehChris() &&
+        (mensalidadeFinanceiraAberta(antes) || mensalidadeFinanceiraIsenta(antes)) &&
+        depois.get('status', '') == antes.get('status', '') &&
+        alterados.hasAny(['valorDevido','valor','valorCobrado']) &&
+        alterados.hasOnly([
+          'valorDevido','valor','valorCobrado','valorContratoProgramado',
+          'valorContratoProgramadoEm','financeiroOperationId',
+          'clienteNome','diaVencimento','atualizadoPor','atualizadoEm'
+        ]) &&
+        depois.get('valorDevido', 0) is number && depois.get('valorDevido', 0) > 0 &&
+        depois.get('valor', depois.get('valorDevido', 0)) == depois.get('valorDevido', 0) &&
+        depois.get('valorCobrado', depois.get('valorDevido', 0)) == depois.get('valorDevido', 0) &&
+        depois.get('valorContratoProgramado', false) == true &&
+        competenciaFinanceiraValida(depois.get('valorContratoProgramadoEm', '')) &&
+        competenciaFinanceiraValida(depois.get('competencia', '')) &&
+        depois.get('competencia', '') >= depois.get('valorContratoProgramadoEm', '') &&
+        contratoDepois.get('financeiroOperationId', '') == depois.get('financeiroOperationId', '') &&
+        contratoAntes.get('financeiroOperationId', '') != depois.get('financeiroOperationId', '') &&
+        contratoDepois.get('valorProgramado', 0) == depois.get('valorDevido', 0) &&
+        contratoDepois.get('valorProgramadoEm', '') == depois.get('valorContratoProgramadoEm', '') &&
+        (!alterados.hasAny(['clienteNome']) || depois.get('clienteNome', '') == contratoDepois.get('clienteNome', '')) &&
+        (!alterados.hasAny(['diaVencimento']) || depois.get('diaVencimento', 0) == contratoDepois.get('diaVencimento', 0));
+    }
+    function reativacaoMensalidadeCanceladaPorSaidaValida(antes, depois) {
+      let op = depois.get('financeiroOperationId', '');
+      let evento = getAfter(/databases/$(database)/documents/clientes_ciclo_financeiro/$(op)).data;
+      return ehChris() &&
+        antes.get('status', '') in ['cancelado','cancelada'] &&
+        antes.get('canceladoPorSaida', false) == true &&
+        depois.get('status', '') in ['isento','isenta','cortesia'] &&
+        depois.get('cortesiaDoMes', false) == true &&
+        textoFinanceiroValido(depois.get('motivoIsencao', ''), 10, 500) &&
+        depois.get('canceladoPorSaida', false) == false &&
+        depois.get('canceladoPorSaidaId', '') == '' &&
+        operationIdFinanceiroValido(op) &&
+        depois.diff(antes).affectedKeys().hasOnly([
+          'status','canceladoPorSaida','canceladoPorSaidaId','statusAntesSaida',
+          'motivoCancelamento','canceladoEm','canceladoPor','cortesiaDoMes',
+          'motivoIsencao','financeiroOperationId','atualizadoEm','atualizadoPor'
+        ]) &&
+        !exists(/databases/$(database)/documents/clientes_ciclo_financeiro/$(op)) &&
+        existsAfter(/databases/$(database)/documents/clientes_ciclo_financeiro/$(op)) &&
+        evento.get('operationId', '') == op &&
+        evento.get('clienteId', '') == clienteMensalidadeFinanceira(depois) &&
+        evento.get('tipo', '') == 'reativacao' &&
+        evento.get('sourceType', '') == 'migracao';
+    }
+    function atualizacaoGerencialMensalidadeValida(antes, depois) {
+      let alterados = depois.diff(antes).affectedKeys();
+      return mensalidadeFinanceiraAberta(antes)
+        ? (alterados.hasAny(['valorDevido','valor','valorCobrado'])
+          ? atualizacaoValorMensalidadeProgramadaValida(antes, depois)
+          : (atualizacaoMensalidadeAbertaValida(antes, depois) || cancelamentoMensalidadePorSaidaValido(antes, depois)))
+        : (mensalidadeFinanceiraIsenta(antes)
+          ? (alterados.hasAny(['valorDevido','valor','valorCobrado'])
+            ? atualizacaoValorMensalidadeProgramadaValida(antes, depois)
+            : (cancelamentoMensalidadePorSaidaValido(antes, depois) || mensalidadeTerminalImutavel(antes, depois)))
+          : ((antes.get('status', '') in ['cancelado','cancelada'] &&
+              antes.get('canceladoPorSaida', false) == true &&
+              reativacaoMensalidadeCanceladaPorSaidaValida(antes, depois)) ||
+            mensalidadeTerminalImutavel(antes, depois)));
+    }
+    function contratoMudouCampoFinanceiro() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'valorCheio','valorVigente','valorProgramado','valorProgramadoEm',
+        'valorProgramadoMotivo','valorProgramadoPor','valorProgramadoAtualizadoEm',
+        'historicoAlteracoesValor','diaVencimento','financeiroRevision','financeiroOperationId'
+      ]);
+    }
+    function revisaoFinanceiraContratoValida() {
+      return ehChris() &&
+        request.resource.data.get('financeiroRevision', 0) == resource.data.get('financeiroRevision', 0) + 1 &&
+        operationIdFinanceiroValido(request.resource.data.get('financeiroOperationId', '')) &&
+        request.resource.data.get('financeiroOperationId', '') != resource.data.get('financeiroOperationId', '');
+    }
+    function contratoTemLedgerAtomico(slug) {
+      let op = request.resource.data.get('financeiroOperationId', '');
+      let evento = getAfter(/databases/$(database)/documents/clientes_ciclo_financeiro/$(op)).data;
+      let mudouProgramacao = request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'valorProgramado','valorProgramadoEm','valorProgramadoMotivo'
+      ]);
+      return !exists(/databases/$(database)/documents/clientes_ciclo_financeiro/$(op)) &&
+        existsAfter(/databases/$(database)/documents/clientes_ciclo_financeiro/$(op)) &&
+        evento.get('operationId', '') == op &&
+        evento.get('sourceType', '') == 'contrato' &&
+        evento.get('sourceId', '') == slug &&
+        (mudouProgramacao
+          ? (evento.get('tipo', '') == 'alteracao_valor' &&
+            evento.get('valor', null) == request.resource.data.get('valorProgramado', null) &&
+            evento.get('competenciaInicio', '') == request.resource.data.get('valorProgramadoEm', ''))
+          : (evento.get('tipo', '') == 'ajuste' && evento.get('valor', null) == null));
+    }
+    function ledgerFinanceiroValido(operationId, dados) {
+      return dados.keys().hasOnly([
+          'schemaVersion','operationId','clienteId','tipo','competenciaInicio',
+          'ultimaCompetencia','dataEfetiva','valor','sourceType','sourceId',
+          'reversalOf','preHash','postHash','criadoPor','criadoEm'
+        ]) &&
+        dados.keys().hasAll([
+          'schemaVersion','operationId','clienteId','tipo','competenciaInicio',
+          'ultimaCompetencia','dataEfetiva','valor','sourceType','sourceId',
+          'reversalOf','preHash','postHash','criadoPor','criadoEm'
+        ]) &&
+        dados.schemaVersion == 1 &&
+        dados.operationId == operationId &&
+        operationIdFinanceiroValido(dados.operationId) &&
+        idFinanceiroValido(dados.clienteId) &&
+        dados.tipo in [
+          'entrada','saida','reativacao','alteracao_valor','lancamento',
+          'baixa','cancelamento','reversao','ajuste','deduplicacao'
+        ] &&
+        competenciaFinanceiraValida(dados.competenciaInicio) &&
+        (dados.ultimaCompetencia == null || competenciaFinanceiraValida(dados.ultimaCompetencia)) &&
+        dados.dataEfetiva is timestamp &&
+        (dados.valor == null || (dados.valor is number && dados.valor > 0 && dados.valor <= 1000000000)) &&
+        dados.sourceType in [
+          'cadastro','contrato','cliente_encerrado','financeiro_lancamento',
+          'ajuste_manual','migracao'
+        ] &&
+        idFinanceiroValido(dados.sourceId) &&
+        (
+          (
+            dados.tipo == 'reversao' &&
+            operationIdFinanceiroValido(dados.reversalOf) &&
+            dados.reversalOf != dados.operationId &&
+            exists(/databases/$(database)/documents/clientes_ciclo_financeiro/$(dados.reversalOf))
+          ) ||
+          (dados.tipo != 'reversao' && dados.reversalOf == null)
+        ) &&
+        hashFinanceiroValido(dados.preHash) &&
+        hashFinanceiroValido(dados.postHash) &&
+        dados.preHash != dados.postHash &&
+        dados.criadoPor == request.auth.uid &&
+        dados.criadoEm == request.time;
+    }
+    function lancamentoFinanceiroValido(docId, dados) {
+      return dados.keys().hasOnly([
+          'schemaVersion','competencia','tipo','descricao','valor','status',
+          'dataCaixa','beneficiarioRef','observacao','autorUid','criadoEm',
+          'atualizadoEm','revision','operationId'
+        ]) &&
+        dados.keys().hasAll([
+          'schemaVersion','competencia','tipo','descricao','valor','status',
+          'dataCaixa','beneficiarioRef','observacao','autorUid','criadoEm',
+          'atualizadoEm','revision','operationId'
+        ]) &&
+        idFinanceiroValido(docId) &&
+        dados.schemaVersion == 1 &&
+        competenciaFinanceiraValida(dados.competencia) &&
+        dados.tipo in [
+          'custo_fixo','salario','imposto','despesa_operacional','receita_ajuste'
+        ] &&
+        textoFinanceiroValido(dados.descricao, 3, 120) &&
+        dados.valor is number && dados.valor > 0 && dados.valor <= 1000000000 &&
+        dados.status in ['previsto','pago','cancelado'] &&
+        (
+          (dados.status == 'previsto' && dados.dataCaixa == null) ||
+          (dados.status == 'pago' && dados.dataCaixa is timestamp) ||
+          (dados.status == 'cancelado' && (dados.dataCaixa == null || dados.dataCaixa is timestamp))
+        ) &&
+        idFinanceiroValido(dados.beneficiarioRef) &&
+        textoFinanceiroValido(dados.observacao, 0, 500) &&
+        dados.autorUid == request.auth.uid &&
+        dados.criadoEm is timestamp &&
+        dados.atualizadoEm is timestamp &&
+        dados.revision is int && dados.revision >= 1 && dados.revision <= 1000000 &&
+        operationIdFinanceiroValido(dados.operationId);
+    }
+    function ledgerCombinaLancamento(docId, lancamento, evento) {
+      return evento.sourceType == 'financeiro_lancamento' &&
+        evento.sourceId == docId &&
+        evento.operationId == lancamento.operationId &&
+        evento.clienteId == lancamento.beneficiarioRef &&
+        evento.competenciaInicio == lancamento.competencia &&
+        evento.valor == lancamento.valor &&
+        evento.criadoPor == lancamento.autorUid &&
+        evento.criadoEm == lancamento.atualizadoEm;
+    }
+    function tipoLedgerCombinaTransicaoLancamento(docId, lancamento, evento) {
+      return (
+          !exists(/databases/$(database)/documents/financeiro_lancamentos/$(docId)) &&
+          evento.tipo == 'lancamento' && evento.reversalOf == null
+        ) || (
+          exists(/databases/$(database)/documents/financeiro_lancamentos/$(docId)) &&
+          get(/databases/$(database)/documents/financeiro_lancamentos/$(docId)).data.status == 'previsto' &&
+          lancamento.status == 'pago' && evento.tipo == 'baixa' && evento.reversalOf == null
+        ) || (
+          exists(/databases/$(database)/documents/financeiro_lancamentos/$(docId)) &&
+          get(/databases/$(database)/documents/financeiro_lancamentos/$(docId)).data.status == 'previsto' &&
+          lancamento.status == 'cancelado' && evento.tipo == 'cancelamento' && evento.reversalOf == null
+        ) || (
+          exists(/databases/$(database)/documents/financeiro_lancamentos/$(docId)) &&
+          get(/databases/$(database)/documents/financeiro_lancamentos/$(docId)).data.status == 'pago' &&
+          lancamento.status == 'cancelado' && evento.tipo == 'reversao' &&
+          evento.reversalOf == get(/databases/$(database)/documents/financeiro_lancamentos/$(docId)).data.operationId
+        ) || (
+          exists(/databases/$(database)/documents/financeiro_lancamentos/$(docId)) &&
+          lancamento.status == get(/databases/$(database)/documents/financeiro_lancamentos/$(docId)).data.status &&
+          evento.tipo == 'ajuste' && evento.reversalOf == null
+        );
+    }
+    function lancamentoTemLedgerAtomico(docId, dados) {
+      return !exists(/databases/$(database)/documents/clientes_ciclo_financeiro/$(dados.operationId)) &&
+        existsAfter(/databases/$(database)/documents/clientes_ciclo_financeiro/$(dados.operationId)) &&
+        ledgerCombinaLancamento(
+          docId,
+          dados,
+          getAfter(/databases/$(database)/documents/clientes_ciclo_financeiro/$(dados.operationId)).data
+        ) &&
+        tipoLedgerCombinaTransicaoLancamento(
+          docId,
+          dados,
+          getAfter(/databases/$(database)/documents/clientes_ciclo_financeiro/$(dados.operationId)).data
+        );
+    }
+    function ledgerLancamentoTemPrincipalAtomico(dados) {
+      return dados.sourceType != 'financeiro_lancamento' || (
+        existsAfter(/databases/$(database)/documents/financeiro_lancamentos/$(dados.sourceId)) &&
+        ledgerCombinaLancamento(
+          dados.sourceId,
+          getAfter(/databases/$(database)/documents/financeiro_lancamentos/$(dados.sourceId)).data,
+          dados
+        ) &&
+        tipoLedgerCombinaTransicaoLancamento(
+          dados.sourceId,
+          getAfter(/databases/$(database)/documents/financeiro_lancamentos/$(dados.sourceId)).data,
+          dados
+        )
+      );
+    }
+    function ledgerContratoTemPrincipalAtomico(dados) {
+      return dados.sourceType != 'contrato' || (
+        exists(/databases/$(database)/documents/contratos_cliente/$(dados.sourceId)) &&
+        existsAfter(/databases/$(database)/documents/contratos_cliente/$(dados.sourceId)) &&
+        getAfter(/databases/$(database)/documents/contratos_cliente/$(dados.sourceId)).data.get('financeiroOperationId', '') == dados.operationId &&
+        get(/databases/$(database)/documents/contratos_cliente/$(dados.sourceId)).data.get('financeiroOperationId', '') != dados.operationId &&
+        getAfter(/databases/$(database)/documents/contratos_cliente/$(dados.sourceId)).data.get('financeiroRevision', 0) ==
+          get(/databases/$(database)/documents/contratos_cliente/$(dados.sourceId)).data.get('financeiroRevision', 0) + 1
+      );
+    }
+    function transicaoLancamentoValida(antes, depois) {
+      return (
+          antes.status == 'previsto' && depois.status == 'pago' &&
+          depois.dataCaixa is timestamp
+        ) || (
+          antes.status == 'previsto' && depois.status == 'cancelado' &&
+          depois.dataCaixa == null && depois.observacao.size() >= 3
+        ) || (
+          antes.status == 'pago' && depois.status == 'cancelado' &&
+          depois.dataCaixa == antes.dataCaixa && depois.observacao.size() >= 3
+        ) || (
+          depois.status == antes.status &&
+          depois.dataCaixa == antes.dataCaixa &&
+          depois.observacao != antes.observacao
+        );
+    }
+
+    // V101 — Controle de conclusão dos calendários.
+    //
+    // Estas funções protegem somente a projeção administrativa. Elas não
+    // autorizam captação, vídeo, postagem nem alteração do calendário. A regra
+    // consegue provar identidade, autoria, transição e atomicidade, mas não
+    // consegue procurar itemId dentro do array do calendário; essa verificação
+    // também é refeita pelo frontend dentro da transação.
+    function podeLerControleConclusao() {
+      return ehCecilia() || ehChris();
+    }
+    function idControleValido(valor) {
+      return valor is string && valor.size() > 0 && valor.size() <= 500;
+    }
+    function competenciaControleValida(valor) {
+      return valor is string && valor.matches('[0-9]{4}-(0[1-9]|1[0-2])');
+    }
+    function operationIdControleValido(valor) {
+      return valor is string && valor.matches('[A-Za-z0-9_-]{12,160}');
+    }
+    function assinaturaSha256Valida(valor) {
+      return valor is string && valor.matches('[a-f0-9]{64}');
+    }
+    function observacaoConferenciaValida(valor) {
+      return valor is string && valor.size() <= 500;
+    }
+    function motivoEncerramentoValido(valor) {
+      return valor is string && valor.size() >= 10 && valor.size() <= 500;
+    }
+    function identidadeControleValida(calendarId, competencia, itemId, dados) {
+      return idControleValido(calendarId) &&
+        competenciaControleValida(competencia) &&
+        idControleValido(itemId) &&
+        dados.calendarId == calendarId &&
+        dados.competencia == competencia &&
+        dados.itemId == itemId;
+    }
+    function autorConferenciaValido(dados) {
+      return dados.autorUid == request.auth.uid &&
+        dados.papelOperado == 'Cecília' &&
+        (
+          (dados.atorRealPapel == 'Cecília' && ehCecilia()) ||
+          (dados.atorRealPapel == 'Chris' && ehChris())
+        );
+    }
+    function autorEncerramentoValido(dados) {
+      return dados.autorUid == request.auth.uid &&
+        dados.atorRealPapel == 'Chris' &&
+        dados.papelOperado == 'Chris' &&
+        ehChris();
+    }
+    function conferenciaPrincipalValida(calendarId, competencia, itemId, dados) {
+      return dados.keys().hasOnly([
+          'schemaVersion','calendarId','competencia','itemId','conferido',
+          'observacao','fonteAssinatura','revision','operationId','autorUid',
+          'atorRealPapel','papelOperado','conferidoEm','atualizadoEm'
+        ]) &&
+        dados.keys().hasAll([
+          'schemaVersion','calendarId','competencia','itemId','conferido',
+          'observacao','fonteAssinatura','revision','operationId','autorUid',
+          'atorRealPapel','papelOperado','conferidoEm','atualizadoEm'
+        ]) &&
+        dados.schemaVersion == 1 &&
+        identidadeControleValida(calendarId, competencia, itemId, dados) &&
+        exists(/databases/$(database)/documents/calendarios/$(calendarId)) &&
+        dados.conferido is bool &&
+        observacaoConferenciaValida(dados.observacao) &&
+        assinaturaSha256Valida(dados.fonteAssinatura) &&
+        dados.revision is int && dados.revision >= 1 &&
+        operationIdControleValido(dados.operationId) &&
+        autorConferenciaValido(dados) &&
+        (dados.conferidoEm == null || dados.conferidoEm is timestamp) &&
+        dados.atualizadoEm is timestamp;
+    }
+    function eventoConferenciaValido(calendarId, competencia, itemId, operacaoId, dados) {
+      return dados.keys().hasOnly([
+          'schemaVersion','calendarId','competencia','itemId','conferido',
+          'observacao','fonteAssinatura','revision','operationId','autorUid',
+          'atorRealPapel','papelOperado','tipo','ocorridoEm'
+        ]) &&
+        dados.keys().hasAll([
+          'schemaVersion','calendarId','competencia','itemId','conferido',
+          'observacao','fonteAssinatura','revision','operationId','autorUid',
+          'atorRealPapel','papelOperado','tipo','ocorridoEm'
+        ]) &&
+        dados.schemaVersion == 1 &&
+        identidadeControleValida(calendarId, competencia, itemId, dados) &&
+        dados.conferido is bool &&
+        observacaoConferenciaValida(dados.observacao) &&
+        assinaturaSha256Valida(dados.fonteAssinatura) &&
+        dados.revision is int && dados.revision >= 1 &&
+        dados.operationId == operacaoId &&
+        operationIdControleValido(dados.operationId) &&
+        autorConferenciaValido(dados) &&
+        dados.tipo in ['conferir','desmarcar','reconferir','anotar'] &&
+        dados.ocorridoEm == request.time;
+    }
+    function eventoConferenciaCombinaPrincipal(principal, evento) {
+      return evento.schemaVersion == principal.schemaVersion &&
+        evento.calendarId == principal.calendarId &&
+        evento.competencia == principal.competencia &&
+        evento.itemId == principal.itemId &&
+        evento.conferido == principal.conferido &&
+        evento.observacao == principal.observacao &&
+        evento.fonteAssinatura == principal.fonteAssinatura &&
+        evento.revision == principal.revision &&
+        evento.operationId == principal.operationId &&
+        evento.autorUid == principal.autorUid &&
+        evento.atorRealPapel == principal.atorRealPapel &&
+        evento.papelOperado == principal.papelOperado &&
+        evento.ocorridoEm == principal.atualizadoEm;
+    }
+    function conferenciaTemEventoAtomico(calendarId, competencia, itemId, dados) {
+      return !exists(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(dados.operationId)) &&
+        existsAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(dados.operationId)) &&
+        eventoConferenciaCombinaPrincipal(
+          dados,
+          getAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(dados.operationId)).data
+        );
+    }
+    function transicaoConferenciaValida(antes, depois, evento) {
+      return (
+          evento.tipo == 'desmarcar' &&
+          antes.conferido == true && depois.conferido == false &&
+          depois.fonteAssinatura == antes.fonteAssinatura &&
+          depois.conferidoEm == null
+        ) || (
+          evento.tipo == 'reconferir' && depois.conferido == true &&
+          (antes.conferido == false || depois.fonteAssinatura != antes.fonteAssinatura) &&
+          depois.conferidoEm == request.time
+        ) || (
+          evento.tipo == 'anotar' &&
+          depois.conferido == antes.conferido &&
+          depois.fonteAssinatura == antes.fonteAssinatura &&
+          depois.conferidoEm == antes.conferidoEm &&
+          depois.observacao != antes.observacao
+        );
+    }
+    function conferenciaPrincipalMudouNoCommit(calendarId, competencia, itemId, evento) {
+      return existsAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)) &&
+        eventoConferenciaCombinaPrincipal(
+          getAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data,
+          evento
+        ) &&
+        (
+          (
+            !exists(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)) &&
+            getAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.revision == 1
+          ) || (
+            exists(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)) &&
+            getAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.revision ==
+              get(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.revision + 1 &&
+            getAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.operationId !=
+              get(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.operationId
+          )
+        );
+    }
+    function encerramentoPrincipalValido(calendarId, competencia, itemId, dados) {
+      return dados.keys().hasOnly([
+          'schemaVersion','calendarId','competencia','itemId','encerrado','motivo',
+          'fonteAssinatura','revision','operationId','autorUid','atorRealPapel',
+          'papelOperado','encerradoEm','atualizadoEm'
+        ]) &&
+        dados.keys().hasAll([
+          'schemaVersion','calendarId','competencia','itemId','encerrado','motivo',
+          'fonteAssinatura','revision','operationId','autorUid','atorRealPapel',
+          'papelOperado','encerradoEm','atualizadoEm'
+        ]) &&
+        dados.schemaVersion == 1 &&
+        identidadeControleValida(calendarId, competencia, itemId, dados) &&
+        exists(/databases/$(database)/documents/calendarios/$(calendarId)) &&
+        dados.encerrado is bool &&
+        motivoEncerramentoValido(dados.motivo) &&
+        assinaturaSha256Valida(dados.fonteAssinatura) &&
+        dados.revision is int && dados.revision >= 1 &&
+        operationIdControleValido(dados.operationId) &&
+        autorEncerramentoValido(dados) &&
+        (dados.encerradoEm == null || dados.encerradoEm is timestamp) &&
+        dados.atualizadoEm is timestamp;
+    }
+    function eventoEncerramentoValido(calendarId, competencia, itemId, operacaoId, dados) {
+      return dados.keys().hasOnly([
+          'schemaVersion','calendarId','competencia','itemId','encerrado','motivo',
+          'fonteAssinatura','revision','operationId','autorUid','atorRealPapel',
+          'papelOperado','tipo','ocorridoEm'
+        ]) &&
+        dados.keys().hasAll([
+          'schemaVersion','calendarId','competencia','itemId','encerrado','motivo',
+          'fonteAssinatura','revision','operationId','autorUid','atorRealPapel',
+          'papelOperado','tipo','ocorridoEm'
+        ]) &&
+        dados.schemaVersion == 1 &&
+        identidadeControleValida(calendarId, competencia, itemId, dados) &&
+        dados.encerrado is bool &&
+        motivoEncerramentoValido(dados.motivo) &&
+        assinaturaSha256Valida(dados.fonteAssinatura) &&
+        dados.revision is int && dados.revision >= 1 &&
+        dados.operationId == operacaoId &&
+        operationIdControleValido(dados.operationId) &&
+        autorEncerramentoValido(dados) &&
+        dados.tipo in ['fechar','reabrir','anotar'] &&
+        dados.ocorridoEm == request.time;
+    }
+    function eventoEncerramentoCombinaPrincipal(principal, evento) {
+      return evento.schemaVersion == principal.schemaVersion &&
+        evento.calendarId == principal.calendarId &&
+        evento.competencia == principal.competencia &&
+        evento.itemId == principal.itemId &&
+        evento.encerrado == principal.encerrado &&
+        evento.motivo == principal.motivo &&
+        evento.fonteAssinatura == principal.fonteAssinatura &&
+        evento.revision == principal.revision &&
+        evento.operationId == principal.operationId &&
+        evento.autorUid == principal.autorUid &&
+        evento.atorRealPapel == principal.atorRealPapel &&
+        evento.papelOperado == principal.papelOperado &&
+        evento.ocorridoEm == principal.atualizadoEm;
+    }
+    function encerramentoTemEventoAtomico(calendarId, competencia, itemId, dados) {
+      return !exists(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(dados.operationId)) &&
+        existsAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(dados.operationId)) &&
+        eventoEncerramentoCombinaPrincipal(
+          dados,
+          getAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(dados.operationId)).data
+        );
+    }
+    function transicaoEncerramentoValida(antes, depois, evento) {
+      return (
+          evento.tipo == 'reabrir' &&
+          antes.encerrado == true && depois.encerrado == false &&
+          depois.encerradoEm == null
+        ) || (
+          evento.tipo == 'fechar' && depois.encerrado == true &&
+          (antes.encerrado == false || depois.fonteAssinatura != antes.fonteAssinatura) &&
+          depois.encerradoEm == request.time
+        ) || (
+          evento.tipo == 'anotar' &&
+          depois.encerrado == antes.encerrado &&
+          depois.fonteAssinatura == antes.fonteAssinatura &&
+          depois.encerradoEm == antes.encerradoEm &&
+          depois.motivo != antes.motivo
+        );
+    }
+    function encerramentoPrincipalMudouNoCommit(calendarId, competencia, itemId, evento) {
+      return existsAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)) &&
+        eventoEncerramentoCombinaPrincipal(
+          getAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data,
+          evento
+        ) &&
+        (
+          (
+            !exists(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)) &&
+            getAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.revision == 1
+          ) || (
+            exists(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)) &&
+            getAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.revision ==
+              get(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.revision + 1 &&
+            getAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.operationId !=
+              get(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)).data.operationId
+          )
+        );
+    }
+    function podeLancarVideoProducao() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email in [
+        'christopherveloso0@gmail.com','amandachamorrosm@gmail.com',
+        'luissouza280507@gmail.com','nathanocosta652@gmail.com'
+      ];
+    }
+    function podeOperarVideoProducao() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email in [
+        'christopherveloso0@gmail.com','amandachamorrosm@gmail.com',
+        'luissouza280507@gmail.com','nathanocosta652@gmail.com',
+        'heloisaksc@gmail.com','vitoriaboaron215@gmail.com','victorvieiraj814@gmail.com'
+      ];
+    }
+    function podePrepararLinkCalendario() {
+      return emailDaSementeNaoRevogado() && request.auth.token.email in [
+        'christopherveloso0@gmail.com','amandachamorrosm@gmail.com',
+        'vitoriaboaron215@gmail.com','gabrielleromaomarketing@gmail.com'
+      ];
+    }
+    function temSessaoCliente() {
+      return logado() &&
+        exists(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)) &&
+        (
+          !('modo' in get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data) ||
+          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.modo != 'equipe'
+        ) &&
+        get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.cliente is string &&
+        get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.token is string &&
+        tokenPortalValido(
+          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.cliente,
+          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.token
+        );
+    }
+    function temSessaoCalendarioEquipe() {
+      return logado() &&
+        exists(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.modo == 'equipe' &&
+        get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.cliente is string &&
+        get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.token is string &&
+        tokenCalendarioEquipeValido(
+          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.cliente,
+          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.token
+        );
+    }
+    function clienteDaSessao() {
+      return get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.cliente;
+    }
+    function ehMeuDoc() {
+      return temSessaoCliente() && resource.data.cliente == clienteDaSessao();
+    }
+    function meuDocPermaneceMeu() {
+      return ehMeuDoc() && request.resource.data.cliente == clienteDaSessao();
+    }
+    function vouCarimbarCerto() {
+      return temSessaoCliente() && request.resource.data.cliente == clienteDaSessao();
+    }
+    function storyClientePodeAtualizar() {
+      return meuDocPermaneceMeu() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'comentarioCliente','comentarioClienteEm','status','postadoEm','postadoPeloCliente',
+          'respondidoEm','aprovadoPeloCliente','aprovadoPeloClienteEm','ajusteTexto'
+        ]) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+          request.resource.data.status in ['aguardando','aprovado','ajuste','postado']);
+    }
+    function acessoDentroDaVigencia(dados) {
+      return !('ativoAte' in dados) || request.time < dados.ativoAte;
+    }
+    function acessoPortalCanonicoAtivo(cliente) {
+      return exists(/databases/$(database)/documents/clientes_acesso/$(cliente)) &&
+        (
+          !('ativo' in get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data) ||
+          get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.ativo != false
+        ) &&
+        acessoDentroDaVigencia(get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data);
+    }
+    function tokenPortalHistoricoAtivo(cliente, token) {
+      return exists(/databases/$(database)/documents/clientes_portal_tokens/$(token)) &&
+        get(/databases/$(database)/documents/clientes_portal_tokens/$(token)).data.cliente == cliente &&
+        (
+          !('ativo' in get(/databases/$(database)/documents/clientes_portal_tokens/$(token)).data) ||
+          get(/databases/$(database)/documents/clientes_portal_tokens/$(token)).data.ativo != false
+        ) &&
+        acessoDentroDaVigencia(get(/databases/$(database)/documents/clientes_portal_tokens/$(token)).data);
+    }
+    function tokenPortalValido(cliente, token) {
+      return (
+        acessoPortalCanonicoAtivo(cliente) &&
+        get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.token == token
+      ) || (
+        tokenPortalHistoricoAtivo(cliente, token) &&
+        (
+          !exists(/databases/$(database)/documents/clientes_acesso/$(cliente)) ||
+          acessoPortalCanonicoAtivo(cliente)
+        )
+      );
+    }
+    function urlHttpsOuVazia(valor) {
+      return valor is string && valor.size() <= 2048 &&
+        (valor == '' || valor.matches('https://[A-Za-z0-9][A-Za-z0-9.-]+(/[A-Za-z0-9._~:/?#\\[\\]@!$&()*+,;=%-]*)?'));
+    }
+    function historicoRespostaClienteValido() {
+      return request.resource.data.historico is list &&
+        (
+          (resource.data.historico is list &&
+            request.resource.data.historico.size() == resource.data.historico.size() + 1 &&
+            request.resource.data.historico.hasAll(resource.data.historico)) ||
+          (!('historico' in resource.data) && request.resource.data.historico.size() == 1)
+        ) &&
+        request.resource.data.historico[request.resource.data.historico.size() - 1] is map &&
+        request.resource.data.historico[request.resource.data.historico.size() - 1].keys().hasOnly(['estagio','em','por']) &&
+        request.resource.data.historico[request.resource.data.historico.size() - 1].estagio == request.resource.data.estagio &&
+        request.resource.data.historico[request.resource.data.historico.size() - 1].em is string &&
+        request.resource.data.historico[request.resource.data.historico.size() - 1].em.size() <= 40 &&
+        request.resource.data.historico[request.resource.data.historico.size() - 1].por == clienteDaSessao() + ' (cliente)';
+    }
+    function respostaPropostaClienteValida() {
+      return resource.data.estagio in ['proposta','analise','ajuste'] &&
+        request.resource.data.estagio in ['aceita','ajuste','perdido'] &&
+        request.resource.data.respostaCliente == request.resource.data.estagio &&
+        request.resource.data.respostaTexto is string &&
+        request.resource.data.respostaTexto.size() <= 2000 &&
+        request.resource.data.atualizadoEm == request.time &&
+        historicoRespostaClienteValido();
+    }
+    function contatoFinanceiroValido(slug, dados) {
+      return dados.keys().hasOnly([
+          'slug','whatsapp','nome','origem','atualizadoPor','atualizadoEm',
+          'criadoPor','criadoEm','migracaoVersao','migradoPor','migradoEm','reciboMigracao'
+        ]) &&
+        dados.slug == slug &&
+        dados.whatsapp is string && dados.whatsapp.matches('55[0-9]{10,11}') &&
+        (!('nome' in dados) || (dados.nome is string && dados.nome.size() <= 200)) &&
+        dados.origem is string &&
+        dados.atualizadoPor is string;
+    }
+    function contatoFinanceiroAmandaValido(slug, dados) {
+      return dados.keys().hasOnly([
+          'slug','whatsapp','nome','origem','atualizadoPor','atualizadoEm'
+        ]) &&
+        dados.keys().hasAll([
+          'slug','whatsapp','nome','origem','atualizadoPor','atualizadoEm'
+        ]) &&
+        contatoFinanceiroValido(slug, dados) &&
+        dados.atualizadoPor == 'Amanda' &&
+        dados.origem in ['ativacao_mensalista','ativacao_avulso','reativacao'];
+    }
+    function tokenCalendarioEquipeValido(cliente, token) {
+      return exists(/databases/$(database)/documents/clientes_acesso/$(cliente)) &&
+        (
+          !('ativo' in get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data) ||
+          get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.ativo != false
+        ) &&
+        acessoDentroDaVigencia(get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data) &&
+        get(/databases/$(database)/documents/clientes_acesso/$(cliente)).data.tokenEquipe == token;
+    }
+    function ehDonoExtra(dados) {
+      return emailDaSementeNaoRevogado() && (
+        (request.auth.token.email == 'christopherveloso0@gmail.com' && dados.filmmaker == 'Chris') ||
+        (request.auth.token.email == 'amandachamorrosm@gmail.com' && dados.filmmaker == 'Amanda') ||
+        (request.auth.token.email == 'vitoriaboaron215@gmail.com' && dados.filmmaker == 'Cecília') ||
+        (request.auth.token.email == 'gabrielleromaomarketing@gmail.com' && dados.filmmaker == 'Gabrielle') ||
+        (request.auth.token.email == 'heloisaksc@gmail.com' && dados.filmmaker == 'Helo') ||
+        (request.auth.token.email == 'luissouza280507@gmail.com' && dados.filmmaker == 'Luís') ||
+        (request.auth.token.email == 'nathanocosta652@gmail.com' && dados.filmmaker == 'Nathan') ||
+        (request.auth.token.email == 'victorvieiraj814@gmail.com' && dados.filmmaker == 'João Victor')
+      );
+    }
+
+    match /sessoes_equipe/{uid} {
+      allow read: if ehEquipe() && request.auth.uid == uid;
+      allow create, update, delete: if ehEquipe() && request.auth.uid == uid;
+    }
+    match /sessoes_gerencia/{uid} {
+      allow read: if ehGerencia() && request.auth.uid == uid;
+      allow create, update, delete: if ehGerencia() && request.auth.uid == uid;
+    }
+    match /sessoes_cliente/{uid} {
+      allow read, delete: if logado() && request.auth.uid == uid;
+      allow create, update: if logado() && request.auth.uid == uid &&
+        request.resource.data.cliente is string && request.resource.data.token is string && (
+          (('modo' in request.resource.data) && request.resource.data.modo == 'equipe' && tokenCalendarioEquipeValido(request.resource.data.cliente, request.resource.data.token)) ||
+          ((!('modo' in request.resource.data) || request.resource.data.modo != 'equipe') && tokenPortalValido(request.resource.data.cliente, request.resource.data.token))
+        );
+    }
+
+    // O formulário público apenas entrega a ficha; só a gerência lê e ativa.
+    match /cadastros_clientes/{docId} {
+      allow create: if ehGerencia() || (
+        logado() &&
+        request.resource.data.criadoPorUid == request.auth.uid &&
+        request.resource.data.protocolo == docId &&
+        request.resource.data.cadastroTipo == 'mensalista_fechado' &&
+        request.resource.data.statusGerencia == 'aguardando_validacao' &&
+        request.resource.data.privadoGerencia == true
+      );
+      allow get: if ehGerencia() ||
+        (logado() && resource.data.criadoPorUid == request.auth.uid) ||
+        (temSessaoCliente() && resource.data.slug == clienteDaSessao());
+      allow list: if ehGerencia();
+      allow update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /leads_avulsos/{docId} {
+      allow create: if logado() && request.resource.data.origemLead == 'avulso' &&
+        request.resource.data.criadoPorUid == request.auth.uid && request.resource.data.protocolo == docId;
+      allow get: if ehGerencia() || (logado() && resource.data.criadoPorUid == request.auth.uid);
+      allow list, update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /leads_mensalista/{docId} {
+      allow create: if logado() && request.resource.data.origemLead == 'mensal' &&
+        request.resource.data.criadoPorUid == request.auth.uid && request.resource.data.protocolo == docId;
+      allow get: if ehGerencia() || (logado() && resource.data.criadoPorUid == request.auth.uid);
+      allow list, update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /leads_pessoa_fisica/{docId} {
+      allow create: if logado() && request.resource.data.origemLead == 'pessoa_fisica' &&
+        request.resource.data.criadoPorUid == request.auth.uid && request.resource.data.protocolo == docId;
+      allow get: if ehGerencia() || (logado() && resource.data.criadoPorUid == request.auth.uid);
+      allow list, update: if ehGerencia();
+      allow delete: if false;
+    }
+
+    match /clientes_portal_tokens/{token} {
+      allow get: if logado();
+      allow list: if ehGerencia();
+      allow create, update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /usuarios_equipe/{email} {
+      allow get: if temEmailVerificado() && request.auth.token.email == email;
+      allow list, create, update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /emails_equipe/{pessoa} {
+      allow read: if ehEquipe();
+      allow create, update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /clientes_acesso/{slug} {
+      allow get: if ehEquipe();
+      allow list: if ehGerencia();
+      allow create: if ehGerencia() || (
+        podePrepararLinkCalendario() &&
+        request.resource.data.keys().hasOnly(['token','tokenEquipe','nome','criadoEm']) &&
+        request.resource.data.token is string &&
+        request.resource.data.tokenEquipe is string &&
+        request.resource.data.nome is string
+      );
+      allow update: if ehGerencia() || (
+        podePrepararLinkCalendario() && (!('ativo' in resource.data) || resource.data.ativo != false) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['token','tokenEquipe','nome','criadoEm']) &&
+        (!('token' in resource.data) || request.resource.data.token == resource.data.token) &&
+        (!('tokenEquipe' in resource.data) || request.resource.data.tokenEquipe == resource.data.tokenEquipe)
+      );
+      allow delete: if false;
+    }
+
+    // V29 — Cecília usa as credenciais no trabalho, mas não administra o
+    // cofre. Leitura é o único direito novo; criar/alterar/soft-delete
+    // continua exclusivo da Gerência.
+    match /cofre_senhas/{docId} {
+      allow read: if ehGerencia() || ehCecilia();
+      allow create, update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /receitas_avulsas/{docId}    { allow read, create, update: if ehGerencia(); allow delete: if false; }
+    match /clientes_encerrados/{docId} { allow read, create, update: if ehGerencia(); allow delete: if false; }
+    match /config_financeiro/{docId} {
+      allow read, create, update: if ehChris();
+      allow delete: if false;
+    }
+    match /onboarding_processos/{docId}{ allow read, create, update: if ehGerencia(); allow delete: if false; }
+    match /negocios/{docId} {
+      // V82 — a Central de Vendas existe somente no DOM do Chris. A regra
+      // acompanha essa fronteira: Amanda continua gestora dos fluxos
+      // operacionais, mas não lê nem altera propostas/reuniões por chamada
+      // direta ao Firestore. O cliente mantém apenas a resposta estreita da
+      // própria proposta e o envio HTTPS do próprio comprovante.
+      allow read: if ehChris() || (temSessaoCliente() && resource.data.clienteSlug == clienteDaSessao());
+      allow create: if ehChris();
+      allow update: if ehChris() || (
+        temSessaoCliente() && resource.data.clienteSlug == clienteDaSessao() &&
+        request.resource.data.clienteSlug == clienteDaSessao() &&
+        (
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'estagio','respostaCliente','respostaTexto','historico','atualizadoEm'
+            ]) &&
+            respostaPropostaClienteValida()
+          ) || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'pagamentoComprovante','pagamentoEnviadoEm','atualizadoEm'
+            ]) &&
+            request.resource.data.estagio == resource.data.estagio &&
+            request.resource.data.pagamentoComprovante != '' &&
+            urlHttpsOuVazia(request.resource.data.pagamentoComprovante) &&
+            request.resource.data.pagamentoEnviadoEm is string &&
+            request.resource.data.pagamentoEnviadoEm.size() <= 40 &&
+            request.resource.data.atualizadoEm == request.time
+          )
+        )
+      );
+      allow delete: if false;
+    }
+    match /reunioes_vendas/{docId} {
+      allow read, create, update: if ehChris();
+      allow delete: if false;
+    }
+    // V103 — histórico canônico do ciclo financeiro. O ID é o operationId;
+    // retries não criam segunda linha e nenhum evento pode ser alterado/apagado.
+    match /clientes_ciclo_financeiro/{operationId} {
+      allow read: if ehChris();
+      allow create: if ehChris() &&
+        ledgerFinanceiroValido(operationId, request.resource.data) &&
+        ledgerLancamentoTemPrincipalAtomico(request.resource.data) &&
+        ledgerContratoTemPrincipalAtomico(request.resource.data);
+      allow update, delete: if false;
+    }
+    // V103 — custos, salários, impostos, despesas e ajustes de receita. Esta
+    // coleção não contém a pauta de mensalidades e permanece privada do Chris.
+    // Correções preservam o original: valor/tipo/competência/beneficiário são
+    // imutáveis; baixa, cancelamento, reversão e anotação incrementam revision.
+    match /financeiro_lancamentos/{docId} {
+      allow read: if ehChris();
+      allow create: if ehChris() &&
+        lancamentoFinanceiroValido(docId, request.resource.data) &&
+        request.resource.data.revision == 1 &&
+        request.resource.data.criadoEm == request.time &&
+        request.resource.data.atualizadoEm == request.time &&
+        lancamentoTemLedgerAtomico(docId, request.resource.data);
+      allow update: if ehChris() &&
+        lancamentoFinanceiroValido(docId, request.resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status','dataCaixa','observacao','autorUid','atualizadoEm',
+          'revision','operationId'
+        ]) &&
+        request.resource.data.revision == resource.data.revision + 1 &&
+        request.resource.data.operationId != resource.data.operationId &&
+        request.resource.data.criadoEm == resource.data.criadoEm &&
+        request.resource.data.atualizadoEm == request.time &&
+        transicaoLancamentoValida(resource.data, request.resource.data) &&
+        lancamentoTemLedgerAtomico(docId, request.resource.data);
+      allow delete: if false;
+    }
+    match /contratos_cliente/{slug} {
+      allow read: if ehGerencia() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow create: if ehGerencia();
+      allow update: if ehGerencia() &&
+        (!contratoMudouCampoFinanceiro() || (
+          revisaoFinanceiraContratoValida() && contratoTemLedgerAtomico(slug)
+        ));
+      allow delete: if false;
+    }
+    match /pagamentos_mensais/{docId} {
+      allow read: if ehGerencia() || ehMeuDoc();
+      allow create: if ehGerencia();
+      allow update: if (ehGerencia() &&
+        atualizacaoGerencialMensalidadeValida(resource.data, request.resource.data)) || (meuDocPermaneceMeu() &&
+        mensalidadeFinanceiraAberta(resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['comprovante','comprovanteEnviadoEm']) &&
+        request.resource.data.comprovante != '' &&
+        urlHttpsOuVazia(request.resource.data.comprovante) &&
+        request.resource.data.comprovanteEnviadoEm is string &&
+        request.resource.data.comprovanteEnviadoEm.size() <= 40);
+      allow delete: if false;
+    }
+    // O registro da conta pessoal não fica exposto à Amanda, clientes ou equipe.
+    // Amanda pode apenas criar o pendente padronizado durante a ativação; depois
+    // somente o Chris lê, classifica a conta e confirma/desfaz o recebimento.
+    match /recebimentos_entrada_pessoal/{docId} {
+      allow read, update: if ehChris();
+      allow create: if ehChris() || (ehAmanda() &&
+        request.resource.data.keys().hasOnly([
+          'id','cliente','clienteNome','competencia','mensalidadeId','valorPrevisto',
+          'status','destino','foraCaixaAgencia','origem','pagoEm','excluido',
+          'criadoPor','criadoEm'
+        ]) &&
+        request.resource.data.id == docId &&
+        request.resource.data.cliente is string &&
+        request.resource.data.clienteNome is string &&
+        request.resource.data.competencia is string &&
+        request.resource.data.mensalidadeId is string &&
+        request.resource.data.valorPrevisto is number && request.resource.data.valorPrevisto > 0 &&
+        request.resource.data.status == 'pendente' &&
+        !('destino' in request.resource.data) &&
+        !('foraCaixaAgencia' in request.resource.data) &&
+        request.resource.data.origem == 'ativacao_mensalista' &&
+        request.resource.data.pagoEm == '' &&
+        request.resource.data.excluido == false
+      );
+      allow delete: if false;
+    }
+    match /pagamentos_extra/{docId} {
+      allow read: if ehGerencia() || (ehEquipe() && ehDonoExtra(resource.data));
+      allow create: if ehGerencia() || (ehEquipe() && ehDonoExtra(request.resource.data) &&
+        request.resource.data.pago == false && request.resource.data.informadoPelaPessoa == true &&
+        (!('aprovadoPeloChris' in request.resource.data) || request.resource.data.aprovadoPeloChris != true) &&
+        (!('excluido' in request.resource.data) || request.resource.data.excluido != true));
+      allow update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /log_acessos/{docId} { allow read: if ehGerencia(); allow create: if logado(); allow update, delete: if false; }
+    match /config_seguranca/{docId} { allow read, create, update: if ehGerencia(); allow delete: if false; }
+
+    // Caixa pública separada: o visitante envia; somente a equipe converte em demanda.
+    match /pedidos_publicos/{docId} {
+      allow create: if logado();
+      allow read, update: if ehEquipe();
+      allow delete: if false;
+    }
+
+    // Dados compartilhados com o Portal: equipe inteira ou somente o cliente da sessão.
+    match /calendarios/{slug} {
+      allow get: if ehEquipe() || ((temSessaoCliente() || temSessaoCalendarioEquipe()) && slug == clienteDaSessao());
+      allow list: if ehEquipe();
+      allow create: if ehEquipe() || (temSessaoCalendarioEquipe() && slug == clienteDaSessao());
+      allow update: if (ehEquipe() && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'itemIdMigracaoVersao','itemIdMigradoEm','itemIdMigradoPor','itemIdMigracaoUltimaOperacao'
+          ]) || (
+            ehChris() &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'items','updatedAt','itemIdMigracaoVersao','itemIdMigradoEm',
+              'itemIdMigradoPor','itemIdMigracaoUltimaOperacao'
+            ]) &&
+            request.resource.data.itemIdMigracaoVersao == 1 &&
+            request.resource.data.itemIdMigradoEm == request.time &&
+            request.resource.data.itemIdMigradoPor == 'Chris' &&
+            request.resource.data.itemIdMigracaoUltimaOperacao.matches('mig_[A-Za-z0-9_-]{12,156}') &&
+            existsAfter(/databases/$(database)/documents/calendarios_itemid_migracoes/$(slug)/operacoes/$(request.resource.data.itemIdMigracaoUltimaOperacao))
+          )
+        )) || (temSessaoCalendarioEquipe() && slug == clienteDaSessao()) || (temSessaoCliente() && slug == clienteDaSessao() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['items','comments','updatedAt','aprovacaoMeses','aprovacaoCliente','aprovacaoInterna']));
+      allow delete: if false;
+    }
+
+    // V102 — recibo mínimo e append-only da normalização explícita de IDs
+    // antigos. A leitura do painel nunca cria este documento; ele só nasce
+    // no mesmo commit que o backup e a atualização do calendário.
+    match /calendarios_itemid_migracoes/{calendarId} {
+      allow read, write: if false;
+      match /operacoes/{operationId} {
+        allow read: if ehChris();
+        allow create: if ehChris() &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion','calendarId','operationId','status','quantidade',
+            'totalItens','hashAntes','hashDepois','backupId','autorUid',
+            'atorRealPapel','papelOperado','criadoEm'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'schemaVersion','calendarId','operationId','status','quantidade',
+            'totalItens','hashAntes','hashDepois','backupId','autorUid',
+            'atorRealPapel','papelOperado','criadoEm'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.calendarId == calendarId &&
+          request.resource.data.operationId == operationId &&
+          operationId.matches('mig_[A-Za-z0-9_-]{12,156}') &&
+          request.resource.data.status == 'aplicada' &&
+          request.resource.data.quantidade is int &&
+          request.resource.data.quantidade >= 1 &&
+          request.resource.data.quantidade <= 5000 &&
+          request.resource.data.totalItens is int &&
+          request.resource.data.totalItens >= request.resource.data.quantidade &&
+          request.resource.data.totalItens <= 5000 &&
+          request.resource.data.hashAntes.matches('[a-f0-9]{64}') &&
+          request.resource.data.hashDepois.matches('[a-f0-9]{64}') &&
+          request.resource.data.hashAntes != request.resource.data.hashDepois &&
+          request.resource.data.backupId == calendarId + '__v102_itemids__' + operationId &&
+          request.resource.data.autorUid == request.auth.uid &&
+          request.resource.data.atorRealPapel == 'Chris' &&
+          request.resource.data.papelOperado == 'Chris' &&
+          request.resource.data.criadoEm == request.time &&
+          existsAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)) &&
+          getAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)).data.__cliente == calendarId &&
+          getAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)).data.__tipo == 'antes_itemids_v102' &&
+          getAfter(/databases/$(database)/documents/calendarios_versoes/$(request.resource.data.backupId)).data.__operationId == operationId;
+        allow update, delete: if false;
+      }
+    }
+
+    // V101 — projeção mínima da conferência administrativa de Cecília.
+    // Renderizar o painel não cria nada. A primeira criação exige conferido=true
+    // e, em qualquer gravação, principal + evento novo precisam estar no mesmo
+    // batch/transação. Chris só escreve declarando que opera o papel Cecília;
+    // o wrapper V96 acrescenta a auditoria delegada fora desta projeção.
+    match /calendarios_conferencias/{calendarId} {
+      allow read, write: if false;
+      match /competencias/{competencia} {
+        allow read, write: if false;
+        match /itens/{itemId} {
+          allow read: if podeLerControleConclusao();
+          allow create: if conferenciaPrincipalValida(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            request.resource.data.conferido == true &&
+            request.resource.data.conferidoEm == request.time &&
+            request.resource.data.atualizadoEm == request.time &&
+            request.resource.data.revision == 1 &&
+            conferenciaTemEventoAtomico(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            getAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(request.resource.data.operationId)).data.tipo == 'conferir';
+          allow update: if conferenciaPrincipalValida(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'conferido','observacao','fonteAssinatura','revision','operationId',
+              'autorUid','atorRealPapel','papelOperado','conferidoEm','atualizadoEm'
+            ]) &&
+            request.resource.data.revision == resource.data.revision + 1 &&
+            request.resource.data.operationId != resource.data.operationId &&
+            request.resource.data.atualizadoEm == request.time &&
+            conferenciaTemEventoAtomico(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            transicaoConferenciaValida(
+              resource.data,
+              request.resource.data,
+              getAfter(/databases/$(database)/documents/calendarios_conferencias/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(request.resource.data.operationId)).data
+            );
+          allow delete: if false;
+
+          match /eventos/{operacaoId} {
+            allow read: if podeLerControleConclusao();
+            allow create: if eventoConferenciaValido(
+                calendarId, competencia, itemId, operacaoId, request.resource.data
+              ) &&
+              conferenciaPrincipalMudouNoCommit(
+                calendarId, competencia, itemId, request.resource.data
+              );
+            allow update, delete: if false;
+          }
+        }
+      }
+    }
+
+    // V101 — encerramento excepcional auditável. Somente o Chris real pode
+    // fechar, reabrir ou anotar; nenhuma operação apaga o evento anterior.
+    match /calendarios_encerramentos/{calendarId} {
+      allow read, write: if false;
+      match /competencias/{competencia} {
+        allow read, write: if false;
+        match /itens/{itemId} {
+          allow read: if podeLerControleConclusao();
+          allow create: if encerramentoPrincipalValido(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            request.resource.data.encerrado == true &&
+            request.resource.data.encerradoEm == request.time &&
+            request.resource.data.atualizadoEm == request.time &&
+            request.resource.data.revision == 1 &&
+            encerramentoTemEventoAtomico(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            getAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(request.resource.data.operationId)).data.tipo == 'fechar';
+          allow update: if encerramentoPrincipalValido(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'encerrado','motivo','fonteAssinatura','revision','operationId',
+              'autorUid','atorRealPapel','papelOperado','encerradoEm','atualizadoEm'
+            ]) &&
+            request.resource.data.revision == resource.data.revision + 1 &&
+            request.resource.data.operationId != resource.data.operationId &&
+            request.resource.data.atualizadoEm == request.time &&
+            encerramentoTemEventoAtomico(
+              calendarId, competencia, itemId, request.resource.data
+            ) &&
+            transicaoEncerramentoValida(
+              resource.data,
+              request.resource.data,
+              getAfter(/databases/$(database)/documents/calendarios_encerramentos/$(calendarId)/competencias/$(competencia)/itens/$(itemId)/eventos/$(request.resource.data.operationId)).data
+            );
+          allow delete: if false;
+
+          match /eventos/{operacaoId} {
+            allow read: if podeLerControleConclusao();
+            allow create: if eventoEncerramentoValido(
+                calendarId, competencia, itemId, operacaoId, request.resource.data
+              ) &&
+              encerramentoPrincipalMudouNoCommit(
+                calendarId, competencia, itemId, request.resource.data
+              );
+            allow update, delete: if false;
+          }
+        }
+      }
+    }
+
+    match /videos_producao/{docId}  { allow read: if ehEquipe() || ehMeuDoc(); allow create: if podeLancarVideoProducao(); allow update: if podeOperarVideoProducao() || meuDocPermaneceMeu(); allow delete: if false; }
+    match /postagens/{docId}        { allow read: if ehEquipe() || ehMeuDoc(); allow create, update: if ehEquipe(); allow delete: if false; }
+    match /agendamentos/{docId}     { allow read: if ehEquipe() || ehMeuDoc(); allow create, update: if ehEquipe(); allow delete: if false; }
+    match /atas_reuniao/{docId}     { allow read: if ehEquipe() || ehMeuDoc(); allow create, update: if ehEquipe(); allow delete: if false; }
+    match /stories_semanais/{docId} { allow read: if ehEquipe() || ehMeuDoc(); allow create: if ehEquipe() || vouCarimbarCerto(); allow update: if ehEquipe() || storyClientePodeAtualizar(); allow delete: if false; }
+    match /stories_links/{docId} {
+      allow read: if ehEquipe() || (temSessaoCliente() && resource.data.cliente == clienteDaSessao() && resource.data.liberadoCliente == true && resource.data.revisaoInterna == 'liberado');
+      allow create, update: if ehEquipe();
+      allow delete: if false;
+    }
+    match /avaliacoes_clientes/{docId} {
+      allow read: if ehEquipe() || (temSessaoCliente() && resource.data.cliente == clienteDaSessao());
+      allow create: if ehEquipe() || (temSessaoCliente() &&
+        request.resource.data.cliente == clienteDaSessao() &&
+        request.resource.data.nota is int && request.resource.data.nota >= 1 && request.resource.data.nota <= 5 &&
+        request.resource.data.mes is string && request.resource.data.origem == 'portal_cliente' &&
+        (!('excluido' in request.resource.data) || request.resource.data.excluido != true));
+      allow update: if ehEquipe() || (temSessaoCliente() &&
+        resource.data.cliente == clienteDaSessao() && request.resource.data.cliente == clienteDaSessao() &&
+        request.resource.data.nota is int && request.resource.data.nota >= 1 && request.resource.data.nota <= 5 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['clienteNome','nota','mes','comentario','origem','atualizadoEm']));
+      allow delete: if false;
+    }
+    match /demandas_cliente/{docId} {
+      allow read: if ehEquipe() || ehMeuDoc();
+      allow create: if ehEquipe() || vouCarimbarCerto();
+      allow update: if ehEquipe() || meuDocPermaneceMeu();
+      allow delete: if false;
+    }
+    match /checklist_cliente/{docId} {
+      allow read: if ehEquipe() || ehMeuDoc();
+      allow create: if ehEquipe();
+      allow update: if ehEquipe() || meuDocPermaneceMeu();
+      allow delete: if false;
+    }
+    match /ideias_cliente/{docId} {
+      allow read: if ehEquipe() || ehMeuDoc();
+      allow create: if ehEquipe() || vouCarimbarCerto();
+      allow update: if ehEquipe() || meuDocPermaneceMeu();
+      allow delete: if false;
+    }
+    match /referencias_cliente/{docId} {
+      allow read: if ehEquipe() || ehMeuDoc();
+      allow create: if ehEquipe() || vouCarimbarCerto();
+      allow update: if ehEquipe() || meuDocPermaneceMeu();
+      allow delete: if false;
+    }
+    match /avisos_do_cliente/{docId} {
+      allow read: if ehEquipe() || ehMeuDoc();
+      allow create: if ehEquipe() || vouCarimbarCerto();
+      allow update: if ehEquipe() || meuDocPermaneceMeu();
+      allow delete: if false;
+    }
+    match /info_extras_cliente/{slug} {
+      allow read: if ehEquipe() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow create, update: if ehEquipe() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow delete: if false;
+    }
+    match /clientes_drive/{slug} {
+      allow read: if ehEquipe() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow create, update: if ehEquipe();
+      allow delete: if false;
+    }
+    match /briefings_cliente/{slug} {
+      allow read: if ehEquipe() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow create, update: if ehEquipe() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow delete: if false;
+    }
+    match /processos_cliente/{slug} {
+      allow read: if ehEquipe() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow create, update: if ehEquipe();
+      allow delete: if false;
+    }
+    match /referencias/{docId} {
+      allow read: if ehEquipe() || ehMeuDoc();
+      allow create, update: if ehEquipe();
+      allow delete: if false;
+    }
+    match /refs_perfil_semana/{slug} {
+      allow read: if ehEquipe() || (temSessaoCliente() && slug == clienteDaSessao());
+      allow create, update: if ehEquipe();
+      allow delete: if false;
+    }
+
+    match /clientes_extras/{docId} {
+      allow read: if ehEquipe();
+      allow create, update: if ehGerencia();
+      allow delete: if false;
+    }
+    match /tipos_tarefa_fixa/{docId} {
+      allow read: if ehEquipe();
+      allow create, update: if ehAmanda() || ehChris();
+      allow delete: if false;
+    }
+    match /clientes_config/{docId} {
+      allow read: if ehEquipe();
+      allow create, update: if ehGerencia();
+      allow delete: if false;
+    }
+    // Novos fluxos de cobrança/mensagens gravam fora do documento operacional
+    // legível pela equipe. O legado só é consultado na migração manual; Amanda
+    // registra/corrige na entrada e somente Chris lê a agenda financeira.
+    match /contatos_clientes_financeiro/{slug} {
+      allow read: if ehChris();
+      allow create: if (ehChris() && contatoFinanceiroValido(slug, request.resource.data)) ||
+        (ehAmanda() && contatoFinanceiroAmandaValido(slug, request.resource.data));
+      allow update: if contatoFinanceiroValido(slug, request.resource.data) && (
+        ehChris() || (
+          ehAmanda() && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'slug','whatsapp','nome','origem','atualizadoPor','atualizadoEm'
+          ]) &&
+          request.resource.data.atualizadoPor == 'Amanda' &&
+          request.resource.data.origem in ['ativacao_mensalista','ativacao_avulso','reativacao']
+        )
+      );
+      allow delete: if false;
+    }
+    match /capsulas_clientes/{docId} {
+      allow read, create, update: if ehAmanda() || ehChris();
+      allow delete: if false;
+    }
+    match /campanhas/{docId} {
+      allow read: if ehChris() || ehAmanda() || ehGabi() || ehCecilia();
+      allow create: if ehChris() || ehGabi();
+      allow update: if ehChris() || ehAmanda() || ehGabi() || ehCecilia();
+      allow delete: if false;
+    }
+
+    // V96: trilha mínima e append-only das ações de Chris operando outro
+    // papel. O payload de negócio nunca entra aqui; criação e escrita do
+    // documento operacional precisam ser aprovadas pelo mesmo batch.
+    match /log_operacoes_delegadas/{docId} {
+      allow read: if ehChris();
+      allow create: if ehChris() &&
+        request.resource.data.keys().hasOnly([
+          'atorReal','papelOperado','operacao','origem','versao',
+          'alvos','totalAlvos','executadoEm'
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'atorReal','papelOperado','operacao','origem','versao',
+          'alvos','totalAlvos','executadoEm'
+        ]) &&
+        request.resource.data.atorReal == 'Chris' &&
+        request.resource.data.papelOperado in [
+          'Amanda','Cecília','Gabrielle','Helo','João Victor','Luís','Nathan','Yas'
+        ] &&
+        request.resource.data.operacao in [
+          'addDoc','setDoc','updateDoc','deleteDoc','runTransaction','writeBatch'
+        ] &&
+        request.resource.data.origem in ['escritorio','calendario'] &&
+        request.resource.data.versao == 'V96' &&
+        request.resource.data.alvos is list &&
+        request.resource.data.alvos.size() <= 40 &&
+        request.resource.data.totalAlvos is int &&
+        request.resource.data.totalAlvos >= request.resource.data.alvos.size() &&
+        request.resource.data.totalAlvos <= 500 &&
+        request.resource.data.executadoEm == request.time;
+      allow update, delete: if false;
+    }
+
+    // Coleções exclusivamente operacionais. Sem sessão de equipe, não há leitura.
+    match /{colecao}/{docId} {
+      // A coleção é filtrada antes do gate de e-mail. Além de manter o mesmo
+      // contrato, isso evita gastar centenas de expressões em caminhos V102
+      // que nunca pertencem a esta lista.
+      allow read, create, update: if colecao in [
+        'agenda_reunioes','anotacoes_pessoais','ausencias',
+        'calendarios_backup','calendarios_backup_20260727',
+        'calendarios_enviados','calendarios_versoes',
+        'checklist_execucoes','checklist_templates_custom','config_painel','controle_postagens',
+        'demandas','editores_afinidade','email_digest_controle','email_throttle',
+        'fila_emails','foto_do_dia','funcionario_do_mes','funcoes_fixas_geradas','get_academy',
+        'log_automacoes','metas_equipe','observacoes_funcionarios','presenca_funcionarios',
+        'ranking_historico','resumos_diarios',
+        'rfv_clientes','sistema','stories_clientes','stories_diarios_config',
+        'stories_diarios_execucoes'
+      ] && ehEquipe();
+      // Dados operacionais nunca são apagados fisicamente. As telas usam
+      // `excluido:true`, preservando histórico e permitindo auditoria.
+      allow delete: if false;
+    }
+  }
+}

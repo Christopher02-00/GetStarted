@@ -1,11 +1,11 @@
 /*
- * Get Started — integração financeira V105 (compatibilidade sobre a V104).
+ * Get Started — integração financeira V103.
  *
  * Este módulo concentra leitura, projeção e UI. A matemática e as leis de
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
-import * as Core from './financeiro-core.mjs?v=105';
+import * as Core from './financeiro-core.mjs?v=103';
 
 const COLECOES_SNAPSHOT = [
   'contratos_cliente',
@@ -15,8 +15,6 @@ const COLECOES_SNAPSHOT = [
   'receitas_avulsas',
   'financeiro_lancamentos',
   'clientes_ciclo_financeiro',
-  'config_financeiro',
-  'clientes_config',
 ];
 const COLECOES_CONTRATOS = [
   'contratos_cliente',
@@ -58,7 +56,7 @@ function hashLeve(valor){
   return (h>>>0).toString(16).padStart(8,'0');
 }
 
-export function instalarFinanceiroV104(deps){
+export function instalarFinanceiroV103(deps){
   const {
     db, collection, doc, getDocs, getDoc, setDoc, updateDoc, runTransaction,
     serverTimestamp, deleteField, arrayUnion,
@@ -138,7 +136,6 @@ function competenciaDeDataCaixa(valor){
   }
 
   function projetar(fontes,competencia,{regua=true}={}){
-    const configRegua=(fontes.config_financeiro||[]).find(v=>v.id==='regua_cobranca')||{};
     return Core.projetarFinanceiroCompetencia({
       contratos:fontes.contratos,
       pagamentos:fontes.pagamentos,
@@ -150,8 +147,6 @@ function competenciaDeDataCaixa(valor){
       hoje:regua?hojeIso(deps):'',
       competenciasRegua:regua?competenciasDaRegua(fontes,competencia):[],
       carenciaDias:5,
-      competenciaInicialOperacao:texto(configRegua.inicioOperacao)||'2026-07',
-      competenciasQuitadasAte:texto(configRegua.competenciasQuitadasAte)||'2026-08',
     });
   }
 
@@ -171,16 +166,13 @@ function competenciaDeDataCaixa(valor){
     return true;
   }
   w.sincronizarCompetenciaFinanceiraV103=sincronizarCompetencia;
-  w.sincronizarCompetenciaFinanceiraV104=sincronizarCompetencia;
 
   function mudarMes(id,delta,origem){
     const atual=campoCompetencia(id);
     return sincronizarCompetencia(delta>0?Core.proximaCompetencia(atual):Core.competenciaAnterior(atual),origem);
   }
   w.mudarMesCobrancaV103=delta=>mudarMes('cobMes',delta,'cobranca');
-  w.mudarMesCobrancaV104=delta=>mudarMes('cobMes',delta,'cobranca');
   w.mudarMesContratosV103=delta=>mudarMes('ctMes',delta,'contratos');
-  w.mudarMesContratosV104=w.mudarMesContratosV103;
   w.mudarMesMensalidades=delta=>mudarMes('mensMes',delta,'mensalidades');
   w.mudarMesFinanceiro=delta=>mudarMes('finMes',delta,'financeiro');
 
@@ -219,7 +211,6 @@ function competenciaDeDataCaixa(valor){
       if(filtro==='pago') linhas=linhas.filter(v=>v.sit.k==='pago');
       linhas.sort((a,b)=>numero(a.diaVencimento)-numero(b.diaVencimento)||nomeLinha(a,nomes).localeCompare(nomeLinha(b,nomes),'pt-BR'));
       w.__mensalidadesV103=Object.fromEntries(linhas.map(v=>[v.id,{...v,clienteNome:nomeLinha(v,nomes)}]));
-      w.__mensalidadesV104=w.__mensalidadesV103;
       const t=p.obrigacoes.totais||{};
       let html=`<div class="painelResumo" style="margin-bottom:16px;">
         <div class="resumoCard"><div class="num" style="font-size:17px;">${brl(t.previsto||0)}</div><div class="lbl">Previsto · ${esc(nomeMes(competencia))}</div></div>
@@ -306,7 +297,6 @@ function competenciaDeDataCaixa(valor){
       const contatos=new Map((fontes.contatos_clientes_financeiro||[]).map(v=>[canonico(v.id),texto(v.whatsapp)]));
       const todas=[...(reg.anterioresVencidos?.itens||[]),...(reg.competenciaSelecionada?.itens||[]),...(reg.proximaPrevisao?.itens||[])];
       w.__cobrancasV103=Object.fromEntries(todas.map(v=>[v.id,{...v,clienteNome:nomeLinha(v,nomes)}]));
-      w.__cobrancasV104=w.__cobrancasV103;
       w.__cobrancasFila=w.__cobrancasV103;
       const hoje=hojeIso(deps);
       const secao=(titulo,sub,itens,tipo)=>{
@@ -334,114 +324,6 @@ function competenciaDeDataCaixa(valor){
     }catch(e){ console.error('V103 régua indisponível:',e); box.innerHTML='<div class="card" style="border:2px solid var(--red);"><b>Régua indisponível</b><div class="desc">Erro de leitura não virou zero, atraso nem mensagem de cobrança. Tente novamente.</div></div>'; return false; }
   };
 
-  function telefoneParaTela(valor){
-    const digitos=Core.normalizarTelefoneBR(valor);
-    if(!digitos)return '';
-    const local=digitos.startsWith('55')?digitos.slice(2):digitos;
-    return local.length===11?`(${local.slice(0,2)}) ${local.slice(2,7)}-${local.slice(7)}`:`+${digitos}`;
-  }
-
-  /* V105 — uma única lei de contato atende a tela e o clique do WhatsApp.
-     A agenda privada canônica vence; aliases privados só são aceitos quando
-     concordam; o cadastro antigo é compatibilidade estritamente read-only. */
-  function resolverContatoCobrancaNasFontes(fontes,identidade){
-    const canonicalId=canonico(identidade);
-    const privados=(fontes?.contatos_clientes_financeiro||[]).filter(v=>canonico(v.id||v.slug)===canonicalId);
-    const canonicoFisico=privados.find(v=>texto(v.id)===canonicalId)||null;
-    const numerosPrivados=new Set(privados.map(v=>Core.normalizarTelefoneBR(v.whatsapp)).filter(Boolean));
-    if(numerosPrivados.size>1)return {estado:'conflito',numero:'',canonicalId,origem:'agenda financeira privada divergente'};
-    if(canonicoFisico){
-      const numero=Core.normalizarTelefoneBR(canonicoFisico.whatsapp);
-      if(numero)return {estado:'confirmado',numero,canonicalId,id:canonicalId,origem:'agenda financeira privada'};
-      if(texto(canonicoFisico.whatsapp))return {estado:'invalido',numero:'',canonicalId,id:canonicalId,origem:'agenda financeira privada'};
-    }
-    const privadosAliases=privados.filter(v=>texto(v.id)!==canonicalId);
-    if(numerosPrivados.size===1){
-      const numero=[...numerosPrivados][0];
-      const fonte=privadosAliases.find(v=>Core.normalizarTelefoneBR(v.whatsapp)===numero);
-      return {estado:'confirmado',numero,canonicalId,id:texto(fonte?.id),origem:'alias da agenda financeira privada'};
-    }
-    const legados=(fontes?.clientes_config||[]).filter(v=>canonico(v.id||v.slug)===canonicalId);
-    const numerosLegados=new Set(legados.map(v=>Core.normalizarTelefoneBR(v.whatsappCobranca)).filter(Boolean));
-    if(numerosLegados.size>1)return {estado:'conflito',numero:'',canonicalId,origem:'cadastros antigos divergentes'};
-    if(numerosLegados.size===1){
-      return {estado:'confirmado',numero:[...numerosLegados][0],canonicalId,id:texto(legados.find(v=>Core.normalizarTelefoneBR(v.whatsappCobranca))?.id),origem:'cadastro anterior · somente leitura'};
-    }
-    const possuiValorInvalido=[...privadosAliases,...legados].some(v=>texto(v.whatsapp||v.whatsappCobranca));
-    return {estado:possuiValorInvalido?'invalido':'ausente',numero:'',canonicalId,origem:''};
-  }
-
-  async function numeroCobrancaConfirmadoV105(identidade){
-    if(!canFinanceiro())throw new Error('A agenda financeira é exclusiva do Chris.');
-    const pessoaDaLeitura=pessoa();
-    const [privadosSnap,legadosSnap]=await Promise.all([
-      getDocs(collection(db,'contatos_clientes_financeiro')),
-      getDocs(collection(db,'clientes_config')),
-    ]);
-    if(pessoa()!==pessoaDaLeitura)throw new Error('A identidade mudou durante a leitura dos contatos.');
-    const resolvido=resolverContatoCobrancaNasFontes({
-      contatos_clientes_financeiro:listaSnapshot(privadosSnap),
-      clientes_config:listaSnapshot(legadosSnap),
-    },identidade);
-    if(resolvido.estado==='conflito')throw new Error('Existem números divergentes para esta identidade. Revise antes de cobrar.');
-    if(resolvido.estado==='invalido')throw new Error('O contato confirmado para esta identidade é inválido.');
-    return resolvido;
-  }
-  w.numeroCobrancaConfirmadoV105=numeroCobrancaConfirmadoV105;
-  w.__resolverContatoCobrancaV105Teste=resolverContatoCobrancaNasFontes;
-
-  w.alternarEdicaoWhatsV104=function(id){
-    const box=document.getElementById(`editarWhatsV104_${id}`);
-    if(box)box.hidden=!box.hidden;
-  };
-
-  /* V105 — a Régua curta usa a mesma fonte de contato do clique real.
-     Julho e agosto são histórico confirmado e não viram atraso. */
-  w.renderCobranca=async function(){
-    if(!canFinanceiro()){ document.getElementById('cobrancaBox')?.replaceChildren(); return false; }
-    const box=document.getElementById('cobrancaBox'); if(!box)return false;
-    const competencia=campoCompetencia('cobMes');
-    ['finMes','mensMes','ctMes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=competencia;});
-    box.innerHTML='<div class="card"><div class="desc">Conferindo cobranças e contatos…</div></div>';
-    try{
-      const fontes=await carregarSnapshot({comContatos:true});
-      const p=projetar(fontes,competencia,{regua:true});
-      if(p.estado==='indisponivel')throw new Error('Régua indisponível.');
-      const nomes=mapaNomes(fontes),reg=p.regua,hoje=hojeIso(deps);
-      const todas=[...(reg.anterioresVencidos?.itens||[]),...(reg.competenciaSelecionada?.itens||[]),...(reg.proximaPrevisao?.itens||[])];
-      w.__cobrancasV103=Object.fromEntries(todas.map(v=>[v.id,{...v,clienteNome:nomeLinha(v,nomes)}]));
-      w.__cobrancasV104=w.__cobrancasV103;
-      w.__cobrancasFila=w.__cobrancasV103;
-      const linha=(v,{previsao=false}={})=>{
-        const c=v.cobranca||Core.classificarCobranca(v,hoje,5);
-        const contatoResolvido=resolverContatoCobrancaNasFontes(fontes,v.canonicalId);
-        const telefone=contatoResolvido.estado==='confirmado'?contatoResolvido.numero:'';
-        const cobradoHoje=texto(v.ultimaCobranca).slice(0,10)===hoje;
-        const cobravel=c.estado!=='a_vencer'&&c.estado!=='indisponivel';
-        const contatoBloqueado=['conflito','invalido'].includes(contatoResolvido.estado);
-        const contatoDisponivel=Boolean(telefone)&&!contatoBloqueado;
-        const editor=`<div id="editarWhatsV104_${escAttr(v.id)}" ${telefone||contatoBloqueado?'hidden':''} style="display:flex;gap:6px;align-items:center;margin-top:7px;"><input id="whatsRapidoV103_${escAttr(v.id)}" value="${escAttr(telefoneParaTela(telefone))}" placeholder="(41) 99999-9999" style="flex:1;min-width:150px;"><button class="btn secondary" style="width:auto;" onclick="salvarWhatsRapidoV103('${escJs(v.id)}','${escJs(v.canonicalId)}')">Salvar contato</button></div>`;
-        const rotuloContato=telefone?telefoneParaTela(telefone):contatoResolvido.estado==='conflito'?'conflito entre cadastros':contatoResolvido.estado==='invalido'?'cadastro inválido':'não cadastrado';
-        const origemContato=telefone?` · ${esc(contatoResolvido.origem)}`:'';
-        const contato=`<div class="meta" style="margin-top:5px;">WhatsApp: <b>${esc(rotuloContato)}</b>${origemContato}${telefone?` · <button class="linkBtn" onclick="alternarEdicaoWhatsV104('${escJs(v.id)}')">editar</button>`:''}</div>${contatoBloqueado?'<div class="meta" style="color:var(--red);">A cobrança fica bloqueada até os números divergentes serem revisados.</div>':''}${editor}`;
-        const acao=previsao
-          ? '<div class="meta" style="margin-top:7px;">Previsão; ainda não é uma cobrança.</div>'
-          : `<div class="btnrow" style="margin-top:8px;">${v.materializada&&cobravel&&contatoDisponivel?`<button class="btn secondary" style="width:auto;" onclick="abrirCobranca('${escJs(v.id)}')">${cobradoHoje?'Abrir conversa novamente':'Abrir cobrança'}</button>`:v.materializada&&cobravel?'<span class="meta">Cadastre ou revise o WhatsApp antes de abrir a cobrança.</span>':!v.materializada?`<button class="btn secondary" style="width:auto;" onclick="materializarCobrancaV103('${escJs(v.id)}')">Criar cobrança deste mês</button>`:'<span class="meta">Ainda fora da janela de cobrança.</span>'}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Já recebi</button></div>${v.materializada&&cobravel&&contatoDisponivel&&!cobradoHoje?`<button id="confirmarCobranca_${escAttr(v.id)}" class="btn secondary" style="width:auto;margin-top:7px;border-color:var(--green);" hidden onclick="confirmarEnvioCobrancaV103('${escJs(v.id)}')">Confirmar que enviei</button>`:''}`;
-        return `<div class="item" data-regua-linha="${escAttr(v.id)}" data-contato-estado="${escAttr(contatoResolvido.estado)}" style="margin-top:7px;${cobradoHoje?'opacity:.72;':''}"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${cobradoHoje?'aprovada':classeEstadoCobranca(c.estado)}">${cobradoHoje?'✔ cobrado hoje':esc(rotuloEstadoCobranca(c.estado,c.dias))}</span></div><div class="meta">${brl(v.valorDevido)} · ${esc(nomeMes(v.competencia))}${v.materializada?'':' · ainda não criada'}</div>${contato}${acao}</div>`;
-      };
-      const comprovantes=reg.comprovantesEmAnalise?.itens||[];
-      const acionaveis=[...(reg.anterioresVencidos.itens||[]),...(reg.competenciaSelecionada.itens||[])].filter(v=>{
-        const c=v.cobranca||Core.classificarCobranca(v,hoje,5);
-        return c.estado!=='a_vencer'&&texto(v.ultimaCobranca).slice(0,10)!==hoje;
-      });
-      const cobradosHoje=[...(reg.anterioresVencidos.itens||[]),...(reg.competenciaSelecionada.itens||[])].filter(v=>texto(v.ultimaCobranca).slice(0,10)===hoje);
-      const aguardando=(reg.competenciaSelecionada.itens||[]).filter(v=>(v.cobranca||{}).estado==='a_vencer');
-      const badge=document.getElementById('badgeCobranca');if(badge){badge.textContent=acionaveis.length||'';badge.style.display=acionaveis.length?'flex':'none';}
-      box.innerHTML=`<div class="card" data-regua-resumo style="border-left:4px solid ${acionaveis.length?'var(--yellow)':'var(--green)'};"><div class="top"><div><h2 style="margin:0;">${acionaveis.length?`${acionaveis.length} cobrança(s) para cuidar agora`:'Nenhuma cobrança pendente agora'}</h2><div class="desc">Julho e agosto de 2026 estão encerrados e não geram atraso. A régua começou em julho; o corte confirmado vai até agosto.</div></div><span class="selo ${acionaveis.length?'hoje':'aprovada'}">${acionaveis.length||'em dia'}</span></div>${htmlConflitos(p)}${acionaveis.map(v=>linha(v)).join('')||'<div class="empty">Nada exige cobrança nesta competência.</div>'}</div>${comprovantes.length?`<details class="card"><summary><b>🧾 ${comprovantes.length} comprovante(s) aguardando conferência</b></summary>${comprovantes.map(v=>`<div class="item"><b>${esc(nomeLinha(v,nomes))}</b><div class="meta">${esc(nomeMes(v.competencia))} · ${brl(v.valorDevido)}</div></div>`).join('')}</details>`:''}${cobradosHoje.length?`<details class="card"><summary><b>✔ ${cobradosHoje.length} cobrado(s) hoje</b></summary>${cobradosHoje.map(v=>linha(v)).join('')}</details>`:''}${aguardando.length?`<details class="card"><summary><b>📅 ${aguardando.length} ainda a vencer em ${esc(nomeMes(reg.competencia))}</b></summary>${aguardando.map(v=>linha(v)).join('')}</details>`:''}${(reg.proximaPrevisao.itens||[]).length?`<details class="card"><summary><b>🔭 Próxima competência — ${reg.proximaPrevisao.quantidade} previsão(ões)</b></summary><div class="desc">Somente previsão; abrir não cria cobrança.</div>${reg.proximaPrevisao.itens.map(v=>linha(v,{previsao:true})).join('')}</details>`:''}`;
-      return true;
-    }catch(e){console.error('V104 régua indisponível:',e);box.innerHTML='<div class="card" style="border:2px solid var(--red);"><b>Régua indisponível</b><div class="desc">Erro de leitura não virou zero nem atraso. Tente novamente.</div></div>';return false;}
-  };
-
   w.salvarWhatsRapidoV103=async function(id,slug){
     if(!canFinanceiro()) return false;
     const numeroWhatsapp=Core.normalizarTelefoneBR(document.getElementById(`whatsRapidoV103_${id}`)?.value||'');
@@ -450,11 +332,6 @@ function competenciaDeDataCaixa(valor){
     const linha=w.__cobrancasV103?.[id]||{};
     const ref=doc(db,'contatos_clientes_financeiro',slugCanonico);
     try{
-      const atual=await getDoc(ref);
-      if(atual.exists()&&Core.normalizarTelefoneBR(atual.data()?.whatsapp)===numeroWhatsapp){
-        mostrarToast('Esse número já estava confirmado; nenhuma gravação foi repetida.');
-        return true;
-      }
       await setDoc(ref,{slug:slugCanonico,whatsapp:numeroWhatsapp,nome:texto(linha.clienteNome)||slugCanonico,origem:'edicao_regua',atualizadoPor:'Chris',atualizadoEm:serverTimestamp()},{merge:true});
       const recibo=await getDoc(ref);
       if(!recibo.exists()||Core.normalizarTelefoneBR(recibo.data().whatsapp)!==numeroWhatsapp) throw new Error('A agenda privada não confirmou o mesmo número.');
@@ -672,40 +549,25 @@ function competenciaDeDataCaixa(valor){
 
   function fecharVigenciaNaCompetencia(contrato,competenciaFinal){
     const inicio=texto(contrato?.primeiraCompetencia);
-    const ultima=texto(contrato?.ultimaCompetenciaPagamento);
-    const vigenciasInformadas=Array.isArray(contrato?.vigencias)
-      ? contrato.vigencias.filter(v=>v&&v.excluido!==true).map(v=>({...v}))
-      : [];
-    /* Muitos contratos reais anteriores à V103 possuem `vigencias: []`.
-       A primeira competência e o valor do próprio contrato são suficientes
-       para normalizar um único ciclo legado; vazio não é ambiguidade. */
-    if(!vigenciasInformadas.length){
-      /* Uma saída já salva manualmente pode ter deixado `vigencias: []`.
-         Não invente o início nem crie outro evento: o intervalo vazio junto
-         da competência final explícita já representa o estado encerrado. */
-      if(ultima===competenciaFinal)return [];
+    if(!Array.isArray(contrato?.vigencias)){
       return Core.competenciaValida(inicio)
         ? [{inicio,fim:competenciaFinal,valor:numero(contrato.valorInicial??contrato.valorVigente??contrato.valorCheio),cicloId:'legado-inicial'}]
         : null;
     }
-    const normalizada=Core.normalizarVigencias({...contrato,vigencias:vigenciasInformadas});
-    if(normalizada.estado==='indisponivel')return null;
-    const posteriores=vigenciasInformadas.filter(v=>Core.competenciaValida(texto(v.inicio))&&texto(v.inicio)>competenciaFinal);
-    if(posteriores.length)return null;
-    const candidatas=vigenciasInformadas.filter(v=>{
-      const comeco=texto(v.inicio),fim=texto(v.fim);
-      return Core.competenciaValida(comeco)&&comeco<=competenciaFinal&&(!fim||fim>=competenciaFinal);
+    let fechou=false;
+    const vigencias=contrato.vigencias.filter(v=>v&&v.excluido!==true).map(v=>{
+      const comeco=texto(v.inicio);
+      const fim=texto(v.fim);
+      if(!fechou&&!fim&&Core.competenciaValida(comeco)&&comeco<=competenciaFinal){
+        fechou=true;
+        return {...v,fim:competenciaFinal};
+      }
+      return {...v};
     });
-    if(candidatas.length!==1)return null;
-    const alvo=candidatas[0];
-    const fimAtual=texto(alvo.fim);
-    if(fimAtual===competenciaFinal)return vigenciasInformadas;
-    /* Compatibilidade V105: se a saída manual já fixou a última competência,
-       normalize também um intervalo antigo que ainda terminava em setembro. */
-    if(fimAtual&&fimAtual!==Core.proximaCompetencia(competenciaFinal)&&ultima!==competenciaFinal)return null;
-    const ajustadas=vigenciasInformadas.map(v=>v===alvo?{...v,fim:competenciaFinal}:v);
-    const simulado={...contrato,ultimaCompetenciaPagamento:competenciaFinal,vigencias:ajustadas};
-    return Core.vigenteNaCompetencia(simulado,competenciaFinal)&&!Core.vigenteNaCompetencia(simulado,Core.proximaCompetencia(competenciaFinal))?ajustadas:null;
+    if(fechou) return vigencias;
+    const jaFechada=vigencias.some(v=>texto(v.fim)===competenciaFinal);
+    const cicloPosterior=vigencias.some(v=>Core.competenciaValida(texto(v.inicio))&&texto(v.inicio)>competenciaFinal);
+    return jaFechada&&!cicloPosterior?vigencias:null;
   }
 
   function contratoFisicoCanonico(fontes,canonicalId){
@@ -726,41 +588,6 @@ function competenciaDeDataCaixa(valor){
       vigencias:Array.isArray(contrato?.vigencias)?contrato.vigencias:[],
       status:texto(contrato?.status),
     });
-  }
-
-  function contratoFisicoFedalto(fontes){
-    const ids=new Set(['fedalto-eletro-comercial','fedalto-eletro']);
-    const candidatos=(fontes.contratos||[]).filter(v=>
-      v.excluido!==true&&v.arquivado!==true&&
-      (ids.has(texto(v.id))||ids.has(texto(v.canonicalId))));
-    return candidatos.length===1
-      ? {contrato:candidatos[0],ids:candidatos.map(v=>v.id),ok:true}
-      : {contrato:null,ids:candidatos.map(v=>v.id),ok:false};
-  }
-
-  function manterVigenciaFedaltoAtiva(contrato){
-    const inicio=texto(contrato?.primeiraCompetencia);
-    const salvas=Array.isArray(contrato?.vigencias)
-      ? contrato.vigencias.filter(v=>v&&v.excluido!==true).map(v=>({...v}))
-      : [];
-    if(!salvas.length){
-      const valor=numero(contrato.valorInicial??contrato.valorVigente??contrato.valorCheio);
-      if(valor<=0)return null;
-      /* O usuário confirmou a verdade operacional específica da Fedalto:
-         ela continua cliente e setembro/2026 é apenas cortesia. Quando o
-         contrato legado não tem mês inicial utilizável, criar o ciclo atual
-         em setembro corrige o presente sem inventar atividade anterior. */
-      const inicioSeguro=Core.competenciaValida(inicio)&&inicio<='2026-09'?inicio:'2026-09';
-      return [{inicio:inicioSeguro,fim:'',valor,cicloId:Core.competenciaValida(inicio)?'legado-inicial':'correcao-fedalto-setembro-v105'}];
-    }
-    const abertas=salvas.filter(v=>!texto(v.fim));
-    if(abertas.length===1&&texto(abertas[0].inicio)<='2026-09'&&Core.vigenteNaCompetencia({...contrato,vigencias:salvas},'2026-09'))return salvas;
-    if(abertas.length)return null;
-    const reparaveis=salvas.filter(v=>['2026-08','2026-09'].includes(texto(v.fim))&&texto(v.inicio)<='2026-09');
-    if(reparaveis.length!==1||salvas.some(v=>texto(v.inicio)>'2026-09'))return null;
-    const reabertas=salvas.map(v=>v===reparaveis[0]?{...v,fim:''}:v);
-    const simulado={...contrato,ultimaCompetenciaPagamento:'',vigencias:reabertas};
-    return Core.vigenteNaCompetencia(simulado,'2026-09')&&Core.vigenteNaCompetencia(simulado,'2026-10')?reabertas:null;
   }
 
   w.renderContratos=async function(){
@@ -965,74 +792,8 @@ function competenciaDeDataCaixa(valor){
   };
   w.salvarContrato=w.salvarContratoV103;
 
-  function configDaIdentidade(fontes,canonicalId){
-    const candidatos=(fontes.clientes_config||[]).filter(v=>canonico(v.id||v.slug)===canonicalId&&v.excluido!==true);
-    return candidatos.find(v=>texto(v.id)===canonicalId)||(candidatos.length===1?candidatos[0]:null);
-  }
-
-  function serializarComparavelV105(valor){
-    if(valor===null||valor===undefined)return null;
-    if(valor instanceof Date)return valor.toISOString();
-    if(typeof valor?.toMillis==='function')return valor.toMillis();
-    if(Array.isArray(valor))return valor.map(serializarComparavelV105);
-    if(typeof valor==='object')return Object.fromEntries(Object.keys(valor).sort().map(chave=>[chave,serializarComparavelV105(valor[chave])]));
-    return typeof valor==='string'?texto(valor):valor;
-  }
-
-  function assinaturaSaidaFinanceira(saida){
-    return JSON.stringify(serializarComparavelV105({
-      canonicalId:canonico(saida?.canonicalId||saida?.slug||saida?.cliente),
-      dataAviso:texto(saida?.dataAviso),
-      dataSaida:texto(saida?.dataSaida),
-      ultimaCompetenciaPagamento:texto(saida?.ultimaCompetenciaPagamento),
-      statusSaida:texto(saida?.statusSaida||'programada').toLowerCase(),
-      tipoCliente:texto(saida?.tipoCliente),
-      valorMensal:numero(saida?.valorMensal),
-      motivo:texto(saida?.motivo),
-      motivoDetalhe:texto(saida?.motivoDetalhe),
-      pendenciasFinais:saida?.pendenciasFinais??null,
-      fichaSnapshot:saida?.fichaSnapshot??null,
-    }));
-  }
-
-  function selecionarSaidaFinanceira(fontes,canonicalId,competenciaFinal,{permitirAusente=false,permitirDuplicatasEquivalentes=false}={}){
-    const config=configDaIdentidade(fontes,canonicalId);
-    const ativas=(fontes.saidas||[]).filter(v=>v.canonicalId===canonicalId&&v.excluido!==true&&texto(v.statusSaida).toLowerCase()!=='cancelada');
-    const finais=ativas.filter(v=>texto(v.ultimaCompetenciaPagamento)===competenciaFinal);
-    const ponteiro=texto(config?.saidaAtivaId);
-    let saida=ponteiro?ativas.find(v=>v.id===ponteiro)||null:null;
-    if(ponteiro&&!saida)return {config,ativas,saida:null,duplicadas:[],bloqueio:'O apontamento da saída manual não corresponde a um recibo ativo'};
-    if(saida&&texto(saida.ultimaCompetenciaPagamento)!==competenciaFinal)return {config,ativas,saida:null,duplicadas:[],bloqueio:'A saída apontada possui outra competência final'};
-    if(!saida){
-      if(finais.length===1)saida=finais[0];
-      else if(finais.length>1){
-        const assinaturas=new Set(finais.map(assinaturaSaidaFinanceira));
-        if(permitirDuplicatasEquivalentes&&assinaturas.size===1)saida=[...finais].sort((a,b)=>a.id.localeCompare(b.id))[0];
-        else return {config,ativas,saida:null,duplicadas:[],bloqueio:'Existem saídas ativas divergentes para a mesma identidade'};
-      }
-    }
-    if(!saida)return permitirAusente?{config,ativas,saida:null,duplicadas:[],bloqueio:''}:{config,ativas,saida:null,duplicadas:[],bloqueio:'A saída financeira canônica não foi confirmada'};
-    const duplicadas=ativas.filter(v=>v.id!==saida.id);
-    if(duplicadas.length&&(!permitirDuplicatasEquivalentes||duplicadas.some(v=>assinaturaSaidaFinanceira(v)!==assinaturaSaidaFinanceira(saida)))){
-      return {config,ativas,saida:null,duplicadas:[],bloqueio:'Existem saídas diferentes; nenhuma será arquivada por suposição'};
-    }
-    return {config,ativas,saida,duplicadas,bloqueio:''};
-  }
-
-  function pagamentoComValor(pagamento,valor){
-    const valores=[pagamento?.valorDevido];
-    if(Object.prototype.hasOwnProperty.call(pagamento||{},'valor'))valores.push(pagamento.valor);
-    if(Object.prototype.hasOwnProperty.call(pagamento||{},'valorCobrado'))valores.push(pagamento.valorCobrado);
-    return valores.length>0&&valores.every(v=>numero(v)===valor);
-  }
-
-  function contratoEncerradoNaCompetencia(contrato,competenciaFinal){
-    if(!contrato||texto(contrato.ultimaCompetenciaPagamento)!==competenciaFinal)return false;
-    return !Core.vigenteNaCompetencia(contrato,Core.proximaCompetencia(competenciaFinal));
-  }
-
   async function lerCorrecaoSetembro(){
-    const fontes=await carregarSnapshot({forcar:true,comContatos:true});
+    const fontes=await carregarSnapshot({forcar:true});
     const grupoVitalle=contratoFisicoCanonico(fontes,'vitalle-odonto');
     const grupoMonique=contratoFisicoCanonico(fontes,'dra-monique');
     const grupoJoaquin=contratoFisicoCanonico(fontes,'joaquin-assados');
@@ -1044,54 +805,33 @@ function competenciaDeDataCaixa(valor){
     const pVitalle=fontes.pagamentos.filter(v=>v.canonicalId==='vitalle-odonto'&&v.competencia>='2026-09');
     const pMonique=fontes.pagamentos.filter(v=>v.canonicalId==='dra-monique'&&v.competencia>='2026-09');
     const pJoaquin=fontes.pagamentos.filter(v=>v.canonicalId==='joaquin-assados'&&v.competencia>='2026-09');
-    const selecaoMonique=selecionarSaidaFinanceira(fontes,'dra-monique','2026-08',{permitirAusente:true});
-    const selecaoJoaquin=selecionarSaidaFinanceira(fontes,'joaquin-assados','2026-08',{permitirDuplicatasEquivalentes:true});
-    const selecaoAcougue=selecionarSaidaFinanceira(fontes,'acougue-sao-joaquim','2026-08');
-    const saidasJ=selecaoJoaquin.ativas;
-    const saidaAutoritativa=selecaoJoaquin.saida;
-    const duplicadas=selecaoJoaquin.duplicadas;
-    const saidasAcougue=selecaoAcougue.ativas;
-    const saidaAcougue=selecaoAcougue.saida;
+    const saidasJ=fontes.saidas.filter(v=>v.canonicalId==='joaquin-assados'&&v.excluido!==true&&v.statusSaida!=='cancelada');
+    const saidaAutoritativa=saidasJ.find(v=>v.ultimaCompetenciaPagamento==='2026-08')||saidasJ[0]||null;
+    const duplicadas=saidasJ.filter(v=>v.id!==saidaAutoritativa?.id);
+    const saidasAcougue=fontes.saidas.filter(v=>v.canonicalId==='acougue-sao-joaquim'&&v.excluido!==true&&v.statusSaida!=='cancelada');
+    const saidaAcougue=saidasAcougue.find(v=>v.ultimaCompetenciaPagamento==='2026-08')||null;
     const pAcougue=fontes.pagamentos.filter(v=>v.canonicalId==='acougue-sao-joaquim'&&v.competencia>='2026-09');
     const vigenciasMonique=monique?fecharVigenciaNaCompetencia(monique,'2026-08'):null;
     const vigenciasJoaquin=joaquin?fecharVigenciaNaCompetencia(joaquin,'2026-08'):null;
     const vigenciasAcougue=acougue?fecharVigenciaNaCompetencia(acougue,'2026-08'):null;
-    const contatoZeiss=resolverContatoCobrancaNasFontes(fontes,'zeiss');
-    const vitalleResolvida=!!vitalle&&numero(vitalle.valorProgramado)===1000&&texto(vitalle.valorProgramadoEm)==='2026-09'&&pVitalle.every(v=>{
-      const status=Core.statusMensalidade(v);
-      return ['pago','cancelado'].includes(status)||(['aberto','isento'].includes(status)&&pagamentoComValor(v,1000));
-    });
-    const moniqueResolvida=!!monique&&!!selecaoMonique.saida&&contratoEncerradoNaCompetencia(monique,'2026-08')&&pMonique.every(v=>Core.statusMensalidade(v)==='cancelado');
-    const joaquinResolvido=!!joaquin&&!!saidaAutoritativa&&contratoEncerradoNaCompetencia(joaquin,'2026-08')&&!duplicadas.length&&pJoaquin.every(v=>Core.statusMensalidade(v)==='cancelado');
-    const acougueResolvido=!!acougue&&!!saidaAcougue&&contratoEncerradoNaCompetencia(acougue,'2026-08')&&pAcougue.every(v=>Core.statusMensalidade(v)==='cancelado');
-    const zeissResolvida=contatoZeiss.estado==='confirmado';
     const bloqueios=[];
     if(!grupoVitalle.ok) bloqueios.push(`Contrato físico canônico único da Vitalle não confirmado (${grupoVitalle.ids.join(', ')||'ausente'})`);
     if(pVitalle.some(v=>Core.statusMensalidade(v)==='pago'&&numero(v.valorDevido)!==1000)) bloqueios.push('Vitalle já possui competência paga com outro valor');
     if(pVitalle.some(v=>Core.statusMensalidade(v)==='indisponivel')) bloqueios.push('Vitalle possui mensalidade futura com estado desconhecido');
     if(!grupoMonique.ok) bloqueios.push(`Contrato físico canônico único da Monique não confirmado (${grupoMonique.ids.join(', ')||'ausente'})`);
-    if(selecaoMonique.bloqueio) bloqueios.push(`Monique: ${selecaoMonique.bloqueio}`);
-    if(monique&&!selecaoMonique.config) bloqueios.push('A ficha operacional canônica da Monique não foi confirmada');
-    if(selecaoMonique.saida&&!/^2026-09-\d{2}$/.test(texto(selecaoMonique.saida.dataSaida))) bloqueios.push('A data da saída manual da Monique não pertence a setembro de 2026');
     if(monique&&!vigenciasMonique) bloqueios.push('A vigência atual da Monique não pôde ser fechada com segurança em agosto');
     if(pMonique.some(v=>Core.statusMensalidade(v)==='pago')) bloqueios.push('Monique possui pagamento posterior já confirmado');
     if(pMonique.some(v=>Core.statusMensalidade(v)==='indisponivel')) bloqueios.push('Monique possui mensalidade futura com estado desconhecido');
     if(!grupoJoaquin.ok) bloqueios.push(`Contrato físico canônico único do Joaquim não confirmado (${grupoJoaquin.ids.join(', ')||'ausente'})`);
-    if(selecaoJoaquin.bloqueio) bloqueios.push(`Joaquim: ${selecaoJoaquin.bloqueio}`);
-    if(saidaAutoritativa&&!/^2026-09-\d{2}$/.test(texto(saidaAutoritativa.dataSaida))) bloqueios.push('A data da saída do Joaquim não pertence a setembro de 2026');
     if(joaquin&&!vigenciasJoaquin) bloqueios.push('A vigência do Joaquim não pôde ser fechada com segurança em agosto');
     if(pJoaquin.some(v=>Core.statusMensalidade(v)==='pago')) bloqueios.push('Joaquim possui pagamento posterior já confirmado');
     if(pJoaquin.some(v=>Core.statusMensalidade(v)==='indisponivel')) bloqueios.push('Joaquim possui mensalidade futura com estado desconhecido');
     if(!saidaAutoritativa||saidaAutoritativa.ultimaCompetenciaPagamento!=='2026-08') bloqueios.push('A saída financeira canônica do Joaquim não foi confirmada até agosto');
     if(!grupoAcougue.ok) bloqueios.push(`Contrato físico canônico único do Açougue não confirmado (${grupoAcougue.ids.join(', ')||'ausente'})`);
-    if(selecaoAcougue.bloqueio) bloqueios.push(`Açougue: ${selecaoAcougue.bloqueio}`);
-    if(saidaAcougue&&!/^2026-09-\d{2}$/.test(texto(saidaAcougue.dataSaida))) bloqueios.push('A data da saída do Açougue não pertence a setembro de 2026');
     if(acougue&&!vigenciasAcougue) bloqueios.push('A vigência do Açougue não pôde ser fechada com segurança em agosto');
     if(!saidaAcougue) bloqueios.push('A saída financeira do Açougue São Joaquim não foi confirmada até agosto');
     if(pAcougue.some(v=>Core.statusMensalidade(v)==='pago')) bloqueios.push('Açougue São Joaquim possui pagamento posterior já confirmado');
     if(pAcougue.some(v=>Core.statusMensalidade(v)==='indisponivel')) bloqueios.push('Açougue possui mensalidade futura com estado desconhecido');
-    if(contatoZeiss.estado==='conflito') bloqueios.push('Zeiss possui números divergentes entre cadastros; nenhum será escolhido automaticamente');
-    if(contatoZeiss.estado==='invalido') bloqueios.push('O número já cadastrado da Zeiss é inválido');
     let ativosSimulados=null;
     if(monique&&joaquin&&acougue&&vigenciasMonique&&vigenciasJoaquin&&vigenciasAcougue){
       const contratosSimulados=fontes.contratos.map(v=>{
@@ -1102,11 +842,9 @@ function competenciaDeDataCaixa(valor){
       });
       const projecaoSimulada=Core.projetarFinanceiroCompetencia({contratos:contratosSimulados,pagamentos:fontes.pagamentos,saidas:fontes.saidas,competencia:'2026-09',mesCaixa:'2026-09'});
       ativosSimulados=projecaoSimulada.movimentos?.totais?.ativos??null;
-      if(projecaoSimulada.estado==='indisponivel') bloqueios.push('A carteira simulada de setembro ficou indisponível');
+      if(projecaoSimulada.estado==='indisponivel'||ativosSimulados!==19) bloqueios.push(`A carteira simulada de setembro resultou em ${ativosSimulados??'estado indisponível'} ativo(s), não 19`);
     }
-    const resolvidos={vitalle:vitalleResolvida,monique:moniqueResolvida,joaquin:joaquinResolvido,acougue:acougueResolvido,zeiss:zeissResolvida};
-    const pendentes=Object.fromEntries(Object.entries(resolvidos).map(([chave,ok])=>[chave,!ok]));
-    return {fontes,vitalle,monique,joaquin,acougue,pVitalle,pMonique,pJoaquin,selecaoMonique,saidasJ,saidaAutoritativa,duplicadas,saidasAcougue,saidaAcougue,pAcougue,vigenciasMonique,vigenciasJoaquin,vigenciasAcougue,contatoZeiss,resolvidos,pendentes,ativosSimulados,bloqueios};
+    return {fontes,vitalle,monique,joaquin,acougue,pVitalle,pMonique,pJoaquin,saidasJ,saidaAutoritativa,duplicadas,saidasAcougue,saidaAcougue,pAcougue,vigenciasMonique,vigenciasJoaquin,vigenciasAcougue,ativosSimulados,bloqueios};
   }
 
   w.preverCorrecaoFinanceiraSetembroV103=async function(){
@@ -1114,63 +852,57 @@ function competenciaDeDataCaixa(valor){
     alvo.innerHTML='<div class="desc">Conferindo os documentos reais sem gravar…</div>';
     try{
       const p=await lerCorrecaoSetembro();w.__correcaoSetembroV103=p;
-      const status=chave=>p.resolvidos[chave]?'<span class="selo aprovada">já confirmado · não será regravado</span>':'<span class="selo hoje">ajuste pendente</span>';
-      const temPendencias=Object.values(p.pendentes).some(Boolean);
-      const numeroZeiss=p.contatoZeiss.estado==='confirmado'?telefoneParaTela(p.contatoZeiss.numero):'';
-      alvo.innerHTML=`${p.bloqueios.length?`<div class="desc" style="color:var(--red);"><b>Aplicação bloqueada:</b> ${p.bloqueios.map(esc).join(' · ')}</div>`:`<div class="desc" style="color:var(--green);"><b>${temPendencias?'Prévia confirmada. Somente os itens pendentes serão escritos.':'Tudo desta etapa já está confirmado; nenhuma gravação será repetida.'}</b></div>`}<div class="item"><div class="top"><b>Vitalle</b>${status('vitalle')}</div><div class="meta">R$ 1.000 desde 2026-09; pagos e cancelados permanecem imutáveis (${p.pVitalle.length} documentos futuros conferidos).</div></div><div class="item"><div class="top"><b>Dra. Monique</b>${status('monique')}</div><div class="meta">Última competência 2026-08; o recibo manual ${esc(p.selecaoMonique.saida?.id||'ainda será criado')} será preservado, sem segunda saída.</div></div><div class="item"><div class="top"><b>Joaquim Assados + Açougue São Joaquim</b>${status('joaquin')}${status('acougue')}</div><div class="meta">As empresas permanecem separadas. Duplicata só será arquivada quando for equivalente ao mesmo evento.</div></div><div class="item"><div class="top"><b>WhatsApp de cobrança da Zeiss</b>${status('zeiss')}</div><div class="meta">${numeroZeiss?`Contato existente confirmado em ${esc(p.contatoZeiss.origem)}; repetir a aplicação não cria outro registro.`:'Informe o número com DDD. Ele será salvo uma única vez no registro canônico da Zeiss.'}</div><div class="field" style="margin-top:8px;"><label>Número com DDD</label><input id="correcaoZeissWhatsV103" value="${escAttr(numeroZeiss)}" ${numeroZeiss?'readonly':''} placeholder="(41) 99999-9999"></div></div>${p.bloqueios.length||w.__previewUnificadaV104||!temPendencias?'':`<button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoFinanceiraSetembroV103()">Aplicar somente os ajustes pendentes</button>`}`;
+      alvo.innerHTML=`${p.bloqueios.length?`<div class="desc" style="color:var(--red);"><b>Aplicação bloqueada:</b> ${p.bloqueios.map(esc).join(' · ')}</div>`:`<div class="desc" style="color:var(--green);"><b>Prévia confirmada. Nenhuma gravação foi feita. Setembro fecha com ${p.ativosSimulados} clientes ativos.</b></div>`}<div class="item"><b>Vitalle</b><div class="meta">Programar R$ 1.000 desde 2026-09; atualizar somente documentos futuros não pagos/não cancelados (${p.pVitalle.length} encontrados).</div></div><div class="item"><b>Dra. Monique</b><div class="meta">Última competência 2026-08; saída em 15/09/2026; cancelar ${p.pMonique.filter(v=>!['pago','cancelado'].includes(Core.statusMensalidade(v))).length} obrigação(ões) futura(s), sem apagar histórico.</div></div><div class="item"><b>Joaquim Assados + Açougue São Joaquim</b><div class="meta">Preservar as duas empresas separadas; fechar ambas em agosto e cancelar ${p.pJoaquin.filter(v=>!['pago','cancelado'].includes(Core.statusMensalidade(v))).length+p.pAcougue.filter(v=>!['pago','cancelado'].includes(Core.statusMensalidade(v))).length} obrigação(ões) futura(s). No Joaquim, preservar ${esc(p.saidaAutoritativa?.id||'recibo não encontrado')} e arquivar ${p.duplicadas.length} duplicata(s) do mesmo evento.</div></div><div class="item"><b>Zeiss</b><div class="meta">O número fica somente na coleção financeira privada e não será escrito no código público.</div><div class="field" style="margin-top:8px;"><label>WhatsApp financeiro da Zeiss</label><input id="correcaoZeissWhatsV103" placeholder="+55 41 99999-9999"></div></div>${p.bloqueios.length?'':`<button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoFinanceiraSetembroV103()">Aplicar os ajustes e conferir recibos</button>`}`;
       return !p.bloqueios.length;
     }catch(e){alvo.innerHTML='<div class="desc" style="color:var(--red);">Prévia indisponível. Nada foi alterado.</div>';return false;}
   };
 
   w.aplicarCorrecaoFinanceiraSetembroV103=async function(){
     if(!canFinanceiro()||locks.has('correcao-setembro'))return false;
-    const digitado=Core.normalizarTelefoneBR(document.getElementById('correcaoZeissWhatsV103')?.value||'');
-    const previa=await lerCorrecaoSetembro();
-    if(previa.bloqueios.length){mostrarToast('A prévia mudou; nada foi alterado.','erro');return false;}
-    const numeroZeiss=digitado||previa.contatoZeiss.numero;
-    if(!numeroZeiss){mostrarToast('Informe o WhatsApp da Zeiss com DDD.','erro');return false;}
-    const contatoPrecisaEscrita=previa.contatoZeiss.estado!=='confirmado'||numeroZeiss!==previa.contatoZeiss.numero;
-    const pendentes={...previa.pendentes,zeiss:contatoPrecisaEscrita};
-    if(!Object.values(pendentes).some(Boolean)){
-      mostrarToast('Tudo já estava confirmado; nenhuma gravação foi repetida.');
-      return true;
-    }
-    if(!w.__aplicacaoFinanceiraV104EmCurso&&!confirm('Aplicar somente os ajustes ainda pendentes? Dados já corrigidos manualmente não serão regravados.'))return false;
+    const numeroZeiss=Core.normalizarTelefoneBR(document.getElementById('correcaoZeissWhatsV103')?.value||'');
+    if(!numeroZeiss){mostrarToast('Informe o WhatsApp da Zeiss com DDD. Ele ficará somente no Firebase privado.','erro');return false;}
+    const previa=await lerCorrecaoSetembro();if(previa.bloqueios.length){mostrarToast('A prévia mudou; nada foi alterado.','erro');return false;}
+    if(!confirm('Aplicar Vitalle, saída da Monique, deduplicação do Joaquim e contato privado da Zeiss? O sistema preservará pagos, cancelados e históricos.'))return false;
     locks.add('correcao-setembro');
     const uid=auth.currentUser?.uid;
     try{
       if(!uid)throw new Error('Sessão autenticada não confirmada.');
-      const vitalleRef=doc(db,'contratos_cliente',previa.vitalle.id),moniqueRef=doc(db,'contratos_cliente',previa.monique.id),joaquinRef=doc(db,'contratos_cliente',previa.joaquin.id),acougueRef=doc(db,'contratos_cliente',previa.acougue.id);
-      const configMoniqueRef=doc(db,'clientes_config',previa.selecaoMonique.config?.id||'dra-monique');
-      const saidaMoniqueId=previa.selecaoMonique.saida?.id||'saida_dra-monique_2026-09-15';
-      const saidaMoniqueRef=doc(db,'clientes_encerrados',saidaMoniqueId),saidaJoaquinRef=doc(db,'clientes_encerrados',previa.saidaAutoritativa.id),saidaAcougueRef=doc(db,'clientes_encerrados',previa.saidaAcougue.id),contatoZeissRef=doc(db,'contatos_clientes_financeiro','zeiss');
-      const pagamentosAlvo=[...(pendentes.vitalle?previa.pVitalle:[]),...(pendentes.monique?previa.pMonique:[]),...(pendentes.joaquin?previa.pJoaquin:[]),...(pendentes.acougue?previa.pAcougue:[])];
-      const refsPag=pagamentosAlvo.map(v=>doc(db,'pagamentos_mensais',v.id));
-      const refsDup=(pendentes.joaquin?previa.duplicadas:[]).map(v=>doc(db,'clientes_encerrados',v.id));
+      const vitalleRef=doc(db,'contratos_cliente',previa.vitalle.id),moniqueRef=doc(db,'contratos_cliente',previa.monique.id),joaquinRef=doc(db,'contratos_cliente',previa.joaquin.id),acougueRef=doc(db,'contratos_cliente',previa.acougue.id),configMoniqueRef=doc(db,'clientes_config','dra-monique'),saidaMoniqueRef=doc(db,'clientes_encerrados','saida_dra-monique_2026-09-15'),saidaJoaquinRef=doc(db,'clientes_encerrados',previa.saidaAutoritativa.id),saidaAcougueRef=doc(db,'clientes_encerrados',previa.saidaAcougue.id),contatoZeissRef=doc(db,'contatos_clientes_financeiro','zeiss');
+      const refsPag=[...previa.pVitalle,...previa.pMonique,...previa.pJoaquin,...previa.pAcougue].map(v=>doc(db,'pagamentos_mensais',v.id));
+      const refsDup=previa.duplicadas.map(v=>doc(db,'clientes_encerrados',v.id));
       const refs=[vitalleRef,moniqueRef,joaquinRef,acougueRef,configMoniqueRef,saidaMoniqueRef,saidaJoaquinRef,saidaAcougueRef,contatoZeissRef,...refsPag,...refsDup];
       const opVitalle='fin_v103_vitalle_2026_09',opMonique='fin_v103_monique_saida_2026_09',opJoaquim='fin_v103_joaquin_dedupe_2026_09',opAcougue='fin_v103_acougue_saida_2026_09';
       const motivoVitalle='Novo valor mensal informado pelo Chris';
-      const dataSaidaMonique=texto(previa.selecaoMonique.saida?.dataSaida)||'2026-09-15';
-      const dataSaidaJoaquim=texto(previa.saidaAutoritativa?.dataSaida)||'2026-09-15';
-      const dataSaidaAcougue=texto(previa.saidaAcougue?.dataSaida)||'2026-09-15';
       const programacaoVitalleMudou=numero(previa.vitalle.valorProgramado)!==1000||texto(previa.vitalle.valorProgramadoEm)!=='2026-09'||texto(previa.vitalle.valorProgramadoMotivo)!==motivoVitalle;
       const preVitalle=await sha256Hex(assinaturaContratoAlvo(previa.vitalle)),postVitalle=await sha256Hex(JSON.stringify({id:previa.vitalle.id,valor:1000,inicio:'2026-09'}));
-      const preMonique=await sha256Hex(assinaturaContratoAlvo(previa.monique)),postMonique=await sha256Hex(JSON.stringify({id:previa.monique.id,fim:'2026-08',saida:dataSaidaMonique}));
+      const preMonique=await sha256Hex(assinaturaContratoAlvo(previa.monique)),postMonique=await sha256Hex(JSON.stringify({id:previa.monique.id,fim:'2026-08',saida:'2026-09-15'}));
       const preJoaquinContrato=await sha256Hex(assinaturaContratoAlvo(previa.joaquin));
       const preJ=await sha256Hex(JSON.stringify(previa.saidasJ.map(v=>v.id).sort())),postJ=await sha256Hex(JSON.stringify({canonico:previa.saidaAutoritativa?.id||'',arquivados:previa.duplicadas.map(v=>v.id).sort()}));
       const preAcougue=await sha256Hex(assinaturaContratoAlvo(previa.acougue)),postAcougue=await sha256Hex(JSON.stringify({id:previa.acougue.id,fim:'2026-08',saida:previa.saidaAcougue.id}));
       const eventos=[
         {op:opVitalle,clienteId:'vitalle-odonto',tipo:programacaoVitalleMudou?'alteracao_valor':'ajuste',comp:'2026-09',ultima:null,data:new Date('2026-09-01T12:00:00-03:00'),valor:programacaoVitalleMudou?1000:null,sourceType:'contrato',sourceId:previa.vitalle.id,pre:preVitalle,post:postVitalle},
-        {op:opMonique,clienteId:'dra-monique',tipo:'saida',comp:'2026-09',ultima:'2026-08',data:new Date(`${dataSaidaMonique}T12:00:00-03:00`),valor:numero(previa.monique.valorVigente),sourceType:'cliente_encerrado',sourceId:saidaMoniqueRef.id,pre:preMonique,post:postMonique},
-        {op:opJoaquim,clienteId:'joaquin-assados',tipo:'deduplicacao',comp:'2026-09',ultima:'2026-08',data:new Date(`${dataSaidaJoaquim}T12:00:00-03:00`),valor:null,sourceType:'migracao',sourceId:previa.saidaAutoritativa?.id||'joaquin-assados',pre:preJ,post:postJ},
-        {op:opAcougue,clienteId:'acougue-sao-joaquim',tipo:'saida',comp:'2026-09',ultima:'2026-08',data:new Date(`${dataSaidaAcougue}T12:00:00-03:00`),valor:numero(previa.acougue.valorVigente),sourceType:'cliente_encerrado',sourceId:previa.saidaAcougue.id,pre:preAcougue,post:postAcougue},
-      ].filter(v=>({[opVitalle]:pendentes.vitalle,[opMonique]:pendentes.monique,[opJoaquim]:pendentes.joaquin,[opAcougue]:pendentes.acougue})[v.op]);
+        {op:opMonique,clienteId:'dra-monique',tipo:'saida',comp:'2026-09',ultima:'2026-08',data:new Date('2026-09-15T12:00:00-03:00'),valor:numero(previa.monique.valorVigente),sourceType:'cliente_encerrado',sourceId:saidaMoniqueRef.id,pre:preMonique,post:postMonique},
+        {op:opJoaquim,clienteId:'joaquin-assados',tipo:'deduplicacao',comp:'2026-09',ultima:'2026-08',data:new Date('2026-09-15T12:00:00-03:00'),valor:null,sourceType:'migracao',sourceId:previa.saidaAutoritativa?.id||'joaquin-assados',pre:preJ,post:postJ},
+        {op:opAcougue,clienteId:'acougue-sao-joaquim',tipo:'saida',comp:'2026-09',ultima:'2026-08',data:new Date('2026-09-15T12:00:00-03:00'),valor:numero(previa.acougue.valorVigente),sourceType:'cliente_encerrado',sourceId:previa.saidaAcougue.id,pre:preAcougue,post:postAcougue},
+      ];
       const eventoRefs=eventos.map(v=>doc(db,'clientes_ciclo_financeiro',v.op));
+      let jaAplicada=false;
       await runTransaction(db,async tx=>{
         const todos=[...refs,...eventoRefs];const snaps=await Promise.all(todos.map(r=>tx.get(r)));const mapa=new Map(todos.map((r,i)=>[r.path,snaps[i]]));
         const eventosExistentes=eventoRefs.filter(ref=>mapa.get(ref.path)?.exists());
         if(eventosExistentes.length){
-          throw new Error('Existe recibo anterior, mas a prévia ainda vê o alvo como pendente. Atualize e audite; nada foi repetido.');
+          if(eventosExistentes.length!==eventoRefs.length) throw new Error('A correção anterior ficou parcial. Não repita; faça auditoria dos recibos.');
+          const vitalleAtual=mapa.get(vitalleRef.path)?.data()||{},moniqueAtual=mapa.get(moniqueRef.path)?.data()||{},joaquinAtual=mapa.get(joaquinRef.path)?.data()||{},acougueAtual=mapa.get(acougueRef.path)?.data()||{};
+          const contatoAtual=mapa.get(contatoZeissRef.path)?.data()||{};
+          const contratosOk=numero(vitalleAtual.valorProgramado)===1000&&texto(vitalleAtual.valorProgramadoEm)==='2026-09'&&texto(moniqueAtual.ultimaCompetenciaPagamento)==='2026-08'&&texto(joaquinAtual.ultimaCompetenciaPagamento)==='2026-08'&&texto(acougueAtual.ultimaCompetenciaPagamento)==='2026-08';
+          const saidasOk=mapa.get(saidaMoniqueRef.path)?.exists()&&mapa.get(saidaJoaquinRef.path)?.exists()&&mapa.get(saidaAcougueRef.path)?.exists();
+          const pagamentosSaidaOk=[...previa.pMonique,...previa.pJoaquin,...previa.pAcougue].every(v=>{
+            const s=mapa.get(doc(db,'pagamentos_mensais',v.id).path);return !s?.exists()||Core.statusMensalidade(s.data())==='cancelado';
+          });
+          const duplicatasOk=refsDup.every(ref=>mapa.get(ref.path)?.data()?.excluido===true);
+          if(!contratosOk||!saidasOk||!pagamentosSaidaOk||!duplicatasOk||Core.normalizarTelefoneBR(contatoAtual.whatsapp)!==numeroZeiss) throw new Error('Os eventos existem, mas o estado final divergiu. Não repita; audite os recibos.');
+          jaAplicada=true;
+          return;
         }
         if(!mapa.get(vitalleRef.path)?.exists()||!mapa.get(moniqueRef.path)?.exists()||!mapa.get(joaquinRef.path)?.exists()||!mapa.get(acougueRef.path)?.exists())throw new Error('Contrato alterado ou removido desde a prévia.');
         const hashesAtuais=await Promise.all([
@@ -1180,203 +912,53 @@ function competenciaDeDataCaixa(valor){
           sha256Hex(assinaturaContratoAlvo({id:acougueRef.id,...mapa.get(acougueRef.path).data()})),
         ]);
         if(hashesAtuais[0]!==preVitalle||hashesAtuais[1]!==preMonique||hashesAtuais[2]!==preJoaquinContrato||hashesAtuais[3]!==preAcougue) throw new Error('Um contrato mudou depois da prévia. Atualize; nada foi gravado.');
-        if(pendentes.monique&&!mapa.get(configMoniqueRef.path)?.exists())throw new Error('A ficha operacional da Monique não existe; a correção não criará uma ficha parcial.');
+        if(!mapa.get(configMoniqueRef.path)?.exists())throw new Error('A ficha operacional da Monique não existe; a correção não criará uma ficha parcial.');
         if(!mapa.get(saidaJoaquinRef.path)?.exists()||texto(mapa.get(saidaJoaquinRef.path).data().ultimaCompetenciaPagamento)!=='2026-08') throw new Error('A saída canônica do Joaquim mudou depois da prévia.');
         if(!mapa.get(saidaAcougueRef.path)?.exists()||texto(mapa.get(saidaAcougueRef.path).data().ultimaCompetenciaPagamento)!=='2026-08') throw new Error('A saída canônica do Açougue mudou depois da prévia.');
         const saidaMoniqueAtual=mapa.get(saidaMoniqueRef.path);
-        if(pendentes.monique&&saidaMoniqueAtual?.exists()&&(
+        if(saidaMoniqueAtual?.exists()&&(
           texto(saidaMoniqueAtual.data().ultimaCompetenciaPagamento)!=='2026-08' ||
-          texto(saidaMoniqueAtual.data().dataSaida)!==dataSaidaMonique
+          texto(saidaMoniqueAtual.data().dataSaida)!=='2026-09-15'
         )) throw new Error('Já existe uma saída divergente para a Monique. Revise antes de aplicar.');
         for(const [rotulo,lista] of [['Monique',previa.pMonique],['Joaquim',previa.pJoaquin],['Açougue',previa.pAcougue]]){
           for(const v of lista){const s=mapa.get(doc(db,'pagamentos_mensais',v.id).path);if(s?.exists()&&Core.statusMensalidade(s.data())==='pago')throw new Error(`Um pagamento de ${rotulo} foi confirmado depois da prévia.`);}
         }
         const carimbo=serverTimestamp();
         const vitalleAtual=mapa.get(vitalleRef.path).data()||{};
-        if(pendentes.vitalle){
-          const ajusteContrato={financeiroRevision:numero(vitalleAtual.financeiroRevision)+1,financeiroOperationId:opVitalle,valorProgramadoPor:'Chris',valorProgramadoAtualizadoEm:carimbo};
-          if(programacaoVitalleMudou)Object.assign(ajusteContrato,{valorProgramado:1000,valorProgramadoEm:'2026-09',valorProgramadoMotivo:motivoVitalle,historicoAlteracoesValor:arrayUnion({acao:'programada',novoValor:1000,inicio:'2026-09',motivo:motivoVitalle,por:'Chris',operationId:opVitalle})});
-          tx.set(vitalleRef,ajusteContrato,{merge:true});
-          previa.pVitalle.forEach(v=>{const ref=doc(db,'pagamentos_mensais',v.id),s=mapa.get(ref.path);if(s?.exists()&&['aberto','isento'].includes(Core.statusMensalidade(s.data()))&&!pagamentoComValor(s.data(),1000)){const atual=s.data(),ajuste={valorDevido:1000,valorContratoProgramado:true,valorContratoProgramadoEm:'2026-09',financeiroOperationId:opVitalle,atualizadoPor:'Chris',atualizadoEm:carimbo};if(Object.prototype.hasOwnProperty.call(atual,'valor'))ajuste.valor=1000;if(Object.prototype.hasOwnProperty.call(atual,'valorCobrado'))ajuste.valorCobrado=1000;tx.set(ref,ajuste,{merge:true});}});
-        }
-        if(pendentes.monique){
-          const dataSaida=texto(previa.selecaoMonique.saida?.dataSaida)||'2026-09-15';
-          tx.set(moniqueRef,{saidaProgramadaPara:dataSaida,ultimaCompetenciaPagamento:'2026-08',vigencias:previa.vigenciasMonique,saidaMotivo:'encerramento informado pelo Chris',saidaMotivoDetalhe:'Cliente não integra a carteira financeira de setembro de 2026',status:'ativo',atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
-          tx.set(configMoniqueRef,{saidaAtivaId:saidaMoniqueRef.id,saidaProgramadaPara:dataSaida,saidaMotivo:'encerramento informado pelo Chris',saidaMotivoDetalhe:'Cliente não integra a carteira financeira de setembro de 2026',clienteInativo:false,atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
-          tx.set(saidaMoniqueRef,{nome:previa.selecaoMonique.saida?.nome||previa.monique.clienteNome||'Dra. Monique',slug:'dra-monique',dataAviso:previa.selecaoMonique.saida?.dataAviso||hojeIso(deps),dataSaida,ultimaCompetenciaPagamento:'2026-08',statusSaida:previa.selecaoMonique.saida?.statusSaida||'programada',tipoCliente:'mensalista',valorMensal:numero(previa.monique.valorVigente),motivo:previa.selecaoMonique.saida?.motivo||'encerramento informado pelo Chris',motivoDetalhe:previa.selecaoMonique.saida?.motivoDetalhe||'Cliente não integra a carteira financeira de setembro de 2026',origemCentralEntrada:true,atualizadoPor:'Chris',atualizadoEm:carimbo,excluido:false,...(saidaMoniqueAtual?.exists()?{}:{criadoPor:'Chris',criadoEm:carimbo})},{merge:true});
-        }
-        if(pendentes.joaquin)tx.set(joaquinRef,{ultimaCompetenciaPagamento:'2026-08',vigencias:previa.vigenciasJoaquin,atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
-        if(pendentes.acougue)tx.set(acougueRef,{ultimaCompetenciaPagamento:'2026-08',vigencias:previa.vigenciasAcougue,atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
+        tx.set(vitalleRef,{valorProgramado:1000,valorProgramadoEm:'2026-09',valorProgramadoMotivo:motivoVitalle,valorProgramadoPor:'Chris',valorProgramadoAtualizadoEm:carimbo,financeiroRevision:numero(vitalleAtual.financeiroRevision)+1,financeiroOperationId:opVitalle,historicoAlteracoesValor:arrayUnion({acao:'programada',novoValor:1000,inicio:'2026-09',motivo:motivoVitalle,por:'Chris',operationId:opVitalle})},{merge:true});
+        previa.pVitalle.forEach(v=>{const ref=doc(db,'pagamentos_mensais',v.id),s=mapa.get(ref.path);if(s?.exists()&&!['pago','cancelado'].includes(Core.statusMensalidade(s.data()))){const atual=s.data(),precisa=numero(atual.valorDevido)!==1000||(Object.prototype.hasOwnProperty.call(atual,'valor')&&numero(atual.valor)!==1000)||(Object.prototype.hasOwnProperty.call(atual,'valorCobrado')&&numero(atual.valorCobrado)!==1000);if(precisa){const ajuste={valorDevido:1000,valorContratoProgramado:true,valorContratoProgramadoEm:'2026-09',financeiroOperationId:opVitalle,atualizadoPor:'Chris',atualizadoEm:carimbo};if(Object.prototype.hasOwnProperty.call(atual,'valor'))ajuste.valor=1000;if(Object.prototype.hasOwnProperty.call(atual,'valorCobrado'))ajuste.valorCobrado=1000;tx.set(ref,ajuste,{merge:true});}}});
+        tx.set(moniqueRef,{saidaProgramadaPara:'2026-09-15',ultimaCompetenciaPagamento:'2026-08',vigencias:previa.vigenciasMonique,saidaMotivo:'encerramento informado pelo Chris',saidaMotivoDetalhe:'Cliente não integra a carteira financeira de setembro de 2026',status:'ativo',atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
+        tx.set(configMoniqueRef,{saidaAtivaId:saidaMoniqueRef.id,saidaProgramadaPara:'2026-09-15',saidaMotivo:'encerramento informado pelo Chris',saidaMotivoDetalhe:'Cliente não integra a carteira financeira de setembro de 2026',clienteInativo:false,atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
+        tx.set(saidaMoniqueRef,{nome:previa.monique.clienteNome||'Dra. Monique',slug:'dra-monique',dataAviso:hojeIso(deps),dataSaida:'2026-09-15',ultimaCompetenciaPagamento:'2026-08',statusSaida:'programada',tipoCliente:'mensalista',valorMensal:numero(previa.monique.valorVigente),motivo:'encerramento informado pelo Chris',motivoDetalhe:'Cliente não integra a carteira financeira de setembro de 2026',origemCentralEntrada:true,criadoPor:'Chris',criadoEm:carimbo,atualizadoPor:'Chris',atualizadoEm:carimbo,excluido:false},{merge:true});
+        tx.set(joaquinRef,{ultimaCompetenciaPagamento:'2026-08',vigencias:previa.vigenciasJoaquin,atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
+        tx.set(acougueRef,{ultimaCompetenciaPagamento:'2026-08',vigencias:previa.vigenciasAcougue,atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
         const cancelarFuturos=(lista,saidaId)=>lista.forEach(v=>{const ref=doc(db,'pagamentos_mensais',v.id),s=mapa.get(ref.path);if(s?.exists()&&!['pago','cancelado'].includes(Core.statusMensalidade(s.data())))tx.set(ref,{status:'cancelado',canceladoPorSaida:true,canceladoPorSaidaId:saidaId,statusAntesSaida:Core.statusMensalidade(s.data()),motivoCancelamento:'Competência posterior ao último mês do contrato (2026-08)',canceladoEm:carimbo,canceladoPor:'Chris',atualizadoEm:carimbo,atualizadoPor:'Chris'},{merge:true});});
-        if(pendentes.monique)cancelarFuturos(previa.pMonique,saidaMoniqueRef.id);
-        if(pendentes.joaquin)cancelarFuturos(previa.pJoaquin,saidaJoaquinRef.id);
-        if(pendentes.acougue)cancelarFuturos(previa.pAcougue,saidaAcougueRef.id);
-        if(pendentes.joaquin)previa.duplicadas.forEach(v=>tx.set(doc(db,'clientes_encerrados',v.id),{excluido:true,statusSaida:'cancelada',motivoExclusao:'Registro duplicado equivalente consolidado pela V105',unificadoNoId:previa.saidaAutoritativa.id,unificadoEm:carimbo,unificadoPor:'Chris'},{merge:true}));
-        if(pendentes.zeiss){
-          const contatoAtualSnap=mapa.get(contatoZeissRef.path);
-          const numeroAtual=contatoAtualSnap?.exists()?Core.normalizarTelefoneBR(contatoAtualSnap.data()?.whatsapp):'';
-          if(numeroAtual&&numeroAtual!==numeroZeiss)throw new Error('O WhatsApp da Zeiss mudou em outra aba. Atualize; nenhum número foi sobrescrito.');
-          if(!numeroAtual)tx.set(contatoZeissRef,{slug:'zeiss',whatsapp:numeroZeiss,nome:'Zeiss',origem:'edicao_financeiro',atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
-        }
+        cancelarFuturos(previa.pMonique,saidaMoniqueRef.id);
+        cancelarFuturos(previa.pJoaquin,saidaJoaquinRef.id);
+        cancelarFuturos(previa.pAcougue,saidaAcougueRef.id);
+        previa.duplicadas.forEach(v=>tx.set(doc(db,'clientes_encerrados',v.id),{excluido:true,statusSaida:'cancelada',motivoExclusao:'Registro duplicado consolidado pela V103',unificadoNoId:previa.saidaAutoritativa.id,unificadoEm:carimbo,unificadoPor:'Chris'},{merge:true}));
+        tx.set(contatoZeissRef,{slug:'zeiss',whatsapp:numeroZeiss,nome:'Zeiss',origem:'edicao_financeiro',atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
         eventos.forEach((v,i)=>{const ref=eventoRefs[i],s=mapa.get(ref.path);if(s?.exists())return;tx.set(ref,{schemaVersion:1,operationId:v.op,clienteId:v.clienteId,tipo:v.tipo,competenciaInicio:v.comp,ultimaCompetencia:v.ultima,dataEfetiva:v.data,valor:v.valor,sourceType:v.sourceType,sourceId:v.sourceId,reversalOf:null,preHash:v.pre,postHash:v.post,criadoPor:uid,criadoEm:carimbo});});
       });
-      invalidar();
-      const final=await lerCorrecaoSetembro();
-      if(final.bloqueios.length||Object.values(final.resolvidos).some(ok=>!ok)||final.contatoZeiss.numero!==numeroZeiss)throw new Error('A transação terminou, mas a releitura não confirmou todos os alvos. Não repita; atualize.');
-      mostrarToast('Somente os ajustes pendentes foram confirmados; dados manuais preservados.');await Promise.all([w.renderFinanceiro(),w.renderMensalidades(),w.renderCobranca(),w.renderContratos()]);await w.preverCorrecaoFinanceiraSetembroV103();return true;
+      const recibosContratos=await Promise.all([vitalleRef,moniqueRef,joaquinRef,acougueRef].map(getDoc));
+      const recibosSaidas=await Promise.all([saidaMoniqueRef,saidaJoaquinRef,saidaAcougueRef].map(getDoc));
+      const reciboContato=await getDoc(contatoZeissRef);
+      const recibosPagamentos=await Promise.all(refsPag.map(getDoc));
+      const recibosDuplicatas=await Promise.all(refsDup.map(getDoc));
+      const recibosEventos=await Promise.all(eventoRefs.map(getDoc));
+      const contratosOk=numero(recibosContratos[0].data()?.valorProgramado)===1000&&recibosContratos.slice(1).every(v=>texto(v.data()?.ultimaCompetenciaPagamento)==='2026-08');
+      const saidasOk=recibosSaidas.every(v=>v.exists()&&texto(v.data()?.ultimaCompetenciaPagamento)==='2026-08');
+      const pagamentosSaidaIds=new Set([...previa.pMonique,...previa.pJoaquin,...previa.pAcougue].map(v=>v.id));
+      const pagamentosOk=recibosPagamentos.every(v=>{
+        if(!v.exists()) return true;
+        if(pagamentosSaidaIds.has(v.id)) return Core.statusMensalidade(v.data())==='cancelado';
+        if(['pago','cancelado'].includes(Core.statusMensalidade(v.data()))) return true;
+        return numero(v.data().valorDevido)===1000&&(!Object.prototype.hasOwnProperty.call(v.data(),'valor')||numero(v.data().valor)===1000)&&(!Object.prototype.hasOwnProperty.call(v.data(),'valorCobrado')||numero(v.data().valorCobrado)===1000);
+      });
+      if(!contratosOk||!saidasOk||!pagamentosOk||Core.normalizarTelefoneBR(reciboContato.data()?.whatsapp)!==numeroZeiss||recibosDuplicatas.some(v=>v.data()?.excluido!==true)||recibosEventos.some(v=>!v.exists()))throw new Error('A transação terminou, mas os recibos não confirmaram todos os alvos. Não repita; atualize.');
+      invalidar();mostrarToast(jaAplicada?'Os ajustes já estavam confirmados; nenhuma escrita foi repetida.':'Ajustes confirmados com recibos.');await Promise.all([w.renderFinanceiro(),w.renderMensalidades(),w.renderCobranca(),w.renderContratos()]);await w.preverCorrecaoFinanceiraSetembroV103();return true;
     }catch(e){console.error(e);mostrarToast('Ajustes não confirmados: '+(e.message||e),'erro');return false;}
     finally{locks.delete('correcao-setembro');}
-  };
-
-  async function lerCorrecaoFedaltoV104(){
-    const fontes=await carregarSnapshot({forcar:true,comContatos:true});
-    const grupo=contratoFisicoFedalto(fontes);
-    const fedalto=grupo.contrato;
-    const vigencias=fedalto?manterVigenciaFedaltoAtiva(fedalto):null;
-    const idsFedalto=new Set([texto(fedalto?.id),'fedalto-eletro-comercial','fedalto-eletro']);
-    const pagamentos=(fontes.pagamentos||[]).filter(v=>idsFedalto.has(texto(v.canonicalId))&&v.competencia==='2026-09');
-    const pagamento=pagamentos.length===1?pagamentos[0]:null;
-    const saidas=(fontes.saidas||[]).filter(v=>idsFedalto.has(texto(v.canonicalId))&&v.excluido!==true&&v.statusSaida!=='cancelada');
-    const config=(fontes.clientes_config||[]).find(v=>idsFedalto.has(texto(v.id)))||null;
-    const configRegua=(fontes.config_financeiro||[]).find(v=>v.id==='regua_cobranca')||null;
-    const assinaturasSaida=new Set(saidas.map(assinaturaSaidaFinanceira));
-    const ponteiroSaida=texto(config?.saidaAtivaId);
-    const contratoJaAtivo=!!fedalto&&Core.vigenteNaCompetencia(fedalto,'2026-09')&&Core.vigenteNaCompetencia(fedalto,'2026-10')&&!texto(fedalto.ultimaCompetenciaPagamento);
-    /* Um isento salvo manualmente em setembro já é a cortesia declarada pelo
-       usuário. A regra protege esse estado terminal; não exigir uma flag nova
-       evita regravação impossível e mantém o documento manual byte a byte. */
-    const pagamentoJaCortesia=!!pagamento&&Core.statusMensalidade(pagamento)==='isento';
-    const reguaJaConfirmada=texto(configRegua?.inicioOperacao)==='2026-07'&&texto(configRegua?.competenciasQuitadasAte)==='2026-08';
-    const resolvida=contratoJaAtivo&&pagamentoJaCortesia&&reguaJaConfirmada&&!saidas.length&&!ponteiroSaida;
-    const bloqueios=[];
-    if(!grupo.ok)bloqueios.push(`Contrato único da Fedalto não confirmado (${grupo.ids.join(', ')||'ausente'})`);
-    if(fedalto&&!vigencias&&!resolvida)bloqueios.push('O ciclo da Fedalto está ambíguo e não pode ser reaberto automaticamente');
-    if(assinaturasSaida.size>1)bloqueios.push('Existem saídas divergentes da Fedalto; nenhuma será cancelada por suposição');
-    if(ponteiroSaida&& !saidas.some(v=>v.id===ponteiroSaida))bloqueios.push('O apontamento de saída da Fedalto não corresponde a um recibo ativo');
-    if(pagamentos.length>1)bloqueios.push('Há mais de uma mensalidade física da Fedalto em setembro');
-    const estado=pagamento?Core.statusMensalidade(pagamento):'ausente';
-    if(estado==='pago')bloqueios.push('Setembro da Fedalto já consta como pago; a correção não apagará um recebimento');
-    if(estado==='cancelado'&&!pagamento?.canceladoPorSaida)bloqueios.push('Setembro da Fedalto foi cancelado por outro motivo e exige revisão manual');
-    if(estado==='indisponivel')bloqueios.push('A mensalidade de setembro da Fedalto possui estado desconhecido');
-    let ativosSimulados=null;
-    if(fedalto&&vigencias){
-      const contratosSimulados=fontes.contratos.map(v=>{
-        if(v.id===fedalto.id)return {...v,status:'ativo',ultimaCompetenciaPagamento:'',vigencias};
-        if(['dra-monique','joaquin-assados','acougue-sao-joaquim'].includes(v.id)){
-          const fechadas=fecharVigenciaNaCompetencia(v,'2026-08');
-          return fechadas?{...v,ultimaCompetenciaPagamento:'2026-08',vigencias:fechadas}:v;
-        }
-        return v;
-      });
-      const projecao=Core.projetarMovimentosCompetencia({contratos:contratosSimulados,saidas:fontes.saidas,competencia:'2026-09'});
-      ativosSimulados=projecao.totais?.ativos??null;
-      if(projecao.estado==='indisponivel')bloqueios.push('A carteira final simulada ficou indisponível');
-      const fedaltoSimulada=contratosSimulados.find(v=>v.id===fedalto.id);
-      if(!fedaltoSimulada||!Core.vigenteNaCompetencia(fedaltoSimulada,'2026-09'))bloqueios.push('A simulação não manteve a Fedalto ativa em setembro');
-    }
-    return {fontes,grupo,fedalto,vigencias,pagamentos,pagamento,estado,saidas,config,configRegua,ativosSimulados,resolvida,bloqueios};
-  }
-
-  w.preverCorrecaoFedaltoReguaV104=async function(){
-    if(!canFinanceiro())return false;
-    const alvo=document.getElementById('financeiroCorrecoesFedaltoV104Status');if(!alvo)return false;
-    alvo.innerHTML='<div class="desc">Conferindo Fedalto e o marco inicial da Régua sem gravar…</div>';
-    try{
-      const p=await lerCorrecaoFedaltoV104();w.__correcaoFedaltoV104=p;
-      alvo.innerHTML=`${p.bloqueios.length?`<div class="desc" style="color:var(--red);"><b>Correção bloqueada:</b> ${p.bloqueios.map(esc).join(' · ')}</div>`:`<div class="desc" style="color:var(--green);"><b>${p.resolvida?'Fedalto e Régua já estavam confirmadas; nada será regravado.':`Prévia confirmada. A carteira simulada possui ${p.ativosSimulados??'um total ainda não materializado'} cliente(s); nada foi gravado.`}</b></div>`}<div class="item"><b>Fedalto Eletro</b><div class="meta">Permanece cliente ativo. Setembro de 2026 será cortesia promocional; agosto e os demais meses não serão reclassificados.</div></div><div class="item"><b>Régua de cobrança</b><div class="meta">A operação começa em julho de 2026 e julho/agosto ficam confirmados como período encerrado, sem inventar datas de caixa.</div></div>${p.bloqueios.length||w.__previewUnificadaV104||p.resolvida?'':`<button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoFedaltoReguaV104()">Corrigir somente Fedalto e a Régua</button>`}`;
-      return !p.bloqueios.length;
-    }catch(e){console.error(e);alvo.innerHTML='<div class="desc" style="color:var(--red);">Prévia indisponível. Nada foi alterado.</div>';return false;}
-  };
-
-  w.aplicarCorrecaoFedaltoReguaV104=async function(){
-    if(!canFinanceiro()||locks.has('fedalto-regua-v104'))return false;
-    const previa=await lerCorrecaoFedaltoV104();
-    if(previa.bloqueios.length){mostrarToast('A prévia da Fedalto mudou; nada foi alterado.','erro');return false;}
-    if(previa.resolvida){mostrarToast('Fedalto e Régua já estavam confirmadas; nenhuma gravação foi repetida.');return true;}
-    if(!w.__aplicacaoFinanceiraV104EmCurso&&!confirm('Manter Fedalto ativa, registrar setembro como cortesia e encerrar os falsos atrasos anteriores a setembro na Régua?'))return false;
-    locks.add('fedalto-regua-v104');
-    try{
-      const uid=auth.currentUser?.uid;if(!uid)throw new Error('Sessão autenticada não confirmada.');
-      const op='fin_v104_fedalto_cortesia_2026_09';
-      const contratoRef=doc(db,'contratos_cliente',previa.fedalto.id);
-      const pagamentoRef=doc(db,'pagamentos_mensais',previa.pagamento?.id||`${previa.fedalto.id}_2026-09`);
-      const configClienteRef=previa.config?doc(db,'clientes_config',previa.config.id):null;
-      const configReguaRef=doc(db,'config_financeiro','regua_cobranca');
-      const saidaRefs=previa.saidas.map(v=>doc(db,'clientes_encerrados',v.id));
-      const eventoRef=doc(db,'clientes_ciclo_financeiro',op);
-      const refs=[contratoRef,pagamentoRef,configClienteRef,configReguaRef,...saidaRefs,eventoRef].filter(Boolean);
-      const preHash=await sha256Hex(JSON.stringify({contrato:assinaturaContratoAlvo(previa.fedalto),pagamento:previa.pagamento||null,saidas:previa.saidas.map(v=>v.id).sort()}));
-      const postHash=await sha256Hex(JSON.stringify({cliente:previa.fedalto.id,ativo:true,cortesia:'2026-09',reguaInicio:'2026-07',quitadoAte:'2026-08'}));
-      let jaAplicada=false;
-      await runTransaction(db,async tx=>{
-        const snaps=await Promise.all(refs.map(ref=>tx.get(ref)));const mapa=new Map(refs.map((ref,i)=>[ref.path,snaps[i]]));
-        const evento=mapa.get(eventoRef.path);
-        if(evento?.exists()){
-          const contrato=mapa.get(contratoRef.path)?.data()||{},pagamento=mapa.get(pagamentoRef.path)?.data()||{},regua=mapa.get(configReguaRef.path)?.data()||{};
-          const vigente=Core.vigenteNaCompetencia(contrato,'2026-09');
-          if(!vigente||Core.statusMensalidade(pagamento)!=='isento'||texto(regua.inicioOperacao)!=='2026-07'||texto(regua.competenciasQuitadasAte)!=='2026-08'||saidaRefs.some(ref=>mapa.get(ref.path)?.data()?.excluido!==true))throw new Error('O recibo existe, mas o estado final divergiu. Atualize e audite; não repita.');
-          jaAplicada=true;return;
-        }
-        const contratoSnap=mapa.get(contratoRef.path);if(!contratoSnap?.exists())throw new Error('O contrato da Fedalto mudou depois da prévia.');
-        const contratoAtual={id:contratoRef.id,...contratoSnap.data()};
-        if(await sha256Hex(assinaturaContratoAlvo(contratoAtual))!==await sha256Hex(assinaturaContratoAlvo(previa.fedalto)))throw new Error('O contrato da Fedalto mudou depois da prévia. Atualize; nada foi gravado.');
-        const pagamentoSnap=mapa.get(pagamentoRef.path);const estadoAtual=pagamentoSnap?.exists()?Core.statusMensalidade(pagamentoSnap.data()):'ausente';
-        if(estadoAtual==='pago'||estadoAtual==='indisponivel'||(estadoAtual==='cancelado'&&pagamentoSnap.data()?.canceladoPorSaida!==true))throw new Error('A mensalidade da Fedalto mudou depois da prévia.');
-        const carimbo=serverTimestamp();
-        tx.set(contratoRef,{status:'ativo',ultimaCompetenciaPagamento:deleteField(),vigencias:previa.vigencias,cortesiaMeses:arrayUnion('2026-09'),saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),encerradoEm:deleteField(),encerradoPor:deleteField(),atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
-        if(configClienteRef&&mapa.get(configClienteRef.path)?.exists())tx.set(configClienteRef,{saidaAtivaId:deleteField(),saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),clienteInativo:false,inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),atualizadoPor:'Chris',atualizadoEm:carimbo},{merge:true});
-        saidaRefs.forEach(ref=>tx.set(ref,{excluido:true,statusSaida:'cancelada',motivoExclusao:'Fedalto permanece ativa; setembro de 2026 é cortesia promocional',canceladoPor:'Chris',canceladoEm:carimbo},{merge:true}));
-        const valor=numero(Core.valorNaCompetencia({...contratoAtual,vigencias:previa.vigencias,ultimaCompetenciaPagamento:''},'2026-09').valor||contratoAtual.valorVigente||contratoAtual.valorCheio);
-        if(!pagamentoSnap?.exists())tx.set(pagamentoRef,{cliente:previa.fedalto.id,canonicalId:previa.fedalto.id,clienteNome:previa.fedalto.clienteNome||'Fedalto Eletro Comercial',competencia:'2026-09',valorDevido:valor,diaVencimento:numero(contratoAtual.diaVencimento)||10,status:'isento',pagoEm:'',comprovante:'',cortesiaDoMes:true,motivoIsencao:'Cortesia promocional da agência em setembro de 2026',criadoEm:carimbo,atualizadoEm:carimbo,atualizadoPor:'Chris'});
-        else if(estadoAtual==='aberto')tx.set(pagamentoRef,{status:'isento',cortesiaDoMes:true,motivoIsencao:'Cortesia promocional da agência em setembro de 2026',atualizadoEm:carimbo,atualizadoPor:'Chris'},{merge:true});
-        else if(estadoAtual==='cancelado')tx.set(pagamentoRef,{status:'isento',canceladoPorSaida:deleteField(),canceladoPorSaidaId:deleteField(),statusAntesSaida:deleteField(),motivoCancelamento:deleteField(),canceladoEm:deleteField(),canceladoPor:deleteField(),cortesiaDoMes:true,motivoIsencao:'Cortesia promocional da agência em setembro de 2026',financeiroOperationId:op,atualizadoEm:carimbo,atualizadoPor:'Chris'},{merge:true});
-        tx.set(configReguaRef,{schemaVersion:1,inicioOperacao:'2026-07',competenciasQuitadasAte:'2026-08',criterioHistorico:'confirmado_pelo_responsavel_sem_inventar_data_caixa',atualizadoPorUid:uid,atualizadoEm:carimbo},{merge:true});
-        tx.set(eventoRef,{schemaVersion:1,operationId:op,clienteId:previa.fedalto.id,tipo:'reativacao',competenciaInicio:'2026-09',ultimaCompetencia:null,dataEfetiva:new Date('2026-09-01T12:00:00-03:00'),valor:null,sourceType:'migracao',sourceId:previa.fedalto.id,reversalOf:null,preHash,postHash,criadoPor:uid,criadoEm:carimbo});
-      });
-      const [contratoFinal,pagamentoFinal,reguaFinal,eventFinal,...saidasFinais]=await Promise.all([getDoc(contratoRef),getDoc(pagamentoRef),getDoc(configReguaRef),getDoc(eventoRef),...saidaRefs.map(getDoc)]);
-      const recibos={
-        contratoVigente:Core.vigenteNaCompetencia(contratoFinal.data()||{},'2026-09'),
-        setembroCortesia:Core.statusMensalidade(pagamentoFinal.data()||{})==='isento',
-        reguaEncerradaAteAgosto:texto(reguaFinal.data()?.competenciasQuitadasAte)==='2026-08',
-        evento:eventFinal.exists(),
-        saidasCanceladas:saidasFinais.every(v=>v.data()?.excluido===true),
-      };
-      const recibosPendentes=Object.entries(recibos).filter(([,ok])=>!ok).map(([nome])=>nome);
-      if(recibosPendentes.length)throw new Error(`A transação terminou, mas os recibos não confirmaram: ${recibosPendentes.join(', ')}. Não repita; atualize.`);
-      invalidar();mostrarToast(jaAplicada?'Fedalto e Régua já estavam confirmadas; nenhuma escrita foi repetida.':'Fedalto ativa, setembro em cortesia e Régua histórica confirmados.');
-      await Promise.all([w.renderFinanceiro(),w.renderMensalidades(),w.renderCobranca(),w.renderContratos()]);
-      await w.preverCorrecaoFedaltoReguaV104();return true;
-    }catch(e){console.error(e);mostrarToast('Fedalto/Régua não confirmadas: '+(e.message||e),'erro');return false;}
-    finally{locks.delete('fedalto-regua-v104');}
-  };
-
-  w.preverCorrecaoFinanceiraV104=async function(){
-    if(!canFinanceiro())return false;
-    w.__previewUnificadaV104=true;
-    try{
-      const [carteiraOk,fedaltoOk]=await Promise.all([w.preverCorrecaoFinanceiraSetembroV103(),w.preverCorrecaoFedaltoReguaV104()]);
-      const alvo=document.getElementById('financeiroCorrecoesV104Acao');
-      const carteiraResolvida=!!w.__correcaoSetembroV103&&Object.values(w.__correcaoSetembroV103.resolvidos||{}).every(Boolean);
-      const tudoResolvido=carteiraResolvida&&w.__correcaoFedaltoV104?.resolvida===true;
-      if(alvo)alvo.innerHTML=carteiraOk&&fedaltoOk?(tudoResolvido?'<div class="desc" style="color:var(--green);"><b>Conferência concluída: todos os alvos já estavam corretos. Não há nada para salvar.</b></div>':'<button class="btn" style="width:auto;" onclick="aplicarCorrecaoFinanceiraV104()">2. Aplicar somente o que falta</button><div class="meta" style="margin-top:7px;">O que já foi salvo manualmente fica fora da transação e não será duplicado.</div>'):'<div class="desc" style="color:var(--red);">A aplicação continua bloqueada enquanto alguma prévia não estiver segura.</div>';
-      return carteiraOk&&fedaltoOk;
-    }finally{w.__previewUnificadaV104=false;}
-  };
-
-  w.aplicarCorrecaoFinanceiraV104=async function(){
-    if(!canFinanceiro())return false;
-    if(w.__aplicacaoFinanceiraV104Promessa)return w.__aplicacaoFinanceiraV104Promessa;
-    if(!confirm('Aplicar os ajustes confirmados de setembro? Pagamentos terminais e datas de caixa serão preservados.'))return false;
-    w.__aplicacaoFinanceiraV104EmCurso=true;
-    const trabalho=(async()=>{
-      if(!await w.aplicarCorrecaoFinanceiraSetembroV103())return false;
-      if(!await w.aplicarCorrecaoFedaltoReguaV104())return false;
-      await w.preverCorrecaoFinanceiraV104();
-      mostrarToast('Todas as correções foram confirmadas com recibos.');return true;
-    })();
-    w.__aplicacaoFinanceiraV104Promessa=trabalho;
-    try{return await trabalho;}
-    finally{w.__aplicacaoFinanceiraV104EmCurso=false;w.__aplicacaoFinanceiraV104Promessa=null;}
   };
 
   /* Desativa os caminhos antigos de renderização. As referências capturadas
@@ -1385,12 +967,6 @@ function competenciaDeDataCaixa(valor){
   w.renderCobrancaV103=w.renderCobranca;
   w.renderFinanceiroV103=w.renderFinanceiro;
   w.renderContratosV103=w.renderContratos;
-  w.marcarMensalidadeV104=w.marcarMensalidadeV103;
-  w.materializarCobrancaV104=w.materializarCobrancaV103;
-  w.confirmarEnvioCobrancaV104=w.confirmarEnvioCobrancaV103;
-  w.salvarLancamentoFinanceiroV104=w.salvarLancamentoFinanceiroV103;
-  w.alterarLancamentoFinanceiroV104=w.alterarLancamentoFinanceiroV103;
-  w.__financeiroV104={carregarSnapshot,projetar,invalidar,core:Core,renderContratosAnterior};
-  w.__financeiroV103=w.__financeiroV104;
-  return w.__financeiroV104;
+  w.__financeiroV103={carregarSnapshot,projetar,invalidar,core:Core,renderContratosAnterior};
+  return w.__financeiroV103;
 }

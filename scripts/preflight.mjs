@@ -797,13 +797,14 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-22-correcao-financeiro-real-v104' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-21-financeiro-por-competencia-v103">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
-    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
+if (build !== '2026-08-22-conciliacao-manual-regua-v105' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-22-correcao-financeiro-real-v104">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
+    !escritorio.includes('<meta name="gs-fourth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V104 inesperada: ${build || 'ausente'}`);
-} else provar('V104 preserva V103/V102/V101 e mantém correção real, finanças, migração e conferência separadas');
+  falhar(`cadeia de build V105 inesperada: ${build || 'ausente'}`);
+} else provar('V105 preserva V104/V103/V102/V101 e mantém reconciliação manual, correção real, finanças, migração e conferência separadas');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

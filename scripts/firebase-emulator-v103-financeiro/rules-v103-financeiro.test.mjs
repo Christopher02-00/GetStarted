@@ -42,15 +42,31 @@ function emailDaFuncao(nome) {
   return encontrado[1];
 }
 
+function emailDoFilmmaker(nome) {
+  const inicio = rules.indexOf("function ehDonoExtra(");
+  assert.notEqual(inicio, -1, "função ehDonoExtra ausente nas regras");
+  const trecho = rules.slice(inicio, inicio + 1800);
+  const nomeSeguro = nome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const encontrado = trecho.match(new RegExp(`request\\.auth\\.token\\.email == '([^']+)' && dados\\.filmmaker == '${nomeSeguro}'`));
+  assert.ok(encontrado, `e-mail semeado do filmmaker ${nome} não encontrado`);
+  return encontrado[1];
+}
+
 const emails = Object.freeze({
   chris: emailDaFuncao("ehChris"),
   amanda: emailDaFuncao("ehAmanda"),
-  outro: emailDaFuncao("ehGabi")
+  outro: emailDaFuncao("ehGabi"),
+  cecilia: emailDaFuncao("ehCecilia"),
+  luis: emailDoFilmmaker("Luís"),
+  nathan: emailDoFilmmaker("Nathan")
 });
 const uids = Object.freeze({
   chris: "uid-sintetico-chris-v103",
   amanda: "uid-sintetico-amanda-v103",
   outro: "uid-sintetico-outro-v103",
+  cecilia: "uid-sintetico-cecilia-v103",
+  luis: "uid-sintetico-luis-v103",
+  nathan: "uid-sintetico-nathan-v103",
   cliente: "uid-sintetico-cliente-v103"
 });
 
@@ -62,6 +78,9 @@ const contextos = {
   chris: env.authenticatedContext(uids.chris, { email: emails.chris, email_verified: true }),
   amanda: env.authenticatedContext(uids.amanda, { email: emails.amanda, email_verified: true }),
   outro: env.authenticatedContext(uids.outro, { email: emails.outro, email_verified: true }),
+  cecilia: env.authenticatedContext(uids.cecilia, { email: emails.cecilia, email_verified: true }),
+  luis: env.authenticatedContext(uids.luis, { email: emails.luis, email_verified: true }),
+  nathan: env.authenticatedContext(uids.nathan, { email: emails.nathan, email_verified: true }),
   cliente: env.authenticatedContext(uids.cliente, { email: "fixture-cliente@invalid.example", email_verified: true }),
   anonimo: env.unauthenticatedContext()
 };
@@ -81,6 +100,28 @@ function caminhoLancamento(docId) {
 }
 function caminhoLedger(op) {
   return `clientes_ciclo_financeiro/${op}`;
+}
+function caminhoContatoFinanceiro(slug) {
+  return `contatos_clientes_financeiro/${slug}`;
+}
+function dadosContatoFinanceiro({
+  slug = "zeiss",
+  whatsapp = "5541990000101",
+  nome = "Zeiss sintética",
+  origem = "edicao_regua",
+  atualizadoPor = "Chris",
+  atualizadoEm = serverTimestamp(),
+  extra = {}
+} = {}) {
+  return {
+    slug,
+    whatsapp,
+    nome,
+    origem,
+    atualizadoPor,
+    atualizadoEm,
+    ...extra
+  };
 }
 function dadosLancamento({
   op = operationId("lancamento"),
@@ -418,6 +459,154 @@ async function caso(nome, executar) {
 
 try {
   await semearBase();
+
+  await caso("Chris cria contato financeiro canônico da Zeiss", async () => {
+    await assertSucceeds(setDoc(
+      doc(db.chris, caminhoContatoFinanceiro("zeiss")),
+      dadosContatoFinanceiro()
+    ));
+    const salvo = await lerAdmin(caminhoContatoFinanceiro("zeiss"));
+    assert.equal(salvo.exists(), true);
+    assert.equal(salvo.data().slug, "zeiss");
+    assert.equal(salvo.data().whatsapp, "5541990000101");
+  });
+  await caso("Chris lê o contato canônico e lista a coleção privada", async () => {
+    const contato = await assertSucceeds(getDoc(doc(db.chris, caminhoContatoFinanceiro("zeiss"))));
+    const contatos = await assertSucceeds(getDocs(collection(db.chris, "contatos_clientes_financeiro")));
+    assert.equal(contato.exists(), true);
+    assert.equal(contatos.docs.filter((snap) => snap.id === "zeiss").length, 1);
+  });
+  await caso("retry de create/update do Chris é idempotente e mantém um único /zeiss", async () => {
+    const referencia = doc(db.chris, caminhoContatoFinanceiro("zeiss"));
+    await assertSucceeds(setDoc(referencia, dadosContatoFinanceiro(), { merge: true }));
+    await assertSucceeds(updateDoc(referencia, {
+      whatsapp: "5541990000102",
+      atualizadoEm: serverTimestamp()
+    }));
+    await assertSucceeds(updateDoc(referencia, {
+      whatsapp: "5541990000102",
+      atualizadoEm: serverTimestamp()
+    }));
+    const contatos = await listarAdmin("contatos_clientes_financeiro");
+    const canonicos = contatos.docs.filter((snap) => snap.id === "zeiss");
+    assert.equal(canonicos.length, 1);
+    assert.equal(canonicos[0].data().whatsapp, "5541990000102");
+  });
+  await caso("slug divergente do docId é negado", async () => {
+    await assertFails(setDoc(
+      doc(db.chris, caminhoContatoFinanceiro("zeiss-alias")),
+      dadosContatoFinanceiro({ slug: "zeiss" })
+    ));
+  });
+  await caso("telefone financeiro inválido é negado", async () => {
+    await assertFails(setDoc(
+      doc(db.chris, caminhoContatoFinanceiro("contato-invalido")),
+      dadosContatoFinanceiro({ slug: "contato-invalido", whatsapp: "telefone-invalido-sintetico" })
+    ));
+  });
+  await caso("campo extra no contato financeiro é negado", async () => {
+    await assertFails(setDoc(
+      doc(db.chris, caminhoContatoFinanceiro("contato-extra")),
+      dadosContatoFinanceiro({ slug: "contato-extra", extra: { dadoNaoPermitido: true } })
+    ));
+  });
+  await caso("anônimo não lê, cria nem atualiza contato financeiro", async () => {
+    await assertFails(getDoc(doc(db.anonimo, caminhoContatoFinanceiro("zeiss"))));
+    await assertFails(setDoc(
+      doc(db.anonimo, caminhoContatoFinanceiro("contato-anonimo")),
+      dadosContatoFinanceiro({ slug: "contato-anonimo" })
+    ));
+    await assertFails(updateDoc(doc(db.anonimo, caminhoContatoFinanceiro("zeiss")), {
+      whatsapp: "5541990000103",
+      atualizadoEm: serverTimestamp()
+    }));
+  });
+  for (const papel of ["cecilia", "luis", "nathan"]) {
+    await caso(`${papel} não lê, cria nem atualiza contato financeiro`, async () => {
+      const slug = `contato-${papel}`;
+      await assertFails(getDoc(doc(db[papel], caminhoContatoFinanceiro("zeiss"))));
+      await assertFails(setDoc(
+        doc(db[papel], caminhoContatoFinanceiro(slug)),
+        dadosContatoFinanceiro({ slug })
+      ));
+      await assertFails(updateDoc(doc(db[papel], caminhoContatoFinanceiro("zeiss")), {
+        whatsapp: "5541990000103",
+        atualizadoEm: serverTimestamp()
+      }));
+    });
+  }
+  await caso("Amanda jamais lê contato pontual nem lista a coleção privada", async () => {
+    await assertFails(getDoc(doc(db.amanda, caminhoContatoFinanceiro("zeiss"))));
+    await assertFails(getDocs(collection(db.amanda, "contatos_clientes_financeiro")));
+  });
+  await caso("Amanda cria somente nas três origens estreitas autorizadas", async () => {
+    for (const origem of ["ativacao_mensalista", "ativacao_avulso", "reativacao"]) {
+      const slug = `contato-amanda-${origem}`;
+      await assertSucceeds(setDoc(
+        doc(db.amanda, caminhoContatoFinanceiro(slug)),
+        dadosContatoFinanceiro({
+          slug,
+          whatsapp: "5541990000201",
+          origem,
+          atualizadoPor: "Amanda"
+        })
+      ));
+    }
+  });
+  await caso("Amanda não cria contato com origem ampla, autoria alheia ou campo extra", async () => {
+    await assertFails(setDoc(
+      doc(db.amanda, caminhoContatoFinanceiro("contato-amanda-origem-ampla")),
+      dadosContatoFinanceiro({
+        slug: "contato-amanda-origem-ampla",
+        origem: "edicao_regua",
+        atualizadoPor: "Amanda"
+      })
+    ));
+    await assertFails(setDoc(
+      doc(db.amanda, caminhoContatoFinanceiro("contato-amanda-autoria")),
+      dadosContatoFinanceiro({
+        slug: "contato-amanda-autoria",
+        origem: "reativacao",
+        atualizadoPor: "Chris"
+      })
+    ));
+    await assertFails(setDoc(
+      doc(db.amanda, caminhoContatoFinanceiro("contato-amanda-extra")),
+      dadosContatoFinanceiro({
+        slug: "contato-amanda-extra",
+        origem: "reativacao",
+        atualizadoPor: "Amanda",
+        extra: { criadoPor: "Amanda" }
+      })
+    ));
+  });
+  await caso("update e retry da Amanda exigem origem estreita e são idempotentes", async () => {
+    const referencia = doc(db.amanda, caminhoContatoFinanceiro("contato-amanda-ativacao_mensalista"));
+    const alteracao = {
+      whatsapp: "5541990000202",
+      origem: "reativacao",
+      atualizadoPor: "Amanda",
+      atualizadoEm: serverTimestamp()
+    };
+    await assertSucceeds(updateDoc(referencia, alteracao));
+    await assertSucceeds(updateDoc(referencia, alteracao));
+    const salvo = await lerAdmin(caminhoContatoFinanceiro("contato-amanda-ativacao_mensalista"));
+    assert.equal(salvo.data().whatsapp, "5541990000202");
+  });
+  await caso("Amanda não amplia origem durante update", async () => {
+    await assertFails(updateDoc(
+      doc(db.amanda, caminhoContatoFinanceiro("contato-amanda-ativacao_avulso")),
+      {
+        origem: "edicao_financeiro",
+        atualizadoPor: "Amanda",
+        atualizadoEm: serverTimestamp()
+      }
+    ));
+  });
+  await caso("delete físico de contato financeiro é negado a Chris e Amanda", async () => {
+    await assertFails(deleteDoc(doc(db.chris, caminhoContatoFinanceiro("zeiss"))));
+    await assertFails(deleteDoc(doc(db.amanda, caminhoContatoFinanceiro("contato-amanda-reativacao"))));
+  });
 
   await caso("Chris lê lançamento e ledger", async () => {
     const [lancamento, evento] = await Promise.all([

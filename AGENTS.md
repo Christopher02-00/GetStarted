@@ -183,6 +183,17 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - A correção dirigida V104 é composta por etapas atômicas e recibos determinísticos. Prévia e renderização fazem zero writes; clique duplo, retry e duas abas convergem; publicação do código e das regras não altera dados automaticamente.
 - `config_financeiro/regua_cobranca` é configuração privada do Chris. Guarda apenas o marco operacional e competências historicamente confirmadas, sem copiar pagamentos, contatos ou contratos.
 
+### Invariantes V105 — conciliação manual e contato de cobrança
+
+- A correção dirigida é um reconciliador de estado canônico, não uma migração descartável. Antes de propor escrita, classifica cada alvo como `já confirmado`, `ajuste pendente`, `bloqueado` ou `indisponível`.
+- Resultado canônico completo já equivalente gera no-op: não cria segundo contato, saída, vigência, pagamento, configuração, evento ou recibo. A declaração humana de reparo manual orienta a prévia, mas não substitui contrato, competência, motivo, pendências, `fichaSnapshot`, histórico e demais provas aplicáveis.
+- Contato financeiro usa uma única resolução na Régua, na ação de WhatsApp e na correção dirigida. O documento canônico privado vence; legado válido somente entra quando inequívoco; fontes válidas divergentes ou valor inválido bloqueiam; leitura vazia nunca apaga contato existente.
+- Contato canônico já salvo é pré-carregado como confirmado e somente leitura na operação dirigida. Se todos os alvos estiverem confirmados, não existe botão de aplicação; se restar diferença segura, somente o subconjunto pendente entra na transação.
+- Abrir WhatsApp exige contato resolvido válido e usa a mesma fonte da linha exibida. A abertura da conversa não confirma envio; erro, popup bloqueado ou contato conflitante nunca pode disparar número genérico ou de outro cliente.
+- Renderização e verificação fazem zero writes. Releitura transacional, operação determinística e recibo preservam idempotência em clique duplo, retry e duas abas; alteração entre prévia e commit vira no-op comprovado ou bloqueio, nunca repetição cega.
+- O valor real de qualquer contato financeiro não entra em HTML, módulo público, teste, documentação, memória compartilhada, Portal ou Central. Ele permanece exclusivamente na coleção privada autorizada ao Chris.
+- A V105 não amplia regras por conveniência e não altera calendários, captação, Place/Luís, vídeos, postagens, Portal ou responsabilidades de Amanda, Gabi, Cecília, Luís e Nathan.
+
 ### Invariantes de workflow e arquivo operacional
 
 - A confirmação de um workflow (enviar calendário, aprovar, devolver) não deve falhar apenas porque o eco do próprio autosave mudou `updatedAt`. Só é permitido tolerar a versão diferente quando a assinatura do conteúdo de negócio é idêntica e nenhuma decisão posterior substituiu a ação. Conteúdo concorrente continua bloqueado.

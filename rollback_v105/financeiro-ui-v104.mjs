@@ -1,11 +1,11 @@
 /*
- * Get Started — integração financeira V106 (compatibilidade sobre a V105).
+ * Get Started — integração financeira V105 (compatibilidade sobre a V104).
  *
  * Este módulo concentra leitura, projeção e UI. A matemática e as leis de
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
-import * as Core from './financeiro-core.mjs?v=106';
+import * as Core from './financeiro-core.mjs?v=105';
 
 const COLECOES_SNAPSHOT = [
   'contratos_cliente',
@@ -22,17 +22,6 @@ const COLECOES_CONTRATOS = [
   'contratos_cliente',
   'clientes_encerrados',
 ];
-
-const CONCILIACAO_JOAQUIN_V106 = Object.freeze({
-  canonicalId:'joaquin-assados',
-  canonicalExitId:'62eBY5iSyFtP21vECYMm',
-  duplicateExitId:'0oqy4pk1tcKZccWWyZDi',
-  operationId:'fin_v106_joaquin_saida_canonica_20260915',
-  exitDate:'2026-09-15',
-  finalCompetence:'2026-08',
-  reason:'resultado',
-  reasonDetail:'Baixo retorno financeiro',
-});
 
   function numero(valor){
   const n=Number(valor);
@@ -535,12 +524,7 @@ function competenciaDeDataCaixa(valor){
   }
 
   w.renderFinanceiro=async function(){
-    if(!canFinanceiro()){
-      document.getElementById('financeiroBox')?.replaceChildren();
-      garantirPainelConciliacaoJoaquinV106();
-      return false;
-    }
-    garantirPainelConciliacaoJoaquinV106();
+    if(!canFinanceiro()){ document.getElementById('financeiroBox')?.replaceChildren(); return false; }
     const box=document.getElementById('financeiroBox'); if(!box) return false;
     const competencia=campoCompetencia('finMes');
     ['mensMes','cobMes','ctMes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=competencia;});
@@ -780,7 +764,6 @@ function competenciaDeDataCaixa(valor){
   }
 
   w.renderContratos=async function(){
-    garantirPainelConciliacaoJoaquinV106();
     if(!canContratos()){document.getElementById('contratosBox')?.replaceChildren();return false;}
     const box=document.getElementById('contratosBox');if(!box)return false;
     const competencia=campoCompetencia('ctMes');
@@ -1047,330 +1030,6 @@ function competenciaDeDataCaixa(valor){
     if(!contrato||texto(contrato.ultimaCompetenciaPagamento)!==competenciaFinal)return false;
     return !Core.vigenteNaCompetencia(contrato,Core.proximaCompetencia(competenciaFinal));
   }
-
-  function saidaAtivaV106(saida){
-    const status=texto(saida?.statusSaida).toLowerCase();
-    return !!saida&&saida.excluido!==true&&!['cancelada','cancelado'].includes(status);
-  }
-
-  function detalheJoaquinV106(valor){
-    return texto(valor).toLocaleLowerCase('pt-BR');
-  }
-
-  function saidaCanonicaJoaquinConfereV106(saida){
-    const c=CONCILIACAO_JOAQUIN_V106;
-    return !!saida&&saida.id===c.canonicalExitId&&
-      canonico(saida.canonicalId||saida.slug||saida.cliente)===c.canonicalId&&
-      texto(saida.dataAviso)==='2026-08-05'&&
-      texto(saida.dataSaida)===c.exitDate&&
-      texto(saida.ultimaCompetenciaPagamento)===c.finalCompetence&&
-      ['programada','encerrada'].includes(texto(saida.statusSaida).toLowerCase())&&
-      texto(saida.motivo).toLowerCase()===c.reason&&
-      detalheJoaquinV106(saida.motivoDetalhe)===detalheJoaquinV106(c.reasonDetail)&&
-      saidaAtivaV106(saida);
-  }
-
-  function saidaConcorrenteJoaquinConfereV106(saida,canonica){
-    const c=CONCILIACAO_JOAQUIN_V106;
-    return !!saida&&!!canonica&&saida.id===c.duplicateExitId&&
-      canonico(saida.canonicalId||saida.slug||saida.cliente)===c.canonicalId&&
-      texto(saida.dataAviso)==='2026-08-06'&&
-      texto(saida.dataSaida)===c.exitDate&&
-      !texto(saida.ultimaCompetenciaPagamento)&&
-      texto(saida.statusSaida).toLowerCase()==='programada'&&
-      texto(saida.motivo).toLowerCase()==='mudanca_interna'&&
-      detalheJoaquinV106(saida.motivoDetalhe)===detalheJoaquinV106(c.reasonDetail)&&
-      numero(saida.valorMensal)>0&&numero(saida.valorMensal)===numero(canonica.valorMensal)&&
-      texto(saida.tipoCliente)===texto(canonica.tipoCliente)&&
-      JSON.stringify(serializarComparavelV105(saida.pendenciasFinais??null))===JSON.stringify(serializarComparavelV105(canonica.pendenciasFinais??null))&&
-      saidaAtivaV106(saida);
-  }
-
-  function contratoJoaquinConfereV106(contrato){
-    const c=CONCILIACAO_JOAQUIN_V106;
-    return !!contrato&&contrato.id===c.canonicalId&&
-      texto(contrato.ultimaCompetenciaPagamento)===c.finalCompetence&&
-      texto(contrato.saidaProgramadaPara)===c.exitDate&&
-      texto(contrato.saidaMotivo).toLowerCase()===c.reason&&
-      detalheJoaquinV106(contrato.saidaMotivoDetalhe)===detalheJoaquinV106(c.reasonDetail)&&
-      contratoEncerradoNaCompetencia(contrato,c.finalCompetence);
-  }
-
-  function configJoaquinConfereV106(config,{exigirPonteiro=false}={}){
-    const c=CONCILIACAO_JOAQUIN_V106;
-    const ponteiro=texto(config?.saidaAtivaId);
-    return !!config&&config.id===c.canonicalId&&
-      texto(config.saidaProgramadaPara)===c.exitDate&&
-      texto(config.saidaMotivo).toLowerCase()===c.reason&&
-      detalheJoaquinV106(config.saidaMotivoDetalhe)===detalheJoaquinV106(c.reasonDetail)&&
-      (exigirPonteiro?ponteiro===c.canonicalExitId:(!ponteiro||ponteiro===c.canonicalExitId));
-  }
-
-  function eventoConciliacaoJoaquinConfereV106(evento){
-    const c=CONCILIACAO_JOAQUIN_V106;
-    return !!evento&&evento.id===c.operationId&&evento.operationId===c.operationId&&
-      evento.clienteId===c.canonicalId&&evento.tipo==='deduplicacao'&&
-      evento.competenciaInicio==='2026-09'&&evento.ultimaCompetencia===c.finalCompetence&&
-      evento.sourceType==='migracao'&&evento.sourceId===c.canonicalExitId;
-  }
-
-  async function hashDocumentoV106(documento){
-    return sha256Hex(JSON.stringify(serializarComparavelV105(documento??null)));
-  }
-
-  function normalizarDocumentoHashV106(tipo,documento){
-    const v={...(documento||{})};
-    if(tipo==='contract')return {
-      ...v,slug:v.id,
-      canonicalId:canonico(v.canonicalId||v.slug||v.cliente||v.id),
-    };
-    if(tipo==='exit')return {
-      ...v,canonicalId:canonico(v.canonicalId||v.slug||v.cliente||v.id),
-    };
-    if(tipo==='payment')return {
-      ...v,canonicalId:canonico(v.canonicalId||v.cliente||v.clienteSlug||String(v.id).replace(/_\d{4}-\d{2}$/,'')),
-    };
-    return v;
-  }
-
-  async function classificarConciliacaoJoaquinV106(fontes){
-    const c=CONCILIACAO_JOAQUIN_V106;
-    const bloqueios=[];
-    const grupoContrato=contratoFisicoCanonico(fontes,c.canonicalId);
-    const contrato=grupoContrato.contrato;
-    const configs=(fontes.clientes_config||[]).filter(v=>
-      canonico(v.id||v.slug)===c.canonicalId&&v.excluido!==true
-    );
-    const config=configs.find(v=>texto(v.id)===c.canonicalId)||null;
-    const saidas=(fontes.saidas||[]).filter(v=>v.canonicalId===c.canonicalId);
-    const canonica=saidas.find(v=>v.id===c.canonicalExitId)||null;
-    const concorrente=saidas.find(v=>v.id===c.duplicateExitId)||null;
-    const ativas=saidas.filter(saidaAtivaV106);
-    const eventos=fontes.clientes_ciclo_financeiro||[];
-    const evento=eventos.find(v=>v.id===c.operationId)||null;
-    const eventoLegado=eventos.find(v=>v.id==='fin_v103_joaquin_dedupe_2026_09')||null;
-    const pagamentos=(fontes.pagamentos||[]).filter(v=>v.canonicalId===c.canonicalId&&texto(v.competencia)>='2026-09');
-    const concorrenteArquivada=!!concorrente&&concorrente.excluido===true&&
-      ['cancelada','cancelado'].includes(texto(concorrente.statusSaida).toLowerCase())&&
-      texto(concorrente.unificadoNoId)===c.canonicalExitId;
-    const pagamentosEncerrados=pagamentos.every(v=>Core.statusMensalidade(v)==='cancelado');
-    const resolvida=saidaCanonicaJoaquinConfereV106(canonica)&&concorrenteArquivada&&
-      configJoaquinConfereV106(config,{exigirPonteiro:true})&&contratoJoaquinConfereV106(contrato)&&
-      ativas.length===1&&ativas[0].id===c.canonicalExitId&&pagamentosEncerrados&&
-      (!evento||eventoConciliacaoJoaquinConfereV106(evento));
-
-    if(!grupoContrato.ok)bloqueios.push(`Contrato físico canônico único não confirmado (${grupoContrato.ids.join(', ')||'ausente'})`);
-    if(configs.length!==1||!config)bloqueios.push('A ficha operacional canônica única do Joaquim não foi confirmada');
-    if(!canonica)bloqueios.push('O recibo de saída escolhido não existe mais');
-    else if(!saidaCanonicaJoaquinConfereV106(canonica))bloqueios.push('O recibo escolhido não corresponde aos fatos confirmados pelo responsável');
-    if(!concorrente)bloqueios.push('O registro concorrente auditado não existe mais; nada será inferido');
-    if(contrato&&!contratoJoaquinConfereV106(contrato))bloqueios.push('O contrato não confirma 15/09/2026 com agosto como última competência');
-    if(config&&!configJoaquinConfereV106(config))bloqueios.push('A ficha operacional diverge da saída confirmada');
-    if(config&&texto(config.saidaAtivaId)&&texto(config.saidaAtivaId)!==c.canonicalExitId)bloqueios.push('A ficha aponta para outro recibo de saída');
-    if(evento&&!eventoConciliacaoJoaquinConfereV106(evento))bloqueios.push('O recibo de conciliação existente possui outro contrato');
-    if(eventoLegado&&!resolvida)bloqueios.push('Existe um recibo antigo de deduplicação sem o estado final V106; exige auditoria antes de continuar');
-    if(!pagamentosEncerrados)bloqueios.push('Existe mensalidade de setembro ou posterior que não está cancelada; esta correção não a alterará');
-
-    if(!resolvida){
-      const idsAtivos=[...ativas.map(v=>v.id)].sort();
-      const idsEsperados=[c.canonicalExitId,c.duplicateExitId].sort();
-      if(JSON.stringify(idsAtivos)!==JSON.stringify(idsEsperados))bloqueios.push('Os recibos ativos mudaram; são esperados somente os dois documentos auditados');
-      if(concorrente&&!saidaConcorrenteJoaquinConfereV106(concorrente,canonica))bloqueios.push('O registro concorrente não corresponde ao documento antigo auditado');
-      if(evento)bloqueios.push('Já existe um recibo V106 sem o estado final completo; exige auditoria antes de repetir');
-    }
-
-    const pronta=!resolvida&&!bloqueios.length;
-    const preHashes=pronta?{
-      canonical:await hashDocumentoV106(normalizarDocumentoHashV106('exit',canonica)),
-      duplicate:await hashDocumentoV106(normalizarDocumentoHashV106('exit',concorrente)),
-      config:await hashDocumentoV106(config),
-      contract:await hashDocumentoV106(normalizarDocumentoHashV106('contract',contrato)),
-      payments:await hashDocumentoV106(pagamentos.map(v=>normalizarDocumentoHashV106('payment',v)).sort((a,b)=>a.id.localeCompare(b.id))),
-    }:null;
-    return {
-      estado:resolvida?'resolvida':pronta?'pronta':'bloqueada',
-      resolvida,pronta,bloqueios,canonicalId:c.canonicalExitId,
-      duplicateId:c.duplicateExitId,operationId:c.operationId,
-      fontes,contrato,config,canonica,concorrente,pagamentos,evento,eventoLegado,preHashes,
-    };
-  }
-
-  async function lerConciliacaoJoaquinV106(){
-    const fontes=await carregarSnapshot({forcar:true,comContatos:false});
-    return classificarConciliacaoJoaquinV106(fontes);
-  }
-
-  function garantirPainelConciliacaoJoaquinV106(){
-    if(typeof document==='undefined')return null;
-    let painel=document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Box');
-    if(!canFinanceiro()){
-      painel?.remove();
-      return null;
-    }
-    if(!painel&&typeof document.createElement==='function'){
-      const ancora=document.getElementById('financeiroCorrecoesV104Acao');
-      if(!ancora?.parentNode)return null;
-      painel=document.createElement('div');
-      painel.id='financeiroCorrecaoSaidaCanonicaJoaquinV106Box';
-      painel.className='item';
-      painel.style.cssText='margin-top:14px;border:2px solid var(--yellow);';
-      painel.innerHTML=`<div class="top"><b>Joaquim Assados — confirmar a saída correta</b><span class="selo hoje">V106</span></div><div class="meta">Você confirmou: saída em 15/09/2026, motivo baixo retorno financeiro e agosto de 2026 como último mês cobrado. Esta ação não altera Açougue São Joaquim nem os outros ajustes.</div><button class="btn secondary" style="width:auto;margin-top:10px;" onclick="preverCorrecaoSaidaCanonicaJoaquinV106()">Verificar esta correção sem salvar</button><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:10px;"><div class="meta">Aguardando verificação específica do Joaquim.</div></div>`;
-      ancora.parentNode.insertBefore(painel,ancora);
-    }
-    return document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Status');
-  }
-
-  w.preverCorrecaoSaidaCanonicaJoaquinV106=async function(){
-    if(!canFinanceiro()){
-      garantirPainelConciliacaoJoaquinV106();
-      return false;
-    }
-    const alvo=garantirPainelConciliacaoJoaquinV106();
-    if(!alvo)return false;
-    alvo.innerHTML='<div class="desc">Conferindo os dois recibos, contrato e ficha sem gravar…</div>';
-    try{
-      const previa=await lerConciliacaoJoaquinV106();
-      w.__correcaoSaidaCanonicaJoaquinV106=previa;
-      if(previa.resolvida){
-        alvo.innerHTML='<div class="desc" style="color:var(--green);"><b>Saída correta confirmada.</b> O registro concorrente está arquivado sem exclusão física. Nenhuma gravação será repetida.</div>';
-        return true;
-      }
-      if(previa.bloqueios.length){
-        alvo.innerHTML=`<div class="desc" style="color:var(--red);"><b>Não é seguro corrigir automaticamente. Nada foi alterado.</b> ${previa.bloqueios.map(esc).join(' · ')}</div>`;
-        return false;
-      }
-      alvo.innerHTML=`<div class="desc" style="color:var(--green);"><b>Prévia segura; nada foi salvo.</b></div><div class="item"><b>Será mantido</b><div class="meta">O recibo confirmado de 15/09/2026, agosto como último mês e motivo baixo retorno financeiro.</div></div><div class="item"><b>Será arquivado, sem apagar</b><div class="meta">Somente o registro concorrente antigo. Contrato, mensalidades, Açougue São Joaquim e demais clientes não serão alterados.</div></div><button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoSaidaCanonicaJoaquinV106()">Confirmar saída correta do Joaquim</button>`;
-      return true;
-    }catch(e){
-      console.error(e);
-      alvo.innerHTML='<div class="desc" style="color:var(--red);"><b>Verificação indisponível.</b> Nada foi alterado.</div>';
-      return false;
-    }
-  };
-
-  w.aplicarCorrecaoSaidaCanonicaJoaquinV106=async function(){
-    if(!canFinanceiro()||locks.has('joaquin-v106'))return false;
-    locks.add('joaquin-v106');
-    try{
-      let previa=await lerConciliacaoJoaquinV106();
-      w.__correcaoSaidaCanonicaJoaquinV106=previa;
-      if(previa.resolvida){
-        mostrarToast('Esta correção já estava concluída; nenhuma gravação foi repetida.');
-        return true;
-      }
-      if(!previa.pronta)throw new Error(`A prévia não está segura: ${previa.bloqueios.join(' · ')}`);
-      if(!confirm('Preservar o recibo correto do Joaquin, apontar a ficha para ele e arquivar somente o registro concorrente antigo?'))return false;
-      // A confirmação humana pode ficar aberta enquanto outra aba muda a coleção.
-      // Refaça a leitura de pertencimento depois dela, antes de montar qualquer write.
-      previa=await lerConciliacaoJoaquinV106();
-      w.__correcaoSaidaCanonicaJoaquinV106=previa;
-      if(previa.resolvida){
-        mostrarToast('Esta correção já estava concluída; nenhuma gravação foi repetida.');
-        return true;
-      }
-      if(!previa.pronta)throw new Error(`Os dados mudaram durante a confirmação: ${previa.bloqueios.join(' · ')}. Nada foi gravado.`);
-      const uid=auth.currentUser?.uid;
-      if(!uid)throw new Error('Sessão autenticada não confirmada.');
-      const c=CONCILIACAO_JOAQUIN_V106;
-      const canonicalRef=doc(db,'clientes_encerrados',c.canonicalExitId);
-      const duplicateRef=doc(db,'clientes_encerrados',c.duplicateExitId);
-      const configRef=doc(db,'clientes_config',c.canonicalId);
-      const contractRef=doc(db,'contratos_cliente',c.canonicalId);
-      const paymentRefs=previa.pagamentos.map(v=>doc(db,'pagamentos_mensais',v.id));
-      const eventRef=doc(db,'clientes_ciclo_financeiro',c.operationId);
-      const preHash=await sha256Hex(JSON.stringify(previa.preHashes));
-      const postHash=await sha256Hex(JSON.stringify({
-        canonical:c.canonicalExitId,duplicate:c.duplicateExitId,
-        archived:true,pointer:c.canonicalExitId,operation:c.operationId,
-      }));
-      let jaAplicada=false;
-      await runTransaction(db,async tx=>{
-        const refs=[canonicalRef,duplicateRef,configRef,contractRef,...paymentRefs,eventRef];
-        const snaps=await Promise.all(refs.map(ref=>tx.get(ref)));
-        const mapa=new Map(refs.map((ref,i)=>[ref.path,snaps[i]]));
-        const canonicalSnap=mapa.get(canonicalRef.path);
-        const duplicateSnap=mapa.get(duplicateRef.path);
-        const configSnap=mapa.get(configRef.path);
-        const contractSnap=mapa.get(contractRef.path);
-        const eventSnap=mapa.get(eventRef.path);
-        if(eventSnap?.exists()){
-          const evento={id:eventRef.id,...eventSnap.data()};
-          const canonica={id:canonicalRef.id,...(canonicalSnap?.data()||{})};
-          const duplicada=duplicateSnap?.data()||{};
-          const config=configSnap?.data()||{};
-          if(!eventoConciliacaoJoaquinConfereV106(evento)||
-            !saidaCanonicaJoaquinConfereV106(canonica)||
-            duplicateSnap?.exists()!==true||duplicada.excluido!==true||
-            !['cancelada','cancelado'].includes(texto(duplicada.statusSaida).toLowerCase())||
-            texto(duplicada.unificadoNoId)!==c.canonicalExitId||
-            texto(config.saidaAtivaId)!==c.canonicalExitId){
-            throw new Error('O recibo V106 existe, mas o estado final divergiu. Atualize e audite; nada foi repetido.');
-          }
-          jaAplicada=true;
-          return;
-        }
-        if(!canonicalSnap?.exists()||!duplicateSnap?.exists()||!configSnap?.exists()||!contractSnap?.exists())throw new Error('Um dos documentos auditados não existe mais. Nada foi alterado.');
-        const pagamentosAtuais=paymentRefs.map(ref=>normalizarDocumentoHashV106('payment',{id:ref.id,...(mapa.get(ref.path)?.data()||{})})).sort((a,b)=>a.id.localeCompare(b.id));
-        const hashesAtuais={
-          canonical:await hashDocumentoV106(normalizarDocumentoHashV106('exit',{id:canonicalRef.id,...canonicalSnap.data()})),
-          duplicate:await hashDocumentoV106(normalizarDocumentoHashV106('exit',{id:duplicateRef.id,...duplicateSnap.data()})),
-          config:await hashDocumentoV106({id:configRef.id,...configSnap.data()}),
-          contract:await hashDocumentoV106(normalizarDocumentoHashV106('contract',{id:contractRef.id,...contractSnap.data()})),
-          payments:await hashDocumentoV106(pagamentosAtuais),
-        };
-        if(Object.keys(hashesAtuais).some(chave=>hashesAtuais[chave]!==previa.preHashes[chave]))throw new Error('Os dados mudaram depois da prévia. Atualize; nada foi gravado.');
-        const carimbo=serverTimestamp();
-        tx.set(configRef,{
-          saidaAtivaId:c.canonicalExitId,
-          atualizadoPor:'Chris',
-          atualizadoEm:carimbo,
-        },{merge:true});
-        tx.set(duplicateRef,{
-          excluido:true,
-          statusSaida:'cancelada',
-          motivoExclusao:'Registro histórico concorrente conciliado após confirmação do responsável',
-          unificadoNoId:c.canonicalExitId,
-          unificadoEm:carimbo,
-          unificadoPor:'Chris',
-        },{merge:true});
-        tx.set(eventRef,{
-          schemaVersion:1,operationId:c.operationId,clienteId:c.canonicalId,
-          tipo:'deduplicacao',competenciaInicio:'2026-09',
-          ultimaCompetencia:c.finalCompetence,
-          dataEfetiva:new Date(`${c.exitDate}T12:00:00-03:00`),valor:null,
-          sourceType:'migracao',sourceId:c.canonicalExitId,reversalOf:null,
-          preHash,postHash,criadoPor:uid,criadoEm:carimbo,
-        });
-      });
-      const [canonicalFinal,duplicateFinal,configFinal,contractFinal,eventFinal]=await Promise.all([
-        getDoc(canonicalRef),getDoc(duplicateRef),getDoc(configRef),getDoc(contractRef),getDoc(eventRef),
-      ]);
-      const recibos={
-        canonicalPreservada:canonicalFinal.exists()&&await hashDocumentoV106(normalizarDocumentoHashV106('exit',{id:canonicalRef.id,...canonicalFinal.data()}))===previa.preHashes.canonical,
-        duplicateArquivada:duplicateFinal.exists()&&duplicateFinal.data()?.excluido===true&&['cancelada','cancelado'].includes(texto(duplicateFinal.data()?.statusSaida).toLowerCase())&&texto(duplicateFinal.data()?.unificadoNoId)===c.canonicalExitId,
-        pointerCanonico:configFinal.exists()&&texto(configFinal.data()?.saidaAtivaId)===c.canonicalExitId,
-        contractPreservado:contractFinal.exists()&&await hashDocumentoV106(normalizarDocumentoHashV106('contract',{id:contractRef.id,...contractFinal.data()}))===previa.preHashes.contract,
-        evento:eventFinal.exists()&&eventoConciliacaoJoaquinConfereV106({id:eventRef.id,...eventFinal.data()}),
-      };
-      const pendentes=Object.entries(recibos).filter(([,ok])=>!ok).map(([nome])=>nome);
-      if(pendentes.length)throw new Error(`A transação terminou, mas os recibos não confirmaram: ${pendentes.join(', ')}. Não repita; atualize.`);
-      invalidar();
-      const final=await lerConciliacaoJoaquinV106();
-      if(!final.resolvida)throw new Error('A releitura não confirmou a remoção do conflito. Não repita; atualize.');
-      w.__correcaoSaidaCanonicaJoaquinV106=final;
-      mostrarToast(jaAplicada?'Esta correção já estava concluída; nenhuma gravação foi repetida.':'Saída correta confirmada. O registro concorrente foi arquivado sem exclusão física.');
-      await Promise.all([w.renderFinanceiro(),w.renderMensalidades(),w.renderCobranca(),w.renderContratos()]);
-      await w.preverCorrecaoFinanceiraV104();
-      return true;
-    }catch(e){
-      console.error(e);
-      mostrarToast('Conflito do Joaquim não corrigido: '+(e.message||e),'erro');
-      await w.preverCorrecaoSaidaCanonicaJoaquinV106?.();
-      return false;
-    }finally{
-      locks.delete('joaquin-v106');
-    }
-  };
 
   async function lerCorrecaoSetembro(){
     const fontes=await carregarSnapshot({forcar:true,comContatos:true});
@@ -1695,11 +1354,7 @@ function competenciaDeDataCaixa(valor){
     if(!canFinanceiro())return false;
     w.__previewUnificadaV104=true;
     try{
-      const [carteiraOk,fedaltoOk]=await Promise.all([
-        w.preverCorrecaoFinanceiraSetembroV103(),
-        w.preverCorrecaoFedaltoReguaV104(),
-        w.preverCorrecaoSaidaCanonicaJoaquinV106(),
-      ]);
+      const [carteiraOk,fedaltoOk]=await Promise.all([w.preverCorrecaoFinanceiraSetembroV103(),w.preverCorrecaoFedaltoReguaV104()]);
       const alvo=document.getElementById('financeiroCorrecoesV104Acao');
       const carteiraResolvida=!!w.__correcaoSetembroV103&&Object.values(w.__correcaoSetembroV103.resolvidos||{}).every(Boolean);
       const tudoResolvido=carteiraResolvida&&w.__correcaoFedaltoV104?.resolvida===true;
@@ -1735,13 +1390,7 @@ function competenciaDeDataCaixa(valor){
   w.confirmarEnvioCobrancaV104=w.confirmarEnvioCobrancaV103;
   w.salvarLancamentoFinanceiroV104=w.salvarLancamentoFinanceiroV103;
   w.alterarLancamentoFinanceiroV104=w.alterarLancamentoFinanceiroV103;
-  w.__financeiroV104={
-    carregarSnapshot,projetar,invalidar,core:Core,renderContratosAnterior,
-    classificarConciliacaoJoaquinV106,lerConciliacaoJoaquinV106,
-    garantirPainelConciliacaoJoaquinV106,
-    constantesV106:{...CONCILIACAO_JOAQUIN_V106},
-  };
+  w.__financeiroV104={carregarSnapshot,projetar,invalidar,core:Core,renderContratosAnterior};
   w.__financeiroV103=w.__financeiroV104;
-  garantirPainelConciliacaoJoaquinV106();
   return w.__financeiroV104;
 }

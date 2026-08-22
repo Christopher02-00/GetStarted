@@ -194,6 +194,16 @@ Antes de entregar qualquer mudança, faça também a checagem curta do catálogo
 - O valor real de qualquer contato financeiro não entra em HTML, módulo público, teste, documentação, memória compartilhada, Portal ou Central. Ele permanece exclusivamente na coleção privada autorizada ao Chris.
 - A V105 não amplia regras por conveniência e não altera calendários, captação, Place/Luís, vídeos, postagens, Portal ou responsabilidades de Amanda, Gabi, Cecília, Luís e Nathan.
 
+### Invariantes V106 — escolha humana de saída canônica
+
+- Divergência entre saídas não pode ser resolvida por nome, data parcial, ordem de leitura ou “registro mais completo”. A escolha do documento canônico exige confirmação humana explícita e IDs exatos previamente auditados.
+- A porta V106 do Joaquin é independente do lote V105 e possui orçamento fechado: dois registros de `clientes_encerrados`, a ficha canônica, contrato, mensalidades posteriores e um recibo determinístico. Bloqueio de outro cliente não autoriza ampliar esse orçamento.
+- Prévia é zero-write. Depois da confirmação humana, a aplicação relê o pertencimento das coleções antes de iniciar a transação e compara os hashes dos documentos protegidos dentro dela. Terceiro registro ou pagamento surgido enquanto o diálogo estava aberto falha antes de qualquer write; alteração dos documentos conhecidos, apontamento diferente ou recibo incompatível falha na transação. O SDK Web não oferece query lock transacional: uma criação manual/Admin SDK no intervalo residual entre a releitura da coleção e o commit precisa ser detectada na releitura pós-commit, sem sucesso falso nem retry cego; nunca prometa zero escrita para esse phantom externo.
+- O documento canônico de saída, o contrato e as mensalidades permanecem sem escrita. Somente a ficha recebe `saidaAtivaId`, o concorrente recebe soft-delete/vínculo e o ledger recebe um evento append-only.
+- Soft-delete preserva o documento concorrente. Nunca usar delete físico, sobrescrever o canônico para igualar registros ou fundir Joaquin Assados com Açougue São Joaquim.
+- `operationId` determinístico, trava antes do primeiro `await`, recibo e releitura pós-commit tornam clique duplo, retry e duas abas idempotentes. Estado parcial não é repetido automaticamente.
+- O painel e suas fontes existem somente para Chris. A V106 não amplia regras, não publica número de contato e não toca Calendários, captação, Place/Luís, vídeos, postagens ou Portal.
+
 ### Invariantes de workflow e arquivo operacional
 
 - A confirmação de um workflow (enviar calendário, aprovar, devolver) não deve falhar apenas porque o eco do próprio autosave mudou `updatedAt`. Só é permitido tolerar a versão diferente quando a assinatura do conteúdo de negócio é idêntica e nenhuma decisão posterior substituiu a ação. Conteúdo concorrente continua bloqueado.

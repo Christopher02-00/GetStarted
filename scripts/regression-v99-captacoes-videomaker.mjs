@@ -578,11 +578,13 @@ exigir(retornoErroAntigo === false && elementosSugestao.agQtdPlanejada.value ===
   'erro obsoleto não substitui a resposta nova por indisponibilidade');
 
 /* Invariantes de entrega e segurança. */
-exigir(escritorio.includes('gs-build" content="2026-08-22-correcao-financeiro-real-v104"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-21-financeiro-por-competencia-v103"') &&
-  escritorio.includes('gs-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102"') &&
-  escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101"'),
-  'build V104 preserva V103, V102 e V101 na cadeia direta');
+exigir(escritorio.includes('gs-build" content="2026-08-22-saida-canonica-joaquin-v106"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-22-conciliacao-manual-regua-v105"') &&
+  escritorio.includes('gs-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104"') &&
+  escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103"') &&
+  escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102"') &&
+  escritorio.includes('gs-fifth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101"'),
+  'build V106 preserva V105, V104, V103, V102 e V101 na cadeia direta');
 exigir(regras.includes('match /calendarios_conferencias/{calendarId}') &&
   regras.includes('match /calendarios_encerramentos/{calendarId}') &&
   regras.includes('allow delete: if false;'),

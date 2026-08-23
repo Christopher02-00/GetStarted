@@ -253,6 +253,107 @@ async function semearMensalidade(docId, dados = dadosMensalidade()) {
 async function semearContrato(slug, dados = dadosContrato({ slug })) {
   await semearAdmin(`contratos_cliente/${slug}`, dados);
 }
+
+const FEDALTO_V108 = Object.freeze({
+  slug: "fedalto-eletro-comercial",
+  operationId: "fin_v108_fedalto_agosto_20260815",
+  julhoId: "fedalto-eletro-comercial_2026-07",
+  agostoId: "fedalto-eletro-comercial_2026-08",
+  setembroId: "fedalto-eletro-comercial_2026-09"
+});
+
+async function semearFedaltoAgostoV108() {
+  await env.withSecurityRulesDisabled(async (contexto) => {
+    const admin = contexto.firestore();
+    await deleteDoc(doc(admin, caminhoLedger(FEDALTO_V108.operationId)));
+    await setDoc(doc(admin, `contratos_cliente/${FEDALTO_V108.slug}`), dadosContrato({
+      slug: FEDALTO_V108.slug,
+      valor: 1700,
+      revision: 4,
+      operationId: "fin_seed_fedalto_v108_0001",
+      extra: {
+        cliente: "Fedalto Eletro Comercial",
+        primeiraCompetencia: "2026-09",
+        ultimaCompetenciaPagamento: "",
+        cortesiaMeses: ["2026-09"],
+        vigencias: [{ inicio: "2026-09", fim: "", valor: 1700, cicloId: "ciclo-fedalto-v108" }]
+      }
+    }));
+    await setDoc(doc(admin, `pagamentos_mensais/${FEDALTO_V108.julhoId}`), dadosMensalidade({
+      cliente: FEDALTO_V108.slug,
+      competencia: "2026-07",
+      status: "pago",
+      valor: 1700,
+      extra: { pagoEm: "2026-08-11" }
+    }));
+    await setDoc(doc(admin, `pagamentos_mensais/${FEDALTO_V108.agostoId}`), dadosMensalidade({
+      cliente: FEDALTO_V108.slug,
+      competencia: "2026-08",
+      status: "isento",
+      valor: 1700,
+      extra: { pagoEm: "", cortesiaDoMes: false, motivoIsencao: "cortesia manual" }
+    }));
+    await setDoc(doc(admin, `pagamentos_mensais/${FEDALTO_V108.setembroId}`), dadosMensalidade({
+      cliente: FEDALTO_V108.slug,
+      competencia: "2026-09",
+      status: "isento",
+      valor: 1700,
+      extra: { pagoEm: "", cortesiaDoMes: true, motivoIsencao: "Cortesia promocional da agência em setembro de 2026" }
+    }));
+  });
+}
+
+function batchCorrecaoFedaltoAgostoV108(database, {
+  pagoEm = "2026-08-15",
+  dataEfetiva = new Date("2026-08-15T15:00:00.000Z"),
+  incluirContrato = true,
+  incluirPagamento = true,
+  incluirLedger = true,
+  extraContrato = {},
+  extraPagamento = {}
+} = {}) {
+  const batch = writeBatch(database);
+  if (incluirContrato) {
+    batch.update(doc(database, `contratos_cliente/${FEDALTO_V108.slug}`), {
+      primeiraCompetencia: "2026-07",
+      vigencias: [{ inicio: "2026-07", fim: "", valor: 1700, cicloId: "ciclo-fedalto-v108" }],
+      financeiroRevision: 5,
+      financeiroOperationId: FEDALTO_V108.operationId,
+      atualizadoPor: "Chris",
+      atualizadoEm: serverTimestamp(),
+      ...extraContrato
+    });
+  }
+  if (incluirPagamento) {
+    batch.update(doc(database, `pagamentos_mensais/${FEDALTO_V108.agostoId}`), {
+      status: "pago",
+      pagoEm,
+      cortesiaDoMes: false,
+      motivoIsencao: deleteField(),
+      financeiroOperationId: FEDALTO_V108.operationId,
+      atualizadoPor: "Chris",
+      atualizadoEm: serverTimestamp(),
+      ...extraPagamento
+    });
+  }
+  if (incluirLedger) {
+    batch.set(doc(database, caminhoLedger(FEDALTO_V108.operationId)), dadosLedger({
+      op: FEDALTO_V108.operationId,
+      clienteId: FEDALTO_V108.slug,
+      tipo: "ajuste",
+      competenciaInicio: "2026-07",
+      ultimaCompetencia: null,
+      dataEfetiva,
+      valor: null,
+      sourceType: "contrato",
+      sourceId: FEDALTO_V108.slug,
+      reversalOf: null,
+      preHash: hash("e"),
+      postHash: hash("f")
+    }));
+  }
+  return batch;
+}
 function ledgerDoLancamento(docId, lancamento, tipo = "lancamento", reversalOf = null, extra = {}) {
   return dadosLedger({
     op: lancamento.operationId,
@@ -1654,6 +1755,121 @@ try {
     await assertFails(getDoc(doc(db.outro, caminho)));
     await assertFails(getDoc(doc(db.cliente, caminho)));
     await assertFails(deleteDoc(doc(db.chris, caminho)));
+  });
+  await caso("V108 nega conciliação da Fedalto para papel diferente de Chris", async () => {
+    await semearFedaltoAgostoV108();
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.amanda).commit());
+  });
+  await caso("V108 nega data de caixa diferente de 15/08/2026", async () => {
+    await semearFedaltoAgostoV108();
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris, { pagoEm: "2026-08-16" }).commit());
+  });
+  await caso("V108 nega recibo com data efetiva fora de 15/08/2026", async () => {
+    await semearFedaltoAgostoV108();
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris, {
+      dataEfetiva: new Date("2026-08-16T15:00:00.000Z")
+    }).commit());
+  });
+  await caso("V108 nega a conciliação se julho não for o pagamento auditado de 11/08/2026", async () => {
+    await semearFedaltoAgostoV108();
+    await semearAdmin(`pagamentos_mensais/${FEDALTO_V108.julhoId}`, dadosMensalidade({
+      cliente: FEDALTO_V108.slug,
+      competencia: "2026-07",
+      status: "pago",
+      valor: 1700,
+      extra: { pagoEm: "2026-07-10" }
+    }));
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris).commit());
+  });
+  await caso("V108 nega a conciliação se setembro não for a cortesia promocional confirmada", async () => {
+    await semearFedaltoAgostoV108();
+    await semearAdmin(`pagamentos_mensais/${FEDALTO_V108.setembroId}`, dadosMensalidade({
+      cliente: FEDALTO_V108.slug,
+      competencia: "2026-09",
+      status: "isento",
+      valor: 1700,
+      extra: { pagoEm: "", cortesiaDoMes: true, motivoIsencao: "Outra isenção" }
+    }));
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris).commit());
+  });
+  await caso("V108 nega pagamento da Fedalto sem correção contratual atômica", async () => {
+    await semearFedaltoAgostoV108();
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris, { incluirContrato: false }).commit());
+  });
+  await caso("V108 nega correção da Fedalto sem recibo append-only", async () => {
+    await semearFedaltoAgostoV108();
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris, { incluirLedger: false }).commit());
+  });
+  await caso("V108 nega alteração oportunista fora do orçamento da Fedalto", async () => {
+    await semearFedaltoAgostoV108();
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris, {
+      extraContrato: { valorVigente: 1800 }
+    }).commit());
+  });
+  await caso("V108 nega alteração interna do ciclo contratual além do início", async () => {
+    await semearFedaltoAgostoV108();
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris, {
+      extraContrato: {
+        vigencias: [{ inicio: "2026-07", fim: "", valor: 1700, cicloId: "ciclo-trocado-indevidamente" }]
+      }
+    }).commit());
+  });
+  await caso("V108 aceita uma única conciliação atômica da Fedalto e preserva julho/setembro", async () => {
+    await semearFedaltoAgostoV108();
+    const julhoAntes = (await lerAdmin(`pagamentos_mensais/${FEDALTO_V108.julhoId}`)).data();
+    const setembroAntes = (await lerAdmin(`pagamentos_mensais/${FEDALTO_V108.setembroId}`)).data();
+    await assertSucceeds(batchCorrecaoFedaltoAgostoV108(db.chris).commit());
+    const [contrato, julho, agosto, setembro, evento] = await Promise.all([
+      lerAdmin(`contratos_cliente/${FEDALTO_V108.slug}`),
+      lerAdmin(`pagamentos_mensais/${FEDALTO_V108.julhoId}`),
+      lerAdmin(`pagamentos_mensais/${FEDALTO_V108.agostoId}`),
+      lerAdmin(`pagamentos_mensais/${FEDALTO_V108.setembroId}`),
+      lerAdmin(caminhoLedger(FEDALTO_V108.operationId))
+    ]);
+    assert.equal(contrato.data().primeiraCompetencia, "2026-07");
+    assert.equal(contrato.data().vigencias[0].inicio, "2026-07");
+    assert.equal(contrato.data().financeiroRevision, 5);
+    assert.equal(agosto.data().status, "pago");
+    assert.equal(agosto.data().pagoEm, "2026-08-15");
+    assert.equal(agosto.data().motivoIsencao, undefined);
+    assert.deepEqual(julho.data(), julhoAntes);
+    assert.deepEqual(setembro.data(), setembroAntes);
+    assert.equal(evento.data().operationId, FEDALTO_V108.operationId);
+    assert.equal(evento.data().tipo, "ajuste");
+  });
+  await caso("V108 não congela edição gerencial não financeira posterior do contrato", async () => {
+    await assertSucceeds(updateDoc(doc(db.chris, `contratos_cliente/${FEDALTO_V108.slug}`), {
+      observacao: "Contrato continua editável depois da conciliação V108"
+    }));
+    assert.equal((await lerAdmin(`contratos_cliente/${FEDALTO_V108.slug}`)).data().observacao,
+      "Contrato continua editável depois da conciliação V108");
+  });
+  await caso("V108 permite nova operação financeira auditada posterior sem reentrar no recibo antigo", async () => {
+    const pagamentoId = `${FEDALTO_V108.slug}_2026-10`;
+    const op = operationId("fedalto-pos-v108");
+    await semearMensalidade(pagamentoId, dadosMensalidade({
+      cliente: FEDALTO_V108.slug,
+      competencia: "2026-10",
+      status: "aberto",
+      valor: 1700
+    }));
+    await assertSucceeds(batchReajusteContrato(db.chris, {
+      slug: FEDALTO_V108.slug,
+      pagamentoId,
+      op,
+      valor: 1800,
+      competenciaProgramada: "2026-10",
+      revisaoContrato: 6
+    }).commit());
+    const contrato = (await lerAdmin(`contratos_cliente/${FEDALTO_V108.slug}`)).data();
+    assert.equal(contrato.financeiroOperationId, op);
+    assert.equal(contrato.financeiroRevision, 6);
+  });
+  await caso("V108 não permite sobrescrever o recibo ou repetir o mesmo lote", async () => {
+    await assertFails(batchCorrecaoFedaltoAgostoV108(db.chris).commit());
+    const eventos = await listarAdmin("clientes_ciclo_financeiro");
+    assert.equal(eventos.docs.filter((item) => item.id === FEDALTO_V108.operationId).length, 1);
+    assert.equal((await lerAdmin(`pagamentos_mensais/${FEDALTO_V108.agostoId}`)).data().pagoEm, "2026-08-15");
   });
   await caso("Fedalto cancelada por saída volta somente para cortesia com ledger atômico", async () => {
     const id = "fedalto-eletro-comercial_2026-09";

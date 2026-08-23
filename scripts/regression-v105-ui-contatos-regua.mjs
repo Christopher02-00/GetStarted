@@ -559,8 +559,8 @@ await new Promise(function(resolve, reject) {
 const endereco = servidor.address();
 const urlFixture = 'http://127.0.0.1:' + endereco.port + '/fixture.html';
 
-exigir(fonteUi.includes("import * as Core from './financeiro-core.mjs?v=107'"), 'runtime V107 preserva o núcleo financeiro validado pela V105');
-exigir(fonteHtml.includes('./financeiro-ui-v104.mjs?v=107'), 'HTML V107 instala a UI financeira compatível com a V105');
+exigir(fonteUi.includes("import * as Core from './financeiro-core.mjs?v=108'"), 'runtime V108 preserva o núcleo financeiro validado pela V105');
+exigir(fonteHtml.includes('./financeiro-ui-v104.mjs?v=108'), 'HTML V108 instala a UI financeira compatível com a V105');
 exigir(
   abrirCobrancaReal.indexOf("window.open('about:blank','_blank')") >= 0 &&
   abrirCobrancaReal.indexOf("window.open('about:blank','_blank')") < abrirCobrancaReal.indexOf('await getDoc'),

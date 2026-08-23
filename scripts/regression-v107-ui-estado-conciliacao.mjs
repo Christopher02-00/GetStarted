@@ -280,7 +280,7 @@ const htmlHarness = [
   '<div id="financeiroBox"></div><div id="mensalidadesBox"></div><div id="cobrancaBox"></div><div id="contratosBox"></div><div id="financeiroLancamentosBox"></div><div id="toast"></div>',
   '</main><script>(', bootstrapFixtureV107.toString(), ')();</script>',
   '<script type="module">',
-  "import { instalarFinanceiroV104 } from '/financeiro-ui-v104.mjs?v=107';",
+  "import { instalarFinanceiroV104 } from '/financeiro-ui-v104.mjs?v=108';",
   'const deps={db:window.db,collection:window.collection,doc:window.doc,getDocs:window.getDocs,getDoc:window.getDoc,setDoc:window.setDoc,updateDoc:window.updateDoc,runTransaction:window.runTransaction,serverTimestamp:window.serverTimestamp,deleteField:window.deleteField,arrayUnion:window.arrayUnion,slugClienteCanonico:window.slugClienteCanonico,hojeLocal:window.hojeLocal,brl:window.brl,nomeMes:window.nomeMes,esc:window.esc,escAttr:window.escAttr,escJs:window.escJs,mostrarToast:window.mostrarToast,usuarioAtual:()=>window.usuarioAtual,auth:window.auth,registrarLogAutomacao:window.registrarLogAutomacao};',
   'window.__runtimeV107=instalarFinanceiroV104(deps);',
   'window.__renderInicialV107=window.renderFinanceiro();',
@@ -460,6 +460,13 @@ async function prepararAgregado(page) {
     };
     window.preverCorrecaoFedaltoReguaV104 = async () => {
       window.__correcaoFedaltoV104 = { resolvida: true };
+      return true;
+    };
+    // A V108 acrescentou a conciliação histórica da Fedalto ao agregado. Esta
+    // suíte focal V107 isola o estado do Joaquim e, portanto, fixa os demais
+    // alvos como resolvidos sem executar writer ou consultar outra fixture.
+    window.preverCorrecaoFedaltoAgostoV108 = async () => {
+      window.__correcaoFedaltoAgostoV108 = { resolvida: true };
       return true;
     };
     const writer = window.aplicarCorrecaoSaidaCanonicaJoaquinV106;

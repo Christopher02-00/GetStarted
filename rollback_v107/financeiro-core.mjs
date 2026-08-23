@@ -35,49 +35,6 @@ function conflito(codigo, detalhe = {}, bloqueante = true) {
   return { codigo, bloqueante, ...detalhe };
 }
 
-function serializarConflitoEstavel(valor) {
-  if (valor === undefined) return 'undefined';
-  if (valor === null || typeof valor !== 'object') {
-    return `${typeof valor}:${JSON.stringify(valor)}`;
-  }
-  if (Array.isArray(valor)) {
-    return `array:[${valor.map(serializarConflitoEstavel).join(',')}]`;
-  }
-  return `object:{${Object.keys(valor).sort()
-    .map(chave => `${JSON.stringify(chave)}:${serializarConflitoEstavel(valor[chave])}`)
-    .join(',')}}`;
-}
-
-/**
- * A identidade canônica vence metadados de fachada quando a causa possui os
- * quatro campos estáveis. Conflitos antigos/incompletos usam o objeto integral
- * como fallback para nunca fundir registros por suposição.
- */
-export function identidadeConflitoFinanceiro(item = {}) {
-  const campos = ['codigo', 'canonicalId', 'competencia', 'id'];
-  if (campos.every(chave => Object.hasOwn(item || {}, chave) &&
-      item[chave] !== null && item[chave] !== undefined && String(item[chave]).trim() !== '')) {
-    return `financeiro:${campos.map(chave => serializarConflitoEstavel(item[chave])).join('|')}`;
-  }
-  return serializarConflitoEstavel(item);
-}
-
-export function deduplicarConflitosFinanceiros(fonte = []) {
-  const unicos = [];
-  const vistos = new Map();
-  for (const item of Array.isArray(fonte) ? fonte : []) {
-    const identidade = identidadeConflitoFinanceiro(item);
-    if (vistos.has(identidade)) {
-      const indice = vistos.get(identidade);
-      if (unicos[indice]?.bloqueante === false && item?.bloqueante !== false) unicos[indice] = item;
-      continue;
-    }
-    vistos.set(identidade, unicos.length);
-    unicos.push(item);
-  }
-  return unicos;
-}
-
 function resultadoIndisponivel(codigo, detalhe = {}) {
   return {
     estado: 'indisponivel',
@@ -964,19 +921,13 @@ export function projetarReguaCobranca({
   }
   const fonte = linhasDeObrigacoes(obrigacoes);
   if (fonte.estado === 'indisponivel') return fonte;
+  const conflitos = [...fonte.conflitos];
   if (competenciaInicialOperacao && !competenciaValida(competenciaInicialOperacao)) {
     return resultadoIndisponivel('INICIO_DA_REGUA_INVALIDO', { competenciaInicialOperacao });
   }
   if (competenciasQuitadasAte && !competenciaValida(competenciasQuitadasAte)) {
     return resultadoIndisponivel('CORTE_HISTORICO_INVALIDO', { competenciasQuitadasAte });
   }
-  // A Régua começou em julho de 2026. Uma inconsistência cadastral anterior
-  // continua auditável ao abrir aquele mês, mas não reaparece como se fosse
-  // uma cobrança atual. Conflitos sem competência explícita nunca são ocultos.
-  const conflitos = deduplicarConflitosFinanceiros(fonte.conflitos).filter(item =>
-    !competenciaInicialOperacao ||
-    !competenciaValida(item?.competencia) ||
-    item.competencia >= competenciaInicialOperacao);
   const candidatas = fonte.linhas.filter(item =>
     item.estado === 'confirmado' &&
     statusMensalidade(item) === 'aberto' &&
@@ -1257,9 +1208,6 @@ export function projetarFinanceiroCompetencia({
     })
     : { estado: 'nao_solicitado', conflitos: [] };
   const componentes = [obrigacoes, movimentos, reconciliacao, regua];
-  const conflitos = deduplicarConflitosFinanceiros(
-    componentes.flatMap(item => item.conflitos || []),
-  );
   if (componentes.some(item => item.estado === 'indisponivel')) {
     return {
       estado: 'indisponivel',
@@ -1269,9 +1217,10 @@ export function projetarFinanceiroCompetencia({
       movimentos,
       reconciliacao,
       regua,
-      conflitos,
+      conflitos: componentes.flatMap(item => item.conflitos || []),
     };
   }
+  const conflitos = componentes.flatMap(item => item.conflitos || []);
   return {
     estado: conflitos.some(item => item.bloqueante !== false) ? 'parcial' : 'confirmado',
     competencia,

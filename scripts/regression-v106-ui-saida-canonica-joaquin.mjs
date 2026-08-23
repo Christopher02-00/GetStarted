@@ -372,7 +372,7 @@ const htmlHarness = [
   '<div id="financeiroBox"></div><div id="mensalidadesBox"></div><div id="cobrancaBox"></div><div id="contratosBox"></div><div id="financeiroLancamentosBox"></div><div id="toast"></div>',
   '</main><script>(', bootstrapFixtureV106.toString(), ')();</script>',
   '<script type="module">',
-  "import { instalarFinanceiroV104 } from '/financeiro-ui-v104.mjs?v=107';",
+  "import { instalarFinanceiroV104 } from '/financeiro-ui-v104.mjs?v=108';",
   'const deps={db:window.db,collection:window.collection,doc:window.doc,getDocs:window.getDocs,getDoc:window.getDoc,setDoc:window.setDoc,updateDoc:window.updateDoc,runTransaction:window.runTransaction,serverTimestamp:window.serverTimestamp,deleteField:window.deleteField,arrayUnion:window.arrayUnion,slugClienteCanonico:window.slugClienteCanonico,hojeLocal:window.hojeLocal,brl:window.brl,nomeMes:window.nomeMes,esc:window.esc,escAttr:window.escAttr,escJs:window.escJs,mostrarToast:window.mostrarToast,usuarioAtual:()=>window.usuarioAtual,auth:window.auth,registrarLogAutomacao:window.registrarLogAutomacao};',
   'window.__depsV106=deps;',
   'window.__runtimeA=instalarFinanceiroV104(deps);',
@@ -616,8 +616,8 @@ async function testarPapelIndevido(page, rotulo) {
   exigir(!resultado.previa && !resultado.aplicacao && resultado.leituras === 0 && resultado.writes === 0, `${rotulo}: papel indevido não lê nem escreve dados financeiros`);
 }
 
-exigir(fonteHtml.includes('2026-08-22-estado-conciliacao-joaquin-v107'), 'HTML real identifica o build V107 que preserva a conciliação V106');
-exigir(fonteHtml.includes('financeiro-core.mjs?v=107') && fonteHtml.includes('financeiro-ui-v104.mjs?v=107'), 'HTML real instala núcleo e UI V107 preservando a porta V106');
+exigir(fonteHtml.includes('2026-08-23-pagamento-fedalto-agosto-v108'), 'HTML real identifica o build V108 que preserva a conciliação V106');
+exigir(fonteHtml.includes('financeiro-core.mjs?v=108') && fonteHtml.includes('financeiro-ui-v104.mjs?v=108'), 'HTML real instala núcleo e UI V108 preservando a porta V106');
 exigir(!fonteHtml.includes('financeiroCorrecaoSaidaCanonicaJoaquinV106Status'), 'cartão específico não fica estático no HTML de papéis indevidos');
 exigir(fonteUi.includes('preverCorrecaoSaidaCanonicaJoaquinV106') && fonteUi.includes('aplicarCorrecaoSaidaCanonicaJoaquinV106'), 'módulo real expõe somente as duas ações V106 acordadas');
 

@@ -1,11 +1,11 @@
 /*
- * Get Started — integração financeira V108 (compatibilidade sobre a V107).
+ * Get Started — integração financeira V109 (compatibilidade sobre a V108).
  *
  * Este módulo concentra leitura, projeção e UI. A matemática e as leis de
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
-import * as Core from './financeiro-core.mjs?v=108';
+import * as Core from './financeiro-core.mjs?v=109';
 
 const COLECOES_SNAPSHOT = [
   'contratos_cliente',
@@ -34,13 +34,14 @@ const CONCILIACAO_JOAQUIN_V106 = Object.freeze({
   reasonDetail:'Baixo retorno financeiro',
 });
 
-const CORRECAO_FEDALTO_AGOSTO_V108 = Object.freeze({
+const CORRECAO_FEDALTO_AGOSTO_V109 = Object.freeze({
   canonicalId:'fedalto-eletro-comercial',
   contractId:'fedalto-eletro-comercial',
   julyPaymentId:'fedalto-eletro-comercial_2026-07',
   augustPaymentId:'fedalto-eletro-comercial_2026-08',
   septemberPaymentId:'fedalto-eletro-comercial_2026-09',
-  operationId:'fin_v108_fedalto_agosto_20260815',
+  operationId:'fin_v109_fedalto_agosto_setembro_20260815',
+  legacyOperationId:'fin_v108_fedalto_agosto_20260815',
   contractStart:'2026-07',
   julyPaidAt:'2026-08-11',
   augustCompetence:'2026-08',
@@ -579,7 +580,7 @@ function competenciaDeDataCaixa(valor){
     try{
       const fontes=await carregarSnapshot();
       await atualizarPainelConciliacaoJoaquinV107ComFontes(fontes);
-      await atualizarCorrecaoFedaltoAgostoV108ComFontes(fontes);
+      await atualizarCorrecaoFedaltoAgostoV109ComFontes(fontes);
       const p=projetar(fontes,competencia,{regua:false});
       if(p.estado==='indisponivel') throw new Error('Financeiro indisponível.');
       const ob=p.obrigacoes.totais||{}, caixa=p.reconciliacao.caixa||{}, lanc=resumoLancamentos(fontes,competencia);
@@ -1784,7 +1785,7 @@ function competenciaDeDataCaixa(valor){
     finally{locks.delete('fedalto-regua-v104');}
   };
 
-  function dataCivilFinanceiraV108(valor){
+  function dataCivilFinanceiraV109(valor){
     const data=valor?.toDate?.() instanceof Date?valor.toDate():(valor instanceof Date?valor:null);
     if(data&&!Number.isNaN(data.getTime()))return data.toISOString().slice(0,10);
     const candidata=texto(valor).slice(0,10);
@@ -1793,21 +1794,23 @@ function competenciaDeDataCaixa(valor){
     return !Number.isNaN(conferida.getTime())&&conferida.toISOString().slice(0,10)===candidata?candidata:'';
   }
 
-  function eventoFedaltoAgostoConfereV108(evento){
-    const c=CORRECAO_FEDALTO_AGOSTO_V108;
-    return !!evento&&evento.id===c.operationId&&evento.operationId===c.operationId&&
+  function eventoFedaltoAgostoConfereV109(evento){
+    const c=CORRECAO_FEDALTO_AGOSTO_V109;
+    const operationId=texto(evento?.operationId);
+    return !!evento&&[c.operationId,c.legacyOperationId].includes(operationId)&&
+      evento.id===operationId&&
       evento.clienteId===c.canonicalId&&evento.tipo==='ajuste'&&
       evento.competenciaInicio===c.contractStart&&evento.ultimaCompetencia===null&&
       evento.valor===null&&evento.sourceType==='contrato'&&
       evento.sourceId===c.contractId&&evento.reversalOf===null&&
-      dataCivilFinanceiraV108(evento.dataEfetiva)===c.augustPaidAt&&
+      dataCivilFinanceiraV109(evento.dataEfetiva)===c.augustPaidAt&&
       /^[a-f0-9]{64}$/.test(texto(evento.preHash))&&
       /^[a-f0-9]{64}$/.test(texto(evento.postHash))&&evento.preHash!==evento.postHash&&
-      !!texto(evento.criadoPor)&&!!dataCivilFinanceiraV108(evento.criadoEm);
+      !!texto(evento.criadoPor)&&!!dataCivilFinanceiraV109(evento.criadoEm);
   }
 
-  function estadoFinalFedaltoAgostoV108({contrato,julho,agosto,setembro,evento}={}){
-    const c=CORRECAO_FEDALTO_AGOSTO_V108;
+  function estadoFinalFedaltoAgostoV109({contrato,julho,agosto,setembro,evento}={}){
+    const c=CORRECAO_FEDALTO_AGOSTO_V109;
     const valorJulho=contrato?Core.valorNaCompetencia(contrato,'2026-07'):null;
     const valorAgosto=contrato?Core.valorNaCompetencia(contrato,'2026-08'):null;
     return !!contrato&&contrato.id===c.contractId&&
@@ -1815,19 +1818,19 @@ function competenciaDeDataCaixa(valor){
       valorJulho?.estado==='confirmado'&&numero(valorJulho.valor)===c.expectedValue&&
       valorAgosto?.estado==='confirmado'&&numero(valorAgosto.valor)===c.expectedValue&&
       !!julho&&julho.id===c.julyPaymentId&&Core.statusMensalidade(julho)==='pago'&&
-      pagamentoComValor(julho,c.expectedValue)&&dataCivilFinanceiraV108(julho.pagoEm)===c.julyPaidAt&&
+      pagamentoComValor(julho,c.expectedValue)&&dataCivilFinanceiraV109(julho.pagoEm)===c.julyPaidAt&&
       !!agosto&&agosto.id===c.augustPaymentId&&Core.statusMensalidade(agosto)==='pago'&&
-      pagamentoComValor(agosto,c.expectedValue)&&dataCivilFinanceiraV108(agosto.pagoEm)===c.augustPaidAt&&
+      pagamentoComValor(agosto,c.expectedValue)&&dataCivilFinanceiraV109(agosto.pagoEm)===c.augustPaidAt&&
       agosto.cortesiaDoMes!==true&&!texto(agosto.motivoIsencao)&&
-      texto(agosto.financeiroOperationId)===c.operationId&&
+      texto(agosto.financeiroOperationId)===texto(evento?.operationId)&&
       !!setembro&&setembro.id===c.septemberPaymentId&&Core.statusMensalidade(setembro)==='isento'&&
       pagamentoComValor(setembro,c.expectedValue)&&setembro.cortesiaDoMes===true&&
-      texto(setembro.motivoIsencao)===c.septemberCourtesyReason&&!dataCivilFinanceiraV108(setembro.pagoEm)&&
-      eventoFedaltoAgostoConfereV108(evento);
+      texto(setembro.motivoIsencao)===c.septemberCourtesyReason&&!dataCivilFinanceiraV109(setembro.pagoEm)&&
+      eventoFedaltoAgostoConfereV109(evento);
   }
 
-  async function classificarCorrecaoFedaltoAgostoV108(fontes){
-    const c=CORRECAO_FEDALTO_AGOSTO_V108;
+  async function classificarCorrecaoFedaltoAgostoV109(fontes){
+    const c=CORRECAO_FEDALTO_AGOSTO_V109;
     const bloqueios=[];
     const grupo=contratoFisicoCanonico(fontes,c.canonicalId);
     const contrato=grupo.contrato;
@@ -1840,8 +1843,9 @@ function competenciaDeDataCaixa(valor){
     const agosto=agostoLista.length===1?agostoLista[0]:null;
     const setembro=setembroLista.length===1?setembroLista[0]:null;
     const saidas=(fontes.saidas||[]).filter(v=>v.canonicalId===c.canonicalId&&saidaAtivaV106(v));
-    const evento=(fontes.clientes_ciclo_financeiro||[]).find(v=>v.id===c.operationId)||null;
-    const resolvida=estadoFinalFedaltoAgostoV108({contrato,julho,agosto,setembro,evento});
+    const eventos=(fontes.clientes_ciclo_financeiro||[]).filter(v=>[c.operationId,c.legacyOperationId].includes(v.id));
+    const evento=eventos.length===1?eventos[0]:null;
+    const resolvida=eventos.length===1&&estadoFinalFedaltoAgostoV109({contrato,julho,agosto,setembro,evento});
 
     if(resolvida)return {
       estado:'resolvida',resolvida:true,pronta:false,bloqueios,fontes,grupo,contrato,
@@ -1850,21 +1854,22 @@ function competenciaDeDataCaixa(valor){
 
     if(!grupo.ok)bloqueios.push(`Contrato físico canônico único da Fedalto não confirmado (${grupo.ids.join(', ')||'ausente'})`);
     if(saidas.length)bloqueios.push('Existe uma saída ativa da Fedalto; esta correção não reabre nem cancela saídas');
-    if(evento)bloqueios.push('O recibo V108 existe, mas o estado final diverge; exige auditoria antes de repetir');
+    if(eventos.length>1)bloqueios.push('Existem recibos V108 e V109 concorrentes; nenhuma operação será escolhida silenciosamente');
+    else if(evento)bloqueios.push(`O recibo ${evento.id===c.legacyOperationId?'V108':'V109'} existe, mas o estado final diverge; exige auditoria antes de repetir`);
     if(julhoLista.length!==1||julho?.id!==c.julyPaymentId)bloqueios.push('A mensalidade única de julho da Fedalto não foi confirmada');
-    else if(Core.statusMensalidade(julho)!=='pago'||!pagamentoComValor(julho,c.expectedValue)||dataCivilFinanceiraV108(julho.pagoEm)!==c.julyPaidAt)bloqueios.push('Julho não corresponde ao pagamento auditado de R$ 1.700 em 11/08/2026');
+    else if(Core.statusMensalidade(julho)!=='pago'||!pagamentoComValor(julho,c.expectedValue)||dataCivilFinanceiraV109(julho.pagoEm)!==c.julyPaidAt)bloqueios.push('Julho não corresponde ao pagamento auditado de R$ 1.700 em 11/08/2026');
     if(agostoLista.length!==1||agosto?.id!==c.augustPaymentId)bloqueios.push('A mensalidade única de agosto da Fedalto não foi confirmada');
     else{
       if(Core.statusMensalidade(agosto)!=='isento')bloqueios.push('Agosto mudou de estado e não corresponde mais à isenção incorreta auditada');
       if(!pagamentoComValor(agosto,c.expectedValue))bloqueios.push('O valor de agosto mudou; nenhum valor será escolhido por suposição');
-      if(dataCivilFinanceiraV108(agosto.pagoEm))bloqueios.push('Agosto já possui outra data de caixa; ela não será sobrescrita');
+      if(dataCivilFinanceiraV109(agosto.pagoEm))bloqueios.push('Agosto já possui outra data de caixa; ela não será sobrescrita');
       if(agosto.cortesiaDoMes===true)bloqueios.push('Agosto está marcado como cortesia real; a correção não pode convertê-lo automaticamente');
       if(texto(agosto.motivoIsencao).toLowerCase()!=='cortesia manual')bloqueios.push('O motivo da isenção de agosto mudou desde a auditoria');
     }
     if(setembroLista.length!==1||setembro?.id!==c.septemberPaymentId)bloqueios.push('A mensalidade única de setembro da Fedalto não foi confirmada');
     else if(Core.statusMensalidade(setembro)!=='isento'||!pagamentoComValor(setembro,c.expectedValue)||
-      setembro.cortesiaDoMes!==true||texto(setembro.motivoIsencao)!==c.septemberCourtesyReason||
-      dataCivilFinanceiraV108(setembro.pagoEm))bloqueios.push('Setembro deixou de ser a cortesia promocional de R$ 1.700 confirmada');
+      setembro.cortesiaDoMes===true||texto(setembro.motivoIsencao).toLowerCase()!=='cortesia manual'||
+      dataCivilFinanceiraV109(setembro.pagoEm))bloqueios.push('Setembro não corresponde à cortesia manual auditada que a V109 pode canonicalizar com segurança');
 
     let vigenciasAlvo=null;
     if(contrato){
@@ -1897,21 +1902,21 @@ function competenciaDeDataCaixa(valor){
     };
   }
 
-  w.__classificarCorrecaoFedaltoAgostoV108Teste=classificarCorrecaoFedaltoAgostoV108;
+  w.__classificarCorrecaoFedaltoAgostoV109Teste=classificarCorrecaoFedaltoAgostoV109;
 
-  async function lerCorrecaoFedaltoAgostoV108(){
-    return classificarCorrecaoFedaltoAgostoV108(await carregarSnapshot({forcar:true,comContatos:false}));
+  async function lerCorrecaoFedaltoAgostoV109(){
+    return classificarCorrecaoFedaltoAgostoV109(await carregarSnapshot({forcar:true,comContatos:false}));
   }
 
-  function garantirPainelCorrecaoFedaltoAgostoV108(){
+  function garantirPainelCorrecaoFedaltoAgostoV109(){
     if(typeof document==='undefined')return null;
-    const existente=document.getElementById('financeiroCorrecaoFedaltoAgostoV108Status');
+    const existente=document.getElementById('financeiroCorrecaoFedaltoAgostoV109Status');
     if(!canFinanceiro()){existente?.remove();return null;}
     if(existente)return existente;
     const caixa=document.getElementById('financeiroCorrecoesV104Box');
     if(!caixa)return null;
     const alvo=document.createElement('div');
-    alvo.id='financeiroCorrecaoFedaltoAgostoV108Status';
+    alvo.id='financeiroCorrecaoFedaltoAgostoV109Status';
     alvo.className='item correcaoFinanceiraEstado correcaoFinanceiraEstado-aguardando';
     alvo.dataset.estado='aguardando';
     alvo.setAttribute('aria-live','polite');
@@ -1921,8 +1926,8 @@ function competenciaDeDataCaixa(valor){
     return alvo;
   }
 
-  function renderizarCorrecaoFedaltoAgostoV108(estado='aguardando',{bloqueios=[]}={}){
-    const alvo=garantirPainelCorrecaoFedaltoAgostoV108();
+  function renderizarCorrecaoFedaltoAgostoV109(estado='aguardando',{bloqueios=[]}={}){
+    const alvo=garantirPainelCorrecaoFedaltoAgostoV109();
     if(!alvo)return null;
     const seguro=['aguardando','verificando','pronta','aplicando','resolvida','bloqueada','indisponivel'].includes(estado)?estado:'indisponivel';
     alvo.dataset.estado=seguro;
@@ -1931,80 +1936,82 @@ function competenciaDeDataCaixa(valor){
     const cabecalho=(titulo,selo,classe)=>`<div class="top"><b>${titulo}</b><span class="selo ${classe}">${selo}</span></div>`;
     const fatos='<div class="meta">Julho permanece pago e intocado · agosto pago em 15/08/2026 · setembro permanece cortesia · valor preservado em R$ 1.700.</div>';
     if(seguro==='resolvida')alvo.innerHTML=`${cabecalho('✅ Fedalto — agosto conciliado','Concluído','aprovada')}${fatos}<div class="desc" style="color:var(--green);margin-top:8px;"><b>Correção concluída e recibo confirmado.</b> Não existe ação pendente e repetir a verificação não grava novamente.</div>`;
-    else if(seguro==='pronta')alvo.innerHTML=`${cabecalho('Fedalto — pagamento de agosto','Requer confirmação','hoje')}${fatos}<div class="desc" style="color:var(--green);margin-top:8px;"><b>Prévia segura; nada foi salvo.</b> Serão alterados somente a vigência contratual, o estado de agosto e o recibo auditável.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoFedaltoAgostoV108()">Confirmar pagamento de 15/08/2026</button>`;
-    else if(seguro==='bloqueada')alvo.innerHTML=`${cabecalho('Fedalto — correção bloqueada','Requer auditoria','atrasado')}${fatos}<div class="desc" style="color:var(--red);margin-top:8px;"><b>Nada foi alterado.</b> ${esc(bloqueios.join(' · ')||'Os dados atuais não correspondem ao retrato auditado.')}</div><button class="btn secondary" style="width:auto;margin-top:8px;" onclick="preverCorrecaoFedaltoAgostoV108()">Verificar novamente sem salvar</button>`;
-    else if(seguro==='indisponivel')alvo.innerHTML=`${cabecalho('Fedalto — verificação indisponível','Não confirmado','atrasado')}<div class="meta">Falha de leitura ou permissão não significa conclusão. Nada foi alterado.</div><button class="btn secondary" style="width:auto;margin-top:8px;" onclick="preverCorrecaoFedaltoAgostoV108()">Tentar verificar novamente</button>`;
+    else if(seguro==='pronta')alvo.innerHTML=`${cabecalho('Fedalto — pagamento e cortesia','Requer confirmação','hoje')}${fatos}<div class="desc" style="color:var(--green);margin-top:8px;"><b>Prévia segura; nada foi salvo.</b> Agosto será conciliado como pago e setembro continuará isento, apenas com a cortesia promocional identificada corretamente. Julho não será alterado.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoFedaltoAgostoV109()">Confirmar ajuste da Fedalto</button>`;
+    else if(seguro==='bloqueada')alvo.innerHTML=`${cabecalho('Fedalto — correção bloqueada','Requer auditoria','atrasado')}${fatos}<div class="desc" style="color:var(--red);margin-top:8px;"><b>Nada foi alterado.</b> ${esc(bloqueios.join(' · ')||'Os dados atuais não correspondem ao retrato auditado.')}</div><button class="btn secondary" style="width:auto;margin-top:8px;" onclick="preverCorrecaoFedaltoAgostoV109()">Verificar novamente sem salvar</button>`;
+    else if(seguro==='indisponivel')alvo.innerHTML=`${cabecalho('Fedalto — verificação indisponível','Não confirmado','atrasado')}<div class="meta">Falha de leitura ou permissão não significa conclusão. Nada foi alterado.</div><button class="btn secondary" style="width:auto;margin-top:8px;" onclick="preverCorrecaoFedaltoAgostoV109()">Tentar verificar novamente</button>`;
     else if(seguro==='verificando'||seguro==='aplicando')alvo.innerHTML=`${cabecalho(seguro==='aplicando'?'Fedalto — confirmando recibos':'Fedalto — verificando agosto',seguro==='aplicando'?'Aplicando':'Conferindo','aguardando')}${fatos}<div class="desc" style="margin-top:8px;">${seguro==='aplicando'?'Executando a transação única e relendo os recibos…':'Lendo contrato, julho, agosto, setembro e recibo sem gravar…'}</div>`;
     else alvo.innerHTML=`${cabecalho('Fedalto — conferir pagamento de agosto','Aguardando','pendente')}${fatos}<div class="meta" style="margin-top:8px;">Verificar apenas lê os dados; não salva nada.</div>`;
     return alvo;
   }
 
-  async function atualizarCorrecaoFedaltoAgostoV108ComFontes(fontes){
+  async function atualizarCorrecaoFedaltoAgostoV109ComFontes(fontes){
     try{
-      const previa=await classificarCorrecaoFedaltoAgostoV108(fontes);
-      w.__correcaoFedaltoAgostoV108=previa;
-      renderizarCorrecaoFedaltoAgostoV108(previa.estado,{bloqueios:previa.bloqueios});
+      const previa=await classificarCorrecaoFedaltoAgostoV109(fontes);
+      w.__correcaoFedaltoAgostoV109=previa;
+      renderizarCorrecaoFedaltoAgostoV109(previa.estado,{bloqueios:previa.bloqueios});
       return previa;
     }catch(e){
-      console.error('V108 não classificou a Fedalto:',e);
-      renderizarCorrecaoFedaltoAgostoV108('indisponivel');
+      console.error('V109 não classificou a Fedalto:',e);
+      renderizarCorrecaoFedaltoAgostoV109('indisponivel');
       return null;
     }
   }
 
-  w.preverCorrecaoFedaltoAgostoV108=async function(){
+  w.preverCorrecaoFedaltoAgostoV109=async function(){
     if(!canFinanceiro())return false;
-    renderizarCorrecaoFedaltoAgostoV108('verificando');
+    renderizarCorrecaoFedaltoAgostoV109('verificando');
     try{
-      const previa=await lerCorrecaoFedaltoAgostoV108();
-      w.__correcaoFedaltoAgostoV108=previa;
-      renderizarCorrecaoFedaltoAgostoV108(previa.estado,{bloqueios:previa.bloqueios});
+      const previa=await lerCorrecaoFedaltoAgostoV109();
+      w.__correcaoFedaltoAgostoV109=previa;
+      renderizarCorrecaoFedaltoAgostoV109(previa.estado,{bloqueios:previa.bloqueios});
       return previa.resolvida||previa.pronta;
     }catch(e){
-      console.error(e);renderizarCorrecaoFedaltoAgostoV108('indisponivel');return false;
+      console.error(e);renderizarCorrecaoFedaltoAgostoV109('indisponivel');return false;
     }
   };
 
-  w.aplicarCorrecaoFedaltoAgostoV108=async function(){
-    if(!canFinanceiro()||locks.has('fedalto-agosto-v108'))return false;
-    locks.add('fedalto-agosto-v108');
+  w.aplicarCorrecaoFedaltoAgostoV109=async function(){
+    if(!canFinanceiro()||locks.has('fedalto-agosto-v109'))return false;
+    locks.add('fedalto-agosto-v109');
     try{
-      let previa=await lerCorrecaoFedaltoAgostoV108();
-      w.__correcaoFedaltoAgostoV108=previa;
+      let previa=await lerCorrecaoFedaltoAgostoV109();
+      w.__correcaoFedaltoAgostoV109=previa;
       if(previa.resolvida){
-        renderizarCorrecaoFedaltoAgostoV108('resolvida');
+        renderizarCorrecaoFedaltoAgostoV109('resolvida');
         mostrarToast('O pagamento de agosto da Fedalto já estava conciliado; nenhuma gravação foi repetida.');
         return true;
       }
       if(!previa.pronta)throw new Error(`A prévia não está segura: ${previa.bloqueios.join(' · ')}`);
-      renderizarCorrecaoFedaltoAgostoV108('pronta');
-      if(!confirm('Confirmar R$ 1.700 da Fedalto como pago em 15/08/2026, preservando julho e mantendo setembro como cortesia?'))return false;
-      renderizarCorrecaoFedaltoAgostoV108('aplicando');
+      renderizarCorrecaoFedaltoAgostoV109('pronta');
+      if(!confirm('Confirmar R$ 1.700 da Fedalto como pago em 15/08/2026 e identificar setembro corretamente como cortesia promocional, sem alterar julho?'))return false;
+      renderizarCorrecaoFedaltoAgostoV109('aplicando');
 
       // A confirmação pode ficar aberta enquanto outra aba altera a carteira.
       // Refaça a leitura integral antes de montar qualquer write.
-      previa=await lerCorrecaoFedaltoAgostoV108();
-      w.__correcaoFedaltoAgostoV108=previa;
+      previa=await lerCorrecaoFedaltoAgostoV109();
+      w.__correcaoFedaltoAgostoV109=previa;
       if(previa.resolvida){
-        renderizarCorrecaoFedaltoAgostoV108('resolvida');
+        renderizarCorrecaoFedaltoAgostoV109('resolvida');
         mostrarToast('Outra aba já concluiu esta correção; nenhuma gravação foi repetida.');
         return true;
       }
       if(!previa.pronta)throw new Error(`Os dados mudaram durante a confirmação: ${previa.bloqueios.join(' · ')}. Nada foi gravado.`);
       const uid=auth.currentUser?.uid;
       if(!uid)throw new Error('Sessão autenticada não confirmada.');
-      const c=CORRECAO_FEDALTO_AGOSTO_V108;
+      const c=CORRECAO_FEDALTO_AGOSTO_V109;
       const contractRef=doc(db,'contratos_cliente',c.contractId);
       const julyRef=doc(db,'pagamentos_mensais',c.julyPaymentId);
       const augustRef=doc(db,'pagamentos_mensais',c.augustPaymentId);
       const septemberRef=doc(db,'pagamentos_mensais',c.septemberPaymentId);
       const eventRef=doc(db,'clientes_ciclo_financeiro',c.operationId);
-      const refs=[contractRef,julyRef,augustRef,septemberRef,eventRef];
+      const legacyEventRef=doc(db,'clientes_ciclo_financeiro',c.legacyOperationId);
+      const refs=[contractRef,julyRef,augustRef,septemberRef,legacyEventRef,eventRef];
       const preHash=await sha256Hex(JSON.stringify(previa.preHashes));
       const postHash=await sha256Hex(JSON.stringify({
         cliente:c.canonicalId,inicio:c.contractStart,
         agosto:{status:'pago',pagoEm:c.augustPaidAt,valor:c.expectedValue},
-        setembro:{status:'isento'},operationId:c.operationId,
+        setembro:{status:'isento',valor:c.expectedValue,pagoEm:'',cortesiaDoMes:true,motivoIsencao:c.septemberCourtesyReason},
+        operationId:c.operationId,
       }));
       let jaAplicada=false;
       await runTransaction(db,async tx=>{
@@ -2014,16 +2021,20 @@ function competenciaDeDataCaixa(valor){
         const julySnap=mapa.get(julyRef.path);
         const augustSnap=mapa.get(augustRef.path);
         const septemberSnap=mapa.get(septemberRef.path);
+        const legacyEventSnap=mapa.get(legacyEventRef.path);
         const eventSnap=mapa.get(eventRef.path);
-        if(eventSnap?.exists()){
-          const finalNoCommit=estadoFinalFedaltoAgostoV108({
+        const eventosExistentes=[legacyEventSnap,eventSnap].filter(snap=>snap?.exists());
+        if(eventosExistentes.length){
+          if(eventosExistentes.length!==1)throw new Error('Existem recibos V108 e V109 concorrentes. Nada foi repetido.');
+          const eventoExistente=eventosExistentes[0];
+          const finalNoCommit=estadoFinalFedaltoAgostoV109({
             contrato:{id:contractRef.id,...(contractSnap?.data()||{})},
             julho:{id:julyRef.id,...(julySnap?.data()||{})},
             agosto:{id:augustRef.id,...(augustSnap?.data()||{})},
             setembro:{id:septemberRef.id,...(septemberSnap?.data()||{})},
-            evento:{id:eventRef.id,...eventSnap.data()},
+            evento:{id:eventoExistente.ref.id,...eventoExistente.data()},
           });
-          if(!finalNoCommit)throw new Error('O recibo V108 existe, mas o estado final divergiu. Atualize e audite; nada foi repetido.');
+          if(!finalNoCommit)throw new Error('Existe um recibo V108/V109, mas o estado final divergiu. Atualize e audite; nada foi repetido.');
           jaAplicada=true;
           return;
         }
@@ -2051,6 +2062,11 @@ function competenciaDeDataCaixa(valor){
           motivoIsencao:deleteField(),financeiroOperationId:c.operationId,
           atualizadoPor:'Chris',atualizadoEm:carimbo,
         },{merge:true});
+        tx.set(septemberRef,{
+          status:'isento',pagoEm:'',cortesiaDoMes:true,
+          motivoIsencao:c.septemberCourtesyReason,financeiroOperationId:c.operationId,
+          atualizadoPor:'Chris',atualizadoEm:carimbo,
+        },{merge:true});
         tx.set(eventRef,{
           schemaVersion:1,operationId:c.operationId,clienteId:c.canonicalId,
           tipo:'ajuste',competenciaInicio:c.contractStart,ultimaCompetencia:null,
@@ -2062,23 +2078,27 @@ function competenciaDeDataCaixa(valor){
 
       const [julyFinal,septemberFinal]=await Promise.all([getDoc(julyRef),getDoc(septemberRef)]);
       const julhoPreservado=julyFinal.exists()&&await hashDocumentoV106(normalizarDocumentoHashV106('payment',{id:julyRef.id,...julyFinal.data()}))===previa.preHashes.july;
-      const setembroPreservado=septemberFinal.exists()&&await hashDocumentoV106(normalizarDocumentoHashV106('payment',{id:septemberRef.id,...septemberFinal.data()}))===previa.preHashes.september;
-      if(!julhoPreservado||!setembroPreservado)throw new Error('A transação terminou, mas julho ou setembro não permaneceram byte a byte. Não repita; atualize.');
+      const setembroFinalDados=septemberFinal.exists()?septemberFinal.data():null;
+      const setembroCanonico=!!setembroFinalDados&&Core.statusMensalidade(setembroFinalDados)==='isento'&&
+        pagamentoComValor(setembroFinalDados,c.expectedValue)&&setembroFinalDados.cortesiaDoMes===true&&
+        texto(setembroFinalDados.motivoIsencao)===c.septemberCourtesyReason&&!dataCivilFinanceiraV109(setembroFinalDados.pagoEm)&&
+        texto(setembroFinalDados.financeiroOperationId)===c.operationId;
+      if(!julhoPreservado||!setembroCanonico)throw new Error('A transação terminou, mas julho ou a cortesia canônica de setembro não foram confirmados. Não repita; atualize.');
       invalidar();
-      const final=await lerCorrecaoFedaltoAgostoV108();
+      const final=await lerCorrecaoFedaltoAgostoV109();
       if(!final.resolvida)throw new Error('A releitura não confirmou contrato, pagamento e recibo final. Não repita; atualize.');
-      w.__correcaoFedaltoAgostoV108=final;
-      renderizarCorrecaoFedaltoAgostoV108('resolvida');
-      mostrarToast(jaAplicada?'A correção já estava concluída; nenhuma gravação foi repetida.':'Fedalto conciliada: agosto pago em 15/08/2026 e setembro preservado como cortesia.');
+      w.__correcaoFedaltoAgostoV109=final;
+      renderizarCorrecaoFedaltoAgostoV109('resolvida');
+      mostrarToast(jaAplicada?'A correção já estava concluída; nenhuma gravação foi repetida.':'Fedalto conciliada: agosto pago em 15/08/2026 e setembro confirmado como cortesia promocional.');
       await Promise.allSettled([w.renderFinanceiro(),w.renderMensalidades(),w.renderCobranca(),w.renderContratos()]);
       return true;
     }catch(e){
       console.error(e);
       mostrarToast('Pagamento da Fedalto não conciliado: '+(e.message||e),'erro');
-      renderizarCorrecaoFedaltoAgostoV108('indisponivel');
+      renderizarCorrecaoFedaltoAgostoV109('indisponivel');
       return false;
     }finally{
-      locks.delete('fedalto-agosto-v108');
+      locks.delete('fedalto-agosto-v109');
     }
   };
 
@@ -2086,18 +2106,18 @@ function competenciaDeDataCaixa(valor){
     if(!canFinanceiro())return false;
     w.__previewUnificadaV104=true;
     try{
-      const painelFedaltoAgosto=!!garantirPainelCorrecaoFedaltoAgostoV108();
+      const painelFedaltoAgosto=!!garantirPainelCorrecaoFedaltoAgostoV109();
       const [carteiraOk,fedaltoOk,joaquinOk,fedaltoAgostoOk]=await Promise.all([
         w.preverCorrecaoFinanceiraSetembroV103(),
         w.preverCorrecaoFedaltoReguaV104(),
         w.preverCorrecaoSaidaCanonicaJoaquinV106(),
-        painelFedaltoAgosto?w.preverCorrecaoFedaltoAgostoV108():Promise.resolve(true),
+        painelFedaltoAgosto?w.preverCorrecaoFedaltoAgostoV109():Promise.resolve(true),
       ]);
       const alvo=document.getElementById('financeiroCorrecoesV104Acao');
       const carteiraResolvida=!!w.__correcaoSetembroV103&&Object.values(w.__correcaoSetembroV103.resolvidos||{}).every(Boolean);
       const ajustesGeraisResolvidos=carteiraResolvida&&w.__correcaoFedaltoV104?.resolvida===true;
       const joaquinResolvido=w.__correcaoSaidaCanonicaJoaquinV106?.resolvida===true;
-      const fedaltoAgostoResolvido=!painelFedaltoAgosto||w.__correcaoFedaltoAgostoV108?.resolvida===true;
+      const fedaltoAgostoResolvido=!painelFedaltoAgosto||w.__correcaoFedaltoAgostoV109?.resolvida===true;
       const tudoResolvido=ajustesGeraisResolvidos&&joaquinResolvido&&fedaltoAgostoResolvido;
       if(alvo){
         if(!carteiraOk||!fedaltoOk||!joaquinOk||!fedaltoAgostoOk){
@@ -2144,13 +2164,13 @@ function competenciaDeDataCaixa(valor){
     classificarConciliacaoJoaquinV106,lerConciliacaoJoaquinV106,
     garantirPainelConciliacaoJoaquinV106,
     renderizarPainelConciliacaoJoaquinV107,atualizarPainelConciliacaoJoaquinV107ComFontes,
-    classificarCorrecaoFedaltoAgostoV108,lerCorrecaoFedaltoAgostoV108,
-    renderizarCorrecaoFedaltoAgostoV108,atualizarCorrecaoFedaltoAgostoV108ComFontes,
+    classificarCorrecaoFedaltoAgostoV109,lerCorrecaoFedaltoAgostoV109,
+    renderizarCorrecaoFedaltoAgostoV109,atualizarCorrecaoFedaltoAgostoV109ComFontes,
     constantesV106:{...CONCILIACAO_JOAQUIN_V106},
-    constantesV108:{...CORRECAO_FEDALTO_AGOSTO_V108},
+    constantesV109:{...CORRECAO_FEDALTO_AGOSTO_V109},
   };
   w.__financeiroV103=w.__financeiroV104;
   garantirPainelConciliacaoJoaquinV106();
-  renderizarCorrecaoFedaltoAgostoV108('aguardando');
+  renderizarCorrecaoFedaltoAgostoV109('aguardando');
   return w.__financeiroV104;
 }

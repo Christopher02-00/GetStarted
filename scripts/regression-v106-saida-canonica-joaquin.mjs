@@ -112,7 +112,7 @@ function fixtureConflitoConfirmado() {
 }
 
 function instalarRuntimeV106(db, papel = 'Chris') {
-  const runtime = instalarRuntime(db, papel);
+  const runtime = instalarRuntime(db, papel, { usarConciliacaoJoaquinV106: true });
   runtime.dom.elementos.set(STATUS_ID, { id: STATUS_ID, innerHTML: '', value: '' });
   return {
     ...runtime,

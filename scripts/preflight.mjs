@@ -37,6 +37,9 @@ const obrigatorios = [
   'scripts/regression-v103-correcao-financeira-real.mjs',
   'scripts/regression-v104-ui-regua-cobranca.mjs',
   'scripts/regression-v104-correcao-financeira-real.mjs',
+  'scripts/regression-v106-saida-canonica-joaquin.mjs',
+  'scripts/regression-v106-ui-saida-canonica-joaquin.mjs',
+  'scripts/regression-v107-ui-estado-conciliacao.mjs',
   'scripts/firebase-emulator-v103-financeiro/firebase.json',
   'scripts/firebase-emulator-v103-financeiro/run-emulator-tests.mjs',
   'scripts/firebase-emulator-v103-financeiro/rules-v103-financeiro.test.mjs',
@@ -360,7 +363,7 @@ if (!/^rules_version\s*=\s*'2';/.test(regras)) falhar(`firestore.rules: a linha 
 else provar(`firestore.rules começa por rules_version = '2'; na linha 1`);
 if (!delimitadoresBalanceados(regras)) falhar('firestore.rules contém delimitadores desbalanceados');
 else provar('firestore.rules com delimitadores balanceados');
-for(const reservado of ['AGENTS.md','firestore.rules','scripts/','regression-critical.mjs','regression-v85-acesso-calendarios-clientes.mjs','rollback_v95/','rollback_v96/','rollback_v97/','rollback_v98/','rollback_v99/','rollback_v100/','rollback_v101/','rollback_v102/','rollback_v103/','rollback_v104/','rollback_v105/']){
+for(const reservado of ['AGENTS.md','firestore.rules','scripts/','regression-critical.mjs','regression-v85-acesso-calendarios-clientes.mjs','rollback_v95/','rollback_v96/','rollback_v97/','rollback_v98/','rollback_v99/','rollback_v100/','rollback_v101/','rollback_v102/','rollback_v103/','rollback_v104/','rollback_v105/','rollback_v106/']){
   if(!configPages.includes('- '+reservado)) falhar(`_config.yml não exclui artefato interno: ${reservado}`);
 }
 if(!erros.some(e=>e.startsWith('_config.yml'))) provar('Pages exclui regras, testes e rollbacks históricos sem apagar as fontes');
@@ -797,15 +800,16 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-22-saida-canonica-joaquin-v106' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-22-conciliacao-manual-regua-v105">') ||
-    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104">') ||
-    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103">') ||
-    !escritorio.includes('<meta name="gs-fourth-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
-    !escritorio.includes('<meta name="gs-fifth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
+if (build !== '2026-08-22-estado-conciliacao-joaquin-v107' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-22-saida-canonica-joaquin-v106">') ||
+    !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-22-conciliacao-manual-regua-v105">') ||
+    !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104">') ||
+    !escritorio.includes('<meta name="gs-fourth-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103">') ||
+    !escritorio.includes('<meta name="gs-fifth-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
+    !escritorio.includes('<meta name="gs-sixth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V106 inesperada: ${build || 'ausente'}`);
-} else provar('V106 preserva V105/V104/V103/V102/V101 e mantém conciliação explícita, reconciliação manual, correção real, finanças, migração e conferência separadas');
+  falhar(`cadeia de build V107 inesperada: ${build || 'ausente'}`);
+} else provar('V107 preserva V106/V105/V104/V103/V102/V101 e mantém estado visual, conciliação explícita, reconciliação manual, correção real, finanças, migração e conferência separadas');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

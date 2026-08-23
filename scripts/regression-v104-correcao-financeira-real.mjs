@@ -213,7 +213,7 @@ export function criarDom() {
   };
 }
 
-export function instalarRuntime(db, papel = 'Chris') {
+export function instalarRuntime(db, papel = 'Chris', { usarConciliacaoJoaquinV106 = false } = {}) {
   const dom = criarDom();
   globalThis.document = dom.document;
   globalThis.confirm = () => true;
@@ -233,6 +233,17 @@ export function instalarRuntime(db, papel = 'Chris') {
     auth: { currentUser: papel === 'Chris' ? { uid: 'uid-chris-sintetico' } : { uid: 'uid-papel-sintetico' } },
     registrarLogAutomacao: () => undefined,
   });
+  /* Esta regressão preserva a fotografia V104/V105, anterior aos IDs físicos
+     auditados pela V106. O estado específico do Joaquim é ensaiado com os IDs
+     reais sintéticos nas regressões V106/V107; aqui ele entra como alvo já
+     resolvido para que a prova histórica continue isolada ao seu orçamento. */
+  if (!usarConciliacaoJoaquinV106) {
+    globalThis.preverCorrecaoSaidaCanonicaJoaquinV106 = async () => {
+      if (papel !== 'Chris') return false;
+      globalThis.__correcaoSaidaCanonicaJoaquinV106 = { estado: 'resolvida', resolvida: true };
+      return true;
+    };
+  }
   const api = {
     prever: globalThis.preverCorrecaoFinanceiraV104,
     aplicar: globalThis.aplicarCorrecaoFinanceiraV104,

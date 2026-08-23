@@ -314,9 +314,9 @@ await new Promise((resolve, reject) => {
 const endereco = servidor.address();
 const url = `http://127.0.0.1:${endereco.port}/fixture.html`;
 
-exigir(fonteHtml.includes('2026-08-21-financeiro-por-competencia-v103'), 'HTML real identifica o build V103 financeiro por competência');
-exigir(fonteHtml.includes('instalarFinanceiroV103({'), 'HTML real instala o módulo financeiro V103');
-exigir(fonteHtml.includes('./financeiro-core.mjs?v=103') && fonteUi.includes("./financeiro-core.mjs?v=103"), 'HTML e UI usam o mesmo núcleo financeiro V103');
+exigir(fonteHtml.includes('2026-08-21-financeiro-por-competencia-v103'), 'HTML real preserva V103 na cadeia financeira por competência');
+exigir(fonteHtml.includes('instalarFinanceiroV104({') && fonteHtml.includes('./financeiro-ui-v104.mjs?v=107'), 'HTML V107 instala a evolução compatível do módulo financeiro');
+exigir(fonteHtml.includes('./financeiro-core.mjs?v=107') && fonteUi.includes("./financeiro-core.mjs?v=103"), 'shell V107 e harness histórico V103 usam o núcleo correspondente à própria versão');
 for (const id of ['finMes','mensMes','cobMes','ctMes','financeiroBox','mensalidadesBox','cobrancaBox','contratosBox']) {
   exigir(fonteHtml.includes(`id="${id}"`), `HTML real contém ${id}`);
 }

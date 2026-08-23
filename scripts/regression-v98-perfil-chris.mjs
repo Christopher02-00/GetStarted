@@ -32,12 +32,13 @@ function sha256(texto){
 }
 
 exigir(escritorio.includes('2026-08-21-restaura-perfil-chris-v98'), 'correção V98 presente na cadeia');
-exigir(escritorio.includes('gs-build" content="2026-08-22-saida-canonica-joaquin-v106')&&
-  escritorio.includes('gs-parent-patch" content="2026-08-22-conciliacao-manual-regua-v105'), 'V106 preserva V105 como pai');
-exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104')&&
-  escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103'), 'V106 preserva V104 e V103 na cadeia');
-exigir(escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102')&&
-  escritorio.includes('gs-fifth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'), 'V106 preserva V102 e V101 na cadeia e o código V98 continua presente');
+exigir(escritorio.includes('gs-build" content="2026-08-22-estado-conciliacao-joaquin-v107')&&
+  escritorio.includes('gs-parent-patch" content="2026-08-22-saida-canonica-joaquin-v106'), 'V107 preserva V106 como pai');
+exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-22-conciliacao-manual-regua-v105')&&
+  escritorio.includes('gs-great-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104')&&
+  escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103'), 'V107 preserva V105, V104 e V103 na cadeia');
+exigir(escritorio.includes('gs-fifth-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102')&&
+  escritorio.includes('gs-sixth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'), 'V107 preserva V102 e V101 na cadeia e o código V98 continua presente');
 exigir(escritorio.includes('PAPEIS_OPERAVEIS_POR_CHRIS'), 'V101 preserva o contrato operacional V96');
 exigir(!escritorio.includes('atualizarBannerAuditoriaChris'), 'identificador removido da auditoria V95 não reapareceu');
 exigir((escritorio.match(/function atualizarBannerOperacaoPerfilChris\s*\(/g) || []).length === 1, 'banner operacional possui uma definição canônica');

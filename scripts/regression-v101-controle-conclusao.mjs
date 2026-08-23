@@ -189,13 +189,14 @@ async function prepararAlvo(api, estado, alteracoes = {}){
 }
 
 /* Estrutura, escopo de papel e integração com V100. */
-exigir(escritorio.includes('gs-build" content="2026-08-22-saida-canonica-joaquin-v106') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-22-conciliacao-manual-regua-v105') &&
-  escritorio.includes('gs-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104') &&
-  escritorio.includes('gs-great-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103') &&
-  escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102') &&
-  escritorio.includes('gs-fifth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'),
-  'build V106 preserva V105/V104/V103/V102 na cadeia e a entrega V101 como quinta ancestral');
+exigir(escritorio.includes('gs-build" content="2026-08-22-estado-conciliacao-joaquin-v107') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-22-saida-canonica-joaquin-v106') &&
+  escritorio.includes('gs-grandparent-patch" content="2026-08-22-conciliacao-manual-regua-v105') &&
+  escritorio.includes('gs-great-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104') &&
+  escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103') &&
+  escritorio.includes('gs-fifth-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102') &&
+  escritorio.includes('gs-sixth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'),
+  'build V107 preserva V106/V105/V104/V103/V102 e a entrega V101 como sexta ancestral');
 exigir(escritorio.includes('data-calsub="conclusao"') && escritorio.includes('id="calSubConclusao"'), 'aba e painel de conclusão existem na experiência atual de Calendários');
 const papeisCalendario = trecho(escritorio, '  const CAL_SUBS_POR_PESSOA = {', '  /* As ferramentas de edição');
 exigir(/'Cecília':\s*\[[^\]]*'conclusao'/.test(papeisCalendario), 'Cecília recebe a subseção de conclusão');

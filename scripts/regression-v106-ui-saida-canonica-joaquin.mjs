@@ -372,7 +372,7 @@ const htmlHarness = [
   '<div id="financeiroBox"></div><div id="mensalidadesBox"></div><div id="cobrancaBox"></div><div id="contratosBox"></div><div id="financeiroLancamentosBox"></div><div id="toast"></div>',
   '</main><script>(', bootstrapFixtureV106.toString(), ')();</script>',
   '<script type="module">',
-  "import { instalarFinanceiroV104 } from '/financeiro-ui-v104.mjs?v=106';",
+  "import { instalarFinanceiroV104 } from '/financeiro-ui-v104.mjs?v=107';",
   'const deps={db:window.db,collection:window.collection,doc:window.doc,getDocs:window.getDocs,getDoc:window.getDoc,setDoc:window.setDoc,updateDoc:window.updateDoc,runTransaction:window.runTransaction,serverTimestamp:window.serverTimestamp,deleteField:window.deleteField,arrayUnion:window.arrayUnion,slugClienteCanonico:window.slugClienteCanonico,hojeLocal:window.hojeLocal,brl:window.brl,nomeMes:window.nomeMes,esc:window.esc,escAttr:window.escAttr,escJs:window.escJs,mostrarToast:window.mostrarToast,usuarioAtual:()=>window.usuarioAtual,auth:window.auth,registrarLogAutomacao:window.registrarLogAutomacao};',
   'window.__depsV106=deps;',
   'window.__runtimeA=instalarFinanceiroV104(deps);',
@@ -500,8 +500,8 @@ async function testarFluxoPrincipal(page, rotulo) {
       commits: window.__fixtureWrites.filter(item => item.tipo === 'transaction').length,
       caminhos: [...commit.caminhos].sort(),
       bulkApplyCalls: window.__fixtureBulkApplyCalls,
-      status: document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Status')?.textContent || '',
-      botaoDepois: !!document.querySelector('#financeiroCorrecaoSaidaCanonicaJoaquinV106Status button'),
+      cartao: document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Box')?.textContent || '',
+      botaoDepois: !!document.querySelector('#financeiroCorrecaoSaidaCanonicaJoaquinV106Box button'),
       confirma: window.__fixtureConfirms.slice(),
     };
   }, antes);
@@ -514,7 +514,7 @@ async function testarFluxoPrincipal(page, rotulo) {
     'clientes_encerrados/0oqy4pk1tcKZccWWyZDi',
   ]), `${rotulo}: clique grava exatamente três alvos auditados numa única transação`);
   exigir(depois.bulkApplyCalls === 0, `${rotulo}: ação específica nunca chama a aplicação geral V105`);
-  exigir(depois.status.includes('Saída correta confirmada') && !depois.botaoDepois, `${rotulo}: releitura troca a ação por confirmação final sem novo botão`);
+  exigir(depois.cartao.includes('Saída correta') && depois.cartao.includes('confirmada') && !depois.botaoDepois, `${rotulo}: releitura troca o cartão inteiro por confirmação final sem nenhum botão`);
   exigir(depois.confirma.some(texto => texto.includes('Preservar o recibo correto')), `${rotulo}: confirmação humana repete o impacto antes da escrita`);
 
   const retry = await page.evaluate(async () => {
@@ -525,9 +525,12 @@ async function testarFluxoPrincipal(page, rotulo) {
       antes,
       depois: window.__fixtureWrites.length,
       toast: window.__fixtureToasts.at(-1)?.mensagem || '',
+      estado: document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Box')?.dataset?.estado || '',
+      botoes: document.querySelectorAll('#financeiroCorrecaoSaidaCanonicaJoaquinV106Box button').length,
     };
   });
   exigir(retry.ok && retry.antes === retry.depois && retry.toast.includes('já estava concluída'), `${rotulo}: retry é no-op e não repete gravação`);
+  exigir(retry.estado === 'resolvida' && retry.botoes === 0, `${rotulo}: segundo clique mantém o cartão concluído e sem ação pendente`);
 
   const largura = await page.evaluate(() => ({
     viewport: window.innerWidth,
@@ -541,7 +544,7 @@ async function testarFluxoPrincipal(page, rotulo) {
 async function testarDuasAbas(page) {
   await page.evaluate(() => {
     window.__resetFixtureV106();
-    document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Status').innerHTML = '<div class="meta">Aguardando.</div>';
+    window.__runtimeA.renderizarPainelConciliacaoJoaquinV107('aguardando');
   });
   await clicarEEsperar(page, '#financeiroCorrecaoSaidaCanonicaJoaquinV106Box button', () =>
     window.__correcaoSaidaCanonicaJoaquinV106?.estado === 'pronta'
@@ -557,11 +560,14 @@ async function testarDuasAbas(page) {
       eventos: Object.keys(window.__store.clientes_ciclo_financeiro),
       ponteiro: window.__store.clientes_config['joaquin-assados']?.saidaAtivaId || '',
       duplicata: window.__store.clientes_encerrados['0oqy4pk1tcKZccWWyZDi'],
+      estado: document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Box')?.dataset?.estado || '',
+      botoes: document.querySelectorAll('#financeiroCorrecaoSaidaCanonicaJoaquinV106Box button').length,
     };
   });
   exigir(resultado.respostas.every(Boolean) && resultado.commits === 1, 'duas abas: duas instâncias convergem com uma única transação');
   exigir(resultado.eventos.length === 1 && resultado.eventos[0] === 'fin_v106_joaquin_saida_canonica_20260915', 'duas abas: operationId determinístico impede segundo recibo');
   exigir(resultado.ponteiro === '62eBY5iSyFtP21vECYMm' && resultado.duplicata?.excluido === true, 'duas abas: ambas terminam no mesmo estado canônico');
+  exigir(resultado.estado === 'resolvida' && resultado.botoes === 0, 'duas abas: a interface compartilhada converge para concluído sem ação residual');
 }
 
 async function testarConcorrencia(page) {
@@ -610,8 +616,8 @@ async function testarPapelIndevido(page, rotulo) {
   exigir(!resultado.previa && !resultado.aplicacao && resultado.leituras === 0 && resultado.writes === 0, `${rotulo}: papel indevido não lê nem escreve dados financeiros`);
 }
 
-exigir(fonteHtml.includes('2026-08-22-saida-canonica-joaquin-v106'), 'HTML real identifica o build V106');
-exigir(fonteHtml.includes('financeiro-core.mjs?v=106') && fonteHtml.includes('financeiro-ui-v104.mjs?v=106'), 'HTML real instala núcleo e UI V106');
+exigir(fonteHtml.includes('2026-08-22-estado-conciliacao-joaquin-v107'), 'HTML real identifica o build V107 que preserva a conciliação V106');
+exigir(fonteHtml.includes('financeiro-core.mjs?v=107') && fonteHtml.includes('financeiro-ui-v104.mjs?v=107'), 'HTML real instala núcleo e UI V107 preservando a porta V106');
 exigir(!fonteHtml.includes('financeiroCorrecaoSaidaCanonicaJoaquinV106Status'), 'cartão específico não fica estático no HTML de papéis indevidos');
 exigir(fonteUi.includes('preverCorrecaoSaidaCanonicaJoaquinV106') && fonteUi.includes('aplicarCorrecaoSaidaCanonicaJoaquinV106'), 'módulo real expõe somente as duas ações V106 acordadas');
 

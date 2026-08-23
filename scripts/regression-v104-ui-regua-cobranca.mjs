@@ -326,7 +326,7 @@ const url = `http://127.0.0.1:${endereco.port}/fixture.html`;
 
 exigir(fonteHtml.includes('2026-08-22-correcao-financeiro-real-v104'), 'HTML real identifica o build V104 de correção financeira real');
 exigir(fonteHtml.includes('instalarFinanceiroV104({'), 'HTML real instala o módulo financeiro V104');
-exigir(fonteHtml.includes('./financeiro-core.mjs?v=106') && fonteUi.includes("./financeiro-core.mjs?v=106"), 'runtime V106 preserva a prova V104 sobre o mesmo núcleo financeiro');
+exigir(fonteHtml.includes('./financeiro-core.mjs?v=107') && fonteUi.includes("./financeiro-core.mjs?v=107"), 'runtime V107 preserva a prova V104 sobre o mesmo núcleo financeiro');
 for (const id of ['finMes','mensMes','cobMes','ctMes','financeiroBox','mensalidadesBox','cobrancaBox','contratosBox']) {
   exigir(fonteHtml.includes(`id="${id}"`), `HTML real contém ${id}`);
 }

@@ -1,11 +1,11 @@
 /*
- * Get Started — integração financeira V106 (compatibilidade sobre a V105).
+ * Get Started — integração financeira V107 (compatibilidade sobre a V106).
  *
  * Este módulo concentra leitura, projeção e UI. A matemática e as leis de
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
-import * as Core from './financeiro-core.mjs?v=106';
+import * as Core from './financeiro-core.mjs?v=107';
 
 const COLECOES_SNAPSHOT = [
   'contratos_cliente',
@@ -546,7 +546,9 @@ function competenciaDeDataCaixa(valor){
     ['mensMes','cobMes','ctMes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=competencia;});
     box.innerHTML='<div class="card"><div class="desc">Reconciliando competência e caixa por fontes confirmadas…</div></div>';
     try{
-      const fontes=await carregarSnapshot(); const p=projetar(fontes,competencia,{regua:false});
+      const fontes=await carregarSnapshot();
+      await atualizarPainelConciliacaoJoaquinV107ComFontes(fontes);
+      const p=projetar(fontes,competencia,{regua:false});
       if(p.estado==='indisponivel') throw new Error('Financeiro indisponível.');
       const ob=p.obrigacoes.totais||{}, caixa=p.reconciliacao.caixa||{}, lanc=resumoLancamentos(fontes,competencia);
       const entradasCaixa=numero(caixa.totalAgencia)+lanc.receita;
@@ -559,7 +561,12 @@ function competenciaDeDataCaixa(valor){
       <div class="card"><h2>👥 Carteira da competência</h2><div class="painelResumo"><div class="resumoCard green"><div class="num">${mov.totais?.ativos||0}</div><div class="lbl">Ativos</div></div><div class="resumoCard"><div class="num">${mov.totais?.entradas||0}</div><div class="lbl">Entraram</div></div><div class="resumoCard"><div class="num">${mov.totais?.saidas||0}</div><div class="lbl">Saíram</div></div></div>${mov.entradas?.length?`<div class="meta">Entradas: ${mov.entradas.map(v=>esc(nomes.get(v.canonicalId)||v.canonicalId)).join(' · ')}</div>`:''}${mov.saidas?.length?`<div class="meta">Saídas: ${mov.saidas.map(v=>esc(nomes.get(v.canonicalId)||v.canonicalId)).join(' · ')}</div>`:''}</div>`;
       await w.renderFinanceiroLancamentosV103(fontes,competencia);
       return true;
-    }catch(e){ console.error('V103 financeiro indisponível:',e); box.innerHTML='<div class="card" style="border:2px solid var(--red);"><b>Financeiro indisponível</b><div class="desc">Nenhum total foi zerado ou inferido. Tente novamente quando as fontes responderem.</div></div>'; return false; }
+    }catch(e){
+      console.error('V103 financeiro indisponível:',e);
+      renderizarPainelConciliacaoJoaquinV107('indisponivel');
+      box.innerHTML='<div class="card" style="border:2px solid var(--red);"><b>Financeiro indisponível</b><div class="desc">Nenhum total foi zerado ou inferido. Tente novamente quando as fontes responderem.</div></div>';
+      return false;
+    }
   };
 
   async function sha256Hex(valor){
@@ -1200,7 +1207,7 @@ function competenciaDeDataCaixa(valor){
     return classificarConciliacaoJoaquinV106(fontes);
   }
 
-  function garantirPainelConciliacaoJoaquinV106(){
+  function obterPainelConciliacaoJoaquinV107(){
     if(typeof document==='undefined')return null;
     let painel=document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Box');
     if(!canFinanceiro()){
@@ -1212,12 +1219,63 @@ function competenciaDeDataCaixa(valor){
       if(!ancora?.parentNode)return null;
       painel=document.createElement('div');
       painel.id='financeiroCorrecaoSaidaCanonicaJoaquinV106Box';
-      painel.className='item';
-      painel.style.cssText='margin-top:14px;border:2px solid var(--yellow);';
-      painel.innerHTML=`<div class="top"><b>Joaquim Assados — confirmar a saída correta</b><span class="selo hoje">V106</span></div><div class="meta">Você confirmou: saída em 15/09/2026, motivo baixo retorno financeiro e agosto de 2026 como último mês cobrado. Esta ação não altera Açougue São Joaquim nem os outros ajustes.</div><button class="btn secondary" style="width:auto;margin-top:10px;" onclick="preverCorrecaoSaidaCanonicaJoaquinV106()">Verificar esta correção sem salvar</button><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:10px;"><div class="meta">Aguardando verificação específica do Joaquim.</div></div>`;
+      painel.className='item correcaoFinanceiraEstado';
+      painel.style.marginTop='14px';
+      painel.setAttribute('aria-live','polite');
       ancora.parentNode.insertBefore(painel,ancora);
     }
+    return painel;
+  }
+
+  function renderizarPainelConciliacaoJoaquinV107(estado='aguardando',{bloqueios=[]}={}){
+    const painel=obterPainelConciliacaoJoaquinV107();
+    if(!painel)return null;
+    const seguro=['aguardando','verificando','pronta','aplicando','resolvida','bloqueada','indisponivel'].includes(estado)
+      ? estado
+      : 'indisponivel';
+    painel.dataset.estado=seguro;
+    painel.className=`item correcaoFinanceiraEstado correcaoFinanceiraEstado-${seguro}`;
+    if(['verificando','aplicando'].includes(seguro))painel.setAttribute('aria-busy','true');
+    else painel.removeAttribute('aria-busy');
+
+    const fato='Saída em 15/09/2026 · agosto de 2026 como último mês cobrado · motivo: baixo retorno financeiro.';
+    const cabecalho=(titulo,selo,classe)=>`<div class="top"><b>${titulo}</b><span class="selo ${classe}">${selo}</span></div>`;
+    if(seguro==='resolvida'){
+      painel.innerHTML=`${cabecalho('✅ Saída correta do Joaquim confirmada','Concluído','aprovada')}<div class="meta">${fato}</div><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:8px;"><div class="desc" style="color:var(--green);margin:0;"><b>Correção concluída.</b> O registro concorrente permanece arquivado, sem exclusão física. Não existe ação pendente e nenhuma gravação será repetida.</div></div>`;
+    }else if(seguro==='pronta'){
+      painel.innerHTML=`${cabecalho('Joaquim Assados — correção pendente','Requer confirmação','hoje')}<div class="meta">${fato} Esta ação não altera Açougue São Joaquim nem os outros ajustes.</div><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:10px;"><div class="desc" style="color:var(--green);"><b>Prévia segura; nada foi salvo.</b></div><div class="item"><b>Será mantido</b><div class="meta">O recibo confirmado, agosto como último mês e o motivo informado.</div></div><div class="item"><b>Será arquivado, sem apagar</b><div class="meta">Somente o registro concorrente antigo. Contrato, mensalidades e outros clientes não serão alterados.</div></div><button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoSaidaCanonicaJoaquinV106()">Confirmar saída correta do Joaquim</button></div>`;
+    }else if(seguro==='bloqueada'){
+      const detalhe=bloqueios.length?bloqueios.map(esc).join(' · '):'Os dados atuais não correspondem à correção auditada.';
+      painel.innerHTML=`${cabecalho('Joaquim Assados — correção bloqueada','Requer auditoria','atrasado')}<div class="meta">${fato}</div><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:10px;"><div class="desc" style="color:var(--red);"><b>Não é seguro aplicar. Nada foi alterado.</b> ${detalhe}</div><button class="btn secondary" style="width:auto;margin-top:8px;" onclick="preverCorrecaoSaidaCanonicaJoaquinV106()">Verificar novamente sem salvar</button></div>`;
+    }else if(seguro==='indisponivel'){
+      painel.innerHTML=`${cabecalho('Joaquim Assados — verificação indisponível','Não confirmado','atrasado')}<div class="meta">Não foi possível reler os recibos agora. Falha de leitura não significa conclusão e nada foi alterado.</div><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:10px;"><button class="btn secondary" style="width:auto;" onclick="preverCorrecaoSaidaCanonicaJoaquinV106()">Tentar verificar novamente</button></div>`;
+    }else if(seguro==='verificando'||seguro==='aplicando'){
+      const aplicando=seguro==='aplicando';
+      painel.innerHTML=`${cabecalho(aplicando?'Joaquim Assados — confirmando a saída':'Joaquim Assados — verificando a saída',aplicando?'Aplicando':'Conferindo','aguardando')}<div class="meta">${fato}</div><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:10px;"><div class="desc">${aplicando?'Confirmando recibos e estado final…':'Conferindo os dois recibos, contrato e ficha sem gravar…'}</div></div>`;
+    }else{
+      painel.innerHTML=`${cabecalho('Joaquim Assados — conferir a saída','Aguardando','pendente')}<div class="meta">${fato} Verificar apenas lê os dados; não salva nada.</div><div id="financeiroCorrecaoSaidaCanonicaJoaquinV106Status" style="margin-top:10px;"><button class="btn secondary" style="width:auto;" onclick="preverCorrecaoSaidaCanonicaJoaquinV106()">Verificar esta correção sem salvar</button></div>`;
+    }
     return document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Status');
+  }
+
+  function garantirPainelConciliacaoJoaquinV106(){
+    const painel=obterPainelConciliacaoJoaquinV107();
+    if(!painel)return null;
+    if(!painel.dataset.estado)renderizarPainelConciliacaoJoaquinV107('aguardando');
+    return document.getElementById('financeiroCorrecaoSaidaCanonicaJoaquinV106Status');
+  }
+
+  async function atualizarPainelConciliacaoJoaquinV107ComFontes(fontes){
+    try{
+      const previa=await classificarConciliacaoJoaquinV106(fontes);
+      w.__correcaoSaidaCanonicaJoaquinV106=previa;
+      renderizarPainelConciliacaoJoaquinV107(previa.estado,{bloqueios:previa.bloqueios});
+      return previa;
+    }catch(e){
+      console.error('V107 não classificou o estado visual do Joaquim:',e);
+      renderizarPainelConciliacaoJoaquinV107('indisponivel');
+      return null;
+    }
   }
 
   w.preverCorrecaoSaidaCanonicaJoaquinV106=async function(){
@@ -1225,25 +1283,23 @@ function competenciaDeDataCaixa(valor){
       garantirPainelConciliacaoJoaquinV106();
       return false;
     }
-    const alvo=garantirPainelConciliacaoJoaquinV106();
-    if(!alvo)return false;
-    alvo.innerHTML='<div class="desc">Conferindo os dois recibos, contrato e ficha sem gravar…</div>';
+    renderizarPainelConciliacaoJoaquinV107('verificando');
     try{
       const previa=await lerConciliacaoJoaquinV106();
       w.__correcaoSaidaCanonicaJoaquinV106=previa;
       if(previa.resolvida){
-        alvo.innerHTML='<div class="desc" style="color:var(--green);"><b>Saída correta confirmada.</b> O registro concorrente está arquivado sem exclusão física. Nenhuma gravação será repetida.</div>';
+        renderizarPainelConciliacaoJoaquinV107('resolvida');
         return true;
       }
       if(previa.bloqueios.length){
-        alvo.innerHTML=`<div class="desc" style="color:var(--red);"><b>Não é seguro corrigir automaticamente. Nada foi alterado.</b> ${previa.bloqueios.map(esc).join(' · ')}</div>`;
+        renderizarPainelConciliacaoJoaquinV107('bloqueada',{bloqueios:previa.bloqueios});
         return false;
       }
-      alvo.innerHTML=`<div class="desc" style="color:var(--green);"><b>Prévia segura; nada foi salvo.</b></div><div class="item"><b>Será mantido</b><div class="meta">O recibo confirmado de 15/09/2026, agosto como último mês e motivo baixo retorno financeiro.</div></div><div class="item"><b>Será arquivado, sem apagar</b><div class="meta">Somente o registro concorrente antigo. Contrato, mensalidades, Açougue São Joaquim e demais clientes não serão alterados.</div></div><button class="btn" style="width:auto;margin-top:10px;" onclick="aplicarCorrecaoSaidaCanonicaJoaquinV106()">Confirmar saída correta do Joaquim</button>`;
+      renderizarPainelConciliacaoJoaquinV107('pronta');
       return true;
     }catch(e){
       console.error(e);
-      alvo.innerHTML='<div class="desc" style="color:var(--red);"><b>Verificação indisponível.</b> Nada foi alterado.</div>';
+      renderizarPainelConciliacaoJoaquinV107('indisponivel');
       return false;
     }
   };
@@ -1255,16 +1311,20 @@ function competenciaDeDataCaixa(valor){
       let previa=await lerConciliacaoJoaquinV106();
       w.__correcaoSaidaCanonicaJoaquinV106=previa;
       if(previa.resolvida){
+        renderizarPainelConciliacaoJoaquinV107('resolvida');
         mostrarToast('Esta correção já estava concluída; nenhuma gravação foi repetida.');
         return true;
       }
       if(!previa.pronta)throw new Error(`A prévia não está segura: ${previa.bloqueios.join(' · ')}`);
+      renderizarPainelConciliacaoJoaquinV107('pronta');
       if(!confirm('Preservar o recibo correto do Joaquin, apontar a ficha para ele e arquivar somente o registro concorrente antigo?'))return false;
+      renderizarPainelConciliacaoJoaquinV107('aplicando');
       // A confirmação humana pode ficar aberta enquanto outra aba muda a coleção.
       // Refaça a leitura de pertencimento depois dela, antes de montar qualquer write.
       previa=await lerConciliacaoJoaquinV106();
       w.__correcaoSaidaCanonicaJoaquinV106=previa;
       if(previa.resolvida){
+        renderizarPainelConciliacaoJoaquinV107('resolvida');
         mostrarToast('Esta correção já estava concluída; nenhuma gravação foi repetida.');
         return true;
       }
@@ -1358,6 +1418,7 @@ function competenciaDeDataCaixa(valor){
       const final=await lerConciliacaoJoaquinV106();
       if(!final.resolvida)throw new Error('A releitura não confirmou a remoção do conflito. Não repita; atualize.');
       w.__correcaoSaidaCanonicaJoaquinV106=final;
+      renderizarPainelConciliacaoJoaquinV107('resolvida');
       mostrarToast(jaAplicada?'Esta correção já estava concluída; nenhuma gravação foi repetida.':'Saída correta confirmada. O registro concorrente foi arquivado sem exclusão física.');
       await Promise.all([w.renderFinanceiro(),w.renderMensalidades(),w.renderCobranca(),w.renderContratos()]);
       await w.preverCorrecaoFinanceiraV104();
@@ -1695,16 +1756,26 @@ function competenciaDeDataCaixa(valor){
     if(!canFinanceiro())return false;
     w.__previewUnificadaV104=true;
     try{
-      const [carteiraOk,fedaltoOk]=await Promise.all([
+      const [carteiraOk,fedaltoOk,joaquinOk]=await Promise.all([
         w.preverCorrecaoFinanceiraSetembroV103(),
         w.preverCorrecaoFedaltoReguaV104(),
         w.preverCorrecaoSaidaCanonicaJoaquinV106(),
       ]);
       const alvo=document.getElementById('financeiroCorrecoesV104Acao');
       const carteiraResolvida=!!w.__correcaoSetembroV103&&Object.values(w.__correcaoSetembroV103.resolvidos||{}).every(Boolean);
-      const tudoResolvido=carteiraResolvida&&w.__correcaoFedaltoV104?.resolvida===true;
-      if(alvo)alvo.innerHTML=carteiraOk&&fedaltoOk?(tudoResolvido?'<div class="desc" style="color:var(--green);"><b>Conferência concluída: todos os alvos já estavam corretos. Não há nada para salvar.</b></div>':'<button class="btn" style="width:auto;" onclick="aplicarCorrecaoFinanceiraV104()">2. Aplicar somente o que falta</button><div class="meta" style="margin-top:7px;">O que já foi salvo manualmente fica fora da transação e não será duplicado.</div>'):'<div class="desc" style="color:var(--red);">A aplicação continua bloqueada enquanto alguma prévia não estiver segura.</div>';
-      return carteiraOk&&fedaltoOk;
+      const ajustesGeraisResolvidos=carteiraResolvida&&w.__correcaoFedaltoV104?.resolvida===true;
+      const joaquinResolvido=w.__correcaoSaidaCanonicaJoaquinV106?.resolvida===true;
+      const tudoResolvido=ajustesGeraisResolvidos&&joaquinResolvido;
+      if(alvo){
+        if(!carteiraOk||!fedaltoOk||!joaquinOk){
+          alvo.innerHTML='<div class="desc" style="color:var(--red);"><b>A conferência continua bloqueada.</b> Veja o cartão vermelho para identificar o ajuste que requer auditoria.</div>';
+        }else if(tudoResolvido){
+          alvo.innerHTML='<div class="desc" style="color:var(--green);"><b>Conferência concluída: todos os alvos estão corretos. Não há nada para salvar.</b></div>';
+        }else{
+          alvo.innerHTML=`${!ajustesGeraisResolvidos?'<button class="btn" style="width:auto;" onclick="aplicarCorrecaoFinanceiraV104()">2. Aplicar somente os ajustes gerais que faltam</button><div class="meta" style="margin-top:7px;">O que já foi salvo manualmente fica fora da transação e não será duplicado.</div>':''}${!joaquinResolvido?'<div class="meta" style="margin-top:9px;color:var(--yellow2);"><b>Joaquim possui confirmação separada no cartão acima.</b> A ação geral não confirma essa saída.</div>':''}`;
+        }
+      }
+      return carteiraOk&&fedaltoOk&&joaquinOk;
     }finally{w.__previewUnificadaV104=false;}
   };
 
@@ -1717,7 +1788,7 @@ function competenciaDeDataCaixa(valor){
       if(!await w.aplicarCorrecaoFinanceiraSetembroV103())return false;
       if(!await w.aplicarCorrecaoFedaltoReguaV104())return false;
       await w.preverCorrecaoFinanceiraV104();
-      mostrarToast('Todas as correções foram confirmadas com recibos.');return true;
+      mostrarToast('Os ajustes gerais foram confirmados com recibos. A saída do Joaquim permanece na confirmação separada.');return true;
     })();
     w.__aplicacaoFinanceiraV104Promessa=trabalho;
     try{return await trabalho;}
@@ -1739,6 +1810,7 @@ function competenciaDeDataCaixa(valor){
     carregarSnapshot,projetar,invalidar,core:Core,renderContratosAnterior,
     classificarConciliacaoJoaquinV106,lerConciliacaoJoaquinV106,
     garantirPainelConciliacaoJoaquinV106,
+    renderizarPainelConciliacaoJoaquinV107,atualizarPainelConciliacaoJoaquinV107ComFontes,
     constantesV106:{...CONCILIACAO_JOAQUIN_V106},
   };
   w.__financeiroV103=w.__financeiroV104;

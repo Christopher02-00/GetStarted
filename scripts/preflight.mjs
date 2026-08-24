@@ -44,9 +44,22 @@ const obrigatorios = [
   'scripts/regression-v108-ui-pagamento-fedalto.mjs',
   'scripts/regression-v109-fedalto-setembro.mjs',
   'scripts/regression-v109-ui-cortesia-fedalto.mjs',
+  'scripts/regression-v110-privacidade-sessao-papeis.mjs',
+  'scripts/regression-v110-ui-privacidade-sessao-papeis.mjs',
+  'scripts/regression-v111-proposta-portal-segura.mjs',
+  'scripts/regression-v111-ui-proposta-portal-segura.mjs',
+  'scripts/regression-v112-gerencia-amanda-papeis.mjs',
+  'scripts/regression-v112-ui-gerencia-amanda-papeis.mjs',
   'scripts/firebase-emulator-v103-financeiro/firebase.json',
   'scripts/firebase-emulator-v103-financeiro/run-emulator-tests.mjs',
   'scripts/firebase-emulator-v103-financeiro/rules-v103-financeiro.test.mjs',
+  'scripts/firebase-emulator-v111-portal-propostas/.gitignore',
+  'scripts/firebase-emulator-v111-portal-propostas/README.md',
+  'scripts/firebase-emulator-v111-portal-propostas/firebase.json',
+  'scripts/firebase-emulator-v111-portal-propostas/package.json',
+  'scripts/firebase-emulator-v111-portal-propostas/pnpm-workspace.yaml',
+  'scripts/firebase-emulator-v111-portal-propostas/rules-v111-portal-propostas.test.mjs',
+  'scripts/firebase-emulator-v111-portal-propostas/run-emulator-tests.mjs',
   'Planos.pdf'
 ];
 for (const arquivo of obrigatorios) {
@@ -367,7 +380,7 @@ if (!/^rules_version\s*=\s*'2';/.test(regras)) falhar(`firestore.rules: a linha 
 else provar(`firestore.rules começa por rules_version = '2'; na linha 1`);
 if (!delimitadoresBalanceados(regras)) falhar('firestore.rules contém delimitadores desbalanceados');
 else provar('firestore.rules com delimitadores balanceados');
-for(const reservado of ['AGENTS.md','firestore.rules','scripts/','regression-critical.mjs','regression-v85-acesso-calendarios-clientes.mjs','rollback_v95/','rollback_v96/','rollback_v97/','rollback_v98/','rollback_v99/','rollback_v100/','rollback_v101/','rollback_v102/','rollback_v103/','rollback_v104/','rollback_v105/','rollback_v106/','rollback_v107/','rollback_v108/']){
+for(const reservado of ['AGENTS.md','firestore.rules','scripts/','regression-critical.mjs','regression-v85-acesso-calendarios-clientes.mjs','rollback_v95/','rollback_v96/','rollback_v97/','rollback_v98/','rollback_v99/','rollback_v100/','rollback_v101/','rollback_v102/','rollback_v103/','rollback_v104/','rollback_v105/','rollback_v106/','rollback_v107/','rollback_v108/','rollback_v109/','rollback_v110/','rollback_v111/']){
   if(!configPages.includes('- '+reservado)) falhar(`_config.yml não exclui artefato interno: ${reservado}`);
 }
 if(!erros.some(e=>e.startsWith('_config.yml'))) provar('Pages exclui regras, testes e rollbacks históricos sem apagar as fontes');
@@ -804,8 +817,10 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-24-privacidade-sessao-papeis-v110' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109">') ||
+if (build !== '2026-08-24-roteador-gerencia-papeis-v112' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-24-proposta-portal-protegida-v111">') ||
+    !escritorio.includes('<meta name="gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110">') ||
+    !escritorio.includes('<meta name="gs-v109-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109">') ||
     !escritorio.includes('<meta name="gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108">') ||
     !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-22-estado-conciliacao-joaquin-v107">') ||
     !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-22-saida-canonica-joaquin-v106">') ||
@@ -815,8 +830,8 @@ if (build !== '2026-08-24-privacidade-sessao-papeis-v110' ||
     !escritorio.includes('<meta name="gs-seventh-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
     !escritorio.includes('<meta name="gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V110 inesperada: ${build || 'ausente'}`);
-} else provar('V110 preserva V109/V108/V107/V106/V105/V104/V103/V102/V101 e mantém privacidade, cortesia canônica, pagamento explícito, estado visual, conciliação explícita, reconciliação manual, correção real, finanças, migração e conferência separadas');
+  falhar(`cadeia de build V112 inesperada: ${build || 'ausente'}`);
+} else provar('V112 preserva V111/V110/V109/V108/V107/V106/V105/V104/V103/V102/V101 e mantém proposta protegida, privacidade, cortesia canônica, pagamento explícito, estado visual, conciliação explícita, reconciliação manual, correção real, finanças, migração e conferência separadas');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
@@ -861,9 +876,13 @@ const mesEditorV68 = ler('calendario.html').slice(
   ler('calendario.html').indexOf('function mesDoItemNoCalendario'),
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
+const portalV111Identificado =
+  portal.includes('<meta name="gs-build" content="2026-08-24-proposta-portal-protegida-v111">') &&
+  portal.includes('<meta name="gs-parent-patch" content="2026-08-24-privacidade-sessao-papeis-v110">') &&
+  portal.includes('<meta name="gs-patch" content="2026-08-24-proposta-portal-protegida-v111">');
 if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-21-operacao-perfis-chris-v96">') ||
     !ler('calendario.html').includes('<meta name="gs-parent-patch" content="2026-08-19-calendarios-stories-v91">') ||
-    !portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v91">') ||
+    !portalV111Identificado ||
     !competenciaCalendariosV67.includes('const mesDoDocumento = mesDoTextoConf') ||
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
     !mesEditorV68.includes('const mesDoDocumento = mesDoTexto(cal && cal.month)') ||

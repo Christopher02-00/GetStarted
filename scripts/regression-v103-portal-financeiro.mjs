@@ -18,9 +18,10 @@ function trecho(inicio,fim){
   return portal.slice(a,b);
 }
 
-exigir(portal.includes('<meta name="gs-build" content="2026-08-19-calendarios-stories-v91">')&&
-  portal.includes('<meta name="gs-patch" content="2026-08-21-portal-financeiro-v103">'),
-  'base publicada V91 e patch isolado V103 do Portal permanecem identificáveis');
+exigir(portal.includes('<meta name="gs-build" content="2026-08-24-proposta-portal-protegida-v111">')&&
+  portal.includes('<meta name="gs-parent-patch" content="2026-08-24-privacidade-sessao-papeis-v110">')&&
+  portal.includes('<meta name="gs-patch" content="2026-08-24-proposta-portal-protegida-v111">'),
+  'Portal V111 está identificado; contrato financeiro V103 será revalidado integralmente');
 
 const helpers=trecho('  function statusPagamentoPortal','  async function dadosPagamentoCliente');
 const contextoHelpers={MESES:['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']};
@@ -85,7 +86,7 @@ exigir(meusDocs.includes("where(campo || 'cliente', '==', clienteAtual.slug)"),
   'query mensal não lista pagamentos de outros clientes');
 
 const render=trecho('  async function carregarPagamentoCliente','  /* Faixa suave no topo do portal');
-const lembrete=trecho('  async function mostrarLembretePagamento','  window.responderProposta');
+const lembrete=trecho('  async function mostrarLembretePagamento','  async function atualizarRespostaPropostaProtegida');
 for(const [nome,codigo] of [['render',render],['lembrete',lembrete],['helpers',helpers]]){
   exigir(!/\b(?:setDoc|addDoc|updateDoc|deleteDoc|runTransaction)\s*\(/.test(codigo),
     `${nome} financeiro não introduz escrita`);

@@ -29,17 +29,20 @@ function sha256(caminho){
   return createHash('sha256').update(fs.readFileSync(path.join(raiz, caminho))).digest('hex');
 }
 
-verificar(escritorio.includes('gs-build" content="2026-08-24-privacidade-sessao-papeis-v110'), 'build V110 identifica a fronteira de sessão e papéis');
-verificar(config.includes('- rollback_v109/'), 'rollback V109 permanece excluído do runtime público');
+verificar(escritorio.includes('gs-build" content="2026-08-24-roteador-gerencia-papeis-v112')&&
+  escritorio.includes('gs-parent-patch" content="2026-08-24-proposta-portal-protegida-v111')&&
+  escritorio.includes('gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110'),
+  'build V112 preserva V111 e a fronteira V110 de sessão e papéis');
+verificar(config.includes('- rollback_v110/'), 'rollback V110 permanece excluído do runtime público');
 
-for(const [arquivo,hashV109] of Object.entries({
-  'portal-cliente.html':'b99d4b9d1f8b8668b24701909cd4bb354cc8275001c20b7cd50dd13533101f62',
+for(const [arquivo,hashLinhaBase] of Object.entries({
+  'portal-cliente.html':'906acb3593909d6d91114a96bff7bfb51251853ff9fd99e215c69d75eafca52b',
   'avulso.html':'15aa50ff81a500a7f285f4f92f9a3fb97bef04a5e3eb203fef179cece38d62b6',
-  'firestore.rules':'bb7c60204fbbbc0127b159277a69bd89beaf8cea0cb20a7c0e5dbba7f6095e1d',
+  'firestore.rules':'bd781bf5c81375067b22bd094c9fadf2a432043cc7a425c5d75ab1b33c430cd8',
   'financeiro-core.mjs':'ce6b55f78bef54d50d78378730329b2b84199961e20de0dd7ee86e98ce42d844',
   'financeiro-ui-v103.mjs':'ab63cde2b36e68b08523cd4e01e54557b25db969beb861e5e59394909c404cfc',
   'financeiro-ui-v104.mjs':'eb152a1d5760ae3343e6189909dcc4a8926b903874c8838bec8beb9077a516ac'
-})) verificar(sha256(arquivo)===hashV109, `${arquivo} permanece byte a byte V109`);
+})) verificar(sha256(arquivo)===hashLinhaBase, `${arquivo} permanece byte a byte na linha-base esperada`);
 
 const limpeza = trecho('function limparEstadoPrivadoTrocaIdentidade', 'window.mudarUsuarioGlobal = async function');
 verificar(Boolean(limpeza), 'existe uma função canônica de limpeza privada');

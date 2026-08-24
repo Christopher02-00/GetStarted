@@ -61,17 +61,19 @@ function testarPropostas(){
   exigir(regras.includes("resource.data.estagio in ['proposta','analise','ajuste']")&&
     regras.includes("request.resource.data.estagio in ['aceita','ajuste','perdido']"),
     'cliente só responde proposta em etapas comerciais respondíveis');
-  exigir(regraNegocio.includes('respostaPropostaClienteValida()')&&
-    regras.includes('historicoRespostaClienteValido()')&&
+  const atualizacaoNegocio=trecho(regras,'function atualizacaoNegocioClienteValida','function atualizacaoPublicaClienteValida');
+  exigir(regraNegocio.includes('atualizacaoNegocioClienteValida(docId)')&&
+    atualizacaoNegocio.includes('respostaPropostaClienteValida(resource.data.clienteSlug)')&&
+    regras.includes('historicoRespostaClienteValido(clienteSlug)')&&
     regras.includes('historico.hasAll(resource.data.historico)'),
     'resposta exige histórico crescente e preserva todas as entradas anteriores');
-  const ramoResposta=trecho(regraNegocio,
-    "request.resource.data.diff(resource.data).affectedKeys().hasOnly([\n              'estagio'",
-    ') || (');
+  const ramoResposta=trecho(atualizacaoNegocio,
+    "alterados.hasAny(['estagio','respostaCliente','respostaTexto','historico'])",
+    ') && respostaPropostaClienteValida');
   exigir(!ramoResposta.includes('pagamentoComprovante')&&!ramoResposta.includes('urlHttpsOuVazia'),
     'resposta não revalida comprovante legado que permaneceu inalterado');
-  exigir(regraNegocio.includes("request.resource.data.pagamentoComprovante != ''")&&
-    regraNegocio.includes('urlHttpsOuVazia(request.resource.data.pagamentoComprovante)'),
+  exigir(atualizacaoNegocio.includes("request.resource.data.pagamentoComprovante != ''")&&
+    atualizacaoNegocio.includes('urlHttpsOuVazia(request.resource.data.pagamentoComprovante)'),
     'alteração do comprovante da proposta continua aceitando somente HTTPS');
 }
 
@@ -83,8 +85,14 @@ function testarPapeis(){
   const negocio=trecho(regras,'match /negocios','match /reunioes_vendas');
   const reuniao=trecho(regras,'match /reunioes_vendas','match /contratos_cliente');
   exigir(negocio.includes('allow read: if ehChris()')&&negocio.includes('allow create: if ehChris()')&&
-    negocio.includes('allow update: if ehChris() ||')&&reuniao.includes('allow read, create, update: if ehChris()'),
-    'backend da Central de Vendas é exclusivo de Chris como o DOM');
+    negocio.includes('allow update: if ehChris() || atualizacaoNegocioClienteValida(docId);')&&
+    (negocio.match(/allow update:/g)||[]).length===1&&
+    regras.includes('revisaoPropostaPortalAvanca(resource.data, request.resource.data)')&&
+    regras.includes('liberacaoPropostaPortalAtiva(propostaId, resource.data.clienteSlug)')&&
+    regras.includes('respostaPropostaPortalEspelhada(propostaId)')&&
+    regras.includes('comprovantePropostaPortalEspelhado(propostaId)')&&
+    reuniao.includes('allow read, create, update: if ehChris()'),
+    'Central continua exclusiva para leitura/criação; cliente só atualiza proposta liberada, revisada e espelhada');
 }
 
 function compilarScriptsInline(){

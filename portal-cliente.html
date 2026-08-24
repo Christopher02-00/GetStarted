@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-  <meta name="gs-build" content="2026-08-19-calendarios-stories-v91">
-  <meta name="gs-patch" content="2026-08-21-portal-financeiro-v103">
+  <meta name="gs-build" content="2026-08-24-proposta-portal-protegida-v111">
+  <meta name="gs-parent-patch" content="2026-08-24-privacidade-sessao-papeis-v110">
+  <meta name="gs-patch" content="2026-08-24-proposta-portal-protegida-v111">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -186,7 +187,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, orderBy, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, orderBy, runTransaction, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -521,6 +522,7 @@
     __invalidacaoSessaoPortalEmCurso=(async()=>{
       const uidEfetivo=uid||auth.currentUser?.uid||'';
       if(uidEfetivo){
+        await limparLiberacoesPropostaPortal(uidEfetivo);
         try{ await deleteDoc(doc(db,'sessoes_cliente',uidEfetivo)); }
         catch(e){ console.warn('A sessão expirada não pôde ser removida do servidor:',e.code||e.message); }
       }
@@ -569,6 +571,9 @@
   }
 
   window.entrarPortal = function(slug, nome, escopo, tokenConfirmado){
+    __propostaLiberada=false;
+    __propostasLiberadasIds.clear();
+    __indicesPropostaPortalConfirmados=[];
     clienteAtual = { slug, nome, escopo:escopo||{} };
     localStorage.setItem('portalClienteSlug', slug);
     /* Reabrir o Portal sem parâmetros usa a sessão local já validada. A
@@ -615,7 +620,13 @@
     carregarAcompanhamento();
   };
 
-  window.sairPortal = function(){
+  window.sairPortal = async function(){
+    const uid=auth.currentUser?.uid||'';
+    await limparLiberacoesPropostaPortal(uid);
+    if(uid){
+      try{ await deleteDoc(doc(db,'sessoes_cliente',uid)); }
+      catch(e){ console.warn('A sessão do Portal não pôde ser removida ao sair:',e.code||e.message); }
+    }
     localStorage.removeItem('portalClienteSlug');
     localStorage.removeItem('portalClienteToken');
     location.href = location.pathname;
@@ -2081,63 +2092,147 @@
      impede o repasse por descuido sem criar atrito de login. A confirmacao
      vale so pra sessao aberta no navegador. */
   let __propostaLiberada = false;
+  let __sessaoPortalAbertaEm = '';
+  let __indicesPropostaPortalConfirmados = [];
+  const __propostasLiberadasIds = new Set();
 
   function so4Digitos(s){ return (s||'').replace(/\D/g,'').slice(-4); }
+  function propostaIdPortalSeguro(id){ return /^[A-Za-z0-9_-]{1,200}$/.test(String(id||'')); }
 
-  async function buscarNegociosDoCliente(){
-    /* O funil comercial inteiro chegava ao navegador do cliente e era
-       filtrado por NOME aqui. Agora só vem o que é dele. Negócio antigo
-       sem o campo `cliente` preenchido deixa de aparecer — é o preço de
-       fechar isto, e é o preço certo. */
-    const snap = await meusDocs('negocios','clienteSlug');
-    const meus = [];
-    snap.forEach(d => {
-      const n = d.data();
-      const slugs=Array.isArray(n.clienteSlugs)?n.clienteSlugs.map(v=>String(v||'').trim()).filter(Boolean):[];
-      const vinculado=n.clienteSlug===clienteAtual.slug||slugs.includes(clienteAtual.slug);
-      /* `preparada` e rascunho interno: não houve envio real e, portanto,
-         não pode existir nem como cartão bloqueado no Portal. As etapas
-         posteriores continuam visíveis para preservar o acompanhamento. */
-      if(vinculado&&n.estagio!=='preparada') meus.push({ id:d.id, ...n });
+  async function buscarIndicesPropostaDoCliente(){
+    const snap=await getDocs(query(
+      collection(db,'propostas_portal_indices'),
+      where('clienteSlug','==',clienteAtual.slug),
+      where('visivel','==',true)
+    ));
+    const indices=[];
+    snap.forEach(d=>{
+      const v=d.data()||{};
+      if(d.id===v.propostaId&&v.clienteSlug===clienteAtual.slug&&v.visivel===true&&propostaIdPortalSeguro(d.id)){
+        indices.push({propostaId:d.id,temPin:v.temPin===true});
+      }
     });
-    meus.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
-    return meus;
+    indices.sort((a,b)=>a.propostaId.localeCompare(b.propostaId));
+    __indicesPropostaPortalConfirmados=indices;
+    return indices;
+  }
+
+  async function criarLiberacaoPropostaPortal(propostaId,pin4){
+    const uid=auth.currentUser?.uid||await window.__authPronta;
+    if(!uid||!clienteAtual?.slug||!__sessaoPortalAbertaEm||!propostaIdPortalSeguro(propostaId)){
+      throw new Error('portal/session-not-ready');
+    }
+    await setDoc(doc(db,'sessoes_cliente',uid,'liberacoes_proposta',propostaId),{
+      propostaId,
+      clienteSlug:clienteAtual.slug,
+      pin4,
+      sessaoAbertaEm:__sessaoPortalAbertaEm,
+      liberadoEm:serverTimestamp(),
+      schemaVersion:1
+    });
+    __propostasLiberadasIds.add(propostaId);
+    return propostaId;
+  }
+
+  async function buscarPropostasLiberadas(){
+    const permitidos=new Set(__indicesPropostaPortalConfirmados.map(v=>v.propostaId));
+    const ids=[...__propostasLiberadasIds].filter(id=>permitidos.has(id)&&propostaIdPortalSeguro(id));
+    const resultados=await Promise.allSettled(ids.map(async id=>{
+      const snap=await getDoc(doc(db,'propostas_portal_publicas',id));
+      if(!snap.exists()) return null;
+      const v=snap.data()||{};
+      if(v.propostaId!==id||v.clienteSlug!==clienteAtual.slug||v.visivel!==true) return null;
+      return {id,...v};
+    }));
+    const propostas=[];
+    let erroIndisponivel=null;
+    resultados.forEach((r,i)=>{
+      const id=ids[i];
+      if(r.status==='fulfilled'){
+        if(r.value) propostas.push(r.value);
+        else __propostasLiberadasIds.delete(id);
+      }else if(acessoPortalFoiNegado(r.reason)){
+        __propostasLiberadasIds.delete(id);
+      }else erroIndisponivel=erroIndisponivel||r.reason;
+    });
+    if(erroIndisponivel) throw erroIndisponivel;
+    __propostaLiberada=__propostasLiberadasIds.size>0;
+    propostas.sort((a,b)=>String(b.atualizadoEm?.seconds||'').localeCompare(String(a.atualizadoEm?.seconds||'')));
+    return propostas;
+  }
+
+  async function limparLiberacoesPropostaPortal(uid){
+    const uidEfetivo=uid||auth.currentUser?.uid||'';
+    const ids=[...__propostasLiberadasIds];
+    if(uidEfetivo){
+      await Promise.allSettled(ids.map(id=>deleteDoc(doc(db,'sessoes_cliente',uidEfetivo,'liberacoes_proposta',id))));
+    }
+    __propostasLiberadasIds.clear();
+    __indicesPropostaPortalConfirmados=[];
+    __propostaLiberada=false;
   }
 
   window.liberarProposta = async function(){
     const digitado = so4Digitos(document.getElementById('propDigitos')?.value);
     if(digitado.length < 4){ alert('Digita os 4 últimos números do seu WhatsApp.'); return; }
-    const negocios = await buscarNegociosDoCliente();
-    const confirmaveis=negocios.filter(n=>so4Digitos(n.whatsapp).length===4);
-    if(!confirmaveis.length){ alert('Esta proposta não tem WhatsApp de confirmação. Peça à agência para enviar o documento diretamente.'); return; }
-    const bate = confirmaveis.some(n => so4Digitos(n.whatsapp) === digitado);
-    if(!bate){ alert('Esses números não batem com o WhatsApp do seu pedido. Confere com a gente se precisar.'); return; }
+    const indices=__indicesPropostaPortalConfirmados.length?__indicesPropostaPortalConfirmados:await buscarIndicesPropostaDoCliente();
+    const confirmaveis=indices.filter(v=>v.temPin===true);
+    if(!confirmaveis.length){ alert('Esta proposta não tem confirmação habilitada. Peça à agência para atualizar o envio protegido.'); return; }
+    const tentativas=await Promise.allSettled(confirmaveis.map(v=>criarLiberacaoPropostaPortal(v.propostaId,digitado)));
+    const liberadas=tentativas.filter(r=>r.status==='fulfilled').length;
+    if(!liberadas){
+      const indisponivel=tentativas.find(r=>r.status==='rejected'&&!acessoPortalFoiNegado(r.reason));
+      if(indisponivel){
+        console.error('Confirmação da proposta indisponível:',indisponivel.reason);
+        alert('Não consegui confirmar sua proposta agora. Nada foi liberado; tente novamente quando a conexão voltar.');
+      }else alert('Esses números não batem com a confirmação desta proposta. Confere com a gente se precisar.');
+      return;
+    }
     __propostaLiberada = true;
-    carregarPropostaCliente();
+    await carregarPropostaCliente();
   };
 
   async function carregarPropostaCliente(){
     const cont = document.getElementById('painelProposta');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const negocios = await buscarNegociosDoCliente();
+    let indices=[];
+    try{ indices=await buscarIndicesPropostaDoCliente(); }
+    catch(e){
+      console.error('Índice protegido de propostas indisponível:',e);
+      cont.innerHTML='<div class="card" style="border-color:var(--red);"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">Não consegui confirmar suas propostas agora. Isso não significa que estejam vazias; tente novamente quando a conexão voltar.</div></div>';
+      return;
+    }
 
-    if(!negocios.length){
-      cont.innerHTML = `<div class="card"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">Nenhuma proposta por aqui ainda. Assim que a gente montar a sua, ela aparece nesta aba.</div></div>`;
+    if(!indices.length){
+      cont.innerHTML = `<div class="card"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">Nenhuma proposta enviada por aqui ainda. Assim que a agência publicar uma, ela aparece nesta aba.</div></div>`;
       return;
     }
 
     if(!__propostaLiberada){
-      const temWhatsappConfirmacao=negocios.some(n=>so4Digitos(n.whatsapp).length===4);
-      if(!temWhatsappConfirmacao){
-        cont.innerHTML=`<div class="card"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">A proposta foi registrada sem um WhatsApp de confirmação. Para proteger os valores, peça à agência que envie o documento diretamente.</div></div>`;
+      const temConfirmacao=indices.some(v=>v.temPin===true);
+      if(!temConfirmacao){
+        cont.innerHTML=`<div class="card"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">A proposta ainda não tem confirmação protegida. Peça à agência para atualizar o envio.</div></div>`;
         return;
       }
       cont.innerHTML = `<div class="card">
         <h2>📄 Sua Proposta</h2>
-        <div class="sub" style="margin-bottom:10px;">Como aqui tem valores, confirma rapidinho que é você: digita os <b>4 últimos números do WhatsApp</b> que você deixou no pedido.</div>
+        <div class="sub" style="margin-bottom:10px;">Como aqui tem valores, confirma rapidinho que é você: digita os <b>4 últimos números do WhatsApp</b> que você deixou no pedido. Antes disso, nenhum valor ou detalhe comercial é carregado.</div>
         <div class="field"><label>4 últimos dígitos</label><input type="text" id="propDigitos" inputmode="numeric" maxlength="4" placeholder="0000"></div>
         <div class="btn" style="margin-top:10px;padding:12px;text-align:center;cursor:pointer;" onclick="liberarProposta()">Ver minha proposta</div>
       </div>`;
+      return;
+    }
+
+    let negocios=[];
+    try{ negocios=await buscarPropostasLiberadas(); }
+    catch(e){
+      console.error('Projeção protegida de propostas indisponível:',e);
+      cont.innerHTML='<div class="card" style="border-color:var(--red);"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">Sua confirmação foi preservada, mas não consegui carregar os detalhes agora. Tente novamente quando a conexão voltar.</div></div>';
+      return;
+    }
+    if(!negocios.length){
+      __propostaLiberada=false;
+      cont.innerHTML='<div class="card"><h2>📄 Sua Proposta</h2><div class="sub" style="margin-bottom:0;">A confirmação expirou ou a proposta foi atualizada. Digite os quatro números novamente.</div></div>';
       return;
     }
 
@@ -2470,6 +2565,39 @@
     }catch(e){ console.error('Lembrete de pagamento:', e); }
   }
 
+  async function atualizarRespostaPropostaProtegida(id,resposta,texto){
+    if(!__propostasLiberadasIds.has(id)) throw new Error('portal/proposta-nao-liberada');
+    const publicoRef=doc(db,'propostas_portal_publicas',id);
+    const canonicoRef=doc(db,'negocios',id);
+    const instante=new Date().toISOString();
+    return runTransaction(db,async tx=>{
+      const publicoSnap=await tx.get(publicoRef);
+      if(!publicoSnap.exists()) throw new Error('portal/proposta-publica-ausente');
+      const atual=publicoSnap.data()||{};
+      if(atual.clienteSlug!==clienteAtual.slug||atual.visivel!==true) throw new Error('portal/proposta-fora-da-sessao');
+      const respostaTexto=String(texto||'').trim();
+      if(atual.estagio===resposta&&atual.respostaCliente===resposta&&String(atual.respostaTexto||'')===respostaTexto){
+        return {alterou:false,operationId:atual.portalOperationId||''};
+      }
+      if(!['proposta','analise','ajuste'].includes(atual.estagio)||!['aceita','ajuste','perdido'].includes(resposta)){
+        throw new Error('portal/transicao-proposta-invalida');
+      }
+      const revision=Number(atual.portalRevision||0)+1;
+      const operationId=['portal_resposta',auth.currentUser?.uid||'anon',id,resposta,revision].join('_').slice(0,220);
+      const evento={estagio:resposta,em:instante,por:clienteAtual.slug+' (cliente)'};
+      tx.update(canonicoRef,{
+        estagio:resposta,respostaCliente:resposta,respostaTexto,
+        historico:arrayUnion(evento),portalRevision:revision,portalOperationId:operationId,
+        atualizadoEm:serverTimestamp()
+      });
+      tx.update(publicoRef,{
+        estagio:resposta,respostaCliente:resposta,respostaTexto,
+        portalRevision:revision,portalOperationId:operationId,atualizadoEm:serverTimestamp()
+      });
+      return {alterou:true,operationId};
+    });
+  }
+
   window.responderProposta = async function(id, resposta){
     let texto = '';
     if(resposta === 'ajuste'){
@@ -2481,28 +2609,63 @@
     } else {
       if(!confirm('Confirmar que você ACEITA essa proposta?')) return;
     }
-    const ref = doc(db,'negocios', id);
-    const snap = await getDoc(ref);
-    const n = snap.exists() ? snap.data() : {};
-    const hist = Array.isArray(n.historico) ? [...n.historico] : [];
-    hist.push({ estagio: resposta, em: new Date().toISOString(), por: clienteAtual.slug + ' (cliente)' });
-    await updateDoc(ref, { estagio: resposta, respostaCliente: resposta, respostaTexto: texto.trim(), historico: hist, atualizadoEm: serverTimestamp() });
+    let recibo;
+    try{
+      recibo=await atualizarRespostaPropostaProtegida(id,resposta,texto);
+    }catch(e){
+      console.error('Resposta protegida da proposta não confirmada:',e);
+      alert('Não consegui confirmar sua resposta agora. Nada foi tratado como salvo; confira a conexão e tente novamente.');
+      return;
+    }
     const aviso = resposta === 'aceita' ? '✅ ' + clienteAtual.nome + ' ACEITOU a proposta' :
                   resposta === 'ajuste' ? '🔄 ' + clienteAtual.nome + ' pediu ajuste na proposta' :
                   '❌ ' + clienteAtual.nome + ' não vai seguir com a proposta';
-    await alertarEquipe(aviso, texto || 'sem observação');
-    carregarPropostaCliente();
+    if(recibo.alterou){
+      try{ await alertarEquipe(aviso, texto || 'sem observação'); }
+      catch(e){ console.warn('Resposta salva; aviso à equipe ficou indisponível:',e); }
+    }
+    await carregarPropostaCliente();
   };
+
+  async function salvarComprovanteProtegido(id,linkSeguro){
+    if(!__propostasLiberadasIds.has(id)) throw new Error('portal/proposta-nao-liberada');
+    const publicoRef=doc(db,'propostas_portal_publicas',id);
+    const canonicoRef=doc(db,'negocios',id);
+    const enviadoEm=new Date().toISOString();
+    return runTransaction(db,async tx=>{
+      const publicoSnap=await tx.get(publicoRef);
+      if(!publicoSnap.exists()) throw new Error('portal/proposta-publica-ausente');
+      const atual=publicoSnap.data()||{};
+      if(atual.clienteSlug!==clienteAtual.slug||atual.visivel!==true||atual.estagio!=='aceita') throw new Error('portal/comprovante-fora-da-etapa');
+      if(atual.pagamentoComprovante===linkSeguro) return {alterou:false,operationId:atual.portalOperationId||''};
+      const revision=Number(atual.portalRevision||0)+1;
+      const operationId=['portal_comprovante',auth.currentUser?.uid||'anon',id,revision].join('_').slice(0,220);
+      const patch={pagamentoComprovante:linkSeguro,pagamentoEnviadoEm:enviadoEm,portalRevision:revision,portalOperationId:operationId,atualizadoEm:serverTimestamp()};
+      tx.update(canonicoRef,patch);
+      tx.update(publicoRef,patch);
+      return {alterou:true,operationId};
+    });
+  }
 
   window.salvarComprovante = async function(id){
     const link = (document.getElementById('compLink_'+id)?.value||'').trim();
     if(!link){ alert('Cola o link do comprovante primeiro.'); return; }
     const linkSeguro=urlHttpsSeguraPortal(link);
     if(!linkSeguro){ alert('Use um link HTTPS válido para o comprovante.'); return; }
-    await updateDoc(doc(db,'negocios', id), { pagamentoComprovante: linkSeguro, pagamentoEnviadoEm: new Date().toISOString(), atualizadoEm: serverTimestamp() });
-    await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante de pagamento', linkSeguro);
+    let recibo;
+    try{
+      recibo=await salvarComprovanteProtegido(id,linkSeguro);
+    }catch(e){
+      console.error('Comprovante protegido não confirmado:',e);
+      alert('Não consegui confirmar o comprovante agora. Nada foi tratado como enviado; confira a conexão e tente novamente.');
+      return;
+    }
+    if(recibo.alterou){
+      try{ await alertarEquipe('💰 ' + clienteAtual.nome + ' enviou comprovante de pagamento', linkSeguro); }
+      catch(e){ console.warn('Comprovante salvo; aviso à equipe ficou indisponível:',e); }
+    }
     alert('Comprovante enviado! Assim que a gente conferir, seu serviço entra em produção.');
-    carregarPropostaCliente();
+    await carregarPropostaCliente();
   };
 
   window.enviarComprovanteWhats = function(id){
@@ -2644,7 +2807,8 @@
       const uid = await window.__authPronta;
       uidSessao=uid||'';
       if(uid){
-        await setDoc(doc(db,'sessoes_cliente', uid), {cliente:slug,token,abertaEm:new Date().toISOString()});
+        __sessaoPortalAbertaEm=new Date().toISOString();
+        await setDoc(doc(db,'sessoes_cliente', uid), {cliente:slug,token,abertaEm:__sessaoPortalAbertaEm});
         sessaoClienteAberta=true;
       }
     }catch(e){

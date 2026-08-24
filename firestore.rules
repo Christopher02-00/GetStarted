@@ -44,7 +44,8 @@ service cloud.firestore {
       return emailDaSementeNaoRevogado() && request.auth.token.email == 'amandachamorrosm@gmail.com';
     }
     function ehChris() {
-      return emailDaSementeNaoRevogado() && request.auth.token.email == 'christopherveloso0@gmail.com';
+      return temEmailVerificado() && request.auth.token.email == 'christopherveloso0@gmail.com' &&
+        emailDaSementeNaoRevogado();
     }
     function ehGabi() {
       return emailDaSementeNaoRevogado() && request.auth.token.email == 'gabrielleromaomarketing@gmail.com';
@@ -881,19 +882,16 @@ service cloud.firestore {
         'vitoriaboaron215@gmail.com','gabrielleromaomarketing@gmail.com'
       ];
     }
+    function sessaoClientePortalValida() {
+      let sessao = get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data;
+      return (!('modo' in sessao) || sessao.modo != 'equipe') &&
+        sessao.cliente is string && sessao.token is string &&
+        tokenPortalValido(sessao.cliente, sessao.token);
+    }
     function temSessaoCliente() {
       return logado() &&
         exists(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)) &&
-        (
-          !('modo' in get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data) ||
-          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.modo != 'equipe'
-        ) &&
-        get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.cliente is string &&
-        get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.token is string &&
-        tokenPortalValido(
-          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.cliente,
-          get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data.token
-        );
+        sessaoClientePortalValida();
     }
     function temSessaoCalendarioEquipe() {
       return logado() &&
@@ -963,7 +961,7 @@ service cloud.firestore {
       return valor is string && valor.size() <= 2048 &&
         (valor == '' || valor.matches('https://[A-Za-z0-9][A-Za-z0-9.-]+(/[A-Za-z0-9._~:/?#\\[\\]@!$&()*+,;=%-]*)?'));
     }
-    function historicoRespostaClienteValido() {
+    function historicoRespostaClienteValido(clienteSlug) {
       return request.resource.data.historico is list &&
         (
           (resource.data.historico is list &&
@@ -976,16 +974,224 @@ service cloud.firestore {
         request.resource.data.historico[request.resource.data.historico.size() - 1].estagio == request.resource.data.estagio &&
         request.resource.data.historico[request.resource.data.historico.size() - 1].em is string &&
         request.resource.data.historico[request.resource.data.historico.size() - 1].em.size() <= 40 &&
-        request.resource.data.historico[request.resource.data.historico.size() - 1].por == clienteDaSessao() + ' (cliente)';
+        request.resource.data.historico[request.resource.data.historico.size() - 1].por == clienteSlug + ' (cliente)';
     }
-    function respostaPropostaClienteValida() {
+    function respostaPropostaClienteValida(clienteSlug) {
       return resource.data.estagio in ['proposta','analise','ajuste'] &&
         request.resource.data.estagio in ['aceita','ajuste','perdido'] &&
         request.resource.data.respostaCliente == request.resource.data.estagio &&
         request.resource.data.respostaTexto is string &&
         request.resource.data.respostaTexto.size() <= 2000 &&
         request.resource.data.atualizadoEm == request.time &&
-        historicoRespostaClienteValido();
+        historicoRespostaClienteValido(clienteSlug);
+    }
+    function indicePropostaPortalValido(propostaId, dados) {
+      return dados.keys().hasOnly([
+          'propostaId','clienteSlug','temPin','visivel','atualizadoEm','schemaVersion'
+        ]) &&
+        dados.keys().hasAll([
+          'propostaId','clienteSlug','temPin','visivel','atualizadoEm','schemaVersion'
+        ]) &&
+        dados.propostaId == propostaId &&
+        dados.clienteSlug is string && dados.clienteSlug.size() <= 200 &&
+        dados.temPin is bool && dados.visivel is bool &&
+        (!dados.visivel || (dados.clienteSlug.size() > 0 && dados.temPin == true)) &&
+        dados.atualizadoEm is timestamp && dados.schemaVersion == 1;
+    }
+    function verificadorPropostaPortalValido(propostaId, dados) {
+      return dados.keys().hasOnly([
+          'propostaId','clienteSlug','pin4','visivel','atualizadoEm','schemaVersion'
+        ]) &&
+        dados.keys().hasAll([
+          'propostaId','clienteSlug','pin4','visivel','atualizadoEm','schemaVersion'
+        ]) &&
+        dados.propostaId == propostaId &&
+        dados.clienteSlug is string && dados.clienteSlug.size() <= 200 &&
+        dados.pin4 is string && (dados.pin4 == '' || dados.pin4.matches('[0-9]{4}')) &&
+        dados.visivel is bool &&
+        (!dados.visivel || (dados.clienteSlug.size() > 0 && dados.pin4.matches('[0-9]{4}'))) &&
+        dados.atualizadoEm is timestamp && dados.schemaVersion == 1;
+    }
+    function projecaoPublicaPropostaValida(propostaId, dados) {
+      // Há 19 chaves obrigatórias abaixo. A contagem exata + a validação
+      // individual de cada campo preservam a allowlist e evitam o custo
+      // quadrático de `hasOnly` numa projeção larga.
+      return dados.keys().size() == 19 &&
+        dados.propostaId == propostaId &&
+        dados.clienteSlug is string && dados.clienteSlug.size() <= 200 &&
+        dados.estagio in ['recebido','negociando','preparada','proposta','analise','ajuste','aceita','producao','entregue','perdido'] &&
+        dados.propostaPlano is string && dados.propostaPlano.size() <= 2000 &&
+        dados.propostaValor is string && dados.propostaValor.size() <= 200 &&
+        dados.propostaValidade is string && dados.propostaValidade.size() <= 20 &&
+        urlHttpsOuVazia(dados.propostaLink) &&
+        dados.propostaCondicoes is string && dados.propostaCondicoes.size() <= 4000 &&
+        dados.respostaCliente is string && dados.respostaCliente.size() <= 40 &&
+        (dados.respostaCliente == '' || dados.respostaCliente in ['aceita','ajuste','perdido']) &&
+        dados.respostaTexto is string && dados.respostaTexto.size() <= 2000 &&
+        urlHttpsOuVazia(dados.pagamentoComprovante) &&
+        dados.pagamentoEnviadoEm is string && dados.pagamentoEnviadoEm.size() <= 40 &&
+        dados.propostaRecorrencia is string && dados.propostaRecorrencia.size() <= 40 &&
+        dados.tipoInteresse is string && dados.tipoInteresse.size() <= 40 &&
+        dados.visivel is bool &&
+        (!dados.visivel || (dados.clienteSlug.size() > 0 && dados.estagio in ['proposta','analise','ajuste','aceita','producao','entregue','perdido'])) &&
+        dados.portalRevision is int && dados.portalRevision >= 1 &&
+        dados.portalOperationId is string && dados.portalOperationId.size() > 0 && dados.portalOperationId.size() <= 240 &&
+        dados.atualizadoEm is timestamp && dados.schemaVersion == 1;
+    }
+    function liberacaoPropostaPortalValida(uid, propostaId, dados) {
+      return logado() && request.auth.uid == uid && temSessaoCliente() &&
+        dados.keys().hasOnly([
+          'propostaId','clienteSlug','pin4','sessaoAbertaEm','liberadoEm','schemaVersion'
+        ]) &&
+        dados.keys().hasAll([
+          'propostaId','clienteSlug','pin4','sessaoAbertaEm','liberadoEm','schemaVersion'
+        ]) &&
+        dados.propostaId == propostaId && dados.clienteSlug == clienteDaSessao() &&
+        dados.pin4 is string && dados.pin4.matches('[0-9]{4}') &&
+        dados.sessaoAbertaEm is string && dados.sessaoAbertaEm.size() <= 40 &&
+        dados.liberadoEm == request.time && dados.schemaVersion == 1 &&
+        exists(/databases/$(database)/documents/propostas_portal_verificadores/$(propostaId)) &&
+        liberacaoPropostaPortalCombinaVerificador(uid, propostaId, dados);
+    }
+    function liberacaoPropostaPortalCombinaVerificador(uid, propostaId, dados) {
+      let sessao = get(/databases/$(database)/documents/sessoes_cliente/$(uid)).data;
+      let verificador = get(/databases/$(database)/documents/propostas_portal_verificadores/$(propostaId)).data;
+      return dados.sessaoAbertaEm == sessao.abertaEm &&
+        verificador.visivel == true && verificador.clienteSlug == sessao.cliente &&
+        verificador.pin4 == dados.pin4;
+    }
+    function liberacaoPropostaPortalAtiva(propostaId, clienteSlug) {
+      return temSessaoCliente() && clienteSlug == clienteDaSessao() &&
+        exists(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)/liberacoes_proposta/$(propostaId)) &&
+        liberacaoPropostaPortalExistenteAtiva(propostaId);
+    }
+    function liberacaoPropostaPortalExistenteAtiva(propostaId) {
+      let sessao = get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)).data;
+      let gate = get(/databases/$(database)/documents/sessoes_cliente/$(request.auth.uid)/liberacoes_proposta/$(propostaId)).data;
+      return gate.clienteSlug == sessao.cliente && gate.sessaoAbertaEm == sessao.abertaEm &&
+        request.time < gate.liberadoEm + duration.value(12, 'h');
+    }
+    function podeLerPropostaPortal(propostaId, dados) {
+      return dados.propostaId == propostaId && dados.visivel == true &&
+        liberacaoPropostaPortalAtiva(propostaId, dados.clienteSlug);
+    }
+    function revisaoPropostaPortalAvanca(antes, depois) {
+      return antes.portalRevision is int && depois.portalRevision == antes.portalRevision + 1 &&
+        depois.portalOperationId is string && depois.portalOperationId.size() > 0 && depois.portalOperationId.size() <= 240 &&
+        depois.portalOperationId != antes.portalOperationId && depois.atualizadoEm == request.time;
+    }
+    function respostaPropostaPortalEspelhada(propostaId) {
+      let espelho = getAfter(/databases/$(database)/documents/propostas_portal_publicas/$(propostaId)).data;
+      return existsAfter(/databases/$(database)/documents/propostas_portal_publicas/$(propostaId)) &&
+        espelho.estagio == request.resource.data.estagio &&
+        espelho.respostaCliente == request.resource.data.respostaCliente &&
+        espelho.respostaTexto == request.resource.data.respostaTexto &&
+        espelho.portalRevision == request.resource.data.portalRevision &&
+        espelho.portalOperationId == request.resource.data.portalOperationId &&
+        espelho.atualizadoEm == request.time;
+    }
+    function comprovantePropostaPortalEspelhado(propostaId) {
+      let espelho = getAfter(/databases/$(database)/documents/propostas_portal_publicas/$(propostaId)).data;
+      return existsAfter(/databases/$(database)/documents/propostas_portal_publicas/$(propostaId)) &&
+        espelho.pagamentoComprovante == request.resource.data.pagamentoComprovante &&
+        espelho.pagamentoEnviadoEm == request.resource.data.pagamentoEnviadoEm &&
+        espelho.portalRevision == request.resource.data.portalRevision &&
+        espelho.portalOperationId == request.resource.data.portalOperationId &&
+        espelho.atualizadoEm == request.time;
+    }
+    function respostaCanonicaPropostaPortalEspelhada(propostaId) {
+      let espelho = getAfter(/databases/$(database)/documents/negocios/$(propostaId)).data;
+      return existsAfter(/databases/$(database)/documents/negocios/$(propostaId)) &&
+        espelho.estagio == request.resource.data.estagio &&
+        espelho.respostaCliente == request.resource.data.respostaCliente &&
+        espelho.respostaTexto == request.resource.data.respostaTexto &&
+        espelho.portalRevision == request.resource.data.portalRevision &&
+        espelho.portalOperationId == request.resource.data.portalOperationId &&
+        espelho.atualizadoEm == request.time;
+    }
+    function comprovanteCanonicoPropostaPortalEspelhado(propostaId) {
+      let espelho = getAfter(/databases/$(database)/documents/negocios/$(propostaId)).data;
+      return existsAfter(/databases/$(database)/documents/negocios/$(propostaId)) &&
+        espelho.pagamentoComprovante == request.resource.data.pagamentoComprovante &&
+        espelho.pagamentoEnviadoEm == request.resource.data.pagamentoEnviadoEm &&
+        espelho.portalRevision == request.resource.data.portalRevision &&
+        espelho.portalOperationId == request.resource.data.portalOperationId &&
+        espelho.atualizadoEm == request.time;
+    }
+    function respostaPublicaPropostaPortalValida(propostaId) {
+      return resource.data.estagio in ['proposta','analise','ajuste'] &&
+        request.resource.data.estagio in ['aceita','ajuste','perdido'] &&
+        request.resource.data.respostaCliente == request.resource.data.estagio &&
+        request.resource.data.respostaTexto is string && request.resource.data.respostaTexto.size() <= 2000 &&
+        revisaoPropostaPortalAvanca(resource.data, request.resource.data);
+    }
+    function comprovantePublicoPropostaPortalValido(propostaId) {
+      return resource.data.estagio == 'aceita' && request.resource.data.estagio == resource.data.estagio &&
+        request.resource.data.pagamentoComprovante != '' && urlHttpsOuVazia(request.resource.data.pagamentoComprovante) &&
+        request.resource.data.pagamentoEnviadoEm is string &&
+        request.resource.data.pagamentoEnviadoEm.size() > 0 && request.resource.data.pagamentoEnviadoEm.size() <= 40 &&
+        request.resource.data.pagamentoEnviadoEm != resource.data.pagamentoEnviadoEm &&
+        revisaoPropostaPortalAvanca(resource.data, request.resource.data);
+    }
+    function atualizacaoNegocioClienteValida(propostaId) {
+      let alterados = request.resource.data.diff(resource.data).affectedKeys();
+      let comprovante = alterados.hasAny(['pagamentoComprovante','pagamentoEnviadoEm']);
+      return (
+          comprovante
+            ? (
+              alterados.hasOnly([
+                'pagamentoComprovante','pagamentoEnviadoEm','portalRevision','portalOperationId','atualizadoEm'
+              ]) &&
+              request.resource.data.estagio == resource.data.estagio &&
+              request.resource.data.pagamentoComprovante != '' &&
+              urlHttpsOuVazia(request.resource.data.pagamentoComprovante) &&
+              request.resource.data.pagamentoEnviadoEm is string &&
+              request.resource.data.pagamentoEnviadoEm.size() > 0 && request.resource.data.pagamentoEnviadoEm.size() <= 40 &&
+              request.resource.data.pagamentoEnviadoEm != resource.data.pagamentoEnviadoEm
+            )
+            : (
+              alterados.hasAny(['estagio','respostaCliente','respostaTexto','historico']) &&
+              alterados.hasOnly([
+                'estagio','respostaCliente','respostaTexto','historico','portalRevision','portalOperationId','atualizadoEm'
+              ]) && respostaPropostaClienteValida(resource.data.clienteSlug)
+            )
+        ) &&
+        revisaoPropostaPortalAvanca(resource.data, request.resource.data) &&
+        request.resource.data.clienteSlug == resource.data.clienteSlug &&
+        liberacaoPropostaPortalAtiva(propostaId, resource.data.clienteSlug) &&
+        (comprovante
+          ? comprovantePropostaPortalEspelhado(propostaId)
+          : respostaPropostaPortalEspelhada(propostaId));
+    }
+    function atualizacaoPublicaClienteValida(propostaId) {
+      let alterados = request.resource.data.diff(resource.data).affectedKeys();
+      let comprovante = alterados.hasAny(['pagamentoComprovante','pagamentoEnviadoEm']);
+      return (
+          comprovante
+            ? (
+              alterados.hasOnly([
+                'pagamentoComprovante','pagamentoEnviadoEm','portalRevision','portalOperationId','atualizadoEm'
+              ]) && comprovantePublicoPropostaPortalValido(propostaId)
+            )
+            : (
+              alterados.hasAny(['estagio','respostaCliente','respostaTexto']) &&
+              alterados.hasOnly([
+                'estagio','respostaCliente','respostaTexto','portalRevision','portalOperationId','atualizadoEm'
+              ]) && respostaPublicaPropostaPortalValida(propostaId)
+            )
+        ) &&
+        podeLerPropostaPortal(propostaId, resource.data) &&
+        (comprovante
+          ? comprovanteCanonicoPropostaPortalEspelhado(propostaId)
+          : respostaCanonicaPropostaPortalEspelhada(propostaId));
+    }
+    function escritaProjecaoPublicaPropostaValida(propostaId) {
+      return ehChris()
+        ? projecaoPublicaPropostaValida(propostaId, request.resource.data)
+        : (
+          exists(/databases/$(database)/documents/propostas_portal_publicas/$(propostaId)) &&
+          atualizacaoPublicaClienteValida(propostaId)
+        );
     }
     function contatoFinanceiroValido(slug, dados) {
       return dados.keys().hasOnly([
@@ -1046,6 +1252,12 @@ service cloud.firestore {
           (('modo' in request.resource.data) && request.resource.data.modo == 'equipe' && tokenCalendarioEquipeValido(request.resource.data.cliente, request.resource.data.token)) ||
           ((!('modo' in request.resource.data) || request.resource.data.modo != 'equipe') && tokenPortalValido(request.resource.data.cliente, request.resource.data.token))
         );
+      match /liberacoes_proposta/{propostaId} {
+        allow get: if logado() && request.auth.uid == uid;
+        allow list: if false;
+        allow create, update: if liberacaoPropostaPortalValida(uid, propostaId, request.resource.data);
+        allow delete: if logado() && request.auth.uid == uid;
+      }
     }
 
     // O formulário público apenas entrega a ficha; só a gerência lê e ativa.
@@ -1137,36 +1349,33 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /onboarding_processos/{docId}{ allow read, create, update: if ehGerencia(); allow delete: if false; }
+    match /propostas_portal_indices/{propostaId} {
+      allow get, list: if ehChris() || (
+        temSessaoCliente() && resource.data.clienteSlug == clienteDaSessao() && resource.data.visivel == true
+      );
+      allow create, update: if ehChris() && indicePropostaPortalValido(propostaId, request.resource.data);
+      allow delete: if ehChris();
+    }
+    match /propostas_portal_verificadores/{propostaId} {
+      allow read: if ehChris();
+      allow create, update: if ehChris() && verificadorPropostaPortalValido(propostaId, request.resource.data);
+      allow delete: if ehChris();
+    }
+    match /propostas_portal_publicas/{propostaId} {
+      allow get: if ehChris() || podeLerPropostaPortal(propostaId, resource.data);
+      allow list: if ehChris();
+      allow create, update: if escritaProjecaoPublicaPropostaValida(propostaId);
+      allow delete: if ehChris();
+    }
     match /negocios/{docId} {
       // V82 — a Central de Vendas existe somente no DOM do Chris. A regra
       // acompanha essa fronteira: Amanda continua gestora dos fluxos
       // operacionais, mas não lê nem altera propostas/reuniões por chamada
       // direta ao Firestore. O cliente mantém apenas a resposta estreita da
       // própria proposta e o envio HTTPS do próprio comprovante.
-      allow read: if ehChris() || (temSessaoCliente() && resource.data.clienteSlug == clienteDaSessao());
+      allow read: if ehChris();
       allow create: if ehChris();
-      allow update: if ehChris() || (
-        temSessaoCliente() && resource.data.clienteSlug == clienteDaSessao() &&
-        request.resource.data.clienteSlug == clienteDaSessao() &&
-        (
-          (
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'estagio','respostaCliente','respostaTexto','historico','atualizadoEm'
-            ]) &&
-            respostaPropostaClienteValida()
-          ) || (
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'pagamentoComprovante','pagamentoEnviadoEm','atualizadoEm'
-            ]) &&
-            request.resource.data.estagio == resource.data.estagio &&
-            request.resource.data.pagamentoComprovante != '' &&
-            urlHttpsOuVazia(request.resource.data.pagamentoComprovante) &&
-            request.resource.data.pagamentoEnviadoEm is string &&
-            request.resource.data.pagamentoEnviadoEm.size() <= 40 &&
-            request.resource.data.atualizadoEm == request.time
-          )
-        )
-      );
+      allow update: if ehChris() || atualizacaoNegocioClienteValida(docId);
       allow delete: if false;
     }
     match /reunioes_vendas/{docId} {

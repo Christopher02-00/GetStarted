@@ -32,15 +32,16 @@ function sha256(texto){
 }
 
 exigir(escritorio.includes('2026-08-21-restaura-perfil-chris-v98'), 'correção V98 presente na cadeia');
-exigir(escritorio.includes('gs-build" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109')&&
-  escritorio.includes('gs-parent-patch" content="2026-08-23-pagamento-fedalto-agosto-v108'), 'V109 preserva V108 como pai');
+exigir(escritorio.includes('gs-build" content="2026-08-24-privacidade-sessao-papeis-v110')&&
+  escritorio.includes('gs-parent-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109')&&
+  escritorio.includes('gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108'), 'V110 preserva V109 e V108 na cadeia');
 exigir(escritorio.includes('gs-grandparent-patch" content="2026-08-22-estado-conciliacao-joaquin-v107')&&
   escritorio.includes('gs-great-grandparent-patch" content="2026-08-22-saida-canonica-joaquin-v106')&&
-  escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-22-conciliacao-manual-regua-v105'), 'V109 preserva V107, V106 e V105 na cadeia');
+  escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-22-conciliacao-manual-regua-v105'), 'V110 preserva V107, V106 e V105 na cadeia');
 exigir(escritorio.includes('gs-fifth-grandparent-patch" content="2026-08-22-correcao-financeiro-real-v104')&&
   escritorio.includes('gs-sixth-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103')&&
   escritorio.includes('gs-seventh-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102')&&
-  escritorio.includes('gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'), 'V109 preserva V104, V103, V102 e V101 na cadeia e o código V98 continua presente');
+  escritorio.includes('gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101'), 'V110 preserva V104, V103, V102 e V101 na cadeia e o código V98 continua presente');
 exigir(escritorio.includes('PAPEIS_OPERAVEIS_POR_CHRIS'), 'V101 preserva o contrato operacional V96');
 exigir(!escritorio.includes('atualizarBannerAuditoriaChris'), 'identificador removido da auditoria V95 não reapareceu');
 exigir((escritorio.match(/function atualizarBannerOperacaoPerfilChris\s*\(/g) || []).length === 1, 'banner operacional possui uma definição canônica');
@@ -82,6 +83,7 @@ const contexto = vm.createContext({
     getElementById: id => id === 'euSouGlobal' ? seletor : null,
     createElement: () => ({ style:{}, remove(){}, innerHTML:'' })
   },
+  limparEstadoPrivadoTrocaIdentidade(){ contexto.__limpezasPrivadas = (contexto.__limpezasPrivadas || 0) + 1; },
   limparEstadoVideosPorTrocaDePapel(){ contexto.__limpezas = (contexto.__limpezas || 0) + 1; },
   limparControleConclusaoCalendarios(){ contexto.__limpezasControle = (contexto.__limpezasControle || 0) + 1; },
   esc: valor => String(valor || ''),
@@ -91,6 +93,7 @@ new vm.Script(`${bannerFonte}\n${prefixoMudar}\nglobalThis.api={mudar:window.mud
 const resultado = await contexto.api.mudar();
 exigir(resultado?.escolhido === 'Chris' && resultado?.usuarioAtual === 'Chris', 'Chris atravessa a antiga linha de falha sem ReferenceError');
 exigir(contexto.__limpezas === 1, 'limpeza de estado anterior continua antes da reconstrução');
+exigir(contexto.__limpezasPrivadas === 1, 'V110 limpa projeções privadas antes de aplicar Chris');
 exigir(contexto.__limpezasControle === 1, 'V101 invalida a projeção antes de reconstruir o papel');
 exigir(!classes.has('modoOperacaoPerfilChris'), 'Chris normal não herda o modo delegado');
 

@@ -578,8 +578,9 @@ exigir(retornoErroAntigo === false && elementosSugestao.agQtdPlanejada.value ===
   'erro obsoleto não substitui a resposta nova por indisponibilidade');
 
 /* Invariantes de entrega e segurança. */
-exigir(escritorio.includes('gs-build" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-23-pagamento-fedalto-agosto-v108"') &&
+exigir(escritorio.includes('gs-build" content="2026-08-24-privacidade-sessao-papeis-v110"') &&
+  escritorio.includes('gs-parent-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
+  escritorio.includes('gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108"') &&
   escritorio.includes('gs-grandparent-patch" content="2026-08-22-estado-conciliacao-joaquin-v107"') &&
   escritorio.includes('gs-great-grandparent-patch" content="2026-08-22-saida-canonica-joaquin-v106"') &&
   escritorio.includes('gs-fourth-grandparent-patch" content="2026-08-22-conciliacao-manual-regua-v105"') &&
@@ -587,7 +588,7 @@ exigir(escritorio.includes('gs-build" content="2026-08-23-canonicalizacao-cortes
   escritorio.includes('gs-sixth-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103"') &&
   escritorio.includes('gs-seventh-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102"') &&
   escritorio.includes('gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101"'),
-  'build V109 preserva V108, V107, V106, V105, V104, V103, V102 e V101 na cadeia direta');
+  'build V110 preserva V109, V108, V107, V106, V105, V104, V103, V102 e V101 na cadeia direta');
 exigir(regras.includes('match /calendarios_conferencias/{calendarId}') &&
   regras.includes('match /calendarios_encerramentos/{calendarId}') &&
   regras.includes('allow delete: if false;'),

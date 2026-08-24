@@ -804,8 +804,9 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-23-canonicalizacao-cortesia-fedalto-v109' ||
-    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-23-pagamento-fedalto-agosto-v108">') ||
+if (build !== '2026-08-24-privacidade-sessao-papeis-v110' ||
+    !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109">') ||
+    !escritorio.includes('<meta name="gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108">') ||
     !escritorio.includes('<meta name="gs-grandparent-patch" content="2026-08-22-estado-conciliacao-joaquin-v107">') ||
     !escritorio.includes('<meta name="gs-great-grandparent-patch" content="2026-08-22-saida-canonica-joaquin-v106">') ||
     !escritorio.includes('<meta name="gs-fourth-grandparent-patch" content="2026-08-22-conciliacao-manual-regua-v105">') ||
@@ -814,8 +815,8 @@ if (build !== '2026-08-23-canonicalizacao-cortesia-fedalto-v109' ||
     !escritorio.includes('<meta name="gs-seventh-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
     !escritorio.includes('<meta name="gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V109 inesperada: ${build || 'ausente'}`);
-} else provar('V109 preserva V108/V107/V106/V105/V104/V103/V102/V101 e mantém cortesia canônica, pagamento explícito, estado visual, conciliação explícita, reconciliação manual, correção real, finanças, migração e conferência separadas');
+  falhar(`cadeia de build V110 inesperada: ${build || 'ausente'}`);
+} else provar('V110 preserva V109/V108/V107/V106/V105/V104/V103/V102/V101 e mantém privacidade, cortesia canônica, pagamento explícito, estado visual, conciliação explícita, reconciliação manual, correção real, finanças, migração e conferência separadas');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;

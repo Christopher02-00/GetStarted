@@ -216,6 +216,8 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
 
 **Invariante V109 — Fedalto:** a ação V108 foi aposentada antes de aplicação porque setembro real ainda estava como `isento + cortesia manual`, e não como cortesia promocional canônica. A V109 exige um único commit de contrato + agosto + setembro + recibo determinístico, preservando julho sem escrita. Agosto torna-se pago somente em 15/08/2026; setembro continua isento, sem `pagoEm`, e recebe a cortesia promocional explícita. Recibo V108/V109 existente só produz conclusão se todo o estado final for equivalente. Escritor V108, recibo antigo isolado, duas abas, retry, campo oportunista, outro papel ou divergência de data/valor/identidade falham fechados. Place/Luís, calendário, vídeo, postagem, Portal, Joaquim e outros clientes permanecem fora do orçamento.
 
+**Invariante V110 — fronteira de identidade:** toda troca real de papel ou UID invalida resultados assíncronos e limpa de forma síncrona caches, projeções, formulários e DOM restrito antes de atribuir a nova identidade ou aguardar rede. Renderer privilegiado captura papel + geração e abandona resposta antiga antes de publicar cache/DOM. `negocios` e reuniões continuam exclusivos do Chris; a Amanda não recebe a porta antiga de Projetos Avulsos que dependia dessa coleção, mas preserva a Central de Clientes operacional. Remoção por papel precisa ser reversível por marcador para Chris/Amanda e o filtro da Cecília não pode deixar `display:none` residual. Essa fronteira não altera regras, Portal, Financeiro, Calendários ou captação e não substitui a futura projeção pública estreita.
+
 ## Evidência e entrega
 
 - Nunca declare uma correção validada sem informar comando ou método, resultado e limite do teste.

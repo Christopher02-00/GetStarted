@@ -53,7 +53,7 @@ try{
   await page.addScriptTag({ content:
     `let usuarioAtual='';let limpezas=0;let cachesLimpos=0;let listenersParados=0;\n` +
     `window.__pessoaAutenticadaReal='Chris';window.__operacaoDelegadaChris='';\n` +
-    `function limparEstadoVideosPorTrocaDePapel(){limpezas++;}function limparCacheIndicadores(){cachesLimpos++;}function pararListenersTempoReal(){listenersParados++;}\n` +
+    `function limparEstadoPrivadoTrocaIdentidade(){limpezas++;}function limparEstadoVideosPorTrocaDePapel(){limpezas++;}function limparControleConclusaoCalendarios(){limpezas++;}function limparCacheIndicadores(){cachesLimpos++;}function pararListenersTempoReal(){listenersParados++;}\n` +
     `function esc(v){return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}\n` +
     banner + '\n' + mudarInicial
   });

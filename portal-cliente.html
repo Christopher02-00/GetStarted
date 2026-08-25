@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-  <meta name="gs-build" content="2026-08-24-proposta-portal-protegida-v111">
+  <meta name="gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115">
   <meta name="gs-parent-patch" content="2026-08-24-privacidade-sessao-papeis-v110">
-  <meta name="gs-patch" content="2026-08-24-proposta-portal-protegida-v111">
+  <meta name="gs-patch" content="2026-08-25-continuidade-calendario-gravacao-v115">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -431,8 +431,9 @@
   }
 
   function urlHttpsSeguraPortal(valor){
-    const original=String(valor||'').trim();
+    let original=String(valor||'').trim();
     if(!original || original.length>2048 || /[\s"'<>]/.test(original)) return '';
+    if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(original)) original='https://'+original;
     try{
       const url=new URL(original);
       if(url.protocol!=='https:' || !url.hostname || url.username || url.password) return '';
@@ -1061,8 +1062,16 @@
     }
     const primeiraCompetenciaCalendarioSite='2026-07';
     const mesDoPeriodoDoSite=mes=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))&&String(mes)>=primeiraCompetenciaCalendarioSite;
-    const mesesDoDoc = [...new Set(todosItens.map(mesDoItemPortal).filter(mesDoPeriodoDoSite))].sort();
-    const mesesLib = (mesesDoDoc.length ? mesesDoDoc : ['']).filter(m => estadoDoMesPortal(m) === 'liberado');
+    const mesesDoDoc = [...new Set([...todosItens.map(mesDoItemPortal),...Object.keys(aprMeses)].filter(mesDoPeriodoDoSite))].sort();
+    const retratoMesPortalV115=mes=>{const r=(aprMeses[mes]||{}).retratoLiberadoV115;return r&&Array.isArray(r.items)?r:null;};
+    const mesVisivelPortalV115=mes=>{
+      const estado=estadoDoMesPortal(mes);
+      if(estado==='liberado') return true;
+      if(estado!=='ajuste_interno') return false;
+      const retrato=retratoMesPortalV115(mes);
+      return !!(retrato?.items?.length||todosItens.some(i=>i&&!i.excluido&&mesDoItemPortal(i)===mes));
+    };
+    const mesesLib = (mesesDoDoc.length ? mesesDoDoc : ['']).filter(mesVisivelPortalV115);
     const mesPedido=new URLSearchParams(location.search).get('mes')||'';
     const mesPedidoValido=/^20\d{2}-(0[1-9]|1[0-2])$/.test(mesPedido)?mesPedido:'';
     if(mesPedidoValido&&!mesDoPeriodoDoSite(mesPedidoValido)){
@@ -1085,7 +1094,10 @@
     if(!mesEscolhido||!mesesLib.includes(mesEscolhido)) mesEscolhido=mesesLib[mesesLib.length-1];
     window.__mesPortal = mesEscolhido;
 
-    const items = todosItens.map((item,indiceBanco)=>({...item,__indiceBanco:indiceBanco}))
+    const ajusteEmAndamentoV115=estadoDoMesPortal(mesEscolhido)==='ajuste_interno';
+    const retratoEscolhidoV115=ajusteEmAndamentoV115?retratoMesPortalV115(mesEscolhido):null;
+    const fonteItensV115=retratoEscolhidoV115?.items?.length?retratoEscolhidoV115.items:todosItens;
+    const items = fonteItensV115.map((item,indiceBanco)=>({...item,__indiceBanco:retratoEscolhidoV115?-1:indiceBanco}))
       .filter(i => !usaMeses || mesDoItemPortal(i) === (mesEscolhido || ''));
 
     /* 28/07/2026 — o portal também respeita a revisão interna. Antes, tudo
@@ -1167,8 +1179,9 @@
         </div>
       </div>` : '';
 
-    cont.innerHTML = avisoLeitura+blocoCalendario + `<div class="card"><h2>Aprovação — ${mesAtual}</h2>
-        <div class="sub" style="margin-bottom:0;">${pendentes ? 'Dá uma olhada em cada conteúdo e aprova o que estiver certo. Se algo precisar mudar, é só falar com a gente.' : 'Acompanhe aqui a evolução de cada conteúdo do mês.'}</div>
+    const avisoAjusteV115=ajusteEmAndamentoV115?'<div class="card" style="border-color:var(--yellow);background:rgba(224,197,106,.08);"><h2 style="font-size:14px;">↩️ Ajuste em andamento</h2><div class="sub" style="margin-bottom:0;">Seu calendário não sumiu. Esta é a última versão enviada; a equipe está corrigindo o pedido e as aprovações ficam pausadas até a nova versão.</div></div>':'';
+    cont.innerHTML = avisoLeitura+avisoAjusteV115+blocoCalendario + `<div class="card"><h2>${ajusteEmAndamentoV115?'Consulta':'Aprovação'} — ${mesAtual}</h2>
+        <div class="sub" style="margin-bottom:0;">${ajusteEmAndamentoV115?'Consulte a versão anterior enquanto a equipe trabalha. Nenhuma aprovação será gravada nesta etapa.':(pendentes ? 'Dá uma olhada em cada conteúdo e aprova o que estiver certo. Se algo precisar mudar, é só falar com a gente.' : 'Acompanhe aqui a evolução de cada conteúdo do mês.')}</div>
       </div>` +
       '<div class="card">' + items.map((it, idx) => `
         <div class="day">
@@ -1186,11 +1199,11 @@
             ${(it.legenda||'').trim()
               ? '<div class="meta" style="white-space:pre-wrap;margin-top:4px;">'+esc((it.legenda||'').trim().slice(0,320))+((it.legenda||'').trim().length>320?'…':'')+'</div>'
               : ((it.desc||'').trim() ? '<div class="meta" style="margin-top:4px;">'+esc((it.desc||'').slice(0,160))+'</div>' : '')}
-            ${urlHttpsSeguraPortal(it.ref) ? '<a href="'+escAttr(urlHttpsSeguraPortal(it.ref))+'" target="_blank" rel="noopener noreferrer" class="meta" style="display:inline-block;margin-top:6px;color:var(--yellow);text-decoration:none;">🎬 Ver a referência ↗</a>' : ''}
+            ${urlHttpsSeguraPortal(it.ref) ? '<a href="'+escAttr(urlHttpsSeguraPortal(it.ref))+'" target="_blank" rel="noopener noreferrer" class="meta" style="display:inline-block;margin-top:6px;color:var(--yellow);text-decoration:none;">🎬 Ver a referência ↗</a>' : (it.ref?'<div class="meta" style="margin-top:6px;color:var(--red);">⚠️ Referência inválida — peça um novo link à equipe.</div>':'')}
             <div style="margin-top:8px;">
               <span class="selo ${situacaoItem(it).cls}">${situacaoItem(it).txt}</span>${FUNIL_LABEL[it.stage] ? '<span class="selo planejamento" style="margin-left:6px;opacity:.65;">'+FUNIL_LABEL[it.stage]+'</span>' : ''}
             </div>
-            ${(!it.apr && !it.posted) ? `<button class="btn" style="margin-top:9px;width:auto;padding:7px 18px;font-size:12px;" data-item-id="${escAttr(it.itemId||'')}" data-item-dia="${Number(it.day)||0}" data-item-nome="${escAttr(it.name||'')}" data-item-indice="${Number(it.__indiceBanco)}" data-item-mes="${escAttr(mesEscolhido||it.mes||'')}" onclick="aprovarConteudoCalendario(this)">✓ Aprovar este conteúdo</button>` : ''}
+            ${(!ajusteEmAndamentoV115 && !it.apr && !it.posted) ? `<button class="btn" style="margin-top:9px;width:auto;padding:7px 18px;font-size:12px;" data-item-id="${escAttr(it.itemId||'')}" data-item-dia="${Number(it.day)||0}" data-item-nome="${escAttr(it.name||'')}" data-item-indice="${Number(it.__indiceBanco)}" data-item-mes="${escAttr(mesEscolhido||it.mes||'')}" onclick="aprovarConteudoCalendario(this)">✓ Aprovar este conteúdo</button>` : ''}
           </div>
         </div>
       `).join('') + '</div>';

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-  <meta name="gs-build" content="2026-08-25-legenda-editorial-fila-cecilia-v114">
+  <meta name="gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115">
   <meta name="gs-parent-patch" content="2026-08-25-pedido-ajuste-calendario-gabi-v113">
   <meta name="gs-security-parent" content="2026-08-21-operacao-perfis-chris-v96">
   <meta name="gs-v91-patch" content="2026-08-19-calendarios-stories-v91">
@@ -1407,7 +1407,9 @@ async function load(){
       return;
     }
     if(snap.exists()){
-      data=snap.data();
+      const fonteConfirmada=snap.data();
+      window.__calFonteClienteV115=fonteConfirmada;
+      data=window.__modoCal==='cliente'?projetarCalendarioClienteV115(fonteConfirmada):fonteConfirmada;
       if(!data.items)data.items=[];
       if(!data.comments)data.comments=[];
     } else {
@@ -1457,7 +1459,7 @@ async function load(){
        retrato confirmado chega, reavaliamos SEMPRE: se o mês está liberado,
        o aviso provisório sai no mesmo ciclo de renderização. */
     window.__checarLiberacaoCalendarioCliente?.();
-    if(window.__modoCal==='cliente'&&estadoAprovacao()!=='liberado'){
+    if(window.__modoCal==='cliente'&&!mesDisponivelClienteV115(mesVisivel)){
       /* O helper acima já deixou a mensagem correta para produção/arquivo. */
     }else{
       renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderFeedback();renderBlocos();
@@ -1675,7 +1677,24 @@ async function executarGravacaoComSeguranca(){
       const srv = atual.data();
       if(srv.mesLegado && !data.mesLegado) data.mesLegado = srv.mesLegado;
       if(srv.aprovacaoMeses || data.aprovacaoMeses){
-        data.aprovacaoMeses = mesclarAprovacoesMaisRecentes(srv.aprovacaoMeses, data.aprovacaoMeses);
+        const mapaServidor={...(srv.aprovacaoMeses||{})};
+        const marcaServidor=mapaServidor[mesVisivel]||{};
+        /* Compatibilidade Bluefit/V114: se o ajuste já estava aberto antes
+           da V115, a primeira gravação da equipe captura o servidor ainda
+           intacto antes de sobrescrever o item solicitado. */
+        if(window.__modoCal==='equipe'&&marcaServidor.status==='ajuste_interno'&&!marcaServidor.retratoLiberadoV115){
+          const camposRetrato=['itemId','day','name','desc','legenda','ref','obs','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
+          const itensRetrato=(srv.items||[]).filter(i=>i&&!i.excluido&&mesDoItemNoCalendario(srv,i)===mesVisivel)
+            .map(i=>{const r={mes:String(i.mes||mesVisivel)};camposRetrato.forEach(c=>{if(i[c]!==undefined)r[c]=JSON.parse(JSON.stringify(i[c]));});return r;});
+          if(itensRetrato.length) mapaServidor[mesVisivel]={...marcaServidor,retratoLiberadoV115:{schemaVersion:1,mes:mesVisivel,
+            publicadoPor:String(marcaServidor.liberadoPorAnterior||marcaServidor.enviadoPor||'Amanda'),
+            publicadoEm:String(marcaServidor.liberadoEmAnterior||marcaServidor.em||''),items:itensRetrato}};
+        }
+        data.aprovacaoMeses = mesclarAprovacoesMaisRecentes(mapaServidor, data.aprovacaoMeses);
+        const retratoServidor=(mapaServidor[mesVisivel]||{}).retratoLiberadoV115;
+        if(retratoServidor&&data.aprovacaoMeses?.[mesVisivel]&&!data.aprovacaoMeses[mesVisivel].retratoLiberadoV115){
+          data.aprovacaoMeses[mesVisivel]={...data.aprovacaoMeses[mesVisivel],retratoLiberadoV115:retratoServidor};
+        }
       }
       /* A aprovação da Amanda é dela, não desta aba. Se a do servidor é
          mais recente que a que esta aba tem na memória, a do servidor
@@ -2036,8 +2055,34 @@ function ehCalendarioLegado(){
      entregue a ninguém e não pode dizer que "segue visível ao cliente". */
   return !aprovacaoCompativelDoMes(mesVisivel) && itensDoMes(mesVisivel).length > 0;
 }
-/* Os meses que o CLIENTE pode ver: só os liberados. */
-function mesesLiberados(){ return mesesExistentes().filter(m => estadoDoMes(m) === 'liberado'); }
+/* V115 — um pedido de correção não apaga o calendário que o cliente
+   recebeu. A equipe edita o documento real; o cliente consulta o retrato
+   publicado, ou o último conteúdo confirmado quando o legado ainda não
+   possuía retrato. Nenhuma renderização escreve no banco. */
+function retratoLiberadoDoMesV115(fonte,mes){
+  const r=((fonte?.aprovacaoMeses||{})[mes]||{}).retratoLiberadoV115;
+  return r&&Array.isArray(r.items)?r:null;
+}
+function mesDisponivelClienteV115(mes){
+  const st=estadoDoMes(mes);
+  return st==='liberado'||(st==='ajuste_interno'&&itensDoMes(mes).length>0);
+}
+function projetarCalendarioClienteV115(fonte){
+  const origem=fonte||{};
+  const projetado={...origem,items:(origem.items||[]).map(i=>({...i})),aprovacaoMeses:{...(origem.aprovacaoMeses||{})}};
+  Object.entries(origem.aprovacaoMeses||{}).forEach(([mes,marca])=>{
+    if(String(marca?.status||'')!=='ajuste_interno') return;
+    const retrato=retratoLiberadoDoMesV115(origem,mes);
+    if(!retrato?.items?.length) return;
+    projetado.items=projetado.items.filter(i=>mesDoItemNoCalendario(origem,i)!==mes)
+      .concat(retrato.items.map(i=>({...i,mes:i.mes||mes,__retratoLiberadoV115:true})));
+  });
+  return projetado;
+}
+window.projetarCalendarioClienteV115=projetarCalendarioClienteV115;
+window.mesDisponivelClienteV115=mesDisponivelClienteV115;
+/* Os meses que o CLIENTE pode ver: liberados ou o retrato durante ajuste. */
+function mesesLiberados(){ return mesesExistentes().filter(m => mesDisponivelClienteV115(m)); }
 
 function renderAprovacaoInterna(){
   let box = document.getElementById('boxAprovacaoInterna');
@@ -2061,12 +2106,13 @@ function renderAprovacaoInterna(){
   box.style.background = 'rgba(255,255,255,.03)';
   box.style.border = '1px solid ' + r.cor;
   box.innerHTML = `<div style="font-weight:800;color:${r.cor};">${r.txt}</div>
+    ${!ehEquipe && st === 'ajuste_interno' ? '<div style="margin-top:7px;color:#ffe9a8;"><b>Ajuste em andamento.</b> Você continua vendo a última versão enviada; aprovações e novos pedidos ficam pausados até a equipe reenviar.</div>' : ''}
     ${legado && ehEquipe ? '<div style="margin-top:6px;opacity:.75;">Calendário montado antes do ciclo de revisão existir — segue visível pro cliente, como sempre foi. Ele pode entrar agora no ciclo formal da Amanda pelo botão abaixo.</div>' : ''}
     ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
     ${pedidoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.78;"><b>Conteúdo:</b> ' + esc(pedidoAjuste.itemNome||'item identificado pelo pedido') + '</div>' : ''}
     ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
     ${ehEquipe && st === 'arquivado' ? '<div style="margin-top:7px;opacity:.75;"><b>Calendário arquivado.</b> A consulta deste mês não altera o calendário público atual.</div>' : ''}
-    ${ehEquipe && st !== 'arquivado' && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">' + (legado ? 'Enviar calendário legado para a Amanda →' : 'Enviar pra aprovação interna →') + '</button>' : ''}
+    ${ehEquipe && st !== 'arquivado' && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">' + (legado ? 'Enviar calendário legado para a Amanda →' : 'Enviar para Amanda revisar e publicar →') + '</button>' : ''}
     ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição e o cliente ainda não vê.</div>' : ''}
     ${ehEquipe && st === 'aprovado_interno' ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente ainda não recebeu.</b> A Gabi pode reabrir para melhorar; depois precisa enviar novamente para a Amanda aprovar.</div>' : ''}
     ${ehEquipe && st === 'liberado' && !legado ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente já recebeu este mês.</b> A edição fica fechada para não mudar silenciosamente o que foi enviado.</div>' : ''}
@@ -2151,7 +2197,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
   }finally{
     window.__enviandoAprovacaoInterna = false;
     document.body.classList.remove('calEnvioEmCurso');
-    if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = rotuloOriginal||'Enviar pra aprovação interna →'; }
+    if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = rotuloOriginal||'Enviar para Amanda revisar e publicar →'; }
   }
 };
 
@@ -2333,7 +2379,19 @@ function aplicarModoCalendario(){
   const checarLiberacao = () => {
     const st = estadoAprovacao();
     const grade = document.getElementById('viewGrid');
-    if(st === 'liberado'){ const av = document.getElementById('avisoNaoLiberado'); if(av) av.remove(); return; }
+    if(st === 'liberado' || (st==='ajuste_interno'&&mesDisponivelClienteV115(mesVisivel))){
+      const av = document.getElementById('avisoNaoLiberado'); if(av) av.remove();
+      let ajuste=document.getElementById('avisoAjusteV115');
+      if(st==='ajuste_interno'&&!ajuste&&grade){
+        ajuste=document.createElement('div'); ajuste.id='avisoAjusteV115';
+        ajuste.style.cssText='padding:12px 14px;margin-bottom:12px;border:1px solid #e0c56a;border-radius:9px;background:#4a3a12;color:#ffe9a8;font-size:12.5px;line-height:1.5;';
+        ajuste.innerHTML='<b>↩️ Ajuste em andamento.</b> O calendário não sumiu: esta é a última versão enviada. A equipe está corrigindo seu pedido; os botões de aprovação voltam quando a nova versão for liberada.';
+        grade.parentNode.insertBefore(ajuste,grade);
+      }
+      if(st!=='ajuste_interno'&&ajuste) ajuste.remove();
+      return;
+    }
+    const ajuste=document.getElementById('avisoAjusteV115'); if(ajuste) ajuste.remove();
     if(!grade || document.getElementById('avisoNaoLiberado')) return;
     ['viewGrid','viewWeek','viewKanban'].forEach(id => {
       const el = document.getElementById(id); if(el) el.innerHTML = '';
@@ -2452,16 +2510,22 @@ function renderMeta(){
 }
 
 function normalizeUrl(u){
-  if(!u)return '';
-  u=u.trim();
-  if(!/^https?:\/\//i.test(u))u='https://'+u;
-  return u;
+  u=String(u||'').trim();
+  if(!u||u.length>2048||/[\s"'<>]/.test(u))return '';
+  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(u))u='https://'+u;
+  try{
+    const url=new URL(u);
+    if(url.protocol!=='https:'||!url.hostname||url.username||url.password)return '';
+    return url.href;
+  }catch(e){return '';}
 }
 
 function updateRefLink(){
   const v=document.getElementById('mRef').value.trim();
   const a=document.getElementById('mRefLink');
-  if(v){a.href=normalizeUrl(v);a.classList.remove('hidden');}
+  const segura=normalizeUrl(v);
+  if(segura){a.href=segura;a.textContent='🔗 Abrir referência ↗';a.classList.remove('hidden');}
+  else if(v){a.removeAttribute('href');a.textContent='⚠️ Referência inválida — cole um link HTTPS';a.classList.remove('hidden');}
   else{a.classList.add('hidden');}
 }
 
@@ -2802,7 +2866,8 @@ function renderWeek(){
     its.forEach(it=>{const idx=data.items.indexOf(it);
       const hasScript=(it.desc||'').trim().length>0;
       const hasLegenda=(it.legenda||'').trim().length>0;
-      const refLink=it.ref?'<a href="'+esc(normalizeUrl(it.ref))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="minitag mt-fmt" style="text-decoration:none;">🔗 referência</a>':'';
+      const refSeguro=normalizeUrl(it.ref);
+      const refLink=refSeguro?'<a href="'+esc(refSeguro)+'" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="minitag mt-fmt" style="text-decoration:none;">🔗 referência</a>':(it.ref?'<span class="minitag" style="background:#3a2323;color:#ff8080;">⚠️ referência inválida</span>':'');
       const scriptTag=hasScript?'<button type="button" class="minitag mt-fmt" style="border:0;cursor:pointer;" onclick="event.stopPropagation();openEdit('+idx+')">📄 roteiro</button>':'';
       const legendaTag=hasLegenda?'<button type="button" class="minitag" style="border:0;cursor:pointer;background:#1e3428;color:#7fd99f;" onclick="event.stopPropagation();openEdit('+idx+')">📝 legenda pronta</button>':'<span class="minitag" style="background:#3a2323;color:#ff8080;">⚠️ sem legenda</span>';
       const gravadoTag=it.gravado?'<span class="minitag" style="background:#1e3428;color:#7fd99f;">🎥 já gravado</span>':'';
@@ -2826,7 +2891,8 @@ function renderKanban(){
   const apr=doMes.filter(i=>i.apr&&!i.posted);
   const post=doMes.filter(i=>i.posted);
   function card(it){const idx=data.items.indexOf(it);
-    const refLine=it.ref?'<a href="'+esc(normalizeUrl(it.ref))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--yellow);text-decoration:none;font-size:9.5px;display:inline-block;margin-bottom:6px;">🔗 referência</a><br>':'';
+    const refSeguro=normalizeUrl(it.ref);
+    const refLine=refSeguro?'<a href="'+esc(refSeguro)+'" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:var(--yellow);text-decoration:none;font-size:9.5px;display:inline-block;margin-bottom:6px;">🔗 referência</a><br>':(it.ref?'<span style="color:var(--red);font-size:9.5px;">⚠️ referência inválida</span><br>':'');
     const obsLine=(it.obs||'').trim()?'<div style="background:#4a3a12;border-left:3px solid #e0c56a;border-radius:5px;padding:6px 8px;margin:5px 0;font-size:9.5px;line-height:1.45;color:#ffe9a8;white-space:pre-wrap;">📌 '+esc(it.obs.trim())+'</div>':'';
     return '<div class="kcard" onclick="openEdit('+idx+')"><div class="kt">'+esc(it.name)+'</div><div class="kd">dia '+it.day+' · '+esc(it.fmt)+'</div>'+obsLine+refLine+'<div class="kbtns" onclick="event.stopPropagation()">'+
       (!it.apr?'<button class="kmini" onclick="quickApr('+idx+')">✓ aprovar</button>':'')+
@@ -2840,9 +2906,10 @@ function renderKanban(){
     '</div>';
 }
 
-function quickApr(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].apr=true;renderAll();}
-function quickPost(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=true;renderAll();}
-function quickUnpost(i){if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
+function clienteEmConsultaDeAjusteV115(){return window.__modoCal==='cliente'&&estadoAprovacao()==='ajuste_interno';}
+function quickApr(i){if(clienteEmConsultaDeAjusteV115()){avisarTela('Aprovações ficam pausadas enquanto a equipe corrige o pedido.','erro');return;}if(exigirRetiradaAntesDeEditar())return;data.items[i].apr=true;renderAll();}
+function quickPost(i){if(clienteEmConsultaDeAjusteV115())return;if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=true;renderAll();}
+function quickUnpost(i){if(clienteEmConsultaDeAjusteV115())return;if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
 
 // MODAL
 function openModal(day){if(exigirRetiradaAntesDeEditar())return;aplicarModoConsultaItem(false);editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
@@ -2860,7 +2927,7 @@ function openModal(day){if(exigirRetiradaAntesDeEditar())return;aplicarModoConsu
   document.getElementById('aprBtn').style.display='none';
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
-function openEdit(i){const somenteConsulta=edicaoBloqueadaPorRevisao();aplicarModoConsultaItem(false);editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent=somenteConsulta?'Consultar conteúdo completo':'Editar conteúdo';
+function openEdit(i){const somenteConsulta=edicaoBloqueadaPorRevisao()||clienteEmConsultaDeAjusteV115();aplicarModoConsultaItem(false);editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent=somenteConsulta?'Consultar conteúdo completo':'Editar conteúdo';
   document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
   document.getElementById('mLegenda').value=it.legenda||'';
   const moE=document.getElementById('mObs'); if(moE) moE.value=it.obs||'';
@@ -2868,7 +2935,7 @@ function openEdit(i){const somenteConsulta=edicaoBloqueadaPorRevisao();aplicarMo
      ele escreveu antes, pra não parecer que sumiu. */
   const ehCli = window.__modoCal === 'cliente';
   const boxCli = document.getElementById('campoObsCliente');
-  if(boxCli) boxCli.style.display = ehCli ? 'block' : 'none';
+  if(boxCli) boxCli.style.display = ehCli && !clienteEmConsultaDeAjusteV115() ? 'block' : 'none';
   const moCli = document.getElementById('mObsCliente');
   if(moCli) moCli.value = it.obsCliente || '';
   document.getElementById('mRef').value=it.ref||'';
@@ -3065,6 +3132,7 @@ async function saveItem(){
 function delItem(){if(exigirRetiradaAntesDeEditar())return;if(editIdx!==null&&data.items[editIdx]){apagouDePropósito=true;data.items[editIdx]={...data.items[editIdx],excluido:true,excluidoPor:'equipe',excluidoEm:new Date().toISOString()};}closeModal();renderAll();}
 async function toggleApr(){
   if(editIdx===null) return;
+  if(clienteEmConsultaDeAjusteV115()){avisarTela('Aprovações ficam pausadas enquanto a equipe corrige o pedido.','erro');return;}
   const idx = editIdx;
   const item = data.items[idx];
   if(!item) return;

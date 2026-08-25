@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const escritorio = fs.readFileSync(path.join(raiz, 'escritorio.html'), 'utf8');
+const portal = fs.readFileSync(path.join(raiz, 'portal-cliente.html'), 'utf8');
 const config = fs.readFileSync(path.join(raiz, '_config.yml'), 'utf8');
 let total = 0;
 const falhas = [];
@@ -29,21 +30,23 @@ function sha256(caminho){
   return createHash('sha256').update(fs.readFileSync(path.join(raiz, caminho))).digest('hex');
 }
 
-verificar(escritorio.includes('gs-build" content="2026-08-25-legenda-editorial-fila-cecilia-v114')&&
+verificar((escritorio.includes('gs-build" content="2026-08-25-legenda-editorial-fila-cecilia-v114')||
+  escritorio.includes('gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115'))&&
   escritorio.includes('gs-v112-patch" content="2026-08-24-roteador-gerencia-papeis-v112')&&
   escritorio.includes('gs-v111-patch" content="2026-08-24-proposta-portal-protegida-v111')&&
   escritorio.includes('gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110'),
-  'build V114 preserva V112, V111 e a fronteira V110 de sessão e papéis');
+  'build cumulativo preserva V112, V111 e a fronteira V110 de sessão e papéis');
 verificar(config.includes('- rollback_v110/'), 'rollback V110 permanece excluído do runtime público');
 
 for(const [arquivo,hashLinhaBase] of Object.entries({
-  'portal-cliente.html':'906acb3593909d6d91114a96bff7bfb51251853ff9fd99e215c69d75eafca52b',
   'avulso.html':'15aa50ff81a500a7f285f4f92f9a3fb97bef04a5e3eb203fef179cece38d62b6',
   'firestore.rules':'66bed60400f8ed73c524cb65e9524729e957788e43dad35cb4a00bbca398fa47',
   'financeiro-core.mjs':'ce6b55f78bef54d50d78378730329b2b84199961e20de0dd7ee86e98ce42d844',
   'financeiro-ui-v103.mjs':'ab63cde2b36e68b08523cd4e01e54557b25db969beb861e5e59394909c404cfc',
   'financeiro-ui-v104.mjs':'eb152a1d5760ae3343e6189909dcc4a8926b903874c8838bec8beb9077a516ac'
 })) verificar(sha256(arquivo)===hashLinhaBase, `${arquivo} permanece byte a byte na linha-base esperada`);
+verificar(portal.includes('mesVisivelPortalV115')&&!portal.includes("collection(db,'negocios')"),
+  'Portal V115 muda somente a continuidade do calendário e continua sem ler a coleção comercial privada');
 
 const limpeza = trecho('function limparEstadoPrivadoTrocaIdentidade', 'window.mudarUsuarioGlobal = async function');
 verificar(Boolean(limpeza), 'existe uma função canônica de limpeza privada');

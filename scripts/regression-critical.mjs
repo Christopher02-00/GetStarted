@@ -1040,16 +1040,18 @@ async function testarCalendariosSandbox() {
     filaRenderizada.includes("abrirAnaliseCalendarioRevisao('cliente-d\\'ouro','2026-09',this)"),
     'Mochi ou identidade com apóstrofo gerou alvo/onclick inválido na fila da Amanda');
   exigir(filaRenderizada.indexOf('btn_analiseCal_bluefit_2026-09') < filaRenderizada.indexOf('analiseCal_bluefit_2026-09') &&
-    filaRenderizada.indexOf('analiseCal_bluefit_2026-09') < filaRenderizada.indexOf('↗ Abrir calendário completo'),
-    'painel da análise voltou a nascer depois das decisões, fora do campo visível no mobile');
+    filaRenderizada.includes('✅ Revisar e enviar ao cliente') && !filaRenderizada.includes('↗ Abrir calendário completo'),
+    'fila da Amanda deixou de ter uma única porta visível antes do painel no mobile');
   exigir(await cliqueRevisaoApi.clicar(botaoMatch[1]) === true &&
     cliqueRevisaoApi.alvo.innerHTML.includes('Texto real do roteiro') &&
+    cliqueRevisaoApi.alvo.innerHTML.includes('Aprovar e publicar ao cliente') &&
+    cliqueRevisaoApi.alvo.innerHTML.includes('Pedir ajuste à Gabi') &&
     cliqueRevisaoApi.attrs['aria-expanded'] === 'true' &&
     cliqueRevisaoApi.botao.textContent.includes('Fechar análise') && cliqueRevisaoApi.scrolls() >= 2,
     'clique do botão HTML não abriu/expôs a análise real da Bluefit no campo visível');
   exigir(await cliqueRevisaoApi.clicar(botaoMatch[1]) === true &&
     cliqueRevisaoApi.alvo.innerHTML === '' && cliqueRevisaoApi.attrs['aria-expanded'] === 'false' &&
-    cliqueRevisaoApi.botao.textContent.includes('Analisar roteiro'),
+    cliqueRevisaoApi.botao.textContent.includes('Revisar e enviar'),
     'segundo clique não fechou a análise nem restaurou o botão');
   cliqueRevisaoApi.setFalha(true);
   exigir(await cliqueRevisaoApi.clicar(botaoMatch[1]) === false &&

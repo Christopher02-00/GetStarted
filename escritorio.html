@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-25-legenda-editorial-fila-cecilia-v114">
+  <meta name="gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115">
   <meta name="gs-parent-patch" content="2026-08-25-pedido-ajuste-calendario-gabi-v113">
   <meta name="gs-v112-patch" content="2026-08-24-roteador-gerencia-papeis-v112">
   <meta name="gs-v111-patch" content="2026-08-24-proposta-portal-protegida-v111">
@@ -1297,7 +1297,7 @@
         <div class="subtab" data-calsub="refs" onclick="setCalSub('refs', this)">Perfis de referência</div>
         <div class="subtab" data-calsub="links" onclick="setCalSub('links', this)">Links e envio</div>
         <div class="subtab" data-calsub="campo" onclick="setCalSub('campo', this)">Modo gravação</div>
-        <div class="subtab" data-calsub="envio" onclick="setCalSub('envio', this)">Publicados e arquivo</div>
+        <div class="subtab" data-calsub="envio" onclick="setCalSub('envio', this)">Revisar e enviar</div>
         <div class="subtab" data-calsub="resgate" onclick="setCalSub('resgate', this)">Resgatar</div>
       </div>
 
@@ -1386,8 +1386,8 @@
 
       <div id="calSubEnvio" style="display:none;">
         <div class="card" style="border:2px solid var(--yellow);">
-          <h2>✅ Publicados e arquivo</h2>
-          <div class="desc">Quando a Amanda aprova, o novo mês aparece imediatamente no Portal do cliente sem fechar os outros meses publicados. Agosto e setembro de 2026 permanecem abertos; a partir de outubro, cada mês é arquivado automaticamente 30 dias após terminar e pode ser reaberto por 30 dias sem mexer nos demais.</div>
+          <h2>✅ Revisar e enviar ao cliente</h2>
+          <div class="desc"><b>Uma fila e uma ação principal.</b> A Gabi envia; a Amanda abre esta aba e usa “Aprovar e publicar”. Calendário novo aparece no Portal; durante correção, o cliente continua vendo a versão anterior até este clique.</div>
           <div id="filaEnvioCalendarios" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -7978,11 +7978,25 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     try {
       const calSnap = await getDoc(doc(db,'calendarios', clienteSlug));
       if(calSnap.exists()){
-        const items = calSnap.data().items || [];
-        const semPostar = items.filter(i => !i.posted).length;
-        calTxt = semPostar + ' conteúdo(s) no calendário ainda sem postar.';
+        const cal = calSnap.data() || {};
+        const campoCompetencia = document.getElementById('agCompetenciaCalendario');
+        const competenciaData = String(document.getElementById('agData')?.value||hojeLocal()).slice(0,7);
+        const selecionada = campoCompetencia?.value || competenciaData;
+        const diagnostico = diagnosticarCompetenciaPendenteV115(cal, selecionada, competenciaData);
+        if(campoCompetencia && campoCompetencia.dataset.manual !== '1' && diagnostico.sugerida){
+          campoCompetencia.value = diagnostico.sugerida;
+          campoCompetencia.dataset.origem = 'calendario_v115';
+        }
+        const efetiva = campoCompetencia?.value || selecionada;
+        const linha = diagnostico.competencias.find(x=>x.mes===efetiva);
+        calTxt = linha
+          ? linha.pendentes + ' conteúdo(s) ainda precisam de gravação em ' + efetiva + '.'
+          : 'Nenhuma competência válida foi encontrada neste calendário.';
       }
-    } catch(e){}
+    } catch(e){
+      console.error('Falha ao confirmar o calendário do cliente antes do agendamento:',e);
+      calTxt = 'Calendário indisponível agora — isso não significa pauta vazia.';
+    }
     /* 01/08/2026 — a quantidade parou de ser chute.
        Era `Math.min(semPostar, 4)` — um número inventado, que não tinha
        relação nenhuma com o que a Gabi planejou. Medi no banco em 01/08:
@@ -8080,7 +8094,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const data = document.getElementById('agData')?.value || hojeLocal();
     const competencia = document.getElementById('agCompetenciaCalendario');
     if(!competencia) return;
-    if(!competencia.dataset.manual || !competencia.value) competencia.value = data.slice(0,7);
+    if(competencia.dataset.manual !== '1' && competencia.dataset.origem !== 'calendario_v115') competencia.value = data.slice(0,7);
     sugerirQtdPeloBloco();
   };
 
@@ -8350,6 +8364,22 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       }catch(e){
         falhaLeituraCalendarioPlanejamento = String((e && (e.code || e.message)) || e || 'calendário indisponível');
         console.error('Agendamento: calendário indisponível; o registro factual continuará autônomo:', e);
+      }
+      const diagnosticoCompetenciaV115 = diagnosticarCompetenciaPendenteV115(
+        calendarioPlanejamento, mesCalendario, String(data||'').slice(0,7)
+      );
+      /* V115: agosto resolvido não pode receber silenciosamente a pauta de
+         setembro só porque a gravação acontece em agosto. A coordenação
+         precisa rever a competência; nenhum agendamento é criado neste clique. */
+      if(calendarioPlanejamentoSnap?.exists() && diagnosticoCompetenciaV115.divergente && !permitirCaptacoesExtras){
+        const campoMes=document.getElementById('agCompetenciaCalendario');
+        if(campoMes){
+          campoMes.value=diagnosticoCompetenciaV115.sugerida;
+          campoMes.dataset.origem='calendario_v115';
+        }
+        await sugerirQtdVideosAgendamento();
+        mostrarToast('Revise o mês da pauta: '+mesCalendario+' não tem itens pendentes e '+diagnosticoCompetenciaV115.sugerida+' tem '+diagnosticoCompetenciaV115.sugeridaPendentes+'. Nada foi salvo; confirme de novo se estiver correto.','erro');
+        return false;
       }
       const planoInicial = planejarSessaoGravacao(calendarioPlanejamento, {
         cliente:clienteSlug, data, mesCalendario, bloco:blocoAgendamento, sessaoOrdem:blocoAgendamento, sessaoChave
@@ -8884,6 +8914,37 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
   window.snapshotItensPlanejadosSessao = snapshotItensPlanejadosSessao;
 
+  /* V115 — a data da filmagem não decide silenciosamente a competência
+     editorial. A tela mede cada mês e sugere apenas uma competência que
+     ainda possua itens reais para gravar; a escolha final continua humana. */
+  function diagnosticarCompetenciaPendenteV115(calendario, selecionada, referencia){
+    const cal=calendario||{};
+    const ref=/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(referencia||''))?String(referencia):'';
+    const atual=String(selecionada||'');
+    const competencias=mesesDeCalendario(cal).map(mes=>{
+      const itens=itensDoMesComIndiceGlobal(cal,mes).filter(i=>i&&!i.excluido);
+      return {mes,total:itens.length,pendentes:itens.filter(i=>!itemNaoPrecisaGravar(i)).length,estado:estadoMesCal(cal,mes)};
+    });
+    const linhaAtual=competencias.find(x=>x.mes===atual)||null;
+    const candidatas=competencias.filter(x=>x.pendentes>0).sort((a,b)=>a.mes.localeCompare(b.mes));
+    const sugerida=(linhaAtual&&linhaAtual.pendentes>0?linhaAtual:null) ||
+      candidatas.find(x=>!ref||x.mes>=ref) || candidatas[candidatas.length-1] || linhaAtual || competencias[competencias.length-1] || null;
+    return {selecionada:atual,sugerida:sugerida?.mes||'',selecionadaPendentes:linhaAtual?.pendentes||0,
+      sugeridaPendentes:sugerida?.pendentes||0,divergente:!!(sugerida&&sugerida.mes!==atual&&sugerida.pendentes>0),competencias};
+  }
+  window.diagnosticarCompetenciaPendenteV115=diagnosticarCompetenciaPendenteV115;
+
+  function urlHttpsOperacionalV115(valor){
+    let bruto=String(valor||'').trim();
+    if(!bruto||bruto.length>2048||/[\s"'<>]/.test(bruto)) return '';
+    if(!/^https?:\/\//i.test(bruto)) bruto='https://'+bruto;
+    try{
+      const u=new URL(bruto);
+      return u.protocol==='https:'&&u.hostname&&!u.username&&!u.password?u.href:'';
+    }catch(_){ return ''; }
+  }
+  window.urlHttpsOperacionalV115=urlHttpsOperacionalV115;
+
   function assinaturaReplanejamentoSessao(agendamento){
     const ag = agendamento || {};
     return JSON.stringify({
@@ -9140,11 +9201,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       let htmlPerfis = '';
       try{
         const slots = refsAgenda[slugAgenda] || [];
-        const validos = slots.filter(x=>x.link);
+        const validos = slots.map(x=>({...x,linkSeguroV115:urlHttpsOperacionalV115(x.link)})).filter(x=>x.linkSeguroV115);
         if(validos.length){
           htmlPerfis = `<div style="background:var(--deep);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;margin:8px 0;">
             <div class="meta" style="font-weight:800;color:var(--yellow);margin-bottom:5px;">🎨 Estilo deste cliente — olha antes de gravar</div>
-            ${validos.map(x=>`<div style="margin-bottom:5px;"><a href="${esc(x.link)}" target="_blank" rel="noopener" style="color:var(--yellow);font-size:11.5px;">${esc(x.link.slice(0,52))}↗</a>${x.nota?'<div class="meta" style="font-size:11px;">'+esc(x.nota)+'</div>':''}</div>`).join('')}
+            ${validos.map(x=>`<div style="margin-bottom:5px;"><a href="${esc(x.linkSeguroV115)}" target="_blank" rel="noopener" style="color:var(--yellow);font-size:11.5px;">${esc(x.linkSeguroV115.slice(0,52))}↗</a>${x.nota?'<div class="meta" style="font-size:11px;">'+esc(x.nota)+'</div>':''}</div>`).join('')}
           </div>`;
         }
       }catch(e){ console.error('Falha ao carregar perfis do cliente:', e); }
@@ -9163,7 +9224,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
                 pior, gravação errada. Agora o que a Cecília escreveu vem
                 junto do aviso. */''}
           ${a.estilo ? '<div style="margin-top:9px;background:var(--deep);border-left:3px solid var(--yellow);padding:10px 12px;border-radius:8px;"><div class="meta" style="font-weight:800;color:var(--yellow);margin-bottom:4px;">🎨 O QUE É PRA FAZER</div><div class="meta" style="white-space:pre-wrap;">'+esc(a.estilo)+'</div></div>' : ''}
-          ${(a.referencias||[]).length ? '<div style="margin-top:8px;">'+(a.referencias||[]).map(r=>'<a href="'+esc(r)+'" target="_blank" rel="noopener" class="meta" style="display:block;color:var(--yellow);margin-bottom:3px;">🔗 '+esc(String(r).slice(0,60))+' ↗</a>').join('')+'</div>' : ''}
+          ${(a.referencias||[]).length ? '<div style="margin-top:8px;">'+(a.referencias||[]).map(r=>{const segura=urlHttpsOperacionalV115(r);return segura?'<a href="'+esc(segura)+'" target="_blank" rel="noopener" class="meta" style="display:block;color:var(--yellow);margin-bottom:3px;">🔗 '+esc(String(r).slice(0,60))+' ↗</a>':'<div class="meta" style="color:var(--red);margin-bottom:3px;">⚠️ Referência inválida — peça um novo link</div>';}).join('')+'</div>' : ''}
           ${a.obsFilmmaker ? '<div style="margin-top:9px;background:rgba(224,197,106,.12);border-left:3px solid var(--yellow);padding:9px 11px;border-radius:7px;"><div class="meta" style="font-weight:800;color:var(--yellow);margin-bottom:3px;">📌 ANTES DE SAIR</div><div class="meta" style="white-space:pre-wrap;color:var(--fg);">'+esc(a.obsFilmmaker)+'</div></div>' : ''}
           <div class="btn ${urgencia==='normal'?'secondary':''}" style="margin-top:8px;padding:11px;text-align:center;font-size:13px;">📹 ${urgencia==='normal'?'Abrir pra registrar os vídeos':'Registrar os vídeos dessa gravação'} <span id="setaGrav_${a.id}">${urgencia==='normal'?'▾':'▴'}</span></div>
         </div>
@@ -9176,7 +9237,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
             <div class="meta" style="margin-top:6px;line-height:1.6;"><b>Cliente:</b> ${esc(a.clienteNome||slugAgenda)} · <b>Quando:</b> ${formatarDataBR(a.data)} ${esc(a.hora||'')}<br><b>Responsável:</b> ${esc(rotuloEquipe(a)||'não definido')} · <b>Esperado:</b> ${qtdPlan} vídeo(s)<br><b>Sessão:</b> ${esc(planoSessao.sessaoChave||chaveSessaoGravacao(a))} · <b>Pauta:</b> ${esc(mesAgenda||'não definida')}</div>
             ${podePlanejarSessao?`<div class="field" style="margin-top:10px;"><label>Responsável que realmente realizou esta sessão</label><select onchange="trocarFilmmakerAgendamento('${a.id}',this.value)">
               ${PESSOAS_DE_CAMPO.map(p=>`<option value="${esc(p)}" ${nomeOperacionalCanonico(responsavelPrincipalSessao)===nomeOperacionalCanonico(p)?'selected':''}>${esc(p)}</option>`).join('')}
-            </select><div class="meta" style="margin-top:5px;">Apenas a coordenação altera. Assim que a troca é salva, o filmmaker correto passa a ver e pode registrar a sessão.</div></div>`:''}
+            </select><div class="meta" style="margin-top:5px;">Apenas a coordenação altera. Assim que a troca é salva, o filmmaker correto passa a ver e pode registrar a sessão.</div>
+            <button class="btn secondary" style="margin-top:8px;width:auto;" onclick="replanejarSessaoGravacao('${a.id}')">🗓️ Corrigir mês/bloco da pauta</button></div>`:''}
           </div>
           ${falhouCalendarioAgenda ? '<div class="card" style="border:2px solid var(--yellow2);margin:10px 0;"><b>⚠️ Calendário indisponível agora.</b><div class="meta" style="margin-top:5px;">Isso não virou uma ordem vazia. Registre abaixo os títulos realmente gravados; eles ficarão somente nesta sessão e nenhum item do calendário será marcado.</div><button class="btn secondary" style="margin-top:8px;" onclick="renderMinhaAgendaFilmmaker()">Tentar carregar o checklist novamente</button></div>' : ''}
           ${planejamentoInconsistente && !falhouCalendarioAgenda ? `<div class="card" style="border:2px solid var(--yellow2);margin:10px 0;"><b>⚠️ O checklist do calendário mudou.</b><div class="meta" style="margin-top:5px;">${(planoSessao.inconsistencias||[]).map(x=>esc(x.motivo||'Item alterado.')).join('<br>')} Para não marcar a pauta errada, use a declaração factual abaixo. Ela não depende de aprovação de Amanda ou Cecília.</div></div>` : ''}
@@ -15710,13 +15772,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const cal = calSnap.data() || {};
     const meses = mesesDeCalendario(cal);
     let mes = ag.mesCalendario || ag.competenciaCalendario || String(ag.data||'').slice(0,7);
-    if(!meses.includes(mes) && meses.length){
-      const escolhido = prompt('Qual é o mês da pauta desta gravação? Use AAAA-MM.', meses[meses.length-1]);
-      if(escolhido === null) return false;
-      mes = String(escolhido||'').trim();
-      if(!/^\d{4}-\d{2}$/.test(mes) || !meses.includes(mes)){
-        mostrarToast('Escolha um mês que exista no calendário deste cliente.', 'erro'); return false;
-      }
+    const diagnostico=diagnosticarCompetenciaPendenteV115(cal,mes,String(ag.data||'').slice(0,7));
+    const resumoMeses=diagnostico.competencias.map(x=>x.mes+': '+x.pendentes+' pendente(s)').join('\n');
+    const escolhido = prompt('Qual é o mês da pauta desta gravação? Use AAAA-MM.\n\n'+resumoMeses,
+      diagnostico.sugerida||meses[meses.length-1]||mes);
+    if(escolhido === null) return false;
+    mes = String(escolhido||'').trim();
+    if(!/^\d{4}-\d{2}$/.test(mes) || !meses.includes(mes)){
+      mostrarToast('Escolha um mês que exista no calendário deste cliente.', 'erro'); return false;
     }
     const maxBlocos = quantosBlocos(cal,mes);
     const atual = Number(ag.sessaoOrdem || ag.bloco)||1;
@@ -22280,6 +22343,25 @@ window.setGerenciaSub = function(qual, el){
     return mapa;
   }
 
+  /* V115 — o modo Campo agora leva o filmmaker à sessão exata onde os
+     vídeos são lançados. Não depende de lembrar outra aba nem procura pelo
+     nome do cliente, que poderia abrir a gravação errada. */
+  window.abrirRegistroAgendamentoCampoV115 = function(agId){
+    const nav=document.getElementById('navAgendamento');
+    if(nav) irPara('agendamento',nav);
+    setTimeout(()=>{
+      const sub=document.getElementById('subtabMinhaAgendaFilmmaker');
+      if(sub) setAgendamentoSub('minhaAgenda',sub);
+      setTimeout(()=>{
+        const card=document.getElementById('ag_'+agId);
+        if(!card){ mostrarToast('A sessão não apareceu na agenda. Atualize a aba e tente novamente.','erro'); return; }
+        const form=document.getElementById('formGrav_'+agId);
+        if(form&&getComputedStyle(form).display==='none') toggleFormGravacao(agId);
+        card.scrollIntoView({behavior:'smooth',block:'start'});
+      },700);
+    },120);
+  };
+
   window.abrirCampoDoCliente = function(slug, nome){
     const cont = document.getElementById('campoConteudo');
     if(!cont) return;
@@ -22302,6 +22384,8 @@ window.setGerenciaSub = function(qual, el){
       const itens = [...new Map(mesesExibidos.flatMap(m=>itensDoMesComIndiceGlobal(cal,m)).map(i=>[i.idx,i])).values()]
         .filter(i=>i&&!i.excluido).sort((a,b)=>(a.day||0)-(b.day||0)||a.idx-b.idx);
       const st = estadoMesCal(cal, mes);
+      const diagnosticosSessao=(grav?.gravacoes||[]).map(g=>({ag:g,...diagnosticarCompetenciaPendenteV115(cal,g.mesCalendario,String(g.data||'').slice(0,7))}));
+      const desvioCompetencia=diagnosticosSessao.find(x=>x.divergente&&x.selecionadaPendentes===0)||null;
       const rotMes = m => { const n=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
         if(!m) return cal.month||''; const [a,mm]=m.split('-'); return (n[Number(mm)-1]||'')+' '+a; };
 
@@ -22313,7 +22397,7 @@ window.setGerenciaSub = function(qual, el){
           </div>
           ${(i.obs||'').trim() ? '<div style="margin-top:9px;background:#4a3a12;border-left:3px solid #e0c56a;border-radius:7px;padding:10px 12px;font-size:13px;line-height:1.5;color:#ffe9a8;white-space:pre-wrap;"><b>📌 Solicitação especial:</b> '+esc(String(i.obs).trim())+'</div>' : ''}
           ${(i.desc||'').trim() ? '<div class="meta" style="margin-top:8px;white-space:pre-wrap;font-size:12.5px;line-height:1.55;">'+esc(String(i.desc).trim())+'</div>' : ''}
-          ${i.ref ? '<a href="'+esc(i.ref)+'" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:10px;border:2px solid var(--yellow);padding:11px;">🎬 Ver a referência ↗</a>' : ''}
+          ${i.ref ? (urlHttpsOperacionalV115(i.ref) ? '<a href="'+esc(urlHttpsOperacionalV115(i.ref))+'" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:10px;border:2px solid var(--yellow);padding:11px;">🎬 Ver a referência ↗</a>' : '<div class="meta" style="margin-top:10px;color:var(--red);">⚠️ Referência inválida — peça um novo link à equipe</div>') : ''}
           <div class="meta" style="margin-top:8px;opacity:.7;">${i.gravado?'✅ já gravado':'⬜ ainda não gravado'}</div>
         </div>`;
 
@@ -22379,11 +22463,13 @@ window.setGerenciaSub = function(qual, el){
               <div class="meta" style="margin-top:4px;">Esta gravação foi marcada sem endereço. <b>Fala com a Cecília antes de sair</b> — agendamento novo já não deixa mais salvar sem local.</div>`}
           </div>` : `<div class="desc" style="margin-top:10px;">Sem gravação marcada pra hoje neste cliente. Abaixo está o mês inteiro, pra consulta.</div>`}
           ${inconsistenciasCampo.length ? '<div class="desc" style="margin-top:10px;background:rgba(214,58,58,.12);border-left:3px solid var(--red);padding:10px 12px;border-radius:7px;"><b>🔒 A ordem desta sessão mudou ou está ambígua.</b> Não grave pela lista abaixo. Abra Minha Agenda e peça para Amanda/Cecília revisar.</div>' : ''}
+          ${desvioCompetencia ? `<div class="desc" style="margin-top:10px;background:rgba(214,58,58,.12);border-left:3px solid var(--red);padding:10px 12px;border-radius:7px;"><b>⚠️ A pauta desta sessão está no mês errado.</b><br>${esc(desvioCompetencia.selecionada||'Mês atual')} está resolvido, mas ${esc(desvioCompetencia.sugerida)} tem ${desvioCompetencia.sugeridaPendentes} pendente(s). A coordenação precisa corrigir mês/bloco antes da gravação.</div>` : ''}
           ${mesesDaSessao.length > 1 ? '<div class="desc" style="margin-top:10px;border-left:3px solid var(--yellow);padding:10px 12px;"><b>Esta visita reúne pautas de mais de um mês.</b> A lista abaixo une somente as sessões formalmente planejadas.</div>' : ''}
           ${st !== 'liberado' ? '<div class="desc" style="margin-top:10px;background:rgba(224,197,106,.12);border-left:3px solid var(--yellow2);padding:10px 12px;border-radius:7px;"><b>⚠️ Este mês ainda não foi aprovado pelo cliente.</b> Pode mudar — confirma com a Cecília antes de gravar algo caro de refazer.</div>' : ''}
+          ${grav?.gravacoes?.length ? `<button class="btn green" style="margin-top:10px;" onclick="abrirRegistroAgendamentoCampoV115('${escJs(grav.gravacoes[0].id)}')">📹 Abrir minha sessão e lançar os vídeos</button>` : ''}
         </div>
         ${grav && deHoje.length ? '<div class="metaSecTit" style="margin-top:14px;">GRAVAR HOJE — ' + deHoje.length + ' conteúdo(s)</div>' + deHoje.map(i=>cartao(i,true)).join('') : ''}
-        ${grav && !deHoje.length ? '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">Tudo desta gravação já está marcado como gravado.</div></div>' : ''}
+        ${grav && !deHoje.length && !desvioCompetencia && !inconsistenciasCampo.length ? '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">Tudo desta gravação já está marcado como gravado.</div></div>' : ''}
         ${jaResolvidos ? '<div class="meta" style="margin-top:12px;padding:9px 11px;background:var(--deep);border-radius:8px;">✅ <b>' + jaResolvidos + '</b> conteúdo(s) deste mês já estão gravados, agendados ou publicados — não entram na conta de hoje.</div>' : ''}
         ${resto.length ? '<div class="metaSecTit" style="margin-top:14px;">' + (grav ? 'O resto do mês (não é de hoje)' : 'O mês inteiro') + '</div>' + resto.map(i=>cartao(i,false)).join('') : ''}
         ${!itens.length ? '<div class="card"><div class="empty">Nada montado neste mês ainda.</div></div>' : ''}`;
@@ -37728,7 +37814,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       return `<div class="card" id="filaCalendariosRevisao" style="border:2px solid var(--yellow2);">
         <h2>🗓️ ${somenteLeitura ? 'Calendários esperando revisão da Amanda' : 'Calendários esperando sua revisão'}</h2>
         ${__erroCalendariosCompartilhado ? '<div style="background:var(--redbg);border-left:3px solid var(--red);padding:9px 11px;border-radius:7px;margin-bottom:10px;font-size:12px;"><b>⚠️ Mostrando o último retrato disponível.</b> O Firebase não confirmou se houve mudança depois dele.</div>' : ''}
-        <div class="desc">O cliente <b>não vê</b> nenhum destes ainda. ${somenteLeitura ? 'Aqui é acompanhamento: a decisão continua exclusivamente no painel da Amanda.' : 'Confira o mês e escolha entre publicar ou pedir ajuste.'}</div>
+        <div class="desc">Calendário novo ainda não aparece; numa correção, o cliente continua vendo somente a última versão publicada. ${somenteLeitura ? 'Aqui é acompanhamento: a decisão continua exclusivamente com a Amanda.' : 'Confira o mês e escolha entre publicar ou pedir ajuste.'}</div>
         ${somenteLeitura ? '' : `<div class="desc" style="margin-top:6px;line-height:1.7;">
           <b style="color:var(--green);">✅ Aprovar e publicar</b> — aparece imediatamente no Portal; os outros meses publicados permanecem isolados e disponíveis.<br>
           <b style="color:var(--red);">↩️ Pedir ajuste</b> — volta pra Gabi com o motivo escrito.
@@ -37737,14 +37823,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
           <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">${esc(c.mes||'sem mês')}</span></div>
           <div class="meta" style="margin-top:4px;">${c.itens} conteúdo(s) · ${c.refs} com referência · enviado por ${esc(c.por)}${c.em ? ' em ' + new Date(c.em).toLocaleDateString('pt-BR') : ''}</div>
           <div class="btnrow" style="margin-top:10px;">
-            <button type="button" id="${idBotaoAnaliseCalendarioRevisao(c.slug,c.mesKey||'')}" class="btn secondary" style="font-size:11.5px;" aria-controls="${idAnaliseCalendarioRevisao(c.slug,c.mesKey||'')}" aria-expanded="false" onclick="return abrirAnaliseCalendarioRevisao('${escJs(c.slug)}','${escJs(c.mesKey||'')}',this)">📝 Analisar roteiro e comentar</button>
+            <button type="button" id="${idBotaoAnaliseCalendarioRevisao(c.slug,c.mesKey||'')}" class="btn green" style="font-size:12px;" aria-controls="${idAnaliseCalendarioRevisao(c.slug,c.mesKey||'')}" aria-expanded="false" onclick="return abrirAnaliseCalendarioRevisao('${escJs(c.slug)}','${escJs(c.mesKey||'')}',this)">✅ Revisar e enviar ao cliente</button>
           </div>
           <div id="${idAnaliseCalendarioRevisao(c.slug,c.mesKey||'')}" role="region" aria-live="polite" style="margin-top:10px;"></div>
-          <div class="btnrow" style="margin-top:10px;">
-            <button type="button" class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${escJs(c.slug)}','${escJs(c.nome)}')">↗ Abrir calendário completo</button>
-            ${somenteLeitura ? '' : `<button type="button" class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${escJs(c.slug)}','${escJs(c.mesKey||'')}')">↩️ Pedir ajuste</button>
-            <button type="button" class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${escJs(c.slug)}','${escJs(c.mesKey||'')}',this)">✅ Aprovar e publicar</button>`}
-          </div>
         </div>`).join('')}
       </div>`;
     }catch(e){
@@ -37776,7 +37857,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     botao.textContent = estado === 'carregando' ? '⏳ Abrindo análise…' :
       estado === 'aberto' ? '✕ Fechar análise do calendário' :
       estado === 'erro' ? '↻ Tentar abrir análise novamente' :
-      '📝 Analisar roteiro e comentar';
+      '✅ Revisar e enviar ao cliente';
   }
 
   function revelarAnaliseCalendarioRevisao(alvo){
@@ -37838,13 +37919,18 @@ Observações do cliente: ${l.observacoes||'—'}`;
       atualizarBotaoAnaliseCalendarioRevisao(botao,'aberto');
       alvo.innerHTML = `<div class="card" style="margin:0;background:var(--deep);border-color:var(--yellow);">
         <div style="font-weight:900;color:var(--yellow);">🔎 Revisão completa — ${esc(cal.client||slug)}</div>
-        <div class="meta" style="margin-top:5px;">Abra cada conteúdo para ler o roteiro inteiro. Aprovar e devolver continuam no mesmo cartão acima.</div>
+        <div class="meta" style="margin-top:5px;">Abra cada conteúdo para ler o roteiro inteiro e conclua a decisão no final deste painel.</div>
         ${itens.map((it,idx)=>htmlItemAnaliseCalendario(it,idx+1)).join('')}
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
           <div class="meta" style="font-weight:900;color:var(--yellow);">COMENTÁRIO DA REVISÃO</div>
           ${usuarioAtual==='Amanda'?`<textarea id="comentarioCal_${idAnaliseCalendarioRevisao(slug,mes)}" placeholder="Escreva uma observação geral para este mês" style="margin-top:7px;min-height:74px;"></textarea>
           <button class="btn secondary" style="width:auto;margin-top:7px;" onclick="comentarAnaliseCalendario('${escJs(slug)}','${escJs(mes)}',this)">Salvar comentário sem alterar os conteúdos</button>`:'<div class="meta" style="margin-top:6px;">Somente Amanda comenta nesta etapa.</div>'}
           <div style="margin-top:10px;">${comentarios.length?comentarios.map(c=>`<div class="item" style="margin-top:6px;"><div class="desc" style="white-space:pre-wrap;">${esc(c.text||'')}</div><div class="meta" style="margin-top:4px;">${esc(c.por||(c.porCliente?'Cliente':'Equipe'))}${c.date?' · '+new Date(c.date).toLocaleString('pt-BR'):''}</div></div>`).join(''):'<div class="meta">Nenhum comentário registrado neste mês.</div>'}</div>
+        </div>
+        <div class="btnrow" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
+          <button type="button" class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${escJs(slug)}','${escJs(cal.client||slug)}')">↗ Abrir calendário completo</button>
+          ${usuarioAtual==='Amanda'?`<button type="button" class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${escJs(slug)}','${escJs(mes)}')">↩️ Pedir ajuste à Gabi</button>
+          <button type="button" class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${escJs(slug)}','${escJs(mes)}',this)">✅ Aprovar e publicar ao cliente</button>`:''}
         </div>
       </div>`;
       revelarAnaliseCalendarioRevisao(alvo);
@@ -38035,14 +38121,29 @@ Observações do cliente: ${l.observacoes||'—'}`;
   /* Publicar um mês é uma única decisão da Amanda e não altera nenhum outro
      mês. O arquivo é calculado isoladamente por competência, 30 dias depois
      do fim do mês, somente de outubro de 2026 em diante. */
-  function mapaAprovacaoAposPublicar(mapaAtual, alvo, pessoa, agora, mesesAtivosAntes){
+  function itemRetratoLiberadoV115(item,mes){
+    const campos=['itemId','day','name','desc','legenda','ref','obs','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
+    const retrato={mes:String(item?.mes||mes||'')};
+    campos.forEach(campo=>{if(item&&item[campo]!==undefined) retrato[campo]=JSON.parse(JSON.stringify(item[campo]));});
+    return retrato;
+  }
+  function criarRetratoLiberadoV115(calendario,alvo,pessoa,agora){
+    const itens=itensDoMesCalendario(calendario||{},alvo).filter(i=>i&&!i.excluido)
+      .map(i=>itemRetratoLiberadoV115(i,alvo));
+    return {schemaVersion:1,mes:alvo,publicadoPor:String(pessoa||'Amanda'),
+      publicadoEm:String(agora||new Date().toISOString()),items:itens};
+  }
+  window.criarRetratoLiberadoV115=criarRetratoLiberadoV115;
+
+  function mapaAprovacaoAposPublicar(mapaAtual, alvo, pessoa, agora, mesesAtivosAntes,retratoLiberadoV115){
     const mapa={...(mapaAtual||{})};
     const operador=String(pessoa||'Amanda');
     const instante=String(agora||new Date().toISOString());
     mapa[alvo]={...(mapa[alvo]||{}),status:'liberado',mes:alvo,por:operador,
       aprovadoPor:operador,aprovadoEm:instante,enviadoPor:operador,enviadoEm:instante,
       em:instante,motivoAjuste:'',arquivadoPor:'',arquivadoEm:'',substituidoPor:'',
-      reabertoAte:'',reabertoPor:'',reabertoEm:'',arquivamentoManual:false};
+      reabertoAte:'',reabertoPor:'',reabertoEm:'',arquivamentoManual:false,
+      retratoLiberadoV115:retratoLiberadoV115||mapa[alvo]?.retratoLiberadoV115||null};
     return mapa;
   }
   window.mapaAprovacaoAposPublicar=mapaAprovacaoAposPublicar;
@@ -38177,7 +38278,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
       internos.sort((a,b)=>String(b.mes).localeCompare(String(a.mes))||a.nome.localeCompare(b.nome,'pt-BR'));
       const rotMes = m => { const n=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
         if(!m) return 'mês único'; const [a,mm]=m.split('-'); return (n[Number(mm)-1]||'')+' '+a; };
-      box.innerHTML =
+      const filaRevisaoDireta=usuarioAtual==='Amanda'?await htmlCalendariosParaRevisar({somenteLeitura:false}):'';
+      box.innerHTML = filaRevisaoDireta+
         (esperando.length ? `<div class="card" style="border-color:var(--yellow2);">
           <div class="desc"><b>${esperando.length}</b> esperando sua aprovação. Ao aprovar no painel, o novo mês aparece imediatamente ao cliente.</div>
         </div>` : '') +
@@ -38288,7 +38390,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
             throw new Error('O mês mudou para '+(estado||'rascunho')+' antes da publicação. Atualize a fila; nada foi publicado.');
           }
           const agora=new Date().toISOString();
-          const mapa=mapaAprovacaoAposPublicar(cal.aprovacaoMeses,a.mes,usuarioAtual||'Amanda',agora,[]);
+          const retrato=criarRetratoLiberadoV115(cal,a.mes,usuarioAtual||'Amanda',agora);
+          const mapa=mapaAprovacaoAposPublicar(cal.aprovacaoMeses,a.mes,usuarioAtual||'Amanda',agora,[],retrato);
           const patch={aprovacaoMeses:mapa,updatedAt:agora};
           /* Se é o mês legado, o campo antigo acompanha — senão as telas
              que ainda leem `aprovacaoInterna` divergiriam. */
@@ -38387,7 +38490,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       await criarDemandaSegura({
         titulo: '↩️ Ajustar o calendário de ' + nome,
         descricao: (usuarioAtual||'A gerência') + ' pediu ajuste antes de liberar pro cliente:\n\n"' + String(motivo).trim() + '"\n\n'
-          + 'Corrige no calendário e clica de novo em "Enviar pra aprovação interna". O cliente continua sem ver nada até a liberação.',
+          + 'Corrige no calendário e clica em "Enviar para Amanda revisar e publicar". Se este mês já tinha sido publicado, o cliente continua vendo a versão anterior até a nova liberação.',
         destinatario: 'Gabrielle', origem: 'sistema', clienteNome: nome,
         prazoData: hojeLocal(), prazoHora: '19:00', status:'pendente'
       }, { janelaMinutos: 120 });

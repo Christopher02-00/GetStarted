@@ -25,8 +25,8 @@ function entre(texto,inicio,fim){
 }
 
 verificar(calendario===calendarios,'aliases singular/plural permanecem byte a byte idênticos');
-verificar(calendario.includes('2026-08-25-legenda-editorial-fila-cecilia-v114'),'calendário declara build V114');
-verificar(escritorio.includes('2026-08-25-legenda-editorial-fila-cecilia-v114'),'Escritório declara build V114');
+verificar(calendario.includes('2026-08-25-legenda-editorial-fila-cecilia-v114')||calendario.includes('2026-08-25-continuidade-calendario-gravacao-v115'),'calendário preserva o contrato V114 no build cumulativo');
+verificar(escritorio.includes('2026-08-25-legenda-editorial-fila-cecilia-v114')||escritorio.includes('2026-08-25-continuidade-calendario-gravacao-v115'),'Escritório preserva o contrato V114 no build cumulativo');
 verificar(calendario.includes('Caminho da legenda:'),'Gabi recebe explicação visível do caminho');
 verificar(calendario.includes('confirmarConteudoAntesDoEnvio()'),'ponte só roda depois de o calendário ser confirmado');
 verificar(calendario.includes("legendaOrigem:'calendario_editorial_v114'"),'postagem recebe origem auditável');

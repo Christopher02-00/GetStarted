@@ -817,7 +817,7 @@ else provar('cápsula sem gatilho temporizado direto');
 const build = escritorio.match(/<meta name="gs-build" content="([^"]+)">/)?.[1];
 if (!build) falhar('marcador gs-build ausente');
 else provar(`build: ${build}`);
-if (build !== '2026-08-25-legenda-editorial-fila-cecilia-v114' ||
+if (build !== '2026-08-25-continuidade-calendario-gravacao-v115' ||
     !escritorio.includes('<meta name="gs-parent-patch" content="2026-08-25-pedido-ajuste-calendario-gabi-v113">') ||
     !escritorio.includes('<meta name="gs-v112-patch" content="2026-08-24-roteador-gerencia-papeis-v112">') ||
     !escritorio.includes('<meta name="gs-v111-patch" content="2026-08-24-proposta-portal-protegida-v111">') ||
@@ -832,8 +832,8 @@ if (build !== '2026-08-25-legenda-editorial-fila-cecilia-v114' ||
     !escritorio.includes('<meta name="gs-seventh-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102">') ||
     !escritorio.includes('<meta name="gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101">') ||
     !escritorio.includes('<meta name="gs-base-patch" content="2026-08-19-rodrigo-so-edicao-v91-1">')) {
-  falhar(`cadeia de build V114 inesperada: ${build || 'ausente'}`);
-} else provar('V114 preserva V113/V112/V111/V110/V109/V108/V107/V106/V105/V104/V103/V102/V101 e mantém calendários, proposta protegida, privacidade e financeiro separados');
+  falhar(`cadeia de build V115 inesperada: ${build || 'ausente'}`);
+} else provar('V115 preserva V114/V113/V112/V111/V110/V109/V108/V107/V106/V105/V104/V103/V102/V101 e mantém calendários, proposta protegida, privacidade e financeiro separados');
 
 const pdfPlanos=fs.readFileSync(path.join(raiz,'Planos.pdf'));
 const paginasPdf=(pdfPlanos.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
@@ -879,10 +879,12 @@ const mesEditorV68 = ler('calendario.html').slice(
   ler('calendario.html').indexOf('/* ===== A ARMADILHA')
 );
 const portalV111Identificado =
-  portal.includes('<meta name="gs-build" content="2026-08-24-proposta-portal-protegida-v111">') &&
+  (portal.includes('<meta name="gs-build" content="2026-08-24-proposta-portal-protegida-v111">') ||
+   portal.includes('<meta name="gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115">')) &&
   portal.includes('<meta name="gs-parent-patch" content="2026-08-24-privacidade-sessao-papeis-v110">') &&
-  portal.includes('<meta name="gs-patch" content="2026-08-24-proposta-portal-protegida-v111">');
-if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-25-legenda-editorial-fila-cecilia-v114">') ||
+  (portal.includes('<meta name="gs-patch" content="2026-08-24-proposta-portal-protegida-v111">') ||
+   portal.includes('<meta name="gs-patch" content="2026-08-25-continuidade-calendario-gravacao-v115">'));
+if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115">') ||
     !ler('calendario.html').includes('<meta name="gs-parent-patch" content="2026-08-25-pedido-ajuste-calendario-gabi-v113">') ||
     !ler('calendario.html').includes('<meta name="gs-security-parent" content="2026-08-21-operacao-perfis-chris-v96">') ||
     !ler('calendario.html').includes('<meta name="gs-v91-patch" content="2026-08-19-calendarios-stories-v91">') ||
@@ -891,7 +893,8 @@ if (!ler('calendario.html').includes('<meta name="gs-build" content="2026-08-25-
     competenciaCalendariosV67.indexOf('if(mesDoDocumento) return mesDoDocumento') > competenciaCalendariosV67.indexOf('const ap =') ||
     !mesEditorV68.includes('const mesDoDocumento = mesDoTexto(cal && cal.month)') ||
     !portal.includes('function mesDoItemPortal(item)') ||
-    !portal.includes('todosItens.map((item,indiceBanco)=>({...item,__indiceBanco:indiceBanco}))') ||
+    !(portal.includes('todosItens.map((item,indiceBanco)=>({...item,__indiceBanco:indiceBanco}))') ||
+      portal.includes('fonteItensV115.map((item,indiceBanco)=>({...item,__indiceBanco:retratoEscolhidoV115?-1:indiceBanco}))')) ||
     !portal.includes('.filter(i => !usaMeses || mesDoItemPortal(i) ===') ||
     !portal.includes('mesPedidoValido&&!mesesLib.includes(mesPedidoValido)') ||
     !portal.includes('O Portal não trocou silenciosamente para outro mês')) {

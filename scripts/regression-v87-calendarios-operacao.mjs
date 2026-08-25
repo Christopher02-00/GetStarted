@@ -50,7 +50,8 @@ async function testarCarteiraEditorialReal(){
 await testarCarteiraEditorialReal();
 
 ok(
-  escritorio.includes('gs-build" content="2026-08-24-roteador-gerencia-papeis-v112"') &&
+  (escritorio.includes('gs-build" content="2026-08-24-roteador-gerencia-papeis-v112"') ||
+   escritorio.includes('gs-v112-patch" content="2026-08-24-roteador-gerencia-papeis-v112"')) &&
   escritorio.includes('gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110"') &&
   escritorio.includes('gs-v109-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
   escritorio.includes('gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108"') &&
@@ -95,7 +96,11 @@ contem(calendario, "[alvoMes]:{status:'rascunho',mes:alvoMes", 'mês novo não p
 contem(calendario, 'const mesUnicoInequivoco=mesesExplicitos.length===1&&mesesExplicitos[0]===mes;', 'primeiro mês já salvo por versão intermediária recupera o estado global sem virar legado');
 contem(calendario, "mesSolicitado<'2026-07'", 'link direto anterior a julho é barrado com mensagem própria');
 contem(calendario, 'pendingWrite=gravacoesCalendarioNaFila>0;\n    pintarEstado();', 'indicador visual é repintado quando a fila de gravação termina');
-contem(calendario, "window.__checarLiberacaoCalendarioCliente?.();\n    if(window.__modoCal==='cliente'&&estadoAprovacao()!=='liberado')", 'snapshot confirmado remove aviso provisório antes de renderizar mês liberado');
+ok(
+  calendario.includes("window.__checarLiberacaoCalendarioCliente?.();\n    if(window.__modoCal==='cliente'&&estadoAprovacao()!=='liberado')") ||
+  calendario.includes("window.__checarLiberacaoCalendarioCliente?.();\n    if(window.__modoCal==='cliente'&&!mesDisponivelClienteV115(mesVisivel))"),
+  'snapshot confirmado remove aviso provisório antes de renderizar mês liberado ou em ajuste visível'
+);
 contem(calendario, "window.__modoCal === 'cliente'", 'separação entre equipe e cliente preservada');
 contem(calendario, "const lib = mesesLiberados();", 'cliente escolhe somente meses liberados');
 

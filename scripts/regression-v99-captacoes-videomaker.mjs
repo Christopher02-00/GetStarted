@@ -578,7 +578,9 @@ exigir(retornoErroAntigo === false && elementosSugestao.agQtdPlanejada.value ===
   'erro obsoleto não substitui a resposta nova por indisponibilidade');
 
 /* Invariantes de entrega e segurança. */
-exigir(escritorio.includes('gs-build" content="2026-08-24-roteador-gerencia-papeis-v112"') &&
+exigir((escritorio.includes('gs-build" content="2026-08-24-roteador-gerencia-papeis-v112"') ||
+  (escritorio.includes('gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115"') &&
+   escritorio.includes('gs-v112-patch" content="2026-08-24-roteador-gerencia-papeis-v112"'))) &&
   escritorio.includes('gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110"') &&
   escritorio.includes('gs-v109-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
   escritorio.includes('gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108"') &&
@@ -589,13 +591,15 @@ exigir(escritorio.includes('gs-build" content="2026-08-24-roteador-gerencia-pape
   escritorio.includes('gs-sixth-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103"') &&
   escritorio.includes('gs-seventh-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102"') &&
   escritorio.includes('gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101"'),
-  'build V112 preserva V110, V109, V108, V107, V106, V105, V104, V103, V102 e V101 na cadeia direta');
+  'build cumulativo preserva V112, V110, V109, V108, V107, V106, V105, V104, V103, V102 e V101 na cadeia direta');
 exigir(regras.includes('match /calendarios_conferencias/{calendarId}') &&
   regras.includes('match /calendarios_encerramentos/{calendarId}') &&
   regras.includes('allow delete: if false;'),
   'V101 amplia somente a projeção de conclusão e preserva delete físico bloqueado');
 exigir(calendario === calendarios, 'calendario.html e calendarios.html permanecem byte a byte idênticos');
-exigir(calendario.includes('gs-build" content="2026-08-25-pedido-ajuste-calendario-gabi-v113"') &&
+exigir((calendario.includes('gs-build" content="2026-08-25-pedido-ajuste-calendario-gabi-v113"') ||
+  (calendario.includes('gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115"') &&
+   calendario.includes('gs-parent-patch" content="2026-08-25-pedido-ajuste-calendario-gabi-v113"'))) &&
   calendario.includes('const idsServidor=new Set') && calendario.includes('itemIdMigracaoVersao'),
   'par de calendários V113 preserva a trava de identidade V102 sem divergência entre aliases');
 

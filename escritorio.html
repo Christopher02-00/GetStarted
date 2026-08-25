@@ -4,8 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-24-roteador-gerencia-papeis-v112">
-  <meta name="gs-parent-patch" content="2026-08-24-proposta-portal-protegida-v111">
+  <meta name="gs-build" content="2026-08-25-legenda-editorial-fila-cecilia-v114">
+  <meta name="gs-parent-patch" content="2026-08-25-pedido-ajuste-calendario-gabi-v113">
+  <meta name="gs-v112-patch" content="2026-08-24-roteador-gerencia-papeis-v112">
+  <meta name="gs-v111-patch" content="2026-08-24-proposta-portal-protegida-v111">
   <meta name="gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110">
   <meta name="gs-v109-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109">
   <meta name="gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108">
@@ -5866,6 +5868,38 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     return escolherPostagemCanonicaPorVideo(snap.docs.map(d=>({id:d.id,...d.data()})),postagemIdPreferida);
   }
 
+  /* V114 — legenda escrita no calendário não é mais uma segunda rotina.
+     A ponte usa somente o vínculo congelado pela gravação: itemId nos
+     registros modernos; índice apenas quando o vídeo é realmente legado.
+     Título, dia e nome parecido nunca identificam conteúdo. */
+  async function obterLegendaEditorialExataV114(video){
+    const itemId=String(video?.calendarItemId||'').trim();
+    const itemIdx=Number.isInteger(video?.calendarItemIdx)?video.calendarItemIdx:null;
+    const slug=String(video?.calendarClienteSlug||video?.cliente||'').trim();
+    if(!slug||(!itemId&&itemIdx===null)) return {estado:'sem_vinculo'};
+    try{
+      const calSnap=await getDoc(doc(db,'calendarios',slug));
+      if(!calSnap.exists()) return {estado:'calendario_ausente'};
+      const itens=calSnap.data().items||[];
+      let candidatos=[];
+      if(itemId) candidatos=itens.map((item,idx)=>({item,idx})).filter(x=>String(x.item?.itemId||'').trim()===itemId);
+      else if(itemIdx!==null&&itens[itemIdx]) candidatos=[{item:itens[itemIdx],idx:itemIdx}];
+      if(candidatos.length!==1||candidatos[0].item?.excluido===true){
+        return {estado:candidatos.length>1?'ambiguo':'item_ausente'};
+      }
+      const {item,idx}=candidatos[0];
+      const texto=String(item.legenda||'').trim();
+      if(!texto) return {estado:'sem_legenda',itemId:String(item.itemId||''),itemIdx:idx};
+      return {estado:'pronta',texto,itemId:String(item.itemId||''),itemIdx:idx,slug,
+        por:String(item.legendaAtualizadaPor||'Calendário editorial — autoria legada não registrada'),
+        em:String(item.legendaAtualizadaEm||'')};
+    }catch(e){
+      console.error('V114: não foi possível confirmar a legenda editorial:',e);
+      return {estado:'indisponivel',erro:e};
+    }
+  }
+  window.obterLegendaEditorialExataV114=obterLegendaEditorialExataV114;
+
   /* ===== NÚCLEO DA APROVAÇÃO DO CLIENTE (Melhoria 1) =====
      Usado por: clique manual (Chris/Amanda), modo automático (na aprovação
      interna), modo tácita (motor, sem objeção em X horas úteis), e
@@ -5898,16 +5932,23 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       return 'finalizado';
     }
 
+    const legendaEditorial=await obterLegendaEditorialExataV114(v);
+    const legendaPronta=legendaEditorial.estado==='pronta';
     const existente=await localizarPostagemExistenteDoVideo(videoId,v.postagemId||'');
     if(existente){
+      const avancarLegenda=legendaPronta&&existente.status==='aguardando_legenda';
       await updateDoc(doc(db,'postagens',existente.id),{
         calendarItemId:v.calendarItemId||null,
         calendarItemIdx:Number.isInteger(v.calendarItemIdx)?v.calendarItemIdx:null,
         calendarClienteSlug:v.calendarClienteSlug||null,
-        vinculoSessao:String(v.vinculoSessao||'')
+        vinculoSessao:String(v.vinculoSessao||''),
+        ...(avancarLegenda?{legenda:legendaEditorial.texto,legendaPor:legendaEditorial.por,
+          legendaEm:legendaEditorial.em,status:'aguardando_agendamento',
+          legendaOrigem:'calendario_editorial_v114'}:{})
       });
       await updateDoc(videoRef,{status:'aprovado',clienteAprovou:true,clienteAprovouEm:new Date().toISOString(),
         clienteAprovouPor:confirmadoPor,postagemId:existente.id});
+      if(avancarLegenda) criarDemandaAgendamentoAutomatica(existente.id).catch(e=>console.error('V114: fila da Cecília avançou, mas o log auxiliar falhou:',e));
       return existente.id;
     }
 
@@ -5918,19 +5959,24 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(postagemAtual.exists() && postagemAtual.data().videoId!==videoId) throw new Error('Conflito de identidade da postagem.');
       if(!postagemAtual.exists()) tx.set(postagemRef,{
         videoId,cliente:v.cliente,clienteNome:v.clienteNome,titulo:v.titulo,
-        linkVideo:v.linkFinalizado,legenda:'',legendaPor:'',legendaEm:'',
+        linkVideo:v.linkFinalizado,legenda:legendaPronta?legendaEditorial.texto:'',
+        legendaPor:legendaPronta?legendaEditorial.por:'',legendaEm:legendaPronta?legendaEditorial.em:'',
+        legendaOrigem:legendaPronta?'calendario_editorial_v114':'',
         calendarItemIdx:Number.isInteger(v.calendarItemIdx)?v.calendarItemIdx:null,
         calendarItemId:v.calendarItemId||null,calendarClienteSlug:v.calendarClienteSlug||null,
         vinculoSessao:String(v.vinculoSessao||''),
         dataAgendada:'',horaAgendada:'',agendadoPor:'',agendadoEm:'',
         aprovadoPor:v.aprovadoPor,aprovadoEm:v.aprovadoInternoEm,
-        status:'aguardando_legenda',demandaLegendaCriada:true,criadoEm:serverTimestamp()
+        status:legendaPronta?'aguardando_agendamento':'aguardando_legenda',demandaLegendaCriada:true,criadoEm:serverTimestamp()
       });
       tx.update(videoRef,{status:'aprovado',clienteAprovou:true,clienteAprovouEm:new Date().toISOString(),
         clienteAprovouPor:confirmadoPor,postagemId:postagemRef.id});
     });
     const reciboPostagem=await getDoc(postagemRef);
     if(!reciboPostagem.exists()||reciboPostagem.data().videoId!==videoId) throw new Error('A postagem não pôde ser confirmada após a aprovação.');
+    if(legendaPronta&&reciboPostagem.data().status==='aguardando_agendamento'){
+      criarDemandaAgendamentoAutomatica(postagemRef.id).catch(e=>console.error('V114: fila da Cecília avançou, mas o log auxiliar falhou:',e));
+    }
     registrarHistorico('videos_producao',videoId,'Cliente confirmou aprovação — liberado pra postagem','Confirmado por: '+confirmadoPor);
 
     /* ===== A LEGENDA DEIXOU DE VIRAR DEMANDA — 29/07/2026 ===========
@@ -11096,14 +11142,28 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   async function renderAgendarPostagens(){
     const cont = document.getElementById('postagensConteudo');
-    const [postSnap, agSnap] = await Promise.all([
-      /* Cecília só precisa do que aguarda agendamento e do que já foi
-         agendado para confirmar. A consulta fica limitada a esses estados. */
-      getDocs(query(collection(db,'postagens'), where('status','in',['aguardando_agendamento','agendado']))),
-      /* Para o cartão "gravações hoje", nenhum outro dia precisa chegar ao
-         navegador dela. */
-      getDocs(query(collection(db,'agendamentos'), where('data','==',hojeLocal())))
-    ]);
+    if(!cont) return;
+    cont.innerHTML='<div class="card"><div class="desc">Confirmando a fila de agendamento…</div></div>';
+    let postSnap,agSnap;
+    try{
+      [postSnap,agSnap] = await Promise.all([
+        /* Cecília só precisa do que aguarda agendamento e do que já foi
+           agendado para confirmar. A consulta fica limitada a esses estados. */
+        getDocs(query(collection(db,'postagens'), where('status','in',['aguardando_agendamento','agendado']))),
+        /* Para o cartão "gravações hoje", nenhum outro dia precisa chegar ao
+           navegador dela. */
+        getDocs(query(collection(db,'agendamentos'), where('data','==',hojeLocal())))
+      ]);
+    }catch(e){
+      console.error('V114: falha ao confirmar a fila da Cecília:',e);
+      cont.innerHTML=`<div class="card" style="border:2px solid var(--red);">
+        <h2>Fila da Cecília indisponível</h2>
+        <div class="desc">O banco não confirmou as postagens agora. <b>Isso não significa que não existam legendas para agendar.</b> Nenhum item foi movido ou tratado como vazio.</div>
+        <div class="meta" style="margin-top:8px;">Código: ${esc(String(e?.code||e?.message||'erro desconhecido'))}</div>
+        <button class="btn secondary" style="width:auto;margin-top:10px;" onclick="renderAgendarPostagens()">Tentar novamente</button>
+      </div>`;
+      return;
+    }
     const pendentes = []; const agendadasParaConfirmar = [];
     postSnap.forEach(d => {
       const p = d.data();
@@ -17649,8 +17709,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     { categoria:'filmmaker', chaves:['gravacao cancelada remarcar'], pergunta:'Preciso cancelar ou remarcar uma gravação, como faço?', resposta:'Na sua Agenda, dentro de Agendamento, tem opção de cancelar ou reagendar diretamente no card da gravação.' },
 
     // ===== EXPANSAO 2 — recursos mais novos e mais variacoes naturais =====
-    { categoria:'amanda', chaves:['legenda calendario gabi','legenda antes video aprovado'], pergunta:'Como a legenda pode estar pronta antes do vídeo ser aprovado?', resposta:'A Gabi agora escreve a legenda direto no calendário editorial, quando planeja o conteúdo do mês — antes mesmo do vídeo existir. Isso fica separado do processo de aprovação do vídeo. Quando o vídeo for aprovado depois, a legenda já está pronta esperando.' },
-    { categoria:'cecilia', chaves:['onde vejo legenda pronta cliente','legendas calendario'], pergunta:'Onde vejo as legendas que a Gabi já escreveu pra um cliente?', resposta:'Postagens → aba "Legendas do Calendário (por cliente)". Escolhe o cliente e vê tudo organizado por dia, com botão de copiar rápido.' },
+    { categoria:'amanda', chaves:['legenda calendario gabi','legenda antes video aprovado'], pergunta:'Como a legenda pode estar pronta antes do vídeo ser aprovado?', resposta:'A Gabi pode escrever a legenda direto no item do calendário. Se a postagem aprovada do mesmo item já existir, Salvar confirma o texto na fila da Cecília. Se ainda não existir, o texto fica confirmado no calendário e entra automaticamente na fila quando o vídeo daquele mesmo ID for aprovado.' },
+    { categoria:'cecilia', chaves:['onde vejo legenda pronta cliente','legendas calendario'], pergunta:'Onde vejo as legendas que a Gabi já escreveu pra um cliente?', resposta:'Para agendar, use Postagens → Agendar Postagem: ali aparecem somente postagens aprovadas e com legenda pronta. A consulta Legendas do Calendário mostra o planejamento por cliente, mas não significa que o vídeo já passou pela aprovação.' },
     { categoria:'amanda', chaves:['pagamento extra editar','uber nao aparece'], pergunta:'Não consigo editar nada em Pagamentos Extras, o que faço?', resposta:'Isso foi corrigido — agora você tem um formulário completo ali pra adicionar pagamento manualmente, marcar como pago, ou excluir. Se ainda aparecer vazio sem formulário, avisa que pode ter algum problema de carregamento.' },
     { categoria:'geral', chaves:['anotacao pessoal excluir','apagar minha anotacao'], pergunta:'Como excluo uma anotação pessoal que criei?', resposta:'Minhas Demandas → aba Minhas Anotações. Cada anotação tem um botão "Excluir" embaixo dela.' },
     { categoria:'amanda', chaves:['rfv cliente sumido','quem nao renova'], pergunta:'Como sei quais clientes estão sumidos e não renovam?', resposta:'Gerência → "Quem está em risco de sair". A lista vem ordenada do mais tempo sem renovar pro mais recente, e destaca em vermelho quem passou de 60 dias.' },
@@ -22004,7 +22064,7 @@ window.setGerenciaSub = function(qual, el){
       let n = 0;
       snap.forEach(d => { if(!d.data().excluido) n++; });
       return n;
-    }catch(e){ console.error('Falha ao contar a fila:', e); return 0; }
+    }catch(e){ console.error('Falha ao contar a fila:', e); return null; }
   }
   async function contarVideosSemEditor(){
     try{
@@ -22840,6 +22900,11 @@ window.setGerenciaSub = function(qual, el){
                     : contarFila(a.contador);
         conta.then(n => {
           if(!b.isConnected) return;
+          if(n===null){
+            b.textContent=a.rot+' (! indisponível)';
+            b.style.background='var(--red)';b.style.color='#fff';b.style.boxShadow='none';
+            return;
+          }
           /* "(13)" ao lado de "Escrever legendas" se lê sozinho: são 13
              esperando você. "(21)" ao lado de "Referências" se leria como
              21 referências, que é o contrário do que o número diz — ali

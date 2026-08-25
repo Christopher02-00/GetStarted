@@ -1,13 +1,14 @@
 rules_version = '2';
-    // Get Started — regras V103 (21/08/2026)
+    // Get Started — regras cumulativas V113 (25/08/2026)
 // Login da equipe por Google verificado; Portal/formulários continuam anônimos e isolados.
     // IMPORTANTE: publicar junto com calendario.html, calendarios.html e portal-cliente.html V85.
 service cloud.firestore {
   match /databases/{database}/documents {
     function logado() { return request.auth != null; }
     function temEmailVerificado() {
-      return logado() && request.auth.token.email is string &&
-        request.auth.token.email_verified == true;
+      return logado() && request.auth.token.get('email', '') is string &&
+        request.auth.token.get('email', '') != '' &&
+        request.auth.token.get('email_verified', false) == true;
     }
     function emailDaEquipeSemente() {
       return temEmailVerificado() && request.auth.token.email in [
@@ -1502,6 +1503,71 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // V113 — o pedido de alteração do cliente não é uma edição comum.
+    // A competência precisa estar explicitamente liberada e volta para a Gabi
+    // no mesmo commit que cria um único aviso determinístico. Conteúdo, título
+    // e comentários permanecem byte a byte iguais nesta transição.
+    function pedidoAjusteCalendarioClienteValidoV113(slug) {
+      let pedido = request.resource.data.get('pedidoAjusteCliente', {});
+      let mapaAntes = resource.data.get('aprovacaoMeses', {});
+      let mapaDepois = request.resource.data.get('aprovacaoMeses', {});
+      let marcaAntes = mapaAntes.get(pedido.get('competencia', ''), {});
+      let marcaDepois = mapaDepois.get(pedido.get('competencia', ''), {});
+      let item = resource.data.get('items', [])[pedido.get('itemIdx', -1)];
+      let aviso = getAfter(/databases/$(database)/documents/avisos_do_cliente/$(pedido.get('operationId', ''))).data;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'aprovacaoMeses','pedidoAjusteCliente','updatedAt'
+        ]) && pedido.keys().hasOnly([
+          'schemaVersion','operationId','calendarId','competencia','itemId',
+          'itemIdx','itemNome','texto','por','autorUid','criadoEm','registradoEm'
+        ]) && pedido.schemaVersion == 1 && pedido.calendarId == slug &&
+        pedido.competencia.matches('[0-9]{4}-(0[1-9]|1[0-2])') &&
+        pedido.operationId.matches('cal_ajuste_v113_[a-f0-9]{48}') &&
+        pedido.itemIdx is int && pedido.itemIdx >= 0 &&
+        pedido.itemIdx < resource.data.get('items', []).size() &&
+        pedido.itemId.size() <= 160 && pedido.itemNome.size() >= 1 && pedido.itemNome.size() <= 300 &&
+        pedido.texto.size() >= 1 && pedido.texto.size() <= 2000 &&
+        pedido.por == 'Cliente' && pedido.autorUid == request.auth.uid &&
+        pedido.criadoEm.size() <= 40 && pedido.registradoEm == request.time &&
+        item.get('itemId', '') == pedido.itemId &&
+        (pedido.itemId != '' || item.get('name', item.get('nome', '')) == pedido.itemNome) &&
+        (item.get('mes', '') == pedido.competencia ||
+          (item.get('mes', '') == '' && resource.data.get('mesLegado', '') == pedido.competencia)) &&
+        marcaAntes.get('status', '') == 'liberado' &&
+        mapaDepois.diff(mapaAntes).affectedKeys().hasOnly([pedido.competencia]) &&
+        marcaDepois.diff(marcaAntes).affectedKeys().hasOnly([
+          'status','mes','por','em','motivoAjuste','pedidoAjusteOperationId',
+          'pedidoAjusteItemId','pedidoAjusteItemIdx','liberadoEmAnterior','liberadoPorAnterior'
+        ]) && marcaDepois.status == 'ajuste_interno' && marcaDepois.mes == pedido.competencia &&
+        marcaDepois.por == 'Cliente' && marcaDepois.em == pedido.criadoEm &&
+        marcaDepois.motivoAjuste == pedido.texto &&
+        marcaDepois.pedidoAjusteOperationId == pedido.operationId &&
+        marcaDepois.pedidoAjusteItemId == pedido.itemId &&
+        marcaDepois.pedidoAjusteItemIdx == pedido.itemIdx &&
+        request.resource.data.updatedAt == pedido.criadoEm &&
+        existsAfter(/databases/$(database)/documents/avisos_do_cliente/$(pedido.operationId)) &&
+        aviso.operationId == pedido.operationId && aviso.cliente == slug &&
+        aviso.tipo == 'ajuste_calendario' && aviso.paraQuem == 'Gabrielle' &&
+        aviso.texto == pedido.texto;
+    }
+    function avisoPedidoAjusteClienteValidoV113(docId) {
+      let aviso = request.resource.data;
+      let calendario = getAfter(/databases/$(database)/documents/calendarios/$(aviso.get('cliente', ''))).data;
+      let pedido = calendario.get('pedidoAjusteCliente', {});
+      return aviso.keys().hasOnly([
+          'cliente','clienteNome','titulo','descricao','texto','itemNome','paraQuem','lido',
+          'viraDemanda','tipo','operationId','competencia','itemId','itemIdx','criadoEm','registradoEm'
+        ]) && docId == aviso.operationId &&
+        pedido.operationId == aviso.operationId && pedido.calendarId == aviso.cliente &&
+        pedido.competencia == aviso.competencia && pedido.itemId == aviso.itemId &&
+        pedido.itemIdx == aviso.itemIdx && pedido.itemNome == aviso.itemNome &&
+        pedido.texto == aviso.texto && aviso.paraQuem == 'Gabrielle' &&
+        aviso.tipo == 'ajuste_calendario' && aviso.viraDemanda == true && aviso.lido == false &&
+        aviso.clienteNome.size() <= 300 && aviso.titulo.size() >= 1 && aviso.titulo.size() <= 500 &&
+        aviso.descricao.size() >= 1 && aviso.descricao.size() <= 5000 &&
+        aviso.criadoEm == pedido.criadoEm && aviso.registradoEm == request.time;
+    }
+
     // Dados compartilhados com o Portal: equipe inteira ou somente o cliente da sessão.
     match /calendarios/{slug} {
       allow get: if ehEquipe() || ((temSessaoCliente() || temSessaoCalendarioEquipe()) && slug == clienteDaSessao());
@@ -1522,8 +1588,11 @@ service cloud.firestore {
             request.resource.data.itemIdMigracaoUltimaOperacao.matches('mig_[A-Za-z0-9_-]{12,156}') &&
             existsAfter(/databases/$(database)/documents/calendarios_itemid_migracoes/$(slug)/operacoes/$(request.resource.data.itemIdMigracaoUltimaOperacao))
           )
-        )) || (temSessaoCalendarioEquipe() && slug == clienteDaSessao()) || (temSessaoCliente() && slug == clienteDaSessao() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['items','comments','updatedAt','aprovacaoMeses','aprovacaoCliente','aprovacaoInterna']));
+        )) || (logado() && request.auth.token.get('email', '') == '' && temSessaoCalendarioEquipe() && slug == clienteDaSessao()) ||
+        (logado() && request.auth.token.get('email', '') == '' && temSessaoCliente() && slug == clienteDaSessao() && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['items','comments','updatedAt']) ||
+          pedidoAjusteCalendarioClienteValidoV113(slug)
+        ));
       allow delete: if false;
     }
 
@@ -1730,8 +1799,14 @@ service cloud.firestore {
     }
     match /avisos_do_cliente/{docId} {
       allow read: if ehEquipe() || ehMeuDoc();
-      allow create: if ehEquipe() || vouCarimbarCerto();
-      allow update: if ehEquipe() || meuDocPermaneceMeu();
+      allow create: if ehEquipe() || (vouCarimbarCerto() && (
+        request.resource.data.get('tipo', '') != 'ajuste_calendario' ||
+        avisoPedidoAjusteClienteValidoV113(docId)
+      ));
+      allow update: if ehEquipe() || (meuDocPermaneceMeu() &&
+        resource.data.get('tipo', '') != 'ajuste_calendario' &&
+        request.resource.data.get('tipo', '') != 'ajuste_calendario' &&
+        !docId.matches('cal_ajuste_v113_[a-f0-9]{48}'));
       allow delete: if false;
     }
     match /info_extras_cliente/{slug} {
@@ -1846,7 +1921,8 @@ service cloud.firestore {
       // A coleção é filtrada antes do gate de e-mail. Além de manter o mesmo
       // contrato, isso evita gastar centenas de expressões em caminhos V102
       // que nunca pertencem a esta lista.
-      allow read, create, update: if colecao in [
+      allow read, create, update: if colecao != 'calendarios' &&
+        colecao != 'avisos_do_cliente' && colecao in [
         'agenda_reunioes','anotacoes_pessoais','ausencias',
         'calendarios_backup','calendarios_backup_20260727',
         'calendarios_enviados','calendarios_versoes',

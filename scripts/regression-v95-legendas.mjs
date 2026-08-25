@@ -22,8 +22,8 @@ exigir(permissaoVideo.includes('amandachamorrosm@gmail.com'),'Amanda perdeu a op
 exigir(!permissaoVideo.includes('gabrielleromaomarketing@gmail.com'),'a correção ampliou indevidamente a permissão geral da Gabi sobre vídeos');
 exigir(!salvar.includes('tx.update(videoRef'),'salvar legenda ainda tenta escrever em videos_producao e será negado para a Gabi');
 exigir(
-  escritorio.includes('gs-build" content="2026-08-24-privacidade-sessao-papeis-v110"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
+  escritorio.includes('gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110"') &&
+  escritorio.includes('gs-v109-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
   escritorio.includes('gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108"') &&
   escritorio.includes('gs-grandparent-patch" content="2026-08-22-estado-conciliacao-joaquin-v107"') &&
   escritorio.includes('gs-great-grandparent-patch" content="2026-08-22-saida-canonica-joaquin-v106"') &&

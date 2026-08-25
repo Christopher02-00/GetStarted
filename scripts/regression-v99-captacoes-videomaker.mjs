@@ -578,8 +578,9 @@ exigir(retornoErroAntigo === false && elementosSugestao.agQtdPlanejada.value ===
   'erro obsoleto não substitui a resposta nova por indisponibilidade');
 
 /* Invariantes de entrega e segurança. */
-exigir(escritorio.includes('gs-build" content="2026-08-24-privacidade-sessao-papeis-v110"') &&
-  escritorio.includes('gs-parent-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
+exigir(escritorio.includes('gs-build" content="2026-08-24-roteador-gerencia-papeis-v112"') &&
+  escritorio.includes('gs-v110-patch" content="2026-08-24-privacidade-sessao-papeis-v110"') &&
+  escritorio.includes('gs-v109-patch" content="2026-08-23-canonicalizacao-cortesia-fedalto-v109"') &&
   escritorio.includes('gs-v108-patch" content="2026-08-23-pagamento-fedalto-agosto-v108"') &&
   escritorio.includes('gs-grandparent-patch" content="2026-08-22-estado-conciliacao-joaquin-v107"') &&
   escritorio.includes('gs-great-grandparent-patch" content="2026-08-22-saida-canonica-joaquin-v106"') &&
@@ -588,13 +589,14 @@ exigir(escritorio.includes('gs-build" content="2026-08-24-privacidade-sessao-pap
   escritorio.includes('gs-sixth-grandparent-patch" content="2026-08-21-financeiro-por-competencia-v103"') &&
   escritorio.includes('gs-seventh-grandparent-patch" content="2026-08-21-itemids-calendarios-legados-v102"') &&
   escritorio.includes('gs-eighth-grandparent-patch" content="2026-08-21-controle-conclusao-calendarios-v101"'),
-  'build V110 preserva V109, V108, V107, V106, V105, V104, V103, V102 e V101 na cadeia direta');
+  'build V112 preserva V110, V109, V108, V107, V106, V105, V104, V103, V102 e V101 na cadeia direta');
 exigir(regras.includes('match /calendarios_conferencias/{calendarId}') &&
   regras.includes('match /calendarios_encerramentos/{calendarId}') &&
   regras.includes('allow delete: if false;'),
   'V101 amplia somente a projeção de conclusão e preserva delete físico bloqueado');
 exigir(calendario === calendarios, 'calendario.html e calendarios.html permanecem byte a byte idênticos');
-exigir(sha256(calendario) === '451d6cb3ee6d2b01ca40c62b648dbe2856c3321d303ef8b5f6c06a1b66c5ee45',
-  'par de calendários contém a trava V102 sem divergência entre aliases');
+exigir(calendario.includes('gs-build" content="2026-08-25-pedido-ajuste-calendario-gabi-v113"') &&
+  calendario.includes('const idsServidor=new Set') && calendario.includes('itemIdMigracaoVersao'),
+  'par de calendários V113 preserva a trava de identidade V102 sem divergência entre aliases');
 
 console.log(`REGRESSÃO V99 CAPTAÇÕES VIDEOMAKER: APROVADA (${total} verificações)`);

@@ -222,6 +222,8 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
 
 **Invariante V112 — navegação segura por papel:** todo roteador valida a autorização e a existência física da view/painel antes de desmontar a tela atual ou invocar renderer. Nó ausente por isolamento de papel é uma negação legítima, nunca motivo para `null.style`/`null.classList`; chamada antiga falha fechada e explica indisponibilidade. Amanda mantém Gerência, Agora, Extras e todas as subabas operacionais autorizadas, mas não recebe Projetos Avulsos, Funil de Negócios nem `negocios`. Chris recupera os painéis exclusivos sem reload; outros funcionários continuam barrados antes de DOM, renderer e rede. A regressão obrigatória percorre todas as rotas permitidas, rotas proibidas, troca de papel, duas abas, reload e mobile.
 
+**Invariante V113 — pedido de ajuste do cliente:** calendário `liberado` permanece bloqueado para edição até existir um pedido explícito confirmado. O botão `Enviar pedido de ajuste` relê o calendário e, numa única transação, muda somente a competência exata para `ajuste_interno` e cria o aviso determinístico da Gabi; sucesso visual só aparece depois do commit. Item moderno usa `itemId`; legado só aceita índice/dia/nome inequívocos. Comentário geral, aprovação simples, outro mês, outro cliente ou estado não liberado nunca reabrem. Clique duplo/retry convergem e erro permanece erro. Pedido anterior à V113 é recuperado apenas por ação humana da equipe, com motivo e confirmação; nenhum conteúdo é apagado. `calendario.html` e `calendarios.html` continuam byte a byte idênticos.
+
 ## Evidência e entrega
 
 - Nunca declare uma correção validada sem informar comando ou método, resultado e limite do teste.

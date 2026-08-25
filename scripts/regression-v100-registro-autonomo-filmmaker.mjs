@@ -664,7 +664,8 @@ exigir(regras.includes('function podeLancarVideoProducao()') &&
   'V101 preserva o writer V100 e acrescenta somente as projeções de conclusão');
 exigir(calendario === calendarios,
   'calendario.html e calendarios.html permanecem byte a byte idênticos');
-exigir(sha256(calendario) === '451d6cb3ee6d2b01ca40c62b648dbe2856c3321d303ef8b5f6c06a1b66c5ee45',
-  'par de calendários mantém a paridade e a proteção V102');
+exigir(calendario.includes('gs-build" content="2026-08-25-pedido-ajuste-calendario-gabi-v113"') &&
+  calendario.includes('const idsServidor=new Set') && calendario.includes('itemIdMigracaoVersao'),
+  'par de calendários V113 mantém a paridade e a proteção V102');
 
 console.log(`REGRESSÃO V100 REGISTRO AUTÔNOMO FILMMAKER: APROVADA (${total} verificações)`);

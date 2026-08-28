@@ -4,7 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-  <meta name="gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115">
+  <meta name="gs-build" content="2026-08-25-legendas-canone-v118">
+  <meta name="gs-v117-patch" content="2026-08-25-handoff-gabi-amanda-v117">
+  <meta name="gs-v116-patch" content="2026-08-25-operacao-campo-producao-v116">
+  <meta name="gs-v115-patch" content="2026-08-25-continuidade-calendario-gravacao-v115">
+  <meta name="gs-v114-patch" content="2026-08-25-legenda-editorial-fila-cecilia-v114">
   <meta name="gs-parent-patch" content="2026-08-25-pedido-ajuste-calendario-gabi-v113">
   <meta name="gs-security-parent" content="2026-08-21-operacao-perfis-chris-v96">
   <meta name="gs-v91-patch" content="2026-08-19-calendarios-stories-v91">
@@ -992,17 +996,57 @@ function limparRascunho(){ try{ localStorage.removeItem(CHAVE_RASCUNHO()); }catc
    intenção de envio não pode depender de ela lembrar de clicar de novo.
    A caixa de saída fica neste navegador, separada do rascunho comum, e é
    reenviada com as mesmas travas de conflito quando o banco responder. */
-const CHAVE_ENVIO_PENDENTE = () => 'envio_amanda_cal_' + (window.__clienteId||'');
+const CHAVE_ENVIO_PENDENTE = (cliente,competencia) =>
+  'envio_amanda_cal_v117_' + String(cliente||window.__clienteId||'') + '__' +
+  String(competencia||(typeof mesVisivel!=='undefined'?mesVisivel:'')||'sem_competencia');
+function identidadeEnvioPendenteV117(pacote){
+  const cliente=String(pacote?.cliente||window.__clienteId||'');
+  const competencia=String(pacote?.competencia||pacote?.mes||
+    (typeof mesVisivel!=='undefined'?mesVisivel:'')||'');
+  const hash=String(pacote?.hash||pacote?.assinatura||'');
+  const tentativas=Math.max(0,Number(pacote?.tentativas)||0);
+  return {cliente,competencia,hash,tentativas};
+}
 let timerEnvioPendente=null;
 function guardarEnvioPendente(pacote){
-  try{ localStorage.setItem(CHAVE_ENVIO_PENDENTE(), JSON.stringify(pacote)); }catch(e){}
+  try{
+    const identidade=identidadeEnvioPendenteV117(pacote);
+    const protegido={...pacote,...identidade,mes:identidade.competencia,
+      tentativas:identidade.tentativas+1};
+    localStorage.setItem(CHAVE_ENVIO_PENDENTE(identidade.cliente,identidade.competencia),JSON.stringify(protegido));
+  }catch(e){}
 }
-function lerEnvioPendente(){
-  try{ const p=localStorage.getItem(CHAVE_ENVIO_PENDENTE()); return p ? JSON.parse(p) : null; }
+function lerEnvioPendente(cliente,competencia){
+  try{
+    const clienteAlvo=cliente||window.__clienteId||'';
+    const competenciaAlvo=competencia||(typeof mesVisivel!=='undefined'?mesVisivel:'');
+    const chaveNova=CHAVE_ENVIO_PENDENTE(clienteAlvo,competenciaAlvo);
+    let p=localStorage.getItem(chaveNova);
+    if(!p){
+      const chaveLegada='envio_amanda_cal_'+String(clienteAlvo);
+      const legado=localStorage.getItem(chaveLegada);
+      if(legado){
+        const candidato=JSON.parse(legado);
+        const mesCandidato=String(candidato?.competencia||candidato?.mes||'');
+        if(!competenciaAlvo||mesCandidato===String(competenciaAlvo)){
+          p=legado;localStorage.setItem(chaveNova,legado);localStorage.removeItem(chaveLegada);
+        }
+      }
+    }
+    const pacote=p?JSON.parse(p):null;
+    if(!pacote) return null;
+    const identidade=identidadeEnvioPendenteV117(pacote);
+    if(cliente&&identidade.cliente!==String(cliente)) return null;
+    if(competencia&&identidade.competencia!==String(competencia)) return null;
+    return pacote;
+  }
   catch(e){ return null; }
 }
-function limparEnvioPendente(){
-  try{ localStorage.removeItem(CHAVE_ENVIO_PENDENTE()); }catch(e){}
+function limparEnvioPendente(pacote){
+  try{
+    const identidade=identidadeEnvioPendenteV117(pacote||{});
+    localStorage.removeItem(CHAVE_ENVIO_PENDENTE(identidade.cliente,identidade.competencia));
+  }catch(e){}
   if(timerEnvioPendente){ clearTimeout(timerEnvioPendente); timerEnvioPendente=null; }
 }
 function mostrarEnvioPendente(){
@@ -1032,15 +1076,15 @@ function agendarEnvioPendente(atraso){
    permanecem intactos. */
 async function confirmarEnvioAprovacaoNoBanco(pacote){
   const fb=window.__fb||{};
-  if(!fb.runTransaction || !fb.db || !fb.docRef) return {ok:false,motivo:'sem-conexao'};
+  if(!fb.runTransaction || !fb.getDoc || !fb.db || !fb.docRef) return {ok:false,motivo:'sem-conexao',etapa:'preparacao',codigo:'gs/sem-conexao'};
   const alvo=String(pacote&&pacote.mes||'');
-  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(alvo)) return {ok:false,motivo:'fora-da-competencia'};
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(alvo)) return {ok:false,motivo:'fora-da-competencia',etapa:'preparacao',codigo:'gs/competencia-invalida'};
   /* Compatibilidade com tentativas guardadas pela V67: o pacote antigo
      levava a marca dentro de `data`, sem a chave `marca`. */
   const marcaLegada=((pacote&&pacote.data&&pacote.data.aprovacaoMeses)||{})[alvo]||
     (pacote&&pacote.data&&pacote.data.aprovacaoInterna)||{};
   const marcaPacote={...(pacote.marca||marcaLegada)};
-  if(marcaPacote.status!=='aguardando_interna') return {ok:false,motivo:'pacote-invalido'};
+  if(marcaPacote.status!=='aguardando_interna') return {ok:false,motivo:'pacote-invalido',etapa:'preparacao',codigo:'gs/pacote-invalido'};
   marcaPacote.mes=alvo;
   marcaPacote.por=marcaPacote.por||pacote.por||'equipe';
   marcaPacote.em=marcaPacote.em||pacote.em||new Date().toISOString();
@@ -1073,17 +1117,47 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
       transacao.set(fb.docRef,patch,{merge:true});
       return {marca,updatedAt,jaConfirmado:false};
     });
-    return {ok:true,...confirmacao};
+    let recibo;
+    try{ recibo=await fb.getDoc(fb.docRef); }
+    catch(e){
+      const codigo=String(e&&e.code||'gs/recibo-indisponivel');
+      return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo};
+    }
+    if(!recibo||!recibo.exists()){
+      return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo:'gs/recibo-ausente'};
+    }
+    const retrato=recibo.data()||{};
+    const marcaConfirmada=aprovacaoCompativelNoCalendario(retrato,alvo);
+    const conteudoConfirmado=assinaturaConteudoCalendario(retrato)===assinaturaConteudoCalendario(pacote.data);
+    if(!marcaConfirmada||marcaConfirmada.status!=='aguardando_interna'||!conteudoConfirmado){
+      return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo:'gs/recibo-pendente',servidor:retrato};
+    }
+    return {ok:true,...confirmacao,marca:marcaConfirmada,
+      updatedAt:String(retrato.updatedAt||confirmacao.updatedAt||''),
+      confirmadoNoBanco:true,retrato};
   }catch(e){
     console.error('Falha ao confirmar envio do calendário:',e);
     const codigo=String(e&&e.code||'');
-    if(codigo==='gs/conteudo-divergente') return {ok:false,motivo:'conflito',erro:codigo,servidor:servidorConflitante};
-    if(codigo==='gs/decisao-posterior') return {ok:false,motivo:'decisao-posterior',erro:codigo};
-    if(codigo==='gs/mes-vazio') return {ok:false,motivo:'vazio',erro:codigo};
-    if(codigo==='gs/calendario-ausente') return {ok:false,motivo:'ausente',erro:codigo};
-    if(/resource-exhausted|quota|429/i.test(codigo+' '+String(e&&e.message||''))) return {ok:false,motivo:'cota',erro:codigo};
-    return {ok:false,motivo:'erro',erro:codigo||String(e&&e.message||e)};
+    if(codigo==='gs/conteudo-divergente') return {ok:false,motivo:'conflito',erro:codigo,etapa:'transacao',codigo,servidor:servidorConflitante};
+    if(codigo==='gs/decisao-posterior') return {ok:false,motivo:'decisao-posterior',erro:codigo,etapa:'transacao',codigo};
+    if(codigo==='gs/mes-vazio') return {ok:false,motivo:'vazio',erro:codigo,etapa:'transacao',codigo};
+    if(codigo==='gs/calendario-ausente') return {ok:false,motivo:'ausente',erro:codigo,etapa:'transacao',codigo};
+    if(/resource-exhausted|quota|429/i.test(codigo+' '+String(e&&e.message||''))) return {ok:false,motivo:'cota',erro:codigo,etapa:'transacao',codigo:codigo||'resource-exhausted'};
+    return {ok:false,motivo:'erro',erro:codigo||String(e&&e.message||e),etapa:'transacao',codigo:codigo||'gs/erro-transacao'};
   }
+}
+
+function emitirHandoffCalendarioV117(pacote,confirmacao){
+  if(!confirmacao?.confirmadoNoBanco||!window.parent||window.parent===window) return;
+  window.parent.postMessage({
+    tipo:'gs-calendario-handoff',
+    cliente:String(pacote?.cliente||window.__clienteId||''),
+    competencia:String(pacote?.competencia||pacote?.mes||''),
+    estado:String(confirmacao?.marca?.status||'aguardando_interna'),
+    origem:'calendario-equipe',
+    updatedAt:String(confirmacao?.updatedAt||''),
+    revision:String(confirmacao?.updatedAt||confirmacao?.marca?.em||'')
+  },window.location.origin);
 }
 
 function aplicarEnvioAprovacaoConfirmado(pacote,confirmacao){
@@ -1095,6 +1169,7 @@ function aplicarEnvioAprovacaoConfirmado(pacote,confirmacao){
   ultimaAssinaturaSalva=assinaturaCalendario(data);
   temNaoSalvo=false;pendingWrite=gravacoesCalendarioNaFila>0;
   limparRascunho();pintarEstado();renderAprovacaoInterna();
+  emitirHandoffCalendarioV117(pacote,confirmacao);
 }
 
 async function confirmarConteudoAntesDoEnvio(){
@@ -1120,9 +1195,9 @@ window.tentarEnvioPendente = async function(automatico){
   window.__enviandoAprovacaoInterna=true;
   try{
     const resultado=await confirmarEnvioAprovacaoNoBanco(pacote);
-    if(resultado && resultado.ok){
+    if(resultado && resultado.ok && resultado.confirmadoNoBanco){
       aplicarEnvioAprovacaoConfirmado(pacote,resultado);
-      limparEnvioPendente(); fecharBarraDecisao();
+      limparEnvioPendente(pacote); fecharBarraDecisao();
       renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();
       avisarTela('Envio recuperado e confirmado no banco. O calendário já está na fila da Amanda.');
       return true;
@@ -1138,7 +1213,7 @@ window.tentarEnvioPendente = async function(automatico){
       return false;
     }
     if(resultado && ['decisao-posterior','historico','vazio','ausente','pacote-invalido'].includes(resultado.motivo)){
-      limparEnvioPendente();fecharBarraDecisao();
+      limparEnvioPendente(pacote);fecharBarraDecisao();
       if(!automatico) avisarTela(resultado.motivo==='decisao-posterior'
         ? 'A Amanda já decidiu este calendário. A tentativa antiga foi encerrada sem alterar o banco.'
         : 'Esta tentativa antiga não pode mais ser enviada e foi encerrada sem alterar o calendário.', 'erro');
@@ -1159,7 +1234,7 @@ window.cancelarEnvioPendente = function(){
   const pacote = lerEnvioPendente();
   if(!pacote) return;
   if(!confirm('Cancelar este envio pendente?\n\nO calendário e todos os conteúdos continuam intactos como rascunho. Apenas a tentativa de envio para a Amanda será cancelada.')) return;
-  limparEnvioPendente();
+  limparEnvioPendente(pacote);
   fecharBarraDecisao();
   avisarTela('Envio pendente cancelado. Nada do calendário foi apagado.');
 };
@@ -2146,7 +2221,9 @@ window.enviarParaAprovacaoInterna = async function(btn){
        pode enviar metade da transição ou disputar com ela. */
     const conteudo=await confirmarConteudoAntesDoEnvio();
     const marca={status:'aguardando_interna',por:quem||'equipe',em:new Date().toISOString(),motivoAjuste:'',mes:alvo};
-    const pacoteEnvioPendente={data:JSON.parse(JSON.stringify(data)),marca,em:marca.em,mes:alvo,por:marca.por};
+    const pacoteEnvioPendente={data:JSON.parse(JSON.stringify(data)),marca,em:marca.em,
+      mes:alvo,competencia:alvo,cliente:String(window.__clienteId||''),por:marca.por,
+      hash:assinaturaConteudoCalendario(data),tentativas:0};
     if(!conteudo||!conteudo.ok){
       guardarEnvioPendente(pacoteEnvioPendente);
       guardarRascunho(); pintarEstado(); renderAprovacaoInterna();
@@ -2162,9 +2239,9 @@ window.enviarParaAprovacaoInterna = async function(btn){
       return;
     }
     const resultado=await confirmarEnvioAprovacaoNoBanco(pacoteEnvioPendente);
-    if(!resultado||!resultado.ok){
+    if(!resultado||!resultado.ok||!resultado.confirmadoNoBanco){
       if(resultado&&['decisao-posterior','historico','vazio','ausente','pacote-invalido'].includes(resultado.motivo)){
-        limparEnvioPendente();
+        limparEnvioPendente(pacoteEnvioPendente);
         avisarTela(resultado.motivo==='decisao-posterior'
           ? 'Não enviei de novo: a Amanda já decidiu este calendário. Reabra a tela para ver o estado atual.'
           : 'Não enviei: o mês ou a tentativa deixou de ser válido. Nenhum dado do calendário foi alterado.', 'erro');
@@ -2190,7 +2267,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
       return;
     }
     aplicarEnvioAprovacaoConfirmado(pacoteEnvioPendente,resultado);
-    limparEnvioPendente();
+    limparEnvioPendente(pacoteEnvioPendente);
     avisarTela(resultado.jaConfirmado
       ? 'O banco confirmou que este calendário já estava na fila da Amanda.'
       : 'Envio confirmado no banco. O calendário já está na fila da Amanda.');
@@ -2990,13 +3067,16 @@ function classificarVinculoLegendaEditorialV114(item,itemIdx,cliente,postagens){
   const ativas=(Array.isArray(postagens)?postagens:[]).filter(p=>p&&p.excluido!==true&&
     normalizarSlugLegendaV114(p.calendarClienteSlug||p.cliente)===slug);
   const itemId=String(item?.itemId||'').trim();
-  let candidatas=itemId?ativas.filter(p=>String(p.calendarItemId||'').trim()===itemId):[];
-  let origem='itemId';
-  if(!itemId){
-    candidatas=ativas.filter(p=>!String(p.calendarItemId||'').trim()&&
-      Number.isInteger(p.calendarItemIdx)&&p.calendarItemIdx===itemIdx);
-    origem='indice_legado';
-  }
+  const competencia=String(item?.mes||'').trim();
+  const origem='itemId_competencia';
+  /* V118: indice e posicao sao somente dados de auditoria. A ponte
+     automatica exige a identidade moderna completa; legado permanece no
+     calendario e segue para conferencia manual na fila da Gabi. */
+  if(!itemId||!competencia) return {estado:'confirmacao_manual',origem,total:0};
+  const candidatas=ativas.filter(p=>
+    String(p.calendarItemId||'').trim()===itemId&&
+    String(p.calendarCompetencia||'').trim()===competencia
+  );
   if(candidatas.length>1) return {estado:'ambiguo',origem,total:candidatas.length};
   if(!candidatas.length) return {estado:'aguardando_video',origem,total:0};
   const postagem=candidatas[0];
@@ -3009,8 +3089,8 @@ function classificarVinculoLegendaEditorialV114(item,itemIdx,cliente,postagens){
 window.classificarVinculoLegendaEditorialV114=classificarVinculoLegendaEditorialV114;
 
 async function sincronizarLegendaEditorialComCeciliaV114(item,itemIdx){
-  const texto=String(item?.legenda||'').trim();
-  if(!texto||window.__modoCal!=='equipe'||window.__papelCalendarioEquipe!=='Gabrielle') return {estado:'somente_planejamento'};
+  const textoInicial=String(item?.legenda||'').trim();
+  if(!textoInicial||window.__modoCal!=='equipe'||window.__papelCalendarioEquipe!=='Gabrielle') return {estado:'somente_planejamento'};
   const fb=window.__fb;
   const [porCliente,porSlug]=await Promise.all([
     fb.getDocs(fb.query(fb.collection(fb.db,'postagens'),fb.where('cliente','==',window.__clienteId))),
@@ -3021,6 +3101,10 @@ async function sincronizarLegendaEditorialComCeciliaV114(item,itemIdx){
   porSlug.forEach(d=>postagensPorId.set(d.id,{id:d.id,...d.data()}));
   const postagens=[...postagensPorId.values()];
   const vinculo=classificarVinculoLegendaEditorialV114(item,itemIdx,window.__clienteId,postagens);
+  if(vinculo.estado==='confirmacao_manual'){
+    avisarTela('Legenda salva no calendario. Este item ainda nao possui itemId e competencia confirmados na postagem; por seguranca, ele segue para conferencia manual da Gabi e nada foi associado por posicao.');
+    return vinculo;
+  }
   if(vinculo.estado==='aguardando_video'){
     avisarTela('Legenda salva e confirmada no calendário. Ainda não existe uma postagem aprovada ligada por este ID; quando ela nascer na aprovação do vídeo, o texto seguirá automaticamente para a Cecília.');
     return vinculo;
@@ -3035,35 +3119,57 @@ async function sincronizarLegendaEditorialComCeciliaV114(item,itemIdx){
   const postagemRef=fb.doc(fb.db,'postagens',vinculo.postagem.id);
   if(!vinculo.postagem.videoId) throw Object.assign(new Error('A postagem ligada não informa o vídeo de origem. A legenda ficou no calendário e nada foi movimentado.'),{code:'gs/legenda-video-ausente'});
   const videoRef=fb.doc(fb.db,'videos_producao',String(vinculo.postagem.videoId));
-  const agora=String(item.legendaAtualizadaEm||new Date().toISOString());
-  await fb.runTransaction(fb.db,async tx=>{
-    const postSnap=await tx.get(postagemRef);
-    const videoSnap=await tx.get(videoRef);
+  const calendarioRef=fb.doc(fb.db,'calendarios',window.__clienteId);
+  const resultado=await fb.runTransaction(fb.db,async tx=>{
+    const [calSnap,postSnap,videoSnap]=await Promise.all([
+      tx.get(calendarioRef),tx.get(postagemRef),tx.get(videoRef)
+    ]);
+    if(!calSnap.exists()) throw new Error('O calendário canônico deixou de existir antes da confirmação.');
     if(!postSnap.exists()) throw new Error('A postagem deixou de existir antes da confirmação.');
     if(!videoSnap.exists()) throw new Error('O vídeo de origem deixou de existir; a legenda ficou no calendário e nada foi movimentado.');
+    const calendarioAtual=calSnap.data()||{};
+    const itemIdEsperado=String(item?.itemId||'').trim();
+    const competenciaEsperada=String(item?.mes||'').trim();
+    const itensAtuais=(Array.isArray(calendarioAtual.items)?calendarioAtual.items:[]).filter(it=>
+      it?.excluido!==true&&String(it?.itemId||'').trim()===itemIdEsperado&&
+      mesDoItemNoCalendario(calendarioAtual,it)===competenciaEsperada
+    );
+    if(itensAtuais.length!==1) throw new Error(itensAtuais.length?'O calendário contém identidades concorrentes; nada foi enviado.':'O item saiu desta competência; a legenda antiga não foi enviada.');
+    const itemAtual=itensAtuais[0];
+    const texto=String(itemAtual.legenda||'').trim();
+    if(!texto) throw new Error('A legenda foi removida em outra aba; a versão antiga não foi enviada.');
+    const agora=String(itemAtual.legendaAtualizadaEm||new Date().toISOString());
     const atual={id:postSnap.id,...postSnap.data()};
-    const revalidado=classificarVinculoLegendaEditorialV114(item,itemIdx,window.__clienteId,[atual]);
-    if(revalidado.estado==='ja_avancada'&&String(atual.legenda||'')===texto) return;
+    const revalidado=classificarVinculoLegendaEditorialV114(itemAtual,itemIdx,window.__clienteId,[atual]);
+    if(revalidado.estado==='ja_avancada'&&String(atual.legenda||'')===texto){
+      return {texto,itemId:String(itemAtual?.itemId||''),competencia:mesDoItemNoCalendario(calendarioAtual,itemAtual),idempotente:true};
+    }
     if(revalidado.estado!=='pronta_para_enviar') throw new Error('A postagem mudou de etapa antes da confirmação; nada foi regredido.');
     const video=videoSnap.data();
     const slugVideo=normalizarSlugLegendaV114(video.calendarClienteSlug||video.cliente);
-    const itemId=String(item?.itemId||'').trim();
+    const itemId=String(itemAtual?.itemId||'').trim();
+    const competencia=mesDoItemNoCalendario(calendarioAtual,itemAtual);
     const idVideo=String(video.calendarItemId||'').trim();
-    const identidadeVideoValida=itemId
-      ? idVideo===itemId
-      : (!idVideo&&Number.isInteger(video.calendarItemIdx)&&video.calendarItemIdx===itemIdx);
+    const identidadeVideoValida=!!itemId&&!!competencia&&idVideo===itemId&&
+      String(video.calendarCompetencia||'').trim()===competencia&&
+      String(atual.calendarCompetencia||'').trim()===competencia;
     if(slugVideo!==normalizarSlugLegendaV114(window.__clienteId)||!identidadeVideoValida||video.clienteAprovou!==true){
       throw new Error('O vídeo não confirmou cliente, conteúdo e aprovação pelo mesmo vínculo. A legenda ficou no calendário.');
     }
     const preferida=String(video.postagemId||'');
     if(preferida&&preferida!==postagemRef.id) throw new Error('O vídeo aponta para outra postagem canônica; nenhuma cópia foi movimentada.');
+    if(!preferida) tx.update(videoRef,{postagemId:postagemRef.id});
     tx.update(postagemRef,{legenda:texto,legendaPor:window.__papelCalendarioEquipe,
       legendaEm:agora,status:'aguardando_agendamento',calendarClienteSlug:window.__clienteId,
-      calendarItemId:String(item?.itemId||'')||null,calendarItemIdx:itemIdx,
-      legendaOrigem:'calendario_editorial_v114'});
+      calendarItemId:itemId||null,
+      calendarCompetencia:competencia||null,
+      legendaOrigem:'calendario_editorial_v118'});
+    return {texto,itemId,competencia};
   });
   const recibo=await fb.getDoc(postagemRef);
-  if(!recibo.exists()||recibo.data().status!=='aguardando_agendamento'||String(recibo.data().legenda||'')!==texto){
+  if(!resultado||!recibo.exists()||recibo.data().status!=='aguardando_agendamento'||String(recibo.data().legenda||'')!==resultado.texto||
+     String(recibo.data().calendarItemId||'')!==resultado.itemId||
+     String(recibo.data().calendarCompetencia||'')!==resultado.competencia){
     throw new Error('A legenda continua salva no calendário, mas a passagem para a Cecília não pôde ser confirmada.');
   }
   avisarTela('Legenda salva no calendário e confirmada na fila da Cecília.');

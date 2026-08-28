@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-  <meta name="gs-build" content="2026-08-28-fluxo-calendario-plataformas-v124">
+  <meta name="gs-build" content="2026-08-28-conciliacao-competencia-v125">
+  <meta name="gs-v124-base" content="2026-08-28-fluxo-calendario-plataformas-v124">
   <meta name="gs-v118-base" content="2026-08-25-legendas-canone-v118">
   <meta name="gs-v117-patch" content="2026-08-25-handoff-gabi-amanda-v117">
   <meta name="gs-v116-patch" content="2026-08-25-operacao-campo-producao-v116">
@@ -951,6 +952,134 @@ function deveBloquearConflitoCalendario(mudouEmOutraAba,enviando,servidor,local,
   return !!carimboEnvio && carimboAtual!==carimboEnvio;
 }
 
+/* ===== CONCILIAÇÃO POR COMPETÊNCIA — V125 ==========================
+   O documento reúne vários meses e vários escritores. `updatedAt` do
+   documento inteiro não pode transformar uma postagem de agosto em
+   conflito com a correção editorial de setembro. A base confirmada,
+   a aba e o servidor são comparados por `itemId` e por campo; somente
+   mudanças editoriais do mês aberto saem desta aba. Outros meses e
+   campos operacionais continuam vindo do servidor. */
+const CAMPOS_EDITORIAIS_CAL_V125=[
+  'day','name','desc','legenda','ref','obs','mes','stage','fmt',
+  'dataFlexivel','bloco','dataPostagem','legendaAtualizadaPor',
+  'legendaAtualizadaEm','apr','aprPor','aprEm','aprovadoPeloClienteEm',
+  'excluido','excluidoPor','excluidoEm'
+];
+window.__calBaseConflitoV125=null;
+window.__conflitoCompetenciaV125=null;
+function clonarCalendarioV125(valor){
+  if(valor===undefined) return undefined;
+  return JSON.parse(JSON.stringify(valor));
+}
+function iguaisCalendarioV125(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
+function identidadeItemCalendarioV125(item){ return String(item&&item.itemId||'').trim(); }
+function itensDaCompetenciaV125(cal,competencia){
+  return ((cal&&cal.items)||[]).filter(item=>item&&mesDoItemNoCalendario(cal,item)===competencia);
+}
+function projecaoEditorialItemV125(item){
+  const saida={itemId:identidadeItemCalendarioV125(item)};
+  CAMPOS_EDITORIAIS_CAL_V125.forEach(campo=>{ if(item&&item[campo]!==undefined) saida[campo]=item[campo]; });
+  return saida;
+}
+function assinaturaConteudoCompetenciaV125(cal,competencia){
+  if(!cal||!competencia) return '';
+  const itens=itensDaCompetenciaV125(cal,competencia).map(projecaoEditorialItemV125)
+    .sort((a,b)=>String(a.itemId).localeCompare(String(b.itemId)));
+  return JSON.stringify({competencia,itens,blocos:clonarCalendarioV125((cal.blocosPorMes||{})[competencia]||null)});
+}
+function indiceItensPorIdV125(cal){
+  const mapa=new Map(),duplicados=[],semId=[];
+  ((cal&&cal.items)||[]).forEach((item,indice)=>{
+    const id=identidadeItemCalendarioV125(item);
+    if(!id){ semId.push({item,indice}); return; }
+    if(mapa.has(id)) duplicados.push(id); else mapa.set(id,{item,indice});
+  });
+  return {mapa,duplicados:[...new Set(duplicados)],semId};
+}
+function camposAlteradosV125(base,versao){
+  return CAMPOS_EDITORIAIS_CAL_V125.filter(campo=>!iguaisCalendarioV125(base&&base[campo],versao&&versao[campo]));
+}
+function mesclarCompetenciaCalendarioV125(base,local,servidor,competencia,preferencia){
+  const b=base||servidor||{},l=local||{},s=servidor||{};
+  const ib=indiceItensPorIdV125(b),il=indiceItensPorIdV125(l),is=indiceItensPorIdV125(s);
+  const conflitos=[];
+  [ ['base',ib],['aba',il],['banco',is] ].forEach(([origem,indice])=>{
+    indice.duplicados.forEach(itemId=>conflitos.push({tipo:'itemId-duplicado',origem,itemId}));
+  });
+  const legadoRelevante=[...ib.semId.map(x=>({origem:'base',...x})),...il.semId.map(x=>({origem:'aba',...x})),...is.semId.map(x=>({origem:'banco',...x}))]
+    .filter(x=>mesDoItemNoCalendario(x.origem==='base'?b:x.origem==='aba'?l:s,x.item)===competencia);
+  legadoRelevante.forEach(x=>conflitos.push({tipo:'item-sem-itemId',origem:x.origem,indice:x.indice}));
+  if(conflitos.length) return {ok:false,conflitos,competencia};
+
+  const ids=new Set();
+  [ib,il,is].forEach(indice=>indice.mapa.forEach(({item},id)=>{
+    const esteveNaBase=ib.mapa.has(id)&&mesDoItemNoCalendario(b,ib.mapa.get(id).item)===competencia;
+    if(esteveNaBase||mesDoItemNoCalendario(indice===ib?b:indice===il?l:s,item)===competencia) ids.add(id);
+  }));
+  const substituicoes=new Map();
+  const novosLocais=[];
+  ids.forEach(itemId=>{
+    const baseItem=ib.mapa.get(itemId)?.item;
+    const localItem=il.mapa.get(itemId)?.item;
+    const serverItem=is.mapa.get(itemId)?.item;
+    if(!baseItem){
+      if(localItem&&!serverItem){ novosLocais.push(clonarCalendarioV125(localItem)); return; }
+      if(!localItem&&serverItem) return;
+      if(localItem&&serverItem){
+        if(iguaisCalendarioV125(projecaoEditorialItemV125(localItem),projecaoEditorialItemV125(serverItem))) return;
+        conflitos.push({tipo:'item-novo-concorrente',itemId}); return;
+      }
+      return;
+    }
+    if(!serverItem){ conflitos.push({tipo:'item-removido-do-banco',itemId}); return; }
+    const localEfetivo=localItem||baseItem;
+    const localMudou=camposAlteradosV125(baseItem,localEfetivo);
+    const bancoMudou=camposAlteradosV125(baseItem,serverItem);
+    const exclusaoLocal=localMudou.includes('excluido');
+    const exclusaoBanco=bancoMudou.includes('excluido');
+    if((exclusaoLocal&&bancoMudou.some(c=>c!=='excluido'))||(exclusaoBanco&&localMudou.some(c=>c!=='excluido'))){
+      conflitos.push({tipo:'exclusao-concorrente',itemId}); return;
+    }
+    const combinado=clonarCalendarioV125(serverItem);
+    CAMPOS_EDITORIAIS_CAL_V125.forEach(campo=>{
+      const bv=baseItem[campo],lv=localEfetivo[campo],sv=serverItem[campo];
+      if(iguaisCalendarioV125(lv,sv)) return;
+      if(iguaisCalendarioV125(lv,bv)) return;
+      if(iguaisCalendarioV125(sv,bv)||preferencia==='aba'){
+        if(lv===undefined) delete combinado[campo]; else combinado[campo]=clonarCalendarioV125(lv);
+        return;
+      }
+      if(preferencia==='banco') return;
+      conflitos.push({tipo:'campo-concorrente',itemId,campo,base:clonarCalendarioV125(bv),aba:clonarCalendarioV125(lv),banco:clonarCalendarioV125(sv)});
+    });
+    substituicoes.set(itemId,combinado);
+  });
+  if(conflitos.length) return {ok:false,conflitos,competencia};
+  const itens=((s&&s.items)||[]).map(item=>substituicoes.get(identidadeItemCalendarioV125(item))||clonarCalendarioV125(item));
+  novosLocais.forEach(item=>{ if(!itens.some(atual=>identidadeItemCalendarioV125(atual)===identidadeItemCalendarioV125(item))) itens.push(item); });
+  const blocosServidor=clonarCalendarioV125((s.blocosPorMes||{})[competencia]);
+  const blocosBase=clonarCalendarioV125((b.blocosPorMes||{})[competencia]);
+  const blocosLocal=clonarCalendarioV125((l.blocosPorMes||{})[competencia]);
+  let blocos=blocosServidor;
+  if(!iguaisCalendarioV125(blocosLocal,blocosBase)){
+    if(iguaisCalendarioV125(blocosServidor,blocosBase)||iguaisCalendarioV125(blocosLocal,blocosServidor)||preferencia==='aba') blocos=blocosLocal;
+    else if(preferencia!=='banco') return {ok:false,competencia,conflitos:[{tipo:'blocos-concorrentes',campo:'blocosPorMes'}]};
+  }
+  const documento={...clonarCalendarioV125(s),items:itens};
+  documento.blocosPorMes={...(clonarCalendarioV125(s.blocosPorMes)||{})};
+  if(blocos===undefined) delete documento.blocosPorMes[competencia]; else documento.blocosPorMes[competencia]=blocos;
+  /* Workflow é do servidor. A única exceção editorial é o nascimento
+     explícito de uma competência nova ainda inexistente como rascunho. */
+  documento.aprovacaoMeses={...(clonarCalendarioV125(s.aprovacaoMeses)||{})};
+  const aprovacaoBase=clonarCalendarioV125((b.aprovacaoMeses||{})[competencia]);
+  const aprovacaoLocal=clonarCalendarioV125((l.aprovacaoMeses||{})[competencia]);
+  const aprovacaoServidor=clonarCalendarioV125((s.aprovacaoMeses||{})[competencia]);
+  if(!aprovacaoServidor&&!aprovacaoBase&&aprovacaoLocal&&aprovacaoLocal.status==='rascunho'){
+    documento.aprovacaoMeses[competencia]=aprovacaoLocal;
+  }
+  return {ok:true,competencia,documento,itens,blocos};
+}
+
 /* ===== O QUE ACONTECEU COM A GABI — 29/07/2026 =======================
    As travas de 27/07 protegeram o BANCO e sacrificaram o TRABALHO DELA.
 
@@ -983,7 +1112,9 @@ const CHAVE_RASCUNHO = () => 'rascunho_cal_' + (window.__clienteId||'');
 function guardarRascunho(){
   try{
     localStorage.setItem(CHAVE_RASCUNHO(), JSON.stringify({
-      data: data, em: new Date().toISOString(), itens: (data.items||[]).length
+      schemaVersion:125, competencia:String(typeof mesVisivel!=='undefined'?mesVisivel:''),
+      data: data, base:window.__calBaseConflitoV125,
+      em: new Date().toISOString(), itens: (data.items||[]).length
     }));
   }catch(e){ /* cota cheia ou aba anônima: não é motivo pra travar nada */ }
 }
@@ -992,6 +1123,11 @@ function lerRascunho(){
   catch(e){ return null; }
 }
 function limparRascunho(){ try{ localStorage.removeItem(CHAVE_RASCUNHO()); }catch(e){} }
+function rascunhoDifereDoBancoV125(rasc,banco){
+  if(!rasc||!rasc.data) return false;
+  const alvo=String(rasc.competencia||mesVisivel||mesDoTexto(rasc.data.month)||'');
+  return !!alvo&&assinaturaConteudoCompetenciaV125(rasc.data,alvo)!==assinaturaConteudoCompetenciaV125(banco,alvo);
+}
 
 /* Se a pessoa já mandou pra Amanda e o Firebase recusou por cota/rede, a
    intenção de envio não pode depender de ela lembrar de clicar de novo.
@@ -1095,7 +1231,7 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
       const snap=await transacao.get(fb.docRef);
       if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
       const servidor=snap.data();
-      if(assinaturaConteudoCalendario(servidor)!==assinaturaConteudoCalendario(pacote.data)){
+      if(assinaturaConteudoCompetenciaV125(servidor,alvo)!==assinaturaConteudoCompetenciaV125(pacote.data,alvo)){
         servidorConflitante=servidor;
         throw Object.assign(new Error('O conteúdo mudou depois da confirmação de salvamento.'),{code:'gs/conteudo-divergente'});
       }
@@ -1129,7 +1265,7 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
     }
     const retrato=recibo.data()||{};
     const marcaConfirmada=aprovacaoCompativelNoCalendario(retrato,alvo);
-    const conteudoConfirmado=assinaturaConteudoCalendario(retrato)===assinaturaConteudoCalendario(pacote.data);
+    const conteudoConfirmado=assinaturaConteudoCompetenciaV125(retrato,alvo)===assinaturaConteudoCompetenciaV125(pacote.data,alvo);
     if(!marcaConfirmada||marcaConfirmada.status!=='aguardando_interna'||!conteudoConfirmado){
       return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo:'gs/recibo-pendente',servidor:retrato};
     }
@@ -1163,9 +1299,13 @@ function emitirHandoffCalendarioV117(pacote,confirmacao){
 
 function aplicarEnvioAprovacaoConfirmado(pacote,confirmacao){
   const alvo=pacote.mes,marca=confirmacao.marca||pacote.marca;
-  data.aprovacaoMeses={...(data.aprovacaoMeses||{}),[alvo]:marca};
-  if(mesUsaCampoLegadoLocal(alvo)) data.aprovacaoInterna=marca;
-  if(confirmacao.updatedAt) data.updatedAt=confirmacao.updatedAt;
+  if(confirmacao.retrato) data=clonarCalendarioV125(confirmacao.retrato);
+  else{
+    data.aprovacaoMeses={...(data.aprovacaoMeses||{}),[alvo]:marca};
+    if(mesUsaCampoLegadoLocal(alvo)) data.aprovacaoInterna=marca;
+    if(confirmacao.updatedAt) data.updatedAt=confirmacao.updatedAt;
+  }
+  window.__calBaseConflitoV125=clonarCalendarioV125(data);
   window.__calVersaoBancoLida=String(data.updatedAt||'');
   ultimaAssinaturaSalva=assinaturaCalendario(data);
   temNaoSalvo=false;pendingWrite=gravacoesCalendarioNaFila>0;
@@ -1207,10 +1347,13 @@ window.tentarEnvioPendente = async function(automatico){
       if(resultado.servidor){
         window.__versaoDoBanco=resultado.servidor;
         bloqueadoPorConflito=true;
-        mostrarConflito((data.items||[]).length,(resultado.servidor.items||[]).length);
+        const alvo=String(pacote.competencia||pacote.mes||mesVisivel||'');
+        const detalhes=mesclarCompetenciaCalendarioV125(window.__calBaseConflitoV125||pacote.data,pacote.data,resultado.servidor,alvo,'');
+        window.__conflitoCompetenciaV125=detalhes;
+        mostrarConflito(itensDaCompetenciaV125(pacote.data,alvo).length,itensDaCompetenciaV125(resultado.servidor,alvo).length,detalhes);
       }
       guardarRascunho();
-      if(!automatico) avisarTela('O envio encontrou outra versão no banco. Junte as versões na barra e envie novamente.', 'erro');
+      if(!automatico) avisarTela('O envio encontrou uma alteração concorrente no mesmo mês. Escolha na barra; nada foi sobrescrito.', 'erro');
       return false;
     }
     if(resultado && ['decisao-posterior','historico','vazio','ausente','pacote-invalido'].includes(resultado.motivo)){
@@ -1359,7 +1502,7 @@ function mostrarBarraDecisao(html){
   if(!el){
     el=document.createElement('div');
     el.id='barraDecisao';
-    el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:220;padding:14px 16px;'+
+    el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:2147483000;padding:14px 16px calc(18px + env(safe-area-inset-bottom));max-height:72vh;overflow:auto;'+
       'background:#4a2010;border-top:2px solid #e0a06a;color:#ffe0c8;font-family:system-ui;'+
       'font-size:13px;line-height:1.55;text-align:center;';
     document.body.appendChild(el);
@@ -1368,69 +1511,64 @@ function mostrarBarraDecisao(html){
 }
 function fecharBarraDecisao(){ const el=document.getElementById('barraDecisao'); if(el) el.style.display='none'; }
 
-function mostrarConflito(meus, doBanco){
-  const explicacao = meus === doBanco
-    ? 'As duas versões têm a mesma quantidade, mas o banco foi alterado depois que esta aba carregou. '
-    : 'As versões têm quantidades diferentes. ';
+function mostrarConflito(meus, doBanco,detalhes){
+  const alvo=String(mesVisivel||'');
+  const rotulo=alvo?textoDoMes(alvo):'este mês';
+  const conflitos=(detalhes&&detalhes.conflitos)||[];
+  const podePreferirAba=conflitos.length>0&&conflitos.every(c=>c.tipo==='campo-concorrente'||c.tipo==='blocos-concorrentes');
+  const explicacao=conflitos.length
+    ? 'Outra aba alterou o mesmo ponto desta competência. Nada foi sobrescrito. '
+    : 'O banco mudou enquanto esta aba estava aberta. Nada foi sobrescrito. ';
   mostrarBarraDecisao(
     '<b>Não gravei ainda — e não perdi nada.</b><br>'+ 
-    'Esta aba tem <b>'+meus+' conteúdo(s)</b> e o banco tem <b>'+doBanco+'</b>. '+
-    explicacao+'Alguém editou de outro lugar, ou esta aba está aberta há um tempo. Escolhe:'+
+    '<b>'+esc(rotulo)+'</b>: esta aba tem <b>'+meus+' conteúdo(s)</b> e o banco tem <b>'+doBanco+'</b>. '+
+    explicacao+(podePreferirAba?'Escolha somente para os pontos realmente concorrentes:':'Use a versão do banco; o rascunho permanece protegido para auditoria:')+
     '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
-    '<button onclick="juntarComOBanco()" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">🔀 Juntar os dois (recomendado)</button>'+
-    '<button onclick="ficarComOBanco()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Descartar o meu e usar o do banco</button>'+
-    '<button onclick="forcarMinhaVersao()" style="padding:8px 14px;border:0;border-radius:6px;background:#7a4a1f;color:#ffe0c8;font-weight:700;cursor:pointer;font-size:12.5px;">Gravar o meu por cima</button>'+
+    (podePreferirAba?'<button onclick="resolverConflitoCompetenciaV125(\'aba\')" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">Manter minhas correções deste mês</button>':'')+
+    '<button onclick="ficarComOBanco()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Usar a versão do banco</button>'+
     '</div>');
 }
 
-/* Junta sem perder nenhum lado: o que está no banco fica, e o que só
-   existe nesta aba entra. Dois conteúdos são "o mesmo" quando têm o
-   mesmo dia e o mesmo título. */
-function chaveItem(it){ return (it.day||0) + '|' + String(it.name||'').trim().toLowerCase(); }
-window.juntarComOBanco = function(){
+/* Compatibilidade de testes/abas antigas: a ação deixou de juntar por
+   dia+título. Toda resolução passa novamente pela transação V125. */
+function chaveItem(it){ return identidadeItemCalendarioV125(it); }
+window.juntarComOBanco = function(){ return window.resolverConflitoCompetenciaV125('aba'); };
+window.resolverConflitoCompetenciaV125 = async function(preferencia){
   if(exigirRetiradaAntesDeEditar()) return;
-  const doBanco = (window.__versaoDoBanco && window.__versaoDoBanco.items) || [];
-  const meus = data.items || [];
-  const vistos = new Set(doBanco.map(chaveItem));
-  const juntos = doBanco.slice();
-  let novos = 0;
-  meus.forEach(it => { if(!vistos.has(chaveItem(it))){ juntos.push(it); vistos.add(chaveItem(it)); novos++; } });
-  /* Conteúdo que só existia num rascunho antigo pode ainda não ter ID.
-     A fusão é uma ação explícita; cada item novo passa a nascer moderno. */
-  data.items = juntos.map(it=>it&&String(it.itemId||'').trim()?it:{...it,itemId:'calitem_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,14)});
+  window.__preferenciaConflitoV125=preferencia==='aba'?'aba':'banco';
+  bloqueadoPorConflito=false;
   fecharBarraDecisao();
-  bloqueadoPorConflito=false; apagouDePropósito=true;   // a fusão é intencional
-  avisarTela('Juntei as duas versões: ' + juntos.length + ' conteúdo(s) no total (' + novos + ' vieram desta aba).');
-  renderAll();
+  const resultado=await gravarComSeguranca();
+  if(!resultado||!resultado.ok){
+    guardarRascunho();
+    if(!bloqueadoPorConflito) avisarTela('Ainda não foi possível conciliar. Seu rascunho continua protegido.','erro');
+    return;
+  }
+  avisarTela('Conciliação confirmada somente em '+textoDoMes(mesVisivel)+'. Os outros meses e estados do banco foram preservados.');
 };
 window.ficarComOBanco = function(){
-  if(!confirm('Isso descarta o que você fez nesta aba e mantém o que está no banco. Tem certeza?')) return;
+  if(!confirm('Isso descarta as alterações não salvas desta aba e mantém a versão confirmada no banco. Tem certeza?')) return;
   fecharBarraDecisao(); bloqueadoPorConflito=false; temNaoSalvo=false; limparRascunho();
-  data = window.__versaoDoBanco || data;
+  data = clonarCalendarioV125(window.__versaoDoBanco || data);
+  window.__calBaseConflitoV125=clonarCalendarioV125(data);
   carregado=true; itensNoBanco=(data.items||[]).length;
   window.__calVersaoBancoLida=String(data.updatedAt||'');
   document.getElementById('clientName').value=data.client||'';
   document.getElementById('monthName').value=data.month||'';
   renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();pintarEstado();
 };
-window.forcarMinhaVersao = function(){
-  if(exigirRetiradaAntesDeEditar()) return;
-  const doBanco = ((window.__versaoDoBanco||{}).items||[]).length;
-  if(!confirm('Isso apaga ' + doBanco + ' conteúdo(s) que estão no banco e deixa só os desta aba. A versão do banco fica guardada e dá pra voltar atrás pelo escritório. Continuar?')) return;
-  fecharBarraDecisao(); bloqueadoPorConflito=false; apagouDePropósito=true;
-  save();
-};
 
 /* Rascunho encontrado ao abrir: ela decide. Nunca é aplicado sozinho. */
 function ofereceRascunho(rasc, itensDoBanco){
-  const q = (rasc.data.items||[]).length;
+  const alvo=String(rasc.competencia||mesVisivel||mesDoTexto(rasc.data.month)||'');
+  const q = itensDaCompetenciaV125(rasc.data,alvo).length;
   const quando = new Date(rasc.em).toLocaleString('pt-BR');
   const situacaoBanco = itensDoBanco === null
     ? 'O banco está indisponível agora, então ainda não comparei as versões.'
     : 'O banco está com ' + itensDoBanco + '.';
   mostrarBarraDecisao(
     '<b>Achei trabalho não salvo neste navegador.</b><br>'+
-    q + ' conteúdo(s), de ' + quando + '. ' + situacaoBanco+
+    q + ' conteúdo(s) de '+esc(alvo?textoDoMes(alvo):'esta competência')+', de ' + quando + '. ' + situacaoBanco+
     '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
     '<button onclick="restaurarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">↩️ Trazer de volta</button>'+
     '<button onclick="descartarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Descartar</button>'+
@@ -1439,12 +1577,26 @@ function ofereceRascunho(rasc, itensDoBanco){
 window.restaurarRascunho = function(){
   if(exigirRetiradaAntesDeEditar()) return;
   const r = lerRascunho(); if(!r) return;
-  data = r.data; carregado=true; apagouDePropósito=true;
+  const banco=clonarCalendarioV125(data);
+  const alvo=String(r.competencia||mesVisivel||mesDoTexto(r.data.month)||'');
+  const baseRascunho=r.base||banco;
+  const conciliado=mesclarCompetenciaCalendarioV125(baseRascunho,r.data,banco,alvo,'aba');
+  if(!conciliado.ok){
+    window.__conflitoCompetenciaV125=conciliado;
+    window.__versaoDoBanco=banco;
+    bloqueadoPorConflito=true;
+    mostrarConflito(itensDaCompetenciaV125(r.data,alvo).length,itensDaCompetenciaV125(banco,alvo).length,conciliado);
+    avisarTela('O rascunho tem pontos que precisam de decisão. Nada foi gravado.','erro');
+    return;
+  }
+  data=conciliado.documento; carregado=true; temNaoSalvo=true;
+  window.__calBaseConflitoV125=banco;
   document.getElementById('clientName').value=data.client||'';
   document.getElementById('monthName').value=data.month||'';
   fecharBarraDecisao();
-  renderAll();
-  avisarTela('Trabalho recuperado e sendo salvo no banco agora.');
+  renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();
+  guardarRascunho();pintarEstado();
+  avisarTela('Trabalho deste mês recuperado. Revise e salve; os outros meses foram preservados.');
 };
 window.descartarRascunho = function(){
   if(!confirm('Descartar de vez esse trabalho não salvo?')) return;
@@ -1485,6 +1637,7 @@ async function load(){
     if(snap.exists()){
       const fonteConfirmada=snap.data();
       window.__calFonteClienteV115=fonteConfirmada;
+      window.__calBaseConflitoV125=clonarCalendarioV125(fonteConfirmada);
       data=window.__modoCal==='cliente'?projetarCalendarioClienteV115(fonteConfirmada):fonteConfirmada;
       if(!data.items)data.items=[];
       if(!data.comments)data.comments=[];
@@ -1562,9 +1715,7 @@ async function load(){
       }else if(window.__modoCal === 'equipe'){
         const r = lerRascunho();
         if(r && r.data){
-          const noBanco = new Set((data.items||[]).map(chaveItem));
-          const soNoRascunho = (r.data.items||[]).filter(it => !noBanco.has(chaveItem(it))).length;
-          if(soNoRascunho > 0){ ofereceRascunho(r, (data.items||[]).length); ofereceu = true; }
+          if(rascunhoDifereDoBancoV125(r,data)){ ofereceRascunho(r,itensDaCompetenciaV125(data,String(r.competencia||mesVisivel||'')).length); ofereceu = true; }
           else limparRascunho();
         }
       }
@@ -1735,113 +1886,91 @@ function gravarComSeguranca(){
 
 async function executarGravacaoComSeguranca(){
   if(!window.__fb){pendingWrite=false;return {ok:false, motivo:'sem-conexao'};}
-  const {docRef,doc,getDoc,setDoc,db}=window.__fb;
+  const {docRef,doc,getDoc,db,runTransaction}=window.__fb;
+  if(!runTransaction){pendingWrite=false;return {ok:false,motivo:'sem-transacao'};}
+  const alvo=String(mesVisivel||mesDoTexto(data.month)||'');
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(alvo)){
+    pendingWrite=false;guardarRascunho();
+    return {ok:false,motivo:'competencia-invalida'};
+  }
+  let servidorConflitante=null,detalhesConflito=null;
+  const preferencia=window.__preferenciaConflitoV125||'';
+  window.__preferenciaConflitoV125='';
   try{
-    const atual = await getDoc(docRef);
-    const antes = atual.exists() ? (atual.data().items||[]) : [];
-    const depois = data.items||[];
-
-    /* ===== NÃO APAGAR O QUE ESTA ABA NÃO CONHECE — 29/07/2026 =======
-       `setDoc` grava o documento inteiro. Uma aba aberta antes desta
-       versão não tem `mesLegado` nem `aprovacaoMeses` na memória — e
-       gravaria por cima, apagando a âncora dos meses e as aprovações da
-       Amanda. Antes de gravar, o que está no servidor e não está aqui
-       volta pra dentro. */
-    const carimboEnvioSolicitado = window.__enviandoAprovacaoInterna
-      ? String(((data.aprovacaoMeses||{})[mesVisivel]||data.aprovacaoInterna||{}).em||'') : '';
-    if(atual.exists()){
-      const srv = atual.data();
-      if(srv.mesLegado && !data.mesLegado) data.mesLegado = srv.mesLegado;
-      if(srv.aprovacaoMeses || data.aprovacaoMeses){
-        const mapaServidor={...(srv.aprovacaoMeses||{})};
-        const marcaServidor=mapaServidor[mesVisivel]||{};
-        /* Compatibilidade Bluefit/V114: se o ajuste já estava aberto antes
-           da V115, a primeira gravação da equipe captura o servidor ainda
-           intacto antes de sobrescrever o item solicitado. */
-        if(window.__modoCal==='equipe'&&marcaServidor.status==='ajuste_interno'&&!marcaServidor.retratoLiberadoV115){
-          const camposRetrato=['itemId','day','name','desc','legenda','ref','obs','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
-          const itensRetrato=(srv.items||[]).filter(i=>i&&!i.excluido&&mesDoItemNoCalendario(srv,i)===mesVisivel)
-            .map(i=>{const r={mes:String(i.mes||mesVisivel)};camposRetrato.forEach(c=>{if(i[c]!==undefined)r[c]=JSON.parse(JSON.stringify(i[c]));});return r;});
-          if(itensRetrato.length) mapaServidor[mesVisivel]={...marcaServidor,retratoLiberadoV115:{schemaVersion:1,mes:mesVisivel,
-            publicadoPor:String(marcaServidor.liberadoPorAnterior||marcaServidor.enviadoPor||'Amanda'),
-            publicadoEm:String(marcaServidor.liberadoEmAnterior||marcaServidor.em||''),items:itensRetrato}};
-        }
-        data.aprovacaoMeses = mesclarAprovacoesMaisRecentes(mapaServidor, data.aprovacaoMeses);
-        const retratoServidor=(mapaServidor[mesVisivel]||{}).retratoLiberadoV115;
-        if(retratoServidor&&data.aprovacaoMeses?.[mesVisivel]&&!data.aprovacaoMeses[mesVisivel].retratoLiberadoV115){
-          data.aprovacaoMeses[mesVisivel]={...data.aprovacaoMeses[mesVisivel],retratoLiberadoV115:retratoServidor};
-        }
+    const base=clonarCalendarioV125(window.__calBaseConflitoV125||data);
+    const local=clonarCalendarioV125(data);
+    const agora=new Date().toISOString();
+    const backupRef=doc(db,'calendarios_versoes',String(window.__clienteId||'calendario')+'__'+agora.replace(/[:.]/g,'-'));
+    const resultado=await runTransaction(db,async transacao=>{
+      const snap=await transacao.get(docRef);
+      if(!snap.exists()) throw Object.assign(new Error('Calendário ausente.'),{code:'gs/calendario-ausente'});
+      const servidor=snap.data();
+      const servidorProtegido=clonarCalendarioV125(servidor);
+      const mapaServidor={...(servidorProtegido.aprovacaoMeses||{})};
+      const marcaServidor=mapaServidor[alvo]||{};
+      /* Compatibilidade Bluefit/V114: se o ajuste já estava aberto antes
+         da V115, a primeira gravação da equipe captura o servidor ainda
+         intacto dentro da mesma transação, antes de alterar o item. */
+      if(window.__modoCal==='equipe'&&marcaServidor.status==='ajuste_interno'&&!marcaServidor.retratoLiberadoV115){
+        const camposRetrato=['itemId','day','name','desc','legenda','ref','obs','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
+        const itensRetrato=(servidor.items||[])
+          .filter(i=>i&&!i.excluido&&mesDoItemNoCalendario(servidor,i)===alvo)
+          .map(i=>{const r={mes:String(i.mes||alvo)};camposRetrato.forEach(c=>{if(i[c]!==undefined)r[c]=clonarCalendarioV125(i[c]);});return r;});
+        if(itensRetrato.length) mapaServidor[alvo]={...marcaServidor,retratoLiberadoV115:{schemaVersion:1,mes:alvo,
+          publicadoPor:String(marcaServidor.liberadoPorAnterior||marcaServidor.enviadoPor||'Amanda'),
+          publicadoEm:String(marcaServidor.liberadoEmAnterior||marcaServidor.em||''),items:itensRetrato}};
       }
-      /* A aprovação da Amanda é dela, não desta aba. Se a do servidor é
-         mais recente que a que esta aba tem na memória, a do servidor
-         ganha — senão uma aba aberta antes dela aprovar desfaria a
-         aprovação sem ninguém perceber. */
-      const srvAp = srv.aprovacaoInterna, meuAp = data.aprovacaoInterna;
-      if(srvAp && srvAp.em && (!meuAp || !meuAp.em || String(srvAp.em) > String(meuAp.em))){
-        data.aprovacaoInterna = srvAp;
+      servidorProtegido.aprovacaoMeses=mapaServidor;
+      const conciliado=mesclarCompetenciaCalendarioV125(base,local,servidorProtegido,alvo,preferencia);
+      if(!conciliado.ok){
+        servidorConflitante=servidor;detalhesConflito=conciliado;
+        throw Object.assign(new Error('Conflito real na mesma competência.'),{code:'gs/conflito-competencia-v125'});
       }
-      ['itemIdMigracaoVersao','itemIdMigradoEm','itemIdMigradoPor','itemIdMigracaoUltimaOperacao'].forEach(chave=>{
-        if(srv[chave]!==undefined) data[chave]=srv[chave];
-      });
+      const deveGuardarVersao=(servidor.items||[]).length&&
+        (Date.now()-ultimaVersaoGuardadaEm>=INTERVALO_VERSAO_MS||apagouDePropósito||window.__enviandoAprovacaoInterna);
+      if(deveGuardarVersao){
+        transacao.set(backupRef,{...servidor,__cliente:window.__clienteId,__salvoEm:agora,__itens:(servidor.items||[]).length});
+      }
+      const patch={items:conciliado.itens,blocosPorMes:conciliado.documento.blocosPorMes||{},
+        aprovacaoMeses:conciliado.documento.aprovacaoMeses||{},updatedAt:agora};
+      transacao.set(docRef,patch,{merge:true});
+      return {deveGuardarVersao};
+    });
+    const recibo=await getDoc(docRef);
+    if(!recibo.exists()||assinaturaConteudoCompetenciaV125(recibo.data(),alvo)!==assinaturaConteudoCompetenciaV125(local,alvo)){
+      throw Object.assign(new Error('O recibo não confirmou a competência salva.'),{code:'gs/recibo-competencia-v125'});
     }
-
-    /* TRAVA 2 — não deixa uma aba desatualizada apagar o trabalho de
-       outra pessoa. Só passa se alguém apagou de propósito nesta aba. */
-    const versaoServidor = String((atual.exists() && atual.data().updatedAt) || '');
-    const mudouEmOutraAba = window.__calVersaoBancoLida !== null &&
-      versaoServidor !== window.__calVersaoBancoLida;
-    const carimboEnvioAtual=String(((data.aprovacaoMeses||{})[mesVisivel]||data.aprovacaoInterna||{}).em||'');
-    const conflitoDeVersao = deveBloquearConflitoCalendario(mudouEmOutraAba,
-      window.__enviandoAprovacaoInterna,atual.exists()?atual.data():{},data,carimboEnvioSolicitado,carimboEnvioAtual);
-    const idsServidor=new Set(antes.map(i=>String(i?.itemId||'').trim()).filter(Boolean));
-    const idsDepois=new Set(depois.map(i=>String(i?.itemId||'').trim()).filter(Boolean));
-    const removeriaItemId=[...idsServidor].some(id=>!idsDepois.has(id));
-    if(removeriaItemId || (!apagouDePropósito && ((antes.length > 0 && depois.length < antes.length) || conflitoDeVersao))){
-      pendingWrite=false;
-      /* NÃO manda mais atualizar a página. O rascunho já está guardado,
-         e a decisão vira botão: juntar as duas versões ou ficar com a
-         do banco. Trabalho nenhum é descartado sem alguém escolher. */
-      bloqueadoPorConflito=true;
-      window.__versaoDoBanco = atual.data();
-      mostrarConflito(depois.length, antes.length);
-      if(removeriaItemId) avisarTela('O banco recebeu identidades permanentes que esta aba antiga ainda não conhece. Junte com o banco ou use a versão do banco; nenhum ID foi removido.','erro');
-      return {ok:false, motivo:removeriaItemId?'itemids-protegidos':'conflito'};
-    }
-
-    /* TRAVA 3 — guarda a versão anterior antes de sobrescrever. A cópia
-       continua obrigatória no começo do bloco de edição e em operações de
-       risco; dentro dos 5 minutos seguintes o rascunho local cobre cada
-       tecla sem dobrar o número de escritas do Firebase. */
-    const deveGuardarVersao = atual.exists() && antes.length &&
-      (Date.now() - ultimaVersaoGuardadaEm >= INTERVALO_VERSAO_MS || apagouDePropósito || window.__enviandoAprovacaoInterna);
-    if(deveGuardarVersao){
-      try{
-        const carimbo = new Date().toISOString().replace(/[:.]/g,'-');
-        await setDoc(doc(db,'calendarios_versoes', window.__clienteId + '__' + carimbo),
-          { ...atual.data(), __cliente: window.__clienteId, __salvoEm: new Date().toISOString(), __itens: antes.length });
-        ultimaVersaoGuardadaEm = Date.now();
-      }catch(e){ console.error('Falha ao guardar versão anterior:', e); }
-    }
-
-    await setDoc(docRef, data);
-    itensNoBanco = depois.length;
-    window.__calVersaoBancoLida = String(data.updatedAt||'');
-    ultimaAssinaturaSalva = assinaturaCalendario(data);
+    data=clonarCalendarioV125(recibo.data());
+    window.__calBaseConflitoV125=clonarCalendarioV125(data);
+    if(resultado&&resultado.deveGuardarVersao) ultimaVersaoGuardadaEm=Date.now();
+    itensNoBanco=(data.items||[]).length;
+    window.__calVersaoBancoLida=String(data.updatedAt||'');
+    ultimaAssinaturaSalva=assinaturaCalendario(data);
     apagouDePropósito = false;
     pendingWrite=false;
     bloqueadoPorConflito=false;
+    window.__conflitoCompetenciaV125=null;
     temNaoSalvo=false;
     ultimoSalvo=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    limparRascunho();          // gravou de verdade: o rascunho já não serve
+    limparRascunho();
     pintarEstado();
     return {ok:true};
   }catch(e){
     console.error('Erro ao salvar:', e);
     pendingWrite=false;
-    /* O rascunho continua no navegador. Ela pode fechar tudo e voltar. */
-    guardarRascunho(); pintarEstado();
-    avisarTela('Não consegui salvar agora (internet). Seu trabalho está guardado neste navegador — pode até fechar a página, que ele volta quando você abrir de novo. Tento de novo a cada edição.', 'erro');
-    return {ok:false, motivo:/quota|exhaust|429/i.test(String((e&&e.message)||e))?'cota':'erro', erro:String((e&&e.message)||e)};
+    guardarRascunho();pintarEstado();
+    const codigo=String(e&&e.code||'');
+    if(codigo==='gs/conflito-competencia-v125'){
+      bloqueadoPorConflito=true;
+      window.__versaoDoBanco=clonarCalendarioV125(servidorConflitante);
+      window.__conflitoCompetenciaV125=detalhesConflito;
+      mostrarConflito(itensDaCompetenciaV125(data,alvo).length,itensDaCompetenciaV125(servidorConflitante,alvo).length,detalhesConflito);
+      avisarTela('Existe uma alteração concorrente exatamente em '+textoDoMes(alvo)+'. Nada foi sobrescrito e o rascunho continua protegido.','erro');
+      return {ok:false,motivo:'conflito',conflitos:detalhesConflito&&detalhesConflito.conflitos};
+    }
+    const cota=/quota|exhaust|429/i.test(codigo+' '+String((e&&e.message)||e));
+    avisarTela(cota?'O limite do banco impediu o salvamento. Seu rascunho continua protegido.':'Não consegui confirmar o salvamento. Seu trabalho continua guardado neste navegador.','erro');
+    return {ok:false,motivo:cota?'cota':'erro',erro:codigo||String((e&&e.message)||e)};
   }
 }
 function renderAll(){save();renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();renderSeletorMes();renderBlocos();}
@@ -2224,7 +2353,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
     const marca={status:'aguardando_interna',por:quem||'equipe',em:new Date().toISOString(),motivoAjuste:'',mes:alvo};
     const pacoteEnvioPendente={data:JSON.parse(JSON.stringify(data)),marca,em:marca.em,
       mes:alvo,competencia:alvo,cliente:String(window.__clienteId||''),por:marca.por,
-      hash:assinaturaConteudoCalendario(data),tentativas:0};
+      hash:assinaturaConteudoCompetenciaV125(data,alvo),tentativas:0};
     if(!conteudo||!conteudo.ok){
       guardarEnvioPendente(pacoteEnvioPendente);
       guardarRascunho(); pintarEstado(); renderAprovacaoInterna();
@@ -2252,10 +2381,12 @@ window.enviarParaAprovacaoInterna = async function(btn){
       if(resultado&&resultado.motivo==='conflito'&&resultado.servidor){
         window.__versaoDoBanco=resultado.servidor;
         bloqueadoPorConflito=true;
-        mostrarConflito((data.items||[]).length,(resultado.servidor.items||[]).length);
+        const detalhes=mesclarCompetenciaCalendarioV125(window.__calBaseConflitoV125||data,data,resultado.servidor,alvo,'');
+        window.__conflitoCompetenciaV125=detalhes;
+        mostrarConflito(itensDaCompetenciaV125(data,alvo).length,itensDaCompetenciaV125(resultado.servidor,alvo).length,detalhes);
       }
       const msg=resultado&&resultado.motivo==='conflito'
-        ? 'NÃO enviei pra Amanda: o calendário mudou depois de ser salvo. O banco foi preservado; junte as versões e tente novamente.'
+        ? 'NÃO enviei pra Amanda: o mesmo mês mudou depois de ser salvo. O banco e o rascunho foram preservados para uma decisão explícita.'
         : resultado&&resultado.motivo==='cota'
           ? 'NÃO enviei pra Amanda: o limite do banco foi atingido. A tentativa ficou protegida para reenvio.'
           : 'NÃO enviei pra Amanda: a transição não foi confirmada pelo banco. A tentativa ficou protegida para reenvio.';

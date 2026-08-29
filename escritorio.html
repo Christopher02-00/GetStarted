@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-29-painel-historico-competencia-v129">
+  <meta name="gs-build" content="2026-08-29-folha-extras-competencia-v130">
+  <meta name="gs-v130-patch" content="2026-08-29-folha-extras-competencia-v130">
   <meta name="gs-v129-patch" content="2026-08-29-painel-historico-competencia-v129">
   <meta name="gs-v128-patch" content="2026-08-29-bootstrap-escritorio-v128">
   <meta name="gs-v127-base" content="2026-08-28-central-calendarios-v127">
@@ -7440,7 +7441,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      deles). O Resumo Executivo carrega SOB DEMANDA — um clique. Assim a
      tela abre instantânea e o peso só vem se você pedir. */
   window.montarFinanceiroCompleto = async function(){
-    try{ await renderGerenciaPagamentos('financeiroExtrasBox'); }
+    try{
+      if(usuarioAtual === 'Chris' && window.renderFinanceiroExtrasV130) await window.renderFinanceiroExtrasV130();
+      else await renderGerenciaPagamentos('financeiroExtrasBox');
+    }
     catch(e){ console.error('Falha nos extras do financeiro:', e);
       const b=document.getElementById('financeiroExtrasBox'); if(b) b.innerHTML='<div class="empty">Não consegui carregar os extras agora.</div>'; }
     const boxRe = document.getElementById('financeiroResumoBox');
@@ -7477,6 +7481,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.definirFilmmakerPagamento = async function(id, nome){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('Definir o responsável pelo extra é da Amanda.', 'erro'); return; }
     if(!nome) return;
+    const atual=await getDoc(doc(db,'pagamentos_extra',id));
+    if(!atual.exists()) return;
+    if(atual.data().folhaExtrasOperationId){
+      mostrarToast('Este item já pertence a uma folha paga e é terminal. Corrija por um complemento auditado.','erro');
+      return;
+    }
     await updateDoc(doc(db,'pagamentos_extra', id), { filmmaker: nome, filmmakerDefinidoPor: usuarioAtual||'?', filmmakerDefinidoEm: new Date().toISOString() });
     mostrarToast('Valor atribuído a ' + nome + '.');
     renderGerenciaPagamentos();
@@ -7635,6 +7645,312 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     __mesExtras = m;
     renderGerenciaPagamentos();
   };
+
+  /* V130 — FECHAMENTO MENSAL EXATO DOS EXTRAS =========================
+     O Financeiro e a tela operacional da Amanda possuem relógios
+     diferentes. A Amanda organiza pelo mês em que o trabalho aconteceu;
+     o Chris paga pela competência da folha, sempre no mês seguinte.
+
+     Esta projeção existe somente dentro de `financeiroExtrasBox`, recebe
+     `finMes` como fonte única e nunca altera `__mesExtras`. Abrir, trocar
+     o mês ou reler é zero-write. A única escrita é a confirmação explícita
+     abaixo, limitada à competência escolhida e protegida por recibo
+     determinístico para clique duplo, retry e duas abas. */
+  const __folhasExtrasV130EmCurso = new Map();
+  let __renderFolhaExtrasV130Seq = 0;
+
+  function valorExtraNumericoV130(v){
+    const n = Number(v);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  function bloqueioExtraFolhaV130(extra){
+    if(!extra || extra.excluido) return 'lançamento removido';
+    if(!extraLiberado(extra)) return 'aguardando conferência da Amanda';
+    if(!String(extra.filmmaker||'').trim()) return 'sem pessoa definida';
+    const filmagem = valorExtraNumericoV130(extra.valorExtra||0);
+    const uber = valorExtraNumericoV130(extra.valorUber||0);
+    if(!Number.isFinite(filmagem) || !Number.isFinite(uber) || filmagem < 0 || uber < 0) return 'valor inválido';
+    const contas = contasDoExtra(extra);
+    if(contas.semValor) return 'filmagem sem valor definido';
+    if(contas.semComprovante) return 'Uber sem comprovante';
+    if(contas.total <= 0) return 'lançamento sem valor a pagar';
+    return '';
+  }
+
+  function projetarFolhaExtrasV130(lista, competencia){
+    const ativos = (lista||[]).filter(p => p && !p.excluido);
+    const daFolha = ativos.filter(p => mesDoPagamentoExtra(p) === competencia);
+    const bloqueados = daFolha.filter(p => !p.pago && !!bloqueioExtraFolhaV130(p));
+    const confirmados = daFolha.filter(p => p.pago || !bloqueioExtraFolhaV130(p));
+    const pagos = confirmados.filter(p => p.pago);
+    const abertos = confirmados.filter(p => !p.pago);
+    const atrasados = ativos.filter(p => !p.pago && mesDoPagamentoExtra(p) < competencia && !bloqueioExtraFolhaV130(p));
+    return {
+      competencia,
+      realizacao: deslocarCompetenciaExtra(competencia,-1),
+      daFolha, confirmados, pagos, abertos, bloqueados, atrasados,
+      total: somarExtras(confirmados).total,
+      totalPago: somarExtras(pagos).total,
+      totalAberto: somarExtras(abertos).total,
+      totalAtrasado: somarExtras(atrasados).total
+    };
+  }
+
+  function estadoFolhaExtrasV130(projecao, competenciaHoje){
+    if(!projecao.daFolha.length) return 'vazia';
+    if(projecao.bloqueados.length) return 'bloqueada';
+    if(competenciaHoje < projecao.competencia) return 'futura';
+    if(projecao.abertos.length) return 'aberta';
+    return 'terminal';
+  }
+
+  function linhaExtraFolhaV130(extra){
+    const contas = contasDoExtra(extra);
+    return `<div class="item" style="border-left:3px solid ${extra.pago?'var(--green)':'var(--yellow)'};">
+      <div class="top"><div class="nome">${esc(extra.filmmaker||'Pessoa não definida')} — ${esc(extra.clienteNome||'sem cliente')}</div><span class="selo ${extra.pago?'aprovada':'hoje'}">${extra.pago?'PAGO':'EM ABERTO'}</span></div>
+      <div class="meta" style="margin-top:5px;">${esc(extra.servico||'extra sem descrição')}${extra.data?' · realizado em '+formatarDataBR(extra.data):''}</div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px;">
+        ${contas.filmagem?'<span class="selo cliente">🎥 '+brl(contas.filmagem)+'</span>':''}
+        ${contas.uber?'<span class="selo cliente">🚗 '+brl(contas.uber)+'</span>':''}
+        <b style="font-size:12.5px;">Total ${brl(contas.total)}</b>
+      </div>
+      ${extra.pago?`<div class="meta" style="margin-top:7px;">Baixado por ${esc(extra.pagoPor||'Chris')}${extra.pagoEm?' em '+formatarDataBR(extra.pagoEm):''}${extra.folhaExtrasOperationId?' · recibo '+esc(extra.folhaExtrasOperationId):''}</div>`:''}
+    </div>`;
+  }
+
+  function htmlAtrasosFolhaExtrasV130(atrasados){
+    const grupos = porMesDePagamentoDosExtras(atrasados);
+    const competencias = Object.keys(grupos).sort();
+    if(!competencias.length) return '';
+    return `<div class="card" style="border:2px solid var(--red);background:rgba(214,58,58,.07);">
+      <div class="metaSecTit" style="color:var(--red);">⚠️ Folhas anteriores ainda abertas</div>
+      <div class="desc">Estes valores não entram no total nem no botão da competência atual. Abra o mês correto para conferir e baixar sem misturar folhas.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        ${competencias.map(comp=>`<button class="btn secondary" style="width:auto;padding:9px 14px;border-color:var(--red);" onclick="abrirCompetenciaFolhaExtrasV130('${comp}')">${rotuloMesExtras(comp)} · ${brl(somarExtras(grupos[comp]).total)}</button>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  window.abrirCompetenciaFolhaExtrasV130 = function(competencia){
+    if(usuarioAtual !== 'Chris' || !competenciaValidaExtra(competencia)) return false;
+    return window.sincronizarCompetenciaFinanceiraV103
+      ? window.sincronizarCompetenciaFinanceiraV103(competencia,'financeiro')
+      : false;
+  };
+
+  window.renderFinanceiroExtrasV130 = async function(){
+    const cont = document.getElementById('financeiroExtrasBox');
+    if(!cont) return false;
+    if(usuarioAtual !== 'Chris'){
+      cont.replaceChildren();
+      return false;
+    }
+    const competencia = String(document.getElementById('finMes')?.value||'');
+    const sequencia = ++__renderFolhaExtrasV130Seq;
+    if(!competenciaValidaExtra(competencia)){
+      cont.innerHTML = `<div class="card" data-folha-extras-competencia="" data-folha-extras-estado="indisponivel"><b>Extras indisponíveis.</b><div class="desc">Selecione uma competência financeira válida.</div></div>`;
+      return false;
+    }
+    cont.innerHTML = `<div class="card" data-folha-extras-competencia="${escAttr(competencia)}" data-folha-extras-estado="carregando"><div class="desc">Conferindo a folha de ${rotuloMesExtras(competencia)}…</div></div>`;
+    let pagamentos = [];
+    try{
+      const snap = await getDocs(collection(db,'pagamentos_extra'));
+      snap.forEach(d=>pagamentos.push({id:d.id,...d.data()}));
+    }catch(erro){
+      console.error('V130 — falha ao ler a folha de extras:',erro);
+      if(sequencia!==__renderFolhaExtrasV130Seq) return false;
+      cont.innerHTML = `<div class="card" data-folha-extras-competencia="${escAttr(competencia)}" data-folha-extras-estado="indisponivel"><b>Extras indisponíveis.</b><div class="desc">Não consegui confirmar os lançamentos. Nada foi tratado como vazio ou pago; tente novamente.</div></div>`;
+      return false;
+    }
+    if(sequencia!==__renderFolhaExtrasV130Seq || usuarioAtual!=='Chris' || document.getElementById('finMes')?.value!==competencia) return false;
+
+    const projecao = projetarFolhaExtrasV130(pagamentos,competencia);
+    const competenciaHoje = hojeLocal().slice(0,7);
+    const estado = estadoFolhaExtrasV130(projecao,competenciaHoje);
+    const tituloEstado = estado==='terminal' ? '✅ Folha paga — sem valores em aberto'
+      : estado==='futura' ? '🗓️ Esta folha ainda não pode ser baixada'
+      : estado==='bloqueada' ? '⚠️ Folha aguardando conferência'
+      : estado==='vazia' ? 'Nenhum extra nesta folha'
+      : '💳 Folha pronta para pagamento';
+    const corEstado = estado==='terminal'?'var(--green)':estado==='bloqueada'?'var(--yellow2)':estado==='aberta'?'var(--yellow)':'var(--line)';
+    const dataPadrao = competencia===competenciaHoje ? hojeLocal() : '';
+    const bloqueios = projecao.bloqueados.map(p=>`<div class="item" style="border-left:3px solid var(--yellow2);"><b>${esc(p.filmmaker||'Pessoa não definida')} — ${esc(p.clienteNome||'sem cliente')}</b><div class="meta" style="margin-top:4px;">${esc(bloqueioExtraFolhaV130(p))}. A Amanda precisa concluir esta conferência antes da baixa.</div></div>`).join('');
+
+    cont.innerHTML = `<section class="card" style="border:2px solid ${corEstado};" data-folha-extras-competencia="${escAttr(competencia)}" data-folha-extras-estado="${estado}">
+      <h2>💸 Folha de extras — ${rotuloMesExtras(competencia)}</h2>
+      <div class="desc">Filmagens avulsas e Uber realizados em <b>${rotuloMesExtras(projecao.realizacao)}</b>, pagos junto com o salário em <b>${rotuloMesExtras(competencia)}</b>. O mês acima é o único controle desta visão.</div>
+      <div class="painelResumo" style="margin-top:14px;">
+        <div class="resumoCard"><div class="num" style="font-size:19px;" data-folha-extras-total>${brl(projecao.total)}</div><div class="lbl">TOTAL DA FOLHA</div></div>
+        <div class="resumoCard green"><div class="num" style="font-size:19px;" data-folha-extras-pago>${brl(projecao.totalPago)}</div><div class="lbl">PAGO</div></div>
+        <div class="resumoCard ${projecao.totalAberto?'yellow':'green'}"><div class="num" style="font-size:19px;" data-folha-extras-aberto>${brl(projecao.totalAberto)}</div><div class="lbl">EM ABERTO</div></div>
+      </div>
+      <div style="display:none" data-folha-extras-atrasado>${brl(projecao.totalAtrasado)}</div>
+      <div class="card" style="margin:14px 0 0;border-left:4px solid ${corEstado};"><b>${tituloEstado}</b><div class="desc" style="margin-top:5px;">${estado==='vazia'?'Mês confirmado sem lançamentos; isso é diferente de falha de leitura.':estado==='terminal'?projecao.confirmados.length+' lançamento(s) preservado(s) no histórico.':estado==='futura'?'A competência pode ser conferida, mas o pagamento só é liberado no próprio mês.':estado==='bloqueada'?'Nenhuma baixa será feita enquanto houver item pendente.':projecao.abertos.length+' lançamento(s) exato(s) desta competência aguardam pagamento.'}</div></div>
+      ${projecao.bloqueados.length?`<div class="card" style="border:2px solid var(--yellow2);"><div class="metaSecTit" data-folha-extras-bloqueados>${projecao.bloqueados.length} aguardando conferência</div>${bloqueios}</div>`:`<div style="display:none" data-folha-extras-bloqueados>0</div>`}
+      ${projecao.confirmados.length?`<div class="card"><div class="metaSecTit">Lançamentos desta folha</div>${projecao.confirmados.sort((a,b)=>String(a.data||'').localeCompare(String(b.data||''))).map(linhaExtraFolhaV130).join('')}</div>`:''}
+      ${estado==='aberta'?`<div class="card" style="border:2px solid var(--green);">
+        <div class="metaSecTit">Confirmar pagamento desta folha</div>
+        <div class="desc">A ação abaixo paga somente ${rotuloMesExtras(competencia)}. Folhas anteriores nunca são incluídas automaticamente.</div>
+        <div class="field" style="margin-top:10px;"><label>Data real em que o dinheiro saiu</label><input type="date" id="folhaExtrasDataCaixaV130" min="${competencia}-01" max="${competencia===competenciaHoje?hojeLocal():competencia+'-31'}" value="${dataPadrao}"></div>
+        <button class="btn green" data-acao-pagar-folha-extras style="margin-top:12px;" onclick="pagarFolhaExtrasDaCompetencia('${competencia}')">✔ Marcar folha de ${rotuloMesExtras(competencia)} como paga</button>
+      </div>`:''}
+    </section>
+    ${htmlAtrasosFolhaExtrasV130(projecao.atrasados)}`;
+    return true;
+  };
+
+  async function sha256TextoV130(texto){
+    const fonte=String(texto);
+    if(globalThis.crypto?.subtle){
+      const bytes = new TextEncoder().encode(fonte);
+      const hash = await globalThis.crypto.subtle.digest('SHA-256',bytes);
+      return [...new Uint8Array(hash)].map(v=>v.toString(16).padStart(2,'0')).join('');
+    }
+    /* `srcdoc`/navegadores antigos podem não expor WebCrypto. O fallback
+       continua determinístico para idempotência; em produção HTTPS o
+       caminho acima é sempre SHA-256. */
+    const sementes=[0x811c9dc5,0x9e3779b9,0x85ebca6b,0xc2b2ae35];
+    const partes=sementes.map(semente=>{
+      let h=semente>>>0;
+      for(let i=0;i<fonte.length;i++) h=Math.imul(h^fonte.charCodeAt(i),0x01000193)>>>0;
+      return h.toString(16).padStart(8,'0');
+    });
+    return partes.join('').repeat(2);
+  }
+
+  function assinaturaItemFolhaV130(extra){
+    const contas = contasDoExtra(extra);
+    return {
+      id:String(extra.id||''), competencia:mesDoPagamentoExtra(extra), pessoa:String(extra.filmmaker||''),
+      filmagem:Number(contas.filmagem.toFixed(2)), uber:Number(contas.uber.toFixed(2)), total:Number(contas.total.toFixed(2)),
+      liberado:extraLiberado(extra), excluido:!!extra.excluido, pago:!!extra.pago
+    };
+  }
+
+  window.pagarFolhaExtrasDaCompetencia = async function(competencia){
+    if(usuarioAtual !== 'Chris'){
+      mostrarToast('A baixa da folha é exclusiva do Chris.','erro');
+      return false;
+    }
+    competencia = String(competencia||'');
+    if(!competenciaValidaExtra(competencia)){
+      mostrarToast('Competência da folha inválida. Nada foi alterado.','erro');
+      return false;
+    }
+    if(competencia > hojeLocal().slice(0,7)){
+      mostrarToast('Esta folha é futura e ainda não pode ser baixada.','erro');
+      return false;
+    }
+    if(__folhasExtrasV130EmCurso.has(competencia)) return __folhasExtrasV130EmCurso.get(competencia);
+
+    const tarefa = (async()=>{
+      const dataCaixa = String(document.getElementById('folhaExtrasDataCaixaV130')?.value||'');
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(dataCaixa) || dataCaixa.slice(0,7)!==competencia || dataCaixa>hojeLocal()){
+        mostrarToast('Informe uma data real dentro da competência selecionada e não futura.','erro');
+        return false;
+      }
+      let todos = [];
+      try{
+        const snap = await getDocs(collection(db,'pagamentos_extra'));
+        snap.forEach(d=>todos.push({id:d.id,...d.data()}));
+      }catch(erro){
+        console.error('V130 — leitura antes da baixa falhou:',erro);
+        mostrarToast('Nada foi alterado: não consegui confirmar a folha agora.','erro');
+        return false;
+      }
+      const projecao = projetarFolhaExtrasV130(todos,competencia);
+      if(projecao.bloqueados.length){
+        mostrarToast('Nada foi alterado: a folha ainda tem item aguardando conferência.','erro');
+        return false;
+      }
+      if(!projecao.abertos.length){
+        await window.renderFinanceiroExtrasV130();
+        mostrarToast('Esta folha já está sem valores em aberto.');
+        return true;
+      }
+      if(projecao.abertos.length>440){
+        mostrarToast('A folha excede o limite seguro de uma confirmação. Nada foi alterado.','erro');
+        return false;
+      }
+
+      const itensIniciais = projecao.abertos.map(assinaturaItemFolhaV130).sort((a,b)=>a.id.localeCompare(b.id));
+      const assinatura = JSON.stringify({competencia,dataCaixa,itens:itensIniciais});
+      const hash = await sha256TextoV130(assinatura);
+      const operationId = `folha_extras_v130_${competencia}_${hash.slice(0,20)}`;
+      const reciboRef = doc(db,'config_financeiro',operationId);
+      if(!confirm(`Confirmar a folha de ${rotuloMesExtras(competencia)} como paga?\n\n${projecao.abertos.length} lançamento(s) · ${brl(projecao.totalAberto)}\nData real: ${formatarDataBR(dataCaixa)}\n\nNenhuma folha anterior será incluída.`)) return false;
+      const pagoEm = new Date(dataCaixa+'T12:00:00-03:00').toISOString();
+      const uid = String(auth?.currentUser?.uid||'');
+      let semAlteracao = false;
+
+      try{
+        await runTransaction(db, async tx => {
+          const recibo = await tx.get(reciboRef);
+          if(recibo.exists()){
+            const existente = recibo.data();
+            if(existente.operationId!==operationId || existente.assinatura!==assinatura || existente.status!=='confirmado') throw new Error('RECIBO_V130_DIVERGENTE');
+            semAlteracao = true;
+            return;
+          }
+          const atuais = [];
+          for(const item of itensIniciais){
+            const ref = doc(db,'pagamentos_extra',item.id);
+            const snap = await tx.get(ref);
+            if(!snap.exists()) throw new Error('ITEM_V130_AUSENTE');
+            atuais.push({id:item.id,ref,...snap.data()});
+          }
+          const assinaturaAtual = JSON.stringify({competencia,dataCaixa,itens:atuais.map(assinaturaItemFolhaV130).sort((a,b)=>a.id.localeCompare(b.id))});
+          if(assinaturaAtual!==assinatura) throw new Error('FOLHA_V130_MUDOU_DURANTE_CONFIRMACAO');
+
+          tx.set(reciboRef,{
+            tipo:'folha_extras_v130',schemaVersion:130,operationId,competenciaPagamento:competencia,
+            competenciaRealizacao:deslocarCompetenciaExtra(competencia,-1),dataCaixa,assinatura,
+            itemIds:itensIniciais.map(v=>v.id),quantidade:itensIniciais.length,total:Number(projecao.totalAberto.toFixed(2)),
+            status:'confirmado',confirmadoPor:'Chris',confirmadoPorUid:uid,confirmadoEm:serverTimestamp(),excluido:false
+          });
+          atuais.forEach(extra=>tx.update(extra.ref,{
+            pago:true,pagoPor:'Chris',pagoPorUid:uid,pagoEm,
+            folhaExtrasOperationId:operationId,folhaExtrasCompetencia:competencia,
+            folhaExtrasDataCaixa:dataCaixa,folhaExtrasSchemaVersion:130,folhaExtrasConfirmadoEm:serverTimestamp()
+          }));
+        });
+      }catch(erro){
+        console.error('V130 — baixa mensal recusada:',erro);
+        mostrarToast('Nada foi alterado: a folha mudou ou não pôde ser confirmada. Recarregue e confira.','erro');
+        return false;
+      }
+
+      __cacheColecoes.delete('pagamentos_extra');
+      projecao.abertos.forEach(extra=>refletirExtraNoCache(extra.id,{
+        pago:true,pagoPor:'Chris',pagoPorUid:uid,pagoEm,folhaExtrasOperationId:operationId,
+        folhaExtrasCompetencia:competencia,folhaExtrasDataCaixa:dataCaixa,folhaExtrasSchemaVersion:130
+      },false));
+      atualizarTodosOsBadges();
+
+      let releitura = [];
+      try{
+        const snapFinal = await getDocs(collection(db,'pagamentos_extra'));
+        snapFinal.forEach(d=>releitura.push({id:d.id,...d.data()}));
+      }catch(erro){
+        console.error('V130 — baixa confirmada, mas releitura falhou:',erro);
+        mostrarToast('O pagamento foi confirmado, mas a conferência final não carregou. Reabra a competência antes de repetir.','erro');
+        return true;
+      }
+      const final = projetarFolhaExtrasV130(releitura,competencia);
+      await window.renderFinanceiroExtrasV130();
+      if(final.abertos.length || final.bloqueados.length){
+        mostrarToast('A baixa foi confirmada, mas entrou outra pendência nesta folha. Confira o complemento.','erro');
+      }else{
+        mostrarToast(semAlteracao?'Folha já confirmada; nenhum pagamento foi repetido.':'Folha paga e conferida por recibo.');
+      }
+      return true;
+    })();
+    __folhasExtrasV130EmCurso.set(competencia,tarefa);
+    try{ return await tarefa; }
+    finally{ if(__folhasExtrasV130EmCurso.get(competencia)===tarefa) __folhasExtrasV130EmCurso.delete(competencia); }
+  };
+  /* FIM V130 — FOLHA DE EXTRAS */
 
   async function renderGerenciaPagamentos(alvoId){
     /* Extras da equipe são gestão financeira-operacional. Funcionário
@@ -7948,7 +8264,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${brl(aberto)} a receber · 🎥 ${brl(cTudo.filmagem)} · 🚗 ${brl(cTudo.uber)})</span><span class="seta">▾</span></div>
           <div class="faixaItens">
           ${(!semDono && pendentes) ? `<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 2px 10px;">
-            <button class="btn green" style="width:auto;padding:8px 15px;font-size:11.5px;" onclick="pagarTudoDaPessoa('${escJs(nome)}')">✔ Pagar folhas vencidas de ${esc(nome)}</button>
+            ${usuarioAtual==='Chris'?`<button class="btn green" style="width:auto;padding:8px 15px;font-size:11.5px;" onclick="pagarTudoDaPessoa('${escJs(nome)}')">✔ Pagar folhas vencidas de ${esc(nome)}</button>`:''}
             <button class="btn secondary" style="width:auto;padding:8px 15px;font-size:11.5px;" onclick="copiarFolhaDaPessoa('${escJs(nome)}')">📋 Copiar resumo pro WhatsApp</button>
           </div>` : ''}
           ${semDono ? '<div class="desc" style="color:var(--yellow2);padding:8px;">Estes vieram antes do campo de filmmaker existir, ou foram lançados sem escolher a pessoa. Define abaixo pra quem é cada um.</div>' : ''}
@@ -7964,15 +8280,17 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
             ${p.servico ? '<div class="meta" style="margin-top:6px;">🛠️ '+esc(p.servico)+'</div>' : ''}
             <div class="field" style="margin-top:8px;">
               <label>Quem recebe</label>
-              <select onchange="definirFilmmakerPagamento('${p.id}', this.value)" style="width:100%;background:var(--deep);border:1px solid var(--line);color:#fff;padding:7px;border-radius:7px;font-size:12px;">
+              <select onchange="definirFilmmakerPagamento('${p.id}', this.value)" ${p.folhaExtrasOperationId?'disabled':''} style="width:100%;background:var(--deep);border:1px solid var(--line);color:#fff;padding:7px;border-radius:7px;font-size:12px;">
                 <option value="">— escolher —</option>
                 ${FILMMAKERS_PAGAMENTO.map(f=>`<option value="${f}" ${p.filmmaker===f?'selected':''}>${f}</option>`).join('')}
               </select>
             </div>
             <div style="display:flex;gap:6px;margin-top:8px;">
-              ${p.pago || mesDoPagamentoExtra(p)<=competenciaHoje
-                ? `<button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="marcarPagamentoExtra('${p.id}', ${!p.pago})">${p.pago ? 'Marcar como pendente' : '✓ Marcar como pago'}</button>`
-                : `<span class="selo pendente">Paga na folha de ${rotuloMesExtras(mesDoPagamentoExtra(p))}</span>`}
+              ${usuarioAtual==='Chris'
+                ? (p.pago || mesDoPagamentoExtra(p)<=competenciaHoje
+                  ? `<button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="marcarPagamentoExtra('${p.id}', ${!p.pago})">${p.pago ? (p.folhaExtrasOperationId?'Pago · terminal':'Marcar como pendente') : '✓ Marcar como pago'}</button>`
+                  : `<span class="selo pendente">Paga na folha de ${rotuloMesExtras(mesDoPagamentoExtra(p))}</span>`)
+                : `<span class="selo ${p.pago?'aprovada':'pendente'}">${p.pago?'Pago pelo Financeiro':'Pagamento exclusivo do Chris'}</span>`}
               <button class="btn red" style="width:auto;padding:5px 12px;font-size:11px;" onclick="excluirPagamentoExtra('${p.id}')">Excluir</button>
             </div>
           </div>`).join('')}
@@ -8072,10 +8390,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   };
 
   window.marcarPagamentoExtra = async function(id, novoEstado){
-    if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão.', 'erro'); return; }
+    if(usuarioAtual!=='Chris'){ mostrarToast('A baixa financeira é exclusiva do Chris.', 'erro'); return; }
+    const atual = await getDoc(doc(db,'pagamentos_extra',id));
+    if(!atual.exists()) return;
+    if(!novoEstado && atual.data().folhaExtrasOperationId){
+      mostrarToast('Pagamento confirmado por recibo V130 é terminal e não volta para pendente.','erro');
+      return;
+    }
     if(novoEstado){
-      const atual = await getDoc(doc(db,'pagamentos_extra',id));
-      if(!atual.exists()) return;
       const competencia = mesDoPagamentoExtra(atual.data());
       if(competencia > hojeLocal().slice(0,7)){
         mostrarToast('Esse extra pertence à folha de '+rotuloMesExtras(competencia)+' e ainda não pode ser baixado.','erro');
@@ -8096,6 +8418,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
   window.excluirPagamentoExtra = async function(id){
     if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão.', 'erro'); return; }
+    const atual=await getDoc(doc(db,'pagamentos_extra',id));
+    if(!atual.exists()) return;
+    if(atual.data().folhaExtrasOperationId){
+      mostrarToast('Este item já pertence a uma folha paga e não pode ser removido.','erro');
+      return;
+    }
     if(!confirm('Excluir esse pagamento extra?')) return;
     await atualizarExtraEEncerrarAvisos(id, { excluido: true, excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString() }, 'lançamento removido por soft-delete');
     mostrarToast('Removido.');
@@ -32354,7 +32682,10 @@ window.setGerenciaSub = function(qual, el){
     if(colecao === 'pagamentos_extra'){
       limparCacheIndicadores();
       atualizarTodosOsBadges();
-      if(document.getElementById(__alvoExtras)?.offsetParent !== null) renderGerenciaPagamentos();
+      const extrasFinanceiroV130=document.getElementById('financeiroExtrasBox');
+      if(usuarioAtual==='Chris' && extrasFinanceiroV130?.offsetParent !== null && window.renderFinanceiroExtrasV130){
+        window.renderFinanceiroExtrasV130();
+      }else if(document.getElementById(__alvoExtras)?.offsetParent !== null) renderGerenciaPagamentos();
     }
     if(colecao === 'postagens'){
       atualizarBadgePostagens();
@@ -40240,7 +40571,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   let __equipeAberta = null;
 
   window.pagarTudoDaPessoa = async function(nome){
-    if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão.', 'erro'); return; }
+    if(usuarioAtual!=='Chris'){ mostrarToast('A baixa financeira é exclusiva do Chris.', 'erro'); return; }
     /* Paga a folha corrente e atrasos. Não antecipa extras realizados no
        mês atual, porque eles pertencem à folha do mês seguinte. */
     let lista = [];
@@ -42290,6 +42621,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
       return await renderFinanceiroOperacionalV109.apply(this,args);
     }finally{
       window.sincronizarVisibilidadeAjustesFinanceirosV129();
+      if(usuarioAtual==='Chris' && document.getElementById('financeiroExtrasBox') && window.renderFinanceiroExtrasV130){
+        try{ await window.renderFinanceiroExtrasV130(); }
+        catch(erro){
+          console.error('V130 — folha de extras não acompanhou a competência:',erro);
+          const box=document.getElementById('financeiroExtrasBox');
+          if(box) box.innerHTML='<div class="card" data-folha-extras-estado="indisponivel"><b>Extras indisponíveis.</b><div class="desc">O Financeiro principal carregou, mas a folha de extras não foi confirmada.</div></div>';
+        }
+      }
     }
   };
   window.renderFinanceiroV103 = window.renderFinanceiro;

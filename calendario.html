@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-  <meta name="gs-build" content="2026-08-28-conciliacao-competencia-v125">
+  <meta name="gs-build" content="2026-08-28-portal-calendario-cliente-v126">
+  <meta name="gs-v125-base" content="2026-08-28-conciliacao-competencia-v125">
   <meta name="gs-v124-base" content="2026-08-28-fluxo-calendario-plataformas-v124">
   <meta name="gs-v118-base" content="2026-08-25-legendas-canone-v118">
   <meta name="gs-v117-patch" content="2026-08-25-handoff-gabi-amanda-v117">
@@ -110,7 +111,25 @@
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:16px;z-index:50;}
   .overlay.show{display:flex;}
   .modal{background:var(--deep);border:2px solid var(--yellow);border-radius:14px;max-width:460px;width:100%;padding:20px;max-height:90vh;overflow-y:auto;}
-  .modal h2{font-size:16px;margin-bottom:14px;}
+  .modalhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-4px 0 14px;position:sticky;top:-20px;z-index:4;background:var(--deep);padding:12px 0 10px;border-bottom:1px solid var(--line);}
+  .modal h2{font-size:16px;margin:0;}
+  .modalclose{width:40px;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--paper);color:var(--offwhite);font-size:22px;line-height:1;cursor:pointer;flex:0 0 auto;}
+  .modalclose:hover,.modalclose:focus-visible{border-color:var(--yellow);color:var(--yellow);outline:none;}
+  .resumoClienteItem{display:none;background:var(--paper);border:1px solid var(--line);border-left:4px solid var(--yellow);border-radius:10px;padding:14px;margin-bottom:14px;}
+  .resumoClienteItem .rcTitulo{font-size:17px;font-weight:800;line-height:1.3;margin-bottom:5px;}
+  .resumoClienteItem .rcMeta{font-size:11.5px;color:var(--muted);margin-bottom:11px;}
+  .resumoClienteItem .rcBloco{font-size:12.5px;line-height:1.55;margin-top:10px;white-space:pre-wrap;}
+  .resumoClienteItem .rcBloco b{display:block;color:var(--yellow);font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px;}
+  .resumoClienteItem .rcRef{display:inline-flex;align-items:center;gap:5px;color:var(--yellow);font-weight:750;text-decoration:none;margin-top:12px;}
+  .resumoClienteItem details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;}
+  .resumoClienteItem summary{cursor:pointer;color:var(--yellow);font-size:12px;font-weight:750;}
+  .modal.modo-cliente-simples .campoInternoEquipe,
+  .modal.modo-cliente-simples #mLegendaFluxoInfo,
+  .modal.modo-cliente-simples .modalbtns{display:none!important;}
+  .modal.modo-cliente-simples .resumoClienteItem{display:block;}
+  .modal.modo-cliente-simples #campoObsCliente{display:block;}
+  .modal.modo-cliente-simples #aprBtn{min-height:48px;font-size:14px;}
+  .modal.modo-cliente-simples .modalhead{top:-20px;}
   .field{margin-bottom:12px;}
   .field label{display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px;}
   .field input,.field textarea,.field select{width:100%;background:var(--paper);border:1px solid var(--line);border-radius:7px;color:#fff;padding:8px 10px;font-size:16px;font-family:inherit;}
@@ -151,7 +170,7 @@
   body.calEnvioEmCurso #viewWeek,
   body.calEnvioEmCurso #viewKanban,
   body.calEnvioEmCurso #painelBlocos{pointer-events:none!important;opacity:.82;}
-  @media(max-width:720px){.kanban{grid-template-columns:1fr;} .grid,.weekdays{font-size:9px;} .cell{min-height:70px;}}
+  @media(max-width:720px){.kanban{grid-template-columns:1fr;} .grid,.weekdays{font-size:9px;} .cell{min-height:70px;} .overlay{padding:0;align-items:stretch;} .modal{max-width:none;max-height:100dvh;border-radius:0;border-left:0;border-right:0;padding:18px;} .modalhead{top:-18px;} .modal.modo-cliente-simples .modalhead{top:-18px;}}
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -271,6 +290,21 @@
     },...opcoes);
   }
 
+  /* V126 — uma promessa do SDK pode ficar pendente sem rejeitar. Retry só
+     protege erro respondido; esta porta dá fim também ao silêncio da rede. */
+  function comPrazoCalendario(promessa,rotulo,limiteMs){
+    let timer=null;
+    const limite=Number(limiteMs)||8000;
+    return Promise.race([
+      Promise.resolve(promessa),
+      new Promise((_,rejeitar)=>{timer=setTimeout(()=>{
+        const erro=new Error((rotulo||'Operação do calendário')+' não respondeu em '+limite+' ms.');
+        erro.code='gs/timeout-bootstrap';
+        rejeitar(erro);
+      },limite);})
+    ]).finally(()=>{if(timer)clearTimeout(timer);});
+  }
+
   function barrar(titulo, texto){
     document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:30px;font-family:system-ui;background:#141414;color:#F0EEE8;">' +
       '<div style="max-width:430px;text-align:center;"><div style="font-size:19px;font-weight:800;margin-bottom:10px;">' + titulo + '</div>' +
@@ -281,7 +315,7 @@
     const codigo=String(erro?.code||'');
     if(codigo.includes('resource-exhausted')){
       barrar('Sistema temporariamente no limite','O link está correto, mas o Firebase atingiu a cota diária. Tente novamente após a renovação da cota ou avise a Get Started.');
-    }else if(codigo.includes('unavailable') || codigo.includes('deadline-exceeded') || codigo.includes('network-request-failed')){
+    }else if(codigo.includes('unavailable') || codigo.includes('deadline-exceeded') || codigo.includes('network-request-failed') || codigo.includes('gs/timeout')){
       barrar('Conexão temporariamente indisponível','O link está correto, mas não consegui alcançar o banco agora. Confira a internet e tente novamente em instantes.');
     }else{
       barrar('Link inválido ou expirado','Essa chave não confere. Pede um link novo pra sua agência.');
@@ -291,11 +325,11 @@
   async function abrirSessaoClienteComRetry(ref,dados){
     let ultimoErro=null;
     for(let tentativa=0;tentativa<2;tentativa++){
-      try{ await setDoc(ref,dados); return; }
+      try{ await comPrazoCalendario(setDoc(ref,dados),'Confirmação segura do link',8000); return; }
       catch(e){
         ultimoErro=e;
         const codigo=String(e?.code||'');
-        if(!codigo.includes('unavailable') && !codigo.includes('deadline-exceeded') && !codigo.includes('network-request-failed')) break;
+        if(!codigo.includes('unavailable') && !codigo.includes('deadline-exceeded') && !codigo.includes('network-request-failed') && !codigo.includes('gs/timeout')) break;
         await new Promise(resolve=>setTimeout(resolve,700));
       }
     }
@@ -304,12 +338,12 @@
 
   async function autenticarCalendarioComRetry(){
     let ultimoErro=null;
-    for(let tentativa=0;tentativa<3;tentativa++){
-      try{ await signInAnonymously(auth); return; }
+    for(let tentativa=0;tentativa<2;tentativa++){
+      try{ await comPrazoCalendario(signInAnonymously(auth),'Autenticação segura do calendário',8000); return; }
       catch(e){
         ultimoErro=e;
         const codigo=String(e?.code||'');
-        if(!codigo.includes('network-request-failed') && !codigo.includes('unavailable')) break;
+        if(!codigo.includes('network-request-failed') && !codigo.includes('unavailable') && !codigo.includes('gs/timeout')) break;
         await new Promise(resolve=>setTimeout(resolve,600*(tentativa+1)));
       }
     }
@@ -417,7 +451,7 @@
 
   <div class="rule"></div>
   <h1>Planejamento de <span class="mo">conteúdo</span></h1>
-  <div class="sub">Edite, ajuste e aprove os conteúdos do mês. Suas alterações são salvas automaticamente.</div>
+  <div class="sub" id="textoIntroducaoCalendario">Edite, ajuste e aprove os conteúdos do mês. Suas alterações são salvas automaticamente.</div>
 
   <div class="metabar">
     <div class="updated" id="updatedText">Última atualização: —</div>
@@ -452,13 +486,17 @@
 <!-- MODAL -->
 <div class="overlay" id="overlay">
   <div class="modal">
-    <h2 id="mTitle">Editar conteúdo</h2>
+    <div class="modalhead">
+      <h2 id="mTitle">Editar conteúdo</h2>
+      <button type="button" class="modalclose" id="btnFecharTopo" onclick="closeModal()" aria-label="Fechar e voltar ao calendário" title="Voltar ao calendário">×</button>
+    </div>
+    <div class="resumoClienteItem" id="resumoClienteItem" aria-live="polite"></div>
     <div id="travaItem" style="display:none;background:rgba(251,188,25,.10);border:1px solid var(--yellow,#FBBC19);border-left:3px solid var(--yellow,#FBBC19);border-radius:9px;padding:12px 14px;margin-bottom:12px;">
       <b id="travaItemTit" style="font-size:13px;">🔒 Este conteúdo já foi programado no Instagram</b>
       <div id="travaItemTxt" style="font-size:11.5px;color:var(--muted,#8a8a8d);margin-top:5px;line-height:1.55;"></div>
     </div>
-    <div class="field"><label>Dia na grade editorial (ordem do calendário)</label><input id="mDay" type="number" min="1" max="31"><div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Organiza visualmente a pauta. Não fixa sozinho o dia da publicação.</div></div>
-    <div class="field"><label>Título do conteúdo</label><input id="mName"></div>
+    <div class="field campoInternoEquipe"><label>Dia na grade editorial (ordem do calendário)</label><input id="mDay" type="number" min="1" max="31"><div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Organiza visualmente a pauta. Não fixa sozinho o dia da publicação.</div></div>
+    <div class="field campoInternoEquipe"><label>Título do conteúdo</label><input id="mName"></div>
     <!-- ===== SOLICITAÇÕES ESPECIAIS — 29/07/2026 ====================
          Pedido da Gabi: um espaço de recado logo abaixo do título, que a
          Cecília E o dono do negócio leiam. O exemplo dela diz tudo: o
@@ -467,20 +505,20 @@
          instrução de produção) e não é legenda (não vai no post). Sem
          um lugar próprio, virava recado de WhatsApp e se perdia.
          Este é o único campo do conteúdo que os DOIS lados leem. -->
-    <div class="field">
+    <div class="field campoInternoEquipe">
       <label>📌 Solicitações especiais (o cliente e a Cecília leem)</label>
       <textarea id="mObs" style="min-height:64px;font-size:11.5px;line-height:1.5;" placeholder="Ex: captação externa, em volta da loja. Precisa de 2 modelos — pai e filha. Levar caixa de presente."></textarea>
       <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">O que precisa ser providenciado ou combinado antes. Aparece pro cliente no portal e pra equipe na gravação.</div>
     </div>
-    <div class="field"><label>Roteiro do conteúdo (cole o roteiro completo em blocos)</label><textarea id="mDesc" style="min-height:150px;font-size:11.5px;line-height:1.5;"></textarea></div>
-    <div class="field"><label>📝 Legenda pra postagem (separado do roteiro — isso é o texto que vai no post)</label><textarea id="mLegenda" style="min-height:80px;font-size:11.5px;line-height:1.5;" placeholder="Escreve aqui a legenda que vai acompanhar o post no Instagram..."></textarea></div>
+    <div class="field campoInternoEquipe"><label>Roteiro do conteúdo (cole o roteiro completo em blocos)</label><textarea id="mDesc" style="min-height:150px;font-size:11.5px;line-height:1.5;"></textarea></div>
+    <div class="field campoInternoEquipe"><label>📝 Legenda pra postagem (separado do roteiro — isso é o texto que vai no post)</label><textarea id="mLegenda" style="min-height:80px;font-size:11.5px;line-height:1.5;" placeholder="Escreve aqui a legenda que vai acompanhar o post no Instagram..."></textarea></div>
     <div id="mLegendaFluxoInfo" style="margin:-3px 0 12px;padding:9px 11px;border-left:3px solid var(--yellow);background:#242424;border-radius:7px;font-size:11.5px;line-height:1.55;color:#cfcfcf;">
       <b style="color:var(--yellow);">Caminho da legenda:</b> se este conteúdo já tiver uma postagem aprovada ligada pelo mesmo ID, Salvar também o envia para a fila da Cecília. Se a postagem ainda não existir, o texto fica confirmado no calendário e segue automaticamente quando o vídeo for aprovado.
     </div>
     <!-- 27/07/2026 — antes era só um campo de colar link, e pra usar uma
          referência já arquivada a Gabi tinha que sair do calendário, abrir o
          Hub e voltar. Agora as referências daquele cliente vêm aqui dentro. -->
-    <div class="field"><label>Referência</label>
+    <div class="field campoInternoEquipe"><label>Referência</label>
       <select id="mRefSelect" onchange="usarRefDoBanco()"><option value="">Escolher do banco de referências…</option></select>
       <input id="mRef" placeholder="ou cole o link aqui" oninput="updateRefLink()" style="margin-top:6px;">
       <a id="mRefLink" class="reflink hidden" href="#" target="_blank" rel="noopener">🔗 Abrir referência ↗</a>
@@ -490,24 +528,24 @@
          conteúdo deve ir ao ar, e a Cecília precisa dessa data pra
          programar. Como nem todo conteúdo tem dia fechado, o campo é
          OPCIONAL — quando preenchido, aparece direto pra Cecília. -->
-    <div class="field">
+    <div class="field campoInternoEquipe">
       <label>📆 Data fixa de publicação — campanha/data obrigatória (opcional)</label>
       <input id="mDataPost" type="date">
       <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Preencha somente para campanha, data comemorativa ou compromisso fechado. É este campo que gera alerta de conflito para a Cecília.</div>
     </div>
-    <div class="field">
+    <div class="field campoInternoEquipe">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
         <input type="checkbox" id="mFlex" style="width:auto;margin:0;">
         <span>Data flexível — o dia é sugestão, pode andar</span>
       </label>
       <div style="font-size:10.5px;color:var(--muted);margin-top:3px;">Marcada como flexível, a data não gera alerta de conflito. Use para conteúdo comum que pode andar conforme a produção.</div>
     </div>
-    <div class="field"><label>Etapa do funil</label>
+    <div class="field campoInternoEquipe"><label>Etapa do funil</label>
       <select id="mStage"><option value="topo">Topo — atração</option><option value="meio">Meio — conexão</option><option value="fundo">Fundo — conversão</option></select>
     </div>
-    <div class="field"><label>Formato</label><input id="mFmt" placeholder="ex: POV óculos Meta, Reel, Story..."></div>
+    <div class="field campoInternoEquipe"><label>Formato</label><input id="mFmt" placeholder="ex: POV óculos Meta, Reel, Story..."></div>
     <!-- 01/08/2026 — em que gravação este conteúdo vai ser filmado. -->
-    <div class="field"><label>Gravação</label>
+    <div class="field campoInternoEquipe"><label>Gravação</label>
       <select id="mBloco">
         <option value="">Automático (metade e metade, na ordem)</option>
         <option value="1">1ª gravação do mês</option>
@@ -1426,6 +1464,20 @@ function avisarTela(msg, cor){
    Junta as duas fontes: o Hub (referencias) e o que o cliente mandou pelo
    portal (referencias_cliente). Carrega uma vez e alimenta o seletor. */
 let refsDoCliente = [];
+let refsDoClienteConfirmadasV126 = [];
+let estadoRefsV126 = 'inicial';
+function comTimeoutReferenciaCalendarioV126(promessa,rotulo,limiteMs){
+  let timer=null;
+  const limite=Number(limiteMs)||10000;
+  return Promise.race([
+    Promise.resolve(promessa),
+    new Promise((_,rejeitar)=>{timer=setTimeout(()=>{
+      const erro=new Error((rotulo||'Referências')+' não respondeu em '+limite+' ms.');
+      erro.code='gs/timeout-referencias';
+      rejeitar(erro);
+    },limite);})
+  ]).finally(()=>{if(timer)clearTimeout(timer);});
+}
 async function carregarRefsDoCliente(){
   if(!window.__fb) return;
   const { db, collection, getDocs } = window.__fb;
@@ -1451,11 +1503,18 @@ async function carregarRefsDoCliente(){
        no outro. Agora as três fontes entram no mesmo seletor,
        identificadas por origem. */
     const { query, where, doc, getDoc } = window.__fb;
-    const [hub, portal, perfis] = await Promise.all([
-      getDocs(query(collection(db,'referencias'), where('cliente','==',slug))),
-      getDocs(query(collection(db,'referencias_cliente'), where('cliente','==',slug))),
-      getDoc(doc(db,'refs_perfil_semana', slug)).catch(() => null)
+    const resultados = await Promise.allSettled([
+      comTimeoutReferenciaCalendarioV126(getDocs(query(collection(db,'referencias'), where('cliente','==',slug))),'Referências do Hub',10000),
+      comTimeoutReferenciaCalendarioV126(getDocs(query(collection(db,'referencias_cliente'), where('cliente','==',slug))),'Referências do Portal',10000),
+      comTimeoutReferenciaCalendarioV126(getDoc(doc(db,'refs_perfil_semana', slug)),'Referências do perfil',10000)
     ]);
+    const [hubR,portalR,perfisR]=resultados;
+    const hub=hubR.status==='fulfilled'?hubR.value:null;
+    const portal=portalR.status==='fulfilled'?portalR.value:null;
+    const perfis=perfisR.status==='fulfilled'?perfisR.value:null;
+    const totalConfirmadas=resultados.filter(r=>r.status==='fulfilled').length;
+    estadoRefsV126=totalConfirmadas===resultados.length?'confirmado':(totalConfirmadas?'parcial':'indisponivel');
+    resultados.filter(r=>r.status==='rejected').forEach(r=>console.warn('Fonte de referência indisponível:',r.reason?.code||r.reason?.message));
     const lista = [];
     if(perfis && perfis.exists()){
       ((perfis.data().slots)||[]).forEach(sl => {
@@ -1463,30 +1522,47 @@ async function carregarRefsDoCliente(){
         lista.push({ link:String(sl.link).trim(), txt:(sl.nota||'referência do cliente'), origem:'perfil' });
       });
     }
-    hub.forEach(d => { const v=d.data();
+    hub?.forEach(d => { const v=d.data();
       if(v.excluido || !v.link) return;
       lista.push({ link:v.link, txt:(v.descricao||v.nicho||'sem descrição'), origem:'hub' }); });
-    portal.forEach(d => { const v=d.data();
+    portal?.forEach(d => { const v=d.data();
       if(v.excluido || !v.link) return;
       lista.push({ link:v.link, txt:(v.descricao||'sem descrição'), origem: v.criadoPorTipo==='cliente' ? 'cliente' : 'portal' }); });
     // mesmo link vindo de duas fontes aparece uma vez só
     const jaVi = new Set();
-    refsDoCliente = lista.filter(r => { const k=r.link.trim(); if(jaVi.has(k)) return false; jaVi.add(k); return true; });
-  }catch(e){ console.error('Falha ao carregar referências:', e); }
+    const confirmadasAgora=lista.filter(r => { const k=r.link.trim(); if(jaVi.has(k)) return false; jaVi.add(k); return true; });
+    if(estadoRefsV126==='confirmado') refsDoClienteConfirmadasV126=confirmadasAgora;
+    if(estadoRefsV126==='parcial'){
+      const unidas=[...confirmadasAgora,...refsDoClienteConfirmadasV126];
+      const vistos=new Set();
+      refsDoCliente=unidas.filter(r=>{const k=String(r.link||'').trim();if(!k||vistos.has(k))return false;vistos.add(k);return true;});
+    }else if(estadoRefsV126==='indisponivel'){
+      refsDoCliente=[...refsDoClienteConfirmadasV126];
+    }else refsDoCliente=confirmadasAgora;
+  }catch(e){ estadoRefsV126='indisponivel'; refsDoCliente=[...refsDoClienteConfirmadasV126]; console.error('Falha ao carregar referências:', e); }
   preencherSeletorRefs();
 }
 function preencherSeletorRefs(){
   const sel = document.getElementById('mRefSelect');
   if(!sel) return;
+  if(!refsDoCliente.length && estadoRefsV126==='indisponivel'){
+    sel.innerHTML = '<option value="">Referências temporariamente indisponíveis — tente novamente</option>';
+    sel.disabled = true; return;
+  }
+  if(!refsDoCliente.length && estadoRefsV126==='parcial'){
+    sel.innerHTML = '<option value="">Parte das referências não respondeu — nada foi considerado vazio</option>';
+    sel.disabled = true; return;
+  }
   if(!refsDoCliente.length){
     sel.innerHTML = '<option value="">Nenhuma referência salva pra este cliente ainda</option>';
     sel.disabled = true; return;
   }
   sel.disabled = false;
   const MARCA = { perfil:'⭐ referência do cliente · ', cliente:'💬 o cliente mandou · ', portal:'💬 pelo portal · ', hub:'🔗 do Hub · ' };
-  sel.innerHTML = '<option value="">Escolher do banco de referências… (' + refsDoCliente.length + ')</option>' +
+  sel.innerHTML = '<option value="">'+(estadoRefsV126==='parcial'?'Referências confirmadas até agora':'Escolher do banco de referências…')+' (' + refsDoCliente.length + ')</option>' +
     refsDoCliente.map((r,i) => `<option value="${i}">${MARCA[r.origem]||''}${esc(String(r.txt).slice(0,58))}</option>`).join('');
 }
+window.comTimeoutReferenciaCalendarioV126=comTimeoutReferenciaCalendarioV126;
 window.usarRefDoBanco = function(){
   const sel = document.getElementById('mRefSelect');
   const r = refsDoCliente[Number(sel.value)];
@@ -1603,9 +1679,51 @@ window.descartarRascunho = function(){
   limparRascunho(); fecharBarraDecisao();
 };
 
+function aguardarBootstrapCalendarioV126(promessa,limiteMs){
+  if(!promessa || typeof promessa.then!=='function'){
+    const erro=new Error('O módulo seguro do calendário não iniciou.');
+    erro.code='gs/bootstrap-ausente';
+    return Promise.reject(erro);
+  }
+  let timer=null;
+  const limite=Number(limiteMs)||22000;
+  return Promise.race([
+    promessa,
+    new Promise((_,rejeitar)=>{timer=setTimeout(()=>{
+      const erro=new Error('A conexão inicial do calendário não respondeu em '+limite+' ms.');
+      erro.code='gs/timeout-bootstrap';
+      rejeitar(erro);
+    },limite);})
+  ]).finally(()=>{if(timer)clearTimeout(timer);});
+}
+function mostrarFalhaInicialCalendarioV126(){
+  const cliente=document.getElementById('clientName');
+  const mes=document.getElementById('monthName');
+  const progresso=document.getElementById('progText');
+  const barra=document.getElementById('barFill');
+  if(cliente){cliente.value='Não carregado';cliente.placeholder='Não carregado';}
+  if(mes){mes.value='Tente novamente';mes.placeholder='Tente novamente';}
+  if(progresso) progresso.textContent='—';
+  if(barra) barra.style.width='0%';
+  const aviso='<div data-v126-estado="indisponivel" style="padding:38px 20px;text-align:center;color:#f0f1ed;line-height:1.6;max-width:520px;margin:0 auto;">'+
+    '<div style="font-size:17px;font-weight:800;margin-bottom:8px;">Não consegui abrir o calendário agora</div>'+
+    '<div style="font-size:13px;color:#bdbdbd;margin-bottom:16px;">Seu calendário e suas aprovações não foram apagados. A conexão não terminou e, por segurança, nada foi mostrado como vazio.</div>'+
+    '<button type="button" onclick="location.reload()" style="border:0;border-radius:9px;background:#FBBC19;color:#2C2D2F;padding:11px 18px;font-weight:800;cursor:pointer;">Tentar carregar novamente</button></div>';
+  ['viewGrid','viewWeek','viewKanban'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=aviso;});
+}
+window.aguardarBootstrapCalendarioV126=aguardarBootstrapCalendarioV126;
+window.mostrarFalhaInicialCalendarioV126=mostrarFalhaInicialCalendarioV126;
+
 async function load(){
   mostrarCarregando();
-  const liberado = await window.__calPronto;
+  let liberado=false;
+  try{
+    liberado=await aguardarBootstrapCalendarioV126(window.__calPronto,22000);
+  }catch(erro){
+    console.error('Falha terminal no bootstrap do calendário V126:',erro);
+    mostrarFalhaInicialCalendarioV126();
+    return;
+  }
   if(!liberado) return;                       // a tela de bloqueio já está no ar
   aplicarModoCalendario();
   pintarEstado();
@@ -2582,6 +2700,9 @@ window.reabrirCalendarioPorPedidoClienteV113 = async function(btn){
 function aplicarModoCalendario(){
   if(window.__modoCal === 'equipe') return;
 
+  const introducao=document.getElementById('textoIntroducaoCalendario');
+  if(introducao) introducao.textContent='Abra um conteúdo, confira o resumo e escolha: aprovar ou pedir ajuste.';
+
   /* O cliente não vê calendário que ainda não foi liberado internamente.
      Sem isso, ele leria um mês em construção e comentaria em cima de
      conteúdo que ainda vai mudar. */
@@ -2621,7 +2742,7 @@ function aplicarModoCalendario(){
   css.textContent = `
     #clientName, #monthName { pointer-events:none; background:transparent; border-color:transparent; }
     .listitem, .card, .chip { cursor:default !important; }
-    #btnAddItem, .btn-del, #mDelete, .fbBtn.edit { display:none !important; }
+    #btnAddItem, .btn-del, #mDelete, .fbBtn.edit, #viewKanban .kbtns { display:none !important; }
   `;
   document.head.appendChild(css);
   ['clientName','monthName'].forEach(id => { const el=document.getElementById(id); if(el) el.readOnly = true; });
@@ -3121,7 +3242,7 @@ function quickPost(i){if(clienteEmConsultaDeAjusteV115())return;if(exigirRetirad
 function quickUnpost(i){if(clienteEmConsultaDeAjusteV115())return;if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
 
 // MODAL
-function openModal(day){if(exigirRetiradaAntesDeEditar())return;aplicarModoConsultaItem(false);editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
+function openModal(day){if(window.__modoCal==='cliente')return;if(exigirRetiradaAntesDeEditar())return;aplicarModoConsultaItem(false);editIdx=null;document.getElementById('mTitle').textContent='Novo conteúdo';
   document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=day;document.getElementById('mName').value='';document.getElementById('mDesc').value='';
   document.getElementById('mRef').value='';
   const mo=document.getElementById('mObs'); if(mo) mo.value='';
@@ -3136,6 +3257,33 @@ function openModal(day){if(exigirRetiradaAntesDeEditar())return;aplicarModoConsu
   document.getElementById('aprBtn').style.display='none';
   updateRefLink();
   document.getElementById('overlay').classList.add('show');}
+function resumoClienteItemV126(it){
+  const titulo=esc(String(it?.name||'Conteúdo'));
+  const dia=Number(it?.day)||'';
+  const mes=mesVisivel?textoDoMes(mesVisivel):String(data?.month||'');
+  const obs=String(it?.obs||'').trim();
+  const roteiro=String(it?.desc||'').trim();
+  const legenda=String(it?.legenda||'').trim();
+  const refSeguro=normalizeUrl(it?.ref);
+  const detalhes=[];
+  if(roteiro) detalhes.push('<div class="rcBloco"><b>Ideia e roteiro</b>'+esc(roteiro)+'</div>');
+  if(legenda) detalhes.push('<div class="rcBloco"><b>Texto da publicação</b>'+esc(legenda)+'</div>');
+  return '<div class="rcTitulo">'+titulo+'</div>'+
+    '<div class="rcMeta">'+(dia?'Dia '+dia+' · ':'')+esc(mes)+'</div>'+
+    (obs?'<div class="rcBloco"><b>Observação importante</b>'+esc(obs)+'</div>':'')+
+    (refSeguro?'<a class="rcRef" href="'+escAttr(refSeguro)+'" target="_blank" rel="noopener noreferrer">🔗 Abrir referência em nova aba</a>':(it?.ref?'<div class="rcBloco" style="color:#e07a7a;"><b>Referência</b>O link está inválido. Peça à equipe para substituí-lo.</div>':''))+
+    (detalhes.length?'<details><summary>Ver roteiro e texto completo</summary>'+detalhes.join('')+'</details>':'');
+}
+function aplicarModoClienteItemV126(it){
+  const modal=document.querySelector('#overlay .modal');
+  const resumo=document.getElementById('resumoClienteItem');
+  const cliente=window.__modoCal==='cliente';
+  if(modal) modal.classList.toggle('modo-cliente-simples',cliente);
+  if(resumo) resumo.innerHTML=cliente?resumoClienteItemV126(it):'';
+  if(cliente) document.getElementById('mTitle').textContent='Confira este conteúdo';
+}
+window.resumoClienteItemV126=resumoClienteItemV126;
+window.aplicarModoClienteItemV126=aplicarModoClienteItemV126;
 function openEdit(i){const somenteConsulta=edicaoBloqueadaPorRevisao()||clienteEmConsultaDeAjusteV115();aplicarModoConsultaItem(false);editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent=somenteConsulta?'Consultar conteúdo completo':'Editar conteúdo';
   document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
   document.getElementById('mLegenda').value=it.legenda||'';
@@ -3189,8 +3337,9 @@ function openEdit(i){const somenteConsulta=edicaoBloqueadaPorRevisao()||clienteE
     b.style.display='none';
   }
   updateRefLink();
+  aplicarModoClienteItemV126(it);
   document.getElementById('overlay').classList.add('show');}
-function closeModal(){document.getElementById('overlay').classList.remove('show');aplicarModoConsultaItem(false);}
+function closeModal(){document.getElementById('overlay').classList.remove('show');document.querySelector('#overlay .modal')?.classList.remove('modo-cliente-simples');aplicarModoConsultaItem(false);}
 function normalizarSlugLegendaV114(valor){
   return String(valor||'').trim().toLowerCase();
 }
@@ -3397,8 +3546,9 @@ async function toggleApr(){
       return;
     }
     if(virandoAprovado) avisarEquipeDaAprovacao(item, idx);
-    avisarTela(virandoAprovado ? 'Aprovado! A Get Started foi avisada.' : 'Aprovação removida.');
-    openEdit(idx);
+    avisarTela(virandoAprovado ? 'Aprovado! Você voltou ao calendário para conferir o próximo conteúdo.' : 'Aprovação removida. Você voltou ao calendário.');
+    closeModal();
+    renderAll_semSalvar();
     return;
   }
 

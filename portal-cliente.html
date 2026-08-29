@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-  <meta name="gs-build" content="2026-08-25-continuidade-calendario-gravacao-v115">
+  <meta name="gs-build" content="2026-08-28-portal-calendario-cliente-v126">
+  <meta name="gs-v115-base" content="2026-08-25-continuidade-calendario-gravacao-v115">
   <meta name="gs-parent-patch" content="2026-08-24-privacidade-sessao-papeis-v110">
-  <meta name="gs-patch" content="2026-08-25-continuidade-calendario-gravacao-v115">
+  <meta name="gs-patch" content="2026-08-28-portal-calendario-cliente-v126">
 <style>
   :root{
     --graphite:#2C2D2F; --yellow:#FBBC19; --offwhite:#F0F1ED;
@@ -449,7 +450,7 @@
       .filter(id=>/^[A-Za-z0-9_-]{1,200}$/.test(id)))];
     for(const id of ids){
       try{
-        const snap=await getDoc(doc(db,'cadastros_clientes',id));
+        const snap=await comTimeoutPortal(getDoc(doc(db,'cadastros_clientes',id)),'Ficha segura do Portal',12000);
         if(!snap.exists()) continue;
         const ficha=snap.data()||{};
         if(String(ficha.slug||'').trim()===slug) return ficha;
@@ -459,7 +460,7 @@
         if(!acessoPortalFoiNegado(e)) console.warn('Ficha pontual não pôde ser lida:',e.code||e.message);
       }
     }
-    const contratoSnap=await getDoc(doc(db,'contratos_cliente',slug));
+    const contratoSnap=await comTimeoutPortal(getDoc(doc(db,'contratos_cliente',slug)),'Contrato seguro do Portal',12000);
     if(!contratoSnap.exists()) return {};
     const c=contratoSnap.data()||{};
     return {
@@ -486,9 +487,9 @@
   }
 
   const auth = getAuth(app);
-  window.__authPronta = signInAnonymously(auth)
+  window.__authPronta = comTimeoutPortal(signInAnonymously(auth),'Autenticação segura do Portal',12000)
     .then(c => c.user.uid)
-    .catch(e => { console.error('Falha na autenticação:', e); return null; });
+    .catch(e => { window.__erroAuthPortal=e; console.error('Falha na autenticação:', e); return null; });
 
   let __invalidacaoSessaoPortalEmCurso=null;
   function acessoPortalFoiNegado(erro){
@@ -1730,11 +1731,23 @@
      virar estrategia depois. Le a colecao referencias_cliente — que e onde
      o antigo "Banco de Ideias" ja gravava, entao todo o historico de links
      que os clientes mandaram ate hoje aparece aqui, sem perder nada. */
+  let referenciasPortalConfirmadasV126={slug:'',itens:[]};
   async function carregarReferenciasCliente(){
     const cont = document.getElementById('painelReferencias');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await meusDocs('referencias_cliente');
-    const minhas = []; snap.forEach(d => { const v = d.data(); if(!v.excluido) minhas.push({id:d.id, ...v}); });
+    let falhaLeitura=null;
+    let minhas=[];
+    try{
+      const snap=await comTimeoutPortal(meusDocs('referencias_cliente'),'Referências do Portal',12000);
+      snap.forEach(d => { const v = d.data(); if(!v.excluido) minhas.push({id:d.id, ...v}); });
+      referenciasPortalConfirmadasV126={slug:clienteAtual.slug,itens:minhas.map(item=>({...item}))};
+    }catch(e){
+      falhaLeitura=e;
+      console.error('Referências do Portal indisponíveis:',e);
+      if(referenciasPortalConfirmadasV126.slug===clienteAtual.slug){
+        minhas=referenciasPortalConfirmadasV126.itens.map(item=>({...item}));
+      }
+    }
     minhas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
 
     let html = `<div class="card">
@@ -1746,11 +1759,15 @@
       <div class="field" style="margin-top:8px;"><label>Observações (opcional)</label><textarea id="novaRefObs"></textarea></div>
       <button class="btn" onclick="enviarReferenciaCliente()">Adicionar referência</button>
     </div>
-    <div class="card"><h2>Suas referências</h2>`;
-    html += minhas.length ? minhas.map(r => `
+    <div class="card"><h2>Suas referências</h2>
+      ${falhaLeitura?'<div style="border-left:3px solid var(--yellow);background:#4a3a12;color:#ffe9a8;border-radius:7px;padding:10px 12px;margin:10px 0;font-size:12px;line-height:1.5;"><b>Não foi possível atualizar a lista agora.</b><br>'+(minhas.length?'Abaixo está a última lista confirmada; nada foi apagado.':'Nada foi considerado vazio ou apagado. Tente novamente quando a conexão voltar.')+'</div>':''}`;
+    html += minhas.length ? minhas.map(r => {
+      const linkSeguro=urlHttpsSeguraPortal(r.link);
+      const capaSegura=urlHttpsSeguraPortal(r.imagemCapa);
+      return `
       <div class="item">
-        ${r.imagemCapa ? '<img src="'+esc(r.imagemCapa)+'" alt="" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px;margin-bottom:8px;" onerror="this.style.display=\'none\'">' : ''}
-        ${r.link ? '<a href="'+esc(r.link)+'" target="_blank" class="nome" style="color:var(--yellow);text-decoration:none;word-break:break-all;">'+esc(r.link)+'</a>' : '<div class="nome">(sem link)</div>'}
+        ${capaSegura ? '<img src="'+escAttr(capaSegura)+'" alt="" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px;margin-bottom:8px;" onerror="this.style.display=\'none\'">' : ''}
+        ${linkSeguro ? '<a href="'+escAttr(linkSeguro)+'" target="_blank" rel="noopener noreferrer" class="nome" style="color:var(--yellow);text-decoration:none;word-break:break-all;">'+esc(r.link)+'</a>' : (r.link?'<div class="nome" style="color:var(--red);">⚠️ Link inválido — peça a substituição à equipe.</div>':'<div class="nome">(sem link)</div>')}
         ${r.descricao ? '<div class="meta" style="margin-top:4px;white-space:pre-wrap;">'+esc(r.descricao)+'</div>' : ''}
         ${r.observacao || r.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(r.observacoes || r.observacao)+'</div>' : ''}
         <div class="meta" style="margin-top:6px;opacity:.7;">${r.criadoEm ? dataBR(r.criadoEm) : ''}${r.criadoPor ? ' · '+esc(r.criadoPor) : ''}</div>
@@ -1760,10 +1777,11 @@
         </div>
         ${!r.aprovadaCliente ? '<div class="btn secondary" style="margin-top:10px;padding:9px;text-align:center;" onclick="aprovarReferenciaCliente(\''+r.id+'\')">👍 Aprovar essa referência</div>' : ''}
       </div>
-    `).join('') : '<div class="empty">Nenhuma referência guardada ainda.</div>';
+    `;}).join('') : (falhaLeitura?'':'<div class="empty">Nenhuma referência guardada ainda.</div>');
     html += '</div>';
     cont.innerHTML = html;
   }
+  window.carregarReferenciasClienteV126=carregarReferenciasCliente;
 
   function hashReferenciaCliente(valor){
     let hash=2166136261;
@@ -2796,7 +2814,11 @@
 
   // Auto-entrada se ja escolheu antes nesse navegador
   window.addEventListener('DOMContentLoaded', async () => {
-    await window.__authPronta;      // nada toca o banco antes de autenticar
+    const uidAutenticado=await window.__authPronta;      // nada toca o banco antes de autenticar
+    if(!uidAutenticado){
+      mostrarPortalIndisponivelSemInvalidar();
+      return;
+    }
     await carregarClientes();
     const params = new URLSearchParams(location.search);
     const slugUrl = params.get('c');
@@ -2811,17 +2833,21 @@
        o Portal não precisa baixar um documento que contenha o segredo.
        O fallback mantém os links antigos funcionando até a migração. */
     let tokenSnap=null;
-    try{ tokenSnap = await getDoc(doc(db,'clientes_portal_tokens', token)); }catch(e){}
+    try{ tokenSnap = await comTimeoutPortal(getDoc(doc(db,'clientes_portal_tokens', token)),'Confirmação do link do Portal',12000); }
+    catch(e){ console.warn('Token moderno do Portal não pôde ser consultado:',e.code||e.message); }
     const tokenNovoValido = tokenSnap && tokenSnap.exists() && tokenSnap.data().ativo !== false && tokenSnap.data().cliente === slug;
     let sessaoClienteAberta=false;
     let uidSessao='';
     let erroAberturaSessao=null;
     try{
-      const uid = await window.__authPronta;
+      const uid = uidAutenticado;
       uidSessao=uid||'';
       if(uid){
         __sessaoPortalAbertaEm=new Date().toISOString();
-        await setDoc(doc(db,'sessoes_cliente', uid), {cliente:slug,token,abertaEm:__sessaoPortalAbertaEm});
+        await comTimeoutPortal(
+          setDoc(doc(db,'sessoes_cliente', uid), {cliente:slug,token,abertaEm:__sessaoPortalAbertaEm}),
+          'Abertura segura da sessão do Portal',12000
+        );
         sessaoClienteAberta=true;
       }
     }catch(e){
@@ -2839,7 +2865,7 @@
     const dadosAcesso = tokenNovoValido ? tokenSnap.data() : {nome:slug};
     let fichaPortal={};
     try{
-      fichaPortal=await carregarFichaPortalSegura(slug,dadosAcesso);
+      fichaPortal=await comTimeoutPortal(carregarFichaPortalSegura(slug,dadosAcesso),'Dados básicos do Portal',15000);
     }catch(e){
       console.warn('Ficha privada do Portal não pôde ser confirmada:',e.code||e.message);
       if(acessoPortalFoiNegado(e)){ await invalidarSessaoPortalLocal(uidSessao); return; }

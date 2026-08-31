@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-29-folha-extras-competencia-v130">
+  <meta name="gs-build" content="2026-08-31-indicador-calendarios-competencia-v133">
+  <meta name="gs-v133-patch" content="2026-08-31-indicador-calendarios-competencia-v133">
+  <meta name="gs-v132-patch" content="2026-08-31-criacao-correcao-calendarios-v132">
+  <meta name="gs-v131-patch" content="2026-08-31-fechamento-mensal-calendarios-v131">
   <meta name="gs-v130-patch" content="2026-08-29-folha-extras-competencia-v130">
   <meta name="gs-v129-patch" content="2026-08-29-painel-historico-competencia-v129">
   <meta name="gs-v128-patch" content="2026-08-29-bootstrap-escritorio-v128">
@@ -1303,7 +1306,7 @@
         <div class="subtab active" data-calsub="controle" onclick="setCalSub('controle', this)">Central</div>
         <div class="subtab" data-calsub="visao" onclick="setCalSub('visao', this)">Visão do mês</div>
         <div class="subtab" data-calsub="conclusao" onclick="setCalSub('conclusao', this)">Controle de conclusão</div>
-        <div class="subtab" data-calsub="editar" onclick="setCalSub('editar', this)">Montar e editar</div>
+        <div class="subtab" data-calsub="editar" onclick="setCalSub('editar', this)">Criar e corrigir calendários</div>
         <div class="subtab" data-calsub="envio" onclick="setCalSub('envio', this)">Revisar e enviar</div>
         <div class="subtab" data-calsub="links" onclick="setCalSub('links', this)">Links e envio</div>
         <div class="subtab" data-calsub="campo" onclick="setCalSub('campo', this)">Modo gravação</div>
@@ -1323,6 +1326,7 @@
             <div class="field"><label>Carteira</label><select id="centralCalCarteira" onchange="aplicarFiltrosControleEditorialCalendarios()"><option value="ativos">Clientes da competência</option><option value="historico">Arquivo/histórico</option><option value="todos">Competência + histórico</option></select></div>
           </div>
         </div>
+        <div id="gestaoCompetenciaCalendariosV131" hidden aria-hidden="true" aria-live="polite"></div>
         <div id="controleEditorialCalendariosBox"><div class="card"><div class="desc">A Central lê somente quando esta aba é aberta.</div></div></div>
       </div>
 
@@ -1363,8 +1367,8 @@
 
       <div id="calSubEditar" style="display:none;">
       <div class="card">
-        <h2>Acompanhar por dentro (uso interno)</h2>
-        <div class="desc">Busca fixa — escolha qualquer cliente, troque à vontade, sem recarregar a página.</div>
+        <h2>Criar e corrigir calendários</h2>
+        <div class="desc">Uma única fonte por cliente e competência. A Gabi cria o mês, reabre o que precisa de correção e acompanha o calendário inteiro sem gerar cópia paralela.</div>
         <input type="text" id="buscaCalFerramentas" placeholder="🔍 Buscar cliente..." oninput="filtrarCalendariosFerramentas()" style="width:100%;background:var(--deep);border:1px solid var(--line);border-radius:9px;color:#fff;padding:11px 13px;font-size:14px;margin-bottom:10px;">
         <div id="listaCalendariosFerramentas" style="max-height:220px;overflow-y:auto;"></div>
       </div>
@@ -4099,6 +4103,54 @@
     });
     return mapa;
   }
+
+  /* ===== V133 — RESUMO DE CALENDÁRIOS POR COMPETÊNCIA =============
+     O painel Agora somava cada mês liberado do mesmo documento. Um cliente
+     com agosto e setembro publicados virava dois "calendários no ar".
+     Esta projeção é zero-write e usa exatamente as mesmas três decisões da
+     Central: carteira da competência, alias canônico e itens ativos do mês.
+     Array normalizado e QuerySnapshot entram pelo mesmo contrato; fonte
+     ausente permanece indisponível e nunca se transforma em zero. */
+  function resumoCalendariosCompetenciaV133(snapshot,clientes,competencia){
+    const mes=String(competencia||'');
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)||!snapshot||typeof snapshot.forEach!=='function'){
+      return {estado:'indisponivel',competencia:mes,linhas:[],liberados:null,emMontagem:null,semCalendario:null,aprovadosAntigos:null};
+    }
+    if(Array.isArray(snapshot)){
+      const documentos=snapshot.map(registro=>{
+        const dados=registro&&typeof registro.data==='function'?(registro.data()||{}):(registro||{});
+        const id=String(registro?.id||dados.id||dados.__documentoId||'');
+        return {id,data:()=>dados};
+      }).filter(documento=>documento.id);
+      snapshot={forEach(fn){documentos.forEach(fn);}};
+    }
+    const mapa=mapaCalendariosPorIdentidade(snapshot,mes);
+    const vistos=new Set();
+    const linhas=[];
+    (Array.isArray(clientes)?clientes:[]).forEach(cliente=>{
+      const slug=slugClienteCanonico(cliente?.slug||cliente?.id||'');
+      if(!slug||vistos.has(slug)) return;
+      vistos.add(slug);
+      const calendario=mapa[slug]||{};
+      const itens=itensAtivosCalendarioV127(calendario,mes);
+      const total=itens.length;
+      const estado=total?estadoMesCal(calendario,mes):'sem_calendario';
+      linhas.push({
+        slug,nome:String(cliente?.nome||calendario.client||slug),competencia:mes,
+        documentoId:String(calendario.__documentoId||''),total,estado
+      });
+    });
+    return {
+      estado:'confirmado',competencia:mes,linhas,
+      liberados:linhas.filter(linha=>linha.total>0&&linha.estado==='liberado').length,
+      emMontagem:linhas.filter(linha=>linha.total>0&&linha.estado!=='liberado').length,
+      semCalendario:linhas.filter(linha=>linha.total===0).length,
+      aprovadosAntigos:linhas.filter(linha=>linha.total>0&&linha.estado==='aprovado_interno').length
+    };
+  }
+  window.resumoCalendariosCompetenciaV133=resumoCalendariosCompetenciaV133;
+  /* ===== FIM V133 — RESUMO DE CALENDÁRIOS POR COMPETÊNCIA ========= */
+
   async function resolverSlugCalendarioExistente(slug,competencia){
     const solicitado=String(slug||''),canonico=slugClienteCanonico(solicitado), candidatos=slugsCompatibilidadeCliente(solicitado);
     const encontrados=[];
@@ -22309,10 +22361,20 @@ window.setGerenciaSub = function(qual, el){
        ninguem olhava — que e como o indicador perde utilidade. Agora
        sao dois numeros com nomes diferentes. */
     let liberados = 0, semCal = 0, espRevisao = 0, represados = 0, mesVelho = 0, semPlano = 0;
+    const competenciaCalendariosIndicadores=competenciaOperacionalCalendario();
+    let resumoCalendariosIndicadores={estado:'indisponivel',competencia:competenciaCalendariosIndicadores};
     const nomesMesVelho = [], nomesSemCal = [], nomesSemPlano = [];
     try{
       const mesAgora = hojeLocal().slice(0,7);
-      const alvo = await clientesCalendarioRecorrentesConfirmados();
+      const alvo = await clientesCalendarioRecorrentesConfirmados(competenciaCalendariosIndicadores);
+      const fonteCalendariosDisponivel=fontes[2].status==='fulfilled'&&!__erroCalendariosCompartilhado;
+      resumoCalendariosIndicadores=resumoCalendariosCompetenciaV133(
+        fonteCalendariosDisponivel?cals:null,alvo,competenciaCalendariosIndicadores
+      );
+      if(resumoCalendariosIndicadores.estado==='confirmado'){
+        liberados=resumoCalendariosIndicadores.liberados;
+        represados=resumoCalendariosIndicadores.aprovadosAntigos;
+      }
       const mapa = {}; cals.forEach(c => mapa[c.id] = c);
       const temProducao = c => {
         const s = c.slug, n = String(c.nome||'').toLowerCase();
@@ -22331,17 +22393,6 @@ window.setGerenciaSub = function(qual, el){
         }
         const m = mesMaisRecenteDoCal(cal);
         if(m && m < mesAgora){ mesVelho++; nomesMesVelho.push(c.nome); }
-        /* A fila detalhada é por mês, então o contador também precisa ser.
-           Antes ele usava o estado geral do documento: um calendário com
-           julho liberado e agosto aguardando podia contar diferente da
-           lista que a Amanda realmente abre. */
-        const mesesConhecidos = mesesDeCalendario(cal);
-        (mesesConhecidos.length ? mesesConhecidos : ['']).forEach(mesCal => {
-          if(!itensDoMesCalendario(cal, mesCal).length) return;
-          const st = estadoMesCal(cal, mesCal);
-          if(st === 'liberado') liberados++;
-          else if(st === 'aprovado_interno') represados++;
-        });
       });
     }catch(e){ console.error('Indicadores: calendários', e); }
     /* Esta é exatamente a mesma função usada para desenhar a fila. Não
@@ -22350,7 +22401,10 @@ window.setGerenciaSub = function(qual, el){
     const filaRevisaoCalendarios = linhasCalendariosAguardandoRevisao(cals);
     espRevisao = filaRevisaoCalendarios.length;
     sinalizarFilaCalendariosAmanda(filaRevisaoCalendarios);
-    lista.push(I('calLiberados', 'Calendários no ar', liberados, 'bom', "irParaCalendariosLiberados()", 'O cliente já está vendo.'));
+    lista.push(I('calLiberados', 'Calendários no ar · '+rotuloCompetenciaControleEditorial(competenciaCalendariosIndicadores),
+      resumoCalendariosIndicadores.estado==='indisponivel'?'—':liberados,
+      resumoCalendariosIndicadores.estado==='indisponivel'?'alto':'bom', "irParaCalendariosLiberados()",
+      resumoCalendariosIndicadores.estado==='indisponivel'?'A leitura desta competência está indisponível; o sistema não mostrou zero.':'Cada cliente liberado nesta competência conta uma única vez.'));
     const rotuloRevisaoCal = pessoaIndicadores === 'Amanda' ? 'Esperando sua revisão' : 'Esperando revisão da Amanda';
     const dicaRevisaoCal = pessoaIndicadores === 'Amanda' ? 'A Gabi enviou, falta você aprovar.' : 'A Gabi enviou; a decisão é da Amanda. Você acompanha em modo leitura.';
     const numeroRevisaoCal = errosLeitura.some(x=>x.startsWith('calendários')) && !cals.length ? '—' : espRevisao;
@@ -22882,6 +22936,7 @@ window.setGerenciaSub = function(qual, el){
        assíncrona antiga não podem atravessar para outro papel. Os painéis
        estruturais permanecem; somente dados e subtelas autorizadas são
        desmontados de forma síncrona. */
+    try{ limparGestaoCompetenciaCalendariosV131(); }catch(e){}
     window.__controleEditorialCalendariosDados=null;
     if(typeof __geracaoSnapshotCalendariosV127!=='undefined') __geracaoSnapshotCalendariosV127++;
     if(typeof __snapshotCalendariosCompartilhado!=='undefined') __snapshotCalendariosCompartilhado=null;
@@ -22945,6 +23000,7 @@ window.setGerenciaSub = function(qual, el){
     if(usuarioAtual!==escolhido) limparEstadoPrivadoTrocaIdentidade();
     limparEstadoVideosPorTrocaDePapel();
     limparControleConclusaoCalendarios();
+    limparGestaoCompetenciaCalendariosV131();
     usuarioAtual = escolhido;
     atualizarBannerOperacaoPerfilChris();
     /* Indicadores incluem regras por pessoa (por exemplo, calendário em
@@ -23208,7 +23264,9 @@ window.setGerenciaSub = function(qual, el){
         const apMes = mes === 'sem-mes' ? null : ((cal.aprovacaoMeses||{})[mes]||null);
         const apGlobal = cal.aprovacaoInterna || null;
         const atualizado = instanteControleCalendario(apMes?.em || (apGlobal?.mes===mes ? apGlobal.em : '') || cal.updatedAt || cal.atualizadoEm);
-        const candidato = {slug, nome:cliente.nome, mes, itens, estado:mes==='sem-mes'?estadoDoCalendario(cal):estadoMesCal(cal,mes), origemId:d.id, atualizado};
+        const retratoLiberadoV115 = mes === 'sem-mes' ? null :
+          (apMes?.retratoLiberadoV115 || (apGlobal?.mes===mes ? apGlobal?.retratoLiberadoV115 : null) || null);
+        const candidato = {slug, nome:cliente.nome, mes, itens, estado:mes==='sem-mes'?estadoDoCalendario(cal):estadoMesCal(cal,mes), origemId:d.id, atualizado,retratoLiberadoV115};
         const anterior = cliente.meses[mes];
         const maisNovo = !anterior || candidato.atualizado > anterior.atualizado;
         const empateCanonico = anterior && candidato.atualizado === anterior.atualizado && d.id === slug && anterior.origemId !== slug;
@@ -23266,6 +23324,276 @@ window.setGerenciaSub = function(qual, el){
     badge.style.display = precisa ? 'inline-flex' : 'none';
   }
 
+  /* ===== V131 — FECHAMENTO ADMINISTRATIVO DE COMPETÊNCIA ===== */
+  /* Esta projeção registra apenas a organização mensal da Amanda. Ela não
+     aprova, publica, arquiva, migra nem regrava calendários; não toca Portal,
+     vídeos, postagens ou os controles item a item V101. O hash guarda uma
+     impressão da fonte, nunca conteúdo editorial ou dado de cliente. */
+  const COLECAO_FECHAMENTOS_CALENDARIOS_V131='calendarios_competencias_gestao';
+  let __geracaoGestaoCompetenciaCalendariosV131=0;
+  let __registrosGestaoCompetenciaCalendariosV131=new Map();
+  let __erroGestaoCompetenciaCalendariosV131=null;
+  const __acoesGestaoCompetenciaCalendariosV131=new Set();
+
+  function podeAlterarFechamentoCompetenciaV131(pessoa, atorReal, operacaoDelegada){
+    return String(pessoa||'')==='Amanda' && String(atorReal||'')==='Amanda' && operacaoDelegada===false;
+  }
+  window.podeAlterarFechamentoCompetenciaV131=podeAlterarFechamentoCompetenciaV131;
+
+  function podeLerFechamentoCompetenciaV131(atorReal){
+    return ['Amanda','Chris'].includes(String(atorReal||''));
+  }
+
+  function estadoFechamentoCompetenciaV131(registro, assinaturaAtual, fonteDisponivel=true){
+    if(fonteDisponivel!==true || !String(assinaturaAtual||'')) return 'indisponivel';
+    if(!registro || registro.finalizado!==true) return 'em_andamento';
+    return String(registro.fonteAssinatura||'')===String(assinaturaAtual) ? 'finalizado' : 'divergente';
+  }
+  window.estadoFechamentoCompetenciaV131=estadoFechamentoCompetenciaV131;
+
+  function operationIdFechamentoCompetenciaV131(competencia, finalizar, revision){
+    const mes=String(competencia||'').replace(/[^0-9]/g,'').slice(0,6)||'000000';
+    const acao=finalizar===true?'finalizar':'reabrir';
+    const rev=Math.max(1,Math.trunc(Number(revision)||1));
+    return 'calmes_'+mes+'_'+acao+'_r'+rev;
+  }
+  window.operationIdFechamentoCompetenciaV131=operationIdFechamentoCompetenciaV131;
+
+  function retratoProtegidoCompetenciaV131(linhas, competencia){
+    const mes=String(competencia||'');
+    const calendarios=(Array.isArray(linhas)?linhas:[])
+      .filter(linha=>linha && String(linha.mes||'')===mes)
+      .map(linha=>({
+        slug:String(linha.slug||''),
+        origemId:String(linha.origemId||''),
+        competencia:mes,
+        estado:String(linha.estado||''),
+        fase:String(linha.fase||''),
+        retratoLiberadoV115:linha.retratoLiberadoV115==null?null:JSON.parse(JSON.stringify(linha.retratoLiberadoV115)),
+        items:(Array.isArray(linha.itens)?linha.itens:[])
+          .filter(item=>item && item.excluido!==true)
+          .map((item,ordem)=>({
+            competencia:mes,
+            itemId:String(item.itemId||''),
+            ordem,
+            day:item.day==null?null:item.day,
+            name:String(item.name||''),
+            desc:String(item.desc||''),
+            roteiroDispensado:item.roteiroDispensado===true,
+            legenda:String(item.legenda||''),
+            legendaYoutube:String(item.legendaYoutube||''),
+            legendaLinkedin:String(item.legendaLinkedin||''),
+            legendaInstagram:String(item.legendaInstagram||''),
+            legendaTiktok:String(item.legendaTiktok||''),
+            ref:String(item.ref||''),
+            referenciaDispensada:item.referenciaDispensada===true,
+            link:String(item.link||''),
+            dataPostagem:String(item.dataPostagem||''),
+            dataFlexivel:item.dataFlexivel===true,
+            fmt:String(item.fmt||''),
+            stage:String(item.stage||''),
+            obs:String(item.obs||''),
+            obsCliente:String(item.obsCliente||''),
+            apr:item.apr===true,
+            posted:item.posted===true,
+            agendado:item.agendado===true,
+            gravado:item.gravado===true,
+            bloco:item.bloco==null?null:item.bloco,
+            postagemId:String(item.postagemId||'')
+          }))
+      }))
+      .sort((a,b)=>(a.slug+'|'+a.origemId).localeCompare(b.slug+'|'+b.origemId,'pt-BR'));
+    return {schemaVersion:1,competencia:mes,calendarios};
+  }
+  window.retratoProtegidoCompetenciaV131=retratoProtegidoCompetenciaV131;
+
+  async function assinaturaFonteCompetenciaV131(linhas, competencia){
+    const retrato=retratoProtegidoCompetenciaV131(linhas,competencia);
+    return sha256Controle(jsonEstavel(retrato));
+  }
+  window.assinaturaFonteCompetenciaV131=assinaturaFonteCompetenciaV131;
+
+  function fontesProtegidasDeConsolidadosV131(consolidados){
+    const fontes=[];
+    Object.values(consolidados||{}).forEach(cliente=>{
+      Object.values(cliente?.meses||{}).forEach(registro=>{
+        if(!registro || !registro.mes) return;
+        fontes.push({
+          slug:String(cliente.slug||registro.slug||''),nome:String(cliente.nome||registro.nome||''),
+          mes:String(registro.mes||''),itens:Array.isArray(registro.itens)?registro.itens:[],
+          estado:String(registro.estado||''),fase:faseControleEditorial(registro.estado,(registro.itens||[]).length),
+          origemId:String(registro.origemId||''),retratoLiberadoV115:registro.retratoLiberadoV115||null
+        });
+      });
+    });
+    return fontes;
+  }
+
+  async function carregarFonteProtegidaCompetenciaV131(competencia){
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(competencia||''))) throw new Error('Competência inválida.');
+    const snapshot=await _getDocsFromServerFB(collection(db,'calendarios'));
+    const consolidados=consolidarMesesControleEditorial(snapshot);
+    return fontesProtegidasDeConsolidadosV131(consolidados).filter(linha=>linha.mes===competencia);
+  }
+
+  function limparGestaoCompetenciaCalendariosV131(){
+    __geracaoGestaoCompetenciaCalendariosV131++;
+    __registrosGestaoCompetenciaCalendariosV131=new Map();
+    __erroGestaoCompetenciaCalendariosV131=null;
+    __acoesGestaoCompetenciaCalendariosV131.clear();
+    const box=document.getElementById('gestaoCompetenciaCalendariosV131');
+    if(box){ box.replaceChildren(); box.hidden=true; box.setAttribute('aria-hidden','true'); }
+  }
+  window.limparGestaoCompetenciaCalendariosV131=limparGestaoCompetenciaCalendariosV131;
+
+  function registroGestaoCompetenciaV131Valido(registro,competencia){
+    if(!registro) return null;
+    if(registro.schemaVersion!==1 || registro.competencia!==competencia ||
+       typeof registro.finalizado!=='boolean' || !/^[a-f0-9]{64}$/.test(String(registro.fonteAssinatura||'')) ||
+       !Number.isInteger(registro.revision) || registro.revision<1) throw new Error('O registro administrativo desta competência é incompatível.');
+    return registro;
+  }
+
+  async function obterRegistroGestaoCompetenciaV131(competencia,forcar=false){
+    if(!forcar && __registrosGestaoCompetenciaCalendariosV131.has(competencia)){
+      return __registrosGestaoCompetenciaCalendariosV131.get(competencia);
+    }
+    const snap=await getDoc(doc(db,COLECAO_FECHAMENTOS_CALENDARIOS_V131,competencia));
+    const registro=snap.exists()?registroGestaoCompetenciaV131Valido(snap.data()||{},competencia):null;
+    __registrosGestaoCompetenciaCalendariosV131.set(competencia,registro);
+    return registro;
+  }
+
+  async function renderGestaoCompetenciaCalendariosV131(opcoes){
+    const box=document.getElementById('gestaoCompetenciaCalendariosV131');
+    if(!box) return;
+    const atorReal=String(window.__pessoaAutenticadaReal||usuarioAtual||'');
+    if(!podeLerFechamentoCompetenciaV131(atorReal)){
+      box.replaceChildren(); box.hidden=true; box.setAttribute('aria-hidden','true');
+      return;
+    }
+    const competencia=String(document.getElementById('centralCalMes')?.value||'');
+    const fontes=window.__controleEditorialCalendariosDados?.fontesProtegidas;
+    const fonteDisponivel=Array.isArray(fontes)&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia);
+    const geracao=++__geracaoGestaoCompetenciaCalendariosV131;
+    const identidade=__geracaoIdentidade;
+    const uid=String(auth.currentUser?.uid||window.__uid||'');
+    box.hidden=false; box.setAttribute('aria-hidden','false');
+    box.innerHTML='<div class="card"><div class="desc">Confirmando o estado administrativo da competência…</div></div>';
+    let assinatura=''; let registro=null; let erro=null;
+    try{
+      if(!fonteDisponivel) throw new Error('A fonte dos calendários não foi confirmada.');
+      assinatura=await assinaturaFonteCompetenciaV131(fontes,competencia);
+      registro=await obterRegistroGestaoCompetenciaV131(competencia,opcoes?.forcarLeitura===true);
+      __erroGestaoCompetenciaCalendariosV131=null;
+    }catch(e){
+      erro=e; __erroGestaoCompetenciaCalendariosV131=e;
+    }
+    if(geracao!==__geracaoGestaoCompetenciaCalendariosV131 || identidade!==__geracaoIdentidade ||
+       uid!==String(auth.currentUser?.uid||window.__uid||'') || atorReal!==String(window.__pessoaAutenticadaReal||usuarioAtual||'') ||
+       !box.isConnected || competencia!==String(document.getElementById('centralCalMes')?.value||'')) return;
+    const estado=estadoFechamentoCompetenciaV131(registro,assinatura,!erro&&fonteDisponivel);
+    const rotulos={
+      em_andamento:{titulo:'Em andamento',cor:'var(--yellow2)',texto:'Esta competência ainda não foi marcada como finalizada.'},
+      finalizado:{titulo:'Finalizado',cor:'var(--green)',texto:'A Amanda marcou esta competência como concluída e a fonte continua igual.'},
+      divergente:{titulo:'Mudou depois da finalização',cor:'var(--red)',texto:'O calendário mudou depois da marca administrativa. Reabra para revisar; nada foi apagado.'},
+      indisponivel:{titulo:'Indisponível',cor:'var(--red)',texto:'Não foi possível confirmar a fonte e o registro. Nenhuma ação foi liberada.'}
+    };
+    const info=rotulos[estado];
+    const retrato=fonteDisponivel?retratoProtegidoCompetenciaV131(fontes,competencia):{calendarios:[]};
+    const totalCalendarios=retrato.calendarios.length;
+    const totalItens=retrato.calendarios.reduce((soma,cal)=>soma+(cal.items?.length||0),0);
+    const podeAlterar=podeAlterarFechamentoCompetenciaV131(usuarioAtual,atorReal,Boolean(window.__operacaoDelegadaChris));
+    const finalizar=estado==='em_andamento';
+    const botao=podeAlterar&&estado!=='indisponivel'
+      ?`<button type="button" class="btn ${finalizar?'green':'secondary'}" data-v131-alterar="${finalizar?'finalizar':'reabrir'}">${finalizar?'Finalizar esta competência':'Reabrir esta competência'}</button>`
+      :'';
+    box.innerHTML=`<div class="card" data-v131-estado="${escAttr(estado)}" style="border:2px solid ${info.cor};">
+      <div class="centralCalTopo"><div><h2 style="margin:0;">Organização de ${esc(rotuloCompetenciaControleEditorial(competencia))}</h2>
+      <div class="desc" style="margin-top:5px;">Marca administrativa do mês inteiro — não publica, não aprova, não arquiva e não altera calendário ou Portal.</div></div>
+      <span class="centralCalEstado" style="color:${info.cor};">${esc(info.titulo)}</span></div>
+      <div class="desc" style="margin-top:10px;">${esc(info.texto)}</div>
+      <div class="meta" style="margin-top:8px;">Fonte atual confirmada: ${totalCalendarios} calendário(s), ${totalItens} conteúdo(s).${atorReal==='Chris'?' Acompanhamento somente leitura do Chris.':''}</div>
+      ${erro?`<div class="meta" style="margin-top:8px;color:var(--red);">${esc(String(erro?.code||erro?.message||'erro desconhecido'))}</div>`:''}
+      ${botao?`<div class="btnrow" style="margin-top:12px;">${botao}</div>`:''}
+    </div>`;
+  }
+  window.renderGestaoCompetenciaCalendariosV131=renderGestaoCompetenciaCalendariosV131;
+
+  async function alterarFechamentoCompetenciaV131(finalizar){
+    const atorReal=String(window.__pessoaAutenticadaReal||usuarioAtual||'');
+    if(!podeAlterarFechamentoCompetenciaV131(usuarioAtual,atorReal,Boolean(window.__operacaoDelegadaChris)) || !auth.currentUser?.uid){
+      mostrarToast('Somente a Amanda autenticada pode alterar esta marca administrativa.','erro');
+      return false;
+    }
+    const competencia=String(document.getElementById('centralCalMes')?.value||'');
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)){
+      mostrarToast('Competência inválida; nada foi alterado.','erro'); return false;
+    }
+    const desejado=finalizar===true;
+    const trava=competencia+'|'+(desejado?'finalizar':'reabrir');
+    if(__acoesGestaoCompetenciaCalendariosV131.has(trava)) return false;
+    const verbo=desejado?'finalizar':'reabrir';
+    if(!confirm('Confirmar '+verbo+' '+rotuloCompetenciaControleEditorial(competencia)+'? Esta marca é apenas organizacional e não altera nenhum calendário.')) return false;
+    __acoesGestaoCompetenciaCalendariosV131.add(trava);
+    try{
+      const fontesAtuais=await carregarFonteProtegidaCompetenciaV131(competencia);
+      const fonteAssinatura=await assinaturaFonteCompetenciaV131(fontesAtuais,competencia);
+      const principalRef=doc(db,'calendarios_competencias_gestao',competencia);
+      const resultado=await runTransaction(db,async tx=>{
+        const principalSnap=await tx.get(principalRef);
+        const anterior=principalSnap.exists()?registroGestaoCompetenciaV131Valido(principalSnap.data()||{},competencia):null;
+        if((!anterior&&!desejado) || (anterior?.finalizado===desejado && (!desejado || anterior.fonteAssinatura===fonteAssinatura))){
+          return {semMudanca:true,registro:anterior};
+        }
+        const revision=(Number(anterior?.revision)||0)+1;
+        const operationId=operationIdFechamentoCompetenciaV131(competencia,desejado,revision);
+        const eventoRef=doc(principalRef,'eventos',operationId);
+        const eventoSnap=await tx.get(eventoRef);
+        if(eventoSnap.exists()){
+          const evento=eventoSnap.data()||{};
+          if(evento.operationId===operationId && evento.revision===revision && evento.finalizado===desejado && evento.fonteAssinatura===fonteAssinatura){
+            return {semMudanca:true,registro:anterior,operationId,revision};
+          }
+          throw new Error('Existe um recibo divergente para esta operação; nada foi alterado.');
+        }
+        const carimbo=serverTimestamp();
+        const comum={schemaVersion:1,competencia,finalizado:desejado,fonteVersao:1,fonteAssinatura,
+          revision,operationId,autorUid:auth.currentUser.uid,atorRealPapel:'Amanda',
+          finalizadoEm:desejado?carimbo:null,reabertoEm:desejado?null:carimbo};
+        tx.set(principalRef,{...comum,atualizadoEm:carimbo});
+        tx.set(eventoRef,{...comum,tipo:desejado?'finalizar':'reabrir',ocorridoEm:carimbo});
+        return {semMudanca:false,operationId,revision};
+      });
+      const recibo=await getDoc(principalRef);
+      if(!recibo.exists()) throw new Error('A confirmação final não foi encontrada; atualize antes de tentar novamente.');
+      const confirmado=registroGestaoCompetenciaV131Valido(recibo.data()||{},competencia);
+      if(confirmado.finalizado!==desejado || confirmado.fonteAssinatura!==fonteAssinatura ||
+         (!resultado.semMudanca && confirmado.operationId!==resultado.operationId)){
+        throw new Error('O estado mudou em outra aba. A tela será atualizada sem repetir a gravação.');
+      }
+      __registrosGestaoCompetenciaCalendariosV131.set(competencia,confirmado);
+      mostrarToast(desejado?'Competência finalizada somente para organização.':'Competência reaberta somente para organização.');
+      await renderGestaoCompetenciaCalendariosV131({forcarLeitura:true});
+      return true;
+    }catch(e){
+      console.error('Falha na marca administrativa da competência:',e);
+      __registrosGestaoCompetenciaCalendariosV131.delete(competencia);
+      mostrarToast('Nada foi alterado: '+(e?.message||e),'erro');
+      await renderGestaoCompetenciaCalendariosV131({forcarLeitura:true});
+      return false;
+    }finally{
+      __acoesGestaoCompetenciaCalendariosV131.delete(trava);
+    }
+  }
+  window.alterarFechamentoCompetenciaV131=alterarFechamentoCompetenciaV131;
+  document.addEventListener('click',evento=>{
+    const botao=evento.target?.closest?.('[data-v131-alterar]');
+    if(!botao || !document.getElementById('gestaoCompetenciaCalendariosV131')?.contains(botao)) return;
+    void window.alterarFechamentoCompetenciaV131(botao.dataset.v131Alterar==='finalizar');
+  });
+  /* ===== FIM V131 — FECHAMENTO ADMINISTRATIVO DE COMPETÊNCIA ===== */
+
   let __geracaoRenderControleCalendariosV127=0;
   window.renderControleEditorialCalendarios = async function(){
     const box = document.getElementById('controleEditorialCalendariosBox');
@@ -23289,6 +23617,7 @@ window.setGerenciaSub = function(qual, el){
       const configs = {};
       snapConfig.forEach(d=>{ const slug=slugClienteCanonico(d.id); if(!configs[slug] || d.id===slug) configs[slug]=d.data()||{}; });
       const consolidados = consolidarMesesControleEditorial(snapCalendarios);
+      const fontesProtegidas=fontesProtegidasDeConsolidadosV131(consolidados);
       const candidatosAtivos = new Map();
       clientesRecorrentes.forEach(c=>candidatosAtivos.set(slugClienteCanonico(c.slug),{slug:slugClienteCanonico(c.slug),nome:c.nome}));
       snapExtras.forEach(d=>{
@@ -23322,7 +23651,7 @@ window.setGerenciaSub = function(qual, el){
           linhas.push({slug:c.slug,nome:c.nome,ativo:false,mes:registro.mes,itens:registro.itens,estado:registro.estado,fase:faseControleEditorial(registro.estado,registro.itens.length),...progresso,origemId:registro.origemId});
         });
       });
-      window.__controleEditorialCalendariosDados={linhas,meses:[...meses].filter(Boolean).sort().reverse()};
+      window.__controleEditorialCalendariosDados={linhas,meses:[...meses].filter(Boolean).sort().reverse(),fontesProtegidas};
       const seletor=document.getElementById('centralCalMes');
       const anterior=seletor?.value;
       if(seletor){
@@ -23365,8 +23694,12 @@ window.setGerenciaSub = function(qual, el){
       .sort((a,b)=>({faltando:0,ajuste:1,revisao:2,montagem:3,aprovado:4,liberado:5}[a.fase]-({faltando:0,ajuste:1,revisao:2,montagem:3,aprovado:4,liberado:5}[b.fase])) || a.nome.localeCompare(b.nome,'pt-BR'));
     const corFase=f=>({faltando:'var(--red)',montagem:'var(--yellow2)',ajuste:'var(--yellow2)',revisao:'var(--yellow)',aprovado:'var(--green)',liberado:'var(--green)'})[f]||'var(--muted)';
     const tituloItem=(i,idx)=>{
-      const temRoteiro=String(i.desc||'').trim().length>0, temLegenda=String(i.legenda||'').trim().length>0, temRef=String(i.ref||'').trim().length>0;
-      return `<div class="centralCalTituloItem"><b>${Number(i.day)||'—'}. ${esc(i.name||'Sem título')}</b><div class="meta" style="margin-top:4px;">${esc(i.fmt||'Conteúdo')} · ${temRoteiro?'✓ roteiro':'sem roteiro'} · ${temLegenda?'✓ legenda':'sem legenda'} · ${temRef?'✓ referência':'sem referência'}</div></div>`;
+      const temRoteiro=String(i.desc||'').trim().length>0, roteiroDispensado=!temRoteiro&&i.roteiroDispensado===true;
+      const temLegenda=String(i.legenda||'').trim().length>0;
+      const temRef=String(i.ref||'').trim().length>0, referenciaDispensada=!temRef&&i.referenciaDispensada===true;
+      const roteiroTxt=temRoteiro?'✓ roteiro':roteiroDispensado?'roteiro dispensado':'roteiro pendente';
+      const referenciaTxt=temRef?'✓ referência':referenciaDispensada?'referência dispensada':'referência pendente';
+      return `<div class="centralCalTituloItem"><b>${Number(i.day)||'—'}. ${esc(i.name||'Sem título')}</b><div class="meta" style="margin-top:4px;">${esc(i.fmt||'Conteúdo')} · ${roteiroTxt} · ${temLegenda?'✓ legenda':'sem legenda'} · ${referenciaTxt}</div></div>`;
     };
     box.innerHTML=`<div class="centralCalResumo">
         <div class="centralCalKpi"><strong>${ativosMes.length}</strong><span>clientes ativos no mês</span></div>
@@ -23377,10 +23710,14 @@ window.setGerenciaSub = function(qual, el){
       <div class="desc" style="margin:4px 0 13px;">Mostrando <b>${filtradas.length}</b> cliente(s) em <b>${esc(rotuloCompetenciaControleEditorial(mes))}</b>. Itens arquivados não entram; o histórico continua preservado.</div>
       ${filtradas.length?`<div class="centralCalGrade">${filtradas.map(l=>`<article class="centralCalCliente ${l.fase}" data-central-cal-cliente="${escAttr(l.slug)}" data-central-cal-fase="${escAttr(l.fase)}">
           <div class="centralCalTopo"><div><div class="centralCalNome">${esc(l.nome)}</div><div class="meta" style="margin-top:5px;">${esc(rotuloCompetenciaControleEditorial(l.mes))}${l.ativo?' · carteira ativa':' · arquivo/histórico'}</div></div><span class="centralCalEstado" style="color:${corFase(l.fase)};">${esc(rotuloFaseControleEditorial(l.fase))}</span></div>
-          <div class="centralCalProgresso"><div><b>${l.total}</b><span>títulos</span></div><div><b>${l.roteiros}/${l.total}</b><span>roteiros</span></div><div><b>${l.legendas}/${l.total}</b><span>legendas</span></div><div><b>${l.referencias}/${l.total}</b><span>referências</span></div></div>
+          <div class="centralCalProgresso"><div><b>${l.total}</b><span>títulos</span></div><div><b>${l.roteiros}/${l.total}</b><span>roteiros resolvidos</span></div><div><b>${l.legendas}/${l.total}</b><span>legendas</span></div><div><b>${l.referencias}/${l.total}</b><span>referências resolvidas</span></div></div>
+          ${l.total?`<div class="meta" data-calendario-progresso-detalhado="true" style="margin-top:8px;">Roteiros: ${l.roteirosPreenchidos} preenchido(s) · ${l.roteirosDispensados} dispensado(s) · ${l.roteirosPendentes} pendente(s). Referências: ${l.referenciasPreenchidas} preenchida(s) · ${l.referenciasDispensadas} dispensada(s) · ${l.referenciasPendentes} pendente(s).</div>`:''}
           ${l.total?`<details class="centralCalTitulos"><summary>▾ Ver os ${l.total} títulos deste mês</summary>${l.itens.slice().sort((a,b)=>(Number(a.day)||99)-(Number(b.day)||99)).map(tituloItem).join('')}</details>`:`<div class="empty" style="padding:14px 0 3px;">Nenhum conteúdo montado nesta competência.</div>`}
           <div class="btnrow" style="margin-top:13px;">${l.ativo?`<button type="button" class="btn secondary" style="font-size:11px;" onclick="abrirCalendarioDeCliente('${escJs(l.origemId||l.slug)}','${escJs(l.nome)}','${escJs(l.mes)}')">${l.total?'Abrir calendário oficial':'Começar calendário'}</button>`:'<span class="meta" data-calendario-historico-somente-leitura="true">Histórico preservado — sem edição ou criação nesta competência.</span>'}${usuarioAtual==='Amanda'&&l.ativo&&l.fase==='revisao'?'<button type="button" class="btn green" style="font-size:11px;" onclick="irParaEnvioCalendarios()">Revisar agora</button>':''}</div>
         </article>`).join('')}</div>`:'<div class="card"><div class="empty">Nenhum cliente corresponde a estes filtros. Isso não altera nem apaga calendário.</div></div>'}`;
+    if(typeof window.renderGestaoCompetenciaCalendariosV131==='function'){
+      void window.renderGestaoCompetenciaCalendariosV131();
+    }
   };
 
   /* ===== FRENTE C1 — VISIBILIDADE TOTAL DA SIDEBAR =====
@@ -27662,16 +27999,42 @@ window.setGerenciaSub = function(qual, el){
     const mesPadrao=/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(competencia||''))
       ?String(competencia):competenciaOperacionalCalendario();
     const podeCopiarLinks=papelPodeSubabaCalendariosV127(usuarioAtual,'links');
-    cont.innerHTML = lista.map(c => `
+    /* V132 — a lista continua sendo apenas uma porta para o documento
+       canônico. O estado vem do snapshot compartilhado já confirmado; se a
+       fonte ainda não chegou, nunca chamamos o mês de vazio nem oferecemos
+       "Criar" por suposição. As permissões antigas de edição permanecem; só
+       o rótulo de próxima ação é especializado para a Gabrielle. */
+    const temSnapshotConfirmado=typeof __snapshotCalendariosCompartilhado!=='undefined' &&
+      __snapshotCalendariosCompartilhado &&
+      typeof __cacheTempoRealPronto!=='undefined' && __cacheTempoRealPronto.calendarios===true &&
+      !(typeof __erroCalendariosCompartilhado!=='undefined' && __erroCalendariosCompartilhado);
+    let consolidados={};
+    if(temSnapshotConfirmado){
+      try{ consolidados=consolidarMesesControleEditorial(__snapshotCalendariosCompartilhado); }catch(e){ consolidados={}; }
+    }
+    cont.innerHTML = lista.map(c => {
+      const slug=slugClienteCanonico(c.slug);
+      const registro=consolidados?.[slug]?.meses?.[mesPadrao]||null;
+      const estadoInformado=String(c.estado||c.status||'');
+      const estado=estadoInformado || String(registro?.estado||'');
+      const confirmado=!!estadoInformado || temSnapshotConfirmado;
+      const ausenteConfirmado=confirmado && (estado==='ausente' || estado==='vazio' || (!registro && !estadoInformado));
+      const emAjuste=estado==='ajuste_interno';
+      const acaoGabrielle=usuarioAtual==='Gabrielle';
+      const rotuloAcao=acaoGabrielle
+        ? (ausenteConfirmado?'Criar calendário':emAjuste?'Corrigir calendário':confirmado?'Abrir calendário':'Confirmar calendário')
+        : 'Abrir calendário';
+      const rotuloEstado=!confirmado?'Confirmando estado…':ausenteConfirmado?'Ainda não iniciado':rotuloFaseControleEditorial(faseControleEditorial(estado,registro?.itens?.length||0));
+      return `
       <div class="item" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <div class="nome">${esc(c.nome)}</div>
+        <div><div class="nome">${esc(c.nome)}</div><div class="meta" data-calendario-competencia="${escAttr(mesPadrao)}">Competência ${esc(mesPadrao)} · ${esc(rotuloEstado)}</div></div>
         <div style="display:flex;gap:6px;">
-          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="abrirCalendarioFerramentas('${c.slug}','${escJs(c.nome)}','${mesPadrao}')">Ver calendário</button>
+          <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" data-calendario-acao-gabrielle="${acaoGabrielle?'true':'false'}" onclick="abrirCalendarioFerramentas('${escJs(c.slug)}','${escJs(c.nome)}','${escJs(mesPadrao)}')">${rotuloAcao}</button>
           ${podeCopiarLinks?`<button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioDireto('${c.slug}', this, '${mesPadrao}')">⧉ Link do mês</button>
           <button class="btn secondary" style="width:auto;padding:6px 12px;font-size:11px;" onclick="copiarLinkCalendarioEquipe('${c.slug}', this, '${mesPadrao}')">👁 Link interno</button>`:''}
         </div>
       </div>
-    `).join('');
+    `; }).join('');
     const links=document.getElementById('listaLinksCal');
     if(links){
       links.innerHTML=lista.map(c=>`<div class="item" style="display:flex;justify-content:space-between;align-items:end;flex-wrap:wrap;gap:10px;">
@@ -28784,11 +29147,21 @@ window.setGerenciaSub = function(qual, el){
   function progressoEditorialCalendario(itens){
     const lista = (Array.isArray(itens) ? itens : []).filter(i=>i && i.excluido!==true);
     const preenchido = valor => String(valor == null ? '' : valor).trim().length > 0;
+    const roteirosPreenchidos=lista.filter(i=>preenchido(i?.desc)).length;
+    const roteirosDispensados=lista.filter(i=>!preenchido(i?.desc)&&i?.roteiroDispensado===true).length;
+    const referenciasPreenchidas=lista.filter(i=>preenchido(i?.ref)).length;
+    const referenciasDispensadas=lista.filter(i=>!preenchido(i?.ref)&&i?.referenciaDispensada===true).length;
     return {
       total: lista.length,
-      roteiros: lista.filter(i => preenchido(i?.desc)).length,
+      roteiros: roteirosPreenchidos+roteirosDispensados,
+      roteirosPreenchidos,
+      roteirosDispensados,
+      roteirosPendentes:Math.max(0,lista.length-roteirosPreenchidos-roteirosDispensados),
       legendas: lista.filter(i => preenchido(i?.legenda)).length,
-      referencias: lista.filter(i => preenchido(i?.ref)).length
+      referencias: referenciasPreenchidas+referenciasDispensadas,
+      referenciasPreenchidas,
+      referenciasDispensadas,
+      referenciasPendentes:Math.max(0,lista.length-referenciasPreenchidas-referenciasDispensadas)
     };
   }
 
@@ -29693,11 +30066,13 @@ window.setGerenciaSub = function(qual, el){
     const mesAtual = document.getElementById('centralCalMes')?.value || competenciaOperacionalCalendario();
 
     let cals = {};
+    let fonteCalendariosV133=null;
     let alvo = [];
     try{
       const [snap,clientesConfirmados] = await Promise.all([obterCalendariosCompartilhados(),clientesCalendarioRecorrentesConfirmados(mesAtual)]);
       if(geracaoDestaLeitura!==__geracaoRenderVisaoCalendariosV127 ||
          usuarioAtual!==pessoaDaLeitura || document.getElementById('visaoCalendariosBox' + (sufixo||''))!==box) return;
+      fonteCalendariosV133=snap;
       cals = mapaCalendariosPorIdentidade(snap,mesAtual);
       alvo = clientesConfirmados;
     }catch(e){
@@ -29723,9 +30098,13 @@ window.setGerenciaSub = function(qual, el){
         legado: ehCalendarioLegado(cal,mesAtual), itens };
     });
 
-    const prontos = linhas.filter(l => l.estado === 'liberado').length;
-    const emMontagem = linhas.filter(l => l.total && l.estado !== 'liberado').length;
-    const vazios = linhas.filter(l => !l.total).length;
+    /* V133: o placar da Central e o cartão do Agora passam pelo mesmo
+       resumo. Assim uma nova tela não consegue voltar a contar meses
+       históricos, aliases ou itens excluídos de forma diferente. */
+    const resumoCompetenciaV133=resumoCalendariosCompetenciaV133(fonteCalendariosV133,alvo,mesAtual);
+    const prontos = resumoCompetenciaV133.liberados;
+    const emMontagem = resumoCompetenciaV133.emMontagem;
+    const vazios = resumoCompetenciaV133.semCalendario;
 
     const podeAcompanharRoteiros = ['Amanda','Gabrielle'].includes(usuarioAtual);
     const calendariosCompletos=linhas.filter(l=>l.total&&l.roteiros===l.total).length;
@@ -29745,7 +30124,7 @@ window.setGerenciaSub = function(qual, el){
       <h2>🧭 Calendários: o que falta fazer</h2>
       <div class="desc">Um calendário por cliente na competência operacional que a equipe está preparando. Cada conteúdo ativo conta uma vez; itens arquivados não entram.</div>
       <div class="painelResumo" style="margin-top:12px;">
-        <div class="resumoCard green"><div class="num">${calendariosCompletos}</div><div class="lbl">calendários com todos os roteiros</div></div>
+        <div class="resumoCard green"><div class="num">${calendariosCompletos}</div><div class="lbl">calendários com roteiros resolvidos</div></div>
         <div class="resumoCard ${calendariosEmAndamento?'yellow':'green'}"><div class="num">${calendariosEmAndamento}</div><div class="lbl">calendários em andamento</div></div>
         <div class="resumoCard ${calendariosSemRoteiro?'red':'green'}"><div class="num">${calendariosSemRoteiro}</div><div class="lbl">calendários ainda sem roteiro</div></div>
       </div>
@@ -29772,7 +30151,7 @@ window.setGerenciaSub = function(qual, el){
               <span class="meta" style="color:${cor};font-weight:800;white-space:nowrap;">${l.total ? l.postados + '/' + l.total + ' publicado' : 'vazio'}</span>
             </div>
             <div class="meta" style="margin-top:5px;">${l.mes ? esc(l.mes)+' · ' : ''}${estadoTxt}${l.total ? ' · ' + l.gravados + ' gravado(s)' + (l.comDataPost ? ' · ' + l.comDataPost + ' com data de publicação' : '') : ''}</div>
-            ${podeAcompanharRoteiros && l.total ? `<div data-calendario-progresso-cliente="${escAttr(l.slug)}" style="background:var(--deep);border-radius:8px;padding:10px;margin-top:10px;"><b style="color:${l.roteiros===l.total?'var(--green)':'var(--yellow)'};">Roteiros: ${l.roteiros} de ${l.total} prontos</b><span class="meta" style="display:block;margin-top:4px;">${l.roteiros===l.total?'Todos os roteiros deste calendário estão preenchidos.':l.roteiros===0?'Nenhum roteiro preenchido ainda.':'Faltam '+(l.total-l.roteiros)+' roteiro(s).'} · Legendas ${l.legendas}/${l.total} · Referências ${l.referencias}/${l.total}</span></div>` : ''}
+            ${podeAcompanharRoteiros && l.total ? `<div data-calendario-progresso-cliente="${escAttr(l.slug)}" style="background:var(--deep);border-radius:8px;padding:10px;margin-top:10px;"><b style="color:${l.roteiros===l.total?'var(--green)':'var(--yellow)'};">Roteiros resolvidos: ${l.roteiros} de ${l.total}</b><span class="meta" style="display:block;margin-top:4px;">Preenchidos ${l.roteirosPreenchidos} · Dispensados ${l.roteirosDispensados} · Pendentes ${l.roteirosPendentes}. Legendas ${l.legendas}/${l.total}. Referências resolvidas ${l.referencias}/${l.total}: preenchidas ${l.referenciasPreenchidas}, dispensadas ${l.referenciasDispensadas}, pendentes ${l.referenciasPendentes}.</span></div>` : ''}
             ${l.total ? `<div style="height:6px;background:var(--deep);border-radius:4px;overflow:hidden;margin-top:9px;">
               <div style="height:100%;width:${pct}%;background:${cor};"></div></div>` : ''}
           </div>`;
@@ -32701,6 +33080,13 @@ window.setGerenciaSub = function(qual, el){
       if(colecao === 'agendamentos') renderCalendarioVisualHome();
     }
     if(colecao === 'calendarios'){
+      /* V133: o Agora não possui polling próprio. Quando o listener
+         canônico recebe um calendário novo, redesenha apenas se o painel
+         está realmente visível; oculto, só o cache é invalidado acima. */
+      const painelAgoraV133=document.getElementById('gerenciaAgora');
+      if(viewAtiva==='gerencia'&&painelAgoraV133?.offsetParent!==null&&window.renderAgora){
+        renderAgora();
+      }
       if(viewAtiva === 'calendarios' && document.getElementById('calSubControle')?.offsetParent !== null){
         renderControleEditorialCalendarios();
       }
@@ -32713,6 +33099,24 @@ window.setGerenciaSub = function(qual, el){
          papelPodeSubabaCalendariosV127(usuarioAtual,'envio') &&
          document.getElementById('calSubEnvio')?.offsetParent !== null){
         renderFilaEnvioCalendarios();
+      }
+      if(viewAtiva === 'calendarios' &&
+         papelPodeSubabaCalendariosV127(usuarioAtual,'editar') &&
+         document.getElementById('calSubEditar')?.offsetParent !== null){
+        /* V132: reutiliza o snapshot compartilhado e apenas redesenha a
+           porta. O iframe canônico já possui listener próprio do documento,
+           então a correção da Gabi chega à Central e ao cliente sem polling,
+           segunda coleção ou gravação intermediária. */
+        renderListaCalendariosFerramentas(calendarioFerramentasClientesConfirmados,calendarioFerramentasCompetenciaConfirmada);
+        if(calendarioFerramentasAbertoSlug && __snapshotCalendariosCompartilhado){
+          let encontrado=null;
+          __snapshotCalendariosCompartilhado.forEach(d=>{
+            if(d.id===calendarioFerramentasAbertoSlug) encontrado=d.data()||{};
+          });
+          calendarioFerramentasDadosConfirmados=encontrado;
+          calendarioFerramentasLeituraEstado=encontrado?'confirmado':'ausente';
+          atualizarDiagnosticoCalendarioFerramentas(calendarioFerramentasAbertoCompetencia);
+        }
       }
       if(viewAtiva === 'agendamento' && document.getElementById('agendamentoControleGravacoes')?.offsetParent !== null){
         renderControleGravacoes();
@@ -39626,13 +40030,14 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.htmlPlacarConteudo = async function(){
     try{
       const hoje = hojeLocal();
+      const mesOperacionalCalendarios=competenciaOperacionalCalendario();
       const [perfis, hub, cals] = await Promise.all([
         getDocs(collection(db,'refs_perfil_semana')),
         getDocs(collection(db,'referencias')),
         obterCalendariosCompartilhados()
       ]);
 
-      const alvo = await clientesCalendarioRecorrentesConfirmados();
+      const alvo = await clientesCalendarioRecorrentesConfirmados(mesOperacionalCalendarios);
 
       // perfis por cliente (a meta de 3)
       const porCliente = {};
@@ -39658,17 +40063,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
       });
 
       // calendários
-      let liberados = 0, montando = 0, semCal = 0;
-      const mesOperacionalCalendarios=competenciaOperacionalCalendario();
-      const mapaCal = mapaCalendariosPorIdentidade(cals,mesOperacionalCalendarios);
-      alvo.forEach(c => {
-        const cal = mapaCal[c.slug] || {};
-        const itens = itensDoMesCalendario(cal,mesOperacionalCalendarios).filter(i=>i&&i.excluido!==true).length;
-        const st = estadoMesCal(cal,mesOperacionalCalendarios);
-        if(!itens) semCal++;
-        else if(st === 'liberado') liberados++;
-        else montando++;
-      });
+      const resumoCalendariosV133=resumoCalendariosCompetenciaV133(cals,alvo,mesOperacionalCalendarios);
+      const liberados=resumoCalendariosV133.liberados;
+      const montando=resumoCalendariosV133.emMontagem;
+      const semCal=resumoCalendariosV133.semCalendario;
 
       const dias = Object.keys(porDia).sort().slice(-14);
       const maxDia = Math.max(...dias.map(d=>porDia[d]), 1);
@@ -40105,7 +40503,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
      mês. O arquivo é calculado isoladamente por competência, 30 dias depois
      do fim do mês, somente de outubro de 2026 em diante. */
   function itemRetratoLiberadoV115(item,mes){
-    const campos=['itemId','day','name','desc','legenda','ref','obs','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
+    const campos=['itemId','day','name','desc','roteiroDispensado','legenda','ref','referenciaDispensada','obs','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
     const retrato={mes:String(item?.mes||mes||'')};
     campos.forEach(campo=>{if(item&&item[campo]!==undefined) retrato[campo]=JSON.parse(JSON.stringify(item[campo]));});
     return retrato;

@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-08-31-central-legendas-independente-v134">
+  <meta name="gs-build" content="2026-09-01-agora-fontes-canonicas-v135">
   <meta name="gs-v134-patch" content="2026-08-31-central-legendas-independente-v134">
+  <meta name="gs-v135-patch" content="2026-09-01-agora-fontes-canonicas-v135">
   <meta name="gs-v133-patch" content="2026-08-31-indicador-calendarios-competencia-v133">
   <meta name="gs-v132-patch" content="2026-08-31-criacao-correcao-calendarios-v132">
   <meta name="gs-v131-patch" content="2026-08-31-fechamento-mensal-calendarios-v131">
@@ -2077,17 +2078,32 @@
      segunda leitura completa da coleção. Só snapshots de coleção inteira
      entram aqui; consultas filtradas por funcionário nunca alimentam este
      cache, para não produzir uma visão parcial com aparência de completa. */
+  /* V135 — uma falha de listener não pode deixar o último retrato com
+     aparência de dado fresco. O mapa registra indisponibilidade por fonte;
+     o painel pode conservar o último retrato somente como contexto, sempre
+     rotulado com traço/indisponível e nunca convertido em zero. */
+  const __errosTempoRealPorColecaoV135=new Map();
+  let __erroDemandasOperacionaisV135=null;
+
   function __alimentarCacheTempoReal(nome, snap){
     if(!nome || !snap || typeof snap.forEach !== 'function') return;
     const itens=[];
     snap.forEach(d=>itens.push({__id:d.id,__path:d.ref?.path || (nome+'/'+d.id),__dados:d.data()}));
+    __errosTempoRealPorColecaoV135.delete(nome);
+    if(nome==='demandas') __erroDemandasOperacionaisV135=null;
     __invalidarCacheColecaoNome(nome);
     __cacheColecoes.set(nome,{em:Date.now(),itens,tempoReal:true});
   }
 
-  function __falhouCacheTempoReal(nome){
+  function __falhouCacheTempoReal(nome,erro){
+    __errosTempoRealPorColecaoV135.set(nome,{em:Date.now(),erro:erro||new Error('listener indisponível')});
+    if(typeof __cacheTempoRealPronto!=='undefined' &&
+       Object.prototype.hasOwnProperty.call(__cacheTempoRealPronto,nome)){
+      __cacheTempoRealPronto[nome]=false;
+    }
     const atual=__cacheColecoes.get(nome);
     if(atual?.tempoReal) __invalidarCacheColecaoNome(nome);
+    try{ if(typeof onDadosTempoRealMudaram==='function') onDadosTempoRealMudaram(nome); }catch(e){}
   }
 
   async function getDocs(ref){
@@ -2105,6 +2121,8 @@
     const geracaoColecao=__geracaoCachePorColecao.get(nome)||0;
     const promessa = (async () => {
       const snap = await _getDocsFB(ref);
+      __errosTempoRealPorColecaoV135.delete(nome);
+      if(nome==='demandas') __erroDemandasOperacionaisV135=null;
       const itens = [];
       snap.forEach(d => itens.push({ __id: d.id, __path:d.ref?.path || (nome+'/'+d.id), __dados: d.data() }));
       /* Uma leitura antiga não pode repovoar o cache depois de troca de
@@ -5398,6 +5416,44 @@
     const btn = document.getElementById('btnLancarVideos');
     btn.disabled = true; btn.textContent = 'Distribuindo...';
 
+    /* V135 — gravação nossa tem uma única porta factual: a sessão exata.
+       Esta tela não cria mais vídeos gravados sem agendamento. Assim não
+       existe janela entre “não achei sessão” e o addDoc onde outra aba
+       poderia criar a sessão e deixar fonte/vídeos divergentes. */
+    if(origemMaterial==='gravado' && !trabalhoExterno){
+      let sessoesDoDia=[];
+      try{
+        const agSnap=await getDocs(collection(db,'agendamentos'));
+        agSnap.forEach(d=>{
+          const a=d.data()||{};
+          const slug=String(a.clienteSlug||a.cliente||'').trim();
+          if(!a.excluido && a.status==='agendado' && slug===String(clienteSlug) && String(a.data||'')===String(data)){
+            sessoesDoDia.push({id:d.id,...a});
+          }
+        });
+      }catch(e){
+        console.error('V135: não consegui confirmar se existe sessão agendada:',e);
+        mostrarToast('Não consegui conferir a agenda. Para não criar vídeo solto, nada foi registrado; tente novamente.','erro');
+        btn.disabled=false;btn.textContent='Registrar e distribuir';
+        return false;
+      }
+      if(sessoesDoDia.length){
+        btn.disabled=false;btn.textContent='Registrar e distribuir';
+        const sessaoExata=sessoesDoDia.length===1?sessoesDoDia[0]:null;
+        if(sessaoExata && PESSOAS_DE_CAMPO.includes(usuarioAtual) && pessoaNaEquipe(sessaoExata,usuarioAtual)){
+          mostrarToast('Este cliente já tem uma sessão nessa data. Abra a sessão: ela registra vídeos e gravação juntos.');
+          abrirRegistroAgendamentoCampoV115(sessaoExata.id);
+        }else{
+          const responsaveis=[...new Set(sessoesDoDia.flatMap(a=>filmmakersDaSessao(a)))].filter(Boolean).join(', ');
+          mostrarToast('Já existe '+sessoesDoDia.length+' gravação(ões) aberta(s) para este cliente/data. '+(responsaveis?'A baixa deve ser feita por '+responsaveis+'.':'Abra Gravações para escolher a sessão exata.'),'erro');
+        }
+        return false;
+      }
+      btn.disabled=false;btn.textContent='Registrar e distribuir';
+      mostrarToast('Para registrar uma gravação nossa, crie primeiro a sessão em Gravações e dê a baixa por Minha Agenda. Esta porta fica só para material recebido do cliente.','erro');
+      return false;
+    }
+
     /* ===== TRAVA DE LOTE REPETIDO — 27/07/2026 =====
        Amanda reportou vídeos duplicados de Joaquin, Bluefit e VIP. Fui aos
        dados: os pares entraram com 7 a 24 SEGUNDOS de diferença — não é
@@ -5508,6 +5564,10 @@
              mandou pronto. É por este campo que a produtividade de campo
              deixa de contar edição avulsa como se fosse filmagem. */
           origemMaterial, soEdicao: origemMaterial === 'recebido',
+          ...(origemMaterial==='gravado' ? {
+            registroSemAgendamento:true,
+            origemRegistro:'lancamento_manual_sem_agenda_v135'
+          } : {}),
           ...(trabalhoExterno ? {
             trabalhoExterno: true,
             vinculoCliente: 'externo_pontual',
@@ -10082,6 +10142,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
              tudo pelo painel e pelo "ver também o que está com outros". */
           origem: 'amanda', clienteNome, destinatario: 'Amanda',
           agendamentoId: agRef.id, ehDecisao: true, ehAviso: true,
+          tipoEspecial:'decisao_liberar_gravacao',
           decisaoSim: 'Liberar a gravação', decisaoNao: 'Não liberar',
           prazoData: data, prazoHora: '12:00', status: 'pendente',
           provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
@@ -10131,7 +10192,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const hojeStr = hojeLocal();
       const ehCampo = PESSOAS_DE_CAMPO.includes(usuarioAtual);
       const podeAdministrar = ['Chris','Amanda','Cecília'].includes(usuarioAtual);
-      let futuros = todos.filter(a => a.data >= hojeStr && a.status !== 'cancelado');
+      let futuros = todos.filter(a => a.data >= hojeStr && a.status === 'agendado');
       if(ehCampo) futuros = futuros.filter(a => pessoaNaEquipe(a, usuarioAtual));
       futuros.sort((a,b)=>String(a.data||'').localeCompare(String(b.data||'')) || String(a.hora||'').localeCompare(String(b.hora||'')));
       if(!futuros.length){ cont.innerHTML = '<div class="empty">Nenhuma gravação agendada.</div>'; return; }
@@ -10199,20 +10260,93 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      Estas três funções fecham tudo isso. Cancelar não apaga: guarda quem
      cancelou e por quê, porque gravação cancelada perto da data é dado de
      operação, não lixo. */
-  async function limparRastrosDoAgendamento(id, motivo, acao){
-    /* encerra a demanda de aprovação, se existir */
+  function cicloDemandaAlertaCanonicoV135(demanda){
+    return String(demanda?.alertaCicloV135||'').trim()||'legado';
+  }
+
+  function demandaPertenceLimpezaCanonicaV135(demanda,alvo){
+    const d=demanda||{},a=alvo||{};
+    const fonteId=String(a.fonteId||'').trim();
+    if(!fonteId) return false;
+    if(a.tipo==='agendamento_postagem'){
+      const ciclo=String(a.ciclo||'').trim();
+      if(!ciclo) return false;
+      const idEsperado='reagendar_post_'+fonteId.replace(/[^A-Za-z0-9_-]/g,'_').slice(0,150);
+      return String(d.postagemId||'').trim()===fonteId &&
+        String(d.tipoEspecial||'')==='reagendar_postagem_v118' &&
+        String(d.id||'')===idEsperado &&
+        String(d.operationId||'')==='reagendar_post_'+fonteId &&
+        cicloDemandaAlertaCanonicoV135(d)===ciclo;
+    }
+    if(!['gravacao','postagem'].includes(String(a.tipo||''))) return false;
+    const ciclo=String(a.ciclo||'').trim();
+    if(!ciclo) return false;
+    const tipoEspecial=String(d.tipoEspecial||'').trim();
+    const titulo=String(d.titulo||'');
+    const contratoReconhecido=a.tipo==='gravacao'
+      ? (tipoEspecial==='gravacao_sem_registro_v135'||
+         (!tipoEspecial&&titulo.includes('Gravação de')&&titulo.includes('sem registro')))
+      : (tipoEspecial==='confirmacao_publicacao_v135'||
+         (!tipoEspecial&&(titulo.startsWith('📲 Confirmar publicação')||
+           (titulo.includes('Postagem de')&&titulo.includes('sem confirmação')))));
+    if(!contratoReconhecido) return false;
+    const vinculo=vinculoDemandaAlertaCanonicoV135(d);
+    return !!vinculo && vinculo.tipo===a.tipo &&
+      String(vinculo.fonteId||'')===fonteId &&
+      cicloDemandaAlertaCanonicoV135(d)===ciclo;
+  }
+
+  function demandaAbertaParaLimpezaV135(demanda){
+    const d=demanda||{};
+    return d.excluido!==true &&
+      !['aprovada','cancelada','cancelada_automaticamente'].includes(String(d.status||''));
+  }
+
+  async function limparRastrosDoAgendamento(id, motivo, acao, cicloAlvo){
+    const alvo={tipo:'gravacao',fonteId:String(id||'').trim(),ciclo:String(cicloAlvo||'').trim()};
+    if(!alvo.fonteId||!alvo.ciclo){
+      console.error('V135: limpeza de gravação recusada sem fonte+ciclo exatos.',alvo);
+      return {encerradas:0,motivo:'identidade_incompleta'};
+    }
     try{
-      const snap = await getDocs(collection(db,'demandas'));
-      const alvo = [];
-      snap.forEach(d => { const v = d.data();
-        if(demandaOperacionalVisivel(v) && v.agendamentoId === id && !['aprovada','cancelada'].includes(v.status)) alvo.push(d.id); });
-      for(const dId of alvo){
-        await updateDoc(doc(db,'demandas', dId), {
-          status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(),
-          notaConclusao:'Encerrada porque a gravação foi ' + acao + (motivo ? ' — ' + motivo : '') + '.'
+      const snap=await getDocs(collection(db,'demandas'));
+      const candidatos=[];
+      snap.forEach(registro=>{
+        const atual={id:registro.id,...(registro.data()||{})};
+        if(demandaAbertaParaLimpezaV135(atual)&&demandaPertenceLimpezaCanonicaV135(atual,alvo)){
+          candidatos.push(registro.id);
+        }
+      });
+      let encerradas=0;
+      for(const demandaId of candidatos){
+        const demandaRef=doc(db,'demandas',demandaId);
+        const encerrou=await runTransaction(db,async tx=>{
+          const atualSnap=await tx.get(demandaRef);
+          if(!atualSnap.exists()) return false;
+          const atual={id:atualSnap.id,...(atualSnap.data()||{})};
+          /* Revalida depois da consulta: se outra aba reutilizou/alterou o
+             documento, o cleanup velho não toca no ciclo novo. */
+          if(!demandaAbertaParaLimpezaV135(atual)||
+             !demandaPertenceLimpezaCanonicaV135(atual,alvo)) return false;
+          tx.update(demandaRef,{
+            status:'cancelada_automaticamente',excluido:true,
+            concluidoPor:'sistema',concluidoEm:serverTimestamp(),
+            motivoExclusao:'Fonte canônica encerrada por ID e ciclo exatos.',
+            notaConclusao:'Encerrada porque a gravação foi '+acao+(motivo?' — '+motivo:'')+'.',
+            cicloEncerradoV135:alvo.ciclo
+          });
+          return true;
         });
+        if(encerrou){
+          encerradas++;
+          registrarHistorico('demandas',demandaId,'Alerta de gravação encerrado por ciclo exato',alvo.ciclo);
+        }
       }
-    }catch(e){ console.error('Falha ao encerrar a demanda ligada:', e); }
+      return {encerradas,ciclo:alvo.ciclo};
+    }catch(e){
+      console.error('Falha ao encerrar o alerta canônico da gravação:',e);
+      return {encerradas:0,motivo:'falha_leitura_ou_transacao'};
+    }
   }
 
   window.cancelarAgendamento = async function(id){
@@ -10220,35 +10354,62 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       mostrarToast('Você não tem permissão para cancelar gravações.', 'erro');
       return false;
     }
-    const snap = await getDoc(doc(db,'agendamentos', id));
+    const agendamentoRef=doc(db,'agendamentos',id);
+    let snap;
+    try{
+      snap=await getDoc(agendamentoRef);
+    }catch(e){
+      mostrarToast('Não consegui conferir a gravação. Nada foi cancelado; tente novamente.','erro');
+      return false;
+    }
     if(!snap.exists()){ mostrarToast('Essa gravação não existe mais.', 'erro'); return false; }
     const a = snap.exists() ? snap.data() : {};
     if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(a, usuarioAtual)){
       mostrarToast('Essa gravação não está na sua equipe.', 'erro');
       return false;
     }
-    if(a.status === 'realizado'){
-      mostrarToast('Uma gravação já confirmada não pode ser cancelada por este caminho.', 'erro');
+    if(a.excluido || a.status !== 'agendado'){
+      mostrarToast('Uma gravação já encerrada não pode ser cancelada por este caminho.', 'erro');
       return false;
     }
     const respostaMotivo = prompt('Por que essa gravação está sendo cancelada?\n\n(o filmmaker e a coordenação veem este texto)');
     if(respostaMotivo === null) return false;
     const motivo = String(respostaMotivo||'').trim();
-    await updateDoc(doc(db,'agendamentos', id), {
-      status: 'cancelado', excluido:true,
-      canceladoPor: usuarioAtual||'?', canceladoEm: new Date().toISOString(), motivoCancelamento: motivo,
-      excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString(), motivoExclusao:motivo||'gravação cancelada'
-    });
-    await limparRastrosDoAgendamento(id, motivo, 'cancelada');
+    let aConfirmado;
+    try{
+      aConfirmado=await runTransaction(db,async tx=>{
+        const atualSnap=await tx.get(agendamentoRef);
+        if(!atualSnap.exists()) throw new Error('Essa gravação não existe mais.');
+        const atual=atualSnap.data()||{};
+        if(atual.excluido || atual.status !== 'agendado'){
+          throw new Error('A gravação já foi encerrada ou mudou em outra aba.');
+        }
+        if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(atual,usuarioAtual)){
+          throw new Error('Essa gravação não está mais na sua equipe.');
+        }
+        const agoraCancelamento=new Date().toISOString();
+        tx.update(agendamentoRef,{
+          status:'cancelado',excluido:true,
+          canceladoPor:usuarioAtual||'?',canceladoEm:agoraCancelamento,motivoCancelamento:motivo,
+          excluidoPor:usuarioAtual||'?',excluidoEm:agoraCancelamento,motivoExclusao:motivo||'gravação cancelada'
+        });
+        return atual;
+      });
+    }catch(e){
+      mostrarToast(String(e?.message||e||'Não consegui cancelar.')+' Nada foi alterado.','erro');
+      return false;
+    }
+    const cicloCancelado=cicloFonteAlertaCanonicoV135('gravacao',aConfirmado||a);
+    await limparRastrosDoAgendamento(id,motivo,'cancelada',cicloCancelado);
     /* Se alguém já estava escalado, precisa saber — senão aparece no local. */
     try{
-      const quem = equipeDoAgendamento(a).map(e=>e.nome).filter(Boolean);
+      const quem = equipeDoAgendamento(aConfirmado||a).map(e=>e.nome).filter(Boolean);
       for(const n of quem){
         await criarDemandaSegura({
-          titulo: '🚫 Gravação cancelada — ' + (a.clienteNome||''),
-          descricao: 'A gravação de ' + (a.clienteNome||'') + ' em ' + formatarDataBR(a.data||'') + (a.hora?' às '+a.hora:'') + ' foi cancelada por ' + (usuarioAtual||'?') + '.'
+          titulo: '🚫 Gravação cancelada — ' + ((aConfirmado||a).clienteNome||''),
+          descricao: 'A gravação de ' + ((aConfirmado||a).clienteNome||'') + ' em ' + formatarDataBR((aConfirmado||a).data||'') + ((aConfirmado||a).hora?' às '+(aConfirmado||a).hora:'') + ' foi cancelada por ' + (usuarioAtual||'?') + '.'
             + (motivo ? '\n\nMotivo: ' + motivo : '') + '\n\nEla saiu da sua agenda. Não precisa fazer nada.',
-          destinatario: n, origem:'sistema', ehAviso:true, clienteNome: a.clienteNome||'',
+          destinatario: n, origem:'sistema', ehAviso:true, clienteNome: (aConfirmado||a).clienteNome||'',
           prazoData: hojeLocal(), prazoHora:'19:00', status:'pendente'
         }, { janelaMinutos: 60 });
       }
@@ -10264,9 +10425,20 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       mostrarToast('Somente a coordenação pode reposicionar esta gravação.', 'erro');
       return false;
     }
-    const snap = await getDoc(doc(db,'agendamentos', id));
+    const agendamentoRef=doc(db,'agendamentos',id);
+    let snap;
+    try{
+      snap=await getDoc(agendamentoRef);
+    }catch(e){
+      mostrarToast('Não consegui conferir a gravação. Nada foi reagendado; tente novamente.','erro');
+      return false;
+    }
     if(!snap.exists()) return;
     const a = snap.data();
+    if(a.excluido || a.status !== 'agendado'){
+      mostrarToast('Esta gravação já foi encerrada ou mudou em outra aba. Nada foi reagendado.','erro');
+      return false;
+    }
     let novaData = prompt('Nova data (AAAA-MM-DD ou DD/MM/AAAA):', a.data || '');
     if(novaData === null) return;
     /* 02/08/2026 — aceita os dois jeitos, igual à do filmmaker. Recusar
@@ -10277,11 +10449,29 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     if(novaHora === null) return;
     const motivo = prompt('O que mudou? (o filmmaker vê este texto)') || '';
 
-    await updateDoc(doc(db,'agendamentos', id), {
-      data: novaData, hora: novaHora || a.hora || '', status: 'agendado',
-      reagendadoPor: usuarioAtual||'?', reagendadoEm: new Date().toISOString(),
-      dataAnterior: a.data || '', motivoReagendamento: motivo
-    });
+    let reposicionamento;
+    try{
+      reposicionamento=await runTransaction(db,async tx=>{
+        const atualSnap=await tx.get(agendamentoRef);
+        if(!atualSnap.exists()) throw new Error('A gravação não existe mais.');
+        const atual=atualSnap.data()||{};
+        if(atual.excluido || atual.status !== 'agendado') throw new Error('A gravação já foi encerrada em outra aba.');
+        if(String(atual.data||'')!==String(a.data||'') || String(atual.hora||'')!==String(a.hora||'')){
+          throw new Error('A data ou a hora mudou em outra aba. Reabra antes de reagendar.');
+        }
+        tx.update(agendamentoRef,{
+          data:novaData,hora:novaHora||atual.hora||'',
+          alertaGravacaoFantasmaCriado:false,
+          reagendadoPor:usuarioAtual||'?',reagendadoEm:new Date().toISOString(),
+          dataAnterior:atual.data||'',motivoReagendamento:motivo
+        });
+        return {cicloAnterior:cicloFonteAlertaCanonicoV135('gravacao',atual)};
+      });
+    }catch(e){
+      mostrarToast(String(e?.message||e||'Não consegui reagendar.')+' Nada foi alterado.','erro');
+      return false;
+    }
+    await limparRastrosDoAgendamento(id,'reagendada para '+novaData,'reagendada',reposicionamento.cicloAnterior);
     registrarHistorico('agendamentos', id, 'Reagendada de ' + (a.data||'?') + ' pra ' + novaData + ' por ' + (usuarioAtual||'?'), motivo);
     try{
       const quem = equipeDoAgendamento(a).map(e=>e.nome).filter(Boolean);
@@ -10304,14 +10494,31 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       mostrarToast('Somente a coordenação pode excluir um agendamento criado por engano.', 'erro');
       return false;
     }
-    if(!confirm('Apagar essa gravação de vez?\n\nUse só quando ela foi criada por engano. Se ela existiu e não aconteceu, prefira CANCELAR — o motivo fica registrado e vira histórico da operação.')) return;
-    await updateDoc(doc(db,'agendamentos', id), {
-      excluido: true, status: 'cancelado',
-      excluidoPor: usuarioAtual||'?', excluidoEm: new Date().toISOString(), motivoExclusao: 'criada por engano'
-    });
-    await limparRastrosDoAgendamento(id, 'criada por engano', 'apagada');
+    if(!confirm('Apagar essa gravação de vez?\n\nUse só quando ela foi criada por engano. Se ela existiu e não aconteceu, prefira CANCELAR — o motivo fica registrado e vira histórico da operação.')) return false;
+    const agendamentoRef=doc(db,'agendamentos',id);
+    let apagamento;
+    try{
+      apagamento=await runTransaction(db,async tx=>{
+        const atualSnap=await tx.get(agendamentoRef);
+        if(!atualSnap.exists()) throw new Error('Essa gravação não existe mais.');
+        const atual=atualSnap.data()||{};
+        if(atual.excluido || atual.status !== 'agendado'){
+          throw new Error('A gravação já foi encerrada ou mudou em outra aba.');
+        }
+        tx.update(agendamentoRef,{
+          excluido:true,status:'cancelado',
+          excluidoPor:usuarioAtual||'?',excluidoEm:new Date().toISOString(),motivoExclusao:'criada por engano'
+        });
+        return {cicloAnterior:cicloFonteAlertaCanonicoV135('gravacao',atual)};
+      });
+    }catch(e){
+      mostrarToast(String(e?.message||e||'Não consegui apagar.')+' Nada foi alterado.','erro');
+      return false;
+    }
+    await limparRastrosDoAgendamento(id,'criada por engano','apagada',apagamento.cicloAnterior);
     mostrarToast('Apagada. Some de todas as telas.');
     renderListaAgendamentos();
+    return true;
   };
 
   /* ===== "MINHA AGENDA" REDESENHADA (24/07/2026) =====
@@ -13458,19 +13665,29 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       return;
     }
     if(!confirm('Desfazer o agendamento dessa postagem?\n\nEla volta pra sua fila de agendar, o item sai do calendário do cliente e a demanda reabre.')) return;
+    let confirmada,r;
     try{
-      const confirmada=await confirmarPostagemCanonicaCeciliaV118(id,['agendado']);
-      const r=await alterarAgendamentoPostagemV118(confirmada,{acao:'desfazer'});
-      const p=confirmada.postagem||{};
-      registrarLogAutomacao('agendamento_postagem_desfeito',id,
-        (p.clienteNome||'')+' — '+(p.titulo||'')+' (por '+atorRealDaSessao()+')');
-      mostrarToast(r?.calendarioPreservado
-        ? 'Agendamento desfeito. O vídeo legado voltou para a fila e a pauta foi preservada.'
-        : 'Agendamento desfeito com segurança. A postagem, o item exato e a demanda foram atualizados juntos.');
+      confirmada=await confirmarPostagemCanonicaCeciliaV118(id,['agendado']);
+      r=await alterarAgendamentoPostagemV118(confirmada,{acao:'desfazer'});
     }catch(e){
       console.error('Desagendamento atômico bloqueado:',e);
       mostrarToast('Não desfiz: '+String(e?.message||e)+' Nada foi alterado.','erro');
+      renderAgendarPostagens();
+      return;
     }
+    try{
+      await darBaixaDemandaAgendamento(id,{
+        tipoAlvo:'confirmacao_publicacao_v135',cicloAlvo:r?.cicloAnterior
+      });
+    }catch(e){
+      console.error('Agendamento desfeito; alerta anterior não pôde ser encerrado:',e);
+    }
+    const p=confirmada.postagem||{};
+    registrarLogAutomacao('agendamento_postagem_desfeito',id,
+      (p.clienteNome||'')+' — '+(p.titulo||'')+' (por '+atorRealDaSessao()+')');
+    mostrarToast(r?.calendarioPreservado
+      ? 'Agendamento desfeito. O vídeo legado voltou para a fila e a pauta foi preservada.'
+      : 'Agendamento desfeito com segurança. A postagem, o item exato e a demanda foram atualizados juntos.');
     renderAgendarPostagens();
   };
 
@@ -13533,7 +13750,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
      1 clique, sem modal. Fecha o elo final que antes ficava solto em
      "agendado" pra sempre — a única confirmação existente era reativa
      (demanda criada DEPOIS da data passar sem ninguém confirmar). */
-  window.confirmarPostagemPublicada = async function(id){
+  window.confirmarPostagemPublicada = async function(id,opcoesV135){
     if(!['Cecília','Chris'].includes(usuarioAtual)){
       mostrarToast('Confirmar publicação é uma ação da Cecília; Chris mantém acesso de auditoria.','erro');
       return {ok:false,motivo:'papel'};
@@ -13541,13 +13758,40 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     let confirmada;
     try{ confirmada=await confirmarPostagemCanonicaCeciliaV118(id,['agendado']); }
     catch(e){ mostrarToast(e?.message||'A postagem não pôde ser confirmada.','erro'); return {ok:false,motivo:e?.message||'canonicidade'}; }
+    const opcoesPublicacaoV135=opcoesV135&&typeof opcoesV135==='object'?opcoesV135:{};
+    const demandaIdV135=String(opcoesPublicacaoV135.demandaId||'').trim();
+    const provaTextoV135=String(opcoesPublicacaoV135.provaTexto||'').trim();
+    const provaImagemV135=String(opcoesPublicacaoV135.provaImagemUrl||'').trim();
+    if(demandaIdV135&&!provaTextoV135&&!provaImagemV135){
+      mostrarToast('A confirmação pela demanda exige uma prova curta ou link. Nada foi publicado.','erro');
+      return {ok:false,motivo:'prova_obrigatoria'};
+    }
+    const demandaRefV135=demandaIdV135?doc(db,'demandas',demandaIdV135):null;
     let resultadoPublicacao;
     try{
       resultadoPublicacao=await runTransaction(db,async tx=>{
-        const postSnap=await tx.get(confirmada.postagemRef);
-        const videoSnap=confirmada.videoRef?await tx.get(confirmada.videoRef):null;
+        const [postSnap,videoSnap,demandaSnapV135]=await Promise.all([
+          tx.get(confirmada.postagemRef),
+          confirmada.videoRef?tx.get(confirmada.videoRef):Promise.resolve(null),
+          demandaRefV135?tx.get(demandaRefV135):Promise.resolve(null)
+        ]);
         const post=postSnap.exists()?postSnap.data()||{}:{};
         const video=videoSnap?.exists()?(videoSnap.data()||{}):null;
+        if(demandaRefV135){
+          if(!demandaSnapV135?.exists()) throw new Error('A demanda de confirmação não existe mais. Nada foi publicado.');
+          const demandaAtual=demandaSnapV135.data()||{};
+          if(!ehDemandaConfirmacaoPostagemV135(demandaAtual) || String(demandaAtual.postagemId||'')!==String(id)){
+            throw new Error('A demanda deixou de apontar para esta postagem. Nada foi publicado.');
+          }
+          if(demandaAtual.excluido===true || demandaAtual.status!=='pendente'){
+            throw new Error('A demanda já foi encerrada ou mudou em outra aba. Nada foi repetido.');
+          }
+          const cicloDemanda=String(demandaAtual.alertaCicloV135||'').trim();
+          const cicloFonte=cicloFonteAlertaCanonicoV135('postagem',post);
+          if((cicloDemanda&&cicloDemanda!==cicloFonte) || (!cicloDemanda&&cicloFonte!=='legado')){
+            throw new Error('A postagem foi reagendada depois deste alerta. Reabra a demanda do ciclo atual; nada foi publicado.');
+          }
+        }
         const identidade=confirmada.videoRef
           ? confirmarIdentidadeCalendarioVideoPostagemV118(post,video)
           : {estado:'manual',moderna:false,itemId:'',competencia:'',slug:String(post.calendarClienteSlug||post.cliente||'').trim()};
@@ -13601,7 +13845,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         if(confirmada.videoRef&&!['finalizado','arquivado'].includes(String(videoSnap.data().status||''))){
           tx.update(confirmada.videoRef,{status:'finalizado',finalizadoEm:new Date().toISOString(),finalizadoVia:'postagem_publicada'});
         }
-        return {ok:true,calendarioAtualizado,videoFinalizado:!!confirmada.videoRef};
+        if(demandaRefV135){
+          tx.update(demandaRefV135,{
+            status:'aprovada',
+            provaTexto:provaTextoV135,provaImagemUrl:provaImagemV135,
+            concluidaEm:serverTimestamp(),concluidoPor:atorRealDaSessao(),
+            notaConclusao:'V135 — prova registrada junto da baixa canônica da postagem.'
+          });
+        }
+        return {ok:true,calendarioAtualizado,videoFinalizado:!!confirmada.videoRef,demandaEncerrada:!!demandaRefV135};
       });
     }catch(e){ mostrarToast(e?.message||'Não foi possível confirmar a publicação.','erro'); return {ok:false,motivo:e?.message||'transacao'}; }
     registrarHistorico('postagens', id, 'Publicação confirmada por ' + atorRealDaSessao());
@@ -13609,11 +13861,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     // Dá baixa na demanda de confirmação de publicação, se a rede de
     // segurança já tiver criado uma (data passou sem ninguém confirmar)
     try{
-      const q = query(collection(db,'demandas'), where('postagemId','==', id), where('status','==','pendente'));
+      const q = query(collection(db,'demandas'), where('postagemId','==', id));
       const snap = await getDocs(q);
       for(const d of snap.docs){
         const dem = d.data();
-        if(!(dem.titulo||'').startsWith('📲 Confirmar publicação')) continue;
+        if(!ehDemandaConfirmacaoPostagemV135(dem) ||
+           ['aprovada','cancelada','cancelada_automaticamente'].includes(String(dem.status||'')) || dem.excluido===true) continue;
         await updateDoc(doc(db,'demandas', d.id), {
           status:'aprovada', concluidoPor:'sistema', concluidoEm: serverTimestamp(),
           notaConclusao: 'Concluída automaticamente — publicação confirmada.'
@@ -13992,11 +14245,12 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const id=String(confirmada.postagemRef.id||confirmada.postagem?.id||'');
     const agora=new Date().toISOString();
     const ator=atorRealDaSessao();
-    const demandaRef=acao==='desfazer'?doc(db,'demandas','reagendar_post_'+id.replace(/[^A-Za-z0-9_-]/g,'_').slice(0,150)):null;
+    const demandaRef=doc(db,'demandas','reagendar_post_'+id.replace(/[^A-Za-z0-9_-]/g,'_').slice(0,150));
     const resultado=await runTransaction(db,async tx=>{
       const postSnap=await tx.get(confirmada.postagemRef);
       if(!postSnap.exists()) throw new Error('A postagem deixou de existir.');
       const post=postSnap.data()||{};
+      const cicloAnterior=cicloFonteAlertaCanonicoV135('postagem',post);
       const statusEsperado=acao==='agendar'?'aguardando_agendamento':'agendado';
       if(String(post.status||'')!==statusEsperado) throw new Error('A postagem mudou para '+String(post.status||'outra etapa')+' em outra aba.');
       if(post.excluido===true) throw new Error('A postagem foi arquivada e não será alterada.');
@@ -14066,12 +14320,18 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       /* Firestore exige TODAS as leituras antes da primeira escrita.
          A demanda de reagendamento também participa do mesmo retrato, de
          modo que clique duplo/duas abas reutilizam o documento determinístico. */
-      const demandaSnap=demandaRef?await tx.get(demandaRef):null;
+      const demandaSnap=await tx.get(demandaRef);
+      const cicloDemandaAgendamentoAnterior=demandaSnap.exists()
+        ? cicloDemandaAlertaCanonicoV135({id:demandaSnap.id,...(demandaSnap.data()||{})})
+        : '';
 
       let deDia=null,praDia=null,mudouDia=false,calendarioPreservado=!usaCalendario;
       if(acao==='agendar'){
         const dia=parseInt(String(data).split('-')[2]);
-        tx.update(confirmada.postagemRef,{dataAgendada:data,horaAgendada:hora,agendadoPor:ator,agendadoEm:agora,status:'agendado'});
+        tx.update(confirmada.postagemRef,{
+          dataAgendada:data,horaAgendada:hora,agendadoPor:ator,agendadoEm:agora,status:'agendado',
+          confirmacaoPostagemCriada:false
+        });
         if(usaCalendario){
           const itemManualId=gerarItemIdCalendarioV101(id);
           const baseNovo={itemId:itemManualId,day:dia,name:post.titulo,desc:post.legenda||'',ref:post.linkVideo||'',
@@ -14094,7 +14354,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           else tx.set(calRef,patchCalendario);
         }
       }else{
-        tx.update(confirmada.postagemRef,{status:'aguardando_agendamento',dataAgendada:'',horaAgendada:'',desfeitoPor:ator,desfeitoEm:agora});
+        tx.update(confirmada.postagemRef,{
+          status:'aguardando_agendamento',dataAgendada:'',horaAgendada:'',
+          confirmacaoPostagemCriada:false,desfeitoPor:ator,desfeitoEm:agora
+        });
         if(usaCalendario&&idx>=0){
           const anterior=items[idx]||{};
           if(String(anterior.postagemId||'')&&String(anterior.postagemId||'')!==id){
@@ -14114,17 +14377,22 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         }
         if(demandaRef){
           const criadaEm=demandaSnap?.exists()?demandaSnap.data().criadoEm:serverTimestamp();
+          const cicloDemandaNovo='reagendar_postagem|'+agora;
           tx.set(demandaRef,{
             titulo:'📅 Reagendar postagem — '+(post.clienteNome||post.cliente||''),
             descricao:'Agendamento desfeito por '+ator+'.\n\nVídeo: '+(post.titulo||'')+(post.linkVideo?'\nLink: '+post.linkVideo:'')+(post.legenda?'\n\nLegenda: '+post.legenda:''),
             origem:'sistema',clienteNome:post.clienteNome||'',destinatario:'Cecília',postagemId:id,
             tipoEspecial:'reagendar_postagem_v118',operationId:'reagendar_post_'+id,
+            alertaCicloV135:cicloDemandaNovo,
             prazoData:hojeLocal(),prazoHora:'19:00',status:'pendente',provaTexto:'',provaImagemUrl:'',
             criadoEm,atualizadoEm:serverTimestamp()
           });
         }
       }
-      return {ok:true,como,deDia,praDia,mudouDia,calendarioPreservado,items,slug,competencia};
+      return {
+        ok:true,como,deDia,praDia,mudouDia,calendarioPreservado,items,slug,competencia,
+        cicloAnterior,cicloDemandaAgendamentoAnterior
+      };
     });
     if(acao==='agendar'&&resultado?.items&&resultado.slug){
       const dia=parseInt(String(data).split('-')[2]);
@@ -14166,7 +14434,15 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       renderAgendarPostagens();
       return;
     }
-    darBaixaDemandaAgendamento(id).catch(e => console.error('Fase 6: falha ao dar baixa automática na demanda', e));
+    if(r?.cicloDemandaAgendamentoAnterior){
+      try{
+        await darBaixaDemandaAgendamento(id,{
+          tipoAlvo:'reagendar_postagem_v118',cicloAlvo:r.cicloDemandaAgendamentoAnterior
+        });
+      }catch(e){
+        console.error('Fase 6: falha ao dar baixa automática na demanda', e);
+      }
+    }
     if(r?.mudouDia){
       mostrarToast('Agendado e o calendário do cliente foi atualizado: dia '+r.deDia+' → dia '+r.praDia+'.');
       registrarHistorico('postagens',id,'Data mudada no calendário do cliente',
@@ -17883,7 +18159,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     todosSnap.forEach(d => {
       if(d.id === agId) return;
       const atual = d.data() || {};
-      if(!atual.excluido && atual.status !== 'cancelado' && atual.data === novaData) qtdNoNovoDia++;
+      if(!atual.excluido && atual.status === 'agendado' && atual.data === novaData) qtdNoNovoDia++;
     });
     const precisaAprovacao = !!ag.ehClienteNovo || qtdNoNovoDia >= 2;
     const motivoAprovacao = ag.ehClienteNovo ? 'cliente novo' : (qtdNoNovoDia >= 2 ? 'terceira gravação do dia' : '');
@@ -17891,19 +18167,40 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const mesSessao = ag.mesCalendario || ag.competenciaCalendario || String(ag.data||novaData).slice(0,7);
     const ordemSessao = Number(ag.sessaoOrdem || ag.bloco)||1;
     const sessaoChave = ag.sessaoChave || (slugSessao+'|'+mesSessao+'|S'+String(ordemSessao).padStart(2,'0'));
-    await updateDoc(agRef, {
-      data:novaData, hora:novaHora, status:'agendado',
-      precisaAprovacao, motivoAprovacao, aprovado:!precisaAprovacao,
-      mesCalendario:mesSessao, sessaoOrdem:ordemSessao, sessaoChave,
-      reagendadoPor:usuarioAtual||'?', reagendadoEm:new Date().toISOString(), dataAnterior:ag.data||''
-    });
-    await limparRastrosDoAgendamento(agId, 'reagendada para '+novaData, 'reagendada');
+    let reagendamento;
+    try{
+      reagendamento=await runTransaction(db,async tx=>{
+        const atualSnap=await tx.get(agRef);
+        if(!atualSnap.exists()) throw new Error('A gravação não existe mais.');
+        const atual=atualSnap.data()||{};
+        if(atual.excluido || atual.status !== 'agendado') throw new Error('A gravação já foi encerrada em outra aba.');
+        if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(atual,usuarioAtual)){
+          throw new Error('Você não faz mais parte da equipe desta gravação.');
+        }
+        if(String(atual.data||'')!==String(ag.data||'') || String(atual.hora||'')!==String(ag.hora||'')){
+          throw new Error('A data ou a hora mudou em outra aba. Reabra antes de reagendar.');
+        }
+        tx.update(agRef,{
+          data:novaData,hora:novaHora,
+          alertaGravacaoFantasmaCriado:false,
+          precisaAprovacao,motivoAprovacao,aprovado:!precisaAprovacao,
+          mesCalendario:mesSessao,sessaoOrdem:ordemSessao,sessaoChave,
+          reagendadoPor:usuarioAtual||'?',reagendadoEm:new Date().toISOString(),dataAnterior:atual.data||''
+        });
+        return {cicloAnterior:cicloFonteAlertaCanonicoV135('gravacao',atual)};
+      });
+    }catch(e){
+      mostrarToast(String(e?.message||e||'Não consegui reagendar.')+' Nada foi alterado.','erro');
+      return false;
+    }
+    await limparRastrosDoAgendamento(agId,'reagendada para '+novaData,'reagendada',reagendamento.cicloAnterior);
     if(precisaAprovacao){
       await criarDemandaSegura({
         titulo:'🎥 Liberar gravação reagendada — '+(ag.clienteNome||''),
         descricao:(usuarioAtual||'O filmmaker')+' reagendou '+(ag.clienteNome||'a gravação')+' para '+formatarDataBR(novaData)+(novaHora?' às '+novaHora:'')+'. Motivo da aprovação: '+motivoAprovacao+'.',
         origem:'sistema', clienteNome:ag.clienteNome||'', destinatario:'Amanda', agendamentoId:agId,
-        ehDecisao:true, ehAviso:true, decisaoSim:'Liberar a gravação', decisaoNao:'Não liberar',
+        ehDecisao:true, ehAviso:true,tipoEspecial:'decisao_liberar_gravacao',
+        decisaoSim:'Liberar a gravação', decisaoNao:'Não liberar',
         prazoData:novaData, prazoHora:'12:00', status:'pendente', criadoEm:serverTimestamp()
       }, { janelaMinutos:60 });
     }
@@ -18171,14 +18468,20 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
        Nem aprovação, data, bloco nem seleção do catálogo autorizam o
        filmmaker a confirmar produção no calendário. Essa confirmação vive
        na projeção exclusiva de Cecília. */
+    let baixaGravacao;
     try{
-      await runTransaction(db, async transacao => {
+      baixaGravacao=await runTransaction(db, async transacao => {
         const agAtual = await transacao.get(agRef);
         if(!agAtual.exists()) throw new Error('Gravação removida durante o registro.');
         const dadosAtuais = agAtual.data() || {};
         if(dadosAtuais.excluido || dadosAtuais.status === 'cancelado') throw new Error('A gravação foi cancelada antes da confirmação.');
         if(dadosAtuais.status !== 'agendado') throw new Error('Esta gravação já foi encerrada ou alterada em outra aba.');
         if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(dadosAtuais,usuarioAtual)) throw new Error('Você não faz mais parte da equipe desta gravação.');
+        if(String(dadosAtuais.data||'')!==String(agDadosAntes.data||'') ||
+           String(dadosAtuais.hora||'')!==String(agDadosAntes.hora||'') ||
+           String(dadosAtuais.reagendadoEm||'')!==String(agDadosAntes.reagendadoEm||'')){
+          throw new Error('A data ou a hora mudou em outra aba. Reabra a sessão antes de registrar.');
+        }
         const slugAtual = dadosAtuais.clienteSlug || dadosAtuais.cliente || '';
         if(slugAtual !== clienteSlug) throw new Error('O cliente da gravação mudou antes da confirmação.');
         const responsaveisAgora = filmmakersDaSessao(dadosAtuais);
@@ -18196,6 +18499,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           temUber, uberLink, valorExtra
         });
         videosParaTransacao.forEach(v => transacao.set(v.ref, v.dados));
+        return {cicloAnterior:cicloFonteAlertaCanonicoV135('gravacao',dadosAtuais)};
       });
     }catch(e){
       console.error('Falha no núcleo da gravação:', e);
@@ -18205,6 +18509,13 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       return false;
     }
 
+    await limparRastrosDoAgendamento(
+      agId,'registro factual confirmado','realizada',baixaGravacao.cicloAnterior
+    );
+
+    /* A baixa factual já foi confirmada atomicamente acima. Esta limpeza
+       secundária remove apenas demandas ligadas pelo ID exato; se falhar,
+       a gravação continua realizada e o reconciliador tenta novamente. */
     /* ===== O CHRIS PRECISA SABER QUE ACABOU — 28/07/2026 ================
        Gravação de cliente novo é a primeira entrega da agência pra ele —
        é quando o Chris manda mensagem, cobra o restante, ou fecha a
@@ -19182,9 +19493,10 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   }
   window.expandirCalendariosDaPessoa = expandirCalendariosDaPessoa;
 
-  function demandasVisiveisDaPessoa(pessoa, opcoes){
+  function demandasVisiveisDaPessoa(pessoa, opcoes, baseConfirmada){
     const opts = opcoes || {};
-    const base = (todasDemandas || []).filter(d =>
+    const origem = Array.isArray(baseConfirmada) ? baseConfirmada : (todasDemandas || []);
+    const base = origem.filter(d =>
       d.destinatario === pessoa &&
       (opts.somentePendentes ? d.status === 'pendente' : d.status !== 'aprovada') &&
       (opts.incluirEscalacao || !d.escalacaoGerencial));
@@ -22648,6 +22960,18 @@ window.setGerenciaSub = function(qual, el){
     ]);
     const nomesFontes = ['vídeos','postagens','calendários','pagamentos','agendamentos'];
     fontes.forEach((r,i)=>{ if(r.status==='rejected'){ errosLeitura.push(nomesFontes[i]); console.error('Indicadores: falha em '+nomesFontes[i], r.reason); } });
+    if(__erroDemandasOperacionaisV135 || __errosTempoRealPorColecaoV135.has('demandas')){
+      errosLeitura.push('demandas');
+    }
+    const rotulosTempoRealV135={
+      videos_producao:'vídeos',postagens:'postagens',calendarios:'calendários',
+      pagamentos_extra:'pagamentos',agendamentos:'agendamentos'
+    };
+    Object.entries(rotulosTempoRealV135).forEach(([colecao,rotulo])=>{
+      if(__errosTempoRealPorColecaoV135.has(colecao) && !errosLeitura.some(item=>String(item).startsWith(rotulo))){
+        errosLeitura.push(rotulo+' (tempo real indisponível)');
+      }
+    });
     const percorrer = (resultado, fn) => {
       if(resultado.status !== 'fulfilled') return;
       const valor = resultado.value;
@@ -22663,7 +22987,15 @@ window.setGerenciaSub = function(qual, el){
     percorrer(fontes[4], d => { const x=d.data(); if(!x.excluido) agends.push({id:d.id, ...x}); });
     if(__erroCalendariosCompartilhado && !errosLeitura.includes('calendários')) errosLeitura.push('calendários (dados anteriores)');
 
-    const dems = (todasDemandas||[]).filter(d => !d.escalacaoGerencial);
+    /* V135 — o cabeçalho do Painel e seus atalhos não podem contar a
+       demanda antiga depois que a gravação/postagem exata já terminou ou
+       foi substituída por outro ciclo. Demandas comuns passam intactas. */
+    const fotoDemandasIndicadoresV135=resolverDemandasAlertasCanonicosV135({
+      demandas:(todasDemandas||[]),agendamentos:agends,postagens:posts,hoje,
+      agendamentosDisponiveis:!errosLeitura.some(item=>String(item).startsWith('agendamentos')),
+      postagensDisponiveis:!errosLeitura.some(item=>String(item).startsWith('postagens'))
+    });
+    const dems = fotoDemandasIndicadoresV135.demandasVisiveis.filter(d => !d.escalacaoGerencial);
     const abertas = dems.filter(d => d.status !== 'aprovada' && d.status !== 'concluida');
     const minhas  = abertas.filter(d => d.destinatario === pessoaIndicadores);
     const praSiMesma = d => (d.origem||'').toLowerCase() === String(d.destinatario||'').toLowerCase();
@@ -22941,6 +23273,31 @@ window.setGerenciaSub = function(qual, el){
     // ---------- ARQUIVO (nunca alerta) ----------
     lista.push(I('lixeira', 'Vídeos na lixeira', naLixeira, 'arquivo', "irParaLixeiraVideos()", 'Arquivo. Não é pendência.'));
 
+    /* A mesma fonte alimenta dezenas de cartões. Se ela falhou, cada
+       consumidor dependente recebe traço; preservar `0` nesse ponto
+       repetiria exatamente a mentira que originou a V135. */
+    const fonteIndisponivelV135=rotulo=>errosLeitura.some(item=>String(item||'').startsWith(rotulo));
+    const dependenciasIndicadorV135={
+      aprovar:['demandas','vídeos'],atrasadas:['demandas'],hoje:['demandas'],
+      vidAtrasados:['vídeos'],semEditor:['vídeos'],emEdicao:['vídeos'],emCorrecao:['vídeos'],
+      aguardInterna:['vídeos'],aguardCliente:['vídeos'],entregHoje:['vídeos'],aprovHoje:['vídeos'],lixeira:['vídeos'],
+      semLegenda:['postagens'],semAgendar:['postagens'],agendadas:['postagens'],postHoje:['postagens'],
+      confirmarPub:['postagens'],prox7:['postagens'],
+      calLiberados:['calendários'],calRevisao:['calendários'],calRepresados:['calendários'],calMesVelho:['calendários'],
+      semCal:['calendários','vídeos','postagens','agendamentos'],
+      semPlano:['calendários','vídeos','postagens','agendamentos'],
+      clienteSaiuAberto:['vídeos','postagens','agendamentos'],
+      extras:['pagamentos'],gravHoje:['agendamentos']
+    };
+    lista.forEach(indicador=>{
+      const faltantes=(dependenciasIndicadorV135[indicador.chave]||[]).filter(fonteIndisponivelV135);
+      if(!faltantes.length) return;
+      indicador.num='—';
+      indicador.grav='alto';
+      indicador.indisponivel=true;
+      indicador.dica='Não foi possível conferir '+faltantes.join(', ')+'. O sistema preservou o último contexto sem mostrar zero.';
+    });
+
     const resultadoIndicadores = {
       pessoa:pessoaIndicadores, lista, hoje, errosLeitura,
       dados:{ videos:vids, postagens:posts, calendarios:cals, extras, agendamentos:agends },
@@ -22949,7 +23306,7 @@ window.setGerenciaSub = function(qual, el){
     /* Uma leitura iniciada por Amanda pode terminar depois que o usuário
        já virou Chris. Ela ainda devolve o próprio resultado ao chamador
        antigo, mas jamais substitui o cache da pessoa nova. */
-    if(usuarioAtual === pessoaIndicadores && geracaoDestaLeitura === __geracaoIndicadores){
+    if(usuarioAtual === pessoaIndicadores && geracaoDestaLeitura === __geracaoIndicadores && !errosLeitura.length){
       __cacheIndicadores = resultadoIndicadores;
       __cacheIndicadoresEm = Date.now();
     }
@@ -22982,7 +23339,7 @@ window.setGerenciaSub = function(qual, el){
       <div class="painelResumo">
         ${itens.map(x => `<div class="resumoCard clicavel" onclick="${x.acao}" title="${esc(x.dica||'')}"
             style="cursor:pointer;border-color:${cor(x.grav)};">
-          <div class="num" style="color:${corNum(x.grav)};">${x.dinheiro ? brl(x.num) : x.num}</div>
+          <div class="num" style="color:${corNum(x.grav)};">${x.num==='—' ? '—' : (x.dinheiro ? brl(x.num) : x.num)}</div>
           <div class="lbl">${esc(x.rot)} →</div>
         </div>`).join('')}
       </div>`;
@@ -23213,21 +23570,29 @@ window.setGerenciaSub = function(qual, el){
        Gestão continua com a visão completa. Os demais recebem só a própria
        fila. A segunda consulta cobre documentos antigos que ainda usam
        `paraQuem`; itens repetidos são unidos pelo id. */
-    const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
-    const snaps = ehGestao
-      ? [await getDocs(collection(db,'demandas'))]
-      : await Promise.all([
-          getDocs(query(collection(db,'demandas'), where('destinatario','==',usuarioAtual))),
-          getDocs(query(collection(db,'demandas'), where('paraQuem','==',usuarioAtual)))
-        ]);
-    const porId = new Map();
-    snaps.forEach(snap => snap.forEach(d => {
-      const dados = d.data();
-      if(demandaOperacionalVisivel(dados)) porId.set(d.id, {id:d.id, ...dados});
-    }));
-    todasDemandas = Array.from(porId.values());
-    todasDemandas.sort((a,b) => String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
-    await carregarAusencias();
+    try{
+      const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
+      const snaps = ehGestao
+        ? [await getDocs(collection(db,'demandas'))]
+        : await Promise.all([
+            getDocs(query(collection(db,'demandas'), where('destinatario','==',usuarioAtual))),
+            getDocs(query(collection(db,'demandas'), where('paraQuem','==',usuarioAtual)))
+          ]);
+      const porId = new Map();
+      snaps.forEach(snap => snap.forEach(d => {
+        const dados = d.data();
+        if(demandaOperacionalVisivel(dados)) porId.set(d.id, {id:d.id, ...dados});
+      }));
+      todasDemandas = Array.from(porId.values());
+      todasDemandas.sort((a,b) => String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
+      await carregarAusencias();
+      __erroDemandasOperacionaisV135=null;
+      __errosTempoRealPorColecaoV135.delete('demandas');
+    }catch(erro){
+      __erroDemandasOperacionaisV135=erro;
+      __errosTempoRealPorColecaoV135.set('demandas',{em:Date.now(),erro});
+      throw erro;
+    }
   }
 
   /* ===== VARREDURA URGENTE — BLINDAGEM DO LOGIN =====
@@ -27246,6 +27611,19 @@ window.setGerenciaSub = function(qual, el){
     if(['Amanda','Chris'].includes(usuarioAtual)) carregarContadorEntradaClientes();
     else zerar('badgeEntradaClientes');
 
+    /* Badges são outro desenho da mesma fila: usam a mesma resolução
+       canônica do Agora/indicadores. Enquanto uma fonte não estiver
+       confirmada, o alerta é preservado (falha fechada), nunca escondido. */
+    const agendamentosDisponiveisBadgesV135=__cacheTempoRealPronto.agendamentos&&
+      !__errosTempoRealPorColecaoV135.has('agendamentos');
+    const postagensDisponiveisBadgesV135=__cacheTempoRealPronto.postagens&&
+      !__errosTempoRealPorColecaoV135.has('postagens');
+    const demandasBadgesV135=resolverDemandasAlertasCanonicosV135({
+      demandas:todasDemandas||[],agendamentos:cacheAgendamentos||[],postagens:cachePostagens||[],
+      hoje:hojeLocal(),agendamentosDisponiveis:agendamentosDisponiveisBadgesV135,
+      postagensDisponiveis:postagensDisponiveisBadgesV135
+    }).demandasVisiveis;
+
     /* ===== O NÚMERO PRECISA SER O QUE A TELA MOSTRA — 30/07/2026 =====
        O Chris tinha "6" preso em Minhas Demandas com a tela vazia, e "1"
        em Atrasadas que sumia ao clicar. A causa: o badge contava uma
@@ -27255,7 +27633,7 @@ window.setGerenciaSub = function(qual, el){
 
        Agora os dois números saem da MESMA lista: o que está em aberto,
        com ela, e não encalhado. Se o número diz 6, tem 6 pra ver. */
-    const minhas = demandasVisiveisDaPessoa(usuarioAtual);
+    const minhas = demandasVisiveisDaPessoa(usuarioAtual,{},demandasBadgesV135);
     const vivas  = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d));
 
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(vivas));
@@ -27296,7 +27674,7 @@ window.setGerenciaSub = function(qual, el){
       if(ba){
         ++__versaoBadgeAprovacoes;
         const vidRev = (cacheVideosProducao || []).filter(v => !v.excluido && v.status === 'aguardando_aprovacao').length;
-        const demRev = (todasDemandas || []).filter(d => d.status === 'concluida_aguardando_aprovacao' && aprovacaoEhDe(d, usuarioAtual)).length;
+        const demRev = demandasBadgesV135.filter(d => d.status === 'concluida_aguardando_aprovacao' && aprovacaoEhDe(d, usuarioAtual)).length;
         const tot = vidRev + demRev;
         if(tot && ['Chris','Amanda'].includes(usuarioAtual)){
           ba.textContent = tot; ba.removeAttribute('title'); ba.style.display = 'flex';
@@ -27328,7 +27706,7 @@ window.setGerenciaSub = function(qual, el){
         const daPessoa = d => aprovacaoEhDe(d, usuarioAtual);   // cópia 2 de 4 → função única
         /* O badge soma demanda + vídeo, porque a tela pra onde ele leva
            mostra os dois. Número e destino têm que contar a mesma coisa. */
-        const nDem = (todasDemandas||[]).filter(d => d.status === 'concluida_aguardando_aprovacao'
+        const nDem = demandasBadgesV135.filter(d => d.status === 'concluida_aguardando_aprovacao'
           && (d.destinatario !== usuarioAtual || praSiMesma(d)) && daPessoa(d)).length;
         const nVid = (cacheVideosProducao||[]).filter(v => !v.excluido && v.status === 'aguardando_aprovacao').length;
         const n = nDem + nVid;
@@ -27533,7 +27911,15 @@ window.setGerenciaSub = function(qual, el){
       <div class="field"><label>Data real da reunião marcada com o cliente</label><input type="date" id="reuniaoDataReal" value="${d.prazoData}"></div>
       <div class="field"><label>Hora real da reunião</label><input type="time" id="reuniaoHoraReal" value="${d.prazoHora==='19:00'?'10:00':d.prazoHora}"></div>
       ` : ''}
-      ${ehTituloDemandaLegenda(d.titulo) && d.postagemId ? `
+      ${ehDemandaConfirmacaoPostagemV135(d) ? `
+      <div class="linha" style="color:var(--yellow2);">📲 Esta confirmação fecha a fonte correta. Ao salvar a prova, a postagem muda para <b>postado</b>, o vídeo é finalizado e esta demanda é encerrada.</div>
+      <div class="field"><label>Confirmação curta</label><textarea id="provaTextoInput" placeholder="Ex.: publicado e conferido no perfil"></textarea></div>
+      <div class="field"><label>Link do print (opcional)</label><input type="text" id="provaLinkInput" placeholder="Link do Drive/WhatsApp com a prova"></div>
+      <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Confirmar publicação na fonte</button>
+      ` : ehDemandaBaixaGravacaoV135(d) ? `
+      <div class="linha" style="color:var(--yellow2);">🎥 Esta demanda não é a baixa da gravação. Abra a sessão exata e registre os conteúdos captados; assim os vídeos e o estado <b>realizado</b> são gravados juntos.</div>
+      <button class="btn green" onclick="abrirBaixaGravacaoDemandaV135('${d.id}')">📹 Abrir a sessão exata em Minha Agenda</button>
+      ` : ehTituloDemandaLegenda(d.titulo) && d.postagemId ? `
       <div class="linha" style="color:var(--yellow2);">✍️ Essa é uma demanda de legenda — escreve o texto completo abaixo. Não precisa de aprovação da Amanda: assim que você salvar, já cai direto na fila da Cecília.</div>
       <div class="field"><label>Texto da legenda</label><textarea id="provaTextoInput" placeholder="Cola ou escreve aqui a legenda completa (pronta pra ir pro ar)..."></textarea></div>
       <div class="field"><label>Link de referência (opcional)</label><input type="text" id="provaLinkInput" placeholder="Opcional — link do Drive/WhatsApp se precisar"></div>
@@ -27963,6 +28349,28 @@ window.setGerenciaSub = function(qual, el){
     return t.startsWith('✍️ Escrever legenda') || t.startsWith('✍️ Legenda pendente');
   }
 
+  function ehDemandaConfirmacaoPostagemV135(demanda){
+    const d=demanda||{};
+    return !!String(d.postagemId||'').trim() &&
+      (d.tipoEspecial==='confirmacao_publicacao_v135'||String(d.titulo||'').startsWith('📲 Confirmar publicação'));
+  }
+
+  function ehDemandaBaixaGravacaoV135(demanda){
+    const d=demanda||{};
+    return !!String(d.agendamentoId||d.agendamentoRefId||'').trim() &&
+      (d.tipoEspecial==='gravacao_sem_registro_v135'||String(d.titulo||'').startsWith('🎥 Gravação de'));
+  }
+
+  window.abrirBaixaGravacaoDemandaV135=function(demandaId){
+    const demanda=todasDemandas.find(x=>x.id===demandaId);
+    const agendamentoId=String(demanda?.agendamentoId||demanda?.agendamentoRefId||'').trim();
+    if(!demanda||!agendamentoId){ mostrarToast('Esta demanda antiga não possui a sessão exata. Nada foi concluído.','erro'); return false; }
+    fecharModal();
+    abrirRegistroAgendamentoCampoV115(agendamentoId);
+    mostrarToast('Abra a sessão e registre os conteúdos captados. A baixa canônica encerrará este alerta.');
+    return true;
+  };
+
   window.enviarProva = async function(id){
     const texto = document.getElementById('provaTextoInput').value.trim();
     const link = document.getElementById('provaLinkInput').value.trim();
@@ -27974,7 +28382,24 @@ window.setGerenciaSub = function(qual, el){
     btn.disabled = true; btn.textContent = 'Enviando...';
     try {
       const d = todasDemandas.find(x=>x.id===id);
+      const ehConfirmacaoPublicacao=ehDemandaConfirmacaoPostagemV135(d);
       const ehLegenda = !!(d && d.postagemId) && ehTituloDemandaLegenda(d.titulo);
+
+      /* V135 — confirmar a demanda específica confirma a FONTE. A versão
+         anterior mudava somente `demandas`, deixando a postagem em
+         `agendado` e o Agora voltava a cobrá-la para sempre. */
+      if(ehConfirmacaoPublicacao){
+        if(!['Cecília','Chris'].includes(usuarioAtual)) throw new Error('Confirmar publicação é uma ação da Cecília; Chris mantém auditoria.');
+        const resultado=await window.confirmarPostagemPublicada(d.postagemId,{
+          demandaId:id,provaTexto:texto,provaImagemUrl:link
+        });
+        if(!resultado?.ok) throw new Error(resultado?.motivo||'A postagem não pôde ser confirmada.');
+        mostrarToast('Publicação confirmada na postagem, no vídeo e na demanda. ✔');
+        fecharModal();
+        carregarMinhasDemandas();
+        mudarUsuarioGlobal();
+        return;
+      }
 
       /* ===== ATALHO DIRETO DE LEGENDA — pedido do Chris (22/07/2026) =====
          Legenda não passa mais pela aprovação da Amanda. A Amanda não
@@ -33200,6 +33625,12 @@ window.setGerenciaSub = function(qual, el){
 
   let __ouvintesTempoReal = [];
   let __usuarioDosOuvintes = '';
+  let __geracaoOuvintesTempoRealV135 = 0;
+
+  function __ouvinteTempoRealAindaAtualV135(pessoa, geracao){
+    return geracao === __geracaoOuvintesTempoRealV135 &&
+      __usuarioDosOuvintes === pessoa && usuarioAtual === pessoa;
+  }
   const __cacheTempoRealPronto = {
     demandas:false, videos_producao:false, postagens:false, agendamentos:false, calendarios:false, pagamentos_extra:false
   };
@@ -33258,6 +33689,9 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function pararListenersTempoReal(limparDemandas, limparCachesColecoes){
+    /* Mesmo que o unsubscribe do SDK ainda entregue um callback que já
+       estava na fila, a geração antiga deixa de poder tocar cache/DOM. */
+    __geracaoOuvintesTempoRealV135++;
     pararOuvinteCalendarioCampo(true);
     if(__timerSalvarPerfis){ clearTimeout(__timerSalvarPerfis); __timerSalvarPerfis = null; }
     if(window.__timerAtualizarContatosAtivos){ clearTimeout(window.__timerAtualizarContatosAtivos); window.__timerAtualizarContatosAtivos=null; }
@@ -33271,6 +33705,8 @@ window.setGerenciaSub = function(qual, el){
     cacheExtrasMenu = [];
     cacheExtrasMenuPronto = false;
     Object.keys(__cacheTempoRealPronto).forEach(k => { __cacheTempoRealPronto[k] = false; });
+    __errosTempoRealPorColecaoV135.clear();
+    __erroDemandasOperacionaisV135=null;
     if(limparDemandas !== false) todasDemandas = [];
     /* Troca de papel é fronteira de privacidade. Nenhum retrato completo
        carregado por Chris/Amanda pode permanecer disponível na memória do
@@ -33296,6 +33732,9 @@ window.setGerenciaSub = function(qual, el){
     pararListenersTempoReal(false, false);
     __usuarioDosOuvintes = usuarioAtual;
     const pessoaDoOuvinte = usuarioAtual;
+    const geracaoDoOuvinteV135 = __geracaoOuvintesTempoRealV135;
+    const ouvinteAindaAtualV135 = () =>
+      __ouvinteTempoRealAindaAtualV135(pessoaDoOuvinte, geracaoDoOuvinteV135);
     const ehGestao = pessoaDoOuvinte === 'Amanda' || pessoaDoOuvinte === 'Chris';
     listenersTempoRealAtivos = true;
 
@@ -33341,7 +33780,7 @@ window.setGerenciaSub = function(qual, el){
       ? collection(db,'demandas')
       : query(collection(db,'demandas'), where('destinatario','==',pessoaDoOuvinte));
     __ouvintesTempoReal.push(onSnapshot(refDemandas, (snap)=>{
-      if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+      if(!ouvinteAindaAtualV135()) return;
       if(ehGestao) __alimentarCacheTempoReal('demandas',snap);
       const anterioresPorId = new Map(todasDemandas.map(d=>[d.id,d]));
       const recebidas = [];
@@ -33370,7 +33809,11 @@ window.setGerenciaSub = function(qual, el){
       primeiroSnapshotDemandas = false;
       __cacheTempoRealPronto.demandas = true;
       onDadosTempoRealMudaram('demandas');
-    }, (erro)=>{ if(ehGestao) __falhouCacheTempoReal('demandas'); console.error('Listener demandas falhou:', erro); }));
+    }, (erro)=>{
+      if(!ouvinteAindaAtualV135()) return;
+      if(ehGestao) __falhouCacheTempoReal('demandas',erro);
+      console.error('Listener demandas falhou:', erro);
+    }));
 
     /* ===== LISTENER DO EDITOR — NÃO ESCREVER NOMES À MÃO ==============
        A otimização de cota de 04/08 deixou apenas Helo e João Victor neste
@@ -33390,7 +33833,7 @@ window.setGerenciaSub = function(qual, el){
         ? collection(db,'videos_producao')
         : query(collection(db,'videos_producao'), where('editorAtribuido','==',pessoaDoOuvinte));
       __ouvintesTempoReal.push(onSnapshot(refVideos, (snap)=>{
-        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        if(!ouvinteAindaAtualV135()) return;
         if(ehGestao) __alimentarCacheTempoReal('videos_producao',snap);
         const anterioresPorId = new Map(cacheVideosProducao.map(v=>[v.id,v]));
         cacheVideosProducao = [];
@@ -33409,7 +33852,11 @@ window.setGerenciaSub = function(qual, el){
         primeiroSnapshotVideos = false;
         __cacheTempoRealPronto.videos_producao = true;
         onDadosTempoRealMudaram('videos_producao');
-      }, (erro)=>{ if(ehGestao) __falhouCacheTempoReal('videos_producao'); console.error('Listener videos_producao falhou:', erro); }));
+      }, (erro)=>{
+        if(!ouvinteAindaAtualV135()) return;
+        if(ehGestao) __falhouCacheTempoReal('videos_producao',erro);
+        console.error('Listener videos_producao falhou:', erro);
+      }));
     }
 
     if(ehGestao || pessoaDoOuvinte === 'Gabrielle' || pessoaDoOuvinte === 'Cecília'){
@@ -33420,13 +33867,17 @@ window.setGerenciaSub = function(qual, el){
         refPostagens = query(refPostagens, where('status','in',['aguardando_agendamento','agendado']));
       }
       __ouvintesTempoReal.push(onSnapshot(refPostagens, (snap)=>{
-        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        if(!ouvinteAindaAtualV135()) return;
         if(ehGestao) __alimentarCacheTempoReal('postagens',snap);
         cachePostagens = [];
         snap.forEach(d => cachePostagens.push({id:d.id, ...d.data()}));
         __cacheTempoRealPronto.postagens = true;
         onDadosTempoRealMudaram('postagens');
-      }, (erro)=>{ if(ehGestao) __falhouCacheTempoReal('postagens'); console.error('Listener postagens falhou:', erro); }));
+      }, (erro)=>{
+        if(!ouvinteAindaAtualV135()) return;
+        if(ehGestao) __falhouCacheTempoReal('postagens',erro);
+        console.error('Listener postagens falhou:', erro);
+      }));
     }
 
     if(ehGestao || pessoaDoOuvinte === 'Cecília' || ['Luís','Nathan'].includes(pessoaDoOuvinte)){
@@ -33436,13 +33887,17 @@ window.setGerenciaSub = function(qual, el){
          trava de papel/equipe antes de escrever. */
       const refAgendamentos = collection(db,'agendamentos');
       __ouvintesTempoReal.push(onSnapshot(refAgendamentos, (snap)=>{
-        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        if(!ouvinteAindaAtualV135()) return;
         __alimentarCacheTempoReal('agendamentos',snap);
         cacheAgendamentos = [];
         snap.forEach(d => cacheAgendamentos.push({id:d.id, ...d.data()}));
         __cacheTempoRealPronto.agendamentos = true;
         onDadosTempoRealMudaram('agendamentos');
-      }, (erro)=>{ __falhouCacheTempoReal('agendamentos'); console.error('Listener agendamentos falhou:', erro); }));
+      }, (erro)=>{
+        if(!ouvinteAindaAtualV135()) return;
+        __falhouCacheTempoReal('agendamentos',erro);
+        console.error('Listener agendamentos falhou:', erro);
+      }));
     }
 
     /* Só a gestão recebe a coleção financeira inteira. O Chris usa o
@@ -33450,14 +33905,18 @@ window.setGerenciaSub = function(qual, el){
        consultam exclusivamente os próprios lançamentos em htmlMeusExtras. */
     if(ehGestao){
       __ouvintesTempoReal.push(onSnapshot(collection(db,'pagamentos_extra'), (snap)=>{
-        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        if(!ouvinteAindaAtualV135()) return;
         __alimentarCacheTempoReal('pagamentos_extra',snap);
         cacheExtrasMenu=[];
         snap.forEach(d=>cacheExtrasMenu.push({id:d.id,...d.data()}));
         cacheExtrasMenuPronto=true;
         __cacheTempoRealPronto.pagamentos_extra=true;
         onDadosTempoRealMudaram('pagamentos_extra');
-      }, (erro)=>{ __falhouCacheTempoReal('pagamentos_extra'); console.error('Listener pagamentos_extra falhou:',erro); }));
+      }, (erro)=>{
+        if(!ouvinteAindaAtualV135()) return;
+        __falhouCacheTempoReal('pagamentos_extra',erro);
+        console.error('Listener pagamentos_extra falhou:',erro);
+      }));
     }
 
     /* Calendários são a fonte comum da Gabi, da aprovação da Amanda e do
@@ -33468,7 +33927,7 @@ window.setGerenciaSub = function(qual, el){
        mantendo atualização ao vivo sem cobrar a coleção inteira. */
     if(['Chris','Amanda','Gabrielle','Cecília'].includes(pessoaDoOuvinte)){
       __ouvintesTempoReal.push(onSnapshot(collection(db,'calendarios'), (snap)=>{
-        if(__usuarioDosOuvintes !== pessoaDoOuvinte) return;
+        if(!ouvinteAindaAtualV135()) return;
         __alimentarCacheTempoReal('calendarios',snap);
         __snapshotCalendariosCompartilhado = snap;
         __snapshotCalendariosEm = Date.now();
@@ -33480,7 +33939,8 @@ window.setGerenciaSub = function(qual, el){
            retrato deixava a badge incompleta até recarregar ou editar algo. */
         onDadosTempoRealMudaram('calendarios');
       }, (erro)=>{
-        __falhouCacheTempoReal('calendarios');
+        if(!ouvinteAindaAtualV135()) return;
+        __falhouCacheTempoReal('calendarios',erro);
         __erroCalendariosCompartilhado = erro;
         console.error('Listener calendarios falhou:', erro);
         if(viewAtiva==='calendarios' &&
@@ -33496,9 +33956,15 @@ window.setGerenciaSub = function(qual, el){
     /* Estas são as três fontes que formam "Aprovar vídeos, demandas e
        calendários". Qualquer mudança nelas invalida a conta anterior e
        redesenha o menu imediatamente. */
-    if(['demandas','videos_producao','calendarios'].includes(colecao)){
+    const fontesAgoraV135=['demandas','videos_producao','calendarios','agendamentos','postagens'];
+    if(fontesAgoraV135.includes(colecao)){
       limparCacheIndicadores();
       atualizarTodosOsBadges();
+      const painelAgoraV135=document.getElementById('gerenciaAgora');
+      if(viewAtiva==='gerencia'&&painelAgoraV135?.offsetParent!==null&&window.renderAgora){
+        clearTimeout(window.__timerRenderAgoraV135);
+        window.__timerRenderAgoraV135=setTimeout(()=>window.renderAgora(),140);
+      }
     }
     if(colecao === 'pagamentos_extra'){
       limparCacheIndicadores();
@@ -33522,13 +33988,8 @@ window.setGerenciaSub = function(qual, el){
       if(colecao === 'agendamentos') renderCalendarioVisualHome();
     }
     if(colecao === 'calendarios'){
-      /* V133: o Agora não possui polling próprio. Quando o listener
-         canônico recebe um calendário novo, redesenha apenas se o painel
-         está realmente visível; oculto, só o cache é invalidado acima. */
-      const painelAgoraV133=document.getElementById('gerenciaAgora');
-      if(viewAtiva==='gerencia'&&painelAgoraV133?.offsetParent!==null&&window.renderAgora){
-        renderAgora();
-      }
+      /* V135: o Agora já foi invalidado e agendado uma única vez acima;
+         esta ramificação redesenha somente as superfícies de calendário. */
       if(viewAtiva === 'calendarios' && document.getElementById('calSubControle')?.offsetParent !== null){
         renderControleEditorialCalendarios();
       }
@@ -33620,20 +34081,53 @@ window.setGerenciaSub = function(qual, el){
     registrarLogAutomacao('postagem_pronta_pra_agendar', postagemId, 'Entrou na fila da Cecília (sem demanda)');
   }
 
-  async function darBaixaDemandaAgendamento(postagemId){
-    const q = query(collection(db,'demandas'), where('postagemId','==', postagemId), where('status','==','pendente'));
-    const snap = await getDocs(q);
-    for(const d of snap.docs){
-      const dem = d.data();
-      // A Melhoria 2 usa o mesmo campo postagemId pra demanda de legenda
-      // (Gabrielle) — não fechar essa aqui por engano, só a de agendamento.
-      if(dem.destinatario === 'Gabrielle' || (dem.titulo||'').startsWith('✍️ Escrever legenda')) continue;
-      await updateDoc(doc(db,'demandas', d.id), {
-        status: 'aprovada', concluidoPor: 'sistema', concluidoEm: serverTimestamp(),
-        notaConclusao: 'Concluída automaticamente pelo sistema — postagem foi agendada.'
-      });
-      registrarHistorico('demandas', d.id, 'Concluída automaticamente — postagem foi agendada');
+  async function darBaixaDemandaAgendamento(postagemId,opcoesV135){
+    const opcoes=opcoesV135&&typeof opcoesV135==='object'?opcoesV135:{};
+    const tipoAlvo=opcoes.tipoAlvo==='confirmacao_publicacao_v135'
+      ? 'postagem'
+      : (opcoes.tipoAlvo==='reagendar_postagem_v118'?'agendamento_postagem':'');
+    const alvo={
+      tipo:tipoAlvo,fonteId:String(postagemId||'').trim(),
+      ciclo:String(opcoes.cicloAlvo||'').trim()
+    };
+    if(!tipoAlvo||!alvo.fonteId||!alvo.ciclo){
+      console.error('V135: baixa de demanda de postagem recusada sem identidade completa.',alvo);
+      return {encerradas:0,motivo:'identidade_incompleta'};
     }
+    const q=query(collection(db,'demandas'),where('postagemId','==',alvo.fonteId));
+    const snap=await getDocs(q);
+    const candidatos=snap.docs.filter(registro=>{
+      const atual={id:registro.id,...(registro.data()||{})};
+      return demandaAbertaParaLimpezaV135(atual)&&demandaPertenceLimpezaCanonicaV135(atual,alvo);
+    });
+    let encerradas=0;
+    for(const registro of candidatos){
+      const demandaRef=doc(db,'demandas',registro.id);
+      const encerrou=await runTransaction(db,async tx=>{
+        const atualSnap=await tx.get(demandaRef);
+        if(!atualSnap.exists()) return false;
+        const atual={id:atualSnap.id,...(atualSnap.data()||{})};
+        if(!demandaAbertaParaLimpezaV135(atual)||
+           !demandaPertenceLimpezaCanonicaV135(atual,alvo)) return false;
+        tx.update(demandaRef,{
+          status:tipoAlvo==='postagem'?'cancelada_automaticamente':'aprovada',
+          ...(tipoAlvo==='postagem'?{excluido:true,motivoExclusao:'Ciclo de publicação substituído por reagendamento.'}:{}),
+          concluidoPor:'sistema',concluidoEm:serverTimestamp(),
+          notaConclusao:tipoAlvo==='postagem'
+            ? 'Alerta encerrado porque o ciclo exato de publicação foi desfeito.'
+            : 'Concluída automaticamente pelo sistema — postagem foi agendada.',
+          ...(tipoAlvo==='postagem'?{cicloEncerradoV135:alvo.ciclo}:{})
+        });
+        return true;
+      });
+      if(encerrou){
+        encerradas++;
+        registrarHistorico('demandas',registro.id,
+          tipoAlvo==='postagem'?'Alerta de publicação encerrado por ciclo exato':'Concluída automaticamente — postagem foi agendada',
+          tipoAlvo==='postagem'?alvo.ciclo:'');
+      }
+    }
+    return {encerradas,tipo:tipoAlvo,ciclo:alvo.ciclo};
   }
 
   /* ===== MELHORIA 2 — BAIXA DA DEMANDA DE LEGENDA =====
@@ -33916,6 +34410,238 @@ window.setGerenciaSub = function(qual, el){
   }
   window.verificarCoberturaPostagensAmanda=verificarCoberturaPostagensAmanda;
 
+  /* ===== V135 — ALERTA, PROVA E FONTE CANÔNICA SÃO UMA SÓ CADEIA ====
+     O painel Agora não pode decidir sozinho que uma gravação/postagem está
+     pendente, enquanto a automação e a demanda usam outra regra. Estes
+     helpers puros são a régua única dos três leitores. Renderizar continua
+     zero-write; qualquer baixa real continua nas funções canônicas. */
+  function classificarAlertaFonteCanonicaV135(tipo, fonte, hoje){
+    const especie=String(tipo||'').toLowerCase();
+    if(fonte === undefined) return {estado:'inconsistente',motivo:'fonte_indisponivel'};
+    if(!fonte || typeof fonte !== 'object') return {estado:'inativo',motivo:'fonte_ausente'};
+    const status=String(fonte.status||'').toLowerCase();
+    if(fonte.excluido===true || fonte.arquivado===true || fonte.deletedAt ||
+       ['cancelado','cancelada','arquivado','arquivada','arquivada_sem_postagem','arquivado_sem_postagem'].includes(status)){
+      return {estado:'inativo',motivo:'fonte_inativa'};
+    }
+    if(especie==='gravacao' && status==='realizado') return {estado:'terminal',motivo:'gravacao_realizada'};
+    if(especie==='postagem' && status==='postado') return {estado:'terminal',motivo:'postagem_publicada'};
+    if(especie==='gravacao' && fonte.aprovado === false) return {estado:'inativo',motivo:'aguardando_aprovacao'};
+    if(status!=='agendado') return {estado:'inconsistente',motivo:'status_nao_operacional'};
+    const data=especie==='postagem' ? String(fonte.dataAgendada||'') : String(fonte.data||'');
+    if(!/^20\d{2}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(data)){
+      return {estado:'inconsistente',motivo:'data_invalida'};
+    }
+    const hojeStr=String(hoje||'');
+    if(!/^20\d{2}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(hojeStr)){
+      return {estado:'inconsistente',motivo:'relogio_invalido'};
+    }
+    return data < hojeStr
+      ? {estado:'aberto',motivo:'prazo_vencido',data}
+      : {estado:'inativo',motivo:data===hojeStr?'prazo_hoje':'prazo_futuro',data};
+  }
+  window.classificarAlertaFonteCanonicaV135=classificarAlertaFonteCanonicaV135;
+
+  function marcadorTemporalAlertaV135(valor){
+    if(valor===undefined||valor===null||valor==='') return '';
+    if(typeof valor==='string'||typeof valor==='number') return String(valor);
+    const segundos=Number(valor.seconds??valor._seconds);
+    const nanos=Number(valor.nanoseconds??valor._nanoseconds??0);
+    if(Number.isFinite(segundos)) return String(segundos)+'_'+String(Number.isFinite(nanos)?nanos:0);
+    return '';
+  }
+
+  function chaveCicloAlertaCanonicoV135(tipo,fonte){
+    const especie=String(tipo||'').toLowerCase();
+    const atual=fonte&&typeof fonte==='object'?fonte:{};
+    const data=especie==='postagem'?String(atual.dataAgendada||''):String(atual.data||'');
+    const hora=especie==='postagem'?String(atual.horaAgendada||''):String(atual.hora||'');
+    const revisao=especie==='postagem'
+      ? marcadorTemporalAlertaV135(atual.agendadoEm||atual.reagendadoEm||atual.criadoEm)
+      : marcadorTemporalAlertaV135(atual.reagendadoEm||atual.sessaoPlanejadoEm||atual.criadoEm);
+    return [especie||'alerta',data||'sem_data',hora||'sem_hora',revisao||'sem_revisao'].join('|');
+  }
+  window.chaveCicloAlertaCanonicoV135=chaveCicloAlertaCanonicoV135;
+
+  function cicloFonteAlertaCanonicoV135(tipo,fonte){
+    const especie=String(tipo||'').toLowerCase();
+    const atual=fonte&&typeof fonte==='object'?fonte:{};
+    const marcador=especie==='postagem'
+      ? atual.confirmacaoPostagemCriada
+      : atual.alertaGravacaoFantasmaCriado;
+    if(marcador===true) return 'legado';
+    if(typeof marcador==='string'&&marcador.trim()) return marcador.trim();
+    return chaveCicloAlertaCanonicoV135(especie,atual);
+  }
+  window.cicloFonteAlertaCanonicoV135=cicloFonteAlertaCanonicoV135;
+
+  function idDemandaAlertaCanonicoV135(tipo, fonteId, ciclo){
+    const prefixo=String(tipo||'alerta').toLowerCase().replace(/[^a-z0-9_-]+/g,'_').slice(0,24)||'alerta';
+    const identidade=String(fonteId||'').replace(/[^A-Za-z0-9_-]+/g,'_').slice(0,120);
+    const legado='v135_'+prefixo+'_'+(identidade||'sem_fonte');
+    const cicloBruto=String(ciclo||'');
+    if(!cicloBruto) return legado;
+    let h1=2166136261,h2=2246822507;
+    for(let i=0;i<cicloBruto.length;i++){
+      const codigo=cicloBruto.charCodeAt(i);
+      h1=Math.imul(h1^codigo,16777619);
+      h2=Math.imul(h2^codigo,3266489917);
+    }
+    const resumo=((h1>>>0).toString(36)+(h2>>>0).toString(36)).slice(0,14);
+    const cicloSeguro=cicloBruto.replace(/[^A-Za-z0-9_-]+/g,'_').slice(0,24)+'_'+resumo;
+    return (legado.slice(0,140)+'_c_'+cicloSeguro).slice(0,180);
+  }
+  window.idDemandaAlertaCanonicoV135=idDemandaAlertaCanonicoV135;
+
+  function chaveEstadoAlertaFonteV135(tipo,fonteId,fonte){
+    const especie=String(tipo||'').toLowerCase();
+    const ciclo=cicloFonteAlertaCanonicoV135(especie,fonte);
+    return especie+':'+String(fonteId||'')+':'+ciclo;
+  }
+
+  function vinculoDemandaAlertaCanonicoV135(demanda){
+    const d=demanda||{};
+    /* Decisões e avisos informativos podem carregar o mesmo ponteiro, mas
+       têm contrato próprio e não são cobrança de baixa operacional. */
+    if(d.ehDecisao===true || d.ehAviso===true) return null;
+    const agendamentoId=String(d.agendamentoId||'').trim();
+    const agendamentoLegado=String(d.agendamentoRefId||'').trim();
+    const postagemId=String(d.postagemId||'').trim();
+    const titulo=String(d.titulo||'');
+    const tipoEspecial=String(d.tipoEspecial||'');
+    const ehAlertaPostagem=!!postagemId&&(
+      tipoEspecial==='confirmacao_publicacao_v135'||
+      titulo.startsWith('📲 Confirmar publicação')||
+      (titulo.includes('Postagem de')&&titulo.includes('sem confirmação'))
+    );
+    const ehAlertaGravacao=!!(agendamentoId||agendamentoLegado)&&(
+      tipoEspecial==='gravacao_sem_registro_v135'||
+      (titulo.includes('Gravação de')&&titulo.includes('sem registro'))
+    );
+    /* Legenda, agendamento editorial e outras demandas também podem ter
+       postagemId/agendamentoId. Elas não pertencem a esta reconciliação. */
+    if(!ehAlertaPostagem&&!ehAlertaGravacao) return null;
+    if(agendamentoId && agendamentoLegado && agendamentoId!==agendamentoLegado){
+      return {tipo:'inconsistente',motivo:'dois_agendamentos_divergentes'};
+    }
+    if((ehAlertaPostagem&&!!(agendamentoId||agendamentoLegado)) ||
+       (ehAlertaGravacao&&!!postagemId)){
+      return {tipo:'inconsistente',motivo:'duas_fontes_divergentes'};
+    }
+    if(ehAlertaPostagem) return {tipo:'postagem',fonteId:postagemId};
+    if(ehAlertaGravacao) return {tipo:'gravacao',fonteId:agendamentoId||agendamentoLegado};
+    return null;
+  }
+
+  function demandaTemConfirmacaoLegadaV135(demanda){
+    const d=demanda||{};
+    const vinculo=vinculoDemandaAlertaCanonicoV135(d);
+    if(!vinculo||vinculo.tipo==='inconsistente') return false;
+    const concluida=['concluida_aguardando_aprovacao','aprovada'].includes(String(d.status||''));
+    const prova=String(d.provaTexto||'').trim()||String(d.provaImagemUrl||'').trim()||String(d.provaLink||'').trim();
+    return concluida && !!prova;
+  }
+
+  function resolverDemandasAlertasCanonicosV135(entrada){
+    const {
+      demandas=[],agendamentos=[],postagens=[],hoje='',
+      agendamentosDisponiveis=true,postagensDisponiveis=true
+    }=entrada||{};
+    const mapaAgendamentos=new Map((agendamentos||[]).map(a=>[String(a?.id||''),a]));
+    const mapaPostagens=new Map((postagens||[]).map(p=>[String(p?.id||''),p]));
+    const chavesComConfirmacaoLegada=new Set();
+    for(const demanda of (demandas||[])){
+      const vinculo=vinculoDemandaAlertaCanonicoV135(demanda);
+      if(vinculo&&vinculo.tipo!=='inconsistente'&&demandaTemConfirmacaoLegadaV135(demanda)){
+        chavesComConfirmacaoLegada.add(
+          vinculo.tipo+':'+vinculo.fonteId+':'+(String(demanda.alertaCicloV135||'').trim()||'legado')
+        );
+      }
+    }
+    const demandasVisiveis=[];
+    const paraEncerrar=[];
+    const inconsistencias=[];
+    const confirmacoesLegadas=[];
+    for(const demanda of (demandas||[])){
+      const vinculo=vinculoDemandaAlertaCanonicoV135(demanda);
+      if(!vinculo){ demandasVisiveis.push(demanda); continue; }
+      if(vinculo.tipo==='inconsistente'){
+        demandasVisiveis.push(demanda);
+        inconsistencias.push({demandaId:demanda.id||'',...vinculo});
+        continue;
+      }
+      const fonteDisponivel=vinculo.tipo==='gravacao' ? agendamentosDisponiveis : postagensDisponiveis;
+      const fonte=fonteDisponivel
+        ? (vinculo.tipo==='gravacao' ? mapaAgendamentos.get(vinculo.fonteId) : mapaPostagens.get(vinculo.fonteId))
+        : undefined;
+      /* Coleção lida com sucesso + ID ausente é fonte inativa. Falha de
+         leitura mantém undefined e, portanto, estado inconsistente: nunca
+         baixa nem esconde trabalho porque a rede/cota falhou. */
+      const cicloDemanda=String(demanda.alertaCicloV135||'').trim()||'legado';
+      const cicloFonte=fonte&&typeof fonte==='object'
+        ? cicloFonteAlertaCanonicoV135(vinculo.tipo,fonte)
+        : '';
+      const estado=cicloFonte&&cicloFonte!==cicloDemanda
+        ? {estado:'inativo',motivo:'ciclo_substituido'}
+        : classificarAlertaFonteCanonicaV135(
+            vinculo.tipo,fonte===undefined&&fonteDisponivel?null:fonte,hoje
+          );
+      const registro={
+        demandaId:demanda.id||'',id:demanda.id||'',
+        chave:vinculo.tipo+':'+vinculo.fonteId+':'+(String(demanda.alertaCicloV135||'').trim()||'legado'),
+        ...vinculo,estado:estado.estado,motivo:estado.motivo
+      };
+      if(estado.estado==='aberto'){
+        /* Uma confirmação vale para a fonte e o ciclo exatos. Assim,
+           duplicatas do mesmo ciclo não voltam a cobrar, mas reagendamento
+           nunca herda a prova de uma data/revisão anterior. */
+        if(chavesComConfirmacaoLegada.has(registro.chave)){
+          const legado={...registro,motivo:'confirmacao_legada_sem_baixa'};
+          confirmacoesLegadas.push(legado);
+          inconsistencias.push(legado);
+        }else{
+          demandasVisiveis.push(demanda);
+        }
+        continue;
+      }
+      if(estado.estado==='terminal'||estado.estado==='inativo'){
+        paraEncerrar.push(registro);
+        continue;
+      }
+      demandasVisiveis.push(demanda);
+      inconsistencias.push(registro);
+    }
+    return {demandasVisiveis,paraEncerrar,inconsistencias,confirmacoesLegadas};
+  }
+  window.resolverDemandasAlertasCanonicosV135=resolverDemandasAlertasCanonicosV135;
+
+  async function reconciliarDemandasAlertasCanonicosV135(){
+    /* Uma falha em qualquer leitura aborta antes da primeira escrita: erro
+       nunca é interpretado como fonte ausente. */
+    const [agSnap,postSnap,demSnap]=await Promise.all([
+      snapshotOperacional('agendamentos'),snapshotOperacional('postagens'),snapshotOperacional('demandas')
+    ]);
+    const agendamentos=agSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const postagens=postSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const demandas=demSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const camposVinculoCanonico=['agendamentoId','agendamentoRefId','postagemId'];
+    const foto=resolverDemandasAlertasCanonicosV135({demandas,agendamentos,postagens,hoje:hojeLocal()});
+    const porId=new Map(demandas.map(d=>[d.id,d]));
+    let encerradas=0;
+    for(const item of foto.paraEncerrar){
+      const atual=porId.get(item.demandaId)||{};
+      if(['aprovada','cancelada','cancelada_automaticamente'].includes(String(atual.status||''))||atual.excluido===true) continue;
+      await updateDoc(doc(db,'demandas',item.demandaId),{
+        status:'cancelada_automaticamente',excluido:true,
+        concluidoPor:'sistema',concluidoEm:serverTimestamp(),
+        motivoExclusao:'V135 — a fonte canônica ficou '+item.estado+' ('+item.motivo+').',
+        notaConclusao:'Alerta encerrado por identidade exata; nenhum dado operacional foi inferido.'
+      });
+      registrarHistorico('demandas',item.demandaId,'Alerta V135 encerrado automaticamente',item.tipo+' '+item.fonteId+' — '+item.motivo);
+      encerradas++;
+    }
+    return {encerradas,inconsistencias:foto.inconsistencias,camposVinculoCanonico};
+  }
   /* ===== REDE DE SEGURANÇA COMPLETA DO CICLO DE POSTAGEM =====
      Cobre as 3 etapas onde algo pode ser esquecido:
      1. LEGENDA esquecida (aguardando_legenda parada 1+ dia) → demanda pra Gabrielle
@@ -33928,6 +34654,10 @@ window.setGerenciaSub = function(qual, el){
     const hojeStr = hojeLocal();
     let novasDemandas = 0;
     const paradasLegenda = [], paradasAgendar = [];
+    /* O saneamento histórico V135 não roda aqui: login, render e motor não
+       têm autorização para alterar demandas antigas. O resolvedor puro já
+       impede o falso alerta na tela; reparo persistente exige uma operação
+       separada, explícita e previamente autorizada. */
     for(const docSnap of snap.docs){
       const p = docSnap.data();
 
@@ -33949,18 +34679,40 @@ window.setGerenciaSub = function(qual, el){
         if(diasEsperando >= 2) paradasAgendar.push((p.clienteNome||'?') + ' — ' + (p.titulo||'') + ' (' + diasEsperando + 'd)');
       }
 
-      // Etapa 3 — agendada, mas a data já passou: foi realmente postada?
-      if(p.status === 'agendado' && !p.confirmacaoPostagemCriada && p.dataAgendada && p.dataAgendada < hojeStr){
-        await addDoc(collection(db,'demandas'), {
-          titulo: '📲 Confirmar publicação — ' + (p.clienteNome||'') + ': ' + (p.titulo||''),
-          descricao: `Essa postagem estava agendada pra ${formatarDataBR(p.dataAgendada)} às ${p.horaAgendada||'?'} e a data já passou. Confirma que foi ao ar (marca como feita com um print de prova). Se não foi, reagenda agora.`,
-          origem: 'sistema', clienteNome: p.clienteNome || '', destinatario: 'Cecília', postagemId: docSnap.id,
-          prazoData: hojeStr, prazoHora: '18:00',
-          status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      // Etapa 3 — identidade determinística + revalidação na mesma transação.
+      const estadoPublicacao=classificarAlertaFonteCanonicaV135('postagem',{id:docSnap.id,...p},hojeStr);
+      if(estadoPublicacao.estado==='aberto'){
+        const postagemRef=doc(db,'postagens',docSnap.id);
+        const criada=await runTransaction(db,async tx=>{
+          const postAtualSnap=await tx.get(postagemRef);
+          if(!postAtualSnap.exists()) return false;
+          const postAtual={id:postAtualSnap.id,...postAtualSnap.data()};
+          const estadoAtual=classificarAlertaFonteCanonicaV135('postagem',postAtual,hojeLocal());
+          if(estadoAtual.estado!=='aberto') return false;
+          const ciclo=cicloFonteAlertaCanonicoV135('postagem',postAtual);
+          const usaIdLegado=ciclo==='legado';
+          const demandaId=idDemandaAlertaCanonicoV135('postagem',docSnap.id,usaIdLegado?'':ciclo);
+          const demandaRef=doc(db,'demandas',demandaId);
+          const demandaAtualSnap=await tx.get(demandaRef);
+          /* Existência, não apenas visibilidade, é o recibo deste ciclo. Uma
+             demanda terminal permanece histórico e nunca é sobrescrita. */
+          if(demandaAtualSnap.exists()) return false;
+          tx.set(demandaRef,{
+            titulo:'📲 Confirmar publicação — '+(postAtual.clienteNome||'')+': '+(postAtual.titulo||''),
+            descricao:`Essa postagem estava agendada pra ${formatarDataBR(postAtual.dataAgendada)} às ${postAtual.horaAgendada||'?'} e a data já passou. Confirme pela ação abaixo; ela dá baixa na postagem canônica e fecha a demanda no mesmo fluxo. Se não foi ao ar, reagende na fila de postagens.`,
+            origem:'sistema',clienteNome:postAtual.clienteNome||'',destinatario:'Cecília',
+            postagemId:docSnap.id,tipoEspecial:'confirmacao_publicacao_v135',
+            alertaCicloV135:ciclo,dataFonteV135:postAtual.dataAgendada||'',horaFonteV135:postAtual.horaAgendada||'',
+            prazoData:hojeStr,prazoHora:'18:00',status:'pendente',
+            provaTexto:'',provaImagemUrl:'',criadoEm:serverTimestamp(),excluido:false
+          });
+          tx.update(postagemRef,{confirmacaoPostagemCriada:ciclo});
+          return true;
         });
-        await updateDoc(doc(db,'postagens', docSnap.id), { confirmacaoPostagemCriada: true });
-        registrarLogAutomacao('confirmacao_publicacao', docSnap.id, 'Data agendada passou — pedida confirmação de publicação');
-        novasDemandas++;
+        if(criada){
+          registrarLogAutomacao('confirmacao_publicacao',docSnap.id,'Data agendada passou — confirmação V135 criada por ID exato');
+          novasDemandas++;
+        }
       }
     }
     /* Um aviso vivo por fila, nunca uma cobrança órfã. A versão anterior
@@ -34038,28 +34790,34 @@ window.setGerenciaSub = function(qual, el){
     const snap = await getDocs(collection(db,'agendamentos'));
     for(const docSnap of snap.docs){
       const a = docSnap.data();
-      if(a.excluido || a.status !== 'agendado' || a.aprovado === false) continue;
-      if(!a.data || a.data >= hojeStr) continue; // ainda não passou
-      if(a.alertaGravacaoFantasmaCriado) continue;
-      await addDoc(collection(db,'demandas'), {
-        titulo: '🎥 Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''),
-        descricao: 'Essa gravação estava agendada e a data já passou, mas ninguém registrou como realizada.\n\n'
-          + 'QUEM FAZ: quem foi a campo gravar' + (a.filmmaker ? ' — no caso, você' : '') + '.\n'
-          + 'ONDE: menu lateral → Minha Agenda → a gravação do dia. Marque os títulos do checklist quando existirem ou escreva os títulos realmente captados quando a pauta estiver atrasada.\n\n'
-          + 'Sem esse registro, os vídeos não entram na fila dos editores e a Saúde do Cliente fica errada. Somente títulos marcados no checklist alteram o calendário; títulos declarados ficam vinculados à sessão sem marcar outra pauta.\n\n'
-          + 'Se a gravação NÃO aconteceu, avisa a Cecília pra cancelar ou reagendar.',
-        /* 27/07/2026 — a cobrança ia sempre pra Cecília, mas quem registra
-           a gravação é o FILMMAKER que foi a campo: é ele que abre "Minha
-           Agenda" e marca o que captou. A Amanda perguntou exatamente isso.
-           Agora vai pra quem gravou; se o agendamento não tiver filmmaker
-           definido, aí sim cai pra Cecília, que é quem agenda. */
-        origem: 'sistema', clienteNome: a.clienteNome || '',
-        destinatario: a.filmmaker || 'Cecília', agendamentoRefId: docSnap.id,
-        prazoData: hojeStr, prazoHora: '18:00',
-        status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
+      const estadoGravacao=classificarAlertaFonteCanonicaV135('gravacao',{id:docSnap.id,...a},hojeStr);
+      if(estadoGravacao.estado!=='aberto') continue;
+      const agendamentoRef=doc(db,'agendamentos',docSnap.id);
+      const criada=await runTransaction(db,async tx=>{
+        const agAtualSnap=await tx.get(agendamentoRef);
+        if(!agAtualSnap.exists()) return false;
+        const agAtual={id:agAtualSnap.id,...agAtualSnap.data()};
+        const estadoAtual=classificarAlertaFonteCanonicaV135('gravacao',agAtual,hojeLocal());
+        if(estadoAtual.estado!=='aberto') return false;
+        const ciclo=cicloFonteAlertaCanonicoV135('gravacao',agAtual);
+        const usaIdLegado=ciclo==='legado';
+        const demandaId=idDemandaAlertaCanonicoV135('gravacao',docSnap.id,usaIdLegado?'':ciclo);
+        const demandaRef=doc(db,'demandas',demandaId);
+        const demandaAtualSnap=await tx.get(demandaRef);
+        if(demandaAtualSnap.exists()) return false;
+        tx.set(demandaRef,{
+          titulo:'🎥 Gravação de '+formatarDataBR(agAtual.data)+' sem registro — '+(agAtual.clienteNome||''),
+          descricao:'Essa gravação está vencida e ainda não possui baixa factual. Abra a sessão exata em Minha Agenda e registre os títulos realmente captados. Marcar somente esta demanda como feita não encerra a gravação.\n\nSe ela não aconteceu, peça cancelamento ou reagendamento à Cecília.',
+          origem:'sistema',clienteNome:agAtual.clienteNome||'',
+          destinatario:agAtual.filmmaker||'Cecília',agendamentoId:docSnap.id,
+          tipoEspecial:'gravacao_sem_registro_v135',prazoData:hojeStr,prazoHora:'18:00',
+          alertaCicloV135:ciclo,dataFonteV135:agAtual.data||'',horaFonteV135:agAtual.hora||'',
+          status:'pendente',provaTexto:'',provaImagemUrl:'',criadoEm:serverTimestamp(),excluido:false
+        });
+        tx.update(agendamentoRef,{alertaGravacaoFantasmaCriado:ciclo});
+        return true;
       });
-      await updateDoc(doc(db,'agendamentos', docSnap.id), { alertaGravacaoFantasmaCriado: true });
-      registrarLogAutomacao('gravacao_fantasma', docSnap.id, 'Data ' + a.data + ' passou sem registro de realização');
+      if(criada) registrarLogAutomacao('gravacao_fantasma',docSnap.id,'Data '+a.data+' passou sem registro — alerta V135 por ID exato');
     }
   }
 
@@ -34761,11 +35519,21 @@ window.salvarPrazoVideo = async function(id){
      Aprovação e agenda de risco — sem apagar nenhuma delas: tudo continua
      no lugar, isto aqui só lê e organiza por PERGUNTA, não por recorte.
      Quatro blocos, na ordem em que importam de manhã. */
+  window.__geracaoRenderAgoraV135=Number(window.__geracaoRenderAgoraV135)||0;
   window.renderAgora = async function(){
+    const geracaoRenderAgoraV135=++window.__geracaoRenderAgoraV135;
+    const usuarioRenderAgoraV135=usuarioAtual;
     const cont = document.getElementById('gerenciaAgora');
     if(!cont) return;
     cont.innerHTML = '<div class="card"><div class="desc">Lendo o dia...</div></div>';
-    await carregarTodasDemandas();
+    try{
+      await carregarTodasDemandas();
+    }catch(erro){
+      /* O último retrato pode ajudar a localizar contexto, mas não pode
+         receber aparência de retrato atual nem impedir o restante do painel. */
+      console.error('Agora V135: demandas indisponíveis; mantendo contexto anterior identificado como incompleto.',erro);
+    }
+    if(geracaoRenderAgoraV135!==window.__geracaoRenderAgoraV135 || usuarioRenderAgoraV135!==usuarioAtual) return false;
 
     /* ═══ O PAINEL DE CONTROLE — 01/08/2026 ═════════════════════════════
        Pedido do Chris: todos os retângulos com número do site inteiro,
@@ -34816,7 +35584,14 @@ window.salvarPrazoVideo = async function(id){
            🗄️ ${(ind.porChave.lixeira||{}).num||0} vídeos na lixeira — arquivo, não é pendência →
          </div>` +
         `</div>`;
-    }catch(e){ console.error('Falha no painel de controle:', e); }
+    }catch(e){
+      console.error('Falha no painel de controle:', e);
+      indicadoresAgora={
+        errosLeitura:['demandas','vídeos','postagens','agendamentos'],
+        dados:{videos:[],postagens:[],calendarios:[],extras:[],agendamentos:[]},porChave:{}
+      };
+      cabecalhoIndicadores='<div class="card" style="border:2px solid var(--red);"><h2>🎛️ Painel de controle</h2><div class="desc"><b>⚠️ Dados indisponíveis.</b> Não foi possível conferir as fontes agora; nenhum zero foi inferido.</div></div>';
+    }
 
     const agora = new Date();
     const hojeStr = dataLocal(agora);
@@ -34827,17 +35602,36 @@ window.salvarPrazoVideo = async function(id){
     const videos = (dadosAgora.videos||[]).filter(v=>!v.excluido);
     const agendamentosAgora = (dadosAgora.agendamentos||[]).filter(a=>!a.excluido);
     const postagensAgora = (dadosAgora.postagens||[]).filter(p=>!p.excluido);
+    const errosLeituraAgora=(indicadoresAgora?.errosLeitura||[]).map(item=>String(item||'').toLowerCase());
+    const fonteDisponivelAgoraV135=rotulo=>!errosLeituraAgora.some(item=>item.startsWith(rotulo));
+    const demandasDisponiveisAgoraV135=fonteDisponivelAgoraV135('demandas');
+    const videosDisponiveisAgoraV135=fonteDisponivelAgoraV135('vídeos');
+    const agendamentosDisponiveisAgoraV135=fonteDisponivelAgoraV135('agendamentos');
+    const postagensDisponiveisAgoraV135=fonteDisponivelAgoraV135('postagens');
+    const decisoesDisponiveisAgoraV135=demandasDisponiveisAgoraV135&&videosDisponiveisAgoraV135;
+    const travadosDisponiveisAgoraV135=demandasDisponiveisAgoraV135&&videosDisponiveisAgoraV135;
+    const riscosDisponiveisAgoraV135=videosDisponiveisAgoraV135&&agendamentosDisponiveisAgoraV135&&postagensDisponiveisAgoraV135;
+    const fotoDemandasAgoraV135=resolverDemandasAlertasCanonicosV135({
+      demandas:todasDemandas||[],agendamentos:agendamentosAgora,postagens:postagensAgora,hoje:hojeStr,
+      agendamentosDisponiveis:agendamentosDisponiveisAgoraV135,
+      postagensDisponiveis:postagensDisponiveisAgoraV135
+    });
+    const demandasOperacionaisAgoraV135=fotoDemandasAgoraV135.demandasVisiveis;
+    const confirmacoesLegadasAgoraV135=[...new Set(
+      fotoDemandasAgoraV135.confirmacoesLegadas.map(item=>item.chave)
+    )];
+    const chavesConfirmadasLegadasAgoraV135=new Set(confirmacoesLegadasAgoraV135);
 
     // ---- BLOCO 1: esperando VOCÊ ----
     const daPessoaAgora = d => aprovacaoEhDe(d, usuarioAtual);   // cópia 3 de 4 → função única
-    const aprovar = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual && daPessoaAgora(d));
-    const prazos  = (usuarioAtual === 'Amanda' || estaAusente('Amanda')) ? todasDemandas.filter(d => d.prazoSolicitado) : [];
+    const aprovar = demandasOperacionaisAgoraV135.filter(d => d.status === 'concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual && daPessoaAgora(d));
+    const prazos  = (usuarioAtual === 'Amanda' || estaAusente('Amanda')) ? demandasOperacionaisAgoraV135.filter(d => d.prazoSolicitado) : [];
     const videosAprovar = videos.filter(v => v.status === 'aguardando_aprovacao');
-    const decisoesPendentes = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d)).length;
+    const decisoesPendentes = demandasOperacionaisAgoraV135.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d)).length;
     const totalVoce = aprovar.length + prazos.length + videosAprovar.length + decisoesPendentes;
 
     // ---- BLOCO 2: travado agora ----
-    const atrasadas = todasDemandas.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado');
+    const atrasadas = demandasOperacionaisAgoraV135.filter(d => d.status === 'pendente' && calcularUrgencia(d) === 'atrasado');
     const porPessoa = {};
     atrasadas.forEach(d => { (porPessoa[d.destinatario||'?'] = porPessoa[d.destinatario||'?']||[]).push(d); });
     videos.filter(v => (v.nivelEscalonamento||0) >= 1 && !['finalizado','arquivado'].includes(v.status))
@@ -34859,33 +35653,45 @@ window.salvarPrazoVideo = async function(id){
          EXCLUÍDAS. As duas que sobraram no painel do Chris (Vital Seg
          31/07 e Mochi 28/07) tinham `excluido: true` — foram apagadas e
          continuavam sendo cobradas. */
-      if(a.excluido) return;
-      if(a.data < hojeStr && a.status === 'agendado') riscos.push({ txt:'Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''), cor:'var(--red)' }); });
+      const estado=classificarAlertaFonteCanonicaV135('gravacao',a,hojeStr);
+      if(estado.estado==='aberto'&&!chavesConfirmadasLegadasAgoraV135.has(chaveEstadoAlertaFonteV135('gravacao',a.id,a))){
+        riscos.push({ txt:'Gravação de ' + formatarDataBR(a.data) + ' sem registro — ' + (a.clienteNome||''), cor:'var(--red)' });
+      }
+    });
     postagensAgora.forEach(p => {
-      if(p.excluido) return;
-      if(p.status === 'agendado' && p.dataAgendada && p.dataAgendada < hojeStr) riscos.push({ txt:'Postagem de ' + formatarDataBR(p.dataAgendada) + ' sem confirmação — ' + (p.clienteNome||''), cor:'var(--yellow2)' }); });
+      const estado=classificarAlertaFonteCanonicaV135('postagem',p,hojeStr);
+      if(estado.estado==='aberto'&&!chavesConfirmadasLegadasAgoraV135.has(chaveEstadoAlertaFonteV135('postagem',p.id,p))){
+        riscos.push({ txt:'Postagem de ' + formatarDataBR(p.dataAgendada) + ' sem confirmação — ' + (p.clienteNome||''), cor:'var(--yellow2)' });
+      }
+    });
     videos.filter(v => (v.nivelEscalonamento||0) >= 2 && ['aguardando_edicao','correcao'].includes(v.status))
       .forEach(v => riscos.push({ txt:'Vídeo escalado nível ' + v.nivelEscalonamento + ' — ' + (v.clienteNome||'') + ': ' + (v.titulo||''), cor:'var(--red)' }));
+
+    const numeroDecisoesAgoraV135=decisoesDisponiveisAgoraV135?totalVoce:'—';
+    const numeroAtrasadasAgoraV135=travadosDisponiveisAgoraV135?atrasadas.length:'—';
+    const numeroRiscosAgoraV135=riscosDisponiveisAgoraV135?riscos.length:'—';
+    const avisoIndisponivelAgoraV135=texto=>`<div style="margin:8px 0;background:var(--redbg);border-left:3px solid var(--red);padding:9px 11px;border-radius:7px;font-size:12px;"><b>⚠️ ${texto}</b> O último contexto pode aparecer abaixo, mas nenhum zero ou baixa foi inferido.</div>`;
 
     let html = `<div class="card">
       <h2>📍 Agora</h2>
       <div class="desc">O que está travado neste minuto. Junta numa tela só o que estava espalhado em cinco — as antigas continuam onde estavam.</div>
       <div class="painelResumo" style="margin-top:10px;">
-        <div class="resumoCard ${totalVoce?'yellow':'green'}"><div class="num">${totalVoce}</div><div class="lbl">esperando você</div></div>
-        <div class="resumoCard ${atrasadas.length?'red':'green'}"><div class="num">${atrasadas.length}</div><div class="lbl">demandas atrasadas</div></div>
-        <div class="resumoCard ${riscos.length?'red':'green'}"><div class="num">${riscos.length}</div><div class="lbl">pontos de risco</div></div>
+        <div class="resumoCard ${!decisoesDisponiveisAgoraV135?'yellow':totalVoce?'yellow':'green'}"><div class="num">${numeroDecisoesAgoraV135}</div><div class="lbl">esperando você</div></div>
+        <div class="resumoCard ${!travadosDisponiveisAgoraV135?'yellow':atrasadas.length?'red':'green'}"><div class="num">${numeroAtrasadasAgoraV135}</div><div class="lbl">demandas atrasadas</div></div>
+        <div class="resumoCard ${!riscosDisponiveisAgoraV135?'yellow':riscos.length?'red':'green'}"><div class="num">${numeroRiscosAgoraV135}</div><div class="lbl">pontos de risco</div></div>
       </div>
     </div>`;
 
     // BLOCO 1
-    html += `<div class="card metaSec" style="border-color:${totalVoce?'var(--yellow)':'var(--green)'};">
-      <div class="metaSecTit">✋ Esperando você decidir</div>`;
-    if(!totalVoce){
+    html += `<div class="card metaSec" style="border-color:${!decisoesDisponiveisAgoraV135?'var(--yellow)':totalVoce?'var(--yellow)':'var(--green)'};">
+      <div class="metaSecTit">✋ Esperando você decidir</div>
+      ${!decisoesDisponiveisAgoraV135?avisoIndisponivelAgoraV135('Decisões indisponíveis para contagem completa.') : ''}`;
+    if(!totalVoce && decisoesDisponiveisAgoraV135){
       html += '<div class="empty" style="color:var(--green);font-weight:700;">Nada travado em você. 🎉</div>';
-    } else {
+    } else if(totalVoce && decisoesDisponiveisAgoraV135) {
       /* Decisões entram aqui: é aqui que o Chris olha de manhã, e é uma
          decisão dele, não trabalho dele. */
-      const decisoes = todasDemandas.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d));
+      const decisoes = demandasOperacionaisAgoraV135.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d));
       if(decisoes.length) html += decisoes.map(d => `<div class="item" style="border-left:3px solid var(--yellow);">
         <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="selo pendente">decisão</span></div>
         <div class="meta" style="margin-top:6px;">${esc((d.descricao||'').split('\n')[0].slice(0,110))}</div>
@@ -34916,10 +35722,11 @@ window.salvarPrazoVideo = async function(id){
 
     // BLOCO 2
     const nomesP = Object.keys(porPessoa).sort((a,b)=>porPessoa[b].length-porPessoa[a].length);
-    html += `<div class="card metaSec" style="border-color:${nomesP.length?'var(--red)':'var(--green)'};">
+    html += `<div class="card metaSec" style="border-color:${!travadosDisponiveisAgoraV135?'var(--yellow)':nomesP.length?'var(--red)':'var(--green)'};">
       <div class="metaSecTit">🔴 Travado agora — por pessoa</div>
-      ${nomesP.length ? '<div class="desc" style="margin-bottom:10px;">Clica no nome pra abrir a lista. O botão monta a cobrança pronta pro WhatsApp dela.</div>' : ''}
-      ${nomesP.length ? nomesP.map(nome => `
+      ${!travadosDisponiveisAgoraV135?avisoIndisponivelAgoraV135('A fila por pessoa está incompleta.') : ''}
+      ${travadosDisponiveisAgoraV135&&nomesP.length ? '<div class="desc" style="margin-bottom:10px;">Clica no nome pra abrir a lista. O botão monta a cobrança pronta pro WhatsApp dela.</div>' : ''}
+      ${travadosDisponiveisAgoraV135&&nomesP.length ? nomesP.map(nome => `
         <div class="faixaDem" data-faixa="ag_${esc(nome)}">
           <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nome)} <span class="qtd">(${porPessoa[nome].length})</span><span class="seta">▾</span></div>
           <div class="faixaItens">
@@ -34928,20 +35735,27 @@ window.salvarPrazoVideo = async function(id){
               <div class="top"><div class="nome">${esc(d.titulo||'')}</div>${d.prazoData?'<span class="selo atrasado">'+formatarDataBR(d.prazoData)+'</span>':''}</div>
             </div>`).join('')}
           </div>
-        </div>`).join('') : '<div class="empty" style="color:var(--green);font-weight:700;">Ninguém com atraso. 🎉</div>'}
+        </div>`).join('') : (travadosDisponiveisAgoraV135?'<div class="empty" style="color:var(--green);font-weight:700;">Ninguém com atraso. 🎉</div>':'')}
     </div>`;
 
     // BLOCO 3 — reaproveita o resumo comparativo que já existe
-    try{
-      const pp = {}; Object.keys(porPessoa).forEach(n => pp[n] = porPessoa[n]);
-      html += await htmlResumoDoDia(atrasadas.length, pp, videos.filter(v=>(v.nivelEscalonamento||0)>=1 && !['finalizado','arquivado'].includes(v.status)).length);
-    }catch(e){ console.error('Falha no resumo do dia dentro do Agora:', e); }
+    if(travadosDisponiveisAgoraV135){
+      try{
+        const pp = {}; Object.keys(porPessoa).forEach(n => pp[n] = porPessoa[n]);
+        html += await htmlResumoDoDia(atrasadas.length, pp, videos.filter(v=>(v.nivelEscalonamento||0)>=1 && !['finalizado','arquivado'].includes(v.status)).length);
+      }catch(e){ console.error('Falha no resumo do dia dentro do Agora:', e); }
+    }
 
     // BLOCO 4
-    html += `<div class="card metaSec" style="border-color:${riscos.length?'var(--red)':'var(--green)'};">
+    html += `<div class="card metaSec" style="border-color:${!riscosDisponiveisAgoraV135?'var(--yellow)':riscos.length?'var(--red)':confirmacoesLegadasAgoraV135.length?'var(--yellow)':'var(--green)'};">
       <div class="metaSecTit">⚠️ Risco — ainda não é problema, mas vai ser</div>
+      ${!riscosDisponiveisAgoraV135?avisoIndisponivelAgoraV135('Os riscos não puderam ser conferidos por inteiro.') : ''}
       ${riscos.length ? riscos.map(r => `<div class="item" style="border-left:3px solid ${r.cor};padding:9px 12px;"><div class="nome" style="font-size:12.5px;">${esc(r.txt)}</div></div>`).join('')
-        : '<div class="empty" style="color:var(--green);font-weight:700;">Nenhum risco aberto agora.</div>'}
+        : (riscosDisponiveisAgoraV135?'<div class="empty" style="color:var(--green);font-weight:700;">Nenhum risco aberto agora.</div>':'')}
+      ${demandasDisponiveisAgoraV135&&confirmacoesLegadasAgoraV135.length ? `<div class="item" style="border-left:3px solid var(--yellow);padding:9px 12px;margin-top:9px;">
+        <div class="nome" style="font-size:12.5px;">🧾 ${confirmacoesLegadasAgoraV135.length} confirmação(ões) antiga(s) já têm prova, mas a fonte original ainda não recebeu a baixa.</div>
+        <div class="meta" style="margin-top:4px;">Não são cobradas como trabalho não feito. A conciliação permanece separada e usa somente o ID exato.</div>
+      </div>` : ''}
     </div>`;
 
     /* ===== O QUE A CENTRAL CARREGAVA, PRESERVADO — 01/08/2026 ========
@@ -34975,7 +35789,11 @@ window.salvarPrazoVideo = async function(id){
       </div>`;
     }
 
+    if(geracaoRenderAgoraV135!==window.__geracaoRenderAgoraV135 ||
+       usuarioRenderAgoraV135!==usuarioAtual ||
+       document.getElementById('gerenciaAgora')!==cont) return false;
     cont.innerHTML = cabecalhoIndicadores + html;
+    return true;
   };
 
   window.renderAtrasosEquipe = async function(){
@@ -43083,14 +43901,60 @@ Observações do cliente: ${l.observacoes||'—'}`;
     try{ if(viewAtiva === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas(); }catch(e){}
   }
 
+  function ehDecisaoCancelavelDeGravacaoV135(demanda){
+    const d=demanda||{};
+    if(!String(d.agendamentoId||'').trim() || d.ehDecisao!==true || d.ehAviso!==true) return false;
+    if(String(d.decisaoSim||'')!=='Liberar a gravação' || String(d.decisaoNao||'')!=='Não liberar') return false;
+    if(String(d.tipoEspecial||'')==='decisao_liberar_gravacao') return true;
+    const titulo=String(d.titulo||'');
+    return titulo.startsWith('🆕 Liberar gravação de cliente novo — ') ||
+      titulo.startsWith('🎥 Liberar 3ª gravação do dia — ') ||
+      titulo.startsWith('🎥 Liberar gravação reagendada — ');
+  }
+
   window.rejeitarDemanda = async function(id){
-    const d = todasDemandas.find(x=>x.id===id);
-    await updateDoc(doc(db,'demandas', id), { status: 'pendente', provaTexto: '', provaImagemUrl: '', rejeitadoEm: new Date().toISOString() });
+    const demandaRef=doc(db,'demandas',id);
+    let resultado;
+    try{
+      resultado=await runTransaction(db,async tx=>{
+        const demandaSnap=await tx.get(demandaRef);
+        if(!demandaSnap.exists()) throw new Error('Essa demanda não existe mais.');
+        const d={id:demandaSnap.id,...demandaSnap.data()};
+        const podeCancelarFonte=ehDecisaoCancelavelDeGravacaoV135(d);
+        let agendamentoRef=null,agendamento=null;
+        if(podeCancelarFonte){
+          agendamentoRef=doc(db,'agendamentos',String(d.agendamentoId));
+          const agendamentoSnap=await tx.get(agendamentoRef);
+          if(agendamentoSnap.exists()) agendamento=agendamentoSnap.data()||{};
+        }
+        tx.update(demandaRef,{
+          status:'pendente',provaTexto:'',provaImagemUrl:'',rejeitadoEm:new Date().toISOString()
+        });
+        const fonteCancelavel=!!agendamento &&
+          agendamento.excluido!==true &&
+          String(agendamento.status||'')==='agendado' &&
+          agendamento.precisaAprovacao===true &&
+          agendamento.aprovado!==true;
+        if(fonteCancelavel){
+          const agoraCancelamento=new Date().toISOString();
+          tx.update(agendamentoRef,{
+            status:'cancelado',excluido:true,canceladoPor:usuarioAtual||'?',
+            canceladoEm:agoraCancelamento,motivoCancelamento:'Decisão de gravação rejeitada para refazer',
+            excluidoPor:usuarioAtual||'?',excluidoEm:agoraCancelamento,
+            motivoExclusao:'decisão de gravação rejeitada para refazer'
+          });
+        }
+        return {d,cancelouAgendamento:fonteCancelavel};
+      });
+    }catch(e){
+      mostrarToast(String(e?.message||e||'Não consegui devolver a demanda.')+' Nada foi alterado.','erro');
+      return false;
+    }
+    const d=resultado.d;
     registrarHistorico('demandas', id, 'Rejeitada — pedido pra refazer');
     mostrarToast('Devolvido pra ' + (d?.destinatario || 'a pessoa') + ' refazer.');
     sincronizarStatusDemandaCliente(id, 'pendente').catch(()=>{});
-    if(d?.agendamentoId){
-      await updateDoc(doc(db,'agendamentos', d.agendamentoId), { status: 'cancelado' });
+    if(resultado.cancelouAgendamento){
       mostrarToast('Rejeitado — a gravação extra foi cancelada.');
     }
     if(d?.destinatario && d.destinatario !== usuarioAtual){
@@ -43102,6 +43966,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     fecharModal();
     carregarGerencia();
     atualizarFilaAprovacao();
+    return true;
   };
 
   /* ===== Botão "+ Nova Demanda" — sempre visível, qualquer subtab da Gerência =====

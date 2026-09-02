@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-  <meta name="gs-build" content="2026-08-31-criacao-correcao-calendarios-v132">
+  <meta name="gs-build" content="2026-09-02-sessao-calendario-interno-v136">
+  <meta name="gs-v136-patch" content="2026-09-02-sessao-calendario-interno-v136">
   <meta name="gs-v132-patch" content="2026-08-31-criacao-correcao-calendarios-v132">
   <meta name="gs-v125-base" content="2026-08-28-conciliacao-competencia-v125">
   <meta name="gs-v124-base" content="2026-08-28-fluxo-calendario-plataformas-v124">
@@ -176,7 +177,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { initializeAuth, getAuth, browserLocalPersistence, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -194,6 +195,14 @@
   const app = modoInternoEquipe
     ? initializeApp(firebaseConfig)
     : initializeApp(firebaseConfig, 'getstarted-public');
+  /* V136 — o Escritório fixa a sessão Google em localStorage. O getAuth()
+     padrão do iframe priorizava IndexedDB e podia migrar a mesma chave,
+     fazendo o observador da página-pai interpretar a remoção como logout.
+     O modo interno nasce já na mesma persistência; o modo público continua
+     no app nomeado e anônimo, sem compartilhar a identidade da equipe. */
+  const auth = modoInternoEquipe
+    ? initializeAuth(app,{persistence:browserLocalPersistence})
+    : getAuth(app);
   const db = getFirestore(app);
 
   /* ===== O CALENDÁRIO GANHOU PORTA — 28/07/2026 =======================
@@ -212,7 +221,6 @@
      O do cliente é o mesmo do portal; o da equipe é um segundo campo,
      que o escritório gera. Assim, mesmo que o link do cliente vaze, quem
      tem ele não consegue apagar o mês. */
-  const auth = getAuth(app);
   const clienteId = params.get('cliente') || '';
   const tokenCliente = params.get('t') || '';
   const tokenEquipe  = params.get('e') || '';
@@ -355,15 +363,20 @@
     return new Promise((resolve,reject)=>{
       let terminou=false;
       let cancelar=()=>{};
+      let ultimoEstado='ausente';
       const concluir=(erro,usuario)=>{
         if(terminou) return;
         terminou=true; clearTimeout(timer); cancelar();
         if(erro) reject(erro); else resolve(usuario);
       };
-      const timer=setTimeout(()=>concluir(new Error('A sessão Google da equipe não respondeu a tempo.')),12000);
+      const timer=setTimeout(()=>concluir(new Error(
+        ultimoEstado==='anonima'
+          ? 'A sessão recebida não pertence à equipe. Volte ao Escritório e entre com seu Google.'
+          : 'A sessão Google da equipe não respondeu a tempo.'
+      )),12000);
       cancelar=onAuthStateChanged(auth,usuario=>{
         if(usuario && !usuario.isAnonymous) concluir(null,usuario);
-        else concluir(new Error('Entre no Escritório com o Google da equipe antes de abrir este calendário.'));
+        else ultimoEstado=usuario?.isAnonymous?'anonima':'ausente';
       },erro=>concluir(erro));
     });
   }

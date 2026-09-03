@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-09-01-agora-fontes-canonicas-v135">
+  <meta name="gs-build" content="2026-09-02-conteudo-fora-calendario-v138">
+  <meta name="gs-v138-patch" content="2026-09-02-conteudo-fora-calendario-v138">
+  <meta name="gs-v137-patch" content="2026-09-02-transicao-unica-legendas-v137">
   <meta name="gs-v134-patch" content="2026-08-31-central-legendas-independente-v134">
   <meta name="gs-v135-patch" content="2026-09-01-agora-fontes-canonicas-v135">
   <meta name="gs-v133-patch" content="2026-08-31-indicador-calendarios-competencia-v133">
@@ -1114,7 +1116,6 @@
       <div id="esteiraConteudoBox"></div>
       <div class="subtabs">
         <div class="subtab active" id="subtabEscreverLegenda" onclick="setPostagensSub('legenda', this)">Escrever Legenda</div>
-        <div class="subtab" id="subtabLegendasCalendario" onclick="setPostagensSub('legendasCalendario', this)">Legendas do Calendário (por cliente)</div>
         <div class="subtab" id="subtabAgendarPostagem" onclick="setPostagensSub('agendar', this)">Central de Agendamento de Postagens</div>
         <!-- 01/08/2026 — a mesma grade que o cliente vê no portal, aqui
              clicável pra Cecília abrir e editar. Ver o bloco espelhado. -->
@@ -6801,6 +6802,181 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   function idPostagemDeterministicaDoVideo(videoId){
     return 'video_'+String(videoId||'').replace(/[^a-zA-Z0-9_-]/g,'_');
   }
+
+  /* ===== V138 — CONTEÚDO FORA DO CALENDÁRIO ======================
+     Um vídeo real pode nascer fora da pauta mensal: cliente entrou no meio
+     do ciclo, gravação extra ou conteúdo pontual. Isso não autoriza tratar
+     toda identidade parcial como válida. O gate V118 continua fechado; esta
+     classificação existe somente para a decisão humana e individual da Amanda.
+     Nenhum título, dia ou índice é usado para inventar vínculo. */
+  function classificarLiberacaoForaCalendarioV138(video,postagens,fonteCalendario){
+    const v=video||{};
+    fonteCalendario=fonteCalendario||{estado:'nao_aplicavel'};
+    const videoId=String(v.id||v.videoId||'').trim();
+    const vinculadas=(Array.isArray(postagens)?postagens:[]).filter(p=>p&&String(p.videoId||'').trim()===videoId);
+    const postagemId=String(v.postagemId||'').trim();
+    const jaConfirmada=v.foraCalendarioConfirmadoV138===true&&
+      String(v.status||'')==='aprovado'&&v.clienteAprovou===true&&postagemId&&
+      vinculadas.some(p=>String(p.id||'')===postagemId&&p.origemForaCalendario===true&&p.excluido!==true);
+    if(jaConfirmada) return {estado:'ja_confirmado',postagemId};
+    if(!videoId||v.excluido===true) return {estado:'video_invalido'};
+    if(String(v.status||'')!=='aguardando_cliente'||v.clienteAprovou===true) return {estado:'etapa_incompativel'};
+    if(!String(v.cliente||'').trim()) return {estado:'cliente_ausente'};
+    if(postagemId) return {estado:'ponteiro_existente',postagemId};
+    if(vinculadas.length) return {estado:'postagem_existente',postagemIds:vinculadas.map(p=>String(p.id||'')).filter(Boolean)};
+
+    const itemId=String(v.calendarItemId||'').trim();
+    const competencia=String(v.calendarCompetencia||'').trim();
+    if(!itemId&&!competencia) return {estado:'fluxo_legado_existente'};
+    if(itemId){
+      if(fonteCalendario?.estado==='indisponivel') return {estado:'calendario_indisponivel'};
+      if(fonteCalendario?.estado==='confirmado'){
+        const candidatos=(Array.isArray(fonteCalendario.dados?.items)?fonteCalendario.dados.items:[])
+          .filter(item=>item&&item.excluido!==true&&String(item.itemId||'').trim()===itemId);
+        if(candidatos.length>1) return {estado:'identidade_ambigua',quantidade:candidatos.length};
+        if(candidatos.length===1) return {estado:'item_calendario_existente'};
+      }else if(!['ausente','nao_aplicavel'].includes(String(fonteCalendario?.estado||''))){
+        return {estado:'calendario_indisponivel'};
+      }
+    }
+    return {estado:'elegivel',itemIdAnterior:itemId,competenciaAnterior:competencia};
+  }
+  window.classificarLiberacaoForaCalendarioV138=classificarLiberacaoForaCalendarioV138;
+
+  function montarDocumentosLiberacaoForaCalendarioV138(video,postagemId,papel,ator,agora,criadoEmServidor){
+    const v=video||{};
+    const retratoAnterior={
+      calendarItemId:String(v.calendarItemId||'').trim()||null,
+      calendarItemIdx:Number.isInteger(v.calendarItemIdx)?v.calendarItemIdx:null,
+      calendarClienteSlug:String(v.calendarClienteSlug||'').trim()||null,
+      calendarCompetencia:String(v.calendarCompetencia||'').trim()||null,
+      vinculoSessao:String(v.vinculoSessao||'').trim()||null
+    };
+    const marcador='fora_calendario_confirmado_v138';
+    return {
+      videoPatch:{
+        status:'aprovado',clienteAprovou:true,clienteAprovouEm:agora,clienteAprovouPor:papel,
+        postagemId,calendarItemId:null,calendarItemIdx:null,calendarClienteSlug:null,
+        calendarCompetencia:null,vinculoSessao:marcador,foraCalendarioConfirmadoV138:true,
+        foraCalendarioConfirmadoEm:agora,foraCalendarioConfirmadoPor:ator,
+        foraCalendarioConfirmadoPapel:papel,vinculoCalendarioAnteriorV138:retratoAnterior
+      },
+      postagem:{
+        videoId:String(v.id||v.videoId||''),cliente:String(v.cliente||''),
+        clienteNome:String(v.clienteNome||v.cliente||''),titulo:String(v.titulo||''),
+        linkVideo:String(v.linkFinalizado||''),legenda:'',legendaPor:'',legendaEm:'',legendaOrigem:'',
+        calendarItemId:null,calendarItemIdx:null,calendarClienteSlug:null,calendarCompetencia:null,
+        vinculoSessao:marcador,origemForaCalendario:true,foraCalendarioConfirmadoV138:true,
+        foraCalendarioConfirmadoEm:agora,foraCalendarioConfirmadoPor:ator,
+        foraCalendarioConfirmadoPapel:papel,vinculoCalendarioAnteriorV138:retratoAnterior,
+        dataAgendada:'',horaAgendada:'',agendadoPor:'',agendadoEm:'',
+        aprovadoPor:String(v.aprovadoPor||''),aprovadoEm:String(v.aprovadoInternoEm||''),
+        status:'aguardando_legenda',demandaLegendaCriada:true,excluido:false,criadoEm:criadoEmServidor
+      }
+    };
+  }
+  window.montarDocumentosLiberacaoForaCalendarioV138=montarDocumentosLiberacaoForaCalendarioV138;
+
+  async function liberarVideoForaCalendarioV138(videoId,opcoes){
+    const confirmacaoExplicita=opcoes?.confirmacaoExplicita===true;
+    if(confirmacaoExplicita!==true){
+      throw Object.assign(new Error('A confirmação explícita da exceção é obrigatória.'),{code:'gs/confirmacao-fora-calendario-obrigatoria'});
+    }
+    const papeisPermitidos=['Amanda','Chris'];
+    const papel=String(usuarioAtual||'');
+    const ator=String(atorRealDaSessao()||'');
+    if(!papeisPermitidos.includes(papel)||!['Amanda','Chris'].includes(ator)||!(papel==='Amanda'||estaAusente('Amanda'))){
+      throw Object.assign(new Error('Somente Amanda pode declarar conteúdo fora do calendário; Chris atua apenas na contingência já prevista.'),{code:'gs/papel-fora-calendario-negado'});
+    }
+
+    const id=String(videoId||'').trim();
+    if(!id) throw Object.assign(new Error('O vídeo não foi identificado.'),{code:'gs/video-ausente'});
+    const videoRef=doc(db,'videos_producao',id);
+    const postagemRef=doc(db,'postagens',idPostagemDeterministicaDoVideo(id));
+    const consulta=await getDocs(query(collection(db,'postagens'),where('videoId','==',id)));
+    const refsPorId=new Map([[postagemRef.id,postagemRef]]);
+    consulta.docs.forEach(registro=>refsPorId.set(registro.id,doc(db,'postagens',registro.id)));
+    const refsPostagens=[...refsPorId.values()];
+
+    const resultado=await runTransaction(db,async tx=>{
+      const videoSnap=await tx.get(videoRef);
+      if(!videoSnap.exists()) throw Object.assign(new Error('O vídeo deixou de existir.'),{code:'gs/video-ausente'});
+      const atual={id:videoSnap.id,...(videoSnap.data()||{})};
+      const cliente=String(atual.cliente||'').trim();
+      if(!cliente) throw Object.assign(new Error('O vídeo não informa o cliente canônico.'),{code:'gs/cliente-ausente'});
+
+      const refsAtuaisPorId=new Map(refsPostagens.map(ref=>[ref.id,ref]));
+      const postagemIdAnterior=String(atual.postagemId||'').trim();
+      if(postagemIdAnterior) refsAtuaisPorId.set(postagemIdAnterior,doc(db,'postagens',postagemIdAnterior));
+      const refsAtuais=[...refsAtuaisPorId.values()];
+      const configRef=doc(db,'clientes_config',cliente);
+      const [configSnap,...postSnaps]=await Promise.all([
+        tx.get(configRef),...refsAtuais.map(ref=>tx.get(ref))
+      ]);
+      const registros=postSnaps.filter(s=>s.exists()).map(s=>({id:s.id,...(s.data()||{})}));
+      const postDeterministica=registros.find(p=>String(p.id||'')===postagemRef.id)||null;
+      if(postDeterministica&&String(postDeterministica.videoId||'')!==id){
+        throw Object.assign(new Error('O ID determinístico da postagem já pertence a outro vídeo.'),{code:'gs/postagem-deterministica-concorrente'});
+      }
+
+      const itemId=String(atual.calendarItemId||'').trim();
+      const slug=String(atual.calendarClienteSlug||atual.cliente||'').trim();
+      let fonteCalendario={estado:'nao_aplicavel'};
+      if(itemId){
+        if(!slug) throw Object.assign(new Error('O cliente do possível calendário não pôde ser confirmado.'),{code:'gs/calendario-sem-cliente'});
+        const calendarioSnap=await tx.get(doc(db,'calendarios',slug));
+        fonteCalendario=calendarioSnap.exists()
+          ?{estado:'confirmado',dados:calendarioSnap.data()||{}}
+          :{estado:'ausente'};
+      }
+
+      const classificacao=classificarLiberacaoForaCalendarioV138(atual,registros,fonteCalendario);
+      if(classificacao.estado==='ja_confirmado') return {jaConfirmado:true,postagemId:classificacao.postagemId};
+      if(ehTrabalhoExternoVideo(atual)||ehVideoDeTrafego(atual.titulo)||ehClienteSoEdicao(cliente)||
+         (configSnap.exists()&&configSnap.data().tipoEntrega==='entrega_direta')){
+        throw Object.assign(new Error('Este vídeo pertence a um fluxo de entrega direta; recarregue e use a finalização normal.'),{code:'gs/destino-operacional-divergente'});
+      }
+      const mensagens={
+        video_invalido:'O vídeo foi arquivado ou não é mais válido.',
+        etapa_incompativel:'O vídeo avançou em outra aba e não será sobrescrito.',
+        cliente_ausente:'O cliente do vídeo não foi confirmado.',
+        ponteiro_existente:'O vídeo já aponta para uma postagem anterior; ela precisa ser conferida antes de criar outra.',
+        postagem_existente:'Já existe postagem ligada a este vídeo; nenhuma cópia foi criada.',
+        fluxo_legado_existente:'Este vídeo já é um legado limpo e deve seguir pelo fluxo normal.',
+        calendario_indisponivel:'O calendário não pôde ser confirmado; nada foi alterado.',
+        identidade_ambigua:'O item aparece mais de uma vez no calendário; a exceção foi bloqueada.',
+        item_calendario_existente:'Este vídeo ainda possui um item canônico no calendário. Corrija o vínculo em vez de retirá-lo da pauta.'
+      };
+      if(classificacao.estado!=='elegivel'){
+        throw Object.assign(new Error(mensagens[classificacao.estado]||'O conteúdo não pode ser declarado fora do calendário neste estado.'),
+          {code:'gs/fora-calendario-'+String(classificacao.estado||'bloqueado')});
+      }
+
+      const agora=new Date().toISOString();
+      const documentos=montarDocumentosLiberacaoForaCalendarioV138(
+        atual,postagemRef.id,papel,ator,agora,serverTimestamp()
+      );
+      tx.set(postagemRef,documentos.postagem);
+      tx.update(videoRef,documentos.videoPatch);
+      return {jaConfirmado:false,postagemId:postagemRef.id};
+    });
+
+    const [reciboPostagem,reciboVideo]=await Promise.all([getDoc(postagemRef),getDoc(videoRef)]);
+    const post=reciboPostagem.exists()?reciboPostagem.data()||{}:{};
+    const video=reciboVideo.exists()?reciboVideo.data()||{}:{};
+    if(!reciboPostagem.exists()||!reciboVideo.exists()||
+       String(post.videoId||'')!==id||String(video.postagemId||'')!==postagemRef.id||
+       post.origemForaCalendario!==true||video.foraCalendarioConfirmadoV138!==true){
+      throw Object.assign(new Error('O recibo da liberação fora do calendário não confirmou os dois ponteiros.'),{code:'gs/recibo-fora-calendario-invalido'});
+    }
+    if(!resultado?.jaConfirmado){
+      registrarHistorico('videos_producao',id,'Liberado como conteúdo fora do calendário',
+        'Amanda confirmou a exceção; calendário preservado. Ator real: '+ator);
+    }
+    return {ok:true,jaConfirmado:resultado?.jaConfirmado===true,postagemId:postagemRef.id};
+  }
+  window.liberarVideoForaCalendarioV138=liberarVideoForaCalendarioV138;
+
   function postagemEhDeclaracaoSemPauta(p){
     const vinculo=String(p?.vinculoSessao||'');
     return ['declarado_em_campo','declarado_legado'].includes(vinculo) &&
@@ -7304,6 +7480,27 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           }catch(erroLegado){
             console.error('A confirmação humana do legado foi bloqueada:',erroLegado);
             mostrarToast(erroLegado?.message||'Não foi possível confirmar o legado com segurança.','erro');
+          }
+        }
+        renderAprovacaoVideos();
+        return;
+      }
+      if(['gs/calendario-identidade-incompleta','gs/item-calendario-inconsistente'].includes(String(e?.code||''))){
+        const confirmarFora=confirm(
+          'Este vídeo não possui um item de calendário confirmável.\n\n'+
+          'Use a opção abaixo SOMENTE se ele foi realmente produzido fora do calendário (por exemplo: cliente entrou no meio do mês ou conteúdo extra).\n\n'+
+          'Ao confirmar:\n• ele não entrará no calendário nem no Portal do Cliente;\n• o calendário atual não será alterado;\n• ele seguirá para a legenda da Gabi e depois para a Cecília agendar.\n\n'+
+          'Liberar este vídeo como conteúdo fora do calendário?'
+        );
+        if(confirmarFora){
+          try{
+            const resultadoFora=await liberarVideoForaCalendarioV138(id,{confirmacaoExplicita:true});
+            mostrarToast(resultadoFora.jaConfirmado
+              ? 'Este conteúdo fora do calendário já estava liberado na mesma postagem.'
+              : 'Conteúdo fora do calendário liberado. Agora está na fila de legenda da Gabi; a Cecília agenda depois.');
+          }catch(erroFora){
+            console.error('A exceção fora do calendário foi bloqueada:',erroFora);
+            mostrarToast(erroFora?.message||'Não foi possível liberar este conteúdo fora do calendário.','erro');
           }
         }
         renderAprovacaoVideos();
@@ -12126,8 +12323,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
   window.setPostagensSub = function(qual, el){
     document.querySelectorAll('#view-postagens .subtab').forEach(t=>t.classList.remove('active'));
     if(el) el.classList.add('active');
+    /* V137 — TRANSIÇÃO ÚNICA DE LEGENDAS
+       A consulta editorial antiga saiu do menu. Uma chamada histórica não
+       reabre o reader paralelo: segue para a única Central de outubro+. */
+    if(qual==='legendasCalendario') return window.irParaCentralCalendarios('legendas');
     if(qual==='legenda') renderLegendasPendentes();
-    if(qual==='legendasCalendario') renderLegendasDoCalendario();
     if(qual==='agendar') renderAgendarPostagens();
     if(qual==='gradeMes') renderGradeDePostagens();
     if(qual==='confirmar') renderConfirmarPublicacoes();
@@ -12758,12 +12958,14 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const vinculoDireto=candidatasDiretas.length===1?candidatasDiretas[0]:null;
       const multiPlataforma = ehClienteMultiPlataforma(p.cliente);
       const infoCliente = CLIENTES_LISTA.find(c => c.slug === p.cliente);
-      const badgeTipo = entregaDiretaSlugsLeg.has(p.cliente) ? '<span class="selo pendente">⚠️ Marcado como entrega direta — confirma se precisa mesmo de legenda</span>' :
+      const badgeTipo = p.origemForaCalendario===true ? '<span class="selo hoje">📌 Fora do calendário — liberado pela Amanda</span>' :
+        entregaDiretaSlugsLeg.has(p.cliente) ? '<span class="selo pendente">⚠️ Marcado como entrega direta — confirma se precisa mesmo de legenda</span>' :
         infoCliente?.extra ? '<span class="selo pendente">Cadastro dinâmico</span>' : '<span class="selo aprovada">Cadastro fixo</span>';
       return `
       <div class="card">
         <h2>${esc(p.clienteNome)} — ${esc(p.titulo)} ${badgeTipo}</h2>
         <div class="desc">🔗 <a href="${esc(p.linkVideo)}" target="_blank" style="color:var(--yellow);">Ver vídeo aprovado ↗</a></div>
+        ${p.origemForaCalendario===true?'<div class="desc" style="color:var(--yellow);">Este é um conteúdo extra: escreva a legenda normalmente. Ele não altera nem aparece na pauta mensal do cliente.</div>':''}
         ${calendariosIndisponiveis.has(p.cliente)?'<div class="desc" style="color:var(--yellow);">O calendário deste cliente está indisponível. Você pode escrever a legenda, mas nenhuma legenda planejada foi tratada como ausente.</div>':''}
         ${calendariosAusentes.has(p.cliente)?'<div class="desc" style="color:var(--yellow);">Este cliente ainda não possui documento de calendário. A postagem continua na fila e pode receber uma legenda escrita manualmente.</div>':''}
         ${p.__canonicoV118==='confirmacao_manual'?'<div class="desc" style="color:var(--yellow);">Vídeo manual sem itemId não herda legenda automaticamente. Ao salvar, confirme explicitamente que esta é a postagem correta.</div>':''}
@@ -13628,7 +13830,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const urgente = diasEsperando >= 1;
       return `
       <div class="card" style="${urgente ? 'border:2px solid var(--red);' : ''}">
-        <h2>${urgente ? '⚠️ ' : ''}${esc(p.clienteNome)} — ${esc(p.titulo)} ${p.recuperadoDoDemandaId ? '<span class="selo hoje">🆕 Legenda recuperada — a Gabi já tinha escrito, só não tinha chegado até aqui</span>' : ''}</h2>
+        <h2>${urgente ? '⚠️ ' : ''}${esc(p.clienteNome)} — ${esc(p.titulo)} ${p.origemForaCalendario===true?'<span class="selo hoje">📌 Fora do calendário — agendar sem alterar a pauta</span>':''} ${p.recuperadoDoDemandaId ? '<span class="selo hoje">🆕 Legenda recuperada — a Gabi já tinha escrito, só não tinha chegado até aqui</span>' : ''}</h2>
         <div class="desc">${urgente ? '<b style="color:var(--red);">Esperando agendamento há '+diasEsperando+' dia(s) — priorize esse!</b><br>' : ''}🔗 <a href="${esc(p.linkVideo)}" target="_blank" rel="noopener" style="color:var(--yellow);">Ver vídeo</a></div>
         ${htmlLegendasAgendamentoV124(p)}
         <div class="row2">
@@ -20192,8 +20394,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     { categoria:'filmmaker', chaves:['gravacao cancelada remarcar'], pergunta:'Preciso cancelar ou remarcar uma gravação, como faço?', resposta:'Na sua Agenda, dentro de Agendamento, tem opção de cancelar ou reagendar diretamente no card da gravação.' },
 
     // ===== EXPANSAO 2 — recursos mais novos e mais variacoes naturais =====
-    { categoria:'amanda', chaves:['legenda calendario gabi','legenda antes video aprovado'], pergunta:'Como a legenda pode estar pronta antes do vídeo ser aprovado?', resposta:'A Gabi pode escrever a legenda direto no item do calendário. Se a postagem aprovada do mesmo item já existir, Salvar confirma o texto na fila da Cecília. Se ainda não existir, o texto fica confirmado no calendário e entra automaticamente na fila quando o vídeo daquele mesmo ID for aprovado.' },
-    { categoria:'cecilia', chaves:['onde vejo legenda pronta cliente','legendas calendario'], pergunta:'Onde vejo as legendas que a Gabi já escreveu pra um cliente?', resposta:'Para agendar, use Postagens → Agendar Postagem: ali aparecem somente postagens aprovadas e com legenda pronta. A consulta Legendas do Calendário mostra o planejamento por cliente, mas não significa que o vídeo já passou pela aprovação.' },
+    { categoria:'amanda', chaves:['legenda calendario gabi','legenda antes video aprovado'], pergunta:'Como a legenda pode estar pronta antes do vídeo ser aprovado?', resposta:'Nos calendários de outubro de 2026 em diante, a Gabi escreve na Central de Calendários → Central de Legendas. O texto fica no item oficial do calendário e não aprova vídeo, não publica e não move a postagem. A fila de agendamento continua sendo uma etapa separada.' },
+    { categoria:'cecilia', chaves:['onde vejo legenda pronta cliente','legendas calendario'], pergunta:'Onde vejo as legendas que a Gabi já escreveu pra um cliente?', resposta:'Para calendários de outubro de 2026 em diante, use Central de Calendários → Central de Legendas e copie o texto do cliente e conteúdo corretos. Para realmente agendar, continue em Postagens → Central de Agendamento de Postagens quando a postagem aprovada estiver na fila. Setembro permanece no processo manual combinado pela equipe.' },
     { categoria:'amanda', chaves:['pagamento extra editar','uber nao aparece'], pergunta:'Não consigo editar nada em Pagamentos Extras, o que faço?', resposta:'Isso foi corrigido — agora você tem um formulário completo ali pra adicionar pagamento manualmente, marcar como pago, ou excluir. Se ainda aparecer vazio sem formulário, avisa que pode ter algum problema de carregamento.' },
     { categoria:'geral', chaves:['anotacao pessoal excluir','apagar minha anotacao'], pergunta:'Como excluo uma anotação pessoal que criei?', resposta:'Minhas Demandas → aba Minhas Anotações. Cada anotação tem um botão "Excluir" embaixo dela.' },
     { categoria:'amanda', chaves:['rfv cliente sumido','quem nao renova'], pergunta:'Como sei quais clientes estão sumidos e não renovam?', resposta:'Gerência → "Quem está em risco de sair". A lista vem ordenada do mais tempo sem renovar pro mais recente, e destaca em vermelho quem passou de 60 dias.' },
@@ -20511,7 +20713,8 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       const veLegenda = ['Chris','Gabrielle'].includes(usuarioAtual);
       const veAgendar = ['Chris','Amanda','Cecília'].includes(usuarioAtual);
       document.getElementById('subtabEscreverLegenda').style.display = veLegenda ? 'block' : 'none';
-      document.getElementById('subtabLegendasCalendario').style.display = veAgendar ? 'block' : 'none';
+      const subLegendasCalendario = document.getElementById('subtabLegendasCalendario');
+      if(subLegendasCalendario) subLegendasCalendario.style.display = 'none';
       document.getElementById('subtabAgendarPostagem').style.display = veAgendar ? 'block' : 'none';
       /* 01/08/2026 — o calendário de postagem é da mesma gente que agenda.
          Sem esta linha a aba nasceria visível pra todo mundo, que foi

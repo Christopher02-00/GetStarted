@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
-  <meta name="gs-build" content="2026-09-02-conteudo-fora-calendario-v138">
+  <meta name="gs-build" content="2026-09-04-recuperacao-nathan-i1">
+  <meta name="gs-i1-patch" content="V138 + navegação da sessão; Rules V131">
   <meta name="gs-v138-patch" content="2026-09-02-conteudo-fora-calendario-v138">
   <meta name="gs-v137-patch" content="2026-09-02-transicao-unica-legendas-v137">
   <meta name="gs-v134-patch" content="2026-08-31-central-legendas-independente-v134">
@@ -1988,7 +1989,7 @@
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
   import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=109";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -5422,9 +5423,13 @@
        existe janela entre “não achei sessão” e o addDoc onde outra aba
        poderia criar a sessão e deixar fonte/vídeos divergentes. */
     if(origemMaterial==='gravado' && !trabalhoExterno){
+      const identidadeEntradaI1=__geracaoIdentidade, pessoaEntradaI1=usuarioAtual;
       let sessoesDoDia=[];
       try{
-        const agSnap=await getDocs(collection(db,'agendamentos'));
+        const agSnap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,'agendamentos')),'Carregar a sessão de gravação',12000);
+        if(identidadeEntradaI1!==__geracaoIdentidade || pessoaEntradaI1!==usuarioAtual){
+          btn.disabled=false;btn.textContent='Registrar e distribuir';return false;
+        }
         agSnap.forEach(d=>{
           const a=d.data()||{};
           const slug=String(a.clienteSlug||a.cliente||'').trim();
@@ -5434,7 +5439,8 @@
         });
       }catch(e){
         console.error('V135: não consegui confirmar se existe sessão agendada:',e);
-        mostrarToast('Não consegui conferir a agenda. Para não criar vídeo solto, nada foi registrado; tente novamente.','erro');
+        if(identidadeEntradaI1===__geracaoIdentidade && pessoaEntradaI1===usuarioAtual)
+          mostrarToast('Não consegui conferir a agenda. Nenhum vídeo foi registrado; tente novamente.','erro');
         btn.disabled=false;btn.textContent='Registrar e distribuir';
         return false;
       }
@@ -5443,7 +5449,7 @@
         const sessaoExata=sessoesDoDia.length===1?sessoesDoDia[0]:null;
         if(sessaoExata && PESSOAS_DE_CAMPO.includes(usuarioAtual) && pessoaNaEquipe(sessaoExata,usuarioAtual)){
           mostrarToast('Este cliente já tem uma sessão nessa data. Abra a sessão: ela registra vídeos e gravação juntos.');
-          abrirRegistroAgendamentoCampoV115(sessaoExata.id);
+          await abrirRegistroAgendamentoCampoV115(sessaoExata.id);
         }else{
           const responsaveis=[...new Set(sessoesDoDia.flatMap(a=>filmmakersDaSessao(a)))].filter(Boolean).join(', ');
           mostrarToast('Já existe '+sessoesDoDia.length+' gravação(ões) aberta(s) para este cliente/data. '+(responsaveis?'A baixa deve ser feita por '+responsaveis+'.':'Abra Gravações para escolher a sessão exata.'),'erro');
@@ -9423,7 +9429,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     mostrarToast('Restaurado pro padrão original.');
   };
 
-  window.setAgendamentoSub = function(qual, el){
+  window.setAgendamentoSub = function(qual, el, opcoes){
     const permitidas = ['agendar','minhaAgenda','calendarioMes'];
     if(!permitidas.includes(qual) && qual !== 'controleGravacoes') return;
     if(qual === 'minhaAgenda' && !['Chris','Amanda','Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)){
@@ -9452,7 +9458,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       renderListaAgendamentos();
       verificarQtdHoje();
     }
-    if(qual==='minhaAgenda') renderMinhaAgendaFilmmaker();
+    if(qual==='minhaAgenda') return renderMinhaAgendaFilmmaker(opcoes);
     if(qual==='controleGravacoes') renderControleGravacoes();
     if(qual==='calendarioMes'){
       const hoje = new Date();
@@ -11152,23 +11158,31 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     renderMinhaAgendaFilmmaker();
   };
 
-  async function renderMinhaAgendaFilmmaker(){
+  let __minhaAgendaRenderGeracaoI1=0;
+  let __aberturaSessaoEmCursoI1=null;
+  async function renderMinhaAgendaFilmmaker(opcoes){
     const cont = document.getElementById('agendamentoMinhaAgenda');
     if(!cont) return;
+    const opts=opcoes||{};
+    if(__aberturaSessaoEmCursoI1 && (__aberturaSessaoEmCursoI1.identidade!==__geracaoIdentidade ||
+      __aberturaSessaoEmCursoI1.pessoa!==usuarioAtual)) __aberturaSessaoEmCursoI1=null;
+    if(__aberturaSessaoEmCursoI1 && opts.aberturaI1!==__aberturaSessaoEmCursoI1) return false;
+    const geracao=++__minhaAgendaRenderGeracaoI1;
+    const identidade=__geracaoIdentidade, pessoa=usuarioAtual;
+    const renderAindaAtual=()=>geracao===__minhaAgendaRenderGeracaoI1 &&
+      identidade===__geracaoIdentidade && pessoa===usuarioAtual;
     cont.innerHTML = '<div class="card"><div class="desc">Carregando sua agenda…</div></div>';
     let todos = [];
-    if(__cacheTempoRealPronto.agendamentos){
-      todos = cacheAgendamentos.filter(v=>!v.excluido).map(v=>({...v}));
-    }else{
       try{
-        const snap = await getDocs(collection(db,'agendamentos'));
+        const snap = await comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,'agendamentos')),'Carregar Minha Agenda',12000);
+        if(!renderAindaAtual()) return false;
         snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
       }catch(e){
+        if(!renderAindaAtual()) return false;
         console.error('Falha ao carregar Minha Agenda:', e);
         cont.innerHTML = '<div class="card" style="border:2px solid var(--red);"><b>⚠️ Sua agenda não carregou.</b><div class="meta" style="margin-top:6px;">Isso não significa que as gravações sumiram.</div><button class="btn secondary" style="margin-top:10px;" onclick="renderMinhaAgendaFilmmaker()">Tentar novamente</button></div>';
-        return;
+        return false;
       }
-    }
     // Nathan e Luís só veem a própria agenda — Cecília/Chris veem tudo (panorama)
     if(PESSOAS_DE_CAMPO.includes(usuarioAtual)){
       todos = todos.filter(a => pessoaNaEquipe(a, usuarioAtual));
@@ -11197,10 +11211,11 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(usuarioAtual === 'Gabrielle') blocoAgenda = await htmlAgendaReunioes('Gabrielle', false);
       else if(['Cecília','Chris','Amanda'].includes(usuarioAtual)) blocoAgenda = await htmlAgendaReunioes('Gabrielle', true);
     }catch(e){ console.error('Falha na agenda de reuniões:', e); }
+    if(!renderAindaAtual()) return false;
 
     if(!pendentes.length && !aguardandoAprovacao.length){
       cont.innerHTML = blocoAgenda + html + '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhuma gravação pendente de registro. Tudo em dia! 🎉</div></div>';
-      return;
+      return true;
     }
 
     /* Luís/Nathan leem somente os calendários dos clientes presentes na
@@ -11386,7 +11401,9 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     html += await montarFaixa('hoje', '🟡 De hoje', deHoje, true);
     html += await montarFaixa('futuras', '⚪ Próximas', futuras, false);
 
+    if(!renderAindaAtual()) return false;
     cont.innerHTML = blocoAgenda + html;
+    return true;
   }
 
   /* O botão de recuperação é HTML dinâmico e o onclick executa no
@@ -20556,7 +20573,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
 
 
   const VIEWS_SO_CHRIS = ['mensalidades','financeiro','centralVendas','cobranca','mensagensClientesChris'];
-  window.irPara = function(nome, el){
+  window.irPara = function(nome, el, opcoes){
     /* Esconder o menu nao e proteger: bastava chamar irPara('financeiro')
        pelo console, ou o site restaurar a ultima aba aberta, pra cair na
        tela mesmo sem o item visivel. A trava real e aqui. */
@@ -20699,7 +20716,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       // Aterrissagem por papel: filmmaker cai direto na PROPRIA agenda;
       // quem agenda (Ceci/Amanda) cai em "Agendar Gravacao"
       if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && subFilmmaker){
-        setAgendamentoSub('minhaAgenda', subFilmmaker);
+        if(!opcoes?.suprimirRenderMinhaAgendaI1) setAgendamentoSub('minhaAgenda', subFilmmaker);
       } else {
         if(subAgendar) setAgendamentoSub('agendar', subAgendar);
         else { popularClientesAgendamento(); renderListaAgendamentos(); verificarQtdHoje(); }
@@ -25372,20 +25389,45 @@ window.setGerenciaSub = function(qual, el){
   /* V115 — o modo Campo agora leva o filmmaker à sessão exata onde os
      vídeos são lançados. Não depende de lembrar outra aba nem procura pelo
      nome do cliente, que poderia abrir a gravação errada. */
-  window.abrirRegistroAgendamentoCampoV115 = function(agId){
-    const nav=document.getElementById('navAgendamento');
-    if(nav) irPara('agendamento',nav);
-    setTimeout(()=>{
+  window.abrirRegistroAgendamentoCampoV115 = async function(agId){
+    const id=String(agId||'').trim();
+    if(!id || !['Chris','Amanda','Cecília',...PESSOAS_DE_CAMPO].includes(usuarioAtual)) return false;
+    const identidade=__geracaoIdentidade, pessoa=usuarioAtual, abertura={id,identidade,pessoa};
+    __aberturaSessaoEmCursoI1=abertura;
+    ++__minhaAgendaRenderGeracaoI1;
+    const aindaAtual=()=>__aberturaSessaoEmCursoI1===abertura &&
+      identidade===__geracaoIdentidade && pessoa===usuarioAtual;
+    try{
+      const snap=await comTimeoutCalendarioOperacional(_getDocFromServerFB(doc(db,'agendamentos',id)),'Confirmar a sessão',12000);
+      if(!aindaAtual()) return false;
+      if(!snap.exists()) throw new Error('Esta sessão não existe mais na agenda.');
+      const sessao=snap.data()||{};
+      if(sessao.excluido || sessao.status!=='agendado') throw new Error('Esta sessão já foi encerrada ou cancelada.');
+      if(PESSOAS_DE_CAMPO.includes(pessoa) && !pessoaNaEquipe(sessao,pessoa))
+        throw new Error('Esta sessão está atribuída a outro responsável. Peça à Cecília para conferir a equipe.');
+      const nav=document.getElementById('navAgendamento');
+      if(nav && irPara('agendamento',nav,{suprimirRenderMinhaAgendaI1:true})===false) return false;
       const sub=document.getElementById('subtabMinhaAgendaFilmmaker');
-      if(sub) setAgendamentoSub('minhaAgenda',sub);
-      setTimeout(()=>{
-        const card=document.getElementById('ag_'+agId);
-        if(!card){ mostrarToast('A sessão não apareceu na agenda. Atualize a aba e tente novamente.','erro'); return; }
-        const form=document.getElementById('formGrav_'+agId);
-        if(form&&getComputedStyle(form).display==='none') toggleFormGravacao(agId);
-        card.scrollIntoView({behavior:'smooth',block:'start'});
-      },700);
-    },120);
+      if(!sub) throw new Error('A agenda não está disponível neste perfil.');
+      const desenhou=await comTimeoutCalendarioOperacional(setAgendamentoSub('minhaAgenda',sub,{aberturaI1:abertura}),'Abrir Minha Agenda',20000);
+      if(!aindaAtual() || desenhou===false) return false;
+      const card=document.getElementById('ag_'+id);
+      if(!card) throw new Error('A sessão mudou enquanto a agenda carregava. Abra a agenda novamente para conferir.');
+      const form=document.getElementById('formGrav_'+id);
+      if(form&&getComputedStyle(form).display==='none') toggleFormGravacao(id);
+      card.scrollIntoView({behavior:'smooth',block:'start'});
+      return true;
+    }catch(e){
+      if(aindaAtual()){
+        ++__minhaAgendaRenderGeracaoI1;
+        const cont=document.getElementById('agendamentoMinhaAgenda');
+        if(cont && viewAtiva==='agendamento') cont.innerHTML='<div class="card"><b>Não foi possível abrir sua sessão agora.</b><div class="meta">Nenhum vídeo foi enviado. Tente carregar a agenda novamente.</div><button class="btn secondary" onclick="renderMinhaAgendaFilmmaker()">Tentar novamente</button></div>';
+        mostrarToast('Não consegui abrir a sessão: '+String(e?.message||e)+'. Nenhum vídeo foi enviado.','erro');
+      }
+      return false;
+    }finally{
+      if(__aberturaSessaoEmCursoI1===abertura) __aberturaSessaoEmCursoI1=null;
+    }
   };
 
   window.__campoCompetenciaPorCliente = window.__campoCompetenciaPorCliente || {};

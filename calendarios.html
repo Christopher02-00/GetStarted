@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial · Get Started</title>
-  <meta name="gs-build" content="2026-09-02-sessao-calendario-interno-v136">
+  <meta name="gs-build" content="2026-09-04-recuperacao-i5-zeiss">
   <meta name="gs-v136-patch" content="2026-09-02-sessao-calendario-interno-v136">
   <meta name="gs-v132-patch" content="2026-08-31-criacao-correcao-calendarios-v132">
   <meta name="gs-v125-base" content="2026-08-28-conciliacao-competencia-v125">
@@ -189,10 +189,32 @@
   };
   const params = new URLSearchParams(window.location.search);
   const modoInternoEquipe = params.get('interno') === '1';
+  /* R4/70.81: os dois nomes anteriores são histórico, não outra porta
+     para a ZEISS. Só esta família muda; os demais aliases continuam iguais. */
+  function normalizarIdCalendarioR4(valor){
+    return String(valor||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase().replace(/\s+/g,'-');
+  }
+  function aliasHistoricoCalendarioR4(valor){
+    return ['zeens','otica-visao-araucaria'].includes(normalizarIdCalendarioR4(valor));
+  }
+  function validarFonteCalendarioR4(ref,dados){
+    const fisico=normalizarIdCalendarioR4(typeof ref==='string'?ref:ref?.id);
+    const campos=['canonicalId','clienteSlug','slug','calendarClienteSlug','clienteId','clientId','cliente'];
+    const declarados=campos.map(c=>normalizarIdCalendarioR4(dados?.[c])).filter(Boolean);
+    const familia=fisico==='zeiss'||aliasHistoricoCalendarioR4(fisico)||declarados.some(v=>v==='zeiss'||aliasHistoricoCalendarioR4(v));
+    if(familia&&(fisico!=='zeiss'||declarados.some(v=>v!=='zeiss'))){
+      throw Object.assign(new Error('A identidade deste documento não confirma o calendário ativo da Zeiss. Nada foi alterado; peça à equipe para conferir a fonte.'),{code:'gs/fonte-calendario-r4'});
+    }
+    return dados;
+  }
+  window.validarFonteCalendarioR4=validarFonteCalendarioR4;
+  window.nomeClienteCalendarioR4=nome=>window.__clienteId==='zeiss'?'Zeiss':String(nome||'');
+  const clienteSolicitadoR4=params.get('cliente')||'';
+  const linkHistoricoR4=aliasHistoricoCalendarioR4(clienteSolicitadoR4);
   /* O link público continua num app isolado e anônimo. Dentro do
      Escritório, porém, o iframe reutiliza o app padrão: assim a Gabi usa
      a própria sessão Google e não depende da chave externa do cliente. */
-  const app = modoInternoEquipe
+  const app = linkHistoricoR4 ? null : modoInternoEquipe
     ? initializeApp(firebaseConfig)
     : initializeApp(firebaseConfig, 'getstarted-public');
   /* V136 — o Escritório fixa a sessão Google em localStorage. O getAuth()
@@ -200,10 +222,10 @@
      fazendo o observador da página-pai interpretar a remoção como logout.
      O modo interno nasce já na mesma persistência; o modo público continua
      no app nomeado e anônimo, sem compartilhar a identidade da equipe. */
-  const auth = modoInternoEquipe
+  const auth = linkHistoricoR4 ? null : modoInternoEquipe
     ? initializeAuth(app,{persistence:browserLocalPersistence})
     : getAuth(app);
-  const db = getFirestore(app);
+  const db = linkHistoricoR4 ? null : getFirestore(app);
 
   /* ===== O CALENDÁRIO GANHOU PORTA — 28/07/2026 =======================
      Até hoje bastava trocar o nome na URL: ?cliente=qualquer-um abria —
@@ -221,7 +243,7 @@
      O do cliente é o mesmo do portal; o da equipe é um segundo campo,
      que o escritório gera. Assim, mesmo que o link do cliente vaze, quem
      tem ele não consegue apagar o mês. */
-  const clienteId = params.get('cliente') || '';
+  const clienteId = linkHistoricoR4 ? '' : normalizarIdCalendarioR4(clienteSolicitadoR4)==='zeiss' ? 'zeiss' : clienteSolicitadoR4;
   const tokenCliente = params.get('t') || '';
   const tokenEquipe  = params.get('e') || '';
   const mesSolicitado = params.get('mes') || '';
@@ -383,6 +405,13 @@
 
   window.__modoCal = 'bloqueado';
   window.__calPronto = (async () => {
+    if(linkHistoricoR4){
+      // A guarda já impediu Auth/docRef. Aguarda os módulos montarem o DOM
+      // antes de apresentar o bloqueio; não transporta o token antigo.
+      await new Promise(resolve=>setTimeout(resolve,0));
+      barrar('Este link é de um cadastro histórico','A cliente ativa é a Zeiss. Peça à Get Started o link atual; esta chave antiga não será redirecionada nem reutilizada.');
+      return false;
+    }
     if(/^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) && mesSolicitado<'2026-07'){
       barrar('Calendários disponíveis a partir de julho de 2026','A Get Started começou a montar calendários pelo site em julho de 2026. Não existe calendário anterior para abrir aqui.');
       return false;
@@ -1295,7 +1324,7 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
     const confirmacao=await fb.runTransaction(fb.db,async transacao=>{
       const snap=await transacao.get(fb.docRef);
       if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
-      const servidor=snap.data();
+      const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data());
       if(assinaturaConteudoCompetenciaV125(servidor,alvo)!==assinaturaConteudoCompetenciaV125(pacote.data,alvo)){
         servidorConflitante=servidor;
         throw Object.assign(new Error('O conteúdo mudou depois da confirmação de salvamento.'),{code:'gs/conteudo-divergente'});
@@ -1328,7 +1357,7 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
     if(!recibo||!recibo.exists()){
       return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo:'gs/recibo-ausente'};
     }
-    const retrato=recibo.data()||{};
+    const retrato=window.validarFonteCalendarioR4(fb.docRef,recibo.data()||{});
     const marcaConfirmada=aprovacaoCompativelNoCalendario(retrato,alvo);
     const conteudoConfirmado=assinaturaConteudoCompetenciaV125(retrato,alvo)===assinaturaConteudoCompetenciaV125(pacote.data,alvo);
     if(!marcaConfirmada||marcaConfirmada.status!=='aguardando_interna'||!conteudoConfirmado){
@@ -1656,7 +1685,7 @@ window.ficarComOBanco = function(){
   window.__calBaseConflitoV125=clonarCalendarioV125(data);
   carregado=true; itensNoBanco=(data.items||[]).length;
   window.__calVersaoBancoLida=String(data.updatedAt||'');
-  document.getElementById('clientName').value=data.client||'';
+  document.getElementById('clientName').value=window.nomeClienteCalendarioR4(data.client);
   document.getElementById('monthName').value=data.month||'';
   renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();pintarEstado();
 };
@@ -1694,7 +1723,7 @@ window.restaurarRascunho = function(){
   }
   data=conciliado.documento; carregado=true; temNaoSalvo=true;
   window.__calBaseConflitoV125=banco;
-  document.getElementById('clientName').value=data.client||'';
+  document.getElementById('clientName').value=window.nomeClienteCalendarioR4(data.client);
   document.getElementById('monthName').value=data.month||'';
   fecharBarraDecisao();
   renderGrid();renderWeek();renderKanban();renderProgress();renderMeta();renderAprovacaoInterna();renderSeletorMes();renderBlocos();
@@ -1771,6 +1800,19 @@ async function load(){
   },12000);
   onSnapshot(docRef,(snap)=>{if(pendingWrite || gravacoesCalendarioNaFila>0)return;
     clearTimeout(timerPrimeiroSnapshot);
+    if(window.__fonteCalendarioBloqueadaR4) return;
+    try{if(snap.exists())window.validarFonteCalendarioR4(docRef,snap.data());}
+    catch(erro){
+      carregado=false;window.__fonteCalendarioBloqueadaR4=true;window.__modoCal='bloqueado';
+      const aviso=document.createElement('div');
+      aviso.style.cssText='max-width:520px;margin:15vh auto;padding:24px;font:15px/1.6 system-ui;color:#f0eee8;text-align:center';
+      aviso.textContent=erro.message;
+      const recarregar=document.createElement('button');recarregar.type='button';recarregar.textContent='Recarregar após a conferência';
+      recarregar.style.cssText='display:block;margin:20px auto;padding:12px;border:0;border-radius:9px;background:#FBBC19;font-weight:bold';
+      recarregar.onclick=()=>location.reload();aviso.appendChild(recarregar);
+      document.body.replaceChildren(aviso);
+      return;
+    }
     /* TRAVA 4 — o eco do banco NÃO apaga edição que ainda não foi
        gravada. Era assim que o trabalho sumia da tela sem aviso: bastava
        chegar uma atualização do servidor enquanto havia coisa não salva
@@ -1815,7 +1857,7 @@ async function load(){
     window.__calVersaoBancoLida=String(data.updatedAt||'');
     setTimeout(renderAprovacaoInterna, 0);
     const av=document.getElementById('avisoSalvamento'); if(av) av.style.display='none';
-    document.getElementById('clientName').value=data.client||nomeDoSlug(window.__clienteId);
+    document.getElementById('clientName').value=window.nomeClienteCalendarioR4(data.client||nomeDoSlug(window.__clienteId));
     document.getElementById('monthName').value=mesVisivel?textoDoMes(mesVisivel):(data.month||mesAtualTexto());
     renderSeletorMes();
     /* 02/08/2026 — `renderBlocos` estava só dentro de `renderAll`, e o
@@ -1936,7 +1978,7 @@ async function salvarComoCliente(aplicar, oQueFoi){
     const confirmado=await runTransaction(db,async transacao=>{
       const atual=await transacao.get(docRef);
       if(!atual.exists()) throw new Error('Não achei seu calendário no servidor.');
-      const srv=atual.data()||{};
+      const srv=window.validarFonteCalendarioR4(docRef,atual.data()||{});
       const itens=(srv.items||[]).map(i=>({...i}));
       const comentarios=(srv.comments||[]).slice();
       const mudou=aplicar(itens,comentarios);
@@ -2049,7 +2091,7 @@ async function executarGravacaoComSeguranca(){
     const resultado=await runTransaction(db,async transacao=>{
       const snap=await transacao.get(docRef);
       if(!snap.exists()) throw Object.assign(new Error('Calendário ausente.'),{code:'gs/calendario-ausente'});
-      const servidor=snap.data();
+      const servidor=window.validarFonteCalendarioR4(docRef,snap.data());
       const servidorProtegido=clonarCalendarioV125(servidor);
       const mapaServidor={...(servidorProtegido.aprovacaoMeses||{})};
       const marcaServidor=mapaServidor[alvo]||{};
@@ -2082,6 +2124,7 @@ async function executarGravacaoComSeguranca(){
       return {deveGuardarVersao};
     });
     const recibo=await getDoc(docRef);
+    if(recibo.exists())window.validarFonteCalendarioR4(docRef,recibo.data());
     if(!recibo.exists()||assinaturaConteudoCompetenciaV125(recibo.data(),alvo)!==assinaturaConteudoCompetenciaV125(local,alvo)){
       throw Object.assign(new Error('O recibo não confirmou a competência salva.'),{code:'gs/recibo-competencia-v125'});
     }
@@ -2593,7 +2636,7 @@ window.retirarDaAprovacaoInterna = async function(btn){
     const resultado = await fb.runTransaction(fb.db, async tx => {
       const snap = await tx.get(fb.docRef);
       if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'), {code:'gs/calendario-ausente'});
-      const servidor = snap.data() || {};
+      const servidor = window.validarFonteCalendarioR4(fb.docRef,snap.data() || {});
       const porMes = alvo ? (servidor.aprovacaoMeses||{})[alvo] : null;
       const antigo = servidor.aprovacaoInterna || {};
       const antigoRepresentaOMes = !alvo || antigo.mes === alvo || servidor.mesLegado === alvo;
@@ -2683,7 +2726,7 @@ window.reabrirCalendarioPorPedidoClienteV113 = async function(btn){
     const resultado=await fb.runTransaction(fb.db,async tx=>{
       const snap=await tx.get(fb.docRef);
       if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
-      const servidor=snap.data()||{};
+      const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
       const mapa={...(servidor.aprovacaoMeses||{})};
       const atual=aprovacaoCompativelNoCalendario(servidor,alvo)||{};
       if(atual.status==='ajuste_interno'&&atual.pedidoAjusteOperationId===operationId){
@@ -2905,7 +2948,7 @@ async function salvarComentarioEquipeDuranteRevisao(registro){
   await fb.runTransaction(fb.db, async transacao => {
     const snap=await transacao.get(fb.docRef);
     if(!snap.exists()) throw new Error('O calendário não existe mais.');
-    const atual=snap.data()||{};
+    const atual=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
     transacao.update(fb.docRef,{
       comments:[registro,...(atual.comments||[])],
       updatedAt:new Date().toISOString()
@@ -3032,7 +3075,7 @@ async function registrarPedidoAjusteClienteNoBancoV113({item,itemIdx,texto,opera
   return fb.runTransaction(fb.db,async transacao=>{
     const snap=await transacao.get(fb.docRef);
     if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
-    const servidor=snap.data()||{};
+    const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
     const mapa={...(servidor.aprovacaoMeses||{})};
     const pedidoExistente=servidor.pedidoAjusteCliente||{};
     const estadoAtual=estadoEfetivoNoCalendarioV113(servidor,competencia);
@@ -3057,8 +3100,8 @@ async function registrarPedidoAjusteClienteNoBancoV113({item,itemIdx,texto,opera
     const pedido={schemaVersion:1,operationId,calendarId:slug,competencia,itemId,itemIdx:alvo.indice,
       itemNome,texto,por:'Cliente',autorUid:String(window.__fbAuthUid||''),criadoEm:agora,
       registradoEm:fb.serverTimestamp()};
-    const aviso={cliente:slug,clienteNome:String(servidor.client||data.client||slug),
-      titulo:'✏️ '+String(servidor.client||data.client||slug)+' pediu ajuste em: '+itemNome.slice(0,45),
+    const aviso={cliente:slug,clienteNome:window.nomeClienteCalendarioR4(servidor.client||data.client||slug),
+      titulo:'✏️ '+window.nomeClienteCalendarioR4(servidor.client||data.client||slug)+' pediu ajuste em: '+itemNome.slice(0,45),
       descricao:'Conteúdo do dia '+(alvo.item?.day||'?')+' — '+itemNome+'\n\nO que o cliente escreveu:\n"'+texto+'"\n\nO mês voltou formalmente para ajuste. Corrija e envie novamente para a Amanda.',
       texto,itemNome,paraQuem:'Gabrielle',lido:false,viraDemanda:true,tipo:'ajuste_calendario',
       operationId,competencia,itemId,itemIdx:alvo.indice,criadoEm:agora,registradoEm:fb.serverTimestamp()};
@@ -3107,7 +3150,7 @@ window.enviarObsDoCliente = async function(){
 async function avisarEquipeDaAprovacao(item, idx){
   try{
     const fb = window.__fb; if(!fb || !fb.addDoc) return;
-    const nome = (data.client || window.__clienteId || 'cliente');
+    const nome = window.nomeClienteCalendarioR4(data.client || window.__clienteId || 'cliente');
     const quantos = (data.items||[]).filter(i=>i&&i.apr).length;
     const total = (data.items||[]).length;
     for(const quem of ['Gabrielle','Amanda']){
@@ -3126,7 +3169,7 @@ async function avisarEquipeDaAprovacao(item, idx){
 async function avisarEquipeDoRecado(txt){
   try{
     const fb = window.__fb; if(!fb || !fb.addDoc) return;
-    const nome = (data.client || window.__clienteId || 'cliente');
+    const nome = window.nomeClienteCalendarioR4(data.client || window.__clienteId || 'cliente');
     for(const quem of ['Amanda','Gabrielle']){
       await fb.addDoc(fb.collection(fb.db,'avisos_do_cliente'), {
         cliente: window.__clienteId, clienteNome: nome,
@@ -3451,7 +3494,7 @@ async function sincronizarLegendaEditorialComCeciliaV114(item,itemIdx){
     if(!calSnap.exists()) throw new Error('O calendário canônico deixou de existir antes da confirmação.');
     if(!postSnap.exists()) throw new Error('A postagem deixou de existir antes da confirmação.');
     if(!videoSnap.exists()) throw new Error('O vídeo de origem deixou de existir; a legenda ficou no calendário e nada foi movimentado.');
-    const calendarioAtual=calSnap.data()||{};
+    const calendarioAtual=window.validarFonteCalendarioR4(calendarioRef,calSnap.data()||{});
     const itemIdEsperado=String(item?.itemId||'').trim();
     const competenciaEsperada=String(item?.mes||'').trim();
     const itensAtuais=(Array.isArray(calendarioAtual.items)?calendarioAtual.items:[]).filter(it=>
@@ -3463,13 +3506,13 @@ async function sincronizarLegendaEditorialComCeciliaV114(item,itemIdx){
     const texto=String(itemAtual.legenda||'').trim();
     if(!texto) throw new Error('A legenda foi removida em outra aba; a versão antiga não foi enviada.');
     const agora=String(itemAtual.legendaAtualizadaEm||new Date().toISOString());
-    const atual={id:postSnap.id,...postSnap.data()};
+    const atual={id:postSnap.id,...window.validarFonteCalendarioR4(window.__clienteId,postSnap.data())};
     const revalidado=classificarVinculoLegendaEditorialV114(itemAtual,itemIdx,window.__clienteId,[atual]);
     if(revalidado.estado==='ja_avancada'&&String(atual.legenda||'')===texto){
       return {texto,itemId:String(itemAtual?.itemId||''),competencia:mesDoItemNoCalendario(calendarioAtual,itemAtual),idempotente:true};
     }
     if(revalidado.estado!=='pronta_para_enviar') throw new Error('A postagem mudou de etapa antes da confirmação; nada foi regredido.');
-    const video=videoSnap.data();
+    const video=window.validarFonteCalendarioR4(window.__clienteId,videoSnap.data());
     const slugVideo=normalizarSlugLegendaV114(video.calendarClienteSlug||video.cliente);
     const itemId=String(itemAtual?.itemId||'').trim();
     const competencia=mesDoItemNoCalendario(calendarioAtual,itemAtual);

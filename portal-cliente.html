@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portal do Cliente · Get Started</title>
-  <meta name="gs-build" content="2026-08-28-portal-calendario-cliente-v126">
+  <meta name="gs-build" content="2026-09-04-recuperacao-i5-zeiss">
   <meta name="gs-v115-base" content="2026-08-25-continuidade-calendario-gravacao-v115">
   <meta name="gs-parent-patch" content="2026-08-24-privacidade-sessao-papeis-v110">
   <meta name="gs-patch" content="2026-08-28-portal-calendario-cliente-v126">
@@ -238,7 +238,47 @@
   const CLIENTES_SO_EDICAO = ['rodrigo','cliente-rodrigo'];
   function ehSoEdicao(){ return !!clienteAtual && CLIENTES_SO_EDICAO.includes(clienteAtual.slug); }
 
+  /* R4 — ZEISS é a identidade operacional; aliases são apenas histórico.
+     Não converte token, documento ou dado de alias em autoridade canônica. */
+  function identidadeEntradaPortalR4(valor){
+    const original=String(valor||''),fisico=original.trim().toLowerCase();
+    const familia=['zeiss','zeens','otica-visao-araucaria'].includes(fisico);
+    return {familia,alias:familia&&fisico!=='zeiss',slug:familia?(fisico==='zeiss'?'zeiss':''):original};
+  }
+  function recusarAliasPortalR4(){
+    if(identidadeEntradaPortalR4(localStorage.getItem('portalClienteSlug')).alias){
+      localStorage.removeItem('portalClienteSlug');
+      localStorage.removeItem('portalClienteToken');
+    }
+    clienteAtual=null;
+    mostrarAcessoPortalInvalido();
+  }
+  function tokenModernoPortalValidoR4(dados,slug,instante){
+    if(!dados||dados.cliente!==slug||dados.ativo===false) return false;
+    if(!Object.prototype.hasOwnProperty.call(dados,'ativoAte')) return true;
+    const prazo=dados.ativoAte;
+    let limite=NaN;
+    try{
+      if(prazo&&typeof prazo.toMillis==='function') limite=prazo.toMillis();
+      else if(prazo&&Number.isFinite(prazo.seconds)&&Number.isInteger(prazo.nanoseconds)&&
+        prazo.nanoseconds>=0&&prazo.nanoseconds<1000000000) limite=prazo.seconds*1000+prazo.nanoseconds/1000000;
+    }catch(_e){ return false; }
+    return Number.isFinite(limite)&&Number(instante)<limite;
+  }
+  function documentoCalendarioPortalCanonicoR4(slug,dados){
+    const entrada=identidadeEntradaPortalR4(slug);
+    const ids=['canonicalId','clienteSlug','slug','calendarClienteSlug','clienteId','clientId','cliente'].map(campo=>dados?.[campo]);
+    if(!entrada.familia&&!ids.some(valor=>identidadeEntradaPortalR4(valor).familia)) return true;
+    if(entrada.alias||String(slug)!=='zeiss'||!dados||typeof dados!=='object') return false;
+    return ids.every(valor=>{
+      if(valor===undefined||valor===null||valor==='') return true;
+      return typeof valor==='string'&&valor.trim().toLowerCase()==='zeiss';
+    });
+  }
+  /* Fim R4 — guardas pontuais do Portal. */
+
   function nomeLegivelPortal(slug,nome){
+    if(identidadeEntradaPortalR4(slug).slug==='zeiss') return 'Zeiss';
     const bruto=String(nome||'').trim();
     if(bruto && bruto!==slug) return bruto;
     return String(slug||'Cliente').split('-').filter(Boolean)
@@ -573,6 +613,10 @@
   }
 
   window.entrarPortal = function(slug, nome, escopo, tokenConfirmado){
+    const entrada=identidadeEntradaPortalR4(slug);
+    if(entrada.alias){ recusarAliasPortalR4(); return false; }
+    slug=entrada.slug;
+    if(entrada.familia) nome='Zeiss';
     __propostaLiberada=false;
     __propostasLiberadasIds.clear();
     __indicesPropostaPortalConfirmados=[];
@@ -955,20 +999,29 @@
   }
 
   async function carregarCalendario(){
+    const clienteDaLeitura=clienteAtual,slugDaLeitura=String(clienteDaLeitura?.slug||'');
+    const leituraAindaAtual=()=>clienteAtual===clienteDaLeitura&&String(clienteAtual?.slug||'')===slugDaLeitura;
     const cont = document.getElementById('painelCalendario');
     cont.innerHTML = '<div class="empty">Carregando calendário...</div>';
     let dadosCal=null;
     let leituraEmCache=false;
     try{
-      const snap=await comTimeoutPortal(getDoc(doc(db,'calendarios',clienteAtual.slug)),'Calendário do Portal');
+      const snap=await comTimeoutPortal(getDoc(doc(db,'calendarios',slugDaLeitura)),'Calendário do Portal');
+      if(!leituraAindaAtual()) return;
       if(!snap.exists()){
         window.__calendarioPortalConfirmado=null;
         cont.innerHTML='<div class="card"><div class="empty"><b>Nenhum calendário foi criado para este cliente.</b><br>A leitura do Firestore terminou e confirmou que o documento ainda não existe.</div></div>';
         return;
       }
       dadosCal=snap.data()||{};
+      if(!documentoCalendarioPortalCanonicoR4(clienteAtual.slug,dadosCal)){
+        window.__calendarioPortalConfirmado=null;
+        cont.innerHTML='<div class="card"><div class="empty">A identidade deste calendário diverge da ZEISS. Peça à agência para conferir o link canônico; nenhum conteúdo foi alterado.</div></div>';
+        return;
+      }
       window.__calendarioPortalConfirmado={cliente:clienteAtual.slug,dados:dadosCal};
     }catch(e){
+      if(!leituraAindaAtual()) return;
       console.error('Falha ao confirmar calendário do Portal:',e);
       const cache=window.__calendarioPortalConfirmado;
       if(cache&&cache.cliente===clienteAtual.slug&&cache.dados){
@@ -978,6 +1031,11 @@
         cont.innerHTML='<div class="card" style="border-color:var(--red);"><div style="padding:18px;"><div style="font-weight:900;margin-bottom:7px;">Calendário temporariamente indisponível</div><div class="sub" style="margin:0;">O Firestore não confirmou os dados agora. Isso não significa que o calendário esteja vazio ou apagado; tente recarregar esta área.</div></div></div>';
         return;
       }
+    }
+    if(!documentoCalendarioPortalCanonicoR4(clienteAtual.slug,dadosCal)){
+      window.__calendarioPortalConfirmado=null;
+      cont.innerHTML='<div class="card"><div class="empty">O calendário salvo neste aparelho não confirma a identidade da ZEISS. Recarregue para conferir a fonte; nenhum conteúdo foi alterado.</div></div>';
+      return;
     }
     const avisoLeitura=leituraEmCache?'<div class="card" style="border-color:var(--yellow);"><div class="sub" style="margin:0;"><b>Exibindo a última versão confirmada neste aparelho.</b> A atualização do Firestore falhou agora; nenhum erro foi convertido em calendário vazio.</div></div>':'';
     /* ===== O PORTAL TAMBÉM PASSA A ENTENDER MESES — 29/07/2026 ======
@@ -1223,11 +1281,25 @@
       const itemId=String(botao.dataset.itemId||''),dia=Number(botao.dataset.itemDia||0);
       const nome=nomeItemLegadoPortal(botao.dataset.itemNome||''),indice=Number(botao.dataset.itemIndice);
       const mesAlvo=String(botao.dataset.itemMes||'');
-      const ref=doc(db,'calendarios',clienteAtual.slug);
+      const clienteInicial=clienteAtual,slugInicial=String(clienteInicial?.slug||'');
+      const entrada=identidadeEntradaPortalR4(slugInicial),uidInicial=auth.currentUser?.uid||'';
+      const tokenInicial=localStorage.getItem('portalClienteToken')||'';
+      if(entrada.alias) throw new Error('Este calendário histórico não autoriza aprovação. Peça o link canônico da ZEISS.');
+      const sessaoConfere=()=>!entrada.familia||(clienteAtual===clienteInicial&&String(clienteAtual?.slug||'')===slugInicial&&
+        (auth.currentUser?.uid||'')===uidInicial&&(localStorage.getItem('portalClienteToken')||'')===tokenInicial);
+      const conferirSessao=()=>{
+        if(!sessaoConfere()){
+          throw new Error('A sessão do cliente mudou. Reabra o calendário antes de aprovar.');
+        }
+      };
+      const ref=doc(db,'calendarios',slugInicial);
       const confirmado=await runTransaction(db,async tx=>{
+        conferirSessao();
         const snap=await tx.get(ref);
+        conferirSessao();
         if(!snap.exists()) throw new Error('Calendário não encontrado.');
         const dados=snap.data()||{},items=(dados.items||[]).map(item=>({...item}));
+        if(!documentoCalendarioPortalCanonicoR4(slugInicial,dados)) throw new Error('A identidade deste calendário diverge da ZEISS. Nada foi aprovado.');
         const estado=((dados.aprovacaoMeses||{})[mesAlvo]||{}).status||
           ((dados.aprovacaoInterna||{}).mes===mesAlvo?(dados.aprovacaoInterna||{}).status:'');
         if(estado&&estado!=='liberado') throw new Error('Este mês deixou de estar liberado.');
@@ -1241,14 +1313,17 @@
         if(items[alvo].apr) return {item:items[alvo],items};
         const agora=new Date().toISOString();
         items[alvo].apr=true;items[alvo].aprPor='cliente';items[alvo].aprEm=agora;items[alvo].aprovadoPeloClienteEm=agora;
+        conferirSessao();
         tx.set(ref,{items,updatedAt:agora},{merge:true});
         return {item:items[alvo],items};
       });
+      if(!sessaoConfere()) return;
       const itemConfirmado=confirmado.item,items=confirmado.items;
       /* 30/07/2026 — ia só pra Gabi. A Amanda precisa saber também: é ela
          que acompanha o ciclo e cobra o próximo passo. */
       await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou um conteúdo do calendário',
         (itemConfirmado.name||'') + ' — dia ' + (itemConfirmado.day||''), 'Gabrielle');
+      if(!sessaoConfere()) return;
       await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou um conteúdo do calendário',
         (itemConfirmado.name||'') + ' — dia ' + (itemConfirmado.day||''), 'Amanda');
 
@@ -1267,12 +1342,13 @@
           ? (['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][Number(mesDoItem.split('-')[1])-1] + ' ' + mesDoItem.split('-')[0])
           : 'o mês';
         for(const quem of ['Cecília','Amanda','Gabrielle']){
+          if(!sessaoConfere()) return;
           await alertarEquipe('🎬 ' + clienteAtual.nome + ' aprovou o calendário de ' + nomeMes + ' inteiro',
             'Os ' + irmaos.length + ' conteúdos estão aprovados.' +
             (quem === 'Cecília' ? ' Já dá pra marcar as gravações desse mês.' : ' Nada pendente com o cliente nesse mês.'), quem);
         }
       }
-      carregarCalendario();
+      if(sessaoConfere()) carregarCalendario();
     }catch(e){ console.error('Falha ao aprovar conteúdo:', e); alert('Não consegui registrar agora: '+(e?.message||'tenta de novo em instantes.')); }
     finally{
       if(botao instanceof Element&&botao.isConnected&&botao.textContent==='Aprovando…'){
@@ -2824,7 +2900,9 @@
     const slugUrl = params.get('c');
     const tokenUrl = params.get('t');
 
-    const slug = slugUrl || localStorage.getItem('portalClienteSlug');
+    const entrada = identidadeEntradaPortalR4(slugUrl || localStorage.getItem('portalClienteSlug'));
+    if(entrada.alias){ recusarAliasPortalR4(); return; }
+    const slug = entrada.slug;
     const token = slugUrl ? tokenUrl : localStorage.getItem('portalClienteToken');
 
     if(!slug || !token){ return; } // fica na tela de "link nao reconhecido"
@@ -2834,8 +2912,21 @@
        O fallback mantém os links antigos funcionando até a migração. */
     let tokenSnap=null;
     try{ tokenSnap = await comTimeoutPortal(getDoc(doc(db,'clientes_portal_tokens', token)),'Confirmação do link do Portal',12000); }
-    catch(e){ console.warn('Token moderno do Portal não pôde ser consultado:',e.code||e.message); }
-    const tokenNovoValido = tokenSnap && tokenSnap.exists() && tokenSnap.data().ativo !== false && tokenSnap.data().cliente === slug;
+    catch(e){
+      console.warn('Token moderno do Portal não pôde ser consultado:',e.code||e.message);
+      mostrarPortalIndisponivelSemInvalidar();
+      return;
+    }
+    /* Existência contraditória nunca vira ausência. Só exists() === false
+       permite que Rules V131 confiram o link legado ao abrir a sessão. */
+    const estadoExistencia=typeof tokenSnap?.exists==='function'?tokenSnap.exists():null;
+    if((estadoExistencia!==true&&estadoExistencia!==false)||tokenSnap?.metadata?.fromCache===true){
+      mostrarPortalIndisponivelSemInvalidar();
+      return;
+    }
+    const tokenNovoExiste=estadoExistencia===true;
+    const tokenNovoValido=tokenNovoExiste&&tokenModernoPortalValidoR4(tokenSnap.data(),slug,Date.now());
+    if(tokenNovoExiste&&!tokenNovoValido){ mostrarAcessoPortalInvalido(); return; }
     let sessaoClienteAberta=false;
     let uidSessao='';
     let erroAberturaSessao=null;

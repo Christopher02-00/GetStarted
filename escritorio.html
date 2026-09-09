@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escritório Get Started</title>
   <meta name="gs-build" content="2026-09-08-recuperacao-i1-i29">
+  <meta name="gs-stokki-build" content="2026-09-09-publicacoes-i30">
   <meta name="gs-i1-patch" content="V138 + navegação da sessão; Rules V131">
   <meta name="gs-v138-patch" content="2026-09-02-conteudo-fora-calendario-v138">
   <meta name="gs-v137-patch" content="2026-09-02-transicao-unica-legendas-v137">
@@ -7461,7 +7462,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
         if(retomada.estado==='etapa_incompativel'){
           throw new Error('A postagem está em uma etapa incompatível e foi preservada sem regressão.');
         }
-        const legendaEditorialAtual=await obterLegendaEditorialTransacionalV118(tx,videoAtual);
+        const legendaEditorialAtual=videoAtual.cliente==='stokki'?{estado:'aguardar_selecao'}:await obterLegendaEditorialTransacionalV118(tx,videoAtual);
         const legendaProntaAtual=legendaEditorialAtual.estado==='pronta';
         const decisaoRetomada=decidirRetomadaLegendaClienteV118(
           postagemAtual,legendaProntaAtual,reativacaoLegadaAtual
@@ -7561,7 +7562,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
       if(!['moderna','legado'].includes(identidadeVideoAtual.estado)){
         throw new Error('O vídeo possui identidade parcial de calendário; nenhuma postagem foi criada.');
       }
-      const legendaEditorialAtual=await obterLegendaEditorialTransacionalV118(tx,dadosVideoAtual);
+      const legendaEditorialAtual=dadosVideoAtual.cliente==='stokki'?{estado:'aguardar_selecao'}:await obterLegendaEditorialTransacionalV118(tx,dadosVideoAtual);
       const legendaProntaAtual=legendaEditorialAtual.estado==='pronta';
       opcoes?.validarContexto?.();
       tx.set(postagemRef,{
@@ -13112,6 +13113,10 @@ async function popularClientesAgendamento(){
         if(!slugsMensalistas.has(slugClienteCanonico(v.cliente||''))) return;
         if(slug && v.cliente !== slug) return;
         posts.push({id:d.id, ...v}); });
+      if(posts.some(usaPublicacaoStokkiI30)){
+        const m=await carregarModuloStokkiI30();
+        posts=[...posts.filter(p=>!usaPublicacaoStokkiI30(p)),...m.eventos(posts).map(e=>({id:e.postagemId,cliente:'stokki',titulo:e.nome+' · '+e.titulo,dataAgendada:e.data,horaAgendada:e.hora,status:e.publicada?'postado':'agendado'}))];
+      }
     }catch(e){
       console.error('Falha ao carregar o calendário de postagem:', e);
       cont.innerHTML = '<div class="card"><div class="empty">Não consegui carregar agora. Recarrega a página.</div></div>';
@@ -13159,6 +13164,81 @@ async function popularClientesAgendamento(){
      isolado nessa função — só muda o comportamento pra esse cliente,
      todos os outros continuam com legenda única, sem risco de quebrar
      nada existente. Quando validado 100%, é só ampliar a lista abaixo. */
+  /* I30: carregamento sob demanda. Falha deste módulo não aborta o site. */
+  var __stokkiModuloI30, __stokkiOperacaoI30;
+  function usaPublicacaoStokkiI30(p){ return p?.cliente==='stokki'&&p?.publicacaoStokki?.versao===1; }
+  function contextoStokkiI30(){return {papel:usuarioAtual,ator:atorRealDaSessao(),geracao:__geracaoIdentidade};}
+  async function carregarModuloStokkiI30(){
+    if(!__stokkiModuloI30) __stokkiModuloI30=import('./stokki-publicacao.mjs?v=i30-1').catch(e=>{__stokkiModuloI30=null;throw e;});
+    const m=await __stokkiModuloI30;m.instalarCampos(document);return m;
+  }
+  async function obterOperacaoStokkiI30(){
+    const m=await carregarModuloStokkiI30();
+    if(!__stokkiOperacaoI30)__stokkiOperacaoI30=m.criarOperacao({document,contexto:contextoStokkiI30,
+      prompt:t=>prompt(t),confirm:t=>confirm(t),toast:t=>mostrarToast(t),salvar:salvarAcaoStokkiI30,
+      listar:async()=>{
+        const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'postagens'),where('cliente','==','stokki'))),'Publicações Stokki',12000);
+        return snap.docs.map(d=>({...d.data(),id:d.id}));
+      }});
+    return __stokkiOperacaoI30;
+  }
+  window.abrirStokkiI30=async function(){
+    try{await (await obterOperacaoStokkiI30()).abrir();}
+    catch(e){mostrarToast('Stokki indisponível: '+e.message+'. As outras áreas continuam disponíveis.','erro');}
+  };
+  async function salvarAcaoStokkiI30(inicial,acao,contexto){
+    const m=await carregarModuloStokkiI30(),ref=doc(db,'postagens',inicial.id);
+    const conferirSessao=()=>{
+      if(JSON.stringify(contexto)!==JSON.stringify(contextoStokkiI30()))throw new Error('O perfil mudou. Reabra esta publicação.');
+      if(!['Amanda','Cecília','Chris'].includes(usuarioAtual))throw new Error('Papel sem acesso a esta operação.');
+    };
+    conferirSessao();
+    await runTransaction(db,async tx=>{
+      conferirSessao();
+      const ps=await tx.get(ref);if(!ps.exists())throw new Error('A postagem não existe mais.');
+      const p={...ps.data(),id:ps.id};
+      if(p.publicacaoStokki?.operacaoId===acao.operacaoId)return;
+      if(m.assinatura(p)!==m.assinatura(inicial))throw new Error('A publicação mudou em outra aba. Reabra para conferir os dados atuais; nada foi sobrescrito.');
+      const vr=p.videoId?doc(db,'videos_producao',String(p.videoId)):null;
+      const vs=vr?await tx.get(vr):null,v=vs?.exists()?vs.data():null;
+      if(vr&&(!v||v.excluido===true||v.cliente!=='stokki'||v.postagemId!==p.id||v.clienteAprovou!==true||!['aprovado','finalizado'].includes(v.status)))throw new Error('O vídeo não está mais aprovado e vinculado a esta postagem.');
+      if(!vr&&p.origemManual!==true)throw new Error('Origem da postagem não confirmada.');
+      const identidade=v?confirmarIdentidadeCalendarioVideoPostagemV118(p,v):{estado:'manual',moderna:false,slug:'stokki'};
+      if(v&&!['moderna','legado'].includes(identidade.estado))throw new Error('A identidade do calendário mudou; nada foi associado por título.');
+      if(identidade.moderna&&identidade.slug!=='stokki')throw new Error('O vínculo aponta para outro cliente. Nenhum calendário foi alterado.');
+      if(['agendar','restaurar','desfazer_publicacao','adicionar','definir_redes'].includes(acao.tipo)){
+        const cfg=await tx.get(doc(db,'clientes_config','stokki'));
+        if(!cfg.exists()||!clientePermiteReagendarR5(cfg.data(),m.horarioBrasilia().slice(0,10),'stokki'))throw new Error('A Stokki não está com serviço de postagem ativo. O histórico pode ser conferido sem criar trabalho novo.');
+      }
+      const resultado=m.alterar(p,acao,{...contexto,em:new Date().toISOString()});
+      const mudaConclusao=['postado','cancelada_manual'].includes(p.status)!==resultado.concluiu||
+        (p.status==='postado')!==resultado.publicado;
+      let cr=null,items=null;
+      if(mudaConclusao&&identidade.moderna){
+        cr=doc(db,'calendarios',identidade.slug);
+        const ocupacao=await tx.get(doc(db,'calendarios_ocupacao',identidade.slug,'competencias',identidade.competencia,'itens',identidade.itemId));
+        if(!ocupacao.exists()||ocupacao.data().videoId!==p.videoId)throw new Error('O vínculo preparado não confirma este vídeo como dono do item. Nenhum item foi escolhido por aproximação.');
+        const cs=await tx.get(cr);
+        if(!cs.exists())throw new Error('O calendário canônico não existe mais.');
+        const cal=cs.data();items=(cal.items||[]).map(it=>it?{...it}:it);
+        const indices=items.map((it,i)=>({it,i})).filter(({it})=>it&&it.excluido!==true&&it.itemId===identidade.itemId&&mesDoItemCalendario(cal,it)===identidade.competencia);
+        if(indices.length!==1||(indices[0].it.postagemId&&String(indices[0].it.postagemId)!==p.id))throw new Error('O item exato do calendário está ausente, duplicado ou vinculado a outra postagem.');
+        const {it,i}=indices[0];items[i]={...it,postagemId:p.id,posted:resultado.publicado,agendado:false};
+      }
+      conferirSessao();
+      tx.update(ref,{...resultado.patch,historico:arrayUnion(resultado.historico)});
+      if(cr)tx.update(cr,{items,updatedAt:new Date().toISOString()});
+      if(vr&&mudaConclusao)tx.update(vr,{status:resultado.concluiu?'finalizado':'aprovado',
+        finalizadoEm:resultado.concluiu?new Date().toISOString():'',finalizadoVia:resultado.concluiu?'publicacao_stokki_i30':''});
+    });
+    conferirSessao();
+    let recibo;
+    try{recibo=await comTimeoutCalendarioOperacional(_getDocFromServerFB(ref),'Recibo da publicação Stokki',12000);}
+    catch(e){throw new Error('A gravação pode ter ocorrido, mas o recibo não chegou. Reabra a publicação para conferir antes de repetir. '+e.message);}
+    const d=recibo.exists()?recibo.data():null;
+    if(!d||(d.publicacaoStokki?.operacaoId!==acao.operacaoId&&!(d.historico||[]).some(h=>{try{return JSON.parse(h.detalhe||'{}').operacaoId===acao.operacaoId;}catch{return false;}})))throw new Error('O servidor não confirmou esta operação. Reabra para conferir; não presuma que falhou ou repita às cegas.');
+    return {ok:true};
+  }
   function ehClienteMultiPlataforma(slug){
     return slug === 'stokki';
   }
@@ -13177,7 +13257,9 @@ async function popularClientesAgendamento(){
     const p = postagem || {};
     const slug = slugClienteCanonico(String(p.cliente||p.clienteSlug||''));
     if(!ehClienteMultiPlataforma(slug)) return [];
-    return PLATAFORMAS_LEGENDA.map(def => ({
+    const selecionadas=usaPublicacaoStokkiI30(p)?p.publicacaoStokki.selecionadas:null;
+    const ids={legendaInstagram:'instagram',legendaLinkedin:'linkedin',legendaTiktok:'tiktok',legendaYoutube:'youtube'};
+    return PLATAFORMAS_LEGENDA.filter(def=>!selecionadas||(selecionadas.includes(ids[def.campo])&&!p.publicacaoStokki.redes[ids[def.campo]]?.retirada)).map(def => ({
       campo:def.campo, label:def.label, icone:def.icone,
       texto:String(p[def.campo]||'').trim()
     })).filter(item => item.texto);
@@ -13327,6 +13409,7 @@ async function popularClientesAgendamento(){
   window.consolidarFilaLegendaConfirmada=consolidarFilaLegendaConfirmada;
 
   async function renderLegendasPendentes(){
+    if(document.querySelector('[data-stokki-legendas][data-stokki-sujo="true"]'))return;
     const cont = document.getElementById('postagensConteudo');
     /* A Gabi precisa apenas da fila de legenda. Ler todas as postagens aqui
        fazia cada abertura pagar também por agendadas, publicadas e arquivo. */
@@ -13406,6 +13489,11 @@ async function popularClientesAgendamento(){
     const avisoParcial=(calendariosIndisponiveis.size||calendariosAusentes.size||avisosCanonicos.length||entregaDiretaIndisponivel)
       ? `<div class="card" style="border-color:var(--yellow);"><h2>Fila carregada parcialmente</h2><div class="desc">${calendariosIndisponiveis.size} calendário(s) indisponível(is), ${calendariosAusentes.size} ainda inexistente(s) e ${avisosCanonicos.length} vínculo(s) inconsistente(s). Os conteúdos confirmados continuam visíveis; erro, ausência e vazio legítimo permanecem separados.</div>${detalhesCanonicos}</div>`
       : '';
+    let moduloStokkiI30=null;
+    if(pendentes.some(p=>p.cliente==='stokki')){
+      try{moduloStokkiI30=await carregarModuloStokkiI30();}
+      catch(e){mostrarToast('Os campos da Stokki não carregaram. As legendas dos demais clientes continuam disponíveis.','erro');}
+    }
     cont.innerHTML = avisoParcial+pendentes.map(p => {
       const legendasDisponiveis = calendariosPorCliente[p.cliente] || [];
       // Vínculo direto e real (por ID, não por nome parecido) — quando o
@@ -13437,12 +13525,7 @@ async function popularClientesAgendamento(){
             <button class="btn secondary" style="width:auto;padding:6px 14px;margin-top:6px;" onclick="preencherLegendaDoCalendario('${p.id}','${escJs(p.cliente)}','${escJs(String(vinculoDireto.itemId||''))}','${escJs(String(vinculoDireto.calendarCompetencia||''))}')">Usar a legenda deste conteúdo</button>
           </div>
         ` : ''}
-        ${multiPlataforma ? `
-          <div class="desc" style="margin:8px 0;">Cliente com legenda separada por plataforma:</div>
-          ${PLATAFORMAS_LEGENDA.map(pl => `
-            <div class="field"><label>${pl.icone} ${pl.label}</label><textarea id="legenda_${p.id}_${pl.campo}" placeholder="Legenda pro ${pl.label}..."></textarea></div>
-          `).join('')}
-        ` : `
+        ${multiPlataforma ? (moduloStokkiI30?moduloStokkiI30.formularioLegendas(p):'<p role="alert">Campos da Stokki indisponíveis. Reabra a fila; nenhuma legenda foi perdida ou salva.</p>') : `
           <div class="field"><textarea id="legenda_${p.id}" placeholder="Escreve a legenda desse conteúdo, ou puxa uma pronta acima..."></textarea></div>
           <button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="verificarGramatica('legenda_${p.id}','gram_${p.id}')">✓ Verificar gramática</button>
           <div id="gram_${p.id}" style="display:none;margin-top:8px;"></div>
@@ -13680,6 +13763,11 @@ async function popularClientesAgendamento(){
         const campo = document.getElementById('legenda_'+postagemId+'_'+p.campo);
         if(campo) campo.value = item[p.campo] || '';
       });
+      const form=Array.from(document.querySelectorAll('[data-stokki-legendas]')).find(el=>el.dataset.stokkiLegendas===postagemId);
+      if(form){form.querySelectorAll('[data-stokki-selecao]').forEach(box=>{
+        const campo=form.querySelector('[data-stokki-texto="'+box.dataset.stokkiSelecao+'"]');
+        box.checked=!!campo?.value.trim();box.dispatchEvent(new Event('change',{bubbles:true}));
+      });}
     } else {
       document.getElementById('legenda_'+postagemId).value = item.legenda;
     }
@@ -13693,6 +13781,7 @@ async function popularClientesAgendamento(){
   };
 
   window.salvarLegenda = async function(id){
+    const sessaoLegendaI30=contextoStokkiI30();
     if(!['Gabrielle','Chris'].includes(usuarioAtual)){
       mostrarToast('Somente a Gabi pode confirmar a legenda; Chris mantém acesso de auditoria.','erro');
       return;
@@ -13742,14 +13831,14 @@ async function popularClientesAgendamento(){
       const dadosLegenda={legendaPor:atorRealDaSessao(),legendaEm:new Date().toISOString(),status:'aguardando_agendamento'};
 
       if(ehClienteMultiPlataforma(cliente)){
-        let preenchidas=0;
-        PLATAFORMAS_LEGENDA.forEach(p=>{
-          const val=document.getElementById('legenda_'+id+'_'+p.campo)?.value.trim()||'';
-          dadosLegenda[p.campo]=val;
-          if(val) preenchidas++;
-        });
-        if(!preenchidas){ mostrarToast('Escreve pelo menos uma das 4 legendas antes de salvar.','erro'); return; }
-        dadosLegenda.legenda=dadosLegenda.legendaInstagram||dadosLegenda.legendaTiktok||dadosLegenda.legendaYoutube||dadosLegenda.legendaLinkedin;
+        const m=await carregarModuloStokkiI30();
+        const form=Array.from(document.querySelectorAll('[data-stokki-legendas]')).find(el=>el.dataset.stokkiLegendas===id);
+        if(!form)throw new Error('Reabra os campos da Stokki antes de salvar.');
+        const entrada=m.lerLegendas(form);
+        Object.assign(dadosLegenda,m.prepararLegendas(postagemInicial,entrada.selecionadas,entrada.textos,atorRealDaSessao(),dadosLegenda.legendaEm));
+        /* Ponteiro legado ausente usa o corredor V123 já existente. Não
+           migrar esse vídeo nem alargar Rules por causa de campos novos. */
+        if(confirmouCanonicaManual)delete dadosLegenda.publicacaoStokki;
       }else{
         const legenda=document.getElementById('legenda_'+id)?.value.trim()||'';
         if(!legenda){ mostrarToast('Escreve a legenda antes de salvar.','erro'); return; }
@@ -13805,7 +13894,9 @@ async function popularClientesAgendamento(){
            avançar a postagem; tentar "reforçar" o vínculo no vídeo fazia a
            transação inteira ser negada pelas regras do papel dela. A leitura
            acima continua protegendo contra uma cópia não canônica. */
-        const conteudoIgual=camposConteudo.every(campo=>String(atual[campo]||'')===String(dadosLegenda[campo]||''));
+        const conteudoIgual=camposConteudo.every(campo=>campo==='publicacaoStokki'
+          ? JSON.stringify(atual[campo]?.selecionadas)===JSON.stringify(dadosLegenda[campo]?.selecionadas)
+          : String(atual[campo]||'')===String(dadosLegenda[campo]||''));
         if(atual.status!=='aguardando_legenda'){
           const etapasPosteriores=['aguardando_agendamento','agendado','confirmando_postagem','postado','finalizado',
             'cancelada_manual','arquivada_sem_postagem','cancelada_video_trafego'];
@@ -13814,6 +13905,7 @@ async function popularClientesAgendamento(){
           }
           throw new Error('A postagem já avançou para '+String(atual.status||'outra etapa')+' e não será regredida.');
         }
+        if(cliente==='stokki'&&JSON.stringify(sessaoLegendaI30)!==JSON.stringify(contextoStokkiI30()))throw new Error('O perfil mudou; reabra a fila para confirmar a legenda.');
         tx.update(postagemRef,dadosLegenda);
         if(videoRef&&!postagemPreferida) tx.update(videoRef,{postagemId:id});
       });
@@ -13833,7 +13925,9 @@ async function popularClientesAgendamento(){
           String(dadosVideoRecibo.calendarClienteSlug||dadosVideoRecibo.cliente||'')===String(dadosRecibo.calendarClienteSlug||dadosRecibo.cliente||'');
       }
       if(!recibo.exists()||!etapaConfirmada||!vinculoConfirmado||
-         !camposConteudo.every(campo=>String(dadosRecibo[campo]||'')===String(dadosLegenda[campo]||''))){
+         !camposConteudo.every(campo=>campo==='publicacaoStokki'
+           ? JSON.stringify(dadosRecibo[campo]?.selecionadas)===JSON.stringify(dadosLegenda[campo]?.selecionadas)
+           : String(dadosRecibo[campo]||'')===String(dadosLegenda[campo]||''))){
         throw new Error('A legenda foi gravada, mas a passagem para a fila da Cecília não pôde ser confirmada.');
       }
 
@@ -13843,15 +13937,17 @@ async function popularClientesAgendamento(){
       if(escolha) delete window.__legendaCalendarioEscolhida[id];
 
       darBaixaDemandaLegenda(id).catch(e=>console.error('Melhoria 2: falha ao dar baixa na demanda de legenda',e));
-      if(String(dadosRecibo.status||'')==='aguardando_agendamento'){
+      if(String(dadosRecibo.status||'')==='aguardando_agendamento'&&!usaPublicacaoStokkiI30(dadosRecibo)){
         criarDemandaAgendamentoAutomatica(id).catch(e=>console.error('Fase 6: falha ao criar demanda automática de agendamento',e));
       }
       mostrarToast('Legenda salva e confirmada na fila da Cecília.');
+      if(cliente==='stokki')Array.from(document.querySelectorAll('[data-stokki-legendas]')).find(el=>el.dataset.stokkiLegendas===id)?.closest('.card')?.remove();
       renderLegendasPendentes();
     }catch(e){
       console.error('Falha ao confirmar a passagem da legenda:',e);
       mostrarToast(e?.message||'Não foi possível confirmar a passagem da legenda.','erro');
-      renderLegendasPendentes();
+      // I30: manter rascunho/seleção em caso de falha; não destruir os campos.
+      if(!document.querySelector('[data-stokki-legendas]'))renderLegendasPendentes();
     }finally{
       window.__salvandoLegendas.delete(id);
     }
@@ -14220,8 +14316,8 @@ async function popularClientesAgendamento(){
       </div>`;
       return;
     }
-    const fila=[];
-    postSnap.forEach(d=>{ const p={id:d.id,...d.data()}; if(p.excluido!==true) fila.push(p); });
+    const fila=[],filaStokkiI30=[];
+    postSnap.forEach(d=>{ const p={id:d.id,...d.data()}; if(p.excluido!==true){if(usaPublicacaoStokkiI30(p))filaStokkiI30.push(p);else fila.push(p);} });
     const idsVideo=[...new Set(fila.map(p=>String(p.videoId||'').trim()).filter(Boolean))];
     const videosPorId=new Map();
     try{
@@ -14261,6 +14357,7 @@ async function popularClientesAgendamento(){
     // Melhoria 6A — postagens já agendadas com data igual/passada, esperando
     // 1 clique confirmando que realmente foram ao ar
     const jaPassaramOuHoje = agendadasParaConfirmar.filter(p => p.dataAgendada && p.dataAgendada <= hoje);
+    resumo=`<div class="card"><h2>Stokki — por plataforma</h2><div class="desc">${filaStokkiI30.length} vídeo(s) em agendamento/publicação. As conferências concluídas ficam no mesmo painel.</div><button class="btn" onclick="abrirStokkiI30()">Abrir publicações e conferências da Stokki</button></div>`+resumo;
     if(jaPassaramOuHoje.length){
       jaPassaramOuHoje.sort((a,b) => (a.dataAgendada||'').localeCompare(b.dataAgendada||''));
       resumo += `<div class="card" style="border:2px solid var(--yellow);"><h2>✔ Confirmar publicação</h2><div class="desc">Essas já passaram da data agendada — confirma que foram ao ar de verdade.</div></div>`;
@@ -14366,6 +14463,7 @@ async function popularClientesAgendamento(){
     try{ confirmada=await confirmarPostagemCanonicaCeciliaV118(id,['aguardando_agendamento']); }
     catch(e){ mostrarToast(e?.message||'A postagem não pôde ser confirmada.','erro'); return; }
     const p = confirmada.postagem;
+    if(usaPublicacaoStokkiI30(p)){await window.abrirStokkiI30();return;}
 
     try{
       await runTransaction(db,async tx=>{
@@ -14542,6 +14640,7 @@ async function popularClientesAgendamento(){
       conferirPapelConfirmacaoR5(contexto);
       const [ps,ds]=await Promise.all([tx.get(postagemRef),demandaRef?tx.get(demandaRef):Promise.resolve(null)]);
       const post=ps.exists()?ps.data():null,demanda=ds?.exists()?ds.data():null;
+      if(usaPublicacaoStokkiI30(post))throw new Error('Esta publicação é conferida por plataforma. Abra Stokki — publicações e conferências. Nenhuma baixa geral foi feita.');
       if(demandaRef&&(!demanda||!ehDemandaConfirmacaoPostagemV135(demanda)||demanda.destinatario!=='Cecília'||
          demanda.excluido===true||String(demanda.postagemId||'')!==contexto.postagemId||
          String(demanda.alertaCicloV135||'')!==String(contexto.demanda.alertaCicloV135||''))){
@@ -14697,6 +14796,7 @@ async function popularClientesAgendamento(){
   window.confirmarPostagemPublicada = async function(id,opcoesV135={}){
     try{
       const contexto=opcoesV135.contextoR5||await carregarConfirmacaoPublicacaoR5(opcoesV135.demandaId||'',String(id));
+      if(usaPublicacaoStokkiI30(contexto.postagem)){await window.abrirStokkiI30();return {ok:false,motivo:'Confirme somente a plataforma publicada no painel da Stokki.'};}
       if(contexto.postagemId!==String(id)) throw new Error('A confirmação aponta para outra postagem.');
       const resultado=await resolverConfirmacaoPublicacaoR5(contexto,{...opcoesV135,acao:opcoesV135.acao||'confirmar'});
       mostrarToast(resultado.calendarioAtualizado?'Publicação confirmada na fonte e no calendário.':'Publicação confirmada; histórico preservado.');
@@ -15105,6 +15205,7 @@ async function popularClientesAgendamento(){
       const postSnap=await tx.get(confirmada.postagemRef);
       if(!postSnap.exists()) throw new Error('A postagem deixou de existir.');
       const post=postSnap.data()||{};
+      if(usaPublicacaoStokkiI30(post))throw new Error('Use Stokki — publicações e conferências para alterar somente a plataforma escolhida.');
       exigirClienteOperacionalR4(post.cliente,post);
       const cicloAnterior=cicloFonteAlertaCanonicoV135('postagem',post);
       const statusEsperado=acao==='agendar'?'aguardando_agendamento':'agendado';
@@ -35862,6 +35963,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function pararListenersTempoReal(limparDemandas, limparCachesColecoes){
+    __stokkiOperacaoI30?.parar();
     /* Mesmo que o unsubscribe do SDK ainda entregue um callback que já
        estava na fila, a geração antiga deixa de poder tocar cache/DOM. */
     __geracaoOuvintesTempoRealV135++;
@@ -35910,6 +36012,15 @@ window.setGerenciaSub = function(qual, el){
       __ouvinteTempoRealAindaAtualV135(pessoaDoOuvinte, geracaoDoOuvinteV135);
     const ehGestao = pessoaDoOuvinte === 'Amanda' || pessoaDoOuvinte === 'Chris';
     listenersTempoRealAtivos = true;
+    if(['Amanda','Cecília','Chris'].includes(pessoaDoOuvinte)){
+      obterOperacaoStokkiI30().then(operacao=>{
+        if(!ouvinteAindaAtualV135())return;
+        const parar=onSnapshot(query(collection(db,'postagens'),where('cliente','==','stokki')),snap=>{
+          if(ouvinteAindaAtualV135())operacao.receber(snap.docs.map(d=>({...d.data(),id:d.id})));
+        },e=>{if(ouvinteAindaAtualV135())operacao.falhar(e);});
+        __ouvintesTempoReal.push(parar);
+      }).catch(e=>{if(ouvinteAindaAtualV135())mostrarToast('Avisos da Stokki indisponíveis: '+e.message,'erro');});
+    }
 
     /* V78 — a planilha de contatos não pode continuar oferecendo um
        cliente depois que Amanda efetiva a saída em outra sessão. O
@@ -36593,6 +36704,7 @@ window.setGerenciaSub = function(qual, el){
     const especie=String(tipo||'').toLowerCase();
     if(fonte === undefined) return {estado:'inconsistente',motivo:'fonte_indisponivel'};
     if(!fonte || typeof fonte !== 'object') return {estado:'inativo',motivo:'fonte_ausente'};
+    if(especie==='postagem'&&usaPublicacaoStokkiI30(fonte))return {estado:'inativo',motivo:'conferencia_por_plataforma_i30'};
     const status=String(fonte.status||'').toLowerCase();
     if(fonte.excluido===true || fonte.arquivado===true || fonte.deletedAt ||
        ['cancelado','cancelada','arquivado','arquivada','arquivada_sem_postagem','arquivado_sem_postagem'].includes(status)){
@@ -37628,6 +37740,7 @@ window.salvarPrazoVideo = async function(id){
       const snap = await getDoc(doc(db,'postagens', id));
       if(!snap.exists()){ mostrarToast('Essa postagem não existe mais.', 'erro'); return; }
       const p = snap.data();
+      if(usaPublicacaoStokkiI30(p)){await window.abrirStokkiI30();return;}
       const ROT = { aguardando_legenda:'Esperando legenda', aguardando_agendamento:'Esperando agendamento',
                     agendado:'Agendada', postado:'Publicada' };
       const modal = document.getElementById('modalConteudo');

@@ -865,6 +865,7 @@
         <button class="btn secondary" style="margin-top:8px;" onclick="sairDoEscritorio()">Sair desta conta</button>
       </div>
       <div id="setorAtalhos"></div>
+      <div id="edicaoManualInicioI34"></div>
       <div id="avisoInicio"></div>
       <!-- 28/07/2026 — este container não existia. renderResumoDiarioHome()
            procurava por ele, não achava, e saía calada (if(!box) return).
@@ -6101,6 +6102,7 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
           <div class="top"><div class="nome">${atrasado?'⚠️ ':''}${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
           ${atrasado ? '<div class="meta" style="color:var(--red);font-weight:800;margin-top:4px;">Passou do prazo de 1 dia útil (até 19h) — prioriza esse.</div>' : ''}
           <div class="meta">${v.observacao ? '📝 ' + esc(v.observacao) : ''}</div>
+          ${v.edicaoManual?.versao===1 ? htmlMaterialEditorI34(v) : ''}
           <div class="field" style="margin-top:10px;"><input type="text" id="link_${v.id}" placeholder="Cola o link do vídeo pronto no Drive"></div>
           <button class="btn green" onclick="enviarVideoParaAprovacao('${v.id}')">📤 Enviar pra aprovação</button>
           <div style="text-align:right;margin-top:6px;">
@@ -7949,8 +7951,19 @@ window.marcarClienteAprovouVideo = async function(id){
   window.renderGerenciaVideos = async function(){
     const cont = document.getElementById('gerenciaVideos');
     if(!['Chris','Amanda'].includes(usuarioAtual)){ if(cont) cont.replaceChildren(); return; }
-    const snap = await getDocs(collection(db,'videos_producao'));
-    const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) todos.push({id:d.id, ...v}); });
+    if(!cont)return;
+    const ctxI34=contextoEdicaoI34();
+    const geracaoI34=String(Number(cont.dataset.geracaoI34||0)+1);cont.dataset.geracaoI34=geracaoI34;
+    cont.innerHTML='<div class="card">Carregando fila de edição…</div>';
+    let snap;
+    try{snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,'videos_producao')),'Conferir fila da Amanda',12000);ctxI34.validar();}
+    catch(e){
+      try{ctxI34.validar();}catch(e){return;}
+      if(cont.dataset.geracaoI34===geracaoI34)cont.innerHTML='<div class="card" role="alert">Não foi possível carregar a fila. Nenhuma pendência foi confirmada como vazia.<button class="btn secondary" onclick="renderGerenciaVideos()">Tentar novamente</button></div>';
+      return;
+    }
+    if(cont.dataset.geracaoI34!==geracaoI34)return;
+    const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && fonteFisicaClienteR4(v.cliente,v)) todos.push({...v,id:d.id}); });
     const abertos = todos.filter(v => ['aguardando_edicao','correcao'].includes(v.status));
     /* ===== 04/08/2026 — ORDEM DA FILA DE DISTRIBUICAO (pedido da Amanda) =====
        Primeiro o prazo; dentro do mesmo prazo, o mesmo cliente em sequencia,
@@ -8135,7 +8148,9 @@ window.marcarClienteAprovouVideo = async function(id){
       }
     }
 
-    cont.innerHTML = html;
+    ctxI34.validar();
+    if(cont.dataset.geracaoI34!==geracaoI34)return;
+    cont.innerHTML = htmlFilaSomenteEdicaoI34(todos) + html;
   }
 
   window.definirPrazoVideoData = async function(id, dataStr){
@@ -8377,7 +8392,7 @@ window.marcarClienteAprovouVideo = async function(id){
     const videos = []; videosSnap.forEach(d=>{ const v=d.data(); if(v.cliente===clienteSlug && !v.excluido) videos.push(v); });
     const videosConcluidos = videos.filter(v => mesOperacional(v.clienteAprovouEm) === mesAtual).length;
 
-    const agendamentos = []; agSnap.forEach(d=>{ const a=d.data(); if(!a.excluido && a.status!=='cancelado' && (a.cliente===clienteSlug || a.clienteSlug===clienteSlug) && a.data?.startsWith(mesAtual)) agendamentos.push(a); });
+    const agendamentos = []; agSnap.forEach(d=>{ const a=d.data(); if(!a.excluido && a.status!=='cancelado' && !sessaoSemCaptacaoI34(a) && (a.cliente===clienteSlug || a.clienteSlug===clienteSlug) && a.data?.startsWith(mesAtual)) agendamentos.push(a); });
     const realizadas = agendamentos.filter(a => a.status === 'realizado');
     const planejado = agendamentos.reduce((s,a)=>s+(a.qtdVideosPlanejados||0),0);
     const realizado = realizadas.reduce((s,a)=>s+(a.qtdVideosRealizados||0),0);
@@ -9647,6 +9662,7 @@ window.marcarClienteAprovouVideo = async function(id){
       if(!s.exists()){ mostrarToast('Este vídeo não existe mais. Nada foi distribuído.', 'erro'); return; }
       const v = s.data();
       exigirClienteOperacionalR4(v.cliente||v.clienteSlug,v);
+      if(pendenteSomenteEdicaoI34(v)){mostrarToast('Abra Somente edição na fila para conferir o material e encaminhar.','erro');return false;}
       anterior = v.editorAtribuido || ''; titulo = v.titulo || ''; clienteNome = v.clienteNome || '';
       trabalhoExterno = ehTrabalhoExternoVideo(v);
     }catch(e){
@@ -9877,7 +9893,7 @@ window.marcarClienteAprovouVideo = async function(id){
       const itens = itensDoMesCalendario(cal, mes).filter(i => i && !i.excluido);
       const concluidos = itens.filter(itemNaoPrecisaGravar);
       const faltam = itens.filter(i => !itemNaoPrecisaGravar(i));
-      const gravacoes = (agendamentos||[]).filter(a => !a.excluido && a.status !== 'cancelado' &&
+      const gravacoes = (agendamentos||[]).filter(a => !a.excluido && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) &&
         (a.cliente === cliente.slug || a.clienteSlug === cliente.slug));
       const doMes = gravacoes.filter(a => String(a.data||'').startsWith(mes));
       const deHoje = gravacoes.filter(a => a.data === hoje);
@@ -10076,7 +10092,7 @@ window.marcarClienteAprovouVideo = async function(id){
       });
       agendamentos.forEach(a => {
         const slug = a.cliente || a.clienteSlug || '';
-        if(!slug || a.excluido || a.status === 'cancelado' || !String(a.data||'').startsWith(mes)) return;
+        if(!slug || a.excluido || a.status === 'cancelado' || sessaoSemCaptacaoI34(a) || !String(a.data||'').startsWith(mes)) return;
         clientesPorSlugControle.set(slug, {slug, nome:a.clienteNome || clientesPorSlugControle.get(slug)?.nome || nomeDeSlugSeguro(slug)});
       });
       const clientes = Array.from(clientesPorSlugControle.values());
@@ -10382,7 +10398,7 @@ async function popularClientesAgendamento(){
     let count = 0;
     snap.forEach(d => {
       const a = d.data();
-      if(!a.excluido && (a.clienteSlug || a.cliente) === clienteSlug && a.data?.startsWith(mesAtual) && a.status !== 'cancelado') count++;
+      if(!a.excluido && (a.clienteSlug || a.cliente) === clienteSlug && a.data?.startsWith(mesAtual) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a)) count++;
     });
 
     let calTxt = 'Calendário desse cliente ainda não foi iniciado.';
@@ -10516,7 +10532,7 @@ async function popularClientesAgendamento(){
     /* 01/08/2026 — gravação excluída não pode contar pra decidir se o
        dia está cheio, senão o sistema pede aprovação da Amanda por causa
        de gravação que não existe mais. */
-    snap.forEach(d => { const a = d.data(); if(a.excluido) return; if(a.data === data && a.status !== 'cancelado') qtd++; });
+    snap.forEach(d => { const a = d.data(); if(a.excluido) return; if(a.data === data && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a)) qtd++; });
     const box = document.getElementById('avisoQtdHoje');
     if(qtd >= 2){
       box.innerHTML = `<div class="avisoBanner" style="border-color:var(--red);"><div class="icone">⚠️</div><div class="texto">Já tem ${qtd} gravação(ões) nesse dia<span>Essa vai precisar da aprovação da Amanda antes de confirmar.</span></div></div>`;
@@ -10725,7 +10741,7 @@ async function popularClientesAgendamento(){
       const sessaoChave=clienteSlug+'|'+mesCalendario+'|S'+String(blocoAgendamento).padStart(2,'0');
       const snap=await getDocs(collection(db,'agendamentos'));validar();
       let qtdNoDia=0,temGravacaoAnteriorDoCliente=false;
-      snap.forEach(d=>{const a=d.data();if(a.excluido||a.status==='cancelado')return;if(a.data===data)qtdNoDia++;if(a.cliente===clienteSlug||a.clienteSlug===clienteSlug)temGravacaoAnteriorDoCliente=true;});
+      snap.forEach(d=>{const a=d.data();if(a.excluido||a.status==='cancelado'||sessaoSemCaptacaoI34(a))return;if(a.data===data)qtdNoDia++;if(a.cliente===clienteSlug||a.clienteSlug===clienteSlug)temGravacaoAnteriorDoCliente=true;});
       const ehClienteNovo=!temGravacaoAnteriorDoCliente;
       const precisaAprovacao=qtdNoDia>=2||ehClienteNovo;
       const motivoAprovacao=ehClienteNovo?'cliente novo':'terceira gravação do dia';
@@ -11197,6 +11213,185 @@ async function popularClientesAgendamento(){
      extras, e compara com o planejado — atualiza a cada clique/digitacao.
      Deliberadamente NAO e um numero digitado a mao: assim o contador
      nunca discorda da lista real de videos que vai ser criada. */
+  /* I34 — encaminhamento manual de edição. Uma pendência, o mesmo vídeo. */
+  function novosEnviosEdicaoAtivosI34(){ return true; }
+  function sessaoSemCaptacaoI34(a){ return a?.status === 'concluido_sem_gravacao'; }
+  function pendenteSomenteEdicaoI34(v){
+    return !v.excluido && v.edicaoManual?.versao===1 && v.edicaoManual.estado!=='encaminhado';
+  }
+  function contextoEdicaoI34(){
+    const identidade=sessaoServicoManual(), uid=auth.currentUser?.uid, pessoa=usuarioAtual;
+    if(!uid) throw new Error('Entre novamente na sua conta.');
+    return {uid,pessoa,ator:atorRealDaSessao(),validar(){
+      if(sessaoServicoManual()!==identidade || auth.currentUser?.uid!==uid || usuarioAtual!==pessoa)
+        throw new Error('O perfil mudou. Reabra esta tela na sua conta.');
+    }};
+  }
+  function materialUrlI34(valor){
+    const texto=String(valor||'').trim();
+    if(!texto) return '';
+    if(texto.length>2000) throw new Error('O link do material é muito longo.');
+    let url; try{url=new URL(texto);}catch(e){throw new Error('Informe um link completo do material, começando com https://.');}
+    if(url.protocol!=='https:' || url.username || url.password) throw new Error('Use um link https:// do material, sem usuário ou senha no endereço.');
+    return url.href;
+  }
+  function htmlOpcaoSomenteEdicaoI34(agId,it,pos,podeExecutar){
+    if(!novosEnviosEdicaoAtivosI34())return '';
+    return `<div class="somenteEdicaoItemI34" data-edicao-item="${escAttr(it.itemId||'')}" style="padding:7px 10px;margin:-4px 0 10px;border:1px solid var(--line);border-radius:0 0 8px 8px;">
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" class="chkSomenteEdicao_${agId}" data-idx="${it.idx}" data-item-id="${escAttr(it.itemId||'')}" data-competencia="${escAttr(it.competenciaI34)}" data-nome="${escAttr(it.name)}" ${podeExecutar?'':'disabled'} onchange="alternarSomenteEdicaoI34('${escJs(agId)}',this)"><b>✂️ Somente edição — não precisa gravar</b></label>
+      <div class="detalheSomenteEdicaoI34" hidden><div class="meta" style="margin:7px 0;color:var(--yellow);">Vai para a Amanda conferir o material e encaminhar ao editor.</div>
+        <label>Observação (opcional)<textarea class="notaSomenteEdicaoI34" maxlength="2000" aria-label="Observação de edição: ${escAttr(it.name)}" placeholder="Ex.: usar imagens que o cliente já enviou"></textarea></label>
+        <label>Link do material (opcional)<input type="url" class="linkSomenteEdicaoI34" maxlength="2000" aria-label="Material de edição: ${escAttr(it.name)}" placeholder="https://..."></label>
+      </div></div>`;
+  }
+  window.alternarSomenteEdicaoI34=function(agId,campo){
+    const bloco=campo.closest('.somenteEdicaoItemI34');
+    bloco.querySelector('.detalheSomenteEdicaoI34').hidden=!campo.checked;
+    bloco.style.borderColor=campo.checked?'var(--yellow)':'var(--line)';
+    if(campo.checked) document.querySelectorAll('.chkVideoCalendario_'+agId).forEach(c=>{
+      if(c.dataset.itemId===campo.dataset.itemId && c.dataset.competencia===campo.dataset.competencia)c.checked=false;
+    });
+    atualizarContadorVideos(agId,Number(document.getElementById('btnConfirmarGravacao_'+agId)?.dataset.qtdPlanejada)||0);
+  };
+  window.alternarGravadoI34=function(agId,campo,qtd){
+    if(campo.checked) document.querySelectorAll('.chkSomenteEdicao_'+agId).forEach(c=>{
+      if(c.dataset.itemId===campo.dataset.itemId && c.dataset.competencia===campo.dataset.competencia){c.checked=false;alternarSomenteEdicaoI34(agId,c);}
+    });
+    atualizarContadorVideos(agId,qtd);
+  };
+  function coletarSomenteEdicaoI34(agId){
+    const selecionados=Array.from(document.querySelectorAll('.chkSomenteEdicao_'+agId+':checked')).map(c=>{
+      const bloco=c.closest('.somenteEdicaoItemI34');
+      return {nome:String(c.dataset.nome||'').trim(),calendarItemIdx:Number(c.dataset.idx),calendarItemId:c.dataset.itemId||'',calendarCompetencia:c.dataset.competencia||'',
+        observacao:String(bloco.querySelector('.notaSomenteEdicaoI34')?.value||'').trim(),materialUrl:materialUrlI34(bloco.querySelector('.linkSomenteEdicaoI34')?.value)};
+    });
+    const manuais=String(document.getElementById('extrasEdicao_'+agId)?.value||'').split('\n').map(s=>s.trim()).filter(Boolean);
+    const nota=String(document.getElementById('notaExtrasEdicao_'+agId)?.value||'').trim();
+    const link=manuais.length?materialUrlI34(document.getElementById('linkExtrasEdicao_'+agId)?.value):'';
+    return [...selecionados,...manuais.map(nome=>({nome,calendarItemIdx:null,calendarItemId:null,calendarCompetencia:null,observacao:nota,materialUrl:link}))];
+  }
+  function validarListaSomenteEdicaoI34(lista,gravados,nomesChecklist){
+    const normalizar=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+    const vistos=new Set(gravados.map(v=>normalizar(v.nome)));
+    for(const v of lista){
+      if(!v.nome || v.nome.length>300 || v.observacao.length>2000) throw new Error('Confira os títulos (até 300 caracteres) e observações (até 2.000 caracteres).');
+      const chave=normalizar(v.nome);
+      if(vistos.has(chave)) throw new Error('“'+v.nome+'” foi repetido ou marcado também como gravado. Escolha uma única opção.');
+      if(v.calendarItemId===null && nomesChecklist.has(chave)) throw new Error('“'+v.nome+'” está no checklist. Use a opção Somente edição ao lado do título.');
+      if(v.calendarItemId!==null && (!segmentoOcupacaoI28(v.calendarItemId)||!/^\d{4}-(0[1-9]|1[0-2])$/.test(v.calendarCompetencia)))throw new Error('Este título não possui vínculo exato com a pauta. Reabra a sessão para conferir.');
+      vistos.add(chave);
+    }
+  }
+  function htmlMaterialEditorI34(v){
+    let link='';try{link=materialUrlI34(v.materialUrl);}catch(e){}
+    return '<div class="meta" style="margin:8px 0;color:var(--yellow);">✂️ Somente edição — material conferido pela gestão'+(link?' · <a href="'+escAttr(link)+'" target="_blank" rel="noopener">Abrir material ↗</a>':'')+'</div>';
+  }
+  function htmlRecibosEdicaoI34(agendamentos){
+    const enviados=agendamentos.filter(a=>a.encaminhamentoEdicaoI34?.versao===1).sort((a,b)=>String(b.finalizadoEm||'').localeCompare(String(a.finalizadoEm||'')));
+    if(!enviados.length)return '';
+    return `<details class="card" open style="border:2px solid var(--green);"><summary style="cursor:pointer;font-weight:800;">✓ Somente edição — envios confirmados para Amanda (${enviados.length})</summary>
+      ${enviados.map(a=>`<div class="item"><b>${esc(a.clienteNome||a.cliente)} · ${formatarDataBR(a.data||'')}</b><div class="meta">${Number(a.qtdVideosRealizados)||0} gravado(s) · ${a.encaminhamentoEdicaoI34.itens.length} somente edição${sessaoSemCaptacaoI34(a)?' · sessão concluída sem gravação':''}</div>
+        <div class="meta" style="margin-top:5px;">${a.encaminhamentoEdicaoI34.itens.map(v=>esc(v.nome)).join(' · ')}</div><div class="meta">Enviado por ${esc(a.encaminhamentoEdicaoI34.por)}. Registrado na fila da Amanda; não precisa reenviar.</div></div>`).join('')}</details>`;
+  }
+  async function lerSomenteEdicaoI34(ctx){
+    const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'videos_producao'),where('edicaoManual.versao','==',1))),'Carregar encaminhamentos de edição',12000);
+    ctx.validar();
+    return snap.docs.map(d=>({...d.data(),id:d.id})).filter(v=>!v.excluido && fonteFisicaClienteR4(v.cliente,v));
+  }
+  function htmlResumoSomenteEdicaoI34(lista){
+    const fila=lista.filter(pendenteSomenteEdicaoI34);
+    return `<div class="card" data-resumo-edicao-i34 style="border:2px solid var(--yellow);"><h2>✂️ Somente edição — aguardando encaminhamento <span class="selo">${fila.length}</span></h2>
+      <div class="desc">${fila.length?'Os videomakers sinalizaram estes vídeos para você conferir o material e escolher o editor.':'Nenhum encaminhamento pendente nesta conferência.'}</div>
+      ${fila.length?`<div class="meta" style="margin-top:7px;">${fila.slice(0,4).map(v=>esc(v.titulo)).join(' · ')}${fila.length>4?'…':''}</div>`:''}
+      <button class="btn" style="margin-top:10px;" onclick="irParaDistribuirVideos()">Abrir fila de edição →</button>
+      <button class="btn secondary" style="margin-top:7px;" onclick="renderResumoSomenteEdicaoI34()">Atualizar pendências</button></div>`;
+  }
+  let __resumoEdicaoGeracaoI34=0;
+  window.renderResumoSomenteEdicaoI34=async function(){
+    const box=document.getElementById('edicaoManualInicioI34'), geracao=++__resumoEdicaoGeracaoI34;
+    if(!box)return;
+    box.innerHTML='';
+    if(!['Amanda','Chris'].includes(usuarioAtual))return;
+    const ctx=contextoEdicaoI34();
+    box.innerHTML='<div class="card">Carregando encaminhamentos de edição…</div>';
+    try{
+      const lista=await lerSomenteEdicaoI34(ctx);
+      if(geracao===__resumoEdicaoGeracaoI34)box.innerHTML=htmlResumoSomenteEdicaoI34(lista);
+    }catch(e){
+      if(geracao!==__resumoEdicaoGeracaoI34)return;
+      try{ctx.validar();}catch(e){box.innerHTML='';return;}
+      box.innerHTML='<div class="card" role="alert" style="border:2px solid var(--red);">Não foi possível conferir os encaminhamentos de edição. A fila não está confirmada como vazia.<button class="btn secondary" onclick="renderResumoSomenteEdicaoI34()">Tentar novamente</button></div>';
+    }
+  };
+  function diaEnvioEdicaoI34(em){
+    const d=new Date(em);return Number.isNaN(d.getTime())?'':new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+  }
+  function htmlFilaSomenteEdicaoI34(lista){
+    const fila=lista.filter(pendenteSomenteEdicaoI34).sort((a,b)=>a.edicaoManual.enviadoEm.localeCompare(b.edicaoManual.enviadoEm));
+    return `<div class="card" id="filaSomenteEdicaoI34" style="border:2px solid var(--yellow);"><h2>✂️ Somente edição — aguardando encaminhamento (${fila.length})</h2>
+      <div class="desc">Confira o material de cada vídeo e escolha o editor. Os itens aguardando material continuam nesta fila.</div>
+      ${fila.length?fila.map(v=>{const e=v.edicaoManual;return `<div class="item" data-edicao-video="${escAttr(v.id)}" data-edicao-revisao="${e.revisao}">
+        <div class="top"><b>${esc(v.titulo)}</b><span class="selo">${e.estado==='aguardando_material'?'Aguardando material':'Aguardando Amanda'}</span></div>
+        <div class="meta" style="margin:6px 0;">${esc(v.clienteNome||v.cliente)} · enviado por ${esc(e.por)} · ${formatarDataBR(diaEnvioEdicaoI34(e.enviadoEm))} · sem gravação</div>
+        <label>Observação / material que falta<textarea data-edicao-nota maxlength="2000">${esc(e.observacao)}</textarea></label>
+        <label>Link do material (opcional)<input data-edicao-link type="url" maxlength="2000" value="${escAttr(e.materialUrl)}" placeholder="https://..."></label>
+        <label>Editor<select data-edicao-editor><option value="">Escolha o editor…</option>${EDITORES_SELECIONAVEIS.map(p=>`<option value="${escAttr(p)}">${esc(p)}</option>`).join('')}</select></label>
+        <label style="display:flex;gap:8px;margin:10px 0;"><input data-edicao-confirmado type="checkbox">Conferi que o material está disponível para edição</label>
+        <div class="btnrow"><button class="btn secondary" onclick="tratarSomenteEdicaoI34('${escJs(v.id)}','aguardar')">Salvar como aguardando material</button>
+        <button class="btn green" onclick="tratarSomenteEdicaoI34('${escJs(v.id)}','encaminhar')">Encaminhar ao editor</button></div>
+      </div>`;}).join(''):'<div class="empty">Nenhum encaminhamento pendente nesta conferência.</div>'}</div>`;
+  }
+  async function salvarTratamentoSomenteEdicaoI34(videoId,entrada,ctx){
+    ctx.validar();
+    if(!['Amanda','Chris'].includes(ctx.pessoa))throw new Error('Este encaminhamento é da gestão.');
+    if(!segmentoOcupacaoI28(videoId)||!['aguardar','encaminhar'].includes(entrada.acao))throw new Error('Encaminhamento inválido. Reabra a fila.');
+    const encaminhar=entrada.acao==='encaminhar', materialUrl=materialUrlI34(entrada.materialUrl), observacao=String(entrada.observacao||'').trim();
+    if(observacao.length>2000)throw new Error('A observação deve ter até 2.000 caracteres.');
+    if(encaminhar && (!entrada.materialConfirmado||!EDITORES_SELECIONAVEIS.includes(entrada.editor)))throw new Error('Escolha o editor e confirme que o material está disponível.');
+    const ref=doc(db,'videos_producao',videoId),em=new Date().toISOString();
+    const resultado=await runTransaction(db,async tx=>{
+      const snap=await tx.get(ref);ctx.validar();
+      if(!snap.exists())throw new Error('Este vídeo não existe mais.');
+      const v=snap.data();exigirClienteOperacionalR4(v.cliente,v);
+      if(!pendenteSomenteEdicaoI34(v)||v.status!=='aguardando_encaminhamento'||v.editorAtribuido)throw new Error('Este item já foi encaminhado ou alterado. Atualize a fila.');
+      if(v.edicaoManual.revisao!==entrada.revisao)throw new Error('Este item mudou em outra aba. Atualize a fila antes de confirmar.');
+      const edicaoManual={...v.edicaoManual,revisao:v.edicaoManual.revisao+1,estado:encaminhar?'encaminhado':'aguardando_material',materialUrl,observacao,
+        materialConfirmado:encaminhar,tratadoPor:ctx.ator,tratadoUid:ctx.uid,tratadoEm:em};
+      const patch={edicaoManual,observacao,materialUrl,historico:arrayUnion({acao:encaminhar?'Encaminhado para edição':'Aguardando material para edição',detalhe:encaminhar?'Editor: '+entrada.editor:observacao,por:ctx.ator,em})};
+      if(encaminhar)Object.assign(patch,{status:'aguardando_edicao',editorAtribuido:entrada.editor,editorAtribuidoPor:ctx.ator,editorAtribuidoEm:em});
+      tx.update(ref,patch);return {titulo:v.titulo,clienteNome:v.clienteNome,revisao:edicaoManual.revisao};
+    });
+    // O commit confirmado nunca é anunciado como zero escrita por falha posterior.
+    try{
+      const snap=await comTimeoutCalendarioOperacional(_getDocFromServerFB(ref),'Conferir encaminhamento salvo',12000);ctx.validar();
+      if(!snap.exists()||snap.metadata?.fromCache||snap.metadata?.hasPendingWrites||snap.data().edicaoManual?.revisao<resultado.revisao)throw new Error('Recibo indisponível.');
+    }catch(e){return {...resultado,recibo:false};}
+    return {...resultado,recibo:true};
+  }
+  const __tratamentosEdicaoI34=new Set();
+  window.tratarSomenteEdicaoI34=async function(videoId,acao){
+    if(__tratamentosEdicaoI34.has(videoId))return false;
+    const card=Array.from(document.querySelectorAll('[data-edicao-video]')).find(el=>el.dataset.edicaoVideo===videoId);
+    if(!card)return false;
+    __tratamentosEdicaoI34.add(videoId);
+    const botoes=card.querySelectorAll('button');botoes.forEach(b=>b.disabled=true);
+    let salvo=false;
+    try{
+      const ctx=contextoEdicaoI34(), editor=card.querySelector('[data-edicao-editor]').value;
+      const resultado=await salvarTratamentoSomenteEdicaoI34(videoId,{acao,editor,revisao:Number(card.dataset.edicaoRevisao),observacao:card.querySelector('[data-edicao-nota]').value,
+        materialUrl:card.querySelector('[data-edicao-link]').value,materialConfirmado:card.querySelector('[data-edicao-confirmado]').checked},ctx);
+      salvo=true;
+      if(!resultado.recibo){mostrarToast('A alteração foi salva, mas o recibo não pôde ser conferido. Atualize a fila antes de tentar novamente.','erro');return false;}
+      mostrarToast(acao==='encaminhar'?'Encaminhado para '+editor+'.':'Salvo como aguardando material. A pendência continua visível.');
+      if(acao==='encaminhar'){
+        try{ctx.validar();await avisarEditorDoVideo(videoId,editor,'',resultado.titulo,resultado.clienteNome);}catch(e){mostrarToast('O vídeo está na fila do editor; o aviso complementar não confirmou.','erro');}
+      }
+      ctx.validar();limparCacheIndicadores();await renderGerenciaVideos();renderResumoSomenteEdicaoI34();return true;
+    }catch(e){mostrarToast((salvo?'A alteração está salva. ':'Não alterei o encaminhamento: ')+String(e.message||e),'erro');return false;}
+    finally{__tratamentosEdicaoI34.delete(videoId);botoes.forEach(b=>b.disabled=false);}
+  };
+  /* Fim I34 — encaminhamento manual. */
+
   window.atualizarContadorVideos = function(agId, qtdPlanejada){
     const box = document.getElementById('contadorVideos_' + agId);
     if(!box) return;
@@ -11205,6 +11400,7 @@ async function popularClientesAgendamento(){
     const extras = campoExtras && campoExtras.value.trim()
       ? campoExtras.value.trim().split('\n').map(s=>s.trim()).filter(Boolean).length : 0;
     const total = marcados + extras;
+    const somenteEdicao=document.querySelectorAll('.chkSomenteEdicao_'+agId+':checked').length + String(document.getElementById('extrasEdicao_'+agId)?.value||'').split('\n').filter(s=>s.trim()).length;
     const plan = Number(qtdPlanejada) || 0;
     let cor = 'var(--muted)', aviso = '';
     if(total === 0){ cor = 'var(--red)'; aviso = ' — marca ou escreve pelo menos um'; }
@@ -11213,11 +11409,12 @@ async function popularClientesAgendamento(){
     else if(plan){ cor = 'var(--green)'; aviso = ' — bateu o planejado'; }
     box.innerHTML = '<b style="color:' + cor + ';">' + total + ' vídeo(s) vão ser lançados</b>' +
       (plan ? '<span style="color:var(--muted);"> (planejado: ' + plan + ')' + aviso + '</span>' : '');
+    if(somenteEdicao)box.innerHTML='<b>'+total+' vídeo(s) gravado(s) e '+somenteEdicao+' somente para edição</b><div class="meta">Somente os gravados entram na produtividade. Confira a seleção antes de enviar.</div>';
     const btn = document.getElementById('btnConfirmarGravacao_' + agId);
     if(btn){
       const podeExecutar = btn.dataset.podeExecutar === '1';
-      btn.disabled = !podeExecutar || total === 0;
-      btn.title = !podeExecutar ? 'Este perfil não executa a gravação.' : (total ? '' : 'Marque ou escreva pelo menos um vídeo.');
+      btn.disabled = !podeExecutar || (total+somenteEdicao) === 0 || __confirmacoesGravacaoEmCurso.has(agId);
+      btn.title = !podeExecutar ? 'Este perfil não executa a gravação.' : (total+somenteEdicao ? '' : 'Marque um vídeo gravado ou somente edição.');
     }
   };
 
@@ -11658,6 +11855,7 @@ async function popularClientesAgendamento(){
     }catch(e){ console.error('Falha na agenda de reuniões:', e); }
     if(!renderAindaAtual()) return false;
 
+    html += htmlRecibosEdicaoI34(todos);
     if(!pendentes.length && !aguardandoAprovacao.length){
       cont.innerHTML = blocoAgenda + html + '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">✅ Nenhuma gravação pendente de registro. Tudo em dia! 🎉</div></div>';
       return true;
@@ -11736,10 +11934,10 @@ async function popularClientesAgendamento(){
         <div style="margin-top:12px;border:1px solid ${cor};border-radius:10px;padding:10px 11px;">
           <div class="meta" style="font-weight:900;color:${cor};margin-bottom:7px;">${titulo}</div>
           ${lista.map((it,pos)=>`<label class="linhaCaptacaoSessao" style="background:var(--deep);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:5px;cursor:pointer;">
-            <input type="checkbox" class="chkVideoCalendario_${a.id}" data-idx="${it.idx}" data-item-id="${escAttr(it.itemId||'')}" data-competencia="${escAttr(mesAgenda)}" data-nome="${escAttr(it.name)}" onchange="atualizarContadorVideos('${a.id}', ${a.qtdVideosPlanejados||0})">
+            <input type="checkbox" class="chkVideoCalendario_${a.id}" data-idx="${it.idx}" data-item-id="${escAttr(it.itemId||'')}" data-competencia="${escAttr(mesAgenda)}" data-nome="${escAttr(it.name)}" onchange="alternarGravadoI34('${a.id}',this,${a.qtdVideosPlanejados||0})">
             <b style="color:${cor};min-width:22px;">${inicio+pos}.</b><span style="font-size:12px;">${esc(it.name||'Sem título')}</span>
             ${filmmakersSessao.length>1?`<select class="responsavelVideoCalendario_${a.id}" onclick="event.stopPropagation()" aria-label="Quem gravou ${escAttr(it.name||'este conteúdo')}">${filmmakersSessao.map(p=>`<option value="${escAttr(p)}" ${nomeOperacionalCanonico(p)===nomeOperacionalCanonico(responsavelCaptacaoPadrao)?'selected':''}>Feito por ${esc(p)}</option>`).join('')}</select>`:`<input type="hidden" class="responsavelVideoCalendario_${a.id}" value="${escAttr(responsavelCaptacaoPadrao||'')}"><span class="meta responsavelCaptacaoRotulo" style="grid-column:4/5;">Feito por ${esc(responsavelCaptacaoPadrao||'responsável da sessão')}</span>`}
-          </label>`).join('')}
+          </label>${htmlOpcaoSomenteEdicaoI34(a.id,{...it,competenciaI34:mesAgenda},pos,podeExecutarSessao)}`).join('')}
         </div>` : '';
       const inicioPendencias = (planoSessao.fazerHoje||[]).length + 1;
       const htmlNaoGravar = (planoSessao.naoGravarHoje||[]).length ? `
@@ -11812,6 +12010,12 @@ async function popularClientesAgendamento(){
             <div class="meta" style="margin-top:6px;">Os títulos digitados ficam vinculados somente a este agendamento e <b>não marcam item algum do calendário</b>. Se um título já aparece no checklist acima, marque-o lá em vez de repeti-lo.</div>
           </div>` : ''}
 
+          ${permiteDeclaracaoSessao && novosEnviosEdicaoAtivosI34() ? `<details class="card" style="border:1px solid var(--yellow);"><summary style="cursor:pointer;font-weight:800;">✂️ Somente edição: adicionar título que não está no checklist</summary>
+            <div class="meta" style="margin:8px 0;">Use para material que não precisa de gravação. Se o título aparece acima, marque Somente edição nele.</div>
+            <label>Títulos para edição (um por linha)<textarea id="extrasEdicao_${a.id}" oninput="atualizarContadorVideos('${a.id}',${qtdPlan})" placeholder="Ex.: Montagem com fotos do cliente"></textarea></label>
+            <label>Observação para esses títulos (opcional)<textarea id="notaExtrasEdicao_${a.id}" maxlength="2000"></textarea></label>
+            <label>Link do material (opcional)<input type="url" id="linkExtrasEdicao_${a.id}" maxlength="2000" placeholder="https://..."></label>
+          </details>`:''}
           <div class="avisoBanner" style="margin:10px 0;"><div class="icone">🎬</div><div class="texto" id="contadorVideos_${a.id}"><b style="color:var(--red);">0 vídeo(s) vão ser lançados</b><span style="color:var(--muted);"> (planejado: ${qtdPlan})</span></div></div>
           <div class="meta" style="margin:-3px 0 12px;padding:9px 11px;border-left:3px solid var(--green);background:rgba(72,187,120,.08);border-radius:8px;"><b>O envio não depende de organização prévia da Amanda ou da Cecília.</b> Ao confirmar, os vídeos entram direto na fila da Amanda para distribuição. A diferença entre planejado e realizado fica visível no controle, sem criar uma aprovação ou tarefa obrigatória.</div>
 
@@ -11825,7 +12029,7 @@ async function popularClientesAgendamento(){
           ${a.tipo==='avulso' ? `<div class="field"><label>Valor extra a receber (cliente fora do banco)</label><input type="text" id="valorExtra_${a.id}" placeholder="Ex: R$ 150,00"></div>` : ''}
           <div class="btnrow">
             ${podeExecutarSessao?`<button class="btn secondary" onclick="reagendarGravacao('${a.id}')">Reagendar</button><button class="btn red" onclick="cancelarGravacaoAgendada('${a.id}')">✕ Cancelar</button>`:''}
-            ${podeExecutarSessao?`<button class="btn green" id="btnConfirmarGravacao_${a.id}" data-confirmar-gravacao="${a.id}" data-pode-executar="1" data-qtd-planejada="${qtdPlan}" disabled title="Marque ou escreva pelo menos um vídeo." onclick="registrarGravacaoRealizada('${a.id}')">Enviar vídeos gravados e concluir sessão</button>`:'<span class="meta">Visão de controle — a execução é do filmmaker da sessão.</span>'}
+            ${podeExecutarSessao?`<button class="btn green" id="btnConfirmarGravacao_${a.id}" data-confirmar-gravacao="${a.id}" data-pode-executar="1" data-qtd-planejada="${qtdPlan}" disabled title="Marque ou escreva pelo menos um vídeo." onclick="registrarGravacaoRealizada('${a.id}')">Conferir envio e concluir checklist</button>`:'<span class="meta">Visão de controle — a execução é do filmmaker da sessão.</span>'}
           </div>
         </div>
       </div>`;
@@ -11902,7 +12106,7 @@ async function popularClientesAgendamento(){
       return;
     }
     const todos = []; snap.forEach(d => todos.push(d.data()));
-    let doMes = todos.filter(a => !a.excluido && a.data && a.data.startsWith(mesFiltro) && a.status !== 'cancelado');
+    let doMes = todos.filter(a => !a.excluido && a.data && a.data.startsWith(mesFiltro) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a));
     if(clienteFiltro !== 'todos') doMes = doMes.filter(a => (a.clienteSlug || a.cliente) === clienteFiltro);
     if(filmmakerFiltro !== 'todos') doMes = doMes.filter(a => pessoaNaEquipe(a, filmmakerFiltro));
 
@@ -11946,7 +12150,7 @@ async function popularClientesAgendamento(){
 
     let planejado = 0, realizado = 0;
     listaAgendamentos.forEach(a => {
-      if((a.cliente === clienteSlug || a.clienteSlug === clienteSlug) && a.data?.startsWith(mesAtual) && a.status !== 'cancelado' && !a.excluido){
+      if((a.cliente === clienteSlug || a.clienteSlug === clienteSlug) && a.data?.startsWith(mesAtual) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && !a.excluido){
         planejado += a.qtdVideosPlanejados || 0;
         if(a.status === 'realizado') realizado += a.qtdVideosRealizados || 0;
       }
@@ -14341,7 +14545,7 @@ async function popularClientesAgendamento(){
 
     const hoje = hojeLocal();
     let gravacoesHoje = 0;
-    agSnap.forEach(d => { const a=d.data(); if(!a.excluido && a.data===hoje && a.status!=='cancelado' && a.aprovado!==false) gravacoesHoje++; });
+    agSnap.forEach(d => { const a=d.data(); if(!a.excluido && a.data===hoje && a.status!=='cancelado' && !sessaoSemCaptacaoI34(a) && a.aprovado!==false) gravacoesHoje++; });
     const atrasadasCount = pendentes.filter(p => p.legendaEm && Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) >= 1).length;
     const recuperadasCount = pendentes.filter(p => p.recuperadoDoDemandaId).length;
 
@@ -16600,7 +16804,7 @@ window.arquivarMesCampanhas=async function(mes,token){
         if(!ultimaPost[v.cliente] || v.dataAgendada > ultimaPost[v.cliente]) ultimaPost[v.cliente] = v.dataAgendada; });
       CLIENTES_LISTA.forEach(c => { if(!ultimaPost[c.slug] || ultimaPost[c.slug] < hojeStr) semPostagem[c.slug] = true; });
       const temGrav = {};
-      ag.forEach(d => { const v = d.data(); if(v.status !== 'cancelado' && v.data >= hojeStr) temGrav[v.cliente] = true; });
+      ag.forEach(d => { const v = d.data(); if(v.status !== 'cancelado' && !sessaoSemCaptacaoI34(v) && v.data >= hojeStr) temGrav[v.cliente] = true; });
       CLIENTES_LISTA.forEach(c => { if(!temGrav[c.slug]) semGravacao[c.slug] = true; });
       const ultimaNota = {};
       av.forEach(d => { const v = d.data(); if(v.excluido) return;
@@ -19805,7 +20009,7 @@ window.arquivarMesCampanhas=async function(mes,token){
       v.dados.calendarItemIdx=itemExatoOcupacaoI28(calendarios.get(slug),v.alvo).idx;
       const ocupacao=await tx.get(v.ocupacaoRef);
       if(ocupacao.exists()) throw new Error('Esta pauta já pertence a um vídeo registrado. Nenhuma cópia foi criada; peça à Amanda para continuar o vídeo existente.');
-      v.recibo=dadosReciboOcupacaoI28(v.ref.id,v.alvo,'gravacao',uid);
+      v.recibo=dadosReciboOcupacaoI28(v.ref.id,v.alvo,v.dados.edicaoManual?.versao===1?'somente_edicao':'gravacao',uid);
     }
     return preparados;
   }
@@ -19873,8 +20077,14 @@ async function registrarGravacaoRealizadaNucleo(agId){
     if(!preparacaoMateriais.ok){ mostrarToast(preparacaoMateriais.erro,'erro'); return false; }
     const videosDeclaradosCampo = preparacaoMateriais.declaradosCampo;
     const todosVideosParaCriar = preparacaoMateriais.videos;
+    let somenteEdicao;
+    try{
+      somenteEdicao=coletarSomenteEdicaoI34(agId);
+      if(somenteEdicao.length && !novosEnviosEdicaoAtivosI34())throw new Error('Novos encaminhamentos de edição estão pausados. Os envios anteriores continuam disponíveis para Amanda.');
+      validarListaSomenteEdicaoI34(somenteEdicao,todosVideosParaCriar,nomesChecklistDisponiveis);
+    }catch(e){mostrarToast(e.message,'erro');return false;}
     const qtdRealizada = todosVideosParaCriar.length;
-    if(qtdRealizada === 0){
+    if(qtdRealizada === 0 && !somenteEdicao.length){
       mostrarToast('Marque ou escreva pelo menos um vídeo. Uma gravação com zero não pode ser finalizada.', 'erro');
       return false;
     }
@@ -19883,12 +20093,17 @@ async function registrarGravacaoRealizadaNucleo(agId){
     const uberLink = temUber ? (document.getElementById('uberInput_'+agId)?.value||'').trim() : '';
     const campoValorExtra = document.getElementById('valorExtra_'+agId);
     const valorExtra = campoValorExtra ? campoValorExtra.value.trim() : '';
+    if(!qtdRealizada && (temUber || valorExtra)){
+      mostrarToast('Este envio não tem gravação. Retire os campos de Uber/extra desta sessão; eventuais serviços devem ser informados pelo lançamento próprio.','erro');return false;
+    }
+    if(somenteEdicao.length && !confirm(qtdRealizada+' vídeo(s) gravado(s) e '+somenteEdicao.length+' somente para edição.\n\nSomente edição:\n'+somenteEdicao.map(v=>'• '+v.nome).join('\n')+'\n\nEnviar para Amanda e concluir este checklist?'))return false;
+    validarSessaoI28();
     const qtdPlanejada = Number(agDadosAntes.qtdVideosPlanejados)||0;
     const qtdVideosFaltantes = Math.max(0,qtdPlanejada-qtdRealizada);
     const qtdVideosExcedentes = Math.max(0,qtdRealizada-qtdPlanejada);
     const qtdVideosVinculadosCalendario = videosDoCalendario.length;
     const qtdVideosDeclaradosCampo = videosDeclaradosCampo.length;
-    const registroCaptacaoModo = qtdVideosVinculadosCalendario && qtdVideosDeclaradosCampo
+    const registroCaptacaoModo = !qtdRealizada ? 'somente_edicao' : qtdVideosVinculadosCalendario && qtdVideosDeclaradosCampo
       ? 'misto' : (qtdVideosVinculadosCalendario ? 'checklist_calendario' : 'declaracao_filmmaker');
     const editorSugeridoPeloFilmmaker = document.getElementById('editorEscolhido_'+agId)?.value || '';
     const hojeRegistro = hojeLocal();
@@ -19926,6 +20141,23 @@ async function registrarGravacaoRealizadaNucleo(agId){
       }
     }));
 
+    const envioEdicaoEmI34=new Date().toISOString();
+    const videosSomenteEdicaoI34=somenteEdicao.map(v=>({ref:doc(collection(db,'videos_producao')),dados:{
+      cliente:clienteSlug,clienteNome,data:hojeRegistro,dataRegistro:hojeRegistro,titulo:clienteNome+' — '+v.nome,
+      calendarItemIdx:v.calendarItemIdx,calendarItemId:v.calendarItemId,calendarCompetencia:v.calendarCompetencia,
+      calendarClienteSlug:v.calendarItemId?clienteSlug:null,agendamentoId:agId,sessaoChave:chaveSessaoGravacao(agDadosAntes),
+      vinculoSessao:v.calendarItemId?'somente_edicao_calendario_i34':'somente_edicao_declarada_i34',
+      enviadoPor:usuarioAtual,registradoPor:usuarioAtual,filmmaker:'',soEdicao:true,origemMaterial:'recebido',
+      observacao:v.observacao,materialUrl:v.materialUrl,editorAtribuido:'',status:'aguardando_encaminhamento',linkFinalizado:'',criadoEm:serverTimestamp(),
+      edicaoManual:{versao:1,revisao:1,estado:'pendente',por:atorRealDaSessao(),uid:uidI28,enviadoEm:envioEdicaoEmI34,
+        observacao:v.observacao,materialUrl:v.materialUrl,materialConfirmado:false,tratadoPor:'',tratadoUid:'',tratadoEm:''},
+      historico:[{acao:'Sinalizado como somente edição',detalhe:'Enviado para Amanda pelo checklist; sem gravação.',por:atorRealDaSessao(),em:envioEdicaoEmI34}]
+    }}));
+    const encaminhamentoEdicaoI34=somenteEdicao.length?{versao:1,por:atorRealDaSessao(),uid:uidI28,em:envioEdicaoEmI34,
+      videoIds:videosSomenteEdicaoI34.map(v=>v.ref.id),itens:videosSomenteEdicaoI34.map((v,i)=>({videoId:v.ref.id,nome:somenteEdicao[i].nome}))}:null;
+    videosParaTransacao.push(...videosSomenteEdicaoI34);
+    const statusSessaoI34=qtdRealizada?'realizado':'concluido_sem_gravacao';
+
     /* V116 — o núcleo é atômico somente entre a baixa factual e os vídeos.
        Nem aprovação, data, bloco nem seleção do catálogo autorizam o
        filmmaker a confirmar produção no calendário. Essa confirmação vive
@@ -19958,9 +20190,10 @@ async function registrarGravacaoRealizadaNucleo(agId){
 
         const preparadosI28=await prepararOcupacoesGravacaoI28(transacao,videosParaTransacao,uidI28);
         validarSessaoI28();
-        preparadosI28.forEach((v,idx)=>{conteudosRealizados[idx].calendarItemIdx=v.dados.calendarItemIdx;});
+        preparadosI28.slice(0,qtdRealizada).forEach((v,idx)=>{conteudosRealizados[idx].calendarItemIdx=v.dados.calendarItemIdx;});
         transacao.update(agRef, {
-          status:'realizado', qtdVideosRealizados:qtdRealizada,
+          status:statusSessaoI34, qtdVideosRealizados:qtdRealizada,
+          ...(encaminhamentoEdicaoI34?{encaminhamentoEdicaoI34}:{}),
           finalizadoPor:usuarioAtual||'?', finalizadoEm:new Date().toISOString(),
           registradoPor:usuarioAtual||'?', dataProducao,
           conteudosRealizados, producaoPorFilmmaker, registroProducaoVersao:3,
@@ -19990,11 +20223,13 @@ async function registrarGravacaoRealizadaNucleo(agId){
       if(snaps.some(s=>!s.exists()||s.metadata?.fromCache||s.metadata?.hasPendingWrites))throw new Error('Recibo incompleto ou ainda local.');
       const porCaminho=new Map(snaps.map((s,idx)=>[refs[idx].path,s.data()]));
       const sessaoSalva=porCaminho.get(agRef.path);
-      if(sessaoSalva.status!=='realizado'||sessaoSalva.qtdVideosRealizados!==qtdRealizada)throw new Error('A sessão salva não confirmou.');
+      if(sessaoSalva.status!==statusSessaoI34||sessaoSalva.qtdVideosRealizados!==qtdRealizada)throw new Error('A sessão salva não confirmou.');
+      if(encaminhamentoEdicaoI34 && (sessaoSalva.encaminhamentoEdicaoI34?.em!==encaminhamentoEdicaoI34.em || sessaoSalva.encaminhamentoEdicaoI34.itens?.length!==somenteEdicao.length || encaminhamentoEdicaoI34.itens.some(v=>!sessaoSalva.encaminhamentoEdicaoI34.itens.some(x=>x.videoId===v.videoId&&x.nome===v.nome))))throw new Error('O recibo de edição não confirmou.');
       for(const v of baixaGravacao.preparadosI28){
         const salvo=porCaminho.get(v.ref.path);
         if(salvo.cliente!==clienteSlug||salvo.agendamentoId!==agId||
            ['calendarClienteSlug','calendarCompetencia','calendarItemId'].some(k=>(salvo[k]??null)!==(v.dados[k]??null)))throw new Error('O vínculo salvo não confirmou.');
+        if(v.dados.edicaoManual && (salvo.edicaoManual?.enviadoEm!==envioEdicaoEmI34 || salvo.soEdicao!==true || salvo.filmmaker!==''))throw new Error('O encaminhamento salvo não confirmou.');
         if(v.ocupacaoRef){
           const r=porCaminho.get(v.ocupacaoRef.path);
           if(r.videoId!==v.ref.id||Object.keys(v.alvo).some(k=>r[k]!==v.alvo[k]))throw new Error('A ocupação salva não confirmou.');
@@ -20010,7 +20245,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       return false;
     };
     let avisoPosCommitI28='';
-    try{await limparRastrosDoAgendamento(agId,'registro factual confirmado','realizada',baixaGravacao.cicloAnterior);}
+    try{await limparRastrosDoAgendamento(agId,qtdRealizada?'registro factual confirmado':'checklist encaminhado somente para edição',qtdRealizada?'realizada':'concluida_sem_gravacao',baixaGravacao.cicloAnterior);}
     catch(e){avisoPosCommitI28=' A gravação está salva; a limpeza dos avisos anteriores ficou pendente.';}
     if(!perfilPosCommitI28())return false;
 
@@ -20024,7 +20259,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
        Agora recebe um aviso no instante em que o filmmaker finaliza. */
     try{
       const ag = agSnap.data() || {};
-      if(ag.ehClienteNovo){
+      if(ag.ehClienteNovo && qtdRealizada>0){
         await criarDemandaSegura({
           titulo: '✅ Primeira gravação de ' + clienteNome + ' está feita',
           descricao: (usuarioAtual||'O filmmaker') + ' finalizou a gravação de ' + clienteNome + '.\n\n'
@@ -20075,7 +20310,9 @@ async function registrarGravacaoRealizadaNucleo(agId){
     }
 
     if(!perfilPosCommitI28())return false;
-    if(qtdVideosFaltantes){
+    if(somenteEdicao.length){
+      mostrarToast(qtdRealizada+' gravado(s) e '+somenteEdicao.length+' somente edição: envio confirmado para Amanda.');
+    }else if(qtdVideosFaltantes){
       mostrarToast(`${qtdRealizada} vídeo(s) enviados para a Amanda. A diferença de ${qtdVideosFaltantes} para o esperado ficou registrada no controle, sem criar tarefa para a Cecília.`);
     }else if(qtdVideosExcedentes){
       mostrarToast(`${qtdRealizada} vídeo(s) enviados para a Amanda — ${qtdVideosExcedentes} acima da estimativa, também registrados no controle.`);
@@ -25238,7 +25475,7 @@ window.setGerenciaSub = function(qual, el){
         const bate = x => (x.clienteSlug === s) || (x.cliente === s) || (String(x.clienteNome||'').toLowerCase() === n);
         return vids.some(v => !v.excluido && bate(v))
             || posts.some(p => bate(p) || p.calendarClienteSlug === s)
-            || agends.some(a => a.status !== 'cancelado' && bate(a));
+            || agends.some(a => a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && bate(a));
       };
       alvo.forEach(c => {
         const cal = mapa[c.slug];
@@ -25307,7 +25544,7 @@ window.setGerenciaSub = function(qual, el){
       };
       const vAbertos = (vids||[]).filter(v => doFora(v) && !['finalizado','arquivado'].includes(v.status));
       const pAbertas = (posts||[]).filter(p => doFora(p) && !['postado','arquivada_sem_postagem'].includes(p.status));
-      const agFut    = (agends||[]).filter(a => doFora(a) && a.status !== 'cancelado' && String(a.data||'') >= hoje);
+      const agFut    = (agends||[]).filter(a => doFora(a) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && String(a.data||'') >= hoje);
       saiuAberto = vAbertos.length + pAbertas.length + agFut.length;
       const porCliente = {};
       [...vAbertos, ...pAbertas, ...agFut].forEach(x => { const k = x.clienteNome || x.cliente || '?';
@@ -25352,7 +25589,7 @@ window.setGerenciaSub = function(qual, el){
     /* 01/08/2026 — comparei os dois painéis cartão a cartão antes de
        aposentar a Central. Dos 7 dela, 4 já existiam aqui. Estes 2 não
        existiam, e sem eles a fusão perderia informação. */
-    const hojeGrav = agends.filter(a => a.data === hoje && a.status !== 'cancelado' && a.aprovado !== false);
+    const hojeGrav = agends.filter(a => a.data === hoje && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && a.aprovado !== false);
     lista.push(I('gravHoje', 'Gravações hoje', hojeGrav.length, 'info', "irParaAtalho('agendamento')", 'Marcadas pra hoje.'));
 
     const d7 = new Date(); d7.setDate(d7.getDate()+7);
@@ -25919,7 +26156,7 @@ window.setGerenciaSub = function(qual, el){
        É a mesma família do contador que mostrava as demandas do colega,
        e o mesmo remédio: limpar na hora, antes de qualquer await.
        Melhor a tela vazia por um segundo do que a informação de outro. */
-    ['meuDiaBox','calendarioVisualHomeBox','avisoInicio','setorAtalhos'].forEach(id => {
+    ['meuDiaBox','calendarioVisualHomeBox','avisoInicio','setorAtalhos','edicaoManualInicioI34'].forEach(id => {
       const el = document.getElementById(id); if(el) el.innerHTML = '';
     });
     /* Ao sair de Amanda/Chris, limpa também o conteúdo que já havia sido
@@ -28126,6 +28363,7 @@ window.setGerenciaSub = function(qual, el){
   };
 
   function renderAvisoInicio(){
+    renderResumoSomenteEdicaoI34();
     if(estaAusente(usuarioAtual)){
       const minhaAus = todasAusencias.find(a => a.funcionario === usuarioAtual && a.dataInicio <= hojeLocal() && a.dataFim >= hojeLocal());
       document.getElementById('avisoInicio').innerHTML = `<div class="avisoBanner vazio"><div class="icone">🏖️</div><div class="texto">Você está de ausência até ${minhaAus?.dataFim}<span>Suas demandas não contam atraso nesse período. Aproveite!</span></div></div>`;
@@ -28228,7 +28466,7 @@ window.setGerenciaSub = function(qual, el){
     const papeisComCalendario = [...PESSOAS_DE_CAMPO, 'Cecília', 'Amanda', 'Chris'];
     const temCalendarioGravacao = papeisComCalendario.includes(usuarioAtual);
     const ehFilmmaker = PESSOAS_DE_CAMPO.includes(usuarioAtual);
-    let agendamentos = cacheAgendamentos.filter(a => !a.excluido && a.status !== 'cancelado');
+    let agendamentos = cacheAgendamentos.filter(a => !a.excluido && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a));
     if(ehFilmmaker) agendamentos = agendamentos.filter(a => pessoaNaEquipe(a, usuarioAtual));
 
     const hoje = new Date();
@@ -34765,7 +35003,7 @@ window.setGerenciaSub = function(qual, el){
       legendasEscritas: postagens.filter(p => diaOperacional(p.legendaEm) === ontemStr).length,
       postagensAgendadas: postagens.filter(p => diaOperacional(p.agendadoEm) === ontemStr).length,
       postagensPublicadas: postagens.filter(p => diaOperacional(p.postadoEm) === ontemStr).length,
-      gravacoesPlanejadasOntem: agends.filter(a => a.data === ontemStr && a.status !== 'cancelado').length,
+      gravacoesPlanejadasOntem: agends.filter(a => a.data === ontemStr && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a)).length,
       gravacoesRealizadasOntem: agends.filter(a => a.data === ontemStr && a.status === 'realizado').length,
       gravacoesHoje: agends.filter(a => a.data === hojeStr && a.status === 'agendado' && a.aprovado !== false).length
     };
@@ -35104,7 +35342,7 @@ window.setGerenciaSub = function(qual, el){
     postSnap.forEach(d => { const v=d.data(); if(v.cliente && v.titulo) titulosAuto.add(v.cliente+'|'+v.titulo); });
     // quem já tem gravação futura marcada
     const comGravacao = new Set();
-    agSnap.forEach(d => { const a=d.data(); if(a.cliente && a.status !== 'cancelado' && a.data >= hojeStr) comGravacao.add(a.cliente); });
+    agSnap.forEach(d => { const a=d.data(); if(a.cliente && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && a.data >= hojeStr) comGravacao.add(a.cliente); });
     // quem já foi avisado
     const jaAvisado = new Set();
     demSnap.forEach(d => { const v=d.data(); if(demandaOperacionalVisivel(v) && v.tipoEspecial === 'calendario_pronto' && v.clienteSlugRef) jaAvisado.add(v.clienteSlugRef); });
@@ -35577,7 +35815,7 @@ window.setGerenciaSub = function(qual, el){
     const restoDeQuemSaiu = [
       ...posts.filter(p => daSaida(p) && !['agendado','postado','arquivada_sem_postagem'].includes(p.status)),
       ...vids.filter(v => daSaida(v) && !['finalizado','arquivado'].includes(v.status)),
-      ...agends.filter(a => daSaida(a) && a.status !== 'cancelado' && String(a.data||'') >= hoje)
+      ...agends.filter(a => daSaida(a) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && String(a.data||'') >= hoje)
     ];
     if(restoDeQuemSaiu.length){
       const porQuem = {}; restoDeQuemSaiu.forEach(x => { const k = x.clienteNome || x.cliente || '?'; porQuem[k]=(porQuem[k]||0)+1; });
@@ -36710,7 +36948,7 @@ window.setGerenciaSub = function(qual, el){
        ['cancelado','cancelada','arquivado','arquivada','arquivada_sem_postagem','arquivado_sem_postagem'].includes(status)){
       return {estado:'inativo',motivo:'fonte_inativa'};
     }
-    if(especie==='gravacao' && status==='realizado') return {estado:'terminal',motivo:'gravacao_realizada'};
+    if(especie==='gravacao' && (status==='realizado'||status==='concluido_sem_gravacao')) return {estado:'terminal',motivo:'gravacao_realizada'};
     if(especie==='postagem' && status==='postado') return {estado:'terminal',motivo:'postagem_publicada'};
     if(especie==='gravacao' && fonte.aprovado === false) return {estado:'inativo',motivo:'aguardando_aprovacao'};
     if(status!=='agendado') return {estado:'inconsistente',motivo:'status_nao_operacional'};
@@ -42944,7 +43182,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const hoje = hojeLocal();
     const snap = await getDocs(collection(db,'agendamentos'));
     const doDia = [];
-    snap.forEach(d => { const a=d.data(); if(!a.excluido && a.data === hoje && a.status !== 'cancelado' && a.aprovado !== false) doDia.push({id:d.id, ...a}); });
+    snap.forEach(d => { const a=d.data(); if(!a.excluido && a.data === hoje && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && a.aprovado !== false) doDia.push({id:d.id, ...a}); });
     doDia.sort((a,b) => (a.hora||'').localeCompare(b.hora||''));
 
     const realizadas = doDia.filter(a => a.status === 'realizado');
@@ -43102,7 +43340,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const pendentes = demandas.filter(d=>d.status==='pendente');
     const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
     const aguardandoAprovacaoDemanda = demandas.filter(d=>d.status==='concluida_aguardando_aprovacao' && d.destinatario !== usuarioAtual);
-    const gravacoesHoje = agendamentos.filter(a => a.data === hoje && a.status !== 'cancelado' && a.aprovado !== false);
+    const gravacoesHoje = agendamentos.filter(a => a.data === hoje && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && a.aprovado !== false);
     const postagensSemana = postagens.filter(p => {
       if(p.status !== 'agendado' || !p.dataAgendada) return false;
       const diff = (new Date(p.dataAgendada) - new Date(hoje)) / 86400000;
@@ -45093,6 +45331,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
        com a mesma leitura: o que está parado primeiro, o placar depois.
        Ela já tinha isso; o que mudou é que agora vem da mesma função que
        alimenta a tela dele — se um mudar, os dois mudam juntos. */
+    try{ html += htmlResumoSomenteEdicaoI34(await lerSomenteEdicaoI34(contextoEdicaoI34())); }catch(e){ html += '<div class="card" role="alert">Encaminhamentos de edição indisponíveis. Abra a fila para tentar novamente.</div>'; }
     try{ html += await htmlResumoDoDiaAmanda(); }catch(e){ console.error(e); }
     try{ html += await htmlPainelOrganizacaoComum({semFilaCalendarios:true}); }catch(e){ console.error(e); }
 

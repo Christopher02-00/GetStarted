@@ -188,8 +188,10 @@
 </div>
 
 <script type="module">
+  import { criarNavegacaoPortalI40 } from './navegacao-portal-i40.mjs?v=i48-1';
+  import { lerServidorPortalI41, conferirSessaoAposFalhaI41, criarLeiturasPortalI41 } from './leitura-portal-i41.mjs?v=i41-1';
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, getDocs, getDocsFromServer, addDoc, doc, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, orderBy, runTransaction, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, getDocsFromServer, addDoc, doc, getDocFromServer, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, orderBy, runTransaction, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { cobrancasVisiveisI38 } from './cobranca-portal-manual.mjs?v=i38-1';
   import { nomeSessaoPublicaI39, entradaPortalI39 } from './sessao-publica-i39.mjs?v=i39-1';
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -207,6 +209,8 @@
   let tokenPortalConfirmadoI39='';
   const app = initializeApp(firebaseConfig, nomeSessaoPublicaI39('portal',identidadeEntradaPortalR4(entradaPublicaI39.slug).slug));
   const db = getFirestore(app);
+  const getDoc=ref=>lerServidorPortalI41(()=>getDocFromServer(ref),contextoPortalI41);
+  const getDocs=ref=>lerServidorPortalI41(()=>getDocsFromServer(ref),contextoPortalI41);
 
   /* ===== CORRIGIDO 27/07/2026 — o selo do calendario mentia =====
      A linha usava STAGE_LABEL[it.stage], mas `stage` no calendario NAO e
@@ -585,10 +589,32 @@
     })().finally(()=>{ __invalidacaoSessaoPortalEmCurso=null; });
     return __invalidacaoSessaoPortalEmCurso;
   }
+  function contextoPortalI41(){return [auth.currentUser?.uid||'',clienteAtual?.slug||'',tokenPortalConfirmadoI39].join('|');}
+  let validacaoSessaoPortalI41=null;
+  async function tratarFalhaPortalI41(erro,area='geral'){
+    if(erro?.code==='gs/contexto-portal')return 'trocada';
+    const uid=auth.currentUser?.uid||'',slug=clienteAtual?.slug||identidadeEntradaPortalR4(entradaPublicaI39.slug).slug,contexto=contextoPortalI41();
+    if(!uid||!slug)return 'indeterminada';
+    if(validacaoSessaoPortalI41?.contexto===contexto)return validacaoSessaoPortalI41.promessa;
+    const promessa=(async()=>{
+      const estado=await conferirSessaoAposFalhaI41({erro,eNegacao:acessoPortalFoiNegado,contexto:contextoPortalI41,lerContrato:()=>getDocFromServer(doc(db,'contratos_cliente',slug))});
+      if(contexto!==contextoPortalI41())return 'trocada';
+      if(estado==='negada'){await invalidarSessaoPortalLocal(uid);return estado;}
+      if(area==='geral'&&clienteAtual){
+        document.getElementById('avisoConsultaPortalI41')?.remove();
+        const aviso=document.createElement('div');aviso.id='avisoConsultaPortalI41';aviso.className='card';aviso.setAttribute('role','alert');
+        const texto=document.createElement('p');texto.textContent='Não foi possível concluir uma operação nesta área. Confira o resultado antes de repetir. Seu link foi preservado.';
+        const fechar=document.createElement('button');fechar.type='button';fechar.className='btn secondary';fechar.textContent='Entendi';fechar.addEventListener('click',()=>aviso.remove());
+        aviso.append(texto,fechar);document.getElementById('telaPortal')?.prepend(aviso);
+      }
+      console.error('Operação do Portal não concluída:',erro?.code||erro?.message);return estado;
+    })().finally(()=>{if(validacaoSessaoPortalI41?.promessa===promessa)validacaoSessaoPortalI41=null;});
+    validacaoSessaoPortalI41={contexto,promessa};return promessa;
+  }
+
   window.addEventListener('unhandledrejection',evento=>{
-    if(!acessoPortalFoiNegado(evento.reason)) return;
     evento.preventDefault();
-    invalidarSessaoPortalLocal().catch(e=>console.error('Falha ao invalidar sessão recusada:',e));
+    tratarFalhaPortalI41(evento.reason).catch(e=>console.error('Falha ao conferir o acesso:',e));
   });
 
   /* ===== A LISTA DE CLIENTES SAIU DO PORTAL — 28/07/2026 =============
@@ -663,6 +689,7 @@
       if(subEl) subEl.textContent = 'Seu painel de edição — acompanhe seus vídeos do envio à entrega.';
       setTab('videos', tabVid);
     } else {
+      setTab('calendario', document.querySelector('[data-tab="calendario"]'));
       carregarCalendario();
       carregarIdeias();
       if(clienteAtual.escopo.incluiStories===true) carregarStories();
@@ -693,22 +720,30 @@
     menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
   };
 
-  window.setTab = function(nome, el){
-    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-    el.classList.add('active');
-    if(['videos','minhaAgenda','ideias','stories','atas','info','briefing','referencias','proposta','pagamento','avaliacao'].includes(nome) && el.closest && el.closest('#menuMais')) document.getElementById('tabMais').classList.add('active');
-    ['Calendario','Acompanhamento','Demandas','Programados','Drive','Videos','MinhaAgenda','Ideias','Stories','Atas','Info','Briefing','Referencias','Proposta','Pagamento','Avaliacao'].forEach(p => {
-      const el = document.getElementById('painel'+p);
-      if(el) el.style.display = (p.toLowerCase()===nome.toLowerCase()) ? 'block' : 'none';
-    });
-    if(nome==='programados') carregarProgramados();
-    if(nome==='minhaAgenda') carregarMinhaAgenda();
-    if(nome==='briefing') carregarBriefingCliente();
-    if(nome==='referencias') carregarReferenciasCliente();
-    if(nome==='proposta') carregarPropostaCliente();
-    if(nome==='pagamento') carregarPagamentoCliente();
-    if(nome==='avaliacao') carregarAvaliacaoCliente();
-  };
+  const leiturasPortalI41=criarLeiturasPortalI41({contexto:contextoPortalI41,onErro:tratarFalhaPortalI41,repetir:area=>window.setTab(area)});
+  carregarCalendario=leiturasPortalI41.envolver('calendario','painelCalendario',carregarCalendario);
+  carregarAcompanhamento=leiturasPortalI41.envolver('acompanhamento','painelAcompanhamento',carregarAcompanhamento);
+  carregarDemandas=leiturasPortalI41.envolver('demandas','painelDemandas',carregarDemandas);
+  carregarProgramados=leiturasPortalI41.envolver('programados','painelProgramados',carregarProgramados);
+  carregarDrive=leiturasPortalI41.envolver('drive','painelDrive',carregarDrive);
+  carregarVideos=leiturasPortalI41.envolver('videos','painelVideos',carregarVideos);
+  carregarMinhaAgenda=leiturasPortalI41.envolver('minhaAgenda','painelMinhaAgenda',carregarMinhaAgenda);
+  carregarIdeias=leiturasPortalI41.envolver('ideias','painelIdeias',carregarIdeias);
+  carregarStories=leiturasPortalI41.envolver('stories','painelStories',carregarStories);
+  carregarAtas=leiturasPortalI41.envolver('atas','painelAtas',carregarAtas);
+  carregarInfo=leiturasPortalI41.envolver('info','painelInfo',carregarInfo);
+  carregarBriefingCliente=leiturasPortalI41.envolver('briefing','painelBriefing',carregarBriefingCliente);
+  carregarReferenciasCliente=leiturasPortalI41.envolver('referencias','painelReferencias',carregarReferenciasCliente);
+  carregarPropostaCliente=leiturasPortalI41.envolver('proposta','painelProposta',carregarPropostaCliente);
+  carregarPagamentoCliente=leiturasPortalI41.envolver('pagamento','painelPagamento',carregarPagamentoCliente);
+  carregarAvaliacaoCliente=leiturasPortalI41.envolver('avaliacao','painelAvaliacao',carregarAvaliacaoCliente);
+  const navegacaoPortalI40=criarNavegacaoPortalI40({cliente:()=>clienteAtual,
+    carregadores:{calendario:carregarCalendario,acompanhamento:carregarAcompanhamento,demandas:carregarDemandas,programados:carregarProgramados,drive:carregarDrive,videos:carregarVideos,minhaAgenda:carregarMinhaAgenda,ideias:carregarIdeias,stories:carregarStories,atas:carregarAtas,info:carregarInfo,briefing:carregarBriefingCliente,referencias:carregarReferenciasCliente,proposta:carregarPropostaCliente,pagamento:carregarPagamentoCliente,avaliacao:carregarAvaliacaoCliente},
+    sempreConferir:['pagamento'],
+    lazy:['programados','minhaAgenda','briefing','referencias','proposta','pagamento','avaliacao'],
+    onErro:tratarFalhaPortalI41
+  });
+  window.setTab=navegacaoPortalI40.setTab;
 
   /* ===== AVALIAÇÃO DO CLIENTE — V58 ================================
      A Gerência já lia `avaliacoes_clientes`, mas o Portal não tinha o
@@ -918,7 +953,7 @@
     try{
       const snap = await getDoc(doc(db,'briefings_cliente', clienteAtual.slug));
       if(snap.exists()) d = snap.data();
-    }catch(e){ console.error('Falha ao carregar briefing:', e); }
+    }catch(e){ console.error('Falha ao carregar briefing:', e); throw e; }
 
     let html = `<div class="card"><h2><svg class="ic"><use href="#i-clipboard"/></svg>Briefing</h2><div class="sub" style="margin-bottom:0;">O direcionamento estratégico da sua marca: público, objetivos, tom de voz, o que pode e o que não pode. É o que orienta tudo que a gente produz pra você.</div></div>`;
 
@@ -1031,6 +1066,19 @@
   function itemPendenteAprovacaoPortalI37(item){
     return !!item && !item.excluido && !item.apr && !item.posted && !item.agendado;
   }
+
+  // O quadro avisa seu mês; a conferência da lista continua sendo manual.
+  window.addEventListener('message',event=>{
+    const quadro=document.getElementById('quadroCalendario'),d=event.data;
+    if(!quadro||event.origin!==location.origin||event.source!==quadro.contentWindow||
+      d?.tipo!=='gs-calendario-mes'||d.cliente!==clienteAtual?.slug||
+      !/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(d.mes||''))||d.mes<'2026-07'||d.mes===window.__mesPortal)return;
+    window.__mesPortal=d.mes;
+    document.querySelectorAll('#painelCalendario button[onclick="aprovarConteudoCalendario(this)"]').forEach(b=>b.disabled=true);
+    let aviso=document.getElementById('avisoMesPortalI48');
+    if(!aviso){aviso=document.createElement('div');aviso.id='avisoMesPortalI48';aviso.className='card';aviso.setAttribute('role','status');document.getElementById('painelCalendario')?.prepend(aviso);}
+    aviso.textContent='Você mudou o mês no calendário. Use Atualizar calendário para conferir a lista de aprovação desse mês.';
+  });
 
   async function carregarCalendario(){
     const clienteDaLeitura=clienteAtual,slugDaLeitura=String(clienteDaLeitura?.slug||'');
@@ -1171,7 +1219,7 @@
       cont.innerHTML='<div class="card"><div style="padding:26px 10px;text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:8px;">Calendários disponíveis a partir de julho de 2026</div><div class="sub" style="margin-bottom:0;">A Get Started começou a montar calendários pelo site em julho de 2026. Não existe calendário anterior para abrir aqui.</div></div></div>';
       return;
     }
-    let mesEscolhido=mesPedidoValido||window.__mesPortal;
+    let mesEscolhido=window.__mesPortal||mesPedidoValido;
     if(mesPedidoValido&&estadoDoMesPortal(mesPedidoValido)==='arquivado'){
       cont.innerHTML='<div class="card"><div style="padding:26px 10px;text-align:center;"><div style="font-size:15px;font-weight:800;">Calendário arquivado</div></div></div>';
       return;
@@ -2940,7 +2988,7 @@ function pintarLembretePagamentoI38(pagamentos,slug){
       fichaPortal=await comTimeoutPortal(carregarFichaPortalSegura(slug,dadosAcesso),'Dados básicos do Portal',15000);
     }catch(e){
       console.warn('Ficha privada do Portal não pôde ser confirmada:',e.code||e.message);
-      if(acessoPortalFoiNegado(e)){ await invalidarSessaoPortalLocal(uidSessao); return; }
+      if(acessoPortalFoiNegado(e)){ const estado=await tratarFalhaPortalI41(e,'ficha'); if(estado!=='negada')mostrarPortalIndisponivelSemInvalidar(); return; }
     }
     let temHistoricoStories=null;
     if(typeof fichaPortal.incluiStories!=='boolean'){

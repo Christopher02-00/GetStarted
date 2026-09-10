@@ -973,7 +973,7 @@
           <div class="field"><label>🎥 Bastidores (um por linha, opcional)</label><textarea id="videoNomesBastidores" placeholder="Ex:&#10;Bastidores Hitech&#10;Bastidores Divina Cantina"></textarea></div>
 
           <div class="field" id="opcoesEditorEnvioI52"><label>Pra qual editor esses vídeos devem ir?</label><select id="videoEditorEscolhido">
-            <option value="">Automático (o sistema escolhe o editor com mais espaço)</option>
+            <option value="">Sem editor — Amanda distribui depois</option>
           </select></div>
           <div class="field"><label>Observação (opcional)</label><input type="text" id="videoObs" placeholder="Ex: cliente pediu urgência"></div>
           <button class="btn" onclick="lancarVideos()" id="btnLancarVideos">Registrar e distribuir</button>
@@ -5138,6 +5138,155 @@
   window.chaveIdentidadeVideo = chaveIdentidadeVideo;
   const EDITORES_GERAL = ["Helo","Cecília","João Victor"];
   const EDITORES_SELECIONAVEIS = ["Helo","Cecília","João Victor","Nathan"];
+  /* I53 — correção manual do mesmo envio; sem aprender afinidade. */
+  function editoresAtuaisI53(){ return EDITORES_GERAL.slice(); }
+  function editoresVisiveisI53(videos){
+    return [...new Set([...editoresAtuaisI53(),...videos.map(v=>v.editorAtribuido).filter(Boolean)])];
+  }
+  window.filtrarListaEnviosI53=function(texto){
+    const normalizar=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[’']/g,'');
+    window.__buscaEnviosI53=String(texto||'');const busca=normalizar(texto);let visiveis=0;
+    document.querySelectorAll('#gerenciaVideos [data-i53-busca]').forEach(el=>{el.hidden=!normalizar(el.dataset.i53Busca).includes(busca);if(!el.hidden)visiveis++;});
+    document.querySelectorAll('#gerenciaVideos [data-i53-grupo]').forEach(el=>{el.hidden=!!busca&&![...el.querySelectorAll('[data-i53-busca]')].some(v=>!v.hidden);});
+    const vazio=document.getElementById('vazioBuscaEnviosI53');if(vazio)vazio.hidden=!busca||visiveis>0;
+  };
+  function assinaturaEnvioI53(v){
+    return JSON.stringify(['cliente','clienteSlug','clienteNome','agendamentoId','calendarClienteSlug','calendarCompetencia','calendarItemId','calendarItemIdx',
+      'status','excluido','titulo','editorAtribuido','observacao','materialUrl','linkFinalizado'].map(k=>v[k]??null).concat(v.correcaoEnvioI53?.operacaoId||''));
+  }
+  function validarVideoEditavelI53(v){
+    exigirClienteOperacionalR4(v.cliente||v.clienteSlug,v);
+    if(v.excluido || !['aguardando_edicao','correcao'].includes(v.status))throw new Error('Este vídeo já mudou de etapa. Atualize a fila antes de corrigir.');
+    if(pendenteSomenteEdicaoI34(v))throw new Error('Confira este material na fila Somente edição antes de encaminhar.');
+  }
+  function dadosEntradaEnvioI53(entrada){
+    const titulo=String(entrada.titulo||'').trim(),observacao=String(entrada.observacao||'').trim();
+    if(titulo.length<2||titulo.length>300)throw new Error('Informe um título entre 2 e 300 caracteres.');
+    if(observacao.length>2000)throw new Error('A observação deve ter até 2.000 caracteres.');
+    return {titulo,observacao,materialUrl:materialUrlI34(entrada.materialUrl),editorAtribuido:String(entrada.editorAtribuido||'')};
+  }
+  function avisoAtribuicaoAbertoI53(d,id,editor){
+    return d.videoId===id && d.destinatario===editor && d.ehAviso===true && d.tipoEspecial==='video_atribuido' &&
+      !d.excluido && !['aprovada','concluida','cancelada'].includes(d.status);
+  }
+  async function salvarCorrecaoEnvioI53(id,entrada,assinatura,operacaoId,ctx){
+    ctx.validar();
+    if(!['Amanda','Chris'].includes(ctx.pessoa))throw new Error('Corrigir a distribuição é uma ação da Amanda ou do Chris.');
+    if(!segmentoOcupacaoI28(id)||!/^i53_[a-f0-9]{32}$/.test(operacaoId))throw new Error('Reabra o vídeo para conferir este envio.');
+    const dados=dadosEntradaEnvioI53(entrada),ref=doc(db,'videos_producao',id),em=new Date().toISOString();
+    // Avisos são do mesmo vídeo e entram no mesmo commit. Falha de leitura não vira lista vazia.
+    const avisos=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'demandas'),where('videoId','==',id))),'Conferir avisos deste vídeo',12000);
+    ctx.validar();
+    const refs=avisos.docs.filter(d=>d.data().tipoEspecial==='video_atribuido'&&d.data().ehAviso===true&&!d.data().excluido&&!['aprovada','concluida','cancelada'].includes(d.data().status)).map(d=>d.ref);
+    if(refs.length>80)throw new Error('Este vídeo tem muitos avisos antigos. Peça ao Chris uma conferência antes de alterar.');
+    const resultado=await runTransaction(db,async tx=>{
+      const snap=await tx.get(ref);ctx.validar();
+      if(!snap.exists())throw new Error('Este vídeo não existe mais.');
+      const v=snap.data();
+      if(v.correcaoEnvioI53?.operacaoId===operacaoId){
+        if(Object.keys(dados).some(k=>dados[k]!==String(v[k]||'')))throw new Error('A tentativa anterior já foi salva com outros dados. Feche e reabra o vídeo para conferir.');
+        return {repetida:true,titulo:v.titulo,editor:v.editorAtribuido||''};
+      }
+      validarVideoEditavelI53(v);
+      if(assinaturaEnvioI53(v)!==assinatura)throw new Error('Este envio mudou em outra aba. Seu texto continua aqui; feche e reabra o vídeo para conferir a versão atual.');
+      const anterior=v.editorAtribuido||'',troca=dados.editorAtribuido!==anterior;
+      if(troca&&dados.editorAtribuido&&!editoresAtuaisI53().includes(dados.editorAtribuido))throw new Error('Escolha um editor atual: Helo, Cecília ou João Victor.');
+      const campos=Object.keys(dados).filter(k=>dados[k]!==String(v[k]||''));
+      if(!campos.length)return {semMudanca:true,titulo:v.titulo,editor:anterior};
+      const avisosAntes=[];
+      for(const r of refs){const s=await tx.get(r);if(s.exists())avisosAntes.push(s);}
+      ctx.validar();
+      const patch=Object.fromEntries(campos.map(k=>[k,dados[k]]));
+      patch.correcaoEnvioI53={operacaoId,por:ctx.ator,em,campos};
+      patch.historico=arrayUnion({acao:'Envio corrigido manualmente',detalhe:troca?'Editor: '+(anterior||'sem editor')+' → '+(dados.editorAtribuido||'aguardando escolha'):'Dados do envio atualizados',por:ctx.ator,em,operacaoId});
+      if(troca)Object.assign(patch,{editorAnterior:anterior,editorAtribuidoPor:ctx.ator,editorAtribuidoEm:em});
+      tx.update(ref,patch);
+      if(troca){
+        for(const s of avisosAntes)if(avisoAtribuicaoAbertoI53(s.data(),id,anterior))tx.update(s.ref,{status:'aprovada',concluidaEm:serverTimestamp(),concluidoPor:ctx.ator,notaConclusao:'Atribuição corrigida: este aviso foi substituído. O vídeo não foi concluído.',correcaoEnvioOperacaoI53:operacaoId});
+        const criarAviso=(sufixo,destinatario,titulo,descricao,tipoEspecial)=>tx.set(doc(db,'demandas',operacaoId+'_'+sufixo),{
+          titulo,descricao,destinatario,criadoPor:ctx.pessoa,origem:'sistema',ehAviso:true,status:'pendente',
+          prazoData:hojeLocal(),prazoHora:'19:00',prioridade:'normal',criadoEm:serverTimestamp(),
+          videoId:id,cliente:v.cliente,clienteNome:v.clienteNome||'',tipoEspecial,correcaoEnvioOperacaoI53:operacaoId
+        });
+        if(dados.editorAtribuido)criarAviso('entrada',dados.editorAtribuido,'🎬 Vídeo para editar: '+dados.titulo,
+          ctx.pessoa+' atribuiu este vídeo a você. Abra Vídeos em Edição → Meus Vídeos.\n\nCliente: '+(v.clienteNome||v.cliente)+'\n\n'+dados.observacao,'video_atribuido');
+        if(anterior)criarAviso('saida',anterior,'↪️ Vídeo retirado da sua fila: '+dados.titulo,
+          ctx.pessoa+' corrigiu a distribuição. '+(dados.editorAtribuido?'O vídeo agora está com '+dados.editorAtribuido+'.':'O vídeo voltou à fila da Amanda.')+' Você não precisa mais editar este item.','video_saiu_da_fila');
+      }else{
+        // O aviso de trabalho ainda aberto acompanha uma correção de título/observação.
+        for(const s of avisosAntes)if(avisoAtribuicaoAbertoI53(s.data(),id,anterior))tx.update(s.ref,{titulo:'🎬 Vídeo para editar: '+dados.titulo,descricao:'Dados do envio atualizados por '+ctx.pessoa+'. Abra o vídeo para conferir o material.\n\n'+dados.observacao,correcaoEnvioOperacaoI53:operacaoId});
+      }
+      return {titulo:dados.titulo,editor:dados.editorAtribuido,troca};
+    });
+    if(resultado.semMudanca)return {...resultado,recibo:true};
+    try{
+      const s=await comTimeoutCalendarioOperacional(_getDocFromServerFB(ref),'Conferir correção salva',12000);ctx.validar();
+      if(!s.exists()||s.metadata?.fromCache||s.metadata?.hasPendingWrites||s.data().correcaoEnvioI53?.operacaoId!==operacaoId)throw new Error('Recibo indisponível');
+      return {...resultado,recibo:true};
+    }catch(e){return {...resultado,recibo:false};}
+  }
+  let __correcaoVideoI53=null,__aberturaVideoI53=0;
+  function limparCorrecaoVideoI53(){
+    ++__aberturaVideoI53;document.getElementById('correcaoVideoI53')?.remove();__correcaoVideoI53=null;
+  }
+  function entradaFormularioVideoI53(modal){
+    return {titulo:modal.querySelector('[name="titulo"]').value,editorAtribuido:modal.querySelector('[name="editor"]').value,
+      observacao:modal.querySelector('[name="observacao"]').value,materialUrl:modal.querySelector('[name="material"]').value};
+  }
+  window.fecharCorrecaoVideoI53=function(){
+    const s=__correcaoVideoI53,m=document.getElementById('correcaoVideoI53');
+    if(s?.salvando)return false;
+    if(s&&m&&JSON.stringify(entradaFormularioVideoI53(m))!==JSON.stringify(s.inicial)&&!s.salvo&&!confirm('Descartar as alterações que ainda não foram salvas?'))return false;
+    limparCorrecaoVideoI53();return true;
+  };
+  window.abrirCorrecaoVideoI53=async function(id,editorProposto){
+    if(!['Amanda','Chris'].includes(usuarioAtual)){mostrarToast('Esta correção é da gestão de vídeos.','erro');return false;}
+    if(__correcaoVideoI53&&!fecharCorrecaoVideoI53())return false;
+    const ctx=contextoEdicaoI34(),geracao=++__aberturaVideoI53;
+    try{
+      if(!segmentoOcupacaoI28(id))throw new Error('Identificação do vídeo inválida.');
+      const snap=await comTimeoutCalendarioOperacional(_getDocFromServerFB(doc(db,'videos_producao',id)),'Abrir envio para corrigir',12000);ctx.validar();
+      if(geracao!==__aberturaVideoI53)return false;
+      if(!snap.exists())throw new Error('Este vídeo não existe mais.');
+      const v=snap.data();validarVideoEditavelI53(v);
+      const atual=v.editorAtribuido||'',editor=editorProposto===undefined?atual:String(editorProposto);
+      if(editor!==atual&&editor&&!editoresAtuaisI53().includes(editor))throw new Error('Este nome não está entre os editores atuais.');
+      const modal=document.createElement('dialog');modal.id='correcaoVideoI53';modal.setAttribute('aria-labelledby','tituloCorrecaoI53');
+      modal.style.cssText='padding:0;margin:auto;inset:0;box-sizing:border-box;width:min(600px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);border:1px solid var(--yellow);border-radius:18px;background:var(--card,#25262a);color:var(--text,#fff);overflow:hidden;';
+      modal.innerHTML=`<style>#correcaoVideoI53::backdrop{background:#000b}#correcaoVideoI53 form{display:flex;flex-direction:column;max-height:calc(100dvh - 26px)}#correcaoVideoI53 input,#correcaoVideoI53 select,#correcaoVideoI53 textarea{width:100%;box-sizing:border-box}#correcaoVideoI53 label{display:block;margin:14px 0 6px;font-weight:700;font-size:13px}#correcaoVideoI53 .i53-corpo{overflow:auto;padding:0 20px 18px;min-height:0}#correcaoVideoI53 .i53-acoes{display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--line);flex-shrink:0}#correcaoVideoI53 .i53-acoes button{min-height:44px;flex:1}#correcaoVideoI53 [data-erro]{white-space:pre-wrap;color:var(--red);font-size:13px}</style>
+        <form><header style="padding:20px 20px 12px;flex-shrink:0"><div class="meta">${esc(v.clienteNome||v.cliente)} · ${esc(formatarDataBR(v.data||''))}</div><h2 id="tituloCorrecaoI53" style="margin:8px 0">Editar envio</h2><div class="desc">Confira os dados e salve. A alteração vale apenas para este vídeo.</div></header>
+        <div class="i53-corpo"><label for="i53-titulo">Título do vídeo</label><input id="i53-titulo" name="titulo" maxlength="300" required value="${escAttr(v.titulo||'')}">
+        <label for="i53-editor">Quem edita</label><select id="i53-editor" name="editor"><option value="" ${!editor?'selected':''}>Sem editor — Amanda decide depois</option>
+          ${atual&&!editoresAtuaisI53().includes(atual)?`<option value="${escAttr(atual)}" ${editor===atual?'selected':''} disabled>${esc(atual)} — atribuição anterior</option>`:''}
+          ${editoresAtuaisI53().map(e=>`<option value="${escAttr(e)}" ${e===editor?'selected':''}>${esc(e)}</option>`).join('')}</select>
+        ${atual&&!editoresAtuaisI53().includes(atual)?'<div class="meta" style="margin-top:6px;color:var(--yellow)">Este responsável não recebe novas edições. Escolha o editor correto ou devolva à fila.</div>':''}
+        <label for="i53-material">Link do material (opcional)</label><input id="i53-material" name="material" type="url" maxlength="2000" placeholder="https://..." value="${escAttr(v.materialUrl||'')}">
+        <label for="i53-observacao">Orientação para o editor (opcional)</label><textarea id="i53-observacao" name="observacao" maxlength="2000" rows="4">${esc(v.observacao||'')}</textarea>
+        <p data-erro role="status" aria-live="polite"></p></div><footer class="i53-acoes"><button class="btn secondary" type="button" data-cancelar>Cancelar</button><button class="btn" type="submit">Salvar alterações</button></footer></form>`;
+      document.body.appendChild(modal);
+      __correcaoVideoI53={id,ctx,assinatura:assinaturaEnvioI53(v),operacaoId:'i53_'+crypto.randomUUID().replaceAll('-',''),inicial:entradaFormularioVideoI53(modal),salvando:false,salvo:false};
+      modal.querySelector('form').addEventListener('submit',e=>{e.preventDefault();confirmarCorrecaoVideoI53();});
+      modal.querySelector('[data-cancelar]').addEventListener('click',()=>fecharCorrecaoVideoI53());
+      modal.addEventListener('cancel',e=>{e.preventDefault();fecharCorrecaoVideoI53();});modal.showModal();return true;
+    }catch(e){try{ctx.validar();}catch{return false;}mostrarToast('Não consegui abrir o envio: '+String(e.message||e),'erro');return false;}
+  };
+  window.confirmarCorrecaoVideoI53=async function(){
+    const s=__correcaoVideoI53,m=document.getElementById('correcaoVideoI53');if(!s||!m||s.salvando||s.salvo)return false;
+    const entrada=entradaFormularioVideoI53(m),botoes=m.querySelectorAll('button'),campos=m.querySelectorAll('input,select,textarea'),erro=m.querySelector('[data-erro]');
+    s.salvando=true;botoes.forEach(b=>b.disabled=true);campos.forEach(c=>c.disabled=true);erro.textContent='Salvando…';
+    try{
+      const r=await salvarCorrecaoEnvioI53(s.id,entrada,s.assinatura,s.operacaoId,s.ctx);s.salvo=true;s.ctx.validar();
+      if(__correcaoVideoI53!==s)return false;
+      if(!r.recibo){erro.textContent='A alteração foi salva, mas não consegui conferir o recibo. Feche e atualize a fila antes de continuar.';return false;}
+      limparCorrecaoVideoI53();fecharModal();
+      mostrarToast(r.semMudanca?'Os dados já estavam assim.':r.editor?'Alterações salvas. Editor: '+r.editor+'.':'Alterações salvas. Vídeo disponível para a Amanda distribuir.');
+      try{limparCacheIndicadores();await renderGerenciaVideos();atualizarTodosOsBadges();}catch(e){mostrarToast('Salvo. Atualize a fila para conferir a tela.','erro');}
+      return true;
+    }catch(e){if(__correcaoVideoI53===s)erro.textContent=(s.salvo?'A alteração está salva. ':'Não consegui confirmar a correção. ')+String(e.message||e);return false;}
+    finally{s.salvando=false;if(__correcaoVideoI53===s){botoes.forEach(b=>b.disabled=s.salvo&&b.type==='submit');campos.forEach(c=>c.disabled=s.salvo);}}
+  };
+  /* Fim I53 — correção manual. */
+
   function papelPodeAbrirVideos(pessoa = usuarioAtual){
     return podeLancarVideo(pessoa) || [...EDITORES_SELECIONAVEIS,'Chris'].includes(pessoa) || ['Amanda','Cecília'].includes(pessoa);
   }
@@ -5150,6 +5299,7 @@
      os resultados e os links do papel anterior não ficam no DOM enquanto a
      nova identidade é conferida. */
   function limparEstadoVideosPorTrocaDePapel(){
+    limparCorrecaoVideoI53();window.__buscaEnviosI53="";
     ++__minhaAgendaRenderGeracaoI1;
     __envioMateriaisI52={sessao:'',agId:'',pontual:false};
     __rascunhosFilmagemI51={sessao:'',itens:new Map()};
@@ -5159,7 +5309,7 @@
     ['videoClienteExternoNome','videoData','videoNomesPrincipais','videoNomesBastidores','videoObs'].forEach(limparValor);
     const cliente=document.getElementById('videoCliente'); if(cliente) cliente.replaceChildren();
     const editor=document.getElementById('videoEditorEscolhido');
-    if(editor) editor.innerHTML='<option value="">Automático (o sistema escolhe o editor com mais espaço)</option>';
+    if(editor) editor.innerHTML='<option value="">Sem editor — Amanda distribui depois</option>';
     const origem=document.getElementById('videoOrigemMaterial'); if(origem) origem.value='gravado';
     atualizarEntradaFilmagensI51();
     const externo=document.getElementById('videoClienteExternoBox'); if(externo) externo.style.display='none';
@@ -5243,8 +5393,8 @@
     const selEditor = document.getElementById('videoEditorEscolhido');
     if(selEditor){
       const anterior=selEditor.value;
-      selEditor.innerHTML = '<option value="">'+(PESSOAS_DE_CAMPO.includes(usuarioAtual)?'Amanda escolhe o editor':'Automático (o sistema escolhe o editor com mais espaço)')+'</option>' +
-        EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}">${e}</option>`).join('');
+      selEditor.innerHTML = '<option value="">'+(PESSOAS_DE_CAMPO.includes(usuarioAtual)?'Amanda escolhe o editor':'Sem editor — Amanda distribui depois')+'</option>' +
+        editoresAtuaisI53().map(e=>`<option value="${e}">${e}</option>`).join('');
       if([...selEditor.options].some(o=>o.value===anterior))selEditor.value=anterior;
     }
     const campoData = document.getElementById('videoData');
@@ -5750,7 +5900,8 @@
          vídeo entra em "🆕 Sem editor — distribuir agora". O filmmaker
          pode sugerir um nome, e a sugestão viaja junto. */
       const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
-      const editor = ehGestao ? (editorManual || await decidirEditor(clienteSlug, trabalhoExterno)) : '';
+      const editor = ehGestao ? editorManual : '';
+      if(editor && !editoresAtuaisI53().includes(editor))throw new Error('Escolha um editor atual ou deixe para a Amanda distribuir.');
       const sugerido = ehGestao ? editor : (editorManual || '');
 
       /* ===== O VÍDEO DUPLICADO DA BLUEFIT — 03/08/2026 ================
@@ -8102,6 +8253,7 @@ window.marcarClienteAprovouVideo = async function(id){
     if(cont.dataset.geracaoI34!==geracaoI34)return;
     const todos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && fonteFisicaClienteR4(v.cliente,v)) todos.push({...v,id:d.id}); });
     const abertos = todos.filter(v => ['aguardando_edicao','correcao'].includes(v.status));
+    const editoresVisiveis=editoresVisiveisI53(abertos);
     /* ===== 04/08/2026 — ORDEM DA FILA DE DISTRIBUICAO (pedido da Amanda) =====
        Primeiro o prazo; dentro do mesmo prazo, o mesmo cliente em sequencia,
        pra ela distribuir um cliente inteiro de uma vez em vez de pular de
@@ -8128,7 +8280,7 @@ window.marcarClienteAprovouVideo = async function(id){
     const hojeStr = hojeLocal();
     const amanhaStr = dataLocal(new Date(Date.now()+86400000));
 
-    let html = '';
+    let html = `<div class="card" style="border-top:3px solid var(--yellow)"><h2>Vídeos enviados para edição</h2><p class="desc">Use Editar envio para corrigir os dados ou mudar quem edita, mesmo depois de distribuir.</p><label for="buscaEnviosI53">Buscar por cliente ou título</label><input type="search" id="buscaEnviosI53" placeholder="Ex.: Camargo’s" value="${escAttr(window.__buscaEnviosI53||'')}" oninput="filtrarListaEnviosI53(this.value)"></div>`;
 
     // ===== SEÇÃO 1 — DISTRIBUIÇÃO PENDENTE, SEMPRE NO TOPO =====
     // Essa é a tarefa diária da Amanda — nunca escondida embaixo de nada.
@@ -8138,7 +8290,7 @@ window.marcarClienteAprovouVideo = async function(id){
         <div class="desc">Vídeos esperando você confirmar e decidir quem edita — tanto o que a equipe gravou quanto edição avulsa que o cliente mandou. Isso é rotina diária: o quanto antes, melhor.</div>
       </div>`;
       html += semEditor.map(v => `
-        <div class="item" style="border:2px solid var(--red);">
+        <div class="item" data-i53-busca="${escAttr((v.clienteNome||v.cliente)+' '+v.titulo)}" style="border:2px solid var(--red);">
           <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
           <div class="meta" style="margin-top:4px;">
             ${v.soEdicao ? '<span class="selo" style="border-color:var(--yellow2);color:var(--yellow2);">✂️ edição avulsa — sem gravação</span>' : '<span class="selo">🎥 gravação nossa</span>'}
@@ -8147,9 +8299,10 @@ window.marcarClienteAprovouVideo = async function(id){
           </div>
           ${v.editorSugerido ? '<div class="meta" style="margin-top:4px;">💡 Sugestão de quem subiu: <b>'+esc(v.editorSugerido)+'</b></div>' : ''}
           <div style="margin-top:10px;">
-            <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${escJs(v.cliente)}', this.value)" style="width:100%;">
+            <button class="btn secondary" style="margin-bottom:8px" onclick="abrirCorrecaoVideoI53('${v.id}')">Editar envio</button>
+            <select class="editorSelect" onchange="abrirCorrecaoVideoI53('${v.id}', this.value)" style="width:100%;">
               <option value="">Escolher editor...</option>
-              ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}" ${e===v.editorSugerido?'selected':''}>${e}${e===v.editorSugerido?' (sugerido)':''}</option>`).join('')}
+              ${editoresAtuaisI53().map(e=>`<option value="${e}" >${e}${e===v.editorSugerido?' (sugerido)':''}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -8158,9 +8311,9 @@ window.marcarClienteAprovouVideo = async function(id){
 
     // ===== SEÇÃO 2 — CARDS-FILTRO, com afordance visível mesmo sem hover
     // (celular não tem hover) — seta e "toque pra filtrar" sempre visíveis =====
-    html += `<div class="desc" style="margin:14px 0 6px;">👆 Toque num card pra filtrar a lista abaixo por aquilo especificamente:</div>`;
+    html += `<details class="card"><summary style="cursor:pointer;font-weight:700;min-height:30px">Resumo por editor e filtros</summary><div class="desc" style="margin:14px 0 6px;">👆 Toque num card pra filtrar a lista abaixo por aquilo especificamente:</div>`;
     html += `<div class="painelResumo">`;
-    EDITORES_GERAL.forEach(ed => {
+    editoresVisiveis.forEach(ed => {
       /* 27/07/2026 — o cartão mostrava o TOTAL, incluindo vídeo já entregue
          esperando cliente ou aprovação. A Cecília via "19" tendo 2 pra
          editar, e concluiu que estava sobrecarregada. Agora o número grande
@@ -8168,10 +8321,10 @@ window.marcarClienteAprovouVideo = async function(id){
       const dele = abertos.filter(v => v.editorAtribuido === ed);
       const naMao = dele.filter(v => ['aguardando_edicao','correcao'].includes(v.status)).length;
       const esperando = dele.length - naMao;
-      const alvo = EDITORES_CONFIG[ed].capacidade;
-      html += `<div class="resumoCard clicavel ${filtro===ed?'yellow':''} ${naMao>alvo?'red':''}" onclick="window.__filtroVideosGerencia='${ed}';renderGerenciaVideos();">
+      const alvo = EDITORES_CONFIG[ed]?.capacidade || 0;
+      html += `<div class="resumoCard clicavel ${filtro===ed?'yellow':''} ${naMao>alvo?'red':''}" onclick="window.__filtroVideosGerencia=${escAttr(JSON.stringify(ed))};renderGerenciaVideos();">
         <div class="num">${naMao}</div>
-        <div class="lbl">${esc(ed)} · pra editar <span class="videoCapacidade">(alvo ${alvo})</span></div>
+        <div class="lbl">${esc(ed)} · pra editar <span class="videoCapacidade">${editoresAtuaisI53().includes(ed)?'(alvo '+alvo+')':'— revisar responsável'}</span></div>
         <div style="font-size:10px;color:var(--muted);margin-top:3px;">${esperando} esperando outros</div>
         <div style="font-size:10px;color:var(--yellow);margin-top:3px;">Ver tudo →</div>
       </div>`;
@@ -8190,8 +8343,8 @@ window.marcarClienteAprovouVideo = async function(id){
         <label>Ver os vídeos de</label>
         <select onchange="window.__filtroVideosGerencia=this.value;renderGerenciaVideos();" style="width:100%;">
           <option value="todos" ${filtro==='todos'?'selected':''}>Todos os editores (${abertos.length} vídeos)</option>
-          ${EDITORES_GERAL.map(ed => { const q = abertos.filter(v=>v.editorAtribuido===ed).length;
-            return `<option value="${ed}" ${filtro===ed?'selected':''}>${ed} — ${q} vídeo(s)</option>`; }).join('')}
+          ${editoresVisiveis.map(ed => { const q = abertos.filter(v=>v.editorAtribuido===ed).length;
+            return `<option value="${escAttr(ed)}" ${filtro===ed?'selected':''}>${esc(ed)} — ${q} vídeo(s)</option>`; }).join('')}
         </select>
       </div>
       <button class="btn ${filtro==='todos'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='todos';renderGerenciaVideos();">Todos (${abertos.length})</button>
@@ -8200,6 +8353,7 @@ window.marcarClienteAprovouVideo = async function(id){
       <button class="btn ${filtro==='atrasados'?'red':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='atrasados';renderGerenciaVideos();">⚠️ Atrasados (${abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr).length})</button>
     </div>`;
 
+    html += '</details>';
     // ===== SEÇÃO 3 — LISTA, organizada de acordo com o filtro =====
     if(filtro === 'concluidos'){
       html += `<div class="grupoFuncionario"><h3>✅ Concluídos recentemente (últimos 15)</h3>`;
@@ -8215,7 +8369,7 @@ window.marcarClienteAprovouVideo = async function(id){
       if(filtro === 'hoje') abertosFiltrados = abertos.filter(v => v.data === hojeStr);
       else if(filtro === 'amanha') abertosFiltrados = abertos.filter(v => v.prazoEntrega === amanhaStr);
       else if(filtro === 'atrasados') abertosFiltrados = abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr);
-      else if(EDITORES_GERAL.includes(filtro)) abertosFiltrados = abertos.filter(v => v.editorAtribuido === filtro);
+      else if(editoresVisiveis.includes(filtro)) abertosFiltrados = abertos.filter(v => v.editorAtribuido === filtro);
       abertosFiltrados = abertosFiltrados.filter(v => v.editorAtribuido); // os sem editor já apareceram na Seção 1
 
       /* 27/07/2026 — o cartão trazia editor, prazo, prioridade e excluir
@@ -8227,7 +8381,7 @@ window.marcarClienteAprovouVideo = async function(id){
         const selo = v.status==='finalizado' ? ['aprovada','Finalizado'] : v.status==='aprovado' ? ['aprovada','Aprovado']
           : v.status==='aguardando_aprovacao' ? ['pendente','Aguardando aprovação'] : v.status==='aguardando_cliente' ? ['hoje','Aguardando cliente']
           : v.status==='correcao' ? ['atrasado','Precisa ajuste'] : ['pendente','Em edição'];
-        return `<div class="item" style="border-left:3px solid ${atrasado?'var(--red)':v.status==='correcao'?'var(--red)':'var(--line)'};">
+        return `<div class="item" data-i53-busca="${escAttr((v.clienteNome||v.cliente)+' '+v.titulo)}" style="border-left:3px solid ${atrasado?'var(--red)':v.status==='correcao'?'var(--red)':'var(--line)'};">
           <div class="top" style="cursor:pointer;" onclick="const d=this.parentElement.querySelector('.detVideo');d.style.display=d.style.display==='none'?'block':'none';">
             <div class="nome">${esc(v.titulo)}</div><span class="selo ${selo[0]}">${selo[1]}</span>
           </div>
@@ -8235,12 +8389,13 @@ window.marcarClienteAprovouVideo = async function(id){
             <span>${esc(v.clienteNome||'')} · ${esc(v.editorAtribuido||'sem editor')}</span>
             <span style="${atrasado?'color:var(--red);font-weight:700;':''}">${atrasado?'⚠️ atrasado':(v.prazoEntregaLabel||'sem prazo')}</span>
           </div>
+          <button class="btn secondary" style="width:auto;margin-top:10px;min-height:44px" onclick="abrirCorrecaoVideoI53('${v.id}')">Editar envio</button>
           <div class="detVideo" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="editorPill">🎞️ ${esc(v.editorAtribuido)}</span>
-            <select class="editorSelect" onchange="reatribuirVideo('${v.id}','${escJs(v.cliente)}', this.value)">
+            <select class="editorSelect" onchange="abrirCorrecaoVideoI53('${v.id}', this.value)">
               <option value="">Mudar pra...</option>
-              ${EDITORES_SELECIONAVEIS.filter(e=>e!==v.editorAtribuido).map(e=>`<option value="${e}">${e}</option>`).join('')}
+              ${editoresAtuaisI53().filter(e=>e!==v.editorAtribuido).map(e=>`<option value="${e}">${e}</option>`).join('')}
             </select>
             ${v.status==='finalizado' ? '<span class="selo aprovada">📦 Finalizado (entrega direta)</span>' : v.status==='aprovado' ? '<span class="selo aprovada">Aprovado</span>' : v.status==='aguardando_aprovacao' ? '<span class="selo aguardando">Aguardando aprovação</span>' : v.status==='aguardando_cliente' ? '<span class="selo hoje">Aguardando cliente</span>' : v.status==='correcao' ? '<span class="selo atrasado">Precisa ajuste</span>' : '<span class="selo pendente">Em edição</span>'}
           </div>
@@ -8271,11 +8426,11 @@ window.marcarClienteAprovouVideo = async function(id){
         // aplicado (com filtro, já está naturalmente estreito).
         html += `<div class="grupoFuncionario"><h3>🎬 Vídeos em aberto — por editor</h3>`;
         if(!abertosFiltrados.length) html += `<div class="empty">Nada em aberto com editor definido agora.</div>`;
-        EDITORES_GERAL.forEach(ed => {
+        editoresVisiveis.forEach(ed => {
           const dele = abertosFiltrados.filter(v => v.editorAtribuido === ed);
           if(!dele.length) return;
-          html += `<div style="margin-top:14px;margin-bottom:4px;"><b style="font-size:12.5px;color:var(--yellow);">🎞️ ${esc(ed)} (${dele.length})</b></div>`;
-          html += dele.map(itemVideoHtml).join('');
+          html += `<section data-i53-grupo><div style="margin-top:14px;margin-bottom:4px;"><b style="font-size:12.5px;color:var(--yellow);">🎞️ ${esc(ed)} (${dele.length})</b></div>`;
+          html += dele.map(itemVideoHtml).join('')+'</section>';
         });
         html += `</div>`;
       } else {
@@ -8287,7 +8442,8 @@ window.marcarClienteAprovouVideo = async function(id){
 
     ctxI34.validar();
     if(cont.dataset.geracaoI34!==geracaoI34)return;
-    cont.innerHTML = htmlFilaSomenteEdicaoI34(todos) + html;
+    cont.innerHTML = htmlFilaSomenteEdicaoI34(todos) + html + '<div id="vazioBuscaEnviosI53" class="empty" hidden>Nenhum vídeo corresponde à busca nesta lista.</div>';
+    filtrarListaEnviosI53(window.__buscaEnviosI53||'');
   }
 
   window.definirPrazoVideoData = async function(id, dataStr){
@@ -9773,76 +9929,9 @@ window.marcarClienteAprovouVideo = async function(id){
   window.avisarEditorDoVideo = avisarEditorDoVideo;
 
   window.reatribuirVideo = async function(videoId, clienteSlug, novoEditor){
-    if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Distribuir vídeos é uma ação da gestão.', 'erro'); return false; }
-    if(!novoEditor) return;
-    /* ===== A ATRIBUIÇÃO ERA MUDA — 03/08/2026 ========================
-       Existem três caminhos que põem editor num vídeo. Só UM avisava:
-
-         criar vídeo já com editor  → dispara e-mail pro editor  ✅
-         reatribuirVideo            → gravava o campo e pronto   ❌
-         salvarEditorVideo          → chama o de cima            ❌
-
-       Então tudo que a Amanda distribui DEPOIS da criação chegava em
-       silêncio. O vídeo entrava na aba do editor sem nada avisando que
-       tinha entrado — e a aba de Vídeos nem badge tinha no menu.
-
-       Três coisas somadas explicam "o editor fica sem trabalho": ele não
-       era avisado, não tinha número no menu, e (no caso da Cecília) o
-       vídeo nem aparecia no Meu Dia dela.
-
-       Agora reatribuir avisa de verdade, e registra quem/quando — sem
-       isso não dá nem pra medir quanto tempo um vídeo ficou parado
-       depois de distribuído (`editorAtribuidoEm` era 0 de 153). */
-    let anterior = '', titulo = '', clienteNome = '', trabalhoExterno = false;
-    try{
-      const s = await getDoc(doc(db,'videos_producao', videoId));
-      if(!s.exists()){ mostrarToast('Este vídeo não existe mais. Nada foi distribuído.', 'erro'); return; }
-      const v = s.data();
-      exigirClienteOperacionalR4(v.cliente||v.clienteSlug,v);
-      if(pendenteSomenteEdicaoI34(v)){mostrarToast('Abra Somente edição na fila para conferir o material e encaminhar.','erro');return false;}
-      anterior = v.editorAtribuido || ''; titulo = v.titulo || ''; clienteNome = v.clienteNome || '';
-      trabalhoExterno = ehTrabalhoExternoVideo(v);
-    }catch(e){
-      mostrarToast('Não consegui confirmar o vídeo antes de distribuir. Nada foi alterado.', 'erro');
-      return;
-    }
-    if(anterior === novoEditor){
-      mostrarToast('Já era ' + novoEditor + ' — nada mudou.');
-      return;
-    }
-    await updateDoc(doc(db,'videos_producao', videoId), {
-      editorAtribuido: novoEditor,
-      editorAtribuidoEm: new Date().toISOString(),
-      editorAtribuidoPor: usuarioAtual || '?',
-      editorAnterior: anterior || ''
-    });
-    registrarHistorico('videos_producao', videoId,
-      anterior ? ('Reatribuído de ' + anterior + ' para ' + novoEditor) : ('Atribuído para ' + novoEditor),
-      'Por ' + (usuarioAtual || '?'));
-    await avisarEditorDoVideo(videoId, novoEditor, anterior, titulo, clienteNome);
-
-    /* Trabalho pontual não representa uma relação contínua cliente/editor.
-       A distribuição fica no próprio vídeo e não cria afinidade paralela. */
-    if(trabalhoExterno){
-      mostrarToast('Trabalho pontual distribuído para ' + novoEditor + ' — sem criar afinidade ou cadastro de cliente.');
-      renderGerenciaVideos();
-      return;
-    }
-
-    const afinidadeRef = doc(db, 'editores_afinidade', clienteSlug);
-    const afinidadeSnap = await getDoc(afinidadeRef);
-    const historico = afinidadeSnap.exists() ? (afinidadeSnap.data().historico || []) : [];
-    historico.push({ editor: novoEditor, em: new Date().toISOString() });
-    const ultimos = historico.slice(-3);
-    let novaAfinidade = afinidadeSnap.exists() ? afinidadeSnap.data().editorAtual : null;
-    if(ultimos.length >= 2 && ultimos.slice(-2).every(h => h.editor === novoEditor)){
-      novaAfinidade = novoEditor;
-    }
-    await setDoc(afinidadeRef, { editorAtual: novaAfinidade, historico }, { merge:true });
-
-    mostrarToast('Reatribuído para ' + novoEditor + (novaAfinidade===novoEditor ? ' — afinidade do cliente atualizada' : ''));
-    renderGerenciaVideos();
-  };
+    if(!['Chris','Amanda'].includes(usuarioAtual)){mostrarToast('Distribuir vídeos é uma ação da gestão.','erro');return false;}
+    return abrirCorrecaoVideoI53(videoId,novoEditor);
+  };;
 
   let editorFuncionarioAtual = '';
   let editorTemplateAtual = {};
@@ -11472,7 +11561,7 @@ async function popularClientesAgendamento(){
         <div class="meta" style="margin:6px 0;">${esc(v.clienteNome||v.cliente)} · enviado por ${esc(e.por)} · ${formatarDataBR(diaEnvioEdicaoI34(e.enviadoEm))} · sem gravação</div>
         <label>Observação / material que falta<textarea data-edicao-nota maxlength="2000">${esc(e.observacao)}</textarea></label>
         <label>Link do material (opcional)<input data-edicao-link type="url" maxlength="2000" value="${escAttr(e.materialUrl)}" placeholder="https://..."></label>
-        <label>Editor<select data-edicao-editor><option value="">Escolha o editor…</option>${EDITORES_SELECIONAVEIS.map(p=>`<option value="${escAttr(p)}">${esc(p)}</option>`).join('')}</select></label>
+        <label>Editor<select data-edicao-editor><option value="">Escolha o editor…</option>${editoresAtuaisI53().map(p=>`<option value="${escAttr(p)}">${esc(p)}</option>`).join('')}</select></label>
         <label style="display:flex;gap:8px;margin:10px 0;"><input data-edicao-confirmado type="checkbox">Conferi que o material está disponível para edição</label>
         <div class="btnrow"><button class="btn secondary" onclick="tratarSomenteEdicaoI34('${escJs(v.id)}','aguardar')">Salvar como aguardando material</button>
         <button class="btn green" onclick="tratarSomenteEdicaoI34('${escJs(v.id)}','encaminhar')">Encaminhar ao editor</button></div>
@@ -11484,7 +11573,7 @@ async function popularClientesAgendamento(){
     if(!segmentoOcupacaoI28(videoId)||!['aguardar','encaminhar'].includes(entrada.acao))throw new Error('Encaminhamento inválido. Reabra a fila.');
     const encaminhar=entrada.acao==='encaminhar', materialUrl=materialUrlI34(entrada.materialUrl), observacao=String(entrada.observacao||'').trim();
     if(observacao.length>2000)throw new Error('A observação deve ter até 2.000 caracteres.');
-    if(encaminhar && (!entrada.materialConfirmado||!EDITORES_SELECIONAVEIS.includes(entrada.editor)))throw new Error('Escolha o editor e confirme que o material está disponível.');
+    if(encaminhar && (!entrada.materialConfirmado||!editoresAtuaisI53().includes(entrada.editor)))throw new Error('Escolha o editor e confirme que o material está disponível.');
     const ref=doc(db,'videos_producao',videoId),em=new Date().toISOString();
     const resultado=await runTransaction(db,async tx=>{
       const snap=await tx.get(ref);ctx.validar();
@@ -22136,7 +22225,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
     { categoria:'geral', chaves:['dado nao encontrado','nao achei resposta','bit nao sabe'], pergunta:'O Bit não sabe responder minha pergunta, o que faço?', resposta:'Tenta reformular com outras palavras primeiro — às vezes muda o resultado. Se continuar sem achar, dá uma olhada no Manual de Função (tem um resumo completo do seu cargo) ou pergunta direto pra Amanda/Chris.' },
 
     // AMANDA — mais variações
-    { categoria:'amanda', chaves:['distribuicao de video','capacidade editor','quem edita cada cliente'], pergunta:'Como funciona a distribuição automática de vídeos pros editores?', resposta:'O sistema olha primeiro se aquele cliente já tem um editor de afinidade (alguém que sempre edita o material dele). Se tiver espaço, vai pra esse editor. Se não tiver, o sistema escolhe quem tem mais vaga livre entre os editores gerais. Se você reatribuir manualmente duas vezes seguidas o mesmo cliente pro mesmo editor, o sistema aprende sozinho e passa a considerar isso como a nova afinidade.' },
+    { categoria:'amanda', chaves:['distribuicao de video','capacidade editor','quem edita cada cliente'], pergunta:'Como funciona a distribuição automática de vídeos pros editores?', resposta:'A Amanda escolhe quem edita cada vídeo. Sem escolha, ele fica em Sem editor — distribuir agora. Para mudar depois, abra Distribuir vídeos e use Editar envio. A alteração vale só para aquele vídeo e não muda o responsável dos próximos.' },
     { categoria:'amanda', chaves:['prazo do video','definir prazo entrega'], pergunta:'Como defino o prazo de entrega de um vídeo pro editor?', resposta:'Gerência → Distribuição de Vídeos. Em cada vídeo em aberto tem botões "Definir: Hoje" e "Definir: Amanhã" — clica no que for certo, e isso já fica visível pro editor saber a urgência.' },
     { categoria:'amanda', chaves:['prioridade do video','cor do video','video vermelho laranja','significado das cores','cores dos videos','cores significam'], pergunta:'O que significam as cores de prioridade nos vídeos?', resposta:'Vermelho é urgente, precisa ser feito o quanto antes. Laranja é alta prioridade mas sem ser emergência. Amarelo é prioridade normal. Verde é sem urgência, pode entrar na fila. Você define isso na tela de Distribuição de Vídeos.' },
     { categoria:'amanda', chaves:['modo ausencia registrar','funcionario de ferias'], pergunta:'Como registro que alguém vai tirar férias?', resposta:'Gerência → Modo Ausência. Coloca o nome, data de início e fim. A partir disso, o sistema para de contar atraso das demandas dessa pessoa durante o período.' },
@@ -22182,7 +22271,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
     { categoria:'amanda', chaves:['modo ausencia registrar ferias'], pergunta:'Como funciona o Modo Ausência em detalhe?', resposta:'Gerência → Equipe → Modo Ausência. Você coloca o nome da pessoa, a data de início e a data de fim da ausência (férias, atestado, o que for). A partir do momento que você registra, o sistema automaticamente para de contar atraso nas demandas dela durante esse período, e ela também não é penalizada no ranking do Funcionário do Mês por algo que estava fora do controle dela. Assim que a data de fim passa, tudo volta ao normal sozinho.' },
     { categoria:'amanda', chaves:['editar checklist de qualquer pessoa detalhe'], pergunta:'Como faço pra mudar o checklist de um funcionário específico?', resposta:'Gerência → Equipe → Editar Checklists. Escolhe a pessoa no menu, e você pode: editar o texto de qualquer item existente, marcar ou desmarcar um item como "crítico" (que exige prova antes de deixar marcar), adicionar um item novo num bloco, remover um bloco inteiro, ou, se bagunçar tudo, tem um botão pra restaurar o checklist original daquela pessoa do zero.' },
     { categoria:'geral', chaves:['manual de funcao completo detalhe'], pergunta:'O que exatamente tem no Manual de Função?', resposta:'Menu Manual de Função. Escolhe qualquer pessoa da equipe (inclusive você mesmo) e vê: o cargo e um resumo de uma frase do que ela faz, a lista completa de responsabilidades reais dela, e botões que já levam direto pras ferramentas principais que essa pessoa usa no sistema — não precisa navegar procurando, já clica e vai.' },
-    { categoria:'amanda', chaves:['distribuicao automatica editor como funciona exatamente'], pergunta:'Explica direito como o sistema escolhe qual editor recebe cada vídeo?', resposta:'Primeiro passo: o sistema olha se aquele cliente já tem um "editor de afinidade" — alguém que historicamente sempre edita o material dele. Se tiver, e esse editor tiver vaga livre na capacidade (Helo até 5, João Victor até 3), o vídeo vai direto pra ele. Segundo passo: se não tiver afinidade definida, ou se o editor de afinidade estiver lotado, o sistema escolhe entre os editores gerais quem tem mais espaço livre no momento. Terceiro passo, o aprendizado: se você (Amanda ou Chris) reatribuir manualmente o mesmo cliente duas vezes seguidas pro mesmo editor, o sistema entende isso como um padrão e passa a considerar esse editor como a nova afinidade daquele cliente — sem precisar configurar nada manualmente.' },
+    { categoria:'amanda', chaves:['distribuicao automatica editor como funciona exatamente'], pergunta:'Explica direito como o sistema escolhe qual editor recebe cada vídeo?', resposta:'A Amanda escolhe quem edita cada vídeo. Sem escolha, ele fica em Sem editor — distribuir agora. Para mudar depois, abra Distribuir vídeos e use Editar envio. A alteração vale só para aquele vídeo e não muda o responsável dos próximos.' },
     { categoria:'geral', chaves:['pipeline completo video passo a passo'], pergunta:'Me explica o caminho completo de um vídeo, do início ao fim?', resposta:'São 6 etapas. 1) O filmmaker registra a gravação e quantos vídeos ficaram prontos — isso já distribui automaticamente pro editor certo. 2) O editor edita e sobe o link — o vídeo cai na fila de "Aprovar Vídeos". 3) Chris ou Amanda aprovam a qualidade (ou pedem ajuste, e volta pro editor). 4) Depois da aprovação de qualidade, o vídeo espera a Amanda confirmar que o CLIENTE também aprovou de verdade — só com essa confirmação ele segue. 5) O vídeo aprovado cai na fila de legenda da Gabi (ou já vem com legenda pronta, se ela escreveu direto no calendário editorial). 6) Com a legenda pronta, a Cecília agenda a data e hora da postagem. Em qualquer momento você pode ver exatamente em qual dessas 6 etapas um vídeo está, em Postagens → Status Completo.' },
     { categoria:'amanda', chaves:['funcionario do mes formula pontuacao calculo'], pergunta:'Como exatamente o sistema calcula os pontos do ranking do mês?', resposta:'Cada demanda aprovada soma 10 pontos. Cada demanda atrasada no momento atual tira 15 pontos. Cada vídeo concluído (editado e aprovado) soma 8 pontos. E a porcentagem média do checklist diário do mês inteiro conta também, multiplicada por 0.5 — então 100% de checklist completo soma até 50 pontos extras. No fim, quem tiver mais pontos aparece em primeiro no ranking, mas a decisão final de quem é o Funcionário do Mês é sempre sua e do Chris — o sistema só sugere.' },
     { categoria:'geral', chaves:['bit como funciona por dentro'], pergunta:'Como o Bit escolhe a resposta certa pra minha pergunta?', resposta:'Ele quebra sua pergunta em palavras-chave, reconhece sinônimos (tipo "postar" e "publicar" contam como a mesma coisa), e dá mais peso pras palavras raras e específicas do sistema (tipo "cápsula" ou "cofre") do que pras palavras muito comuns. Ele compara isso com um banco de mais de 60 perguntas já respondidas, e escolhe a que tiver mais palavras em comum com o que você perguntou. Se não tiver certeza total, ele te mostra as perguntas mais parecidas que encontrou, em vez de simplesmente dizer que não sabe — assim você sempre tem um caminho, mesmo que a primeira resposta não seja exatamente a que você queria.' },
@@ -38086,7 +38175,8 @@ window.setGerenciaSub = function(qual, el){
         <div class="field" style="margin-top:12px;"><label>Quem edita</label>
           <select id="editorVid_${id}">
             <option value="">Sem editor — entra na fila de distribuição</option>
-            ${EDITORES_SELECIONAVEIS.map(e=>`<option value="${esc(e)}" ${e===v.editorAtribuido?'selected':''}>${esc(e)}</option>`).join('')}
+            ${v.editorAtribuido&&!editoresAtuaisI53().includes(v.editorAtribuido)?`<option value="${escAttr(v.editorAtribuido)}" selected disabled>${esc(v.editorAtribuido)} — atribuição anterior</option>`:''}
+            ${editoresAtuaisI53().map(e=>`<option value="${esc(e)}" ${e===v.editorAtribuido?'selected':''}>${esc(e)}</option>`).join('')}
           </select>
           <button class="btn secondary" style="margin-top:8px;" onclick="salvarEditorVideo('${id}','${escJs(v.cliente||'')}')">↪️ Salvar editor</button>
         </div>
@@ -38180,16 +38270,10 @@ window.salvarPrazoVideo = async function(id){
   };
 
   window.salvarEditorVideo = async function(id, clienteSlug){
-    if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão de vídeos.', 'erro'); return false; }
-    const novo = document.getElementById('editorVid_'+id)?.value || '';
-    try{
-      if(novo && typeof reatribuirVideo === 'function'){ await reatribuirVideo(id, clienteSlug, novo); }
-      else { await updateDoc(doc(db,'videos_producao', id), { editorAtribuido: novo }); }
-      mostrarToast(novo ? 'Agora é com ' + novo + '.' : 'Voltou pra fila de distribuição.');
-      fecharModal();
-      try{ renderGerenciaVideos(); }catch(e){}
-    }catch(e){ mostrarToast('Não consegui salvar: ' + e.message, 'erro'); }
-  };
+    if(!['Chris','Amanda'].includes(usuarioAtual)){mostrarToast('Esta ação é da gestão.','erro');return false;}
+    const campo=document.getElementById('editorVid_'+id);if(!campo)return false;
+    return abrirCorrecaoVideoI53(id,campo.value);
+  };;
 
   window.abrirPostagemDeAtraso = async function(id){
     try{
@@ -45629,7 +45713,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         html += `<div class="item">
           <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.editorAtribuido)} · ${esc(v.clienteNome||'')}</div></div>
           <div class="row2" style="margin-top:8px;">
-            <select id="reatribuirSel_${v.id}">${EDITORES_SELECIONAVEIS.map(e=>`<option value="${e}" ${e===v.editorAtribuido?'selected':''}>${e}</option>`).join('')}</select>
+            <select id="reatribuirSel_${v.id}">${editoresAtuaisI53().map(e=>`<option value="${e}" ${e===v.editorAtribuido?'selected':''}>${e}</option>`).join('')}</select>
             <button class="btn secondary" onclick="reatribuirVideo('${v.id}','${escJs(v.cliente)}',document.getElementById('reatribuirSel_${v.id}').value)">Reatribuir</button>
           </div>
         </div>`;

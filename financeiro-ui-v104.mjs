@@ -6,6 +6,7 @@
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
 import * as Core from './financeiro-core.mjs?v=109';
+import { instalarConferenciaPortalI38, lerFontesCobrancaI38 } from './cobranca-portal-manual.mjs?v=i38-1';
 
 const COLECOES_SNAPSHOT = [
   'contratos_cliente',
@@ -566,6 +567,8 @@ function competenciaDeDataCaixa(valor){
     return {lista,pagos,receita,custos,previsto};
   }
 
+  const conferenciaPortalI38=instalarConferenciaPortalI38({...deps,canFinanceiro,carregarSnapshot:()=>lerFontesCobrancaI38(deps),invalidar,vigente:Core.vigenteNaCompetencia});
+
   w.renderFinanceiro=async function(){
     if(!canFinanceiro()){
       document.getElementById('financeiroBox')?.replaceChildren();
@@ -592,6 +595,7 @@ function competenciaDeDataCaixa(valor){
       <div class="card"><h2>🔗 Ponte de reconciliação</h2><div class="item"><div class="top"><div class="nome">Competência ${esc(nomeMes(competencia))}</div><b>${brl(ob.previsto||0)} = ${brl(ob.quitado||0)} quitado + ${brl(ob.aberto||0)} aberto</b></div></div><div class="item"><div class="top"><div class="nome">Caixa real de ${esc(nomeMes(competencia))}</div><b>${brl(entradasCaixa)} entradas − ${brl(lanc.custos)} custos = ${brl(caixaLiquido)}</b></div><div class="meta">Pagamento atrasado entra no caixa pela data em que foi recebido, sem mudar sua competência original.</div></div></div>
       ${htmlConflitos(p,nomes)}
       <div class="card"><h2>👥 Carteira da competência</h2><div class="painelResumo"><div class="resumoCard green"><div class="num">${mov.totais?.ativos||0}</div><div class="lbl">Ativos</div></div><div class="resumoCard"><div class="num">${mov.totais?.entradas||0}</div><div class="lbl">Entraram</div></div><div class="resumoCard"><div class="num">${mov.totais?.saidas||0}</div><div class="lbl">Saíram</div></div></div>${mov.entradas?.length?`<div class="meta">Entradas: ${mov.entradas.map(v=>esc(nomes.get(v.canonicalId)||v.canonicalId)).join(' · ')}</div>`:''}${mov.saidas?.length?`<div class="meta">Saídas: ${mov.saidas.map(v=>esc(nomes.get(v.canonicalId)||v.canonicalId)).join(' · ')}</div>`:''}</div>`;
+      conferenciaPortalI38.montar(box,fontes,competencia);
       await w.renderFinanceiroLancamentosV103(fontes,competencia);
       return true;
     }catch(e){

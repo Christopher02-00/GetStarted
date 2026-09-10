@@ -182,7 +182,7 @@
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, getDocFromServer, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { initializeAuth, getAuth, browserLocalPersistence, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -480,7 +480,7 @@
     return true;
   })();
 
-  window.__fb = { docRef, doc, getDoc, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction };
+  window.__fb = { docRef, doc, getDoc, getDocFromServer, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
   window.__mesSolicitadoCal = /^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) && mesSolicitado>='2026-07' ? mesSolicitado : '';
 </script>
@@ -2092,6 +2092,33 @@ function gravarComSeguranca(){
   return filaGravacaoCalendario;
 }
 
+/* I36 — confirmar no servidor; uma oscilação repete só a leitura. */
+async function lerReciboServidorI36(ref,documentoEsperado,competencia){
+  const ler=window.__fb?.getDocFromServer;
+  if(typeof ler!=='function')throw Object.assign(new Error('A confirmação do servidor não está disponível. Reabra o calendário atualizado.'),{code:'gs/recibo-api-i36'});
+  for(let tentativa=0;tentativa<2;tentativa++){
+    let timer;
+    try{
+      const snap=await Promise.race([
+        ler(ref),
+        new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('O servidor demorou para confirmar o salvamento.'),{code:'gs/recibo-timeout-i36'})),8000);})
+      ]);
+      if(!snap?.exists())throw Object.assign(new Error('O servidor não confirmou este calendário.'),{code:'gs/recibo-ausente-i36'});
+      if(snap.metadata?.fromCache||snap.metadata?.hasPendingWrites)throw Object.assign(new Error('A leitura ainda é local e não confirma o servidor.'),{code:'gs/recibo-local-i36'});
+      const recebido=window.validarFonteCalendarioR4(ref,snap.data());
+      if(assinaturaConteudoCompetenciaV125(recebido,competencia)!==assinaturaConteudoCompetenciaV125(documentoEsperado,competencia)){
+        throw Object.assign(new Error('O servidor já tem uma versão diferente nesta competência. Seus textos continuam protegidos para conferir.'),{code:'gs/recibo-divergente-i36'});
+      }
+      return snap;
+    }catch(e){
+      const codigo=String(e?.code||'');
+      if(tentativa||!/(?:^|\/)(?:unavailable|deadline-exceeded|network-request-failed)$/.test(codigo)&&codigo!=='gs/recibo-timeout-i36')throw e;
+    }finally{if(timer)clearTimeout(timer);}
+    await new Promise(resolve=>setTimeout(resolve,500));
+  }
+}
+/* Fim I36. */
+
 async function executarGravacaoComSeguranca(){
   if(!window.__fb){pendingWrite=false;return {ok:false, motivo:'sem-conexao'};}
   const {docRef,doc,getDoc,db,runTransaction}=window.__fb;
@@ -2159,11 +2186,7 @@ async function executarGravacaoComSeguranca(){
     window.__calBaseConflitoV125=clonarCalendarioV125(mudouNoCommitI35&&!rascunhoNoCommitI35.ok?local:resultado.documentoConfirmado);
     const basePosCommitI35=clonarCalendarioV125(window.__calBaseConflitoV125);
     guardarRascunho();
-    const recibo=await getDoc(docRef);
-    if(recibo.exists())window.validarFonteCalendarioR4(docRef,recibo.data());
-    if(!recibo.exists()||assinaturaConteudoCompetenciaV125(recibo.data(),alvo)!==assinaturaConteudoCompetenciaV125(resultado.documentoConfirmado,alvo)){
-      throw Object.assign(new Error('O recibo não confirmou a competência salva.'),{code:'gs/recibo-competencia-v125'});
-    }
+    const recibo=await lerReciboServidorI36(docRef,resultado.documentoConfirmado,alvo);
     if(String(window.__clienteId||'')!==clienteDaOperacaoI35||String(mesVisivel||'')!==alvo)return {ok:true,foraDaTela:true};
     const editadoDepoisI35=mudouNoCommitI35||assinaturaCalendario(data)!==assinaturaCalendario(resultado.documentoConfirmado);
     const posteriorI35=editadoDepoisI35?mesclarCompetenciaCalendarioV125(basePosCommitI35,clonarCalendarioV125(data),recibo.data(),alvo,''):null;

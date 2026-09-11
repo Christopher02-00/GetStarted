@@ -2762,41 +2762,70 @@
   /* Do aviso direto pra Cecília, com os dados já preenchidos. */
   window.mandarParaCeciliaAgendar=async function(demandaId,leadId){return encaminharServicoCeciliaI19(demandaId,leadId);};
 
+  /* I54: a identidade é a entrada, nunca o título do pedido. A demanda e
+     o recibo nascem juntos; repetir a leitura não duplica nem perde texto. */
+  async function converterEntradaClienteI54(caixa,entradaId){
+    if(!['avisos_do_cliente','pedidos_publicos'].includes(caixa)||!entradaId) throw new Error('Origem do pedido inválida.');
+    const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([caixa,String(entradaId)])));
+    const demandaId='entrada_i54_'+Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
+    const origemRef=doc(db,caixa,String(entradaId)),destinoRef=doc(db,'demandas',demandaId);
+    return runTransaction(db,async tx=>{
+      const origem=await tx.get(origemRef);
+      if(!origem.exists()) return false;
+      const a=origem.data()||{};
+      if(a.lido||a.viraDemanda===false||a.cancelado||a.excluido) return false;
+      const cliente=String(a.cliente||a.clienteSlug||a.slug||'');
+      if(!fonteFisicaClienteR4(cliente,a)) return false;
+      const existente=await tx.get(destinoRef);
+      if(existente.exists()){
+        const d=existente.data()||{};
+        if(d.origemAvisoColecao!==caixa||d.origemAvisoId!==String(entradaId)) throw new Error('O vínculo deste pedido precisa de conferência.');
+      }else{
+        const pretendido=String(a.paraQuem||a.destinatario||'Amanda').trim()||'Amanda';
+        const destino=DESTINATARIOS_DEMANDA.includes(pretendido)?pretendido:'Amanda';
+        const nome=String(a.clienteNome||cliente||'');
+        let titulo=String(a.titulo||('Pedido de '+(nome||'cliente')));
+        const competencia=String(a.competencia||a.mes||a.mesRef||'');
+        const itemId=String(a.itemId||'');
+        const deOnde=caixa==='pedidos_publicos'?'formulário de pedidos do site':'portal de '+(nome||'?');
+        let descricao=String(a.descricao||'');
+        if(/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)) descricao+='\n\nMês do pedido: '+competencia.split('-').reverse().join('/');
+        if(a.itemNome) descricao+='\nConteúdo: '+String(a.itemNome);
+        descricao+='\n\n— veio do '+deOnde;
+        if(destino!==pretendido){
+          titulo='↪️ (era pra '+pretendido+') '+titulo;
+          descricao='Este pedido era para '+pretendido+', que não tem acesso ao sistema. Amanda, confira o encaminhamento.\n\n'+descricao;
+        }
+        tx.set(destinoRef,{
+          titulo,descricao,destinatario:destino,origem:'cliente',clienteNome:nome,
+          ...(cliente?{cliente,clienteSlug:cliente}:{}),
+          ehAviso:true,demandaClienteId:String(a.demandaClienteId||''),
+          prazoData:a.prazoData||hojeLocal(),prazoHora:a.prazoHora||'19:00',status:'pendente',
+          criadoEm:new Date().toISOString(),origemAvisoColecao:caixa,origemAvisoId:String(entradaId),
+          operationId:String(a.operationId||''),competencia,itemId,itemNome:String(a.itemNome||''),
+          tipoPedidoCliente:String(a.tipo||''),conversaoVersao:'i54',
+          ...(destino!==pretendido?{destinatarioPretendido:pretendido}:{})
+        });
+      }
+      tx.update(origemRef,{lido:true,convertidoEm:new Date().toISOString(),demandaInternaId:demandaId,conversaoVersao:'i54'});
+      return true;
+    });
+  }
+
   async function converterAvisosDoCliente(){
-    /* Duas caixas de entrada, mesma lógica:
-       `avisos_do_cliente`  → o que o cliente manda pelo portal
-       `pedidos_publicos`   → o que chega pelo formulário aberto na internet
-       Nenhuma das duas escreve na fila da equipe. Quem cria tarefa aqui
-       dentro somos nós — e é isso que impede alguém de fora encher o
-       painel de todo mundo com um script. */
-    let total = 0;
+    let total=0;
     for(const caixa of ['avisos_do_cliente','pedidos_publicos']){
       let snap;
-      try{ snap = await getDocs(collection(db, caixa)); }
-      catch(e){ console.error('Não consegui ler ' + caixa + ':', e); continue; }
-      const pendentes = [];
-      snap.forEach(d => { const v = d.data(); if(!v.lido && v.viraDemanda !== false) pendentes.push({id:d.id, ...v}); });
-
-      for(const a of pendentes){
-        if(!fonteFisicaClienteR4(a.cliente||a.clienteSlug||a.slug||'',a)) continue;
-        const deOnde = caixa === 'pedidos_publicos' ? 'formulário de pedidos do site' : 'portal de ' + (a.clienteNome || a.cliente || '?');
-        try{
-          await criarDemandaSegura({
-            titulo: a.titulo || ('Pedido de ' + (a.clienteNome || a.cliente || 'cliente')),
-            descricao: (a.descricao || '') + '\n\n— veio do ' + deOnde,
-            destinatario: a.paraQuem || a.destinatario || 'Amanda',
-            origem: 'cliente', clienteNome: a.clienteNome || a.cliente || '',
-            ehAviso: true, demandaClienteId: a.demandaClienteId || '',
-            prazoData: a.prazoData || hojeLocal(),
-            prazoHora: a.prazoHora || '19:00',
-            status: 'pendente'
-          }, { janelaMinutos: 60 });
-          await updateDoc(doc(db, caixa, a.id), { lido: true, convertidoEm: new Date().toISOString() });
-          total++;
-        }catch(e){ console.error('Falha ao converter ' + a.id + ':', e); }
+      try{snap=await getDocs(collection(db,caixa));}
+      catch(e){console.error('Não consegui ler '+caixa+':',e);continue;}
+      const pendentes=[];
+      snap.forEach(d=>{const a=d.data();if(!a.lido&&a.viraDemanda!==false&&!a.cancelado&&!a.excluido)pendentes.push(d.id);});
+      for(const id of pendentes){
+        try{if(await converterEntradaClienteI54(caixa,id))total++;}
+        catch(e){console.error('O pedido '+id+' continua pendente de encaminhamento:',e);}
       }
     }
-    if(total) registrarLogAutomacao('avisos_cliente_convertidos', '', total + ' pedido(s) de fora viraram demanda');
+    if(total)registrarLogAutomacao('avisos_cliente_convertidos','',total+' pedido(s) de fora viraram demanda');
   }
 
   async function registrarAcessoGerencia(pessoa){

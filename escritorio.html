@@ -661,6 +661,7 @@
      e-mail nunca sai" — cai sozinho no CDN oficial do EmailJS como reserva. -->
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.emailjs.com/dist/email.min.js';document.head.appendChild(s);"></script>
 <script src="gs-gravacoes-cliente-i61.js?v=i61-1"></script>
+<script src="gs-conferencia-cecilia-i63.js?v=i63-1"></script>
 </head>
 <body class="semUsuario">
 <div id="authEquipeGate" style="position:fixed;inset:0;z-index:10000;background:#171717;color:#f5f5f2;display:flex;align-items:center;justify-content:center;padding:24px;font-family:Inter,system-ui,sans-serif;">
@@ -1244,7 +1245,7 @@
 
     <div class="view" id="view-acompanhamento">
       <h1>Acompanhamento do <span class="y">Cliente</span></h1>
-      <div class="sub">Gravações organizadas pela Cecília, ligadas aos conteúdos de cada mês. A equipe consulta a mesma preparação que será mostrada no calendário do cliente.</div>
+      <div class="sub">Marcação dos gravados e preparação das próximas gravações, por cliente e mês.</div>
       <div id="gravacoesCentralI61"></div>
       <details id="historicoAcompI61"><summary>Histórico geral do projeto e melhorias no perfil</summary>
       <div id="acompVisaoGeral"></div>
@@ -21002,6 +21003,22 @@ async function registrarGravacaoRealizadaNucleo(agId){
      registro com data e responsável. */
   /* I61 — um editor manual; os consumidores usam a projeção isolada. */
   const gravacoesStoreI61=GetGravacoesI61.store({fb:{db,doc,getDoc:_getDocFromServerFB,getDocs:_getDocsFromServerFB,collection,onSnapshot,runTransaction,serverTimestamp},uid:()=>auth.currentUser?.uid||'',canEdit:()=>usuarioAtual==='Cecília',monthOf:mesDoItemCalendario,validateCalendar:(id,d)=>{if(id==='zeiss')exigirClienteOperacionalR4(id,d);return d;}});
+  async function fontesConferenciaI63(mes){
+    const [extras,config,snap]=await Promise.all(['clientes_extras','clientes_config','calendarios'].map(c=>_getDocsFromServerFB(collection(db,c))));
+    if(!await carregarClientesExtras({extras,config})||!Array.isArray(__carteiraCalendarioOperacionalConfirmada))throw Error('Não foi possível confirmar a carteira de clientes. Tente novamente.');
+    const mapa=mapaCalendariosPorIdentidade(snap,mes);
+    const clientes=__carteiraCalendarioOperacionalConfirmada.filter(c=>{
+      const cfg=__configuracoesCarteiraCalendarioConfirmadas[c.slug]||{},fim=dataOperacionalISO(cfg.inativoDesde);
+      return cfg.excluido!==true&&cfg.ativo!==false&&String(cfg.tipoCliente||'').toLowerCase()!=='encerrado'&&!(fim&&fim<=hojeLocal())&&!clienteInativoEfetivo(cfg)&&!!mapa[c.slug]&&mapa[c.slug].excluido!==true;
+    });
+    return {mapa,clientes};
+  }
+  const gravacoesEdicaoStoreI63={...gravacoesStoreI61,save:async args=>{
+    // Confirma a carteira nesta ação, sem mudar a transação ou as regras da pauta.
+    const cadastro=await _getDocFromServerFB(doc(db,'clientes_config',args.cliente)),cfg=cadastro.exists()?cadastro.data():{},fim=dataOperacionalISO(cfg.inativoDesde);
+    if(cfg.excluido===true||cfg.ativo===false||String(cfg.tipoCliente||'').toLowerCase()==='encerrado'||(fim&&fim<=hojeLocal())||clienteInativoEfetivo(cfg))throw Error('Este cliente não está disponível para novas conferências. Atualize a lista.');
+    return gravacoesStoreI61.save(args);
+  }};
   let gravacoesEditorI61=null,gravacoesGeracaoI61=0,gravacoesContextoI61=null;
   window.abrirGravacoesI61=function(){irPara('acompanhamento',document.getElementById('navAcompanhamento'));};
   async function montarGravacoesI61(){
@@ -21011,15 +21028,15 @@ async function registrarGravacaoRealizadaNucleo(agId){
     const seq=++gravacoesGeracaoI61;gravacoesEditorI61?.dispose();gravacoesEditorI61=null;
     box.innerHTML='<div class="card">Carregando calendários para a conferência…</div>';
     try{
-      await carregarClientesExtras();const snap=await _getDocsFromServerFB(collection(db,'calendarios'));
+      const fontes=await fontesConferenciaI63(hojeLocal().slice(0,7));
       if(seq!==gravacoesGeracaoI61||pessoa!==usuarioAtual)return;
-      const mapa=mapaCalendariosPorIdentidade(snap,hojeLocal().slice(0,7));
+      const mapa=fontes.mapa;
       let carteiraCampo=null;
       if(PESSOAS_DE_CAMPO.includes(pessoa)){const agenda=await _getDocsFromServerFB(collection(db,'agendamentos'));carteiraCampo=new Set(agenda.docs.map(d=>d.data()).filter(a=>!a.excluido&&pessoaNaEquipe(a,pessoa)).map(a=>slugClienteCanonico(a.cliente||a.clienteSlug||'')));}
       if(seq!==gravacoesGeracaoI61||pessoa!==usuarioAtual)return;
-      const clientes=CLIENTES_LISTA.filter(c=>(!carteiraCampo||carteiraCampo.has(slugClienteCanonico(c.slug)))&&mapa[slugClienteCanonico(c.slug)]?.excluido!==true&&mapa[slugClienteCanonico(c.slug)]).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
-      gravacoesContextoI61={pessoa,mapa,cliente:'',mes:hojeLocal().slice(0,7)};
-      box.innerHTML=`<div class="g61"><p>${pessoa==='Cecília'?'Confirme com os videomakers, como você já faz hoje, e marque os conteúdos que foram gravados. O cliente acompanha a organização que você salvar.':'Consulte a organização da Cecília. Para mudar grupo, preparação ou situação, peça a conferência dela.'}</p><div class="g61fields"><label>Cliente<select id="g61Cliente"><option value="">Escolha o cliente…</option>${clientes.map(c=>`<option value="${GetGravacoesI61.esc(slugClienteCanonico(c.slug))}">${GetGravacoesI61.esc(c.nome)}</option>`).join('')}</select></label><label>Mês do calendário<input id="g61Mes" type="month" value="${hojeLocal().slice(0,7)}"></label><button type="button" id="g61Atualizar">Atualizar lista</button></div><p id="g61Aviso" role="status">Escolha o cliente e o mês. Calendários atrasados continuam acessíveis no mês original.</p></div><div id="g61Conteudos"></div>`;
+      const clientes=fontes.clientes.filter(c=>!carteiraCampo||carteiraCampo.has(slugClienteCanonico(c.slug))).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      gravacoesContextoI61={pessoa,mapa,carteiraCampo,cliente:'',mes:hojeLocal().slice(0,7)};
+      box.innerHTML=`<div class="g61"><p>${pessoa==='Cecília'?'Escolha o cliente e o mês da pauta da Gabi.':'Consulte a organização da Cecília. Para mudar grupo, preparação ou situação, peça a conferência dela.'}</p><div class="g61fields"><label>Cliente<select id="g61Cliente"><option value="">Escolha o cliente…</option>${clientes.map(c=>`<option value="${GetGravacoesI61.esc(slugClienteCanonico(c.slug))}">${GetGravacoesI61.esc(c.nome)}</option>`).join('')}</select></label><label>Mês do calendário<input id="g61Mes" type="month" value="${hojeLocal().slice(0,7)}"></label><button type="button" id="g61Atualizar">Atualizar lista</button></div><p id="g61Aviso" role="status">Pauta atrasada? Selecione o mês original.</p></div><div id="g61Conteudos"></div>`;
       GetGravacoesI61.style();
       for(const id of ['g61Cliente','g61Mes'])document.getElementById(id).onchange=()=>carregarGravacoesI61(false);
       document.getElementById('g61Atualizar').onclick=()=>carregarGravacoesI61(true);
@@ -21035,6 +21052,12 @@ async function registrarGravacaoRealizadaNucleo(agId){
     if(!cliente||!GetGravacoesI61.mesValido(mes)){aviso.textContent='Escolha o cliente e um mês válido.';return;}
     aviso.textContent='Conferindo a pauta e a organização salva…';
     try{
+      const fontes=await fontesConferenciaI63(mes);
+      if(seq!==gravacoesGeracaoI61||ctx.pessoa!==usuarioAtual)return;
+      ctx.mapa=fontes.mapa;
+      const permitidos=fontes.clientes.filter(c=>!ctx.carteiraCampo||ctx.carteiraCampo.has(c.slug));
+      if(forcar){const atual=sel.value;sel.innerHTML='<option value="">Escolha o cliente…</option>'+permitidos.map(c=>'<option value="'+GetGravacoesI61.esc(c.slug)+'">'+GetGravacoesI61.esc(c.nome)+'</option>').join('');sel.value=atual;}
+      if(!permitidos.some(c=>c.slug===cliente))throw Error('Cliente fora da carteira ativa de calendários. Reabra esta área para atualizar os clientes.');
       const id=ctx.mapa[cliente].__documentoId;
       const calSnap=await _getDocFromServerFB(doc(db,'calendarios',id));if(!calSnap.exists())throw Error('Calendário não encontrado.');
       const cal=calSnap.data();if(id==='zeiss')exigirClienteOperacionalR4(id,cal);if(cal.excluido)throw Error('Calendário arquivado.');
@@ -21047,9 +21070,9 @@ async function registrarGravacaoRealizadaNucleo(agId){
       const [registros,grupos,antigos]=await Promise.all([gravacoesStoreI61.read(id,mes,'itens'),gravacoesStoreI61.read(id,mes,'grupos'),_getDocsFromServerFB(collection(db,'calendarios_producao',id,'competencias',mes,'itens'))]);
       if(seq!==gravacoesGeracaoI61||ctx.pessoa!==usuarioAtual)return;
       const anteriores=Object.fromEntries(antigos.docs.map(d=>[d.id,d.data()]));
-      gravacoesEditorI61=GetGravacoesI61.editor(box,{cliente:id,mes,itens,registros,grupos,anteriores,store:gravacoesStoreI61,uid:()=>auth.currentUser?.uid||'',canEdit:()=>usuarioAtual==='Cecília'&&gravacoesContextoI61===ctx&&seq===gravacoesGeracaoI61});
+      gravacoesEditorI61=GetConferenciaCeciliaI63.editor(box,{cliente:id,mes,itens,registros,grupos,anteriores,store:gravacoesEdicaoStoreI63,hoje:hojeLocal(),uid:()=>auth.currentUser?.uid||'',canEdit:()=>usuarioAtual==='Cecília'&&gravacoesContextoI61===ctx&&seq===gravacoesGeracaoI61});
       await gravacoesEditorI61.ready;
-      if(seq===gravacoesGeracaoI61)aviso.textContent='Calendário de '+mes.split('-').reverse().join('/')+' · Salve cada conteúdo após conferir.';
+      if(seq===gravacoesGeracaoI61)aviso.textContent='Calendário de '+mes.split('-').reverse().join('/')+' · Conteúdos da pauta da Gabi.';
     }catch(e){if(seq===gravacoesGeracaoI61)aviso.textContent='Não consegui confirmar a leitura. '+(e.message||'Tente novamente.')+' Nenhum conteúdo foi alterado.';}
   }
   function limparGravacoesI61(){
@@ -21059,7 +21082,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
   }
   function inicioGravacoesI61(){
     const box=document.getElementById('gravacoesInicioI61');if(!box)return;
-    const html=usuarioAtual==='Cecília'?`<div class="card" style="border:2px solid var(--yellow)"><h2>🎥 Gravações e acompanhamento</h2><div class="desc">Sua conferência diária: perguntar aos videomakers o que foi gravado, marcar os conteúdos e organizar a próxima gravação. Depois, conclua o item no seu checklist.</div><button class="btn" onclick="abrirGravacoesI61()">Organizar e conferir gravações</button></div>`:'';
+    const html=usuarioAtual==='Cecília'?`<div class="card" style="border:2px solid var(--yellow)"><h2>🎥 Gravações e acompanhamento</h2><div class="desc">Confirme os vídeos gravados no dia. A preparação da próxima gravação fica em um bloco separado.</div><button class="btn" onclick="abrirGravacoesI61()">Registrar gravados</button></div>`:'';
     if(box.innerHTML!==html)box.innerHTML=html;
   }
 

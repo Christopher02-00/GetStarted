@@ -16507,6 +16507,57 @@ window.detectarCampanhas=function(calendarios){
 function campBotaoI7(texto,func,args=[],classe='secondary'){
   return '<button class="btn '+classe+'" style="width:auto;max-width:100%;white-space:normal;overflow-wrap:anywhere;" onclick="'+escAttr(func+'('+args.map(v=>JSON.stringify(v)).join(',')+')')+'">'+esc(texto)+'</button>';
 }
+
+// I60: confirmação visível, vinculada à campanha exata e sem apagar histórico.
+function campContextoExclusaoI60(id,token,origem){
+  if(!window.podeEditarCampanha())throw new Error('Somente Gabi ou Chris exclui esta campanha.');
+  let ctx;
+  if(origem==='lista'){
+    const lista=campI7.lista;
+    if(!lista||lista.token!==token||!document.getElementById(token))throw new Error('A lista mudou. Abra a campanha novamente.');
+    const alvo=lista.registros.find(x=>x.id===id);
+    if(!alvo)throw new Error('A campanha saiu desta lista. Atualize antes de continuar.');
+    ctx={id,raw:alvo.raw,sessao:lista.sessao,host:document.getElementById(token+'_'+id)};
+  }else{
+    ctx={...campContextoI7(id,token),host:document.getElementById(token)};
+  }
+  campSessaoI7(ctx.sessao);
+  if(!ctx.host||ctx.raw.arquivada||ctx.raw.excluido)throw new Error('Esta campanha já está no histórico ou saiu da lista.');
+  return ctx;
+}
+window.cancelarExclusaoCampanhaI60=function(){
+  if(campI7.ocupado)return mostrarToast('Aguarde a confirmação da operação em andamento.','erro');
+  document.querySelectorAll('#view-campanhas [data-confirmacao-exclusao-i60]').forEach(el=>el.remove());
+};
+window.prepararExclusaoCampanhaI60=function(id,token,origem='detalhe'){
+  try{
+    if(campI7.ocupado)return mostrarToast('Aguarde a operação atual.','erro');
+    const ctx=campContextoExclusaoI60(id,token,origem),c=normalizarCampanhaMensal(ctx.raw);
+    const clientes=c.clientes.map(cl=>String(cl.nome||cl.slug||cl.cliente||'Cliente sem nome'));
+    const total=c.clientes.reduce((n,cl)=>n+(Array.isArray(cl.postagens)?cl.postagens.filter(p=>p&&!p.excluido).length:0),0);
+    window.cancelarExclusaoCampanhaI60();
+    const box=document.createElement('div');box.className='card';box.dataset.confirmacaoExclusaoI60=id;
+    box.setAttribute('role','alertdialog');box.setAttribute('aria-label','Confirmar exclusão da campanha');
+    box.style.cssText='border:2px solid var(--red);margin:12px 0;overflow-wrap:anywhere;';
+    box.innerHTML='<h3>Excluir esta campanha?</h3><p><b>'+esc(c.nome||'Campanha')+'</b> · '+esc(c.dataCampanha||'Sem data')+'</p><p class="meta">'+(clientes.length?'Clientes: '+esc(clientes.join(', ')):'Nenhum cliente vinculado')+' · '+total+' postagem(ns)</p><p class="desc">Ela sairá da lista ativa e ficará no Histórico arquivado. '+(total?'As postagens desta campanha também sairão deste quadro. ':'')+'Os calendários e vídeos continuam como estão.</p><div class="btnrow">'+campBotaoI7('Cancelar','cancelarExclusaoCampanhaI60')+campBotaoI7('Excluir esta campanha','executarExclusaoCampanhaI60',[id,token,origem],'red')+'</div>';
+    ctx.host.prepend(box);box.scrollIntoView({block:'nearest'});box.querySelector('button')?.focus({preventScroll:true});
+    return true;
+  }catch(e){return campErroI7(e);}
+};
+window.executarExclusaoCampanhaI60=async function(id,token,origem='detalhe'){
+  try{
+    const ctx=campContextoExclusaoI60(id,token,origem);
+    const painel=Array.from(ctx.host.querySelectorAll('[data-confirmacao-exclusao-i60]')).find(e=>e.dataset.confirmacaoExclusaoI60===id);
+    if(!painel)throw new Error('Confirme a campanha antes de excluir.');
+    if(campI7.ocupado)return mostrarToast('Aguarde a operação atual.','erro');
+    const op=campOperacaoI7({...ctx,token:origem==='lista'?undefined:token},'arquivar_campanha');
+    op.exclusaoConfirmadaI60=true;if(origem==='lista')op.listaTokenI60=token;
+    const botoes=Array.from(painel.querySelectorAll('button'));botoes.forEach(b=>b.disabled=true);
+    try{return await campExecutarI7(op,'Campanha excluída da lista ativa. Histórico preservado.');}
+    finally{if(painel.isConnected)botoes.forEach(b=>b.disabled=false);}
+  }catch(e){return campErroI7(e);}
+};
+
 function campCampoI7(ctx,ci,pi,campo,label,valor,pode,tipo='text'){
   return '<div class="field"><label>'+esc(label)+'</label><input id="'+ctx.token+'_'+ci+'_'+pi+'_'+campo+'" type="'+tipo+'" value="'+escAttr(String(valor??''))+'" '+(pode?'':'disabled')+'></div>';
 }
@@ -16548,6 +16599,7 @@ function campConstruirI7(a,op){
     if(campLegadoI7(a)!==campLegadoI7(op.original))throw new Error('Estrutura mudou. Reabra.');
     campCompararI7(a,op.original,Object.keys(op.campos));Object.assign(b,op.campos);
   }else if(op.tipo==='arquivar_campanha'){
+    if(op.exclusaoConfirmadaI60&&!campIgualI7(a,op.original))throw new Error('A campanha mudou depois da sua conferência. Cancele e abra o acompanhamento novamente antes de excluir.');
     if(op.mes&&mesCampanha(a)!==op.mes)throw new Error('Campanha mudou de mês. Não arquivada.');
     b.arquivada=true;b.arquivadaPor=op.papel;b.arquivadaEm=iso;
   }else if(op.tipo==='editar_legado'){
@@ -16586,7 +16638,7 @@ function campConstruirI7(a,op){
 }
 async function atualizarEstruturaCampanha(op){
   const ref=doc(db,'campanhas',op.id);let revisaoVista;
-  const validar=()=>{campSessaoI7(op.sessao);campPapelI7(op.tipo);if(op.token)campContextoI7(op.id,op.token);};
+  const validar=()=>{campSessaoI7(op.sessao);campPapelI7(op.tipo);if(op.token)campContextoI7(op.id,op.token);if(op.listaTokenI60)campContextoExclusaoI60(op.id,op.listaTokenI60,'lista');};
   for(let rodada=0;rodada<3;rodada++){
     try{
       const resultado=await runTransaction(db,async tx=>{
@@ -16705,7 +16757,8 @@ async function renderCampanhasKanban(){
     try{const p=campPendenciaI7();if(p){html+='<div class="card">Há um envio sem confirmação. '+campBotaoI7('Conferir envio pendente','conferirEnvioCampanhaI7')+'</div>';if(p.tipoEnvio==='criar')for(const [id,k] of [['campNome','nome'],['campEmoji','emoji'],['campData','dataCampanha'],['campIdeia','ideia']]){const e=document.getElementById(id);if(e)e.value=p.valores[k];}}}catch(e){html+='<p>'+esc('Envios indisponíveis neste navegador: '+e.message)+'</p>';}
     if(!doMes.length)html+='<div class="card">Nenhuma campanha '+(window.__historicoCampanhas?'arquivada':'ativa')+' neste mês.</div>';
     for(const x of doMes){
-      html+='<div class="card"><h3>'+esc(x.c.emoji)+' '+esc(x.c.nome||'Campanha')+'</h3><p class="meta">'+x.c.clientes.reduce((n,cl)=>n+cl.postagens.filter(p=>!p.excluido).length,0)+' postagem(ns) · '+esc(x.c.dataCampanha||'Sem data')+'</p>'+campBotaoI7(window.__historicoCampanhas?'Consultar histórico':'Abrir acompanhamento','abrirCampanha',[x.id])+'</div>';
+      const clientes=x.c.clientes.map(cl=>cl.nome||cl.slug||cl.cliente||'Cliente sem nome');
+      html+='<div class="card" id="'+escAttr(token+'_'+x.id)+'"><h3>'+esc(x.c.emoji)+' '+esc(x.c.nome||'Campanha')+'</h3><p class="meta">'+x.c.clientes.reduce((n,cl)=>n+cl.postagens.filter(p=>!p.excluido).length,0)+' postagem(ns) · '+esc(x.c.dataCampanha||'Sem data')+'</p><p class="meta">'+esc(clientes.length?clientes.join(' · '):'Sem cliente vinculado')+'</p><div class="btnrow">'+campBotaoI7(window.__historicoCampanhas?'Consultar histórico':'Abrir acompanhamento','abrirCampanha',[x.id])+(!window.__historicoCampanhas&&window.podeEditarCampanha()?campBotaoI7('Excluir campanha','prepararExclusaoCampanhaI60',[x.id,token,'lista'],'red'):'')+'</div></div>';
     }
     if(detectadasMes.length)html+='<div class="card"><h3>📅 Pautas — somente leitura</h3><p class="desc">Não são copiadas ou ocultadas por título igual.</p>'+detectadasMes.map(c=>'<div class="item"><b>'+esc(c.cliente)+' — '+esc(c.titulo)+'</b><div class="meta">'+esc(c.dataCampanha||'Sem data')+' · '+(c.postado?'postado':c.agendado?'agendado':c.gravado?'gravado':'planejado')+'</div></div>').join('')+'</div>';
     if(doMes.length&&!window.__historicoCampanhas&&window.podePrazoCampanha())html+=campBotaoI7('Arquivar as '+doMes.length+' campanhas deste mês','arquivarMesCampanhas',[mes,token]);
@@ -16735,7 +16788,7 @@ window.abrirCampanha=async function(id){
       }catch(e){if(sessao!==sessaoServicoManual()||abertura!==campI7.abertura)throw e;avisoFonte='Adição indisponível: '+(e.message||e)+'. Histórico preservado.';}
     }
     campSessaoI7(sessao);if(abertura!==campI7.abertura)return false;campI7.detalhe=ctx;window.__campanhaAberta=id;
-    let html='<div id="'+ctx.token+'" class="card" style="border:2px solid var(--yellow);overflow-wrap:anywhere;"><div class="top"><h2>'+esc(c.emoji)+' '+esc(c.nome||'Campanha')+'</h2>'+campBotaoI7('Fechar','fecharCampanhaI7')+'</div><p class="desc">'+esc(c.ideia||'Sem descrição')+' · '+esc(c.dataCampanha||'Sem data')+(arquivada?' · ARQUIVADA — histórico preservado':' · Status manual de acompanhamento')+'</p>';
+    let html='<div id="'+ctx.token+'" class="card" style="border:2px solid var(--yellow);overflow-wrap:anywhere;"><div class="top"><h2>'+esc(c.emoji)+' '+esc(c.nome||'Campanha')+'</h2><div class="btnrow">'+campBotaoI7('Fechar','fecharCampanhaI7')+(planeja&&!arquivada?campBotaoI7('Excluir campanha','excluirCampanha',[id,ctx.token],'red'):'')+'</div></div><p class="desc">'+esc(c.ideia||'Sem descrição')+' · '+esc(c.dataCampanha||'Sem data')+(arquivada?' · ARQUIVADA — histórico preservado':' · Status manual de acompanhamento')+'</p>';
     if(planeja&&!legado){html+='<div class="row3">'+campCampoI7(ctx,-1,-1,'emoji','Ícone',c.emoji,true)+campCampoI7(ctx,-1,-1,'nome','Nome',c.nome,true)+campCampoI7(ctx,-1,-1,'dataCampanha','Data',c.dataCampanha,true,'date')+'</div><div class="field"><label>Planejamento</label><textarea id="'+ctx.token+'_-1_-1_ideia">'+esc(c.ideia||'')+'</textarea></div>'+campBotaoI7('Salvar planejamento','salvarCabecalhoCampanha',[id,ctx.token],'');}
     const grupos=legado?[{slug:raw.cliente||'',nome:raw.clienteNome||raw.cliente||'Cliente sem ID físico',postagens:[campPostLegadoI7(raw)]}]:Array.isArray(raw.clientes)?raw.clientes:[];
     if(!legado&&!Array.isArray(raw.clientes))html+='<p>Estrutura inválida: arquive.</p>';
@@ -16761,7 +16814,7 @@ window.abrirCampanha=async function(id){
       if(ctx.opcoes.length){html+='<div class="field"><label>Cliente e agrupamento físico</label><select id="'+ctx.token+'_-1_-1_cliente"><option value="">Escolha o cliente</option>'+ctx.opcoes.map((x,i)=>'<option value="'+i+'">'+esc(x.label)+' ['+esc(x.slug)+']</option>').join('')+'</select></div><div class="row2">'+campCampoI7(ctx,-1,-1,'novoTitulo','Conteúdo','',true)+campCampoI7(ctx,-1,-1,'novaPublicacao','Publicação','',true,'date')+'</div>'+campBotaoI7('Adicionar postagem','adicionarPostCampanha',[id,ctx.token],'');}
       html+='</div>';
       }
-      html+=campBotaoI7('Arquivar campanha — manter histórico','excluirCampanha',[id,ctx.token]);
+      // Exclusão individual disponível no topo do detalhe e no cartão da lista (I60).
     }
     html+='</div>';box.innerHTML=html;
     try{const envio=campPendenciaI7(),p=envio?.tipoEnvio==='converter'?envio.rascunhoAnterior:envio;if(p?.tipoEnvio==='post'&&p.id===id){if(p.tipo==='adicionar_legado')box.innerHTML+='<p>Rascunho antigo preservado: '+esc(p.post.titulo)+' · '+esc(p.post.dataPublicacao)+'. Organize o histórico e depois adicione como novo envio.</p>';for(const [campo,v] of [['novoTitulo',p.post.titulo],['novaPublicacao',p.post.dataPublicacao],['cliente',String(ctx.opcoes.findIndex(o=>o.slug===p.slug&&(p.tipo==='adicionar_legado'||o.ci===p.ci)))]]){const e=document.getElementById(ctx.token+'_-1_-1_'+campo);if(e)e.value=v;}}}catch(e){}
@@ -16827,11 +16880,8 @@ window.excluirPostCampanha=async function(id,ci,pi,token){
     const op=campOperacaoI7(ctx,'arquivar_post',ci,pi);op.campos={excluido:true,excluidoPor:usuarioAtual,excluidoEm:op.iso};return await campExecutarI7(op,'Postagem arquivada com histórico.');
   }catch(e){return campErroI7(e);}
 };
-window.excluirCampanha=async function(id,token){
-  try{const ctx=campContextoI7(id,token);if(!window.podeEditarCampanha())throw new Error('Somente Gabi ou Chris arquiva esta campanha.');
-    if(!confirm('Arquivar inclusive etapas abertas, sem publicar nem apagar?'))return false;
-    return await campExecutarI7(campOperacaoI7(ctx,'arquivar_campanha'),'Campanha arquivada com histórico.');
-  }catch(e){return campErroI7(e);}
+window.excluirCampanha=function(id,token){
+  return window.prepararExclusaoCampanhaI60(id,token,'detalhe');
 };
 window.arquivarMesCampanhas=async function(mes,token){
   if(campI7.ocupado)return mostrarToast('Aguarde a confirmação atual.','erro');

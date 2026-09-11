@@ -1081,6 +1081,7 @@
   });
 
   async function carregarCalendario(){
+    const uidLeituraI56=auth.currentUser?.uid||'',tokenLeituraI56=tokenPortalConfirmadoI39;
     const clienteDaLeitura=clienteAtual,slugDaLeitura=String(clienteDaLeitura?.slug||'');
     const leituraAindaAtual=()=>clienteAtual===clienteDaLeitura&&String(clienteAtual?.slug||'')===slugDaLeitura;
     const cont = document.getElementById('painelCalendario');
@@ -1348,10 +1349,140 @@
           </div>
         </div>
       `).join('') + '</div>';
+    cont.querySelectorAll('button[onclick="aprovarConteudoCalendario(this)"]').forEach(botao=>{
+      try{
+        const item=dadosCal.items[Number(botao.dataset.itemIndice)];
+        const esperado=capturarAprovacaoI56(dadosCal,item,mesEscolhido);
+        leiturasAprovacaoPortalI56.set(botao,{esperado,cliente:clienteDaLeitura,uid:uidLeituraI56,token:tokenLeituraI56});
+      }catch(e){botao.disabled=true;botao.textContent='Atualize o calendário para conferir';botao.title=e.message;}
+    });
   }
 
-  /* A identidade principal é `itemId`. Legado sem ID só usa índice quando
-     dia e nome ainda conferem; nunca escolhe o primeiro conteúdo do dia. */
+  /* I56: itemId único e versão aberta; legado exige retrato completo único. */
+/* I56 — contrato de aprovação por versão/competência. Gerado igual nos dois pontos de entrada. */
+const MESES_PT_I56=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function mesRefDoTextoI56(valor){
+  var bruto=String(valor||'').trim().toLowerCase();
+  var t=bruto.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  var iso=t.match(/\b(20\d{2})[-\/.](0?[1-9]|1[0-2])\b/);
+  if(iso)return {mes:parseInt(iso[2],10)-1,ano:parseInt(iso[1],10)};
+  var brasileiro=t.match(/\b(0?[1-9]|1[0-2])[-\/](20\d{2})\b/);
+  if(brasileiro)return {mes:parseInt(brasileiro[1],10)-1,ano:parseInt(brasileiro[2],10)};
+  var i=-1;
+  for(var k=0;k<MESES_PT_I56.length;k++){
+    var nome=MESES_PT_I56[k].normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    if(new RegExp('(?:^|[^a-z])'+nome+'(?:$|[^a-z])').test(t) ||
+       new RegExp('(?:^|[^a-z])'+nome.slice(0,3)+'(?:$|[^a-z])').test(t)){i=k;break;}
+  }
+  if(i<0)return null;
+  var a=t.match(/\b(20\d{2})\b/);
+  return {mes:i,ano:a?parseInt(a[1],10):new Date().getFullYear()};
+}
+function mesDoTextoI56(txt){
+  const r=mesRefDoTextoI56(txt);
+  return r ? r.ano+'-'+String(r.mes+1).padStart(2,'0') : '';
+}
+function docJaUsaMesesNoCalendarioI56(cal){
+  return ((cal&&cal.items)||[]).some(i => i && i.mes) || !!(cal&&cal.aprovacaoMeses) || !!(cal&&cal.mesLegado);
+}
+function mesDoItemNoCalendarioI56(cal,it){
+  if(it && it.mes) return it.mes;
+  if(cal && cal.mesLegado) return cal.mesLegado;
+  /* É a mesma âncora usada por `carimbarMesDosAntigos()`. A competência
+     escrita no documento vence metadados de uma aprovação mais nova. */
+  const mesDoDocumento = mesDoTextoI56(cal && cal.month);
+  if(mesDoDocumento) return mesDoDocumento;
+  const ap = cal && cal.aprovacaoInterna;
+  if(ap && ap.mes) return ap.mes;
+  const chavesAprovacao = Object.keys((cal&&cal.aprovacaoMeses)||{}).filter(Boolean);
+  if(chavesAprovacao.length === 1) return chavesAprovacao[0];
+  return '';
+}
+function aprovacaoCompativelNoCalendarioI56(cal,mes){
+  const porMes = ((cal&&cal.aprovacaoMeses)||{})[mes];
+  if(porMes && porMes.status) return porMes;
+  const ap = cal&&cal.aprovacaoInterna;
+  if(!ap || !ap.status) return null;
+  if(ap.mes) return ap.mes === mes ? ap : null;
+  const temMapa = Object.keys((cal&&cal.aprovacaoMeses)||{}).length > 0;
+  const usaMeses=docJaUsaMesesNoCalendarioI56(cal);
+  const legado = (cal&&cal.mesLegado) || (usaMeses ? '' : mesDoTextoI56(cal&&cal.month));
+  const mesesExplicitos=[...new Set(((cal&&cal.items)||[]).filter(i=>i&&!i.excluido&&i.mes).map(i=>i.mes))];
+  const mesUnicoInequivoco=mesesExplicitos.length===1&&mesesExplicitos[0]===mes;
+  return !temMapa && (!mes || !usaMeses || (legado && mes === legado) || mesUnicoInequivoco) ? ap : null;
+}
+function mesHistoricoAnteriorAoControleNoCalendarioI56(cal,mes){
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))) return false;
+  const controlados=Object.keys((cal&&cal.aprovacaoMeses)||{})
+    .filter(m=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(m)).sort();
+  if(!controlados.length || mes>=controlados[0]) return false;
+  return ((cal&&cal.items)||[]).some(it=>it&&!it.excluido&&mesDoItemNoCalendarioI56(cal,it)===mes);
+}
+function limiteArquivoAutomaticoCalendarioI56(mes){
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))) return null;
+  const [ano,numeroMes]=mes.split('-').map(Number);
+  const limite=new Date(ano,numeroMes,0);
+  limite.setHours(0,0,0,0);
+  limite.setDate(limite.getDate()+30);
+  return limite;
+}
+function estadoPublicadoEfetivoCalendarioI56(mes,marca,referencia){
+  const registro=marca||{};
+  const status=String(registro.status||'');
+  const agora=referencia instanceof Date?new Date(referencia.getTime()):new Date(referencia||Date.now());
+  const reabertoAte=new Date(registro.reabertoAte||'');
+  if(!Number.isNaN(reabertoAte.getTime())&&agora<reabertoAte) return 'liberado';
+  if(['2026-08','2026-09'].includes(String(mes||''))&&status==='arquivado'&&registro.substituidoPor&&registro.arquivamentoManual!==true) return 'liberado';
+  if(status==='liberado'&&String(mes||'')>='2026-10'){
+    const limite=limiteArquivoAutomaticoCalendarioI56(mes);
+    if(limite&&agora>=limite) return 'arquivado';
+  }
+  return status;
+}
+function estadoEfetivoNoCalendarioI56(cal,mes){
+  const explicita=aprovacaoCompativelNoCalendarioI56(cal,mes);
+  if(explicita?.status) return estadoPublicadoEfetivoCalendarioI56(mes,explicita);
+  if(mesHistoricoAnteriorAoControleNoCalendarioI56(cal,mes)) return 'liberado';
+  const legado=cal?.mesLegado||(docJaUsaMesesNoCalendarioI56(cal)?'':mesDoTextoI56(cal?.month));
+  const temConteudo=((cal?.items)||[]).some(item=>item&&!item.excluido&&mesDoItemNoCalendarioI56(cal,item)===mes);
+  return ((!mes||(legado&&legado===mes))&&temConteudo)?'liberado':'rascunho';
+}
+/* I56: o retrato pertence à tela aberta, nunca à posição atual do array.
+   Sem ID, só um retrato integral e único do legado pode ser reconhecido. */
+function serializarAprovacaoI56(valor){
+  if(Array.isArray(valor)) return '['+valor.map(serializarAprovacaoI56).join(',')+']';
+  if(valor&&typeof valor==='object') return '{'+Object.keys(valor).sort().filter(k=>valor[k]!==undefined).map(k=>JSON.stringify(k)+':'+serializarAprovacaoI56(valor[k])).join(',')+'}';
+  return JSON.stringify(valor);
+}
+function versaoItemAprovacaoI56(cal,item){
+  const copia={...item,mes:mesDoItemNoCalendarioI56(cal,item)};
+  for(const campo of ['apr','aprPor','aprEm','aprovadoPeloClienteEm','__indiceBanco']) delete copia[campo];
+  return serializarAprovacaoI56(copia);
+}
+function capturarAprovacaoI56(cal,item,mes){
+  if(!item||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)||mesDoItemNoCalendarioI56(cal,item)!==mes) throw Error('Não foi possível confirmar o mês deste conteúdo. Atualize o calendário e abra o conteúdo novamente.');
+  const esperado=Object.freeze({id:String(item.itemId||'').trim(),mes,
+    versao:versaoItemAprovacaoI56(cal,item),aprovado:!!item.apr,
+    liberacao:serializarAprovacaoI56(aprovacaoCompativelNoCalendarioI56(cal,mes))});
+  conferirAprovacaoI56(cal,esperado);
+  return esperado;
+}
+function conferirAprovacaoI56(cal,esperado){
+  const mudou='Este conteúdo mudou desde que você abriu. Atualize o calendário e confira a versão atual antes de aprovar.';
+  if(!esperado) throw Error(mudou);
+  if(estadoEfetivoNoCalendarioI56(cal,esperado.mes)!=='liberado') throw Error('As aprovações deste mês estão pausadas. Atualize o calendário para acompanhar a revisão.');
+  if(serializarAprovacaoI56(aprovacaoCompativelNoCalendarioI56(cal,esperado.mes))!==esperado.liberacao) throw Error(mudou);
+  const candidatos=(cal.items||[]).map((item,indice)=>({item,indice})).filter(({item})=>item&&(
+    esperado.id ? String(item.itemId||'').trim()===esperado.id :
+      !String(item.itemId||'').trim()&&mesDoItemNoCalendarioI56(cal,item)===esperado.mes&&versaoItemAprovacaoI56(cal,item)===esperado.versao));
+  if(candidatos.length!==1) throw Error('Não foi possível confirmar a identidade deste conteúdo. Atualize o calendário e abra o conteúdo novamente.');
+  const alvo=candidatos[0];
+  if(alvo.item.excluido||alvo.item.posted||alvo.item.agendado) throw Error('Este conteúdo saiu da aprovação. Atualize o calendário para conferir sua situação.');
+  if(mesDoItemNoCalendarioI56(cal,alvo.item)!==esperado.mes||versaoItemAprovacaoI56(cal,alvo.item)!==esperado.versao) throw Error(mudou);
+  return alvo;
+}
+
+  const leiturasAprovacaoPortalI56=new WeakMap();
   function nomeItemLegadoPortal(valor){
     return String(valor||'').normalize('NFC').replace(/\s+/g,' ').trim();
   }
@@ -1374,33 +1505,29 @@
           throw new Error('A sessão do cliente mudou. Reabra o calendário antes de aprovar.');
         }
       };
+      const leitura=leiturasAprovacaoPortalI56.get(botao);
+      const telaConfere=()=>sessaoConfere()&&botao.isConnected&&leitura?.cliente===clienteInicial&&leitura?.uid===uidInicial&&leitura?.token===tokenInicial&&String(window.__mesPortal||mesAlvo)===mesAlvo;
+      const conferirTela=()=>{conferirSessao();if(!telaConfere())throw Error('A tela mudou. Atualize o calendário e abra o conteúdo novamente.');};
+      conferirTela();
       const ref=doc(db,'calendarios',slugInicial);
       const confirmado=await runTransaction(db,async tx=>{
         conferirSessao();
         const snap=await tx.get(ref);
         conferirSessao();
         if(!snap.exists()) throw new Error('Calendário não encontrado.');
-        const dados=snap.data()||{},items=(dados.items||[]).map(item=>({...item}));
+        const dados=snap.data()||{},items=(dados.items||[]).map(item=>item?({...item}):item);
         if(!documentoCalendarioPortalCanonicoR4(slugInicial,dados)) throw new Error('A identidade deste calendário diverge da ZEISS. Nada foi aprovado.');
-        const estado=((dados.aprovacaoMeses||{})[mesAlvo]||{}).status||
-          ((dados.aprovacaoInterna||{}).mes===mesAlvo?(dados.aprovacaoInterna||{}).status:'');
-        if(estado&&estado!=='liberado') throw new Error('Este mês deixou de estar liberado.');
-        let alvo=itemId?items.findIndex(item=>String(item?.itemId||'')===itemId):-1;
-        if(alvo<0&&Number.isInteger(indice)&&items[indice]&&Number(items[indice].day)===dia&&nomeItemLegadoPortal(items[indice].name)===nome) alvo=indice;
-        if(alvo<0){
-          const candidatos=items.map((item,i)=>({item,i})).filter(({item})=>Number(item?.day)===dia&&nomeItemLegadoPortal(item?.name)===nome);
-          if(candidatos.length===1) alvo=candidatos[0].i;
-        }
-        if(alvo<0||!items[alvo]) throw new Error('O conteúdo mudou de posição ou identidade. Recarregue antes de aprovar.');
-        if(items[alvo].excluido || items[alvo].posted || items[alvo].agendado) throw new Error('Este conteúdo foi retirado da aprovação. Reabra o calendário para conferir a versão atual.');
-        if(items[alvo].apr) return {item:items[alvo],items};
+        conferirTela();
+        const alvo=conferirAprovacaoI56(dados,leitura.esperado).indice;
+        if(items[alvo].apr)return {item:items[alvo],items,mudou:false};
         const agora=new Date().toISOString();
         items[alvo].apr=true;items[alvo].aprPor='cliente';items[alvo].aprEm=agora;items[alvo].aprovadoPeloClienteEm=agora;
-        conferirSessao();
+        conferirTela();
         tx.set(ref,{items,updatedAt:agora},{merge:true});
-        return {item:items[alvo],items};
+        return {item:items[alvo],items,mudou:true};
       });
       if(!sessaoConfere()) return;
+      if(!confirmado.mudou){if(telaConfere())carregarCalendario();return;}
       const itemConfirmado=confirmado.item,items=confirmado.items;
       /* 30/07/2026 — ia só pra Gabi. A Amanda precisa saber também: é ela
          que acompanha o ciclo e cobra o próximo passo. */
@@ -1431,7 +1558,7 @@
             (quem === 'Cecília' ? ' Já dá pra marcar as gravações desse mês.' : ' Nada pendente com o cliente nesse mês.'), quem);
         }
       }
-      if(sessaoConfere()) carregarCalendario();
+      if(telaConfere()) carregarCalendario();
     }catch(e){ console.error('Falha ao aprovar conteúdo:', e); alert('Não consegui registrar agora: '+(e?.message||'tenta de novo em instantes.')); }
     finally{
       if(botao instanceof Element&&botao.isConnected&&botao.textContent==='Aprovando…'){

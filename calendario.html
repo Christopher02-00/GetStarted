@@ -1992,6 +1992,191 @@ async function load(){
    observação dele, num campo separado do `obs` da Gabi pra não haver
    disputa) e `comments`. Nada mais.
    =================================================================== */
+/* I56 — contrato de aprovação por versão/competência. Gerado igual nos dois pontos de entrada. */
+const MESES_PT_I56=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function mesRefDoTextoI56(valor){
+  var bruto=String(valor||'').trim().toLowerCase();
+  var t=bruto.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  var iso=t.match(/\b(20\d{2})[-\/.](0?[1-9]|1[0-2])\b/);
+  if(iso)return {mes:parseInt(iso[2],10)-1,ano:parseInt(iso[1],10)};
+  var brasileiro=t.match(/\b(0?[1-9]|1[0-2])[-\/](20\d{2})\b/);
+  if(brasileiro)return {mes:parseInt(brasileiro[1],10)-1,ano:parseInt(brasileiro[2],10)};
+  var i=-1;
+  for(var k=0;k<MESES_PT_I56.length;k++){
+    var nome=MESES_PT_I56[k].normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    if(new RegExp('(?:^|[^a-z])'+nome+'(?:$|[^a-z])').test(t) ||
+       new RegExp('(?:^|[^a-z])'+nome.slice(0,3)+'(?:$|[^a-z])').test(t)){i=k;break;}
+  }
+  if(i<0)return null;
+  var a=t.match(/\b(20\d{2})\b/);
+  return {mes:i,ano:a?parseInt(a[1],10):new Date().getFullYear()};
+}
+function mesDoTextoI56(txt){
+  const r=mesRefDoTextoI56(txt);
+  return r ? r.ano+'-'+String(r.mes+1).padStart(2,'0') : '';
+}
+function docJaUsaMesesNoCalendarioI56(cal){
+  return ((cal&&cal.items)||[]).some(i => i && i.mes) || !!(cal&&cal.aprovacaoMeses) || !!(cal&&cal.mesLegado);
+}
+function mesDoItemNoCalendarioI56(cal,it){
+  if(it && it.mes) return it.mes;
+  if(cal && cal.mesLegado) return cal.mesLegado;
+  /* É a mesma âncora usada por `carimbarMesDosAntigos()`. A competência
+     escrita no documento vence metadados de uma aprovação mais nova. */
+  const mesDoDocumento = mesDoTextoI56(cal && cal.month);
+  if(mesDoDocumento) return mesDoDocumento;
+  const ap = cal && cal.aprovacaoInterna;
+  if(ap && ap.mes) return ap.mes;
+  const chavesAprovacao = Object.keys((cal&&cal.aprovacaoMeses)||{}).filter(Boolean);
+  if(chavesAprovacao.length === 1) return chavesAprovacao[0];
+  return '';
+}
+function aprovacaoCompativelNoCalendarioI56(cal,mes){
+  const porMes = ((cal&&cal.aprovacaoMeses)||{})[mes];
+  if(porMes && porMes.status) return porMes;
+  const ap = cal&&cal.aprovacaoInterna;
+  if(!ap || !ap.status) return null;
+  if(ap.mes) return ap.mes === mes ? ap : null;
+  const temMapa = Object.keys((cal&&cal.aprovacaoMeses)||{}).length > 0;
+  const usaMeses=docJaUsaMesesNoCalendarioI56(cal);
+  const legado = (cal&&cal.mesLegado) || (usaMeses ? '' : mesDoTextoI56(cal&&cal.month));
+  const mesesExplicitos=[...new Set(((cal&&cal.items)||[]).filter(i=>i&&!i.excluido&&i.mes).map(i=>i.mes))];
+  const mesUnicoInequivoco=mesesExplicitos.length===1&&mesesExplicitos[0]===mes;
+  return !temMapa && (!mes || !usaMeses || (legado && mes === legado) || mesUnicoInequivoco) ? ap : null;
+}
+function mesHistoricoAnteriorAoControleNoCalendarioI56(cal,mes){
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))) return false;
+  const controlados=Object.keys((cal&&cal.aprovacaoMeses)||{})
+    .filter(m=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(m)).sort();
+  if(!controlados.length || mes>=controlados[0]) return false;
+  return ((cal&&cal.items)||[]).some(it=>it&&!it.excluido&&mesDoItemNoCalendarioI56(cal,it)===mes);
+}
+function limiteArquivoAutomaticoCalendarioI56(mes){
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))) return null;
+  const [ano,numeroMes]=mes.split('-').map(Number);
+  const limite=new Date(ano,numeroMes,0);
+  limite.setHours(0,0,0,0);
+  limite.setDate(limite.getDate()+30);
+  return limite;
+}
+function estadoPublicadoEfetivoCalendarioI56(mes,marca,referencia){
+  const registro=marca||{};
+  const status=String(registro.status||'');
+  const agora=referencia instanceof Date?new Date(referencia.getTime()):new Date(referencia||Date.now());
+  const reabertoAte=new Date(registro.reabertoAte||'');
+  if(!Number.isNaN(reabertoAte.getTime())&&agora<reabertoAte) return 'liberado';
+  if(['2026-08','2026-09'].includes(String(mes||''))&&status==='arquivado'&&registro.substituidoPor&&registro.arquivamentoManual!==true) return 'liberado';
+  if(status==='liberado'&&String(mes||'')>='2026-10'){
+    const limite=limiteArquivoAutomaticoCalendarioI56(mes);
+    if(limite&&agora>=limite) return 'arquivado';
+  }
+  return status;
+}
+function estadoEfetivoNoCalendarioI56(cal,mes){
+  const explicita=aprovacaoCompativelNoCalendarioI56(cal,mes);
+  if(explicita?.status) return estadoPublicadoEfetivoCalendarioI56(mes,explicita);
+  if(mesHistoricoAnteriorAoControleNoCalendarioI56(cal,mes)) return 'liberado';
+  const legado=cal?.mesLegado||(docJaUsaMesesNoCalendarioI56(cal)?'':mesDoTextoI56(cal?.month));
+  const temConteudo=((cal?.items)||[]).some(item=>item&&!item.excluido&&mesDoItemNoCalendarioI56(cal,item)===mes);
+  return ((!mes||(legado&&legado===mes))&&temConteudo)?'liberado':'rascunho';
+}
+/* I56: o retrato pertence à tela aberta, nunca à posição atual do array.
+   Sem ID, só um retrato integral e único do legado pode ser reconhecido. */
+function serializarAprovacaoI56(valor){
+  if(Array.isArray(valor)) return '['+valor.map(serializarAprovacaoI56).join(',')+']';
+  if(valor&&typeof valor==='object') return '{'+Object.keys(valor).sort().filter(k=>valor[k]!==undefined).map(k=>JSON.stringify(k)+':'+serializarAprovacaoI56(valor[k])).join(',')+'}';
+  return JSON.stringify(valor);
+}
+function versaoItemAprovacaoI56(cal,item){
+  const copia={...item,mes:mesDoItemNoCalendarioI56(cal,item)};
+  for(const campo of ['apr','aprPor','aprEm','aprovadoPeloClienteEm','__indiceBanco']) delete copia[campo];
+  return serializarAprovacaoI56(copia);
+}
+function capturarAprovacaoI56(cal,item,mes){
+  if(!item||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)||mesDoItemNoCalendarioI56(cal,item)!==mes) throw Error('Não foi possível confirmar o mês deste conteúdo. Atualize o calendário e abra o conteúdo novamente.');
+  const esperado=Object.freeze({id:String(item.itemId||'').trim(),mes,
+    versao:versaoItemAprovacaoI56(cal,item),aprovado:!!item.apr,
+    liberacao:serializarAprovacaoI56(aprovacaoCompativelNoCalendarioI56(cal,mes))});
+  conferirAprovacaoI56(cal,esperado);
+  return esperado;
+}
+function conferirAprovacaoI56(cal,esperado){
+  const mudou='Este conteúdo mudou desde que você abriu. Atualize o calendário e confira a versão atual antes de aprovar.';
+  if(!esperado) throw Error(mudou);
+  if(estadoEfetivoNoCalendarioI56(cal,esperado.mes)!=='liberado') throw Error('As aprovações deste mês estão pausadas. Atualize o calendário para acompanhar a revisão.');
+  if(serializarAprovacaoI56(aprovacaoCompativelNoCalendarioI56(cal,esperado.mes))!==esperado.liberacao) throw Error(mudou);
+  const candidatos=(cal.items||[]).map((item,indice)=>({item,indice})).filter(({item})=>item&&(
+    esperado.id ? String(item.itemId||'').trim()===esperado.id :
+      !String(item.itemId||'').trim()&&mesDoItemNoCalendarioI56(cal,item)===esperado.mes&&versaoItemAprovacaoI56(cal,item)===esperado.versao));
+  if(candidatos.length!==1) throw Error('Não foi possível confirmar a identidade deste conteúdo. Atualize o calendário e abra o conteúdo novamente.');
+  const alvo=candidatos[0];
+  if(alvo.item.excluido||alvo.item.posted||alvo.item.agendado) throw Error('Este conteúdo saiu da aprovação. Atualize o calendário para conferir sua situação.');
+  if(mesDoItemNoCalendarioI56(cal,alvo.item)!==esperado.mes||versaoItemAprovacaoI56(cal,alvo.item)!==esperado.versao) throw Error(mudou);
+  return alvo;
+}
+
+let aprovacaoModalI56=null;
+let aprovacaoEmCursoI56=false;
+function capturarModalAprovacaoI56(item){
+  aprovacaoModalI56=null;
+  if(window.__modoCal!=='cliente') return;
+  const botao=document.getElementById('aprBtn');
+  try{
+    const esperado=capturarAprovacaoI56(data,item,mesVisivel);
+    aprovacaoModalI56={esperado,cliente:String(window.__clienteId||''),uid:String(window.__fbAuthUid||''),fb:window.__fb};
+    botao.disabled=aprovacaoEmCursoI56;
+  }catch(e){
+    botao.disabled=true;
+    if(!item.excluido&&!item.posted&&!item.agendado&&!clienteEmConsultaDeAjusteV115()){
+      botao.textContent='Atualize o calendário para conferir';botao.title=e.message;
+    }
+  }
+}
+async function aprovarModalClienteI56(){
+  if(aprovacaoEmCursoI56) return false;
+  const contexto=aprovacaoModalI56,botao=document.getElementById('aprBtn');
+  const identidadeConfere=()=>contexto&&window.__modoCal==='cliente'&&window.__fb===contexto.fb&&String(window.__clienteId||'')===contexto.cliente&&String(window.__fbAuthUid||'')===contexto.uid;
+  const telaConfere=()=>identidadeConfere()&&aprovacaoModalI56===contexto&&mesVisivel===contexto.esperado.mes;
+  const conferirTela=()=>{if(!telaConfere())throw Error('A tela ou sessão mudou. Abra o conteúdo novamente antes de aprovar.');};
+  aprovacaoEmCursoI56=true;
+  const rotulo=botao.textContent;botao.disabled=true;botao.textContent='Salvando…';
+  try{
+    conferirTela();
+    const fb=contexto.fb;
+    if(!fb?.runTransaction||!fb.db||!fb.docRef)throw Error('Sem conexão com o servidor. Tente novamente; o conteúdo continua aberto.');
+    const aprovar=!contexto.esperado.aprovado;
+    const confirmado=await fb.runTransaction(fb.db,async tx=>{
+      conferirTela();
+      const snap=await tx.get(fb.docRef);conferirTela();
+      if(!snap.exists())throw Error('Calendário não encontrado.');
+      const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
+      const alvo=conferirAprovacaoI56(servidor,contexto.esperado);
+      if(!!alvo.item.apr===aprovar)return {mudou:false,servidor,item:alvo.item,indice:alvo.indice};
+      const items=(servidor.items||[]).map(it=>it?({...it}):it),agora=new Date().toISOString();
+      items[alvo.indice].apr=aprovar;items[alvo.indice].aprPor=aprovar?'cliente':'';items[alvo.indice].aprEm=aprovar?agora:'';
+      conferirTela();tx.set(fb.docRef,{items,updatedAt:agora},{merge:true});
+      return {mudou:true,servidor:{...servidor,items,updatedAt:agora},item:items[alvo.indice],indice:alvo.indice};
+    });
+    if(!identidadeConfere())return true;
+    if(telaConfere()){
+      data=projetarCalendarioClienteV115(confirmado.servidor);
+      window.__calFonteClienteV115=confirmado.servidor;
+      closeModal();renderAll_semSalvar();
+      avisarTela(confirmado.mudou?(aprovar?'✓ Conteúdo aprovado!':'Aprovação removida.'):(aprovar?'Este conteúdo já estava aprovado.':'A aprovação já estava removida.'));
+    }
+    if(confirmado.mudou&&aprovar)avisarEquipeDaAprovacao(confirmado.item,confirmado.indice);
+    return true;
+  }catch(e){
+    console.error('Falha ao aprovar conteúdo:',e);
+    if(telaConfere())avisarTela('Não foi possível confirmar a aprovação: '+(e?.message||'tente novamente.'),'erro');
+    return false;
+  }finally{
+    aprovacaoEmCursoI56=false;
+    if(aprovacaoModalI56===contexto){botao.disabled=false;botao.textContent=rotulo;}
+    else if(aprovacaoModalI56)document.getElementById('aprBtn').disabled=false;
+  }
+}
+
 async function salvarComoCliente(aplicar, oQueFoi){
   if(!window.__fb){ avisarTela('Sem conexão com o servidor. Nada foi salvo.', 'erro'); return false; }
   const { docRef, runTransaction, db } = window.__fb;
@@ -3496,8 +3681,8 @@ function openEdit(i){const somenteConsulta=edicaoBloqueadaPorRevisao()||clienteE
   updateRefLink();
   aplicarModoClienteItemV126(it);
   prepararObservacaoClienteI35(it);
-  document.getElementById('overlay').classList.add('show');iniciarFormularioI35(it);}
-function closeModal(){guardarFormularioI35();formularioI35=null;document.getElementById('overlay').classList.remove('show');document.querySelector('#overlay .modal')?.classList.remove('modo-cliente-simples');aplicarModoConsultaItem(false);}
+  document.getElementById('overlay').classList.add('show');iniciarFormularioI35(it);capturarModalAprovacaoI56(it);}
+function closeModal(){aprovacaoModalI56=null;guardarFormularioI35();formularioI35=null;document.getElementById('overlay').classList.remove('show');document.querySelector('#overlay .modal')?.classList.remove('modo-cliente-simples');aplicarModoConsultaItem(false);}
 function normalizarSlugLegendaV114(valor){
   return String(valor||'').trim().toLowerCase();
 }
@@ -3699,6 +3884,7 @@ function delItem(){if(exigirRetiradaAntesDeEditar())return;if(editIdx!==null&&da
 async function toggleApr(){
   if(editIdx===null) return;
   if(clienteEmConsultaDeAjusteV115()){avisarTela('Aprovações ficam pausadas enquanto a equipe corrige o pedido.','erro');return;}
+  if(window.__modoCal === 'cliente')return aprovarModalClienteI56();
   const idx = editIdx;
   const item = data.items[idx];
   if(!item) return;
@@ -3706,32 +3892,6 @@ async function toggleApr(){
   /* ===== 03/08/2026 — O CLIENTE TEM CAMINHO PRÓPRIO ==================
      Antes isto chamava `save()` pros dois lados, e o `save()` recusava a
      gravação do cliente. Ele via verde e nada acontecia. */
-  if(window.__modoCal === 'cliente'){
-    const virandoAprovado = !item.apr;
-    const btn = document.getElementById('aprBtn');
-    if(btn){ btn.disabled = true; btn.textContent = virandoAprovado ? 'Aprovando…' : 'Removendo…'; }
-    const ok = await salvarComoCliente((itens) => {
-      if(!itens[idx]) return false;
-      itens[idx].apr = virandoAprovado;
-      itens[idx].aprPor = virandoAprovado ? 'cliente' : '';
-      itens[idx].aprEm  = virandoAprovado ? new Date().toISOString() : '';
-      return true;
-    }, virandoAprovado ? 'aprovou um conteúdo' : 'removeu a aprovação de um conteúdo');
-
-    if(btn) btn.disabled = false;
-    if(!ok){
-      /* Falhou: NÃO deixa a tela mentindo. */
-      openEdit(idx);
-      return;
-    }
-    if(virandoAprovado) avisarEquipeDaAprovacao(item, idx);
-    avisarTela(virandoAprovado ? 'Aprovado! Você voltou ao calendário para conferir o próximo conteúdo.' : 'Aprovação removida. Você voltou ao calendário.');
-    closeModal();
-    renderAll_semSalvar();
-    return;
-  }
-
-  /* Equipe: segue como sempre. */
   if(exigirRetiradaAntesDeEditar()) return;
   data.items[idx].apr = !data.items[idx].apr;
   save(); openEdit(idx); renderAll();

@@ -86,6 +86,19 @@
     .gpCab div{font-size:9px;}
   }
 
+
+/* I58 — seleção de leitura, independente dos controles de aprovação. */
+.visao-i58{margin:12px 0;padding:12px;border:1px solid var(--yellow);border-radius:12px;background:var(--card,#252527);}
+.visao-i58[hidden],.visao-i58-vazio[hidden]{display:none!important;}
+.visao-i58__opcoes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}
+.visao-i58__opcoes button{min-width:0;min-height:44px;padding:8px 5px;border:1px solid #666;border-radius:9px;background:transparent;color:var(--text,#f0f0f0);font:inherit;font-size:12px;font-weight:600;line-height:1.35;cursor:pointer;}
+.visao-i58__opcoes button[aria-pressed="true"]{background:var(--yellow);border-color:var(--yellow);color:#171717;}
+.visao-i58__opcoes span{display:block;font-weight:800;margin-top:2px;}
+.visao-i58__ajuda,.visao-i58__pendencia{font-size:12px;line-height:1.5;margin:10px 0 0;}
+.visao-i58__pendencia{padding-top:8px;border-top:1px solid #555;}
+.visao-i58__pendencia button{border:0;background:transparent;color:var(--yellow);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;}
+.visao-i58-vazio{padding:14px;border:1px dashed #777;border-radius:10px;margin:12px 0;font-size:13px;line-height:1.5;}
+
 </style>
 </head>
 <body>
@@ -1067,6 +1080,58 @@
     return !!item && !item.excluido && !item.apr && !item.posted && !item.agendado;
   }
 
+/* I58 — projeção visual; não altera fonte, competência ou aprovação. */
+function normalizarFiltroI58(valor){return ['pauta','andamento','todos'].includes(valor)?valor:'pauta';}
+function jaProduzidoI58(item){return !!(item&&(item.gravado||item.agendado||item.posted));}
+function itensDaSelecaoI58(itens,filtro){
+  const modo=normalizarFiltroI58(filtro);
+  return (itens||[]).filter(it=>it&&!it.excluido&&(modo==='todos'||(modo==='andamento')===jaProduzidoI58(it)));
+}
+function controleVisaoI58(itens,filtro,acao,podeAprovar){
+  const modo=normalizarFiltroI58(filtro),pauta=itensDaSelecaoI58(itens,'pauta'),andamento=itensDaSelecaoI58(itens,'andamento');
+  const opcoes=[['pauta','Pauta do mês',pauta.length],['andamento','Já gravados',andamento.length],['todos','Todos',pauta.length+andamento.length]];
+  const pendencias=andamento.filter(it=>!it.apr&&!it.agendado&&!it.posted).length;
+  return '<div class="visao-i58__opcoes" role="group" aria-label="Conteúdos exibidos no calendário">'+opcoes.map(([valor,nome,total])=>
+    '<button type="button" aria-pressed="'+(modo===valor)+'" onclick="'+acao+'(\''+valor+'\')">'+nome+' <span>'+total+'</span></button>').join('')+'</div>'+
+    '<p class="visao-i58__ajuda">'+(modo==='pauta'?'Roteiros e conteúdos a preparar neste mês. Os dias indicam a publicação prevista.':modo==='andamento'?'Materiais já gravados, programados ou publicados. Eles continuam disponíveis para consulta.':'Todos os conteúdos do mês selecionado.')+'</p>'+
+    (modo==='pauta'&&pendencias&&podeAprovar?'<p class="visao-i58__pendencia">'+pendencias+' conteúdo(s) já gravado(s) ainda precisam da sua aprovação. <button type="button" onclick="'+acao+'(\'andamento\')">Conferir agora</button></p>':'');
+}
+function mensagemSelecaoVaziaI58(itens,filtro){
+  if(itensDaSelecaoI58(itens,filtro).length)return '';
+  return normalizarFiltroI58(filtro)==='pauta'&&itensDaSelecaoI58(itens,'andamento').length
+    ?'Nenhum conteúdo a preparar neste mês. Consulte os materiais em Já gravados ou Todos.'
+    :normalizarFiltroI58(filtro)==='andamento'?'Nenhum material marcado como gravado, programado ou publicado neste mês.':'Nenhum conteúdo nesta seleção.';
+}
+/* FIM I58 — projeção visual */
+
+
+  const filtrosPortalI58=new Map();
+  let contextoFiltroPortalI58=null;
+  function chaveFiltroPortalI58(cliente,mes){return String(cliente||'')+'|'+String(mes||'');}
+  function filtroPortalI58(cliente,mes){return filtrosPortalI58.get(chaveFiltroPortalI58(cliente,mes))||'pauta';}
+  function aplicarFiltroPortalI58(){
+    const ctx=contextoFiltroPortalI58,box=document.getElementById('filtroPortalI58');
+    if(!ctx||!box||ctx.cliente!==clienteAtual?.slug)return;
+    const mesConfere=ctx.mes===String(window.__mesPortal||''),filtro=filtroPortalI58(ctx.cliente,ctx.mes);
+    const html=controleVisaoI58(ctx.itens,filtro,'selecionarFiltroPortalI58',ctx.podeAprovar);
+    if(box.innerHTML!==html)box.innerHTML=html;
+    box.querySelectorAll('button').forEach(b=>b.disabled=!mesConfere);
+    if(!mesConfere)return; // I48: aguardar conferência manual da nova competência.
+    document.querySelectorAll('#listaCalendarioI58 > .day').forEach(el=>{el.style.display=filtro==='todos'||el.dataset.visaoI58===filtro?'':'none';});
+    const vazio=document.getElementById('vazioPortalI58');
+    if(vazio){vazio.textContent=mensagemSelecaoVaziaI58(ctx.itens,filtro);vazio.hidden=!vazio.textContent;}
+    const link=document.getElementById('abrirCalendarioI58');
+    if(link){const url=new URL(link.href);url.searchParams.set('filtroI58',filtro);link.href=url.toString();}
+    const quadro=document.getElementById('quadroCalendario');
+    if(quadro?.contentWindow)quadro.contentWindow.postMessage({tipo:'gs-calendario-filtro-i58',cliente:ctx.cliente,mes:ctx.mes,filtro},location.origin);
+  }
+  window.selecionarFiltroPortalI58=function(valor){
+    const ctx=contextoFiltroPortalI58;
+    if(!ctx||ctx.cliente!==clienteAtual?.slug||ctx.mes!==String(window.__mesPortal||''))return;
+    filtrosPortalI58.set(chaveFiltroPortalI58(ctx.cliente,ctx.mes),normalizarFiltroI58(valor));
+    aplicarFiltroPortalI58();
+  };
+
   // O quadro avisa seu mês; a conferência da lista continua sendo manual.
   window.addEventListener('message',event=>{
     const quadro=document.getElementById('quadroCalendario'),d=event.data;
@@ -1074,6 +1139,7 @@
       d?.tipo!=='gs-calendario-mes'||d.cliente!==clienteAtual?.slug||
       !/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(d.mes||''))||d.mes<'2026-07'||d.mes===window.__mesPortal)return;
     window.__mesPortal=d.mes;
+    aplicarFiltroPortalI58();
     document.querySelectorAll('#painelCalendario button[onclick="aprovarConteudoCalendario(this)"]').forEach(b=>b.disabled=true);
     let aviso=document.getElementById('avisoMesPortalI48');
     if(!aviso){aviso=document.createElement('div');aviso.id='avisoMesPortalI48';aviso.className='card';aviso.setAttribute('role','status');document.getElementById('painelCalendario')?.prepend(aviso);}
@@ -1272,6 +1338,7 @@
 
     if(!items.length){ cont.innerHTML = avisoLeitura+'<div class="card"><div class="empty">Nenhum conteúdo planejado ainda esse mês — vazio confirmado no documento carregado.</div></div>'; return; }
     items.sort((a,b)=>(a.day||0)-(b.day||0));
+    contextoFiltroPortalI58={cliente:slugDaLeitura,mes:String(mesEscolhido||''),itens:items,podeAprovar:!ajusteEmAndamentoV115};
     /* CORRIGIDO 27/07/2026 — o portal ignorava o campo "Mês" do calendario
        e escrevia o mes do relogio. Calendario de agosto aberto em julho
        aparecia como "Calendário de Julho". */
@@ -1312,21 +1379,21 @@
           <h2 style="margin-bottom:4px;"><svg class="ic"><use href="#i-calendar"/></svg>Seu calendário do mês</h2>
           <div class="sub" style="margin-bottom:10px;">Grade do mês, lista por semana e quadro de aprovação — tudo aqui dentro.</div>
         </div>
-        <iframe id="quadroCalendario" src="calendario.html?cliente=${encodeURIComponent(clienteAtual.slug)}&t=${encodeURIComponent(tokenCal)}${mesEscolhido?'&mes='+encodeURIComponent(mesEscolhido):''}&v=${Date.now()}"
+        <iframe id="quadroCalendario" src="calendario.html?cliente=${encodeURIComponent(clienteAtual.slug)}&t=${encodeURIComponent(tokenCal)}${mesEscolhido?'&mes='+encodeURIComponent(mesEscolhido):''}&visaoPortalI58=1&filtroI58=${filtroPortalI58(slugDaLeitura,mesEscolhido)}&v=${Date.now()}"
                 style="width:100%;height:760px;border:0;display:block;background:transparent;" loading="lazy"
                 title="Calendário editorial"></iframe>
         <div style="padding:10px 16px 14px;">
-          <a href="calendario.html?cliente=${encodeURIComponent(clienteAtual.slug)}&t=${encodeURIComponent(tokenCal)}${mesEscolhido?'&mes='+encodeURIComponent(mesEscolhido):''}" target="_blank" rel="noopener"
+          <a id="abrirCalendarioI58" href="calendario.html?cliente=${encodeURIComponent(clienteAtual.slug)}&t=${encodeURIComponent(tokenCal)}${mesEscolhido?'&mes='+encodeURIComponent(mesEscolhido):''}" target="_blank" rel="noopener"
              class="meta" style="color:var(--yellow);text-decoration:none;">Abrir em tela cheia ↗</a>
         </div>
       </div>` : '';
 
     const avisoAjusteV115=ajusteEmAndamentoV115?'<div class="card" style="border-color:var(--yellow);background:rgba(224,197,106,.08);"><h2 style="font-size:14px;">↩️ Ajuste em andamento</h2><div class="sub" style="margin-bottom:0;">Seu calendário não sumiu. Esta é a última versão enviada; a equipe está corrigindo o pedido e as aprovações ficam pausadas até a nova versão.</div></div>':'';
-    cont.innerHTML = avisoLeitura+avisoAjusteV115+blocoCalendario + `<div class="card"><h2>${ajusteEmAndamentoV115?'Consulta':'Aprovação'} — ${mesAtual}</h2>
+    cont.innerHTML = avisoLeitura+avisoAjusteV115+'<div id="filtroPortalI58" class="visao-i58"></div><div id="vazioPortalI58" class="visao-i58-vazio" role="status" hidden></div>'+blocoCalendario + `<div class="card"><h2>${ajusteEmAndamentoV115?'Consulta':'Aprovação'} — ${mesAtual}</h2>
         <div class="sub" style="margin-bottom:0;">${ajusteEmAndamentoV115?'Consulte a versão anterior enquanto a equipe trabalha. Nenhuma aprovação será gravada nesta etapa.':(pendentes ? 'Dá uma olhada em cada conteúdo e aprova o que estiver certo. Se algo precisar mudar, é só falar com a gente.' : 'Acompanhe aqui a evolução de cada conteúdo do mês.')}</div>
       </div>` +
-      '<div class="card">' + items.map((it, idx) => `
-        <div class="day">
+      '<div class="card" id="listaCalendarioI58">' + items.map((it, idx) => `
+        <div class="day" data-visao-i58="${jaProduzidoI58(it)?'andamento':'pauta'}" style="${filtroPortalI58(slugDaLeitura,mesEscolhido)==='todos'||(filtroPortalI58(slugDaLeitura,mesEscolhido)==='andamento')===jaProduzidoI58(it)?'':'display:none;'}">
           <div class="daynum"><div class="d">${it.day||'?'}</div><div class="m">${(mesAtual||'').slice(0,3)}</div></div>
           <div style="flex:1;">
             <div class="nome">${esc(it.name)}</div>
@@ -1349,6 +1416,8 @@
           </div>
         </div>
       `).join('') + '</div>';
+    aplicarFiltroPortalI58();
+    document.getElementById('quadroCalendario')?.addEventListener('load',aplicarFiltroPortalI58);
     cont.querySelectorAll('button[onclick="aprovarConteudoCalendario(this)"]').forEach(botao=>{
       try{
         const item=dadosCal.items[Number(botao.dataset.itemIndice)];

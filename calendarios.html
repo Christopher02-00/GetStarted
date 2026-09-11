@@ -179,6 +179,19 @@
   body.calEnvioEmCurso #viewKanban,
   body.calEnvioEmCurso #painelBlocos{pointer-events:none!important;opacity:.82;}
   @media(max-width:720px){.kanban{grid-template-columns:1fr;} .grid,.weekdays{font-size:9px;} .cell{min-height:70px;} .overlay{padding:0;align-items:stretch;} .modal{max-width:none;max-height:100dvh;border-radius:0;border-left:0;border-right:0;padding:18px;} .modalhead{top:-18px;} .modal.modo-cliente-simples .modalhead{top:-18px;}}
+
+/* I58 — seleção de leitura, independente dos controles de aprovação. */
+.visao-i58{margin:12px 0;padding:12px;border:1px solid var(--yellow);border-radius:12px;background:var(--card,#252527);}
+.visao-i58[hidden],.visao-i58-vazio[hidden]{display:none!important;}
+.visao-i58__opcoes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}
+.visao-i58__opcoes button{min-width:0;min-height:44px;padding:8px 5px;border:1px solid #666;border-radius:9px;background:transparent;color:var(--text,#f0f0f0);font:inherit;font-size:12px;font-weight:600;line-height:1.35;cursor:pointer;}
+.visao-i58__opcoes button[aria-pressed="true"]{background:var(--yellow);border-color:var(--yellow);color:#171717;}
+.visao-i58__opcoes span{display:block;font-weight:800;margin-top:2px;}
+.visao-i58__ajuda,.visao-i58__pendencia{font-size:12px;line-height:1.5;margin:10px 0 0;}
+.visao-i58__pendencia{padding-top:8px;border-top:1px solid #555;}
+.visao-i58__pendencia button{border:0;background:transparent;color:var(--yellow);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;}
+.visao-i58-vazio{padding:14px;border:1px dashed #777;border-radius:10px;margin:12px 0;font-size:13px;line-height:1.5;}
+
 </style>
 <script type="module">
   import { nomeSessaoPublicaI39 } from './sessao-publica-i39.mjs?v=i39-1';
@@ -509,6 +522,8 @@
     <button class="fbBtn" onclick="openFeedback()">💬 Sugestões e comentários</button>
   </div>
 
+  <div id="filtroCalendarioI58" class="visao-i58" hidden></div>
+  <div id="vazioCalendarioI58" class="visao-i58-vazio" role="status" hidden></div>
   <div class="tabs">
     <div class="tab active" onclick="setView('grid',this)">📅 Grade do mês</div>
     <div class="tab" onclick="setView('week',this)">📋 Lista por semana</div>
@@ -3037,6 +3052,7 @@ function aplicarModoCalendario(){
      conteúdo que ainda vai mudar. */
   const checarLiberacao = () => {
     const st = estadoAprovacao();
+    renderFiltroCalendarioI58();
     const grade = document.getElementById('viewGrid');
     if(st === 'liberado' || (st==='ajuste_interno'&&mesDisponivelClienteV115(mesVisivel))){
       const av = document.getElementById('avisoNaoLiberado'); if(av) av.remove();
@@ -3486,7 +3502,73 @@ function renderProgress(){
   document.getElementById('barFill').style.width = (ap/tot*100)+'%';
 }
 
+/* I58 — projeção visual; não altera fonte, competência ou aprovação. */
+function normalizarFiltroI58(valor){return ['pauta','andamento','todos'].includes(valor)?valor:'pauta';}
+function jaProduzidoI58(item){return !!(item&&(item.gravado||item.agendado||item.posted));}
+function itensDaSelecaoI58(itens,filtro){
+  const modo=normalizarFiltroI58(filtro);
+  return (itens||[]).filter(it=>it&&!it.excluido&&(modo==='todos'||(modo==='andamento')===jaProduzidoI58(it)));
+}
+function controleVisaoI58(itens,filtro,acao,podeAprovar){
+  const modo=normalizarFiltroI58(filtro),pauta=itensDaSelecaoI58(itens,'pauta'),andamento=itensDaSelecaoI58(itens,'andamento');
+  const opcoes=[['pauta','Pauta do mês',pauta.length],['andamento','Já gravados',andamento.length],['todos','Todos',pauta.length+andamento.length]];
+  const pendencias=andamento.filter(it=>!it.apr&&!it.agendado&&!it.posted).length;
+  return '<div class="visao-i58__opcoes" role="group" aria-label="Conteúdos exibidos no calendário">'+opcoes.map(([valor,nome,total])=>
+    '<button type="button" aria-pressed="'+(modo===valor)+'" onclick="'+acao+'(\''+valor+'\')">'+nome+' <span>'+total+'</span></button>').join('')+'</div>'+
+    '<p class="visao-i58__ajuda">'+(modo==='pauta'?'Roteiros e conteúdos a preparar neste mês. Os dias indicam a publicação prevista.':modo==='andamento'?'Materiais já gravados, programados ou publicados. Eles continuam disponíveis para consulta.':'Todos os conteúdos do mês selecionado.')+'</p>'+
+    (modo==='pauta'&&pendencias&&podeAprovar?'<p class="visao-i58__pendencia">'+pendencias+' conteúdo(s) já gravado(s) ainda precisam da sua aprovação. <button type="button" onclick="'+acao+'(\'andamento\')">Conferir agora</button></p>':'');
+}
+function mensagemSelecaoVaziaI58(itens,filtro){
+  if(itensDaSelecaoI58(itens,filtro).length)return '';
+  return normalizarFiltroI58(filtro)==='pauta'&&itensDaSelecaoI58(itens,'andamento').length
+    ?'Nenhum conteúdo a preparar neste mês. Consulte os materiais em Já gravados ou Todos.'
+    :normalizarFiltroI58(filtro)==='andamento'?'Nenhum material marcado como gravado, programado ou publicado neste mês.':'Nenhum conteúdo nesta seleção.';
+}
+/* FIM I58 — projeção visual */
+
+
+const filtrosCalendarioI58=new Map();
+let primeiraChaveFiltroI58='';
+function filtroCalendarioI58(){
+  const chave=String(window.__clienteId||'')+'|'+mesVisivel;
+  if(!primeiraChaveFiltroI58)primeiraChaveFiltroI58=chave;
+  if(!filtrosCalendarioI58.has(chave))filtrosCalendarioI58.set(chave,chave===primeiraChaveFiltroI58?normalizarFiltroI58(new URLSearchParams(location.search).get('filtroI58')):'pauta');
+  return filtrosCalendarioI58.get(chave);
+}
+function itensDaVistaCalendarioI58(){
+  const itens=itensDoMes(mesVisivel);
+  if(window.__modoCal!=='cliente')return itens;
+  return mesDisponivelClienteV115(mesVisivel)?itensDaSelecaoI58(itens,filtroCalendarioI58()):[];
+}
+function renderFiltroCalendarioI58(){
+  const box=document.getElementById('filtroCalendarioI58'),vazio=document.getElementById('vazioCalendarioI58');
+  if(!box||!vazio)return;
+  const disponivel=window.__modoCal==='cliente'&&carregado&&mesDisponivelClienteV115(mesVisivel);
+  const embutido=window.parent!==window&&new URLSearchParams(location.search).get('visaoPortalI58')==='1';
+  box.hidden=!disponivel||embutido;vazio.hidden=!disponivel;
+  if(!disponivel)return;
+  const itens=itensDoMes(mesVisivel),filtro=filtroCalendarioI58();
+  const html=controleVisaoI58(itens,filtro,'selecionarFiltroCalendarioI58',!clienteEmConsultaDeAjusteV115());
+  if(box.innerHTML!==html)box.innerHTML=html;
+  const mensagem=mensagemSelecaoVaziaI58(itens,filtro);vazio.textContent=mensagem;vazio.hidden=!mensagem;
+}
+window.selecionarFiltroCalendarioI58=function(valor){
+  if(window.__modoCal!=='cliente'||!carregado||!mesDisponivelClienteV115(mesVisivel))return;
+  filtrosCalendarioI58.set(String(window.__clienteId||'')+'|'+mesVisivel,normalizarFiltroI58(valor));
+  renderGrid();renderWeek();renderKanban();
+  try{const url=new URL(location.href);url.searchParams.set('filtroI58',filtroCalendarioI58());history.replaceState({},'',url);}catch(e){}
+};
+window.addEventListener('message',event=>{
+  const d=event.data;
+  if(window.parent===window||event.source!==window.parent||event.origin!==location.origin||d?.tipo!=='gs-calendario-filtro-i58'||
+    d.cliente!==window.__clienteId||!['pauta','andamento','todos'].includes(d.filtro)||
+    d.mes!==String(mesVisivel||window.__mesSolicitadoCal||''))return;
+  filtrosCalendarioI58.set(String(d.cliente)+'|'+d.mes,d.filtro);
+  if(window.__modoCal==='cliente'&&carregado&&mesDisponivelClienteV115(mesVisivel)){renderGrid();renderWeek();renderKanban();}
+});
+
 function renderGrid(){
+  renderFiltroCalendarioI58();
   const wrap=document.getElementById('viewGrid');
   let html='<div class="weekdays"><div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sáb</div></div><div class="grid">';
   /* CORRIGIDO 27/07/2026 — a grade era fixa: offset 5 e sempre 31 dias,
@@ -3497,7 +3579,7 @@ function renderGrid(){
   const offset=offsetDoMes();
   const totalDias=diasDoMes();
   for(let i=0;i<offset;i++) html+='<div class="cell empty"></div>';
-  const itensVis=itensDoMes(mesVisivel);
+  const itensVis=itensDaVistaCalendarioI58();
   for(let d=1;d<=totalDias;d++){
     const its=itensVis.filter(i=>i.day===d);
     html+='<div class="cell" onclick="openModal('+d+')"><div class="dnum">'+d+'</div>';
@@ -3519,7 +3601,7 @@ function renderWeek(){
   ]).filter(w=>w[0]<=w[1]);
   let html='';
   weeks.forEach((w,wi)=>{
-    const its=itensDoMes(mesVisivel).filter(i=>i.day>=w[0]&&i.day<=w[1]).sort((a,b)=>a.day-b.day);
+    const its=itensDaVistaCalendarioI58().filter(i=>i.day>=w[0]&&i.day<=w[1]).sort((a,b)=>a.day-b.day);
     html+='<div class="weekblock"><div class="weekhead"><div class="wn">Semana '+(wi+1)+'</div><div class="wl">dias '+w[0]+'–'+w[1]+' · '+its.length+' conteúdo(s)</div></div>';
     if(!its.length) html+='<div style="color:var(--muted);font-size:11px;padding:6px 2px;">Sem conteúdo — clique numa data na grade pra adicionar.</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
@@ -3545,7 +3627,7 @@ function renderWeek(){
 
 function renderKanban(){
   const wrap=document.getElementById('viewKanban');
-  const doMes=itensDoMes(mesVisivel);
+  const doMes=itensDaVistaCalendarioI58();
   const todo=doMes.filter(i=>!i.apr&&!i.posted);
   const apr=doMes.filter(i=>i.apr&&!i.posted);
   const post=doMes.filter(i=>i.posted);

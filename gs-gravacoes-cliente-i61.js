@@ -143,6 +143,8 @@
           op=op||'i61_'+crypto.randomUUID().replace(/-/g,'');
           const result=await db.save({cliente,mes,kind,id,values,base:original,source,operationId:op});
           original=result.registro;draft=null;op='';dirtyForms.delete(form);try{localStorage.removeItem(key);}catch(e){}
+          // I61A: a tela reflete os campos normalizados no registro confirmado.
+          for(const [campo,valor] of Object.entries(valores(kind,original)))form.elements.namedItem(campo).value=valor;
           receipt.textContent='✓ Salvo e confirmado. A organização do cliente foi atualizada.';
           const badge=form.querySelector('[data-status]');if(badge)badge.textContent=estados[situacao(original,source)];fold.querySelector('[data-summary-status]').textContent=kind==='grupos'?br(original.data):estados[situacao(original,source)];
         }catch(e){receipt.textContent='Não confirmado: '+msg(e)+' O rascunho foi mantido.';receipt.classList.add('g61error');}

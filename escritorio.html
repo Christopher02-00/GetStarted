@@ -881,6 +881,12 @@
     <div class="view" id="view-minhasDemandasAtribuidas">
       <h1>Minhas <span class="y">Demandas</span></h1>
       <div class="sub">Suas tarefas em aberto — exclusivas suas, ninguém mais vê isso. O que for de outra pessoa, aparece só pra ela.</div>
+      <div class="card" id="recebimentoClienteI55" style="border-color:var(--yellow);margin-bottom:18px;">
+        <h2 style="margin-bottom:8px;">Pedidos dos clientes</h2>
+        <div class="desc">Ao abrir esta área, conferimos os pedidos enviados pelos clientes. Para buscar pedidos novos enquanto você trabalha, use o botão abaixo.</div>
+        <button type="button" class="btn secondary" id="atualizarPedidosClienteI55" style="margin-top:12px;" onclick="atualizarPedidosClienteI55()">Atualizar pedidos</button>
+        <div class="desc" id="statusPedidosClienteI55" role="status" aria-live="polite" style="margin-top:10px;">Aguardando conferência.</div>
+      </div>
       <div id="listaMinhasDemandasAtribuidas"></div>
       <div class="empty" id="emptyMinhasDemandasAtribuidas" style="display:none;">Selecione seu nome na tela de Início primeiro.</div>
     </div>
@@ -2764,19 +2770,23 @@
 
   /* I54: a identidade é a entrada, nunca o título do pedido. A demanda e
      o recibo nascem juntos; repetir a leitura não duplica nem perde texto. */
-  async function converterEntradaClienteI54(caixa,entradaId){
+  async function converterEntradaClienteI54(caixa,entradaId,validar=()=>{}){
     if(!['avisos_do_cliente','pedidos_publicos'].includes(caixa)||!entradaId) throw new Error('Origem do pedido inválida.');
     const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([caixa,String(entradaId)])));
     const demandaId='entrada_i54_'+Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
+    validar();
     const origemRef=doc(db,caixa,String(entradaId)),destinoRef=doc(db,'demandas',demandaId);
     return runTransaction(db,async tx=>{
+      validar();
       const origem=await tx.get(origemRef);
+      validar();
       if(!origem.exists()) return false;
       const a=origem.data()||{};
       if(a.lido||a.viraDemanda===false||a.cancelado||a.excluido) return false;
       const cliente=String(a.cliente||a.clienteSlug||a.slug||'');
       if(!fonteFisicaClienteR4(cliente,a)) return false;
       const existente=await tx.get(destinoRef);
+      validar();
       if(existente.exists()){
         const d=existente.data()||{};
         if(d.origemAvisoColecao!==caixa||d.origemAvisoId!==String(entradaId)) throw new Error('O vínculo deste pedido precisa de conferência.');
@@ -2812,21 +2822,95 @@
     });
   }
 
-  async function converterAvisosDoCliente(){
-    let total=0;
+  async function converterAvisosDoCliente(opcoes={}){
+    const resultado={recebidos:0,falhas:0};
+    const validar=opcoes.validar||(()=>{});
+    const pessoa=opcoes.pessoa||'';
+    const gestao=!pessoa||['Amanda','Chris'].includes(pessoa);
     for(const caixa of ['avisos_do_cliente','pedidos_publicos']){
-      let snap;
-      try{snap=await getDocs(collection(db,caixa));}
-      catch(e){console.error('Não consegui ler '+caixa+':',e);continue;}
-      const pendentes=[];
-      snap.forEach(d=>{const a=d.data();if(!a.lido&&a.viraDemanda!==false&&!a.cancelado&&!a.excluido)pendentes.push(d.id);});
+      validar();
+      const pendentes=new Set();
+      const consultas=gestao?[collection(db,caixa)]:[
+        query(collection(db,caixa),where('paraQuem','==',pessoa)),
+        query(collection(db,caixa),where('destinatario','==',pessoa))
+      ];
+      for(const consulta of consultas){
+        try{
+          const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(consulta),'Conferir pedidos dos clientes',12000);
+          validar();
+          snap.forEach(d=>{
+            const a=d.data();
+            const destino=String(a.paraQuem||a.destinatario||'Amanda').trim()||'Amanda';
+            const cliente=String(a.cliente||a.clienteSlug||a.slug||'');
+            if((gestao||destino===pessoa)&&!a.lido&&a.viraDemanda!==false&&!a.cancelado&&!a.excluido&&fonteFisicaClienteR4(cliente,a))pendentes.add(d.id);
+          });
+        }catch(e){validar();resultado.falhas++;console.error('Não consegui conferir '+caixa+':',e);}
+      }
       for(const id of pendentes){
-        try{if(await converterEntradaClienteI54(caixa,id))total++;}
-        catch(e){console.error('O pedido '+id+' continua pendente de encaminhamento:',e);}
+        validar();
+        try{if(await converterEntradaClienteI54(caixa,id,validar))resultado.recebidos++;}
+        catch(e){validar();resultado.falhas++;console.error('O pedido '+id+' continua pendente de encaminhamento:',e);}
       }
     }
-    if(total)registrarLogAutomacao('avisos_cliente_convertidos','',total+' pedido(s) de fora viraram demanda');
+    return resultado;
   }
+
+  /* I55: uma porta na jornada diária e uma atualização manual. O motor
+     global não decide mais quando um pedido pode chegar à equipe. */
+  let __recebimentoClienteI55=null;
+  window.atualizarPedidosClienteI55=function(){
+    const painel=document.getElementById('recebimentoClienteI55');
+    const botao=document.getElementById('atualizarPedidosClienteI55');
+    const status=document.getElementById('statusPedidosClienteI55');
+    if(!painel||!botao||!status)return Promise.resolve(false);
+    if(!auth.currentUser?.uid||auth.currentUser.isAnonymous===true||!DESTINATARIOS_DEMANDA.includes(usuarioAtual)){
+      status.textContent='Entre com seu perfil da equipe para conferir os pedidos.';
+      return Promise.resolve(false);
+    }
+    const sessao=sessaoServicoManual(),pessoa=usuarioAtual;
+    if(__recebimentoClienteI55?.sessao===sessao)return __recebimentoClienteI55.promessa;
+    const op={sessao,promessa:null};
+    __recebimentoClienteI55=op;
+    const atual=()=>__recebimentoClienteI55===op&&sessao===sessaoServicoManual();
+    const validar=()=>{if(!atual()||!auth.currentUser?.uid)throw new Error('O perfil mudou. Abra Minhas Demandas novamente.');};
+    botao.disabled=true;
+    painel.setAttribute('aria-busy','true');
+    status.style.color='';
+    status.textContent='Conferindo pedidos dos clientes e atualizando sua fila…';
+    op.promessa=(async()=>{
+      let resultado;
+      try{
+        resultado=await converterAvisosDoCliente({pessoa,validar});
+        validar();
+        await renderMinhasDemandasAtribuidas(false,{servidor:true,validar});
+        validar();
+        if(resultado.falhas){
+          status.style.color='var(--red)';
+          status.textContent='Conferência incompleta. '+resultado.recebidos+' pedido(s) encaminhado(s); outros não puderam ser conferidos. Use Atualizar pedidos para tentar novamente. Os pedidos não confirmados continuam pendentes.';
+          return false;
+        }
+        const alcance=['Amanda','Chris'].includes(pessoa)?'à equipe':'para você';
+        status.textContent='Conferido às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})+'. '+resultado.recebidos+' novo(s) pedido(s) encaminhado(s) '+alcance+'. Sua lista foi atualizada; os filtros escolhidos continuam valendo.';
+        return true;
+      }catch(e){
+        if(atual()){
+          status.style.color='var(--red)';
+          status.textContent=resultado
+            ?'A conferência recebeu '+resultado.recebidos+' pedido(s), mas não consegui atualizar sua lista. Use Atualizar pedidos para tentar novamente sem duplicar os pedidos.'
+            :'Não consegui concluir a conferência. Use Atualizar pedidos para tentar novamente sem duplicar os pedidos.';
+          console.error('Recebimento de pedidos:',e);
+        }
+        return false;
+      }finally{
+        if(__recebimentoClienteI55===op){
+          __recebimentoClienteI55=null;
+          botao.disabled=false;
+          painel.setAttribute('aria-busy','false');
+        }
+      }
+    })();
+    return op.promessa;
+  };
 
   async function registrarAcessoGerencia(pessoa){
     try{
@@ -22558,7 +22642,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
     if(nome === 'cadastro') setCadastroSub('central', document.querySelector('#view-cadastro .subtab'));
     if(nome === 'centralVendas') renderCentralVendas();
     if(nome === 'cofreCecilia') renderCofreCecilia();
-    if(nome === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas();
+    if(nome === 'minhasDemandasAtribuidas') atualizarPedidosClienteI55();
     if(nome === 'atrasadas') renderPainelDemandas();
     if(nome === 'minhasDemandas') carregarMinhasDemandas();
     if(nome === 'checklist') abrirChecklist();
@@ -26241,7 +26325,7 @@ window.setGerenciaSub = function(qual, el){
 
      Regra que passa a valer: consulta que decide o que a pessoa vê nunca
      ordena no banco por campo que pode faltar. */
-  async function carregarTodasDemandas(){
+  async function carregarTodasDemandas(opcoes={}){
     /* 04/08/2026 — cada funcionário lia as 546+ demandas da agência duas
        vezes no login, mesmo usando apenas as endereçadas a ele. Além da
        cota, isso colocava dados de outras pessoas na memória do navegador.
@@ -26249,14 +26333,18 @@ window.setGerenciaSub = function(qual, el){
        Gestão continua com a visão completa. Os demais recebem só a própria
        fila. A segunda consulta cobre documentos antigos que ainda usam
        `paraQuem`; itens repetidos são unidos pelo id. */
+    const validar=opcoes.validar||(()=>{});
+    const ler=opcoes.servidor===true?_getDocsFromServerFB:getDocs;
     try{
+      validar();
       const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
       const snaps = ehGestao
-        ? [await getDocs(collection(db,'demandas'))]
+        ? [await ler(collection(db,'demandas'))]
         : await Promise.all([
-            getDocs(query(collection(db,'demandas'), where('destinatario','==',usuarioAtual))),
-            getDocs(query(collection(db,'demandas'), where('paraQuem','==',usuarioAtual)))
+            ler(query(collection(db,'demandas'), where('destinatario','==',usuarioAtual))),
+            ler(query(collection(db,'demandas'), where('paraQuem','==',usuarioAtual)))
           ]);
+      validar();
       const porId = new Map();
       snaps.forEach(snap => snap.forEach(d => {
         const dados = d.data();
@@ -26265,9 +26353,11 @@ window.setGerenciaSub = function(qual, el){
       todasDemandas = Array.from(porId.values());
       todasDemandas.sort((a,b) => String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
       await carregarAusencias();
+      validar();
       __erroDemandasOperacionaisV135=null;
       __errosTempoRealPorColecaoV135.delete('demandas');
     }catch(erro){
+      validar();
       __erroDemandasOperacionaisV135=erro;
       __errosTempoRealPorColecaoV135.set('demandas',{em:Date.now(),erro});
       throw erro;
@@ -29949,13 +30039,14 @@ window.setGerenciaSub = function(qual, el){
     return out;
   }
 
-  window.renderMinhasDemandasAtribuidas = async function(soRefiltrar){
+  window.renderMinhasDemandasAtribuidas = async function(soRefiltrar,opcoes={}){
     const lista = document.getElementById('listaMinhasDemandasAtribuidas');
     const empty = document.getElementById('emptyMinhasDemandasAtribuidas');
     if(!lista || !empty) return;
     if(!usuarioAtual){ lista.innerHTML=''; empty.style.display='block'; return; }
     empty.style.display='none';
-    if(soRefiltrar !== true) await carregarTodasDemandas();
+    if(soRefiltrar !== true) await carregarTodasDemandas(opcoes);
+    if(opcoes.validar)opcoes.validar();
     const todasMinhas = demandasVisiveisDaPessoa(usuarioAtual);
     /* mesma regra do badge lateral — um número só no site inteiro */
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
@@ -36358,7 +36449,7 @@ window.setGerenciaSub = function(qual, el){
       { nome: 'conciliacaoVideosTrafego', fn: conciliarVideosDeTrafegoRetroativo },
       { nome: 'antifantasmaPipeline', fn: limparDemandasFantasmaPipeline },
       { nome: 'varreduraDuplicatas', fn: varrerDuplicatas },
-      { nome: 'avisosDoPortal', fn: converterAvisosDoCliente },
+      // I55: pedidos conferidos ao abrir Minhas Demandas ou atualizar manualmente.
       { nome: 'cadastrosNovos', fn: avisarCadastrosNovos },
       { nome: 'demandasSubstituidas', fn: encerrarDemandasSubstituidas },
       { nome: 'calendarioNovoParaProducao', fn: avisarCalendarioPronto },

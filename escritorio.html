@@ -872,6 +872,7 @@
            O Resumo do Dia foi construído e nunca apareceu pra ninguém. -->
       <div id="resumoDiarioBox"></div>
       <div id="videosPorDiaBox"></div>
+      <div id="avisoChecklistInicioI59"></div>
       <div id="meuDiaBox"></div>
       <div id="calendarioVisualHomeBox"></div>
       <div id="funcionarioMesInicioBox"></div>
@@ -3395,141 +3396,141 @@
     }
   };
 
+  // I59: a agenda é única para execução, lembrete e conferência. Sem migração.
+  const agendasChecklistI59 = {}, versoesChecklistI59 = {};
+  const diasChecklistI59 = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+  const copiarChecklistI59 = v => JSON.parse(JSON.stringify(v));
+  function assinaturaChecklistI59(v){
+    if(Array.isArray(v)) return '['+v.map(assinaturaChecklistI59).join(',')+']';
+    if(v && typeof v==='object') return '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+assinaturaChecklistI59(v[k])).join(',')+'}';
+    return JSON.stringify(v ?? null);
+  }
+  function agendaChecklistI59(nome, periodo){
+    return agendasChecklistI59[nome]?.[periodo] || {nome:periodo,frequencia:periodo==='Diário'?'diario':periodo.startsWith('Semanal')?'semanal':'mensal',diaSemana:5,diaMes:1,ativo:true};
+  }
+  function dataChecklistI59(ref){
+    return typeof ref==='string' && /^\d{4}-\d{2}-\d{2}$/.test(ref) ? new Date(ref+'T12:00:00') : ref ? new Date(ref) : new Date();
+  }
+  function ocorrenciaChecklistI59(nome, periodo, ref){
+    const d=dataChecklistI59(ref), a=agendaChecklistI59(nome,periodo);
+    if(a.frequencia==='semanal') d.setDate(d.getDate()-((d.getDay()+6)%7)+((Number(a.diaSemana)+6)%7));
+    if(a.frequencia==='mensal') d.setDate(Math.min(Number(a.diaMes)||1,new Date(d.getFullYear(),d.getMonth()+1,0).getDate()));
+    return dataLocal(d);
+  }
+  function previstoChecklistI59(nome, periodo, ref){
+    const a=agendaChecklistI59(nome,periodo);
+    return a.ativo!==false && ocorrenciaChecklistI59(nome,periodo,ref)===dataLocal(dataChecklistI59(ref));
+  }
+  function rotuloAgendaChecklistI59(a){
+    return a.frequencia==='diario'?'Diário · todos os dias':a.frequencia==='semanal'?'Semanal · '+diasChecklistI59[a.diaSemana]:'Mensal · dia '+a.diaMes+(Number(a.diaMes)>28?' (último dia nos meses curtos)':'');
+  }
   function chaveExecucao(funcionario, periodo, referencia){
-    const hoje = referencia ? new Date(referencia) : new Date();
-    if(periodo === "Diário") return funcionario + "_diario_" + dataLocal(hoje);
-    if(periodo.startsWith("Semanal")){
-      const d = new Date(hoje);
-      const diff = (d.getDay() + 2) % 7;
-      d.setDate(d.getDate() - diff + (d.getDay() >= 5 ? 5 - d.getDay() + 7 : 5 - d.getDay()));
-      return funcionario + "_semanal_" + dataLocal(hoje).slice(0,7);
+    if(periodo==='Diário') return funcionario+'_diario_'+dataLocal(dataChecklistI59(referencia));
+    return funcionario+'_rotina_'+encodeURIComponent(periodo)+'_'+ocorrenciaChecklistI59(funcionario,periodo,referencia);
+  }
+  function legadoChecklistI59(nome,periodo,ref){
+    if(periodo==='Diário'||periodo.startsWith('rotina_')) return null;
+    return nome+(periodo.startsWith('Semanal')?'_semanal_':'_mensal_')+dataLocal(dataChecklistI59(ref)).slice(0,7);
+  }
+  async function lerExecucaoChecklistI59(nome,periodo,ref){
+    const chave=chaveExecucao(nome,periodo,ref), snap=await getDoc(doc(db,'checklist_execucoes',chave));
+    if(snap.exists()) return snap.data();
+    const legado=legadoChecklistI59(nome,periodo,ref);
+    if(!legado) return {itensFeitos:{}};
+    const anterior=await getDoc(doc(db,'checklist_execucoes',legado)), itensFeitos={};
+    for(const [id,v] of Object.entries(anterior.exists()?anterior.data().itensFeitos||{}:{})){
+      if(v?.em && !isNaN(new Date(v.em)) && ocorrenciaChecklistI59(nome,periodo,v.em)===ocorrenciaChecklistI59(nome,periodo,ref)) itensFeitos[id]=v;
     }
-    return funcionario + "_mensal_" + dataLocal(hoje).slice(0,7);
+    return {itensFeitos};
+  }
+  async function lerRotinasHojeI59(nome,ref){
+    const template=await obterTemplatesEfetivos(nome), lista=[];
+    for(const [periodo,blocos] of Object.entries(template||{})){
+      if(!previstoChecklistI59(nome,periodo,ref)) continue;
+      const itens=blocos.flatMap(b=>b.itens||[]);if(!itens.length)continue;
+      const exec=await lerExecucaoChecklistI59(nome,periodo,ref), feitosMap=exec.itensFeitos||{};
+      lista.push({periodo,nome:agendaChecklistI59(nome,periodo).nome,blocos,feitosMap,total:itens.length,feitos:itens.filter(i=>feitosMap[i.id]?.feito).length});
+    }
+    return lista;
   }
 
-  let checklistExecAtual = { itensFeitos: {} };
-  let checklistPeriodoAtual = "";
-  let checklistChaveAtual = "";
-  let timerViradaChecklist = null;
-
-  function cancelarViradaChecklist(){
-    if(timerViradaChecklist) clearTimeout(timerViradaChecklist);
-    timerViradaChecklist = null;
-  }
-
+  let checklistExecAtual={itensFeitos:{}}, checklistPeriodoAtual='', checklistChaveAtual='', timerViradaChecklist=null;
+  let checklistContextoI59=null, checklistCarregandoI59=0, checklistGravandoI59=false, provaContextoI59=null;
+  function cancelarViradaChecklist(){if(timerViradaChecklist)clearTimeout(timerViradaChecklist);timerViradaChecklist=null;}
   function programarViradaChecklist(){
-    cancelarViradaChecklist();
-    if(checklistPeriodoAtual !== 'Diário') return;
-    const agora = new Date();
-    const proxima = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1, 0, 0, 0, 150);
-    timerViradaChecklist = setTimeout(async () => {
-      timerViradaChecklist = null;
-      if(viewAtiva !== 'checklist' || checklistPeriodoAtual !== 'Diário' || !usuarioAtual) return;
-      try{
-        await carregarExecucaoChecklist();
-        renderChecklist();
-        mostrarToast('Novo dia iniciado — o checklist de ontem foi preservado e o de hoje está limpo.');
-        programarViradaChecklist();
-      }catch(e){
-        console.error('Falha ao abrir o checklist do novo dia:', e);
-        mostrarToast('O dia virou, mas não consegui carregar o novo checklist. Reabra a tela antes de marcar itens.', 'erro');
-      }
-    }, Math.max(250, proxima.getTime() - agora.getTime()));
+    cancelarViradaChecklist();const agora=new Date(),proxima=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate()+1,0,0,0,150);
+    timerViradaChecklist=setTimeout(async()=>{if(viewAtiva!=='checklist'||!usuarioAtual)return;try{await window.abrirChecklist();mostrarToast('Novo dia carregado. O histórico anterior foi preservado.');}catch(e){mostrarToast('O dia virou. Reabra Meu Checklist antes de marcar.','erro');}},Math.max(250,proxima-agora));
   }
-
-  window.abrirChecklistPeriodo = async function(periodo, el){
-    document.querySelectorAll('.checklistTabs .subtab').forEach(t=>t.classList.remove('active'));
-    if(el) el.classList.add('active');
-    checklistPeriodoAtual = periodo;
-    await carregarExecucaoChecklist();
-    renderChecklist();
-    programarViradaChecklist();
+  window.abrirChecklistPeriodo=async function(periodo,el){
+    if(checklistGravandoI59){mostrarToast('Aguarde a confirmação do item.');return;}
+    document.querySelectorAll('.checklistTabs .subtab').forEach(t=>t.classList.remove('active'));if(el)el.classList.add('active');
+    checklistPeriodoAtual=periodo;try{await carregarExecucaoChecklist();renderChecklist();programarViradaChecklist();}catch(e){const box=document.getElementById('checklistItens');if(box)box.innerHTML='<div class="card">Não foi possível carregar. Reabra o checklist para tentar novamente.</div>';}
   };
-
   async function carregarExecucaoChecklist(){
-    const chave = chaveExecucao(usuarioAtual, checklistPeriodoAtual);
-    const ref = doc(db, 'checklist_execucoes', chave);
-    const snap = await getDoc(ref);
-    checklistExecAtual = snap.exists() ? snap.data() : { itensFeitos: {} };
-    checklistExecAtual.itensFeitos = checklistExecAtual.itensFeitos || {};
-    checklistChaveAtual = chave;
+    const pessoa=usuarioAtual,periodo=checklistPeriodoAtual,dia=hojeLocal(),ticket=++checklistCarregandoI59;
+    checklistContextoI59=null;checklistChaveAtual='';
+    const box=document.getElementById('checklistItens');if(box)box.innerHTML='<div class="card">Carregando itens...</div>';
+    if(!periodo)return;
+    const versao=versoesChecklistI59[pessoa],chave=chaveExecucao(pessoa,periodo,dia),exec=await lerExecucaoChecklistI59(pessoa,periodo,dia);
+    if(ticket!==checklistCarregandoI59||pessoa!==usuarioAtual||periodo!==checklistPeriodoAtual||dia!==hojeLocal())return;
+    checklistExecAtual={...exec,itensFeitos:exec.itensFeitos||{}};checklistChaveAtual=chave;
+    checklistContextoI59={pessoa,periodo,dia,chave,versao,initial:copiarChecklistI59(checklistExecAtual.itensFeitos)};
   }
-
+  function contextoChecklistValidoI59(c){return !!c&&c===checklistContextoI59&&c.pessoa===usuarioAtual&&c.periodo===checklistPeriodoAtual&&c.dia===hojeLocal()&&c.chave===chaveExecucao(c.pessoa,c.periodo)&&viewAtiva==='checklist';}
   async function salvarExecucaoChecklist(){
-    const chaveAgora = chaveExecucao(usuarioAtual, checklistPeriodoAtual);
-    if(!checklistChaveAtual || checklistChaveAtual !== chaveAgora){
-      throw new Error('CHECKLIST_DIA_MUDOU');
-    }
-    await setDoc(doc(db, 'checklist_execucoes', checklistChaveAtual), checklistExecAtual);
+    const c=checklistContextoI59;if(!contextoChecklistValidoI59(c))throw Error('CHECKLIST_DIA_MUDOU');
+    const desired=copiarChecklistI59(checklistExecAtual.itensFeitos),changed=[...new Set([...Object.keys(c.initial),...Object.keys(desired)])].filter(id=>assinaturaChecklistI59(c.initial[id])!==assinaturaChecklistI59(desired[id]));
+    const ref=doc(db,'checklist_execucoes',c.chave);
+    const salvo=await runTransaction(db,async tx=>{
+      const config=await tx.get(doc(db,'checklist_templates_custom',c.pessoa)),snap=await tx.get(ref);
+      if(!contextoChecklistValidoI59(c))throw Error('CHECKLIST_DIA_MUDOU');
+      if(assinaturaChecklistI59(config.exists()?config.data():null)!==c.versao)throw Error('A configuração deste checklist mudou. Reabra Meu Checklist para conferir antes de marcar.');
+      if(agendaChecklistI59(c.pessoa,c.periodo).ativo===false)throw Error('Este checklist está pausado.');
+      const next=snap.exists()?snap.data():{itensFeitos:copiarChecklistI59(c.initial)};next.itensFeitos={...(next.itensFeitos||{})};
+      for(const id of changed){
+        if(!templatesEfetivos[c.pessoa]?.[c.periodo]?.some(b=>b.itens.some(i=>i.id===id)))throw Error('O item mudou. Reabra o checklist.');
+        if(snap.exists()&&assinaturaChecklistI59(next.itensFeitos[id])!==assinaturaChecklistI59(c.initial[id]))throw Error('Este item foi alterado em outra aba. Reabra o checklist para conferir.');
+        if(desired[id])next.itensFeitos[id]=desired[id];else delete next.itensFeitos[id];
+      }
+      tx.set(ref,{...next,funcionario:c.pessoa,periodo:c.periodo,referencia:ocorrenciaChecklistI59(c.pessoa,c.periodo,c.dia),atualizadoEm:new Date().toISOString()});return next;
+    });
+    if(contextoChecklistValidoI59(c)){checklistExecAtual=salvo;c.initial=copiarChecklistI59(salvo.itensFeitos);}
   }
-
   async function salvarChecklistProtegendoVirada(){
-    try{
-      await salvarExecucaoChecklist();
-      return true;
-    }catch(e){
-      if(e?.message !== 'CHECKLIST_DIA_MUDOU') throw e;
-      await carregarExecucaoChecklist();
-      renderChecklist();
-      programarViradaChecklist();
-      mostrarToast('O dia virou durante a marcação. O checklist novo foi carregado sem copiar o anterior.', 'erro');
-      return false;
+    try{await salvarExecucaoChecklist();return true;}catch(e){
+      if(e.message==='CHECKLIST_DIA_MUDOU'){mostrarToast('O dia ou a rotina mudou. Reabra Meu Checklist antes de marcar.','erro');}
+      else mostrarToast('Não salvei: '+e.message,'erro');
+      if(checklistContextoI59)checklistExecAtual.itensFeitos=copiarChecklistI59(checklistContextoI59.initial);
+      renderChecklist();return false;
     }
   }
-
   async function garantirChecklistAtualAntesDeEditar(){
-    const chaveAgora = chaveExecucao(usuarioAtual, checklistPeriodoAtual);
-    if(checklistChaveAtual === chaveAgora) return true;
-    await carregarExecucaoChecklist();
-    renderChecklist();
-    programarViradaChecklist();
-    mostrarToast('O dia virou: carreguei o checklist novo. Confirme o item novamente.', 'erro');
-    return false;
+    if(contextoChecklistValidoI59(checklistContextoI59))return true;
+    mostrarToast('Reabra Meu Checklist para carregar o dia e a rotina atuais.','erro');return false;
   }
-
-  window.toggleItemChecklist = async function(itemId, critico){
-    if(!await garantirChecklistAtualAntesDeEditar()) return false;
-    const jaFeito = !!checklistExecAtual.itensFeitos[itemId]?.feito;
-    if(!jaFeito && critico){
-      abrirModalProvaChecklist(itemId);
-      return;
-    }
-    if(jaFeito){
-      delete checklistExecAtual.itensFeitos[itemId];
-    } else {
-      checklistExecAtual.itensFeitos[itemId] = { feito:true, prova:'', em: new Date().toISOString() };
-    }
-    if(!await salvarChecklistProtegendoVirada()) return false;
-    renderChecklist();
-    return true;
+  async function marcarItemChecklistI59(itemId,feito,prova){
+    if(checklistGravandoI59||!await garantirChecklistAtualAntesDeEditar())return false;
+    checklistGravandoI59=true;
+    document.querySelectorAll('#checklistItens .chk,#modalConteudo button').forEach(e=>e.disabled=true);
+    if(feito)checklistExecAtual.itensFeitos[itemId]={feito:true,prova,em:new Date().toISOString()};else delete checklistExecAtual.itensFeitos[itemId];
+    try{const ok=await salvarChecklistProtegendoVirada();if(ok){renderChecklist();atualizarAvisosChecklistI59(false);}return ok;}
+    finally{checklistGravandoI59=false;document.querySelectorAll('#checklistItens .chk,#modalConteudo button').forEach(e=>e.disabled=false);}
+  }
+  window.toggleItemChecklist=async function(itemId,critico){
+    if(checklistGravandoI59||!await garantirChecklistAtualAntesDeEditar())return false;
+    const feito=!!checklistExecAtual.itensFeitos[itemId]?.feito;
+    if(!feito&&critico){abrirModalProvaChecklist(itemId);return;}
+    return marcarItemChecklistI59(itemId,!feito,'');
   };
-
-  window.abrirModalProvaChecklist = function(itemId){
-    const modal = document.getElementById('modalConteudo');
-    modal.innerHTML = `
-      <h2>Confirmar item crítico</h2>
-      <div class="linha">Esse item precisa de uma prova rápida antes de marcar como feito.</div>
-      <div class="field"><label>Link ou observação</label><input type="text" id="provaChecklistInput" placeholder="Cola o link ou escreve uma observação"></div>
-      <button class="btn green" onclick="confirmarProvaChecklist('${itemId}')">Confirmar e marcar feito</button>
-      <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Cancelar</button>
-    `;
+  window.abrirModalProvaChecklist=function(itemId){
+    provaContextoI59=checklistContextoI59;
+    document.getElementById('modalConteudo').innerHTML=`<h2>Confirmar item crítico</h2><div class="linha">Informe o link ou uma observação como prova.</div><div class="field"><label>Link ou observação</label><input type="text" id="provaChecklistInput"></div><button class="btn green" onclick="confirmarProvaChecklist(${argumentoChecklistI59(itemId)})">Confirmar e marcar feito</button><button class="btn secondary" style="margin-top:8px" onclick="fecharModal()">Cancelar</button>`;
     document.getElementById('overlayView').classList.add('show');
   };
-
-  window.confirmarProvaChecklist = async function(itemId){
-    if(!await garantirChecklistAtualAntesDeEditar()){
-      fecharModal();
-      return false;
-    }
-    const prova = document.getElementById('provaChecklistInput').value.trim();
-    checklistExecAtual.itensFeitos[itemId] = { feito:true, prova, em: new Date().toISOString() };
-    if(!await salvarChecklistProtegendoVirada()){
-      fecharModal();
-      return false;
-    }
-    fecharModal();
-    renderChecklist();
-    return true;
+  window.confirmarProvaChecklist=async function(itemId){
+    if(provaContextoI59!==checklistContextoI59||!contextoChecklistValidoI59(provaContextoI59)){mostrarToast('A rotina mudou. Feche e abra o item novamente.','erro');return false;}
+    const prova=document.getElementById('provaChecklistInput').value.trim();
+    if(await marcarItemChecklistI59(itemId,true,prova)){fecharModal();return true;}return false;
   };
 
   function contarStreakDiario(funcionario, diasHistorico){
@@ -3571,11 +3572,10 @@
   }
 
   async function obterTemplatesEfetivos(funcionario){
-    const customSnap = await getDoc(doc(db,'checklist_templates_custom', funcionario));
-    if(customSnap.exists() && customSnap.data().excluido!==true && customSnap.data().periodos){
-      return incluirItemStoriesObrigatorio(funcionario, customSnap.data().periodos);
-    }
-    return incluirItemStoriesObrigatorio(funcionario, CHECKLIST_TEMPLATES[funcionario] || null);
+    const snap=await getDoc(doc(db,'checklist_templates_custom',funcionario)),raw=snap.exists()?snap.data():null;
+    versoesChecklistI59[funcionario]=assinaturaChecklistI59(raw);
+    agendasChecklistI59[funcionario]=raw&&raw.excluido!==true?raw.agendas||{}:{};
+    return incluirItemStoriesObrigatorio(funcionario,raw&&raw.excluido!==true&&raw.periodos?raw.periodos:CHECKLIST_TEMPLATES[funcionario]||null);
   }
 
   /* ===== MELHORIA 7 — PAINEL DE DISCIPLINA OPERACIONAL =====
@@ -3583,18 +3583,13 @@
      e-mail, não pune. Usa obterTemplatesEfetivos (já existente) que
      funciona pra QUALQUER funcionário, não só quem está logado agora. */
   async function calcularDisciplinaHoje(){
-    const hojeStr = hojeLocal();
-    const ativos = FUNCIONARIOS.filter(nome => !estaAusente(nome));
-    const resultados = [];
-    for(const nome of ativos){
-      const template = await obterTemplatesEfetivos(nome);
-      const totalItens = template?.['Diário'] ? template['Diário'].reduce((s,b)=>s+b.itens.length,0) : 0;
-      if(!totalItens) continue; // função sem checklist diário configurado — não entra na contagem
-      const chave = nome + '_diario_' + hojeStr;
-      const snap = await getDoc(doc(db,'checklist_execucoes', chave));
-      const feitos = snap.exists() ? Object.values(snap.data().itensFeitos||{}).filter(it => it?.feito).length : 0;
-      resultados.push({ nome, feitos, total: totalItens, concluido: feitos >= totalItens && totalItens > 0 });
+    const dia=hojeLocal(),resultados=[];
+    for(const nome of FUNCIONARIOS.filter(n=>!estaAusente(n))){
+      const rotinas=await lerRotinasHojeI59(nome,dia);if(!rotinas.length)continue;
+      const total=rotinas.reduce((s,r)=>s+r.total,0),feitos=rotinas.reduce((s,r)=>s+r.feitos,0);
+      resultados.push({nome,feitos,total,concluido:feitos>=total&&total>0,rotinas});
     }
+    if(dia!==hojeLocal())throw Error('O dia mudou durante a conferência. Atualize a tela.');
     return resultados;
   }
 
@@ -3677,6 +3672,7 @@
   }
 
   window.abrirChecklist = async function(){
+    const pessoaI59=usuarioAtual;
     const sub = document.getElementById('checklistSub');
     const cont = document.getElementById('checklistConteudo');
     if(!usuarioAtual){ sub.textContent = 'Selecione seu nome na tela de Início primeiro.'; cont.innerHTML=''; return; }
@@ -3696,6 +3692,7 @@
     const marcadosAuto = await autoVerificarChecklist();
     if(marcadosAuto > 0) mostrarToast('✔ ' + marcadosAuto + ' item(ns) do checklist confirmado(s) pelo próprio sistema — já marcados.');
     const templates = await obterTemplatesEfetivos(usuarioAtual);
+    if(usuarioAtual!==pessoaI59||viewAtiva!=='checklist')return;
     templatesEfetivos[usuarioAtual] = templates;
     if(!templates){
       sub.textContent = 'Sua função ainda não tem checklist digital configurado.';
@@ -3703,11 +3700,12 @@
       return;
     }
     sub.textContent = 'Seus itens de rotina — marca conforme for fazendo.';
-    const periodos = Object.keys(templates);
+    const periodos = Object.keys(templates).filter(p=>agendaChecklistI59(usuarioAtual,p).ativo!==false).sort((a,b)=>Number(previstoChecklistI59(usuarioAtual,b))-Number(previstoChecklistI59(usuarioAtual,a)));
+    if(!periodos.length){cont.innerHTML='<div class="card">Nenhum checklist ativo. Amanda pode configurar em Editar Checklists.</div>';return;}
     checklistPeriodoAtual = periodos[0];
     let tabsHtml = '<div class="checklistTabs">';
     periodos.forEach((p, i) => {
-      tabsHtml += `<div class="subtab ${i===0?'active':''}" onclick="abrirChecklistPeriodo('${p}', this)">${p}</div>`;
+      tabsHtml += `<div class="subtab ${i===0?'active':''}" onclick="abrirChecklistPeriodo(${argumentoChecklistI59(p)}, this)">${esc(agendaChecklistI59(usuarioAtual,p).nome)}${previstoChecklistI59(usuarioAtual,p)?' · Hoje':''}</div>`;
     });
     tabsHtml += '</div>';
     cont.innerHTML = `<div id="streakBox"></div>` + tabsHtml + `<div id="checklistItens"></div>`;
@@ -3733,12 +3731,13 @@
   function renderChecklist(){
     const template = templatesEfetivos[usuarioAtual]?.[checklistPeriodoAtual];
     const cont = document.getElementById('checklistItens');
-    if(!template || !cont) return;
+    if(!template || !cont || !contextoChecklistValidoI59(checklistContextoI59)) return;
     const totalItens = template.reduce((s,b)=>s+b.itens.length, 0);
     const feitosCount = template.reduce((s,b)=> s + b.itens.filter(it => checklistExecAtual.itensFeitos[it.id]?.feito).length, 0);
     const pct = totalItens ? Math.round((feitosCount/totalItens)*100) : 0;
 
-    let html = `<div class="progressoWrap"><div class="progressoBarra"><div class="fill" style="width:${pct}%;"></div></div><div class="progressoTxt">${feitosCount} de ${totalItens} concluídos (${pct}%)</div></div>`;
+    const agendaI59=agendaChecklistI59(usuarioAtual,checklistPeriodoAtual);
+    let html = `<div class="card"><h2>${esc(agendaI59.nome)}</h2><div class="desc">${esc(rotuloAgendaChecklistI59(agendaI59))} · Referência: ${formatarDataBR(ocorrenciaChecklistI59(usuarioAtual,checklistPeriodoAtual))}${previstoChecklistI59(usuarioAtual,checklistPeriodoAtual)?' · Previsto para hoje':' · Consulta/ajuste da ocorrência. Sem lembrete ou cobrança hoje.'}</div></div><div class="progressoWrap"><div class="progressoBarra"><div class="fill" style="width:${pct}%;"></div></div><div class="progressoTxt">${feitosCount} de ${totalItens} concluídos (${pct}%)</div></div>`;
 
     template.forEach(bloco => {
       html += `<div class="blocoChecklist"><h3>${esc(bloco.bloco)}</h3>`;
@@ -10123,109 +10122,93 @@ window.marcarClienteAprovouVideo = async function(id){
     return abrirCorrecaoVideoI53(videoId,novoEditor);
   };;
 
-  let editorFuncionarioAtual = '';
-  let editorTemplateAtual = {};
-
+  let editorFuncionarioAtual='', editorTemplateAtual={}, editorAgendasI59={}, editorBaseI59=null, editorCarregamentoI59=0, editorSalvandoI59=false;
+  const editorPodeI59=()=>['Amanda','Chris'].includes(usuarioAtual);
+  const argumentoChecklistI59=v=>escAttr(JSON.stringify(v));
+  function editorMudouI59(){return editorBaseI59 && assinaturaChecklistI59({periodos:editorTemplateAtual,agendas:editorAgendasI59})!==editorBaseI59.edicao;}
   function renderEditorChecklistInicial(){
-    const cont = document.getElementById('gerenciaEditarChecklist');
-    cont.innerHTML = `
-      <div class="card">
-        <h2>Editar checklist de um funcionário</h2>
-        <div class="desc">Ajuste os blocos e itens com sua expertise — a automação continua funcionando do mesmo jeito por baixo.</div>
-        <div class="field"><label>Funcionário</label>
-          <select id="editorFuncSelect" onchange="selecionarFuncionarioEditor()">
-            <option value="">Selecione...</option>
-            ${Object.keys(CHECKLIST_TEMPLATES).map(f=>`<option value="${f}">${f}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <div id="editorTemplateBox"></div>
-    `;
+    const cont=document.getElementById('gerenciaEditarChecklist');
+    if(!editorPodeI59()){cont.innerHTML='<div class="empty">Edição disponível para Amanda e Chris.</div>';return;}
+    // Voltar à aba conserva a edição ainda não salva.
+    if(cont.querySelector('#editorFuncSelect')) return;
+    cont.innerHTML=`<div class="card"><h2>Checklists da equipe</h2><div class="desc">Escolha a pessoa, crie a rotina e defina quando ela deve fazer. Tudo fica no Meu Checklist dela.</div><div class="field"><label for="editorFuncSelect">Funcionário</label><select id="editorFuncSelect" onchange="selecionarFuncionarioEditor()"><option value="">Selecione...</option>${FUNCIONARIOS.map(f=>`<option value="${escAttr(f)}">${esc(f)}</option>`).join('')}</select></div><div class="meta">Lembrete no Início no dia previsto. Amanda confere em Checklists do dia e recebe o aviso no site a partir das 19h. É necessário acessar o site; não há disparo garantido com ele fechado.</div></div><div id="editorTemplateBox"></div>`;
   }
-
-  window.selecionarFuncionarioEditor = async function(){
-    editorFuncionarioAtual = document.getElementById('editorFuncSelect').value;
-    if(!editorFuncionarioAtual){ document.getElementById('editorTemplateBox').innerHTML=''; return; }
-    const templates = await obterTemplatesEfetivos(editorFuncionarioAtual);
-    editorTemplateAtual = JSON.parse(JSON.stringify(templates || {}));
-    renderEditorTemplate();
+  window.selecionarFuncionarioEditor=async function(){
+    const select=document.getElementById('editorFuncSelect'),nome=select.value;
+    if(editorSalvandoI59 || (editorMudouI59()&&!confirm('Trocar de funcionário sem salvar as alterações?'))){select.value=editorFuncionarioAtual;return;}
+    if(!editorPodeI59())return;
+    const ticket=++editorCarregamentoI59,ator=usuarioAtual;
+    editorFuncionarioAtual=nome;editorBaseI59=null;
+    const box=document.getElementById('editorTemplateBox');box.innerHTML=nome?'<div class="card">Carregando checklists...</div>':'';if(!nome)return;
+    try{
+      const snap=await getDoc(doc(db,'checklist_templates_custom',nome));
+      if(ticket!==editorCarregamentoI59||ator!==usuarioAtual||nome!==editorFuncionarioAtual)return;
+      const raw=snap.exists()?snap.data():null;
+      const ativo=raw&&raw.excluido!==true;
+      editorTemplateAtual=copiarChecklistI59(incluirItemStoriesObrigatorio(nome,ativo&&raw.periodos?raw.periodos:CHECKLIST_TEMPLATES[nome]||{})||{});
+      editorAgendasI59=copiarChecklistI59(ativo?raw.agendas||{}:{});
+      editorBaseI59={raw:assinaturaChecklistI59(raw),edicao:assinaturaChecklistI59({periodos:editorTemplateAtual,agendas:editorAgendasI59})};
+      renderEditorTemplate();
+    }catch(e){if(ticket===editorCarregamentoI59){box.innerHTML='<div class="card">Não foi possível carregar. Selecione novamente a pessoa para tentar de novo.</div>';mostrarToast('Não carreguei o checklist; nenhum dado foi alterado.','erro');}}
   };
-
-  function gerarIdItem(){
-    return 'custom_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-  }
-
+  function gerarIdItem(){return 'custom_'+crypto.randomUUID();}
+  function agendaEditorI59(p){return editorAgendasI59[p]||{nome:p,frequencia:p==='Diário'?'diario':p.startsWith('Semanal')?'semanal':'mensal',diaSemana:5,diaMes:1,ativo:true};}
   function renderEditorTemplate(){
-    const box = document.getElementById('editorTemplateBox');
-    let html = '';
-    Object.keys(editorTemplateAtual).forEach(periodo => {
-      html += `<div class="card"><h2>${esc(periodo)}</h2>`;
-      editorTemplateAtual[periodo].forEach((bloco, bIdx) => {
-        html += `<div class="blocoChecklist">
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-            <input type="text" value="${esc(bloco.bloco)}" style="flex:1;background:var(--deep);border:1px solid var(--line);border-radius:7px;color:#fff;padding:6px 10px;font-size:12.5px;font-weight:800;" onchange="editorAtualizarBloco('${periodo}',${bIdx},this.value)">
-            <button class="btn red" style="width:auto;padding:6px 12px;font-size:11px;" onclick="editorRemoverBloco('${periodo}',${bIdx})">Remover bloco</button>
-          </div>`;
-        bloco.itens.forEach((it, iIdx) => {
-          html += `<div class="itemChecklist">
-            <input type="checkbox" class="chk" ${it.critico?'checked':''} onchange="editorToggleCritico('${periodo}',${bIdx},${iIdx})" title="Marcar como crítico (pede prova)">
-            <input type="text" value="${esc(it.texto)}" style="flex:1;background:var(--deep);border:1px solid var(--line);border-radius:7px;color:#fff;padding:7px 10px;font-size:12.5px;" onchange="editorAtualizarItemTexto('${periodo}',${bIdx},${iIdx},this.value)">
-            <button class="btn red" style="width:auto;padding:6px 10px;font-size:10px;" onclick="editorRemoverItem('${periodo}',${bIdx},${iIdx})">✕</button>
-          </div>`;
-        });
-        html += `<button class="btn secondary" style="margin-top:4px;" onclick="editorAdicionarItem('${periodo}',${bIdx})">+ Adicionar item</button>
-        </div>`;
+    const box=document.getElementById('editorTemplateBox');if(!box||!editorBaseI59)return;
+    let html=`<div class="card"><div class="btnrow"><button class="btn" onclick="editorNovaRotinaI59()">+ Novo checklist</button><button class="btn green" onclick="salvarTemplateEditado()">Salvar alterações</button></div><div id="editorReciboI59" class="meta" role="status" style="margin-top:10px">${editorMudouI59()?'Alterações ainda não salvas.':'Configuração carregada.'}</div></div><fieldset id="editorCamposI59" style="border:0;padding:0;margin:0;min-width:0">`;
+    for(const p of Object.keys(editorTemplateAtual)){
+      const a=agendaEditorI59(p),arg=argumentoChecklistI59(p),diarioLegado=p==='Diário';
+      html+=`<div class="card" data-rotina-editor-i59="${escAttr(p)}"><h2>${esc(a.nome)}${a.ativo===false?' · Pausado':''}</h2><div class="field"><label>Nome do checklist</label><input value="${escAttr(a.nome)}" maxlength="90" oninput="editorAgendaI59(${arg},'nome',this.value)"></div><div class="btnrow"><div class="field" style="flex:1;min-width:140px"><label>Frequência</label><select ${diarioLegado?'disabled':''} onchange="editorAgendaI59(${arg},'frequencia',this.value)">${[['diario','Diário'],['semanal','Semanal'],['mensal','Mensal']].map(([v,n])=>`<option value="${v}" ${a.frequencia===v?'selected':''}>${n}</option>`).join('')}</select></div>${a.frequencia==='semanal'?`<div class="field" style="flex:1;min-width:140px"><label>Dia da semana</label><select onchange="editorAgendaI59(${arg},'diaSemana',Number(this.value))">${diasChecklistI59.map((n,i)=>`<option value="${i}" ${Number(a.diaSemana)===i?'selected':''}>${n}</option>`).join('')}</select></div>`:a.frequencia==='mensal'?`<div class="field" style="flex:1;min-width:140px"><label>Dia do mês</label><input type="number" min="1" max="31" value="${a.diaMes}" oninput="editorAgendaI59(${arg},'diaMes',Number(this.value))"></div>`:''}</div><div class="meta" data-agenda-resumo-i59>${esc(rotuloAgendaChecklistI59(a))}${diarioLegado?' · A rotina diária existente permanece; use Novo checklist para outra frequência.':''}</div>`;
+      editorTemplateAtual[p].forEach((bloco,b)=>{
+        html+=`<div class="blocoChecklist"><div class="btnrow"><input aria-label="Nome do bloco" value="${escAttr(bloco.bloco)}" style="flex:1;min-width:0" oninput="editorAtualizarBloco(${arg},${b},this.value)"><button class="btn secondary" style="width:auto" onclick="editorRemoverBloco(${arg},${b})">Remover bloco</button></div>`;
+        bloco.itens.forEach((it,i)=>{html+=`<div class="itemChecklist"><input aria-label="Exigir comprovante" type="checkbox" class="chk" ${it.critico?'checked':''} onchange="editorToggleCritico(${arg},${b},${i})"><input aria-label="Texto do item" value="${escAttr(it.texto)}" style="flex:1;min-width:0" oninput="editorAtualizarItemTexto(${arg},${b},${i},this.value)"><button aria-label="Remover item" class="btn secondary" style="width:auto" onclick="editorRemoverItem(${arg},${b},${i})">✕</button></div>`;});
+        html+=`<button class="btn secondary" onclick="editorAdicionarItem(${arg},${b})">+ Adicionar item</button></div>`;
       });
-      html += `<button class="btn secondary" onclick="editorAdicionarBloco('${periodo}')">+ Adicionar bloco em ${esc(periodo)}</button>`;
-      html += `</div>`;
-    });
-    html += `<div class="btnrow">
-      <button class="btn secondary" onclick="restaurarPadraoChecklist()">Restaurar padrão original</button>
-      <button class="btn green" onclick="salvarTemplateEditado()">Salvar alterações</button>
-    </div>`;
-    box.innerHTML = html;
+      html+=`<div class="btnrow"><button class="btn secondary" onclick="editorAdicionarBloco(${arg})">+ Adicionar bloco</button>${!diarioLegado?`<button class="btn secondary" onclick="editorAgendaI59(${arg},'ativo',${a.ativo===false})">${a.ativo===false?'Reativar':'Pausar'} checklist</button>`:''}</div></div>`;
+    }
+    html+=`</fieldset><div class="btnrow"><button class="btn secondary" onclick="restaurarPadraoChecklist()">Restaurar padrão original</button><button class="btn green" onclick="salvarTemplateEditado()">Salvar alterações</button></div>`;
+    box.innerHTML=html;
   }
-
-  window.editorAtualizarBloco = function(periodo, bIdx, valor){
-    editorTemplateAtual[periodo][bIdx].bloco = valor;
+  function editorSinalizarI59(){const el=document.getElementById('editorReciboI59');if(el)el.textContent='Alterações ainda não salvas.';}
+  window.editorNovaRotinaI59=function(){if(!editorPodeI59()||editorSalvandoI59||!editorBaseI59)return;const p='rotina_'+crypto.randomUUID();editorAgendasI59[p]={nome:'Novo checklist',frequencia:'semanal',diaSemana:1,diaMes:1,ativo:true};editorTemplateAtual[p]=[{bloco:'Tarefas',itens:[{id:gerarIdItem(),texto:'Novo item',critico:false}]}];renderEditorTemplate();document.querySelector('[data-rotina-editor-i59="'+p+'"]').scrollIntoView({block:'center'});};
+  window.editorAgendaI59=function(p,k,v){if(editorSalvandoI59)return;editorAgendasI59[p]={...agendaEditorI59(p),[k]:v};if(k==='frequencia'||k==='ativo')renderEditorTemplate();else{editorSinalizarI59();const card=document.querySelector('[data-rotina-editor-i59="'+CSS.escape(p)+'"]');if(card){if(k==='nome')card.querySelector('h2').textContent=v+(editorAgendasI59[p].ativo===false?' · Pausado':'');if(k==='diaMes'||k==='diaSemana')card.querySelector('[data-agenda-resumo-i59]').textContent=rotuloAgendaChecklistI59(editorAgendasI59[p]);}}};
+  window.editorAtualizarBloco=(p,b,v)=>{editorTemplateAtual[p][b].bloco=v;editorSinalizarI59();};
+  window.editorAtualizarItemTexto=(p,b,i,v)=>{editorTemplateAtual[p][b].itens[i].texto=v;editorSinalizarI59();};
+  window.editorToggleCritico=(p,b,i)=>{editorTemplateAtual[p][b].itens[i].critico=!editorTemplateAtual[p][b].itens[i].critico;editorSinalizarI59();};
+  window.editorRemoverItem=(p,b,i)=>{editorTemplateAtual[p][b].itens.splice(i,1);renderEditorTemplate();};
+  window.editorAdicionarItem=(p,b)=>{editorTemplateAtual[p][b].itens.push({id:gerarIdItem(),texto:'Novo item',critico:false});renderEditorTemplate();};
+  window.editorRemoverBloco=(p,b)=>{editorTemplateAtual[p].splice(b,1);renderEditorTemplate();};
+  window.editorAdicionarBloco=p=>{editorTemplateAtual[p].push({bloco:'Novo bloco',itens:[{id:gerarIdItem(),texto:'Novo item',critico:false}]});renderEditorTemplate();};
+  window.salvarTemplateEditado=async function(){
+    if(!editorPodeI59()||editorSalvandoI59||!editorBaseI59)return false;
+    const nome=editorFuncionarioAtual,ator=usuarioAtual,base=editorBaseI59.raw;
+    const periodos=copiarChecklistI59(incluirItemStoriesObrigatorio(nome,editorTemplateAtual)),agendas=copiarChecklistI59(editorAgendasI59);
+    for(const[p,blocos]of Object.entries(periodos)){
+      const a=agendaEditorI59(p);
+      if(!a.nome.trim()||!['diario','semanal','mensal'].includes(a.frequencia)||!Number.isInteger(Number(a.diaSemana))||a.diaSemana<0||a.diaSemana>6||!Number.isInteger(Number(a.diaMes))||a.diaMes<1||a.diaMes>31||!blocos.flatMap(b=>b.itens).length||blocos.some(b=>!b.bloco.trim()||b.itens.some(i=>!i.texto.trim()))){mostrarToast('Confira nome, dia e itens de cada checklist. Não salvei.','erro');return false;}
+    }
+    editorSalvandoI59=true;document.querySelectorAll('#gerenciaEditarChecklist input,#gerenciaEditarChecklist select,#gerenciaEditarChecklist button').forEach(e=>e.disabled=true);
+    try{
+      const ref=doc(db,'checklist_templates_custom',nome),editadoEm=new Date().toISOString();
+      const salvo=await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref),atual=snap.exists()?snap.data():null;
+        if(usuarioAtual!==ator||editorFuncionarioAtual!==nome||!editorPodeI59())throw Error('O perfil mudou. Reabra a edição.');
+        if(assinaturaChecklistI59(atual)!==base)throw Error('Outra edição foi salva. Seu rascunho está aqui; reabra a pessoa para conferir a versão atual antes de salvar.');
+        const next={...(atual||{}),periodos,agendas,excluido:false,editadoEm,editadoPor:ator,revisao:(Number(atual?.revisao)||0)+1};tx.set(ref,next);return next;
+      });
+      editorTemplateAtual=periodos;editorAgendasI59=agendas;editorBaseI59={raw:assinaturaChecklistI59(salvo),edicao:assinaturaChecklistI59({periodos,agendas})};
+      document.getElementById('editorReciboI59').textContent='✓ Salvo para '+nome+'. A rotina aparece no Meu Checklist; o lembrete segue o dia escolhido.';
+      mostrarToast('Checklists de '+nome+' salvos.');return true;
+    }catch(e){document.getElementById('editorReciboI59').textContent='Não salvo: '+(e.message||'falha de conexão')+' Seu rascunho foi mantido.';mostrarToast('Não salvei. Confira o aviso na edição.','erro');return false;}
+    finally{editorSalvandoI59=false;document.querySelectorAll('#gerenciaEditarChecklist input,#gerenciaEditarChecklist select,#gerenciaEditarChecklist button').forEach(e=>e.disabled=false);const diario=document.querySelector('[data-rotina-editor-i59="Diário"] select');if(diario)diario.disabled=true;}
   };
-  window.editorAtualizarItemTexto = function(periodo, bIdx, iIdx, valor){
-    editorTemplateAtual[periodo][bIdx].itens[iIdx].texto = valor;
-  };
-  window.editorToggleCritico = function(periodo, bIdx, iIdx){
-    editorTemplateAtual[periodo][bIdx].itens[iIdx].critico = !editorTemplateAtual[periodo][bIdx].itens[iIdx].critico;
-  };
-  window.editorRemoverItem = function(periodo, bIdx, iIdx){
-    editorTemplateAtual[periodo][bIdx].itens.splice(iIdx,1);
+  window.restaurarPadraoChecklist=function(){
+    if(!editorPodeI59()||editorSalvandoI59||!editorBaseI59)return;
+    if(!confirm('Carregar o padrão original? As rotinas adicionais ficarão pausadas, sem apagar o histórico. Depois clique em Salvar alterações.'))return;
+    for(const p of Object.keys(editorTemplateAtual))if(!CHECKLIST_TEMPLATES[editorFuncionarioAtual]?.[p])editorAgendasI59[p]={...agendaEditorI59(p),ativo:false};
+    Object.assign(editorTemplateAtual,copiarChecklistI59(CHECKLIST_TEMPLATES[editorFuncionarioAtual]||{}));
+    for(const p of Object.keys(CHECKLIST_TEMPLATES[editorFuncionarioAtual]||{}))delete editorAgendasI59[p];
     renderEditorTemplate();
-  };
-  window.editorAdicionarItem = function(periodo, bIdx){
-    editorTemplateAtual[periodo][bIdx].itens.push({ id: gerarIdItem(), texto: 'Novo item', critico:false });
-    renderEditorTemplate();
-  };
-  window.editorRemoverBloco = function(periodo, bIdx){
-    editorTemplateAtual[periodo].splice(bIdx,1);
-    renderEditorTemplate();
-  };
-  window.editorAdicionarBloco = function(periodo){
-    editorTemplateAtual[periodo].push({ bloco: 'Novo bloco', itens: [{ id: gerarIdItem(), texto: 'Novo item', critico:false }] });
-    renderEditorTemplate();
-  };
-
-  window.salvarTemplateEditado = async function(){
-    await setDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual), { periodos: editorTemplateAtual, excluido:false, editadoEm: new Date().toISOString() });
-    mostrarToast('Checklist de ' + editorFuncionarioAtual + ' atualizado!');
-  };
-
-  window.restaurarPadraoChecklist = async function(){
-    if(!confirm('Restaurar o checklist de '+editorFuncionarioAtual+' pro padrão original? Isso apaga TODAS as customizações feitas nele.')) return;
-    await setDoc(doc(db,'checklist_templates_custom', editorFuncionarioAtual), {
-      excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString(),
-      motivoExclusao:'Checklist personalizado restaurado para o padrão original'
-    },{merge:true});
-    editorTemplateAtual = JSON.parse(JSON.stringify(CHECKLIST_TEMPLATES[editorFuncionarioAtual] || {}));
-    renderEditorTemplate();
-    mostrarToast('Restaurado pro padrão original.');
   };
 
   window.setAgendamentoSub = function(qual, el, opcoes){
@@ -26675,7 +26658,7 @@ window.setGerenciaSub = function(qual, el){
        É a mesma família do contador que mostrava as demandas do colega,
        e o mesmo remédio: limpar na hora, antes de qualquer await.
        Melhor a tela vazia por um segundo do que a informação de outro. */
-    ['meuDiaBox','calendarioVisualHomeBox','avisoInicio','setorAtalhos','edicaoManualInicioI34'].forEach(id => {
+    ['avisoChecklistInicioI59','meuDiaBox','calendarioVisualHomeBox','avisoInicio','setorAtalhos','edicaoManualInicioI34'].forEach(id => {
       const el = document.getElementById(id); if(el) el.innerHTML = '';
     });
     /* Ao sair de Amanda/Chris, limpa também o conteúdo que já havia sido
@@ -27461,15 +27444,55 @@ window.setGerenciaSub = function(qual, el){
      acha que perdeu a tela.
      28/07/2026 — em caso de qualquer falha, o item FICA VISÍVEL. Aba a
      mais incomoda; aba a menos impede alguém de trabalhar. */
-  async function ajustarChecklistDinamico(){
-    const el = document.getElementById('navChecklist');
-    if(!el || !usuarioAtual) return;
-    if(el.style.display === 'none') return;   // a matriz já negou — respeita
+  let avisoChecklistEmCursoI59=false, avisoChecklistPendenteI59=false, avisoChecklistTimerI59=null, avisoChecklistPessoaI59='', avisoChecklistListenerI59=null, avisoChecklistViradaI59=null;
+  async function atualizarAvisosChecklistI59(notificar=true){
+    const pessoa=usuarioAtual,dia=hojeLocal(),box=document.getElementById('avisoChecklistInicioI59');
+    if(!box)return;
+    if(box.dataset.diaI59 && (box.dataset.diaI59!==dia||box.dataset.pessoaI59!==pessoa))box.innerHTML='';
+    if(avisoChecklistEmCursoI59){avisoChecklistPendenteI59=true;return;}
+    if(!pessoa||estaAusente(pessoa)){box.innerHTML='';return;}
+    avisoChecklistEmCursoI59=true;
     try{
-      const templates = await obterTemplatesEfetivos(usuarioAtual);
-      const tem = templates && Object.keys(templates).some(per => (templates[per]||[]).length);
-      el.style.display = tem ? 'flex' : 'none';
-    }catch(e){ el.style.display = 'flex'; }
+      const minhas=await lerRotinasHojeI59(pessoa,dia);
+      if(pessoa!==usuarioAtual||dia!==hojeLocal())return;
+      const abertas=minhas.filter(r=>r.feitos<r.total);
+      let html=minhas.length?`<div class="card" style="border:2px solid var(--yellow)"><h2>📋 Checklists de hoje</h2><div class="desc">${abertas.length?abertas.map(r=>esc(r.nome)+' · '+r.feitos+'/'+r.total).join('<br>'):'✓ Todos os checklists previstos para hoje estão concluídos.'}</div><button class="btn" onclick="irPara('checklist',document.getElementById('navChecklist'))">Abrir Meu Checklist</button><button class="btn secondary" style="margin-top:8px" onclick="atualizarAvisosChecklistI59(false)">Atualizar checklists</button></div>`:'';
+      if(pessoa==='Amanda'&&new Date().getHours()>=19){
+        const resultados=await calcularDisciplinaHoje(),pendencias=pendenciasChecklistDoResumo(resultados);
+        html+=`<div class="card" style="border:2px solid var(--yellow)"><h2>📋 Conferência do fim do dia · ${formatarDataBR(dia)}</h2><div class="desc">${pendencias.length?esc(textoPendenciasChecklist(pendencias)):'✓ Nenhuma pendência nos checklists previstos para hoje.'}</div><button class="btn" onclick="abrirConferenciaChecklistI59()">Conferir equipe</button></div>`;
+      }
+      if(pessoa!==usuarioAtual||dia!==hojeLocal())return;
+      if(box.innerHTML!==html)box.innerHTML=html;box.dataset.diaI59=dia;box.dataset.pessoaI59=pessoa;
+      if(notificar&&pessoa==='Amanda'&&new Date().getHours()>=19){try{const k='checklist_fechamento_i59_'+dia;if(!sessionStorage.getItem(k)){mostrarToast('📋 A conferência dos checklists de hoje está no Início.');dispararNotificacaoNavegador('Conferência do fim do dia','Abra Checklists do dia para conferir a equipe.');sessionStorage.setItem(k,'1');}}catch(e){}}
+      const aviso=pessoa+'_'+dia+'_'+abertas.map(r=>r.periodo).sort().join('_');
+      if(notificar&&abertas.length){try{if(!sessionStorage.getItem('checklist_aviso_i59_'+aviso)){mostrarToast('📋 Você tem '+abertas.length+' checklist(s) para hoje. Abra Meu Checklist.');dispararNotificacaoNavegador('Checklists de hoje',abertas.map(r=>r.nome).join(' · '));sessionStorage.setItem('checklist_aviso_i59_'+aviso,'1');}}catch(e){}}
+    }catch(e){if(pessoa===usuarioAtual)box.innerHTML='<div class="card"><h2>Checklists de hoje</h2><div class="desc">Não consegui conferir agora. Nenhum checklist foi considerado concluído.</div><button class="btn secondary" onclick="atualizarAvisosChecklistI59()">Tentar novamente</button></div>';}
+    finally{avisoChecklistEmCursoI59=false;if(avisoChecklistPendenteI59){avisoChecklistPendenteI59=false;atualizarAvisosChecklistI59(notificar);}}
+  }
+  window.atualizarAvisosChecklistI59=atualizarAvisosChecklistI59;
+  window.abrirConferenciaChecklistI59=function(){window.irParaGerenciaSub('disciplinaDia',document.getElementById('navitemGerencia'));};
+  function programarAvisoHorarioI59(){
+    if(avisoChecklistViradaI59)clearTimeout(avisoChecklistViradaI59);
+    const d=new Date(),alvo=new Date(d.getFullYear(),d.getMonth(),d.getDate()+(d.getHours()>=19?1:0),d.getHours()>=19?0:19,0,0,200);
+    avisoChecklistViradaI59=setTimeout(()=>{atualizarAvisosChecklistI59();programarAvisoHorarioI59();},Math.max(250,alvo-d));
+  }
+  function iniciarAvisosChecklistI59(){
+    programarAvisoHorarioI59();
+    const pessoa=usuarioAtual;
+    if(pessoa!==avisoChecklistPessoaI59){if(avisoChecklistListenerI59)avisoChecklistListenerI59();avisoChecklistPessoaI59=pessoa;avisoChecklistListenerI59=null;if(pessoa)avisoChecklistListenerI59=onSnapshot(doc(db,'checklist_templates_custom',pessoa),()=>{if(usuarioAtual===pessoa){ajustarChecklistDinamico();atualizarAvisosChecklistI59();}},()=>{if(usuarioAtual===pessoa)atualizarAvisosChecklistI59(false);});}
+    atualizarAvisosChecklistI59();
+    if(!avisoChecklistTimerI59){avisoChecklistTimerI59=setInterval(()=>{if(document.visibilityState==='visible')atualizarAvisosChecklistI59();},120000);window.addEventListener('focus',()=>atualizarAvisosChecklistI59());document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')atualizarAvisosChecklistI59();});}
+  }
+
+  async function ajustarChecklistDinamico(){
+    const el=document.getElementById('navChecklist'),pessoa=usuarioAtual;
+    if(!el||!FUNCIONARIOS.includes(pessoa))return;
+    try{
+      const templates=await obterTemplatesEfetivos(pessoa);
+      if(pessoa!==usuarioAtual)return;
+      const tem=templates&&Object.keys(templates).some(per=>(templates[per]||[]).length);
+      el.style.display=tem?'flex':'none';
+    }catch(e){if(pessoa===usuarioAtual)el.style.display='flex';}
   }
 
   /* ===== A FAXINA — FASE 4 (28/07/2026) ===============================
@@ -27601,6 +27624,7 @@ window.setGerenciaSub = function(qual, el){
       el.style.display = mostrar ? 'flex' : 'none';
     });
     ajustarChecklistDinamico();
+    iniciarAvisosChecklistI59();
     reorganizarSidebarPorPapel();
     montarBotaoTelasAntigas();
     montarAtalhoDestaque();
@@ -28879,7 +28903,7 @@ window.setGerenciaSub = function(qual, el){
     if(window.mascoteAtualizarEstado){
       const template = templatesEfetivos[usuarioAtual]?.["Diário"];
       let pct = null;
-      if(template && checklistExecAtual){
+      if(template && checklistExecAtual && checklistPeriodoAtual==='Diário' && checklistContextoI59?.pessoa===usuarioAtual){
         const total = template.reduce((s,b)=>s+b.itens.length,0);
         const feitos = template.reduce((s,b)=> s + b.itens.filter(it => checklistExecAtual.itensFeitos?.[it.id]?.feito).length, 0);
         pct = total ? Math.round((feitos/total)*100) : null;
@@ -29018,6 +29042,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   async function renderMeuDia(){
+    atualizarAvisosChecklistI59();
     const box = document.getElementById('meuDiaBox');
     if(!box) return;
     if(!usuarioAtual || estaAusente(usuarioAtual)){ box.innerHTML = ''; return; }
@@ -35067,6 +35092,7 @@ window.setGerenciaSub = function(qual, el){
       snap.forEach(d => {
         const f = d.data();
         if(f.enviado) return;
+        if(f.tipo==='resumo_checklist' && f.itemId!=='resumo_checklist_'+hojeLocal()) return;
         (porPessoa[f.destinatario] = porPessoa[f.destinatario] || []).push({ id: d.id, ...f });
       });
       for(const pessoa of Object.keys(porPessoa)){
@@ -42112,16 +42138,14 @@ window.salvarPrazoVideo = async function(id){
     cont.innerHTML = html + '<div class="card"><div class="desc">Carregando o ambiente de ' + esc(escolhido) + '...</div></div>';
 
     const hojeStr = hojeLocal();
-    const [template, execSnap] = await Promise.all([
-      obterTemplatesEfetivos(escolhido),
-      getDoc(doc(db,'checklist_execucoes', escolhido + '_diario_' + hojeStr))
-    ]);
+    const rotinasI59=await lerRotinasHojeI59(escolhido,hojeStr);
     await carregarTodasDemandas();
-
-    const feitosMap = execSnap.exists() ? (execSnap.data().itensFeitos || {}) : {};
-    const blocos = template?.['Diário'] || [];
-    const totalItens = blocos.reduce((s,b)=>s+b.itens.length, 0);
-    const feitosCount = blocos.reduce((s,b)=> s + b.itens.filter(it => feitosMap[it.id]?.feito).length, 0);
+    const feitosMap={},blocos=[];
+    for(const r of rotinasI59){
+      for(const b of r.blocos)blocos.push({bloco:r.nome+' · '+b.bloco,itens:b.itens.map(it=>({...it,id:r.periodo+'::'+it.id}))});
+      for(const [id,v]of Object.entries(r.feitosMap))feitosMap[r.periodo+'::'+id]=v;
+    }
+    const totalItens=rotinasI59.reduce((s,r)=>s+r.total,0),feitosCount=rotinasI59.reduce((s,r)=>s+r.feitos,0);
 
     const minhas = todasDemandas.filter(d => d.destinatario === escolhido && d.status !== 'aprovada' && !d.escalacaoGerencial);
     const pendentes = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao');
@@ -42149,7 +42173,7 @@ window.salvarPrazoVideo = async function(id){
       <div class="faixaHead" onclick="toggleFaixaDemandas(this)">📋 Checklist de hoje <span class="qtd">(${totalItens ? feitosCount+' de '+totalItens : 'sem checklist configurado'})</span><span class="seta">▾</span></div>
       <div class="faixaItens">`;
     if(!blocos.length){
-      html += '<div class="empty" style="font-size:11px;padding:8px;">Essa função não tem checklist diário configurado.</div>';
+      html += '<div class="empty" style="font-size:11px;padding:8px;">Essa pessoa não tem checklist previsto para hoje.</div>';
     } else {
       blocos.forEach(b => {
         html += `<div class="meta" style="margin:8px 0 4px;font-weight:800;color:var(--yellow);">${esc(b.bloco)}</div>`;
@@ -42224,6 +42248,7 @@ window.salvarPrazoVideo = async function(id){
     const cont = document.getElementById('gerenciaDisciplinaDia');
     if(!cont) return;
     cont.innerHTML = '<div class="card"><div class="desc">Conferindo os checklists de hoje...</div></div>';
+    try{
     const resultados = await calcularDisciplinaHoje();
     const concluidos = resultados.filter(r => r.concluido);
     const naoComecou = resultados.filter(r => !r.concluido && r.feitos === 0);
@@ -42231,7 +42256,7 @@ window.salvarPrazoVideo = async function(id){
 
     let html = `<div class="card">
       <h2>📋 Checklists do dia</h2>
-      <div class="desc">Quem entregou, quem começou e parou, e quem ainda não abriu. Atualiza a cada vez que você entra aqui.</div>
+      <div class="desc">Somente as rotinas previstas para hoje: diárias, semanais ou mensais. Atualiza ao abrir; a conferência não encerra o checklist. <button class="btn secondary" onclick="renderDisciplinaDia()">Atualizar conferência</button></div>
     </div>
     <div class="painelResumo" style="margin-bottom:16px;">
       <div class="resumoCard green"><div class="num">${concluidos.length}</div><div class="lbl">Entregaram</div></div>
@@ -42242,6 +42267,7 @@ window.salvarPrazoVideo = async function(id){
     const linha = r => `<div class="item" style="border-left:3px solid ${r.concluido?'var(--green)':r.feitos?'var(--yellow2)':'var(--red)'};">
       <div class="top"><div class="nome">${esc(r.nome)}</div><span class="selo ${r.concluido?'aprovada':r.feitos?'hoje':'atrasado'}">${r.feitos}/${r.total}</span></div>
       <div class="meta" style="margin-top:4px;">${r.concluido ? '✅ Checklist do dia entregue' : r.feitos ? '🟡 Faltam ' + (r.total - r.feitos) + ' item(ns)' : '🔴 Ainda não começou o checklist de hoje'}</div>
+      ${(r.rotinas||[]).map(x=>`<div class="meta">${esc(x.nome)} · ${x.feitos}/${x.total}</div>`).join('')}
     </div>`;
 
     const bloco = (titulo, lista, aberta) => lista.length ? `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="disc_${titulo}">
@@ -42252,8 +42278,9 @@ window.salvarPrazoVideo = async function(id){
     html += bloco('🔴 Não começaram', naoComecou, true);
     html += bloco('🟡 Com item em aberto', parcial, true);
     html += bloco('✅ Entregaram', concluidos, false);
-    if(!resultados.length) html += '<div class="empty">Ninguém com checklist diário configurado.</div>';
+    if(!resultados.length) html += '<div class="empty">Nenhum checklist previsto para hoje.</div>';
     cont.innerHTML = html;
+    }catch(e){cont.innerHTML='<div class="card">Não consegui conferir os checklists. Nenhum resultado foi considerado entregue.<button class="btn secondary" onclick="renderDisciplinaDia()">Tentar novamente</button></div>';}
   };
 
   function pendenciasChecklistDoResumo(resultados){
@@ -42280,6 +42307,7 @@ window.salvarPrazoVideo = async function(id){
       if(jaFoi.exists()) return;   // ja disparou hoje
       const resultados = await calcularDisciplinaHoje();
       if(!resultados.length) return;
+      if(hojeLocal()!==hojeStr)return;
       const concluidos = resultados.filter(r => r.concluido);
       const pendencias = pendenciasChecklistDoResumo(resultados);
       const resumo = textoPendenciasChecklist(pendencias);

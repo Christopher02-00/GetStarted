@@ -1130,7 +1130,7 @@
     <!-- STORIES — tela própria da Cecília, tirada da Gerência -->
     <div class="view" id="view-stories">
       <h1>📸 <span class="y">Stories</span> pra Aprovar</h1>
-      <div class="sub">Cria o story do cliente aqui — já vai direto pro portal daquele cliente aprovar. Organizado por status: aguardando, aprovado, ajuste pedido.</div>
+      <div class="sub">Crie ou edite o Story da semana. A Amanda revisa antes de liberar para o cliente.</div>
       <div id="storiesConteudo"></div>
     </div>
 
@@ -18152,7 +18152,8 @@ window.arquivarMesCampanhas=async function(mes,token){
         if(mesmo&&(colecao!=='stories_links'||atual.liberadoCliente===(efetiva==='liberar'))){esperado={...atual};alterado=false;return;}
         if(!historico&&['liberar','ajustar'].includes(efetiva)&&etapa!=='aguardando_interna')throw new Error('O material mudou de etapa. Atualize a revisão.');
         if(efetiva==='reenviar'&&!['ajuste_interno','aguardando_interna'].includes(etapa))throw new Error('Estes links já saíram da revisão. Altere o conteúdo pelo editor antes de reenviar.');
-        if(['salvar','corrigir_ativo'].includes(efetiva)&&!ajusteStoriesAutorizadoI27(atual))throw new Error('Peça à Amanda um ajuste específico deste registro antes de editar.');
+        if(efetiva==='salvar'&&!ajusteStoriesAutorizadoI27(atual))throw new Error('Peça à Amanda um ajuste específico deste registro antes de editar.');
+        if(efetiva==='corrigir_ativo'&&!storyEditavelI64(atual))throw new Error('Este Story foi publicado ou saiu da edição ativa. Atualize a lista.');
         if(atual.historico!=null&&!Array.isArray(atual.historico))throw new Error('O histórico deste registro está ilegível. Nenhuma informação foi substituída.');
         const em=new Date().toISOString(),patch={revisaoInterna:destino,atualizadoEm:serverTimestamp()};
         if(historico)patch.continuidadeInternaStoriesI27=true;
@@ -18182,7 +18183,11 @@ window.arquivarMesCampanhas=async function(mes,token){
         }
         if(efetiva==='reenviar'&&!linksStoryPodemSerLiberados(atual.dias))throw new Error('Deixe ao menos um link HTTPS válido para revisão.');
         const evento={id:eventoId,acao:'Stories: '+efetiva+(historico?' internamente':''),por:usuarioAtual,em,detalhe:motivo};
-        if(efetiva==='corrigir_ativo')evento.correcaoAnterior={titulo:atual.titulo||'',descricao:atual.descricao||'',linkReferencia:atual.linkReferencia||atual.linkRef||'',motivoAjusteInterno:atual.motivoAjusteInterno};
+        if(efetiva==='corrigir_ativo'){
+          const camposAntes=['titulo','descricao','linkRef','linkReferencia','motivoAjusteInterno','revisaoInterna','status','comentarioCliente','comentarioClienteEm','ajusteTexto','respondidoEm','aprovadoPeloCliente','aprovadoPeloClienteEm','liberadoPor','liberadoEm'];
+          evento.correcaoAnterior=Object.fromEntries(camposAntes.filter(k=>k in atual).map(k=>[k,atual[k]]));
+          Object.assign(patch,{semanaConteudo:semanaEfetivaStory(atual),status:'aguardando',revisaoStoryI64:(Number(atual.revisaoStoryI64)||0)+1,aprovadoPeloCliente:false,aprovadoPeloClienteEm:null,respondidoEm:null,ajusteTexto:'',comentarioCliente:'',comentarioClienteEm:null,liberadoPor:'',liberadoEm:null});
+        }
         patch.historico=[...(atual.historico||[]),evento];patch.ultimaAcaoStoriesI27={id:eventoId,acao:efetiva,por:usuarioAtual,em};
         esperado={...atual,...patch};alterado=true;validar();tx.update(preparado.ref,patch);
       });gravado=alterado;if(sessao!==sessaoServicoManual())return gravado;
@@ -18234,9 +18239,9 @@ window.arquivarMesCampanhas=async function(mes,token){
   /* GET_I50_STORY_ATIVO_INICIO */
   let abrindoStoryAtivoI50=false;
   function botaoCorrigirStoryI50(s){
-    if(!['Gabrielle','Amanda','Chris'].includes(usuarioAtual)||!ajusteStoriesAutorizadoI27(s)||terminalStoriesI27(s)||s.excluido)return '';
+    if(!['Gabrielle','Amanda','Chris'].includes(usuarioAtual)||!storyEditavelI64(s))return '';
     try{exigirAlvoStoriesI27('stories_semanais',s.id,s);}catch(_){return '';}
-    return `<button type="button" class="btn" style="margin-top:10px;white-space:normal;" onclick="${escAttr('abrirCorrecaoStoryI50('+JSON.stringify(s.id)+')')}">Corrigir este Story</button>`;
+    return `<button type="button" class="btn" style="margin-top:10px;white-space:normal;" onclick="${escAttr('abrirCorrecaoStoryI50('+JSON.stringify(s.id)+')')}">${ajusteStoriesAutorizadoI27(s)||s.status==='ajuste'?'Corrigir este Story':'Editar Story e reenviar'}</button>`;
   }
   window.abrirCorrecaoStoryI50=async function(id){
     if(abrindoStoryAtivoI50||document.getElementById('editorStoryAtivoI50'))return false;
@@ -18245,10 +18250,10 @@ window.arquivarMesCampanhas=async function(mes,token){
     try{
       validar();const p=await prepararRegistroStoriesI27('stories_semanais',id,validar);validar();
       if(!p.ativo||terminalStoriesI27(p.dados))throw new Error('Abra Corrigir este registro no histórico de Stories.');
-      if(!ajusteStoriesAutorizadoI27(p.dados))throw new Error('Este Story já saiu do ajuste ou precisa de um pedido específico da Amanda. Atualize a lista.');
+      if(!storyEditavelI64(p.dados))throw new Error('Este Story já foi publicado ou não pode mais ser editado por esta tela. Atualize a lista.');
       const d=p.dados,dialog=document.createElement('dialog');dialog.id='editorStoryAtivoI50';
-      dialog.setAttribute('aria-labelledby','tituloEditorStoryI50');dialog.style.cssText='background:var(--card,#22252c);color:var(--text,#fff);border:2px solid var(--yellow,#ffc20e);border-radius:16px;padding:20px;width:min(720px,calc(100vw - 32px));max-height:85dvh;overflow:auto;box-sizing:border-box;';
-      dialog.innerHTML=`<h2 id="tituloEditorStoryI50">Corrigir Story e reenviar à Amanda</h2><div class="desc" style="overflow-wrap:anywhere;">${esc(d.clienteNome||p.slug)} · ${esc(semanaEfetivaStory(d)||'sem semana definida')}</div><div class="card" style="margin:12px 0;white-space:pre-wrap;overflow-wrap:anywhere;"><b>A Amanda pediu:</b><br>${esc(d.motivoAjusteInterno)}</div><div class="field"><label for="tituloStoryI50">Título</label><input id="tituloStoryI50"></div><div class="field"><label for="roteiroStoryI50">Roteiro</label><textarea id="roteiroStoryI50" style="min-height:180px;"></textarea></div><div class="field"><label for="referenciaStoryI50">Referência HTTPS (opcional)</label><input id="referenciaStoryI50" type="url"></div><div class="meta">A correção volta para a revisão da Amanda. Ela confere e libera para o cliente.</div><div id="estadoCorrecaoStoryI50" role="status" style="margin-top:10px;white-space:pre-wrap;overflow-wrap:anywhere;"></div><div class="btnrow" style="margin-top:14px;flex-wrap:wrap;"><button type="button" class="btn" id="salvarStoryI50" style="white-space:normal;">Salvar correção e reenviar à Amanda</button><button type="button" class="btn secondary" id="cancelarStoryI50">Cancelar</button></div>`;
+      dialog.setAttribute('aria-labelledby','tituloEditorStoryI50');dialog.style.cssText='margin:auto;background:var(--card,#22252c);color:var(--text,#fff);border:2px solid var(--yellow,#ffc20e);border-radius:16px;padding:20px;width:min(720px,calc(100vw - 32px));max-height:85dvh;overflow:auto;box-sizing:border-box;';
+      dialog.innerHTML=`<h2 id="tituloEditorStoryI50">Editar Story e enviar à Amanda</h2><div class="desc" style="overflow-wrap:anywhere;">${esc(d.clienteNome||p.slug)} · ${esc(semanaEfetivaStory(d)||'sem semana definida')}</div><div class="card" style="margin:12px 0;white-space:pre-wrap;overflow-wrap:anywhere;">${d.motivoAjusteInterno?'<b>A Amanda pediu:</b><br>'+esc(d.motivoAjusteInterno):d.status==='ajuste'?'<b>O cliente pediu:</b><br>'+esc(d.ajusteTexto||''):'Edite o roteiro salvo. Ao enviar, ele volta para a revisão da Amanda.'}</div><div class="field"><label for="tituloStoryI50">Título</label><input id="tituloStoryI50"></div><div class="field"><label for="roteiroStoryI50">Roteiro</label><textarea id="roteiroStoryI50" style="min-height:180px;"></textarea></div><div class="field"><label for="referenciaStoryI50">Referência HTTPS (opcional)</label><input id="referenciaStoryI50" type="url"></div><div class="meta">A correção volta para a revisão da Amanda. Ela confere e libera para o cliente.</div><div id="estadoCorrecaoStoryI50" role="status" style="margin-top:10px;white-space:pre-wrap;overflow-wrap:anywhere;"></div><div class="btnrow" style="margin-top:14px;flex-wrap:wrap;"><button type="button" class="btn" id="salvarStoryI50" style="white-space:normal;">Salvar correção e reenviar à Amanda</button><button type="button" class="btn secondary" id="cancelarStoryI50">Cancelar</button></div>`;
       const el=n=>dialog.querySelector('#'+n);el('tituloStoryI50').value=d.titulo||'';el('roteiroStoryI50').value=d.descricao||'';el('referenciaStoryI50').value=d.linkReferencia||d.linkRef||'';
       const campos=()=>({titulo:el('tituloStoryI50').value,descricao:el('roteiroStoryI50').value,linkRef:el('referenciaStoryI50').value}),original=JSON.stringify(campos()),sujo=()=>JSON.stringify(campos())!==original;
       let salvando=false;const antesDeSair=e=>{if(sujo()||salvando){e.preventDefault();e.returnValue='';}};
@@ -18290,6 +18295,28 @@ window.arquivarMesCampanhas=async function(mes,token){
   }
   // GET_I24_CRIACAO_STORIES_FIM
 
+  // I64: mesma semana, mesmo registro; editar é uma nova revisão manual.
+  const retratosRevisaoStoryI64=new Map();
+  function storyEditavelI64(s){
+    return !!s&&!s.excluido&&!terminalStoriesI27(s)&&s.status!=='postado'&&s.postadoPeloCliente!==true&&
+      ['aguardando','aprovado','ajuste'].includes(s.status||'aguardando')&&
+      ['aguardando_interna','ajuste_interno','liberado'].includes(s.revisaoInterna||'liberado');
+  }
+  function retratoRevisaoStoryI64(s){
+    const chave=crypto.randomUUID();retratosRevisaoStoryI64.set(chave,{colecao:'stories_semanais',id:s.id,sessao:sessaoServicoManual(),assinatura:assinaturaDadosClienteI21(Object.fromEntries(Object.entries(s).filter(([k])=>k!=='id')))});return chave;
+  }
+  function decidirRevisaoStoryI64(id,chave,acao){
+    const ctx=retratosRevisaoStoryI64.get(chave);
+    if(!ctx||ctx.id!==id||ctx.sessao!==sessaoServicoManual()){mostrarToast('Atualize Stories e confira o material antes de decidir.','erro');return false;}
+    return comandoStoriesI27('stories_semanais',id,acao,ctx);
+  }
+  function chaveRascunhoStoryI64(slug,semana){return ['get_story_i64',auth.currentUser?.uid||'',usuarioAtual||'',slug,semana].join('|');}
+  function guardarRascunhoStoryI64(cont){
+    const form=cont?.querySelector('[data-story-criacao-i64]');if(!form?.dataset.cliente||!form.querySelector('#stTit_1'))return;
+    const values=['stTit_1','stDesc_1','stRef_1'].map(id=>form.querySelector('#'+id)?.value||'');
+    try{const key=chaveRascunhoStoryI64(form.dataset.cliente,form.dataset.semana);if(values.some(Boolean))localStorage.setItem(key,JSON.stringify(values));else localStorage.removeItem(key);}catch(e){console.warn('Rascunho Story indisponível neste navegador',e);}
+  }
+
   let __salvandoStorySemana=false;
   window.criarSemanaStories = async function(){
     if(__salvandoStorySemana) return mostrarToast('O envio desta semana já está em andamento.','erro');
@@ -18297,6 +18324,7 @@ window.arquivarMesCampanhas=async function(mes,token){
     const botao=document.getElementById('btnEnviarSemanaStories');
     if(botao) botao.disabled=true;
     const sessao=sessaoServicoManual();let confirmado=false;
+    const formI64=document.querySelector('[data-story-criacao-i64]'),camposI64=[...(formI64?.querySelectorAll('input,textarea,select')||[])];camposI64.forEach(e=>e.disabled=true);
     const validarSessao=()=>{if(!auth.currentUser?.uid||!usuarioAtual||sessao!==sessaoServicoManual())throw new Error('O perfil mudou ou a sessão terminou. Abra Stories novamente no perfil correto.');};
     try{
     validarSessao();
@@ -18371,7 +18399,8 @@ window.arquivarMesCampanhas=async function(mes,token){
       },{merge:true});
     });
     confirmado=true;validarSessao();
-    DIAS_STORY.forEach(d => { ['stTit_','stDesc_','stRef_'].forEach(pre => { const el=document.getElementById(pre+d.n); if(el) el.value=''; }); });
+    ['stTit_1','stDesc_1','stRef_1'].forEach(id=>{const e=formI64?.querySelector('#'+id);if(e)e.value='';});
+    try{localStorage.removeItem(chaveRascunhoStoryI64(slug,semana));}catch(e){}
     if(gestor){
       mostrarToast('Story da semana de ' + nome + ' salvo com liberação interna registrada.');
     }else{
@@ -18393,13 +18422,14 @@ window.arquivarMesCampanhas=async function(mes,token){
       return confirmado;
     }finally{
       __salvandoStorySemana=false;
+      camposI64.forEach(e=>e.disabled=false);
       if(botao) botao.disabled=false;
     }
   };
 
-  window.liberarStory = async function(id){return comandoStoriesI27('stories_semanais',id,'liberar');};
+  window.liberarStory = async function(id,chave){return decidirRevisaoStoryI64(id,chave,'liberar');};
 
-  window.devolverStory = async function(id){return comandoStoriesI27('stories_semanais',id,'ajustar');};
+  window.devolverStory = async function(id,chave){return decidirRevisaoStoryI64(id,chave,'ajustar');};
 
   /* Guarda os links por cliente e semana: stories_links/{slug}_{semana} */
   window.salvarLinkStory = async function(slug, semana, dia){
@@ -18457,11 +18487,12 @@ window.arquivarMesCampanhas=async function(mes,token){
   window.renderStoriesCliente = async function(){
     const cont = document.getElementById('storiesConteudo'),sessaoI27=sessaoServicoManual();
     if(!cont)return;
+    guardarRascunhoStoryI64(cont);retratosRevisaoStoryI64.clear();
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     let linksConfirmadosEquipe=true;
     let avisoLeituraLinks='';
     try{
-      const snapL = await comTimeoutStoriesEquipe(getDocs(collection(db,'stories_links')),'os links de Stories');
+      const snapL = await comTimeoutStoriesEquipe(_getDocsFromServerFB(collection(db,'stories_links')),'os links de Stories');
       if(sessaoI27!==sessaoServicoManual())return;
       window.__linksStorySemana = {}; window.__linksStoryDocs = {};
       snapL.forEach(d => { const dados=d.data()||{}; if(!fonteFisicaClienteR4(dados.cliente||dados.slug||'',dados)) return; window.__linksStoryDocs[d.id]={...dados,id:d.id}; window.__linksStorySemana[d.id] = dados.dias || {}; });
@@ -18485,7 +18516,7 @@ window.arquivarMesCampanhas=async function(mes,token){
     window.__semanaStories = semana;
 
     let html = `<div class="card">
-      <h2>📸 Stories da semana</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;"><h2>📸 Stories da semana</h2><button class="btn secondary" style="width:auto;" onclick="renderStoriesCliente()">Atualizar Stories</button></div>
       <div class="desc">Cada semana começa do zero. As anteriores continuam guardadas — navega com as setas.</div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
         <button class="btn secondary" style="width:auto;padding:8px 14px;" onclick="mudarSemanaStories(-1)">‹</button>
@@ -18614,9 +18645,9 @@ window.arquivarMesCampanhas=async function(mes,token){
       <div class="meta" style="margin-top:12px;">Depois da revisão da Amanda, os links aparecem no Portal do Cliente. Isso está no seu checklist de sexta.</div>
     </div>
 
-    <div class="card" style="border:2px solid var(--yellow);">
-      <h2>📅 Montar a semana inteira</h2>
-      <div class="desc">Escolhe o cliente e preenche os dias de uma vez. Vai tudo junto pro portal dele aprovar, organizado por dia. Deixa em branco o dia que não tem story.</div>
+    <div class="card" data-story-criacao-i64 style="border:2px solid var(--yellow);">
+      <h2>📅 Roteiro da semana</h2>
+      <div class="desc">Escreva o roteiro da semana e envie para a Amanda revisar. O cliente vê após a liberação.</div>
       <div class="field" style="margin-top:10px;"><label>Cliente</label>
         <select id="storyCliente" onchange="window.__storyClienteSel=this.value;renderStoriesCliente();">${clientesStory.map(c=>`<option value="${c.slug}" data-nome="${escAttr(c.nome)}" ${window.__storyClienteSel===c.slug?'selected':''}>${esc(c.nome)}</option>`).join('')}</select>
       </div>
@@ -18650,7 +18681,7 @@ window.arquivarMesCampanhas=async function(mes,token){
     let todos=[];
     let avisoLeituraStories='';
     try{
-      const snap=await comTimeoutStoriesEquipe(getDocs(collection(db,'stories_semanais')),'os roteiros de Stories');
+      const snap=await comTimeoutStoriesEquipe(_getDocsFromServerFB(collection(db,'stories_semanais')),'os roteiros de Stories');
       if(sessaoI27!==sessaoServicoManual())return;
       snap.forEach(d=>{ const dados=d.data()||{}; if(fonteFisicaClienteR4(dados.cliente||dados.slug||'',dados)) todos.push({...dados,id:d.id}); });
       window.__storiesEquipeConfirmado=todos.map(s=>({...s}));
@@ -18722,8 +18753,8 @@ window.arquivarMesCampanhas=async function(mes,token){
           ${refSegura ? '<div class="meta" style="margin-top:6px;">🔗 <a href="'+escAttr(refSegura)+'" target="_blank" rel="noopener noreferrer" style="color:var(--yellow);">Referência ↗</a></div>' : ''}
           <div class="meta" style="margin-top:4px;">montado por ${esc(st.enviadoPor||st.criadoPor||'?')}</div>
           <div class="btnrow" style="margin-top:10px;">
-            <button class="btn red" style="font-size:11.5px;" onclick="${escAttr('devolverStory('+JSON.stringify(st.id)+')')}">↩️ Pedir ajuste</button>
-            <button class="btn green" style="font-size:11.5px;" onclick="${escAttr('liberarStory('+JSON.stringify(st.id)+')')}">✅ Liberar pro cliente</button>
+            <button class="btn red" style="font-size:11.5px;" onclick="${escAttr('devolverStory('+JSON.stringify(st.id)+','+JSON.stringify(retratoRevisaoStoryI64(st))+')')}">↩️ Pedir ajuste</button>
+            <button class="btn green" style="font-size:11.5px;" onclick="${escAttr('liberarStory('+JSON.stringify(st.id)+','+JSON.stringify(retratoRevisaoStoryI64(st))+')')}">✅ Liberar pro cliente</button>
           </div>
         </div>`; }).join('')}
       </div>`;
@@ -18765,6 +18796,16 @@ window.arquivarMesCampanhas=async function(mes,token){
 
     if(sessaoI27!==sessaoServicoManual())return false;
     cont.innerHTML = html;
+    const formI64=cont.querySelector('[data-story-criacao-i64]');
+    if(formI64){
+      formI64.dataset.cliente=clienteStorySelecionado;formI64.dataset.semana=semana;
+      if(daSemana.length){
+        formI64.innerHTML='<h2>Roteiro desta semana</h2><div class="desc">A semana já tem material salvo. Abra o registro para editar e reenviar à Amanda.</div>'+daSemana.map(s=>'<div class="item" style="margin-top:12px;"><b>'+esc(s.titulo||'Stories da semana')+'</b><div class="meta">'+rotuloStatus(s)+'</div>'+botaoCorrigirStoryI50(s)+(s.status==='postado'?'<div class="meta">Publicado — preservado para consulta.</div>':'')+'</div>').join('');
+      }else{
+        try{const r=JSON.parse(localStorage.getItem(chaveRascunhoStoryI64(clienteStorySelecionado,semana))||'null');if(Array.isArray(r))['stTit_1','stDesc_1','stRef_1'].forEach((id,i)=>{const e=formI64.querySelector('#'+id);if(e)e.value=String(r[i]||'');});}catch(e){}
+        formI64.addEventListener('input',()=>guardarRascunhoStoryI64(cont));
+      }
+    }
     return true;
   }
 

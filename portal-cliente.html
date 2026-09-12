@@ -2378,6 +2378,29 @@ function conferirAprovacaoI56(cal,esperado){
   window.semanaStoryDerivadaPortal=semanaStoryDerivadaPortal;
   window.semanaEfetivaStoryPortal=semanaEfetivaStoryPortal;
 
+  // I64: cada botão responde somente à versão que o cliente leu.
+  const retratosStoryPortalI64=new Map(),salvandoStoryPortalI64=new Set();
+  function assinaturaStoryPortalI64(v){
+    const normal=x=>Array.isArray(x)?x.map(normal):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,normal(x[k])])):x;
+    return JSON.stringify(normal(Object.fromEntries(Object.entries(v||{}).filter(([k])=>k!=='id'))));
+  }
+  function retratoStoryPortalI64(s){const chave=crypto.randomUUID();retratosStoryPortalI64.set(chave,{id:s.id,cliente:clienteAtual.slug,uid:auth.currentUser?.uid,assinatura:assinaturaStoryPortalI64(s)});return chave;}
+  async function responderVersaoStoryI64(id,chave,patch,aviso){
+    const ctx=retratosStoryPortalI64.get(chave),card=document.getElementById('story_'+id);
+    const valida=()=>ctx&&ctx.id===id&&ctx.cliente===clienteAtual?.slug&&ctx.uid===auth.currentUser?.uid&&retratosStoryPortalI64.get(chave)===ctx;
+    if(!valida()){alert('Atualize Stories e confira o material antes de responder.');return false;}
+    if(salvandoStoryPortalI64.has(id))return false;salvandoStoryPortalI64.add(id);if(card)card.style.opacity='.5';let salvo=false;
+    try{
+      await runTransaction(db,async tx=>{const ref=doc(db,'stories_semanais',id),s=await tx.get(ref);if(!valida())throw Error('A sessão ou a tela mudou. Abra Stories novamente.');const atual=s.exists()?s.data():null;
+        if(!atual||atual.cliente!==ctx.cliente||atual.excluido||atual.status==='postado'||(atual.revisaoInterna||'liberado')!=='liberado'||assinaturaStoryPortalI64(atual)!==ctx.assinatura)throw Error('Este Story foi alterado pela equipe. Atualize Stories e leia a versão atual antes de responder.');
+        tx.update(ref,patch);
+      });salvo=true;
+      if(aviso)await alertarEquipe(aviso.titulo,aviso.texto);
+      await carregarStories();return true;
+    }catch(e){console.error('Resposta de Story não confirmada:',e);alert(salvo?'Sua resposta foi salva. O aviso ou a atualização da tela ficou pendente; atualize Stories antes de repetir.':(e?.message||'Não consegui salvar. Confira sua conexão e tente novamente.'));return salvo;}
+    finally{salvandoStoryPortalI64.delete(id);if(card?.isConnected)card.style.opacity='1';}
+  }
+
   async function carregarStories(){
     const cont = document.getElementById('painelStories');
     cont.innerHTML = '<div class="empty">Carregando...</div>';
@@ -2437,7 +2460,8 @@ function conferirAprovacaoI56(cal,esperado){
     };
     /* Story ainda na revisão interna não chega aqui. Campo ausente =
        story anterior a 29/07 = continua visível, como sempre foi. */
-    const meus = todosMeus.filter(s => (s.revisaoInterna || 'liberado') === 'liberado');
+    const meus = todosMeus.filter(s => !s.excluido && (s.revisaoInterna || 'liberado') === 'liberado');
+    retratosStoryPortalI64.clear();
 
     const daSemana = meus.filter(s => semanaEfetivaStoryPortal(s) === semana);
     const semSemana = meus.filter(s => !s.semana);
@@ -2464,6 +2488,7 @@ function conferirAprovacaoI56(cal,esperado){
     }
 
     const cardStory = s => {
+      const chaveI64=retratoStoryPortalI64(s);
       const referenciaSegura=urlHttpsSeguraPortal(s.linkReferencia);
       return `
       <div class="card" id="story_${s.id}" style="border-left:3px solid ${s.status==='postado'?'var(--green)':s.status==='ajuste'?'var(--red)':s.status==='aprovado'?'var(--yellow)':'var(--line)'};transition:opacity .2s;">
@@ -2476,10 +2501,10 @@ function conferirAprovacaoI56(cal,esperado){
           <span class="selo ${s.status==='aprovado'?'publicado':s.status==='postado'?'publicado':s.status==='ajuste'?'gravacao':'roteiro'}">${s.status==='aprovado'?'Aprovado — pode postar':s.status==='postado'?'✔ Publicado':s.status==='ajuste'?'Você pediu ajuste':'Aguardando você'}</span>
         </div>
         ${s.status!=='postado' ? `
-        ${s.status!=='aprovado' ? `<div class="btn secondary" style="margin-top:10px;padding:9px;text-align:center;" onclick="responderStory('${s.id}','aprovado')">✓ Aprovar</div>
-        <div class="btn secondary" style="margin-top:6px;padding:9px;text-align:center;" onclick="pedirAjusteStory('${s.id}')">Pedir ajuste</div>` : ''}
-        <div class="btn secondary" style="margin-top:6px;padding:9px;text-align:center;" onclick="comentarStory('${s.id}')">💬 ${s.comentarioCliente ? 'Editar comentário' : 'Deixar um comentário'}</div>
-        <div class="btn" style="margin-top:6px;padding:10px;text-align:center;cursor:pointer;" onclick="marcarStoryPublicado('${s.id}')">✔ Já publiquei esse story</div>
+        ${s.status!=='aprovado' ? `<div class="btn secondary" style="margin-top:10px;padding:9px;text-align:center;" onclick="responderStory('${s.id}','aprovado','${chaveI64}')">✓ Aprovar</div>
+        <div class="btn secondary" style="margin-top:6px;padding:9px;text-align:center;" onclick="pedirAjusteStory('${s.id}','${chaveI64}')">Pedir ajuste</div>` : ''}
+        <div class="btn secondary" style="margin-top:6px;padding:9px;text-align:center;" onclick="comentarStory('${s.id}','${chaveI64}')">💬 ${s.comentarioCliente ? 'Editar comentário' : 'Deixar um comentário'}</div>
+        <div class="btn" style="margin-top:6px;padding:10px;text-align:center;cursor:pointer;" onclick="marcarStoryPublicado('${s.id}','${chaveI64}')">✔ Já publiquei esse story</div>
         ` : ''}
       </div>`;
     };
@@ -3060,55 +3085,21 @@ function pintarLembretePagamentoI38(pagamentos,slug){
     window.open('https://wa.me/5541999088357?text=' + encodeURIComponent(msg), '_blank');
   };
 
-  window.comentarStory = async function(id){
-    const texto = prompt('Seu comentário sobre esse story:');
-    if(texto === null) return;
-    await updateDoc(doc(db,'stories_semanais', id), { comentarioCliente: texto.trim(), comentarioClienteEm: new Date().toISOString() });
-    carregarStories();
+  window.comentarStory = async function(id,chave){
+    const texto=prompt('Seu comentário sobre esse story:');if(texto===null)return false;
+    return responderVersaoStoryI64(id,chave,{comentarioCliente:texto.trim(),comentarioClienteEm:new Date().toISOString()});
   };
-
-  window.marcarStoryPublicado = async function(id){
-    if(!confirm('Confirmar que você já publicou esse story?')) return;
-    await updateDoc(doc(db,'stories_semanais', id), { status: 'postado', postadoEm: new Date().toISOString(), postadoPeloCliente: true });
-    carregarStories();
+  window.marcarStoryPublicado = async function(id,chave){
+    if(!confirm('Confirmar que você já publicou esse story?'))return false;
+    return responderVersaoStoryI64(id,chave,{status:'postado',postadoEm:new Date().toISOString(),postadoPeloCliente:true});
   };
-
-  /* ===== APROVAÇÃO EM VIA DUPLA — 29/07/2026 =========================
-     Pedido do Chris: quando o cliente aprova, os dois lados têm que
-     saber na hora — o cliente vê o selo de aprovado e a equipe vê que
-     pode tocar. Antes isto mudava um campo e não avisava ninguém: a
-     Gabi só descobria se abrisse a tela por acaso. */
-  window.responderStory = async function(id, status){
-    /* O teste de 29/07 pegou isto: entre o clique e a tela mudar passam
-       alguns segundos (a lista é relida do banco). Sem nenhum sinal, o
-       cliente acha que não funcionou e clica de novo. Agora a resposta
-       é imediata e o botão trava enquanto grava. */
-    const cartao = document.getElementById('story_' + id);
-    if(cartao) cartao.style.opacity = '.5';
-    try{
-      await updateDoc(doc(db,'stories_semanais', id), {
-        status, respondidoEm: serverTimestamp(),
-        aprovadoPeloCliente: status === 'aprovado',
-        aprovadoPeloClienteEm: status === 'aprovado' ? new Date().toISOString() : null
-      });
-      if(status === 'aprovado'){
-        await alertarEquipe('✅ ' + clienteAtual.nome + ' aprovou os stories da semana',
-          'Pode seguir — ela já tem o sinal verde pra postar.');
-      }
-      await carregarStories();
-    }catch(e){
-      console.error('Falha ao responder story:', e);
-      if(cartao) cartao.style.opacity = '1';
-      alert('Não consegui registrar agora. Confere a internet e tenta de novo.');
-    }
+  window.responderStory = async function(id,status,chave){
+    if(status!=='aprovado')return false;
+    return responderVersaoStoryI64(id,chave,{status:'aprovado',respondidoEm:serverTimestamp(),aprovadoPeloCliente:true,aprovadoPeloClienteEm:new Date().toISOString()},{titulo:'✅ '+clienteAtual.nome+' aprovou os stories da semana',texto:'Pode seguir — ela já tem o sinal verde pra postar.'});
   };
-
-  window.pedirAjusteStory = async function(id){
-    const ajuste = prompt('O que precisa mudar nesse story?');
-    if(!ajuste) return;
-    await updateDoc(doc(db,'stories_semanais', id), { status:'ajuste', ajusteTexto: ajuste, respondidoEm: serverTimestamp() });
-    await alertarEquipe('⚠️ ' + clienteAtual.nome + ' pediu ajuste num story', ajuste);
-    carregarStories();
+  window.pedirAjusteStory = async function(id,chave){
+    const ajuste=prompt('O que precisa mudar nesse story?');if(!ajuste?.trim())return false;
+    return responderVersaoStoryI64(id,chave,{status:'ajuste',ajusteTexto:ajuste.trim(),respondidoEm:serverTimestamp()},{titulo:'⚠️ '+clienteAtual.nome+' pediu ajuste num story',texto:ajuste.trim()});
   };
 
   async function carregarAtas(){

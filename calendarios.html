@@ -499,7 +499,7 @@
   window.__mesSolicitadoCal = /^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) && mesSolicitado>='2026-07' ? mesSolicitado : '';
 </script>
 <script src="gs-gravacoes-cliente-i65.js?v=i65-1"></script>
-<script src="gs-aprovacao-conteudo-i68.js"></script>
+<script src="gs-aprovacao-conteudo-i68.js?v=i68a"></script>
 </head>
 <body>
 <div class="wrap">
@@ -1349,7 +1349,7 @@ function agendarEnvioPendente(atraso){
    permanecem intactos. */
 async function confirmarEnvioAprovacaoNoBanco(pacote){
   const fb=window.__fb||{};
-  if(!fb.runTransaction || !fb.getDoc || !fb.db || !fb.docRef) return {ok:false,motivo:'sem-conexao',etapa:'preparacao',codigo:'gs/sem-conexao'};
+  if(!fb.runTransaction || !fb.getDocFromServer || !fb.db || !fb.docRef) return {ok:false,motivo:'sem-conexao',etapa:'preparacao',codigo:'gs/sem-conexao'};
   const alvo=String(pacote&&pacote.mes||'');
   if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(alvo)) return {ok:false,motivo:'fora-da-competencia',etapa:'preparacao',codigo:'gs/competencia-invalida'};
   /* Compatibilidade com tentativas guardadas pela V67: o pacote antigo
@@ -1391,10 +1391,10 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
       return {marca,updatedAt,jaConfirmado:false};
     });
     let recibo;
-    try{ recibo=await fb.getDoc(fb.docRef); }
+    try{ recibo=await lerReciboServidorI36(fb.docRef,pacote.data,alvo,'aguardando_interna'); }
     catch(e){
       const codigo=String(e&&e.code||'gs/recibo-indisponivel');
-      return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo};
+      return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo,commitConfirmado:true};
     }
     if(!recibo||!recibo.exists()){
       return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo:'gs/recibo-ausente'};
@@ -2306,7 +2306,7 @@ function gravarComSeguranca(){
 }
 
 /* I36 — confirmar no servidor; uma oscilação repete só a leitura. */
-async function lerReciboServidorI36(ref,documentoEsperado,competencia){
+async function lerReciboServidorI36(ref,documentoEsperado,competencia,estadoEsperado){
   const ler=window.__fb?.getDocFromServer;
   if(typeof ler!=='function')throw Object.assign(new Error('A confirmação do servidor não está disponível. Reabra o calendário atualizado.'),{code:'gs/recibo-api-i36'});
   for(let tentativa=0;tentativa<2;tentativa++){
@@ -2322,10 +2322,16 @@ async function lerReciboServidorI36(ref,documentoEsperado,competencia){
       if(assinaturaConteudoCompetenciaV125(recebido,competencia)!==assinaturaConteudoCompetenciaV125(documentoEsperado,competencia)){
         throw Object.assign(new Error('O servidor já tem uma versão diferente nesta competência. Seus textos continuam protegidos para conferir.'),{code:'gs/recibo-divergente-i36'});
       }
+      if(estadoEsperado&&aprovacaoCompativelNoCalendario(recebido,competencia)?.status!==estadoEsperado){
+        throw Object.assign(new Error('A confirmação desta etapa ainda não corresponde à operação enviada.'),{code:'gs/recibo-estado-i68a'});
+      }
       return snap;
     }catch(e){
       const codigo=String(e?.code||'');
-      if(tentativa||!/(?:^|\/)(?:unavailable|deadline-exceeded|network-request-failed)$/.test(codigo)&&codigo!=='gs/recibo-timeout-i36')throw e;
+      // Repete só a leitura. Diferença persistente continua sendo erro, nunca sucesso.
+      const repetir=/(?:^|\/)(?:unavailable|deadline-exceeded|network-request-failed)$/.test(codigo)||
+        ['gs/recibo-timeout-i36','gs/recibo-local-i36','gs/recibo-divergente-i36','gs/recibo-estado-i68a'].includes(codigo);
+      if(tentativa||!repetir)throw e;
     }finally{if(timer)clearTimeout(timer);}
     await new Promise(resolve=>setTimeout(resolve,500));
   }
@@ -2864,7 +2870,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
         ? 'NÃO enviei pra Amanda: o mesmo mês mudou depois de ser salvo. O banco e o rascunho foram preservados para uma decisão explícita.'
         : resultado&&resultado.motivo==='cota'
           ? 'NÃO enviei pra Amanda: o limite do banco foi atingido. A tentativa ficou protegida para reenvio.'
-          : 'NÃO enviei pra Amanda: a transição não foi confirmada pelo banco. A tentativa ficou protegida para reenvio.';
+          : resultado?.commitConfirmado ? 'O banco recebeu o envio. Falta confirmar a leitura; sua tentativa está protegida.' : 'Não consegui confirmar o envio para a Amanda. A tentativa ficou protegida para conferir.';
       avisarTela(msg,'erro');
       /* A barra de conflito contém a decisão correta. Não a substitui
          pela caixa de retentativa, que esconderia a necessidade de juntar

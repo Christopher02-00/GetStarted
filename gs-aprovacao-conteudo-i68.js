@@ -25,16 +25,36 @@
     return item;
   }
   function aprovacaoNoRetrato(retrato, atuais, publicadoEm='') {
-    return retrato.map(it=>{
+    // O retrato protege o texto editorial. Fatos de produção continuam atuais.
+    const porId=new Map();
+    atuais.forEach(a=>{const id=String(a?.itemId||'').trim();if(id)porId.set(id,[...(porId.get(id)||[]),a]);});
+    const presentes=new Set(retrato.map(it=>String(it?.itemId||'').trim()).filter(Boolean));
+    const resultado=retrato.map(it=>{
       const id=String(it.itemId||'').trim();
       const encontrados=id?atuais.filter(a=>String(a.itemId||'').trim()===id):atuais.filter(a=>(!a.itemId&&!mudou(it,a))||a.origemLegadaI68===assinatura(it));
       if(encontrados.length!==1)return {...it};
       const a=encontrados[0],t=a.textosPublicadosClienteI68;
       const copia=t&&String(t.em||'')>String(publicadoEm)&&typeof t.desc==='string'&&typeof t.legenda==='string'?{...it,desc:t.desc,legenda:t.legenda,roteiroDispensado:!!t.roteiroDispensado}:{...it};
-      if(mudou(copia,a))return copia;
-      for(const k of marcas){if(a[k]===undefined)delete copia[k];else copia[k]=a[k];}
+      if(!mudou(copia,a))for(const k of marcas){if(a[k]===undefined)delete copia[k];else copia[k]=a[k];}
+      if(!a.excluido){
+        for(const k of ['posted','agendado','gravado'])if(a[k]!==undefined)copia[k]=a[k];
+        // A data editorial só acompanha uma postagem já programada/publicada.
+        if((a.posted===true||a.agendado===true)&&/^\d{4}-\d{2}-\d{2}$/.test(String(a.dataPostagem||''))){
+          copia.dataPostagem=a.dataPostagem;
+          if(Number.isInteger(Number(a.day))&&Number(a.day)>=1&&Number(a.day)<=31)copia.day=a.day;
+        }
+      }
       return copia;
     });
+    // Conteúdo criado pela postagem após a liberação já é público. Um novo
+    // rascunho ou apenas gravado continua fora até a Amanda liberar.
+    atuais.forEach(a=>{
+      const id=String(a?.itemId||'').trim();
+      if(id&&!presentes.has(id)&&porId.get(id)?.length===1&&!a.excluido&&(a.posted===true||a.agendado===true)){
+        resultado.push({...a});presentes.add(id);
+      }
+    });
+    return resultado;
   }
   function prepararReenvio(cal,mes,em,mesDoItem=(c,it)=>it.mes||c.mesLegado) {
     const p=cal.pedidoAjusteCliente;

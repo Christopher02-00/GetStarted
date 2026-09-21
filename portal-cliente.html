@@ -853,6 +853,11 @@
      o que já está agendado dentro do Instagram, com dia e hora — não vai
      mais mudar, é só esperar subir. Lê `postagens` com status `agendado`,
      que é o que a Cecília realmente agenda. */
+  function publicacoesPortalI77(posts,mes){
+    const ativos=posts.filter(p=>!p.excluido&&['agendado','postado'].includes(p.status));
+    const dataValida=p=>{const d=String(p.dataAgendada||'');if(!/^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d))return false;return new Date(d+'T12:00:00Z').toISOString().slice(0,10)===d;};
+    return {doMes:ativos.filter(p=>dataValida(p)&&p.dataAgendada.slice(0,7)===mes),semData:ativos.filter(p=>!dataValida(p))};
+  }
   async function carregarProgramados(){
     const cont = document.getElementById('painelProgramados');
     if(clienteAtual?.slug==='stokki'){
@@ -860,7 +865,7 @@
       cont.innerHTML='<div class="empty">Carregando publicações da Stokki…</div>';
       try{
         const [m,snap]=await Promise.all([
-          comTimeoutPortal(import('./stokki-publicacao.mjs?v=i30-1'),'Calendário de Postagens',12000),
+          comTimeoutPortal(import('./stokki-publicacao.mjs?v=i77-1'),'Calendário de Postagens',12000),
           comTimeoutPortal(meusDocs('postagens'),'Publicações Stokki',12000)
         ]);
         if(clienteAtual!==clienteDaLeitura||cont.__stokkiLeitura!==nonce)return;
@@ -912,9 +917,11 @@
       cont.innerHTML = '<div class="card"><div class="empty">Não consegui carregar agora. Recarrega a página.</div></div>'; return; }
 
     const hoje = dataLocalPortal();
-    const agendados = posts.filter(p => p.status === 'agendado')
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(window.__gpMes||''))window.__gpMes=hoje.slice(0,7);
+    const {doMes:postsDoMes,semData:postsSemData}=publicacoesPortalI77(posts,window.__gpMes);
+    const agendados = postsDoMes.filter(p => p.status === 'agendado')
       .sort((a,b) => String(a.dataAgendada||'').localeCompare(String(b.dataAgendada||'')));
-    const postados = posts.filter(p => p.status === 'postado')
+    const postados = postsDoMes.filter(p => p.status === 'postado')
       .sort((a,b) => String(b.dataAgendada||b.postadoEm||'').localeCompare(String(a.dataAgendada||a.postadoEm||'')));
     const futuros = agendados.filter(p => (p.dataAgendada||'') >= hoje);
     const passados = agendados.filter(p => (p.dataAgendada||'') < hoje);
@@ -971,11 +978,14 @@
           <button class="btn secondary" style="width:auto;padding:5px 12px;font-size:11px;" onclick="gpMudarMes(1)">próximo mês →</button>
         </div>
       </div>
-      ${htmlGradeDePostagens(posts, window.__gpMes, hoje, '')}
+      ${htmlGradeDePostagens(postsDoMes, window.__gpMes, hoje, '')}
     </div>`;
 
+    if(postsSemData.length){
+      html += '<div class="card"><h2>Data a confirmar · '+postsSemData.length+'</h2>'+postsSemData.map(p=>'<div class="item"><div class="nome">'+esc(tituloLimpo(p.titulo||'Conteúdo'))+'</div><div class="meta">'+(p.status==='postado'?'Publicação confirmada · data a confirmar':'Agendamento com data a confirmar')+'</div></div>').join('')+'</div>';
+    }
     if(!futuros.length && !passados.length && !postados.length){
-      html += '<div class="card"><div class="empty">Nada agendado no Instagram ainda. Assim que nossa equipe agendar, aparece aqui com dia e hora.</div></div>';
+      html += '<div class="card"><div class="empty">Nenhuma publicação agendada ou confirmada neste mês.</div></div>';
       cont.innerHTML = html; return;
     }
 
@@ -989,7 +999,7 @@
     }
     if(postados.length){
       html += `<div class="card" style="background:transparent;border:none;padding:14px 0 0;"><h2 style="font-size:14px;">Já publicados — ${postados.length}</h2></div>`;
-      html += postados.slice(0,20).map(p => card(p, 'var(--green)', {cls:'publicado', txt:'✔ publicado'})).join('');
+      html += postados.map(p => card(p, 'var(--green)', {cls:'publicado', txt:'✔ publicado'})).join('');
     }
     cont.innerHTML = html;
   }
@@ -1856,11 +1866,11 @@ function conferirAprovacaoI56(cal,esperado){
   const VIDEO_STATUS_COR = { aguardando_edicao:'roteiro', correcao:'gravacao', aguardando_aprovacao:'edicao', aguardando_cliente:'gravacao', aprovado:'publicado', finalizado:'publicado' };
 
   const POSTAGEM_STATUS_LABEL = { aguardando_legenda:'Preparando legenda', aguardando_agendamento:'Definindo a melhor data' };
-  let calendarioPubOffset = 0; // 0 = mês atual, -1 = mês anterior, +1 = próximo
-  window.navegarCalendarioPub = function(delta){
-    calendarioPubOffset += delta;
-    carregarVideos();
-  };
+  function linkVideoPortalI77(valor){
+    const seguro=urlHttpsSeguraPortal(valor);
+    if(!seguro)return '';
+    return new URL(seguro).hostname.includes('.')?seguro:'';
+  }
 
   async function carregarVideos(){
     const cont = document.getElementById('painelVideos');
@@ -1870,7 +1880,7 @@ function conferirAprovacaoI56(cal,esperado){
     ]);
     const meusVideos = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido && v.status!=='aprovado' && v.status!=='finalizado') meusVideos.push(v); });
     const entregues = []; videosSnap.forEach(d => { const v=d.data(); if(!v.excluido && (v.status==='finalizado' || (v.status==='aprovado' && v.clienteAprovouEm))) entregues.push(v); });
-    const minhasPostagens = []; postagensSnap.forEach(d => minhasPostagens.push({id:d.id, ...d.data()}));
+    const minhasPostagens = []; postagensSnap.forEach(d => {if(!d.data().excluido)minhasPostagens.push({id:d.id, ...d.data()});});
     const aguardandoVoce = meusVideos.filter(v=>v.status==='aguardando_cliente');
 
     const hoje = new Date();
@@ -1918,7 +1928,7 @@ function conferirAprovacaoI56(cal,esperado){
         <div class="item">
           <div class="nome">${esc(tituloLimpo(v.titulo)||'')}</div>
           <div class="meta">${v.clienteAprovouEm ? new Date(v.clienteAprovouEm).toLocaleDateString('pt-BR') : ''}</div>
-          ${v.linkFinalizado ? '<a href="'+esc(v.linkFinalizado)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;padding:9px;">▶ Assistir / baixar ↗</a>' : ''}
+          ${linkVideoPortalI77(v.linkFinalizado) ? '<a href="'+esc(linkVideoPortalI77(v.linkFinalizado))+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;padding:9px;">▶ Assistir / baixar ↗</a>' : ''}
         </div>
       `).join('') : '<div class="empty">Nenhum vídeo entregue ainda.</div>';
       html += `</div>`;
@@ -1930,17 +1940,20 @@ function conferirAprovacaoI56(cal,esperado){
     // ===== MELHORIA 8B — Seu conteúdo em números =====
     const publicadas = minhasPostagens.filter(p => p.status==='postado');
     const publicadasEsteMes = publicadas.filter(p => diaOperacionalPortal(p.postadoEm).slice(0,7) === mesAtualStr);
-    const prontosAguardandoData = minhasPostagens.filter(p => p.status==='aguardando_legenda' || p.status==='aguardando_agendamento').length;
+    const moduloStokki=clienteAtual?.slug==='stokki'
+      ?await comTimeoutPortal(import('./stokki-publicacao.mjs?v=i77-1'),'Situação das publicações',12000):null;
+    const pendentesStokki=moduloStokki?moduloStokki.resumoAgendamento(minhasPostagens):null;
+    const prontosAguardandoData = minhasPostagens.filter(p => p.status==='aguardando_legenda' || (!moduloStokki?.usaFluxo(p)&&p.status==='aguardando_agendamento')).length+(pendentesStokki?.videos||0);
     const emProducaoAgora = meusVideos.filter(v => ['aguardando_edicao','correcao','aguardando_aprovacao'].includes(v.status)).length;
 
     let html = `<div class="card"><h2><svg class="ic"><use href="#i-activity"/></svg>Seu conteúdo em números</h2>
       <div class="sub" style="margin-bottom:10px;">Direto da nossa produção — atualiza sozinho, sem ninguém precisar digitar nada aqui.</div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
         <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-          <div style="font-size:22px;font-weight:800;">${publicadasEsteMes.length}</div><div style="font-size:11px;color:var(--muted);">Publicados este mês</div>
+          <div style="font-size:22px;font-weight:800;">${publicadasEsteMes.length}</div><div style="font-size:11px;color:var(--muted);">Publicação concluída neste mês</div>
         </div>
         <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
-          <div style="font-size:22px;font-weight:800;">${publicadas.length}</div><div style="font-size:11px;color:var(--muted);">Publicados no total</div>
+          <div style="font-size:22px;font-weight:800;">${publicadas.length}</div><div style="font-size:11px;color:var(--muted);">Publicação concluída no total</div>
         </div>
         <div style="background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;">
           <div style="font-size:22px;font-weight:800;">${prontosAguardandoData}</div><div style="font-size:11px;color:var(--muted);">Prontos aguardando data</div>
@@ -1969,7 +1982,9 @@ function conferirAprovacaoI56(cal,esperado){
       .sort((a,b) => (a.dataAgendada||'9999').localeCompare(b.dataAgendada||'9999'));
     html += `<div class="card"><h2 style="font-size:14px;">Aprovados — em preparação pra publicação</h2>`;
     html += emPreparacao.length ? emPreparacao.map(p => {
-      const rotulo = p.status==='agendado'
+      const rotulo = moduloStokki?.usaFluxo(p)&&['agendado','aguardando_agendamento'].includes(p.status)
+        ? (pendentesStokki.pendentes.some(x=>x.id===p.id)?'Há plataformas aguardando data':'Programação por plataforma — veja o calendário')
+        : p.status==='agendado'
         ? 'Agendado: ' + (p.dataAgendada?dataBR(p.dataAgendada):'') + ' ' + (p.horaAgendada||'')
         : (POSTAGEM_STATUS_LABEL[p.status]||p.status);
       return `<div class="item"><div class="nome">${esc(tituloLimpo(p.titulo)||'Postagem')}</div><span class="selo ${p.status==='agendado'?'gravacao':'roteiro'}">${rotulo}</span></div>`;
@@ -2003,84 +2018,21 @@ function conferirAprovacaoI56(cal,esperado){
       <div class="item" style="border-left:3px solid #4caf72;">
         <div class="nome">${esc(tituloLimpo(v.titulo)||'')}</div>
         <div class="meta">${v.clienteAprovouEm ? 'aprovado em ' + new Date(v.clienteAprovouEm).toLocaleDateString('pt-BR') : 'finalizado'}</div>
-        ${v.linkFinalizado
-          ? '<a href="'+esc(v.linkFinalizado)+'" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">▶ Assistir / baixar</a>'
-          : '<div class="meta" style="margin-top:6px;color:#d63a3a;">O link deste vídeo ainda não foi anexado — pede pra gente no WhatsApp que a gente manda.</div>'}
+        ${linkVideoPortalI77(v.linkFinalizado)
+          ? '<a href="'+esc(linkVideoPortalI77(v.linkFinalizado))+'" target="_blank" rel="noopener" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">▶ Assistir / baixar</a>'
+          : '<div class="meta" style="margin-top:6px;color:#d63a3a;">O link deste vídeo precisa ser confirmado pela equipe.</div>'}
       </div>
     `).join('') : '<div class="empty">Nenhum vídeo pronto ainda.</div>';
     if(prontos.length > 30) html += '<div class="meta" style="margin-top:8px;">Mostrando os 30 mais recentes de ' + prontos.length + '.</div>';
     html += `</div>`;
 
-    html += renderCalendarioPublicacoesHtml(minhasPostagens);
-
-    // ===== MELHORIA 8D — Últimos publicados =====
-    const ultimosPublicados = [...publicadas].sort((a,b) => (b.postadoEm||'').localeCompare(a.postadoEm||'')).slice(0,10);
-    html += `<div class="card"><h2 style="font-size:14px;">Últimos publicados</h2>`;
-    html += ultimosPublicados.length ? ultimosPublicados.map(p => `
-      <div class="item"><div class="nome">${esc(tituloLimpo(p.titulo)||'Postagem')}</div><div class="meta">${p.postadoEm ? new Date(p.postadoEm).toLocaleDateString('pt-BR') : ''}</div></div>
-    `).join('') : '<div class="empty">Nenhuma publicação confirmada ainda.</div>';
-    html += `</div>`;
+    html += `<div class="card" style="border-color:var(--yellow);">
+      <h2 style="font-size:16px;">📅 Calendário de Postagens</h2>
+      <p class="sub">Veja o que vai sair e o que já foi publicado, com as datas de cada mês.</p>
+      <button class="btn" type="button" onclick="setTab('programados',document.querySelector('[data-tab=programados]'))">Ver calendário de postagens →</button>
+    </div>`;
 
     cont.innerHTML = html;
-  }
-
-  /* Calendário mensal simples em JS puro — bolinha amarela = agendado
-     naquele dia, bolinha verde = já postado. Navegação por mês. Cada
-     cliente só vê o próprio conteúdo (minhasPostagens já vem filtrado
-     por clienteAtual.slug em carregarVideos). */
-  function renderCalendarioPublicacoesHtml(minhasPostagens){
-    const base = new Date();
-    base.setMonth(base.getMonth() + calendarioPubOffset);
-    const ano = base.getFullYear(), mes = base.getMonth();
-    const nomeMes = base.toLocaleDateString('pt-BR', { month:'long', year:'numeric' });
-    const primeiroDiaSemana = new Date(ano, mes, 1).getDay();
-    const totalDias = new Date(ano, mes+1, 0).getDate();
-
-    const porDia = {};
-    minhasPostagens.forEach(p => {
-      if(p.status==='agendado' && p.dataAgendada){
-        const d = new Date(p.dataAgendada+'T00:00:00');
-        if(d.getFullYear()===ano && d.getMonth()===mes){
-          const dia = d.getDate();
-          porDia[dia] = porDia[dia] || []; porDia[dia].push({tipo:'agendado', titulo:p.titulo});
-        }
-      }
-      if(p.status==='postado'){
-        const dataRef = p.postadoEm || p.dataAgendada;
-        if(!dataRef) return;
-        const d = new Date(dataRef.length>10 ? dataRef : dataRef+'T00:00:00');
-        if(d.getFullYear()===ano && d.getMonth()===mes){
-          const dia = d.getDate();
-          porDia[dia] = porDia[dia] || []; porDia[dia].push({tipo:'postado', titulo:p.titulo});
-        }
-      }
-    });
-
-    let grade = '';
-    for(let i=0;i<primeiroDiaSemana;i++) grade += '<div></div>';
-    for(let dia=1; dia<=totalDias; dia++){
-      const eventos = porDia[dia] || [];
-      const bolinhas = eventos.map(e => `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${e.tipo==='postado'?'#2e9e4f':'var(--yellow)'};margin:1px;" title="${esc(tituloLimpo(e.titulo)||'')}"></span>`).join('');
-      grade += `<div style="text-align:center;padding:6px 2px;border-radius:6px;${eventos.length?'background:var(--paper);':''}">
-        <div style="font-size:11px;">${dia}</div><div>${bolinhas}</div>
-      </div>`;
-    }
-
-    return `<div class="card">
-      <h2 style="font-size:14px;display:flex;justify-content:space-between;align-items:center;">
-        <span>📅 Calendário de Publicações</span>
-        <span>
-          <button class="btn secondary" style="padding:4px 10px;font-size:12px;" onclick="navegarCalendarioPub(-1)">‹</button>
-          <button class="btn secondary" style="padding:4px 10px;font-size:12px;" onclick="navegarCalendarioPub(1)">›</button>
-        </span>
-      </h2>
-      <div class="sub" style="text-transform:capitalize;margin-bottom:8px;">${nomeMes}</div>
-      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-size:11px;">${grade}</div>
-      <div style="margin-top:10px;font-size:11px;color:var(--muted);">
-        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--yellow);margin-right:4px;"></span>Agendado
-        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2e9e4f;margin:0 4px 0 12px;"></span>Publicado
-      </div>
-    </div>`;
   }
 
   /* ===== ONDA 2 (24/07/2026) — IDEIAS E REFERENCIAS SEPARADAS =====

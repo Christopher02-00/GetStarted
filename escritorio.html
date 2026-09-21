@@ -1022,7 +1022,7 @@
           <div class="row3">
             <div class="field"><label>Data</label><input type="date" id="agData" onchange="sincronizarCompetenciaAgendamento();verificarQtdHoje()"></div>
             <div class="field"><label>Hora</label><input type="time" id="agHora" value="10:00"></div>
-            <div class="field"><label>Mês da pauta a gravar</label><input type="month" id="agCompetenciaCalendario" onchange="this.dataset.manual='1';sugerirQtdPeloBloco()"><div class="meta" style="margin-top:4px;">Mês de origem da pauta. Pode ser anterior ou posterior à filmagem; sua escolha será respeitada.</div></div>
+            <div class="field"><label>Mês da pauta a gravar</label><input type="month" id="agCompetenciaCalendario" onchange="this.dataset.manual='1';sugerirQtdPeloBloco();mostrarSolicitacoesDoCalendario()"><div class="meta" style="margin-top:4px;">Mês de origem da pauta. Pode ser anterior ou posterior à filmagem; sua escolha será respeitada.</div></div>
             <!-- 01/08/2026 — qual gravação do mês é esta. É o que liga o
                  calendário da Gabi ao que o filmmaker vê no dia. -->
             <div class="field"><label>Qual gravação do mês</label>
@@ -10901,6 +10901,7 @@ async function popularClientesAgendamento(){
        34 conteúdos marcados em agosto contra 133 vídeos "planejados" nas
        gravações. Agora vem da conta real do bloco, e ela pode mudar. */
     try{ await sugerirQtdPeloBloco(); }catch(e){ console.error('Falha ao sugerir a quantidade pelo bloco:', e); }
+    if(clienteSlug===document.getElementById('agCliente')?.value)void mostrarSolicitacoesDoCalendario();
 
     document.getElementById('historicoClienteMes').innerHTML = `<div class="avisoBanner"><div class="icone">📊</div><div class="texto">Esse cliente já teve ${count} gravação(ões) esse mês<span>${esc(calTxt)}</span></div></div>`;
   };
@@ -13895,9 +13896,16 @@ async function popularClientesAgendamento(){
   /* I30: carregamento sob demanda. Falha deste módulo não aborta o site. */
   var __stokkiModuloI30, __stokkiOperacaoI30;
   function usaPublicacaoStokkiI30(p){ return p?.cliente==='stokki'&&p?.publicacaoStokki?.versao===1; }
+  function postagemPrecisaAgendarI77(p){
+    if(!p||p.excluido===true)return false;
+    if(!usaPublicacaoStokkiI30(p))return p.status==='aguardando_agendamento';
+    if(!['aguardando_agendamento','agendado'].includes(p.status))return false;
+    const plano=p.publicacaoStokki;
+    return (plano.selecionadas||[]).some(id=>{const r=plano.redes?.[id];return r&&!r.retirada&&!r.publicadaEm&&!r.data;});
+  }
   function contextoStokkiI30(){return {papel:usuarioAtual,ator:atorRealDaSessao(),geracao:__geracaoIdentidade};}
   async function carregarModuloStokkiI30(){
-    if(!__stokkiModuloI30) __stokkiModuloI30=import('./stokki-publicacao.mjs?v=i30-1').catch(e=>{__stokkiModuloI30=null;throw e;});
+    if(!__stokkiModuloI30) __stokkiModuloI30=import('./stokki-publicacao.mjs?v=i77-1').catch(e=>{__stokkiModuloI30=null;throw e;});
     const m=await __stokkiModuloI30;m.instalarCampos(document);return m;
   }
   async function obterOperacaoStokkiI30(){
@@ -13936,7 +13944,7 @@ async function popularClientesAgendamento(){
       if(identidade.moderna&&identidade.slug!=='stokki')throw new Error('O vínculo aponta para outro cliente. Nenhum calendário foi alterado.');
       if(['agendar','restaurar','desfazer_publicacao','adicionar','definir_redes'].includes(acao.tipo)){
         const cfg=await tx.get(doc(db,'clientes_config','stokki'));
-        if(!cfg.exists()||!clientePermiteReagendarR5(cfg.data(),m.horarioBrasilia().slice(0,10),'stokki'))throw new Error('A Stokki não está com serviço de postagem ativo. O histórico pode ser conferido sem criar trabalho novo.');
+        if(!cfg.exists()||!clientePermiteReagendarR5(cfg.data(),m.horarioBrasilia().slice(0,10),'stokki'))throw new Error('O cadastro operacional da Stokki precisa de conferência. Amanda ou Chris pode conferir em Central de Clientes → Confirmar cadastro operacional. Sua data digitada foi preservada.');
       }
       const resultado=m.alterar(p,acao,{...contexto,em:new Date().toISOString()});
       const mudaConclusao=['postado','cancelada_manual'].includes(p.status)!==resultado.concluiu||
@@ -15093,12 +15101,16 @@ async function popularClientesAgendamento(){
     const hoje = hojeLocal();
     let gravacoesHoje = 0;
     agSnap.forEach(d => { const a=d.data(); if(!a.excluido && a.data===hoje && a.status!=='cancelado' && !sessaoSemCaptacaoI34(a) && a.aprovado!==false) gravacoesHoje++; });
-    const atrasadasCount = pendentes.filter(p => p.legendaEm && Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) >= 1).length;
+    let resumoStokki;
+    try{resumoStokki=(await carregarModuloStokkiI30()).resumoAgendamento(filaStokkiI30);}
+    catch(e){resumoStokki={pendentes:[],videos:null,plataformas:null,erro:e.message};}
+    const totalPraAgendar=resumoStokki.erro?null:pendentes.length+resumoStokki.videos;
+    const atrasadasCount = [...pendentes,...resumoStokki.pendentes].filter(p => p.legendaEm && Math.floor((Date.now()-new Date(p.legendaEm).getTime())/86400000) >= 1).length;
     const recuperadasCount = pendentes.filter(p => p.recuperadoDoDemandaId).length;
 
     let resumo = `<div class="painelResumo">
       <div class="resumoCard"><div class="num">${gravacoesHoje}</div><div class="lbl">Gravações hoje</div></div>
-      <div class="resumoCard ${pendentes.length ? 'yellow' : ''}"><div class="num">${pendentes.length}</div><div class="lbl">Postagens pra agendar</div></div>
+      <div class="resumoCard ${totalPraAgendar ? 'yellow' : ''}"><div class="num">${totalPraAgendar===null?'A conferir':totalPraAgendar}</div><div class="lbl">Vídeos/postagens pra agendar</div></div>
       <div class="resumoCard ${atrasadasCount ? 'red' : ''}"><div class="num">${atrasadasCount}</div><div class="lbl">Atrasadas — priorize</div></div>
     </div>
     ${recuperadasCount ? `<div class="card" style="border:2px solid var(--yellow);"><h2>🆕 ${recuperadasCount} legenda(s) recuperada(s) agora</h2><div class="desc">A Gabi já tinha escrito essas legendas, mas ficaram presas por um bug de sincronização (corrigido em 22/07/2026) e nunca chegaram até você. Recuperamos o texto original de cada uma — estão marcadas abaixo, revisa e agenda normalmente.</div></div>` : ''}
@@ -15108,7 +15120,7 @@ async function popularClientesAgendamento(){
     // Melhoria 6A — postagens já agendadas com data igual/passada, esperando
     // 1 clique confirmando que realmente foram ao ar
     const jaPassaramOuHoje = agendadasParaConfirmar.filter(p => p.dataAgendada && p.dataAgendada <= hoje);
-    resumo=`<div class="card"><h2>Stokki — por plataforma</h2><div class="desc">${filaStokkiI30.length} vídeo(s) em agendamento/publicação. As conferências concluídas ficam no mesmo painel.</div><button class="btn" onclick="abrirStokkiI30()">Abrir publicações e conferências da Stokki</button></div>`+resumo;
+    resumo=`<div class="card"><h2>Stokki — por plataforma</h2><div class="desc">${resumoStokki.erro?'Não foi possível conferir a Stokki: '+esc(resumoStokki.erro):resumoStokki.videos+' vídeo(s) com '+resumoStokki.plataformas+' plataforma(s) aguardando data.'} Programações e conferências ficam neste painel.</div><button class="btn" onclick="abrirStokkiI30()">Abrir publicações e conferências da Stokki</button></div>`+resumo;
     if(jaPassaramOuHoje.length){
       jaPassaramOuHoje.sort((a,b) => (a.dataAgendada||'').localeCompare(b.dataAgendada||''));
       resumo += `<div class="card" style="border:2px solid var(--yellow);"><h2>✔ Confirmar publicação</h2><div class="desc">Essas já passaram da data agendada — confirma que foram ao ar de verdade.</div></div>`;
@@ -15127,7 +15139,7 @@ async function popularClientesAgendamento(){
        fila está vazia. Ela pediu "na aba de postagens pendentes", e é
        justamente quando não tem nada pendente que ela vai querer
        acrescentar uma arte. */
-    if(!pendentes.length){ cont.innerHTML = resumo + htmlFormPostAvulso() + '<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'; return; }
+    if(!pendentes.length){ cont.innerHTML = resumo + htmlFormPostAvulso() + (resumoStokki.erro?'<div class="empty">Confira a leitura da Stokki no painel acima.</div>':totalPraAgendar?'<div class="empty">Os vídeos pendentes da Stokki estão no painel acima.</div>':'<div class="empty">Nenhuma postagem esperando agendamento agora. 🎉</div>'); return; }
 
     pendentes.sort((a,b) => new Date(a.legendaEm||0) - new Date(b.legendaEm||0));
 
@@ -15296,6 +15308,37 @@ async function popularClientesAgendamento(){
     if(config.statusSaida==='programada'&&!datas.length) return false;
     return true;
   }
+  function cadastroLegadoConfirmavelI77(config,contrato,slug,hoje=hojeLocal()){
+    if(!config||!contrato||config.ativo!==undefined||config.clienteInativo!==undefined)return false;
+    if(!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)||slugClienteCanonico(slug)!==slug)return false;
+    if(config.tipoEntrega!=='postagem_completa'||config.tipoCliente==='avulso'||config.tipoCliente==='interno')return false;
+    if(String(contrato.status||'').toLowerCase()!=='ativo'||!contratoOperacionalAtivo(contrato)||saidaClienteJaEfetiva(contrato,hoje))return false;
+    if(contrato.clienteInativo===true||contrato.arquivadoEm||contrato.unificadoEm||contrato.unificadoPara)return false;
+    for(const k of ['slug','cliente','clienteSlug'])if(contrato[k]&&String(contrato[k])!==slug)return false;
+    return clientePermiteReagendarR5({...config,clienteInativo:false},hoje,slug);
+  }
+  window.confirmarCadastroLegadoPostagemI77=async function(slug){
+    const sessao=contextoStokkiI30(),operacaoId=crypto.randomUUID();
+    const conferir=()=>{if(!['Amanda','Chris'].includes(usuarioAtual)||!auth.currentUser?.uid||jsonEstavel(sessao)!==jsonEstavel(contextoStokkiI30()))throw new Error('Abra esta conferência no perfil de Amanda ou Chris.');};
+    try{
+      conferir();
+      if(!window.__entradaClientesAtivos?.[slug]||window.__entradaClientesAtivos[slug].tipo!=='mensalista')throw new Error('Reabra a ficha atual deste cliente na Central.');
+      if(!confirm('Conferir o contrato ativo e completar a marca operacional deste cadastro antigo? Valores, pagamentos, conteúdos e datas serão preservados.'))return false;
+      const saidas=await _getDocsFromServerFB(query(collection(db,'clientes_encerrados'),where('slug','==',slug)));
+      conferir();const cfgRef=doc(db,'clientes_config',slug),ctrRef=doc(db,'contratos_cliente',slug);
+      await runTransaction(db,async tx=>{
+        conferir();const cfg=await tx.get(cfgRef),ctr=await tx.get(ctrRef);
+        const saidasAtuais=await Promise.all(saidas.docs.map(d=>tx.get(d.ref)));
+        if(saidasAtuais.some(d=>d.exists()&&saidaClienteJaEfetiva(d.data())))throw new Error('Existe uma saída efetiva. Use a revisão do cadastro; esta conferência não reativa clientes.');
+        if(cfg.exists()&&cfg.data().conferenciaOperacionalI77?.operacaoId===operacaoId)return;
+        if(!cfg.exists()||!ctr.exists()||!cadastroLegadoConfirmavelI77(cfg.data(),ctr.data(),slug))throw new Error('O cadastro não atende à conferência de legado ativo. Nada foi alterado; revise contrato, serviço ou saída na Central.');
+        conferir();tx.update(cfgRef,{clienteInativo:false,conferenciaOperacionalI77:{versao:1,operacaoId,por:atorRealDaSessao(),papel:usuarioAtual,em:new Date().toISOString(),origem:'contrato_ativo_conferido'}});
+      });
+      const recibo=await _getDocFromServerFB(cfgRef);conferir();
+      if(!recibo.exists()||recibo.data().clienteInativo!==false||recibo.data().conferenciaOperacionalI77?.operacaoId!==operacaoId)throw new Error('A confirmação precisa ser relida. Atualize a Central antes de repetir.');
+      window.limparCacheDeClientes();await window.renderCentralEntradaClientes();mostrarToast('Cadastro operacional confirmado. A equipe pode conferir o agendamento novamente.');return true;
+    }catch(e){mostrarToast('Conferência não concluída: '+e.message,'erro');return false;}
+  };
   function conferirAlvoConfirmacaoR5(contexto,demanda,post){
     conferirPapelConfirmacaoR5(contexto);
     if(contexto.demandaId){
@@ -16056,16 +16099,16 @@ async function popularClientesAgendamento(){
             origemAgendamentoManualV118:!videoId,excluido:false};
           if(idx>=0){
             const anterior=items[idx]||{};deDia=anterior.day;praDia=dia;mudouDia=Number(deDia)!==dia;
-            items[idx]=identidadeModerna?{
-              ...atualizarItemAgendamentoPautaR1a(anterior,{acao,data,postagemId:id,competencia,ator,agora}),
-              ref:post.linkVideo||anterior.ref||'',excluido:false,excluidoPor:'',excluidoEm:'',motivoExclusao:''
-            }:{...anterior,itemId:anterior.itemId||baseNovo.itemId,day:dia,agendado:true,posted:false,postagemId:id,
-              ref:post.linkVideo||anterior.ref||'',dataPostagem:data,excluido:false,
+            // I77: agendar não reescreve roteiro, legenda nem referência editorial.
+            items[idx]=identidadeModerna
+              ? atualizarItemAgendamentoPautaR1a(anterior,{acao,data,postagemId:id,competencia,ator,agora})
+              : {...anterior,itemId:anterior.itemId||baseNovo.itemId,day:dia,agendado:true,posted:false,postagemId:id,
+              dataPostagem:data,excluido:false,
               excluidoPor:'',excluidoEm:'',motivoExclusao:'',
               agendamentoAnteriorV118:{postagemId:id,day:anterior.day??null,dataPostagem:anterior.dataPostagem||'',
                 agendado:anterior.agendado===true,posted:anterior.posted===true,postagemIdAnterior:anterior.postagemId||''}};
             praDia=items[idx].day;mudouDia=deDia!==praDia&&Number(deDia)!==Number(praDia);
-            if(!String(items[idx].desc||'').trim()&&String(post.legenda||'').trim()) items[idx].desc=post.legenda;
+
           }else{
             items.push(baseNovo);idx=items.length-1;praDia=dia;
           }
@@ -16210,7 +16253,7 @@ async function popularClientesAgendamento(){
     const aguardandoAprovacaoInterna = videos.filter(v => v.status === 'aguardando_aprovacao');
     const aguardandoCliente = videos.filter(v => v.status === 'aguardando_cliente');
     const aguardandoLegenda = postagens.filter(p => p.status === 'aguardando_legenda');
-    const prontoAgendar = postagens.filter(p => p.status === 'aguardando_agendamento');
+    const prontoAgendar = postagens.filter(postagemPrecisaAgendarI77);
     const agendadoProx7 = postagens.filter(p => p.status === 'agendado' && p.dataAgendada && p.dataAgendada >= hojeStr && p.dataAgendada <= dataLocal(hojeMais7));
     const finalizadosDireto = videos.filter(v => v.status === 'finalizado' && !ehTrabalhoExternoVideo(v));
     const finalizadosPontuais = videos.filter(v => v.status === 'finalizado' && ehTrabalhoExternoVideo(v));
@@ -24620,6 +24663,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
           ${v.tipo==='mensalista'?(v.token?'<button class="btn" style="width:auto;" onclick="abrirPortalClienteCentral(\''+escJs(v.slug)+'\')">Abrir Portal ↗</button><button class="btn secondary" style="width:auto;" onclick="copiarPortalClienteCentral(\''+escJs(v.slug)+'\')">Copiar Portal</button>':'<button class="btn" style="width:auto;" onclick="garantirPortalClienteCentral(\''+escJs(v.slug)+'\')">Criar/recuperar Portal</button>'):''}
           ${v.tipo==='mensalista'&&!ehClienteSoEdicao(v.slug)?'<button class="btn secondary" style="width:auto;" onclick="abrirCalendarioDeCliente(\''+escJs(v.slug)+'\',\''+escJs(v.nome)+'\')">Calendário</button>':''}
           ${v.onboardingId&&v.onboardingStatus!=='concluido'?'<button class="btn secondary" style="width:auto;" onclick="abrirOnboardingCentral(\''+escJs(v.onboardingId)+'\')">Onboarding</button>':''}
+          ${v.tipo==='mensalista'&&!v.saida&&cadastroLegadoConfirmavelI77(configsBrutos[v.slug],contratosBrutos[v.slug],v.slug)?`<button class="btn secondary" style="width:auto;" onclick="confirmarCadastroLegadoPostagemI77('${escJs(v.slug)}')">Confirmar cadastro operacional</button>`:''}
           <button class="btn secondary" style="width:auto;" onclick="navegarGerenciaSub('saudeClientes')">Ficha operacional</button>
           ${v.origem!=='configuracao'?`<button class="btn secondary" style="width:auto;" onclick="editarClienteAtivoCentral('${escJs(v.slug)}')">Editar dados</button>`:'<span class="meta">Ficha vinculada ao serviço; confira os dados do pedido nos controles de serviço abaixo.</span>'}
           ${v.identidadeDivergente&&v.origem!=='configuracao'?'<button class="btn" style="width:auto;" onclick="repararIdentidadeClienteCentral(\''+escJs(v.slug)+'\')">Corrigir identidade para '+esc(nomeClienteCanonico(v.slug,v.nome))+'</button>':''}
@@ -28114,10 +28158,10 @@ window.setGerenciaSub = function(qual, el){
      foi a DEMANDA por item, que era o que pesava. */
   async function contarFila(qual){
     try{
-      const alvo = qual === 'legenda' ? 'aguardando_legenda' : 'aguardando_agendamento';
-      const snap = await getDocs(query(collection(db,'postagens'), where('status','==',alvo)));
+      const alvo = qual === 'legenda' ? where('status','==','aguardando_legenda') : where('status','in',['aguardando_agendamento','agendado']);
+      const snap = await getDocs(query(collection(db,'postagens'),alvo));
       let n = 0;
-      snap.forEach(d => { if(!d.data().excluido) n++; });
+      snap.forEach(d => { if(qual==='legenda'?!d.data().excluido:postagemPrecisaAgendarI77(d.data())) n++; });
       return n;
     }catch(e){ console.error('Falha ao contar a fila:', e); return null; }
   }
@@ -28158,28 +28202,34 @@ window.setGerenciaSub = function(qual, el){
 
   /* Lê o calendário do cliente e mostra as solicitações especiais que a
      Gabi escreveu. Só leitura — a fonte continua sendo o calendário. */
+  let __solicitacoesCalendarioI77=0;
+  function solicitacoesCalendarioI77(cal,mes){
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||'')))return [];
+    return itensAtivosCalendarioV127(cal,mes).filter(i=>String(i.obs||'').trim()).sort((a,b)=>(Number(a.day)||0)-(Number(b.day)||0));
+  }
   window.mostrarSolicitacoesDoCalendario = async function(){
-    const box = document.getElementById('agSolicitacoesCalendario');
-    if(!box) return;
-    const slug = document.getElementById('agCliente')?.value;
-    if(!slug || slug === '__novo__'){ box.style.display='none'; box.innerHTML=''; return; }
+    const box=document.getElementById('agSolicitacoesCalendario');if(!box)return;
+    const consulta=++__solicitacoesCalendarioI77;
+    const contexto=()=>JSON.stringify([document.getElementById('agCliente')?.value,document.getElementById('agCompetenciaCalendario')?.value,usuarioAtual,__geracaoIdentidade]);
+    const inicial=contexto(),slug=document.getElementById('agCliente')?.value,mes=document.getElementById('agCompetenciaCalendario')?.value;
+    const vigente=()=>consulta===__solicitacoesCalendarioI77&&inicial===contexto();
+    box.innerHTML='';box.style.display='none';
+    if(!slug||slug==='__novo__'||!mes)return;
     try{
-      const snap = await getDoc(doc(db,'calendarios', slug));
-      const itens = snap.exists() ? (snap.data().items||[]) : [];
-      const comObs = itens.filter(i => (i && i.obs || '').trim()).sort((a,b)=>(a.day||0)-(b.day||0));
-      if(!comObs.length){ box.style.display='none'; box.innerHTML=''; return; }
+      const snap=await getDoc(doc(db,'calendarios',slug));if(!vigente())return;
+      const comObs=solicitacoesCalendarioI77(snap.exists()?snap.data():{},mes);
+      if(!comObs.length)return;
       box.style.display='block';
-      box.innerHTML = `<div class="card" style="border:2px solid var(--yellow);margin:0 0 12px;">
-        <h2 style="font-size:14px;">📌 Solicitações especiais do calendário (${comObs.length})</h2>
-        <div class="desc">A Gabi escreveu isto no calendário deste cliente. Confere se cai nesta gravação — o filmmaker precisa saber antes de sair.</div>
-        ${comObs.map(i => `<div class="item" style="margin-top:8px;border-left:3px solid var(--yellow);">
-          <div class="top"><div class="nome">Dia ${i.day||'?'} — ${esc(i.name||'sem título')}</div></div>
+      box.innerHTML=`<div class="card" style="border:2px solid var(--yellow);margin:0 0 12px;">
+        <h2 style="font-size:14px;">📌 Preparação da pauta · ${esc(mes.slice(5)+'/'+mes.slice(0,4))} (${comObs.length})</h2>
+        <div class="desc">Escolha a orientação dos conteúdos desta gravação para levar ao videomaker.</div>
+        ${comObs.map(i=>`<div class="item" style="margin-top:8px;border-left:3px solid var(--yellow);">
+          <div class="top"><div class="nome">${esc(i.name||'Sem título')}</div></div>
           <div class="meta" style="margin-top:5px;white-space:pre-wrap;color:var(--fg);">${esc(String(i.obs).trim())}</div>
-          <button class="btn secondary" style="margin-top:8px;width:auto;padding:6px 12px;font-size:11px;"
-            onclick="usarSolicitacaoNoAgendamento('${escJs(String(i.obs).trim())}')">↓ Levar pras observações do filmmaker</button>
+          <button class="btn secondary" style="margin-top:8px;width:auto;padding:6px 12px;font-size:11px;" onclick="usarSolicitacaoNoAgendamento('${escJs(String(i.obs).trim())}')">↓ Levar pras observações do filmmaker</button>
         </div>`).join('')}
       </div>`;
-    }catch(e){ console.error('Falha ao ler as solicitações do calendário:', e); box.style.display='none'; }
+    }catch(e){if(!vigente())return;console.error('Falha ao ler as solicitações do calendário:',e);box.style.display='block';box.innerHTML='<div class="card">Não foi possível conferir as orientações agora. <button class="btn secondary" onclick="mostrarSolicitacoesDoCalendario()">Tentar novamente</button></div>';}
   };
 
   window.usarSolicitacaoNoAgendamento = function(texto){
@@ -28975,6 +29025,7 @@ window.setGerenciaSub = function(qual, el){
         'border-radius:10px;margin-bottom:' + (i < cfg.length-1 ? '8px' : '0') + ';cursor:pointer;text-align:center;'+
         'box-shadow:0 2px 10px rgba(251,188,25,.25);';
       b.textContent = a.rot;
+      if(a.contador==='agendar')b.dataset.filaAgendamentoI77=a.rot;
       b.setAttribute('onclick', a.acao);
       caixa.appendChild(b);
       /* O número entra no próprio botão: ela vê quantos estão esperando
@@ -28987,6 +29038,7 @@ window.setGerenciaSub = function(qual, el){
                     : contarFila(a.contador);
         conta.then(n => {
           if(!b.isConnected) return;
+          if(a.contador==='agendar'&&listenersTempoRealAtivos)n=cachePostagens.filter(postagemPrecisaAgendarI77).length;
           if(n===null){
             b.textContent=a.rot+' (! indisponível)';
             b.style.background='var(--red)';b.style.color='#fff';b.style.boxShadow='none';
@@ -29418,7 +29470,7 @@ window.setGerenciaSub = function(qual, el){
       });
     }
     if(usuarioAtual === 'Cecília'){
-      cachePostagens.filter(p => p.status === 'aguardando_agendamento').forEach(p => {
+      cachePostagens.filter(postagemPrecisaAgendarI77).forEach(p => {
         const dias = p.legendaEm ? Math.floor((Date.now() - new Date(p.legendaEm).getTime())/86400000) : 0;
         itens.push({
           icone: '📅', titulo: 'Agendar: ' + (p.titulo||''), meta: esc(p.clienteNome||''),
@@ -29954,15 +30006,20 @@ window.setGerenciaSub = function(qual, el){
       let count;
       if(listenersTempoRealAtivos){
         // Fase 2: usa o cache ao vivo, sem buscar de novo no banco
-        count = cachePostagens.filter(p => p.status === 'aguardando_agendamento').length;
+        count = cachePostagens.filter(postagemPrecisaAgendarI77).length;
       } else {
         // Fallback de segurança — listeners ainda não iniciaram (ex.: antes do login)
         const snap = await getDocs(collection(db,'postagens'));
         count = 0;
-        snap.forEach(d => { if(d.data().status==='aguardando_agendamento') count++; });
+        snap.forEach(d => { if(postagemPrecisaAgendarI77(d.data())) count++; });
       }
       if(count){ badge.style.display='flex'; badge.textContent = count; }
       else { badge.style.display='none'; }
+      document.querySelectorAll('[data-fila-agendamento-i77]').forEach(b=>{
+        b.textContent=b.dataset.filaAgendamentoI77+(count?' ('+count+')':'');
+        b.style.background=count?'var(--yellow)':'var(--line)';b.style.color=count?'var(--graphite)':'var(--muted)';
+        b.style.boxShadow=count?'0 2px 10px rgba(251,188,25,.25)':'none';
+      });
     }catch(e){}
   }
 

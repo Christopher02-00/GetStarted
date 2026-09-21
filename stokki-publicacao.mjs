@@ -12,7 +12,9 @@ const cp=o=>JSON.parse(JSON.stringify(o));
 export const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const ehStokki=p=>p?.cliente==='stokki';
 export const usaFluxo=p=>ehStokki(p)&&p?.publicacaoStokki?.versao===1;
-export const assinatura=p=>JSON.stringify([p?.cliente,p?.videoId,p?.calendarClienteSlug,p?.calendarCompetencia,p?.calendarItemId,
+// I77: mapas equivalentes não são mudanças de outra aba; arrays mantêm a ordem.
+const jsonEstavel=valor=>JSON.stringify(valor,(_chave,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
+export const assinatura=p=>jsonEstavel([p?.cliente,p?.videoId,p?.calendarClienteSlug,p?.calendarCompetencia,p?.calendarItemId,
   p?.status,p?.excluido,p?.linkVideo,p?.publicacaoStokki,...REDES.map(r=>p?.[r.campo])]);
 export function horarioBrasilia(agora=new Date()){
   const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(agora);
@@ -137,6 +139,15 @@ export function alterar(p,acao,ctx){
   const historico={acao:'Stokki — '+acao.tipo+' / '+acao.rede,por:ctx.ator,em:ctx.em,
     detalhe:JSON.stringify({operacaoId:acao.operacaoId,motivo:acao.motivo||'',antes,depois:r})};
   return {patch,historico,concluiu:['postado','cancelada_manual'].includes(status),publicado:status==='postado'};
+}
+export function resumoAgendamento(posts){
+  const pendentes=[];let plataformas=0;
+  for(const p of posts){
+    if(!usaFluxo(p)||p.excluido===true||!['aguardando_agendamento','agendado'].includes(p.status))continue;
+    const s=validarPlano(p),faltam=s.selecionadas.filter(id=>{const r=s.redes[id];return !r.retirada&&!r.publicadaEm&&!r.data;}).length;
+    if(faltam){pendentes.push(p);plataformas+=faltam;}
+  }
+  return {pendentes,videos:pendentes.length,plataformas};
 }
 export function eventos(posts){
   const out=[];

@@ -1351,6 +1351,11 @@
             <div class="field"><label for="centralLegendasV134Busca">Buscar cliente ou conteúdo</label><input id="centralLegendasV134Busca" placeholder="Cliente ou título" oninput="aplicarFiltrosCentralLegendasV134()"></div>
             <div class="field"><label for="centralLegendasV134Situacao">Situação</label><select id="centralLegendasV134Situacao" onchange="aplicarFiltrosCentralLegendasV134()"><option value="todas">Todas</option><option value="pendentes">Sem legenda</option><option value="preenchidas">Com legenda</option><option value="bloqueadas">Somente leitura</option></select></div>
           </div>
+          <div id="centralLegendasOrganizacaoI76" class="field" style="max-width:320px;margin-top:12px;">
+            <label for="centralLegendasVisaoI76">Organização das legendas</label>
+            <select id="centralLegendasVisaoI76" onchange="aplicarFiltrosCentralLegendasV134()"><option value="abertos">Em trabalho</option><option value="concluidos">Concluídos</option><option value="todos">Todos / histórico</option></select>
+            <div class="meta" style="margin-top:6px;">Concluir organiza a lista. Os textos continuam salvos.</div>
+          </div>
           <div id="centralLegendasV134Estado" role="status" aria-live="polite" class="desc" style="margin-top:10px;">O painel lê somente quando esta subaba é aberta.</div>
         </div>
         <div id="centralLegendasV134Box" aria-live="polite"></div>
@@ -4446,6 +4451,8 @@
   let __fonteCentralLegendasV134={competencia:'',desatualizada:false};
   let __edicaoCentralLegendasV134=null;
   const __acoesCentralLegendasV134=new Set();
+  let __gruposLegendasI76=new Map(), __perfilOrganizacaoI76=null;
+  const __acoesOrganizacaoI76=new Set();
 
   let __retornoLegendaI73=null, __abrindoLegendaI73=false;
   const chaveRascunhoLegendaI73=alvo=>'legenda_i73_'+JSON.stringify([String(auth.currentUser?.uid||''),alvo.calendarId,alvo.competencia,alvo.itemId]);
@@ -4577,6 +4584,7 @@
     __geracaoCentralLegendasV134++;
     __linhasCentralLegendasV134=[];
     __mapaCentralLegendasV134.clear();
+    __gruposLegendasI76.clear(); __perfilOrganizacaoI76=null;
     __leituraFilaLegendasI66++;
     __etapaLegendasI66='calendario';
     sincronizarEtapaLegendasI66A();
@@ -4674,6 +4682,72 @@
     return String(linha?.[campo]||'');
   }
 
+  // I76: organização visual independente da aprovação. Nunca altera textos ou etapa editorial.
+  function materialOrganizacaoLegendasI76(linhas){
+    return JSON.stringify(linhas.map(l=>[l.itemId,l.titulo,l.roteiro,l.dia,l.formato,...CAMPOS_LEGENDA_LEITURA_V134.map(c=>String(l[c]||''))])
+      .sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));
+  }
+  async function assinaturaOrganizacaoLegendasI76(linhas){
+    const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(materialOrganizacaoLegendasI76(linhas)));
+    return Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
+  }
+  async function gruposOrganizacaoLegendasI76(snapshot,linhas,competencia){
+    const docs=new Map();snapshot.forEach(d=>docs.set(d.id,d.data()||{}));
+    const grupos=new Map();
+    for(const linha of linhas){
+      const chave=JSON.stringify([linha.calendarId,competencia]);
+      if(!grupos.has(chave))grupos.set(chave,{chave,calendarId:linha.calendarId,slugCanonico:linha.slugCanonico,nome:linha.nomeCliente,competencia,linhas:[]});
+      grupos.get(chave).linhas.push(linha);
+    }
+    await Promise.all([...grupos.values()].map(async g=>{
+      g.marca=docs.get(g.calendarId)?.organizacaoLegendasI76?.[competencia]||null;
+      g.assinatura=await assinaturaOrganizacaoLegendasI76(g.linhas);
+      g.concluido=g.marca?.estado==='concluido' && g.marca?.assinatura===g.assinatura;
+      g.alterado=g.marca?.estado==='concluido' && !g.concluido;
+      g.bloqueio=g.linhas.find(l=>l.bloqueio)?.bloqueio||'';
+    }));
+    return grupos;
+  }
+  window.organizarMesLegendasI76=async function(chave,concluir){
+    const alvo=__gruposLegendasI76.get(String(chave||'')),identidade=capturarIdentidadeCentralLegendasV134();
+    if(!alvo||!identidadeCentralLegendasV134Valida(identidade)||__fonteCentralLegendasV134.desatualizada||alvo.bloqueio)return false;
+    if(__acoesOrganizacaoI76.has(chave))return false;
+    const pendentes=alvo.linhas.filter(l=>!String(l.legenda||'').trim()).length;
+    if(!confirm(concluir
+      ?`Concluir as legendas de ${alvo.nome} em ${rotuloCompetenciaControleEditorial(alvo.competencia)}? São ${alvo.linhas.length} conteúdos no mês${pendentes?', sendo '+pendentes+' sem legenda principal':''}. Os textos ficam salvos e a aprovação não muda.`
+      :`Reabrir as legendas de ${alvo.nome} em ${rotuloCompetenciaControleEditorial(alvo.competencia)}? Nenhum texto será alterado.`))return false;
+    __acoesOrganizacaoI76.add(chave);aplicarFiltrosCentralLegendasV134();
+    const ids=[...new Set([alvo.calendarId,...slugsFonteOperacionalR4(alvo.slugCanonico)])],refs=ids.map(id=>doc(db,'calendarios',id)),ref=refs.find(r=>r.id===alvo.calendarId);
+    const operacao=crypto.randomUUID(),estadoNovo=concluir?'concluido':'aberto';
+    try{
+      await runTransaction(db,async tx=>{
+        const snaps=[];for(const r of refs)snaps.push(await tx.get(r));
+        if(!identidadeCentralLegendasV134Valida(identidade))throw Error('O perfil mudou. Atualize a Central.');
+        const snap=snaps.find(d=>d.id===alvo.calendarId),snapshot={forEach(fn){snaps.filter(d=>d.exists()).forEach(fn);}};
+        const fontes=fontesAtivasCentralLegendasV134(snapshot,alvo.slugCanonico,alvo.competencia);
+        if(!snap?.exists()||fontes.length!==1||fontes[0]!==alvo.calendarId)throw Error('A origem do calendário mudou. Atualize a lista.');
+        const dados=snap.data();exigirClienteOperacionalR4(alvo.calendarId,dados);
+        const foto=projetarLegendasCompetenciaV134(snapshot,clientesDaFonteCentralLegendasV134(snapshot,alvo.competencia),alvo.competencia);
+        const linhas=foto.linhas.filter(l=>l.calendarId===alvo.calendarId);
+        if(!linhas.length||linhas.some(l=>l.bloqueio)||await assinaturaOrganizacaoLegendasI76(linhas)!==alvo.assinatura)throw Error('Os conteúdos mudaram. Atualize e confira antes de concluir ou reabrir.');
+        const anterior=dados.organizacaoLegendasI76?.[alvo.competencia]||null;
+        if(JSON.stringify(anterior)!==JSON.stringify(alvo.marca))throw Error('A organização mudou em outra aba. Atualize a lista.');
+        if(!identidadeCentralLegendasV134Valida(identidade))throw Error('O perfil mudou antes da confirmação.');
+        const agora=new Date().toISOString();
+        tx.update(ref,{['organizacaoLegendasI76.'+alvo.competencia]:{estado:estadoNovo,assinatura:alvo.assinatura,operacao,atualizadoEm:agora,atualizadoPor:identidade.atorReal,
+          ...(concluir?{concluidoEm:agora,concluidoPor:identidade.atorReal}:anterior?.concluidoEm?{concluidoEm:anterior.concluidoEm,concluidoPor:anterior.concluidoPor||''}:{})}});
+      });
+      const recibo=await comTimeoutCalendarioOperacional(_getDocFromServerFB(ref),'Confirmar organização das legendas',12000);
+      if(!identidadeCentralLegendasV134Valida(identidade))return false;
+      if(recibo.data()?.organizacaoLegendasI76?.[alvo.competencia]?.operacao!==operacao)throw Error('A confirmação mudou. Atualize a lista para conferir.');
+      mostrarToast(concluir?'Mês concluído. As legendas continuam disponíveis em Concluídos ou Todos / histórico.':'Mês reaberto para trabalho.');
+      await renderCentralLegendasV134();return true;
+    }catch(e){
+      if(identidadeCentralLegendasV134Valida(identidade))mostrarToast('Não confirmei a organização: '+(e?.message||e),'erro');
+      return false;
+    }finally{__acoesOrganizacaoI76.delete(chave);if(identidadeCentralLegendasV134Valida(identidade))aplicarFiltrosCentralLegendasV134();}
+  };
+
   function aplicarFiltrosCentralLegendasV134(){
     const box=document.getElementById('centralLegendasV134Box');
     const estado=document.getElementById('centralLegendasV134Estado');
@@ -4681,7 +4755,10 @@
     if(__etapaLegendasI66==='videos') return filtrarFilaLegendasI66();
     const busca=normNomeCliente(document.getElementById('centralLegendasV134Busca')?.value||'');
     const situacao=String(document.getElementById('centralLegendasV134Situacao')?.value||'todas');
+    const visao=document.getElementById('centralLegendasVisaoI76')?.value||'todos';
     const filtradas=__linhasCentralLegendasV134.filter(linha=>{
+      const grupo=__gruposLegendasI76.get(JSON.stringify([linha.calendarId,linha.competencia]));
+      if(visao==='abertos'&&grupo?.concluido || visao==='concluidos'&&!grupo?.concluido)return false;
       const combina=!busca || normNomeCliente(linha.nomeCliente+' '+linha.titulo).includes(busca);
       const preenchida=!!String(linha.legenda||'').trim();
       const estadoOk=situacao==='todas' || (situacao==='pendentes'&&!preenchida) ||
@@ -4696,12 +4773,12 @@
       ?`Atualização indisponível. Exibindo o último retrato confirmado de ${rotuloCompetenciaControleEditorial(__fonteCentralLegendasV134.competencia)}; salvar está bloqueado.`
       :`${__linhasCentralLegendasV134.length} conteúdo(s) confirmado(s): ${preenchidas} com legenda e ${pendentes} pendente(s).`;
     if(!filtradas.length){
-      box.innerHTML='<div class="card"><div class="empty">Nenhuma legenda corresponde a estes filtros no retrato confirmado. Nenhum calendário foi alterado.</div></div>';
+      box.innerHTML='<div class="card"><div class="empty">Nenhuma legenda neste filtro. Você pode trocar o mês ou a organização acima.</div></div>';
       return true;
     }
     const rotuloCampo={legenda:'Legenda principal',legendaYoutube:'YouTube',legendaLinkedin:'LinkedIn',legendaInstagram:'Instagram',legendaTiktok:'TikTok'};
     const podeEditar=podeEditarCentralLegendasV134(usuarioAtual,window.__pessoaAutenticadaReal,Boolean(window.__operacaoDelegadaChris));
-    box.innerHTML=filtradas.map(linha=>{
+    const renderItem=linha=>{
       const campos=CAMPOS_LEGENDA_LEITURA_V134.filter(campo=>String(linha[campo]||'').trim());
       const bloqueio=linha.bloqueio || (!ESTADOS_EDITAVEIS_LEGENDA_V134.has(linha.estadoMes)?
         'Este mês está em revisão, publicado ou arquivado; a legenda fica somente leitura.':'');
@@ -4714,6 +4791,16 @@
         ${bloqueio?`<div class="meta" data-v134-bloqueio="true" style="margin-top:10px;color:var(--muted);">🔒 ${esc(bloqueio)}</div>`:''}
         ${linha.legendaAtualizadaPor?`<div class="meta" style="margin-top:7px;">Última alteração: ${esc(linha.legendaAtualizadaPor)}${linha.legendaAtualizadaEm?' · '+esc(linha.legendaAtualizadaEm):''}</div>`:''}
       </article>`;
+    };
+    box.innerHTML=[...__gruposLegendasI76.values()].map(g=>{
+      const visiveis=filtradas.filter(l=>l.calendarId===g.calendarId&&l.competencia===g.competencia);if(!visiveis.length)return '';
+      const pendentes=g.linhas.filter(l=>!String(l.legenda||'').trim()).length;
+      return `<section class="card" data-legendas-grupo-i76="${escAttr(g.calendarId)}" style="border:1px solid ${g.concluido?'var(--green)':'var(--line)'};">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;"><div><h2 style="margin:0 0 6px;">${esc(g.nome)}</h2><div class="meta">${esc(rotuloCompetenciaControleEditorial(g.competencia))} · ${g.linhas.length} conteúdo(s) · ${pendentes} sem legenda</div><div style="margin-top:6px;color:${g.concluido?'var(--green)':'var(--yellow)'};">${g.concluido?'✓ Legendas concluídas':g.alterado?'Conteúdo alterado após a conclusão':'Em trabalho'}</div></div>
+        ${podeEditar?`<button type="button" class="btn ${g.concluido?'secondary':''}" style="width:auto;max-width:100%;" ${g.bloqueio||desatualizada||__acoesOrganizacaoI76.has(g.chave)?'disabled':''} onclick="organizarMesLegendasI76('${escJs(g.chave).replace(/"/g,'&quot;')}',${!g.concluido})">${__acoesOrganizacaoI76.has(g.chave)?'Confirmando…':g.concluido?'Reabrir legendas deste mês':'Concluir legendas deste mês'}</button>`:''}</div>
+        ${g.bloqueio?`<div class="meta" style="margin-top:8px;">${esc(g.bloqueio)}</div>`:''}
+        <details ${busca?'open':''} style="margin-top:14px;"><summary style="cursor:pointer;">Ver conteúdos e legendas (${visiveis.length})</summary><div style="margin-top:12px;">${visiveis.map(renderItem).join('')}</div></details>
+      </section>`;
     }).join('');
     return true;
   }
@@ -4742,6 +4829,11 @@
       const clientes=clientesDaFonteCentralLegendasV134(snapshot,competencia);
       const foto=projetarLegendasCompetenciaV134(snapshot,clientes,competencia);
       if(foto.estado!=='confirmado') throw new Error('A fonte de calendários não confirmou esta competência.');
+      const grupos=await gruposOrganizacaoLegendasI76(snapshot,foto.linhas,competencia);
+      if(geracao!==__geracaoCentralLegendasV134 || pessoaDaLeitura!==usuarioAtual || document.getElementById('centralLegendasV134Box')!==box)return false;
+      const visao=document.getElementById('centralLegendasVisaoI76');
+      if(visao&&__perfilOrganizacaoI76!==pessoaDaLeitura){visao.value=pessoaDaLeitura==='Gabrielle'?'abertos':'todos';__perfilOrganizacaoI76=pessoaDaLeitura;}
+      __gruposLegendasI76=grupos;
       __linhasCentralLegendasV134=foto.linhas;
       __fonteCentralLegendasV134={competencia,desatualizada:false};
       /* A filtragem exibe legendaYoutube, legendaLinkedin, legendaInstagram
@@ -4752,6 +4844,7 @@
       if(geracao!==__geracaoCentralLegendasV134 || pessoaDaLeitura!==usuarioAtual || document.getElementById('centralLegendasV134Box')!==box) return false;
       console.error('Falha na Central de Legendas V134:',e);
       __linhasCentralLegendasV134=[];
+      __gruposLegendasI76.clear();
       __mapaCentralLegendasV134.clear();
       __fonteCentralLegendasV134={competencia:String(seletor.value||''),desatualizada:true};
       estado.textContent='Central de Legendas indisponível. Nenhum vazio foi confirmado e salvar permanece bloqueado.';
@@ -4917,6 +5010,7 @@
     if(editorial)editorial.hidden=videos;
     if(fila)fila.hidden=!videos;
     if(situacao)situacao.hidden=videos;
+    const organizacao=document.getElementById('centralLegendasOrganizacaoI76');if(organizacao)organizacao.hidden=videos;
     for(const [id,ativo]of [['centralLegendasCalendarioI66',!videos],['centralLegendasVideosI66',videos]]){
       const b=document.getElementById(id);
       if(b){b.classList.toggle('secondary',!ativo);b.setAttribute('aria-pressed',String(ativo));}

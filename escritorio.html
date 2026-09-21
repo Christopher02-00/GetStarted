@@ -1022,7 +1022,7 @@
           <div class="row3">
             <div class="field"><label>Data</label><input type="date" id="agData" onchange="sincronizarCompetenciaAgendamento();verificarQtdHoje()"></div>
             <div class="field"><label>Hora</label><input type="time" id="agHora" value="10:00"></div>
-            <div class="field"><label>Mês da pauta a gravar</label><input type="month" id="agCompetenciaCalendario" onchange="this.dataset.manual='1';sugerirQtdPeloBloco();mostrarSolicitacoesDoCalendario()"><div class="meta" style="margin-top:4px;">Mês de origem da pauta. Pode ser anterior ou posterior à filmagem; sua escolha será respeitada.</div></div>
+            <div class="field"><label>Mês da pauta a gravar</label><input type="month" id="agCompetenciaCalendario" onchange="this.dataset.manual='1';mostrarHistoricoCliente(true);mostrarSolicitacoesDoCalendario()"><div class="meta" style="margin-top:4px;">Mês de origem da pauta. Pode ser anterior ou posterior à filmagem; sua escolha será respeitada.</div></div>
             <!-- 01/08/2026 — qual gravação do mês é esta. É o que liga o
                  calendário da Gabi ao que o filmmaker vê no dia. -->
             <div class="field"><label>Qual gravação do mês</label>
@@ -10858,52 +10858,70 @@ async function popularClientesAgendamento(){
   }
 }
 
-  window.mostrarHistoricoCliente = async function(){
-    const sel = document.getElementById('agCliente');
-    const clienteSlug = sel.value;
+  let __historicoClienteMesSequenciaI77E = 0;
+  function contextoHistoricoClienteI77E(){
+    return JSON.stringify([
+      document.getElementById('agCliente')?.value || '',
+      document.getElementById('agCompetenciaCalendario')?.value || '',
+      document.getElementById('agCompetenciaCalendario')?.dataset.manual || '',
+      document.getElementById('agData')?.value || '', usuarioAtual, __geracaoIdentidade
+    ]);
+  }
+  window.mostrarHistoricoCliente = async function(preservarQuantidade=false){
+    const sequencia = ++__historicoClienteMesSequenciaI77E;
+    let contexto = contextoHistoricoClienteI77E();
+    const vigente = ()=>sequencia===__historicoClienteMesSequenciaI77E && contexto===contextoHistoricoClienteI77E();
+    const clienteSlug = document.getElementById('agCliente')?.value || '';
+    const painel = document.getElementById('historicoClienteMes');
     const campoQuantidade = document.getElementById('agQtdPlanejada');
-    if(campoQuantidade){ campoQuantidade.value=''; delete campoQuantidade.dataset.editado; }
-    if(clienteSlug === '__novo__'){ document.getElementById('historicoClienteMes').innerHTML = ''; return; }
+    if(!preservarQuantidade && campoQuantidade){ campoQuantidade.value=''; delete campoQuantidade.dataset.editado; }
+    if(!painel) return;
+    if(!clienteSlug || clienteSlug==='__novo__'){ painel.innerHTML=''; return; }
+    painel.textContent='Conferindo o mês selecionado…';
     const mesAtual = hojeLocal().slice(0,7);
-    const snap = await getDocs(collection(db,'agendamentos'));
-    let count = 0;
-    snap.forEach(d => {
-      const a = d.data();
-      if(!a.excluido && (a.clienteSlug || a.cliente) === clienteSlug && a.data?.startsWith(mesAtual) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a)) count++;
-    });
-
-    let calTxt = 'Calendário desse cliente ainda não foi iniciado.';
-    try {
-      const calSnap = await getDoc(doc(db,'calendarios', clienteSlug));
-      if(calSnap.exists()){
-        const cal = calSnap.data() || {};
-        const campoCompetencia = document.getElementById('agCompetenciaCalendario');
-        const competenciaData = String(document.getElementById('agData')?.value||hojeLocal()).slice(0,7);
-        const selecionada = campoCompetencia?.value || competenciaData;
-        const diagnostico = diagnosticarCompetenciaPendenteV115(cal, selecionada, competenciaData);
-        if(campoCompetencia && campoCompetencia.dataset.manual !== '1' && diagnostico.sugerida){
-          campoCompetencia.value = diagnostico.sugerida;
-          campoCompetencia.dataset.origem = 'calendario_v115';
-        }
-        const efetiva = campoCompetencia?.value || selecionada;
-        const linha = diagnostico.competencias.find(x=>x.mes===efetiva);
-        calTxt = linha
-          ? linha.pendentes + ' conteúdo(s) ainda precisam de gravação em ' + efetiva + '.'
-          : 'Nenhuma competência válida foi encontrada neste calendário.';
-      }
-    } catch(e){
-      console.error('Falha ao confirmar o calendário do cliente antes do agendamento:',e);
-      calTxt = 'Calendário indisponível agora — isso não significa pauta vazia.';
+    let historico='Histórico de gravações indisponível agora.';
+    try{
+      const snap = await getDocs(collection(db,'agendamentos'));
+      if(!vigente()) return;
+      let count=0;
+      snap.forEach(d=>{
+        const a=d.data();
+        if(!a.excluido && (a.clienteSlug||a.cliente)===clienteSlug && a.data?.startsWith(mesAtual) && a.status!=='cancelado' && !sessaoSemCaptacaoI34(a)) count++;
+      });
+      historico=count+' gravação(ões) registradas em '+mesAtual+'.';
+    }catch(e){
+      if(!vigente()) return;
+      console.error('Falha ao consultar histórico de gravações:',e);
     }
-    /* 01/08/2026 — a quantidade parou de ser chute.
-       Era `Math.min(semPostar, 4)` — um número inventado, que não tinha
-       relação nenhuma com o que a Gabi planejou. Medi no banco em 01/08:
-       34 conteúdos marcados em agosto contra 133 vídeos "planejados" nas
-       gravações. Agora vem da conta real do bloco, e ela pode mudar. */
-    try{ await sugerirQtdPeloBloco(); }catch(e){ console.error('Falha ao sugerir a quantidade pelo bloco:', e); }
-    if(clienteSlug===document.getElementById('agCliente')?.value)void mostrarSolicitacoesDoCalendario();
-
-    document.getElementById('historicoClienteMes').innerHTML = `<div class="avisoBanner"><div class="icone">📊</div><div class="texto">Esse cliente já teve ${count} gravação(ões) esse mês<span>${esc(calTxt)}</span></div></div>`;
+    let calTxt='Calendário desse cliente ainda não foi iniciado.';
+    try{
+      const calSnap=await getDoc(doc(db,'calendarios',clienteSlug));
+      if(!vigente()) return;
+      if(calSnap.exists()){
+        const campoCompetencia=document.getElementById('agCompetenciaCalendario');
+        const competenciaData=String(document.getElementById('agData')?.value||hojeLocal()).slice(0,7);
+        const selecionada=campoCompetencia?.value||competenciaData;
+        const diagnostico=diagnosticarCompetenciaPendenteV115(calSnap.data()||{},selecionada,competenciaData);
+        if(!preservarQuantidade && campoCompetencia && campoCompetencia.dataset.manual!=='1' && diagnostico.sugerida){
+          campoCompetencia.value=diagnostico.sugerida;
+          campoCompetencia.dataset.origem='calendario_v115';
+          contexto=contextoHistoricoClienteI77E();
+        }
+        const efetiva=campoCompetencia?.value||selecionada;
+        const linha=diagnostico.competencias.find(x=>x.mes===efetiva);
+        calTxt=linha ? linha.pendentes+' conteúdo(s) ainda precisam de gravação em '+efetiva+'.'
+          : 'Não há pauta cadastrada em '+efetiva+'.';
+      }
+    }catch(e){
+      if(!vigente()) return;
+      console.error('Falha ao confirmar o calendário do cliente antes do agendamento:',e);
+      calTxt='Calendário indisponível agora — isso não significa pauta vazia.';
+    }
+    if(!vigente()) return;
+    try{ await sugerirQtdPeloBloco(); }catch(e){ console.error('Falha ao sugerir a quantidade pelo bloco:',e); }
+    if(!vigente()) return;
+    void mostrarSolicitacoesDoCalendario();
+    painel.innerHTML=`<div class="avisoBanner"><div class="icone">📊</div><div class="texto">${esc(historico)}<span>${esc(calTxt)}</span></div></div>`;
   };
 
   /* V100 — o calendário sugere a quantidade, mas não autoriza a captação.
@@ -10993,8 +11011,9 @@ async function popularClientesAgendamento(){
     const data = document.getElementById('agData')?.value || hojeLocal();
     const competencia = document.getElementById('agCompetenciaCalendario');
     if(!competencia) return;
+    const mesAnterior=competencia.value;
     if(competencia.dataset.manual !== '1' && competencia.dataset.origem !== 'calendario_v115') competencia.value = data.slice(0,7);
-    sugerirQtdPeloBloco();
+    void mostrarHistoricoCliente(true);
   };
 
   window.verificarQtdHoje = async function(){

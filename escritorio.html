@@ -2458,6 +2458,8 @@
         if(/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes))document.getElementById('centralLegendasV134Mes').innerHTML=`<option value="${mes}">${mes}</option>`;
         document.getElementById('centralLegendasV134Busca').value=busca;
         window.abrirCentralLegendasI66('calendario');
+        const cliente=destino.get('legendasCliente'),itemId=destino.get('legendasItem');
+        if(cliente&&itemId)void window.abrirLegendaDoCalendarioI73({cliente,itemId,mes},null);
       }
     }).catch(e=>console.error('I66: não foi possível abrir o destino de legendas',e));
     window.__inicializacaoEquipeAtual.catch(e=>{
@@ -4445,6 +4447,42 @@
   let __edicaoCentralLegendasV134=null;
   const __acoesCentralLegendasV134=new Set();
 
+  let __retornoLegendaI73=null, __abrindoLegendaI73=false;
+  const chaveRascunhoLegendaI73=alvo=>'legenda_i73_'+JSON.stringify([String(auth.currentUser?.uid||''),alvo.calendarId,alvo.competencia,alvo.itemId]);
+  function guardarRascunhoLegendaI73(){
+    const a=__edicaoCentralLegendasV134,el=document.getElementById('centralLegendaV134Texto');if(!a||!el)return;
+    try{localStorage.setItem(a.chaveRascunhoI73,JSON.stringify({texto:el.value,base:a.legendaBase}));}
+    catch(e){mostrarToast('Mantenha esta tela aberta: não consegui proteger o rascunho neste navegador.','erro');}
+  }
+  window.abrirLegendaDoCalendarioI73=async function(c,origem){
+    const iframe=document.getElementById('iframeCalendarioFerramentas');
+    if(__abrindoLegendaI73||__edicaoCentralLegendasV134||!c||!podeLerCentralLegendasV134(usuarioAtual))return false;
+    if(origem&&(!iframe||origem!==iframe.contentWindow||String(c.cliente)!==String(new URL(iframe.src,location.href).searchParams.get('cliente'))))return false;
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(c.mes||''))||!String(c.itemId||'').trim()||!fonteFisicaClienteR4(c.cliente))return false;
+    const identidade=capturarIdentidadeCentralLegendasV134();
+    const mesma=()=>identidade.geracao===__geracaoIdentidade&&identidade.uid===String(auth.currentUser?.uid||'')&&identidade.pessoa===usuarioAtual&&(!origem||origem===document.getElementById('iframeCalendarioFerramentas')?.contentWindow&&String(c.cliente)===calendarioFerramentasAbertoSlug&&origem.__pedidoLegendaI73===c);
+    __abrindoLegendaI73=true;
+    try{
+      const ids=[...new Set([c.cliente,...slugsFonteOperacionalR4(slugClienteCanonico(c.cliente))])];
+      const snaps=await comTimeoutCalendarioOperacional(Promise.all(ids.map(id=>_getDocFromServerFB(doc(db,'calendarios',id)))),'Conferir legenda do conteúdo',12000);
+      if(!mesma())return false;
+      const snapshot={forEach(fn){snaps.filter(s=>s.exists()).forEach(fn);}};
+      const foto=projetarLegendasCompetenciaV134(snapshot,clientesDaFonteCentralLegendasV134(snapshot,c.mes),c.mes);
+      const linhas=foto.linhas.filter(l=>l.calendarId===c.cliente&&l.itemId===c.itemId);
+      if(linhas.length!==1||linhas[0].bloqueio)throw Error(linhas[0]?.bloqueio||'Conteúdo não confirmado neste mês.');
+      const linha=linhas[0];
+      if(!linha.editavel||!podeEditarCentralLegendasV134(usuarioAtual,identidade.atorReal,identidade.delegada)){
+        mostrarToast('Esta legenda está somente para consulta neste perfil ou nesta etapa. O roteiro permanece aberto.','erro');return false;
+      }
+      __mapaCentralLegendasV134.set(linha.chave,linha);__fonteCentralLegendasV134.desatualizada=false;
+      if(!abrirEditorLegendaCentralV134(linha.chave))return false;
+      __retornoLegendaI73=origem?{...c,origem}:null;
+      if(origem)document.getElementById('centralLegendaV134Voltar').textContent='Voltar ao roteiro';
+      return true;
+    }catch(e){if(mesma())mostrarToast('Não consegui abrir a legenda: '+(e?.message||e),'erro');return false;}
+    finally{__abrindoLegendaI73=false;}
+  };
+
   function podeLerCentralLegendasV134(pessoa){
     return ['Gabrielle','Cecília','Amanda','Chris'].includes(String(pessoa||''));
   }
@@ -4512,7 +4550,11 @@
       podeEditarCentralLegendasV134(pessoa,atorReal,Boolean(window.__operacaoDelegadaChris));
   }
 
-  function fecharEditorLegendaCentralV134(){
+  function fecharEditorLegendaCentralV134(salvou=false,forcar=false){
+    if(!forcar&&__edicaoCentralLegendasV134&&__acoesCentralLegendasV134.has(__edicaoCentralLegendasV134.chave))return false;
+    if(!salvou)guardarRascunhoLegendaI73();
+    const retorno=__retornoLegendaI73;__retornoLegendaI73=null;
+    if(retorno)retorno.origem.postMessage({...retorno,origem:undefined,tipo:'gs-legenda-retorno-i73',salvou:salvou===true},location.origin);
     __edicaoCentralLegendasV134=null;
     const modal=document.getElementById('modalConteudo');
     if(modal?.dataset.v134Editor==='true'){
@@ -4536,7 +4578,7 @@
     sincronizarEtapaLegendasI66A();
     document.getElementById('centralLegendasFilaI66')?.replaceChildren();
     __fonteCentralLegendasV134={competencia:'',desatualizada:false};
-    fecharEditorLegendaCentralV134();
+    fecharEditorLegendaCentralV134(false,true);
     __acoesCentralLegendasV134.clear();
     const box=document.getElementById('centralLegendasV134Box');
     if(box) box.replaceChildren();
@@ -4743,15 +4785,21 @@
       mostrarToast('Esta legenda está disponível somente para leitura.','erro');
       return false;
     }
-    __edicaoCentralLegendasV134={...linha,legendaBase:linha.legenda,legendaAtualizadaEmBase:linha.legendaAtualizadaEm};
+    __edicaoCentralLegendasV134={...linha,legendaBase:linha.legenda,legendaAtualizadaEmBase:linha.legendaAtualizadaEm,chaveRascunhoI73:chaveRascunhoLegendaI73(linha)};
+    let textoI73=linha.legenda,avisoI73='A legenda continua vinculada a este conteúdo.';
+    try{const r=JSON.parse(localStorage.getItem(__edicaoCentralLegendasV134.chaveRascunhoI73)||'null');if(r&&typeof r.texto==='string'&&r.texto!==linha.legenda){textoI73=r.texto;avisoI73=r.base===linha.legenda?'Rascunho recuperado. Confira antes de salvar.':'O banco mudou. Seu rascunho foi preservado; compare com a legenda salva antes de decidir.';}}catch(e){}
+
     const modal=document.getElementById('modalConteudo');
     if(!modal) return false;
     modal.dataset.v134Editor='true';
     modal.innerHTML=`<h2>📝 ${esc(linha.nomeCliente)} — ${esc(linha.titulo)}</h2>
       <div class="desc" style="margin:7px 0 12px;">Calendário: ${esc(rotuloCompetenciaControleEditorial(linha.competencia))} · dia ${linha.dia||'a definir'}. Salve o texto deste conteúdo.</div>
-      <div class="field"><label>Legenda principal</label><textarea id="centralLegendaV134Texto" data-legenda-campo="legenda" maxlength="20000" style="min-height:220px;">${esc(linha.legenda)}</textarea></div>
-      <div class="btnrow"><button type="button" class="btn secondary" onclick="fecharEditorLegendaCentralV134()">Cancelar</button><button type="button" class="btn" id="centralLegendaV134Salvar" data-legenda-acao="salvar" onclick="salvarLegendaCentralV134()">Salvar legenda</button></div>`;
+      <div class="field"><label>Legenda principal</label><textarea id="centralLegendaV134Texto" data-legenda-campo="legenda" maxlength="20000" style="min-height:220px;">${esc(textoI73)}</textarea></div>
+      <p id="centralLegendaI73Estado" role="status">${esc(avisoI73)}</p><details><summary>Conferir legenda salva</summary><p style="white-space:pre-wrap">${esc(linha.legenda)}</p></details>
+      <div class="btnrow"><button type="button" id="centralLegendaV134Voltar" class="btn secondary" onclick="fecharEditorLegendaCentralV134()">Voltar à Central</button><button type="button" class="btn" id="centralLegendaV134Salvar" data-legenda-acao="salvar" onclick="salvarLegendaCentralV134()">Salvar legenda</button></div>`;
     document.getElementById('overlayView')?.classList.add('show');
+    document.getElementById('centralLegendaV134Texto').addEventListener('input',guardarRascunhoLegendaI73);
+    document.getElementById('centralLegendaV134Texto').focus();
     return true;
   }
   window.abrirEditorLegendaCentralV134=abrirEditorLegendaCentralV134;
@@ -4782,7 +4830,10 @@
     }
     const trava=[alvo.calendarId,alvo.competencia,alvo.itemId].join('|');
     if(__acoesCentralLegendasV134.has(trava)) return false;
+    guardarRascunhoLegendaI73();
     __acoesCentralLegendasV134.add(trava); // trava antes do primeiro await
+    const campoI73=document.getElementById('centralLegendaV134Texto'),voltarI73=document.getElementById('centralLegendaV134Voltar');
+    if(campoI73)campoI73.disabled=true;if(voltarI73)voltarI73.disabled=true;
     const botao=document.getElementById('centralLegendaV134Salvar');
     if(botao) botao.disabled=true;
     const idsCandidatos=[...new Set([alvo.calendarId,...slugsFonteOperacionalR4(alvo.slugCanonico)])];
@@ -4824,7 +4875,7 @@
         return {noOp:false,agoraISO};
       });
       if(!identidadeCentralLegendasV134Valida(identidade)) throw new Error('A identidade mudou ao concluir. Atualize a Central antes de continuar.');
-      const confirmado=await getDoc(ref);
+      const confirmado=await comTimeoutCalendarioOperacional(_getDocFromServerFB(ref),'Confirmar legenda salva',12000);
       if(!identidadeCentralLegendasV134Valida(identidade)) throw new Error('A identidade mudou durante a releitura do recibo. Atualize a Central antes de continuar.');
       if(!confirmado.exists()) throw new Error('A gravação terminou, mas o recibo do calendário não pôde ser relido.');
       const dadosConfirmados=confirmado.data()||{};
@@ -4833,9 +4884,12 @@
         String(item.itemId||'').trim()===alvo.itemId && mesDoItemCalendario(dadosConfirmados,item)===alvo.competencia);
       if(itensConfirmados.length!==1 || String(itensConfirmados[0].legenda||'')!==texto) throw new Error('A releitura não confirmou exatamente a legenda salva.');
       if(!identidadeCentralLegendasV134Valida(identidade)) throw new Error('A identidade mudou antes da confirmação visual. Atualize a Central antes de continuar.');
-      fecharEditorLegendaCentralV134();
+      if(__edicaoCentralLegendasV134!==alvo)return true;
+      try{localStorage.removeItem(alvo.chaveRascunhoI73);}catch(e){}
+      const voltouI73=!!__retornoLegendaI73;
+      fecharEditorLegendaCentralV134(true,true);
       mostrarToast(resultado?.noOp?'Esta legenda já estava confirmada.':'Legenda confirmada na Central.');
-      await renderCentralLegendasV134();
+      if(!voltouI73)await renderCentralLegendasV134();
       return true;
     }catch(e){
       console.error('Falha ao salvar legenda pela Central V134:',e);
@@ -4844,6 +4898,7 @@
     }finally{
       __acoesCentralLegendasV134.delete(trava);
       if(botao) botao.disabled=false;
+      if(campoI73)campoI73.disabled=false;if(voltarI73)voltarI73.disabled=false;
     }
   }
   window.salvarLegendaCentralV134=salvarLegendaCentralV134;
@@ -31538,6 +31593,7 @@ window.setGerenciaSub = function(qual, el){
   };
 
   window.fecharModal = function(){
+    if(__edicaoCentralLegendasV134)return fecharEditorLegendaCentralV134();
     document.getElementById('overlayView').classList.remove('show');
   };
 
@@ -31991,17 +32047,20 @@ window.setGerenciaSub = function(qual, el){
     if(!iframe||event.source!==iframe.contentWindow) return;
     const competencia=String(event.data.competencia||'');
     const cliente=slugClienteCanonico(String(event.data.cliente||''));
+    const mesmoMesI73=()=>competencia===String(document.getElementById('mesLinkCalFerramentas')?.value||'');
+    if(!mesmoMesI73())return;
     if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)) return;
     if(cliente&&calendarioFerramentasAbertoSlug&&cliente!==slugClienteCanonico(calendarioFerramentasAbertoSlug)) return;
     try{
       const alvo=calendarioFerramentasAbertoSlug||cliente;
       const confirmado=await getDoc(doc(db,'calendarios',alvo));
       if(!confirmado.exists()) throw new Error('Calendário não encontrado após o envio.');
-      if(event.source!==iframe.contentWindow||alvo!==calendarioFerramentasAbertoSlug) return;
+      if(event.source!==iframe.contentWindow||alvo!==calendarioFerramentasAbertoSlug||!mesmoMesI73()) return;
       calendarioFerramentasDadosConfirmados=confirmado.data()||{};
       calendarioFerramentasLeituraEstado='confirmado';
       atualizarDiagnosticoCalendarioFerramentas(competencia);
     }catch(e){
+      if(event.source!==iframe.contentWindow||!mesmoMesI73())return;
       console.error('Handoff Gabi → Amanda sem recibo no painel-pai:',e);
       calendarioFerramentasLeituraEstado='falha';
       atualizarDiagnosticoCalendarioFerramentas(competencia);
@@ -32015,6 +32074,8 @@ window.setGerenciaSub = function(qual, el){
     const mes=String(event.data.mes||'');
     if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)) return;
     const campo=document.getElementById('mesLinkCalFerramentas'); if(campo) campo.value=mes;
+    calendarioFerramentasAbertoCompetencia=mes;
+    ++__geracaoRevalidacaoEditorCalendarioV127;__revalidacaoEditorCalendarioV127EmCurso=null;
     atualizarDiagnosticoCalendarioFerramentas(mes);
   });
 

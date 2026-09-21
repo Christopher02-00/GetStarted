@@ -499,7 +499,7 @@
   window.__mesSolicitadoCal = /^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) && mesSolicitado>='2026-07' ? mesSolicitado : '';
 </script>
 <script src="gs-gravacoes-cliente-i65.js?v=i65-1"></script>
-<script src="gs-aprovacao-conteudo-i68.js?v=i68a"></script>
+<script src="gs-aprovacao-conteudo-i68.js?v=i71"></script>
 </head>
 <body>
 <div class="wrap">
@@ -658,7 +658,7 @@
          mexe. Agora ela tem campo próprio, e o que ela escreve aqui vira
          demanda pra Gabi ajustar. -->
     <div id="observacaoClienteI35" class="acaoClienteI35" hidden>
-      <b>Aprovação pausada durante o ajuste</b>
+      <b>Este conteúdo está em ajuste</b>
       <p>Quer acrescentar algo? Sua observação fica ligada a este conteúdo e chega à Amanda e à Gabi.</p>
       <div class="field"><label for="textoObservacaoClienteI35">Sua observação sobre este conteúdo</label><textarea id="textoObservacaoClienteI35" maxlength="3000" placeholder="Escreva o que a equipe precisa considerar nesta revisão."></textarea></div>
       <button class="btn btn-y" id="enviarObservacaoClienteI35" type="button" onclick="enviarObservacaoClienteI35()">Enviar observação à equipe</button>
@@ -1380,7 +1380,7 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
       if(existente&&['aprovado_interno','liberado'].includes(existente.status)){
         throw Object.assign(new Error('A Amanda já decidiu este calendário.'),{code:'gs/decisao-posterior'});
       }
-      const marca={...marcaPacote};
+      const marca={...existente,...marcaPacote};
       const updatedAt=new Date().toISOString();
       const patch={
         aprovacaoMeses:{...(servidor.aprovacaoMeses||{}),[alvo]:marca},
@@ -2113,28 +2113,28 @@ function serializarAprovacaoI56(valor){
   return JSON.stringify(valor);
 }
 function versaoItemAprovacaoI56(cal,item){
-  const copia={...item,mes:mesDoItemNoCalendarioI56(cal,item)};
-  for(const campo of ['apr','aprPor','aprEm','aprovadoPeloClienteEm','__indiceBanco','revisaoPendenteI68','aprovacoesAnterioresI68','pedidoRevisadoI68']) delete copia[campo];
-  return serializarAprovacaoI56(copia);
+  return GetAprovacaoI68.versaoPublica(item,mesDoItemNoCalendarioI56(cal,item));
 }
 function capturarAprovacaoI56(cal,item,mes){
   if(!item||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)||mesDoItemNoCalendarioI56(cal,item)!==mes) throw Error('Não foi possível confirmar o mês deste conteúdo. Atualize o calendário e abra o conteúdo novamente.');
   const esperado=Object.freeze({id:String(item.itemId||'').trim(),mes,
     versao:versaoItemAprovacaoI56(cal,item),aprovado:!!item.apr,
-    liberacao:serializarAprovacaoI56(aprovacaoCompativelNoCalendarioI56(cal,mes))});
+    liberacao:GetAprovacaoI68.liberacaoPublica(aprovacaoCompativelNoCalendarioI56(cal,mes),mes)});
   conferirAprovacaoI56(cal,esperado);
   return esperado;
 }
 function conferirAprovacaoI56(cal,esperado){
   const mudou='Este conteúdo mudou desde que você abriu. Atualize o calendário e confira a versão atual antes de aprovar.';
   if(!esperado) throw Error(mudou);
-  if(estadoEfetivoNoCalendarioI56(cal,esperado.mes)!=='liberado') throw Error('As aprovações deste mês estão pausadas. Atualize o calendário para acompanhar a revisão.');
-  if(serializarAprovacaoI56(aprovacaoCompativelNoCalendarioI56(cal,esperado.mes))!==esperado.liberacao) throw Error(mudou);
+  const estado=estadoEfetivoNoCalendarioI56(cal,esperado.mes);
+  if(estado!=='liberado'&&!GetAprovacaoI68.revisaoPublica(cal,esperado.mes,estado)) throw Error('Este calendário ainda não está disponível para aprovação.');
+  if(GetAprovacaoI68.liberacaoPublica(aprovacaoCompativelNoCalendarioI56(cal,esperado.mes),esperado.mes)!==esperado.liberacao) throw Error(mudou);
   const candidatos=(cal.items||[]).map((item,indice)=>({item,indice})).filter(({item})=>item&&(
     esperado.id ? String(item.itemId||'').trim()===esperado.id :
       !String(item.itemId||'').trim()&&mesDoItemNoCalendarioI56(cal,item)===esperado.mes&&versaoItemAprovacaoI56(cal,item)===esperado.versao));
   if(candidatos.length!==1) throw Error('Não foi possível confirmar a identidade deste conteúdo. Atualize o calendário e abra o conteúdo novamente.');
   const alvo=candidatos[0];
+  if(GetAprovacaoI68.pedidoDoItem(cal,esperado.mes,alvo.item)) throw Error('Este conteúdo está em ajuste. Os demais continuam disponíveis.');
   if(alvo.item.excluido||alvo.item.posted||alvo.item.agendado) throw Error('Este conteúdo saiu da aprovação. Atualize o calendário para conferir sua situação.');
   if(mesDoItemNoCalendarioI56(cal,alvo.item)!==esperado.mes||versaoItemAprovacaoI56(cal,alvo.item)!==esperado.versao) throw Error(mudou);
   return alvo;
@@ -2751,17 +2751,23 @@ function retratoLiberadoDoMesV115(fonte,mes){
 }
 function mesDisponivelClienteV115(mes){
   const st=estadoDoMes(mes);
-  return st==='liberado'||(st==='ajuste_interno'&&itensDoMes(mes).length>0);
+  return st==='liberado'||((st==='ajuste_interno'||GetAprovacaoI68.revisaoPublica(data,mes,st))&&itensDoMes(mes).length>0);
 }
 function projetarCalendarioClienteV115(fonte){
   const origem=fonte||{};
   const projetado={...origem,items:(origem.items||[]).map(i=>({...i})),aprovacaoMeses:{...(origem.aprovacaoMeses||{})}};
   Object.entries(origem.aprovacaoMeses||{}).forEach(([mes,marca])=>{
-    if(String(marca?.status||'')!=='ajuste_interno') return;
+    if(String(marca?.status||'')!=='ajuste_interno'&&!GetAprovacaoI68.revisaoPublica(origem,mes,String(marca?.status||''))) return;
     const retrato=retratoLiberadoDoMesV115(origem,mes);
     if(!retrato?.items?.length) return;
     projetado.items=projetado.items.filter(i=>mesDoItemNoCalendario(origem,i)!==mes)
       .concat(GetAprovacaoI68.aprovacaoNoRetrato(retrato.items.map(i=>({...i,mes:i.mes||mes})),(origem.items||[]).filter(i=>mesDoItemNoCalendario(origem,i)===mes).map(i=>({...i,mes:i.mes||mes})),retrato.publicadoEm||'').map(i=>({...i,__retratoLiberadoV115:true})));
+  });
+  // Pedido pendente é revisão, mesmo que o retrato tenha uma aprovação antiga.
+  // Apenas projeção visual; o histórico persistido permanece intacto.
+  projetado.items=projetado.items.map(item=>{
+    const pedido=GetAprovacaoI68.pedidoDoItem(origem,mesDoItemNoCalendario(origem,item),item);
+    return {...item,__pedidoAjusteI71:pedido?.operationId||'',...(pedido?{apr:false}:{})};
   });
   return projetado;
 }
@@ -2783,8 +2789,8 @@ function renderAprovacaoInterna(){
   const st = estadoAprovacao();
   const r = ROTULO_APROVACAO[st] || ROTULO_APROVACAO.rascunho;
   const info = aprovacaoCompativelDoMes(mesVisivel) || {};
-  const pedidoAjuste = data.pedidoAjusteCliente && data.pedidoAjusteCliente.competencia === mesVisivel
-    ? data.pedidoAjusteCliente : null;
+  const pedidosAjusteI71=GetAprovacaoI68.pedidosPendentes(data,mesVisivel);
+  const pedidoAjuste=pedidosAjusteI71.at(-1)||null;
   const ehEquipe = window.__modoCal === 'equipe';
   atualizarTravaVisualDoMes();
 
@@ -2792,14 +2798,14 @@ function renderAprovacaoInterna(){
   box.style.background = 'rgba(255,255,255,.03)';
   box.style.border = '1px solid ' + r.cor;
   box.innerHTML = `<div style="font-weight:800;color:${r.cor};">${r.txt}</div>
-    ${!ehEquipe && st === 'ajuste_interno' ? '<div style="margin-top:7px;color:#ffe9a8;"><b>Ajuste em andamento.</b> Você continua vendo a última versão enviada; aprovações e novos pedidos ficam pausados até a equipe reenviar.</div>' : ''}
+    ${!ehEquipe && (st === 'ajuste_interno'||pedidosAjusteI71.length) ? '<div style="margin-top:7px;color:#ffe9a8;"><b>Ajuste em andamento.</b> Cada conteúdo tem sua própria revisão. Você pode aprovar ou pedir ajustes nos demais enquanto a equipe trabalha.</div>' : ''}
     ${legado && ehEquipe ? '<div style="margin-top:6px;opacity:.75;">Calendário montado antes do ciclo de revisão existir — segue visível pro cliente, como sempre foi. Ele pode entrar agora no ciclo formal da Amanda pelo botão abaixo.</div>' : ''}
     ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
-    ${pedidoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.78;"><b>Conteúdo:</b> ' + esc(pedidoAjuste.itemNome||'item identificado pelo pedido') + '</div>' : ''}
+    ${ehEquipe&&pedidosAjusteI71.length?'<div style="margin-top:8px"><b>Pedidos por conteúdo</b>'+pedidosAjusteI71.map(p=>'<div style="padding:8px;border:1px solid #655e43;border-radius:6px;margin-top:6px"><b>'+esc(p.itemNome)+'</b><br>'+esc(p.texto)+'</div>').join('')+'</div>':''}
     ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
     ${ehEquipe && st === 'arquivado' ? '<div style="margin-top:7px;opacity:.75;"><b>Calendário arquivado.</b> A consulta deste mês não altera o calendário público atual.</div>' : ''}
     ${ehEquipe && st !== 'arquivado' && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">' + (legado ? 'Enviar calendário legado para a Amanda →' : 'Enviar para Amanda revisar e publicar →') + '</button>' : ''}
-    ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição e o cliente ainda não vê.</div>' : ''}
+    ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição.'+(pedidosAjusteI71.length?' O cliente continua vendo a versão já publicada.':' O cliente ainda não vê este mês.')+'</div>' : ''}
     ${ehEquipe && st === 'aprovado_interno' ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente ainda não recebeu.</b> A Gabi pode reabrir para melhorar; depois precisa enviar novamente para a Amanda aprovar.</div>' : ''}
     ${ehEquipe && st === 'liberado' && !legado ? '<div style="margin-top:6px;opacity:.85;line-height:1.55;"><b>O cliente já recebeu este mês.</b> A edição fica fechada para não mudar silenciosamente o que foi enviado.</div>' : ''}
     ${ehEquipe && st === 'liberado' ? '<button class="btn btn-o" style="margin-top:10px;padding:10px 16px;border-color:#e0c56a;color:#ffe9a8;" onclick="reabrirCalendarioPorPedidoClienteV113(this)">✏️ Já existe pedido do cliente? Reabrir formalmente</button>' : ''}
@@ -3076,13 +3082,13 @@ function aplicarModoCalendario(){
     const st = estadoAprovacao();
     renderFiltroCalendarioI58();
     const grade = document.getElementById('viewGrid');
-    if(st === 'liberado' || (st==='ajuste_interno'&&mesDisponivelClienteV115(mesVisivel))){
+    if(mesDisponivelClienteV115(mesVisivel)){
       const av = document.getElementById('avisoNaoLiberado'); if(av) av.remove();
       let ajuste=document.getElementById('avisoAjusteV115');
       if(st==='ajuste_interno'&&!ajuste&&grade){
         ajuste=document.createElement('div'); ajuste.id='avisoAjusteV115';
         ajuste.style.cssText='padding:12px 14px;margin-bottom:12px;border:1px solid #e0c56a;border-radius:9px;background:#4a3a12;color:#ffe9a8;font-size:12.5px;line-height:1.5;';
-        ajuste.innerHTML='<b>↩️ Ajuste em andamento.</b> O calendário não sumiu: esta é a última versão enviada. A equipe está corrigindo seu pedido; os botões de aprovação voltam quando a nova versão for liberada.';
+        ajuste.innerHTML='<b>↩️ Pedidos de ajuste em andamento.</b> Os demais conteúdos continuam disponíveis para aprovar, editar o texto ou pedir ajuste.';
         grade.parentNode.insertBefore(ajuste,grade);
       }
       if(st!=='ajuste_interno'&&ajuste) ajuste.remove();
@@ -3194,6 +3200,7 @@ window.verMes = function(m){
   const campo=document.getElementById('monthName');
   if(campo) campo.value = textoDoMes(m);
   renderGrid();renderWeek();renderKanban();renderProgress();renderSeletorMes();renderAprovacaoInterna();renderBlocos();
+  window.__checarLiberacaoCalendarioCliente?.();
   avisarMesVisivelAoPai();
 };
 
@@ -3366,20 +3373,23 @@ async function registrarPedidoAjusteClienteNoBancoV113({item,itemIdx,texto,opera
   if(!fb.runTransaction||!fb.db||!fb.docRef||!fb.doc||!fb.serverTimestamp) throw Object.assign(new Error('Conexão transacional indisponível.'),{code:'gs/sem-conexao'});
   if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)) throw Object.assign(new Error('Competência inválida.'),{code:'gs/competencia-invalida'});
   const avisoRef=fb.doc(fb.db,'avisos_do_cliente',operationId);
-  return fb.runTransaction(fb.db,async transacao=>{
-    const snap=await transacao.get(fb.docRef);
+  return GetAprovacaoI68.transacionarPedido(fb,async (transacao,snap)=>{
     if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
     const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
     const mapa={...(servidor.aprovacaoMeses||{})};
-    const pedidoExistente=servidor.pedidoAjusteCliente||{};
+    const pedidos={...(servidor.pedidosAjusteClienteI71||{})};
+    const anterior=servidor.pedidoAjusteCliente||{};
+    if(anterior.operationId&&!pedidos[anterior.operationId])pedidos[anterior.operationId]=anterior;
+    const pedidoExistente=pedidos[operationId];
     const estadoAtual=estadoEfetivoNoCalendarioV113(servidor,competencia);
-    if(pedidoExistente.operationId===operationId&&estadoAtual==='ajuste_interno'){
-      return {marca:mapa[competencia],pedido:pedidoExistente,updatedAt:String(servidor.updatedAt||''),jaConfirmado:true};
+    if(pedidoExistente){
+      if(pedidoExistente.competencia!==competencia||pedidoExistente.texto!==texto||pedidoExistente.itemId!==String(item?.itemId||''))throw Error('O recibo não corresponde a este pedido.');
+      return {marca:mapa[competencia],pedido:pedidoExistente,pedidos,updatedAt:String(servidor.updatedAt||''),jaConfirmado:true};
     }
-    if(estadoAtual==='ajuste_interno') throw Object.assign(new Error('Este mês já possui um ajuste em andamento.'),{code:'gs/ajuste-ja-aberto'});
+    const revisaoPublica=GetAprovacaoI68.revisaoPublica(servidor,competencia,estadoAtual);
     const liberacao=aprovacaoLiberadaExplicitaV113(servidor,competencia);
     if(estadoAtual==='liberado'&&!liberacao) throw Object.assign(new Error('Este calendário antigo exige que a equipe confirme a reabertura uma vez.'),{code:'gs/legado-sem-estado-explicito'});
-    if(estadoAtual!=='liberado'||!liberacao) throw Object.assign(new Error('Este mês deixou de estar liberado.'),{code:'gs/estado-alterado'});
+    if(!liberacao&&!revisaoPublica) throw Object.assign(new Error('O calendário não está disponível para novos pedidos.'),{code:'gs/estado-alterado'});
     conferirAprovacaoI56(servidor,esperado);
     const alvo=localizarItemPedidoAjusteV113(servidor,item,itemIdx,competencia);
     if(!alvo) throw Object.assign(new Error('O conteúdo mudou de identidade ou competência. Recarregue antes de pedir o ajuste.'),{code:'gs/item-divergente'});
@@ -3389,20 +3399,21 @@ async function registrarPedidoAjusteClienteNoBancoV113({item,itemIdx,texto,opera
     const marcaAnterior=mapa[competencia]||{};
     const marca={...marcaAnterior,status:'ajuste_interno',mes:competencia,por:'Cliente',em:agora,
       motivoAjuste:texto,pedidoAjusteOperationId:operationId,pedidoAjusteItemId:itemId,
-      pedidoAjusteItemIdx:alvo.indice,liberadoEmAnterior:String(liberacao.em||''),
-      liberadoPorAnterior:String(liberacao.por||liberacao.enviadoPor||'')};
+      pedidoAjusteItemIdx:alvo.indice,liberadoEmAnterior:String(liberacao?.em||marcaAnterior.liberadoEmAnterior||marcaAnterior.retratoLiberadoV115?.publicadoEm||''),
+      liberadoPorAnterior:String(liberacao?.por||liberacao?.enviadoPor||marcaAnterior.liberadoPorAnterior||marcaAnterior.retratoLiberadoV115?.publicadoPor||'')};
     mapa[competencia]=marca;
     const pedido={schemaVersion:1,operationId,calendarId:slug,competencia,itemId,itemIdx:alvo.indice,
       itemNome,texto,por:'Cliente',autorUid:String(window.__fbAuthUid||''),criadoEm:agora,
       registradoEm:fb.serverTimestamp()};
     const aviso={cliente:slug,clienteNome:window.nomeClienteCalendarioR4(servidor.client||data.client||slug),
       titulo:'✏️ '+window.nomeClienteCalendarioR4(servidor.client||data.client||slug)+' pediu ajuste em: '+itemNome.slice(0,45),
-      descricao:'Conteúdo do dia '+(alvo.item?.day||'?')+' — '+itemNome+'\n\nO que o cliente escreveu:\n"'+texto+'"\n\nO mês voltou formalmente para ajuste. Corrija e envie novamente para a Amanda.',
+      descricao:'Conteúdo do dia '+(alvo.item?.day||'?')+' — '+itemNome+'\n\nO que o cliente escreveu:\n"'+texto+'"\n\nAjuste somente este conteúdo e envie para a Amanda revisar. Os demais pedidos têm acompanhamento próprio.',
       texto,itemNome,paraQuem:'Gabrielle',lido:false,viraDemanda:true,tipo:'ajuste_calendario',
       operationId,competencia,itemId,itemIdx:alvo.indice,criadoEm:agora,registradoEm:fb.serverTimestamp()};
-    transacao.set(fb.docRef,{aprovacaoMeses:mapa,pedidoAjusteCliente:pedido,updatedAt:agora},{merge:true});
+    pedidos[operationId]=pedido;
+    transacao.set(fb.docRef,{aprovacaoMeses:mapa,pedidoAjusteCliente:pedido,pedidosAjusteClienteI71:pedidos,updatedAt:agora},{merge:true});
     transacao.set(avisoRef,aviso);
-    return {marca,pedido:{...pedido,registradoEm:null},updatedAt:agora,jaConfirmado:false};
+    return {marca,pedido:{...pedido,registradoEm:null},pedidos:{...pedidos,[operationId]:{...pedido,registradoEm:null}},updatedAt:agora,jaConfirmado:false};
   });
 }
 let pedidoAjusteClienteEmCursoV113=false;
@@ -3423,18 +3434,19 @@ window.enviarObsDoCliente = async function(){
     const confirmado=await registrarPedidoAjusteClienteNoBancoV113({item,itemIdx:idx,texto:txt,operationId,esperado:aprovacaoModalI56?.esperado});
     data.aprovacaoMeses={...(data.aprovacaoMeses||{}),[confirmado.pedido.competencia]:confirmado.marca};
     data.pedidoAjusteCliente=confirmado.pedido;
+    data.pedidosAjusteClienteI71=confirmado.pedidos;
     data.updatedAt=confirmado.updatedAt||data.updatedAt;
     notificarAlteracaoPortalI68();closeModal();renderAll_semSalvar();renderMeta();renderAprovacaoInterna();
     avisarTela(confirmado.jaConfirmado
       ? 'Este pedido já estava confirmado. A Gabi continua com o ajuste.'
-      : 'Pedido confirmado — o mês voltou para a Gabi ajustar e reenviar.');
+      : 'Pedido confirmado para este conteúdo. Você pode continuar revisando os demais.');
   }catch(e){
     console.error('Falha ao registrar o pedido de ajuste V113:',e);
     const codigo=String(e?.code||'');
     const mensagem=codigo==='gs/legado-sem-estado-explicito'
       ? 'Este calendário antigo precisa ser reaberto pela equipe. Seu texto não foi perdido desta tela; avise a Get Started para usar “Reabrir pedido do cliente”.'
       : codigo==='gs/ajuste-ja-aberto'
-        ? 'Já existe um ajuste em andamento neste mês. A Gabi precisa concluir e reenviar antes de outro pedido.'
+        ? 'Este conteúdo já está em ajuste. Você pode enviar pedidos nos outros conteúdos.'
         : 'Não consegui confirmar o ajuste no servidor. Nada foi reaberto nem anunciado como concluído; tente novamente.';
     avisarTela(mensagem,'erro');
   }finally{
@@ -3582,7 +3594,7 @@ function renderFiltroCalendarioI58(){
   box.hidden=!disponivel||embutido;vazio.hidden=!disponivel;
   if(!disponivel)return;
   const itens=itensDoMes(mesVisivel),filtro=filtroCalendarioI58();
-  const html=controleVisaoI58(itens,filtro,'selecionarFiltroCalendarioI58',!clienteEmConsultaDeAjusteV115());
+  const html=controleVisaoI58(itens,filtro,'selecionarFiltroCalendarioI58',!clienteEmConsultaDeAjusteV115(null));
   if(box.innerHTML!==html)box.innerHTML=html;
   const mensagem=mensagemSelecaoVaziaI58(itens,filtro);vazio.textContent=mensagem;vazio.hidden=!mensagem;
 }
@@ -3681,7 +3693,12 @@ function renderKanban(){
     '</div>';
 }
 
-function clienteEmConsultaDeAjusteV115(){return window.__modoCal==='cliente'&&estadoAprovacao()==='ajuste_interno';}
+function clienteEmConsultaDeAjusteV115(item=data.items?.[editIdx]){
+  if(window.__modoCal!=='cliente')return false;
+  const st=estadoAprovacao();
+  if(GetAprovacaoI68.revisaoPublica(data,mesVisivel,st))return !!GetAprovacaoI68.pedidoDoItem(data,mesVisivel,item);
+  return st==='ajuste_interno';
+}
 function quickApr(i){if(window.__modoCal!=='equipe')return false;if(clienteEmConsultaDeAjusteV115()){avisarTela('Aprovações ficam pausadas enquanto a equipe corrige o pedido.','erro');return;}if(exigirRetiradaAntesDeEditar())return;data.items[i].apr=true;renderAll();}
 function quickPost(i){if(window.__modoCal!=='equipe')return false;if(clienteEmConsultaDeAjusteV115())return;if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=true;renderAll();}
 function quickUnpost(i){if(window.__modoCal!=='equipe')return false;if(clienteEmConsultaDeAjusteV115())return;if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
@@ -3716,7 +3733,7 @@ function openModal(day){if(window.__modoCal==='cliente')return;if(exigirRetirada
 function resumoClienteItemV126(it){
   const titulo=esc(String(it?.name||'Conteúdo'));
   const revisao=it?.revisaoPendenteI68&&!it.apr?'<div class="rcBloco"><b>Nova conferência</b>Conteúdo revisado. Você pode editar o texto, pedir outro ajuste ou aprovar.</div>':'';
-  const editar=!clienteEmConsultaDeAjusteV115()&&!itemJaNaEsteira(it)?'<button type="button" class="btn btn-o" style="margin-top:14px" onclick="abrirTextosClienteI68()">✍️ Editar roteiro ou legenda</button>':'';
+  const editar=!clienteEmConsultaDeAjusteV115(it)&&!itemJaNaEsteira(it)?'<button type="button" class="btn btn-o" style="margin-top:14px" onclick="abrirTextosClienteI68()">✍️ Editar roteiro ou legenda</button>':'';
   const dia=Number(it?.day)||'';
   const mes=mesVisivel?textoDoMes(mesVisivel):String(data?.month||'');
   const obs=String(it?.obs||'').trim();
@@ -3742,7 +3759,7 @@ function aplicarModoClienteItemV126(it){
 }
 window.resumoClienteItemV126=resumoClienteItemV126;
 window.aplicarModoClienteItemV126=aplicarModoClienteItemV126;
-function openEdit(i){guardarTextoClienteI68();editorTextoClienteI68=null;document.getElementById('edicaoTextosClienteI68').hidden=true;const somenteConsulta=edicaoBloqueadaPorRevisao()||clienteEmConsultaDeAjusteV115();aplicarModoConsultaItem(false);editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent=somenteConsulta?'Consultar conteúdo completo':'Editar conteúdo';
+function openEdit(i){guardarTextoClienteI68();editorTextoClienteI68=null;document.getElementById('edicaoTextosClienteI68').hidden=true;const somenteConsulta=edicaoBloqueadaPorRevisao()||clienteEmConsultaDeAjusteV115(data.items[i]);aplicarModoConsultaItem(false);editIdx=i;const it=data.items[i];document.getElementById('mTitle').textContent=somenteConsulta?'Consultar conteúdo completo':'Editar conteúdo';
   document.getElementById('mDay').max=String(diasDoMes());document.getElementById('mDay').value=it.day;document.getElementById('mName').value=it.name;document.getElementById('mDesc').value=it.desc;
   const roteiroDispensadoEditar=document.getElementById('mRoteiroDispensado');if(roteiroDispensadoEditar)roteiroDispensadoEditar.checked=it.roteiroDispensado===true;
   document.getElementById('mLegenda').value=it.legenda||'';
@@ -4217,14 +4234,14 @@ function notificarAlteracaoPortalI68(){if(window.__modoCal==='cliente')window.pa
 let observacaoClienteEmCursoI35=false,contextoObservacaoClienteI35=null;
 const textosObservacaoClienteI35=new Map();
 function prepararObservacaoClienteI35(it){
-  const cliente=window.__modoCal==='cliente',pausado=clienteEmConsultaDeAjusteV115(),travado=itemJaNaEsteira(it);
+  const cliente=window.__modoCal==='cliente',pausado=clienteEmConsultaDeAjusteV115(it),travado=itemJaNaEsteira(it);
   const aviso=document.getElementById('orientacaoClienteI35'),box=document.getElementById('observacaoClienteI35');
   aviso.hidden=!cliente||travado;box.hidden=!pausado||travado;
   if(cliente&&!travado){
-    document.getElementById('orientacaoTextoI35').textContent=pausado?'Ajuste em andamento. Esta é a última versão enviada. A aprovação volta quando a equipe publicar a revisão; você pode acrescentar uma observação abaixo.':'Confira o conteúdo e use os botões abaixo para aprovar ou pedir um ajuste.';
+    document.getElementById('orientacaoTextoI35').textContent=pausado?'Este conteúdo está em ajuste. Você pode acrescentar uma observação; os outros conteúdos continuam disponíveis.':'Confira o conteúdo e use os botões abaixo para aprovar ou pedir um ajuste.';
     const salto=document.getElementById('irAcoesClienteI35');salto.textContent=pausado?'Ir para observação':'Ir para aprovação ou ajuste';salto.onclick=()=>document.getElementById(pausado?'observacaoClienteI35':'campoObsCliente').scrollIntoView({block:'start',behavior:'smooth'});
   }
-  contextoObservacaoClienteI35=pausado&&!travado?{cliente:String(window.__clienteId||''),mes:String(mesVisivel||''),itemId:String(it?.itemId||''),revisao:String(data.aprovacaoMeses?.[mesVisivel]?.em||''),item:{...it}}:null;
+  contextoObservacaoClienteI35=pausado&&!travado?{cliente:String(window.__clienteId||''),mes:String(mesVisivel||''),itemId:String(it?.itemId||''),revisao:GetAprovacaoI68.liberacaoPublica(data.aprovacaoMeses?.[mesVisivel],mesVisivel),item:{...it}}:null;
   const campo=document.getElementById('textoObservacaoClienteI35'),btn=document.getElementById('enviarObservacaoClienteI35');
   if(contextoObservacaoClienteI35){const c=contextoObservacaoClienteI35;c.chave=[window.__fbAuthUid,c.cliente,c.mes,c.itemId,c.revisao].join('|');campo.value=textosObservacaoClienteI35.get(c.chave)||'';}
   campo.oninput=()=>{if(contextoObservacaoClienteI35)textosObservacaoClienteI35.set(contextoObservacaoClienteI35.chave,campo.value);};
@@ -4245,7 +4262,7 @@ async function registrarObservacaoClienteI35({cliente,mes,itemId,revisao,texto})
     const existente=comments.find(c=>c.id===operationId);
     if(existente){if(existente.autorUid!==uid||existente.text!==texto||existente.itemId!==itemId||existente.mes!==mes)throw Error('O recibo mudou. Confira os comentários antes de reenviar.');return{registro:existente,jaConfirmado:true};}
     const marca=servidor.aprovacaoMeses?.[mes];
-    if(estadoEfetivoNoCalendarioV113(servidor,mes)!=='ajuste_interno'||String(marca?.em||'')!==revisao)throw Error('A revisão deste mês mudou. Seu texto continua nesta tela; reabra o conteúdo para conferir o estado atual.');
+    if(!['ajuste_interno','aguardando_interna','aprovado_interno'].includes(estadoEfetivoNoCalendarioV113(servidor,mes))||GetAprovacaoI68.liberacaoPublica(marca,mes)!==revisao)throw Error('A revisão deste mês mudou. Seu texto continua nesta tela; reabra o conteúdo para conferir o estado atual.');
     const retrato=retratoLiberadoDoMesV115(servidor,mes),alvos=(retrato?.items||[]).filter(i=>i&&i.itemId===itemId&&!i.excluido&&mesDoItemNoCalendario(servidor,{...i,mes:i.mes||mes})===mes);
     if(alvos.length!==1||itemJaNaEsteira(alvos[0]))throw Error('O conteúdo não está disponível para observação nesta versão. Confira com a equipe.');
     const item=alvos[0],agora=new Date().toISOString(),nome=window.nomeClienteCalendarioR4(servidor.client||cliente);

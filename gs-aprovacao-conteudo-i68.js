@@ -56,18 +56,85 @@
     });
     return resultado;
   }
-  function prepararReenvio(cal,mes,em,mesDoItem=(c,it)=>it.mes||c.mesLegado) {
-    const p=cal.pedidoAjusteCliente;
-    if(!p?.operationId || p.competencia!==mes)return cal;
-    const alvos=(cal.items||[]).map((item,indice)=>({item,indice})).filter(({item,indice})=>
-      item&&mesDoItem(cal,item)===mes&&
-      (p.itemId?String(item.itemId||'')===p.itemId:indice===p.itemIdx&&String(item.name||'')===p.itemNome));
-    if(alvos.length!==1)throw Error('O conteúdo do pedido de ajuste precisa ser identificado antes do reenvio.');
-    const {item,indice}=alvos[0];
-    if(item.excluido||item.pedidoRevisadoI68===p.operationId)return cal;
-    const items=cal.items.slice();
-    items[indice]=revisar(item,item,{por:'Equipe',em,forcar:true,pedido:p.operationId});
-    return {...cal,items};
+  // I71: o mês coordena o trabalho interno; cada pedido conserva seu alvo.
+  function pedidosPendentes(cal,mes) {
+    const marca=cal?.aprovacaoMeses?.[mes]||{};
+    if(!['ajuste_interno','aguardando_interna','aprovado_interno'].includes(marca.status))return [];
+    const publicado=String(marca.retratoLiberadoV115?.publicadoEm||marca.liberadoEmAnterior||'');
+    const todos={...(cal.pedidosAjusteClienteI71||{})},anterior=cal.pedidoAjusteCliente;
+    if(anterior?.operationId&&!todos[anterior.operationId])todos[anterior.operationId]=anterior;
+    return Object.values(todos).filter(p=>p?.operationId&&p.competencia===mes&&
+      (!publicado||String(p.criadoEm||'')>publicado)).sort((a,b)=>String(a.criadoEm).localeCompare(String(b.criadoEm)));
   }
-  root.GetAprovacaoI68=Object.freeze({campos,marcas,assinatura,mudou,revisar,aprovacaoNoRetrato,prepararReenvio});
+  function pedidoDoItem(cal,mes,item) {
+    return pedidosPendentes(cal,mes).filter(p=>{
+      if(Object.prototype.hasOwnProperty.call(item||{},'__pedidoAjusteI71'))return item.__pedidoAjusteI71===p.operationId;
+      if(p.itemId)return String(item?.itemId||'')===p.itemId;
+      const itens=cal?.items||[],alvo=itens[p.itemIdx];
+      if(alvo===item&&String(alvo?.name||'')===p.itemNome)return true;
+      // Legado: nome repetido não identifica dois conteúdos como um só.
+      // O retrato mantém o roteiro anterior enquanto a equipe o corrige.
+      const retrato=cal?.aprovacaoMeses?.[mes]?.retratoLiberadoV115?.items||[];
+      const candidatos=itens.filter(i=>String(i?.name||'')===p.itemNome&&(i.mes||cal.mesLegado)===mes);
+      if(candidatos.length===1){
+        const unico=candidatos[0];
+        return item===unico||(!item?.itemId&&String(item?.name||'')===p.itemNome)||
+          (!!unico.itemId&&unico.itemId===item?.itemId);
+      }
+      if(!alvo||String(alvo.name||'')!==p.itemNome)return false;
+      const originais=retrato.filter(i=>String(i.name||'')===p.itemNome&&Number(i.day)===Number(alvo.day));
+      const versao=originais.length===1?originais[0]:alvo;
+      return !item?.itemId&&assinatura(item)===assinatura(versao)&&
+        candidatos.filter(i=>Number(i.day)===Number(versao.day)).length===1;
+    }).at(-1)||null;
+  }
+  function revisaoPublica(cal,mes,estado) {
+    const marca=cal?.aprovacaoMeses?.[mes]||{};
+    return ['ajuste_interno','aguardando_interna','aprovado_interno'].includes(estado)&&
+      !!(marca.retratoLiberadoV115?.items?.length||marca.liberadoEmAnterior)&&pedidosPendentes(cal,mes).length>0;
+  }
+  function liberacaoPublica(marca,mes) {
+    const m=marca||{};
+    return JSON.stringify([mes,String(m.retratoLiberadoV115?.publicadoEm||
+      (m.status==='liberado'?m.em:m.liberadoEmAnterior)||''),
+      String(m.retratoLiberadoV115?.publicadoPor||(m.status==='liberado'?m.por:m.liberadoPorAnterior)||'')]);
+  }
+  function versaoPublica(item,mes) {
+    const it={...item,mes};
+    return JSON.stringify([String(it.itemId||''),campos.map(k=>valor(it,k)),!!it.excluido,!!it.posted,!!it.agendado]);
+  }
+  function prepararReenvio(cal,mes,em,mesDoItem=(c,it)=>it.mes||c.mesLegado) {
+    let items=cal.items,alterou=false;
+    for(const p of pedidosPendentes(cal,mes)){
+      const alvos=(items||[]).map((item,indice)=>({item,indice})).filter(({item,indice})=>
+        item&&mesDoItem(cal,item)===mes&&
+        (p.itemId?String(item.itemId||'')===p.itemId:indice===p.itemIdx&&String(item.name||'')===p.itemNome));
+      if(alvos.length!==1)throw Error('O conteúdo do pedido de ajuste precisa ser identificado antes do reenvio.');
+      const {item,indice}=alvos[0];
+      if(item.excluido||item.pedidoRevisadoI68===p.operationId)continue;
+      if(!alterou){items=items.slice();alterou=true;}
+      items[indice]=revisar(item,item,{por:'Equipe',em,forcar:true,pedido:p.operationId});
+    }
+    return alterou?{...cal,items}:cal;
+  }
+  // Duas abas podem ler a mesma versão. As Rules recusam sobrescrever
+  // o primeiro pedido; só repetir após comprovar que a fonte mudou.
+  async function transacionarPedido(fb,executar) {
+    const revisao=cal=>JSON.stringify([cal?.updatedAt||'',cal?.pedidoAjusteCliente?.operationId||'',
+      Object.keys(cal?.pedidosAjusteClienteI71||{}).sort()]);
+    for(let tentativa=0;;tentativa++){
+      let lida=null;
+      try{return await fb.runTransaction(fb.db,async tx=>{
+        const snap=await tx.get(fb.docRef);
+        lida=snap.exists()?revisao(snap.data()):null;
+        return executar(tx,snap);
+      });}catch(e){
+        if(tentativa>=2||lida===null||!String(e?.code||'').includes('permission-denied')||!fb.getDocFromServer)throw e;
+        const atual=await fb.getDocFromServer(fb.docRef);
+        if(!atual.exists()||revisao(atual.data())===lida)throw e;
+      }
+    }
+  }
+  root.GetAprovacaoI68=Object.freeze({campos,marcas,assinatura,mudou,revisar,aprovacaoNoRetrato,prepararReenvio,
+    pedidosPendentes,pedidoDoItem,revisaoPublica,liberacaoPublica,versaoPublica,transacionarPedido});
 })(typeof window==='undefined'?globalThis:window);

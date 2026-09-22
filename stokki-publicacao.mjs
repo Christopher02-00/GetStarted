@@ -1,3 +1,4 @@
+import {legendaUtilizavelI79,exigirLegendaI79,legendaExternaAprovadaI79} from './gs-legenda-qualidade-i79.mjs?v=i79-1';
 /* Stokki I30. Fonte única: postagens. Projeções não escrevem; o adaptador
    transacional do Escritório confirma sessão, vídeo, identidade e recibo. */
 export const REDES=Object.freeze([
@@ -51,7 +52,7 @@ export function prepararLegendas(p,selecionadas,textos,por,em){
   const patch={};
   for(const r of REDES){
     const texto=String(textos[r.id]||'').trim();
-    if(selecionadas.includes(r.id))exigir(texto.length>0&&texto.length<=20000,`Preencha a legenda de ${r.nome} (até 20 mil caracteres).`);
+    if(selecionadas.includes(r.id))exigir(legendaUtilizavelI79(texto),`Preencha a legenda de ${r.nome} (até 20 mil caracteres).`);
     patch[r.campo]=selecionadas.includes(r.id)?texto:'';
   }
   patch.legenda=patch[escolhidas[0].campo];
@@ -95,6 +96,7 @@ export function alterar(p,acao,ctx){
   const patch={};
   switch(acao.tipo){
     case 'agendar':
+      if(!legendaExternaAprovadaI79(p))exigirLegendaI79(p[REDES.find(x=>x.id===acao.rede).campo]);
       exigir(!r.publicadaEm,'Desfaça a confirmação equivocada antes de reagendar.');
       exigir(dataHoraValida(acao.data,acao.hora),'Informe data e horário válidos. Horários são de Brasília.');
       r.data=acao.data;r.hora=acao.hora;r.checks=[];r.conferidaEm='';r.conferidaPor='';break;
@@ -122,7 +124,7 @@ export function alterar(p,acao,ctx){
     case 'restaurar':r.retirada=false;r.data='';r.hora='';break;
     case 'adicionar':
     case 'corrigir_legenda': {
-      const texto=String(acao.texto||'').trim();exigir(texto&&texto.length<=20000,'Informe a legenda correta, até 20 mil caracteres.');
+      const texto=String(acao.texto||'').trim();exigirLegendaI79(texto);
       const def=REDES.find(x=>x.id===acao.rede);patch[def.campo]=texto;
       if(s.selecionadas[0]===acao.rede)patch.legenda=texto;
       r.checks=[];r.conferidaEm='';r.conferidaPor='';break;
@@ -297,7 +299,17 @@ export function criarOperacao(api){
   async function carregar(){const g=++geracao,c=contexto();try{const novos=await api.listar();if(g!==geracao||JSON.stringify(c)!==JSON.stringify(contexto()))return;posts=novos;erro='';}
     catch(e){if(g!==geracao)return;erro='Não foi possível conferir as publicações da Stokki. '+e.message;}
     avisar();desenhar();}
-  return {abrir,carregar,receber(novos){posts=novos;erro='';avisar();
+  function incorporarReparoI79(p){
+    if(!usaFluxo(p)||ocupado)return;
+    const anterior=retratos.get(p.id);if(!anterior)return;
+    const fatos=x=>[x.cliente,x.videoId,x.calendarItemId,x.calendarCompetencia,x.calendarClienteSlug,x.status,x.excluido,x.dataAgendada,x.horaAgendada,x.publicacaoStokki?.selecionadas,Object.fromEntries(Object.entries(x.publicacaoStokki?.redes||{}).map(([k,r])=>[k,[r.data,r.hora,r.retirada,r.publicadaEm,r.publicadaPor,r.url]]))];
+    if(jsonEstavel(fatos(p))!==jsonEstavel(fatos(anterior)))return;
+    posts=posts.map(v=>v.id===p.id?cp(p):v);retratos.set(p.id,cp(p));
+    const card=[...painel.querySelectorAll('[data-stokki-post]')].find(el=>el.dataset.stokkiPost===p.id);
+    for(const def of REDES){const campo=card?.querySelector(`[data-stokki-rede="${def.id}"] [data-stokki-legenda]`);if(campo&&campo.value===String(anterior[def.campo]||''))campo.value=p[def.campo]||'';}
+    if(!posts.some(v=>retratos.has(v.id)&&assinatura(v)!==assinatura(retratos.get(v.id))))painel.querySelector('[data-stokki-feedback]').textContent='Legenda atualizada. Sua data digitada foi preservada.';
+  }
+  return {abrir,carregar,incorporarReparoI79,receber(novos){posts=novos;erro='';avisar();
       if(!timer)timer=setInterval(avisar,30000); // Só relógio/projeção; zero gravações automáticas.
       if(painel?.isConnected&&!ocupado&&novos.some(p=>retratos.has(p.id)&&assinatura(p)!==assinatura(retratos.get(p.id)))){
         const feedback=painel.querySelector('[data-stokki-feedback]');

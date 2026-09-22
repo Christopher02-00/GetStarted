@@ -3207,7 +3207,7 @@ window.abrirMesCalendarioEquipe=function(){
   window.verMes(m);
 };
 function avisarMesVisivelAoPai(){
-  try{ if(window.parent!==window) window.parent.postMessage({tipo:'gs-calendario-mes',cliente:window.__clienteId||'',mes:mesVisivel||''},window.location.origin); }catch(e){}
+  try{ if(window.parent!==window) window.parent.postMessage({tipo:'gs-calendario-mes',cliente:window.__clienteId||'',mes:mesVisivel||'',filtro:filtroCalendarioI58()},window.location.origin); }catch(e){}
 }
 window.verMes = function(m){
   /* Trocar de mês é só mudar a VISTA. Não reescreve o rótulo do
@@ -3607,7 +3607,7 @@ function itensDaVistaCalendarioI58(){
 }
 function montarGravacoesCalendarioI61(){
   const el=document.getElementById('gravacoesCalendarioI61');if(!el)return;
-  const embutido=window.parent!==window&&new URLSearchParams(location.search).get('visaoPortalI58')==='1';
+  const embutido=window.parent!==window&&new URLSearchParams(location.search).get('visaoPortalI58')==='1'&&new URLSearchParams(location.search).get('portalUnificadoI81')!=='1';
   const disponivel=carregado&&window.__fb&&!embutido&&(window.__modoCal==='equipe'||mesDisponivelClienteV115(mesVisivel));
   el.hidden=!disponivel;
   if(!disponivel){GetGravacoesI61.stopReader(el);el.replaceChildren();return;}
@@ -3619,7 +3619,7 @@ function renderFiltroCalendarioI58(){
   const box=document.getElementById('filtroCalendarioI58'),vazio=document.getElementById('vazioCalendarioI58');
   if(!box||!vazio)return;
   const disponivel=window.__modoCal==='cliente'&&carregado&&mesDisponivelClienteV115(mesVisivel);
-  const embutido=window.parent!==window&&new URLSearchParams(location.search).get('visaoPortalI58')==='1';
+  const embutido=window.parent!==window&&new URLSearchParams(location.search).get('visaoPortalI58')==='1'&&new URLSearchParams(location.search).get('portalUnificadoI81')!=='1';
   box.hidden=!disponivel||embutido;vazio.hidden=!disponivel;
   if(!disponivel)return;
   const itens=itensDoMes(mesVisivel),filtro=filtroCalendarioI58();
@@ -3632,6 +3632,7 @@ window.selecionarFiltroCalendarioI58=function(valor){
   filtrosCalendarioI58.set(String(window.__clienteId||'')+'|'+mesVisivel,normalizarFiltroI58(valor));
   renderGrid();renderWeek();renderKanban();
   try{const url=new URL(location.href);url.searchParams.set('filtroI58',filtroCalendarioI58());history.replaceState({},'',url);}catch(e){}
+  avisarMesVisivelAoPai();
 };
 window.addEventListener('message',event=>{
   const d=event.data;
@@ -3640,6 +3641,26 @@ window.addEventListener('message',event=>{
     d.mes!==String(mesVisivel||window.__mesSolicitadoCal||''))return;
   filtrosCalendarioI58.set(String(d.cliente)+'|'+d.mes,d.filtro);
   if(window.__modoCal==='cliente'&&carregado&&mesDisponivelClienteV115(mesVisivel)){renderGrid();renderWeek();renderKanban();}
+});
+
+// I81: a intenção visual espera o leitor; não cria registros nem troca a competência.
+let observadorGravacoesI81=null;
+window.addEventListener('message',event=>{
+  const d=event.data;
+  if(window.parent===window||event.source!==window.parent||event.origin!==location.origin||d?.tipo!=='gs-gravacoes-abrir-i81'||d.cliente!==window.__clienteId||d.mes!==String(mesVisivel||'')||window.__modoCal!=='cliente')return;
+  observadorGravacoesI81?.disconnect();observadorGravacoesI81=null;
+  const box=document.getElementById('gravacoesCalendarioI61');if(!box)return;
+  const abrir=()=>{
+    if(!box.isConnected||box.hidden||d.cliente!==window.__clienteId||d.mes!==String(mesVisivel||'')){
+      observadorGravacoesI81?.disconnect();observadorGravacoesI81=null;return;
+    }
+    const botao=box.querySelector('[data-filter="a_gravar"]');if(!botao)return;
+    observadorGravacoesI81?.disconnect();observadorGravacoesI81=null;
+    botao.click();box.scrollIntoView({block:'start'});
+    window.parent.postMessage({tipo:'gs-gravacoes-abertas-i81',cliente:d.cliente,mes:d.mes},location.origin);
+  };
+  observadorGravacoesI81=new MutationObserver(abrir);
+  observadorGravacoesI81.observe(box,{childList:true,subtree:true});abrir();
 });
 
 function renderGrid(){
@@ -3678,7 +3699,7 @@ function renderWeek(){
   weeks.forEach((w,wi)=>{
     const its=itensDaVistaCalendarioI58().filter(i=>i.day>=w[0]&&i.day<=w[1]).sort((a,b)=>a.day-b.day);
     html+='<div class="weekblock"><div class="weekhead"><div class="wn">Semana '+(wi+1)+'</div><div class="wl">dias '+w[0]+'–'+w[1]+' · '+its.length+' conteúdo(s)</div></div>';
-    if(!its.length) html+='<div style="color:var(--muted);font-size:11px;padding:6px 2px;">Sem conteúdo — clique numa data na grade pra adicionar.</div>';
+    if(!its.length) html+='<div style="color:var(--muted);font-size:11px;padding:6px 2px;">'+(window.__modoCal==='cliente'?'Nenhum conteúdo nesta semana para o filtro escolhido.':'Sem conteúdo — clique numa data na grade pra adicionar.')+'</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
       const hasScript=(it.desc||'').trim().length>0;
       const hasLegenda=legendaUtilizavelI79(it.legenda);
@@ -3774,14 +3795,13 @@ function resumoClienteItemV126(it){
   }
   const legendaVisivel=legendas.join('')||'<div class="rcBloco rcLegenda"><b>Legenda da publicação</b>A equipe ainda não disponibilizou uma legenda para este conteúdo.</div>';
   const refSeguro=normalizeUrl(it?.ref);
-  const detalhes=[];
-  if(roteiro) detalhes.push('<div class="rcBloco"><b>Ideia e roteiro</b>'+esc(roteiro)+'</div>');
-
+  const roteiroVisivel=roteiro?'<div class="rcBloco rcRoteiro"><b>Ideia e roteiro</b>'+esc(roteiro)+'</div>':'<div class="rcBloco"><b>Ideia e roteiro</b>'+(it?.roteiroDispensado===true?'Este conteúdo não precisa de roteiro.':'A equipe ainda não disponibilizou o roteiro deste conteúdo.')+'</div>';
   return '<div class="rcTitulo">'+titulo+'</div>'+
-    '<div class="rcMeta">'+(dia?'Dia '+dia+' · ':'')+esc(mes)+'</div>'+legendaVisivel+
-    (obs?'<div class="rcBloco"><b>Observação importante</b>'+esc(obs)+'</div>':'')+
+    '<div class="rcMeta">'+(dia?'Dia '+dia+' · ':'')+esc(mes)+'</div>'+
+    (obs?'<div class="rcBloco"><b>Preparação para a gravação</b>'+esc(obs)+'</div>':'')+
     (refSeguro?'<a class="rcRef" href="'+escAttr(refSeguro)+'" target="_blank" rel="noopener noreferrer">🔗 Abrir referência em nova aba</a>':(it?.ref?'<div class="rcBloco" style="color:#e07a7a;"><b>Referência</b>O link está inválido. Peça à equipe para substituí-lo.</div>':''))+
-    (detalhes.length?'<details><summary>Ver roteiro completo</summary>'+detalhes.join('')+'</details>':'')+revisao+editar;
+    roteiroVisivel+legendaVisivel+revisao+editar;
+
 }
 function aplicarModoClienteItemV126(it){
   const modal=document.querySelector('#overlay .modal');
@@ -3850,7 +3870,9 @@ function openEdit(i){guardarTextoClienteI68();editorTextoClienteI68=null;documen
   updateRefLink();
   aplicarModoClienteItemV126(it);
   prepararObservacaoClienteI35(it);
-  document.getElementById('overlay').classList.add('show');iniciarFormularioI35(it);capturarModalAprovacaoI56(it);}
+  document.getElementById('overlay').classList.add('show');iniciarFormularioI35(it);capturarModalAprovacaoI56(it);
+  if(window.__modoCal==='cliente')window.parent?.postMessage({tipo:'gs-conteudo-aberto-i81',cliente:String(window.__clienteId||''),mes:mesVisivel},location.origin);
+}
 function closeModal(){if(salvandoTextoClienteI68)return;window.__pedidoLegendaI73=null;guardarTextoClienteI68();editorTextoClienteI68=null;document.getElementById('edicaoTextosClienteI68').hidden=true;window.parent?.postMessage({tipo:'gs-conteudo-fechado-i68',cliente:String(window.__clienteId||'')},location.origin);aprovacaoModalI56=null;guardarFormularioI35();formularioI35=null;document.getElementById('overlay').classList.remove('show');document.querySelector('#overlay .modal')?.classList.remove('modo-cliente-simples');aplicarModoConsultaItem(false);}
 function normalizarSlugLegendaV114(valor){
   return String(valor||'').trim().toLowerCase();

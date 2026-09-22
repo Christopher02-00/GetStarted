@@ -162,8 +162,8 @@
     <div class="sub">Esse portal é individual — cada empresa acessa só o próprio link.</div>
     <div class="card" id="cardAcessoInvalido">
       <div style="text-align:center;padding:10px 0;">
-        <div style="font-size:14px;font-weight:700;margin-bottom:8px;">Link não reconhecido</div>
-        <div class="sub" style="margin-bottom:0;">Pede pra sua agência o link de acesso certinho — ele já vem pronto, sem precisar selecionar nada.</div>
+        <div style="font-size:14px;font-weight:700;margin-bottom:8px;">Confirmando seu acesso…</div>
+        <div class="sub" style="margin-bottom:0;">Aguarde enquanto abrimos o portal da sua empresa.</div>
       </div>
     </div>
   </div>
@@ -1079,7 +1079,20 @@
      leitura, em tempo real, sem o cliente precisar perguntar nada. */
   const gravacoesPortalStoreI61=GetGravacoesI61.store({fb:{db,doc,getDoc,getDocs,collection,onSnapshot,query,where},uid:()=>auth.currentUser?.uid||'',canEdit:()=>false});
   const chamadaGravacoesI61='<div class="card"><h2>Gravações e preparação</h2><div class="sub">Veja o que falta ser gravado, a organização de cada gravação e o que você precisa separar.</div><button class="btn" onclick="abrirGravacoesClienteI61()">Ver gravações do calendário</button></div>';
-  window.abrirGravacoesClienteI61=function(){setTab('calendario',document.querySelector('[data-tab="calendario"]'));const box=document.getElementById('gravacoesPortalI61');if(box){box.querySelector('[data-filter="a_gravar"]')?.click();box.scrollIntoView({block:'start',behavior:'smooth'});}};
+  let pedidoGravacoesI81=null;
+  function enviarPedidoGravacoesI81(){
+    const quadro=document.getElementById('quadroCalendario'),mes=String(window.__mesPortal||'');
+    if(!pedidoGravacoesI81||pedidoGravacoesI81.cliente!==clienteAtual?.slug||!quadro?.contentWindow||!mes)return;
+    if(pedidoGravacoesI81.mes&&pedidoGravacoesI81.mes!==mes){pedidoGravacoesI81=null;return;}
+    pedidoGravacoesI81.mes=mes;
+    quadro.contentWindow.postMessage({tipo:'gs-gravacoes-abrir-i81',cliente:pedidoGravacoesI81.cliente,mes},location.origin);
+  }
+  window.abrirGravacoesClienteI61=function(){
+    pedidoGravacoesI81={cliente:String(clienteAtual?.slug||''),mes:''};
+    setTab('calendario',document.querySelector('[data-tab="calendario"]'));
+    enviarPedidoGravacoesI81();
+    document.getElementById('quadroCalendario')?.scrollIntoView({block:'start',behavior:'smooth'});
+  };
   function montarGravacoesPortalI61(){
     const ctx=contextoFiltroPortalI58,el=document.getElementById('gravacoesPortalI61');
     if(el&&ctx&&ctx.cliente===clienteAtual?.slug)GetGravacoesI61.reader(el,{cliente:ctx.cliente,mes:ctx.mes,itens:ctx.itens,store:gravacoesPortalStoreI61});
@@ -1189,18 +1202,32 @@ function mensagemSelecaoVaziaI58(itens,filtro){
     aplicarFiltroPortalI58();
   };
 
-  // O quadro avisa seu mês; a conferência da lista continua sendo manual.
+  // I81: o quadro é a única vista de conteúdos; o Portal acompanha só a rota.
+  let posicaoAntesConteudoI81=null;
   window.addEventListener('message',event=>{
     const quadro=document.getElementById('quadroCalendario'),d=event.data;
-    if(!quadro||event.origin!==location.origin||event.source!==quadro.contentWindow||
-      d?.tipo!=='gs-calendario-mes'||d.cliente!==clienteAtual?.slug||
-      !/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(d.mes||''))||d.mes<'2026-07'||d.mes===window.__mesPortal)return;
+    if(!quadro||event.origin!==location.origin||event.source!==quadro.contentWindow||d?.cliente!==clienteAtual?.slug)return;
+    if(d.tipo==='gs-gravacoes-abertas-i81'){
+      if(pedidoGravacoesI81?.cliente===d.cliente&&pedidoGravacoesI81.mes===d.mes)pedidoGravacoesI81=null;
+      return;
+    }
+    if(d.tipo==='gs-conteudo-aberto-i81'){
+      if(!posicaoAntesConteudoI81)posicaoAntesConteudoI81={quadro,y:window.scrollY};
+      quadro.scrollIntoView({block:'start'});return;
+    }
+    if(d.tipo==='gs-conteudo-fechado-i68'){
+      const anterior=posicaoAntesConteudoI81;posicaoAntesConteudoI81=null;
+      if(anterior?.quadro===quadro)window.scrollTo({top:anterior.y});
+      return;
+    }
+    if(d.tipo!=='gs-calendario-mes'||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(d.mes||''))||d.mes<'2026-07')return;
     window.__mesPortal=d.mes;
-    aplicarFiltroPortalI58();
-    document.querySelectorAll('#painelCalendario button[onclick="aprovarConteudoCalendario(this)"]').forEach(b=>b.disabled=true);
-    let aviso=document.getElementById('avisoMesPortalI48');
-    if(!aviso){aviso=document.createElement('div');aviso.id='avisoMesPortalI48';aviso.className='card';aviso.setAttribute('role','status');document.getElementById('painelCalendario')?.prepend(aviso);}
-    aviso.textContent='Você mudou o mês no calendário. Use Atualizar calendário para conferir a lista de aprovação desse mês.';
+    const filtro=normalizarFiltroI58(d.filtro);
+    filtrosPortalI58.set(chaveFiltroPortalI58(d.cliente,d.mes),filtro);
+    const link=document.getElementById('abrirCalendarioI58');
+    if(link){const url=new URL(link.href);url.searchParams.set('mes',d.mes);url.searchParams.set('filtroI58',filtro);link.href=url.toString();}
+    const url=new URL(location.href);url.searchParams.set('mes',d.mes);history.replaceState({},'',url);
+    enviarPedidoGravacoesI81();
   });
 
   async function carregarCalendario(){
@@ -1437,10 +1464,10 @@ function mensagemSelecaoVaziaI58(itens,filtro){
       <div class="card" style="padding:0;overflow:hidden;">
         <div style="padding:14px 16px 0;">
           <h2 style="margin-bottom:4px;"><svg class="ic"><use href="#i-calendar"/></svg>Seu calendário do mês</h2>
-          <div class="sub" style="margin-bottom:10px;">Grade do mês, lista por semana e quadro de aprovação — tudo aqui dentro.</div>
+          <div class="sub" style="margin-bottom:10px;">Escolha o mês e abra um conteúdo para conferir roteiro, legenda e referência.</div>
         </div>
-        <iframe id="quadroCalendario" src="calendario.html?cliente=${encodeURIComponent(clienteAtual.slug)}&t=${encodeURIComponent(tokenCal)}${mesEscolhido?'&mes='+encodeURIComponent(mesEscolhido):''}&visaoPortalI58=1&filtroI58=${filtroPortalI58(slugDaLeitura,mesEscolhido)}&v=${Date.now()}"
-                style="width:100%;height:760px;border:0;display:block;background:transparent;" loading="lazy"
+        <iframe id="quadroCalendario" src="calendario.html?cliente=${encodeURIComponent(clienteAtual.slug)}&t=${encodeURIComponent(tokenCal)}${mesEscolhido?'&mes='+encodeURIComponent(mesEscolhido):''}&visaoPortalI58=1&portalUnificadoI81=1&filtroI58=${filtroPortalI58(slugDaLeitura,mesEscolhido)}&v=${Date.now()}"
+                style="width:100%;height:min(900px,calc(100dvh - 32px));min-height:360px;border:0;display:block;background:transparent;" loading="lazy"
                 title="Calendário editorial"></iframe>
         <div style="padding:10px 16px 14px;">
           <a id="abrirCalendarioI58" href="calendario.html?cliente=${encodeURIComponent(clienteAtual.slug)}&t=${encodeURIComponent(tokenCal)}${mesEscolhido?'&mes='+encodeURIComponent(mesEscolhido):''}" target="_blank" rel="noopener"
@@ -1448,46 +1475,11 @@ function mensagemSelecaoVaziaI58(itens,filtro){
         </div>
       </div>` : '';
 
-    const avisoAjusteV115=ajusteEmAndamentoV115?'<div class="card" style="border-color:var(--yellow);background:rgba(224,197,106,.08);"><h2 style="font-size:14px;">↩️ Ajuste em andamento</h2><div class="sub" style="margin-bottom:0;">Cada conteúdo tem sua própria revisão. Os demais continuam disponíveis para aprovar ou pedir ajuste.</div></div>':'';
-    cont.innerHTML = avisoLeitura+avisoAjusteV115+'<div id="gravacoesPortalI61"></div><div id="filtroPortalI58" class="visao-i58"></div><div id="vazioPortalI58" class="visao-i58-vazio" role="status" hidden></div>'+blocoCalendario + `<div class="card"><h2>${ajusteEmAndamentoV115?'Revisão dos conteúdos':'Aprovação'} — ${mesAtual}</h2>
-        <div class="sub" style="margin-bottom:0;">${ajusteEmAndamentoV115?'Confira o andamento de cada conteúdo. Os que estão em ajuste aguardam a revisão da equipe.':(pendentes ? 'Dá uma olhada em cada conteúdo e aprova o que estiver certo. Se algo precisar mudar, é só falar com a gente.' : 'Acompanhe aqui a evolução de cada conteúdo do mês.')}</div>
-      </div>` +
-      '<div class="card" id="listaCalendarioI58">' + items.map((it, idx) => `
-        <div class="day" data-visao-i58="${jaProduzidoI58(it)?'andamento':'pauta'}" style="${filtroPortalI58(slugDaLeitura,mesEscolhido)==='todos'||(filtroPortalI58(slugDaLeitura,mesEscolhido)==='andamento')===jaProduzidoI58(it)?'':'display:none;'}">
-          <div class="daynum"><div class="d">${it.day||'?'}</div><div class="m">${(mesAtual||'').slice(0,3)}</div></div>
-          <div style="flex:1;">
-            <div class="nome">${esc(it.name)}</div>
-            ${/* ===== SOLICITAÇÕES ESPECIAIS — 29/07/2026 ==============
-                  Vem antes da legenda de propósito. É o único campo do
-                  conteúdo escrito PARA o cliente agir: "precisa de dois
-                  modelos, pai e filha" é coisa que ele providencia, e se
-                  ele ler isso depois da legenda já perdeu o ponto. */
-              (it.obs||'').trim()
-              ? '<div style="margin-top:7px;background:rgba(224,197,106,.12);border-left:3px solid var(--yellow);border-radius:7px;padding:9px 11px;font-size:12.5px;line-height:1.55;white-space:pre-wrap;"><b>📌 Solicitação especial:</b> '+esc(it.obs.trim())+'</div>'
-              : ''}
-            ${(it.legenda||'').trim()
-              ? '<div class="meta" style="white-space:pre-wrap;margin-top:4px;">'+esc((it.legenda||'').trim().slice(0,320))+((it.legenda||'').trim().length>320?'…':'')+'</div>'
-              : ((it.desc||'').trim() ? '<div class="meta" style="margin-top:4px;">'+esc((it.desc||'').slice(0,160))+'</div>' : '')}
-            ${urlHttpsSeguraPortal(it.ref) ? '<a href="'+escAttr(urlHttpsSeguraPortal(it.ref))+'" target="_blank" rel="noopener noreferrer" class="meta" style="display:inline-block;margin-top:6px;color:var(--yellow);text-decoration:none;">🎬 Ver a referência ↗</a>' : (it.ref?'<div class="meta" style="margin-top:6px;color:var(--red);">⚠️ Referência inválida — peça um novo link à equipe.</div>':'')}
-            <div style="margin-top:8px;">
-              ${GetAprovacaoI68.pedidoDoItem(dadosCal,mesEscolhido,it)?'<span class="selo planejamento">Ajuste solicitado · aguardando revisão</span>':`<span class="selo ${situacaoItem(it).cls}">${situacaoItem(it).txt}</span>`}${FUNIL_LABEL[it.stage] ? '<span class="selo planejamento" style="margin-left:6px;opacity:.65;">'+FUNIL_LABEL[it.stage]+'</span>' : ''}
-            </div>
-            ${it.revisaoPendenteI68&&!it.apr?'<div class="meta" style="margin-top:8px">Conteúdo revisado · confira novamente.</div>':''}
-            ${((!ajusteEmAndamentoV115||revisaoPorConteudoI71)&&!GetAprovacaoI68.pedidoDoItem(dadosCal,mesEscolhido,it)&&itemPendenteAprovacaoPortalI37(it)) ? `<button class="btn" style="margin-top:9px;width:auto;padding:7px 18px;font-size:12px;" data-item-id="${escAttr(it.itemId||'')}" data-item-dia="${Number(it.day)||0}" data-item-nome="${escAttr(it.name||'')}" data-item-indice="${Number(it.__indiceBanco)}" data-item-mes="${escAttr(mesEscolhido||it.mes||'')}" onclick="aprovarConteudoCalendario(this)">${it.revisaoPendenteI68?'✓ Aprovar versão revisada':'✓ Aprovar este conteúdo'}</button>` : ''}
-          </div>
-        </div>
-      `).join('') + '</div>';
-    aplicarFiltroPortalI58();
-    document.getElementById('quadroCalendario')?.addEventListener('load',aplicarFiltroPortalI58);
-    cont.querySelectorAll('button[onclick="aprovarConteudoCalendario(this)"]').forEach(botao=>{
-      try{
-        const alvos=items.filter(i=>botao.dataset.itemId?String(i.itemId||'')===botao.dataset.itemId:(String(i.name||'')===botao.dataset.itemNome&&Number(i.day)===Number(botao.dataset.itemDia)));
-        if(alvos.length!==1)throw Error('Identidade do conteúdo precisa de conferência.');
-        const item=alvos[0];
-        const esperado=capturarAprovacaoI56(dadosCal,item,mesEscolhido);
-        leiturasAprovacaoPortalI56.set(botao,{esperado,cliente:clienteDaLeitura,uid:uidLeituraI56,token:tokenLeituraI56});
-      }catch(e){botao.disabled=true;botao.textContent='Atualize o calendário para conferir';botao.title=e.message;}
-    });
+    cont.innerHTML=avisoLeitura+blocoCalendario;
+    // Não espelhar itens/contagens aqui: o calendário já atualiza seus próprios leitores.
+    // Isto também preserva a vista após edição, ajuste ou aprovação.
+    posicaoAntesConteudoI81=null;
+
   }
 
   /* I56: itemId único e versão aberta; legado exige retrato completo único. */
@@ -1615,12 +1607,11 @@ function conferirAprovacaoI56(cal,esperado){
 }
 
 
-  let atualizarAposFecharI68=null;
+  // I81: o próprio calendário incorpora a confirmação da escrita sem ser recriado.
   window.addEventListener('message',e=>{
     const quadro=document.getElementById('quadroCalendario');
     if(e.origin!==location.origin||e.source!==quadro?.contentWindow||e.data?.cliente!==String(clienteAtual?.slug||''))return;
-    if(e.data.tipo==='gs-texto-cliente-i68')atualizarAposFecharI68={cliente:e.data.cliente,quadro};
-    if(e.data.tipo==='gs-conteudo-fechado-i68'&&atualizarAposFecharI68?.cliente===e.data.cliente&&atualizarAposFecharI68.quadro===quadro){atualizarAposFecharI68=null;carregarCalendario();}
+    if(e.data.tipo==='gs-texto-cliente-i68')window.__calendarioPortalConfirmado=null;
   });
 
   const leiturasAprovacaoPortalI56=new WeakMap();
@@ -3143,7 +3134,7 @@ function pintarLembretePagamentoI38(pagamentos,slug){
     const slug = entrada.slug;
     const token = entradaPublicaI39.token;
 
-    if(!slug || !token){ return; } // fica na tela de "link nao reconhecido"
+    if(!slug || !token){ mostrarAcessoPortalInvalido(); return; } // ausência confirmada; não confundir com carregamento
 
     /* V17 — clientes novos usam o token como chave não enumerável. Assim
        o Portal não precisa baixar um documento que contenha o segredo.

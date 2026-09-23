@@ -27054,6 +27054,9 @@ window.setGerenciaSub = function(qual, el){
      poderia atravessar Chris ↔ Amanda ↔ equipe no mesmo navegador. */
   function limparEstadoPrivadoTrocaIdentidade(){
     __geracaoIdentidade++;
+    // I82: nenhum formulario da pessoa anterior atravessa a troca real de conta/papel.
+    document.getElementById('overlayView')?.classList.remove('show');
+    document.getElementById('modalConteudo')?.replaceChildren();
     try{ window.limparArquivoFinanceiroI9?.(); }catch(e){}
     try{ window.limparCentralLegendasV134?.(); }catch(e){}
 
@@ -29589,10 +29592,27 @@ window.setGerenciaSub = function(qual, el){
     </div>`;
   }
 
-  async function renderMeuDia(){
-    atualizarAvisosChecklistI59();
+  async function renderMeuDia(opcoesI82={}){
+    const validarI82=opcoesI82.validar||(()=>{});
+    validarI82();
+    if(!opcoesI82.somenteFila)atualizarAvisosChecklistI59();
     const box = document.getElementById('meuDiaBox');
     if(!box) return;
+    /* A conclusão atualiza só a fila do dia. Preserva o formulário de
+       extras, inclusive seus nós, valores e foco, sem consultar financeiro. */
+    const publicarFilaI82=async html=>{
+      if(opcoesI82.somenteFila){
+        validarI82();
+        const anterior=Array.from(box.children).find(el=>el.querySelector('h2')?.textContent.trim()==='☀️ Meu Dia');
+        const fragmento=document.createElement('template');fragmento.innerHTML=html;
+        if(anterior)anterior.replaceWith(fragmento.content);
+        else box.prepend(fragmento.content);
+        return;
+      }
+      const extras=await htmlMeusExtras();
+      validarI82();box.innerHTML=html+extras;
+    };
+    if(opcoesI82.somenteFila&&['Chris','Amanda'].includes(usuarioAtual))return;
     if(!usuarioAtual || estaAusente(usuarioAtual)){ box.innerHTML = ''; return; }
     // Chris e Amanda têm o Resumo do Dia logo acima — mostrar o Meu Dia
     // junto era informação dobrada. As pendências pessoais deles entram
@@ -29648,6 +29668,7 @@ window.setGerenciaSub = function(qual, el){
 
     // 3) Checklist diário pendente (1 item agregado)
     const pendentesChecklist = await contarChecklistDiarioPendente();
+    validarI82();
     if(pendentesChecklist === null){
       itens.push({
         icone:'⚠️', titulo:'Checklist indisponível para conferência', meta:'Leitura não confirmada',
@@ -29702,7 +29723,7 @@ window.setGerenciaSub = function(qual, el){
         meuDiaZeradoComemorado = true;
         if(window.mascoteDispararConfete) window.mascoteDispararConfete();
       }
-      box.innerHTML = `<div class="card"><h2>☀️ Meu Dia</h2><div class="empty">Nenhuma pendência agora. Você está em dia! 🎉</div></div>` + await htmlMeusExtras();
+      await publicarFilaI82(`<div class="card"><h2>☀️ Meu Dia</h2><div class="empty">Nenhuma pendência agora. Você está em dia! 🎉</div></div>`);
       return;
     }
     meuDiaZeradoComemorado = false;
@@ -29723,7 +29744,7 @@ window.setGerenciaSub = function(qual, el){
        o tempo-real recalcula e o próximo assume o lugar sozinho. */
     const proximo = itens[0];
     const restoLista = visiveis.slice(1);
-    box.innerHTML = `<div class="card"><h2>☀️ Meu Dia</h2>
+    await publicarFilaI82(`<div class="card"><h2>☀️ Meu Dia</h2>
       <div class="meuDiaResumo">🔔 ${resumoPartes.join(' · ')} — o site já ordenou pra você</div>
       <div class="proximoTrabalho" onclick="${proximo.acao}">
         <div class="ptLabel">▶ SEU PRÓXIMO TRABALHO</div>
@@ -29734,7 +29755,7 @@ window.setGerenciaSub = function(qual, el){
       ${restoLista.length ? '<div class="meta" style="margin:2px 0 8px;color:var(--muted);font-size:11px;">Depois vem:</div>' : ''}
       ${restoLista.map(meuDiaItemHtml).join('')}
       ${resto > 0 ? `<button class="btn secondary" style="margin-top:8px;" onclick="window.irParaAtalho('minhasDemandasAtribuidas')">Ver tudo (+${resto} item${resto>1?'s':''}) →</button>` : ''}
-    </div>` + await htmlMeusExtras();
+    </div>`);
   }
 
   /* ===== O ENGANCHE QUE FALTAVA — 04/08/2026 ========================
@@ -29754,7 +29775,7 @@ window.setGerenciaSub = function(qual, el){
   const __meuDiaSemBloco = renderMeuDia;
   renderMeuDia = function(){
     const r = __meuDiaSemBloco.apply(this, arguments);
-    try{ renderVideosPorDiaInicio(); }catch(e){ console.error('bloco por dia:', e); }
+    if(!arguments[0]?.somenteFila)try{ renderVideosPorDiaInicio(); }catch(e){ console.error('bloco por dia:', e); }
     return r;
   };
 
@@ -31815,6 +31836,70 @@ window.setGerenciaSub = function(qual, el){
     return true;
   };
 
+  /* I82: salvar trabalho não é trocar identidade. Atualiza a fila atual
+     sem reiniciar sessão, ouvintes, outros painéis ou a navegação. */
+  async function finalizarConclusaoDemandaI82(contexto, mensagem){
+    const mesmaPessoa=()=>contexto.sessao===sessaoServicoManual();
+    const validar=()=>{if(!mesmaPessoa())throw new Error('A pessoa da sessão mudou.');};
+    if(!mesmaPessoa())return;
+    const fecharConfirmado=()=>{
+      if(document.getElementById('btnEnviarProva')===contexto.botao){
+        fecharModal();
+        return true;
+      }
+      return false;
+    };
+    try{
+      /* Mantém o formulário ocupado até a fila estar pronta. Fechá-lo
+         antes desta leitura deixa um cartão antigo clicável durante o redesenho. */
+      await carregarTodasDemandas({servidor:true,validar});
+      if(!mesmaPessoa())return;
+      if(contexto.filaLegenda){
+        const contador=Array.from(document.querySelectorAll('#atalhoDestaque [onclick]'))
+          .find(b=>b.getAttribute('onclick')==="irParaFila('legenda')");
+        if(contador){
+          const n=await contarFila('legenda');validar();
+          if(contador.isConnected){
+            contador.textContent='Escrever legendas'+(n===null?' (! indisponível)':n?' ('+n+')':'');
+            contador.style.background=n===null?'var(--red)':n?'var(--yellow)':'var(--line)';
+            contador.style.color=n===null?'#fff':n?'var(--graphite)':'var(--muted)';
+            if(!n)contador.style.boxShadow='none';
+          }
+        }
+      }
+      await renderMeuDia({validar,somenteFila:true});
+      if(!mesmaPessoa())return;
+      limparCacheIndicadores();
+      const minhas=demandasVisiveisDaPessoa(usuarioAtual);
+      atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
+        minhas.filter(d=>d.status!=='concluida_aguardando_aprovacao'&&!estaEncalhada(d))));
+      /* A pessoa pode ter aberto outra tela ou outro formulário durante
+         o salvamento. O retorno antigo não fecha nem redesenha esse trabalho. */
+      const formularioOriginal=document.getElementById('btnEnviarProva')===contexto.botao;
+      const outroFormulario=document.getElementById('overlayView')?.classList.contains('show')&&!formularioOriginal;
+      if(viewAtiva!==contexto.view||viewAtiva!=='minhasDemandasAtribuidas'||outroFormulario){
+        if(fecharConfirmado())mostrarToast(mensagem);
+        return;
+      }
+      const lista=document.getElementById('listaMinhasDemandasAtribuidas');
+      const chaveGrupo=g=>(g.closest('[data-faixa]')?.dataset.faixa||'')+'|'+(g.querySelector('.grot')?.textContent||'');
+      const grupos=new Map(Array.from(lista?.querySelectorAll('.grupoDem')||[]).map(g=>[chaveGrupo(g),g.classList.contains('aberto')]));
+      const rolagem=document.scrollingElement,topo=rolagem?.scrollTop||0;
+      await renderMinhasDemandasAtribuidas(true,{validar});
+      if(!mesmaPessoa()||viewAtiva!==contexto.view)return;
+      lista?.querySelectorAll('.grupoDem').forEach(g=>{const k=chaveGrupo(g);if(grupos.has(k))g.classList.toggle('aberto',grupos.get(k));});
+      if(rolagem)rolagem.scrollTop=topo;
+      // A lista já está pronta quando o próximo cartão fica clicável.
+      if(fecharConfirmado())mostrarToast(mensagem);
+    }catch(erro){
+      if(mesmaPessoa()){
+        fecharConfirmado();
+        console.error('I82: trabalho salvo; não foi possível atualizar a fila:',erro);
+        mostrarToast('O trabalho foi salvo. Use Atualizar pedidos para conferir a fila.','erro');
+      }
+    }
+  }
+
   window.enviarProva = async function(id){
     const texto = document.getElementById('provaTextoInput').value.trim();
     const link = document.getElementById('provaLinkInput').value.trim();
@@ -31823,11 +31908,14 @@ window.setGerenciaSub = function(qual, el){
       return;
     }
     const btn = document.getElementById('btnEnviarProva');
+    if(!btn || btn.disabled)return;
+    const contextoI82={sessao:sessaoServicoManual(),view:viewAtiva,botao:btn};
     btn.disabled = true; btn.textContent = 'Enviando...';
     try {
       const d = todasDemandas.find(x=>x.id===id);
       const ehConfirmacaoPublicacao=ehDemandaConfirmacaoPostagemV135(d);
       const ehLegenda = !!(d && d.postagemId) && ehTituloDemandaLegenda(d.titulo);
+      contextoI82.filaLegenda=ehLegenda;
 
       /* V135 — confirmar a demanda específica confirma a FONTE. A versão
          anterior mudava somente `demandas`, deixando a postagem em
@@ -31839,10 +31927,7 @@ window.setGerenciaSub = function(qual, el){
           contextoR5:document.getElementById('confirmacaoPublicacaoR5')?.contextoR5
         });
         if(!resultado?.ok) throw new Error(resultado?.motivo||'A postagem não pôde ser confirmada.');
-        mostrarToast('Publicação confirmada na postagem, no vídeo e na demanda. ✔');
-        fecharModal();
-        carregarMinhasDemandas();
-        mudarUsuarioGlobal();
+        await finalizarConclusaoDemandaI82(contextoI82, 'Publicação confirmada na postagem, no vídeo e na demanda. ✔');
         return;
       }
 
@@ -31909,10 +31994,7 @@ window.setGerenciaSub = function(qual, el){
         });
         darBaixaDemandaLegenda(d.postagemId).catch(()=>{});
         criarDemandaAgendamentoAutomatica(d.postagemId).catch(e => console.error('Falha ao criar demanda automática de agendamento', e));
-        mostrarToast(resultadoLegenda==='idempotente'?'Esta legenda já estava confirmada na fila da Cecília.':'Legenda salva! Já caiu direto na fila da Cecília.');
-        fecharModal();
-        carregarMinhasDemandas();
-        mudarUsuarioGlobal();
+        await finalizarConclusaoDemandaI82(contextoI82, resultadoLegenda==='idempotente'?'Esta legenda já estava confirmada na fila da Cecília.':'Legenda salva! Já caiu direto na fila da Cecília.');
         return;
       }
 
@@ -31939,13 +32021,12 @@ window.setGerenciaSub = function(qual, el){
       }
       await updateDoc(doc(db,'demandas', id), dadosExtras);
       sincronizarStatusDemandaCliente(id, 'andamento').catch(()=>{});
-      mostrarToast(ehSoAviso ? 'Marcado como visto — aviso não precisa de aprovação.' : 'Enviado! Aguardando aprovação da gerência.');
-      fecharModal();
-      carregarMinhasDemandas();
-      mudarUsuarioGlobal();
+      await finalizarConclusaoDemandaI82(contextoI82, ehSoAviso ? 'Marcado como visto — aviso não precisa de aprovação.' : 'Enviado! Aguardando aprovação da gerência.');
     } catch(err){
-      mostrarToast('Erro ao enviar: ' + err.message, 'erro');
-      btn.disabled = false; btn.textContent = '✅ Marcar como feita';
+      if(contextoI82.sessao===sessaoServicoManual() && document.getElementById('btnEnviarProva')===btn){
+        mostrarToast('Erro ao enviar: ' + err.message, 'erro');
+        btn.disabled = false; btn.textContent = '✅ Marcar como feita';
+      }
     }
   };
 
@@ -37598,7 +37679,12 @@ window.setGerenciaSub = function(qual, el){
       renderEsteiraConteudo();
     }
     if(viewAtiva === 'inicio' && ['demandas','videos_producao','postagens','agendamentos'].includes(colecao)){
-      renderMeuDia(); try{ renderVideosPorDiaInicio(); }catch(e){}
+      /* Estas fontes atualizam a fila, não o formulário de extras. */
+      const sessaoI82=sessaoServicoManual();
+      renderMeuDia({somenteFila:true,validar:()=>{
+        if(sessaoI82!==sessaoServicoManual())throw new Error('A pessoa da sessão mudou.');
+      }}).catch(e=>{if(sessaoI82===sessaoServicoManual())console.error('I82: atualização da fila do dia indisponível:',e);});
+      try{ renderVideosPorDiaInicio(); }catch(e){}
       if(colecao === 'agendamentos') renderCalendarioVisualHome();
     }
     if(colecao === 'calendarios'){

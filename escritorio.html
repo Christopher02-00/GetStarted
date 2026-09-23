@@ -6175,7 +6175,12 @@
           return;
         }
         pendente.videos.forEach((v,i)=>tx.set(refs[i],{...v.data,criadoEm:serverTimestamp()}));
-        tx.set(avisoRef,{...pendente.demanda,criadoEm:serverTimestamp()});
+        // I83B: conserva o recibo atômico sem criar outra cobrança para a mesma fila.
+        tx.set(avisoRef,{...pendente.demanda,...(!pendente.form.editor?{
+          titulo:'Recibo · '+pendente.demanda.titulo,status:'aprovada',ehAviso:true,reciboEnvioI83B:true,
+          filaDestinoI83B:'distribuicao',concluidoPor:'sistema',concluidoEm:new Date().toISOString(),
+          notaConclusao:'Recibo do envio. A distribuição continua pendente nos vídeos e no aviso Conferir vídeos sem editor.'
+        }:{}),criadoEm:serverTimestamp()});
       }),'Confirmar o lote de materiais',20000);
       validar();
       const recibos=await comTimeoutCalendarioOperacional(Promise.all([...refs,avisoRef].map(r=>_getDocFromServerFB(r))),'Conferir o envio salvo',12000);validar();
@@ -6183,7 +6188,12 @@
       confirmado=true;sessionStorage.removeItem(chave);mostrarPendenciaEnvioI67();
       ['videoNomesPrincipais','videoNomesBastidores','videoObs','videoClienteExternoNome'].forEach(id=>document.getElementById(id).value='');
       document.getElementById('ultimaDistribuicao').innerHTML='<div class="avisoBanner"><div class="texto">'+pendente.videos.length+' vídeo(s) recebidos '+(form.editor?'por '+esc(form.editor):'na fila da Amanda')+'<span>'+pendente.videos.map(v=>esc(v.data.titulo)).join('<br>')+'</span></div></div>';
-      mostrarToast('Envio confirmado. '+(form.editor?'Disponível para '+form.editor+'.':'Amanda já pode distribuir os vídeos.'));
+      let avisoPendenteI83B=false;
+      if(!pendente.form.editor){
+        try{await verificarDistribuicaoDiariaAmanda();}catch(e){avisoPendenteI83B=true;console.warn('Vídeos salvos; aviso de distribuição ainda não atualizado.',e);}
+      }
+      validar();
+      mostrarToast(avisoPendenteI83B?'Envio salvo na fila da Amanda. O lembrete ainda não foi atualizado; não repita o envio.':'Envio confirmado. '+(form.editor?'Disponível para '+form.editor+'.':'Amanda já pode distribuir os vídeos.'),avisoPendenteI83B?'erro':undefined);
       try{await renderLancadosHoje();}catch(e){console.error('Envio confirmado; atualização da lista indisponível.',e);}
       return true;
     }catch(e){
@@ -8637,6 +8647,7 @@ window.marcarClienteAprovouVideo = async function(id){
     cont.innerHTML = htmlFilaSomenteEdicaoI34(todos) + html + '<div id="vazioBuscaEnviosI53" class="empty" hidden>Nenhum vídeo corresponde à busca nesta lista.</div>';
     filtrarListaEnviosI53(window.__buscaEnviosI53||'');
     prepararPrazosVideoI57(cont,todos,ctxI34);
+    verificarDistribuicaoDiariaAmanda().catch(e=>console.warn('Conferência do aviso de distribuição pendente:',e));
   }
 
     /* I57 — prazo manual no cartão; escolher a data nunca desmonta a lista. */
@@ -18527,6 +18538,7 @@ window.arquivarMesCampanhas=async function(mes,token){
       if(alterado&&!historico&&efetiva==='ajustar'&&colecao==='stories_semanais'){
         await addDoc(collection(db,'demandas'),{titulo:'📸 Ajustar os stories de '+(dados.clienteNome||dados.cliente||'cliente'),descricao:(usuarioAtual||'A Amanda')+' pediu ajuste no roteiro de stories da semana:\n\n"'+motivo+'"\n\nCorrige em 📸 Stories e reenvia.',origem:'sistema',clienteNome:'',destinatario:dados.enviadoPor||dados.criadoPor||'Gabrielle',prazoData:hojeLocal(),prazoHora:'18:00',status:'pendente',provaTexto:'',provaImagemUrl:'',criadoEm:serverTimestamp()});validar();
       }
+      await verificarStoriesParadosAmanda();validar();
       const tela=await renderStoriesCliente();validar();if(tela===false)throw new Error('Não foi possível atualizar a tela de Stories.');
       mostrarToast(!alterado?'Esta decisão já estava registrada.':historico?(efetiva==='salvar'?'Correção salva no mesmo registro, para revisão da Amanda.':efetiva==='ajustar'?'Ajuste autorizado. A Gabi encontra este registro no histórico.':efetiva==='arquivar'?'Pendência desconsiderada; histórico preservado.':'Material concluído internamente; cliente e Portal não foram reativados.'):(efetiva==='liberar'?'Liberação editorial registrada. O acesso depende do Portal vigente.':efetiva==='ajustar'?'Ajuste registrado e encaminhado.':efetiva==='corrigir_ativo'?'Correção salva. O Story voltou para a revisão da Amanda.':'Links enviados para revisão da Amanda.'));
       return true;
@@ -18747,14 +18759,7 @@ window.arquivarMesCampanhas=async function(mes,token){
     if(gestor){
       mostrarToast('Story da semana de ' + nome + ' salvo com liberação interna registrada.');
     }else{
-      await addDoc(collection(db,'demandas'), {
-        titulo:'📸 Aprovar os stories de ' + nome + ' — semana de ' + semana,
-        descricao:(usuarioAtual||'A Gabi') + ' montou o roteiro de stories da semana pra ' + nome + '.\n\n' +
-        'Confere e libera em 📸 Stories → "Esperando sua aprovação". O cliente só vê depois que você liberar.',
-        origem:'sistema',clienteNome:'',destinatario:'Amanda',
-        prazoData:hojeLocal(),prazoHora:'18:00',status:'pendente',
-        provaTexto:'',provaImagemUrl:'',criadoEm:serverTimestamp()
-      });
+      await verificarStoriesParadosAmanda();
       validarSessao();mostrarToast('Story da semana de ' + nome + ' salvo para revisão da Amanda.');
     }
     validarSessao();await renderStoriesCliente();validarSessao();
@@ -31300,6 +31305,11 @@ window.setGerenciaSub = function(qual, el){
     if(!d) return;
     if(ehDemandaConfirmacaoPostagemV135(d)) return abrirConfirmacaoPublicacaoR5(id);
     const modal = document.getElementById('modalConteudo');
+    const filaI83B=tipoAvisoFilaI83B(d);
+    if(filaI83B){
+      modal.innerHTML=`<h2>${esc(d.titulo)}</h2><div class="linha" style="white-space:pre-wrap;">${esc(d.descricao||'')}</div><div class="meta">O aviso acompanha os itens pendentes. As decisões são feitas na própria fila.</div><div class="btnrow" style="margin-top:16px;"><button class="btn green" onclick="fecharModal();${filaI83B==='stories'?"irParaStories('aprovar')":"irParaDistribuirVideos()"}">${filaI83B==='stories'?'Abrir Stories para revisar':'Abrir distribuição de vídeos'}</button><button class="btn secondary" onclick="fecharModal()">Fechar</button></div>`;
+      document.getElementById('overlayView').classList.add('show');return;
+    }
 
     /* Decisão não é tarefa. Quem recebe não vai executar nada — vai dizer
        sim ou não. Mostrar "descreva o que foi feito" e "pedir mais prazo"
@@ -35857,40 +35867,70 @@ window.setGerenciaSub = function(qual, el){
     }
   }
 
-  /* ===== LEMBRETE "PRAZO É HOJE" =====
-     Antes, o sistema só falava alguma coisa por e-mail quando JÁ tinha
-     atrasado. Agora avisa também no próprio dia do prazo — antes de virar
-     atraso — pra pessoa conseguir se organizar. Manda 1 vez por dia (usa
-     a data de hoje como controle, não repete se o motor rodar de novo). */
-  /* ===== DISTRIBUIÇÃO DIÁRIA DE VÍDEOS — RESPONSABILIDADE ÚNICA DA AMANDA =====
-     Antes o sistema distribuía sozinho, na hora, sem ninguém decidir. Agora
-     os vídeos nascem sem editor (registrarGravacaoRealizada) e ficam
-     esperando a Amanda, todo dia de manhã. Essa verificação cria 1 demanda
-     por dia (não repete se já criou hoje) só se houver vídeo pendente. */
-  /* ===== O AVISO DIÁRIO DE STORIES — 29/07/2026 ======================
-     O Chris pediu notificação de demanda "pra que elas sempre fiquem
-     atentas". Sem isso, o story parado na revisão só é descoberto por
-     acaso — que é exatamente como a Juliane ficou uma semana sem ver
-     nada. Uma demanda por dia, e só se houver algo parado. */
+  /* I83B: Stories e distribuição usam um aviso por fila, sem recriar a mesma
+     cobrança a cada dia. Novos itens/revisões atualizam esse mesmo aviso. */
+  /* I83B: um aviso acompanha cada fila; atualizar o aviso nunca decide o conteúdo. */
+  function tipoAvisoFilaI83B(d){
+    return d?.origem==='sistema'&&d.destinatario==='Amanda'&&d.ehAviso===true&&
+      ['stories','distribuicao'].includes(d.filaAvisoI83B)?d.filaAvisoI83B:'';
+  }
+  async function sincronizarAvisoFilaI83B(tipo,ids){
+    if(!['stories','distribuicao'].includes(tipo))throw Error('Fila de aviso inválida.');
+    const sessao=sessaoServicoManual(),validar=()=>{if(!auth.currentUser?.uid||sessao!==sessaoServicoManual())throw Error('O perfil mudou durante a conferência do aviso.');};
+    validar();
+    const colecao=tipo==='stories'?'stories_semanais':'videos_producao',ref=doc(db,'demandas','aviso_fila_i83b_'+tipo);
+    return runTransaction(db,async tx=>{
+      validar();const snap=await tx.get(ref),anterior=snap.exists()?snap.data():null;validar();
+      if(anterior&&tipoAvisoFilaI83B(anterior)!==tipo)throw Error('A identificação deste aviso precisa de conferência. Nenhuma demanda foi substituída.');
+      if(anterior?.fontesAvisoI83B!=null&&!Array.isArray(anterior.fontesAvisoI83B))throw Error('As referências deste aviso precisam de conferência.');
+      if(anterior?.historico!=null&&!Array.isArray(anterior.historico))throw Error('O histórico deste aviso precisa de conferência.');
+      const anteriores=anterior?.fontesAvisoI83B||[],uniao=[...new Set([...ids,...anteriores.map(x=>x.id)])].sort();
+      if(uniao.some(id=>typeof id!=='string'||!id||id.includes('/')||id==='.'||id==='..'))throw Error('Há uma referência inválida na fila.');
+      const fontes=[],contratos=new Map();
+      // Relê também as fontes do aviso anterior: uma consulta atrasada não encerra trabalho ainda pendente.
+      for(const id of uniao){
+        const s=await tx.get(doc(db,colecao,id));validar();if(!s.exists())continue;const v=s.data();
+        if(v.excluido===true||v.cancelado===true||!fonteFisicaClienteR4(v.cliente||v.clienteSlug||'',v))continue;
+        if(tipo==='stories'){
+          if(terminalStoriesI27(v)||v.status==='postado'||v.postadoPeloCliente===true||(v.revisaoInterna||'liberado')!=='aguardando_interna')continue;
+          if(!contratos.has(v.cliente))contratos.set(v.cliente,await lerFontesStoriesI27(tx,v.cliente));validar();
+          if(!contratos.get(v.cliente).ativo)continue;
+          const revisao=await hashSenha(JSON.stringify([v.revisaoStoryI64||0,v.enviadoEm||v.criadoEm||'',v.titulo||'',v.descricao||'',v.linkRef||v.linkReferencia||'']));validar();
+          fontes.push({id,revisao,rotulo:(v.clienteNome||v.cliente)+' · semana de '+semanaEfetivaStory(v)+' · '+(v.titulo||'Stories da semana')});
+        }else{
+          if(v.editorAtribuido||v.status!=='aguardando_edicao')continue;
+          fontes.push({id,revisao:id,rotulo:(v.clienteNome||v.cliente||'Cliente')+' · '+(v.titulo||'Vídeo sem título')});
+        }
+      }
+      validar();if(!anterior&&!fontes.length)return false;
+      const chaves=new Set(anteriores.map(x=>x.id+'|'+x.revisao)),temNovo=fontes.some(x=>!chaves.has(x.id+'|'+x.revisao));
+      const mudouFontes=fontes.length!==anteriores.length||fontes.some((f,i)=>['id','revisao','rotulo'].some(k=>f[k]!==anteriores[i]?.[k]));
+      const titulo=tipo==='stories'?'📸 Conferir Stories aguardando revisão':'🎬 Conferir vídeos sem editor';
+      const descricao=fontes.length
+        ?fontes.length+' item(ns) nesta fila:\n\n'+fontes.map(x=>'• '+x.rotulo).join('\n')+'\n\n'+(tipo==='stories'?'Abra Stories para revisar e liberar cada material.':'Abra Distribuir vídeos para escolher o editor de cada vídeo.')
+        :'Nenhum item aguarda esta etapa. O histórico do aviso foi preservado.';
+      const encerrado=['aprovada','concluida','cancelada','concluida_aguardando_aprovacao'].includes(anterior?.status)||anterior?.excluido===true;
+      // Conferir um aviso não aprova Story nem distribui vídeo. Só uma nova obrigação volta a avisar.
+      const status=fontes.length?(temNovo?'pendente':anterior.status):(encerrado?anterior.status:'aprovada');
+      const mudaEtapa=!anterior||temNovo||status!==anterior.status;
+      if(anterior&&!mudouFontes&&!mudaEtapa)return false;
+      const em=new Date().toISOString(),patch={fontesAvisoI83B:fontes,descricao,atualizadoEm:serverTimestamp()};
+      if(!anterior)Object.assign(patch,{titulo,origem:'sistema',clienteNome:'',destinatario:'Amanda',ehAviso:true,filaAvisoI83B:tipo,criadoEm:serverTimestamp(),provaTexto:'',provaImagemUrl:'',historico:[]});
+      if(mudaEtapa){
+        const evento={acao:fontes.length?'Aviso atualizado: novos itens na fila':'Aviso encerrado: fila sem pendência',por:'sistema',em,fontesAntes:anteriores.map(x=>({id:x.id,revisao:x.revisao})),statusAntes:anterior?.status||'',excluidoAntes:anterior?.excluido===true,provaTextoAnterior:anterior?.provaTexto||'',provaImagemAnterior:anterior?.provaImagemUrl||'',encerramentoAnterior:Object.fromEntries(['concluidoPor','concluidoEm','concluidaEm','notaConclusao','excluidoEm','excluidoPor','motivoExclusao'].filter(k=>anterior&&k in anterior).map(k=>[k,anterior[k]]))};
+        patch.status=status;patch.historico=[...(anterior?.historico||[]),evento];
+        if(fontes.length)Object.assign(patch,{excluido:false,prazoData:hojeLocal(),prazoHora:tipo==='stories'?'18:00':'11:00',provaTexto:'',provaImagemUrl:'',emailEnviado:false,...(anterior?Object.fromEntries(['concluidoPor','concluidoEm','concluidaEm','notaConclusao','excluidoEm','excluidoPor','motivoExclusao'].map(k=>[k,deleteField()])):{})});
+        else Object.assign(patch,{concluidoPor:'sistema',concluidoEm:em,concluidaEm:em,notaConclusao:'As fontes não aguardam mais esta etapa. Nenhuma aprovação ou distribuição foi feita por este aviso.'});
+      }
+      validar();if(anterior)tx.update(ref,patch);else tx.set(ref,patch);return true;
+    });
+  }
+
   async function verificarStoriesParadosAmanda(){
-    const hojeStr = hojeLocal();
-    const marcador = await getDoc(doc(db,'sistema','stories_revisao_amanda'));
-    if(marcador.exists() && marcador.data().ultimaData === hojeStr) return;
-    const [carteira,snap]=await Promise.all([
-      carteiraStoriesContinuidadeI27(),
-      comTimeoutStoriesEquipe(_getDocsFromServerFB(collection(db,'stories_semanais')),'os Stories aguardando revisão')
-    ]);
-    const ativos=new Set(carteira.map(c=>c.slug)),parados=[];
-    snap.forEach(d => { const v = d.data();
-      if(v.excluido===true||v.cancelado===true||terminalStoriesI27(v)||v.status==='postado'||v.postadoPeloCliente===true) return;
-      if(!ativos.has(v.cliente)||!fonteFisicaClienteR4(v.cliente||'',v)) return;
-      if((v.revisaoInterna || 'liberado') === 'aguardando_interna') parados.push(v.clienteNome || v.cliente); });
-    if(!parados.length) return;
-    await criarAvisoParaGestao('📸 Aprovar os stories de ' + parados.join(', '),
-      parados.length + ' roteiro(s) de stories esperando você liberar. O cliente não vê nenhum deles enquanto isso.\n\n'
-      + 'Faz em 📸 Stories → "Esperando sua aprovação", ou pelo botão amarelo no menu.', 'Amanda');
-    await setDoc(doc(db,'sistema','stories_revisao_amanda'), { ultimaData: hojeStr });
-    registrarLogAutomacao('stories_revisao_amanda', '', parados.length + ' story(s) esperando revisão');
+    const sessao=sessaoServicoManual();
+    const snap=await comTimeoutStoriesEquipe(_getDocsFromServerFB(collection(db,'stories_semanais')),'os Stories aguardando revisão');
+    if(sessao!==sessaoServicoManual())throw Error('O perfil mudou durante a leitura da fila.');
+    return sincronizarAvisoFilaI83B('stories',snap.docs.filter(d=>(d.data().revisaoInterna||'liberado')==='aguardando_interna'&&d.data().excluido!==true).map(d=>d.id));
   }
 
   /* ===== APOSENTAR A PILHA QUE JÁ EXISTE — 29/07/2026 ================
@@ -35927,23 +35967,10 @@ window.setGerenciaSub = function(qual, el){
   }
 
   async function verificarDistribuicaoDiariaAmanda(){
-    const hojeStr = hojeLocal();
-    const marcador = await getDoc(doc(db,'sistema', 'distribuicao_diaria_amanda'));
-    if(marcador.exists() && marcador.data().ultimaData === hojeStr) return; // já criou hoje
-
-    const snap = await getDocs(collection(db,'videos_producao'));
-    const semEditor = []; snap.forEach(d => { const v=d.data(); if(!fonteFisicaClienteR4(v.cliente||v.clienteSlug||'',v)) return; if(!v.excluido && !v.editorAtribuido && v.status==='aguardando_edicao') semEditor.push(v); });
-    if(!semEditor.length) return;
-
-    await addDoc(collection(db,'demandas'), {
-      titulo: '🎬 Distribuir ' + semEditor.length + ' vídeo(s) pros editores',
-      descricao: 'Vídeos gravados esperando distribuição: ' + semEditor.map(v=>v.titulo).join(', ') + '. Faz isso em Gerência → Distribuição de Vídeos.',
-      origem: 'sistema', clienteNome: '', destinatario: 'Amanda',
-      prazoData: hojeStr, prazoHora: '11:00',
-      status: 'pendente', provaTexto: '', provaImagemUrl: '', criadoEm: serverTimestamp()
-    });
-    await setDoc(doc(db,'sistema', 'distribuicao_diaria_amanda'), { ultimaData: hojeStr });
-    registrarLogAutomacao('distribuicao_diaria_amanda', '', semEditor.length + ' vídeo(s) esperando distribuição');
+    const sessao=sessaoServicoManual();
+    const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,'videos_producao')),'os vídeos aguardando distribuição',12000);
+    if(sessao!==sessaoServicoManual())throw Error('O perfil mudou durante a leitura da fila.');
+    return sincronizarAvisoFilaI83B('distribuicao',snap.docs.filter(d=>{const v=d.data();return !v.excluido&&!v.editorAtribuido&&v.status==='aguardando_edicao';}).map(d=>d.id));
   }
 
   /* ===== COBERTURA SEMANAL DE REFERÊNCIAS POR CLIENTE (24/07/2026) =====

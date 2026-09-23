@@ -18646,6 +18646,27 @@ window.arquivarMesCampanhas=async function(mes,token){
     try{const key=chaveRascunhoStoryI64(form.dataset.cliente,form.dataset.semana);if(values.some(Boolean))localStorage.setItem(key,JSON.stringify(values));else localStorage.removeItem(key);}catch(e){console.warn('Rascunho Story indisponível neste navegador',e);}
   }
 
+  // I83A: o cancelado fica no histórico; a próxima criação usa outra posição da mesma semana.
+  async function destinoNovoStoryI83(tx,slug,semana,validarSessao){
+    const base=storySemanalId(slug,semana);
+    for(let geracao=0;;geracao++){
+      validarSessao();
+      const ref=doc(db,'stories_semanais',base+(geracao?'__nova_'+geracao:''));
+      const snap=await tx.get(ref);validarSessao();
+      if(!snap.exists()) return ref;
+      const anterior=snap.data()||{};
+      exigirIdentidadeClienteI21(slug,anterior);
+      if(anterior.cliente!==slug||semanaEfetivaStory(anterior)!==semana){
+        throw new Error('A identificação desta semana precisa ser conferida pela Amanda. Nenhum registro foi alterado.');
+      }
+      if(anterior.excluido!==true){
+        throw new Error('Já existe um Story nesta semana. Atualize a lista e abra o registro salvo; seu texto continua neste formulário.');
+      }
+      // A leitura faz parte da transação: duas abas disputam a mesma posição livre.
+      // Não atualiza, restaura ou reaproveita o documento cancelado.
+    }
+  }
+
   let __salvandoStorySemana=false;
   window.criarSemanaStories = async function(){
     if(__salvandoStorySemana) return mostrarToast('O envio desta semana já está em andamento.','erro');
@@ -18704,17 +18725,10 @@ window.arquivarMesCampanhas=async function(mes,token){
       throw new Error('Este cliente já possui Story salvo nesta semana. Abra o registro existente em vez de criar outro.');
     }
     const st=criar[0];
-    const storyRef=doc(db,'stories_semanais',existente?.id||storySemanalId(slug,semana));
     await runTransaction(db,async tx=>{
-      validarSessao();const atualSnap=await tx.get(storyRef);validarSessao();
-      if(!!existente!==atualSnap.exists()) throw new Error('O Story foi criado ou removido em outra aba. Atualize a tela; o registro não foi recriado nem sobrescrito.');
-      if(!atualSnap.exists()){await validarCriacaoStoriesI24(tx,slug);validarSessao();}
-      else {exigirAlvoStoriesI27('stories_semanais',storyRef.id,atualSnap.data());const fontes=await lerFontesStoriesI27(tx,slug);validarSessao();if(!fontes.ativo||terminalStoriesI27(atualSnap.data()))throw new Error('Use Corrigir este registro no histórico de Stories. A carteira ativa não reabre material encerrado.');}
-      if(atualSnap.exists()){
-        const atual=atualSnap.data()||{};exigirIdentidadeClienteI21(slug,atual);
-        if(atual.cliente!==slug||semanaEfetivaStory(atual)!==semana) throw new Error('A identidade do Story mudou durante o envio.');
-        if((atual.revisaoInterna||'liberado')!=='ajuste_interno') throw new Error('O Story já saiu do estado de ajuste. Atualize a tela antes de reenviar.');
-      }
+      validarSessao();
+      const storyRef=await destinoNovoStoryI83(tx,slug,semana,validarSessao);
+      await validarCriacaoStoriesI24(tx,slug);validarSessao();
       tx.set(storyRef,{
         cliente: slug, clienteNome: nome, semana, semanaConteudo:semana, semanaVersao:1,
         dia: st.dia, diaSemana: st.dia, diaNome: st.diaNome,
@@ -18722,8 +18736,8 @@ window.arquivarMesCampanhas=async function(mes,token){
         linkRef: st.linkRef, linkReferencia: st.linkRef, observacoes: '',
         revisaoInterna: gestor ? 'liberado' : 'aguardando_interna',
         enviadoPor: usuarioAtual || '?',
-        status: 'aguardando', criadoPor: atualSnap.exists()?(atualSnap.data().criadoPor||usuarioAtual||'?'):(usuarioAtual||'?'),
-        criadoEm: atualSnap.exists()?(atualSnap.data().criadoEm||serverTimestamp()):serverTimestamp(),
+        status: 'aguardando', criadoPor: usuarioAtual||'?',
+        criadoEm: serverTimestamp(),
         atualizadoEm:serverTimestamp(), motivoAjusteInterno:deleteField()
       },{merge:true});
     });
@@ -35862,10 +35876,14 @@ window.setGerenciaSub = function(qual, el){
     const hojeStr = hojeLocal();
     const marcador = await getDoc(doc(db,'sistema','stories_revisao_amanda'));
     if(marcador.exists() && marcador.data().ultimaData === hojeStr) return;
-    const snap = await getDocs(collection(db,'stories_semanais'));
-    const parados = [];
+    const [carteira,snap]=await Promise.all([
+      carteiraStoriesContinuidadeI27(),
+      comTimeoutStoriesEquipe(_getDocsFromServerFB(collection(db,'stories_semanais')),'os Stories aguardando revisão')
+    ]);
+    const ativos=new Set(carteira.map(c=>c.slug)),parados=[];
     snap.forEach(d => { const v = d.data();
-      if(!fonteFisicaClienteR4(v.cliente||v.clienteSlug||'',v)) return;
+      if(v.excluido===true||v.cancelado===true||terminalStoriesI27(v)||v.status==='postado'||v.postadoPeloCliente===true) return;
+      if(!ativos.has(v.cliente)||!fonteFisicaClienteR4(v.cliente||'',v)) return;
       if((v.revisaoInterna || 'liberado') === 'aguardando_interna') parados.push(v.clienteNome || v.cliente); });
     if(!parados.length) return;
     await criarAvisoParaGestao('📸 Aprovar os stories de ' + parados.join(', '),

@@ -258,21 +258,30 @@ export function criarOperacao(api){
       catch(e){return `<p role="alert">${esc(p.titulo)}: ${esc(e.message)}</p>`;}
     }).join('')||'<p>Nenhum vídeo no novo fluxo ainda. Os antigos continuam na fila anterior; os novos entram após a Gabi selecionar as plataformas.</p>');
   }
+  function fecharComConferenciaI84(){
+    if(ocupado||!painel)return;
+    if(capturarPreenchimentoI84().some(r=>r.campos.length)&&!api.confirm('Há preenchimento não salvo. Fechar e descartar apenas esse preenchimento?'))return;
+    painel.close();painel.remove();painel=null;
+  }
   async function abrir(){
     if(!['Amanda','Cecília','Chris'].includes(contexto().papel))return;
     if(painel)painel.remove();
     painel=doc.createElement('dialog');painel.dataset.stokkiPainel='';painel.style.cssText='width:min(900px,94vw);max-height:90vh;overflow:auto;color:inherit;background:var(--bg,#242526);border:1px solid #888;border-radius:12px;padding:20px;box-sizing:border-box';
-    doc.body.append(painel);painel.showModal();desenhar();
+    doc.body.append(painel);painel.showModal();redesenharPreservandoI84();
+    painel.addEventListener('cancel',ev=>{ev.preventDefault();fecharComConferenciaI84();});
     painel.addEventListener('click',async ev=>{
-      if(ev.target.closest('[data-stokki-fechar]')){if(!ocupado){painel.close();painel.remove();painel=null;}return;}
+      if(ev.target.closest('[data-stokki-fechar]')){fecharComConferenciaI84();return;}
+      const descartar=ev.target.closest('[data-stokki-descartar-rascunho]');
+      if(descartar){if(!ocupado&&api.confirm('Descartar apenas este preenchimento e mostrar os dados atuais? O que já está salvo não será alterado.'))await carregar(null,descartar.closest('[data-stokki-post]').dataset.stokkiPost);return;}
       if(ev.target.closest('[data-stokki-recarregar]')){await carregar();return;}
-      if(ev.target.closest('[data-stokki-historico]')){mostrarHistorico=!mostrarHistorico;desenhar();return;}
+      if(ev.target.closest('[data-stokki-historico]')){mostrarHistorico=!mostrarHistorico;redesenharPreservandoI84();return;}
       if(ev.target.closest('[data-stokki-copiar]')){
         const campo=ev.target.closest('[data-stokki-rede]').querySelector('[data-stokki-legenda]');
         try{await navigator.clipboard.writeText(campo.value);api.toast('Legenda copiada.');}
         catch{campo.focus();campo.select();api.toast('Texto selecionado. Use Copiar no seu dispositivo.');}return;
       }
       const botao=ev.target.closest('[data-stokki-acao]');if(!botao||ocupado)return;
+      if(botao.closest('[data-stokki-conflito]')){api.toast('Este material mudou. Confira os dados atuais antes de salvar.');return;}
       const bloco=botao.closest('[data-stokki-rede]'),id=botao.closest('[data-stokki-post]').dataset.stokkiPost;
       const p=retratos.get(id),tipo=botao.dataset.stokkiAcao,rede=bloco.dataset.stokkiRede||bloco.querySelector('[data-stokki-adicionar]')?.value;
       const acao={tipo,rede,operacaoId:crypto.randomUUID(),data:bloco.querySelector('[data-stokki-data]')?.value||'',hora:bloco.querySelector('[data-stokki-hora]')?.value||'',
@@ -283,22 +292,88 @@ export function criarOperacao(api){
       }
       if(tipo==='publicar'&&!api.confirm('Confirma que este vídeo realmente foi publicado nesta plataforma? O checklist ficará pendente para Amanda e Cecília.'))return;
       const feedback=painel.querySelector('[data-stokki-feedback]');feedback.textContent='Salvando e confirmando no servidor…';ocupado=true;botao.disabled=true;
-      try{alterar(p,acao,{...contexto(),em:new Date().toISOString()});await api.salvar(p,acao,contexto());ocupado=false;await carregar();api.toast('Registro confirmado. Amanda e Cecília veem a mesma situação.');}
+      try{alterar(p,acao,{...contexto(),em:new Date().toISOString()});const recibo=await api.salvar(p,acao,contexto());ocupado=false;botao.disabled=false;await carregar({id,acao,recibo:recibo?.postagem});api.toast('Registro confirmado. Amanda e Cecília veem a mesma situação.');}
       catch(e){ocupado=false;botao.disabled=false;feedback.textContent=e.message||String(e);feedback.setAttribute('role','alert');}
     });
     await carregar();
   }
   function avisar(){
     let el=doc.getElementById('stokkiAvisosI30');
+    if(api.avisosNoMenu){el?.remove();return;} // I84: acesso pelo espaço Legendas e Postagens.
     if(!['Amanda','Cecília','Chris'].includes(contexto().papel)){el?.remove();return;}
     if(!el){el=doc.createElement('aside');el.id='stokkiAvisosI30';el.style.cssText='margin:8px 0 14px;padding:10px 14px;border:1px solid #ffc400;border-radius:10px;background:#262626;color:#fff;font-size:13px';(doc.querySelector('.main')||doc.body).prepend(el);el.addEventListener('click',abrir);}
     let ps=[];try{ps=pendencias(posts);}catch(e){erro='Stokki indisponível: '+e.message;}
     const html=`<button type="button" style="background:none;color:inherit;border:0;text-align:left;cursor:pointer"><b>Stokki · ${erro?'leitura indisponível':ps.length+' pendência(s)'}</b><br>${esc(erro||ps.slice(0,2).map(p=>`${rotulo[p.tipo]} · ${p.nome} · ${p.titulo}`).join(' / ')||'Abrir publicações e conferências')}</button>`;
     if(el.innerHTML!==html)el.innerHTML=html;
   }
-  async function carregar(){const g=++geracao,c=contexto();try{const novos=await api.listar();if(g!==geracao||JSON.stringify(c)!==JSON.stringify(contexto()))return;posts=novos;erro='';}
-    catch(e){if(g!==geracao)return;erro='Não foi possível conferir as publicações da Stokki. '+e.message;}
-    avisar();desenhar();}
+  // Preserve unsaved neighboring fields after an action, including typing during IO.
+  // A changed external version keeps its old editor/guard instead of silently rebasing a draft.
+  function capturarPreenchimentoI84(){
+    if(!painel?.isConnected)return [];
+    return [...painel.querySelectorAll('[data-stokki-post]')].map(card=>({
+      id:card.dataset.stokkiPost,card,base:retratos.get(card.dataset.stokkiPost),
+      campos:[...card.querySelectorAll('input,textarea,select')].filter(el=>el.type==='checkbox'?el.checked!==el.defaultChecked:el.value!==(el.tagName==='SELECT'?[...el.options].find(o=>o.defaultSelected)?.value||el.options[0]?.value||'':el.defaultValue)).map(el=>({
+        rede:el.closest('[data-stokki-rede]')?.dataset.stokkiRede||'',
+        atributo:[...el.attributes].find(a=>a.name.startsWith('data-stokki-'))?.name||'',
+        chave:[...el.attributes].find(a=>a.name.startsWith('data-stokki-'))?.value||'',
+        valor:el.value,marcado:el.checked
+      })),
+      abertos:[...card.querySelectorAll('details')].filter(el=>el.open).map(el=>({rede:el.closest('[data-stokki-rede]')?.dataset.stokkiRede||'',texto:el.querySelector('summary')?.textContent})),
+      foco:[...card.querySelectorAll('input,textarea,select')].indexOf(doc.activeElement),
+      selecao:card.contains(doc.activeElement)?[doc.activeElement.selectionStart,doc.activeElement.selectionEnd]:[]
+    }));
+  }
+  function preservarPreenchimentoI84(antes,confirmacao){
+    let conflito=false;
+    for(const r of antes){
+      const card=[...painel.querySelectorAll('[data-stokki-post]')].find(el=>el.dataset.stokkiPost===r.id),atual=retratos.get(r.id);
+      if(!r.base)continue;
+      let seguro=!!card&&!!atual&&assinatura(atual)===assinatura(r.base);
+      if(confirmacao&&r.id===confirmacao.id&&atual?.publicacaoStokki?.operacaoId===confirmacao.acao.operacaoId){
+        try{const esperado=alterar(r.base,confirmacao.acao,{...contexto(),em:atual.publicacaoStokki.em});seguro=assinatura({...r.base,...esperado.patch})===assinatura(atual);}catch{}
+      }
+      if(r.campos.length&&!seguro){
+        if(card)card.replaceWith(r.card);else painel.append(r.card);
+        r.card.dataset.stokkiConflito='true';
+        for(const b of r.card.querySelectorAll('[data-stokki-acao]'))b.disabled=true;
+        if(!r.card.querySelector('[data-stokki-descartar-rascunho]'))r.card.insertAdjacentHTML('afterbegin','<p role="alert">Este material foi alterado ou retirado em outra ação. Seu preenchimento está preservado para consulta e cópia.</p><button type="button" data-stokki-descartar-rascunho>Descartar este preenchimento e atualizar</button>');
+        retratos.set(r.id,r.base);conflito=true;continue;
+      }
+      if(!card)continue;
+      for(const f of r.campos){
+        const a=confirmacao?.acao||{},mesmo=r.id===confirmacao?.id&&f.rede===(a.rede||'');
+        const gravado=mesmo&&((['agendar','desagendar'].includes(a.tipo)&&((f.atributo==='data-stokki-data'&&f.valor===a.data)||(f.atributo==='data-stokki-hora'&&f.valor===a.hora)))||
+          (a.tipo==='corrigir_legenda'&&f.atributo==='data-stokki-legenda'&&f.valor===a.texto)||
+          (a.tipo==='publicar'&&f.atributo==='data-stokki-url'&&f.valor===a.url)||
+          (a.tipo==='conferir'&&f.atributo==='data-stokki-check'));
+        if(gravado)continue;
+        const bloco=[...card.querySelectorAll('[data-stokki-rede]')].find(el=>el.dataset.stokkiRede===f.rede);
+        const el=[...(bloco?.querySelectorAll('input,textarea,select')||[])].find(el=>el.getAttribute(f.atributo)===f.chave);
+        if(el){el.value=f.valor;if(el.type==='checkbox')el.checked=f.marcado;}
+      }
+      for(const el of card.querySelectorAll('details'))if(r.abertos.some(a=>a.rede===(el.closest('[data-stokki-rede]')?.dataset.stokkiRede||'')&&a.texto===el.querySelector('summary')?.textContent))el.open=true;
+    }
+    if(conflito)painel.querySelector('[data-stokki-feedback]').textContent='Outra ação mudou uma publicação. Seu preenchimento foi mantido; confira a versão atual antes de salvar esse material.';
+  }
+  function redesenharPreservandoI84(confirmacao=null,descartarId=null){
+    if(!painel?.isConnected||ocupado)return;
+    const antes=capturarPreenchimentoI84().filter(r=>r.id!==descartarId),rolagem=painel.scrollTop;
+    desenhar();preservarPreenchimentoI84(antes,confirmacao);
+    for(const r of antes)if(r.foco>=0){
+      const card=[...painel.querySelectorAll('[data-stokki-post]')].find(el=>el.dataset.stokkiPost===r.id),el=card?.querySelectorAll('input,textarea,select')[r.foco];
+      if(el){el.focus({preventScroll:true});try{if(r.selecao[0]!==null)el.setSelectionRange(...r.selecao);}catch{}}
+    }
+    painel.scrollTop=rolagem;
+  }
+  async function carregar(confirmacao=null,descartarId=null){const g=++geracao,c=contexto();
+    try{const novos=await api.listar();if(g!==geracao||JSON.stringify(c)!==JSON.stringify(contexto()))return;
+      if(confirmacao?.recibo){const i=novos.findIndex(p=>p.id===confirmacao.id),atual=novos[i];
+        if(!atual||(atual.publicacaoStokki?.revisao||0)<confirmacao.recibo.publicacaoStokki.revisao){if(i<0)novos.push(confirmacao.recibo);else novos[i]=confirmacao.recibo;}}
+      posts=novos;erro='';
+    }catch(e){if(g!==geracao)return;console.warn('Falha ao conferir publicações da Stokki',e);erro='Não foi possível atualizar as publicações. Confira sua conexão e tente novamente.';
+      if(painel?.isConnected){painel.querySelector('[data-stokki-feedback]').innerHTML=esc(erro+' O preenchimento continua aqui.')+' <button type="button" data-stokki-recarregar>Tentar atualizar novamente</button>';return;}}
+    avisar();redesenharPreservandoI84(confirmacao,descartarId);
+  }
   function incorporarReparoI79(p){
     if(!usaFluxo(p)||ocupado)return;
     const anterior=retratos.get(p.id);if(!anterior)return;

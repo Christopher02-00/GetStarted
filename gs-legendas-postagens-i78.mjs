@@ -32,7 +32,8 @@ export function criarConferencia(api){
   const vigente=()=>JSON.stringify(ctx)===JSON.stringify(api.contexto());
   const post=()=>estado?.postagens.find(p=>p.id===postId);
   const linha=()=>estado?.linhas.find(l=>chave(l)===escolha);
-  const pode=p=>estado?.podeEditar && EDITAVEIS.has(p?.status) && !referencia(p)?.nativa;
+  const copiaManual=p=>!!input?.derivadaPostagemI84&&p?.id===input.postId&&!referencia(p);
+  const pode=p=>!copiaManual(p)&&estado?.podeEditar && EDITAVEIS.has(p?.status) && !referencia(p)?.nativa;
   function rascunho(p){if(!rascunhos.has(p.id))rascunhos.set(p.id,{textos:{},origens:{}});return rascunhos.get(p.id);}
   function podeReparar(p){return estado?.podeEditar&&pendenciaLegendaI79(p)&&(!(p.cliente==='stokki'&&p.publicacaoStokki?.versao===1)||['Cecília','Amanda','Chris'].includes(estado.papel));}
   function formularioReparo(p,l,r){
@@ -78,6 +79,7 @@ export function criarConferencia(api){
           const p=post(),l=b.hasAttribute('data-remover')?null:linha();
           if(!pode(p)||(!l&&!b.hasAttribute('data-remover')))throw Error('Escolha a postagem e o conteúdo primeiro.');
           if(l?.bloqueio)throw Error(l.bloqueio);
+          if(l?.derivadaPostagemI84)throw Error('Escolha um conteúdo de origem. Esta linha foi criada pela própria postagem.');
           busy=true;render();aviso('Confirmando a referência…');
           try{
             const novo=await api.salvar(p,l,estado,ctx);conferir();
@@ -109,21 +111,21 @@ export function criarConferencia(api){
   }
   function render(){
     const selects=[...corpo.querySelectorAll('select')],foco=doc.activeElement?.id,scroll=dialog.scrollTop;
-    const p=post(),r=p?resolver(p,estado.linhas):null,l=linha(),manual=!!p&&pode(p)&&(editar||r.estado!=='confirmado');
+    const p=post(),r=p?resolver(p,estado.linhas):null,l=copiaManual(p)?null:linha(),manual=!!p&&pode(p)&&(editar||r.estado!=='confirmado');
     const fixo=input.postId,refNativa=referencia(p||{})?.nativa;
     const meses=[...new Set(estado.linhas.map(l=>l.competencia))].sort().reverse();
     const itens=estado.linhas.filter(l=>l.competencia===mes);
     corpo.innerHTML=`<section><h3>${e(estado.nomeCliente)}</h3>${fixo?'':`<label for="i78Post">Postagem / vídeo</label><select id="i78Post" data-post ${busy?'disabled':''}><option value="">Selecione a postagem</option>${estado.postagens.map(v=>`<option value="${e(v.id)}" ${v.id===postId?'selected':''}>${e(v.titulo||'Sem título')} · ${e(pendenciaLegendaI79(v)?'Legenda pendente':estados[v.status]||v.status)}${resolver(v,estado.linhas).linha&&chave(resolver(v,estado.linhas).linha)===chave(input)?' · deste conteúdo':''}</option>`).join('')}</select>`}
       ${p?`<h3 style="margin-top:12px">${e(p.titulo)}</h3><p class="meta">${e(pendenciaLegendaI79(p)?'Legenda pendente · '+(p.status==='agendado'?'agendamento preservado':'aguardando agendamento'):estados[p.status]||p.status)}${p.dataAgendada?' · '+e(p.dataAgendada)+' '+e(p.horaAgendada||''):''}</p>${linkVideo(p)}`:'<p class="meta">Escolha o vídeo que vai usar esta legenda. Sem ligação pelo título.</p>'}</section>
-      <section><h3>Conteúdo de origem no calendário</h3>
+      ${copiaManual(p)?'<section><h3>Material incluído na postagem</h3><p class="meta">Esta é a postagem vinculada ao calendário. Sua legenda está abaixo.</p></section>':`<section><h3>Conteúdo de origem no calendário</h3>
         ${r?.estado==='indisponivel'?`<p role="alert">${e(r.motivo)}</p>`:''}
-        ${manual?`<p class="meta">Escolha manualmente e confira o roteiro e a legenda abaixo.</p><label for="i78Mes">Mês do calendário</label><select id="i78Mes" data-mes ${busy?'disabled':''}><option value="">Escolha o mês</option>${meses.map(v=>`<option value="${e(v)}" ${mes===v?'selected':''}>${e(rotuloMes(v))}</option>`).join('')}</select><label for="i78Item">Conteúdo do calendário</label><select id="i78Item" data-item ${busy?'disabled':''}><option value="">Escolha o conteúdo</option>${itens.map(v=>`<option value="${e(chave(v))}" ${v.bloqueio?'disabled':''} ${escolha===chave(v)?'selected':''}>${e(v.titulo)} · dia ${e(v.dia||'a definir')}${v.bloqueio?' · conferir identificação':''}</option>`).join('')}</select>`:''}
+        ${manual?`<p class="meta">Escolha manualmente e confira o roteiro e a legenda abaixo.</p><label for="i78Mes">Mês do calendário</label><select id="i78Mes" data-mes ${busy?'disabled':''}><option value="">Escolha o mês</option>${meses.map(v=>`<option value="${e(v)}" ${mes===v?'selected':''}>${e(rotuloMes(v))}</option>`).join('')}</select><label for="i78Item">Conteúdo do calendário</label><select id="i78Item" data-item ${busy?'disabled':''}><option value="">Escolha o conteúdo</option>${itens.map(v=>`<option value="${e(chave(v))}" ${v.bloqueio||v.derivadaPostagemI84?'disabled':''} ${escolha===chave(v)?'selected':''}>${e(v.titulo)} · dia ${e(v.dia||'a definir')}${v.bloqueio?' · conferir identificação':v.derivadaPostagemI84?' · cópia da postagem':''}</option>`).join('')}</select>`:''}
         ${l?`${p&&r?.estado!=='confirmado'?'<p class="meta">Prévia — referência ainda não confirmada.</p>':''}<h3 style="margin-top:14px">${e(l.titulo)}</h3><p class="meta">Calendário ${e(rotuloMes(l.competencia))} · dia ${e(l.dia||'a definir')} · ${e(l.formato||'Conteúdo')}</p><p class="meta">${l.aprovado?'Conteúdo aprovado pelo cliente.':'Confira a liberação deste conteúdo antes de publicar.'}</p><details><summary>Conferir roteiro</summary><div style="white-space:pre-wrap;margin-top:10px">${e(l.roteiro||'Sem roteiro preenchido.')}</div></details>`:!manual?'<p class="meta">Sem referência confirmada. Uma postagem avulsa pode usar sua própria legenda.</p>':''}
-        ${manual?`<button type="button" class="btn" data-salvar style="margin-top:14px" ${busy||!l||l.bloqueio?'disabled':''}>Confirmar este conteúdo para esta postagem</button>${r.estado==='confirmado'?'<button type="button" class="btn secondary" data-voltar>Cancelar escolha</button>':''}`:''}
+        ${manual?`<button type="button" class="btn" data-salvar style="margin-top:14px" ${busy||!l||l.bloqueio||l.derivadaPostagemI84?'disabled':''}>Confirmar este conteúdo para esta postagem</button>${r.estado==='confirmado'?'<button type="button" class="btn secondary" data-voltar>Cancelar escolha</button>':''}`:''}
         ${pode(p)&&r.estado==='confirmado'&&!editar?'<button type="button" class="btn secondary" data-trocar style="margin-top:12px">Trocar referência</button>':''}
         ${pode(p)&&p.referenciaLegendaI78?`<button type="button" class="btn secondary" data-remover ${busy?'disabled':''} style="margin-top:12px">Retirar referência manual</button>`:''}
         ${refNativa?'<p class="meta">Ligação original da produção. Ela é preservada.</p>':''}
-      </section>
+      </section>`}
       ${l?`<section><h3>Legenda atual do calendário</h3>${blocoTextos(l,'cal')}</section>`:''}
       ${p?formularioReparo(p,l,r):''}
       ${p?`<section><h3>Texto enviado com esta postagem</h3><p class="meta">Confira o texto que será usado na publicação. Recados e sinais isolados são tratados como pendência.</p>${blocoTextos(p,'post')}</section>`:''}

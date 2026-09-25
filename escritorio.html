@@ -664,6 +664,10 @@
 <script src="gs-conferencia-cecilia-i65.js?v=i65-1"></script>
 <script src="gs-aprovacao-conteudo-i68.js?v=i71"></script>
 <script src="gs-revisao-cliente-i72.js?v=i72"></script>
+<style>
+/* I85: o atalho global não deve cobrir os botões do detalhe da gravação. */
+body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:none!important;}
+</style>
 </head>
 <body class="semUsuario">
 <div id="authEquipeGate" style="position:fixed;inset:0;z-index:10000;background:#171717;color:#f5f5f2;display:flex;align-items:center;justify-content:center;padding:24px;font-family:Inter,system-ui,sans-serif;">
@@ -1015,7 +1019,7 @@
           <h2>Nova gravação</h2>
           <div id="avisoQtdHoje"></div>
           <div class="row2">
-            <div class="field"><label>Cliente</label><select id="agCliente" onchange="mostrarHistoricoCliente(); mostrarSolicitacoesDoCalendario();"></select></div>
+            <div class="field"><label for="agCliente">Cliente</label><select id="agCliente" onchange="mostrarHistoricoCliente(); mostrarSolicitacoesDoCalendario();"></select><div id="agClientesEstadoI85" class="meta" role="status" style="margin-top:6px;"></div><button id="agClientesAtualizarI85" type="button" class="btn secondary" style="width:auto;margin-top:8px;padding:8px 12px;" onclick="atualizarClientesAgendamentoI85()">Atualizar clientes</button></div>
             <div class="field"><label>Tipo</label><select id="agTipo"><option value="fixo">Cliente fixo</option><option value="avulso">Avulso (fora do banco)</option></select></div>
           </div>
           <div id="historicoClienteMes"></div>
@@ -1072,7 +1076,8 @@
           </div>
           <button class="btn" onclick="agendarGravacao()" id="btnAgendar">Agendar</button>
         </div>
-        <div id="listaAgendamentos"></div>
+        <div id="agConferenciaNovaI85" role="status"></div>
+          <div id="listaAgendamentos"></div>
       </div>
 
       <div id="agendamentoMinhaAgenda" style="display:none;"></div>
@@ -2751,7 +2756,9 @@
       if(v.origem !== 'sistema' && v.criadoPor !== 'sistema') return;
       const tipo = v.tipoEspecial || v.tipoFuncaoFixa;
       if(!tipo) return;
-      if(tipo==='reagendar_postagem_v118') return;
+      // I85: cobranças de gravação pertencem ao ID/ciclo da sessão.
+      // Outra gravação do mesmo funcionário não substitui esta pendência.
+      if(tipo==='reagendar_postagem_v118'||tipo==='gravacao_sem_registro_v135') return;
       /* Função fixa mensal não é uma "versão" do mês anterior. Sem a
          competência na chave, a limpeza fechava agosto por existir julho
          (ou o contrário), recriando a fila de calendários errada. */
@@ -10745,7 +10752,20 @@ window.marcarClienteAprovouVideo = async function(id){
 
   /* I29 privado: inserir estado/helpers; substituir somente as duas funções.
    Preservar a declaração existente let __agendamentoEmCurso=false. */
-const agClienteI29={leitura:0,confirmada:null};
+const agClienteI29={leitura:0,confirmada:null,emCurso:null};
+let conferenciaNovaAgendaI85=null;
+function conferirNovaAgendaI85(snap,f,sessao){
+  const existentes=snap.docs.map(d=>({...d.data(),id:d.id})).filter(a=>!a.excluido&&a.status!=='cancelado'&&!sessaoSemCaptacaoI34(a)&&
+    (a.clienteSlug||a.cliente)===f.clienteSlug&&(a.mesCalendario||a.competenciaCalendario||String(a.data||'').slice(0,7))===f.mesCalendario&&Number(a.sessaoOrdem||a.bloco||1)===f.blocoAgendamento);
+  const painel=document.getElementById('agConferenciaNovaI85');if(!painel)return existentes.length===0;
+  if(!existentes.length){painel.innerHTML='';conferenciaNovaAgendaI85=null;return true;}
+  const chave=JSON.stringify([sessao,f,existentes.map(a=>[a.id,assinaturaAgendaI85(a)]).sort((a,b)=>a[0].localeCompare(b[0]))]);
+  if(conferenciaNovaAgendaI85===chave&&painel.querySelector('#agOutraSessaoI85')?.checked)return true;
+  conferenciaNovaAgendaI85=chave;
+  painel.innerHTML=`<div class="card" style="border:1px solid var(--yellow);margin-top:14px;"><h3>Já existe gravação nesta pauta</h3><p class="meta">Se mudou só a data, abra a sessão abaixo. Evita criar outra cobrança.</p>${existentes.map(a=>`<button type="button" class="btn secondary" style="margin-bottom:8px;" data-agenda="${escAttr(a.id)}" onclick="abrirAgendaI85(this.dataset.agenda)">${formatarDataBR(a.data||'')} · ${esc(a.hora||'')} · ${a.status==='realizado'?'Realizada — '+Number(a.qtdVideosRealizados||0)+' vídeo(s)':'Agendada'}</button>`).join('')}<label style="display:flex;gap:10px;align-items:center;"><input id="agOutraSessaoI85" type="checkbox" style="width:auto;">É outra gravação. Quero criar uma sessão adicional.</label><p class="meta">Para uma sessão adicional, marque a opção e clique em Agendar novamente.</p></div>`;
+  painel.scrollIntoView({block:'center',behavior:'smooth'});return false;
+}
+
 
 function agDataI29(valor){
   if(valor===undefined||valor===null||valor==='')return '';
@@ -10864,37 +10884,52 @@ function agPendenciaI29(valor,uid=auth.currentUser?.uid,agIdEsperado){
   return validar(JSON.parse(texto));
 }
 
-async function popularClientesAgendamento(){
-  const sel=document.getElementById('agCliente');if(!sel)return false;
-  const leitura=++agClienteI29.leitura,anterior=sel.value;let sessao;
-  agClienteI29.confirmada=null;
-  // Manter o select focável evita o ciclo foco → disabled → blur → novo foco.
-  // A única opção de carregamento é desabilitada e a carteira fica nula.
-  sel.disabled=false;sel.innerHTML='<option value="" disabled selected>Conferindo clientes ativos…</option>';
-  // Atribuição substitui a anterior; preencher opções nunca chama focus().
-  sel.onfocus=()=>{void popularClientesAgendamento();};
-  try{
-    sessao=agSessaoI29();
-    const btn=document.getElementById('btnAgendar');if(btn&&!__agendamentoEmCurso){btn.disabled=false;btn.textContent='Agendar / conferir tentativa';}
-    const snap=await agServidorI29(_getDocsFromServerFB(collection(db,'clientes_config')),'os clientes para gravação');agSessaoI29(sessao);
-    if(leitura!==agClienteI29.leitura)return false;
-    const clientes=[];let invalidos=0;
-    snap.forEach(d=>{try{clientes.push(agFonteI29(d.id,d.data()));}catch(e){if(!e.clienteInativoI29)invalidos++;}});
-    clientes.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
-    agClienteI29.confirmada={sessao,clientes};
-    sel.innerHTML='<option value="">'+(clientes.length?'Selecione o cliente ativo':'Nenhum cadastro ativo confirmado; confira a Central')+'</option>'+
-      clientes.map(c=>'<option value="'+esc(c.slug)+'" data-nome="'+esc(c.nome)+'">'+esc(c.nome)+'</option>').join('')+
-      (invalidos?'<option value="" disabled>Há cadastros indisponíveis; confira a Central de Clientes</option>':'');
-    sel.value=clientes.some(c=>c.slug===anterior)?anterior:'';sel.disabled=clientes.length===0;
-    sel.title=invalidos?'Há configurações inválidas; somente clientes confirmados estão disponíveis.':'Clientes confirmados no servidor.';
-    return true;
-  }catch(e){
-    if(leitura!==agClienteI29.leitura)return false;
-    agClienteI29.confirmada=null;sel.disabled=true;sel.innerHTML='<option value="">Clientes indisponíveis — reabra Gravações para conferir</option>';
-    if(sessao===sessaoServicoManual())mostrarToast(e.message||'Não foi possível confirmar os clientes.','erro');
-    return false;
+// I85: abrir o seletor não faz rede nem substitui suas opções.
+// Entradas concorrentes compartilham a consulta; o envio ainda revalida I29.
+function popularClientesAgendamento(){
+  const sel=document.getElementById('agCliente');if(!sel)return Promise.resolve(false);
+  sel.onfocus=null;
+  let sessao;
+  try{sessao=agSessaoI29();}catch(e){
+    agClienteI29.confirmada=null;mostrarToast(e.message,'erro');return Promise.resolve(false);
   }
+  if(agClienteI29.emCurso?.sessao===sessao)return agClienteI29.emCurso.promessa;
+  const leitura=++agClienteI29.leitura,anterior=sel.value||(agClienteI29.selecaoPendente?.sessao===sessao?agClienteI29.selecaoPendente.slug:'');
+  const botao=document.getElementById('agClientesAtualizarI85'),aviso=document.getElementById('agClientesEstadoI85');
+  const vigente=()=>leitura===agClienteI29.leitura && sessao===sessaoServicoManual() && sel===document.getElementById('agCliente');
+  agClienteI29.confirmada=null;
+  sel.disabled=true;sel.innerHTML='<option value="">Conferindo clientes ativos…</option>';
+  if(botao){botao.disabled=true;botao.textContent='Conferindo…';}
+  if(aviso)aviso.textContent='';
+  const tarefa={sessao,promessa:null};agClienteI29.emCurso=tarefa;
+  tarefa.promessa=(async()=>{
+    try{
+      const btn=document.getElementById('btnAgendar');if(btn&&!__agendamentoEmCurso){btn.disabled=false;btn.textContent='Agendar / conferir tentativa';}
+      const snap=await agServidorI29(_getDocsFromServerFB(collection(db,'clientes_config')),'os clientes para gravação');agSessaoI29(sessao);
+      if(!vigente())return false;
+      const clientes=[];let invalidos=0;
+      snap.forEach(d=>{try{clientes.push(agFonteI29(d.id,d.data()));}catch(e){if(!e.clienteInativoI29)invalidos++;}});
+      clientes.sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+      agClienteI29.confirmada={sessao,clientes};agClienteI29.selecaoPendente=null;
+      sel.innerHTML='<option value="">'+(clientes.length?'Selecione o cliente ativo':'Nenhum cliente ativo confirmado')+'</option>'+clientes.map(c=>'<option value="'+esc(c.slug)+'" data-nome="'+esc(c.nome)+'">'+esc(c.nome)+'</option>').join('');
+      sel.value=clientes.some(c=>c.slug===anterior)?anterior:'';sel.disabled=clientes.length===0;
+      sel.title='Clientes confirmados no servidor.';
+      if(aviso)aviso.textContent=invalidos?'Alguns cadastros precisam de conferência na Central de Clientes.':clientes.length?'':'Confira os cadastros na Central de Clientes.';
+      if(anterior&&sel.value!==anterior){mostrarHistoricoCliente();mostrarSolicitacoesDoCalendario();}
+      return true;
+    }catch(e){
+      if(!vigente())return false;
+      agClienteI29.confirmada=null;agClienteI29.selecaoPendente={sessao,slug:anterior};sel.disabled=true;sel.innerHTML='<option value="">Não foi possível carregar os clientes</option>';
+      if(aviso)aviso.textContent='Tente novamente abaixo. Os outros campos foram mantidos.';
+      return false;
+    }finally{
+      if(vigente()&&botao){botao.disabled=false;botao.textContent=agClienteI29.confirmada?'Atualizar clientes':'Tentar novamente';}
+      if(agClienteI29.emCurso===tarefa)agClienteI29.emCurso=null;
+    }
+  })();
+  return tarefa.promessa;
 }
+window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
 
   let __historicoClienteMesSequenciaI77E = 0;
   function contextoHistoricoClienteI77E(){
@@ -11255,7 +11290,7 @@ async function popularClientesAgendamento(){
     }else{
       formulario=agFormularioI29();const f=formulario;
       const carteira=agClienteI29.confirmada;
-      if(!carteira||carteira.sessao!==sessao||!carteira.clientes.some(c=>c.slug===f.clienteSlug))throw new Error('Selecione um cliente confirmado. Reabra Gravações para atualizar a lista; o cadastro é feito somente na Central.');
+      if(!carteira||carteira.sessao!==sessao||!carteira.clientes.some(c=>c.slug===f.clienteSlug))throw new Error('Selecione um cliente confirmado. Use Atualizar clientes para conferir a lista; o cadastro é feito somente na Central.');
       let clienteSlug=exigirClienteOperacionalR4(f.clienteSlug);
       const {data,hora,local,estilo,referencias,obsFilmmaker,equipe,tipo,blocoAgendamento,mesCalendario,competenciaEscolhidaManualmente,permitirCaptacoesExtras}=f;
       if(!clienteSlug||!data)throw new Error('Preenche cliente e data.');
@@ -11269,6 +11304,7 @@ async function popularClientesAgendamento(){
       const clienteNome=agFonteI29(clienteSlug,config.data(),data).nome;
       const sessaoChave=clienteSlug+'|'+mesCalendario+'|S'+String(blocoAgendamento).padStart(2,'0');
       const snap=await getDocs(collection(db,'agendamentos'));validar();
+      if(!conferirNovaAgendaI85(snap,f,sessao)){mostrarToast('Confira a gravação existente antes de criar outra.');return false;}
       let qtdNoDia=0,temGravacaoAnteriorDoCliente=false;
       snap.forEach(d=>{const a=d.data();if(a.excluido||a.status==='cancelado'||sessaoSemCaptacaoI34(a))return;if(a.data===data)qtdNoDia++;if(a.cliente===clienteSlug||a.clienteSlug===clienteSlug)temGravacaoAnteriorDoCliente=true;});
       const ehClienteNovo=!temGravacaoAnteriorDoCliente;
@@ -11340,6 +11376,7 @@ async function popularClientesAgendamento(){
     const recibos=await Promise.all([agRef,...(demandaRef?[demandaRef]:[])].map(ref=>agServidorI29(_getDocFromServerFB(ref),'a gravação confirmada')));agSessaoI29(sessao);
     if(!igual(recibos[0],p.agendamento)||(demandaRef&&!igual(recibos[1],p.demanda)))throw new Error('O estado atual difere do envio confirmado. Confira a gravação '+p.agId+'; não repita o envio.');
     agPendenciaI29(null,uid,p.agId);
+    conferenciaNovaAgendaI85=null;const conferencia=document.getElementById('agConferenciaNovaI85');if(conferencia)conferencia.innerHTML='';
     if(formulario&&JSON.stringify(agFormularioI29())===JSON.stringify(formulario)){
       ['agLocal','agEstilo','agReferencias','agObsFilmmaker'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
       const extras=document.getElementById('agPermitirExtras');if(extras)extras.checked=false;
@@ -11542,7 +11579,75 @@ async function popularClientesAgendamento(){
     }
   }
 
-  window.cancelarAgendamento = async function(id){
+  // I85: um detalhe por sessão existente, sem abrir o formulário de nova gravação.
+  function assinaturaAgendaI85(a){
+    return JSON.stringify([a.data||'',a.hora||'',a.status||'',!!a.excluido,a.filmmaker||'',a.equipe||[],a.mesCalendario||'',a.sessaoOrdem||a.bloco||1,a.qtdVideosRealizados||0]);
+  }
+  function validarManutencaoAgendaI85(sessao,opcoes,a){
+    if(!auth.currentUser?.uid||sessao!==sessaoServicoManual())throw new Error('O perfil mudou. Reabra a gravação antes de alterar.');
+    if(opcoes?.validar)opcoes.validar();
+    if(a&&opcoes?.base!==undefined&&opcoes.base!==assinaturaAgendaI85(a))throw new Error('Esta gravação mudou. Feche e abra novamente para conferir.');
+  }
+  function chipAgendaI85(a,texto){
+    return `<button type="button" class="calChip ${a.aprovado===false?'pendente':''}" style="width:100%;text-align:left;color:inherit;cursor:pointer;" data-agenda="${escAttr(a.id)}" onclick="event.stopPropagation();abrirAgendaI85(this.dataset.agenda)" title="Abrir gravação e conferir data">${texto}${a.status==='realizado'?' ✓':''}</button>`;
+  }
+  let detalheAgendaI85=null;
+  window.abrirAgendaI85=async function(id){
+    const sessao=sessaoServicoManual(),papel=usuarioAtual;
+    if(!auth.currentUser?.uid||!['Chris','Amanda','Cecília',...PESSOAS_DE_CAMPO].includes(papel))return false;
+    const cont=document.getElementById('modalConteudo'),overlay=document.getElementById('overlayView');if(!cont||!overlay)return false;
+    cont.innerHTML='<section id="agendaDetalheI85"><h2>Conferindo gravação…</h2><button class="btn secondary" onclick="fecharModal()">Voltar</button></section>';
+    overlay.classList.add('show');const raiz=cont.firstElementChild;
+    const ctx={id,sessao,papel,raiz,busy:false,base:null};detalheAgendaI85=ctx;
+    const vigente=()=>detalheAgendaI85===ctx&&raiz.isConnected&&overlay.classList.contains('show')&&sessao===sessaoServicoManual();
+    try{
+      const snap=await agServidorI29(_getDocFromServerFB(doc(db,'agendamentos',id)),'esta gravação');
+      if(!vigente())return false;
+      if(!snap.exists())throw new Error('Gravação não encontrada.');
+      const a=snap.data();
+      if(PESSOAS_DE_CAMPO.includes(papel)&&!pessoaNaEquipe(a,papel))throw new Error('Esta sessão pertence a outra equipe.');
+      ctx.base=assinaturaAgendaI85(a);
+      const aberta=!a.excluido&&a.status==='agendado',coord=['Chris','Amanda','Cecília'].includes(papel);
+      raiz.innerHTML=`<h2>${esc(a.clienteNome||a.cliente||'Gravação')}</h2>
+        <div class="card" style="margin:12px 0;"><b>${formatarDataBR(a.data||'')} · ${esc(a.hora||'')}</b><p class="meta">${esc(rotuloEquipe(a))} · ${esc(a.local||'Local não informado')}</p><span class="selo">${a.excluido||a.status==='cancelado'?'Retirada da agenda':a.status==='realizado'?'Realizada · '+Number(a.qtdVideosRealizados||0)+' vídeo(s)':a.aprovado===false?'Aguardando Amanda':'Agendada'}</span><p class="meta">Pauta: ${esc(a.mesCalendario||String(a.data||'').slice(0,7))} · Gravação ${Number(a.sessaoOrdem||a.bloco)||1}</p></div>
+        ${aberta?`<div class="card" style="margin:12px 0;"><h3>Mudar data ou horário</h3><div class="row2"><div class="field"><label for="agendaDataI85">Data</label><input id="agendaDataI85" type="date" value="${escAttr(a.data||'')}"></div><div class="field"><label for="agendaHoraI85">Horário</label><input id="agendaHoraI85" type="time" value="${escAttr(a.hora||'')}"></div></div><label for="agendaMotivoI85">Observação (opcional)</label><input id="agendaMotivoI85" maxlength="1000" placeholder="Ex.: cliente mudou o dia"><button class="btn" style="margin-top:12px;" onclick="acaoAgendaI85('data')">Salvar data e horário</button></div>
+        <details class="card" style="margin:12px 0;"><summary>Esta gravação não aconteceu</summary><label for="agendaCancelamentoI85" style="margin-top:12px;display:block;">Motivo</label><input id="agendaCancelamentoI85" maxlength="1000" placeholder="Ex.: cliente cancelou esta sessão"><button class="btn red" style="margin-top:12px;" onclick="acaoAgendaI85('cancelar')">Cancelar esta gravação</button><p class="meta">Sai da agenda e encerra a cobrança desta sessão.</p></details>
+        ${coord?'<details class="card" style="margin:12px 0;"><summary>Agendamento duplicado ou criado por engano</summary><p class="meta">Retira só esta sessão. Os vídeos e o histórico continuam preservados.</p><button class="btn secondary" onclick="acaoAgendaI85(&quot;retirar&quot;)">Retirar este agendamento</button></details>':''}`:'<p class="meta">Sessão encerrada. O registro e os vídeos foram preservados.</p>'}
+        <p id="agendaEstadoI85" role="status"></p><button class="btn secondary" onclick="fecharModal()">Voltar à tela anterior</button>`;
+      return true;
+    }catch(e){
+      if(vigente())raiz.innerHTML='<h2>Não foi possível abrir a gravação</h2><p>'+esc(e.message)+'</p><button class="btn secondary" data-agenda="'+escAttr(id)+'" onclick="abrirAgendaI85(this.dataset.agenda)">Tentar novamente</button><button class="btn secondary" onclick="fecharModal()">Voltar</button>';
+      return false;
+    }
+  };
+  window.acaoAgendaI85=async function(acao){
+    const ctx=detalheAgendaI85;if(!ctx||ctx.busy||!['data','cancelar','retirar'].includes(acao))return false;
+    const validar=()=>{if(detalheAgendaI85!==ctx||!ctx.raiz.isConnected||!document.getElementById('overlayView')?.classList.contains('show')||ctx.sessao!==sessaoServicoManual())throw new Error('A tela mudou. Abra novamente a gravação.');};
+    const aviso=ctx.raiz.querySelector('#agendaEstadoI85');
+    const op={base:ctx.base,validar,data:ctx.raiz.querySelector('#agendaDataI85')?.value||'',hora:ctx.raiz.querySelector('#agendaHoraI85')?.value||'',motivo:ctx.raiz.querySelector(acao==='cancelar'?'#agendaCancelamentoI85':'#agendaMotivoI85')?.value.trim()||''};
+    try{
+      validar();
+      if(acao==='data'&&(!normalizarDataDigitada(op.data)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(op.hora)))throw new Error('Preencha uma data e um horário válidos.');
+      if(acao==='cancelar'&&!op.motivo)throw new Error('Informe o motivo do cancelamento.');
+      if(acao==='cancelar'&&!confirm('Cancelar somente esta gravação? O motivo e o histórico serão preservados.'))return false;
+      ctx.busy=true;ctx.raiz.querySelectorAll('button,input').forEach(el=>el.disabled=true);aviso.textContent='Salvando…';
+      const ok=acao==='data'?await (PESSOAS_DE_CAMPO.includes(ctx.papel)?reagendarGravacao(ctx.id,op):reposicionarAgendamento(ctx.id,op)):acao==='cancelar'?await cancelarAgendamento(ctx.id,op):await apagarAgendamento(ctx.id,op);
+      if(!ok){if(ctx.raiz.isConnected)aviso.textContent='Não foi confirmado. Confira o aviso e tente novamente.';return false;}
+      if(ctx.sessao!==sessaoServicoManual())return true;
+      // Atualiza apenas o leitor aberto; mês/filtros e formulário de nova gravação ficam intactos.
+      if(document.getElementById('agendamentoCalendarioMes')?.style.display==='block')await renderCalendarioMesFilmmaker();
+      if(detalheAgendaI85===ctx&&ctx.raiz.isConnected){
+        await abrirAgendaI85(ctx.id);
+        const estado=document.getElementById('agendaEstadoI85');if(estado)estado.textContent=acao==='data'?'Data e horário atualizados.':'Gravação retirada da agenda. Histórico preservado.';
+      }
+      return true;
+    }catch(e){if(ctx.raiz.isConnected)aviso.textContent=e.message;return false;}
+    finally{ctx.busy=false;if(ctx.raiz.isConnected)ctx.raiz.querySelectorAll('button,input').forEach(el=>el.disabled=false);}
+  };
+
+  window.cancelarAgendamento = async function(id,opcoesI85){
+    const sessaoI85=sessaoServicoManual();
+    const validarI85=a=>validarManutencaoAgendaI85(sessaoI85,opcoesI85,a);
     if(!['Chris','Amanda','Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)){
       mostrarToast('Você não tem permissão para cancelar gravações.', 'erro');
       return false;
@@ -11557,6 +11662,7 @@ async function popularClientesAgendamento(){
     }
     if(!snap.exists()){ mostrarToast('Essa gravação não existe mais.', 'erro'); return false; }
     const a = snap.exists() ? snap.data() : {};
+    try{validarI85(a);}catch(e){mostrarToast(e.message,'erro');return false;}
     if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(a, usuarioAtual)){
       mostrarToast('Essa gravação não está na sua equipe.', 'erro');
       return false;
@@ -11565,7 +11671,7 @@ async function popularClientesAgendamento(){
       mostrarToast('Uma gravação já encerrada não pode ser cancelada por este caminho.', 'erro');
       return false;
     }
-    const respostaMotivo = prompt('Por que essa gravação está sendo cancelada?\n\n(o filmmaker e a coordenação veem este texto)');
+    const respostaMotivo = opcoesI85 ? opcoesI85.motivo : prompt('Por que essa gravação está sendo cancelada?\n\n(o filmmaker e a coordenação veem este texto)');
     if(respostaMotivo === null) return false;
     const motivo = String(respostaMotivo||'').trim();
     let aConfirmado;
@@ -11573,7 +11679,7 @@ async function popularClientesAgendamento(){
       aConfirmado=await runTransaction(db,async tx=>{
         const atualSnap=await tx.get(agendamentoRef);
         if(!atualSnap.exists()) throw new Error('Essa gravação não existe mais.');
-        const atual=atualSnap.data()||{};
+        const atual=atualSnap.data()||{};validarI85(atual);
         if(atual.excluido || atual.status !== 'agendado'){
           throw new Error('A gravação já foi encerrada ou mudou em outra aba.');
         }
@@ -11589,7 +11695,7 @@ async function popularClientesAgendamento(){
         return atual;
       });
     }catch(e){
-      mostrarToast(String(e?.message||e||'Não consegui cancelar.')+' Nada foi alterado.','erro');
+      mostrarToast(String(e?.message||e||'Não consegui cancelar.')+' Não foi possível confirmar. Reabra a gravação para conferir antes de repetir.','erro');
       return false;
     }
     const cicloCancelado=cicloFonteAlertaCanonicoV135('gravacao',aConfirmado||a);
@@ -11613,7 +11719,9 @@ async function popularClientesAgendamento(){
     return true;
   };
 
-  window.reposicionarAgendamento = async function(id){
+  window.reposicionarAgendamento = async function(id,opcoesI85){
+    const sessaoI85=sessaoServicoManual();
+    const validarI85=a=>validarManutencaoAgendaI85(sessaoI85,opcoesI85,a);
     if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)){
       mostrarToast('Somente a coordenação pode reposicionar esta gravação.', 'erro');
       return false;
@@ -11628,26 +11736,29 @@ async function popularClientesAgendamento(){
     }
     if(!snap.exists()) return;
     const a = snap.data();
+    try{validarI85(a);}catch(e){mostrarToast(e.message,'erro');return false;}
     if(a.excluido || a.status !== 'agendado'){
       mostrarToast('Esta gravação já foi encerrada ou mudou em outra aba. Nada foi reagendado.','erro');
       return false;
     }
-    let novaData = prompt('Nova data (AAAA-MM-DD ou DD/MM/AAAA):', a.data || '');
+    let novaData = opcoesI85 ? opcoesI85.data : prompt('Nova data (AAAA-MM-DD ou DD/MM/AAAA):', a.data || '');
     if(novaData === null) return;
     /* 02/08/2026 — aceita os dois jeitos, igual à do filmmaker. Recusar
        quem digita 05/08/2026 é atrito à toa. */
     novaData = normalizarDataDigitada(novaData);
     if(!novaData){ mostrarToast('Não entendi essa data. Escreve 2026-08-05 ou 05/08/2026.', 'erro'); return; }
-    const novaHora = prompt('Nova hora (HH:MM):', a.hora || '10:00');
+    const novaHora = opcoesI85 ? opcoesI85.hora : prompt('Nova hora (HH:MM):', a.hora || '10:00');
     if(novaHora === null) return;
-    const motivo = prompt('O que mudou? (o filmmaker vê este texto)') || '';
+    const motivo = opcoesI85 ? opcoesI85.motivo : prompt('O que mudou? (o filmmaker vê este texto)') || '';
+    if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(novaHora)){mostrarToast('Informe um horário válido.','erro');return false;}
+    if(novaData===a.data&&novaHora===a.hora){mostrarToast('Esta data e horário já estão salvos.');return true;}
 
     let reposicionamento;
     try{
       reposicionamento=await runTransaction(db,async tx=>{
         const atualSnap=await tx.get(agendamentoRef);
         if(!atualSnap.exists()) throw new Error('A gravação não existe mais.');
-        const atual=atualSnap.data()||{};
+        const atual=atualSnap.data()||{};validarI85(atual);
         if(atual.excluido || atual.status !== 'agendado') throw new Error('A gravação já foi encerrada em outra aba.');
         if(String(atual.data||'')!==String(a.data||'') || String(atual.hora||'')!==String(a.hora||'')){
           throw new Error('A data ou a hora mudou em outra aba. Reabra antes de reagendar.');
@@ -11661,7 +11772,7 @@ async function popularClientesAgendamento(){
         return {cicloAnterior:cicloFonteAlertaCanonicoV135('gravacao',atual)};
       });
     }catch(e){
-      mostrarToast(String(e?.message||e||'Não consegui reagendar.')+' Nada foi alterado.','erro');
+      mostrarToast(String(e?.message||e||'Não consegui reagendar.')+' Não foi possível confirmar. Reabra a gravação para conferir antes de repetir.','erro');
       return false;
     }
     await limparRastrosDoAgendamento(id,'reagendada para '+novaData,'reagendada',reposicionamento.cicloAnterior);
@@ -11680,21 +11791,24 @@ async function popularClientesAgendamento(){
     }catch(e){ console.error('Falha ao avisar do reagendamento:', e); }
     mostrarToast('Reagendada pra ' + formatarDataBR(novaData) + ' — a equipe foi avisada.');
     renderListaAgendamentos();
+    return true;
   };
 
-  window.apagarAgendamento = async function(id){
+  window.apagarAgendamento = async function(id,opcoesI85){
+    const sessaoI85=sessaoServicoManual();
+    const validarI85=a=>validarManutencaoAgendaI85(sessaoI85,opcoesI85,a);
     if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)){
       mostrarToast('Somente a coordenação pode excluir um agendamento criado por engano.', 'erro');
       return false;
     }
-    if(!confirm('Apagar essa gravação de vez?\n\nUse só quando ela foi criada por engano. Se ela existiu e não aconteceu, prefira CANCELAR — o motivo fica registrado e vira histórico da operação.')) return false;
+    if(!confirm('Retirar este agendamento criado por engano? O histórico e os vídeos serão preservados.\n\nUse só quando ela foi criada por engano. Se ela existiu e não aconteceu, prefira CANCELAR — o motivo fica registrado e vira histórico da operação.')) return false;
     const agendamentoRef=doc(db,'agendamentos',id);
     let apagamento;
     try{
       apagamento=await runTransaction(db,async tx=>{
         const atualSnap=await tx.get(agendamentoRef);
         if(!atualSnap.exists()) throw new Error('Essa gravação não existe mais.');
-        const atual=atualSnap.data()||{};
+        const atual=atualSnap.data()||{};validarI85(atual);
         if(atual.excluido || atual.status !== 'agendado'){
           throw new Error('A gravação já foi encerrada ou mudou em outra aba.');
         }
@@ -11705,11 +11819,11 @@ async function popularClientesAgendamento(){
         return {cicloAnterior:cicloFonteAlertaCanonicoV135('gravacao',atual)};
       });
     }catch(e){
-      mostrarToast(String(e?.message||e||'Não consegui apagar.')+' Nada foi alterado.','erro');
+      mostrarToast(String(e?.message||e||'Não consegui apagar.')+' Não foi possível confirmar. Reabra a gravação para conferir antes de repetir.','erro');
       return false;
     }
     await limparRastrosDoAgendamento(id,'criada por engano','apagada',apagamento.cicloAnterior);
-    mostrarToast('Apagada. Some de todas as telas.');
+    mostrarToast('Retirada da agenda. O histórico foi preservado.');
     renderListaAgendamentos();
     return true;
   };
@@ -12589,6 +12703,7 @@ async function popularClientesAgendamento(){
           <div class="avisoBanner" style="margin:10px 0;"><div class="icone">🎬</div><div class="texto" id="contadorVideos_${a.id}"><b style="color:var(--red);">0 vídeo(s) vão ser lançados</b><span style="color:var(--muted);"> (planejado: ${qtdPlan})</span></div></div>
           <div class="meta" style="margin:-3px 0 12px;padding:9px 11px;border-left:3px solid var(--green);background:rgba(72,187,120,.08);border-radius:8px;">Ao enviar, a Amanda recebe os vídeos na fila de edição. Ela escolhe os editores manualmente.</div>
 
+          ${envioI52?`<button type="button" class="btn secondary" style="margin:8px 0 14px;" data-agenda="${escAttr(a.id)}" onclick="abrirAgendaI85(this.dataset.agenda)">Corrigir data ou informar que não aconteceu</button>`:''}
           <div class="btnrow">
 
             ${podeExecutarSessao?`<button class="btn green" id="btnConfirmarGravacao_${a.id}" data-confirmar-gravacao="${a.id}" data-pode-executar="1" data-qtd-planejada="${qtdPlan}" disabled title="Marque ou escreva pelo menos um vídeo." onclick="registrarGravacaoRealizada('${a.id}')">Enviar para Amanda e concluir sessão</button>`:'<span class="meta">Visão de controle — a execução é do filmmaker da sessão.</span>'}
@@ -12646,10 +12761,15 @@ async function popularClientesAgendamento(){
   async function popularFiltroClientesCalendario(){
     const sel = document.getElementById('calFiltroTodos');
     if(!sel) return;
+    const anterior=sel.value,sessao=sessaoServicoManual();
     try{
       const lista=await clientesCalendarioRecorrentesConfirmados();
+      if(sessao!==sessaoServicoManual())return;
+      sel.disabled=false;
       sel.innerHTML = '<option value="todos">Todos os mensalistas</option>' + lista.filter(c => !ehClienteSoEdicao(c.slug)).map(c => `<option value="${c.slug}">${esc(c.nome)}</option>`).join('');
+      if(lista.some(c=>c.slug===anterior))sel.value=anterior;
     }catch(e){
+      if(sessao!==sessaoServicoManual())return;
       console.error('Falha ao confirmar filtro mensalista de gravações:',e);
       sel.innerHTML='<option value="">Carteira mensalista indisponível</option>';
       sel.disabled=true;
@@ -12670,6 +12790,7 @@ async function popularClientesAgendamento(){
     renderCalendarioMesFilmmaker();
   };
 
+  let leituraCalendarioAgendaI85=0;
   window.renderCalendarioMesFilmmaker = async function(){
     const grade = document.getElementById('calMesGrid');
     if(!grade) return;
@@ -12680,14 +12801,18 @@ async function popularClientesAgendamento(){
     // clientes, mas só das gravações deles) — Cecília/Chris veem geral.
     const ehFilmmaker = PESSOAS_DE_CAMPO.includes(usuarioAtual);
     const filmmakerFiltro = ehFilmmaker ? usuarioAtual : (document.getElementById('calFiltroFilmmaker')?.value || 'todos');
+    const leitura=++leituraCalendarioAgendaI85,sessao=sessaoServicoManual();
+    const vigente=()=>leitura===leituraCalendarioAgendaI85&&sessao===sessaoServicoManual()&&mesFiltro===(document.getElementById('calMesFiltro')?.value||hojeLocal().slice(0,7))&&clienteFiltro===(document.getElementById('calFiltroTodos')?.value||'todos');
     let snap;
     try{ snap = await getDocs(collection(db,'agendamentos')); }
     catch(e){
+      if(!vigente())return;
       console.error('Falha ao carregar calendário de gravações:', e);
       grade.innerHTML = '<div class="card" style="border:2px solid var(--red);"><b>⚠️ Calendário de gravações indisponível.</b><div class="meta" style="margin-top:6px;">Nenhuma gravação foi removida.</div><button class="btn secondary" style="margin-top:10px;" onclick="renderCalendarioMesFilmmaker()">Tentar novamente</button></div>';
       return;
     }
-    const todos = []; snap.forEach(d => todos.push(d.data()));
+    if(!vigente())return;
+    const todos = []; snap.forEach(d => todos.push({...d.data(),id:d.id}));
     let doMes = todos.filter(a => !a.excluido && a.data && a.data.startsWith(mesFiltro) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a));
     if(clienteFiltro !== 'todos') doMes = doMes.filter(a => (a.clienteSlug || a.cliente) === clienteFiltro);
     if(filmmakerFiltro !== 'todos') doMes = doMes.filter(a => pessoaNaEquipe(a, filmmakerFiltro));
@@ -12697,7 +12822,7 @@ async function popularClientesAgendamento(){
     const diasNoMes = new Date(ano, mes, 0).getDate();
     const offset = primeiroDia.getDay();
 
-    let html = ehFilmmaker ? '' : '<div class="calDica">💡 Toque num dia pra já abrir o formulário de agendar gravação naquela data.</div>';
+    let html = ehFilmmaker ? '' : '<div class="calDica">Toque na gravação para alterar ou retirar. Toque num dia vazio para criar uma nova.</div>';
     html += '<div class="calWeekdays"><div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sáb</div></div><div class="calGrid">';
     for(let i=0;i<offset;i++) html += '<div class="calCell empty"></div>';
     for(let d=1; d<=diasNoMes; d++){
@@ -12707,7 +12832,7 @@ async function popularClientesAgendamento(){
       html += `<div class="calCell ${ehFilmmaker?'':'clicavel'}"${clique}><div class="cdnum">${d}</div>`;
       its.forEach(it => {
         const pendCls = it.aprovado === false ? 'pendente' : '';
-        html += `<div class="calChip ${pendCls}">${it.hora} · ${esc(it.clienteNome)} · ${esc(rotuloEquipe(it))}${it.aprovado===false?' ⏳':''}</div>`;
+        html += chipAgendaI85(it,`${esc(it.hora||'')} · ${esc(it.clienteNome)} · ${esc(rotuloEquipe(it))}${it.aprovado===false?' ⏳':''}`);
       });
       html += `</div>`;
     }
@@ -20773,7 +20898,9 @@ window.arquivarMesCampanhas=async function(mes,token){
   }
   window.normalizarDataDigitada = normalizarDataDigitada;
 
-  window.reagendarGravacao = async function(agId){
+  window.reagendarGravacao = async function(agId,opcoesI85){
+    const sessaoI85=sessaoServicoManual();
+    const validarI85=a=>validarManutencaoAgendaI85(sessaoI85,opcoesI85,a);
     if(!['Cecília', ...PESSOAS_DE_CAMPO].includes(usuarioAtual)){
       mostrarToast('Você não tem permissão para reagendar gravações.', 'erro');
       return false;
@@ -20790,6 +20917,7 @@ window.arquivarMesCampanhas=async function(mes,token){
     }
     if(!agSnap.exists()){ mostrarToast('Essa gravação não existe mais.', 'erro'); return false; }
     const ag = agSnap.data() || {};
+    try{validarI85(ag);}catch(e){mostrarToast(e.message,'erro');return false;}
     if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(ag, usuarioAtual)){
       mostrarToast('Essa gravação não está na sua equipe.', 'erro');
       return false;
@@ -20798,11 +20926,14 @@ window.arquivarMesCampanhas=async function(mes,token){
       mostrarToast('Essa gravação não está mais aberta para reagendamento.', 'erro');
       return false;
     }
-    const digitada = prompt('Nova data (AAAA-MM-DD ou DD/MM/AAAA):');
+    const digitada = opcoesI85 ? opcoesI85.data : prompt('Nova data (AAAA-MM-DD ou DD/MM/AAAA):');
     if(!digitada) return false;
     const novaData = normalizarDataDigitada(digitada);
     if(!novaData){ mostrarToast('Não entendi essa data. Escreve 2026-08-05 ou 05/08/2026.', 'erro'); return; }
-    const novaHora = prompt('Nova hora (HH:MM):', '10:00') || '10:00';
+    const novaHora = opcoesI85 ? opcoesI85.hora : prompt('Nova hora (HH:MM):', ag.hora||'10:00');
+    if(novaHora===null)return false;
+    if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(novaHora)){mostrarToast('Informe um horário válido.','erro');return false;}
+    if(novaData===ag.data&&novaHora===ag.hora){mostrarToast('Esta data e horário já estão salvos.');return true;}
     const todosSnap = await getDocs(collection(db,'agendamentos'));
     let qtdNoNovoDia = 0;
     todosSnap.forEach(d => {
@@ -20821,7 +20952,7 @@ window.arquivarMesCampanhas=async function(mes,token){
       reagendamento=await runTransaction(db,async tx=>{
         const atualSnap=await tx.get(agRef);
         if(!atualSnap.exists()) throw new Error('A gravação não existe mais.');
-        const atual=atualSnap.data()||{};
+        const atual=atualSnap.data()||{};validarI85(atual);
         if(atual.excluido || atual.status !== 'agendado') throw new Error('A gravação já foi encerrada em outra aba.');
         if(PESSOAS_DE_CAMPO.includes(usuarioAtual) && !pessoaNaEquipe(atual,usuarioAtual)){
           throw new Error('Você não faz mais parte da equipe desta gravação.');
@@ -20839,7 +20970,7 @@ window.arquivarMesCampanhas=async function(mes,token){
         return {cicloAnterior:cicloFonteAlertaCanonicoV135('gravacao',atual)};
       });
     }catch(e){
-      mostrarToast(String(e?.message||e||'Não consegui reagendar.')+' Nada foi alterado.','erro');
+      mostrarToast(String(e?.message||e||'Não consegui reagendar.')+' Não foi possível confirmar. Reabra a gravação para conferir antes de repetir.','erro');
       return false;
     }
     await limparRastrosDoAgendamento(agId,'reagendada para '+novaData,'reagendada',reagendamento.cicloAnterior);
@@ -29711,7 +29842,7 @@ window.setGerenciaSub = function(qual, el){
       grade += `<div class="calCell ${podeAbrirGravacao?'clicavel':''}" style="${diaStr===hojeStr?'border:1px solid var(--yellow);':''}"${clique}><div class="cdnum">${d}</div>`;
       its.forEach(it => {
         const pendCls = it.aprovado === false ? 'pendente' : '';
-        grade += `<div class="calChip ${pendCls}">${it.hora||''} · ${esc(it.clienteNome||'')}${!ehFilmmaker && it.filmmaker ? ' · '+esc(it.filmmaker) : ''}</div>`;
+        grade += chipAgendaI85(it,`${esc(it.hora||'')} · ${esc(it.clienteNome||'')}${!ehFilmmaker&&it.filmmaker?' · '+esc(it.filmmaker):''}`);
       });
       funcoesDia.forEach(t => {
         grade += `<div class="calChip pendente" style="border-left:3px solid var(--yellow);cursor:pointer;" onclick="event.stopPropagation();abrirDemandaMinha('${t.id}')">🔁 ${esc(t.titulo||'Função fixa')}</div>`;

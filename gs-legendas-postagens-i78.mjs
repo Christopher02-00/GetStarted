@@ -1,4 +1,4 @@
-import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=i79-1';
+import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=i90-1';
 // I78: consulta compartilhada. Textos e vínculo de produção nunca são escritos aqui.
 export const CAMPOS = {legenda:'Legenda principal',legendaInstagram:'Instagram',legendaYoutube:'YouTube',legendaLinkedin:'LinkedIn',legendaTiktok:'TikTok'};
 export const EDITAVEIS = new Set(['aguardando_legenda','aguardando_agendamento','agendado']);
@@ -35,7 +35,7 @@ export function criarConferencia(api){
   const copiaManual=p=>!!input?.derivadaPostagemI84&&p?.id===input.postId&&!referencia(p);
   const pode=p=>!copiaManual(p)&&estado?.podeEditar && EDITAVEIS.has(p?.status) && !referencia(p)?.nativa;
   function rascunho(p){if(!rascunhos.has(p.id))rascunhos.set(p.id,{textos:{},origens:{}});return rascunhos.get(p.id);}
-  function podeReparar(p){return estado?.podeEditar&&pendenciaLegendaI79(p)&&(!(p.cliente==='stokki'&&p.publicacaoStokki?.versao===1)||['Cecília','Amanda','Chris'].includes(estado.papel));}
+  function podeReparar(p){return estado?.podeEditar&&pendenciaLegendaI79(p)&&(!(p.cliente==='stokki'&&p.publicacaoStokki?.versao===1)||(['Cecília','Amanda','Chris'].includes(estado.papel)||(estado.papel==='Gabrielle'&&p.legendaPendenteAoAgendarI90===true)));}
   function formularioReparo(p,l,r){
     if(!pendenciaLegendaI79(p))return '';
     if(!podeReparar(p))return '<p class="meta">Legenda pendente. Na Stokki, Cecília ou Amanda confirma o texto das plataformas nesta mesma conferência.</p>';

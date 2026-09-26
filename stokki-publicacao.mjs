@@ -1,4 +1,4 @@
-import {legendaUtilizavelI79,exigirLegendaI79,legendaExternaAprovadaI79} from './gs-legenda-qualidade-i79.mjs?v=i79-1';
+import {legendaUtilizavelI79,exigirLegendaI79,legendaExternaAprovadaI79,camposPendentesI79} from './gs-legenda-qualidade-i79.mjs?v=i90-1';
 /* Stokki I30. Fonte única: postagens. Projeções não escrevem; o adaptador
    transacional do Escritório confirma sessão, vídeo, identidade e recibo. */
 export const REDES=Object.freeze([
@@ -43,7 +43,7 @@ export function validarPlano(p){
   }
   return s;
 }
-export function prepararLegendas(p,selecionadas,textos,por,em){
+export function prepararLegendas(p,selecionadas,textos,por,em,permitirSemLegendaI90=false){
   exigir(ehStokki(p),'Cliente diferente da Stokki.');
   exigir(Array.isArray(selecionadas)&&selecionadas.length&&new Set(selecionadas).size===selecionadas.length&&
     selecionadas.every(id=>REDES.some(r=>r.id===id)),'Selecione pelo menos uma plataforma.');
@@ -51,11 +51,11 @@ export function prepararLegendas(p,selecionadas,textos,por,em){
   const escolhidas=REDES.filter(r=>selecionadas.includes(r.id));
   const patch={};
   for(const r of REDES){
-    const texto=String(textos[r.id]||'').trim();
-    if(selecionadas.includes(r.id))exigir(legendaUtilizavelI79(texto),`Preencha a legenda de ${r.nome} (até 20 mil caracteres).`);
-    patch[r.campo]=selecionadas.includes(r.id)?texto:'';
+    const texto=String(textos[r.id]||(permitirSemLegendaI90?p[r.campo]:'')||'').trim();
+    if(selecionadas.includes(r.id)&&(!permitirSemLegendaI90||texto))exigir(legendaUtilizavelI79(texto),`Preencha a legenda de ${r.nome} (até 20 mil caracteres).`);
+    patch[r.campo]=selecionadas.includes(r.id)?texto:(permitirSemLegendaI90?String(p[r.campo]||''):'');
   }
-  patch.legenda=patch[escolhidas[0].campo];
+  patch.legenda=patch[escolhidas[0].campo]||(permitirSemLegendaI90?String(p.legenda||''):'');
   patch.publicacaoStokki={versao:1,revisao:(p.publicacaoStokki?.revisao||0)+1,selecionadas:escolhidas.map(r=>r.id),
     redes:Object.fromEntries(escolhidas.map(r=>[r.id,redeVazia()])),por,em,operacaoId:''};
   return patch;
@@ -70,11 +70,12 @@ export function alterar(p,acao,ctx){
   exigir(p?.excluido!==true,'Postagem arquivada; nenhum dado foi alterado.');
   exigir(['Amanda','Cecília','Chris'].includes(ctx.papel),'Esta operação é de Amanda/Cecília; Chris mantém auditoria.');
   if(acao.tipo==='definir_redes'){
-    exigir(ehStokki(p)&&!p.publicacaoStokki&&p.status==='aguardando_agendamento','Somente um vídeo do fluxo anterior, ainda não agendado, pode entrar manualmente. Plano de outra versão exige atualizar a página.');
+    exigir(ehStokki(p)&&!p.publicacaoStokki&&['aguardando_legenda','aguardando_agendamento'].includes(p.status),'Somente um vídeo do fluxo anterior, ainda não agendado, pode entrar manualmente. Plano de outra versão exige atualizar a página.');
     exigir(acao.operacaoId&&String(acao.motivo||'').trim(),'Informe o motivo da definição manual de plataformas.');
-    const patch=prepararLegendas(p,acao.selecionadas,acao.textos,ctx.ator,ctx.em);
+    const patch=prepararLegendas(p,acao.selecionadas,acao.textos,ctx.ator,ctx.em,acao.permitirSemLegendaI90===true);
     patch.publicacaoStokki.operacaoId=acao.operacaoId;
     Object.assign(patch,{status:'aguardando_agendamento',legendaPor:ctx.ator,legendaEm:ctx.em,dataAgendada:'',horaAgendada:''});
+    if(camposPendentesI79({...p,...patch}).length)Object.assign(patch,{legendaPendenteAoAgendarI90:true,legendaPendenteAgendamentoPorI90:ctx.ator,legendaPendenteAgendamentoEmI90:ctx.em});
     return {patch,concluiu:false,publicado:false,historico:{acao:'Stokki — definir plataformas manualmente',por:ctx.ator,em:ctx.em,
       detalhe:JSON.stringify({operacaoId:acao.operacaoId,motivo:acao.motivo,legendasAnteriores:Object.fromEntries(['legenda',...REDES.map(r=>r.campo)].map(k=>[k,p[k]||'']))})}};
   }
@@ -96,7 +97,8 @@ export function alterar(p,acao,ctx){
   const patch={};
   switch(acao.tipo){
     case 'agendar':
-      if(!legendaExternaAprovadaI79(p))exigirLegendaI79(p[REDES.find(x=>x.id===acao.rede).campo]);
+      if(!acao.permitirSemLegendaI90&&!legendaExternaAprovadaI79(p))exigirLegendaI79(p[REDES.find(x=>x.id===acao.rede).campo]);
+      if(!legendaExternaAprovadaI79(p)&&!legendaUtilizavelI79(p[REDES.find(x=>x.id===acao.rede).campo]))Object.assign(patch,{legendaPendenteAoAgendarI90:true,legendaPendenteAgendamentoPorI90:ctx.ator,legendaPendenteAgendamentoEmI90:ctx.em});
       exigir(!r.publicadaEm,'Desfaça a confirmação equivocada antes de reagendar.');
       exigir(dataHoraValida(acao.data,acao.hora),'Informe data e horário válidos. Horários são de Brasília.');
       r.data=acao.data;r.hora=acao.hora;r.checks=[];r.conferidaEm='';r.conferidaPor='';break;
@@ -111,6 +113,7 @@ export function alterar(p,acao,ctx){
       r.publicadaEm=ctx.em;r.publicadaPor=ctx.ator;r.url=url;r.checks=[];r.conferidaEm='';r.conferidaPor='';break;
     }
     case 'conferir':
+      if(!legendaExternaAprovadaI79(p))exigirLegendaI79(p[REDES.find(x=>x.id===acao.rede).campo]);
       exigir(r.publicadaEm,'Confirme primeiro que esta plataforma foi publicada.');
       exigir(Array.isArray(acao.checks)&&CHECKS.every((_,i)=>acao.checks.includes(i))&&new Set(acao.checks).size===CHECKS.length,'Confira os oito itens antes de concluir.');
       exigir(!r.conferidaEm,'A conferência já foi concluída.');
@@ -159,7 +162,7 @@ export function eventos(posts){
     for(const id of s.selecionadas){const r=s.redes[id],d=REDES.find(x=>x.id===id);
       if(r.retirada||!dataHoraValida(r.data,r.hora))continue;
       out.push({postagemId:p.id,rede:id,nome:d.nome,cor:d.cor,titulo:p.titulo||'Vídeo',data:r.data,hora:r.hora,
-        legenda:p[d.campo]||'',publicada:!!r.publicadaEm,conferida:!!r.conferidaEm,url:r.url||''});
+        legenda:p[d.campo]||'',legendaPendente:p.legendaPendenteAoAgendarI90===true&&!legendaExternaAprovadaI79(p)&&!legendaUtilizavelI79(p[d.campo]),publicada:!!r.publicadaEm,conferida:!!r.conferidaEm,url:r.url||''});
     }
   }
   return out.sort((a,b)=>(a.data+a.hora).localeCompare(b.data+b.hora));
@@ -217,7 +220,7 @@ export function htmlCalendario(posts,mes){
   const dias=[...new Set(es.map(e=>e.data))];
   const grupos=dias.map(d=>`<section class="card"><h3>${esc(d.split('-').reverse().join('/'))}</h3>${es.filter(e=>e.data===d).map(e=>`<article style="margin:12px 0;padding:12px;border-left:4px solid ${e.cor};overflow-wrap:anywhere">
     <strong>${e.hora} · ${esc(e.titulo)}</strong> ${badge({nome:e.nome,cor:e.cor})}<div>${e.publicada?'Publicação confirmada':'Agendada — publicação ainda não confirmada'}${e.conferida?' · Conferida':''}</div>
-    <details><summary>Ver legenda</summary><p style="white-space:pre-wrap">${esc(e.legenda)}</p></details></article>`).join('')}</section>`).join('');
+    ${e.legendaPendente?'<p>Legenda em preparação · agendamento mantido</p>':'<details><summary>Ver legenda</summary><p style="white-space:pre-wrap">'+esc(e.legenda)+'</p></details>'}</article>`).join('')}</section>`).join('');
   return `<h2>Calendário de Postagens — Stokki</h2><p>Somente publicações programadas ou confirmadas, por plataforma. Horários de Brasília. Não inclui gravações ou produção.</p>
     <label>Mês <input type="month" data-stokki-mes value="${mes}" style="max-width:220px"></label>${grupos||'<div class="card">Nenhuma publicação programada neste mês.</div>'}`;
 }
@@ -230,7 +233,7 @@ export function criarOperacao(api){
     const a=(tipo,texto)=>`<button type="button" class="btn secondary" data-stokki-acao="${tipo}" style="width:auto">${texto}</button>`;
     return `<section data-stokki-rede="${r}" style="border:1px solid var(--line,#777);border-radius:10px;padding:14px;margin:12px 0;min-width:0">
       ${badge(d)} <b>${v.retirada?'Retirada do plano':v.conferidaEm?'Conferida por '+esc(v.conferidaPor):v.publicadaEm?'Publicação confirmada — conferir':v.data?'Agendada':'Aguardando agendamento'}</b>
-      <details><summary>Legenda / correção manual</summary><textarea data-stokki-legenda maxlength="20000" style="width:100%;min-height:100px">${esc(p[d.campo]||'')}</textarea><button type="button" data-stokki-copiar>Copiar legenda</button>${!v.retirada?a('corrigir_legenda','Salvar legenda corrigida'):''}<p>Corrigir aqui registra o texto usado na rede. Se já publicou, ajuste também na plataforma; a conferência será reaberta.</p></details>
+      ${!v.retirada&&!legendaExternaAprovadaI79(p)&&!legendaUtilizavelI79(p[d.campo])?'<p style="color:var(--yellow)">Legenda pendente com a Gabi · o agendamento pode ser registrado.</p>':''}<details><summary>Legenda / correção manual</summary><textarea data-stokki-legenda maxlength="20000" style="width:100%;min-height:100px">${esc(p[d.campo]||'')}</textarea><button type="button" data-stokki-copiar>Copiar legenda</button>${!v.retirada?a('corrigir_legenda','Salvar legenda corrigida'):''}<p>Corrigir aqui registra o texto usado na rede. Se já publicou, ajuste também na plataforma; a conferência será reaberta.</p></details>
       ${v.retirada?a('restaurar','Restaurar esta plataforma'):!v.publicadaEm?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0"><label>Data<input data-stokki-data type="date" value="${esc(v.data)}"></label><label>Horário de Brasília<input data-stokki-hora type="time" value="${esc(v.hora)}"></label></div>
         ${a('agendar',v.data?'Corrigir data/horário':'Registrar agendamento')}${v.data?a('desagendar','Desfazer agendamento'):''}
         ${v.data?`<label>Link da publicação (opcional)<input data-stokki-url type="url" placeholder="https://..."></label>${a('publicar','Confirmar que publicou nesta plataforma')}`:''}
@@ -244,13 +247,13 @@ export function criarOperacao(api){
     retratos=new Map(posts.map(p=>[p.id,cp(p)]));
     painel.innerHTML=`<div style="position:sticky;top:-20px;z-index:1;background:#252627;padding:8px 0;display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 style="margin:0;font-size:19px">Stokki — publicações e conferências</h2><button data-stokki-fechar type="button" style="flex-shrink:0;background:#ffd029;color:#171717;border:0;border-radius:6px;padding:9px">Fechar ×</button></div><p>Uma linha por plataforma. Alterações são manuais; nenhuma publicação é marcada pelo relógio. Correções ficam no histórico.</p><div data-stokki-feedback role="status"></div>`;
     if(erro){painel.insertAdjacentHTML('beforeend',`<p role="alert">${esc(erro)}</p><button data-stokki-recarregar>Recarregar</button>`);return;}
-    const registros=posts.filter(p=>ehStokki(p)&&p.excluido!==true&&(usaFluxo(p)||p.status==='aguardando_agendamento'));
+    const registros=posts.filter(p=>ehStokki(p)&&p.excluido!==true&&(usaFluxo(p)||['aguardando_legenda','aguardando_agendamento'].includes(p.status)));
     const encerrado=p=>{try{return usaFluxo(p)&&['postado','cancelada_manual'].includes(p.status)&&Object.values(validarPlano(p).redes).every(r=>r.retirada||r.conferidaEm);}catch{return false;}};
     const validos=registros.filter(p=>mostrarHistorico||!encerrado(p));
     painel.insertAdjacentHTML('beforeend',`<button type="button" class="btn secondary" data-stokki-historico>${mostrarHistorico?'Mostrar somente em operação':'Mostrar também concluídos e retirados'} (${registros.filter(encerrado).length})</button>`);
     painel.insertAdjacentHTML('beforeend',validos.map(p=>{
       const video=linkSeguro(p.linkVideo,'Abrir vídeo aprovado')||'<span>Link do vídeo indisponível: confira a origem na esteira de vídeos.</span>';
-      if(!p.publicacaoStokki)return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3><p>${video}</p>${api.htmlReferencia?.(p)||''}<p>Fluxo anterior: ainda não agendado. Pode definir as redes manualmente. Nada é convertido ao abrir esta tela.</p><details><summary>Legenda já existente (para copiar)</summary><p style="white-space:pre-wrap">${esc(p.legenda||'')}</p></details><section data-stokki-rede="">${formularioLegendas(p)}<button type="button" class="btn" data-stokki-acao="definir_redes">Confirmar plataformas e legendas deste vídeo</button></section></article>`;
+      if(!p.publicacaoStokki)return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3><p>${video}</p>${api.htmlReferencia?.(p)||''}<p>Escolha onde este vídeo será publicado. A legenda pode ser completada depois, sem alterar o agendamento.</p><details><summary>Legenda já existente (para copiar)</summary><p style="white-space:pre-wrap">${esc(p.legenda||'')}</p></details><section data-stokki-rede="">${formularioLegendas(p)}<button type="button" class="btn" data-stokki-acao="definir_redes">Confirmar plataformas deste vídeo</button></section></article>`;
       try{validarPlano(p);return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3><p>${video}</p>${api.htmlReferencia?.(p)||''}
         ${['aguardando_agendamento','agendado','postado','cancelada_manual'].includes(p.status)?p.publicacaoStokki.selecionadas.map(r=>formulario(p,r)).join('')+
           (p.publicacaoStokki.selecionadas.length<4?`<details><summary>Adicionar uma plataforma que faltou</summary><section data-stokki-rede=""><label>Plataforma<select data-stokki-adicionar>${REDES.filter(r=>!p.publicacaoStokki.selecionadas.includes(r.id)).map(r=>`<option value="${r.id}">${r.nome}</option>`).join('')}</select></label><label>Legenda<textarea data-stokki-legenda maxlength="20000"></textarea></label><button type="button" class="btn secondary" data-stokki-acao="adicionar">Adicionar plataforma e legenda</button></section></details>`:''):'<p>O vídeo está em revisão/legenda. As publicações anteriores ficam preservadas; aguarde o fluxo de aprovação.</p>'}
@@ -286,7 +289,8 @@ export function criarOperacao(api){
       const p=retratos.get(id),tipo=botao.dataset.stokkiAcao,rede=bloco.dataset.stokkiRede||bloco.querySelector('[data-stokki-adicionar]')?.value;
       const acao={tipo,rede,operacaoId:crypto.randomUUID(),data:bloco.querySelector('[data-stokki-data]')?.value||'',hora:bloco.querySelector('[data-stokki-hora]')?.value||'',
         texto:bloco.querySelector('[data-stokki-legenda]')?.value||'',url:bloco.querySelector('[data-stokki-url]')?.value||'',checks:Array.from(bloco.querySelectorAll('[data-stokki-check]:checked'),e=>Number(e.dataset.stokkiCheck))};
-      if(tipo==='definir_redes')Object.assign(acao,lerLegendas(bloco.querySelector('[data-stokki-legendas]')));
+      if(tipo==='definir_redes')Object.assign(acao,lerLegendas(bloco.querySelector('[data-stokki-legendas]')),{permitirSemLegendaI90:true});
+      if(tipo==='agendar')acao.permitirSemLegendaI90=true;
       if(['desagendar','retirar','restaurar','desfazer_publicacao','corrigir_legenda','adicionar','definir_redes'].includes(tipo)||(tipo==='agendar'&&p.publicacaoStokki.redes[rede].data)){
         const motivo=api.prompt('Motivo curto desta correção (fica no histórico):');if(motivo===null)return;acao.motivo=motivo;
       }

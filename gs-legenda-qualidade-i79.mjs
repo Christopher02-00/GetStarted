@@ -16,7 +16,8 @@ export function camposPendentesI79(p){
   }
   return CAMPOS_I79.filter(k=>(k==='legenda'||String(p?.[k]||'').trim())&&!legendaUtilizavelI79(p?.[k]));
 }
-export function pendenciaLegendaI79(p){return p?.excluido!==true && ['aguardando_agendamento','agendado'].includes(p?.status)&&camposPendentesI79(p).length>0;}
+export function pendenciaAgendadaI90(p){return p?.legendaPendenteAoAgendarI90===true&&p?.excluido!==true&&['aguardando_agendamento','agendado','postado'].includes(p?.status)&&camposPendentesI79(p).length>0;}
+export function pendenciaLegendaI79(p){return pendenciaAgendadaI90(p)||(p?.excluido!==true && ['aguardando_agendamento','agendado'].includes(p?.status)&&camposPendentesI79(p).length>0);}
 export function exigirLegendaI79(texto){if(!legendaUtilizavelI79(texto))throw Error('Preencha a legenda com o texto da publicação. Ponto, vírgula e “Disponível no calendário” não são legendas. O que você digitou foi mantido.');return String(texto).trim();}
 export function exigirPostagemI79(p){if(camposPendentesI79(p).length)throw Error('Esta postagem ainda precisa de legenda. Abra “Conteúdo e legenda” para conferir e completar o texto antes de agendar. As datas já registradas foram preservadas.');}
 // Apenas campos faltantes podem ser reparados; etapa, datas e editoriais permanecem.

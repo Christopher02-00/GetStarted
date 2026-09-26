@@ -1891,7 +1891,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
               <div class="gGrupoHead" onclick="toggleGrupoGerencia(this)">Equipe <span class="seta">▾</span></div>
               <div class="gGrupoItens">
                 <div class="subtab" data-sub="equipeVisao" onclick="setGerenciaSub('equipeVisao', this)">Ver ambiente de cada um</div>
-                <div class="subtab" data-sub="disciplinaDia" onclick="setGerenciaSub('disciplinaDia', this)">Checklists do dia</div>
+                <div class="subtab" data-sub="disciplinaDia" onclick="setGerenciaSub('disciplinaDia', this)">Conferir checklists</div>
                 <div class="subtab" data-sub="funcionarioMes" onclick="setGerenciaSub('funcionarioMes', this)">Metas da Equipe & Funcionário do Mês</div>
                 <!-- veio do extinto grupo "Dinheiro" — é operação da Amanda,
                      não faturamento, então tinha que continuar alcançável
@@ -2015,7 +2015,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
   import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=i38-1";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, orderBy, limit, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { initializeAuth, browserPopupRedirectResolver, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -3484,23 +3484,89 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
     }
     return {itensFeitos};
   }
-  async function lerRotinasHojeI59(nome,ref){
-    const template=await obterTemplatesEfetivos(nome), lista=[];
-    for(const [periodo,blocos] of Object.entries(template||{})){
-      if(!previstoChecklistI59(nome,periodo,ref)) continue;
-      const itens=blocos.flatMap(b=>b.itens||[]);if(!itens.length)continue;
-      const exec=await lerExecucaoChecklistI59(nome,periodo,ref), feitosMap=exec.itensFeitos||{};
-      lista.push({periodo,nome:agendaChecklistI59(nome,periodo).nome,blocos,feitosMap,total:itens.length,feitos:itens.filter(i=>feitosMap[i.id]?.feito).length});
+
+  // I91: uma ocorrência permanece até a conferência da gestão; os registros anteriores nunca são zerados.
+  const cicloIdChecklistI91=(nome,periodo)=>encodeURIComponent(nome)+'__'+encodeURIComponent(periodo);
+  async function cicloChecklistI91(nome,periodo,ref,abrir=false){
+    const referencia=ocorrenciaChecklistI59(nome,periodo,ref),id=cicloIdChecklistI91(nome,periodo);
+    const controlRef=doc(db,'checklist_ciclos_i91',id);
+    const carregar=async(reader)=>{const s=await reader(controlRef);return s.exists()?s.data():null;};
+    let ciclo=await carregar(getDoc);
+    const deveAbrir=c=>!c||(c.estado==='conferido'&&referencia>c.referencia&&referencia<=hojeLocal());
+    if(abrir&&referencia<=hojeLocal()&&deveAbrir(ciclo)&&agendaChecklistI59(nome,periodo).ativo!==false){
+      const blocos=templatesEfetivos[nome]?.[periodo]||(await obterTemplatesEfetivos(nome))?.[periodo];
+      if(!blocos?.length)throw Error('Esta rotina não está disponível. Atualize a lista.');
+      const antigo=await lerExecucaoChecklistI59(nome,periodo,ref),execucaoId=chaveExecucao(nome,periodo,ref);
+      ciclo=await runTransaction(db,async tx=>{
+        const atual=await carregar(r=>tx.get(r)),er=doc(db,'checklist_execucoes',execucaoId),es=await tx.get(er);
+        if(!deveAbrir(atual))return atual;
+        const novo={funcionario:nome,periodo,referencia,execucaoId,estado:'aberto',blocos:copiarChecklistI59(blocos),agenda:copiarChecklistI59(agendaChecklistI59(nome,periodo)),abertoEm:new Date().toISOString()};
+        tx.set(controlRef,novo);
+        tx.set(er,{...(es.exists()?es.data():antigo),funcionario:nome,periodo,referencia,cicloI91:id});
+        return novo;
+      });
+    }
+    if(ciclo&&!deveAbrir(ciclo)){
+      const snap=await getDoc(doc(db,'checklist_execucoes',ciclo.execucaoId));
+      if(!snap.exists())throw Error('O checklist não pôde ser conferido. Nenhum histórico foi reiniciado.');
+      return {id,ciclo,exec:snap.data(),blocos:ciclo.blocos,chave:ciclo.execucaoId,referencia:ciclo.referencia};
+    }
+    return {id,ciclo:null,exec:await lerExecucaoChecklistI59(nome,periodo,ref),blocos:templatesEfetivos[nome]?.[periodo],chave:chaveExecucao(nome,periodo,ref),referencia};
+  }
+  async function incluirCiclosPendentesI91(nome,template){
+    const sn=await getDocs(query(collection(db,'checklist_ciclos_i91'),where('funcionario','==',nome)));
+    const saida={...(template||{})};
+    sn.forEach(d=>{const c=d.data();if(c.estado==='aberto'){saida[c.periodo]=c.blocos;if(!agendasChecklistI59[nome]?.[c.periodo]||agendaChecklistI59(nome,c.periodo).ativo===false){agendasChecklistI59[nome]??={};agendasChecklistI59[nome][c.periodo]={...c.agenda,ativo:true,retidaI91:true};}}});
+    return saida;
+  }
+  async function lerRotinasConferenciaI91(nome,ref){
+    const original=await obterTemplatesEfetivos(nome),sn=await getDocs(query(collection(db,'checklist_ciclos_i91'),where('funcionario','==',nome))),controles={};
+    const tpl={...(original||{})},lista=[];
+    sn.forEach(d=>{const c=d.data();controles[c.periodo]=c;if(c.estado==='aberto')tpl[c.periodo]=c.blocos;});
+    for(const [periodo,blocos] of Object.entries(tpl)){
+      if(!previstoChecklistI59(nome,periodo,ref)&&controles[periodo]?.estado!=='aberto')continue;
+      const estado=await cicloChecklistI91(nome,periodo,ref);
+      const itens=(estado.blocos||blocos).flatMap(b=>b.itens||[]);if(!itens.length)continue;
+      const feitosMap=estado.exec.itensFeitos||{};
+      lista.push({...estado,periodo,nome:estado.ciclo?.agenda?.nome||agendaChecklistI59(nome,periodo).nome,blocos:estado.blocos||blocos,feitosMap,total:itens.length,feitos:itens.filter(i=>feitosMap[i.id]?.feito).length});
     }
     return lista;
   }
+
+  const conferirContextosI91=new Map();let conferirEmCursoI91=false;
+  window.conferirChecklistI91=async function(id){
+    if(conferirEmCursoI91||!['Amanda','Chris'].includes(usuarioAtual))return;
+    const visto=conferirContextosI91.get(id);if(!visto)return;
+    const pessoa=usuarioAtual;
+    conferirEmCursoI91=true;
+    try{
+      const r=visto.rotina,controle=doc(db,'checklist_ciclos_i91',id),er=doc(db,'checklist_execucoes',r.chave),cr=doc(db,'checklist_conferencias_i91',r.chave);
+      await runTransaction(db,async tx=>{
+        const cs=await tx.get(controle),es=await tx.get(er),recibo=await tx.get(cr);
+        if(pessoa!==usuarioAtual||!['Amanda','Chris'].includes(usuarioAtual))throw Error('O perfil mudou. Abra a conferência novamente.');
+        const ciclo=cs.exists()?cs.data():null,exec=es.exists()?es.data():{itensFeitos:{}};
+        if(recibo.exists())return;
+        if((ciclo?.execucaoId||r.chave)!==r.chave||ciclo?.estado==='conferido'||(ciclo&&assinaturaChecklistI59(ciclo.blocos)!==assinaturaChecklistI59(r.blocos)))throw Error('Este checklist já mudou. Atualize a conferência.');
+        if(assinaturaChecklistI59(exec.itensFeitos||{})!==assinaturaChecklistI59(r.feitosMap))throw Error('A pessoa atualizou o checklist. Confira os itens novamente antes de liberar.');
+        const em=new Date().toISOString(),base=ciclo||{funcionario:visto.nome,periodo:r.periodo,referencia:r.referencia,execucaoId:r.chave,blocos:r.blocos,agenda:agendaChecklistI59(visto.nome,r.periodo),abertoEm:em};
+        const conferencia={cicloI91:id,funcionario:visto.nome,periodo:r.periodo,referencia:r.referencia,execucaoId:r.chave,blocos:base.blocos,itensFeitos:exec.itensFeitos||{},feitos:r.feitos,total:r.total,conferidoPor:pessoa,conferidoEm:em};
+        tx.set(cr,conferencia);
+        tx.set(controle,{...base,estado:'conferido',conferidoPor:pessoa,conferidoEm:em});
+        if(!ciclo)tx.set(er,{...exec,funcionario:visto.nome,periodo:r.periodo,referencia:r.referencia,cicloI91:id});
+      });
+      mostrarToast('Checklist conferido. Histórico preservado e próximo período liberado.');
+      await renderDisciplinaDia();atualizarAvisosChecklistI59(false);
+    }catch(e){mostrarToast('Não consegui confirmar a conferência. Atualize a lista antes de repetir: '+e.message,'erro');}finally{conferirEmCursoI91=false;}
+  };
+
+  async function lerRotinasHojeI59(nome,ref){return lerRotinasConferenciaI91(nome,ref);}
 
   let checklistExecAtual={itensFeitos:{}}, checklistPeriodoAtual='', checklistChaveAtual='', timerViradaChecklist=null;
   let checklistContextoI59=null, checklistCarregandoI59=0, checklistGravandoI59=false, provaContextoI59=null;
   function cancelarViradaChecklist(){if(timerViradaChecklist)clearTimeout(timerViradaChecklist);timerViradaChecklist=null;}
   function programarViradaChecklist(){
     cancelarViradaChecklist();const agora=new Date(),proxima=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate()+1,0,0,0,150);
-    timerViradaChecklist=setTimeout(async()=>{if(viewAtiva!=='checklist'||!usuarioAtual)return;try{await window.abrirChecklist();mostrarToast('Novo dia carregado. O histórico anterior foi preservado.');}catch(e){mostrarToast('O dia virou. Reabra Meu Checklist antes de marcar.','erro');}},Math.max(250,proxima-agora));
+    timerViradaChecklist=setTimeout(async()=>{if(viewAtiva!=='checklist'||!usuarioAtual)return;try{await window.abrirChecklist();mostrarToast('Checklist atualizado. A liberação do próximo depende da conferência da Amanda.');}catch(e){mostrarToast('O dia virou. Reabra Meu Checklist antes de marcar.','erro');}},Math.max(250,proxima-agora));
   }
   window.abrirChecklistPeriodo=async function(periodo,el){
     if(checklistGravandoI59){mostrarToast('Aguarde a confirmação do item.');return;}
@@ -3512,28 +3578,27 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
     checklistContextoI59=null;checklistChaveAtual='';
     const box=document.getElementById('checklistItens');if(box)box.innerHTML='<div class="card">Carregando itens...</div>';
     if(!periodo)return;
-    const versao=versoesChecklistI59[pessoa],chave=chaveExecucao(pessoa,periodo,dia),exec=await lerExecucaoChecklistI59(pessoa,periodo,dia);
+    const versao=versoesChecklistI59[pessoa],estado=await cicloChecklistI91(pessoa,periodo,dia,true),{chave,exec}=estado;
     if(ticket!==checklistCarregandoI59||pessoa!==usuarioAtual||periodo!==checklistPeriodoAtual||dia!==hojeLocal())return;
     checklistExecAtual={...exec,itensFeitos:exec.itensFeitos||{}};checklistChaveAtual=chave;
-    checklistContextoI59={pessoa,periodo,dia,chave,versao,initial:copiarChecklistI59(checklistExecAtual.itensFeitos)};
+    checklistContextoI59={pessoa,periodo,dia,chave,versao,estado,initial:copiarChecklistI59(checklistExecAtual.itensFeitos)};
   }
-  function contextoChecklistValidoI59(c){return !!c&&c===checklistContextoI59&&c.pessoa===usuarioAtual&&c.periodo===checklistPeriodoAtual&&c.dia===hojeLocal()&&c.chave===chaveExecucao(c.pessoa,c.periodo)&&viewAtiva==='checklist';}
+  function contextoChecklistValidoI59(c){return !!c&&c===checklistContextoI59&&c.pessoa===usuarioAtual&&c.periodo===checklistPeriodoAtual&&c.dia===hojeLocal()&&c.chave===c.estado.chave&&viewAtiva==='checklist';}
   async function salvarExecucaoChecklist(){
     const c=checklistContextoI59;if(!contextoChecklistValidoI59(c))throw Error('CHECKLIST_DIA_MUDOU');
     const desired=copiarChecklistI59(checklistExecAtual.itensFeitos),changed=[...new Set([...Object.keys(c.initial),...Object.keys(desired)])].filter(id=>assinaturaChecklistI59(c.initial[id])!==assinaturaChecklistI59(desired[id]));
     const ref=doc(db,'checklist_execucoes',c.chave);
     const salvo=await runTransaction(db,async tx=>{
-      const config=await tx.get(doc(db,'checklist_templates_custom',c.pessoa)),snap=await tx.get(ref);
+      const controle=await tx.get(doc(db,'checklist_ciclos_i91',c.estado.id)),snap=await tx.get(ref);
       if(!contextoChecklistValidoI59(c))throw Error('CHECKLIST_DIA_MUDOU');
-      if(assinaturaChecklistI59(config.exists()?config.data():null)!==c.versao)throw Error('A configuração deste checklist mudou. Reabra Meu Checklist para conferir antes de marcar.');
-      if(agendaChecklistI59(c.pessoa,c.periodo).ativo===false)throw Error('Este checklist está pausado.');
+      if(!controle.exists()||controle.data().execucaoId!==c.chave||controle.data().estado!=='aberto')throw Error('A Amanda já conferiu este checklist. Atualize para continuar.');
       const next=snap.exists()?snap.data():{itensFeitos:copiarChecklistI59(c.initial)};next.itensFeitos={...(next.itensFeitos||{})};
       for(const id of changed){
-        if(!templatesEfetivos[c.pessoa]?.[c.periodo]?.some(b=>b.itens.some(i=>i.id===id)))throw Error('O item mudou. Reabra o checklist.');
+        if(!c.estado.blocos?.some(b=>b.itens.some(i=>i.id===id)))throw Error('O item mudou. Reabra o checklist.');
         if(snap.exists()&&assinaturaChecklistI59(next.itensFeitos[id])!==assinaturaChecklistI59(c.initial[id]))throw Error('Este item foi alterado em outra aba. Reabra o checklist para conferir.');
         if(desired[id])next.itensFeitos[id]=desired[id];else delete next.itensFeitos[id];
       }
-      tx.set(ref,{...next,funcionario:c.pessoa,periodo:c.periodo,referencia:ocorrenciaChecklistI59(c.pessoa,c.periodo,c.dia),atualizadoEm:new Date().toISOString()});return next;
+      tx.set(ref,{...next,funcionario:c.pessoa,periodo:c.periodo,referencia:c.estado.referencia,cicloI91:c.estado.id,atualizadoEm:new Date().toISOString()});return next;
     });
     if(contextoChecklistValidoI59(c)){checklistExecAtual=salvo;c.initial=copiarChecklistI59(salvo.itensFeitos);}
   }
@@ -3555,7 +3620,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
     document.querySelectorAll('#checklistItens .chk,#modalConteudo button').forEach(e=>e.disabled=true);
     if(feito)checklistExecAtual.itensFeitos[itemId]={feito:true,prova,em:new Date().toISOString()};else delete checklistExecAtual.itensFeitos[itemId];
     try{const ok=await salvarChecklistProtegendoVirada();if(ok){renderChecklist();atualizarAvisosChecklistI59(false);}return ok;}
-    finally{checklistGravandoI59=false;document.querySelectorAll('#checklistItens .chk,#modalConteudo button').forEach(e=>e.disabled=false);}
+    finally{checklistGravandoI59=false;document.querySelectorAll('#checklistItens .chk,#modalConteudo button').forEach(e=>e.disabled=checklistContextoI59?.estado?.ciclo?.estado==='conferido');}
   }
   window.toggleItemChecklist=async function(itemId,critico){
     if(checklistGravandoI59||!await garantirChecklistAtualAntesDeEditar())return false;
@@ -3629,12 +3694,14 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
      Só leitura, pra gestão agir humanamente — não cria demanda, não manda
      e-mail, não pune. Usa obterTemplatesEfetivos (já existente) que
      funciona pra QUALQUER funcionário, não só quem está logado agora. */
-  async function calcularDisciplinaHoje(){
-    const dia=hojeLocal(),resultados=[];
-    for(const nome of FUNCIONARIOS.filter(n=>!estaAusente(n))){
-      const rotinas=await lerRotinasHojeI59(nome,dia);if(!rotinas.length)continue;
-      const total=rotinas.reduce((s,r)=>s+r.total,0),feitos=rotinas.reduce((s,r)=>s+r.feitos,0);
-      resultados.push({nome,feitos,total,concluido:feitos>=total&&total>0,rotinas});
+  async function calcularDisciplinaHoje(incluirAusentes=false){
+    const dia=hojeLocal(),nomes=FUNCIONARIOS.filter(n=>incluirAusentes||!estaAusente(n)),resultados=[];
+    for(let i=0;i<nomes.length;i+=3){
+      const lote=await Promise.all(nomes.slice(i,i+3).map(async nome=>{
+        const rotinas=(await lerRotinasHojeI59(nome,dia)).filter(r=>!estaAusente(nome)||r.ciclo?.estado==='aberto');if(!rotinas.length)return null;
+        const total=rotinas.reduce((s,r)=>s+r.total,0),feitos=rotinas.reduce((s,r)=>s+r.feitos,0);
+        return {nome,feitos,total,concluido:feitos>=total&&total>0,rotinas};
+      }));resultados.push(...lote.filter(Boolean));
     }
     if(dia!==hojeLocal())throw Error('O dia mudou durante a conferência. Atualize a tela.');
     return resultados;
@@ -3645,7 +3712,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
     const faltam = resultados.filter(r => !r.concluido);
     return `<div class="card">
       <h2>📋 Disciplina de hoje</h2>
-      <div class="desc">${concluidos}/${resultados.length} checklists concluídos hoje${faltam.length ? ' — falta: ' + faltam.map(r=>esc(r.nome)+' ('+r.feitos+'/'+r.total+')').join(', ') : ' — todo mundo em dia! 🎉'}</div>
+      <div class="desc">${concluidos}/${resultados.length} checklists com itens concluídos${faltam.length ? ' — falta: ' + faltam.map(r=>esc(r.nome)+' ('+r.feitos+'/'+r.total+')').join(', ') : ' — todo mundo em dia! 🎉'}</div>
     </div>`;
   }
 
@@ -3694,13 +3761,18 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
       const diario = templatesAV?.['Diário']; if(!diario) return 0;
       const idsVerificaveis = diario.flatMap(b => b.itens.map(it => it.id)).filter(id => CHECKLIST_AUTOVERIFICAVEL[id]);
       if(!idsVerificaveis.length) return 0;
-      const chaveAV = usuarioAtual + '_diario_' + hojeLocal();
+      const pessoaAV=usuarioAtual;
+      templatesEfetivos[pessoaAV]=templatesAV;
+      const estadoAV=await cicloChecklistI91(pessoaAV,'Diário',hojeLocal(),true);
+      if(!estadoAV.ciclo||estadoAV.referencia!==hojeLocal()||estadoAV.ciclo.estado==='conferido')return 0;
+      const chaveAV = estadoAV.chave;
       const refAV = doc(db,'checklist_execucoes', chaveAV);
       const snapAV = await getDoc(refAV);
       const execAV = snapAV.exists() ? snapAV.data() : { itensFeitos: {} };
       execAV.itensFeitos = execAV.itensFeitos || {};
       let marcados = 0;
       for(const idItem of idsVerificaveis){
+        if(!estadoAV.blocos.some(b=>b.itens.some(i=>i.id===idItem)))continue;
         if(execAV.itensFeitos[idItem]?.feito) continue;
         try{
           if(await CHECKLIST_AUTOVERIFICAVEL[idItem].fn()){
@@ -3709,7 +3781,13 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
           }
         }catch(e){}
       }
-      if(marcados) await setDoc(refAV, execAV, { merge: true });
+      if(marcados)await runTransaction(db,async tx=>{
+        const cs=await tx.get(doc(db,'checklist_ciclos_i91',estadoAV.id)),es=await tx.get(refAV);
+        if(usuarioAtual!==pessoaAV||!cs.exists()||cs.data().estado!=='aberto'||cs.data().execucaoId!==chaveAV||cs.data().referencia!==hojeLocal())return;
+        const atual=es.exists()?es.data():{itensFeitos:{}};const itens={...(atual.itensFeitos||{})};
+        for(const id of idsVerificaveis)if(!itens[id]?.feito&&execAV.itensFeitos[id]?.feito)itens[id]=execAV.itensFeitos[id];
+        tx.set(refAV,{...atual,itensFeitos:itens});
+      });
       return marcados;
     }catch(e){ console.error('Auto-verificação do checklist falhou:', e); return 0; }
   }
@@ -3732,9 +3810,10 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
       renderStoriesDiarios();
     }
 
+    try{
     const marcadosAuto = await autoVerificarChecklist();
     if(marcadosAuto > 0) mostrarToast('✔ ' + marcadosAuto + ' item(ns) do checklist confirmado(s) pelo próprio sistema — já marcados.');
-    const templates = await obterTemplatesEfetivos(usuarioAtual);
+    const templates = await incluirCiclosPendentesI91(usuarioAtual,await obterTemplatesEfetivos(usuarioAtual));
     if(usuarioAtual!==pessoaI59||viewAtiva!=='checklist')return;
     templatesEfetivos[usuarioAtual] = templates;
     if(!templates){
@@ -3769,25 +3848,32 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
         renderStoriesDiarios();
       }
     }
+    }catch(e){
+      if(usuarioAtual!==pessoaI59||viewAtiva!=='checklist')return;
+      checklistContextoI59=null;
+      cont.innerHTML='<div class="card">Não consegui carregar o checklist. Suas marcações continuam salvas.<button class="btn secondary" onclick="abrirChecklist()">Tentar novamente</button></div>';
+      if(storiesBoxAntecipado)cont.appendChild(storiesBoxAntecipado);
+    }
   };
 
   function renderChecklist(){
-    const template = templatesEfetivos[usuarioAtual]?.[checklistPeriodoAtual];
+    const template = checklistContextoI59?.estado?.blocos;
     const cont = document.getElementById('checklistItens');
     if(!template || !cont || !contextoChecklistValidoI59(checklistContextoI59)) return;
     const totalItens = template.reduce((s,b)=>s+b.itens.length, 0);
     const feitosCount = template.reduce((s,b)=> s + b.itens.filter(it => checklistExecAtual.itensFeitos[it.id]?.feito).length, 0);
     const pct = totalItens ? Math.round((feitosCount/totalItens)*100) : 0;
 
-    const agendaI59=agendaChecklistI59(usuarioAtual,checklistPeriodoAtual);
-    let html = `<div class="card"><h2>${esc(agendaI59.nome)}</h2><div class="desc">${esc(rotuloAgendaChecklistI59(agendaI59))} · Referência: ${formatarDataBR(ocorrenciaChecklistI59(usuarioAtual,checklistPeriodoAtual))}${previstoChecklistI59(usuarioAtual,checklistPeriodoAtual)?' · Previsto para hoje':' · Consulta/ajuste da ocorrência. Sem lembrete ou cobrança hoje.'}</div></div><div class="progressoWrap"><div class="progressoBarra"><div class="fill" style="width:${pct}%;"></div></div><div class="progressoTxt">${feitosCount} de ${totalItens} concluídos (${pct}%)</div></div>`;
+    const estadoI91=checklistContextoI59.estado,fechadoI91=!estadoI91.ciclo||estadoI91.ciclo.estado==='conferido';
+    const agendaI59=estadoI91.ciclo?.agenda||agendaChecklistI59(usuarioAtual,checklistPeriodoAtual);
+    let html = `<div class="card"><h2>${esc(agendaI59.nome)}</h2><div class="desc">${esc(rotuloAgendaChecklistI59(agendaI59))} · Referência: ${formatarDataBR(estadoI91.referencia)}</div><div class="desc">${!estadoI91.ciclo?'Disponível na data prevista.':fechadoI91?'✓ Conferido pela gestão. O próximo abre na próxima data prevista.':'A Amanda confere e libera o próximo checklist. As marcações ficam salvas.'}</div><button class="btn secondary" onclick="abrirChecklist()">Atualizar checklist</button></div><div class="progressoWrap"><div class="progressoBarra"><div class="fill" style="width:${pct}%;"></div></div><div class="progressoTxt">${feitosCount} de ${totalItens} concluídos (${pct}%)</div></div>`;
 
     template.forEach(bloco => {
       html += `<div class="blocoChecklist"><h3>${esc(bloco.bloco)}</h3>`;
       bloco.itens.forEach(it => {
         const feito = !!checklistExecAtual.itensFeitos[it.id]?.feito;
         html += `<div class="itemChecklist ${feito?'feito':''}">
-          <input type="checkbox" class="chk" ${feito?'checked':''} onchange="toggleItemChecklist('${it.id}', ${!!it.critico})">
+          <input type="checkbox" class="chk" ${fechadoI91?'disabled':''} ${feito?'checked':''} onchange="toggleItemChecklist('${it.id}', ${!!it.critico})">
           <div style="flex:1;">
             <span class="txt2">${esc(it.texto)}</span>
             ${it.id==='c_d_i61_gravacoes'?'<button type="button" class="btn secondary" onclick="abrirGravacoesI61()">Abrir gravações e acompanhamento</button>':''}
@@ -10301,7 +10387,7 @@ window.marcarClienteAprovouVideo = async function(id){
     if(!editorPodeI59()){cont.innerHTML='<div class="empty">Edição disponível para Amanda e Chris.</div>';return;}
     // Voltar à aba conserva a edição ainda não salva.
     if(cont.querySelector('#editorFuncSelect')) return;
-    cont.innerHTML=`<div class="card"><h2>Checklists da equipe</h2><div class="desc">Escolha a pessoa, crie a rotina e defina quando ela deve fazer. Tudo fica no Meu Checklist dela.</div><div class="field"><label for="editorFuncSelect">Funcionário</label><select id="editorFuncSelect" onchange="selecionarFuncionarioEditor()"><option value="">Selecione...</option>${FUNCIONARIOS.map(f=>`<option value="${escAttr(f)}">${esc(f)}</option>`).join('')}</select></div><div class="meta">Lembrete no Início no dia previsto. Amanda confere em Checklists do dia e recebe o aviso no site a partir das 19h. É necessário acessar o site; não há disparo garantido com ele fechado.</div></div><div id="editorTemplateBox"></div>`;
+    cont.innerHTML=`<div class="card"><h2>Checklists da equipe</h2><div class="desc">Escolha a pessoa, crie a rotina e defina quando ela deve fazer. Tudo fica no Meu Checklist dela.</div><div class="field"><label for="editorFuncSelect">Funcionário</label><select id="editorFuncSelect" onchange="selecionarFuncionarioEditor()"><option value="">Selecione...</option>${FUNCIONARIOS.map(f=>`<option value="${escAttr(f)}">${esc(f)}</option>`).join('')}</select></div><div class="meta">Lembrete no Início no dia previsto. Amanda libera o próximo período em Conferir checklists e recebe o aviso no site a partir das 19h. É necessário acessar o site; não há disparo garantido com ele fechado.</div></div><div id="editorTemplateBox"></div>`;
   }
   window.selecionarFuncionarioEditor=async function(){
     const select=document.getElementById('editorFuncSelect'),nome=select.value;
@@ -23084,29 +23170,20 @@ async function registrarGravacaoRealizadaNucleo(agId){
   }
 
   async function sincronizarChecklistStoriesGabrielle(referencia){
-    const dataRef = referencia ? new Date(referencia) : new Date();
-    const estado = await estadoStoriesPrevistosNoDia(dataRef);
-    const chave = chaveExecucao('Gabrielle', 'Diário', dataRef);
-    const ref = doc(db,'checklist_execucoes', chave);
-    const snap = await getDoc(ref);
-    const execucao = snap.exists() ? snap.data() : { itensFeitos:{} };
-    execucao.itensFeitos = execucao.itensFeitos || {};
-    const estavaFeito = !!execucao.itensFeitos.g_d_10?.feito;
-    if(estado.completo && !estavaFeito){
-      execucao.itensFeitos.g_d_10 = {
-        feito:true,
-        prova:'✔ Verificado automaticamente pelos checks de Stories Diários',
-        em:new Date().toISOString(), automatico:true, origem:'stories_diarios'
-      };
-      await setDoc(ref, { itensFeitos:{ g_d_10:execucao.itensFeitos.g_d_10 } }, { merge:true });
-    }else if(!estado.completo && estavaFeito){
-      delete execucao.itensFeitos.g_d_10;
-      await setDoc(ref, { itensFeitos:{ g_d_10:deleteField() } }, { merge:true });
-    }
-    if(usuarioAtual === 'Gabrielle' && checklistPeriodoAtual === 'Diário' && checklistChaveAtual === chave){
-      checklistExecAtual.itensFeitos = execucao.itensFeitos;
-      renderChecklist();
-    }
+    const dataRef=referencia?new Date(referencia):new Date(),estado=await estadoStoriesPrevistosNoDia(dataRef);
+    const ciclo=await cicloChecklistI91('Gabrielle','Diário',dataRef),chave=ciclo.chave;
+    if(ciclo.ciclo&&(ciclo.referencia!==dataLocal(dataRef)||ciclo.ciclo.estado==='conferido'))return estado;
+    const ref=doc(db,'checklist_execucoes',chave);
+    await runTransaction(db,async tx=>{
+      const cs=await tx.get(doc(db,'checklist_ciclos_i91',ciclo.id)),es=await tx.get(ref);
+      if(cs.exists()&&(cs.data().estado!=='aberto'||cs.data().execucaoId!==chave||cs.data().referencia!==dataLocal(dataRef)))return;
+      const exec=es.exists()?es.data():{itensFeitos:{}},itens={...(exec.itensFeitos||{})};
+      if(estado.completo&&!itens.g_d_10?.feito)itens.g_d_10={feito:true,prova:'✔ Verificado automaticamente pelos checks de Stories Diários',em:new Date().toISOString(),automatico:true,origem:'stories_diarios'};
+      else if(!estado.completo&&itens.g_d_10?.feito)delete itens.g_d_10;
+      else return;
+      tx.set(ref,{...exec,itensFeitos:itens});
+    });
+    if(usuarioAtual==='Gabrielle'&&viewAtiva==='checklist'&&checklistPeriodoAtual==='Diário'&&checklistChaveAtual===chave&&!checklistGravandoI59){await carregarExecucaoChecklist();renderChecklist();}
     return estado;
   }
 
@@ -23241,7 +23318,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
         console.error('Story salvo, mas falhou a sincronização com o checklist diário:', e);
       }
       mostrarToast(checklistSincronizado
-        ? (valor ? '☑ Story verificado e checklist atualizado!' : 'Check do Story retirado e checklist atualizado.')
+        ? (valor ? '☑ Story verificado!' : 'Check do Story retirado.')
         : 'O Story foi salvo, mas o item do checklist não sincronizou. Reabra Meu Checklist.', checklistSincronizado ? undefined : 'erro');
       await renderStoriesDiarios();
       return true;
@@ -28383,14 +28460,14 @@ window.setGerenciaSub = function(qual, el){
       const minhas=await lerRotinasHojeI59(pessoa,dia);
       if(pessoa!==usuarioAtual||dia!==hojeLocal())return;
       const abertas=minhas.filter(r=>r.feitos<r.total);
-      let html=minhas.length?`<div class="card" style="border:2px solid var(--yellow)"><h2>📋 Checklists de hoje</h2><div class="desc">${abertas.length?abertas.map(r=>esc(r.nome)+' · '+r.feitos+'/'+r.total).join('<br>'):'✓ Todos os checklists previstos para hoje estão concluídos.'}</div><button class="btn" onclick="irPara('checklist',document.getElementById('navChecklist'))">Abrir Meu Checklist</button><button class="btn secondary" style="margin-top:8px" onclick="atualizarAvisosChecklistI59(false)">Atualizar checklists</button></div>`:'';
-      if(pessoa==='Amanda'&&new Date().getHours()>=19){
-        const resultados=await calcularDisciplinaHoje(),pendencias=pendenciasChecklistDoResumo(resultados);
-        html+=`<div class="card" style="border:2px solid var(--yellow)"><h2>📋 Conferência do fim do dia · ${formatarDataBR(dia)}</h2><div class="desc">${pendencias.length?esc(textoPendenciasChecklist(pendencias)):'✓ Nenhuma pendência nos checklists previstos para hoje.'}</div><button class="btn" onclick="abrirConferenciaChecklistI59()">Conferir equipe</button></div>`;
+      let html=minhas.length?`<div class="card" style="border:2px solid var(--yellow)"><h2>📋 Meus checklists</h2><div class="desc">${abertas.length?abertas.map(r=>esc(r.nome)+' · '+formatarDataBR(r.referencia)+' · '+r.feitos+'/'+r.total).join('<br>'):'✓ Itens concluídos. A Amanda confere e libera o próximo período.'}</div><button class="btn" onclick="irPara('checklist',document.getElementById('navChecklist'))">Abrir Meu Checklist</button><button class="btn secondary" style="margin-top:8px" onclick="atualizarAvisosChecklistI59(false)">Atualizar checklists</button></div>`:'';
+      if(pessoa==='Amanda'){
+        const resultados=await calcularDisciplinaHoje(true),pendencias=pendenciasChecklistDoResumo(resultados);
+        html+=`<div class="card" style="border:2px solid var(--yellow)"><h2>📋 Conferir checklists</h2><div class="desc">${pendencias.length?esc(textoPendenciasChecklist(pendencias)):'Confira os checklists para liberar o próximo período.'}</div><button class="btn" onclick="abrirConferenciaChecklistI59()">Conferir equipe</button></div>`;
       }
       if(pessoa!==usuarioAtual||dia!==hojeLocal())return;
       if(box.innerHTML!==html)box.innerHTML=html;box.dataset.diaI59=dia;box.dataset.pessoaI59=pessoa;
-      if(notificar&&pessoa==='Amanda'&&new Date().getHours()>=19){try{const k='checklist_fechamento_i59_'+dia;if(!sessionStorage.getItem(k)){mostrarToast('📋 A conferência dos checklists de hoje está no Início.');dispararNotificacaoNavegador('Conferência do fim do dia','Abra Checklists do dia para conferir a equipe.');sessionStorage.setItem(k,'1');}}catch(e){}}
+      if(notificar&&pessoa==='Amanda'&&new Date().getHours()>=19){try{const k='checklist_fechamento_i59_'+dia;if(!sessionStorage.getItem(k)){mostrarToast('📋 A conferência dos checklists de hoje está no Início.');dispararNotificacaoNavegador('Conferência do fim do dia','Abra Conferir checklists para revisar a equipe.');sessionStorage.setItem(k,'1');}}catch(e){}}
       const aviso=pessoa+'_'+dia+'_'+abertas.map(r=>r.periodo).sort().join('_');
       if(notificar&&abertas.length){try{if(!sessionStorage.getItem('checklist_aviso_i59_'+aviso)){mostrarToast('📋 Você tem '+abertas.length+' checklist(s) para hoje. Abra Meu Checklist.');dispararNotificacaoNavegador('Checklists de hoje',abertas.map(r=>r.nome).join(' · '));sessionStorage.setItem('checklist_aviso_i59_'+aviso,'1');}}catch(e){}}
     }catch(e){if(pessoa===usuarioAtual)box.innerHTML='<div class="card"><h2>Checklists de hoje</h2><div class="desc">Não consegui conferir agora. Nenhum checklist foi considerado concluído.</div><button class="btn secondary" onclick="atualizarAvisosChecklistI59()">Tentar novamente</button></div>';}
@@ -29897,11 +29974,10 @@ window.setGerenciaSub = function(qual, el){
     try{
       const templates = await obterTemplatesEfetivos(usuarioAtual);
       if(!templates || !templates["Diário"]) return 0;
-      const chave = chaveExecucao(usuarioAtual, "Diário");
-      const snap = await getDoc(doc(db, 'checklist_execucoes', chave));
-      const feitosObj = snap.exists() ? (snap.data().itensFeitos || {}) : {};
-      const totalItens = templates["Diário"].reduce((s,b)=>s+b.itens.length, 0);
-      const feitos = templates["Diário"].reduce((s,b)=> s + b.itens.filter(it => feitosObj[it.id]?.feito).length, 0);
+      const ciclo=await cicloChecklistI91(usuarioAtual,'Diário',hojeLocal());
+      const feitosObj = ciclo.exec.itensFeitos || {};
+      const totalItens = (ciclo.blocos||templates["Diário"]).reduce((s,b)=>s+b.itens.length, 0);
+      const feitos = (ciclo.blocos||templates["Diário"]).reduce((s,b)=> s + b.itens.filter(it => feitosObj[it.id]?.feito).length, 0);
       return Math.max(0, totalItens - feitos);
     }catch(e){ console.error('Meu Dia: falha ao checar checklist', e); return null; }
   }
@@ -43369,43 +43445,46 @@ window.salvarPrazoVideo = async function(id){
      O que existe: a partir das 19h, o primeiro acesso de Chris/Amanda
      dispara o e-mail do resumo, uma vez por dia (marcado em
      log_automacoes pra nao repetir). */
-  window.renderDisciplinaDia = async function(){
-    const cont = document.getElementById('gerenciaDisciplinaDia');
-    if(!cont) return;
-    cont.innerHTML = '<div class="card"><div class="desc">Conferindo os checklists de hoje...</div></div>';
+
+  window.renderDisciplinaDia=async function(){
+    const cont=document.getElementById('gerenciaDisciplinaDia'),papel=usuarioAtual;if(!cont||!['Chris','Amanda'].includes(papel))return;
+    cont.innerHTML='<div class="card">Carregando checklists...</div>';
     try{
-    const resultados = await calcularDisciplinaHoje();
-    const concluidos = resultados.filter(r => r.concluido);
-    const naoComecou = resultados.filter(r => !r.concluido && r.feitos === 0);
-    const parcial = resultados.filter(r => !r.concluido && r.feitos > 0);
+      const resultados=await calcularDisciplinaHoje(true);if(papel!==usuarioAtual)return;
+      for(const pessoa of resultados)for(const r of pessoa.rotinas){
+        if(!r.ciclo&&r.referencia<=hojeLocal()){
+          templatesEfetivos[pessoa.nome]=await obterTemplatesEfetivos(pessoa.nome);
+          if(papel!==usuarioAtual)return;
+          const atual=await cicloChecklistI91(pessoa.nome,r.periodo,r.referencia,true);
+          Object.assign(r,atual,{feitosMap:atual.exec.itensFeitos||{}});
+          const itens=r.blocos.flatMap(b=>b.itens||[]);r.total=itens.length;r.feitos=itens.filter(i=>r.feitosMap[i.id]?.feito).length;
+        }
+      }
+      if(papel!==usuarioAtual)return;
+      conferirContextosI91.clear();
+      let html='<div class="card"><h2>📋 Conferir checklists</h2><div class="desc">Confira os itens e libere o próximo período. O histórico fica salvo.</div><button class="btn secondary" onclick="renderDisciplinaDia()">Atualizar conferência</button><button class="btn secondary" onclick="historicoChecklistI91()">Ver conferências anteriores</button><div id="historicoChecklistI91"></div></div>';
+      for(const pessoa of resultados){
+        html+='<div class="card"><h2>'+esc(pessoa.nome)+'</h2>';
+        for(const r of pessoa.rotinas){
+          conferirContextosI91.set(r.id,{nome:pessoa.nome,rotina:r});
+          const fechado=r.ciclo?.estado==='conferido';
+          html+='<div class="blocoChecklist" data-conferencia-i91="'+escAttr(r.id)+'"><h3>'+esc(r.nome)+' · '+formatarDataBR(r.referencia)+'</h3><div class="desc">'+r.feitos+'/'+r.total+' feitos · '+(r.total-r.feitos)+' pendentes</div><details><summary>Ver itens e provas</summary>';
+          for(const bloco of r.blocos){html+='<b>'+esc(bloco.bloco)+'</b>';for(const it of bloco.itens||[]){const m=r.feitosMap[it.id];html+='<div class="itemChecklist">'+(m?.feito?'✓ ':'○ ')+esc(it.texto)+(m?.prova?'<div class="meta">'+esc(m.prova)+'</div>':'')+'</div>';}}
+          html+='</details>'+(fechado?'<div class="desc">✓ Conferido · próximo período liberado</div>':'<button class="btn" style="margin-top:12px" onclick="conferirChecklistI91('+argumentoChecklistI59(r.id)+')">Conferido — liberar próximo</button>')+'</div>';
+        }html+='</div>';
+      }
+      cont.innerHTML=html+(resultados.length?'':'<div class="card">Nenhum checklist previsto ou aguardando conferência.</div>');
+    }catch(e){cont.innerHTML='<div class="card">Não consegui carregar a conferência. Nenhum checklist foi liberado.<button class="btn secondary" onclick="renderDisciplinaDia()">Tentar novamente</button></div>';}
+  };
 
-    let html = `<div class="card">
-      <h2>📋 Checklists do dia</h2>
-      <div class="desc">Somente as rotinas previstas para hoje: diárias, semanais ou mensais. Atualiza ao abrir; a conferência não encerra o checklist. <button class="btn secondary" onclick="renderDisciplinaDia()">Atualizar conferência</button></div>
-    </div>
-    <div class="painelResumo" style="margin-bottom:16px;">
-      <div class="resumoCard green"><div class="num">${concluidos.length}</div><div class="lbl">Entregaram</div></div>
-      <div class="resumoCard ${parcial.length?'yellow':''}"><div class="num">${parcial.length}</div><div class="lbl">Deixaram item em aberto</div></div>
-      <div class="resumoCard ${naoComecou.length?'red':'green'}"><div class="num">${naoComecou.length}</div><div class="lbl">Não começaram</div></div>
-    </div>`;
-
-    const linha = r => `<div class="item" style="border-left:3px solid ${r.concluido?'var(--green)':r.feitos?'var(--yellow2)':'var(--red)'};">
-      <div class="top"><div class="nome">${esc(r.nome)}</div><span class="selo ${r.concluido?'aprovada':r.feitos?'hoje':'atrasado'}">${r.feitos}/${r.total}</span></div>
-      <div class="meta" style="margin-top:4px;">${r.concluido ? '✅ Checklist do dia entregue' : r.feitos ? '🟡 Faltam ' + (r.total - r.feitos) + ' item(ns)' : '🔴 Ainda não começou o checklist de hoje'}</div>
-      ${(r.rotinas||[]).map(x=>`<div class="meta">${esc(x.nome)} · ${x.feitos}/${x.total}</div>`).join('')}
-    </div>`;
-
-    const bloco = (titulo, lista, aberta) => lista.length ? `<div class="faixaDem ${aberta?'aberta':''}" data-faixa="disc_${titulo}">
-      <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${titulo} <span class="qtd">(${lista.length})</span><span class="seta">▾</span></div>
-      <div class="faixaItens">${lista.map(linha).join('')}</div>
-    </div>` : '';
-
-    html += bloco('🔴 Não começaram', naoComecou, true);
-    html += bloco('🟡 Com item em aberto', parcial, true);
-    html += bloco('✅ Entregaram', concluidos, false);
-    if(!resultados.length) html += '<div class="empty">Nenhum checklist previsto para hoje.</div>';
-    cont.innerHTML = html;
-    }catch(e){cont.innerHTML='<div class="card">Não consegui conferir os checklists. Nenhum resultado foi considerado entregue.<button class="btn secondary" onclick="renderDisciplinaDia()">Tentar novamente</button></div>';}
+  window.historicoChecklistI91=async function(){
+    const box=document.getElementById('historicoChecklistI91'),papel=usuarioAtual;if(!box||!['Chris','Amanda'].includes(papel))return;
+    box.textContent='Carregando histórico...';
+    try{
+      const sn=await getDocs(query(collection(db,'checklist_conferencias_i91'),orderBy('conferidoEm','desc'),limit(20)));
+      if(papel!==usuarioAtual||!box.isConnected)return;
+      box.innerHTML='<h3>Últimas 20 conferências</h3>'+(sn.empty?'<div class="desc">Nenhuma conferência registrada.</div>':sn.docs.map(d=>{const r=d.data();return '<details class="blocoChecklist"><summary>'+esc(r.funcionario)+' · '+formatarDataBR(r.referencia)+' · '+r.feitos+'/'+r.total+'</summary><div class="desc">Conferido por '+esc(r.conferidoPor)+'</div>'+r.blocos.map(b=>'<b>'+esc(b.bloco)+'</b>'+b.itens.map(i=>'<div class="itemChecklist">'+(r.itensFeitos[i.id]?.feito?'✓ ':'○ ')+esc(i.texto)+(r.itensFeitos[i.id]?.prova?'<div class="meta">'+esc(r.itensFeitos[i.id].prova)+'</div>':'')+'</div>').join('')).join('')+'</details>';}).join(''));
+    }catch(e){if(box.isConnected)box.textContent='Não consegui ler o histórico. Tente novamente.';}
   };
 
   function pendenciasChecklistDoResumo(resultados){

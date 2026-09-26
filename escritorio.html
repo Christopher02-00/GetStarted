@@ -38736,7 +38736,22 @@ window.setGerenciaSub = function(qual, el){
         confirmar que realmente foi ao ar — fecha o ciclo, que antes
         terminava em "agendado" e ninguém nunca verificava se postou. */
   async function verificarPostagensEsquecidas(){
-    const snap = await snapshotOperacional('postagens');
+    /* I89 — cachePostagens é uma fila por papel (Cecília não contém
+       aguardando_legenda). Um aviso global nunca usa essa lista parcial.
+       A consulta confirmada inclui só os três estados usados neste motor;
+       falha/pendência local não significa fila zerada. */
+    const sessaoI89=sessaoServicoManual(),geracaoI89=__geracaoIdentidade;
+    const validarSessaoI89=()=>{
+      if(!auth.currentUser?.uid || sessaoI89!==sessaoServicoManual() || geracaoI89!==__geracaoIdentidade){
+        throw new Error('O perfil mudou durante a conferência das postagens; aviso preservado.');
+      }
+    };
+    const snap = await _getDocsFromServerFB(query(collection(db,'postagens'),
+      where('status','in',['aguardando_legenda','aguardando_agendamento','agendado'])));
+    validarSessaoI89();
+    if(snap.metadata?.fromCache || snap.metadata?.hasPendingWrites){
+      throw new Error('A fila de postagens ainda não foi confirmada no servidor; aviso preservado.');
+    }
     const hojeStr = hojeLocal();
     let novasDemandas = 0;
     const paradasLegenda = [], paradasAgendar = [];
@@ -38746,6 +38761,8 @@ window.setGerenciaSub = function(qual, el){
        separada, explícita e previamente autorizada. */
     for(const docSnap of snap.docs){
       const p = docSnap.data();
+      if(p.excluido===true) continue;
+      validarSessaoI89();
 
       /* ===== A REDE DE SEGURANÇA VIROU UM AVISO SÓ — 29/07/2026 ======
          Antes cada item parado virava uma demanda. Vinte conteúdos
@@ -38772,6 +38789,7 @@ window.setGerenciaSub = function(qual, el){
         const criada=await runTransaction(db,async tx=>{
           const postAtualSnap=await tx.get(postagemRef);
           if(!postAtualSnap.exists()) return false;
+          validarSessaoI89();
           const postAtual={id:postAtualSnap.id,...postAtualSnap.data()};
           const estadoAtual=classificarAlertaFonteCanonicaV135('postagem',postAtual,hojeLocal());
           if(estadoAtual.estado!=='aberto') return false;
@@ -38782,6 +38800,7 @@ window.setGerenciaSub = function(qual, el){
           const demandaAtualSnap=await tx.get(demandaRef);
           /* Existência, não apenas visibilidade, é o recibo deste ciclo. Uma
              demanda terminal permanece histórico e nunca é sobrescrita. */
+          validarSessaoI89();
           if(demandaAtualSnap.exists()) return false;
           tx.set(demandaRef,{
             titulo:'📲 Confirmar publicação — '+(postAtual.clienteNome||'')+': '+(postAtual.titulo||''),
@@ -38808,17 +38827,19 @@ window.setGerenciaSub = function(qual, el){
        aviso tem identidade estável, atualiza enquanto existe pendência e
        é encerrado automaticamente quando a fila correspondente zera. */
     async function avisarParadas(lista, quem, titulo, ondeFazer, marcador){
+      validarSessaoI89();
       const idAviso = 'alerta_fluxo_' + marcador.replace(/[^a-zA-Z0-9_-]/g,'_');
       const avisoRef = doc(db,'demandas',idAviso);
       const [mk, avisoAtual, pendentesSnap] = await Promise.all([
-        getDoc(doc(db,'sistema', marcador)),
-        getDoc(avisoRef),
-        snapshotOperacional('demandas', d=>d.status==='pendente')
+        _getDocFromServerFB(doc(db,'sistema', marcador)),
+        _getDocFromServerFB(avisoRef),
+        _getDocsFromServerFB(query(collection(db,'demandas'),where('destinatario','==',quem)))
       ]);
+      validarSessaoI89();
       const antigos = pendentesSnap.docs.filter(registro => {
         if(registro.id === idAviso) return false;
         const d = registro.data();
-        return d.destinatario === quem &&
+        return d.excluido!==true && d.status==='pendente' && d.destinatario === quem &&
           (d.tipoEspecial === marcador || String(d.titulo||'').startsWith(titulo));
       });
 
@@ -38826,12 +38847,15 @@ window.setGerenciaSub = function(qual, el){
         const paraFechar = [...antigos];
         if(avisoAtual.exists() && avisoAtual.data().status === 'pendente') paraFechar.push({id:idAviso,ref:avisoRef,data:()=>avisoAtual.data()});
         for(const registro of paraFechar){
+          validarSessaoI89();
           await updateDoc(registro.ref || doc(db,'demandas',registro.id), {
             status:'aprovada', concluidoPor:'sistema', concluidoEm:serverTimestamp(),
             notaConclusao:'Encerrada automaticamente — a fila correspondente foi zerada.'
           });
+          validarSessaoI89();
           registrarHistorico('demandas',registro.id,'Aviso encerrado automaticamente — fila zerada');
         }
+        validarSessaoI89();
         if(paraFechar.length || !mk.exists() || mk.data().estadoAtual!=='zerada'){
           await setDoc(doc(db,'sistema', marcador), {ultimaData:hojeStr,estadoAtual:'zerada',quantidade:0},{merge:true});
         }
@@ -38842,10 +38866,13 @@ window.setGerenciaSub = function(qual, el){
       const jaAtual = avisoAtual.exists() && avisoAtual.data().status==='pendente' &&
         mk.exists() && mk.data().estadoAtual===estadoAtual;
       for(const registro of antigos){
+        validarSessaoI89();
         await updateDoc(registro.ref,{status:'aprovada',concluidoPor:'sistema',concluidoEm:serverTimestamp(),
           notaConclusao:'Substituída pelo aviso único e atualizado da mesma fila.'});
+        validarSessaoI89();
         registrarHistorico('demandas',registro.id,'Aviso duplicado consolidado automaticamente');
       }
+      validarSessaoI89();
       if(jaAtual && !antigos.length) return;
       await setDoc(avisoRef,{
         titulo:titulo + ' — ' + lista.length + ' parado(s) há 2+ dias',
@@ -38854,6 +38881,7 @@ window.setGerenciaSub = function(qual, el){
         status:'pendente',provaTexto:'',provaImagemUrl:'',tipoEspecial:marcador,
         atualizadoEm:serverTimestamp(),criadoEm:avisoAtual.exists()?(avisoAtual.data().criadoEm||serverTimestamp()):serverTimestamp(),excluido:false
       },{merge:true});
+      validarSessaoI89();
       await setDoc(doc(db,'sistema', marcador), { ultimaData: hojeStr,estadoAtual,quantidade:lista.length },{merge:true});
       registrarLogAutomacao(marcador, quem, lista.length + ' item(ns) parado(s)');
     }

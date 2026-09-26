@@ -3848,6 +3848,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
   let __erroCarteiraCalendarioOperacional = null;
   let __carregarClientesExtrasEmCurso = null;
   let __versaoCarteiraCalendario = 0;
+  let __revalidacaoCarteiraCalendarioI87 = null;
 
   /* I21 COMPATIBILIDADE EXTRAS INICIO */
   function projetarListaClientesI21(snapExtras,snapConfig){
@@ -4059,15 +4060,22 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
 
   async function carregarClientesExtras(fontesConfirmadas){
     const forcarFontes=!!(fontesConfirmadas&&fontesConfirmadas.extras&&fontesConfirmadas.config);
+    const sessaoDaLeitura=sessaoServicoManual();
+    // A navegação aguarda a conferência já em curso; não lê a janela vazia
+    // entre invalidar a carteira e receber as duas fontes do servidor.
+    if(!forcarFontes&&__revalidacaoCarteiraCalendarioI87?.sessao===sessaoDaLeitura){
+      try{return await __revalidacaoCarteiraCalendarioI87.promessa;}catch(e){return false;}
+    }
     if(__carregarClientesExtrasEmCurso&&!forcarFontes) return __carregarClientesExtrasEmCurso;
     const versaoDaLeitura=__versaoCarteiraCalendario;
-    __carregarClientesExtrasEmCurso=(async()=>{ try{
+    // Adiar também fontes prontas evita guardar uma promessa já finalizada.
+    const promessa=Promise.resolve().then(async()=>{ try{
       const [snap,cfgSnap] = forcarFontes
         ? [fontesConfirmadas.extras,fontesConfirmadas.config]
-        : await Promise.all([
+        : await comTimeoutCalendarioOperacional(Promise.all([
             getDocs(collection(db,'clientes_extras')),
             getDocs(collection(db,'clientes_config'))
-          ]);
+          ]),'Carregar carteira de clientes',12000);
       const {configuracoes,porSlug,ativos}=projetarListaClientesI21(snap,cfgSnap);
       const catalogoCalendarios=[...porSlug.values()].filter(c=>{
         const slug=slugClienteCanonico(c.slug);
@@ -4095,7 +4103,12 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
         const cfg=configuracoes[c.slug]||{};
         return cfg.excluido!==true&&cfg.ativo!==false&&!clienteInativoEfetivo(cfg);
       });
-      if(versaoDaLeitura!==__versaoCarteiraCalendario) return false;
+      if(sessaoDaLeitura!==sessaoServicoManual()) return false;
+      if(versaoDaLeitura!==__versaoCarteiraCalendario){
+        const atual=__revalidacaoCarteiraCalendarioI87;
+        if(atual?.sessao===sessaoDaLeitura){try{return await atual.promessa;}catch(e){return false;}}
+        return Array.isArray(__carteiraCalendarioOperacionalConfirmada);
+      }
       CLIENTES_LISTA.splice(0,CLIENTES_LISTA.length,...ativos);
       __carteiraCalendarioOperacionalConfirmada=carteiraCalendarios;
       __catalogoCalendarioPorCompetenciaConfirmado=catalogoCalendarios;
@@ -4103,13 +4116,18 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
       __erroCarteiraCalendarioOperacional=null;
       return true;
     }catch(e){
-      __erroCarteiraCalendarioOperacional=e;
-      console.error('Não consegui atualizar a carteira operacional; mantive a última lista confirmada.',e);
+      if(versaoDaLeitura===__versaoCarteiraCalendario&&sessaoDaLeitura===sessaoServicoManual()){
+        __erroCarteiraCalendarioOperacional=e;
+        if(e?.code==='gs/timeout-calendario'){
+          __invalidarCacheColecaoNome('clientes_extras');
+          __invalidarCacheColecaoNome('clientes_config');
+        }
+        console.error('Não consegui atualizar a carteira operacional; mantive a última lista confirmada.',e);
+      }
       return false;
-    } finally {
-      if(versaoDaLeitura===__versaoCarteiraCalendario) __carregarClientesExtrasEmCurso=null;
-    }})();
-    return __carregarClientesExtrasEmCurso;
+    }}).finally(()=>{if(__carregarClientesExtrasEmCurso===promessa)__carregarClientesExtrasEmCurso=null;});
+    __carregarClientesExtrasEmCurso=promessa;
+    return promessa;
   }
   /* ===== CLIENTE "SÓ EDIÇÃO" (plano do Rodrigo) =====
      Plano em que a agência APENAS edita os vídeos que o cliente envia.
@@ -4154,6 +4172,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
     __cacheAlvoConteudo = null;
     __cacheCasta = null;
     __versaoCarteiraCalendario++;
+    __revalidacaoCarteiraCalendarioI87 = null;
     __carteiraCalendarioOperacionalConfirmada = null;
     __catalogoCalendarioPorCompetenciaConfirmado = null;
     __configuracoesCarteiraCalendarioConfirmadas = Object.create(null);
@@ -5409,31 +5428,45 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
     return __catalogoCalendarioPorCompetenciaConfirmado.map(c=>({...c}));
   };
   async function revalidarCarteiraCalendarioV127(){
-    /* Uma saída, reativação ou troca de casta pode ter sido confirmada em
-       outra aba. Antes de qualquer ação que cria token ou altera calendário,
-       descarte o retrato local e releia as duas fontes canônicas. Se uma
-       delas falhar, a ação falha fechada; o último retrato não vira
-       autorização para escrever. */
-    const pessoaDaLeitura=usuarioAtual;
+    const sessao=sessaoServicoManual();
+    if(__revalidacaoCarteiraCalendarioI87?.sessao===sessao) return __revalidacaoCarteiraCalendarioI87.promessa;
     window.limparCacheDeClientes();
-    /* `getDocs` do Escritório possui cache operacional de 10 s. Uma ação
-       irreversível de calendário não pode reutilizá-lo: estas duas leituras
-       vêm obrigatoriamente do servidor. Se a rede estiver indisponível,
-       a ação para; cache/offline nunca vira autorização. */
     __invalidarCacheColecaoNome('clientes_extras');
     __invalidarCacheColecaoNome('clientes_config');
-    const [extras,config]=await Promise.all([
-      _getDocsFromServerFB(collection(db,'clientes_extras')),
-      _getDocsFromServerFB(collection(db,'clientes_config'))
-    ]);
-    if(usuarioAtual!==pessoaDaLeitura){
-      throw new Error('O perfil mudou durante a revalidação da carteira. Tente novamente no perfil correto.');
-    }
-    const confirmou=await carregarClientesExtras({extras,config});
-    if(confirmou!==true||!Array.isArray(__catalogoCalendarioPorCompetenciaConfirmado)){
-      throw (__erroCarteiraCalendarioOperacional||new Error('Não foi possível revalidar a carteira operacional dos calendários.'));
-    }
-    return true;
+    const tarefa={sessao,versao:__versaoCarteiraCalendario,promessa:null};
+    __revalidacaoCarteiraCalendarioI87=tarefa;
+    tarefa.promessa=Promise.resolve().then(async()=>{
+      try{
+        // Cada ação nova continua confirmando no servidor. Só chamadas
+        // simultâneas da mesma identidade compartilham este par de leituras.
+        const [extras,config]=await comTimeoutCalendarioOperacional(Promise.all([
+          _getDocsFromServerFB(collection(db,'clientes_extras')),
+          _getDocsFromServerFB(collection(db,'clientes_config'))
+        ]),'Conferir carteira de clientes',12000);
+        if(sessao!==sessaoServicoManual()||tarefa.versao!==__versaoCarteiraCalendario){
+          throw new Error('A carteira ou o perfil mudou durante a conferência. Tente novamente.');
+        }
+        const confirmou=await carregarClientesExtras({extras,config});
+        if(sessao!==sessaoServicoManual()||tarefa.versao!==__versaoCarteiraCalendario)throw new Error('A carteira ou o perfil mudou durante a conferência. Tente novamente.');
+        if(confirmou!==true||!Array.isArray(__catalogoCalendarioPorCompetenciaConfirmado)){
+          throw (__erroCarteiraCalendarioOperacional||new Error('Não foi possível revalidar a carteira operacional dos calendários.'));
+        }
+        // A consulta comum logo após esta confirmação reaproveita as
+        // mesmas fontes no cache curto existente; não refaz ambas de novo.
+        for(const [nome,snap] of [['clientes_extras',extras],['clientes_config',config]]){
+          const itens=[];
+          snap.forEach(d=>itens.push({__id:d.id,__path:d.ref?.path||nome+'/'+d.id,__dados:d.data()}));
+          __cacheColecoes.set(nome,{em:Date.now(),itens});
+        }
+        return true;
+      }catch(e){
+        if(sessao===sessaoServicoManual()&&tarefa.versao===__versaoCarteiraCalendario)__erroCarteiraCalendarioOperacional=e;
+        throw e;
+      }finally{
+        if(__revalidacaoCarteiraCalendarioI87===tarefa)__revalidacaoCarteiraCalendarioI87=null;
+      }
+    });
+    return tarefa.promessa;
   }
   window.revalidarCarteiraCalendarioV127=revalidarCarteiraCalendarioV127;
   async function clientePertenceCarteiraCalendarioV127(slug,competencia,revalidar){
@@ -27328,6 +27361,7 @@ window.setGerenciaSub = function(qual, el){
      poderia atravessar Chris ↔ Amanda ↔ equipe no mesmo navegador. */
   function limparEstadoPrivadoTrocaIdentidade(){
     __geracaoIdentidade++;
+    window.limparCacheDeClientes();
     // I82: nenhum formulario da pessoa anterior atravessa a troca real de conta/papel.
     document.getElementById('overlayView')?.classList.remove('show');
     document.getElementById('modalConteudo')?.replaceChildren();

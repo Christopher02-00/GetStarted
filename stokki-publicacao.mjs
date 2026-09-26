@@ -264,7 +264,7 @@ export function criarOperacao(api){
   function fecharComConferenciaI84(){
     if(ocupado||!painel)return;
     if(capturarPreenchimentoI84().some(r=>r.campos.length)&&!api.confirm('Há preenchimento não salvo. Fechar e descartar apenas esse preenchimento?'))return;
-    painel.close();painel.remove();painel=null;
+    painel.close();painel.remove();painel=null;retratos.clear();
   }
   async function abrir(){
     if(!['Amanda','Cecília','Chris'].includes(contexto().papel))return;
@@ -379,7 +379,8 @@ export function criarOperacao(api){
     avisar();redesenharPreservandoI84(confirmacao,descartarId);
   }
   function incorporarReparoI79(p){
-    if(!usaFluxo(p)||ocupado)return;
+    // A conferência também abre sem este painel, inclusive após fechá-lo ou trocar de perfil.
+    if(!painel?.isConnected||!usaFluxo(p)||ocupado)return;
     const anterior=retratos.get(p.id);if(!anterior)return;
     const fatos=x=>[x.cliente,x.videoId,x.calendarItemId,x.calendarCompetencia,x.calendarClienteSlug,x.status,x.excluido,x.dataAgendada,x.horaAgendada,x.publicacaoStokki?.selecionadas,Object.fromEntries(Object.entries(x.publicacaoStokki?.redes||{}).map(([k,r])=>[k,[r.data,r.hora,r.retirada,r.publicadaEm,r.publicadaPor,r.url]]))];
     if(jsonEstavel(fatos(p))!==jsonEstavel(fatos(anterior)))return;
@@ -396,5 +397,5 @@ export function criarOperacao(api){
       }
     },
     falhar(e){erro='Não foi possível atualizar a Stokki. '+(e.message||e);avisar();},
-    parar(){geracao++;posts=[];erro='';if(timer)clearInterval(timer);timer=null;painel?.remove();painel=null;doc.getElementById('stokkiAvisosI30')?.remove();}};
+    parar(){geracao++;posts=[];retratos.clear();erro='';if(timer)clearInterval(timer);timer=null;painel?.remove();painel=null;doc.getElementById('stokkiAvisosI30')?.remove();}};
 }

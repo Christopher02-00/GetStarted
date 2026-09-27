@@ -5,6 +5,7 @@
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
+import { instalarEntradaFinanceiraI94 } from './financeiro-entrada-i94.mjs?v=i94-1';
 import * as Core from './financeiro-core.mjs?v=109';
 import { instalarConferenciaPortalI38, lerFontesCobrancaI38 } from './cobranca-portal-manual.mjs?v=i38-1';
 
@@ -97,13 +98,14 @@ export function instalarFinanceiroV104(deps){
   const w=globalThis;
   const caches=new Map();
   const carregamentos=new Map();
+  let geracaoCacheI94=0, revalidarI94=false;
   const locks=new Set();
   const renderContratosAnterior=w.renderContratos;
 
   function pessoa(){ return texto(usuarioAtual()); }
   function canFinanceiro(){ return pessoa()==='Chris'; }
   function canContratos(){ return ['Chris','Amanda'].includes(pessoa()); }
-  function invalidar(){ caches.clear(); }
+  function invalidar(){ caches.clear(); carregamentos.clear(); geracaoCacheI94++; revalidarI94=true; }
 
   function canonico(valor){ return slugClienteCanonico(texto(valor)); }
 
@@ -132,7 +134,8 @@ function competenciaDeDataCaixa(valor){
 }
 
   async function carregarSnapshot({forcar=false,comContatos=false,modo='completo'}={}){
-    const agora=Date.now();
+    const agora=Date.now(), geracao=geracaoCacheI94;
+    forcar=forcar||revalidarI94;
     const chave=`${pessoa()}|${modo}|${comContatos?'contatos':'sem-contatos'}`;
     const cacheAtual=caches.get(chave);
     if(!forcar&&cacheAtual&&(agora-cacheAtual.em)<15000) return cacheAtual.valor;
@@ -140,15 +143,16 @@ function competenciaDeDataCaixa(valor){
     const promessa=(async()=>{
       const base=modo==='contratos'?COLECOES_CONTRATOS:COLECOES_SNAPSHOT;
       const nomes=[...base,...(comContatos?['contatos_clientes_financeiro']:[])];
-      const snaps=await Promise.all(nomes.map(nome=>getDocs(collection(db,nome))));
+      const ler=forcar?deps.getDocsFromServer:getDocs;
+      const snaps=await Promise.all(nomes.map(nome=>ler(collection(db,nome))));
       const bruto={};
       nomes.forEach((nome,i)=>{ bruto[nome]=listaSnapshot(snaps[i]); });
       const valor=prepararFontes(bruto);
-      caches.set(chave,{valor,em:Date.now()});
+      if(geracao===geracaoCacheI94){ caches.set(chave,{valor,em:Date.now()}); revalidarI94=false; }
       return valor;
     })();
     carregamentos.set(chave,promessa);
-    try{return await promessa;}finally{carregamentos.delete(chave);}
+    try{return await promessa;}finally{if(carregamentos.get(chave)===promessa)carregamentos.delete(chave);}
   }
 
   function mapaNomes(fontes){
@@ -276,7 +280,7 @@ function competenciaDeDataCaixa(valor){
       const porDia={}; linhas.forEach(v=>{const d=numero(v.diaVencimento)||10;(porDia[d]??=[]).push(v);});
       for(const dia of Object.keys(porDia).map(Number).sort((a,b)=>a-b)){
         const grupo=porDia[dia];
-        html+=`<div class="faixaDem aberta"><div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${grupo.length})</span><span class="seta">▾</span></div><div class="faixaItens">${grupo.map(v=>`<div class="item" style="border-left:3px solid ${v.sit.cor};"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${v.sit.selo}">${esc(v.sit.rotulo)}</span></div><div class="meta">${brl(v.valorDevido)} · ${v.materializada?'documento confirmado':'obrigação derivada, ainda sem documento'}</div><div class="btnrow" style="margin-top:8px;">${!['pago','isento','cancelado'].includes(v.sit.k)?`<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Recebi</button><button class="btn secondary" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','isento')">🎁 Cortesia</button>`:''}</div>${['pago','isento'].includes(v.sit.k)?'<div class="meta" style="margin-top:8px;">Estado encerrado. Uma correção exige lançamento auditado; esta tela não reabre cobranças silenciosamente.</div>':''}</div>`).join('')}</div></div>`;
+        html+=`<div class="faixaDem aberta"><div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${grupo.length})</span><span class="seta">▾</span></div><div class="faixaItens">${grupo.map(v=>`<div class="item" style="border-left:3px solid ${v.sit.cor};"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${v.sit.selo}">${esc(v.sit.rotulo)}</span></div><div class="meta">${brl(v.valorDevido)} · ${v.materializada?'documento confirmado':'obrigação derivada, ainda sem documento'}</div><div class="btnrow" style="margin-top:8px;">${!['pago','isento','cancelado'].includes(v.sit.k)?`<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Recebi</button>${v.pagamentoEntradaPendente?'':`<button class="btn secondary" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','isento')">🎁 Cortesia</button>`}`:''}</div>${['pago','isento'].includes(v.sit.k)?'<div class="meta" style="margin-top:8px;">Estado encerrado. Uma correção exige lançamento auditado; esta tela não reabre cobranças silenciosamente.</div>':''}</div>`).join('')}</div></div>`;
       }
       box.innerHTML=html;
       return true;
@@ -319,6 +323,8 @@ function competenciaDeDataCaixa(valor){
   }
 
   w.marcarMensalidadeV103=async function(id,status){
+    const linha=w.__mensalidadesV103?.[id]||w.__cobrancasV103?.[id];
+    if(status==='pago'&&linha?.pagamentoEntradaPendente===true) return w.abrirPrimeiroPagamentoMensalidadeI94(id);
     if(locks.has('mens:'+id)) return false;
     if(!['pago','isento','aberto'].includes(status)) return false;
     if(!confirm(`Confirmar mensalidade como ${status.toUpperCase()}?`)) return false;
@@ -436,7 +442,7 @@ function competenciaDeDataCaixa(valor){
 
   w.alternarEdicaoWhatsV104=function(id){
     const box=document.getElementById(`editarWhatsV104_${id}`);
-    if(box)box.hidden=!box.hidden;
+    if(box){box.hidden=!box.hidden;box.style.display=box.hidden?'none':'flex';if(!box.hidden)box.querySelector('input')?.focus();}
   };
 
   /* V105 — a Régua curta usa a mesma fonte de contato do clique real.
@@ -464,14 +470,14 @@ function competenciaDeDataCaixa(valor){
         const cobravel=c.estado!=='a_vencer'&&c.estado!=='indisponivel';
         const contatoBloqueado=['conflito','invalido'].includes(contatoResolvido.estado);
         const contatoDisponivel=Boolean(telefone)&&!contatoBloqueado;
-        const editor=`<div id="editarWhatsV104_${escAttr(v.id)}" ${telefone||contatoBloqueado?'hidden':''} style="display:flex;gap:6px;align-items:center;margin-top:7px;"><input id="whatsRapidoV103_${escAttr(v.id)}" value="${escAttr(telefoneParaTela(telefone))}" placeholder="(41) 99999-9999" style="flex:1;min-width:150px;"><button class="btn secondary" style="width:auto;" onclick="salvarWhatsRapidoV103('${escJs(v.id)}','${escJs(v.canonicalId)}')">Salvar contato</button></div>`;
+        const editor=`<div id="editarWhatsV104_${escAttr(v.id)}" ${telefone?'hidden':''} style="display:${telefone?'none':'flex'};gap:6px;flex-wrap:wrap;align-items:center;margin-top:7px;"><input id="whatsRapidoV103_${escAttr(v.id)}" value="${escAttr(telefoneParaTela(telefone))}" placeholder="(41) 99999-9999" style="flex:1;min-width:150px;"><button class="btn secondary" style="width:auto;" onclick="salvarWhatsRapidoV103('${escJs(v.id)}','${escJs(v.canonicalId)}')">Salvar contato</button></div>`;
         const rotuloContato=telefone?telefoneParaTela(telefone):contatoResolvido.estado==='conflito'?'conflito entre cadastros':contatoResolvido.estado==='invalido'?'cadastro inválido':'não cadastrado';
         const origemContato=telefone?` · ${esc(contatoResolvido.origem)}`:'';
-        const contato=`<div class="meta" style="margin-top:5px;">WhatsApp: <b>${esc(rotuloContato)}</b>${origemContato}${telefone?` · <button class="linkBtn" onclick="alternarEdicaoWhatsV104('${escJs(v.id)}')">editar</button>`:''}</div>${contatoBloqueado?'<div class="meta" style="color:var(--red);">A cobrança fica bloqueada até os números divergentes serem revisados.</div>':''}${editor}`;
+        const contato=`<div class="meta" style="margin-top:5px;">WhatsApp: <b>${esc(rotuloContato)}</b>${origemContato}${telefone?` · <button class="linkBtn" onclick="alternarEdicaoWhatsV104('${escJs(v.id)}')">Editar contato</button>`:''}</div>${contatoBloqueado?'<div class="meta" style="color:var(--red);">A cobrança fica bloqueada até os números divergentes serem revisados.</div>':''}${editor}`;
         const acao=previsao
           ? '<div class="meta" style="margin-top:7px;">Previsão; ainda não é uma cobrança.</div>'
-          : `<div class="btnrow" style="margin-top:8px;">${v.materializada&&cobravel&&contatoDisponivel?`<button class="btn secondary" style="width:auto;" onclick="abrirCobranca('${escJs(v.id)}')">${cobradoHoje?'Abrir conversa novamente':'Abrir cobrança'}</button>`:v.materializada&&cobravel?'<span class="meta">Cadastre ou revise o WhatsApp antes de abrir a cobrança.</span>':!v.materializada?`<button class="btn secondary" style="width:auto;" onclick="materializarCobrancaV103('${escJs(v.id)}')">Criar cobrança deste mês</button>`:'<span class="meta">Ainda fora da janela de cobrança.</span>'}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Já recebi</button></div>${v.materializada&&cobravel&&contatoDisponivel&&!cobradoHoje?`<button id="confirmarCobranca_${escAttr(v.id)}" class="btn secondary" style="width:auto;margin-top:7px;border-color:var(--green);" hidden onclick="confirmarEnvioCobrancaV103('${escJs(v.id)}')">Confirmar que enviei</button>`:''}`;
-        return `<div class="item" data-regua-linha="${escAttr(v.id)}" data-contato-estado="${escAttr(contatoResolvido.estado)}" style="margin-top:7px;${cobradoHoje?'opacity:.72;':''}"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${cobradoHoje?'aprovada':classeEstadoCobranca(c.estado)}">${cobradoHoje?'✔ cobrado hoje':esc(rotuloEstadoCobranca(c.estado,c.dias))}</span></div><div class="meta">${brl(v.valorDevido)} · ${esc(nomeMes(v.competencia))}${v.materializada?'':' · ainda não criada'}</div>${contato}${acao}</div>`;
+          : `<div class="btnrow" style="margin-top:8px;">${v.materializada&&cobravel&&contatoDisponivel?`<button class="btn secondary" style="width:auto;" onclick="abrirCobranca('${escJs(v.id)}')">${cobradoHoje?'Abrir conversa novamente':'Abrir cobrança'}</button>`:v.materializada&&cobravel?'<span class="meta">Cadastre ou revise o WhatsApp antes de abrir a cobrança.</span>':!v.materializada?`<button class="btn secondary" style="width:auto;" onclick="materializarCobrancaV103('${escJs(v.id)}')">Criar cobrança deste mês</button>`:'<span class="meta">Ainda fora da janela de cobrança.</span>'}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">${v.pagamentoEntradaPendente?'Confirmar primeiro pagamento':'✔ Já recebi'}</button></div>${v.materializada&&cobravel&&contatoDisponivel&&!cobradoHoje?`<button id="confirmarCobranca_${escAttr(v.id)}" class="btn secondary" style="width:auto;margin-top:7px;border-color:var(--green);" hidden onclick="confirmarEnvioCobrancaV103('${escJs(v.id)}')">Confirmar que enviei</button>`:''}`;
+        return `<div class="item" data-regua-linha="${escAttr(v.id)}" data-contato-estado="${escAttr(contatoResolvido.estado)}" style="margin-top:7px;${cobradoHoje?'opacity:.72;':''}"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${cobradoHoje?'aprovada':classeEstadoCobranca(c.estado)}">${cobradoHoje?'✔ cobrado hoje':esc(rotuloEstadoCobranca(c.estado,c.dias))}</span></div><div class="meta">${brl(v.valorDevido)} · ${esc(nomeMes(v.competencia))}${v.materializada?'':' · ainda não criada'}</div>${contato}${acao}<button class="btn secondary" style="width:auto;margin-top:8px" onclick="abrirValorContratoCliente('${escJs(v.canonicalId)}')">Dados do contrato</button></div>`;
       };
       const comprovantes=reg.comprovantesEmAnalise?.itens||[];
       const acionaveis=[...(reg.anterioresVencidos.itens||[]),...(reg.competenciaSelecionada.itens||[])].filter(v=>{
@@ -567,6 +573,8 @@ function competenciaDeDataCaixa(valor){
     return {lista,pagos,receita,custos,previsto};
   }
 
+  const entradaI94=instalarEntradaFinanceiraI94({...deps,canFinanceiro,aposConfirmar:async()=>{invalidar();await Promise.all([w.renderMensalidades(),w.renderFinanceiro(),w.renderCobranca()]);}});
+
   const conferenciaPortalI38=instalarConferenciaPortalI38({...deps,canFinanceiro,carregarSnapshot:()=>lerFontesCobrancaI38(deps),invalidar,vigente:Core.vigenteNaCompetencia});
 
   w.renderFinanceiro=async function(){
@@ -595,6 +603,7 @@ function competenciaDeDataCaixa(valor){
       <div class="card"><h2>🔗 Ponte de reconciliação</h2><div class="item"><div class="top"><div class="nome">Competência ${esc(nomeMes(competencia))}</div><b>${brl(ob.previsto||0)} = ${brl(ob.quitado||0)} quitado + ${brl(ob.aberto||0)} aberto</b></div></div><div class="item"><div class="top"><div class="nome">Caixa real de ${esc(nomeMes(competencia))}</div><b>${brl(entradasCaixa)} entradas − ${brl(lanc.custos)} custos = ${brl(caixaLiquido)}</b></div><div class="meta">Pagamento atrasado entra no caixa pela data em que foi recebido, sem mudar sua competência original.</div></div></div>
       ${htmlConflitos(p,nomes)}
       <div class="card"><h2>👥 Carteira da competência</h2><div class="painelResumo"><div class="resumoCard green"><div class="num">${mov.totais?.ativos||0}</div><div class="lbl">Ativos</div></div><div class="resumoCard"><div class="num">${mov.totais?.entradas||0}</div><div class="lbl">Entraram</div></div><div class="resumoCard"><div class="num">${mov.totais?.saidas||0}</div><div class="lbl">Saíram</div></div></div>${mov.entradas?.length?`<div class="meta">Entradas: ${mov.entradas.map(v=>esc(nomes.get(v.canonicalId)||v.canonicalId)).join(' · ')}</div>`:''}${mov.saidas?.length?`<div class="meta">Saídas: ${mov.saidas.map(v=>esc(nomes.get(v.canonicalId)||v.canonicalId)).join(' · ')}</div>`:''}</div>`;
+      box.insertAdjacentHTML('beforeend',entradaI94.html(fontes,competencia));
       conferenciaPortalI38.montar(box,fontes,competencia);
       await w.renderFinanceiroLancamentosV103(fontes,competencia);
       return true;

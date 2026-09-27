@@ -680,6 +680,8 @@
 <style>
 /* I85: o atalho global não deve cobrir os botões do detalhe da gravação. */
 body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:none!important;}
+/* I93: o editor de acompanhamento fica acima do menu e atalhos móveis. */
+#overlayView:has(#demI93Salvar){z-index:500;}
 </style>
 </head>
 <body class="semUsuario">
@@ -2034,6 +2036,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
 </div>
 
 <script type="module">
+import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,patchSincroniaDemandaI93} from './gs-demandas-cliente-i93.mjs?v=i93-1';
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i90-1";
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=i92-1";
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
@@ -19821,8 +19824,8 @@ window.arquivarMesCampanhas=async function(mes,token){
   async function htmlDemandasPortalAdmin(apenasLeitura){
     let registros = [];
     try{
-      const snap = await getDocs(collection(db,'demandas_cliente'));
-      snap.forEach(d => { const v=d.data(); if(!v.excluido) registros.push({id:d.id, ...v}); });
+      const snap = await _getDocsFromServerFB(collection(db,'demandas_cliente'));
+      snap.forEach(d => { const v=d.data(); if(!v.excluido) registros.push({...v,id:d.id}); });
     }catch(e){
       console.error('Falha ao ler demandas do Portal:', e);
       return '<div class="card" style="border-color:var(--red);"><div class="empty">Nao consegui carregar as demandas agora. Nenhum dado foi alterado.</div></div>';
@@ -19831,11 +19834,13 @@ window.arquivarMesCampanhas=async function(mes,token){
     const podeCriar = usuarioAtual === 'Amanda';
     const valorTempo = v => v?.seconds ? v.seconds*1000 : Date.parse(v||'')||0;
     registros.sort((a,b)=>valorTempo(b.criadoEm)-valorTempo(a.criadoEm));
-    const abertas = registros.filter(d => !['concluida','cancelada'].includes(String(d.status||'')));
-    const concluidas = registros.filter(d => d.status === 'concluida');
+    const abertas = gruposDemandasI93(registros).abertas;
+    const gruposI93=gruposDemandasI93(registros);
+    const concluidas=gruposI93.recentes;
     const STATUS = { pendente:'Pendente', andamento:'Em andamento', aguardando:'Aguardando retorno', concluida:'Concluida', cancelada:'Cancelada' };
     const COR = { pendente:'var(--yellow2)', andamento:'var(--yellow)', aguardando:'var(--yellow2)', concluida:'var(--green)', cancelada:'var(--muted)' };
-    const card = d => {
+    const card = registro => {
+      const d={...registro,status:statusDemandaI93(registro)};
       const responsaveis = Array.isArray(d.responsaveis) ? d.responsaveis : [];
       const mapa = d.responsaveisStatus || {};
       return `<div class="item" style="border-left:3px solid ${COR[d.status]||'var(--line)'};">
@@ -19844,22 +19849,22 @@ window.arquivarMesCampanhas=async function(mes,token){
         ${d.descricao ? '<div class="meta" style="margin-top:7px;white-space:pre-wrap;">'+esc(d.descricao)+'</div>' : ''}
         ${d.observacoes ? '<div class="meta" style="margin-top:7px;background:var(--deep);padding:8px 10px;border-radius:7px;">📝 '+esc(d.observacoes)+'</div>' : ''}
         ${responsaveis.length ? '<div class="meta" style="margin-top:8px;line-height:1.7;"><b>Responsaveis:</b> '+responsaveis.map(n => esc(n)+' — '+esc(STATUS[mapa[n]]||'Pendente')).join('<br>')+'</div>' : ''}
+        ${podeCriar&&d.status!=='cancelada'?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;"><button class="btn secondary" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'editar')">Editar acompanhamento</button><button class="btn ${d.status==='concluida'?'secondary':''}" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'${d.status==='concluida'?'reabrir':'concluir'}')">${d.status==='concluida'?'Reabrir acompanhamento':'✓ Concluir acompanhamento'}</button></div>`:''}
       </div>`;
     };
 
     let h = `<div class="card" style="border:2px solid var(--yellow);">
       <h2>📋 Demandas dos clientes</h2>
-      <div class="desc">Pedido registrado pela Amanda a partir de reuniao ou WhatsApp. O cliente acompanha o mesmo registro no Portal e cada responsavel recebe sua parte em Minhas Demandas.</div>
+      <div class="desc">Acompanhe os pedidos dos clientes. Concluídos ficam aqui por cinco dias; depois, no histórico.</div>
       <div class="painelResumo" style="margin-top:10px;">
         <div class="resumoCard ${abertas.length?'yellow':'green'}"><div class="num">${abertas.length}</div><div class="lbl">em aberto</div></div>
-        <div class="resumoCard green"><div class="num">${concluidas.length}</div><div class="lbl">concluidas</div></div>
+        <div class="resumoCard green"><div class="num">${concluidas.length}</div><div class="lbl">concluídas recentes</div></div>
       </div>
     </div>`;
 
     if(podeCriar){
-      h += `<div class="card">
-        <h2>+ Nova demanda do cliente</h2>
-        <div class="desc">A gravacao e atomica: ou o Portal e todas as caixas dos responsaveis recebem, ou nada e criado.</div>
+      h += `<details class="card"><summary style="cursor:pointer;font-weight:700;">+ Nova demanda do cliente</summary>
+        <div class="desc">Registre o pedido e escolha quem fará cada tarefa.</div>
         <div class="field"><label>Cliente</label><select id="demPortalCliente"><option value="">Escolhe...</option>${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
         <div class="field"><label>Titulo da demanda</label><input type="text" id="demPortalTitulo" placeholder="Ex: Ajustar campanha de Dia dos Pais"></div>
         <div class="field"><label>Descricao</label><textarea id="demPortalDescricao" placeholder="O que foi solicitado e qual resultado precisa ser entregue"></textarea></div>
@@ -19867,15 +19872,73 @@ window.arquivarMesCampanhas=async function(mes,token){
         <div class="field"><label>Colaborador(es) responsavel(is)</label><div id="demPortalResponsaveis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;margin-top:6px;">${DESTINATARIOS_DEMANDA.map(n=>`<label style="display:flex;align-items:center;gap:7px;background:var(--deep);padding:8px 10px;border-radius:7px;"><input type="checkbox" value="${esc(n)}"> ${esc(n)}</label>`).join('')}</div></div>
         <div class="field"><label>Entregar ate</label><input type="date" id="demPortalPrazo"></div>
         <button class="btn" id="btnCriarDemPortal" onclick="criarDemandaPortalAdmin()">Criar e distribuir demanda</button>
-      </div>`;
+      </details>`;
     } else {
       h += `<div class="card"><div class="desc">Somente a Amanda cria demandas oficiais do Portal. Esta visualizacao e de acompanhamento.</div></div>`;
     }
 
     h += `<div class="grupoFuncionario"><h3>Em andamento (${abertas.length})</h3>${abertas.length ? abertas.map(card).join('') : '<div class="empty">Nenhuma demanda em aberto.</div>'}</div>`;
-    if(concluidas.length) h += `<div class="grupoFuncionario"><h3>Concluidas (${concluidas.length})</h3>${concluidas.slice(0,30).map(card).join('')}</div>`;
+    if(concluidas.length) h += `<div class="grupoFuncionario"><h3>Concluídas nos últimos cinco dias (${concluidas.length})</h3>${concluidas.map(card).join('')}</div>`;
+    if(gruposI93.historico.length)h+=`<details class="card"><summary style="cursor:pointer;font-weight:700;">Histórico (${gruposI93.historico.length})</summary><div class="desc">Concluídas há mais de cinco dias, registros antigos sem data de conclusão e canceladas.</div>${gruposI93.historico.map(card).join('')}</details>`;
     return h;
   }
+
+  // I93: comando manual sobre o acompanhamento; nenhuma tarefa individual é alterada.
+  function atributoDemandaI93(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');}
+  let __editorDemandaPortalI93=null;
+  window.abrirDemandaPortalI93=async function(id,acao){
+    if(usuarioAtual!=='Amanda'||!['editar','concluir','reabrir'].includes(acao))return;
+    const sessao=sessaoServicoManual();
+    try{
+      const snap=await _getDocFromServerFB(doc(db,'demandas_cliente',id));
+      if(sessao!==sessaoServicoManual()||usuarioAtual!=='Amanda')return;
+      if(!snap.exists()||snap.data().excluido||statusDemandaI93(snap.data())==='cancelada')throw Error('Esta demanda não está mais disponível. Atualize a lista.');
+      const d=snap.data(),estado=statusDemandaI93(d);
+      if((acao==='concluir'&&estado==='concluida')||(acao==='reabrir'&&estado!=='concluida')){reRenderPortalAdmin();return;}
+      const op={id,acao,sessao,base:assinaturaDemandaI93(d),d,token:crypto.randomUUID(),salvando:false};
+      __editorDemandaPortalI93=op;
+      document.getElementById('modalConteudo').innerHTML=`<h2>${acao==='editar'?'Editar acompanhamento':acao==='concluir'?'Concluir acompanhamento':'Reabrir acompanhamento'}</h2><p><b>${esc(d.clienteNome||d.cliente)}</b> · ${esc(d.titulo||d.texto||'Demanda')}</p><div class="desc">Atualiza o acompanhamento do cliente. As tarefas e os comprovantes da equipe permanecem iguais.</div>
+      ${acao==='editar'?`<div class="field"><label for="demI93Titulo">Título</label><input id="demI93Titulo" maxlength="500" value="${atributoDemandaI93(d.titulo||d.texto||'')}"></div><div class="field"><label for="demI93Descricao">Descrição</label><textarea id="demI93Descricao" maxlength="15000">${esc(d.descricao||'')}</textarea></div><div class="field"><label for="demI93Observacoes">Observações</label><textarea id="demI93Observacoes" maxlength="15000">${esc(d.observacoes||'')}</textarea></div><div class="field"><label for="demI93Prazo">Entrega até (opcional)</label><input id="demI93Prazo" type="date" value="${atributoDemandaI93(d.prazoData||'')}"></div>`:`<p>${acao==='concluir'?'O cliente verá como concluída por cinco dias. Depois, poderá consultar no histórico.':'O pedido voltará para a lista em andamento do cliente.'}</p>`}
+      <div id="demI93Mensagem" role="status" style="margin:12px 0;"></div><button id="demI93Salvar" class="btn" onclick="salvarDemandaPortalI93()">${acao==='editar'?'Salvar acompanhamento':acao==='concluir'?'Confirmar conclusão':'Confirmar reabertura'}</button><button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Voltar</button>`;
+      document.getElementById('overlayView').classList.add('show');
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast('Não consegui abrir: '+e.message,'erro');}
+  };
+  window.salvarDemandaPortalI93=async function(){
+    const op=__editorDemandaPortalI93;
+    if(!op||op.salvando||usuarioAtual!=='Amanda'||op.sessao!==sessaoServicoManual())return;
+    const vigente=()=>op===__editorDemandaPortalI93&&op.sessao===sessaoServicoManual()&&usuarioAtual==='Amanda'&&document.getElementById('demI93Salvar')===btn;
+    const msg=document.getElementById('demI93Mensagem'),btn=document.getElementById('demI93Salvar');
+    let campos={};
+    try{if(op.acao==='editar')campos=camposEdicaoI93({titulo:document.getElementById('demI93Titulo').value,descricao:document.getElementById('demI93Descricao').value,observacoes:document.getElementById('demI93Observacoes').value,prazoData:document.getElementById('demI93Prazo').value});}
+    catch(e){msg.textContent=e.message;return;}
+    op.salvando=true;btn.disabled=true;msg.textContent='Salvando…';
+    const inputs=Array.from(document.querySelectorAll('#modalConteudo input,#modalConteudo textarea'));inputs.forEach(el=>el.disabled=true);
+    const ref=doc(db,'demandas_cliente',op.id);
+    try{
+      try{await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);
+        if(!vigente())throw Error('O perfil mudou. Feche esta janela e abra a demanda novamente.');
+        if(!snap.exists()||snap.data().excluido||statusDemandaI93(snap.data())==='cancelada')throw Error('Demanda não disponível.');
+        const atual=snap.data();
+        if(atual.operacaoAcompanhamentoI93===op.token)return;
+        if(assinaturaDemandaI93(atual)!==op.base)throw Error('O acompanhamento mudou em outra janela. Seu texto continua aqui; copie-o antes de fechar e conferir a versão atual.');
+        const patch={...campos,revisaoAcompanhamentoI93:(Number(atual.revisaoAcompanhamentoI93)||0)+1,operacaoAcompanhamentoI93:op.token,atualizadoEm:serverTimestamp()};
+        if(op.acao!=='editar'){
+          const status=op.acao==='concluir'?'concluida':'andamento';
+          patch.status=status;patch.acompanhamentoManualI93={status,por:'Amanda',em:serverTimestamp(),concluidoEm:status==='concluida'?serverTimestamp():null};
+        }
+        const antes={};for(const k of ['titulo','texto','descricao','observacoes','prazoData'])antes[k]=atual[k]??'';
+        patch.historico=arrayUnion({acao:'Acompanhamento: '+op.acao,por:'Amanda',em:new Date().toISOString(),operacao:op.token,antes:{...antes,status:statusDemandaI93(atual)}});
+        tx.update(ref,patch);
+      });}catch(e){
+        // Resposta perdida não autoriza repetir a operação como se ela não tivesse ocorrido.
+        const recibo=await _getDocFromServerFB(ref).catch(()=>null);
+        if(!recibo?.exists()||recibo.data().operacaoAcompanhamentoI93!==op.token)throw e;
+      }
+      if(vigente()){__editorDemandaPortalI93=null;fecharModal();mostrarToast('Acompanhamento atualizado.');await reRenderPortalAdmin();}
+    }catch(e){if(vigente())msg.textContent='Não foi possível confirmar: '+e.message;}
+    finally{op.salvando=false;if(vigente()){btn.disabled=false;inputs.forEach(el=>el.disabled=false);}}
+  };
 
   window.criarDemandaPortalAdmin = async function(){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('Somente a Amanda cria demandas do Portal.', 'erro'); return; }
@@ -32260,16 +32323,15 @@ window.setGerenciaSub = function(qual, el){
          primeiro a terminar nao pode concluir o pedido inteiro pro cliente.
          Recalcula pelo grupo vinculado e mantem compatibilidade com os
          pedidos antigos, que possuem apenas uma demanda interna. */
-      const grupoSnap = await getDocs(query(collection(db,'demandas'), where('demandaClienteId','==',demandaClienteId)));
-      const grupo = [];
-      grupoSnap.forEach(d => { const v=d.data(); if(!v.excluido) grupo.push(v); });
-      if(!grupo.length){
-        await updateDoc(doc(db,'demandas_cliente', demandaClienteId), { status: statusCliente });
-        return;
-      }
-      const calculado = calcularStatusPortalPorDemandas(grupo,statusCliente);
-      await updateDoc(doc(db,'demandas_cliente', demandaClienteId), {
-        status: calculado.status, responsaveisStatus:calculado.responsaveisStatus, atualizadoEm: serverTimestamp()
+      const grupoSnap = await _getDocsFromServerFB(query(collection(db,'demandas'), where('demandaClienteId','==',demandaClienteId)));
+      const ref=doc(db,'demandas_cliente',demandaClienteId);
+      await runTransaction(db,async tx=>{
+        const parent=await tx.get(ref);
+        if(!parent.exists()||parent.data().excluido||statusDemandaI93(parent.data())==='cancelada')return;
+        const docs=await Promise.all(grupoSnap.docs.map(d=>tx.get(d.ref)));
+        const grupo=docs.filter(d=>d.exists()&&!d.data().excluido).map(d=>d.data());
+        const calculado=calcularStatusPortalPorDemandas(grupo,statusCliente);
+        tx.update(ref,patchSincroniaDemandaI93(parent.data(),calculado,serverTimestamp()));
       });
     }catch(e){ console.error('Falha ao sincronizar status com o portal do cliente:', e); }
   }
@@ -32299,7 +32361,7 @@ window.setGerenciaSub = function(qual, el){
         espelhosJaUsados.add(candidatos[0].id);
         // já sincroniza o status atual também, pra pegar as que já estavam resolvidas
         const statusCliente = d.status === 'aprovada' ? 'concluida' : d.status === 'concluida_aguardando_aprovacao' ? 'andamento' : 'pendente';
-        await updateDoc(doc(db,'demandas_cliente', candidatos[0].id), { status: statusCliente });
+        await sincronizarStatusDemandaCliente(d.id,statusCliente);
         vinculadas++;
       }
     }

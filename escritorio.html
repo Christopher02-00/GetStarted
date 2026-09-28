@@ -39668,6 +39668,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   let intervalComando = null;
+  let __renderCentralComandoI97 = null;
   let ultimaAtualizacaoComando = null;
 
   function iniciarCentralComando(){
@@ -39695,6 +39696,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function pararCentralComando(){
+    __renderCentralComandoI97 = null;
     if(intervalComando){ clearInterval(intervalComando); intervalComando = null; }
   }
 
@@ -45287,9 +45289,50 @@ Observações do cliente: ${l.observacoes||'—'}`;
     return lista;
   }
 
+  /* I97 — o bloco legado nasce dentro de uma view oculta. Conferir apenas
+     seu display inline iniciava o cockpit no login e em todo listener,
+     inclusive durante a troca de identidade que invalida a carteira. */
+  function centralComandoVisivelI97(cont){
+    return !!(auth.currentUser?.uid && ['Chris','Amanda'].includes(usuarioAtual) && gerenciaAutenticada &&
+      document.getElementById('view-gerencia')?.classList.contains('active') &&
+      document.getElementById('conteudoGerencia')?.style.display !== 'none' &&
+      cont?.isConnected && cont.offsetParent !== null);
+  }
   async function renderCentralComando(){
-    const cont = document.getElementById('gerenciaComando');
-    if(!cont || cont.style.display === 'none') { pararCentralComando(); return; }
+    const cont=document.getElementById('gerenciaComando');
+    if(!centralComandoVisivelI97(cont)){ pararCentralComando(); return false; }
+    const sessao=sessaoServicoManual();
+    const anterior=__renderCentralComandoI97;
+    if(anterior?.sessao===sessao && anterior.cont===cont){
+      anterior.pendente=true;
+      return anterior.promessa;
+    }
+    const tarefa={sessao,cont,pendente:false,promessa:null};
+    __renderCentralComandoI97=tarefa;
+    const vigente=()=>__renderCentralComandoI97===tarefa && sessao===sessaoServicoManual() && centralComandoVisivelI97(cont);
+    tarefa.promessa=Promise.resolve().then(async()=>{
+      try{
+        let resultado=false;
+        do{
+          tarefa.pendente=false;
+          resultado=await montarCentralComandoI97(cont,vigente);
+        }while(tarefa.pendente && vigente());
+        return resultado;
+      }catch(e){
+        if(vigente()){
+          console.error('Não foi possível atualizar a Central de Comando:',e);
+          cont.innerHTML='<div class="card" role="alert"><h2>Painel indisponível</h2><div class="desc">Não foi possível confirmar os dados. Abra o Painel de controle novamente para tentar outra leitura.</div></div>';
+        }
+        return false;
+      }finally{
+        if(__renderCentralComandoI97===tarefa)__renderCentralComandoI97=null;
+      }
+    });
+    return tarefa.promessa;
+  }
+
+  async function montarCentralComandoI97(cont, vigente){
+    if(!vigente()) return false;
     const jaTinhaConteudo = cont.innerHTML.length > 100;
     if(!jaTinhaConteudo) cont.innerHTML = '<div class="card"><div class="desc">Carregando central de comando...</div></div>';
     const hoje = hojeLocal();
@@ -45315,7 +45358,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       agendamentosRaw = []; agendamentosSnap.forEach(d => agendamentosRaw.push({id:d.id, ...d.data()}));
       postagensRaw = []; postagensSnap.forEach(d => postagensRaw.push({id:d.id, ...d.data()}));
     }
+    if(!vigente()) return false;
     const presencaDocs = await carregarPresencaComando();
+    if(!vigente()) return false;
 
     const videos = videosRaw.filter(v => !v.excluido);
     const qtdNaLixeira = videosRaw.filter(v => v.excluido).length;
@@ -45484,7 +45529,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       }
     }catch(e){ console.error('Falha ao completar a Central:', e); }
 
+    if(!vigente()) return false;
     cont.innerHTML = html;
+    return true;
   }
 
   window.aprovarDireto = async function(id){
@@ -45637,6 +45684,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.htmlPlacarConteudo = async function(){
+    const sessaoI97=sessaoServicoManual();
+    const vigenteI97=()=>sessaoI97===sessaoServicoManual();
     try{
       const hoje = hojeLocal();
       const mesOperacionalCalendarios=competenciaOperacionalCalendario();
@@ -45646,7 +45695,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
         obterCalendariosCompartilhados()
       ]);
 
+      if(!vigenteI97()) return '';
       const alvo = await clientesCalendarioRecorrentesConfirmados(mesOperacionalCalendarios);
+      if(!vigenteI97()) return '';
 
       // perfis por cliente (a meta de 3)
       const porCliente = {};
@@ -45765,6 +45816,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         ${semCal ? '<div class="meta" style="margin-top:8px;color:var(--red);">Sem calendário: ' + resumoCalendariosV133.linhas.filter(linha=>linha.total===0).map(linha=>esc(linha.nome)).join(', ') + '</div>' : ''}
       </div>`;
     }catch(e){
+      if(!vigenteI97()) return '';
       console.error('Falha no placar de conteúdo:', e);
       return `<div class="card" role="alert" style="border:2px solid var(--red);">
         <h2>📊 Conteúdo — o placar do mês</h2>

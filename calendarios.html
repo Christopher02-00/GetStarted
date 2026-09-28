@@ -700,6 +700,7 @@
 
 <script type="module">
 import {legendaUtilizavelI79,exigirLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=i79-1';
+import {legendaClienteI95,textosCalendarioI95} from './gs-legenda-cliente-i95.mjs?v=i95-1';
 const KEY='get_calendar_v1';
 let data={client:'',month:'',items:[],comments:[],updatedAt:null};
 let view='grid';
@@ -1952,6 +1953,7 @@ async function load(){
     }
     avisarMesVisivelAoPai();
     carregarRefsDoCliente();
+    if(window.__modoCal==='cliente')iniciarLegendasClienteI95();
 
     /* ===== A ORDEM AQUI NÃO É DETALHE — 29/07/2026 ==================
        Na primeira versão eu gravei o carimbo dos meses ANTES de conferir
@@ -3711,11 +3713,13 @@ function renderWeek(){
     if(!its.length) html+='<div style="color:var(--muted);font-size:11px;padding:6px 2px;">'+(window.__modoCal==='cliente'?'Nenhum conteúdo nesta semana para o filtro escolhido.':'Sem conteúdo — clique numa data na grade pra adicionar.')+'</div>';
     its.forEach(it=>{const idx=data.items.indexOf(it);
       const hasScript=(it.desc||'').trim().length>0;
-      const hasLegenda=legendaUtilizavelI79(it.legenda);
+      const leituraLegenda=window.__modoCal==='cliente'?legendaExibidaClienteI95(it):{estado:'calendario',textos:textosCalendarioI95(it)};
+      const hasLegenda=leituraLegenda.textos.length>0;
       const refSeguro=normalizeUrl(it.ref);
       const refLink=refSeguro?'<a href="'+esc(refSeguro)+'" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="minitag mt-fmt" style="text-decoration:none;">🔗 referência</a>':(it.ref?'<span class="minitag" style="background:#3a2323;color:#ff8080;">⚠️ referência inválida</span>':'');
       const scriptTag=hasScript?'<button type="button" class="minitag mt-fmt" style="border:0;cursor:pointer;" onclick="event.stopPropagation();openEdit('+idx+')">📄 roteiro</button>':'';
-      const legendaTag=hasLegenda?'<button type="button" class="minitag" style="border:0;cursor:pointer;background:#1e3428;color:#7fd99f;" onclick="event.stopPropagation();openEdit('+idx+')">📝 legenda pronta</button>':'<span class="minitag" style="background:#3a2323;color:#ff8080;">⚠️ sem legenda</span>';
+      const legendaPendente=({carregando:'Conferindo legenda…',erro:'Legenda indisponível — tentar novamente',conferir:'Legenda em conferência'})[leituraLegenda.estado]||'⚠️ sem legenda';
+      const legendaTag=hasLegenda?'<button type="button" class="minitag" style="border:0;cursor:pointer;background:#1e3428;color:#7fd99f;" onclick="event.stopPropagation();openEdit('+idx+')">📝 legenda pronta</button>':'<button type="button" class="minitag" style="border:0;cursor:pointer;background:#3a2323;color:#ff8080;" onclick="event.stopPropagation();openEdit('+idx+')">'+esc(legendaPendente)+'</button>';
       const gravadoTag=it.gravado?'<span class="minitag" style="background:#1e3428;color:#7fd99f;">🎥 já gravado</span>':'';
       const preview=(it.desc||'').slice(0,90).replace(/\n/g,' ');
       /* A solicitação especial aparece INTEIRA, não cortada: é instrução
@@ -3789,6 +3793,45 @@ function openModal(day){if(window.__modoCal==='cliente')return;if(exigirRetirada
   document.getElementById('aprBtn').style.display='none';
   updateRefLink();
   document.getElementById('overlay').classList.add('show');iniciarFormularioI35(null);}
+// I95: uma leitura por cliente, independente dos campos/rascunhos editoriais.
+let leituraLegendasI95={cliente:'',fb:null,estado:'carregando',postagens:[],off:null,timer:null};
+function legendaExibidaClienteI95(it){
+  const fonte=window.__calFonteClienteV115||{};
+  return legendaClienteI95({item:it,cliente:String(window.__clienteId||''),mes:mesDoItemNoCalendarioI56(data,it),
+    origens:(fonte.items||[]).map(o=>({...o,mes:mesDoItemNoCalendarioI56(fonte,o)})),
+    postagens:leituraLegendasI95.postagens,leitura:leituraLegendasI95.estado});
+}
+function htmlLegendaClienteI95(it){
+  const r=legendaExibidaClienteI95(it);
+  if(r.textos.length)return r.textos.map(t=>'<div class="rcBloco rcLegenda"><b>'+esc(t.rotulo)+'</b>'+esc(t.texto)+'</div>').join('');
+  const mensagens={carregando:'Conferindo a legenda da postagem…',erro:'Não foi possível conferir a legenda agora. Tente novamente.',
+    conferir:'A equipe precisa conferir a origem e o texto desta legenda.',pendente:'A equipe ainda não disponibilizou uma legenda para este conteúdo.'};
+  return '<div class="rcBloco rcLegenda" role="status"><b>Legenda da publicação</b>'+mensagens[r.estado]+
+    (r.estado==='erro'?'<br><button type="button" class="btn btn-o" onclick="iniciarLegendasClienteI95(true)">Tentar novamente</button>':'')+'</div>';
+}
+function atualizarLeituraLegendasI95(){
+  if(window.__modoCal!=='cliente'||!carregado||!mesDisponivelClienteV115(mesVisivel))return;
+  // Não reabre modal, não redesenha editor, não dispara save nem altera foco.
+  renderWeek();
+  const bloco=document.getElementById('legendaClienteI95');
+  if(bloco&&document.getElementById('overlay').classList.contains('show')&&data.items?.[editIdx])bloco.innerHTML=htmlLegendaClienteI95(data.items[editIdx]);
+}
+function iniciarLegendasClienteI95(repetir=false){
+  if(window.__modoCal!=='cliente'||!window.__fb)return;
+  const cliente=String(window.__clienteId||''),fb=window.__fb;
+  if(!repetir&&leituraLegendasI95.cliente===cliente&&leituraLegendasI95.fb===fb)return;
+  leituraLegendasI95.off?.();clearTimeout(leituraLegendasI95.timer);
+  const atual=leituraLegendasI95={cliente,fb,estado:'carregando',postagens:[],off:null,timer:null};
+  const vigente=()=>leituraLegendasI95===atual&&window.__modoCal==='cliente'&&window.__fb===fb&&String(window.__clienteId||'')===cliente;
+  const falhar=()=>{if(!vigente())return;atual.estado='erro';atual.postagens=[];atualizarLeituraLegendasI95();};
+  atual.timer=setTimeout(falhar,12000);
+  try{atual.off=fb.onSnapshot(fb.query(fb.collection(fb.db,'postagens'),fb.where('cliente','==',cliente)),{includeMetadataChanges:true},snap=>{
+    if(!vigente()||snap.metadata.fromCache||snap.metadata.hasPendingWrites)return;
+    clearTimeout(atual.timer);atual.postagens=snap.docs.map(d=>({...d.data(),id:d.id}));atual.estado='confirmada';atualizarLeituraLegendasI95();
+  },()=>{clearTimeout(atual.timer);falhar();});}catch{clearTimeout(atual.timer);falhar();}
+}
+window.iniciarLegendasClienteI95=iniciarLegendasClienteI95;
+window.addEventListener('pagehide',ev=>{if(!ev.persisted){leituraLegendasI95.off?.();clearTimeout(leituraLegendasI95.timer);}});
 function resumoClienteItemV126(it){
   const titulo=esc(String(it?.name||'Conteúdo'));
   const revisao=it?.revisaoPendenteI68&&!it.apr?'<div class="rcBloco"><b>Nova conferência</b>Conteúdo revisado. Você pode editar o texto, pedir outro ajuste ou aprovar.</div>':'';
@@ -3797,12 +3840,7 @@ function resumoClienteItemV126(it){
   const mes=mesVisivel?textoDoMes(mesVisivel):String(data?.month||'');
   const obs=String(it?.obs||'').trim();
   const roteiro=String(it?.desc||'').trim();
-  const vistas=new Set(),legendas=[];
-  for(const [campo,rotulo] of [['legenda','Legenda da publicação'],['legendaInstagram','Legenda · Instagram'],['legendaTiktok','Legenda · TikTok'],['legendaYoutube','Legenda · YouTube'],['legendaLinkedin','Legenda · LinkedIn']]){
-    const texto=String(it?.[campo]||'').trim();if(!legendaUtilizavelI79(texto)||vistas.has(texto))continue;
-    vistas.add(texto);legendas.push('<div class="rcBloco rcLegenda"><b>'+rotulo+'</b>'+esc(texto)+'</div>');
-  }
-  const legendaVisivel=legendas.join('')||'<div class="rcBloco rcLegenda"><b>Legenda da publicação</b>A equipe ainda não disponibilizou uma legenda para este conteúdo.</div>';
+  const legendaVisivel='<section id="legendaClienteI95">'+htmlLegendaClienteI95(it)+'</section>';
   const refSeguro=normalizeUrl(it?.ref);
   const roteiroVisivel=roteiro?'<div class="rcBloco rcRoteiro"><b>Ideia e roteiro</b>'+esc(roteiro)+'</div>':'<div class="rcBloco"><b>Ideia e roteiro</b>'+(it?.roteiroDispensado===true?'Este conteúdo não precisa de roteiro.':'A equipe ainda não disponibilizou o roteiro deste conteúdo.')+'</div>';
   return '<div class="rcTitulo">'+titulo+'</div>'+

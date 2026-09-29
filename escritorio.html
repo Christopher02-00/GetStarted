@@ -2793,6 +2793,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
       // I85: cobranças de gravação pertencem ao ID/ciclo da sessão.
       // Outra gravação do mesmo funcionário não substitui esta pendência.
       if(tipo==='reagendar_postagem_v118'||tipo==='gravacao_sem_registro_v135') return;
+      if(ehAvisoDistribuicaoI105(v)) return; // Vídeos/eventos diferentes não são substitutos.
       /* Função fixa mensal não é uma "versão" do mês anterior. Sem a
          competência na chave, a limpeza fechava agosto por existir julho
          (ou o contrário), recriando a fila de calendários errada. */
@@ -5780,7 +5781,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
         for(const s of avisosAntes)if(avisoAtribuicaoAbertoI53(s.data(),id,anterior))tx.update(s.ref,{status:'aprovada',concluidaEm:serverTimestamp(),concluidoPor:ctx.ator,notaConclusao:'Atribuição corrigida: este aviso foi substituído. O vídeo não foi concluído.',correcaoEnvioOperacaoI53:operacaoId});
         const criarAviso=(sufixo,destinatario,titulo,descricao,tipoEspecial)=>tx.set(doc(db,'demandas',operacaoId+'_'+sufixo),{
           titulo,descricao,destinatario,criadoPor:ctx.pessoa,origem:'sistema',ehAviso:true,status:'pendente',
-          prazoData:hojeLocal(),prazoHora:'19:00',prioridade:'normal',criadoEm:serverTimestamp(),
+          prazoData:'',prazoHora:'',prioridade:'normal',criadoEm:serverTimestamp(),
           videoId:id,cliente:v.cliente,clienteNome:v.clienteNome||'',tipoEspecial,correcaoEnvioOperacaoI53:operacaoId
         });
         if(dados.editorAtribuido)criarAviso('entrada',dados.editorAtribuido,'🎬 Vídeo para editar: '+dados.titulo,
@@ -10408,10 +10409,6 @@ window.marcarClienteAprovouVideo = async function(id){
   async function avisarEditorDoVideo(videoId, editor, anterior, titulo, clienteNome){
     if(!editor) return;
     try{
-      const prazo = (typeof calcularPrazoEdicaoVideo === 'function')
-        ? calcularPrazoEdicaoVideo({ id: videoId, status: 'aguardando_edicao', criadoEm: new Date().toISOString() })
-        : null;
-      const prazoStr = prazo ? dataLocal(prazo) : hojeLocal();
       await criarDemandaSegura({
         titulo: '🎬 Vídeo novo pra você editar: ' + String(titulo || 'sem título'),
         descricao: (usuarioAtual || 'A gerência') + ' passou este vídeo pra você' +
@@ -10420,7 +10417,7 @@ window.marcarClienteAprovouVideo = async function(id){
           'Ele já está na sua aba "Vídeos em Edição → Meus Vídeos", com o link do material. ' +
           'Marca este aviso como visto quando começar.',
         destinatario: editor, origem: 'sistema', ehAviso: true,
-        prazoData: prazoStr, prazoHora: '19:00', prioridade: 'alta',
+        prazoData: '', prazoHora: '', prioridade: 'alta',
         videoId: videoId, clienteNome: clienteNome || '',
         tipoEspecial: 'video_atribuido'
       });
@@ -10433,7 +10430,7 @@ window.marcarClienteAprovouVideo = async function(id){
           descricao: (usuarioAtual || 'A gerência') + ' passou este vídeo pra ' + editor + '.\n\n' +
             'Você não precisa mais editar. Se já tinha começado, avisa ' + editor + ' pra não refazer o trabalho.',
           destinatario: anterior, origem: 'sistema', ehAviso: true,
-          prazoData: hojeLocal(), prazoHora: '19:00', prioridade: 'normal',
+          prazoData: '', prazoHora: '', prioridade: 'normal',
           videoId: videoId, tipoEspecial: 'video_saiu_da_fila'
         });
       }
@@ -26433,7 +26430,55 @@ window.setGerenciaSub = function(qual, el){
     atualizarTodosOsBadges();
   };
 
+  // I105: distribuição é aviso de leitura. O prazo de editar pertence ao
+  // vídeo, não à data em que o aviso foi enviado. Vale também para legados;
+  // não muda documentos nem neutraliza decisões/obrigações de outros fluxos.
+  function ehAvisoDistribuicaoI105(d){
+    return !!d && d.origem==='sistema' && d.ehAviso===true &&
+      ['video_atribuido','video_saiu_da_fila'].includes(d.tipoEspecial);
+  }
+  function resumoAvisoDistribuicaoI105(d){
+    return d.tipoEspecial==='video_saiu_da_fila'
+      ? 'Aviso de retirada · confira a distribuição atual'
+      : 'Aviso de distribuição · prazo na ficha do vídeo';
+  }
+  function cardAvisoDistribuicaoI105(d){
+    return `<div class="item" style="border-left:3px solid var(--line);cursor:pointer;" onclick="abrirAvisoDistribuicaoI105('${escJs(d.id)}')">
+      <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="selo pendente">Aviso</span></div>
+      <div class="meta" style="margin-top:5px;">${esc(d.destinatario||'')} · ${esc(resumoAvisoDistribuicaoI105(d))}</div>
+    </div>`;
+  }
+  window.abrirAvisoDistribuicaoI105 = async function(id){
+    const d=todasDemandas.find(x=>x.id===id);
+    if(!ehAvisoDistribuicaoI105(d) || (d.destinatario!==usuarioAtual && !['Chris','Amanda'].includes(usuarioAtual)))return;
+    const sessao=sessaoServicoManual(),modal=document.getElementById('modalConteudo');
+    modal.innerHTML=`<h2>${tituloDemanda(d)}</h2><div class="linha">${esc(d.destinatario||'')} · Aviso de distribuição</div>
+      <div class="linha" style="white-space:pre-wrap;">${esc(d.descricao||'')}</div>
+      <div id="fonteAvisoDistribuicaoI105" class="linha" aria-live="polite">Conferindo o vídeo…</div>
+      <div class="meta">Ler este aviso não conclui a edição. O prazo e a entrega ficam no vídeo.</div>
+      <div class="btnrow" style="margin-top:14px;">
+        ${['Chris','Amanda'].includes(usuarioAtual)?'<button class="btn" onclick="fecharModal();irParaDistribuirVideos()">Abrir distribuição de vídeos</button>':papelPodeAbrirVideos(usuarioAtual)?'<button class="btn" onclick="fecharModal();meuDiaAbrirVideos()">Abrir Meus Vídeos</button>':''}
+        ${d.destinatario===usuarioAtual && d.status==='pendente'?`<input type="hidden" id="provaTextoInput" value="Aviso de distribuição lido. A edição continua acompanhada no vídeo."><input type="hidden" id="provaLinkInput" value=""><button class="btn secondary" id="btnEnviarProva" onclick="enviarProva('${escJs(d.id)}')">Marcar aviso como lido</button>`:''}
+        <button class="btn secondary" onclick="fecharModal()">Fechar</button>
+      </div>`;
+    const alvo=document.getElementById('fonteAvisoDistribuicaoI105');
+    document.getElementById('overlayView').classList.add('show');
+    const vigente=()=>sessao===sessaoServicoManual() && document.getElementById('fonteAvisoDistribuicaoI105')===alvo && document.getElementById('overlayView').classList.contains('show');
+    if(!String(d.videoId||'').trim()){alvo.textContent='Este aviso antigo não tem vínculo com o vídeo. A gestão precisa conferir a distribuição.';return;}
+    try{
+      const snap=await comTimeoutCalendarioOperacional(_getDocFromServerFB(doc(db,'videos_producao',d.videoId)),'Conferir vídeo do aviso',12000);
+      if(!vigente())return;
+      if(!snap.exists()){alvo.textContent='O vídeo vinculado não foi encontrado. Confira com a gestão; nenhuma tarefa foi concluída.';return;}
+      const v=snap.data(),etapas={aguardando_edicao:'Em edição',correcao:'Em correção',aguardando_aprovacao:'Em aprovação',aprovado:'Aprovado',finalizado:'Finalizado',arquivado:'Arquivado'};
+      const estado=v.excluido?'Arquivado':etapas[v.status]||'Etapa a conferir';
+      alvo.innerHTML=`<b>${esc(v.titulo||'Vídeo')}</b><div class="meta">${esc(estado)} · Editor atual: ${esc(v.editorAtribuido||'A definir')}</div>
+        <div style="margin-top:6px;">${v.prazoEntrega?'Prazo da edição: <b>'+esc(formatarDataBR(v.prazoEntrega))+'</b>':'Prazo da edição ainda não definido pela gestão.'}</div>
+        ${v.editorAtribuido && v.editorAtribuido!==d.destinatario?'<div class="meta" style="margin-top:6px;">Este vídeo não está mais na fila de '+esc(d.destinatario)+'.</div>':''}`;
+    }catch(e){if(vigente())alvo.innerHTML='<div role="alert">Não consegui conferir o vídeo agora. Feche e abra o aviso para tentar novamente. O histórico continua salvo.</div>';}
+  };
+
   function calcularUrgencia(demanda){
+    if(ehAvisoDistribuicaoI105(demanda)) return 'normal';
     if(demanda.status !== 'pendente') return 'normal';
     /* Espera do cliente sai do atraso. A equipe não pode ser cobrada por
        algo que não depende dela — e a gestão continua vendo, na coluna
@@ -27037,6 +27082,7 @@ window.setGerenciaSub = function(qual, el){
 
   const JANELA_URGENCIA_BADGE_DIAS = 1;
   function ehUrgenteParaBadge(demanda, diasJanela){
+    if(ehAvisoDistribuicaoI105(demanda)) return false;
     if(demanda.status !== 'pendente') return false;
     if(estaAusente(demanda.destinatario)) return false;
     const janela = (diasJanela == null) ? JANELA_URGENCIA_BADGE_DIAS : diasJanela;
@@ -29974,7 +30020,7 @@ window.setGerenciaSub = function(qual, el){
     // não aparecem aqui nem em Minhas Demandas)
     demandasVisiveisDaPessoa(usuarioAtual).forEach(d => {
       itens.push({
-        icone: '✅', titulo: d.titulo, meta: formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''),
+        icone: ehAvisoDistribuicaoI105(d)?'📨':'✅', titulo: d.titulo, meta: ehAvisoDistribuicaoI105(d)?resumoAvisoDistribuicaoI105(d):formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''),
         desc: d.descricao || '', urgencia: calcularUrgencia(d),
         ordem: (d.prazoData||'9999') + 'T' + (d.prazoHora||'19:00'),
         acao: `abrirDemandaMinha('${d.id}')`
@@ -30746,6 +30792,7 @@ window.setGerenciaSub = function(qual, el){
      que a aba Atrasadas usa - mesma hierarquia, mesmo tamanho de fonte,
      mesmo selo de status. Minhas Demandas passa a parecer Atrasadas. */
   function cardDemandaCompacto(d){
+    if(ehAvisoDistribuicaoI105(d)) return cardAvisoDistribuicaoI105(d);
     const urg = calcularUrgencia(d);
     const borda = d.status==='concluida_aguardando_aprovacao' ? 'var(--line)' : urg==='atrasado' ? 'var(--red)' : (urg==='hoje' ? 'var(--yellow2)' : 'var(--line)');
     const selo = d.status==='concluida_aguardando_aprovacao' ? '<span class="selo aguardando">Aguardando</span>' :
@@ -30760,6 +30807,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function cardDemandaEnviada(d){
+    if(ehAvisoDistribuicaoI105(d)) return cardAvisoDistribuicaoI105(d);
     const urg = calcularUrgencia(d);
     const aguardandoAprov = d.status === 'concluida_aguardando_aprovacao';
     const borda = aguardandoAprov ? 'var(--green)' : urg==='atrasado' ? 'var(--red)' : (urg==='hoje' ? 'var(--yellow2)' : 'var(--line)');
@@ -30785,6 +30833,7 @@ window.setGerenciaSub = function(qual, el){
   window.abrirDemandaEnviada = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
     const modal = document.getElementById('modalConteudo');
     const urg = calcularUrgencia(d);
     const pessoa = d.destinatario || '?';
@@ -30949,6 +30998,7 @@ window.setGerenciaSub = function(qual, el){
   const DIAS_PRA_ENCALHAR = 15;
 
   function estaEncalhada(d){
+    if(ehAvisoDistribuicaoI105(d)) return false;
     if(d.status === 'concluida_aguardando_aprovacao') return false;
     const automatica = (d.origem === 'sistema' || d.criadoPor === 'sistema');
     if(!automatica) return false;
@@ -31078,7 +31128,7 @@ window.setGerenciaSub = function(qual, el){
     const clienteSel = document.getElementById('filtroClienteMinhasDemandas')?.value || '';
     const chip = (f, rotulo) => `<span class="chip ${filtroMinhasDemandas===f?'ativo':''}" onclick="setFiltroMinhasDemandas('${f}', this)">${rotulo}</span>`;
     const chips = `<div id="chipsMinhasDemandas" class="chipsFiltro">
-      ${chip('todas','Todas')}${chip('atrasadas','🔴 Atrasadas')}${chip('hoje','🟡 Hoje')}${chip('proximas','📅 Próximos 7 dias')}${chip('aguardando','✋ Aguardando')}${chip('enviei','📤 Que eu enviei')}${chip('feitas','✅ Concluídas')}${chip('cliente','Por cliente')}
+      ${chip('todas','Todas')}${chip('avisosEdicao','Avisos de edição')}${chip('atrasadas','🔴 Atrasadas')}${chip('hoje','🟡 Hoje')}${chip('proximas','📅 Próximos 7 dias')}${chip('aguardando','✋ Aguardando')}${chip('enviei','📤 Que eu enviei')}${chip('feitas','✅ Concluídas')}${chip('cliente','Por cliente')}
       <select id="filtroClienteMinhasDemandas" style="display:${filtroMinhasDemandas==='cliente'?'inline-block':'none'};" onchange="renderMinhasDemandasAtribuidas(true)">
         <option value="">Todos os clientes</option>
         ${clientes.map(c => `<option value="${esc(c)}" ${c===clienteSel?'selected':''}>${esc(c)}</option>`).join('')}
@@ -31152,14 +31202,16 @@ window.setGerenciaSub = function(qual, el){
     if(filtroMinhasDemandas === 'proximas'){
       const limiteFiltro = new Date(); limiteFiltro.setDate(limiteFiltro.getDate()+7);
       const limiteFiltroStr = dataLocal(limiteFiltro);
-      minhas = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d) &&
+      minhas = minhas.filter(d => !ehAvisoDistribuicaoI105(d) && d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d) &&
         !['atrasado','hoje'].includes(calcularUrgencia(d)) && d.prazoData && d.prazoData <= limiteFiltroStr);
     }
     if(filtroMinhasDemandas === 'aguardando') minhas = minhas.filter(d => d.status === 'concluida_aguardando_aprovacao');
     if(filtroMinhasDemandas === 'cliente' && clienteSel) minhas = minhas.filter(d => d.clienteNome === clienteSel);
 
-    const aguardando = minhas.filter(d => d.status === 'concluida_aguardando_aprovacao');
-    const pendentes = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao');
+    if(filtroMinhasDemandas === 'avisosEdicao') minhas=minhas.filter(ehAvisoDistribuicaoI105);
+    const avisosEdicao=minhas.filter(ehAvisoDistribuicaoI105);
+    const aguardando = minhas.filter(d => !ehAvisoDistribuicaoI105(d) && d.status === 'concluida_aguardando_aprovacao');
+    const pendentes = minhas.filter(d => !ehAvisoDistribuicaoI105(d) && d.status !== 'concluida_aguardando_aprovacao');
     const porData = l => [...l].sort((a,b) => ((a.prazoData||'') + (a.prazoHora||'')).localeCompare((b.prazoData||'') + (b.prazoHora||'')));
     /* Encalhadas saem da conta do dia — ver comentário em estaEncalhada. */
     const encalhadas = porData(pendentes.filter(estaEncalhada));
@@ -31193,7 +31245,7 @@ window.setGerenciaSub = function(qual, el){
     /* V44 — estes números sempre partem da lista completa da pessoa. O
        filtro muda a lista abaixo, não desmonta nem abre buracos no resumo. */
     const resumoAguardando = todasMinhas.filter(d => d.status === 'concluida_aguardando_aprovacao');
-    const resumoVivas = todasMinhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d));
+    const resumoVivas = todasMinhas.filter(d => !ehAvisoDistribuicaoI105(d) && d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d));
     const resumoAtrasadas = resumoVivas.filter(d => calcularUrgencia(d) === 'atrasado');
     const resumoHoje = resumoVivas.filter(d => calcularUrgencia(d) === 'hoje');
     const resumoProximas = resumoVivas.filter(d => !['atrasado','hoje'].includes(calcularUrgencia(d)) && d.prazoData && d.prazoData <= limiteStr);
@@ -31315,6 +31367,7 @@ window.setGerenciaSub = function(qual, el){
     }
 
     lista.innerHTML = resumoHtml + chips + faixaAprovar +
+      (avisosEdicao.length ? faixaDemandasHtml('avisosEdicao', '📨 Avisos de edição — para leitura', avisosEdicao, true, estadoSalvo) : '') +
       (urgentes.length ? faixaDemandasHtml('urgentes', '🔥 Urgente — não pode esperar', urgentes, true, estadoSalvo) : '') +
       faixaDemandasHtml('atrasadas', '🔴 Atrasadas', atrasadas, true, estadoSalvo) +
       faixaDemandasHtml('hoje', '🟡 Pra hoje', praHoje, true, estadoSalvo) +
@@ -31630,6 +31683,7 @@ window.setGerenciaSub = function(qual, el){
   window.abrirDemandaMinha = function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
     if(ehDemandaConfirmacaoPostagemV135(d)) return abrirConfirmacaoPublicacaoR5(id);
     if(d.postagemId&&ehTituloDemandaLegenda(d.titulo))return abrirLegendaDemandaI84(d);
     const modal = document.getElementById('modalConteudo');
@@ -36182,6 +36236,7 @@ window.setGerenciaSub = function(qual, el){
     for(const docSnap of snap.docs){
       const dem = docSnap.data();
       if(!demandaOperacionalVisivel(dem)) continue;
+      if(ehAvisoDistribuicaoI105(dem)) continue;
       if(dem.status !== 'pendente') continue;
       if(dem.destinatario && estaAusente(dem.destinatario)) continue;
       if(!dem.prazoData) continue;
@@ -36610,7 +36665,7 @@ window.setGerenciaSub = function(qual, el){
     const MENINAS = ['Amanda','Cecília','Gabrielle','Yas'];
     const snap = await snapshotOperacional('demandas');
     const pend = {};
-    snap.forEach(d => { const v=d.data(); if(!demandaOperacionalVisivel(v) || v.status!=='pendente' || !v.destinatario) return; if(!MENINAS.includes(v.destinatario)) return; if(estaAusente(v.destinatario)) return; (pend[v.destinatario]=pend[v.destinatario]||[]).push(v); });
+    snap.forEach(d => { const v=d.data(); if(!demandaOperacionalVisivel(v) || ehAvisoDistribuicaoI105(v) || v.status!=='pendente' || !v.destinatario) return; if(!MENINAS.includes(v.destinatario)) return; if(estaAusente(v.destinatario)) return; (pend[v.destinatario]=pend[v.destinatario]||[]).push(v); });
     let notificadas = 0;
     for(const nome of MENINAS){
       const lista = pend[nome]; if(!lista || !lista.length) continue;
@@ -36632,6 +36687,7 @@ window.setGerenciaSub = function(qual, el){
     for(const docSnap of snap.docs){
       const d = docSnap.data();
       if(!demandaOperacionalVisivel(d)) continue;
+      if(ehAvisoDistribuicaoI105(d)) continue;
       if(d.status !== 'pendente' || !d.destinatario) continue;
       if(d.prazoData !== hojeStr) continue;
       if(d.lembretePrazoHojeEm === hojeStr) continue; // já lembrou hoje
@@ -36691,6 +36747,7 @@ window.setGerenciaSub = function(qual, el){
     for(const ddRF of snapDRF.docs){
       const d = ddRF.data();
       if(!demandaOperacionalVisivel(d)) continue;
+      if(ehAvisoDistribuicaoI105(d)) continue;
       if(d.prazoData !== hojeRF || d.avisoRetaFinalEm === hojeRF) continue;
       if(!d.destinatario || estaAusente(d.destinatario)) continue;
       const prazoMs = new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime();
@@ -37282,6 +37339,7 @@ window.setGerenciaSub = function(qual, el){
       '||' + (d.clienteSlug || d.cliente || d.clienteNome || '');
   }
   function mesmaDemandaPendente(a,b){
+    if(ehAvisoDistribuicaoI105(a)||ehAvisoDistribuicaoI105(b)) return ehAvisoDistribuicaoI105(a)&&ehAvisoDistribuicaoI105(b)&&!!a.videoId&&a.videoId===b.videoId&&a.tipoEspecial===b.tipoEspecial&&a.destinatario===b.destinatario&&String(a.correcaoEnvioOperacaoI53||'')===String(b.correcaoEnvioOperacaoI53||'');
     return norm(a?.titulo)===norm(b?.titulo) && identidadeRecorrenteDemanda(a)===identidadeRecorrenteDemanda(b);
   }
 
@@ -37374,6 +37432,7 @@ window.setGerenciaSub = function(qual, el){
     dSnap.forEach(d => { const v=d.data();
       if(!demandaOperacionalVisivel(v) || v.status !== 'pendente') return;
       if(demandaIdentificadaServicoI19(v)) return; // Destinos exatos não se deduplicam por título.
+      if(ehAvisoDistribuicaoI105(v)) return; // I53 já encerra só a atribuição exata.
       const k = (v.destinatario||'') + '||' + norm(v.titulo) + identidadeRecorrenteDemanda(v) + (avisoLegadoServicoI19(v)?'|servico:'+JSON.stringify(v.leadId):'');
       (grupos[k] = grupos[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
     });
@@ -43415,7 +43474,7 @@ window.salvarPrazoVideo = async function(id){
     const totalItens=rotinasI59.reduce((s,r)=>s+r.total,0),feitosCount=rotinasI59.reduce((s,r)=>s+r.feitos,0);
 
     const minhas = todasDemandas.filter(d => d.destinatario === escolhido && d.status !== 'aprovada' && !d.escalacaoGerencial);
-    const pendentes = minhas.filter(d => d.status !== 'concluida_aguardando_aprovacao');
+    const pendentes = minhas.filter(d => !ehAvisoDistribuicaoI105(d) && d.status !== 'concluida_aguardando_aprovacao');
     const atrasadas = pendentes.filter(d => calcularUrgencia(d) === 'atrasado');
     const praHoje = pendentes.filter(d => calcularUrgencia(d) === 'hoje');
     const aguardandoAprov = minhas.filter(d => d.status === 'concluida_aguardando_aprovacao');
@@ -43725,6 +43784,7 @@ window.salvarPrazoVideo = async function(id){
      =================================================================== */
 
   const FAIXAS_DEMANDA = [
+    { chave:'avisoEdicao', rot:'Avisos de edição', cor:'var(--muted)', dica:'leitura; prazo acompanhado no vídeo' },
     /* 03/08/2026 — a coluna que a Amanda pediu. Vem primeiro na régua
        porque é a que explica por que o número de atrasadas caiu. */
     { chave:'esperaCliente', rot:'Em espera do cliente', cor:'var(--yellow2)', dica:'não depende da equipe' },
@@ -43737,6 +43797,7 @@ window.salvarPrazoVideo = async function(id){
   ];
 
   function faixaDaDemanda(d){
+    if(ehAvisoDistribuicaoI105(d)) return 'avisoEdicao';
     if(esperandoCliente(d)) return 'esperaCliente';
     const u = calcularUrgencia(d);
     if(u === 'atrasado') return 'atrasada';
@@ -43752,6 +43813,7 @@ window.salvarPrazoVideo = async function(id){
   }
 
   function diasDeAtraso(d){
+    if(ehAvisoDistribuicaoI105(d)) return 0;
     if(!d.prazoData) return 0;
     const a = new Date(hojeLocal() + 'T00:00:00');
     const b = new Date(d.prazoData + 'T00:00:00');
@@ -43812,6 +43874,7 @@ window.salvarPrazoVideo = async function(id){
   }
 
   function cardDemanda(d, comCaixa, aoAbrir){
+    if(ehAvisoDistribuicaoI105(d)) return cardAvisoDistribuicaoI105(d);
     const f = faixaDaDemanda(d);
     const info = FAIXAS_DEMANDA.find(x=>x.chave===f);
     const dias = diasDeAtraso(d);
@@ -43872,6 +43935,7 @@ window.salvarPrazoVideo = async function(id){
     html += bloco('proxima', 'Próximos 3 dias', '');
     html += bloco('adiante', 'Mais pra frente', '');
     html += bloco('semprazo', 'Sem prazo definido', '');
+    html += bloco('avisoEdicao', 'Avisos de edição — para leitura', '');
     html += htmlEntregasDaSemana(todasDemandas, usuarioAtual);
     cont.innerHTML = html;
   }
@@ -44015,7 +44079,7 @@ window.salvarPrazoVideo = async function(id){
         ${cardResumo('esperaCliente','Com o cliente','')}
       </div>
       <div class="filtrosDemandas" aria-label="Filtros da central de demandas">
-        ${botaoFiltro('todas','Todas')}${botaoFiltro('atrasada','Atrasadas')}${botaoFiltro('hoje','Hoje')}${botaoFiltro('amanha','Amanhã')}${botaoFiltro('proxima','Próximas')}${botaoFiltro('adiante','Mais adiante')}${botaoFiltro('esperaCliente','Com o cliente')}${botaoFiltro('semprazo','Sem prazo')}
+        ${botaoFiltro('todas','Todas')}${botaoFiltro('atrasada','Atrasadas')}${botaoFiltro('hoje','Hoje')}${botaoFiltro('amanha','Amanhã')}${botaoFiltro('proxima','Próximas')}${botaoFiltro('adiante','Mais adiante')}${botaoFiltro('esperaCliente','Com o cliente')}${botaoFiltro('semprazo','Sem prazo')}${botaoFiltro('avisoEdicao','Avisos de edição')}
       </div>
       <div class="desc"><b>${visiveis.length}</b> demanda(s) visível(is) neste filtro${filtro ? ' para '+esc(filtro) : ''}.</div>
     </div>`;
@@ -44024,7 +44088,7 @@ window.salvarPrazoVideo = async function(id){
     const pessoas = {};
     abertas.forEach(d => {
       const q = d.destinatario || '(sem dono)';
-      pessoas[q] = pessoas[q] || { esperaCliente:0, atrasada:0, hoje:0, amanha:0, proxima:0, adiante:0, semprazo:0, total:0 };
+      pessoas[q] = pessoas[q] || { esperaCliente:0, atrasada:0, hoje:0, amanha:0, proxima:0, adiante:0, semprazo:0, avisoEdicao:0, total:0 };
       pessoas[q][faixaDaDemanda(d)]++; pessoas[q].total++;
     });
     const ordemPessoas = Object.keys(pessoas).sort((a,b)=>pessoas[b].atrasada-pessoas[a].atrasada || pessoas[b].total-pessoas[a].total);
@@ -44067,7 +44131,7 @@ window.salvarPrazoVideo = async function(id){
                                        : l.sort((a,b)=>String(a.prazoData||'9999').localeCompare(String(b.prazoData||'9999')));
       return `<div class="card">
         <h2>${titulo} <span class="qtd">(${l.length})</span></h2>
-        <div class="desc">Marca as caixas pra agir em várias de uma vez.</div>
+        <div class="desc">${chave==='avisoEdicao'?'Avisos para leitura. O prazo da edição fica no vídeo.':'Marca as caixas pra agir em várias de uma vez.'}</div>
         ${ordem.map(d => cardDemanda(d, true, 'abrirDemandaGerencia')).join('')}
       </div>`;
     };
@@ -44078,9 +44142,10 @@ window.salvarPrazoVideo = async function(id){
     html += blocoG('proxima', 'Próximos 3 dias');
     html += blocoG('adiante', 'Mais pra frente');
     html += blocoG('semprazo', 'Sem prazo definido');
+    html += blocoG('avisoEdicao', 'Avisos de edição — para leitura');
     if(!abertas.length) html += '<div class="card" style="border-color:var(--green);"><div class="empty" style="color:var(--green);font-weight:700;">Nenhuma demanda em aberto na equipe.</div></div>';
     else if(!visiveis.length) html += '<div class="card"><div class="empty">Nenhuma demanda corresponde a este filtro.</div></div>';
-    html += `<div class="card"><button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="marcarTodasDemandas(true)">Selecionar as ${visiveis.length} visíveis</button></div>`;
+    if(visiveis.some(d=>!ehAvisoDistribuicaoI105(d))) html += `<div class="card"><button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="marcarTodasDemandas(true)">Selecionar as ${visiveis.filter(d=>!ehAvisoDistribuicaoI105(d)).length} demandas visíveis</button></div>`;
     try{ html += await htmlOutrosAtrasados(); }catch(e){ console.error('Falha nos outros atrasados:', e); }
     html += htmlEntregasDaSemana(todasDemandas, filtro || null);
     cont.innerHTML = html;
@@ -47784,6 +47849,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.abrirDemandaGerencia = function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
     const modal = document.getElementById('modalConteudo');
     /* ===== CORREÇÃO 22/07/2026 (pedido do Chris) =====
        Bug: a demanda da própria Amanda (ou do próprio Chris, se algum dia

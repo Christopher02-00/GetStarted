@@ -17622,13 +17622,39 @@ window.criarCampanha=async function(){
 window.selecionarMesCampanhas=function(mes){if(!/^\d{4}-\d{2}$/.test(mes))return;window.__mesCampanhas=mes;return renderCampanhasKanban();};
 window.alternarHistoricoCampanhas=function(){window.__historicoCampanhas=!window.__historicoCampanhas;return renderCampanhasKanban();};
 window.atualizarBadgeCampanhas=function(n){const el=document.getElementById('badgeCampanhasAcomp');if(!el)return;el.textContent=n;el.style.display=n?'inline-flex':'none';};
+// I104: um ouvinte da fonte correta por sessão. Uma mudança em demandas
+// não deve baixar novamente campanhas; mudanças feitas por outra pessoa
+// continuam chegando, mesmo se nenhuma outra coleção tiver sido alterada.
+let __badgeCampanhasI104=null;
+function pararBadgeCampanhasI104(){
+  const atual=__badgeCampanhasI104;__badgeCampanhasI104=null;
+  if(atual?.parar)atual.parar();
+}
 window.atualizarBadgeRiscosCampanhas=async function(){
-  if(!window.podeVerCampanha()){window.atualizarBadgeCampanhas(0);return 0;}
+  if(!window.podeVerCampanha()){pararBadgeCampanhasI104();window.atualizarBadgeCampanhas(0);return 0;}
   const sessao=sessaoServicoManual();
-  try{const snap=await campServidorI7(_getDocsFromServerFB(collection(db,'campanhas')),'Carregar acompanhamento');campSessaoI7(sessao);let n=0;
-    snap.forEach(d=>{const a=d.data();if(a.excluido||a.arquivada)return;const c=normalizarCampanhaMensal(a);c.clientes.forEach(cl=>cl.postagens.forEach(p=>{if(!p.excluido&&riscoPostCampanha(p))n++;}));});
+  if(__badgeCampanhasI104?.sessao===sessao)return __badgeCampanhasI104.pintar();
+  pararBadgeCampanhasI104();
+  const estado={sessao,registros:null,parar:null,pintar:null};
+  const vigente=()=>__badgeCampanhasI104===estado && sessao===sessaoServicoManual() && window.podeVerCampanha();
+  estado.pintar=()=>{
+    if(!vigente()||!estado.registros)return null;
+    let n=0;
+    estado.registros.forEach(a=>{if(a.excluido||a.arquivada)return;const c=normalizarCampanhaMensal(a);c.clientes.forEach(cl=>cl.postagens.forEach(p=>{if(!p.excluido&&riscoPostCampanha(p))n++;}));});
     window.atualizarBadgeCampanhas(n);return n;
-  }catch(e){if(sessao===sessaoServicoManual())window.atualizarBadgeCampanhas('!');console.error('Badge de Campanhas não confirmado:',e);return null;}
+  };
+  __badgeCampanhasI104=estado;
+  window.atualizarBadgeCampanhas('…');
+  const falhou=erro=>{
+    if(!vigente())return;
+    pararBadgeCampanhasI104();window.atualizarBadgeCampanhas('!');
+    console.error('Badge de Campanhas não confirmado:',erro);
+  };
+  try{estado.parar=onSnapshot(collection(db,'campanhas'),{includeMetadataChanges:true},snap=>{
+    if(!vigente()||snap.metadata.fromCache||snap.metadata.hasPendingWrites)return;
+    estado.registros=snap.docs.map(d=>d.data());estado.pintar();
+  },falhou);}catch(erro){falhou(erro);}
+  return null;
 };
 function popularClientesCampanha(){}
 async function renderCampanhasKanban(){
@@ -27368,6 +27394,8 @@ window.setGerenciaSub = function(qual, el){
      respostas assíncronas; depois remove todo retrato privilegiado que
      poderia atravessar Chris ↔ Amanda ↔ equipe no mesmo navegador. */
   function limparEstadoPrivadoTrocaIdentidade(){
+    pararBadgeCampanhasI104();
+    cancelarAtualizacaoTempoRealI104();
     limparDirecaoI101();
     limparDesafioI99();
     __geracaoIdentidade++;
@@ -32466,11 +32494,35 @@ window.setGerenciaSub = function(qual, el){
     return true;
   };
 
+  async function carregarEntradaGerenciaI104(){
+    const sessao=sessaoServicoManual();
+    const vigente=()=>sessao===sessaoServicoManual() && gerenciaAutenticada && viewAtiva==='gerencia';
+    if(!vigente())return;
+    const destino=gerenciaSubPendente;
+    gerenciaSubPendente=null;
+    // Preserva a Central de Comando usada por esta entrada, com estado visível.
+    if(!ativarPainelGerenciaSeguro('comando'))return;
+    const cont=document.getElementById('gerenciaComando');
+    cont.innerHTML='<div class="card" role="status"><h2>Carregando o painel…</h2><div class="desc">Conferindo as informações da equipe.</div></div>';
+    try{
+      await carregarGerencia();
+      if(!vigente() || cont.offsetParent===null)return;
+      if(destino){
+        const el=document.querySelector('#conteudoGerencia .subtab[data-sub="'+destino+'"]');
+        setGerenciaSub(destino,el||null);
+      }else iniciarCentralComando();
+    }catch(e){
+      console.error('Não foi possível preparar a gerência:',e);
+      if(vigente() && cont.offsetParent!==null)cont.innerHTML='<div class="card" role="alert"><h2>Painel indisponível</h2><div class="desc">Não foi possível conferir os dados agora.</div><button class="btn" onclick="navegarGerenciaSub(\'agora\')">Tentar abrir o painel</button></div>';
+    }
+  }
+
   async function abrirGerenciaAutenticada(hash, lembrada){
       if(!['Chris','Amanda'].includes(usuarioAtual)){
         mostrarToast('Essa área é da gerência.', 'erro');
         return;
       }
+      const sessaoEntradaI104=sessaoServicoManual();
       gerenciaAutenticada = true;
       /* Registra a abertura para auditoria. A liberação de contratos,
          mensalidades e cofre vem exclusivamente do e-mail Google de
@@ -32486,21 +32538,12 @@ window.setGerenciaSub = function(qual, el){
           registrarAcessoGerencia(usuarioAtual || '?');
         }
       }catch(e){ console.error('Falha ao abrir sessão de gerência — o painel abre mesmo assim:', e); }
+      if(sessaoEntradaI104!==sessaoServicoManual())return;
       if(!lembrada && usuarioAtual === 'Chris') setTimeout(() => { try{ exigirTrocaDeSenha(); }catch(e){ console.error(e); } }, 1200);
       if(hash) lembrarGerencia(hash);
       document.getElementById('gateGerencia').style.display='none';
       document.getElementById('conteudoGerencia').style.display='block';
-      carregarGerencia().then(()=>{
-        if(gerenciaSubPendente){
-          const el = document.querySelector('#conteudoGerencia .subtab[data-sub="' + gerenciaSubPendente + '"]');
-          /* Destinos operacionais acessíveis por cartão não precisam ter
-             uma subtab visível. O clique continua válido após a senha. */
-          setGerenciaSub(gerenciaSubPendente, el || null);
-          gerenciaSubPendente = null;
-        } else {
-          iniciarCentralComando();
-        }
-      });
+      carregarEntradaGerenciaI104();
   }
 
   window.entrarGerencia = async function(){
@@ -36057,9 +36100,16 @@ window.setGerenciaSub = function(qual, el){
 
   async function carregarGerencia(){
     if(!['Chris','Amanda'].includes(usuarioAtual)) return;
+    const sessaoI104=sessaoServicoManual();
     await carregarTodasDemandas();
-    await motorAutomacoes('gerencia'); // redundância barata — o motor já roda sozinho (ver bloco FASE 1 abaixo)
-    await Promise.all([renderGerenciaAmanda(), renderGerenciaChris()]);
+    if(sessaoI104!==sessaoServicoManual())return;
+    await motorAutomacoes('gerencia'); // mantém a conferência operacional existente
+    if(sessaoI104!==sessaoServicoManual() || viewAtiva!=='gerencia' || !gerenciaAutenticada)return;
+    // I104: cada subaba já possui seu gatilho ao abrir. Não montar os dois
+    // painéis ocultos junto com o cockpit (custo duplicado no celular).
+    const visivelI104=id=>{const el=document.getElementById(id);return el && el.offsetParent!==null;};
+    if(visivelI104('gerenciaAmanda'))await renderGerenciaAmanda();
+    else if(visivelI104('gerenciaChris'))await renderGerenciaChris();
   }
 
   /* ===== FASE 4 (parte 2) — ESCALONAMENTO DE DEMANDAS COMUNS =====
@@ -37904,6 +37954,8 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function pararListenersTempoReal(limparDemandas, limparCachesColecoes){
+    pararBadgeCampanhasI104();
+    cancelarAtualizacaoTempoRealI104();
     __stokkiOperacaoI30?.parar();
     /* Mesmo que o unsubscribe do SDK ainda entregue um callback que já
        estava na fila, a geração antiga deixa de poder tocar cache/DOM. */
@@ -38177,47 +38229,70 @@ window.setGerenciaSub = function(qual, el){
     }
   }
 
+  // I104: o cache é confirmado no listener. Só o desenho é agrupado;
+  // todas as fontes da rajada são conservadas para seus leitores.
+  let __filaTempoRealI104=null;
+  function cancelarAtualizacaoTempoRealI104(){
+    if(__filaTempoRealI104)clearTimeout(__filaTempoRealI104.timer);
+    __filaTempoRealI104=null;
+    clearTimeout(window.__timerRenderAgoraV135);
+  }
   function onDadosTempoRealMudaram(colecao){
-    /* Estas são as três fontes que formam "Aprovar vídeos, demandas e
-       calendários". Qualquer mudança nelas invalida a conta anterior e
-       redesenha o menu imediatamente. */
+    limparCacheIndicadores();
+    const sessao=sessaoServicoManual();
+    if(__filaTempoRealI104 && __filaTempoRealI104.sessao!==sessao)cancelarAtualizacaoTempoRealI104();
+    if(!__filaTempoRealI104){
+      const fila={sessao,fontes:new Set(),timer:null};
+      __filaTempoRealI104=fila;
+      fila.timer=setTimeout(()=>{
+        if(__filaTempoRealI104!==fila)return;
+        __filaTempoRealI104=null;
+        if(fila.sessao!==sessaoServicoManual())return;
+        atualizarLeitoresTempoRealI104(fila.fontes);
+      },120);
+    }
+    __filaTempoRealI104.fontes.add(colecao);
+  }
+  function atualizarLeitoresTempoRealI104(colecoes){
+    const mudouI104=(...fontes)=>fontes.some(fonte=>colecoes.has(fonte));
+    /* Fontes de aprovação atualizam o mesmo menu uma vez por rajada.
+       Campanhas têm fonte própria: não reler essa coleção por evento alheio. */
     const fontesAgoraV135=['demandas','videos_producao','calendarios','agendamentos','postagens'];
-    if(fontesAgoraV135.includes(colecao)){
+    if(mudouI104(...fontesAgoraV135,'pagamentos_extra')){
       limparCacheIndicadores();
       atualizarTodosOsBadges();
       const painelAgoraV135=document.getElementById('gerenciaAgora');
       if(viewAtiva==='gerencia'&&painelAgoraV135?.offsetParent!==null&&window.renderAgora){
         clearTimeout(window.__timerRenderAgoraV135);
-        window.__timerRenderAgoraV135=setTimeout(()=>window.renderAgora(),140);
+        const sessaoAgoraI104=sessaoServicoManual();
+        window.__timerRenderAgoraV135=setTimeout(()=>{if(sessaoAgoraI104===sessaoServicoManual() && viewAtiva==='gerencia' && painelAgoraV135.offsetParent!==null)window.renderAgora();},140);
       }
     }
-    if(colecao === 'pagamentos_extra'){
-      limparCacheIndicadores();
-      atualizarTodosOsBadges();
+    if(mudouI104('pagamentos_extra')){
       const extrasFinanceiroV130=document.getElementById('financeiroExtrasBox');
       if(usuarioAtual==='Chris' && extrasFinanceiroV130?.offsetParent !== null && window.renderFinanceiroExtrasV130){
         window.renderFinanceiroExtrasV130();
       }else if(document.getElementById(__alvoExtras)?.offsetParent !== null) renderGerenciaPagamentos();
     }
-    if(colecao === 'postagens'){
+    if(mudouI104('postagens')){
       atualizarBadgePostagens();
     }
-    if(colecao === 'demandas'){
+    if(mudouI104('demandas')){
       if(viewAtiva === 'minhasDemandasAtribuidas') renderMinhasDemandasAtribuidas();
     }
-    if(viewAtiva === 'postagens' && ['videos_producao','postagens'].includes(colecao)){
+    if(viewAtiva === 'postagens' && mudouI104('videos_producao','postagens')){
       renderEsteiraConteudo();
     }
-    if(viewAtiva === 'inicio' && ['demandas','videos_producao','postagens','agendamentos'].includes(colecao)){
+    if(viewAtiva === 'inicio' && mudouI104('demandas','videos_producao','postagens','agendamentos')){
       /* Estas fontes atualizam a fila, não o formulário de extras. */
       const sessaoI82=sessaoServicoManual();
       renderMeuDia({somenteFila:true,validar:()=>{
         if(sessaoI82!==sessaoServicoManual())throw new Error('A pessoa da sessão mudou.');
       }}).catch(e=>{if(sessaoI82===sessaoServicoManual())console.error('I82: atualização da fila do dia indisponível:',e);});
       try{ renderVideosPorDiaInicio(); }catch(e){}
-      if(colecao === 'agendamentos') renderCalendarioVisualHome();
+      if(mudouI104('agendamentos')) renderCalendarioVisualHome();
     }
-    if(colecao === 'calendarios'){
+    if(mudouI104('calendarios')){
       /* V135: o Agora já foi invalidado e agendado uma única vez acima;
          esta ramificação redesenha somente as superfícies de calendário. */
       if(viewAtiva === 'calendarios' && document.getElementById('calSubControle')?.offsetParent !== null){

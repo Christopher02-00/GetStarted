@@ -1,3 +1,4 @@
+import {precisaRevisarI106} from './gs-identidade-conteudo-i106.mjs?v=1';
 import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=i90-1';
 // I78: consulta compartilhada. Textos e vínculo de produção nunca são escritos aqui.
 export const CAMPOS = {legenda:'Legenda principal',legendaInstagram:'Instagram',legendaYoutube:'YouTube',legendaLinkedin:'LinkedIn',legendaTiktok:'TikTok'};
@@ -5,8 +6,8 @@ export const EDITAVEIS = new Set(['aguardando_legenda','aguardando_agendamento',
 const e=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const chave = r=>JSON.stringify([r.calendarId,r.competencia,r.itemId]);
 export function referencia(p){
-  if(p.calendarItemId){
-    if(!p.calendarCompetencia || !p.calendarClienteSlug)return {invalida:true,nativa:true};
+  if(p.calendarItemId||p.calendarCompetencia){
+    if(!p.calendarItemId || !p.calendarCompetencia || !p.calendarClienteSlug)return {invalida:true,nativa:true};
     return {calendarId:p.calendarClienteSlug,competencia:p.calendarCompetencia,itemId:p.calendarItemId,nativa:true};
   }
   return p.referenciaLegendaI78 || null;
@@ -28,7 +29,7 @@ function blocoTextos(d,origem){
 
 export function criarConferencia(api){
   const doc=api.document,rascunhos=new Map();
-  let dialog,corpo,estado,input,ctx,seq=0,busy=false,postId='',escolha='',mes='',editar=false;
+  let dialog,corpo,estado,input,ctx,seq=0,busy=false,postId='',escolha='',mes='',editar=false,revisar=false;
   const vigente=()=>JSON.stringify(ctx)===JSON.stringify(api.contexto());
   const post=()=>estado?.postagens.find(p=>p.id===postId);
   const linha=()=>estado?.linhas.find(l=>chave(l)===escolha);
@@ -36,11 +37,18 @@ export function criarConferencia(api){
   const pode=p=>!copiaManual(p)&&estado?.podeEditar && EDITAVEIS.has(p?.status) && !referencia(p)?.nativa;
   function rascunho(p){if(!rascunhos.has(p.id))rascunhos.set(p.id,{textos:{},origens:{}});return rascunhos.get(p.id);}
   function podeReparar(p){return estado?.podeEditar&&pendenciaLegendaI79(p)&&(!(p.cliente==='stokki'&&p.publicacaoStokki?.versao===1)||(['Cecília','Amanda','Chris'].includes(estado.papel)||(estado.papel==='Gabrielle'&&p.legendaPendenteAoAgendarI90===true)));}
+  function camposRevisao(p){
+    const redes={instagram:'legendaInstagram',youtube:'legendaYoutube',linkedin:'legendaLinkedin',tiktok:'legendaTiktok'};
+    return p?.publicacaoStokki?.versao===1?p.publicacaoStokki.selecionadas.filter(k=>!p.publicacaoStokki.redes[k]?.retirada).map(k=>redes[k]):Object.keys(CAMPOS).filter(k=>k==='legenda'||String(p[k]||'').trim());
+  }
+  function podeRevisar(p){return estado?.podeEditar&&['aguardando_agendamento','agendado'].includes(p?.status)&&
+    (!(p.cliente==='stokki'&&p.publicacaoStokki?.versao===1)||['Cecília','Amanda','Chris'].includes(estado.papel));}
+  const camposFormulario=p=>revisar?camposRevisao(p):camposPendentesI79(p);
   function formularioReparo(p,l,r){
-    if(!pendenciaLegendaI79(p))return '';
-    if(!podeReparar(p))return '<p class="meta">Legenda pendente. Na Stokki, Cecília ou Amanda confirma o texto das plataformas nesta mesma conferência.</p>';
+    if(!pendenciaLegendaI79(p)&&!(revisar&&podeRevisar(p)))return '';
+    if(!podeReparar(p)&&!(revisar&&podeRevisar(p)))return '<p class="meta">Legenda pendente. Na Stokki, Cecília ou Amanda confirma o texto das plataformas nesta mesma conferência.</p>';
     const draft=rascunho(p),confirmada=r?.estado==='confirmado'?r.linha:null;
-    return `<section><h3>Completar legenda da postagem</h3><p class="meta">Confira o vídeo e o texto. Datas, aprovação e calendário permanecem.</p>${camposPendentesI79(p).map(k=>{
+    return `<section><h3>${revisar?'Revisar legenda deste vídeo':'Completar legenda da postagem'}</h3><p class="meta">Confira o vídeo e o texto. Datas, aprovação e calendário permanecem.</p>${camposFormulario(p).map(k=>{
       const fonte=legendaUtilizavelI79(confirmada?.[k])?k:legendaUtilizavelI79(confirmada?.legenda)?'legenda':'';
       return `<label for="i79-${k}">${e(CAMPOS[k])}</label><textarea id="i79-${k}" data-texto-i79="${k}" rows="5" maxlength="20000" style="width:100%;box-sizing:border-box" ${busy?'disabled':''}>${e(draft.textos[k]||'')}</textarea>${fonte&&r?.estado==='confirmado'?`<button class="btn secondary" type="button" data-fonte-i79="${k}" data-campo-fonte="${fonte}" ${busy?'disabled':''}>Usar legenda do calendário${k!=='legenda'?' em '+e(CAMPOS[k]):''}</button>`:''}`;
     }).join('')}<button type="button" class="btn" data-reparar-i79 ${busy?'disabled':''}>Confirmar legenda da postagem</button></section>`;
@@ -59,7 +67,7 @@ export function criarConferencia(api){
     dialog.addEventListener('input',ev=>{const k=ev.target.dataset.textoI79,p=post();if(k&&p){const d=rascunho(p);d.textos[k]=ev.target.value;delete d.origens[k];}});
     dialog.addEventListener('change',ev=>{
       try{conferir();if(busy)return;
-        if(ev.target.matches('[data-post]')){postId=ev.target.value;editar=false;iniciarEscolha();}
+        if(ev.target.matches('[data-post]')){postId=ev.target.value;editar=false;revisar=false;iniciarEscolha();}
         if(ev.target.matches('[data-mes]')){mes=ev.target.value;escolha='';}
         if(ev.target.matches('[data-item]'))escolha=ev.target.value;
         render();
@@ -69,6 +77,8 @@ export function criarConferencia(api){
       const b=ev.target.closest('button');if(!b||b.hasAttribute('data-fechar')||busy)return;
       try{conferir();
         if(b.hasAttribute('data-trocar')){editar=true;escolha='';render();}
+        if(b.hasAttribute('data-revisar')){const p=post();if(!podeRevisar(p))throw Error('Esta revisão pertence ao responsável pela postagem.');revisar=true;const d=rascunho(p);for(const k of camposRevisao(p))if(!(k in d.textos))d.textos[k]=p[k]||'';render();}
+        if(b.hasAttribute('data-usar-fila')){const p=post(),r=resolver(p,estado.linhas);if(r.estado!=='confirmado')throw Error('Confirme primeiro o conteúdo.');const usado=await api.usar?.(p,r.linha);conferir();if(usado!==false)dialog.close();}
         if(b.hasAttribute('data-voltar')){editar=false;iniciarEscolha();render();}
         if(b.hasAttribute('data-copiar')){
           const [origem,campo]=b.dataset.copiar.split(':'),valor=(origem==='post'?post():linha())?.[campo];
@@ -89,14 +99,14 @@ export function criarConferencia(api){
         }
         if(b.hasAttribute('data-fonte-i79')){
           const p=post(),r=resolver(p,estado.linhas),k=b.dataset.fonteI79,campo=b.dataset.campoFonte;
-          if(!podeReparar(p)||r.estado!=='confirmado'||!legendaUtilizavelI79(r.linha[campo]))throw Error('Confirme primeiro o conteúdo de origem.');
+          if((!podeReparar(p)&&!(revisar&&podeRevisar(p)))||r.estado!=='confirmado'||!legendaUtilizavelI79(r.linha[campo]))throw Error('Confirme primeiro o conteúdo de origem.');
           const d=rascunho(p);d.textos[k]=String(r.linha[campo]).trim();d.origens[k]={campo,assinatura:r.linha.assinatura};render();aviso('Texto trazido para conferência. Confirme abaixo para salvar.');
         }
         if(b.hasAttribute('data-reparar-i79')){
-          const p=post();if(!podeReparar(p))throw Error('Reabra a postagem com o perfil responsável.');
-          const d=rascunho(p),textos=Object.fromEntries(camposPendentesI79(p).map(k=>[k,d.textos[k]||'']));
+          const p=post();if(!podeReparar(p)&&!(revisar&&podeRevisar(p)))throw Error('Reabra a postagem com o perfil responsável.');
+          const d=rascunho(p),textos=Object.fromEntries(camposFormulario(p).map(k=>[k,d.textos[k]||'']));
           busy=true;render();aviso('Confirmando a legenda…');
-          try{const novo=await api.reparar(p,textos,d.origens,estado,ctx);conferir();estado.postagens=estado.postagens.map(v=>v.id===novo.id?novo:v);rascunhos.delete(p.id);api.atualizado?.(novo);aviso('Legenda confirmada. Datas e aprovações preservadas.');}
+          try{const novo=await (revisar?api.revisar:api.reparar)(p,textos,d.origens,estado,ctx);conferir();estado.postagens=estado.postagens.map(v=>v.id===novo.id?novo:v);rascunhos.delete(p.id);revisar=false;api.atualizado?.(novo);aviso('Legenda confirmada. Datas e aprovações preservadas.');}
           finally{busy=false;if(dialog.open&&vigente())render();}
         }
         if(b.hasAttribute('data-postagens')){dialog.close();await api.postagens(post());}
@@ -116,7 +126,7 @@ export function criarConferencia(api){
     const meses=[...new Set(estado.linhas.map(l=>l.competencia))].sort().reverse();
     const itens=estado.linhas.filter(l=>l.competencia===mes);
     corpo.innerHTML=`<section><h3>${e(estado.nomeCliente)}</h3>${fixo?'':`<label for="i78Post">Postagem / vídeo</label><select id="i78Post" data-post ${busy?'disabled':''}><option value="">Selecione a postagem</option>${estado.postagens.map(v=>`<option value="${e(v.id)}" ${v.id===postId?'selected':''}>${e(v.titulo||'Sem título')} · ${e(pendenciaLegendaI79(v)?'Legenda pendente':estados[v.status]||v.status)}${resolver(v,estado.linhas).linha&&chave(resolver(v,estado.linhas).linha)===chave(input)?' · deste conteúdo':''}</option>`).join('')}</select>`}
-      ${p?`<h3 style="margin-top:12px">${e(p.titulo)}</h3><p class="meta">${e(pendenciaLegendaI79(p)?'Legenda pendente · '+(p.status==='agendado'?'agendamento preservado':'aguardando agendamento'):estados[p.status]||p.status)}${p.dataAgendada?' · '+e(p.dataAgendada)+' '+e(p.horaAgendada||''):''}</p>${linkVideo(p)}`:'<p class="meta">Escolha o vídeo que vai usar esta legenda. Sem ligação pelo título.</p>'}</section>
+      ${p?`<h3 style="margin-top:12px">${e(r?.linha?.titulo||p.titulo)}</h3><p class="meta">Nome do vídeo: ${e(p.titulo)}</p>${precisaRevisarI106(p)?'<p style="color:var(--yellow)">A referência mudou. Confira o vídeo e revise a legenda antes de usá-la.</p>':''}<p class="meta">${e(pendenciaLegendaI79(p)?'Legenda pendente · '+(p.status==='agendado'?'agendamento preservado':'aguardando agendamento'):estados[p.status]||p.status)}${p.dataAgendada?' · '+e(p.dataAgendada)+' '+e(p.horaAgendada||''):''}</p>${linkVideo(p)}`:'<p class="meta">Escolha o vídeo que vai usar esta legenda. Sem ligação pelo título.</p>'}</section>
       ${copiaManual(p)?'<section><h3>Material incluído na postagem</h3><p class="meta">Esta é a postagem vinculada ao calendário. Sua legenda está abaixo.</p></section>':`<section><h3>Conteúdo de origem no calendário</h3>
         ${r?.estado==='indisponivel'?`<p role="alert">${e(r.motivo)}</p>`:''}
         ${manual?`<p class="meta">Escolha manualmente e confira o roteiro e a legenda abaixo.</p><label for="i78Mes">Mês do calendário</label><select id="i78Mes" data-mes ${busy?'disabled':''}><option value="">Escolha o mês</option>${meses.map(v=>`<option value="${e(v)}" ${mes===v?'selected':''}>${e(rotuloMes(v))}</option>`).join('')}</select><label for="i78Item">Conteúdo do calendário</label><select id="i78Item" data-item ${busy?'disabled':''}><option value="">Escolha o conteúdo</option>${itens.map(v=>`<option value="${e(chave(v))}" ${v.bloqueio||v.derivadaPostagemI84?'disabled':''} ${escolha===chave(v)?'selected':''}>${e(v.titulo)} · dia ${e(v.dia||'a definir')}${v.bloqueio?' · conferir identificação':v.derivadaPostagemI84?' · cópia da postagem':''}</option>`).join('')}</select>`:''}
@@ -127,6 +137,8 @@ export function criarConferencia(api){
         ${refNativa?'<p class="meta">Ligação original da produção. Ela é preservada.</p>':''}
       </section>`}
       ${l?`<section><h3>Legenda atual do calendário</h3>${blocoTextos(l,'cal')}</section>`:''}
+      ${p&&r?.estado==='confirmado'&&p.status==='aguardando_legenda'&&api.podeUsar?.(p)?'<button class="btn" type="button" data-usar-fila>Usar legenda no formulário da Gabi</button>':''}
+      ${p&&podeRevisar(p)&&!revisar?'<button class="btn secondary" type="button" data-revisar>Conferir / corrigir texto deste vídeo</button>':''}
       ${p?formularioReparo(p,l,r):''}
       ${p?`<section><h3>Texto enviado com esta postagem</h3><p class="meta">Confira o texto que será usado na publicação. Recados e sinais isolados são tratados como pendência.</p>${blocoTextos(p,'post')}</section>`:''}
       <div style="display:flex;gap:10px;flex-wrap:wrap"><button type="button" class="btn secondary" data-reler ${busy?'disabled':''}>Atualizar conferência</button>${!fixo&&p&&['aguardando_agendamento','agendado'].includes(p.status)?'<button type="button" class="btn" data-postagens>Ir para Postagens</button>':''}</div>`;    // Mantém o controle em uso durante mudanças de mês/conteúdo (inclusive teclado).
@@ -137,7 +149,7 @@ export function criarConferencia(api){
   async function carregar(){
     const n=++seq;corpo.innerHTML='<p>Conferindo a postagem e o calendário…</p>';
     try{const result=await api.ler(input);if(n!==seq||!dialog.open)return;conferir();estado=result;
-      postId=input.postId||'';
+      postId=input.postId||'';revisar=false;
       if(!postId&&input.calendarId){const ligados=estado.postagens.filter(p=>{const r=resolver(p,estado.linhas);return r.linha&&chave(r.linha)===chave(input);});if(ligados.length===1)postId=ligados[0].id;}
       editar=false;iniciarEscolha();render();
       if(post())api.atualizado?.(post());

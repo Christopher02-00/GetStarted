@@ -31015,6 +31015,8 @@ window.setGerenciaSub = function(qual, el){
   window.abrirDemandaEnviada = async function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAvisoExclusaoI112(d)) return abrirPedidosExclusaoI112(id);
+    if(pedidoExclusaoAtivoI112(d)&&['Amanda','Chris'].includes(usuarioAtual)) return abrirDecisaoExclusaoI112(id);
     if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
     const modal = document.getElementById('modalConteudo');
     const urg = calcularUrgencia(d);
@@ -31309,7 +31311,8 @@ window.setGerenciaSub = function(qual, el){
     const clientes = [...new Set(todasMinhas.map(d => d.clienteNome).filter(Boolean))].sort((a,b) => a.localeCompare(b,'pt-BR'));
     const clienteSel = document.getElementById('filtroClienteMinhasDemandas')?.value || '';
     const chip = (f, rotulo) => `<span class="chip ${filtroMinhasDemandas===f?'ativo':''}" onclick="setFiltroMinhasDemandas('${f}', this)">${rotulo}</span>`;
-    const chips = `<div id="chipsMinhasDemandas" class="chipsFiltro">
+    const pedidosI112=['Amanda','Chris'].includes(usuarioAtual)?todasDemandas.filter(pedidoExclusaoAtivoI112):[];
+    const chips = `${pedidosI112.length?`<div class="card"><b>Exclusões para decidir · ${pedidosI112.length}</b><p>Confira o pedido original para retirar ou manter a demanda.</p><button class="btn" onclick="abrirPedidosExclusaoI112()">Conferir pedidos de exclusão</button></div>`:''}<div id="chipsMinhasDemandas" class="chipsFiltro">
       ${chip('todas','Todas')}${chip('avisosEdicao','Avisos de edição')}${chip('atrasadas','🔴 Atrasadas')}${chip('hoje','🟡 Hoje')}${chip('proximas','📅 Próximos 7 dias')}${chip('aguardando','✋ Aguardando')}${chip('enviei','📤 Que eu enviei')}${chip('feitas','✅ Concluídas')}${chip('cliente','Por cliente')}
       <select id="filtroClienteMinhasDemandas" style="display:${filtroMinhasDemandas==='cliente'?'inline-block':'none'};" onchange="renderMinhasDemandasAtribuidas(true)">
         <option value="">Todos os clientes</option>
@@ -31865,6 +31868,8 @@ window.setGerenciaSub = function(qual, el){
   window.abrirDemandaMinha = function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAvisoExclusaoI112(d)) return abrirPedidosExclusaoI112(id);
+    if(pedidoExclusaoAtivoI112(d)&&['Amanda','Chris'].includes(usuarioAtual)) return abrirDecisaoExclusaoI112(id);
     if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
     if(ehDemandaConfirmacaoPostagemV135(d)) return abrirConfirmacaoPublicacaoR5(id);
     if(d.postagemId&&ehTituloDemandaLegenda(d.titulo))return abrirLegendaDemandaI84(d);
@@ -31983,6 +31988,7 @@ window.setGerenciaSub = function(qual, el){
       <button class="btn green" onclick="enviarProva('${d.id}')" id="btnEnviarProva">✅ Marcar como feita</button>
       `}`}`}
       <button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Fechar</button>
+      ${d.exclusaoDecisaoI112?.decisao==='manter'&&!d.exclusaoPedida?`<div class="linha">${esc(d.exclusaoDecisaoI112.por)} conferiu e decidiu manter esta demanda. Você pode enviar um novo pedido se a situação mudou.</div>`:''}
       ${(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda')
         ? `<button class="btn red" style="margin-top:8px;opacity:.75;" onclick="excluirDemandaMinha('${d.id}')">🗑️ Excluir esta demanda</button>`
         : (d.exclusaoPedida
@@ -32007,40 +32013,156 @@ window.setGerenciaSub = function(qual, el){
      Vale pra todo mundo. A pessoa pede com o motivo escrito; a Amanda
      decide num clique. A demanda NÃO some enquanto isso — ela fica
      marcada, pra ninguém achar que já foi. */
-  window.pedirExclusaoDemanda = async function(id){
-    const motivo = prompt('Por que essa demanda não faz mais sentido?\n(a Amanda lê exatamente este texto)');
-    if(motivo === null) return;
-    if(!String(motivo).trim()){ mostrarToast('Escreve o motivo — sem ele ela não tem como decidir.', 'erro'); return; }
-    const d = todasDemandas.find(x=>x.id===id) || {};
+  // I112: pedido e decisão pertencem ao ID original, nunca ao título do aviso.
+  function ehAvisoExclusaoI112(d){
+    return !!d && (d.tipoEspecial==='pedido_exclusao_i112' ||
+      (d.origem==='sistema' && /^🗑️ .+ quer excluir: /u.test(String(d.titulo||''))));
+  }
+  function pedidoExclusaoAtivoI112(d){
+    return !!d && d.excluido!==true && !/^(aprovada|cancelad)/.test(String(d.status||'')) &&
+      !!d.exclusaoPedida && !!String(d.exclusaoPedida.em||'');
+  }
+  let __decisaoExclusaoI112=null;
+  let __aberturaExclusaoI112=0;
+  let __exclusaoEmCursoI112=new Set();
+  function exigirGestorExclusaoI112(sessao){
+    if(!['Amanda','Chris'].includes(usuarioAtual) || sessao!==sessaoServicoManual())
+      throw Error('Seu perfil mudou. Abra o pedido novamente com Amanda ou Chris.');
+  }
+  async function atualizarFilaExclusaoI112(sessao,mensagem,contexto){
+    if(sessao!==sessaoServicoManual())return;
+    if(!contexto||(viewAtiva===contexto.view&&document.getElementById('modalConteudo')?.firstElementChild===contexto.cabecalho))fecharModal();
     try{
-      await updateDoc(doc(db,'demandas', id), {
-        exclusaoPedida: { por: usuarioAtual||'?', motivo: String(motivo).trim(), em: new Date().toISOString() }
+      await carregarTodasDemandas({servidor:true,validar:()=>{if(sessao!==sessaoServicoManual())throw Error('Perfil alterado.');}});
+      if(sessao!==sessaoServicoManual())return;
+      atualizarTodosOsBadges();
+      if(viewAtiva==='minhasDemandasAtribuidas')await renderMinhasDemandasAtribuidas(true);
+      atualizarFilaAprovacao();
+      if(viewAtiva==='demandas')renderDemandasDaEquipe();
+      mostrarToast(mensagem);
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast('Registro salvo. Reabra Minhas Demandas para atualizar a lista.','erro');}
+  }
+  window.pedirExclusaoDemanda=async function(id){
+    if(__exclusaoEmCursoI112.has(id))return;
+    const motivo=prompt('Por que essa demanda não faz mais sentido?\nA Amanda receberá o pedido para autorizar ou manter.');
+    if(motivo===null)return;
+    if(!String(motivo).trim()){mostrarToast('Escreva o motivo para a Amanda conferir.','erro');return;}
+    const sessao=sessaoServicoManual(),pessoa=usuarioAtual,em=new Date().toISOString(),contexto={view:viewAtiva,cabecalho:document.getElementById('modalConteudo')?.firstElementChild};
+    const validar=()=>{if(!pessoa||sessao!==sessaoServicoManual())throw Error('Seu perfil mudou. Reabra a demanda.');};
+    const ref=doc(db,'demandas',id),avisoRef=doc(db,'demandas','exclusao_i112_'+id);
+    __exclusaoEmCursoI112.add(id);
+    try{
+      await runTransaction(db,async tx=>{
+        const [snap,aviso]=await Promise.all([tx.get(ref),tx.get(avisoRef)]);validar();
+        if(!snap.exists())throw Error('A demanda não existe mais.');
+        const d=snap.data();
+        if(d.excluido===true||/^(aprovada|cancelad)/.test(String(d.status||'')))throw Error('Essa demanda já foi encerrada. Atualize a lista.');
+        if(!['Amanda','Chris'].includes(pessoa)&&String(d.destinatario||d.paraQuem||'')!==pessoa)throw Error('Só o responsável pode pedir a exclusão.');
+        if(ehAvisoExclusaoI112(d))throw Error('Abra o pedido de exclusão para decidir.');
+        if(pedidoExclusaoAtivoI112(d))return; // rede/clique repetido não cria outro pedido
+        if(aviso.exists()&&(aviso.data().demandaOriginalId!==id||aviso.data().tipoEspecial!=='pedido_exclusao_i112'))throw Error('O aviso tem outro vínculo. Nada foi alterado.');
+        const pedido={por:pessoa,motivo:String(motivo).trim(),em,avisoId:avisoRef.id};
+        tx.update(ref,{exclusaoPedida:pedido,historico:arrayUnion({acao:pessoa+' pediu exclusão',detalhe:pedido.motivo,em,por:atorRealDaSessao()})});
+        tx.set(avisoRef,{titulo:'🗑️ '+pessoa+' quer excluir: '+(d.titulo||'Demanda'),
+          descricao:pedido.motivo,origem:'sistema',destinatario:'Amanda',clienteNome:'',ehAviso:true,
+          tipoEspecial:'pedido_exclusao_i112',demandaOriginalId:id,pedidoExclusaoEm:em,
+          prazoData:hojeLocal(),prazoHora:'19:00',status:'pendente',excluido:false,
+          criadoEm:aviso.exists()?aviso.data().criadoEm||serverTimestamp():serverTimestamp(),
+          historico:arrayUnion({acao:'Pedido recebido para decidir',em,por:pessoa,demandaOriginalId:id})},{merge:true});
       });
-      registrarHistorico('demandas', id, (usuarioAtual||'?') + ' pediu exclusão', String(motivo).trim());
-      await criarAvisoParaGestao('🗑️ ' + (usuarioAtual||'Alguém') + ' quer excluir: ' + (d.titulo||'uma demanda'),
-        'Motivo: "' + String(motivo).trim() + '"\n\nAbra a demanda em Gerência e decida: excluir de vez ou manter.', 'Amanda');
-      mostrarToast('Pedido enviado pra Amanda.');
-      fecharModal();
-      await carregarTodasDemandas();
-      renderMinhasDemandasAtribuidas();
-    }catch(e){ mostrarToast('Não consegui pedir: ' + e.message, 'erro'); }
+      validar();
+      await atualizarFilaExclusaoI112(sessao,'Pedido enviado à Amanda. A demanda permanece até a decisão.',contexto);
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast('Não foi possível confirmar o pedido: '+e.message,'erro');}
+    finally{__exclusaoEmCursoI112.delete(id);}
   };
-
-  window.recusarExclusaoDemanda = async function(id){
-    const d = todasDemandas.find(x=>x.id===id) || {};
+  window.abrirPedidosExclusaoI112=async function(avisoId=''){
+    const sessao=sessaoServicoManual(),abertura=++__aberturaExclusaoI112,view=viewAtiva,cabecalho=document.getElementById('modalConteudo')?.firstElementChild;
     try{
-      await updateDoc(doc(db,'demandas', id), { exclusaoPedida: null });
-      registrarHistorico('demandas', id, 'Pedido de exclusão recusado por ' + (usuarioAtual||'?'));
-      if(d.destinatario){
-        await criarAvisoParaGestao('↩️ Sua demanda continua: ' + (d.titulo||''),
-          (usuarioAtual||'A Amanda') + ' avaliou e decidiu manter esta demanda. Se ainda fizer sentido excluir, fala com ela.', d.destinatario);
+      exigirGestorExclusaoI112(sessao);
+      await carregarTodasDemandas({servidor:true,validar:()=>exigirGestorExclusaoI112(sessao)});
+      if(abertura!==__aberturaExclusaoI112||view!==viewAtiva||cabecalho!==document.getElementById('modalConteudo')?.firstElementChild)return;
+      const aviso=avisoId?todasDemandas.find(d=>d.id===avisoId):null;
+      if(avisoId&&(!aviso||!ehAvisoExclusaoI112(aviso)))throw Error('Este aviso mudou. Reabra a fila.');
+      if(aviso?.demandaOriginalId)return abrirDecisaoExclusaoI112(aviso.demandaOriginalId,avisoId);
+      const pedidos=todasDemandas.filter(pedidoExclusaoAtivoI112);
+      document.getElementById('modalConteudo').innerHTML=`<h2>Pedidos de exclusão</h2>
+        ${aviso?`<div class="linha"><b>${esc(aviso.titulo)}</b><p>${esc(aviso.descricao||'')}</p></div><p>Este aviso antigo não tem vínculo salvo. Selecione a demanda original abaixo e confira antes de decidir.</p>`:'<p>Decida diretamente na demanda que a pessoa pediu para retirar.</p>'}
+        ${pedidos.map(d=>`<div class="card"><b>${esc(d.titulo||'Demanda')}</b><div class="meta">${esc(d.destinatario||d.paraQuem||'')} · ${formatarDataBR(d.prazoData)}</div><p>${esc(d.exclusaoPedida.motivo||'')}</p><button class="btn" onclick="abrirDecisaoExclusaoI112('${escJs(d.id)}','${escJs(avisoId)}')">Conferir este pedido</button></div>`).join('')||'<p>Nenhum pedido de exclusão está pendente.</p>'}
+        ${aviso?`<button class="btn secondary" onclick="encerrarAvisoExclusaoI112('${escJs(avisoId)}')">Arquivar somente este aviso antigo</button>`:''}
+        <button class="btn secondary" onclick="fecharModal()">Fechar</button>`;
+      document.getElementById('overlayView').classList.add('show');
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast(e.message,'erro');}
+  };
+  window.abrirDecisaoExclusaoI112=async function(id,avisoId=''){
+    const sessao=sessaoServicoManual(),abertura=++__aberturaExclusaoI112,view=viewAtiva,cabecalho=document.getElementById('modalConteudo')?.firstElementChild;__decisaoExclusaoI112=null;
+    try{
+      exigirGestorExclusaoI112(sessao);
+      const snap=await _getDocFromServerFB(doc(db,'demandas',id));exigirGestorExclusaoI112(sessao);
+      if(abertura!==__aberturaExclusaoI112||view!==viewAtiva||cabecalho!==document.getElementById('modalConteudo')?.firstElementChild)return;
+      if(!snap.exists())throw Error('A demanda original não foi encontrada. Nada foi excluído.');
+      const d=snap.data(),pedido=d.exclusaoPedida;
+      if(!pedidoExclusaoAtivoI112(d)){
+        document.getElementById('modalConteudo').innerHTML=`<h2>${esc(d.titulo||'Demanda')}</h2><p>${d.excluido?'Esta demanda já foi arquivada.':d.exclusaoDecisaoI112?.decisao==='manter'?'A gerência decidiu manter esta demanda.':'Não há pedido de exclusão pendente nesta demanda.'}</p>${avisoId?`<button class="btn secondary" onclick="encerrarAvisoExclusaoI112('${escJs(avisoId)}')">Encerrar este aviso</button>`:''}<button class="btn secondary" onclick="fecharModal()">Fechar</button>`;
+      }else{
+        __decisaoExclusaoI112={id,avisoId:avisoId||pedido.avisoId||'',pedido:jsonEstavel(pedido),destinatario:String(d.destinatario||d.paraQuem||''),titulo:String(d.titulo||''),sessao};
+        document.getElementById('modalConteudo').innerHTML=`<h2>Decidir exclusão</h2><div class="card"><h3>${esc(d.titulo||'Demanda')}</h3><p>Responsável: <b>${esc(d.destinatario||d.paraQuem||'')}</b></p><p>Pedido por ${esc(pedido.por||'')} · ${esc(pedido.motivo||'')}</p>${d.descricao?`<details><summary>Descrição da demanda</summary><p style="white-space:pre-wrap">${esc(d.descricao)}</p></details>`:''}</div><p>Autorizar retira esta demanda das filas e cobranças. O histórico e os materiais são preservados.</p><div class="btnrow"><button class="btn red" data-decisao-i112 onclick="decidirExclusaoI112(true)">Autorizar exclusão</button><button class="btn secondary" data-decisao-i112 onclick="decidirExclusaoI112(false)">Manter demanda</button><button class="btn secondary" onclick="fecharModal()">Fechar</button></div>`;
       }
-      mostrarToast('Mantida — a pessoa foi avisada.');
-      fecharModal(); await carregarTodasDemandas(); renderMinhasDemandasAtribuidas();
-    }catch(e){ mostrarToast('Erro: ' + e.message, 'erro'); }
+      document.getElementById('overlayView').classList.add('show');
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast(e.message,'erro');}
+  };
+  window.decidirExclusaoI112=async function(excluir){
+    const ctx=__decisaoExclusaoI112;if(!ctx||__exclusaoEmCursoI112.has(ctx.id))return;
+    __exclusaoEmCursoI112.add(ctx.id);
+    const contexto={view:viewAtiva,cabecalho:document.getElementById('modalConteudo')?.firstElementChild};
+    const botoes=[...document.querySelectorAll('[data-decisao-i112]')];botoes.forEach(b=>b.disabled=true);
+    try{
+      exigirGestorExclusaoI112(ctx.sessao);
+      const por=usuarioAtual,em=new Date().toISOString(),ref=doc(db,'demandas',ctx.id);
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(ref);let aviso=null,avisoRef=null;
+        if(ctx.avisoId){avisoRef=doc(db,'demandas',ctx.avisoId);aviso=await tx.get(avisoRef);}
+        exigirGestorExclusaoI112(ctx.sessao);
+        if(!snap.exists())throw Error('A demanda não existe mais.');
+        const d=snap.data(),decisao=excluir?'excluir':'manter';
+        if(d.exclusaoDecisaoI112?.pedidoEm===JSON.parse(ctx.pedido).em&&d.exclusaoDecisaoI112?.decisao===decisao)return;
+        if(!pedidoExclusaoAtivoI112(d)||jsonEstavel(d.exclusaoPedida)!==ctx.pedido||String(d.destinatario||d.paraQuem||'')!==ctx.destinatario||String(d.titulo||'')!==ctx.titulo)throw Error('O pedido mudou em outra tela. Reabra antes de decidir.');
+        if(avisoRef&&(!aviso.exists()||!ehAvisoExclusaoI112(aviso.data())||
+          (aviso.data().demandaOriginalId&&(aviso.data().demandaOriginalId!==ctx.id||aviso.data().pedidoExclusaoEm!==d.exclusaoPedida.em))))throw Error('O aviso não corresponde a esta solicitação. Reabra o pedido.');
+        const r={decisao,pedidoEm:d.exclusaoPedida.em,por,em,motivo:d.exclusaoPedida.motivo||''};
+        tx.update(ref,{exclusaoPedida:null,exclusaoDecisaoI112:r,
+          ...(excluir?{excluido:true,excluidoPor:por,excluidoEm:em,motivoExclusao:'Exclusão autorizada: '+r.motivo}:{}),
+          historico:arrayUnion({acao:excluir?'Exclusão autorizada por '+por:'Exclusão recusada por '+por,detalhe:r.motivo,em,por:atorRealDaSessao()})});
+        if(avisoRef)tx.update(avisoRef,{status:'aprovada',excluido:true,excluidoPor:por,excluidoEm:em,
+          demandaOriginalId:ctx.id,decisaoExclusaoI112:r,
+          historico:arrayUnion({acao:'Decisão aplicada à demanda original',demandaOriginalId:ctx.id,decisao,em,por:atorRealDaSessao()})});
+      });
+      exigirGestorExclusaoI112(ctx.sessao);
+      const salvo=await _getDocFromServerFB(ref);exigirGestorExclusaoI112(ctx.sessao);
+      if(!salvo.exists()||salvo.data().exclusaoDecisaoI112?.pedidoEm!==JSON.parse(ctx.pedido).em||salvo.data().exclusaoDecisaoI112?.decisao!==(excluir?'excluir':'manter'))throw Error('Não foi possível confirmar a decisão. Reabra o pedido antes de tentar novamente.');
+      if(__decisaoExclusaoI112===ctx)__decisaoExclusaoI112=null;
+      await atualizarFilaExclusaoI112(ctx.sessao,excluir?'Exclusão confirmada — a demanda saiu da fila da pessoa.':'Demanda mantida — a decisão aparece para o responsável.',contexto);
+    }catch(e){if(ctx.sessao===sessaoServicoManual())mostrarToast(e.message,'erro');}
+    finally{__exclusaoEmCursoI112.delete(ctx.id);botoes.forEach(b=>b.disabled=false);}
+  };
+  window.recusarExclusaoDemanda=id=>abrirDecisaoExclusaoI112(id);
+  window.encerrarAvisoExclusaoI112=async function(id){
+    const sessao=sessaoServicoManual();
+    const contexto={view:viewAtiva,cabecalho:document.getElementById('modalConteudo')?.firstElementChild};
+    if(!confirm('Arquivar somente este aviso? Isso não exclui nem conclui nenhuma demanda da equipe.'))return;
+    try{
+      exigirGestorExclusaoI112(sessao);
+      await runTransaction(db,async tx=>{
+        const ref=doc(db,'demandas',id),s=await tx.get(ref);exigirGestorExclusaoI112(sessao);
+        if(!s.exists()||!ehAvisoExclusaoI112(s.data()))throw Error('O aviso mudou. Atualize a tela.');
+        if(s.data().demandaOriginalId){const d=await tx.get(doc(db,'demandas',s.data().demandaOriginalId));exigirGestorExclusaoI112(sessao);if(d.exists()&&pedidoExclusaoAtivoI112(d.data()))throw Error('Ainda existe um pedido pendente. Abra a demanda e decida.');}
+        tx.update(ref,{excluido:true,excluidoPor:usuarioAtual,excluidoEm:new Date().toISOString(),motivoExclusao:'Aviso encerrado explicitamente; nenhuma demanda original alterada'});
+      });
+      await atualizarFilaExclusaoI112(sessao,'Somente o aviso foi arquivado.',contexto);
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast(e.message,'erro');}
   };
 
   window.excluirDemandaMinha = async function(id){
+    if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
@@ -32515,6 +32637,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   window.enviarProva = async function(id){
+    if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     const legendaI84=todasDemandas.find(d=>d.id===id&&d.postagemId&&ehTituloDemandaLegenda(d.titulo));
     if(legendaI84)return abrirLegendaDemandaI84(legendaI84);
     const texto = document.getElementById('provaTextoInput').value.trim();
@@ -44360,6 +44483,7 @@ window.salvarPrazoVideo = async function(id){
   };
 
   window.excluirDemandaDoPainel = async function(id){
+    if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
     const d = todasDemandas.find(x=>x.id===id);
     const titulo = d ? d.titulo : id;
@@ -48032,6 +48156,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.abrirDemandaGerencia = function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAvisoExclusaoI112(d)) return abrirPedidosExclusaoI112(id);
+    if(pedidoExclusaoAtivoI112(d)&&['Amanda','Chris'].includes(usuarioAtual)) return abrirDecisaoExclusaoI112(id);
     if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
     const modal = document.getElementById('modalConteudo');
     /* ===== CORREÇÃO 22/07/2026 (pedido do Chris) =====
@@ -48143,6 +48269,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
      uma vez, pro conjunto. Perguntar 12 vezes seguidas faz a pessoa
      clicar em "ok" no automático, que é pior que não perguntar. */
   window.excluirDemandaGerencia = async function(id, emLote){
+    if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     if(!usuarioAtual || (usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda')){
       if(!emLote) mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro');
       return;
@@ -48301,6 +48428,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.aprovarDemanda = async function(id){
+    if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     const d = todasDemandas.find(x=>x.id===id);
     await updateDoc(doc(db,'demandas', id), { status: 'aprovada', aprovadoEm: new Date().toISOString(), aprovadoPor: usuarioAtual||'?' });
     registrarHistorico('demandas', id, 'Aprovada por ' + (usuarioAtual||'?'));
@@ -48369,6 +48497,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   }
 
   window.rejeitarDemanda = async function(id){
+    if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     const demandaRef=doc(db,'demandas',id);
     let resultado;
     try{

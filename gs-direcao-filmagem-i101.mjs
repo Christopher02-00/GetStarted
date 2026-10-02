@@ -36,6 +36,20 @@ export function validar(id,d){
   }
   return n;
 }
+// I113: o aviso é uma leitura da revisão salva, nunca outra demanda.
+export function planosSemConferencia(rows){
+  const byId=new Map(rows.map(r=>[r.id,r]));
+  return rows.filter(r=>r.id.startsWith('p_')&&String(r.data?.texto||'').trim()).filter(r=>{
+    const v=byId.get('r_'+r.id)?.data;
+    return !(v?.versao===r.revisao&&['ciente','ajustar'].includes(v.estado));
+  });
+}
+export function avisosPlanejamento(rows,agendas){
+  const byId=new Map(agendas.map(a=>[a.id,a]));
+  return planosSemConferencia(rows).map(r=>({...r,agenda:byId.get(r.id.slice(2))||null}))
+    .filter(r=>!r.agenda?.excluido&&r.agenda?.status!=='cancelado')
+    .sort((a,b)=>String(b.atualizadoEm?.seconds||'').localeCompare(String(a.atualizadoEm?.seconds||''),undefined,{numeric:true})||a.id.localeCompare(b.id));
+}
 export function criarRepositorio(s,contexto){
   const {db,doc,collection,query,where,documentId,onSnapshot,runTransaction,serverTimestamp,getDocFromServer,getDocsFromServer}=s;
   const ref=id=>doc(db,COL,id),hist=(id,op)=>doc(db,COL,id,'historico',op);
@@ -48,6 +62,27 @@ export function criarRepositorio(s,contexto){
     async historico(id){const c=guard(),r=await getDocsFromServer(collection(db,COL,id,'historico'));current(c);return r.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.revisao-a.revisao);},
     watch(meses,ok,fail){const c=guard(),periodos=[...new Set(meses)],grupos=[];for(let i=0;i<periodos.length;i+=10)grupos.push(periodos.slice(i,i+10));const rows=new Map();
       const offs=grupos.map((values,i)=>onSnapshot(query(collection(db,COL),where('periodo','in',values)),{includeMetadataChanges:true},snap=>{try{current(c);if(snap.metadata.fromCache){ok(null,{cache:true});return;}rows.set(i,snap.docs.map(d=>({id:d.id,...d.data()})));if(rows.size===grupos.length)ok([...rows.values()].flat(),{cache:false});}catch{}},e=>{try{current(c);fail(e);}catch{}}));return()=>offs.forEach(f=>f());},
+    watchPlanejamentos(ok,fail){
+      const c=guard();if(c.nome!=='Amanda')throw Error('Este aviso é da Amanda.');
+      let ativo=true,geracao=0,chave=null,offsAgenda=[],rows=new Map(),agendas=new Map(),confirmados=new Set(),agendaPronta=new Set(),grupos=0;
+      const valido=()=>{if(!ativo)return false;try{current(c);return true;}catch{return false;}};
+      const erro=e=>{if(valido())fail(e);};
+      const emitir=()=>{if(!valido())return;if(confirmados.size!==2||agendaPronta.size!==grupos){ok(null,{cache:true});return;}ok(avisosPlanejamento([...rows.values()].flat(),[...agendas.values()].flat()),{cache:false});};
+      const atualizarAgenda=()=>{
+        const ids=[...new Set(planosSemConferencia([...rows.values()].flat()).map(r=>r.id.slice(2)))].sort(),next=ids.join('|');
+        if(chave===next){emitir();return;}chave=next;const n=++geracao;offsAgenda.forEach(f=>f());offsAgenda=[];agendas.clear();agendaPronta.clear();grupos=Math.ceil(ids.length/30);
+        if(!grupos){emitir();return;}ok(null,{cache:true});
+        for(let i=0;i<ids.length;i+=30){const part=i/30;offsAgenda.push(onSnapshot(query(collection(db,'agendamentos'),where(documentId(),'in',ids.slice(i,i+30))),{includeMetadataChanges:true},snap=>{
+          if(!valido()||n!==geracao)return;if(snap.metadata.fromCache){agendaPronta.delete(part);emitir();return;}
+          agendas.set(part,snap.docs.map(d=>({...d.data(),id:d.id})));agendaPronta.add(part);emitir();
+        },e=>{if(n===geracao){agendaPronta.delete(part);erro(e);}}));}
+      };
+      const offs=['p_','r_p_'].map(prefix=>onSnapshot(query(collection(db,COL),where(documentId(),'>=',prefix),where(documentId(),'<',prefix+'\uf8ff')),{includeMetadataChanges:true},snap=>{
+        if(!valido())return;if(snap.metadata.fromCache){confirmados.delete(prefix);emitir();return;}
+        rows.set(prefix,snap.docs.map(d=>({...d.data(),id:d.id})));confirmados.add(prefix);if(confirmados.size===2)atualizarAgenda();else emitir();
+      },e=>{confirmados.delete(prefix);erro(e);}));
+      return()=>{ativo=false;++geracao;offs.forEach(f=>f());offsAgenda.forEach(f=>f());};
+    },
     async save(id,data,periodo,revisao){
       const c=guard(),retorno=id.startsWith('r_');
       if(retorno?!gestao(c.nome):c.nome!=='Luís')throw Error(retorno?'A conferência pertence a Chris e Amanda.':'O planejamento e a entrega são registrados pelo Luís.');
@@ -82,9 +117,29 @@ const CSS=`
 .dir101{--d-gold:#ffca28;--d-line:#45474b;--d-soft:#acb0b8;--d-bg:#25272b;color:#f3f3f4;margin:18px 0;font-size:14px;line-height:1.5}.dir101 *{box-sizing:border-box}.dir101 .d-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px}.dir101 .d-kicker{font-size:11px;font-weight:800;letter-spacing:1.6px;color:var(--d-gold);text-transform:uppercase}.dir101 h2{font-size:24px;line-height:1.2;margin:6px 0}.dir101 h3{font-size:17px;margin:0 0 8px}.dir101 p{margin:6px 0}.dir101 .d-muted{color:var(--d-soft);font-size:13px}.dir101 .d-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.dir101 .d-card{min-width:0;padding:18px;border:1px solid var(--d-line);border-radius:16px;background:var(--d-bg);margin-bottom:14px}.dir101 .d-card.gold{border-color:#887333;background:linear-gradient(140deg,#373023,#25272b 85%)}.dir101 .d-card.green{border-color:#45846b}.dir101 .d-card.red{border-color:#b87570}.dir101 .d-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px}.dir101 .d-between{justify-content:space-between}.dir101 .d-pill{display:inline-flex;border:1px solid #65666d;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;white-space:normal}.dir101 .d-pill.gold{color:#ffda67;border-color:#806b32}.dir101 .d-pill.green{color:#97dfb6;border-color:#477c5b}.dir101 .d-pill.red{color:#ffb0a9;border-color:#a16964}.dir101 .d-number{font-size:25px;font-weight:800}.dir101 .d-progress{height:5px;border-radius:4px;background:#414145;margin:12px 0;overflow:hidden}.dir101 .d-progress span{height:100%;display:block;background:var(--d-gold)}.dir101 .d-btn{border:1px solid #585b63;background:#33353a;color:#fff;border-radius:10px;padding:10px 14px;min-height:42px;cursor:pointer;font-size:13px;font-weight:700;white-space:normal}.dir101 .d-btn.primary{background:var(--d-gold);border-color:var(--d-gold);color:#24221a}.dir101 .d-btn:disabled{opacity:.5;cursor:wait}.dir101 .d-btn:focus-visible,.dir101 input:focus-visible,.dir101 textarea:focus-visible,.dir101 select:focus-visible{outline:2px solid var(--d-gold);outline-offset:3px}.dir101 a{color:#ffe39c;overflow-wrap:anywhere}.dir101 label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}.dir101 input:not([type=checkbox]),.dir101 textarea,.dir101 select{width:100%;border:1px solid #5a5c63;border-radius:10px;background:#202226;color:#fff;padding:11px 12px;font:inherit}.dir101 textarea{min-height:120px;resize:vertical}.dir101 input[type=checkbox]{width:18px;height:18px;accent-color:var(--d-gold)}.dir101 .d-field{margin-bottom:16px}.dir101 .d-fields{display:grid;grid-template-columns:1fr 1fr;gap:16px}.dir101 .d-fields .d-field{margin-bottom:0}.dir101 .d-list{display:grid;grid-template-columns:1fr 1fr;gap:14px}.dir101 .d-week{border-top:1px solid var(--d-line);padding-top:18px;margin-top:16px}.dir101 .d-empty{padding:16px;border:1px dashed #55585d;border-radius:12px;color:var(--d-soft)}.dir101 .d-status{white-space:pre-wrap;margin:10px 0;overflow-wrap:anywhere}.dir101 .d-status.error{color:#ffb4a9}.dir101 .d-preserve{white-space:pre-wrap;overflow-wrap:anywhere}.dir101 details{border:1px solid #44474c;border-radius:10px;padding:12px;margin-top:12px}.dir101 summary{cursor:pointer;font-weight:700}.dir101 .d-extras{border-left:3px solid #ffca28;padding:14px;background:#202226;border-radius:10px;margin:12px 0}.dir101 .d-preview{max-height:130px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}.dir101 .d-toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:14px 0}.dir101 .d-toolbar label{margin:0}.dir101 .d-toolbar input{max-width:190px}.dir101 .d-editor{scroll-margin-top:24px}.dir101 .d-plan-title{border-left:3px solid #ffca28;padding-left:14px;margin-bottom:18px}.dir101 .d-save{position:sticky;bottom:6px;padding:12px;background:#27292ef2;border:1px solid #50525b;border-radius:12px;margin-top:18px;z-index:2}.dir101 .d-check{display:flex;align-items:flex-start;gap:10px;font-weight:500}.dir101 [hidden]{display:none!important}@media(max-width:760px){.dir101 .d-grid,.dir101 .d-list,.dir101 .d-fields{grid-template-columns:1fr}.dir101 .d-head{align-items:flex-start;flex-direction:column}.dir101 h2{font-size:22px}.dir101 .d-card{padding:15px}.dir101 .d-toolbar{align-items:stretch}.dir101 .d-btn{min-height:44px}.dir101 .d-save .d-row{align-items:stretch;flex-direction:column}}
 `;
 
-export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,abrirPautas,compacto=false,abrirArea,abrirRotina,abrirDemandas,agora=()=>new Date()}){
+export function montarAvisosPlanejamento(root,{repo,abrir,aoContar,avisar}){
+  let ativo=true,off=null,rows=[],erro='',cache=true,primeiro=true,ultimas=new Set();
+  root.classList.add('dir101');
+  function render(){
+    if(!ativo)return;aoContar?.(rows.length,{cache,erro:!!erro});
+    root.innerHTML=`<style>${CSS}</style><section class="d-card gold" aria-label="Avisos de planejamento"><div class="d-row d-between"><div><span class="d-kicker">Luís → Amanda</span><h2>Planejamentos para conferir${rows.length?' · '+rows.length:''}</h2></div><button class="d-btn" data-atualizar>Ainda falta algo? Atualizar</button></div>
+      <p class="d-muted">Confira ou peça uma alteração. Se Luís atualizar o plano, ele aparece aqui novamente.</p>
+      ${erro?'<p class="d-status error" role="status">Não foi possível atualizar os avisos. A última lista foi mantida; tente atualizar.</p>':cache?'<p class="d-muted" role="status">Conferindo os avisos com o servidor…</p>':''}
+      ${!rows.length&&!cache&&!erro?'<p class="d-empty">Todos os planejamentos compartilhados estão conferidos.</p>':''}
+      <div class="d-list">${rows.map(r=>`<article class="d-card" data-plano="${esc(r.id)}"><div class="d-row d-between"><h3>${esc(r.agenda?.clienteNome||r.agenda?.cliente||'Sessão não localizada')}</h3><span class="d-pill gold">${r.revisao>1?'Planejamento atualizado':'Planejamento recebido'}</span></div><p class="d-muted">Gravação · ${br(r.agenda?.data)}${r.agenda?.hora?' · '+esc(r.agenda.hora):''}</p>${r.agenda?`<button class="d-btn primary" data-conferir="${esc(r.id)}">Conferir planejamento</button>`:'<p class="d-status error">A agenda deste plano precisa ser conferida. O planejamento continua salvo.</p>'}</article>`).join('')}</div></section>`;
+  }
+  function iniciar(){off?.();erro='';cache=true;render();off=repo.watchPlanejamentos((data,meta)=>{
+    if(!ativo)return;cache=meta.cache;
+    if(data){rows=data;erro='';const next=new Set(rows.map(r=>r.id+':'+r.revisao));if(!primeiro&&[...next].some(k=>!ultimas.has(k)))avisar?.('Luís compartilhou um planejamento. Confira em Direção de Filmagem.');ultimas=next;primeiro=false;}render();
+  },()=>{if(ativo){erro='erro';cache=false;render();}});}
+  const click=e=>{const b=e.target.closest('button');if(b?.dataset.conferir)abrir(b.dataset.conferir);else if(b?.hasAttribute('data-atualizar'))iniciar();};
+  root.addEventListener('click',click);iniciar();
+  return {destroy(){ativo=false;off?.();root.removeEventListener('click',click);root.replaceChildren();root.classList.remove('dir101');}};
+}
+
+export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,abrirPautas,compacto=false,abrirArea,abrirRotina,abrirDemandas,registroInicial='',agora=()=>new Date()}){
   const ctx={...contexto()};if(!permitido(ctx.nome))return {destroy(){}};
-  let vivo=true,seq=0,off=[],agenda=[],registros=new Map(),selecionado=null,salvando=false,semana=segunda(hojeBRT(agora())),mes=hojeBRT(agora()).slice(0,7),erro='',ready=false,cache=false,filtroSessoes='ativas';
+  let vivo=true,seq=0,off=[],agenda=[],registros=new Map(),selecionado=null,salvando=false,semana=segunda(hojeBRT(agora())),mes=hojeBRT(agora()).slice(0,7),erro='',ready=false,cache=false,filtroSessoes='ativas',alvoInicial=registroInicial;
   const manager=gestao(ctx.nome),valido=()=>vivo&&contexto().sessao===ctx.sessao&&contexto().uid===ctx.uid&&contexto().nome===ctx.nome;
   const key=id=>'get:i101:'+ctx.uid+':'+ctx.nome+':'+id;
   const draft={get(id){try{return JSON.parse(localStorage.getItem(key(id))||'null');}catch{return null;}},set(id,v){try{localStorage.setItem(key(id),JSON.stringify(v));return true;}catch{return false;}},del(id){try{localStorage.removeItem(key(id));}catch{}}};
@@ -130,7 +185,7 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
   async function carregar(){
     const n=++seq;off.forEach(f=>f());off=[];erro='';ready=false;cache=false;dashboard();
     try{
-      const a=await sessoes();if(!valido()||n!==seq)return;agenda=a;
+      const a=await sessoes();if(!valido()||n!==seq)return;agenda=a;if(alvoInicial){const item=agenda.find(x=>x.id===alvoInicial.slice(2));if(diaValido(item?.data))mes=item.data.slice(0,7);}
       const meses=[mes,...diasGet(semana).map(d=>d.slice(0,7))];
       const linked=agenda.filter(noMes).flatMap(a=>['p_'+a.id,'e_'+a.id]).flatMap(id=>[id,'r_'+id]);
       const other=new Map();
@@ -141,7 +196,7 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
       off.push(repo.watch([...meses,...[...other.values()].map(r=>r.periodo)],(rows,meta)=>{
         if(!valido()||n!==seq)return;cache=meta.cache;
         if(rows){registros=new Map(other);rows.forEach(r=>registros.set(r.id,r));ready=true;erro='';}
-        dashboard();avisoVersao();
+        dashboard();avisoVersao();if(ready&&alvoInicial){const id=alvoInicial;alvoInicial='';open(id);}
       },e=>{if(valido()&&n===seq){erro='Não foi possível conferir a direção. Isso não significa que os registros sumiram. '+(e.code==='permission-denied'?'Confira a publicação das permissões desta área.':'Tente atualizar.');dashboard();}}));
     }catch(e){if(valido()&&n===seq){erro='Não foi possível carregar a agenda da direção. Nenhuma gravação foi alterada.';dashboard();}}
   }
@@ -171,12 +226,12 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
     if(igual){draft.del(id);return;}
     if(!draft.set(id,{data:d,revisao:manager?selecionado.retornoRevisao:selecionado.revisao,periodo:selecionado.periodo}))status('O navegador não conseguiu guardar seu rascunho local. Mantenha esta tela aberta até salvar.',true);
   }
-  function status(s,error=false){const box=editor.querySelector('[data-form-status]');if(box){box.className='d-status'+(error?' error':'');box.textContent=s;}}
+  function status(s,error=false){let box=editor.querySelector('[data-form-status]');if(!box&&error){editor.innerHTML='<div data-form-status role="status"></div>';box=editor.querySelector('[data-form-status]');}if(box){box.className='d-status'+(error?' error':'');box.textContent=s;}}
   function avisoVersao(){if(!selecionado)return;const r=registros.get(selecionado.id),box=editor.querySelector('[data-version]');if(box)box.textContent=!salvando&&r&&r.revisao!==selecionado.revisao?'Há uma versão mais recente no servidor. Seu texto não foi substituído.':'';const rv=registros.get('r_'+selecionado.id),fb=editor.querySelector('[data-feedback]');if(fb&&rv)fb.innerHTML=`<div class="d-card ${rv.data.estado==='ajustar'?'red':'green'}"><strong>${esc(rv.autorNome)} · ${rv.data.estado==='ajustar'?'Pediu alteração':'Conferiu'}${rv.data.versao!==selecionado.revisao?' uma versão anterior':''}</strong><p class="d-preserve">${esc(rv.data.texto||'Conferência registrada.')}</p></div>`;}
   function desenharEditor(data){
     const s=selecionado,r=registros.get(s.id),rev=registros.get('r_'+s.id),a=agenda.find(a=>a.id===s.id.slice(2));
     editor.innerHTML=`<div class="d-card gold"><div class="d-row d-between"><div class="d-plan-title"><span class="d-kicker">${s.id.startsWith('p_')?'Planejamento livre':s.id.startsWith('e_')?'Conferência da gravação':'Rotina Get'}</span><h2>${esc(tituloRegistro(s.id))}</h2></div>${btn('Fechar','close')}</div><p class="d-muted">${a?'Sessão da agenda · '+esc(a.status)+(a.excluido?' · arquivada':'')+' · pauta '+esc(sessaoPeriodo(a)):'Segunda, quarta e sexta · vídeo ou carrossel'}</p><div class="d-status error" data-version role="status"></div><div data-feedback>${rev?`<div class="d-card ${rev.data.estado==='ajustar'?'red':'green'}"><strong>${esc(rev.autorNome)} · ${rev.data.estado==='ajustar'?'Pediu alteração':'Conferiu'}${rev.data.versao!==s.revisao?' uma versão anterior':''}</strong><p class="d-preserve">${esc(rev.data.texto||'Conferência registrada.')}</p></div>`:''}</div>
-      ${manager?resumo(r?.data,s.id):`<form novalidate>${formulario(data)}<div class="d-save"><div class="d-row">${btn(s.id.startsWith('g_')?'Salvar conteúdo da Get':s.id.startsWith('e_')?'Apresentar entrega':'Salvar e compartilhar','save',true)}${btn('Conferir versão atual','reload-record')}</div><p class="d-muted">Chris e Amanda recebem na página inicial. Rascunho local até salvar.</p></div></form>`}
+      ${manager?resumo(r?.data,s.id):`<form novalidate>${formulario(data)}<div class="d-save"><div class="d-row">${btn(s.id.startsWith('g_')?'Salvar conteúdo da Get':s.id.startsWith('e_')?'Apresentar entrega':'Salvar e compartilhar','save',true)}${btn('Conferir versão atual','reload-record')}</div><p class="d-muted">Chris e Amanda recebem na página inicial. Ao compartilhar um planejamento, Amanda também recebe um aviso. Rascunho local até salvar.</p></div></form>`}
       ${manager&&r?`<div class="d-card"><h3>Sua conferência · versão ${r.revisao}</h3>${area('retorno','Retorno para o Luís',rev?.data?.versao===r.revisao?rev.data.texto:'','Explique o ajuste necessário ou deixe uma orientação.') }<div class="d-row">${btn('Pedir alteração','request',true)}${btn('Marcar como conferido','ack')}</div></div>`:''}
       <div data-form-status class="d-status" role="status"></div><div class="d-row" style="margin-top:18px">${btn('Ver histórico','history')}${manager?btn('Conferir versão atual','reload-record'):''}${!manager&&draft.get(s.id)?btn('Recuperar meu rascunho','restore-draft'):''}</div><div data-history></div>
       ${a?`<details><summary>Agenda, pauta e materiais já enviados</summary><p class="d-muted">${esc(a.estilo||'')} ${esc(a.obsFilmmaker||'')}</p>${(a.referencias||[]).map(u=>`<p>${link(u,'Referência da agenda ↗')}</p>`).join('')}<div class="d-row">${btn('Consultar calendários','pautas')}${a.status==='agendado'&&!a.excluido?btn('Enviar materiais desta sessão','envio'):''}${btn('Ver materiais registrados','materials')}</div><div data-materials></div></details>`:''}</div>`;

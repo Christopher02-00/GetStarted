@@ -2045,6 +2045,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
 </div>
 
 <script type="module">
+import * as RadarI110 from './gs-radar-i110.mjs?v=1';
 import {referenciaI106,resolverI106,resumoI106,precisaRevisarI106,chaveI106,referenciaEscolhidaI106,escolherConteudosI106} from './gs-identidade-conteudo-i106.mjs?v=1';
 import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,patchSincroniaDemandaI93} from './gs-demandas-cliente-i93.mjs?v=i93-2';
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i90-1";
@@ -15848,7 +15849,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     return instanteAgendamentoI90(video?.clienteAprovouEm)||instanteAgendamentoI90(post?.criadoEm);
   }
   function inicioEsperaAgendamentoI90(post){
-    return Math.max(instanteAgendamentoI90(post?.criadoEm),instanteAgendamentoI90(post?.legendaEm),instanteAgendamentoI90(post?.aprovadoEm),Number(post?.__liberacaoI90)||0);
+    return RadarI110.startWaiting(post);
   }
   function diasEsperaAgendamentoI90(post,agora=Date.now()){
     const inicio=inicioEsperaAgendamentoI90(post);return inicio?Math.max(0,Math.floor((agora-inicio)/86400000)):0;
@@ -36160,7 +36161,7 @@ window.setGerenciaSub = function(qual, el){
       txt += `  Nenhuma — time em dia! 🎉\n`;
     }
     txt += `\n*Vídeos:*\n  Em edição: ${emEdicao}\n  Em correção: ${emCorrecao}\n  Aguardando aprovação interna: ${aguardApr}\n  Aguardando aprovação do cliente: ${aguardCliente}\n`;
-    txt += `\n*Radar de Perdas:* ${perdasDigest.length ? perdasDigest.length + ' item(ns) precisando de atenção (ver Gerência)' : '0 — funil limpo 🎉'}\n`;
+    txt += `\n*Radar de Perdas:* ${RadarI110.digest(perdasDigest)}\n`;
     txt += `\n*Gravações amanhã (${formatarDataBR(amanhaStr)}):* ${gravacoesAmanha.length}\n`;
     gravacoesAmanha.forEach(a => { txt += `  • ${a.clienteNome||'?'} às ${a.hora||'?'}\n`; });
     return txt;
@@ -47770,106 +47771,138 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }
   };
 
-  /* ===== MELHORIA 6B — RADAR DE PERDAS =====
-     A contabilidade de conteúdo: gravado × lançado × aprovado × legendado
-     × agendado × publicado, elo por elo, por cliente. Qualquer diferença
-     vira um item de perda com localização exata. Só PAINEL de auditoria —
-     não cria demanda nem e-mail novo (cada elo já tem sua cobrança própria;
-     aprendemos com o bug das demandas-sombra que painel e automação não
-     podem se misturar). */
-  async function calcularRadarPerdas(){
-    const [agSnap, storiesSnap] = await Promise.all([
-      getDocs(collection(db,'agendamentos')),
-      getDocs(collection(db,'stories_semanais'))
-    ]);
-    const videos = cacheVideosProducao.filter(v => !v.excluido);
-    const postagens = cachePostagens.filter(p => !p.excluido);
-    const hojeStr = hojeLocal();
-    const perdas = [];
-
-    // Elo A — gravado × lançado, por cliente (só informativo, não é erro fatal)
-    const realizadoPorCliente = {};
-    agSnap.forEach(d => {
-      const a = d.data();
-      if(!a.excluido && a.status === 'realizado' && (a.qtdVideosRealizados||0) > 0){
-        const slug = a.cliente || a.clienteSlug;
-        if(slug) realizadoPorCliente[slug] = (realizadoPorCliente[slug]||0) + Number(a.qtdVideosRealizados||0);
-      }
-    });
-    const lancadoPorCliente = {};
-    videos.forEach(v => { lancadoPorCliente[v.cliente] = (lancadoPorCliente[v.cliente]||0) + 1; });
-    Object.keys(realizadoPorCliente).forEach(slug => {
-      const diferenca = realizadoPorCliente[slug] - (lancadoPorCliente[slug]||0);
-      if(diferenca > 0){
-        const nomeCliente = videos.find(v=>v.cliente===slug)?.clienteNome || slug;
-        perdas.push({ elo:'A. Gravado → Lançado', cliente: nomeCliente, titulo: diferenca + ' vídeo(s) gravado(s) a mais do que lançado(s) pra edição', dias: null });
-      }
-    });
-
-    // Elo B — aprovado sem postagem (deve ser sempre 0, o conciliador já resolve)
-    const videoIdsComPostagem = new Set(postagens.map(p=>p.videoId).filter(Boolean));
-    videos.forEach(v => {
-      if(v.status==='finalizado') return; // entrega direta — nao e perda, e o fim correto do ciclo
-      if((v.status==='aprovado' || v.clienteAprovou===true) && !videoIdsComPostagem.has(v.id)){
-        perdas.push({ elo:'B. Aprovado → Postagem', cliente: v.clienteNome||'—', titulo: v.titulo||'', dias: null });
-      }
-    });
-
-    // Elo C — legenda travada 2+ dias
-    postagens.forEach(p => {
-      if(p.status !== 'aguardando_legenda') return;
-      const dias = p.criadoEm?.seconds ? Math.floor((Date.now()-p.criadoEm.seconds*1000)/86400000) : 0;
-      if(dias >= 2) perdas.push({ elo:'C. Postagem → Legenda', cliente: p.clienteNome||'—', titulo: p.titulo||'', dias });
-    });
-
-    // Elo D — agendamento travado 2+ dias (desde a legenda)
-    postagens.forEach(p => {
-      if(p.status !== 'aguardando_agendamento') return;
-      const dias = diasEsperaAgendamentoI90(p);
-      if(dias >= 2) perdas.push({ elo:'D. Legenda → Agendamento', cliente: p.clienteNome||'—', titulo: p.titulo||'', dias });
-    });
-
-    // Elo E — agendado, data já passou, sem confirmação de publicação
-    postagens.forEach(p => {
-      if(p.status !== 'agendado' || !p.dataAgendada || p.dataAgendada >= hojeStr) return;
-      const dias = Math.floor((Date.now()-new Date(p.dataAgendada).getTime())/86400000);
-      perdas.push({ elo:'E. Agendado → Publicado', cliente: p.clienteNome||'—', titulo: p.titulo||'', dias });
-    });
-
-    // Elo F — story esquecido (cliente não respondeu em 3+ dias)
-    storiesSnap.forEach(d => {
-      const s = d.data();
-      if(s.excluido || s.status !== 'pendente') return;
-      const dias = s.criadoEm?.seconds ? Math.floor((Date.now()-s.criadoEm.seconds*1000)/86400000) : 0;
-      if(dias >= 3) perdas.push({ elo:'F. Stories', cliente: s.clienteNome||'—', titulo: s.titulo||'', dias });
-    });
-
-    return perdas;
+  /* I110: leitura por identidade; acompanhamento interno não altera a produção. */
+  let radarAtualI110=[], radarModalI110=null, radarSequenciaI110=0, radarLeituraI110=null;
+  const radarFiltrosI110=new Map();
+  function exigirRadarI110(sessao){
+    if(!['Chris','Amanda'].includes(usuarioAtual)||sessao!==sessaoServicoManual())throw Error('O perfil mudou. Reabra o Radar.');
   }
-
-  function renderRadarPerdasHtml(perdas, idExpandir){
-    const cor = perdas.length ? 'var(--red)' : 'var(--green)';
-    const texto = perdas.length ? perdas.length + ' item(ns) precisando de atenção' : '0 perdas — funil limpo';
-    let html = `<div class="card" style="border:2px solid ${cor};">
-      <h2 style="cursor:pointer;" onclick="document.getElementById('${idExpandir}').style.display = document.getElementById('${idExpandir}').style.display==='none' ? 'block' : 'none';">📡 Radar de Perdas — ${texto}</h2>
-      <div id="${idExpandir}" style="display:none;margin-top:10px;">`;
-    if(!perdas.length){
-      html += '<div class="empty">Nada parado além do esperado. 🎉</div>';
-    } else {
-      const porElo = {};
-      perdas.forEach(p => { porElo[p.elo] = porElo[p.elo] || []; porElo[p.elo].push(p); });
-      Object.keys(porElo).sort().forEach(elo => {
-        html += `<div style="margin-top:10px;"><b style="font-size:12px;">${esc(elo)}</b></div>`;
-        porElo[elo].forEach(p => {
-          html += `<div class="item" style="padding:8px 10px;margin-top:4px;">
-            <b>${esc(p.cliente)}</b> — ${esc(p.titulo)}${p.dias!==null ? ' · há '+p.dias+' dia(s)' : ''}
-          </div>`;
-        });
+  async function calcularRadarPerdas(forcar=false){
+    const sessao=sessaoServicoManual();
+    if(radarLeituraI110?.sessao===sessao&&!forcar)return radarLeituraI110.promise;
+    const promise=(async()=>{
+      try{
+        exigirRadarI110(sessao);
+        const nomes=['agendamentos','videos_producao','postagens','stories_semanais'];
+        const snaps=await Promise.all(nomes.map(n=>comTimeoutCalendarioOperacional(forcar?_getDocsFromServerFB(collection(db,n)):getDocs(collection(db,n)),'Conferir Radar: '+n,12000)));
+        const notes=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'config_painel'),where('tipo','==','radar_i110'))),'Conferir acompanhamentos do Radar',12000);
+        exigirRadarI110(sessao);
+        const data=Object.fromEntries(nomes.map((n,i)=>[n,snaps[i].docs.map(d=>({...d.data(),id:d.id}))]));
+        const items=RadarI110.applyFollowups(RadarI110.calculate(data),notes.docs.map(d=>({...d.data(),id:d.id})));
+        radarAtualI110=items;
+        return items;
+      }catch(e){
+        const items=[];items.erro=String(e.message||e);return items;
+      }
+    })();
+    const ctx={sessao,promise};radarLeituraI110=ctx;
+    try{return await promise;}finally{if(radarLeituraI110===ctx)radarLeituraI110=null;}
+  }
+  function renderRadarPerdasHtml(items,id){
+    const filter=radarFiltrosI110.get(id)||'aberto';
+    const s=RadarI110.summary(items), labels={aberto:'Para agir',conferencia:'Conferir registros',acompanhamento:'Em acompanhamento',conferido:'Conferidos'};
+    const counts={aberto:s.acao,conferencia:s.conferencia,acompanhamento:s.acompanhamento,conferido:s.conferido};
+    const shown=items.filter(i=>filter==='aberto'?i.state==='aberto'&&i.kind==='acao':filter==='conferencia'?i.state==='aberto'&&i.kind==='conferencia':i.state===filter);
+    const color=items.erro?'var(--yellow)':s.acao?'var(--red)':s.conferencia?'var(--yellow)':'var(--green)';
+    return `<section class="card radar-i110" data-radar-id="${escAttr(id)}" style="border:2px solid ${color}">
+      <h2>📡 Radar de Perdas</h2><p class="meta">Abra a ocorrência para entender o motivo e escolher o próximo passo.</p>
+      <button type="button" class="btn secondary" onclick="atualizarRadarI110()">Atualizar Radar</button>
+      ${items.erro?`<p role="alert">Não foi possível conferir agora. Nenhum item foi considerado resolvido.</p><p class="meta">${esc(items.erro)}</p>`:`
+      <div class="btnrow" style="margin:12px 0;flex-wrap:wrap">${Object.entries(labels).map(([value,label])=>`<button type="button" class="btn ${value===filter?'':'secondary'}" data-radar="${escAttr(id)}" data-filter="${value}" onclick="filtrarRadarI110(this.dataset.radar,this.dataset.filter)">${label} (${counts[value]})</button>`).join('')}</div>
+      <div style="max-height:560px;overflow:auto">${shown.length?shown.map(i=>`<article class="item" style="padding:14px;margin-top:8px"><h3 style="margin:0 0 6px">${esc(i.clienteNome)} · ${esc(i.titulo)}</h3><p>${esc(i.description)}</p>${i.dias!==null?`<p class="meta">${i.dias} dia(s) nesta etapa</p>`:''}${i.changed?'<p class="meta">O registro mudou depois da última conferência. Confira novamente.</p>':''}${i.expired?'<p class="meta">Chegou a data combinada para rever.</p>':''}${i.note?`<p class="meta">${esc(i.note.motivo)}${i.note.reverEm?' · rever '+esc(formatarDataBR(i.note.reverEm)):''}</p>`:''}<button type="button" class="btn" data-key="${escAttr(i.key)}" onclick="abrirRadarI110(this.dataset.key)">Ver detalhes e resolver</button></article>`).join(''):'<p class="meta">Nenhuma ocorrência neste grupo.</p>'}</div>`}
+    </section>`;
+  }
+  window.filtrarRadarI110=function(id,filter){
+    if(!['aberto','conferencia','acompanhamento','conferido'].includes(filter))return;
+    radarFiltrosI110.set(id,filter);
+    const node=[...document.querySelectorAll('.radar-i110')].find(n=>n.dataset.radarId===id);
+    if(node)node.outerHTML=renderRadarPerdasHtml(radarAtualI110,id);
+  };
+  window.atualizarRadarI110=async function(){
+    const sessao=sessaoServicoManual(),nodes=[...document.querySelectorAll('.radar-i110')];
+    nodes.forEach(n=>n.querySelector('button')?.setAttribute('disabled',''));
+    const items=await calcularRadarPerdas(true);
+    if(sessao!==sessaoServicoManual())return;
+    for(const n of nodes)if(n.isConnected)n.outerHTML=renderRadarPerdasHtml(items,n.dataset.radarId);
+  };
+  window.abrirRadarI110=async function(key){
+    const seq=++radarSequenciaI110,sessao=sessaoServicoManual();
+    const modal=document.getElementById('modalConteudo');
+    try{exigirRadarI110(sessao);}catch(e){mostrarToast(e.message,'erro');return;}
+    modal.innerHTML='<h2>Conferindo ocorrência…</h2><button class="btn secondary" onclick="fecharModal()">Fechar</button>';
+    document.getElementById('overlayView').classList.add('show');
+    const root=modal.firstElementChild,items=await calcularRadarPerdas(true);
+    if(seq!==radarSequenciaI110||sessao!==sessaoServicoManual()||modal.firstElementChild!==root||!document.getElementById('overlayView').classList.contains('show'))return;
+    const i=items.find(x=>x.key===key);
+    if(items.erro||!i){modal.innerHTML=`<h2>${items.erro?'Não foi possível conferir':'A ocorrência não está mais aberta na fonte'}</h2><p>${esc(items.erro||'Atualize o Radar para ver a situação atual. Nenhuma alteração foi feita.')}</p><button class="btn secondary" onclick="fecharModal();atualizarRadarI110()">Voltar e atualizar</button>`;return;}
+    radarModalI110={item:i,sessao,revision:Number(i.note?.revisao)||0,busy:false,op:null};
+    modal.innerHTML=`<h2>${esc(i.clienteNome)} · ${esc(i.titulo)}</h2><p>${esc(i.description)}</p><div class="card">${i.details.map(t=>`<p class="meta" style="overflow-wrap:anywhere">${esc(t)}</p>`).join('')}<p class="meta">Registro: ${esc(i.id)}</p><button type="button" class="btn" onclick="origemRadarI110()">${esc(i.route)}</button></div>
+      <div class="card"><h3>Acompanhamento da Amanda e do Chris</h3><p class="meta">Organiza somente este Radar. Não publica vídeos, não altera a fila da equipe e não suspende cobranças automáticas.</p>
+      <label for="radarEstadoI110">Situação</label><select id="radarEstadoI110"><option value="aberto">Precisa de ação / conferir</option><option value="acompanhamento">Espera combinada — rever depois</option><option value="conferido">Conferido manualmente</option></select>
+      <label for="radarMotivoI110">Motivo e o que foi combinado</label><textarea id="radarMotivoI110" maxlength="2000" placeholder="Ex.: material pronto; aguardando o lançamento do almoço do cliente."></textarea>
+      <label for="radarReverI110">Rever em (para espera combinada)</label><input id="radarReverI110" type="date"><p class="meta">Na data escolhida, a ocorrência volta para conferência. Se a fonte mudar, a conferência anterior deixa de encobrir a mudança.</p>
+      <button type="button" id="radarSalvarI110" class="btn" onclick="salvarRadarI110()">Salvar acompanhamento</button><p id="radarReciboI110" role="status"></p></div>
+      <button type="button" class="btn secondary" onclick="demandaRadarI110()">Preparar demanda para a equipe</button><p class="meta">Você escolhe a pessoa e revisa antes de enviar.</p>
+      <details><summary>Histórico desta conferência</summary>${(Array.isArray(i.note?.historico)?i.note.historico:[]).slice().reverse().map(h=>`<p class="meta">${esc(h.em)} · ${esc(h.por)} · ${esc(h.estado)}<br>${esc(h.motivo)}</p>`).join('')||'<p class="meta">Primeiro acompanhamento.</p>'}</details><button type="button" class="btn secondary" style="margin-top:12px" onclick="fecharModal()">Voltar</button>`;
+    document.getElementById('radarEstadoI110').value=i.state;
+    document.getElementById('radarMotivoI110').value=i.note?.motivo||'';
+    document.getElementById('radarReverI110').value=i.note?.reverEm||'';
+    radarModalI110.root=modal.firstElementChild;
+  };
+  window.origemRadarI110=async function(){
+    const ctx=radarModalI110;if(!ctx)return;
+    try{exigirRadarI110(ctx.sessao);}catch(e){mostrarToast(e.message,'erro');return;}
+    const i=ctx.item;radarSequenciaI110++;fecharModal();
+    if(i.col==='agendamentos')await abrirAgendaI85(i.id);
+    else if(i.col==='videos_producao')await abrirVideoDeAtraso(i.id);
+    else if(i.col==='postagens')await abrirPostagemDeAtraso(i.id);
+    else {window.__storyClienteSel=i.cliente;if(i.semana)window.__semanaStories=i.semana;irPara('stories');mostrarToast('Confira '+i.clienteNome+' · semana '+i.semana);}
+  };
+  window.demandaRadarI110=function(){
+    const ctx=radarModalI110;if(!ctx)return;
+    try{exigirRadarI110(ctx.sessao);}catch(e){mostrarToast(e.message,'erro');return;}
+    const i=ctx.item;radarSequenciaI110++;abrirModalNovaDemanda();
+    document.getElementById('novoTituloModal').value='Conferir '+i.clienteNome+' — '+i.titulo;
+    document.getElementById('novaDescModal').value=i.description+'\n'+i.details.join('\n')+'\nRegistro: '+i.col+'/'+i.id+'\nConfira a origem e registre a solução no caminho normal. A conferência do Radar não altera o conteúdo.';
+  };
+  window.salvarRadarI110=async function(){
+    const ctx=radarModalI110;if(!ctx||ctx.busy)return false;
+    const modal=document.getElementById('modalConteudo'),vigente=()=>ctx===radarModalI110&&ctx.root===modal.firstElementChild&&ctx.sessao===sessaoServicoManual();
+    const btn=document.getElementById('radarSalvarI110'),recibo=document.getElementById('radarReciboI110');
+    const fields=['radarEstadoI110','radarMotivoI110','radarReverI110'].map(id=>document.getElementById(id));
+    const raw=fields.map(f=>f.value);
+    let values;
+    try{exigirRadarI110(ctx.sessao);values=RadarI110.validateFollowup({estado:fields[0].value,motivo:fields[1].value,reverEm:fields[2].value});}catch(e){recibo.textContent=e.message;return false;}
+    ctx.busy=true;btn.disabled=true;recibo.textContent="Salvando acompanhamento…";
+    const signature=RadarI110.stable(values);
+    if(!ctx.op||ctx.op.values!==signature)ctx.op={id:crypto.randomUUID(),values:signature};
+    const op=ctx.op.id,ref=doc(db,'config_painel','radar_i110_'+ctx.item.key);
+    try{
+      const items=await calcularRadarPerdas(true);exigirRadarI110(ctx.sessao);
+      if(items.erro)throw Error(items.erro);
+      const atual=items.find(i=>i.key===ctx.item.key);
+      if(!atual||atual.signature!==ctx.item.signature)throw Error('A origem mudou. Reabra a ocorrência antes de registrar a conferência.');
+      await runTransaction(db,async tx=>{
+        const s=await tx.get(ref),old=s.exists()?s.data():null;exigirRadarI110(ctx.sessao);
+        if(old&&(old.tipo!=='radar_i110'||old.chave!==ctx.item.key||!Array.isArray(old.historico)))throw Error('Registro de acompanhamento incompatível. Nenhum dado foi sobrescrito.');
+        if(old?.operacaoId===op)return;
+        if((Number(old?.revisao)||0)!==ctx.revision)throw Error('Outro gestor atualizou esta conferência. Seu texto foi mantido; copie-o e reabra para comparar.');
+        const entry={operacaoId:op,por:usuarioAtual,em:new Date().toISOString(),...values};
+        tx.set(ref,{tipo:'radar_i110',versao:1,chave:ctx.item.key,cliente:ctx.item.cliente,origemColecao:ctx.item.col,origemId:ctx.item.id,assinatura:ctx.item.signature,titulo:ctx.item.titulo,...values,por:usuarioAtual,em:entry.em,revisao:ctx.revision+1,operacaoId:op,historico:[...(old?.historico||[]),entry]});
       });
-    }
-    html += '</div></div>';
-    return html;
-  }
+      const s=await _getDocFromServerFB(ref);exigirRadarI110(ctx.sessao);
+      if(!s.exists()||s.data().operacaoId!==op)throw Error('Não foi possível confirmar. Reabra a ocorrência antes de tentar novamente.');
+      ctx.revision=s.data().revisao;ctx.item.note=s.data();ctx.op=null;
+      if(vigente()){
+        // Não substituir texto que a pessoa digitou durante a espera.
+        const mudouDuranteEspera=fields.some((field,index)=>field.value!==raw[index]);
+        [values.estado,values.motivo,values.reverEm].forEach((value,index)=>{if(fields[index].value===raw[index])fields[index].value=value;});
+        recibo.textContent=mudouDuranteEspera?'Versão enviada salva. As alterações digitadas durante a espera ainda precisam ser salvas.':'Acompanhamento salvo. As fontes e a fila da equipe foram preservadas.';
+      }
+      await atualizarRadarI110();return true;
+    }catch(e){if(vigente())recibo.textContent='Não confirmado: '+e.message;return false;}
+    finally{ctx.busy=false;if(btn.isConnected)btn.disabled=false;}
+  };
 
   /* Uma função só monta o cockpit. A tela do Resumo Executivo e a Central
      de Comando chamam a mesma — assim os dois lugares nunca divergem. */

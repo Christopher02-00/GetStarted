@@ -1,5 +1,7 @@
 // Direção de Filmagem: fonte privada, sem writers de agenda, vídeo ou portal.
 export const INICIO_ROTINA = '2026-09-28';
+export const INICIO_GET_SEMANAL = '2026-10-05';
+export const getSemanal = id => /^g_s_[a-zA-Z0-9-]{8,80}$/.test(id);
 const COL='direcao_filmagem', PAPEIS=['Luís','Chris','Amanda'];
 export const permitido = p => PAPEIS.includes(p);
 export const gestao = p => ['Chris','Amanda'].includes(p);
@@ -30,12 +32,45 @@ export function validar(id,d){
     if(!n.texto)throw Error('Conte brevemente o que foi realizado.');
     if(n.estado==='entregue'&&(!n.arquivos||(!n.referencias&&!n.extras.some(x=>x.url))||n.extras.some(x=>!x.url)))throw Error('Para concluir a conferência, confirme os arquivos e informe os links dos materiais, inclusive os extras.');
   }else{
-    if(!diaValido(id.slice(2))||!diasGet(id.slice(2)).includes(id.slice(2)))throw Error('A rotina Get usa segunda, quarta e sexta, a partir de 28/09/2026.');
+    if(!getSemanal(id)&&(!diaValido(id.slice(2))||!diasGet(id.slice(2)).includes(id.slice(2))))throw Error('Registro Get anterior inválido. Abra o conteúdo existente.');
     n={titulo:texto(d.titulo,200,'O título'),formato:d.formato,texto:texto(d.texto,12000,'A ideia'),referencias:links(d.referencias),url:texto(d.url,2000,'O material'),estado:d.estado};
-    if(!n.titulo||!['video','carrossel'].includes(n.formato)||!['planejado','em_producao','entregue'].includes(n.estado)||(n.url&&!linkSeguro(n.url))||(n.estado==='entregue'&&!n.url))throw Error('Informe título, formato e situação. Uma entrega precisa do link do material.');
+    if(!n.titulo||!['video','carrossel'].includes(n.formato)||!(getSemanal(id)?['planejado','em_producao','entregue','cancelado']:['planejado','em_producao','entregue']).includes(n.estado)||(n.url&&!linkSeguro(n.url))||(n.estado==='entregue'&&!n.url))throw Error('Informe título, formato e situação. Uma entrega precisa do link do material.');
+    if(getSemanal(id)){
+      Object.assign(n,{modelo:114,entregaEm:String(d.entregaEm||''),primeiraEntregaEm:String(d.primeiraEntregaEm||''),pronto:d.pronto===true});
+      if(!diaValido(n.entregaEm)||n.entregaEm<INICIO_GET_SEMANAL)throw Error('Informe a data da entrega, a partir de 05/10/2026. O histórico anterior fica preservado.');
+      if(n.estado==='entregue'&&(!n.pronto||n.entregaEm>hojeBRT()))throw Error('Confirme o material organizado e as etapas atribuídas a você. A entrega não pode estar no futuro.');
+      if(n.url)n.url=linkSeguro(n.url);
+    }
   }
   return n;
 }
+// I114: a entrega e sua conferência são eventos distintos da publicação.
+export function chaveMaterialGet(url){
+  if(!linkSeguro(url))return '';
+  const u=new URL(url);u.hash='';
+  if(['drive.google.com','docs.google.com'].includes(u.hostname)){
+    const id=u.pathname.match(/\/(?:d|folders)\/([A-Za-z0-9_-]+)/)?.[1]||u.searchParams.get('id');
+    if(id)return 'google:'+id;
+  }
+  return u.href;
+}
+export function dataGet(r){return getSemanal(r.id)?r.data?.primeiraEntregaEm||r.data?.entregaEm||'':r.id.slice(2);}
+export function resumoSemanaGet(rows,semana,hoje){
+  const byId=new Map(rows.map(r=>[r.id,r])),fim=somarDias(semana,6),origem=new Map();
+  const conteudos=rows.filter(r=>r.id.startsWith('g_')&&diaValido(dataGet(r)));
+  const entregue=r=>!!chaveMaterialGet(r.data?.url)&&r.data?.estado!=='cancelado'&&(getSemanal(r.id)?!!r.data.primeiraEntregaEm:r.data?.estado==='entregue');
+  // Mesmo material, inclusive cadastrado em duas abas, nunca soma duas entregas.
+  conteudos.filter(entregue).sort((a,b)=>dataGet(a).localeCompare(dataGet(b))||a.id.localeCompare(b.id)).forEach(r=>{const k=chaveMaterialGet(r.data.url);if(!origem.has(k))origem.set(k,r.id);});
+  const items=conteudos.filter(r=>dataGet(r)>=semana&&dataGet(r)<=fim).map(r=>{
+    const v=byId.get('r_'+r.id),retorno=v?.data?.versao===r.revisao?v:null;
+    const duplicadoDe=entregue(r)&&origem.get(chaveMaterialGet(r.data.url))!==r.id?origem.get(chaveMaterialGet(r.data.url)):'';
+    const conta=entregue(r)&&!duplicadoDe;
+    const estado=r.data?.estado==='cancelado'?'cancelado':duplicadoDe?'duplicado':(retorno?.data.estado==='ajustar'||conta&&r.data.estado!=='entregue'&&v?.data.estado==='ajustar')?'ajuste':conta&&r.data.estado==='entregue'?(retorno?.data.estado==='ciente'?'conferido':'conferencia'):'producao';
+    return {...r,retorno:retorno||(estado==='ajuste'?v:null),duplicadoDe,conta,estadoGet:estado};
+  }).sort((a,b)=>dataGet(a).localeCompare(dataGet(b))||a.id.localeCompare(b.id));
+  return {items,entregues:items.filter(r=>r.conta).length,conferidos:items.filter(r=>r.estadoGet==='conferido').length,ajustes:items.filter(r=>r.estadoGet==='ajuste').length,conferir:items.filter(r=>r.estadoGet==='conferencia').length,encerrada:fim<hoje,meta:2};
+}
+
 // I113: o aviso é uma leitura da revisão salva, nunca outra demanda.
 export function planosSemConferencia(rows){
   const byId=new Map(rows.map(r=>[r.id,r]));
@@ -62,6 +97,16 @@ export function criarRepositorio(s,contexto){
     async historico(id){const c=guard(),r=await getDocsFromServer(collection(db,COL,id,'historico'));current(c);return r.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.revisao-a.revisao);},
     watch(meses,ok,fail){const c=guard(),periodos=[...new Set(meses)],grupos=[];for(let i=0;i<periodos.length;i+=10)grupos.push(periodos.slice(i,i+10));const rows=new Map();
       const offs=grupos.map((values,i)=>onSnapshot(query(collection(db,COL),where('periodo','in',values)),{includeMetadataChanges:true},snap=>{try{current(c);if(snap.metadata.fromCache){ok(null,{cache:true});return;}rows.set(i,snap.docs.map(d=>({id:d.id,...d.data()})));if(rows.size===grupos.length)ok([...rows.values()].flat(),{cache:false});}catch{}},e=>{try{current(c);fail(e);}catch{}}));return()=>offs.forEach(f=>f());},
+    watchGet(ok,fail){
+      const c=guard(),parts=new Map(),confirmed=new Set();let active=true;
+      const valid=()=>{if(!active)return false;try{current(c);return true;}catch{return false;}};
+      const offs=['g_','r_g_'].map(prefix=>onSnapshot(query(collection(db,COL),where(documentId(),'>=',prefix),where(documentId(),'<',prefix+'\uf8ff')),{includeMetadataChanges:true},snap=>{
+        if(!valid())return;if(snap.metadata.fromCache){confirmed.delete(prefix);ok(null,{cache:true});return;}
+        parts.set(prefix,snap.docs.map(d=>({id:d.id,...d.data()})));confirmed.add(prefix);
+        ok(confirmed.size===2?[...parts.values()].flat():null,{cache:confirmed.size!==2});
+      },e=>{if(valid()){confirmed.delete(prefix);fail(e);}}));
+      return()=>{active=false;offs.forEach(f=>f());};
+    },
     watchPlanejamentos(ok,fail){
       const c=guard();if(c.nome!=='Amanda')throw Error('Este aviso é da Amanda.');
       let ativo=true,geracao=0,chave=null,offsAgenda=[],rows=new Map(),agendas=new Map(),confirmados=new Set(),agendaPronta=new Set(),grupos=0;
@@ -88,11 +133,24 @@ export function criarRepositorio(s,contexto){
       if(retorno?!gestao(c.nome):c.nome!=='Luís')throw Error(retorno?'A conferência pertence a Chris e Amanda.':'O planejamento e a entrega são registrados pelo Luís.');
       if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(periodo))throw Error('Período inválido.');
       const normal=validar(id,data),op=crypto.randomUUID(),h=hist(id,op);let result;
+      if(getSemanal(id)&&normal.estado==='entregue'){
+        const existing=await getDocsFromServer(query(collection(db,COL),where(documentId(),'>=','g_'),where(documentId(),'<','g_\uf8ff')));current(c);
+        const duplicate=existing.docs.find(d=>d.id!==id&&d.data().data?.estado!=='cancelado'&&chaveMaterialGet(d.data().data?.url)&&chaveMaterialGet(d.data().data.url)===chaveMaterialGet(normal.url));
+        if(duplicate)throw Error('Este material já tem uma ficha na Get. Abra o conteúdo existente e atualize a versão; não crie outra entrega.');
+      }
       try{
         await runTransaction(db,async tx=>{
           current(c);const old=await tx.get(ref(id)),v=old.exists()?old.data():null;
           if((v?.revisao||0)!==revisao)throw Object.assign(Error('Este registro mudou. Seu rascunho está preservado. Confira a versão atual antes de reenviar.'),{code:'conflito'});
-          if(retorno){const target=await tx.get(ref(id.slice(2)));if(!target.exists()||target.data().revisao!==normal.versao)throw Object.assign(Error('Luís atualizou este conteúdo. Abra a versão atual antes de conferir.'),{code:'conflito'});}
+          if(retorno){const target=await tx.get(ref(id.slice(2)));if(!target.exists()||target.data().revisao!==normal.versao)throw Object.assign(Error('Luís atualizou este conteúdo. Abra a versão atual antes de conferir.'),{code:'conflito'});
+            if(getSemanal(id.slice(2))&&(target.data().data.estado==='cancelado'||normal.estado==='ciente'&&(target.data().data.estado!=='entregue'||!target.data().data.pronto||!linkSeguro(target.data().data.url))))throw Error('A conferência exige material entregue e disponível. Planejamento ou cancelamento não é entrega.');
+          }
+          if(getSemanal(id)){
+            const first=v?.data?.primeiraEntregaEm||'';
+            if(first&&normal.entregaEm!==first)throw Error('A data da primeira entrega fica preservada. Corrija o material na mesma ficha, sem mudar sua semana.');
+            normal.primeiraEntregaEm=first||(normal.estado==='entregue'?normal.entregaEm:'');
+            periodo=(normal.primeiraEntregaEm||normal.entregaEm).slice(0,7);
+          }
           if(v&&estavel(v.data)===estavel(normal)){result={id,...v,semAlteracao:true};return;}
           const value={data:normal,periodo,revisao:revisao+1,operacao:op,autorUid:c.uid,autorNome:c.nome,atualizadoEm:serverTimestamp()};
           tx.set(ref(id),value);tx.set(h,value);result={id,...value};
@@ -140,6 +198,7 @@ export function montarAvisosPlanejamento(root,{repo,abrir,aoContar,avisar}){
 export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,abrirPautas,compacto=false,abrirArea,abrirRotina,abrirDemandas,registroInicial='',agora=()=>new Date()}){
   const ctx={...contexto()};if(!permitido(ctx.nome))return {destroy(){}};
   let vivo=true,seq=0,off=[],agenda=[],registros=new Map(),selecionado=null,salvando=false,semana=segunda(hojeBRT(agora())),mes=hojeBRT(agora()).slice(0,7),erro='',ready=false,cache=false,filtroSessoes='ativas',alvoInicial=registroInicial;
+  let getRows=new Map(),getReady=false,getCache=false,getErro='',offGet=()=>{},outrasGet=false;
   const manager=gestao(ctx.nome),valido=()=>vivo&&contexto().sessao===ctx.sessao&&contexto().uid===ctx.uid&&contexto().nome===ctx.nome;
   const key=id=>'get:i101:'+ctx.uid+':'+ctx.nome+':'+id;
   const draft={get(id){try{return JSON.parse(localStorage.getItem(key(id))||'null');}catch{return null;}},set(id,v){try{localStorage.setItem(key(id),JSON.stringify(v));return true;}catch{return false;}},del(id){try{localStorage.removeItem(key(id));}catch{}}};
@@ -156,6 +215,19 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
   const sessaoPeriodo=a=>(/^20\d{2}-\d{2}$/.test(a.mesCalendario||'')?a.mesCalendario:diaValido(a.data)?a.data.slice(0,7):mes);
   const noMes=a=>diaValido(a.data)?a.data.startsWith(mes):sessaoPeriodo(a)===mes;
   const periodosLigados=()=>[...registros.values()].filter(r=>!r.id.startsWith('g_')&&!r.id.startsWith('r_')&&agenda.some(a=>noMes(a)&&a.id===r.id.slice(2))).map(r=>r.periodo);
+  function registrar(r){registros.set(r.id,r);if(r.id.startsWith('g_')||r.id.startsWith('r_g_'))getRows.set(r.id,r);}
+  function iniciarGet(){
+    offGet();getErro='';getCache=false;
+    offGet=repo.watchGet((rows,meta)=>{if(!valido())return;getCache=meta.cache;if(rows){getRows=new Map(rows.map(r=>[r.id,r]));rows.forEach(registrar);getReady=true;getErro='';}dashboard();avisoVersao();},()=>{if(valido()){getErro='Não foi possível atualizar os conteúdos da Get. Os registros já carregados foram mantidos.';dashboard();}});
+  }
+  function quadroGet(){
+    if(semana<INICIO_GET_SEMANAL)return '';
+    const all=[...getRows.values()],today=hojeBRT(agora()),q=resumoSemanaGet(all,semana,today);
+    const pendentesOutras=[...new Set(all.filter(r=>r.id.startsWith('g_')&&diaValido(dataGet(r))).map(r=>segunda(dataGet(r))))].filter(w=>w!==semana).flatMap(w=>resumoSemanaGet(all,w,today).items.filter(r=>['conferencia','ajuste'].includes(r.estadoGet))); 
+    const labels={producao:'Pendente de entrega',conferencia:'Aguardando conferência',ajuste:'Ajuste solicitado',conferido:'Conferido',cancelado:'Cancelado · fora da meta',duplicado:'Mesmo material · não soma novamente'};
+    const card=r=>`<article class="d-card ${r.estadoGet==='conferido'?'green':r.estadoGet==='ajuste'?'red':''}"><div class="d-row d-between"><h3>${esc(r.data.titulo||'Conteúdo anterior')}</h3>${pill(labels[r.estadoGet],r.estadoGet==='conferido'?'green':r.estadoGet==='ajuste'?'red':'gold')}</div><p class="d-muted">${r.data.formato==='carrossel'?'Carrossel':'Vídeo'} · ${r.conta?'Primeira entrega':'Data informada'}: ${br(dataGet(r))}</p>${r.data.url?`<p>${link(r.data.url,'Abrir material ↗')}</p>`:''}${r.retorno?.data.texto?`<p class="d-preserve">${esc(r.retorno.data.texto)}</p>`:''}${r.duplicadoDe?'<p class="d-muted">Use a ficha original para acompanhar este material.</p>':''}<div class="d-row">${btn(manager?'Abrir e conferir':'Abrir / atualizar','open',true,`data-id="${esc(r.id)}"`)}${r.duplicadoDe?btn('Abrir ficha original','open',false,`data-id="${esc(r.duplicadoDe)}"`):''}</div></article>`;
+    return `<section class="d-week" aria-label="Conteúdos da Get"><div class="d-row d-between"><div><span class="d-kicker">Rotina semanal</span><h3>Conteúdos da Get · ${br(semana)} a ${br(somarDias(semana,6))}</h3></div>${!manager?btn(getSemanal(draft.get('novo_'+semana)?.id||'')?'Retomar novo conteúdo em rascunho':'+ Novo conteúdo da Get','new-get',true):''}</div><p class="d-muted">Mínimo de 2 entregas por semana, em dias livres. Ideia não conta como entrega. Não é necessário publicar no Instagram para registrar o material.</p>${getErro?`<p class="d-status error" role="alert">${esc(getErro)}</p>`:''}${getCache?'<p role="status">Aguardando confirmação do servidor. Último retrato preservado.</p>':''}${!getReady?'<p role="status">Conferindo entregas da Get…</p>':`<div class="d-grid"><article class="d-card gold"><span class="d-kicker">Entregas da semana</span><div class="d-number">${q.entregues}/2</div><p>${q.entregues>=2?'Mínimo de entregas atingido':q.encerrada?'Semana encerrada · confira o histórico':(semana>today?'Semana futura · ':'Semana em andamento · ')+(2-q.entregues)+' entrega(s) para o mínimo'}</p></article><article class="d-card"><span class="d-kicker">Conferidos pela gestão</span><div class="d-number">${q.conferidos}</div><p>${q.conferir} aguardando conferência</p></article><article class="d-card ${q.ajustes?'red':''}"><span class="d-kicker">Retornos para Luís</span><div class="d-number">${q.ajustes}</div><p>Correções mantêm o mesmo conteúdo e a semana original.</p></article></div><p class="d-muted">${manager?'Amanda: abra o material e confira ou peça alteração. Conferir aqui acompanha a entrega; não libera publicação.':'Luís: entregue o material organizado e conclua as etapas atribuídas a você, inclusive edição quando for sua responsabilidade. Em uma correção, atualize a mesma ficha.'}</p><div class="d-list">${q.items.map(card).join('')}</div>${!q.items.length?'<p class="d-empty">Nenhum conteúdo registrado nesta semana. Não foram criadas tarefas retroativas.</p>':''}${pendentesOutras.length?`<div data-outras-get>${btn(`Outras semanas · ${pendentesOutras.length} conteúdo(s) aguardando ação`,'other-weeks',false,`aria-expanded="${outrasGet}"`)}${outrasGet?`<div class="d-list">${pendentesOutras.map(card).join('')}</div>`:''}</div>`:''}`}</section>`;
+  }
   function dashboard(){
     if(!valido())return;
     const slots=diasGet(semana),done=slots.filter(d=>registros.get('g_'+d)?.data.estado==='entregue').length;
@@ -163,7 +235,8 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
     const futuros=todasSessoes.filter(a=>!a.excluido&&a.status==='agendado'&&a.data>=hojeBRT(agora()));
     const fechar=todasSessoes.filter(a=>!a.excluido&&a.status!=='cancelado'&&a.data>=INICIO_ROTINA&&(a.status==='realizado'||a.data<hojeBRT(agora()))&&registros.get('e_'+a.id)?.data.estado!=='entregue');
     const sessoesVisiveis=filtroSessoes==='todas'?todasSessoes:filtroSessoes==='fechar'?fechar:todasSessoes.filter(a=>futuros.includes(a)||fechar.includes(a));
-    const novidades=[...registros.values()].filter(r=>!r.id.startsWith('r_')&&(!retorno(r)||retorno(r).data.estado==='ajustar'));
+    const novidades=[...registros.values()].filter(r=>!r.id.startsWith('r_')&&!r.id.startsWith('g_')&&(!retorno(r)||retorno(r).data.estado==='ajustar'));
+    for(const r of getRows.values())if(r.id.startsWith('g_')&&retorno(r)?.data.estado==='ajustar'&&r.data?.estado!=='cancelado')novidades.push(r);
     const ajustes=novidades.filter(r=>retorno(r)?.data.estado==='ajustar');
     const conferidosGet=slots.filter(d=>{const r=registros.get('g_'+d);return r?.data.estado==='entregue'&&retorno(r)?.data.estado==='ciente';}).length;
     const sessionCard=a=>{
@@ -177,11 +250,12 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
       ${erro?`<div class="d-card red" role="alert">${esc(erro)} ${btn('Tentar novamente','refresh')}</div>`:''}
       ${!ready?'<p role="status" class="d-empty">Conferindo agenda e registros no servidor…</p>':''}${cache?'<p class="d-muted" role="status">Aguardando conexão. Os dados anteriores continuam na tela.</p>':''}
       ${ready?`<div class="d-grid"><div class="d-card gold"><span class="d-kicker">Próximas gravações</span><div class="d-number">${futuros.length}</div><p class="d-muted">No mês selecionado</p></div><div class="d-card"><span class="d-kicker">Gravações para fechar</span><div class="d-number">${fechar.length}</div><p class="d-muted">Entrega ainda não apresentada</p></div><div class="d-card"><span class="d-kicker">${manager?'Para acompanhar':'Retornos e compartilhamentos'}</span><div class="d-number">${novidades.length}</div><p class="d-muted">Nos períodos abertos nesta tela</p></div></div>`:''}
-      <section class="d-week" ${!ready?'hidden':''}><div class="d-row d-between"><h3>Conteúdos Get · ${br(semana)} a ${br(somarDias(semana,6))}</h3>${pill(`${done} de ${slots.length} entregues`,done===3?'green':'gold')}${pill(`${conferidosGet} de ${slots.length} conferidos pela gestão`,conferidosGet===3?'green':'')}</div><p class="d-muted">Segunda, quarta e sexta · vídeo ou carrossel · uma entrega por dia.</p><div class="d-progress"><span style="width:${done/3*100}%"></span></div><div class="d-grid">${slots.map((d,i)=>{const r=registros.get('g_'+d),v=r?.data,late=d<hojeBRT(agora())&&v?.estado!=='entregue';return `<article class="d-card ${v?.estado==='entregue'?'green':d===hojeBRT(agora())?'gold':''}"><div class="d-row d-between"><strong>${['Segunda','Quarta','Sexta'][i]}</strong><span class="d-muted">${br(d)}</span></div><h3 style="margin-top:14px">${esc(v?.titulo||'Definir conteúdo')}</h3><p class="d-muted">${v?.formato==='carrossel'?'Carrossel':v?.formato==='video'?'Vídeo':'Vídeo ou carrossel'}</p><div class="d-row" style="margin:12px 0">${pill(v?.estado==='entregue'?'✓ Material entregue':v?.estado==='em_producao'?'Em produção':late?'Entrega pendente':d===hojeBRT(agora())?'Para hoje':'Planejado',v?.estado==='entregue'?'green':late?'red':'gold')}${r?etiqueta(r):''}</div>${v?.url?`<p>${link(v.url,'Ver material ↗')}</p>`:''}${btn(manager?'Ver conteúdo':'Planejar / entregar','open',true,`data-id="g_${d}"`)}</article>`;}).join('')}</div>${!slots.length?'<p class="d-empty">Esta rotina começa em 28/09/2026. Não há cobrança de semanas anteriores.</p>':''}</section>
+      ${quadroGet()}
+      <section class="d-week" ${!ready||semana>=INICIO_GET_SEMANAL?'hidden':''}><div class="d-row d-between"><h3>Conteúdos Get · ${br(semana)} a ${br(somarDias(semana,6))}</h3>${pill(`${done} de ${slots.length} entregues`,done===3?'green':'gold')}${pill(`${conferidosGet} de ${slots.length} conferidos pela gestão`,conferidosGet===3?'green':'')}</div><p class="d-muted">Segunda, quarta e sexta · vídeo ou carrossel · uma entrega por dia.</p><div class="d-progress"><span style="width:${done/3*100}%"></span></div><div class="d-grid">${slots.map((d,i)=>{const r=registros.get('g_'+d),v=r?.data,late=d<hojeBRT(agora())&&v?.estado!=='entregue';return `<article class="d-card ${v?.estado==='entregue'?'green':d===hojeBRT(agora())?'gold':''}"><div class="d-row d-between"><strong>${['Segunda','Quarta','Sexta'][i]}</strong><span class="d-muted">${br(d)}</span></div><h3 style="margin-top:14px">${esc(v?.titulo||'Definir conteúdo')}</h3><p class="d-muted">${v?.formato==='carrossel'?'Carrossel':v?.formato==='video'?'Vídeo':'Vídeo ou carrossel'}</p><div class="d-row" style="margin:12px 0">${pill(v?.estado==='entregue'?'✓ Material entregue':v?.estado==='em_producao'?'Em produção':late?'Entrega pendente':d===hojeBRT(agora())?'Para hoje':'Planejado',v?.estado==='entregue'?'green':late?'red':'gold')}${r?etiqueta(r):''}</div>${v?.url?`<p>${link(v.url,'Ver material ↗')}</p>`:''}${btn(manager?'Ver conteúdo':'Planejar / entregar','open',true,`data-id="g_${d}"`)}</article>`;}).join('')}</div>${!slots.length?'<p class="d-empty">Esta rotina começa em 28/09/2026. Não há cobrança de semanas anteriores.</p>':''}</section>
       ${ready?`<section><div class="d-row d-between" style="margin:18px 0 12px"><h3>Gravações · ${esc(mes.split('-').reverse().join('/'))}</h3><label>Mostrar<select data-session-filter>${[['ativas','Próximas e para fechar'],['fechar','Gravações para fechar'],['todas','Todas / histórico']].map(([v,l])=>`<option value="${v}" ${v===filtroSessoes?'selected':''}>${l}</option>`).join('')}</select></label></div><div class="d-list">${(compacto?sessoesVisiveis.slice(0,4):sessoesVisiveis).map(sessionCard).join('')}</div>${!sessoesVisiveis.length?'<div class="d-empty">Nenhuma sessão do Luís neste filtro. Consulte Todas / histórico ou outro mês.</div>':''}${compacto&&sessoesVisiveis.length>4?btn(`Ver as ${sessoesVisiveis.length} gravações`,'area'):''}<p class="d-muted">O histórico anterior a 28/09 permanece consultável, sem criar cobranças retroativas de direção.</p></section>`:''}
       ${ready&&novidades.length?`<details><summary>${manager?'Compartilhamentos e alterações para conferir':'Meus registros e retornos'} (${novidades.length})</summary>${novidades.map(r=>`<div class="d-row d-between" style="padding:10px 0;border-bottom:1px solid #41434a"><span>${esc(tituloRegistro(r.id))} · ${etiqueta(r)}</span>${btn('Abrir','open',false,`data-id="${esc(r.id)}"`)}</div>`).join('')}</details>`:''}`;
   }
-  function tituloRegistro(id){if(id.startsWith('g_'))return 'Get · '+br(id.slice(2));const a=agenda.find(a=>a.id===id.slice(2));return (id.startsWith('p_')?'Planejamento':'Entrega')+' · '+(a?.clienteNome||a?.cliente||'Sessão anterior')+' · '+br(a?.data);}
+  function tituloRegistro(id){if(id.startsWith('g_')){const r=getRows.get(id)||registros.get(id);return 'Get · '+(r?.data?.titulo||'Novo conteúdo')+(r?' · '+br(dataGet(r)):'');}const a=agenda.find(a=>a.id===id.slice(2));return (id.startsWith('p_')?'Planejamento':'Entrega')+' · '+(a?.clienteNome||a?.cliente||'Sessão anterior')+' · '+br(a?.data);}
   async function carregar(){
     const n=++seq;off.forEach(f=>f());off=[];erro='';ready=false;cache=false;dashboard();
     try{
@@ -204,20 +278,21 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
   const area=(name,label,value='',placeholder='')=>`<div class="d-field"><label for="d101-${name}">${label}</label><textarea id="d101-${name}" name="${name}" placeholder="${esc(placeholder)}">${esc(value)}</textarea></div>`;
   const select=(name,label,value,items)=>`<div class="d-field"><label for="d101-${name}">${label}</label><select id="d101-${name}" name="${name}">${items.map(([v,l])=>`<option value="${v}" ${value===v?'selected':''}>${l}</option>`).join('')}</select></div>`;
   const estados=[['planejado','Planejado'],['em_producao','Em produção'],['entregue','Material entregue']];
-  function vazio(id){return id.startsWith('p_')?{texto:'',referencias:'',necessidades:''}:id.startsWith('e_')?{texto:'',diferente:'',referencias:'',arquivos:false,estado:'em_andamento',extras:[]}:{titulo:'',formato:'video',texto:'',referencias:'',url:'',estado:'planejado'};}
+  function vazio(id){if(getSemanal(id))return {modelo:114,titulo:'',formato:'video',texto:'',referencias:'',url:'',estado:'em_producao',entregaEm:semana>hojeBRT(agora())?semana:semana===segunda(hojeBRT(agora()))?hojeBRT(agora()):somarDias(semana,6),primeiraEntregaEm:'',pronto:false};return id.startsWith('p_')?{texto:'',referencias:'',necessidades:''}:id.startsWith('e_')?{texto:'',diferente:'',referencias:'',arquivos:false,estado:'em_andamento',extras:[]}:{titulo:'',formato:'video',texto:'',referencias:'',url:'',estado:'planejado'};}
   function extra(x){return `<div class="d-extras" data-extra="${esc(x.id)}"><div class="d-row d-between"><strong>Material extra / diferente</strong>${btn('Retirar deste rascunho','remove-extra',false,`data-extra-id="${esc(x.id)}"`)}</div><div class="d-fields">${input('extra-titulo-'+x.id,'Título do material',x.titulo)}${select('extra-formato-'+x.id,'Formato',x.formato,[['video','Vídeo'],['carrossel','Carrossel'],['foto','Foto'],['story','Story'],['outro','Outro']])}</div>${input('extra-url-'+x.id,'Link do material',x.url,'url')}${input('extra-ref-'+x.id,'Link de referência (opcional)',x.referencia,'url')}</div>`;}
   function formulario(d){
     const id=selecionado.id;
     if(id.startsWith('p_'))return area('texto','O que pretendo fazer',d.texto,'Vídeos, ideias, cenas, mudanças, Stories, dinâmica da gravação…')+area('referencias','Links de referência — um por linha',d.referencias,'https://…')+area('necessidades','Preparação e decisões necessárias',d.necessidades,'Produtos, pessoas, equipamentos e o que precisa de alinhamento.');
-    if(id.startsWith('e_'))return area('texto','O que foi realizado',d.texto)+area('diferente','O que fiz a mais ou diferente',d.diferente,'Explique mudanças, conteúdos extras, aprendizados ou pendências.')+area('referencias','Links dos materiais e referências — um por linha',d.referencias,'https://…')+`<div data-extras>${(d.extras||[]).map(extra).join('')}</div>${btn('+ Adicionar material extra','add-extra')}<p class="d-muted">Apresentar um extra aqui não o envia novamente para edição.</p>`+select('estado','Situação da conferência',d.estado,[['em_andamento','Em andamento / com pendências'],['entregue','Entrega apresentada à gestão']])+`<label class="d-check"><input type="checkbox" name="arquivos" ${d.arquivos?'checked':''}>Conferi os arquivos e os links desta entrega.</label>`;
-    return `<div class="d-fields">${input('titulo','Nome do conteúdo',d.titulo)}${select('formato','Formato',d.formato,[['video','Vídeo'],['carrossel','Carrossel']])}</div>`+area('texto','Ideia e execução',d.texto)+area('referencias','Links de referência — um por linha',d.referencias)+input('url','Link do material entregue',d.url,'url')+select('estado','Situação',d.estado,estados);
+    if(id.startsWith('e_'))return area('texto','O que foi realizado',d.texto)+area('diferente','O que fiz a mais ou diferente (opcional)',d.diferente,'Explique mudanças, conteúdos extras, aprendizados ou pendências.')+area('referencias','Links dos materiais e referências — um por linha',d.referencias,'https://…')+`<div data-extras>${(d.extras||[]).map(extra).join('')}</div>${btn('+ Adicionar material extra','add-extra')}<p class="d-muted">Extras de clientes são opcionais para Luís. Apresentar aqui não duplica o envio para edição.</p>`+select('estado','Situação da conferência',d.estado,[['em_andamento','Em andamento / com pendências'],['entregue','Entrega apresentada à gestão']])+`<label class="d-check"><input type="checkbox" name="arquivos" ${d.arquivos?'checked':''}>Conferi os arquivos e os links desta entrega.</label>`;
+    const semanal=getSemanal(id),data=semanal?(input('entregaEm','Data da primeira entrega',d.entregaEm,'date').replace('type="date"','type="date"'+(d.primeiraEntregaEm?' readonly':''))+(d.primeiraEntregaEm?'<p class="d-muted">Data original preservada. Revisões e correções não geram outra entrega.</p>':'')):'';
+    return data+`<div class="d-fields">${input('titulo','Nome do conteúdo',d.titulo)}${select('formato','Formato',d.formato,[['video','Vídeo'],['carrossel','Carrossel']])}</div>`+area('texto','Ideia e execução',d.texto)+area('referencias','Links de referência — um por linha',d.referencias)+input('url','Link do material entregue',d.url,'url')+select('estado','Situação',d.estado,semanal?[...estados,['cancelado','Cancelar conteúdo · preservar histórico']]:estados)+(semanal?`<label class="d-check"><input type="checkbox" name="pronto" ${d.pronto?'checked':''}>O material está organizado, o link abre este conteúdo e concluí as etapas atribuídas a mim, inclusive edição quando for minha responsabilidade.</label><p class="d-muted">Use um link próprio do conteúdo, não uma pasta geral do cliente. Uma ideia ou pauta isolada não conta.</p>`:'');
   }
   function resumo(d,id){
     if(!d)return '<div class="d-empty">Luís ainda não compartilhou este registro.</div>';
     const fields=id.startsWith('p_')?[['Planejamento',d.texto],['Preparação e decisões',d.necessidades]]:id.startsWith('e_')?[['O que foi realizado',d.texto],['A mais ou diferente',d.diferente]]:[['Conteúdo',d.titulo],['Ideia e execução',d.texto]];
     return fields.map(([k,v])=>`<div class="d-card"><h3>${k}</h3><div class="d-preserve">${esc(v||'Não informado')}</div></div>`).join('')+(d.estado?`<p>${pill(d.estado==='entregue'?'Entrega apresentada':d.estado==='em_producao'?'Em produção':'Em andamento',d.estado==='entregue'?'green':'gold')}</p>`:'')+(d.url?`<p>${link(d.url,'Ver material ↗')}</p>`:'')+(d.referencias?`<div class="d-card"><h3>Materiais e referências</h3>${d.referencias.split('\n').map((x,i)=>`<p>${link(x,'Abrir link '+(i+1)+' ↗')}</p>`).join('')}</div>`:'')+(d.extras||[]).map(x=>`<div class="d-extras"><h3>${esc(x.titulo)}</h3>${pill(x.formato)}<p>${link(x.url,'Ver material extra ↗')}</p><p>${link(x.referencia,'Ver referência ↗')}</p></div>`).join('');
   }
-  function campos(){const f=editor.querySelector('form');if(!f)return null;const fd=new FormData(f),v=Object.fromEntries(fd);if(selecionado.id.startsWith('e_')){v.arquivos=fd.has('arquivos');v.extras=[...f.querySelectorAll('[data-extra]')].map(el=>{const i=el.dataset.extra;return {id:i,titulo:v['extra-titulo-'+i],formato:v['extra-formato-'+i],url:v['extra-url-'+i],referencia:v['extra-ref-'+i]};});for(const k of Object.keys(v))if(k.startsWith('extra-'))delete v[k];}return v;}
+  function campos(){const f=editor.querySelector('form');if(!f)return null;const fd=new FormData(f),v=Object.fromEntries(fd);if(getSemanal(selecionado.id)){v.pronto=fd.has('pronto');v.modelo=114;v.primeiraEntregaEm=registros.get(selecionado.id)?.data?.primeiraEntregaEm||'';}if(selecionado.id.startsWith('e_')){v.arquivos=fd.has('arquivos');v.extras=[...f.querySelectorAll('[data-extra]')].map(el=>{const i=el.dataset.extra;return {id:i,titulo:v['extra-titulo-'+i],formato:v['extra-formato-'+i],url:v['extra-url-'+i],referencia:v['extra-ref-'+i]};});for(const k of Object.keys(v))if(k.startsWith('extra-'))delete v[k];}return v;}
   function guardar(){
     if(!selecionado||!valido())return;
     const id=manager?'r_'+selecionado.id:selecionado.id,el=editor.querySelector('[name=retorno]');
@@ -230,9 +305,9 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
   function avisoVersao(){if(!selecionado)return;const r=registros.get(selecionado.id),box=editor.querySelector('[data-version]');if(box)box.textContent=!salvando&&r&&r.revisao!==selecionado.revisao?'Há uma versão mais recente no servidor. Seu texto não foi substituído.':'';const rv=registros.get('r_'+selecionado.id),fb=editor.querySelector('[data-feedback]');if(fb&&rv)fb.innerHTML=`<div class="d-card ${rv.data.estado==='ajustar'?'red':'green'}"><strong>${esc(rv.autorNome)} · ${rv.data.estado==='ajustar'?'Pediu alteração':'Conferiu'}${rv.data.versao!==selecionado.revisao?' uma versão anterior':''}</strong><p class="d-preserve">${esc(rv.data.texto||'Conferência registrada.')}</p></div>`;}
   function desenharEditor(data){
     const s=selecionado,r=registros.get(s.id),rev=registros.get('r_'+s.id),a=agenda.find(a=>a.id===s.id.slice(2));
-    editor.innerHTML=`<div class="d-card gold"><div class="d-row d-between"><div class="d-plan-title"><span class="d-kicker">${s.id.startsWith('p_')?'Planejamento livre':s.id.startsWith('e_')?'Conferência da gravação':'Rotina Get'}</span><h2>${esc(tituloRegistro(s.id))}</h2></div>${btn('Fechar','close')}</div><p class="d-muted">${a?'Sessão da agenda · '+esc(a.status)+(a.excluido?' · arquivada':'')+' · pauta '+esc(sessaoPeriodo(a)):'Segunda, quarta e sexta · vídeo ou carrossel'}</p><div class="d-status error" data-version role="status"></div><div data-feedback>${rev?`<div class="d-card ${rev.data.estado==='ajustar'?'red':'green'}"><strong>${esc(rev.autorNome)} · ${rev.data.estado==='ajustar'?'Pediu alteração':'Conferiu'}${rev.data.versao!==s.revisao?' uma versão anterior':''}</strong><p class="d-preserve">${esc(rev.data.texto||'Conferência registrada.')}</p></div>`:''}</div>
+    editor.innerHTML=`<div class="d-card gold"><div class="d-row d-between"><div class="d-plan-title"><span class="d-kicker">${s.id.startsWith('p_')?'Planejamento livre':s.id.startsWith('e_')?'Conferência da gravação':'Rotina Get'}</span><h2>${esc(tituloRegistro(s.id))}</h2></div>${btn('Fechar','close')}</div><p class="d-muted">${a?'Sessão da agenda · '+esc(a.status)+(a.excluido?' · arquivada':'')+' · pauta '+esc(sessaoPeriodo(a)):getSemanal(s.id)?'Mínimo de duas entregas semanais · dias livres · acompanhamento até a conferência':'Modelo anterior · segunda, quarta e sexta'}</p><div class="d-status error" data-version role="status"></div><div data-feedback>${rev?`<div class="d-card ${rev.data.estado==='ajustar'?'red':'green'}"><strong>${esc(rev.autorNome)} · ${rev.data.estado==='ajustar'?'Pediu alteração':'Conferiu'}${rev.data.versao!==s.revisao?' uma versão anterior':''}</strong><p class="d-preserve">${esc(rev.data.texto||'Conferência registrada.')}</p></div>`:''}</div>
       ${manager?resumo(r?.data,s.id):`<form novalidate>${formulario(data)}<div class="d-save"><div class="d-row">${btn(s.id.startsWith('g_')?'Salvar conteúdo da Get':s.id.startsWith('e_')?'Apresentar entrega':'Salvar e compartilhar','save',true)}${btn('Conferir versão atual','reload-record')}</div><p class="d-muted">Chris e Amanda recebem na página inicial. Ao compartilhar um planejamento, Amanda também recebe um aviso. Rascunho local até salvar.</p></div></form>`}
-      ${manager&&r?`<div class="d-card"><h3>Sua conferência · versão ${r.revisao}</h3>${area('retorno','Retorno para o Luís',rev?.data?.versao===r.revisao?rev.data.texto:'','Explique o ajuste necessário ou deixe uma orientação.') }<div class="d-row">${btn('Pedir alteração','request',true)}${btn('Marcar como conferido','ack')}</div></div>`:''}
+      ${manager&&r&&r.data.estado!=='cancelado'?`<div class="d-card"><h3>Sua conferência · versão ${r.revisao}</h3>${area('retorno','Retorno para o Luís',rev?.data?.versao===r.revisao?rev.data.texto:'','Explique o ajuste necessário ou deixe uma orientação.') }<div class="d-row">${btn('Pedir alteração','request',true)}${!getSemanal(s.id)||r.data.estado==='entregue'&&r.data.pronto?btn('Marcar como conferido','ack'):''}</div></div>`:''}
       <div data-form-status class="d-status" role="status"></div><div class="d-row" style="margin-top:18px">${btn('Ver histórico','history')}${manager?btn('Conferir versão atual','reload-record'):''}${!manager&&draft.get(s.id)?btn('Recuperar meu rascunho','restore-draft'):''}</div><div data-history></div>
       ${a?`<details><summary>Agenda, pauta e materiais já enviados</summary><p class="d-muted">${esc(a.estilo||'')} ${esc(a.obsFilmmaker||'')}</p>${(a.referencias||[]).map(u=>`<p>${link(u,'Referência da agenda ↗')}</p>`).join('')}<div class="d-row">${btn('Consultar calendários','pautas')}${a.status==='agendado'&&!a.excluido?btn('Enviar materiais desta sessão','envio'):''}${btn('Ver materiais registrados','materials')}</div><div data-materials></div></details>`:''}</div>`;
     const form=editor.querySelector('form');form?.addEventListener('input',guardar);form?.addEventListener('change',guardar);form?.addEventListener('submit',e=>e.preventDefault());const rt=editor.querySelector('[name=retorno]');const dr=draft.get('r_'+s.id);if(rt&&dr?.data.versao===s.revisao){rt.value=dr.data.texto;status('Seu retorno em rascunho foi recuperado. Ainda não foi enviado.');}rt?.addEventListener('input',guardar);avisoVersao();
@@ -243,7 +318,7 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
       const [r,rv]=await Promise.all([repo.read(id),repo.read('r_'+id)]);if(!valido()||n!==seq)return;
       if(r)registros.set(id,r);else registros.delete(id);if(rv)registros.set(rv.id,rv);else registros.delete('r_'+id);
       const a=agenda.find(x=>x.id===id.slice(2));if(!id.startsWith('g_')&&!a)throw Error('A sessão não foi encontrada. Atualize a agenda.');
-      selecionado={id,revisao:r?.revisao||0,retornoRevisao:rv?.revisao||0,periodo:r?.periodo||(id.startsWith('g_')?id.slice(2,9):diaValido(a?.data)?a.data.slice(0,7):sessaoPeriodo(a))};
+      selecionado={id,revisao:r?.revisao||0,retornoRevisao:rv?.revisao||0,periodo:r?.periodo||(id.startsWith('g_')?(getSemanal(id)?semana.slice(0,7):id.slice(2,9)):diaValido(a?.data)?a.data.slice(0,7):sessaoPeriodo(a))};
       const d=draft.get(id),restaurar=!manager&&!fresh&&d&&d.revisao===selecionado.revisao;
       desenharEditor(restaurar?d.data:r?.data||vazio(id));if(restaurar)status('Rascunho recuperado neste navegador. Ainda não foi compartilhado.');else if(!manager&&d)status('Existe um rascunho anterior. Compare com a versão atual antes de recuperá-lo.');
       editor.scrollIntoView({behavior:'smooth',block:'start'});
@@ -258,7 +333,8 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
     if(!selecionado||salvando||manager)return;const s={...selecionado},before=campos();guardar();salvando=true;editor.querySelectorAll('[data-action=save]').forEach(b=>b.disabled=true);status('Salvando e conferindo no servidor…');
     try{
       const result=await repo.save(s.id,before,s.periodo,s.revisao);if(!valido()||selecionado?.id!==s.id)return;
-      const after=campos();registros.set(s.id,result);selecionado.revisao=result.revisao;
+      const after=campos();if(getSemanal(s.id))after.primeiraEntregaEm=before.primeiraEntregaEm; // Metadado confirmado pelo servidor não é digitação durante a espera.
+      if(draft.get('novo_'+semana)?.id===s.id)draft.del('novo_'+semana);registrar(result);selecionado.periodo=result.periodo;selecionado.revisao=result.revisao;
       if(estavel(after)===estavel(before)){draft.del(s.id);desenharEditor(result.data);status('Salvo. Chris e Amanda já podem conferir na página inicial.');}
       else{guardar();status('A versão enviada foi salva. As alterações que você digitou durante a espera continuam neste rascunho.');}
       dashboard();
@@ -268,7 +344,7 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
   async function review(state){
     if(!manager||!selecionado||salvando)return;const s={...selecionado},message=editor.querySelector('[name=retorno]')?.value||'';salvando=true;editor.querySelectorAll('[data-action=request],[data-action=ack]').forEach(b=>b.disabled=true);
     try{guardar();const r=await repo.save('r_'+s.id,{estado:state,texto:message,versao:s.revisao},s.periodo,s.retornoRevisao);if(!valido())return;
-      const after=editor.querySelector('[name=retorno]')?.value||'';registros.set(r.id,r);selecionado.retornoRevisao=r.revisao;
+      const after=editor.querySelector('[name=retorno]')?.value||'';registrar(r);selecionado.retornoRevisao=r.revisao;
       if(after===message){draft.del(r.id);desenharEditor(registros.get(s.id)?.data);status(state==='ajustar'?'Alteração solicitada. O Luís recebe o retorno nesta mesma ficha.':'Conferência registrada para esta versão.');}
       else{guardar();status('Retorno enviado. O texto digitado durante a espera continua em rascunho.');}dashboard();}
     catch(e){if(valido())status(e.message,true);}finally{salvando=false;if(valido())editor.querySelectorAll('[data-action=request],[data-action=ack]').forEach(b=>b.disabled=false);}
@@ -276,13 +352,15 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
   async function action(e){
     const el=e.target.closest('[data-action]');if(!el||!root.contains(el)||!valido())return;const ac=el.dataset.action;
     try{
+      if(ac==='other-weeks'){outrasGet=!outrasGet;dashboard();return;}
       if(ac==='save')return await save();if(ac==='request'||ac==='ack')return await review(ac==='request'?'ajustar':'ciente');
       if(salvando){status('Aguarde a confirmação do salvamento.');return;}
       if(ac==='area'){guardar();abrirArea?.();}
       else if(ac==='rotina'){guardar();abrirRotina?.();}
       else if(ac==='demandas'){guardar();abrirDemandas?.();}
-      else if(ac==='refresh'){guardar();await carregar();}
+      else if(ac==='refresh'){guardar();iniciarGet();await carregar();}
       else if(ac==='open')await open(el.dataset.id);
+      else if(ac==='new-get'&&!manager&&semana>=INICIO_GET_SEMANAL){const stored=draft.get('novo_'+semana)?.id;const id=getSemanal(stored||'')?stored:'g_s_'+crypto.randomUUID();draft.set('novo_'+semana,{id});await open(id);}
       else if(ac==='close'){guardar();selecionado=null;editor.replaceChildren();dashboard();}
       else if(ac==='prev'||ac==='next'){guardar();semana=somarDias(semana,ac==='prev'?-7:7);mes=semana.slice(0,7);selecionado=null;editor.replaceChildren();await carregar();}
       else if(ac==='reload-record')await open(selecionado.id,{fresh:true});
@@ -297,6 +375,7 @@ export function montarDirecao(root,{repo,contexto,sessoes,materiais,abrirEnvio,a
     }catch(e){if(valido())status(e.message,true);}
   }
   async function filtro(e){if(e.target.matches('[data-session-filter]')){filtroSessoes=e.target.value;dashboard();return;}if(!e.target.matches('[data-mes],[data-semana]'))return;if(salvando){dashboard();return;}guardar();try{if(e.target.matches('[data-mes]'))mes=e.target.value;else{semana=segunda(e.target.value);mes=semana.slice(0,7);}if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes))throw Error('Mês inválido');selecionado=null;editor.replaceChildren();await carregar();}catch{erro='Escolha um mês e uma semana válidos.';dashboard();}}
+  iniciarGet();
   const unloading=()=>guardar();root.addEventListener('click',action);root.addEventListener('change',filtro);window.addEventListener('beforeunload',unloading);carregar();
-  return {destroy(){guardar();vivo=false;++seq;off.forEach(f=>f());off=[];root.removeEventListener('click',action);root.removeEventListener('change',filtro);window.removeEventListener('beforeunload',unloading);root.replaceChildren();root.classList.remove('dir101');}};
+  return {destroy(){guardar();vivo=false;offGet();++seq;off.forEach(f=>f());off=[];root.removeEventListener('click',action);root.removeEventListener('change',filtro);window.removeEventListener('beforeunload',unloading);root.replaceChildren();root.classList.remove('dir101');}};
 }

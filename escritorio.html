@@ -31545,6 +31545,35 @@ window.setGerenciaSub = function(qual, el){
     return out;
   }
 
+  // I119: o histórico reconhece aprovação e conclusão direta sem alterar os registros.
+  function instanteHistoricoDemandaI119(valor){
+    let ms;
+    try{
+      if(valor && typeof valor.toMillis === 'function') ms = valor.toMillis();
+      else if(valor && typeof valor.toDate === 'function') ms = valor.toDate().getTime();
+      else if(valor && typeof valor.seconds === 'number') ms = valor.seconds * 1000 + (typeof valor.nanoseconds === 'number' ? valor.nanoseconds / 1e6 : 0);
+      else if(valor instanceof Date) ms = valor.getTime();
+      else if(typeof valor === 'string' && valor.trim()) ms = Date.parse(valor);
+    }catch(_){ return null; }
+    return Number.isFinite(ms) && Number.isFinite(new Date(ms).getTime()) ? ms : null;
+  }
+  function eventoFinalDemandaI119(d){
+    const nome = valor => typeof valor === 'string' && valor.trim() !== '?' ? valor.trim() : '';
+    const aprovacao = !!nome(d.aprovadoPor) || d.aprovadoEm != null;
+    const responsavel = nome(aprovacao ? d.aprovadoPor : d.concluidoPor);
+    // concluidaEm é a entrega para aprovação; só vale como conclusão direta com seu responsável.
+    const em = aprovacao ? instanteHistoricoDemandaI119(d.aprovadoEm)
+      : instanteHistoricoDemandaI119(d.concluidoEm) ?? (responsavel ? instanteHistoricoDemandaI119(d.concluidaEm) : null);
+    return {aprovacao, responsavel, em};
+  }
+  function rotuloHistoricoDemandaI119(d){
+    const evento = eventoFinalDemandaI119(d);
+    const acao = evento.aprovacao ? 'Aprovada' : 'Concluída';
+    const pessoa = evento.responsavel ? acao + ' por ' + evento.responsavel : acao + ' · Responsável não registrado';
+    const data = evento.em === null ? 'Data não registrada' : new Date(evento.em).toLocaleDateString('pt-BR', {timeZone:'America/Sao_Paulo'});
+    return esc(pessoa + ' · ' + data);
+  }
+
   window.renderMinhasDemandasAtribuidas = async function(soRefiltrar,opcoes={}){
     const lista = document.getElementById('listaMinhasDemandasAtribuidas');
     const empty = document.getElementById('emptyMinhasDemandasAtribuidas');
@@ -31600,7 +31629,7 @@ window.setGerenciaSub = function(qual, el){
     const concluidas = todasDemandas.filter(d =>
       (d.destinatario === usuarioAtual || (d.origem||'').toLowerCase() === (usuarioAtual||'').toLowerCase()) &&
       d.status === 'aprovada' && !d.excluido)
-      .sort((a,b) => (b.concluidoEm?.seconds||0) - (a.concluidoEm?.seconds||0));
+      .sort((a,b) => (eventoFinalDemandaI119(b).em ?? -Infinity) - (eventoFinalDemandaI119(a).em ?? -Infinity));
 
     if(filtroMinhasDemandas === 'enviei'){
       lista.innerHTML = chips + `<div class="painelResumo" style="margin-bottom:16px;">
@@ -31627,7 +31656,7 @@ window.setGerenciaSub = function(qual, el){
       </div>` + (concluidas.length
         ? concluidas.slice(0,40).map(d => `<div class="item" style="border-left:3px solid var(--green);padding:13px 15px;margin-bottom:12px;">
             <div class="top"><div class="nome">${tituloDemanda(d)}</div><span class="meta">${d.destinatario === usuarioAtual ? 'era sua' : 'você mandou pra ' + esc(d.destinatario||'?')}</span></div>
-            <div class="meta" style="margin-top:5px;">✅ ${esc(d.concluidoPor||'?')}${d.concluidoEm?.seconds ? ' · ' + new Date(d.concluidoEm.seconds*1000).toLocaleDateString('pt-BR') : ''}${d.notaConclusao ? ' · ' + esc(String(d.notaConclusao).slice(0,80)) : ''}</div>
+            <div class="meta" style="margin-top:5px;">✅ ${rotuloHistoricoDemandaI119(d)}${d.notaConclusao ? ' · ' + esc(String(d.notaConclusao).slice(0,80)) : ''}</div>
           </div>`).join('')
         : '<div class="card"><div class="empty">Nada concluído ainda.</div></div>');
       return;

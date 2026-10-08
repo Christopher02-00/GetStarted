@@ -501,7 +501,7 @@
   window.__mesSolicitadoCal = /^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) && mesSolicitado>='2026-07' ? mesSolicitado : '';
 </script>
 <script src="gs-gravacoes-cliente-i65.js?v=i65-1"></script>
-<script src="gs-aprovacao-conteudo-i68.js?v=i71"></script>
+<script src="gs-aprovacao-conteudo-i68.js?v=i121"></script>
 <script src="gs-revisao-cliente-i72.js?v=i72"></script>
 </head>
 <body>
@@ -2421,17 +2421,17 @@ async function executarGravacaoComSeguranca(){
       const servidorProtegido=clonarCalendarioV125(servidor);
       const mapaServidor={...(servidorProtegido.aprovacaoMeses||{})};
       const marcaServidor=mapaServidor[alvo]||{};
-      /* Compatibilidade Bluefit/V114: se o ajuste já estava aberto antes
-         da V115, a primeira gravação da equipe captura o servidor ainda
-         intacto dentro da mesma transação, antes de alterar o item. */
-      if(window.__modoCal==='equipe'&&marcaServidor.status==='ajuste_interno'&&!marcaServidor.retratoLiberadoV115){
+      /* I121: só protege a versão anterior quando há liberação comprovada.
+         Primeiro ajuste interno permanece privado e não ganha retrato. */
+      const publicacaoAnteriorI121=GetAprovacaoI68.publicacaoAnterior(servidor,alvo);
+      if(window.__modoCal==='equipe'&&marcaServidor.status==='ajuste_interno'&&!marcaServidor.retratoLiberadoV115&&publicacaoAnteriorI121){
         const camposRetrato=['itemId','day','name','desc','roteiroDispensado','legenda','ref','referenciaDispensada','obs','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
         const itensRetrato=(servidor.items||[])
           .filter(i=>i&&!i.excluido&&mesDoItemNoCalendario(servidor,i)===alvo)
           .map(i=>{const r={mes:String(i.mes||alvo)};camposRetrato.forEach(c=>{if(i[c]!==undefined)r[c]=clonarCalendarioV125(i[c]);});return r;});
         if(itensRetrato.length) mapaServidor[alvo]={...marcaServidor,retratoLiberadoV115:{schemaVersion:1,mes:alvo,
-          publicadoPor:String(marcaServidor.liberadoPorAnterior||marcaServidor.enviadoPor||'Amanda'),
-          publicadoEm:String(marcaServidor.liberadoEmAnterior||marcaServidor.em||''),items:itensRetrato}};
+          publicadoPor:publicacaoAnteriorI121.por,
+          publicadoEm:publicacaoAnteriorI121.em,items:itensRetrato}};
       }
       servidorProtegido.aprovacaoMeses=mapaServidor;
       const conciliado=mesclarCompetenciaCalendarioV125(base,local,servidorProtegido,alvo,preferencia);
@@ -2822,13 +2822,13 @@ function retratoLiberadoDoMesV115(fonte,mes){
 }
 function mesDisponivelClienteV115(mes){
   const st=estadoDoMes(mes);
-  return st==='liberado'||((st==='ajuste_interno'||GetAprovacaoI68.revisaoPublica(data,mes,st))&&itensDoMes(mes).length>0);
+  return st==='liberado'||(GetAprovacaoI68.consultaEmRevisao(data,mes,st)&&itensDoMes(mes).length>0);
 }
 function projetarCalendarioClienteV115(fonte){
   const origem=fonte||{};
   const projetado={...origem,items:(origem.items||[]).map(i=>({...i})),aprovacaoMeses:{...(origem.aprovacaoMeses||{})}};
   Object.entries(origem.aprovacaoMeses||{}).forEach(([mes,marca])=>{
-    if(String(marca?.status||'')!=='ajuste_interno'&&!GetAprovacaoI68.revisaoPublica(origem,mes,String(marca?.status||''))) return;
+    if(!GetAprovacaoI68.consultaEmRevisao(origem,mes,String(marca?.status||''))) return;
     const retrato=retratoLiberadoDoMesV115(origem,mes);
     if(!retrato?.items?.length) return;
     projetado.items=projetado.items.filter(i=>mesDoItemNoCalendario(origem,i)!==mes)
@@ -2858,11 +2858,15 @@ function renderAprovacaoInterna(){
     else return;
   }
   const st = estadoAprovacao();
-  const r = ROTULO_APROVACAO[st] || ROTULO_APROVACAO.rascunho;
+  const ehEquipe = window.__modoCal === 'equipe';
+  const disponivelCliente = mesDisponivelClienteV115(mesVisivel);
+  box.hidden = !ehEquipe && !disponivelCliente;
+  const r = !ehEquipe && GetAprovacaoI68.consultaEmRevisao(data,mesVisivel,st)
+    ? {txt:'Calendário em revisão — versão já publicada',cor:'#e0c56a'}
+    : ROTULO_APROVACAO[st] || ROTULO_APROVACAO.rascunho;
   const info = aprovacaoCompativelDoMes(mesVisivel) || {};
   const pedidosAjusteI71=GetAprovacaoI68.pedidosPendentes(data,mesVisivel);
   const pedidoAjuste=pedidosAjusteI71.at(-1)||null;
-  const ehEquipe = window.__modoCal === 'equipe';
   atualizarTravaVisualDoMes();
 
   const legado = ehCalendarioLegado();
@@ -2871,9 +2875,9 @@ function renderAprovacaoInterna(){
   box.innerHTML = `<div style="font-weight:800;color:${r.cor};">${r.txt}</div>
     ${!ehEquipe && (st === 'ajuste_interno'||pedidosAjusteI71.length) ? '<div style="margin-top:7px;color:#ffe9a8;"><b>Ajuste em andamento.</b> Cada conteúdo tem sua própria revisão. Você pode aprovar ou pedir ajustes nos demais enquanto a equipe trabalha.</div>' : ''}
     ${legado && ehEquipe ? '<div style="margin-top:6px;opacity:.75;">Calendário montado antes do ciclo de revisão existir — segue visível pro cliente, como sempre foi. Ele pode entrar agora no ciclo formal da Amanda pelo botão abaixo.</div>' : ''}
-    ${info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
+    ${ehEquipe && info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
     ${ehEquipe&&pedidosAjusteI71.length?'<div style="margin-top:8px"><b>Pedidos por conteúdo</b>'+pedidosAjusteI71.map(p=>'<div style="padding:8px;border:1px solid #655e43;border-radius:6px;margin-top:6px"><b>'+esc(p.itemNome)+'</b><br>'+esc(p.texto)+'</div>').join('')+'</div>':''}
-    ${info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
+    ${ehEquipe && info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
     ${ehEquipe && st === 'arquivado' ? '<div style="margin-top:7px;opacity:.75;"><b>Calendário arquivado.</b> A consulta deste mês não altera o calendário público atual.</div>' : ''}
     ${ehEquipe && st !== 'arquivado' && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">' + (legado ? 'Enviar calendário legado para a Amanda →' : 'Enviar para Amanda revisar e publicar →') + '</button>' : ''}
     ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição.'+(pedidosAjusteI71.length?' O cliente continua vendo a versão já publicada.':' O cliente ainda não vê este mês.')+'</div>' : ''}

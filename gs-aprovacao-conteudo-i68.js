@@ -88,10 +88,35 @@
         candidatos.filter(i=>Number(i.day)===Number(versao.day)).length===1;
     }).at(-1)||null;
   }
+  // I121: ajuste é trabalho interno, não evidência de que Amanda publicou.
+  // O retrato legado isolado também não basta: versões antigas o criavam
+  // durante o primeiro ajuste usando a data da devolução como publicação.
+  function marcaDoMes(cal,mes) {
+    const mensal=cal?.aprovacaoMeses?.[mes];
+    if(mensal&&mensal.status)return mensal.mes&&mensal.mes!==mes?{}:mensal;
+    const antiga=cal?.aprovacaoInterna||{};
+    if(antiga.mes)return antiga.mes===mes?antiga:{};
+    if(Object.keys(cal?.aprovacaoMeses||{}).length)return {};
+    const meses=[...new Set((cal?.items||[]).filter(i=>i&&!i.excluido&&i.mes).map(i=>i.mes))];
+    return cal?.mesLegado===mes||(meses.length===1&&meses[0]===mes)?antiga:{};
+  }
+  function publicacaoAnterior(cal,mes) {
+    const m=marcaDoMes(cal,mes),r=m.retratoLiberadoV115;
+    const instante=v=>typeof v==='string'&&v.trim()&&Number.isFinite(Date.parse(v))?v:'';
+    const anterior=instante(m.liberadoEmAnterior),publicado=instante(r?.publicadoEm);
+    const decisao=instante(m.aprovadoEm);
+    const decisaoPublicada=decisao&&decisao===instante(m.enviadoEm)?decisao:'';
+    const em=r?(publicado&&[anterior,decisaoPublicada].includes(publicado)?publicado:''):anterior;
+    if(!em)return null;
+    // Retrato de outro mês ou de outra decisão não pode expor a edição atual.
+    if(r&&((r.mes&&r.mes!==mes)||!Array.isArray(r.items)||publicado!==em))return null;
+    return {em,por:String(m.liberadoPorAnterior||m.aprovadoPor||m.enviadoPor||''),retrato:r||null};
+  }
+  function consultaEmRevisao(cal,mes,estado) {
+    return ['ajuste_interno','aguardando_interna','aprovado_interno'].includes(estado)&&!!publicacaoAnterior(cal,mes);
+  }
   function revisaoPublica(cal,mes,estado) {
-    const marca=cal?.aprovacaoMeses?.[mes]||{};
-    return ['ajuste_interno','aguardando_interna','aprovado_interno'].includes(estado)&&
-      !!(marca.retratoLiberadoV115?.items?.length||marca.liberadoEmAnterior)&&pedidosPendentes(cal,mes).length>0;
+    return consultaEmRevisao(cal,mes,estado)&&pedidosPendentes(cal,mes).length>0;
   }
   function liberacaoPublica(marca,mes) {
     const m=marca||{};
@@ -136,5 +161,5 @@
     }
   }
   root.GetAprovacaoI68=Object.freeze({campos,marcas,assinatura,mudou,revisar,aprovacaoNoRetrato,prepararReenvio,
-    pedidosPendentes,pedidoDoItem,revisaoPublica,liberacaoPublica,versaoPublica,transacionarPedido});
+    pedidosPendentes,pedidoDoItem,publicacaoAnterior,consultaEmRevisao,revisaoPublica,liberacaoPublica,versaoPublica,transacionarPedido});
 })(typeof window==='undefined'?globalThis:window);

@@ -1,5 +1,5 @@
 import {precisaRevisarI106} from './gs-identidade-conteudo-i106.mjs?v=1';
-import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=i90-1';
+import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=i124-1';
 // I78: consulta compartilhada. Textos e vínculo de produção nunca são escritos aqui.
 export const CAMPOS = {legenda:'Legenda principal',legendaInstagram:'Instagram',legendaYoutube:'YouTube',legendaLinkedin:'LinkedIn',legendaTiktok:'TikTok'};
 export const EDITAVEIS = new Set(['aguardando_legenda','aguardando_agendamento','agendado']);
@@ -36,7 +36,7 @@ export function criarConferencia(api){
   const copiaManual=p=>!!input?.derivadaPostagemI84&&p?.id===input.postId&&!referencia(p);
   const pode=p=>!copiaManual(p)&&estado?.podeEditar && EDITAVEIS.has(p?.status) && !referencia(p)?.nativa;
   function rascunho(p){if(!rascunhos.has(p.id))rascunhos.set(p.id,{textos:{},origens:{}});return rascunhos.get(p.id);}
-  function podeReparar(p){return estado?.podeEditar&&pendenciaLegendaI79(p)&&(!(p.cliente==='stokki'&&p.publicacaoStokki?.versao===1)||(['Cecília','Amanda','Chris'].includes(estado.papel)||(estado.papel==='Gabrielle'&&p.legendaPendenteAoAgendarI90===true)));}
+  function podeReparar(p){return estado?.podeEditar&&pendenciaLegendaI79(p)&&(!(p.cliente==='stokki'&&p.publicacaoStokki?.versao===1)||(['Cecília','Amanda','Chris'].includes(estado.papel)||(['Fernanda','Gabrielle'].includes(estado.papel)&&p.legendaPendenteAoAgendarI90===true)));}
   function camposRevisao(p){
     const redes={instagram:'legendaInstagram',youtube:'legendaYoutube',linkedin:'legendaLinkedin',tiktok:'legendaTiktok'};
     return p?.publicacaoStokki?.versao===1?p.publicacaoStokki.selecionadas.filter(k=>!p.publicacaoStokki.redes[k]?.retirada).map(k=>redes[k]):Object.keys(CAMPOS).filter(k=>k==='legenda'||String(p[k]||'').trim());
@@ -137,7 +137,7 @@ export function criarConferencia(api){
         ${refNativa?'<p class="meta">Ligação original da produção. Ela é preservada.</p>':''}
       </section>`}
       ${l?`<section><h3>Legenda atual do calendário</h3>${blocoTextos(l,'cal')}</section>`:''}
-      ${p&&r?.estado==='confirmado'&&p.status==='aguardando_legenda'&&api.podeUsar?.(p)?'<button class="btn" type="button" data-usar-fila>Usar legenda no formulário da Gabi</button>':''}
+      ${p&&r?.estado==='confirmado'&&p.status==='aguardando_legenda'&&api.podeUsar?.(p)?'<button class="btn" type="button" data-usar-fila>Usar legenda neste formulário</button>':''}
       ${p&&podeRevisar(p)&&!revisar?'<button class="btn secondary" type="button" data-revisar>Conferir / corrigir texto deste vídeo</button>':''}
       ${p?formularioReparo(p,l,r):''}
       ${p?`<section><h3>Texto enviado com esta postagem</h3><p class="meta">Confira o texto que será usado na publicação. Recados e sinais isolados são tratados como pendência.</p>${blocoTextos(p,'post')}</section>`:''}

@@ -22,7 +22,7 @@ export function exigirLegendaI79(texto){if(!legendaUtilizavelI79(texto))throw Er
 export function exigirPostagemI79(p){if(camposPendentesI79(p).length)throw Error('Esta postagem ainda precisa de legenda. Abra “Conteúdo e legenda” para conferir e completar o texto antes de agendar. As datas já registradas foram preservadas.');}
 // Apenas campos faltantes podem ser reparados; etapa, datas e editoriais permanecem.
 export function prepararReparoI79(p,textos,ctx){
-  if(!['Gabrielle','Cecília','Amanda','Chris'].includes(ctx.papel)||!pendenciaLegendaI79(p))throw Error('Esta postagem não está disponível para completar legenda. Atualize a conferência.');
+  if(!['Fernanda','Gabrielle','Cecília','Amanda','Chris'].includes(ctx.papel)||!pendenciaLegendaI79(p))throw Error('Esta postagem não está disponível para completar legenda. Atualize a conferência.');
   const faltantes=camposPendentesI79(p),patch={};
   if(Object.keys(textos).some(k=>!faltantes.includes(k)))throw Error('Uma legenda já preenchida não será sobrescrita. Atualize a conferência.');
   for(const k of faltantes){if(!(k in textos))throw Error('Confira todas as legendas pendentes.');patch[k]=exigirLegendaI79(textos[k]);}

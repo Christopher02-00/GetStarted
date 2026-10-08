@@ -1249,22 +1249,48 @@ function mesclarCompetenciaCalendarioV125(base,local,servidor,competencia,prefer
 let temNaoSalvo=false;
 let ultimoSalvo=null;
 let bloqueadoPorConflito=false;
-const CHAVE_RASCUNHO = () => 'rascunho_cal_' + (window.__clienteId||'');
+const CHAVE_RASCUNHO_LEGADO = () => 'rascunho_cal_' + (window.__clienteId||'');
+const CHAVE_RASCUNHO = (competencia=mesVisivel) => 'rascunho_cal_v120_' + (window.__clienteId||'') + '__' + competencia + '__' + encodeURIComponent(window.__fbAuthUid||'sem_uid');
+// A cópia de um mês não pode ser substituída/limpa ao salvar outro mês.
+// A chave antiga continua legível até a recuperação explícita ser confirmada.
+function copiasCalendarioI120(){
+  const copias=[];
+  try{
+    const prefixo='rascunho_cal_v120_'+(window.__clienteId||'')+'__';
+    for(let i=0;i<localStorage.length;i++){
+      const chave=localStorage.key(i);
+      if(typeof chave!=='string')continue;
+      if(chave!==CHAVE_RASCUNHO_LEGADO()&&!chave.startsWith(prefixo))continue;
+      try{
+        const r=JSON.parse(localStorage.getItem(chave));
+        const competencia=String(r?.competencia||mesDoTexto(r?.data?.month)||'');
+        if(!r?.data||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia))continue;
+        if(r.cliente&&r.cliente!==String(window.__clienteId||''))continue;
+        if(r.autorUid&&r.autorUid!==String(window.__fbAuthUid||''))continue;
+        copias.push({...r,competencia,chaveLocalI120:chave});
+      }catch(e){}
+    }
+  }catch(e){}
+  return copias.sort((a,b)=>String(b.em||'').localeCompare(String(a.em||'')));
+}
 
 function guardarRascunho(){
   try{
     localStorage.setItem(CHAVE_RASCUNHO(), JSON.stringify({
-      schemaVersion:125, competencia:String(typeof mesVisivel!=='undefined'?mesVisivel:''),
+      schemaVersion:125, cliente:String(window.__clienteId||''),autorUid:String(window.__fbAuthUid||''),
+      competencia:String(typeof mesVisivel!=='undefined'?mesVisivel:''),
       data: data, base:window.__calBaseConflitoV125,
       em: new Date().toISOString(), itens: (data.items||[]).length
     }));
   }catch(e){ avisarTela('Não consegui guardar o rascunho neste navegador. Mantenha a aba aberta e baixe seus textos antes de sair.','erro'); }
 }
-function lerRascunho(){
-  try{ const r = localStorage.getItem(CHAVE_RASCUNHO()); return r ? JSON.parse(r) : null; }
-  catch(e){ return null; }
+function lerRascunho(competencia=mesVisivel){
+  const copias=copiasCalendarioI120();
+  return copias.find(r=>r.competencia===competencia)||copias[0]||null;
 }
-function limparRascunho(){ try{ localStorage.removeItem(CHAVE_RASCUNHO()); }catch(e){} }
+function limparRascunho(competencia=mesVisivel){
+  try{for(const r of copiasCalendarioI120())if(r.competencia===competencia)localStorage.removeItem(r.chaveLocalI120);}catch(e){}
+}
 function rascunhoDifereDoBancoV125(rasc,banco){
   if(!rasc||!rasc.data) return false;
   const alvo=String(rasc.competencia||mesVisivel||mesDoTexto(rasc.data.month)||'');
@@ -1775,14 +1801,19 @@ function ofereceRascunho(rasc, itensDoBanco){
     q + ' conteúdo(s) de '+esc(alvo?textoDoMes(alvo):'esta competência')+', de ' + quando + '. ' + situacaoBanco+
     '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'+
     '<button onclick="restaurarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#4caf72;color:#08210f;font-weight:800;cursor:pointer;font-size:12.5px;">↩️ Trazer de volta</button>'+
+    '<button onclick="fecharBarraDecisao()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Agora não · manter cópia</button>'+
     '<button onclick="descartarRascunho()" style="padding:8px 14px;border:0;border-radius:6px;background:#3a3a3a;color:#eee;font-weight:700;cursor:pointer;font-size:12.5px;">Descartar</button>'+
     '</div>');
 }
 window.restaurarRascunho = function(){
-  if(exigirRetiradaAntesDeEditar()) return;
   const r = lerRascunho(); if(!r) return;
-  const banco=clonarCalendarioV125(data);
   const alvo=String(r.competencia||mesVisivel||mesDoTexto(r.data.month)||'');
+  if(pendingWrite||gravacoesCalendarioNaFila>0||salvandoItemI35){avisarTela('Espere a confirmação do salvamento atual antes de recuperar outra cópia.','erro');return;}
+  if(formularioAlteradoI35()&&!guardarFormularioI35())return;
+  // A recuperação deve usar a trava e a grade DO MÊS DA CÓPIA.
+  if(alvo!==mesVisivel)verMes(alvo);
+  if(mesVisivel!==alvo||exigirRetiradaAntesDeEditar())return;
+  const banco=clonarCalendarioV125(data);
   const baseRascunho=r.base||banco;
   const conciliado=mesclarCompetenciaCalendarioV125(baseRascunho,r.data,banco,alvo,'aba');
   if(!conciliado.ok){
@@ -1803,8 +1834,9 @@ window.restaurarRascunho = function(){
   avisarTela('Trabalho deste mês recuperado. Revise e salve; os outros meses foram preservados.');
 };
 window.descartarRascunho = function(){
+  const r=lerRascunho();if(!r)return;
   if(!confirm('Descartar de vez esse trabalho não salvo?')) return;
-  limparRascunho(); fecharBarraDecisao();
+  limparRascunho(r.competencia); fecharBarraDecisao();
 };
 
 function aguardarBootstrapCalendarioV126(promessa,limiteMs){
@@ -1976,7 +2008,7 @@ async function load(){
         const r = lerRascunho();
         if(r && r.data){
           if(rascunhoDifereDoBancoV125(r,data)){ ofereceRascunho(r,itensDaCompetenciaV125(data,String(r.competencia||mesVisivel||'')).length); ofereceu = true; }
-          else limparRascunho();
+          else limparRascunho(r.competencia);
         }
       }
     }
@@ -3229,6 +3261,13 @@ window.verMes = function(m){
     avisarTela('Os calendários pelo site começam em julho de 2026.','erro');
     return;
   }
+  if(window.__modoCal==='equipe'&&m!==mesVisivel){
+    if(pendingWrite||gravacoesCalendarioNaFila>0||salvandoItemI35||window.__enviandoAprovacaoInterna){
+      avisarTela('Espere a confirmação do salvamento antes de trocar de mês.','erro');return;
+    }
+    if(temNaoSalvo)guardarRascunho();
+    if(formularioAlteradoI35()&&!guardarFormularioI35())return;
+  }
   if(window.__modoCal==='cliente'&&!mesesLiberados().includes(m)){
     avisarTela(estadoDoMes(m)==='arquivado'?'Calendário arquivado':'Calendário em produção','erro');
     return;
@@ -3243,6 +3282,11 @@ window.verMes = function(m){
   renderGrid();renderWeek();renderKanban();renderProgress();renderSeletorMes();renderAprovacaoInterna();renderBlocos();
   window.__checarLiberacaoCalendarioCliente?.();
   avisarMesVisivelAoPai();
+  atualizarRascunhosI35();
+  if(window.__modoCal==='equipe'&&!temNaoSalvo){
+    const r=lerRascunho(m);
+    if(r?.competencia===m&&rascunhoDifereDoBancoV125(r,data))ofereceRascunho(r,itensDaCompetenciaV125(data,m).length);
+  }
 };
 
 function renderMeta(){
@@ -4119,7 +4163,7 @@ async function salvarItemNoSiteI35(){
   const referenciaDispensada=!!document.getElementById('mReferenciaDispensada')?.checked;
   if(roteiroNovo&&roteiroDispensado){avisarTela('Escolha uma opção: mantenha o roteiro escrito ou marque que ele não é necessário. Nada foi alterado.','erro');return;}
   if(referenciaNova&&referenciaDispensada){avisarTela('Escolha uma opção: mantenha a referência ou marque que ela não é necessária. Nada foi alterado.','erro');return;}
-  const it={...anterior,itemId:anterior.itemId||('calitem_'+Date.now()+'_'+Math.random().toString(36).slice(2,9)),day:diaEscolhido,name:document.getElementById('mName').value||'Sem título',
+  const it={...anterior,itemId:anterior.itemId||formularioI35?.itemId||('calitem_'+Date.now()+'_'+Math.random().toString(36).slice(2,9)),day:diaEscolhido,name:document.getElementById('mName').value||'Sem título',
     desc:document.getElementById('mDesc').value,roteiroDispensado:!!document.getElementById('mRoteiroDispensado')?.checked,legenda:legendaNova,
     ref:document.getElementById('mRef').value,referenciaDispensada:!!document.getElementById('mReferenciaDispensada')?.checked,
     obs:(document.getElementById('mObs')?.value||''),
@@ -4150,7 +4194,8 @@ async function salvarItemNoSiteI35(){
   let indiceSalvo=editIdx;
   if(editIdx!==null)data.items[editIdx]=it;else{data.items.push(it);indiceSalvo=data.items.length-1;}
   editIdx=indiceSalvo;
-  if(formularioI35){formularioI35.itemId=it.itemId;formularioI35.novo=false;guardarFormularioI35();}
+  // Atribuir ID não significa que o primeiro commit já ocorreu.
+  if(formularioI35){formularioI35.itemId=it.itemId;guardarFormularioI35();}
   /* O primeiro conteúdo de uma competência nova precisa criar também o
      estado mensal explícito. Sem isso, o fallback de compatibilidade
      confundia o mês recém-criado com um calendário legado já publicado. */
@@ -4257,6 +4302,20 @@ function mostrarRascunhosI35(){
     '<button class="btn btn-o" style="margin-top:14px;" onclick="fecharBarraDecisao()">Fechar</button>');
 }
 function obterCopiaI35(id){return copiasRascunhoI35().find(r=>r.id===id)||null;}
+function destinoFormularioI120(r,cal,copias){
+  const id=String(r.itemId||'');
+  const encontrados=(cal.items||[]).map((it,indice)=>({it,indice})).filter(x=>id&&x.it.itemId===id);
+  if(encontrados.length){
+    if(encontrados.length!==1||encontrados[0].it.excluido||mesDoItemNoCalendario(cal,encontrados[0].it)!==r.competencia)return null;
+    return {indice:encontrados[0].indice};
+  }
+  // Compatibilidade com o rascunho antigo que já gravou novo=false:
+  // a base não possuía este ID e a cópia local contém sua criação.
+  const criacaoComprovada=(copias||[]).some(c=>c.competencia===r.competencia&&Array.isArray(c.base?.items)&&
+    !c.base.items.some(it=>it.itemId===id)&&
+    (c.data?.items||[]).some(it=>id&&it.itemId===id&&!it.excluido&&mesDoItemNoCalendario(c.data,it)===r.competencia));
+  return r.novo===true||criacaoComprovada?{novo:true}:null;
+}
 function baixarRascunhoI35(id){
   const r=obterCopiaI35(id);if(!r)return;
   const partes=['Rascunho — '+r.cliente+' — '+r.competencia,'Guardado em '+r.em,''];
@@ -4269,10 +4328,11 @@ function trazerRascunhoI35(id){
   const r=obterCopiaI35(id);if(!r)return;
   if(formularioAlteradoI35()&&!guardarFormularioI35())return;
   if(r.tipo==='formulario'){
-    if(r.novo)openModal(Number(r.form?.mDay)||1);
-    else{const indices=(data.items||[]).map((it,i)=>({it,i})).filter(x=>x.it.itemId===r.itemId&&mesDoItemNoCalendario(data,x.it)===r.competencia&&!x.it.excluido);if(indices.length!==1){avisarTela('O conteúdo não está disponível com a mesma identidade. Baixe os textos e confira antes de criar ou substituir qualquer item.','erro');return;}openEdit(indices[0].i);}
+    const destino=destinoFormularioI120(r,data,copiasCalendarioI120());
+    if(!destino){avisarTela('O conteúdo não está disponível com a mesma identidade. Baixe os textos e confira antes de criar ou substituir qualquer item.','erro');return;}
+    if(destino.novo)openModal(Number(r.form?.mDay)||1);else openEdit(destino.indice);
     CAMPOS_FORMULARIO_I35.forEach(c=>{const el=document.getElementById(c);if(el&&r.form?.[c]!==undefined){if(el.type==='checkbox')el.checked=!!r.form[c];else el.value=String(r.form[c]);}});
-    formularioI35.id=r.id;guardarFormularioI35();fecharBarraDecisao();return;
+    formularioI35.id=r.id;formularioI35.itemId=String(r.itemId||'');guardarFormularioI35();fecharBarraDecisao();return;
   }
   if(temNaoSalvo&&!protegerRascunhoCalendarioI35('antes de trazer outra cópia'))return;
   try{localStorage.setItem(CHAVE_RASCUNHO(),JSON.stringify(r));}catch(e){avisarTela('Não consegui preparar a restauração. A cópia continua disponível para baixar.','erro');return;}

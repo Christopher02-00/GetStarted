@@ -27392,24 +27392,22 @@ window.setGerenciaSub = function(qual, el){
       </div>`;
   };
 
-  const JANELA_URGENCIA_BADGE_DIAS = 1;
-  function ehUrgenteParaBadge(demanda, diasJanela){
-    if(ehAvisoDistribuicaoI105(demanda)) return false;
-    if(demanda.status !== 'pendente') return false;
-    if(estaAusente(demanda.destinatario)) return false;
-    const janela = (diasJanela == null) ? JANELA_URGENCIA_BADGE_DIAS : diasJanela;
-    const agora = new Date();
-    const prazo = new Date(demanda.prazoData + 'T' + (demanda.prazoHora || '19:00'));
-    const limite = new Date(agora);
-    limite.setDate(limite.getDate() + janela);
-    limite.setHours(23,59,59,999);
-    return prazo <= limite;
+  /* I123: menu e resumo usam a classificação da própria lista.
+     Amanhã permanece em Próximos 7 dias, sem virar cobrança de hoje. */
+  function ehUrgenteParaBadge(demanda){
+    return !estaEncalhada(demanda) &&
+      ['atrasado','hoje'].includes(calcularUrgencia(demanda));
   }
-  function contarUrgentesBadge(lista, diasJanela){
-    /* 28/07/2026 — encalhada não entra no badge. O número no menu existe
-       pra dizer "isto precisa de você agora"; backlog automático de três
-       semanas atrás diz outra coisa, e é essa outra coisa que assusta. */
-    return lista.filter(d => ehUrgenteParaBadge(d, diasJanela) && !estaEncalhada(d)).length;
+  function contarUrgentesBadge(lista){
+    return lista.filter(ehUrgenteParaBadge).length;
+  }
+  function demandasCanonicasContadoresI123(){
+    return resolverDemandasAlertasCanonicosV135({
+      demandas:todasDemandas||[],agendamentos:cacheAgendamentos||[],postagens:cachePostagens||[],
+      hoje:hojeLocal(),
+      agendamentosDisponiveis:__cacheTempoRealPronto.agendamentos&&!__errosTempoRealPorColecaoV135.has('agendamentos'),
+      postagensDisponiveis:__cacheTempoRealPronto.postagens&&!__errosTempoRealPorColecaoV135.has('postagens')
+    }).demandasVisiveis;
   }
   // ===== PRAZO DE EDICAO — 1 dia util, ate as 19h =====
   // ===== FASE 4 — PRAZOS EM DIAS ÚTEIS =====
@@ -31596,7 +31594,7 @@ window.setGerenciaSub = function(qual, el){
       if(soRefiltrar!==true)await carregarTodasDemandas(opcoes);
     }
     if(opcoes.validar)opcoes.validar();
-    const todasMinhas = demandasVisiveisDaPessoa(usuarioAtual);
+    const todasMinhas = demandasVisiveisDaPessoa(usuarioAtual,{},demandasCanonicasContadoresI123());
     /* mesma regra do badge lateral — um número só no site inteiro */
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
       todasMinhas.filter(d => d.status !== 'concluida_aguardando_aprovacao' && !estaEncalhada(d))));
@@ -31785,7 +31783,7 @@ window.setGerenciaSub = function(qual, el){
        Agora: o cartão principal é só o que ela tem PRA FAZER hoje, o que
        ela entregou sai do peso visual, e famílias grandes viram uma linha
        só que abre no clique. */
-    const resumoHtml = `<div class="painelResumo painelResumoDemandas" style="margin-bottom:16px;">
+    const resumoHtml = `<div class="desc" role="note" style="margin-bottom:8px;">O número no menu soma <b>Atrasadas + Pra hoje</b>. Próximas demandas e avisos ficam separados.</div><div class="painelResumo painelResumoDemandas" style="margin-bottom:16px;">
       <div class="resumoCard clicavel ${resumoAtrasadas.length?'red':''}" onclick="setFiltroMinhasDemandas('atrasadas', null)">
         <div class="num">${resumoAtrasadas.length}</div><div class="lbl">Atrasadas →</div>
       </div>
@@ -31955,15 +31953,7 @@ window.setGerenciaSub = function(qual, el){
     /* Badges são outro desenho da mesma fila: usam a mesma resolução
        canônica do Agora/indicadores. Enquanto uma fonte não estiver
        confirmada, o alerta é preservado (falha fechada), nunca escondido. */
-    const agendamentosDisponiveisBadgesV135=__cacheTempoRealPronto.agendamentos&&
-      !__errosTempoRealPorColecaoV135.has('agendamentos');
-    const postagensDisponiveisBadgesV135=__cacheTempoRealPronto.postagens&&
-      !__errosTempoRealPorColecaoV135.has('postagens');
-    const demandasBadgesV135=resolverDemandasAlertasCanonicosV135({
-      demandas:todasDemandas||[],agendamentos:cacheAgendamentos||[],postagens:cachePostagens||[],
-      hoje:hojeLocal(),agendamentosDisponiveis:agendamentosDisponiveisBadgesV135,
-      postagensDisponiveis:postagensDisponiveisBadgesV135
-    }).demandasVisiveis;
+    const demandasBadgesV135=demandasCanonicasContadoresI123();
 
     /* ===== O NÚMERO PRECISA SER O QUE A TELA MOSTRA — 30/07/2026 =====
        O Chris tinha "6" preso em Minhas Demandas com a tela vazia, e "1"
@@ -32071,8 +32061,12 @@ window.setGerenciaSub = function(qual, el){
   function atualizarBadgeMinhasDemandasAtribuidas(qtd){
     const badge = document.getElementById('badgeMinhasDemandasAtribuidas');
     if(!badge) return;
-    if(qtd){ badge.style.display='flex'; badge.textContent = qtd; }
-    else { badge.style.display='none'; }
+    if(qtd){
+      badge.style.display='flex'; badge.textContent = qtd;
+      const rotulo=qtd+' demanda'+(qtd===1?'':'s')+' em Atrasadas + Pra hoje';
+      badge.title=rotulo;badge.setAttribute('aria-label',rotulo);
+    }
+    else { badge.style.display='none';badge.textContent='';badge.removeAttribute('title');badge.removeAttribute('aria-label'); }
   }
 
   /* ===== CHECKLIST DE CLIENTES DENTRO DA DEMANDA (27/07/2026) =====
@@ -32934,7 +32928,7 @@ window.setGerenciaSub = function(qual, el){
       await renderMeuDia({validar,somenteFila:true});
       if(!mesmaPessoa())return;
       limparCacheIndicadores();
-      const minhas=demandasVisiveisDaPessoa(usuarioAtual);
+      const minhas=demandasVisiveisDaPessoa(usuarioAtual,{},demandasCanonicasContadoresI123());
       atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
         minhas.filter(d=>d.status!=='concluida_aguardando_aprovacao'&&!estaEncalhada(d))));
       /* A pessoa pode ter aberto outra tela ou outro formulário durante

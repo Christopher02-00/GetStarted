@@ -1,6 +1,6 @@
 /* I96 — recados privados por origem exata. Não participa do estado editorial. */
 export const COLECAO='calendarios_recados_equipe';
-const PAPÉIS=new Set(['Chris','Amanda','Gabrielle','Cecília']);
+const PAPÉIS=new Set(['Chris','Amanda','Gabrielle','Fernanda','Cecília']);
 const texto=v=>String(v??'');
 // O Firestore não garante a ordem das propriedades de um mapa.
 export const mesmaSelecao=(a,b)=>a==null&&b==null||!!a&&!!b&&a.origem===b.origem&&a.inicio===b.inicio&&a.fim===b.fim;
@@ -77,7 +77,7 @@ export function montar({root,alvo,repo,contexto,antesSeparar=()=>{},separado=()=
   let rascunho;try{rascunho=JSON.parse(storage.getItem(draftKey)||'null');}catch{}
   root.classList.add('recado-i96');root.replaceChildren();
   function el(tag,txt,parent=root){const e=document.createElement(tag);if(txt)e.textContent=txt;parent.append(e);return e;}
-  el('h3','Recado interno · só a equipe');el('p','Gabi, Cecília e Amanda usam este espaço. O cliente não recebe este texto.');
+  el('h3','Recado interno · só a equipe');el('p','Gabi, Júlia, Cecília e Amanda usam este espaço. O cliente não recebe este texto.');
   const titulo=el('p',alvo.titulo||''),label=el('label','Recado para a equipe'),input=el('textarea',null,label);input.maxLength=8000;input.setAttribute('aria-label','Recado para a equipe');input.disabled=true;
   const salvar=el('button','Salvar recado');salvar.type='button';salvar.className='principal';salvar.disabled=true;
   const atualizar=el('button','Conferir recado salvo');atualizar.type='button';
@@ -123,7 +123,7 @@ export function montar({root,alvo,repo,contexto,antesSeparar=()=>{},separado=()=
     }catch(e){guardar();if(vivo)aviso.textContent=e.message;}finally{busy=false;if(vivo)botões();}
   }
   salvar.onclick=()=>gravar();confirmar.onclick=()=>gravar(preview);
-  hist.ontoggle=async()=>{if(!hist.open)return;historicos.textContent='Carregando…';try{const rows=await repo.historico(alvo,c);if(!vivo)return;historicos.replaceChildren();for(const r of rows.slice(0,20)){const d=el('details',null,historicos);el('summary','Versão '+r.revisao+' · '+r.por,d);el('pre',r.texto||'(recado vazio)',d);}if(!rows.length)historicos.textContent='Sem versões anteriores.';}catch(e){if(vivo)historicos.textContent=e.message;}};
+  hist.ontoggle=async()=>{if(!hist.open)return;historicos.textContent='Carregando…';try{const rows=await repo.historico(alvo,c);if(!vivo)return;historicos.replaceChildren();for(const r of rows.slice(0,20)){const d=el('details',null,historicos);el('summary','Versão '+r.revisao+' · '+(r.por==='Fernanda'?'Júlia':r.por),d);el('pre',r.texto||'(recado vazio)',d);}if(!rows.length)historicos.textContent='Sem versões anteriores.';}catch(e){if(vivo)historicos.textContent=e.message;}};
   carregar(true);
   return {fechar(){if(input.disabled===false&&input.value!==(foto?.nota?.texto||''))guardar();vivo=false;root.replaceChildren();},ocupado:()=>busy};
 }

@@ -230,6 +230,23 @@
   }
   window.validarFonteCalendarioR4=validarFonteCalendarioR4;
   window.nomeClienteCalendarioR4=nome=>window.__clienteId==='zeiss'?'Zeiss':String(nome||'');
+  // I126: apenas rótulo de autoria; pessoa/por/UID persistidos não são alterados.
+  window.nomeExibicaoPessoaCalendarioI126=function(pessoa){
+    const identidade=String(pessoa||'');
+    if(window.__modoCal!=='equipe')return identidade;
+    let rotulo='';
+    if(identidade===window.__papelCalendarioEquipe&&auth.currentUser?.uid===window.__fbAuthUid)
+      rotulo=window.__nomeExibicaoCalendarioEquipe;
+    try{
+      const pai=window.parent;
+      if(!rotulo&&pai!==window&&pai.location.origin===window.location.origin&&
+          auth.currentUser?.uid===window.__fbAuthUid&&
+          pai.__pessoaAutenticadaReal===window.__atorRealCalendarioEquipe)
+        rotulo=pai.__nomesExibicaoEquipeI126?.[identidade];
+    }catch(e){/* Sem acesso ao pai, conservar o rótulo local e a chave histórica. */}
+    return typeof rotulo==='string'&&rotulo.trim()&&rotulo.length<=160
+      ?rotulo.trim():identidade==='Fernanda'?'Júlia':identidade;
+  };
   const clienteSolicitadoR4=params.get('cliente')||'';
   const linkHistoricoR4=aliasHistoricoCalendarioR4(clienteSolicitadoR4);
   /* O link público continua num app isolado e anônimo. Dentro do
@@ -268,7 +285,7 @@
   const tokenCliente = params.get('t') || '';
   const tokenEquipe  = params.get('e') || '';
   const mesSolicitado = params.get('mes') || '';
-  const PAPEIS_OPERAVEIS_POR_CHRIS = Object.freeze(['Amanda','Cecília','Gabrielle','Helo','João Victor','Luís','Nathan','Yas']);
+  const PAPEIS_OPERAVEIS_POR_CHRIS = Object.freeze(['Amanda','Cecília','Gabrielle','Fernanda','Helo','João Victor','Luís','Nathan','Yas']);
   const PAPEL_CALENDARIO_POR_EMAIL = Object.freeze({
     'christopherveloso0@gmail.com':'Chris','amandachamorrosm@gmail.com':'Amanda',
     'vitoriaboaron215@gmail.com':'Cecília','gabrielleromaomarketing@gmail.com':'Gabrielle',
@@ -276,6 +293,19 @@
     'nathanocosta652@gmail.com':'Nathan','victorvieiraj814@gmail.com':'João Victor',
     'yasmocelin@gmail.com':'Yas'
   });
+
+  // I126 R3: perfil cadastrado não altera pessoa/autor do calendário.
+  window.papelSocialMediaCalendarioI126=function(){return window.__papelCalendarioEquipe==='Gabrielle'||window.__papelCalendarioEquipe==='Fernanda'&&window.__perfilFuncionalCalendarioEquipe==='social_media';};
+  async function identidadeCalendarioEquipeI126(usuario){
+    const email=String(usuario?.email||'').trim().toLowerCase(),legada=PAPEL_CALENDARIO_POR_EMAIL[email];
+    if(legada)return {pessoa:legada,perfilFuncional:legada==='Gabrielle'?'social_media':'',nomeExibicao:legada};
+    if(usuario?.emailVerified!==true||usuario?.isAnonymous===true)throw Error('Confirme o Google verificado da equipe.');
+    const snap=await getDocFromServer(doc(db,'usuarios_equipe',email)),d=snap.exists()?snap.data():null;
+    if(auth.currentUser?.uid!==usuario.uid||String(auth.currentUser?.email||'').trim().toLowerCase()!==email)throw Error('A sessão mudou. Reabra o calendário.');
+    if(!d||d.pessoa!=='Fernanda'||d.ativo!==true||d.excluido===true||d.perfilFuncional!=='social_media')throw Error('O cadastro da Júlia não está ativo como Social Media.');
+    return {pessoa:'Fernanda',perfilFuncional:'social_media',nomeExibicao:'Júlia'};
+  }
+
   const modoOperacaoChrisSolicitado = modoInternoEquipe && params.get('operacaoChris') === '1';
   const papelOperadoSolicitado = params.get('papelOperado') || '';
   let modoOperacaoChrisAtivo = false;
@@ -458,11 +488,25 @@
         aviso.textContent='🔐 CHRIS OPERANDO COMO '+papelOperadoSolicitado+' · ALTERAÇÕES ATIVAS E REGISTRADAS';
         document.body.prepend(aviso);
       }
-      const emailEquipe=String(usuarioEquipe?.email||'').trim().toLowerCase();
-      window.__papelCalendarioEquipe=modoOperacaoChrisAtivo
-        ? papelOperadoSolicitado
-        : (PAPEL_CALENDARIO_POR_EMAIL[emailEquipe]||'Equipe');
-      window.__atorRealCalendarioEquipe=PAPEL_CALENDARIO_POR_EMAIL[emailEquipe]||'Equipe';
+      let pessoaEquipe;
+      try{pessoaEquipe=await identidadeCalendarioEquipeI126(usuarioEquipe);}
+      catch(e){barrar('Sessão da equipe não confirmada',e?.message||'Volte ao Escritório e entre novamente.');return false;}
+      let perfilFinal=modoOperacaoChrisAtivo?(papelOperadoSolicitado==='Gabrielle'?'social_media':''):pessoaEquipe.perfilFuncional,nomeFinal=modoOperacaoChrisAtivo?papelOperadoSolicitado:pessoaEquipe.nomeExibicao;
+      try{
+        if(modoOperacaoChrisAtivo&&papelOperadoSolicitado==='Fernanda'){
+          const contatoPerfil=await getDocFromServer(doc(db,'emails_equipe',papelOperadoSolicitado)),emailPerfil=String(contatoPerfil.data()?.email||'').trim().toLowerCase();
+          const snapPerfil=emailPerfil?await getDocFromServer(doc(db,'usuarios_equipe',emailPerfil)):null,dPerfil=snapPerfil?.exists()?snapPerfil.data():null;
+          if(!dPerfil||dPerfil.pessoa!=='Fernanda'||dPerfil.ativo!==true||dPerfil.excluido===true||dPerfil.perfilFuncional!=='social_media')throw Error('O cadastro da Júlia não está ativo como Social Media.');
+          perfilFinal=dPerfil?.perfilFuncional===undefined?(papelOperadoSolicitado==='Gabrielle'?'social_media':''):dPerfil.perfilFuncional;
+          nomeFinal=dPerfil?.nomeExibicao===undefined?(papelOperadoSolicitado==='Fernanda'?'Júlia':papelOperadoSolicitado):dPerfil.nomeExibicao;
+          if(!['','social_media'].includes(perfilFinal)||typeof nomeFinal!=='string'||!nomeFinal.trim()||nomeFinal.length>160)throw Error('Confira o perfil e a apresentação no cadastro.');
+        }
+        if(auth.currentUser?.uid!==usuarioEquipe.uid||String(auth.currentUser?.email||'').trim().toLowerCase()!==String(usuarioEquipe.email||'').trim().toLowerCase()||modoOperacaoChrisAtivo&&(pessoaEquipe.pessoa!=='Chris'||params.get('papelOperado')!==papelOperadoSolicitado))throw Error('A sessão ou o perfil mudou. Reabra pelo Escritório.');
+      }catch(e){barrar('Perfil da equipe não confirmado',e?.message||'Volte ao Escritório e tente novamente.');return false;}
+      window.__papelCalendarioEquipe=modoOperacaoChrisAtivo?papelOperadoSolicitado:pessoaEquipe.pessoa;
+      window.__atorRealCalendarioEquipe=pessoaEquipe.pessoa;
+      window.__perfilFuncionalCalendarioEquipe=perfilFinal;
+      window.__nomeExibicaoCalendarioEquipe=nomeFinal;
       window.__fbAuthUid=String(usuarioEquipe?.uid||'');
       window.__modoCal='equipe';
       return true;
@@ -1418,6 +1462,7 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
         aprovacaoMeses:{...(servidor.aprovacaoMeses||{}),[alvo]:marca},
         updatedAt
       };
+      if(window.__papelCalendarioEquipe==='Fernanda') patch.competenciaEdicaoSM=alvo;
       if(mesUsaCampoLegadoNoCalendario(servidor,alvo)) patch.aprovacaoInterna=marca;
       transacao.set(fb.docRef,patch,{merge:true});
       return {marca,updatedAt,jaConfirmado:false};
@@ -2450,6 +2495,7 @@ async function executarGravacaoComSeguranca(){
       }
       const patch={items:conciliado.itens,blocosPorMes:conciliado.documento.blocosPorMes||{},
         aprovacaoMeses:conciliado.documento.aprovacaoMeses||{},updatedAt:agora};
+      if(window.__papelCalendarioEquipe==='Fernanda') patch.competenciaEdicaoSM=alvo;
       transacao.set(docRef,patch,{merge:true});
       return {deveGuardarVersao,documentoConfirmado:{...servidor,...patch}};
     });
@@ -2773,8 +2819,8 @@ function podeEditarLegendaCalendarioI75(){
   // I86: o calendário e a Central leem a mesma legenda editorial.
   // Cópias de postagens mantêm o texto operacional na Central, sem outro editor.
   const item=editIdx!==null?data.items[editIdx]:null;
-  return window.__modoCal==='equipe'&&window.__papelCalendarioEquipe==='Gabrielle'&&!!window.__fbAuthUid&&
-    ['Gabrielle','Chris'].includes(window.__atorRealCalendarioEquipe)&&item?.origemAgendamentoManualV118!==true;
+  return window.__modoCal==='equipe'&&papelSocialMediaCalendarioI126()&&!!window.__fbAuthUid&&
+    (window.__atorRealCalendarioEquipe===window.__papelCalendarioEquipe||window.__atorRealCalendarioEquipe==='Chris')&&item?.origemAgendamentoManualV118!==true;
 }
 function aplicarModoConsultaItem(ativo){
   ['mDay','mName','mObs','mDesc','mLegenda','mRef','mDataPost','mFmt'].forEach(id=>{
@@ -2875,9 +2921,9 @@ function renderAprovacaoInterna(){
   box.innerHTML = `<div style="font-weight:800;color:${r.cor};">${r.txt}</div>
     ${!ehEquipe && (st === 'ajuste_interno'||pedidosAjusteI71.length) ? '<div style="margin-top:7px;color:#ffe9a8;"><b>Ajuste em andamento.</b> Cada conteúdo tem sua própria revisão. Você pode aprovar ou pedir ajustes nos demais enquanto a equipe trabalha.</div>' : ''}
     ${legado && ehEquipe ? '<div style="margin-top:6px;opacity:.75;">Calendário montado antes do ciclo de revisão existir — segue visível pro cliente, como sempre foi. Ele pode entrar agora no ciclo formal da Amanda pelo botão abaixo.</div>' : ''}
-    ${ehEquipe && info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(info.por) : '') + '</div>' : ''}
+    ${ehEquipe && info.motivoAjuste && st === 'ajuste_interno' ? '<div style="margin-top:6px;opacity:.9;">"' + esc(info.motivoAjuste) + '"' + (info.por ? ' — ' + esc(window.nomeExibicaoPessoaCalendarioI126(info.por)) : '') + '</div>' : ''}
     ${ehEquipe&&pedidosAjusteI71.length?'<div style="margin-top:8px"><b>Pedidos por conteúdo</b>'+pedidosAjusteI71.map(p=>'<div style="padding:8px;border:1px solid #655e43;border-radius:6px;margin-top:6px"><b>'+esc(p.itemNome)+'</b><br>'+esc(p.texto)+'</div>').join('')+'</div>':''}
-    ${ehEquipe && info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(info.por) : '') + '</div>' : ''}
+    ${ehEquipe && info.em ? '<div style="margin-top:5px;opacity:.6;font-size:11px;">' + new Date(info.em).toLocaleString('pt-BR') + (info.por ? ' · ' + esc(window.nomeExibicaoPessoaCalendarioI126(info.por)) : '') + '</div>' : ''}
     ${ehEquipe && st === 'arquivado' ? '<div style="margin-top:7px;opacity:.75;"><b>Calendário arquivado.</b> A consulta deste mês não altera o calendário público atual.</div>' : ''}
     ${ehEquipe && st !== 'arquivado' && (st === 'rascunho' || st === 'ajuste_interno' || legado) ? '<button class="btn btn-g" style="margin-top:10px;padding:10px 16px;" onclick="enviarParaAprovacaoInterna(this)">' + (legado ? 'Enviar calendário legado para a Amanda →' : 'Enviar para Amanda revisar e publicar →') + '</button>' : ''}
     ${ehEquipe && st === 'aguardando_interna' ? '<div style="margin-top:6px;opacity:.75;">A Amanda recebeu o aviso. O mês está travado para edição.'+(pedidosAjusteI71.length?' O cliente continua vendo a versão já publicada.':' O cliente ainda não vê este mês.')+'</div>' : ''}
@@ -2902,7 +2948,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
   if(edicaoBloqueadaPorRevisao() && !legado){ exigirRetiradaAntesDeEditar(); return; }
   if(!itensDoMes(mesVisivel).length){ avisarTela('Este mês está vazio — monta o mês antes de enviar.', 'erro'); return; }
   if(legado && !confirm('Este calendário antigo está visível para o cliente. Ao enviar para a Amanda, ele entra no ciclo formal de revisão e fica temporariamente indisponível ao cliente até a decisão dela.\n\nContinuar?')) return;
-  const quem = prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
+  const quem = papelSocialMediaCalendarioI126()&&window.__papelCalendarioEquipe!=='Gabrielle'?window.__atorRealCalendarioEquipe:prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
   if(quem === null) return;
   const alvo = mesVisivel || mesDoTexto(data.month) || '';
   const rotuloOriginal=btn&&btn.textContent;
@@ -3000,7 +3046,7 @@ window.retirarDaAprovacaoInterna = async function(btn){
     ? 'A aprovação já dada pela Amanda será cancelada e o mês sairá da fila de envio ao cliente.'
     : 'O mês sairá da fila de revisão da Amanda.';
   if(!confirm('Retirar este mês da aprovação e voltar para rascunho?\n\n' + avisoEstado + '\n\nTodos os conteúdos serão preservados. Depois das alterações, será necessário enviar novamente.')) return;
-  const quem = prompt('Seu nome (pra registrar quem retirou):', 'Gabrielle');
+  const quem = papelSocialMediaCalendarioI126()&&window.__papelCalendarioEquipe!=='Gabrielle'?window.__atorRealCalendarioEquipe:prompt('Seu nome (pra registrar quem retirou):', 'Gabrielle');
   if(quem === null) return;
 
   const alvo = mesVisivel || mesDoTexto(data.month) || '';
@@ -3033,6 +3079,7 @@ window.retirarDaAprovacaoInterna = async function(btn){
       if(alvo) mapa[alvo] = marca;
       const patch = { updatedAt:agora };
       if(alvo) patch.aprovacaoMeses = mapa;
+      if(window.__papelCalendarioEquipe==='Fernanda') patch.competenciaEdicaoSM=alvo;
       const espelharAntigo = !servidor.aprovacaoInterna || antigoRepresentaOMes;
       if(espelharAntigo) patch.aprovacaoInterna = marca;
       tx.set(fb.docRef, patch, {merge:true});
@@ -3117,7 +3164,7 @@ window.reabrirCalendarioPorPedidoClienteV113 = async function(btn){
         liberadoEmAnterior:String(atual.em||''),liberadoPorAnterior:String(atual.por||atual.enviadoPor||''),
         origemAjuste:'recuperacao_pedido_anterior_v113'};
       mapa[alvo]=marca;
-      tx.set(fb.docRef,{aprovacaoMeses:mapa,updatedAt:agora},{merge:true});
+      tx.set(fb.docRef,{aprovacaoMeses:mapa,updatedAt:agora,...(window.__papelCalendarioEquipe==='Fernanda'?{competenciaEdicaoSM:alvo}:{})},{merge:true});
       return {marca,mapa,updatedAt:agora,jaConfirmado:false};
     });
     data.aprovacaoMeses=resultado.mapa;
@@ -3145,7 +3192,7 @@ window.reabrirCalendarioPorPedidoClienteV113 = async function(btn){
    estética: é a diferença entre "ele não consegue" e "ele não vê como". */
 function aplicarModoCalendario(){
   const acoesV132=document.getElementById('acoesEditorCalendarioV132');
-  const gabiPodeCriar=window.__modoCal==='equipe'&&window.__papelCalendarioEquipe==='Gabrielle';
+  const gabiPodeCriar=window.__modoCal==='equipe'&&papelSocialMediaCalendarioI126();
   if(acoesV132){acoesV132.hidden=!gabiPodeCriar;acoesV132.setAttribute('aria-hidden',gabiPodeCriar?'false':'true');}
   if(window.__modoCal === 'equipe') return;
 
@@ -3816,7 +3863,7 @@ function quickPost(i){if(window.__modoCal!=='equipe')return false;if(clienteEmCo
 function quickUnpost(i){if(window.__modoCal!=='equipe')return false;if(clienteEmConsultaDeAjusteV115())return;if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
 
 window.abrirNovoConteudoMesV132=function(){
-  if(window.__modoCal!=='equipe'||window.__papelCalendarioEquipe!=='Gabrielle'){
+  if(window.__modoCal!=='equipe'||!papelSocialMediaCalendarioI126()){
     avisarTela('Esta ação rápida pertence à criação editorial da Gabi.','erro');return false;
   }
   const usados=new Set(itensDoMes(mesVisivel).map(i=>Number(i.day)).filter(n=>n>=1&&n<=diasDoMes()));
@@ -3847,11 +3894,11 @@ let editorRecadoI96=null,geracaoRecadoI96=0;
 function fecharRecadoCalendarioI96(){geracaoRecadoI96++;editorRecadoI96?.fechar();editorRecadoI96=null;const box=document.getElementById('recadoEquipeI96');if(box){box.hidden=true;box.replaceChildren();}}
 async function abrirRecadoCalendarioI96(it){
   fecharRecadoCalendarioI96();const box=document.getElementById('recadoEquipeI96');
-  if(window.__modoCal!=='equipe'||!['Gabrielle','Cecília','Amanda','Chris'].includes(window.__papelCalendarioEquipe))return;
+  if(window.__modoCal!=='equipe'||!(['Cecília','Amanda','Chris'].includes(window.__papelCalendarioEquipe)||papelSocialMediaCalendarioI126()))return;
   box.hidden=false;
   if(!it?.itemId){box.textContent='Salve o conteúdo para adicionar um recado interno.';return;}
   const geracao=geracaoRecadoI96,fb=window.__fb,alvo={calendarId:fb.docRef.id,competencia:mesDoItemNoCalendarioI56(data,it),itemId:it.itemId,titulo:it.name};
-  const contexto=()=>({uid:window.__fbAuthUid||'',papel:window.__papelCalendarioEquipe,ator:window.__atorRealCalendarioEquipe,calendarId:window.__fb?.docRef?.id});
+  const contexto=()=>({uid:window.__fbAuthUid||'',papel:window.__papelCalendarioEquipe,ator:window.__atorRealCalendarioEquipe,perfilFuncional:window.__perfilFuncionalCalendarioEquipe,calendarId:window.__fb?.docRef?.id});
   const validarContexto=c=>{if(window.__modoCal!=='equipe'||JSON.stringify(c)!==JSON.stringify(contexto()))throw Error('O perfil mudou. Reabra o recado.');};
   box.textContent='Abrindo recado interno…';
   try{const m=await import('./gs-recados-equipe-i96.mjs?v=1');if(geracao!==geracaoRecadoI96)return;
@@ -4020,7 +4067,7 @@ window.classificarVinculoLegendaEditorialV114=classificarVinculoLegendaEditorial
 
 async function sincronizarLegendaEditorialComCeciliaV114(item,itemIdx){
   const textoInicial=String(item?.legenda||'').trim();
-  if(!legendaUtilizavelI79(textoInicial)||window.__modoCal!=='equipe'||window.__papelCalendarioEquipe!=='Gabrielle') return {estado:'somente_planejamento'};
+  if(!legendaUtilizavelI79(textoInicial)||window.__modoCal!=='equipe'||!papelSocialMediaCalendarioI126()) return {estado:'somente_planejamento'};
   const fb=window.__fb;
   const [porCliente,porSlug]=await Promise.all([
     fb.getDocs(fb.query(fb.collection(fb.db,'postagens'),fb.where('cliente','==',window.__clienteId))),
@@ -4205,7 +4252,7 @@ async function salvarItemNoSiteI35(){
      confundia o mês recém-criado com um calendário legado já publicado. */
   if(mesAindaVazio && !aprovacaoCompativelDoMes(alvoMes)){
     const agora=new Date().toISOString();
-    data.aprovacaoMeses={...(data.aprovacaoMeses||{}),[alvoMes]:{status:'rascunho',mes:alvoMes,por:'',em:agora,motivoAjuste:''}};
+    data.aprovacaoMeses={...(data.aprovacaoMeses||{}),[alvoMes]:{status:'rascunho',mes:alvoMes,por:window.__papelCalendarioEquipe==='Fernanda'?'Fernanda':'',em:agora,motivoAjuste:''}};
   }
   save();clearTimeout(saveTimer);saveTimer=null;
   renderGrid();renderWeek();renderKanban();renderProgress();renderAprovacaoInterna();renderSeletorMes();renderBlocos();
@@ -4218,7 +4265,7 @@ async function salvarItemNoSiteI35(){
   }
   limparFormularioConfirmadoI35(formularioEnviadoI35?.id);formularioI35=null;closeModal();
   avisarTela('Conteúdo confirmado no site.');
-  if(window.__modoCal==='equipe'&&window.__papelCalendarioEquipe==='Gabrielle'&&String(it.legenda||'').trim()){
+  if(window.__modoCal==='equipe'&&papelSocialMediaCalendarioI126()&&String(it.legenda||'').trim()){
     try{
       const confirmado=await confirmarConteudoAntesDoEnvio();
       if(!confirmado?.ok) throw new Error('A legenda ficou protegida como rascunho, mas o calendário ainda não foi confirmado na nuvem. Nada foi enviado para a Cecília.');

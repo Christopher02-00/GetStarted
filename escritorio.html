@@ -27950,6 +27950,8 @@ window.setGerenciaSub = function(qual, el){
     if(typeof calendarioFerramentasClientesConfirmados!=='undefined') calendarioFerramentasClientesConfirmados=[];
     if(typeof calendarioFerramentasClientesEstado!=='undefined') calendarioFerramentasClientesEstado='nao-carregado';
     if(typeof calendarioFerramentasCompetenciaConfirmada!=='undefined') calendarioFerramentasCompetenciaConfirmada='';
+    if(typeof __geracaoAberturaCalendarioI129!=='undefined') ++__geracaoAberturaCalendarioI129;
+    if(typeof __aberturaCalendarioI129Pendente!=='undefined') __aberturaCalendarioI129Pendente=false;
     if(typeof calendarioFerramentasAbertoSlug!=='undefined') calendarioFerramentasAbertoSlug=null;
     if(typeof calendarioFerramentasAbertoCompetencia!=='undefined') calendarioFerramentasAbertoCompetencia='';
     if(typeof __geracaoRevalidacaoEditorCalendarioV127!=='undefined') __geracaoRevalidacaoEditorCalendarioV127++;
@@ -33742,6 +33744,8 @@ window.setGerenciaSub = function(qual, el){
   let calendarioFerramentasAbertoCompetencia = '';
   let calendarioFerramentasDadosConfirmados = null;
   let calendarioFerramentasLeituraEstado='nao-iniciada';
+  let __geracaoAberturaCalendarioI129=0;
+  let __aberturaCalendarioI129Pendente=false;
   let __geracaoRevalidacaoEditorCalendarioV127=0;
   let __revalidacaoEditorCalendarioV127EmCurso=null;
 
@@ -33776,10 +33780,11 @@ window.setGerenciaSub = function(qual, el){
     if(event.data?.tipo!=='gs-calendario-handoff') return;
     if(event.origin!==window.location.origin) return;
     const iframe=document.getElementById('iframeCalendarioFerramentas');
-    if(!iframe||event.source!==iframe.contentWindow) return;
+    if(!iframe||event.source!==iframe.contentWindow||__aberturaCalendarioI129Pendente||!calendarioFerramentasAbertoSlug) return;
+    const geracao=__geracaoAberturaCalendarioI129;
     const competencia=String(event.data.competencia||'');
     const cliente=slugClienteCanonico(String(event.data.cliente||''));
-    const mesmoMesI73=()=>competencia===String(document.getElementById('mesLinkCalFerramentas')?.value||'');
+    const mesmoMesI73=()=>geracao===__geracaoAberturaCalendarioI129&&!__aberturaCalendarioI129Pendente&&competencia===String(document.getElementById('mesLinkCalFerramentas')?.value||'');
     if(!mesmoMesI73())return;
     if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)) return;
     if(cliente&&calendarioFerramentasAbertoSlug&&cliente!==slugClienteCanonico(calendarioFerramentasAbertoSlug)) return;
@@ -33802,7 +33807,9 @@ window.setGerenciaSub = function(qual, el){
   window.addEventListener('message',event=>{
     if(event.origin!==window.location.origin || event.data?.tipo!=='gs-calendario-mes') return;
     const iframe=document.getElementById('iframeCalendarioFerramentas');
-    if(!iframe || event.source!==iframe.contentWindow) return;
+    if(!iframe || event.source!==iframe.contentWindow || __aberturaCalendarioI129Pendente || !calendarioFerramentasAbertoSlug) return;
+    if(slugClienteCanonico(String(event.data.cliente||''))!==slugClienteCanonico(calendarioFerramentasAbertoSlug)) return;
+    if(String(event.data.editorI129||'')!==new URL(iframe.getAttribute('src')||'',window.location.href).searchParams.get('v'))return;
     const mes=String(event.data.mes||'');
     if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)) return;
     const campo=document.getElementById('mesLinkCalFerramentas'); if(campo) campo.value=mes;
@@ -33813,6 +33820,7 @@ window.setGerenciaSub = function(qual, el){
 
   async function revalidarEditorCalendarioVisivelV127(){
     const iframe=document.getElementById('iframeCalendarioFerramentas');
+    if(__aberturaCalendarioI129Pendente) return true;
     const slug=calendarioFerramentasAbertoSlug,mes=calendarioFerramentasAbertoCompetencia;
     if(!iframe||!slug||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(mes||''))) return true;
     if(!papelPodeSubabaCalendariosV127(usuarioAtual,'editar')){
@@ -33823,10 +33831,12 @@ window.setGerenciaSub = function(qual, el){
     }
     if(__revalidacaoEditorCalendarioV127EmCurso) return __revalidacaoEditorCalendarioV127EmCurso;
     const geracao=++__geracaoRevalidacaoEditorCalendarioV127,pessoa=usuarioAtual;
+    const abertura=__geracaoAberturaCalendarioI129,identidade=__geracaoIdentidade,uid=String(auth.currentUser?.uid||'');
+    const atual=()=>!__aberturaCalendarioI129Pendente&&abertura===__geracaoAberturaCalendarioI129&&identidade===__geracaoIdentidade&&uid===String(auth.currentUser?.uid||'')&&geracao===__geracaoRevalidacaoEditorCalendarioV127&&pessoa===usuarioAtual&&slug===calendarioFerramentasAbertoSlug&&mes===calendarioFerramentasAbertoCompetencia&&iframe===document.getElementById('iframeCalendarioFerramentas');
     __revalidacaoEditorCalendarioV127EmCurso=(async()=>{
       try{
         const permitido=await clientePertenceCarteiraCalendarioV127(slug,mes,true);
-        if(geracao!==__geracaoRevalidacaoEditorCalendarioV127||pessoa!==usuarioAtual||slug!==calendarioFerramentasAbertoSlug) return false;
+        if(!atual()) return false;
         if(permitido) return true;
         iframe.src='about:blank';
         calendarioFerramentasDadosConfirmados=null;
@@ -33837,7 +33847,7 @@ window.setGerenciaSub = function(qual, el){
         mostrarToast('Este cliente não pertence mais à carteira desta competência. O editor foi fechado sem gravar nada.','erro');
         return false;
       }catch(e){
-        if(geracao!==__geracaoRevalidacaoEditorCalendarioV127||pessoa!==usuarioAtual||slug!==calendarioFerramentasAbertoSlug) return false;
+        if(!atual()) return false;
         iframe.src='about:blank';
         calendarioFerramentasDadosConfirmados=null;
         calendarioFerramentasLeituraEstado='falha';
@@ -33860,59 +33870,58 @@ window.setGerenciaSub = function(qual, el){
 
   window.abrirCalendarioFerramentas = async function(slug, nome, competencia){
     if(!exigirSubabaCalendariosV127('editar','A edição de calendário não pertence a este perfil.')) return false;
+    const iframe=document.getElementById('iframeCalendarioFerramentas');
+    if(!iframe) return false;
+    if(iframe.getAttribute('src')&&iframe.getAttribute('src')!=='about:blank'){
+      let pode=false;
+      try{pode=iframe.contentWindow?.podeTrocarCalendarioI129?.().ok===true;}catch(e){}
+      if(!pode){mostrarToast('Salve ou feche o conteúdo atual e aguarde a confirmação antes de trocar de calendário.','erro');return false;}
+    }
     const slugSolicitado=String(slug||''),slugCanonico=slugClienteCanonico(slugSolicitado);
-    document.getElementById('nomeClienteFerramentasAberto').textContent = nome;
-    document.getElementById('calendarioFerramentasAberto').style.display = 'block';
-    const mesLink=document.getElementById('mesLinkCalFerramentas');
     const competenciaEscolhida=/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(competencia||''))
       ?String(competencia):competenciaOperacionalCalendario();
-    if(mesLink) mesLink.value=competenciaEscolhida;
+    const geracao=++__geracaoAberturaCalendarioI129,identidade=__geracaoIdentidade;
+    const pessoa=usuarioAtual,uid=String(auth.currentUser?.uid||''),delegacao=String(window.__operacaoDelegadaChris||'');
+    const atual=()=>geracao===__geracaoAberturaCalendarioI129&&identidade===__geracaoIdentidade&&pessoa===usuarioAtual&&uid===String(auth.currentUser?.uid||'')&&delegacao===String(window.__operacaoDelegadaChris||'')&&iframe===document.getElementById('iframeCalendarioFerramentas');
+    ++__geracaoRevalidacaoEditorCalendarioV127;__revalidacaoEditorCalendarioV127EmCurso=null;
+    __aberturaCalendarioI129Pendente=true;
+    iframe.inert=true;iframe.style.visibility='hidden';
+    document.getElementById('nomeClienteFerramentasAberto').textContent=nome;
+    document.getElementById('calendarioFerramentasAberto').style.display='block';
+    const mesLink=document.getElementById('mesLinkCalFerramentas');
+    if(mesLink)mesLink.value=competenciaEscolhida;
     calendarioFerramentasDadosConfirmados=null;
     calendarioFerramentasLeituraEstado='carregando';
-    atualizarDiagnosticoCalendarioFerramentas(mesLink?.value||'');
+    atualizarDiagnosticoCalendarioFerramentas(competenciaEscolhida);
     try{
-      if(!await clientePertenceCarteiraCalendarioV127(slugCanonico,competenciaEscolhida,true)){
-        throw new Error('Este cliente não pertence à carteira recorrente desta competência. O histórico continua preservado, mas não pode ser editado.');
-      }
+      const permitido=await clientePertenceCarteiraCalendarioV127(slugCanonico,competenciaEscolhida,true);
+      if(!atual())return false;
+      if(!permitido)throw new Error('Este cliente não pertence à carteira recorrente desta competência. O histórico continua preservado, mas não pode ser editado.');
       const slugDocumento=await resolverSlugCalendarioExistente(slugSolicitado,competenciaEscolhida);
-      calendarioFerramentasAbertoSlug = slugDocumento;
-      calendarioFerramentasAbertoCompetencia = competenciaEscolhida;
-      const calSnap=await comTimeoutCalendarioOperacional(
-        getDoc(doc(db,'calendarios',slugDocumento)),
-        'A abertura do calendário interno',12000
-      );
-      if(calSnap.exists()){
-        calendarioFerramentasDadosConfirmados=calSnap.data()||{};
-        calendarioFerramentasLeituraEstado='confirmado';
-      }else{
-        calendarioFerramentasDadosConfirmados=null;
-        calendarioFerramentasLeituraEstado='ausente';
-      }
-      atualizarDiagnosticoCalendarioFerramentas(mesLink?.value||'');
-      /* 02/08/2026 — QUEBRA-CACHE NO IFRAME.
-             Ao subir um `calendario.html` novo, quem já tinha o antigo no
-             navegador continuava vendo o velho AQUI DENTRO, mesmo depois
-             de recarregar o escritório — o iframe tem cache próprio e a
-             URL não mudava. Perdi tempo investigando isto como possível
-             causa do painel de gravações não aparecer (não era, mas o
-             problema é real). `v=` muda a cada carga e mata o cache. */
-      const operacaoChris=window.__operacaoDelegadaChris
-        ? '&operacaoChris=1&papelOperado='+encodeURIComponent(window.__operacaoDelegadaChris)
-        : '';
-      document.getElementById('iframeCalendarioFerramentas').src = 'calendario.html?cliente=' + encodeURIComponent(slugDocumento) + '&interno=1&mes=' + encodeURIComponent(mesLink?.value||'') + operacaoChris + '&v=' + Date.now();
+      if(!atual())return false;
+      const calSnap=await comTimeoutCalendarioOperacional(getDoc(doc(db,'calendarios',slugDocumento)),'A abertura do calendário interno',12000);
+      if(!atual())return false;
+      calendarioFerramentasAbertoSlug=slugDocumento;
+      calendarioFerramentasAbertoCompetencia=competenciaEscolhida;
+      calendarioFerramentasDadosConfirmados=calSnap.exists()?(calSnap.data()||{}):null;
+      calendarioFerramentasLeituraEstado=calSnap.exists()?'confirmado':'ausente';
+      atualizarDiagnosticoCalendarioFerramentas(competenciaEscolhida);
+      const operacaoChris=delegacao?'&operacaoChris=1&papelOperado='+encodeURIComponent(delegacao):'';
+      iframe.src='calendario.html?cliente='+encodeURIComponent(slugDocumento)+'&interno=1&mes='+encodeURIComponent(competenciaEscolhida)+operacaoChris+'&v='+Date.now();
+      iframe.inert=false;iframe.style.visibility='';
+      __aberturaCalendarioI129Pendente=false;
+      return true;
     }catch(e){
+      if(!atual())return false;
       console.error('Falha ao abrir calendário interno:',e);
-      const iframe=document.getElementById('iframeCalendarioFerramentas');
-      if(iframe) iframe.removeAttribute('src');
-      calendarioFerramentasAbertoSlug=null;
-      calendarioFerramentasAbertoCompetencia='';
-      calendarioFerramentasDadosConfirmados=null;
-      calendarioFerramentasLeituraEstado='falha';
-      atualizarDiagnosticoCalendarioFerramentas(mesLink?.value||'');
+      iframe.removeAttribute('src');iframe.inert=false;iframe.style.visibility='';
+      calendarioFerramentasAbertoSlug=null;calendarioFerramentasAbertoCompetencia='';
+      calendarioFerramentasDadosConfirmados=null;calendarioFerramentasLeituraEstado='falha';
+      __aberturaCalendarioI129Pendente=false;
+      atualizarDiagnosticoCalendarioFerramentas(competenciaEscolhida);
       mostrarToast('Não consegui abrir o calendário: '+(e?.message||'tente novamente.'),'erro');
+      return false;
     }
-    renderRefsPerfilCliente(slugCanonico, nome);
-    return calendarioFerramentasLeituraEstado!=='falha';
   };
 
   /* ===== REFERENCIAS DE PERFIL POR CLIENTE, POR SEMANA (24/07/2026) =====

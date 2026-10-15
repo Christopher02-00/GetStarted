@@ -3552,10 +3552,11 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   // I91: uma ocorrência permanece até a conferência da gestão; os registros anteriores nunca são zerados.
   const cicloIdChecklistI91=(nome,periodo)=>encodeURIComponent(nome)+'__'+encodeURIComponent(periodo);
   async function cicloChecklistI91(nome,periodo,ref,abrir=false){
-    const referencia=ocorrenciaChecklistI59(nome,periodo,ref),id=cicloIdChecklistI91(nome,periodo);
+    const referencia=ocorrenciaChecklistI59(nome,periodo,ref),id=cicloIdChecklistI91(nome,periodo),sessaoI129=sessaoServicoManual();
+    const validarSessaoI129=()=>{if(abrir&&sessaoI129!==sessaoServicoManual())throw Error('CHECKLIST_SESSAO_MUDOU');};
     const controlRef=doc(db,'checklist_ciclos_i91',id);
     const carregar=async(reader)=>{const s=await reader(controlRef);return s.exists()?s.data():null;};
-    let ciclo=await carregar(getDoc);
+    let ciclo=await carregar(getDoc);validarSessaoI129();
     const deveAbrir=c=>!c||(c.estado==='conferido'&&referencia>c.referencia&&referencia<=hojeLocal());
     if(abrir&&referencia<=hojeLocal()&&deveAbrir(ciclo)&&agendaChecklistI59(nome,periodo).ativo!==false){
       const blocos=templatesEfetivos[nome]?.[periodo]||(await obterTemplatesEfetivos(nome))?.[periodo];
@@ -3563,7 +3564,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
       const antigo=await lerExecucaoChecklistI59(nome,periodo,ref),execucaoId=chaveExecucao(nome,periodo,ref);
       ciclo=await runTransaction(db,async tx=>{
         const atual=await carregar(r=>tx.get(r)),er=doc(db,'checklist_execucoes',execucaoId),es=await tx.get(er);
-        if(!deveAbrir(atual))return atual;
+        validarSessaoI129();if(!deveAbrir(atual))return atual;
         const novo={funcionario:nome,periodo,referencia,execucaoId,estado:'aberto',blocos:copiarChecklistI59(blocos),agenda:copiarChecklistI59(agendaChecklistI59(nome,periodo)),abertoEm:new Date().toISOString()};
         tx.set(controlRef,novo);
         tx.set(er,{...(es.exists()?es.data():antigo),funcionario:nome,periodo,referencia,cicloI91:id});
@@ -3632,22 +3633,44 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     cancelarViradaChecklist();const agora=new Date(),proxima=new Date(agora.getFullYear(),agora.getMonth(),agora.getDate()+1,0,0,0,150);
     timerViradaChecklist=setTimeout(async()=>{if(viewAtiva!=='checklist'||!usuarioAtual)return;try{await window.abrirChecklist();mostrarToast('Checklist atualizado. A liberação do próximo depende da conferência da Amanda.');}catch(e){mostrarToast('O dia virou. Reabra Meu Checklist antes de marcar.','erro');}},Math.max(250,proxima-agora));
   }
+  // I129: uma leitura pendente precisa de recuperação sem aceitar respostas da sessão antiga.
+  let checklistAberturaI129=0;
+  function aguardarChecklistI129(promessa){
+    let timer;
+    return Promise.race([promessa,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('CHECKLIST_LEITURA_DEMOROU')),20000);})]).finally(()=>clearTimeout(timer));
+  }
+  function erroLeituraChecklistI129(box){
+    if(box)box.innerHTML='<div class="card" role="status">Não foi possível concluir a leitura do checklist. Tente novamente para conferir as marcações salvas.<button class="btn secondary" onclick="tentarChecklistI129()">Tentar novamente</button></div>';
+  }
+  window.tentarChecklistI129=()=>document.getElementById('checklistItens')?window.abrirChecklistPeriodo(checklistPeriodoAtual,document.querySelector('.checklistTabs .active')):window.abrirChecklist();
   window.abrirChecklistPeriodo=async function(periodo,el){
     if(checklistGravandoI59){mostrarToast('Aguarde a confirmação do item.');return;}
     document.querySelectorAll('.checklistTabs .subtab').forEach(t=>t.classList.remove('active'));if(el)el.classList.add('active');
-    checklistPeriodoAtual=periodo;try{await carregarExecucaoChecklist();renderChecklist();programarViradaChecklist();}catch(e){const box=document.getElementById('checklistItens');if(box)box.innerHTML='<div class="card">Não foi possível carregar. Reabra o checklist para tentar novamente.</div>';}
+    const abertura=++checklistAberturaI129,sessao=sessaoServicoManual();checklistPeriodoAtual=periodo;
+    try{if(await carregarExecucaoChecklist()){renderChecklist();programarViradaChecklist();}}
+    catch(e){if(abertura===checklistAberturaI129&&sessao===sessaoServicoManual()&&periodo===checklistPeriodoAtual&&viewAtiva==='checklist'){++checklistCarregandoI59;checklistContextoI59=null;checklistChaveAtual='';erroLeituraChecklistI129(document.getElementById('checklistItens'));console.warn('Exibição do checklist não concluída:',e);}}
   };
   async function carregarExecucaoChecklist(){
-    const pessoa=usuarioAtual,periodo=checklistPeriodoAtual,dia=hojeLocal(),ticket=++checklistCarregandoI59;
+    const pessoa=usuarioAtual,periodo=checklistPeriodoAtual,dia=hojeLocal(),ticket=++checklistCarregandoI59,sessao=sessaoServicoManual();
     checklistContextoI59=null;checklistChaveAtual='';
-    const box=document.getElementById('checklistItens');if(box)box.innerHTML='<div class="card">Carregando itens...</div>';
-    if(!periodo)return;
-    const versao=versoesChecklistI59[pessoa],estado=await cicloChecklistI91(pessoa,periodo,dia,true),{chave,exec}=estado;
-    if(ticket!==checklistCarregandoI59||pessoa!==usuarioAtual||periodo!==checklistPeriodoAtual||dia!==hojeLocal())return;
-    checklistExecAtual={...exec,itensFeitos:exec.itensFeitos||{}};checklistChaveAtual=chave;
-    checklistContextoI59={pessoa,periodo,dia,chave,versao,estado,initial:copiarChecklistI59(checklistExecAtual.itensFeitos)};
+    const box=document.getElementById('checklistItens');if(box)box.innerHTML='<div class="card" role="status">Carregando itens...</div>';
+    const vigente=()=>ticket===checklistCarregandoI59&&sessao===sessaoServicoManual()&&pessoa===usuarioAtual&&periodo===checklistPeriodoAtual&&box===document.getElementById('checklistItens')&&viewAtiva==='checklist';
+    try{
+      if(!periodo)throw Error('CHECKLIST_PERIODO_AUSENTE');
+      const versao=versoesChecklistI59[pessoa],estado=await aguardarChecklistI129(cicloChecklistI91(pessoa,periodo,dia,true));
+      if(!vigente())return false;
+      if(dia!==hojeLocal())throw Error('CHECKLIST_DIA_MUDOU');
+      if(!Array.isArray(estado.blocos)||!estado.blocos.every(b=>b&&Array.isArray(b.itens)))throw Error('CHECKLIST_CICLO_INCOMPLETO');
+      const {chave,exec}=estado;
+      checklistExecAtual={...exec,itensFeitos:exec.itensFeitos||{}};checklistChaveAtual=chave;
+      checklistContextoI59={pessoa,periodo,dia,chave,versao,estado,sessao,initial:copiarChecklistI59(checklistExecAtual.itensFeitos)};
+      return true;
+    }catch(e){
+      if(vigente()){++checklistCarregandoI59;checklistContextoI59=null;checklistChaveAtual='';erroLeituraChecklistI129(box);console.warn('Leitura do checklist não concluída:',e);}
+      return false;
+    }
   }
-  function contextoChecklistValidoI59(c){return !!c&&c===checklistContextoI59&&c.pessoa===usuarioAtual&&c.periodo===checklistPeriodoAtual&&c.dia===hojeLocal()&&c.chave===c.estado.chave&&viewAtiva==='checklist';}
+  function contextoChecklistValidoI59(c){return !!c&&c===checklistContextoI59&&c.pessoa===usuarioAtual&&c.periodo===checklistPeriodoAtual&&c.dia===hojeLocal()&&c.chave===c.estado.chave&&c.sessao===sessaoServicoManual()&&viewAtiva==='checklist';}
   async function salvarExecucaoChecklist(){
     const c=checklistContextoI59;if(!contextoChecklistValidoI59(c))throw Error('CHECKLIST_DIA_MUDOU');
     const desired=copiarChecklistI59(checklistExecAtual.itensFeitos),changed=[...new Set([...Object.keys(c.initial),...Object.keys(desired)])].filter(id=>assinaturaChecklistI59(c.initial[id])!==assinaturaChecklistI59(desired[id]));
@@ -3855,15 +3878,16 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
 
   async function autoVerificarChecklist(){
     try{
-      if(!usuarioAtual) return 0;
-      const templatesAV = await obterTemplatesEfetivos(usuarioAtual);
+      const pessoaAV=usuarioAtual,sessaoAV=sessaoServicoManual();
+      if(!pessoaAV)return 0;
+      const templatesAV = await obterTemplatesEfetivos(pessoaAV);
+      if(sessaoAV!==sessaoServicoManual()||pessoaAV!==usuarioAtual)return 0;
       const diario = templatesAV?.['Diário']; if(!diario) return 0;
       const idsVerificaveis = diario.flatMap(b => b.itens.map(it => it.id)).filter(id => CHECKLIST_AUTOVERIFICAVEL[id]);
       if(!idsVerificaveis.length) return 0;
-      const pessoaAV=usuarioAtual;
       templatesEfetivos[pessoaAV]=templatesAV;
       const estadoAV=await cicloChecklistI91(pessoaAV,'Diário',hojeLocal(),true);
-      if(!estadoAV.ciclo||estadoAV.referencia!==hojeLocal()||estadoAV.ciclo.estado==='conferido')return 0;
+      if(sessaoAV!==sessaoServicoManual()||pessoaAV!==usuarioAtual||!estadoAV.ciclo||estadoAV.referencia!==hojeLocal()||estadoAV.ciclo.estado==='conferido')return 0;
       const chaveAV = estadoAV.chave;
       const refAV = doc(db,'checklist_execucoes', chaveAV);
       const snapAV = await getDoc(refAV);
@@ -3882,7 +3906,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
       }
       if(marcados)await runTransaction(db,async tx=>{
         const cs=await tx.get(doc(db,'checklist_ciclos_i91',estadoAV.id)),es=await tx.get(refAV);
-        if(usuarioAtual!==pessoaAV||!cs.exists()||cs.data().estado!=='aberto'||cs.data().execucaoId!==chaveAV||cs.data().referencia!==hojeLocal())return;
+        if(sessaoAV!==sessaoServicoManual()||usuarioAtual!==pessoaAV||!cs.exists()||cs.data().estado!=='aberto'||cs.data().execucaoId!==chaveAV||cs.data().referencia!==hojeLocal())return;
         const atual=es.exists()?es.data():{itensFeitos:{}};const itens={...(atual.itensFeitos||{})};
         for(const id of idsVerificaveis)if(!itens[id]?.feito&&execAV.itensFeitos[id]?.feito)itens[id]=execAV.itensFeitos[id];
         tx.set(refAV,{...atual,itensFeitos:itens});
@@ -3914,7 +3938,9 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   };
   window.abrirChecklist = async function(){
     organizarRotinaLuisI102();
-    const pessoaI59=usuarioAtual;
+    const pessoaI59=usuarioAtual,sessaoI129=sessaoServicoManual(),aberturaI129=++checklistAberturaI129;
+    ++checklistCarregandoI59;checklistContextoI59=null;checklistChaveAtual='';
+    const vigenteI129=()=>aberturaI129===checklistAberturaI129&&sessaoI129===sessaoServicoManual()&&pessoaI59===usuarioAtual&&viewAtiva==='checklist';
     const sub = document.getElementById('checklistSub');
     const cont = document.getElementById('checklistConteudo');
     if(!usuarioAtual){ sub.textContent = 'Selecione seu nome na tela de Início primeiro.'; cont.innerHTML=''; return; }
@@ -3924,6 +3950,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
        bloco por 11,6 s e a Gabi concluía que a opção não existia. Ele nasce
        imediatamente e o mesmo nó é apenas movido para o final quando o
        restante termina — sem duplicar leitura nem perder um check. */
+    cont.innerHTML='<div class="card" role="status">Carregando seu checklist...<button class="btn secondary" onclick="abrirChecklist()">Tentar novamente</button></div>';
     let storiesBoxAntecipado = null;
     if(usuarioAtual === 'Gabrielle'){
       cont.innerHTML = `<div id="storiesDiariosBox" style="margin-top:0;"></div>`;
@@ -3932,10 +3959,11 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     }
 
     try{
-    const marcadosAuto = await autoVerificarChecklist();
+    const marcadosAuto = await aguardarChecklistI129(autoVerificarChecklist());
+    if(!vigenteI129())return;
     if(marcadosAuto > 0) mostrarToast('✔ ' + marcadosAuto + ' item(ns) do checklist confirmado(s) pelo próprio sistema — já marcados.');
-    const templates = await incluirCiclosPendentesI91(usuarioAtual,await obterTemplatesEfetivos(usuarioAtual));
-    if(usuarioAtual!==pessoaI59||viewAtiva!=='checklist')return;
+    const templates = await aguardarChecklistI129((async()=>incluirCiclosPendentesI91(pessoaI59,await obterTemplatesEfetivos(pessoaI59)))());
+    if(!vigenteI129())return;
     templatesEfetivos[usuarioAtual] = templates;
     if(!templates){
       sub.textContent = 'Sua função ainda não tem checklist digital configurado.';
@@ -3952,14 +3980,6 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     });
     tabsHtml += '</div>';
     cont.innerHTML = `<div id="streakBox"></div>` + tabsHtml + `<div id="checklistItens"></div>`;
-    await carregarExecucaoChecklist();
-    renderChecklist();
-    programarViradaChecklist();
-    if(templates["Diário"]){
-      const streak = await calcularStreak(usuarioAtual);
-      const box = document.getElementById('streakBox');
-      if(box) box.innerHTML = `<div class="streakBar"><div class="fogo">🔥</div><div class="txt">${streak} dia(s) seguido(s) com o Diário 100% completo<span>Continue assim — isso conta pra avaliação mensal.</span></div></div>`;
-    }
     if(usuarioAtual === 'Gabrielle'){
       if(storiesBoxAntecipado){
         storiesBoxAntecipado.style.marginTop = '20px';
@@ -3969,10 +3989,22 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
         renderStoriesDiarios();
       }
     }
+    if(!await carregarExecucaoChecklist())return;
+    renderChecklist();
+    programarViradaChecklist();
+    if(templates["Diário"]){
+      const box = document.getElementById('streakBox');
+      try{
+        const streak = await aguardarChecklistI129(calcularStreak(pessoaI59));
+        if(vigenteI129()&&box===document.getElementById('streakBox'))box.innerHTML = `<div class="streakBar"><div class="fogo">🔥</div><div class="txt">${streak} dia(s) seguido(s) com o Diário 100% completo<span>Continue assim — isso conta pra avaliação mensal.</span></div></div>`;
+      }catch(e){if(vigenteI129()&&box===document.getElementById('streakBox'))box.textContent='A sequência de dias não pôde ser consultada. Você pode continuar o checklist.';}
+      if(!vigenteI129())return;
+    }
+
     }catch(e){
-      if(usuarioAtual!==pessoaI59||viewAtiva!=='checklist')return;
-      checklistContextoI59=null;
-      cont.innerHTML='<div class="card">Não consegui carregar o checklist. Suas marcações continuam salvas.<button class="btn secondary" onclick="abrirChecklist()">Tentar novamente</button></div>';
+      if(!vigenteI129())return;
+      ++checklistCarregandoI59;checklistContextoI59=null;checklistChaveAtual='';
+      erroLeituraChecklistI129(cont);console.warn('Abertura do checklist não concluída:',e);
       if(storiesBoxAntecipado)cont.appendChild(storiesBoxAntecipado);
     }
   };

@@ -101,6 +101,7 @@ export function instalarFinanceiroV104(deps){
   let geracaoCacheI94=0, revalidarI94=false;
   const locks=new Set();
   const renderContratosAnterior=w.renderContratos;
+  let aberturaContratosI132=0;
 
   function pessoa(){ return texto(usuarioAtual()); }
   function canFinanceiro(){ return pessoa()==='Chris'; }
@@ -837,10 +838,16 @@ function competenciaDeDataCaixa(valor){
     if(!canContratos()){document.getElementById('contratosBox')?.replaceChildren();return false;}
     const box=document.getElementById('contratosBox');if(!box)return false;
     const competencia=campoCompetencia('ctMes');
+    const abertura=++aberturaContratosI132,papel=pessoa(),uid=auth.currentUser?.uid,sessao=deps.sessaoContratosAusentes?.();
+    const vigente=()=>abertura===aberturaContratosI132&&canContratos()&&pessoa()===papel&&auth.currentUser?.uid===uid&&deps.sessaoContratosAusentes?.()===sessao&&campoCompetencia('ctMes')===competencia&&box.isConnected;
+    w.__contratosClientesIncompletos={};
     ['finMes','mensMes','cobMes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=competencia;});
     box.innerHTML='<div class="card"><div class="desc">Projetando carteira, entradas e saídas da competência…</div></div>';
     try{
-      const fontes=await carregarSnapshot({modo:'contratos'});
+      const fontes=await carregarSnapshot({modo:'contratos',forcar:true});
+      if(!vigente())return false;
+      const ausentes=deps.htmlContratosAusentes?await deps.htmlContratosAusentes({contratos:fontes.contratos,competencia}):{html:'',clientes:[]};
+      if(!vigente())return false;
       const mov=Core.projetarMovimentosCompetencia({contratos:fontes.contratos,saidas:fontes.saidas,competencia});
       if(mov.estado==='indisponivel')throw new Error('Carteira indisponível.');
       const nomes=mapaNomes(fontes);
@@ -849,11 +856,14 @@ function competenciaDeDataCaixa(valor){
       // porque ele apareceu por último na leitura da coleção.
       const cards=mov.ativos.map(v=>v.contrato).filter(Boolean).sort((a,b)=>texto(a.clienteNome).localeCompare(texto(b.clienteNome),'pt-BR'));
       let html=`<div class="painelResumo"><div class="resumoCard green"><div class="num">${mov.totais.ativos}</div><div class="lbl">Ativos em ${esc(nomeMes(competencia))}</div></div><div class="resumoCard"><div class="num">${mov.totais.entradas}</div><div class="lbl">Entraram no mês</div></div><div class="resumoCard"><div class="num">${mov.totais.saidas}</div><div class="lbl">Saíram no mês</div></div></div>${htmlConflitos(mov,nomes)}${tabelaMovimentos(mov.entradas,mov.saidas,nomes,competencia)}<div class="card"><b>Fichas dos contratos vigentes nesta competência</b><div class="desc">O seletor muda o retrato histórico. Valores recebidos, caixa, custos e contatos privados não são carregados nesta tela. Salvar uma ficha é uma ação explícita.</div></div>`;
+      html+=ausentes.html;
       html+=cards.map(ct=>{
         const slug=ct.id,valorAtual=Core.valorNaCompetencia(ct,competencia);const valor=valorAtual.estado==='confirmado'?valorAtual.valor:numero(ct.valorVigente);
         const meses=Array.isArray(ct.cortesiaMeses)?ct.cortesiaMeses:[];
         return `<div class="faixaDem" data-faixa="ct_${escAttr(slug)}" data-fin-contrato-v103="${escAttr(slug)}"><div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(ct.clienteNome||slug)} <span class="qtd">${brl(valor)} · dia ${numero(ct.diaVencimento)||10}${ct.ultimaCompetenciaPagamento?' · último mês '+esc(ct.ultimaCompetenciaPagamento):''}</span><span class="seta">▾</span></div><div class="faixaItens"><div class="row2"><div class="field"><label>Cliente</label><input id="ctNome_${escAttr(slug)}" value="${escAttr(ct.clienteNome||'')}"></div><div class="field"><label>Plano</label><input id="ctPlano_${escAttr(slug)}" value="${escAttr(ct.plano||'Mensalista')}"></div></div><div class="row3"><div class="field"><label>Valor cheio</label><input type="number" id="ctValorCheio_${escAttr(slug)}" value="${numero(ct.valorCheio)}"></div><div class="field"><label>Valor base vigente</label><input type="number" id="ctValorVigente_${escAttr(slug)}" value="${numero(ct.valorVigente)}"></div><div class="field"><label>Vencimento</label><input type="number" id="ctDia_${escAttr(slug)}" value="${numero(ct.diaVencimento)||10}"></div></div><input type="hidden" id="ctVolta_${escAttr(slug)}" value="${escAttr(ct.voltaAoCheioEm||'')}"><input type="hidden" id="ctStatus_${escAttr(slug)}" value="${escAttr(ct.status||'ativo')}"><input type="hidden" id="ctRevision_${escAttr(slug)}" value="${numero(ct.financeiroRevision)}"><div class="row2"><div class="field"><label>Primeira competência · histórico</label><input type="month" id="ctPrimeiraCompetencia_${escAttr(slug)}" value="${escAttr(ct.primeiraCompetencia||'')}" readonly aria-readonly="true"><div class="meta">Entradas e reativações são corrigidas somente pela Central, com evento auditável.</div></div><div class="field"><label>Situação do ciclo</label><div class="meta">${esc(ct.status||'ativo')} · entradas e saídas são alteradas somente pela Central, com competência e histórico.</div></div></div><div class="field"><label>Observação</label><textarea id="ctObs_${escAttr(slug)}">${esc(ct.observacao||'')}</textarea></div><input type="checkbox" id="ctCortesiaPerm_${escAttr(slug)}" ${ct.cortesiaPermanente?'checked':''} hidden><textarea id="ctCortesiaMeses_${escAttr(slug)}" hidden>${esc(meses.join('\n'))}</textarea><div class="card" style="border-color:var(--yellow);"><b>Alteração programada</b><div class="row3"><div class="field"><label>Novo valor</label><input type="number" id="ctValorProgramado_${escAttr(slug)}" value="${ct.valorProgramado??''}"></div><div class="field"><label>Começa em</label><input type="month" id="ctValorProgramadoEm_${escAttr(slug)}" value="${escAttr(ct.valorProgramadoEm||Core.proximaCompetencia(hojeLocal().slice(0,7)))}"></div><div class="field"><label>Motivo</label><input id="ctValorProgramadoMotivo_${escAttr(slug)}" value="${escAttr(ct.valorProgramadoMotivo||'')}"></div></div></div><button class="btn" style="width:auto;" onclick="salvarContrato('${escJs(slug)}')">Salvar contrato</button></div></div>`;
       }).join('');
+      if(!vigente())return false;
+      w.__contratosClientesIncompletos=Object.fromEntries(ausentes.clientes.map(v=>[canonico(v.slug),v]));
       box.innerHTML=html;
       box.querySelectorAll('[id^="ctValorVigente_"]').forEach(el=>{
         el.readOnly=true;
@@ -861,7 +871,7 @@ function competenciaDeDataCaixa(valor){
         el.title='Valor histórico. Programe a alteração no bloco abaixo.';
       });
       return true;
-    }catch(e){console.error(e);box.innerHTML='<div class="card" style="border:2px solid var(--red);"><b>Carteira indisponível</b><div class="desc">Nenhum cliente foi contado como ativo ou inativo. Tente novamente.</div></div>';return false;}
+    }catch(e){console.error(e);if(!vigente())return false;w.__contratosClientesIncompletos={};box.innerHTML='<div class="card" style="border:2px solid var(--red);"><b>Carteira indisponível</b><div class="desc">Nenhum cliente foi contado como ativo ou inativo. Tente novamente.</div></div>';return false;}
   };
 
   function valorDoCampo(id,slug){ return texto(document.getElementById(`${id}_${slug}`)?.value); }

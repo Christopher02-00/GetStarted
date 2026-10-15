@@ -24441,12 +24441,21 @@ async function registrarGravacaoRealizadaNucleo(agId){
         contrato:mensal?doc(db,'contratos_cliente',slug):null, onboarding:atual.onboardingId?doc(db,'onboarding_processos',atual.onboardingId):null,
         story:mensal?doc(db,'stories_clientes',slug):null
       };
-      const listaRefs=__validarReferenciasFirestore([...Object.values(refs),...pagamentosDoCliente.map(p=>p.ref)],'a atualização da ficha de '+atual.nome);
+      const configsDaFicha=mensal?slugsFonteOperacionalR4(slug).map(id=>doc(db,'clientes_config',id)):[refs.config];
+      const listaRefs=__validarReferenciasFirestore([...new Map([...Object.values(refs),...configsDaFicha,...pagamentosDoCliente.map(p=>p.ref)].filter(Boolean).map(ref=>[ref.path,ref])).values()],'a atualização da ficha de '+atual.nome);
       await runTransaction(db,async tx=>{
         const snaps=await Promise.all(listaRefs.map(r=>tx.get(r))); const existe=new Map(listaRefs.map((r,i)=>[r.path,snaps[i].exists()]));
         const snapshotPorCaminho=new Map(listaRefs.map((r,i)=>[r.path,snaps[i]]));
+        // I130: reler as mesmas fontes físicas que montaram a ficha, inclusive aliases.
+        const cfgAtual=consolidarDocumentosClientePorIdentidade({docs:configsDaFicha.map(ref=>snapshotPorCaminho.get(ref.path)).filter(snap=>snap?.exists()).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)},'config')[slug]||{};
+        if(mensal){
+          const cadastroAtual=refs.cadastro?snapshotPorCaminho.get(refs.cadastro.path)?.data()||{}:{};
+          const entregaAtual=cfgAtual.tipoEntrega||cadastroAtual.tipoEntrega||'postagem_completa';
+          if(!['postagem_completa','entrega_direta'].includes(entregaAtual)||!['postagem_completa','entrega_direta'].includes(dados.tipoEntrega)) throw new Error('A modalidade de entrega precisa ser conferida antes de salvar a ficha.');
+          if(entregaAtual!==atual.tipoEntrega) throw new Error('A modalidade de entrega mudou em outra aba. Reabra a ficha antes de salvar; nenhuma alteração foi sobrescrita.');
+        }
         const carimbo={atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()};
-        tx.set(refs.config,{tipoCliente:mensal?'mensalista':'avulso',tipoEntrega:dados.tipoEntrega,...preservarRotinaMensalI117(snapshotPorCaminho.get(refs.config.path)?.data()||{},mensal,dados.tipoEntrega),...carimbo},{merge:true});
+        tx.set(refs.config,{tipoCliente:mensal?'mensalista':'avulso',tipoEntrega:dados.tipoEntrega,...preservarRotinaMensalI117(cfgAtual,mensal,dados.tipoEntrega),...carimbo},{merge:true});
         if(refs.extra&&existe.get(refs.extra.path)) tx.set(refs.extra,{atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true});
         if(refs.cadastro&&existe.get(refs.cadastro.path)) tx.set(refs.cadastro,{instagram:dados.instagram,telefone:dados.telefone,aniversario:dados.aniversario,contatos:dados.contatos,plano:dados.plano,planoDetalhes:dados.planoDetalhes,...(financeiroCompleto?{valorMensal:dados.valorMensal,diaVencimento:dados.diaVencimento}:{}),tipoEntrega:dados.tipoEntrega,incluiStories:dados.incluiStories,contrato:dados.observacoes,cortesiaTipo:dados.cortesiaTipo,cortesiaMeses:dados.cortesiaMeses,cortesiaPermanente:dados.cortesiaPermanente,...carimbo},{merge:true});
         if(refs.lead&&existe.get(refs.lead.path)) tx.set(refs.lead,{instagram:dados.instagram,whatsapp:dados.telefone,observacoes:dados.observacoes,...carimbo},{merge:true});
@@ -24791,7 +24800,10 @@ async function registrarGravacaoRealizadaNucleo(agId){
         const tokenEscolhidoDoc=tokensConhecidos.find(v=>v.ref.id===tokenEscolhido);
         credencialRestaurada={acessoPath:acessoEscolhido?.ref.path||'',tokenPath:tokenEscolhidoDoc?.ref.path||''};
         refs.forEach(ref=>{ if(existe.get(ref.path)) tx.set(ref,{saidaProgramadaPara:deleteField(),saidaMotivo:deleteField(),saidaMotivoDetalhe:deleteField(),saidaAtualizadaPor:deleteField(),saidaAtualizadaEm:deleteField(),ativoAte:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true}); });
-        tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado,saidaAtivaId:deleteField(),clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),...(mensalista?{tipoEntrega:tipoEntregaReativada,semConteudoRecorrente:tipoEntregaReativada==='entrega_direta',motivoSemConteudo:tipoEntregaReativada==='entrega_direta'?'Plano com entrega direta: fora das rotinas recorrentes de postagem':deleteField()}:{}),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
+        const configReativada=snapshotPorCaminho.get('clientes_config/'+slug)?.data()||{};
+        const entregaReativada=configReativada.tipoEntrega||tipoEntregaReativada;
+        if(mensalista&&!['postagem_completa','entrega_direta'].includes(entregaReativada)) throw new Error('Confira a modalidade de entrega antes de reativar este cliente.');
+        tx.set(doc(db,'clientes_config',slug),{nome:nomeReativado,saidaAtivaId:deleteField(),clienteInativo:false,excluido:false,ativo:true,tipoCliente:mensalista?'mensalista':(atual.tipo||deleteField()),...(mensalista?{tipoEntrega:entregaReativada,...(entregaReativada==='entrega_direta'?preservarRotinaMensalI117(configReativada,true,entregaReativada):{semConteudoRecorrente:false,motivoSemConteudo:deleteField()})}:{}),inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()},{merge:true});
         /* Contato histórico é preservado quando o campo fica vazio. Quando
            Amanda informa um novo número, ela grava sem ler o documento. */
         if(contatoFinanceiroRef) tx.set(contatoFinanceiroRef,{slug,whatsapp:reativacao.whatsapp,nome:nomeReativado,origem:'reativacao',atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true});
@@ -24812,9 +24824,13 @@ async function registrarGravacaoRealizadaNucleo(agId){
           const atualizacaoContrato={clienteNome:nomeReativado,status:'ativo',encerrado:false,excluido:false,ativo:true,ultimaCompetenciaPagamento:deleteField(),encerradoEm:deleteField(),encerradoPor:deleteField(),arquivadoEm:deleteField(),arquivadoPor:deleteField(),unificadoEm:deleteField()};
           if(reativacao?.ok){
             const novaVigencia={inicio:reativacao.primeiraCompetencia,fim:'',valor:reativacao.valorMensal,cicloId:'reativacao_'+String(saida.id||reativacao.primeiraCompetencia)};
-            Object.assign(atualizacaoContrato,{diaVencimento:reativacao.diaVencimento,reativacaoCompetencia:reativacao.primeiraCompetencia,reativadoPor:usuarioAtual,reativadoEm:serverTimestamp(),vigencias:[...vigenciasAnteriores,novaVigencia]});
-            if(existe.get(contratoRef.path)) Object.assign(atualizacaoContrato,{valorProgramado:reativacao.valorMensal,valorProgramadoEm:reativacao.primeiraCompetencia,valorProgramadoMotivo:'Reativação do cliente',valorProgramadoPor:usuarioAtual,valorProgramadoAtualizadoEm:serverTimestamp(),historicoAlteracoesValor:arrayUnion({acao:'programada',origem:'reativacao',valorAnterior:valorContratoNaCompetencia(contratoAnterior,reativacao.primeiraCompetencia),novoValor:reativacao.valorMensal,inicio:reativacao.primeiraCompetencia,motivo:'Reativação do cliente',por:usuarioAtual||'?',em:new Date().toISOString()})});
-            else Object.assign(atualizacaoContrato,{plano:saida.fichaSnapshot?.plano||'Mensalista',planoDetalhes:saida.fichaSnapshot?.planoDetalhes||'',valorCheio:reativacao.valorMensal,valorVigente:reativacao.valorMensal,primeiraCompetencia:reativacao.primeiraCompetencia,observacao:saida.fichaSnapshot?.observacoes||'Contrato recuperado na reativação'});
+            Object.assign(atualizacaoContrato,{reativacaoCompetencia:reativacao.primeiraCompetencia,reativadoPor:usuarioAtual,reativadoEm:serverTimestamp(),vigencias:[...vigenciasAnteriores,novaVigencia]});
+            // I130: reativar o mesmo contrato não é uma alteração de preço.
+            if(existe.get(contratoRef.path)){
+              const valorPreservado=valorContratoNaCompetencia(contratoAnterior,reativacao.primeiraCompetencia);
+              if(reativacao.valorMensal!==valorPreservado||reativacao.diaVencimento!==Number(contratoAnterior.diaVencimento)) throw new Error('Reative com o valor do contrato para '+reativacao.primeiraCompetencia+' (R$ '+valorPreservado.toFixed(2)+') e vencimento dia '+contratoAnterior.diaVencimento+'. Para alterar essas condições, Chris usa Valores dos contratos após a reativação. Nenhum dado foi alterado.');
+            }
+            else Object.assign(atualizacaoContrato,{diaVencimento:reativacao.diaVencimento,plano:saida.fichaSnapshot?.plano||'Mensalista',planoDetalhes:saida.fichaSnapshot?.planoDetalhes||'',valorCheio:reativacao.valorMensal,valorVigente:reativacao.valorMensal,primeiraCompetencia:reativacao.primeiraCompetencia,observacao:saida.fichaSnapshot?.observacoes||'Contrato recuperado na reativação'});
           }
           tx.set(contratoRef,atualizacaoContrato,{merge:true});
         }
@@ -25628,7 +25644,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       }).map(v=>{
         const slug=slugDo(v), ctr=contratos[slug]||{}, acesso=acessos[slug]||{}, extra=extrasPorSlug[slug]||{}, onboarding=onboardingPorSlug[slug]||{};
         const nomeOriginal=v.nome||ctr.clienteNome||extra.nome||slug, nome=nomeClienteCanonico(slug,nomeOriginal);
-        return {tipo:'mensalista',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,instagram:v.instagram||'',telefone:v.telefone||'',aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(valorContratoNaCompetencia(ctr,hojeLocal().slice(0,7))||v.valorMensal||ctr.valorCheio||0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||ctr.primeiraCompetencia||'',ultimaCompetenciaPagamento:ctr.ultimaCompetenciaPagamento||saidasProgramadasPorSlug[slug]?.ultimaCompetenciaPagamento||'',tipoEntrega:v.tipoEntrega||configs[slug]?.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
+        return {tipo:'mensalista',slug,nome,nomeOriginal,identidadeDivergente:nome!==nomeOriginal,instagram:v.instagram||'',telefone:v.telefone||'',aniversario:v.aniversario||'',contatos:v.contatos||'',plano:v.plano||ctr.plano||'',planoDetalhes:v.planoDetalhes||ctr.planoDetalhes||'',valorMensal:Number(valorContratoNaCompetencia(ctr,hojeLocal().slice(0,7))||v.valorMensal||ctr.valorCheio||0),diaVencimento:Number(v.diaVencimento??ctr.diaVencimento??0),primeiraCompetencia:v.primeiraCompetencia||ctr.primeiraCompetencia||'',ultimaCompetenciaPagamento:ctr.ultimaCompetenciaPagamento||saidasProgramadasPorSlug[slug]?.ultimaCompetenciaPagamento||'',tipoEntrega:configs[slug]?.tipoEntrega||v.tipoEntrega||'postagem_completa',incluiStories:v.incluiStories===true||stories[slug]?.ativo===true,cortesiaPermanente:ctr.cortesiaPermanente===true||v.cortesiaPermanente===true,cortesiaMeses:Array.isArray(ctr.cortesiaMeses)?ctr.cortesiaMeses:(Array.isArray(v.cortesiaMeses)?v.cortesiaMeses:[]),observacoes:v.contrato||ctr.observacao||'',cadastroId:v.id,extraId:extra.id||'',onboardingId:onboarding.id||'',onboardingStatus:onboarding.status||'não iniciado',token:acesso.token||tokenPorCliente[slug]?.id||'',saida:saidasProgramadasPorSlug[slug]||null};
       });
       const avulsosAtivos=[
         ...avulsosEmpresaSnap.docs.map(d=>({...d.data(),id:d.id,colecaoOrigem:'leads_avulsos'})),
@@ -25752,8 +25768,8 @@ async function registrarGravacaoRealizadaNucleo(agId){
         const vencimentoPreservado=Number(contrato.diaVencimento||f.diaVencimento||v.diaVencimento||0);
         const chaveArquivo=chaveArquivoCliente(v);
         const camposReativacao=podeReativar?`<div class="card" style="margin-top:12px;border-color:var(--yellow);background:rgba(255,193,7,.06);">
-          <b>Dados financeiros da nova entrada</b>
-          <div class="desc">Amanda confere estes dados antes de recuperar a mesma ficha e o mesmo Portal. Nenhum cadastro novo será criado.</div>
+          <b>${contratos[slug]?'Condições do contrato na reativação':'Dados financeiros da nova entrada'}</b>
+          <div class="desc">Amanda confere estes dados antes de recuperar a mesma ficha e o mesmo Portal. Nenhum cadastro novo será criado.${contratos[slug]?' O contrato existente mantém seu valor e vencimento. Alterações são feitas pelo Chris em Valores dos contratos após a reativação.':''}</div>
           <div class="row2" style="margin-top:10px;">
             <div class="field"><label>Valor mensal (R$)</label><input type="number" min="0.01" step="0.01" inputmode="decimal" id="${escAttr(idCampoReativacaoCliente(chaveArquivo,'Valor'))}" value="${valorPreservado>0?escAttr(String(valorPreservado)):''}" placeholder="Ex.: 1500,00"></div>
             <div class="field"><label>Dia de vencimento</label><input type="number" min="1" max="31" step="1" inputmode="numeric" id="${escAttr(idCampoReativacaoCliente(chaveArquivo,'Vencimento'))}" value="${vencimentoPreservado>=1&&vencimentoPreservado<=31?escAttr(String(vencimentoPreservado)):''}" placeholder="1 a 31"></div>

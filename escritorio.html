@@ -22527,13 +22527,64 @@ async function registrarGravacaoRealizadaNucleo(agId){
     if(cfg.excluido===true||cfg.ativo===false||String(cfg.tipoCliente||'').toLowerCase()==='encerrado'||(fim&&fim<=hojeLocal())||clienteInativoEfetivo(cfg))throw Error('Este cliente não está disponível para novas conferências. Atualize a lista.');
     return gravacoesStoreI61.save(args);
   }};
+  // I141: declaração factual e organização manual permanecem fontes distintas.
+  async function projetarDeclaracoesI141({cliente,mes,cal,agendas,registros}){
+    if(cal.items!==undefined&&!Array.isArray(cal.items))throw Error('A estrutura da pauta precisa ser conferida.');
+    const itens=(Array.isArray(cal.items)?cal.items:[]).filter(i=>!i.excluido&&mesDoItemCalendario(cal,i)===mes),contagens=new Map();
+    for(const i of itens)if(typeof i.itemId==='string'&&/^[\w-]{1,180}$/.test(i.itemId))contagens.set(i.itemId,(contagens.get(i.itemId)||0)+1);
+    const anteriores=GetGravacoesI61.captacoesAnteriores(cliente,mes,agendas),rows=await Promise.all(itens.map(async item=>{
+      const id=typeof item.itemId==='string'?item.itemId:'',identificado=contagens.get(id)===1,assinatura=await GetGravacoesI61.assinatura(item),registro=identificado?registros[id]:null,efetivo=identificado?GetGravacoesI61.registroEfetivo(registro,assinatura,anteriores[id],item):null;
+      return {id,item,identificado,fatos:[],estado:identificado?GetGravacoesI61.situacaoEfetiva(registro,assinatura,anteriores[id],item):'a_organizar',manual:!!registro&&registro.fonteAssinatura===assinatura&&registro.estado==='gravado',anterior:!!efetivo?.registroAnterior,roteiroMudou:!!registro&&registro.fonteAssinatura!==assinatura};
+    })),porId=new Map(rows.filter(r=>r.identificado).map(r=>[r.id,r])),fora=[],sessoes=[],avisos=[];
+    for(const a of agendas){
+      if(a.excluido||!['realizado','concluido_sem_gravacao'].includes(a.status))continue;
+      if(a.cliente!==cliente||a.clienteSlug&&a.clienteSlug!==cliente){avisos.push('Sessão '+a.id+' com identidade divergente; confira o registro.');continue;}
+      const data=String(a.dataProducao||a.data||''),mesVisita=data.slice(0,7),conteudos=Array.isArray(a.conteudosRealizados)?a.conteudosRealizados:[],sem=a.status==='concluido_sem_gravacao';
+      if(mesVisita!==mes&&!conteudos.some(i=>i.calendarCompetencia===mes))continue;
+      const edicao=Array.isArray(a.encaminhamentoEdicaoI34?.itens)?a.encaminhamentoEdicaoI34.itens:[];
+      sessoes.push({id:a.id,data,por:a.registradoPor||a.finalizadoPor||a.filmmaker||'Não informado',quantidade:Number.isInteger(a.qtdVideosRealizados)?a.qtdVideosRealizados:null,faltantes:Number.isInteger(a.qtdVideosFaltantes)?a.qtdVideosFaltantes:null,sem,legado:!conteudos.length&&!sem,edicao});
+      if(sem){if(conteudos.length)avisos.push('Sessão '+a.id+' marcada sem gravação contém declarações; precisa de conferência.');continue;}
+      for(const c of conteudos){
+        const id=typeof c.calendarItemId==='string'?c.calendarItemId:'',competencia=typeof c.calendarCompetencia==='string'?c.calendarCompetencia:'',fato={sessao:a.id,nome:c.nome||'Título não informado',filmmaker:c.filmmaker||'Responsável não informado',data,registradoPor:a.registradoPor||a.finalizadoPor||'Não informado',id,competencia};
+        if(id&&competencia===mes&&porId.has(id)){porId.get(id).fatos.push(fato);continue;}
+        if(competencia===mes&&id){fora.push({...fato,motivo:contagens.get(id)>1?'ID duplicado na pauta; vínculo requer conferência':'Item fora da pauta ativa deste mês'});continue;}
+        if(mesVisita===mes&&(!id||!GetGravacoesI61.mesValido(competencia)))fora.push({...fato,motivo:id?'Vínculo incompleto: competência não informada':'Declarado fora da pauta / extra'});
+      }
+    }
+    return {rows,fora,sessoes,avisos,declarados:rows.filter(r=>r.fatos.length).length,aguardam:rows.filter(r=>r.fatos.length&&r.estado!=='gravado').length,anteriores:rows.filter(r=>r.estado==='gravado'&&r.anterior).length,confirmados:rows.filter(r=>r.manual).length};
+  }
+  function htmlDeclaracoesI141(modelo,mes){
+    const esc=GetGravacoesI61.esc,estados={a_organizar:'A conferir / organizar',a_gravar:'Falta ser gravado',gravado:'Gravado',sem_gravacao:'Não precisa de gravação'},fato=f=>`<li><b>${esc(f.filmmaker)}</b> · ${esc(formatarDataBR(f.data)||f.data||'Data não informada')} · declaração: ${esc(f.nome)}<br><small>Sessão ${esc(f.sessao)} · registrada por ${esc(f.registradoPor)}</small></li>`;
+    return `<p><b>${modelo.rows.length}</b> itens na pauta · <b>${modelo.declarados}</b> conteúdos únicos declarados com vínculo · <b>${modelo.aguardam}</b> aguardam conferência da organização · <b>${modelo.confirmados}</b> confirmados na organização · <b>${modelo.anteriores}</b> gravações anteriores preservadas.</p><p>Situação da pauta na organização: <b>${modelo.rows.filter(r=>r.estado==='a_gravar').length}</b> falta gravar · <b>${modelo.rows.filter(r=>r.estado==='a_organizar').length}</b> a conferir / organizar · <b>${modelo.rows.filter(r=>r.estado==='sem_gravacao').length}</b> não precisam de gravação.</p><p>Competência da pauta: ${esc(mes)}. A declaração do filmmaker não altera a situação manual. Cecília confere no bloco de organização abaixo.</p>${modelo.avisos.map(x=>'<p class="g61error">'+esc(x)+'</p>').join('')}<details open><summary>Conteúdos da pauta e o que foi declarado</summary>${modelo.rows.map(r=>`<article><strong>${esc(r.item.name||'Conteúdo sem título')}</strong><p><span class="g61status">${estados[r.estado]||estados.a_organizar}${r.manual?' · confirmação da organização':r.anterior?' · registro anterior':''}</span>${!r.identificado?' · identificação ausente ou repetida na pauta':''}</p>${r.roteiroMudou?'<p class="g61error">O roteiro mudou. A organização anterior precisa de nova conferência.</p>':''}${r.fatos.length?`<p><b>Declarado pelo filmmaker</b>${r.estado!=='gravado'?' · conferir na organização':r.anterior?' · registro anterior preservado':''}</p>${['a_gravar','sem_gravacao'].includes(r.estado)?'<p class="g61error">A declaração e a situação manual divergem. Confira antes de decidir o que falta.</p>':''}<ul>${r.fatos.map(fato).join('')}</ul>`:'<p>Nenhuma declaração vinculada recebida para este item. Confira a situação da organização; ausência de declaração não prova ausência de gravação.</p>'}</article>`).join('')||'<p>Não há itens ativos de pauta neste mês. Declarações sem vínculo continuam abaixo.</p>'}</details><details ${modelo.fora.length?'open':''}><summary>Declarações fora da pauta / vínculo a conferir (${modelo.fora.length})</summary><p>Extras e vínculos incompletos são exibidos pelo mês da produção. Não abatem outro item da pauta.</p>${modelo.fora.map(f=>`<article><b>${esc(f.motivo)}</b><ul>${fato(f)}</ul>${f.id?'<small>ID declarado: '+esc(f.id)+'</small>':''}</article>`).join('')}</details><details><summary>Sessões e materiais enviados (${modelo.sessoes.length})</summary>${modelo.sessoes.map(a=>`<article><strong>${esc(formatarDataBR(a.data)||a.data)} · ${esc(a.por)}</strong><p>Sessão ${esc(a.id)}</p><p>${a.sem?'Sessão concluída sem gravação':a.legado?'Quantidade antiga: '+esc(a.quantidade??'não informada')+' · títulos não identificados':esc(a.quantidade??'não informada')+' conteúdo(s) declarados na sessão'}${a.faltantes!==null?' · saldo informado da sessão: '+esc(a.faltantes):''}</p>${a.edicao.length?'<p>Somente edição ('+a.edicao.length+'): '+a.edicao.map(i=>esc(i.nome||'Material')).join(' · ')+'. Não soma captação.</p>':''}</article>`).join('')}</details>`;
+  }
+  let declaracoesStopI141=null;
+  function pararDeclaracoesI141(){declaracoesStopI141?.();declaracoesStopI141=null;}
+  function iniciarDeclaracoesI141(ctx,id,seq){
+    pararDeclaracoesI141();const root=document.getElementById('g61DeclaracoesI141');if(!root||!['Amanda','Cecília'].includes(usuarioAtual)||!ctx.cliente||!GetGravacoesI61.mesValido(ctx.mes)||!id)return;
+    const cliente=ctx.cliente,mes=ctx.mes,sessao=sessaoServicoManual(),pessoa=usuarioAtual,uid=auth.currentUser?.uid,key=[uid,pessoa,sessao,id,cliente,mes].join('|'),anterior=root.dataset.chave===key?root.querySelector('[data-decl-body]')?.innerHTML||'':'';
+    root.dataset.chave=key;root.innerHTML='<section class="g61"><h2>O que os filmmakers registraram</h2><p data-decl-status role="status">Conferindo declarações, pauta e organização no servidor…</p><button type="button" data-decl-retry>Atualizar declarações</button><div data-decl-body>'+anterior+'</div></section>';
+    const status=root.querySelector('[data-decl-status]'),body=root.querySelector('[data-decl-body]'),estado={cal:null,agendas:null,registros:null},prontos=new Set(),offs=[];let ativo=true,render=0;
+    const valido=()=>ativo&&uid===auth.currentUser?.uid&&pessoa===usuarioAtual&&sessao===sessaoServicoManual()&&viewAtiva==='acompanhamento'&&seq===gravacoesGeracaoI61&&ctx===gravacoesContextoI61&&ctx.cliente===cliente&&ctx.mes===mes&&root===document.getElementById('g61DeclaracoesI141')&&root.isConnected;
+    const stop=()=>{if(!ativo)return;ativo=false;++render;clearTimeout(timer);offs.forEach(f=>f());};declaracoesStopI141=stop;
+    const falha=(e,tipo)=>{if(!valido()){stop();return;}if(tipo)prontos.delete(tipo);++render;status.textContent='Não consegui atualizar uma das fontes. '+(e?.message||'Tente novamente.')+' A última leitura disponível foi mantida; não significa zero gravações.';};
+    async function receber(tipo,snap){
+      if(!valido()){stop();return;}if(snap.metadata?.fromCache||snap.metadata?.hasPendingWrites){prontos.delete(tipo);++render;status.textContent='Conferindo '+tipo+' no servidor. A última leitura disponível foi mantida.';return;}
+      let geracaoProjetada=null;try{if(tipo==='pauta'){if(!snap.exists()||snap.data().excluido)throw Error('A pauta não está disponível. Atualize a lista de clientes.');estado.cal=snap.data();if(id==='zeiss')exigirClienteOperacionalR4(id,estado.cal);}else if(tipo==='declarações')estado.agendas=snap.docs.map(d=>({...d.data(),id:d.id}));else estado.registros=Object.fromEntries(snap.docs.map(d=>[d.id,d.data()]));prontos.add(tipo);if(prontos.size!==3)return;clearTimeout(timer);const atual=geracaoProjetada=++render;const modelo=await projetarDeclaracoesI141({cliente,mes,cal:estado.cal,agendas:estado.agendas,registros:estado.registros});if(!valido()||atual!==render)return;body.innerHTML=htmlDeclaracoesI141(modelo,mes);status.textContent='Declarações, pauta e organização confirmadas no servidor. Atualização automática enquanto esta área estiver aberta.';}catch(e){if(geracaoProjetada!==null&&geracaoProjetada!==render)return;falha(e,tipo);}
+    }
+    const timer=setTimeout(()=>falha(Error('O servidor ainda não confirmou todas as fontes.')),12000);
+    root.querySelector('[data-decl-retry]').onclick=()=>{if(valido())iniciarDeclaracoesI141(ctx,id,seq);};
+    offs.push(onSnapshot(doc(db,'calendarios',id),{includeMetadataChanges:true},s=>receber('pauta',s),e=>falha(e,'pauta')));
+    offs.push(onSnapshot(query(collection(db,'agendamentos'),where('cliente','==',cliente)),{includeMetadataChanges:true},s=>receber('declarações',s),e=>falha(e,'declarações')));
+    offs.push(onSnapshot(collection(db,'gravacoes_cliente',id,'meses',mes,'itens'),{includeMetadataChanges:true},s=>receber('organização',s),e=>falha(e,'organização')));
+  }
+
   let gravacoesEditorI61=null,gravacoesGeracaoI61=0,gravacoesContextoI61=null;
   window.abrirGravacoesI61=function(){irPara('acompanhamento',document.getElementById('navAcompanhamento'));};
   async function montarGravacoesI61(){
     const box=document.getElementById('gravacoesCentralI61'),pessoa=usuarioAtual;
     if(!box)return;
-    if(gravacoesContextoI61?.pessoa===pessoa&&box.querySelector('#g61Cliente'))return;
-    const seq=++gravacoesGeracaoI61;gravacoesEditorI61?.dispose();gravacoesEditorI61=null;
+    if(gravacoesContextoI61?.pessoa===pessoa&&box.querySelector('#g61Cliente')){const c=gravacoesContextoI61;if(c.cliente)iniciarDeclaracoesI141(c,c.mapa[c.cliente]?.__documentoId,gravacoesGeracaoI61);return;}
+    const seq=++gravacoesGeracaoI61;pararDeclaracoesI141();gravacoesEditorI61?.dispose();gravacoesEditorI61=null;
     box.innerHTML='<div class="card">Carregando calendários para a conferência…</div>';
     try{
       const fontes=await fontesConferenciaI63(hojeLocal().slice(0,7));
@@ -22544,7 +22595,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       if(seq!==gravacoesGeracaoI61||pessoa!==usuarioAtual)return;
       const clientes=fontes.clientes.filter(c=>!carteiraCampo||carteiraCampo.has(slugClienteCanonico(c.slug))).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
       gravacoesContextoI61={pessoa,mapa,carteiraCampo,cliente:'',mes:hojeLocal().slice(0,7)};
-      box.innerHTML=`<div class="g61"><p>${pessoa==='Cecília'?'Escolha o cliente e o mês da pauta da Gabi.':'Consulte a organização da Cecília. Para mudar grupo, preparação ou situação, peça a conferência dela.'}</p><div class="g61fields"><label>Cliente<select id="g61Cliente"><option value="">Escolha o cliente…</option>${clientes.map(c=>`<option value="${GetGravacoesI61.esc(slugClienteCanonico(c.slug))}">${GetGravacoesI61.esc(c.nome)}</option>`).join('')}</select></label><label>Mês do calendário<input id="g61Mes" type="month" value="${hojeLocal().slice(0,7)}"></label><button type="button" id="g61Atualizar">Atualizar lista</button></div><p id="g61Aviso" role="status">Pauta atrasada? Selecione o mês original.</p></div><div id="g61Conteudos"></div>`;
+      box.innerHTML=`<div class="g61"><p>${pessoa==='Cecília'?'Escolha o cliente e o mês da pauta da Gabi.':'Consulte a organização da Cecília. Para mudar grupo, preparação ou situação, peça a conferência dela.'}</p><div class="g61fields"><label>Cliente<select id="g61Cliente"><option value="">Escolha o cliente…</option>${clientes.map(c=>`<option value="${GetGravacoesI61.esc(slugClienteCanonico(c.slug))}">${GetGravacoesI61.esc(c.nome)}</option>`).join('')}</select></label><label>Mês do calendário<input id="g61Mes" type="month" value="${hojeLocal().slice(0,7)}"></label><button type="button" id="g61Atualizar">Atualizar lista</button></div><p id="g61Aviso" role="status">Pauta atrasada? Selecione o mês original.</p></div>${['Amanda','Cecília'].includes(pessoa)?'<div id="g61DeclaracoesI141"></div>':''}<div id="g61Conteudos"></div>`;
       GetGravacoesI61.style();
       for(const id of ['g61Cliente','g61Mes'])document.getElementById(id).onchange=()=>carregarGravacoesI61(false);
       document.getElementById('g61Atualizar').onclick=()=>carregarGravacoesI61(true);
@@ -22556,6 +22607,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
     if(!ctx||ctx.pessoa!==usuarioAtual)return;
     if(gravacoesEditorI61?.dirty()&&!confirm('Trocar ou atualizar a lista? Seus rascunhos ficam guardados neste navegador, mas ainda não estão no Portal.')){sel.value=ctx.cliente;mesEl.value=ctx.mes;return;}
     const cliente=sel.value,mes=mesEl.value,seq=++gravacoesGeracaoI61;
+    pararDeclaracoesI141();const quadro=document.getElementById('g61DeclaracoesI141');if(quadro)quadro.replaceChildren();
     gravacoesEditorI61?.dispose();gravacoesEditorI61=null;GetGravacoesI61.stopReader(box);box.replaceChildren();ctx.cliente=cliente;ctx.mes=mes;
     if(!cliente||!GetGravacoesI61.mesValido(mes)){aviso.textContent='Escolha o cliente e um mês válido.';return;}
     aviso.textContent='Conferindo a pauta e a organização salva…';
@@ -22571,6 +22623,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       const cal=calSnap.data();if(id==='zeiss')exigirClienteOperacionalR4(id,cal);if(cal.excluido)throw Error('Calendário arquivado.');
       const itens=(cal.items||[]).filter(i=>!i.excluido&&mesDoItemCalendario(cal,i)===mes);
       if(seq!==gravacoesGeracaoI61||ctx.pessoa!==usuarioAtual)return;
+      iniciarDeclaracoesI141(ctx,id,seq);
       if(!itens.length){const meses=[...new Set((cal.items||[]).filter(i=>!i.excluido).map(i=>mesDoItemCalendario(cal,i)).filter(Boolean))].sort();aviso.textContent='Não há conteúdos neste mês. Meses com conteúdo: '+(meses.join(', ')||'nenhum')+'.';return;}
       if(ctx.pessoa!=='Cecília'){
         await GetGravacoesI61.reader(box,{cliente:id,mes,itens,store:gravacoesStoreI61,open:true});aviso.textContent='Consulta da organização manual. A pauta completa continua no calendário.';return;
@@ -22584,7 +22637,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
     }catch(e){if(seq===gravacoesGeracaoI61)aviso.textContent='Não consegui confirmar a leitura. '+(e.message||'Tente novamente.')+' Nenhum conteúdo foi alterado.';}
   }
   function limparGravacoesI61(){
-    gravacoesGeracaoI61++;gravacoesEditorI61?.dispose();gravacoesEditorI61=null;gravacoesContextoI61=null;
+    pararDeclaracoesI141();gravacoesGeracaoI61++;gravacoesEditorI61?.dispose();gravacoesEditorI61=null;gravacoesContextoI61=null;
     const box=document.getElementById('g61Conteudos');if(box)GetGravacoesI61.stopReader(box);
     document.getElementById('gravacoesCentralI61')?.replaceChildren();
   }
@@ -24090,6 +24143,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
     }
     if(nome !== 'calendarios') pararOuvinteCalendarioCampo(false);
     registrarAtividadeUsuario();
+    if(nome!=='acompanhamento')pararDeclaracoesI141();
     viewAtiva = nome; // Fase 2 — usado pelo dispatcher de tempo real
     document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
     if(el?.classList) el.classList.add('active');

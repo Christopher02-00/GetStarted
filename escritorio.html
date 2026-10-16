@@ -2056,7 +2056,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=i92-1";
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
-  import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=i132-1";
+  import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=i136-1";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, or as _orFB, documentId, orderBy, limit, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { initializeAuth, browserPopupRedirectResolver, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -9880,7 +9880,8 @@ window.marcarClienteAprovouVideo = async function(id){
       return false;
     }
     const competencia = String(document.getElementById('finMes')?.value||'');
-    const sequencia = ++__renderFolhaExtrasV130Seq;
+    const sequencia = ++__renderFolhaExtrasV130Seq,sessaoI136=sessaoServicoManual();
+    const dataAnteriorI136=document.getElementById('folhaExtrasDataCaixaV130')?.value||'';
     if(!competenciaValidaExtra(competencia)){
       cont.innerHTML = `<div class="card" data-folha-extras-competencia="" data-folha-extras-estado="indisponivel"><b>Extras indisponíveis.</b><div class="desc">Selecione uma competência financeira válida.</div></div>`;
       return false;
@@ -9888,15 +9889,14 @@ window.marcarClienteAprovouVideo = async function(id){
     cont.innerHTML = `<div class="card" data-folha-extras-competencia="${escAttr(competencia)}" data-folha-extras-estado="carregando"><div class="desc">Conferindo a folha de ${rotuloMesExtras(competencia)}…</div></div>`;
     let pagamentos = [];
     try{
-      const snap = await getDocs(collection(db,'pagamentos_extra'));
-      snap.forEach(d=>pagamentos.push({id:d.id,...d.data()}));
+      pagamentos=await lerExtrasServidorI136();
     }catch(erro){
       console.error('V130 — falha ao ler a folha de extras:',erro);
-      if(sequencia!==__renderFolhaExtrasV130Seq) return false;
+      if(sequencia!==__renderFolhaExtrasV130Seq||sessaoI136!==sessaoServicoManual()||cont!==document.getElementById('financeiroExtrasBox')) return false;
       cont.innerHTML = `<div class="card" data-folha-extras-competencia="${escAttr(competencia)}" data-folha-extras-estado="indisponivel"><b>Extras indisponíveis.</b><div class="desc">Não consegui confirmar os lançamentos. Nada foi tratado como vazio ou pago; tente novamente.</div></div>`;
       return false;
     }
-    if(sequencia!==__renderFolhaExtrasV130Seq || usuarioAtual!=='Chris' || document.getElementById('finMes')?.value!==competencia) return false;
+    if(sequencia!==__renderFolhaExtrasV130Seq||sessaoI136!==sessaoServicoManual()||cont!==document.getElementById('financeiroExtrasBox')||usuarioAtual!=='Chris'||document.getElementById('finMes')?.value!==competencia) return false;
 
     const projecao = projetarFolhaExtrasV130(pagamentos,competencia);
     const competenciaHoje = hojeLocal().slice(0,7);
@@ -9907,7 +9907,7 @@ window.marcarClienteAprovouVideo = async function(id){
       : estado==='vazia' ? 'Nenhum extra nesta folha'
       : '💳 Folha pronta para pagamento';
     const corEstado = estado==='terminal'?'var(--green)':estado==='bloqueada'?'var(--yellow2)':estado==='aberta'?'var(--yellow)':'var(--line)';
-    const dataPadrao = competencia===competenciaHoje ? hojeLocal() : '';
+    const dataPadrao = /^\d{4}-\d{2}-\d{2}$/.test(dataAnteriorI136)&&dataAnteriorI136.slice(0,7)===competencia&&dataAnteriorI136<=hojeLocal()?dataAnteriorI136:(competencia===competenciaHoje?hojeLocal():'');
     const bloqueios = projecao.bloqueados.map(p=>`<div class="item" style="border-left:3px solid var(--yellow2);"><b>${esc(p.filmmaker||'Pessoa não definida')} — ${esc(p.clienteNome||'sem cliente')}</b><div class="meta" style="margin-top:4px;">${esc(bloqueioExtraFolhaV130(p))}. A Amanda precisa concluir esta conferência antes da baixa.</div></div>`).join('');
 
     cont.innerHTML = `<section class="card" style="border:2px solid ${corEstado};" data-folha-extras-competencia="${escAttr(competencia)}" data-folha-extras-estado="${estado}">
@@ -9961,6 +9961,29 @@ window.marcarClienteAprovouVideo = async function(id){
     };
   }
 
+  /* I136 — o recibo do servidor decide o resultado da tentativa. Uma
+     resposta perdida não prova que a baixa deixou de acontecer. */
+  async function lerExtrasServidorI136(){
+    const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,'pagamentos_extra')),'Conferir folha de extras',12000);
+    if(snap.metadata?.fromCache!==false||snap.metadata?.hasPendingWrites!==false) throw Error('A folha ainda não foi confirmada pelo servidor.');
+    return snap.docs.map(d=>({...d.data(),id:d.id}));
+  }
+  async function conferirBaixaExtrasI136(tentativa){
+    const refs=[doc(db,'config_financeiro',tentativa.operationId),...tentativa.itens.map(i=>doc(db,'pagamentos_extra',i.id))];
+    const snaps=await comTimeoutCalendarioOperacional(Promise.all(refs.map(ref=>_getDocFromServerFB(ref))),'Conferir recibo da folha',12000);
+    if(snaps.some(s=>s.metadata?.fromCache!==false||s.metadata?.hasPendingWrites!==false)) throw Error('A conferência da folha ainda está pendente.');
+    if(!snaps[0].exists()) return false;
+    const r=snaps[0].data(),ids=tentativa.itens.map(i=>i.id);
+    if(r.tipo!=='folha_extras_v130'||r.schemaVersion!==130||r.operationId!==tentativa.operationId||r.assinatura!==tentativa.assinatura||r.status!=='confirmado'||r.competenciaPagamento!==tentativa.competencia||r.competenciaRealizacao!==deslocarCompetenciaExtra(tentativa.competencia,-1)||r.dataCaixa!==tentativa.dataCaixa||r.confirmadoPor!=='Chris'||r.confirmadoPorUid!==tentativa.uid||r.quantidade!==ids.length||JSON.stringify(r.itemIds)!==JSON.stringify(ids)||r.total!==tentativa.total||!r.confirmadoEm?.toMillis?.()) throw Error('O recibo encontrado diverge desta tentativa. Não repita a baixa.');
+    for(let n=0;n<tentativa.itens.length;n++){
+      const s=snaps[n+1],i=tentativa.itens[n];
+      if(!s.exists()) throw Error('Um lançamento do recibo não foi encontrado. Não repita a baixa.');
+      const x={...s.data(),id:i.id};
+      if(JSON.stringify(assinaturaItemFolhaV130(x))!==JSON.stringify({...i,pago:true})||x.pagoPor!=='Chris'||x.pagoPorUid!==tentativa.uid||x.pagoEm!==tentativa.pagoEm||x.folhaExtrasOperationId!==tentativa.operationId||x.folhaExtrasCompetencia!==tentativa.competencia||x.folhaExtrasDataCaixa!==tentativa.dataCaixa||x.folhaExtrasSchemaVersion!==130||!x.folhaExtrasConfirmadoEm?.toMillis?.()) throw Error('Os lançamentos e o recibo precisam de conferência. Não repita a baixa.');
+    }
+    return true;
+  }
+
   window.pagarFolhaExtrasDaCompetencia = async function(competencia){
     if(usuarioAtual !== 'Chris'){
       mostrarToast('A baixa da folha é exclusiva do Chris.','erro');
@@ -9977,33 +10000,36 @@ window.marcarClienteAprovouVideo = async function(id){
     }
     if(__folhasExtrasV130EmCurso.has(competencia)) return __folhasExtrasV130EmCurso.get(competencia);
 
+    const sessaoI136=sessaoServicoManual(),uidI136=auth.currentUser?.uid,boxI136=document.getElementById('financeiroExtrasBox');
+    const vigenteI136=()=>usuarioAtual==='Chris'&&auth.currentUser?.uid===uidI136&&sessaoServicoManual()===sessaoI136&&document.getElementById('finMes')?.value===competencia&&document.getElementById('financeiroExtrasBox')===boxI136;
+    const avisarI136=(texto,tipo)=>{if(vigenteI136())mostrarToast(texto,tipo);};
     const tarefa = (async()=>{
       const dataCaixa = String(document.getElementById('folhaExtrasDataCaixaV130')?.value||'');
       if(!/^\d{4}-\d{2}-\d{2}$/.test(dataCaixa) || dataCaixa.slice(0,7)!==competencia || dataCaixa>hojeLocal()){
-        mostrarToast('Informe uma data real dentro da competência selecionada e não futura.','erro');
+        avisarI136('Informe uma data real dentro da competência selecionada e não futura.','erro');
         return false;
       }
       let todos = [];
       try{
-        const snap = await getDocs(collection(db,'pagamentos_extra'));
-        snap.forEach(d=>todos.push({id:d.id,...d.data()}));
+        todos=await lerExtrasServidorI136();
+        if(!vigenteI136())return false;
       }catch(erro){
         console.error('V130 — leitura antes da baixa falhou:',erro);
-        mostrarToast('Nada foi alterado: não consegui confirmar a folha agora.','erro');
+        avisarI136('Nada foi alterado: não consegui confirmar a folha agora.','erro');
         return false;
       }
       const projecao = projetarFolhaExtrasV130(todos,competencia);
       if(projecao.bloqueados.length){
-        mostrarToast('Nada foi alterado: a folha ainda tem item aguardando conferência.','erro');
+        avisarI136('Nada foi alterado: a folha ainda tem item aguardando conferência.','erro');
         return false;
       }
       if(!projecao.abertos.length){
         await window.renderFinanceiroExtrasV130();
-        mostrarToast('Esta folha já está sem valores em aberto.');
+        avisarI136('Esta folha já está sem valores em aberto.');
         return true;
       }
       if(projecao.abertos.length>440){
-        mostrarToast('A folha excede o limite seguro de uma confirmação. Nada foi alterado.','erro');
+        avisarI136('A folha excede o limite seguro de uma confirmação. Nada foi alterado.','erro');
         return false;
       }
 
@@ -10013,12 +10039,15 @@ window.marcarClienteAprovouVideo = async function(id){
       const operationId = `folha_extras_v130_${competencia}_${hash.slice(0,20)}`;
       const reciboRef = doc(db,'config_financeiro',operationId);
       if(!confirm(`Confirmar a folha de ${rotuloMesExtras(competencia)} como paga?\n\n${projecao.abertos.length} lançamento(s) · ${brl(projecao.totalAberto)}\nData real: ${formatarDataBR(dataCaixa)}\n\nNenhuma folha anterior será incluída.`)) return false;
+      if(!vigenteI136())return false;
       const pagoEm = new Date(dataCaixa+'T12:00:00-03:00').toISOString();
       const uid = String(auth?.currentUser?.uid||'');
-      let semAlteracao = false;
+      let semAlteracao = false,erroTentativaI136=null;
+      const tentativaI136={operationId,assinatura,competencia,dataCaixa,pagoEm,uid,itens:itensIniciais,total:Number(projecao.totalAberto.toFixed(2))};
 
       try{
         await runTransaction(db, async tx => {
+          if(!vigenteI136())throw Error('O perfil ou a competência mudou.');
           const recibo = await tx.get(reciboRef);
           if(recibo.exists()){
             const existente = recibo.data();
@@ -10036,6 +10065,7 @@ window.marcarClienteAprovouVideo = async function(id){
           const assinaturaAtual = JSON.stringify({competencia,dataCaixa,itens:atuais.map(assinaturaItemFolhaV130).sort((a,b)=>a.id.localeCompare(b.id))});
           if(assinaturaAtual!==assinatura) throw new Error('FOLHA_V130_MUDOU_DURANTE_CONFIRMACAO');
 
+          if(!vigenteI136())throw Error('O perfil ou a competência mudou.');
           tx.set(reciboRef,{
             tipo:'folha_extras_v130',schemaVersion:130,operationId,competenciaPagamento:competencia,
             competenciaRealizacao:deslocarCompetenciaExtra(competencia,-1),dataCaixa,assinatura,
@@ -10049,33 +10079,51 @@ window.marcarClienteAprovouVideo = async function(id){
           }));
         });
       }catch(erro){
-        console.error('V130 — baixa mensal recusada:',erro);
-        mostrarToast('Nada foi alterado: a folha mudou ou não pôde ser confirmada. Recarregue e confira.','erro');
+        erroTentativaI136=erro;
+        console.warn('I136 — a resposta da baixa exige conferência do recibo:',erro);
+      }
+      let confirmadaI136=false;
+      try{confirmadaI136=await conferirBaixaExtrasI136(tentativaI136);}
+      catch(erro){
+        console.warn('I136 — confirmação da folha pendente:',erro);
+        avisarI136('Não consegui concluir a conferência da folha. A baixa pode ter sido salva. Reabra a competência para conferir antes de repetir.','erro');
         return false;
       }
-
-      __cacheColecoes.delete('pagamentos_extra');
-      projecao.abertos.forEach(extra=>refletirExtraNoCache(extra.id,{
-        pago:true,pagoPor:'Chris',pagoPorUid:uid,pagoEm,folhaExtrasOperationId:operationId,
-        folhaExtrasCompetencia:competencia,folhaExtrasDataCaixa:dataCaixa,folhaExtrasSchemaVersion:130
-      },false));
-      atualizarTodosOsBadges();
+      if(!confirmadaI136){
+        avisarI136('O recibo desta tentativa ainda não foi confirmado. Preserve a data e confira novamente antes de repetir a baixa.','erro');
+        return false;
+      }
+      __invalidarCacheColecaoNome('pagamentos_extra');
+      if(!vigenteI136())return true;
+      try{
+        projecao.abertos.forEach(extra=>refletirExtraNoCache(extra.id,{
+          pago:true,pagoPor:'Chris',pagoPorUid:uid,pagoEm,folhaExtrasOperationId:operationId,
+          folhaExtrasCompetencia:competencia,folhaExtrasDataCaixa:dataCaixa,folhaExtrasSchemaVersion:130
+        },false));
+        atualizarTodosOsBadges();
+      }catch(erro){
+        console.warn('I136 — recibo confirmado; indicadores pendentes:',erro);
+        avisarI136('Folha paga e confirmada pelo recibo. Reabra a tela para atualizar os indicadores.','erro');
+        return true;
+      }
 
       let releitura = [];
       try{
-        const snapFinal = await getDocs(collection(db,'pagamentos_extra'));
-        snapFinal.forEach(d=>releitura.push({id:d.id,...d.data()}));
+        releitura=await lerExtrasServidorI136();
       }catch(erro){
-        console.error('V130 — baixa confirmada, mas releitura falhou:',erro);
-        mostrarToast('O pagamento foi confirmado, mas a conferência final não carregou. Reabra a competência antes de repetir.','erro');
+        console.warn('V130 — baixa confirmada, mas releitura falhou:',erro);
+        avisarI136('O pagamento foi confirmado, mas a conferência final não carregou. Reabra a competência antes de repetir.','erro');
         return true;
       }
+      if(!vigenteI136())return true;
       const final = projetarFolhaExtrasV130(releitura,competencia);
-      await window.renderFinanceiroExtrasV130();
+      try{await window.renderFinanceiroExtrasV130();}
+      catch(erro){console.warn('I136 — folha confirmada; tela pendente:',erro);avisarI136('Folha paga e confirmada pelo recibo. Reabra a tela para atualizar a conferência.','erro');return true;}
+      if(!vigenteI136())return true;
       if(final.abertos.length || final.bloqueados.length){
-        mostrarToast('A baixa foi confirmada, mas entrou outra pendência nesta folha. Confira o complemento.','erro');
+        avisarI136('A baixa foi confirmada, mas entrou outra pendência nesta folha. Confira o complemento.','erro');
       }else{
-        mostrarToast(semAlteracao?'Folha já confirmada; nenhum pagamento foi repetido.':'Folha paga e conferida por recibo.');
+        avisarI136(semAlteracao?'Folha já confirmada; nenhum pagamento foi repetido.':erroTentativaI136?'Folha paga e confirmada pelo recibo. A resposta inicial não chegou; a baixa não foi repetida.':'Folha paga e conferida por recibo.');
       }
       return true;
     })();

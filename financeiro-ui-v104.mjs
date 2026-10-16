@@ -656,12 +656,29 @@ function competenciaDeDataCaixa(valor){
 
   async function gravarLancamento({existente=null,statusNovo=null,dataCaixaReal=''}={}){
     const uid=auth.currentUser?.uid; if(!uid) throw new Error('Sessão autenticada não confirmada.');
-    const comp=campoCompetencia('finMes');
+    const comp=campoCompetencia('finMes'),sessaoI136=deps.sessaoContratosAusentes?.();
+    const vigenteI136=()=>canFinanceiro()&&auth.currentUser?.uid===uid&&deps.sessaoContratosAusentes?.()===sessaoI136&&campoCompetencia('finMes')===comp;
     let docId,base,status,op,tipoEvento,reversalOf=null;
     if(existente){
       docId=existente.id; status=statusNovo;
       if(!['pago','cancelado'].includes(status)) throw new Error('Transição não permitida.');
-      op=operationId();
+      // Um botão anterior pode continuar aberto se só a confirmação falhou.
+      // Conferir o estado/recibo existentes vem antes de gerar outra transição.
+      const atual=await deps.getDocFromServer(doc(db,'financeiro_lancamentos',docId));
+      if(atual.metadata?.fromCache!==false||atual.metadata?.hasPendingWrites!==false)throw new Error('A conferência ainda está pendente. Atualize antes de repetir.');
+      if(atual.exists()&&atual.data().status===status){
+        const p=atual.data(),ms=x=>x?.toMillis?.()??x?.getTime?.()??(x?Date.parse(x):null);
+        const campos=['competencia','tipo','descricao','valor','beneficiarioRef','observacao','autorUid'];
+        if(campos.some(k=>p[k]!==existente[k])||(status==='pago'&&ms(p.dataCaixa)!==ms(timestampData(dataCaixaReal))))throw new Error('Este lançamento já mudou. Confira a data e os valores antes de outra alteração.');
+        const eventoAtual=await deps.getDocFromServer(doc(db,'clientes_ciclo_financeiro',p.operationId));
+        if(eventoAtual.metadata?.fromCache!==false||eventoAtual.metadata?.hasPendingWrites!==false||!eventoAtual.exists())throw new Error('O estado foi salvo, mas o recibo ainda precisa ser conferido. Não repita a baixa.');
+        const e=eventoAtual.data();
+        if(e.sourceType!=='financeiro_lancamento'||e.sourceId!==docId||e.operationId!==p.operationId||e.valor!==p.valor||e.competenciaInicio!==p.competencia||!['lancamento',...(status==='pago'?['baixa']:['cancelamento','reversao'])].includes(e.tipo)||(status==='pago'&&ms(e.dataEfetiva)!==ms(p.dataCaixa))||!Number.isInteger(p.revision)||p.revision<1||!p.atualizadoEm?.toMillis?.()||!e.criadoEm?.toMillis?.())throw new Error('O estado e o evento financeiro divergem. Não repita a alteração.');
+        if(!vigenteI136())throw new Error('O perfil ou a competência mudou.');
+        return {confirmado:true,semAlteracao:true,respostaRecuperada:false};
+      }
+
+      op='fin_'+await sha256Hex(JSON.stringify({schemaVersion:1,sourceId:docId,expectedRevision:numero(existente.revision),expectedOperationId:existente.operationId,status,dataCaixaReal}));
       tipoEvento=existente.status==='pago'&&status==='cancelado'?'reversao':status==='pago'?'baixa':'cancelamento';
       reversalOf=tipoEvento==='reversao'?existente.operationId:null;
       const dataPagamento=status==='pago'?timestampData(dataCaixaReal):null;
@@ -695,7 +712,9 @@ function competenciaDeDataCaixa(valor){
     const principal=doc(db,'financeiro_lancamentos',docId),evento=doc(db,'clientes_ciclo_financeiro',op);
     const pre=await sha256Hex(JSON.stringify(existente||{novo:true,docId}));
     const post=await sha256Hex(JSON.stringify({...base,criadoEm:'server',atualizadoEm:'server'}));
-    await runTransaction(db,async tx=>{
+    let erroTentativaI136=null;
+    try{await runTransaction(db,async tx=>{
+      if(!vigenteI136())throw new Error('O perfil ou a competência mudou.');
       const [pSnap,eSnap]=await Promise.all([tx.get(principal),tx.get(evento)]);
       if(eSnap.exists()){
         if(eSnap.data().sourceId!==docId) throw new Error('OperationId já pertence a outra ação.');
@@ -704,20 +723,34 @@ function competenciaDeDataCaixa(valor){
       if(existente){
         if(!pSnap.exists()||numero(pSnap.data().revision)!==numero(existente.revision)||pSnap.data().operationId!==existente.operationId) throw new Error('Outra aba alterou este lançamento. Atualize a tela.');
       }else if(pSnap.exists()) throw new Error('Este lançamento já existe.');
+      if(!vigenteI136())throw new Error('O perfil ou a competência mudou.');
       const carimbo=serverTimestamp();
       if(!existente){ base.criadoEm=carimbo; }
       base.atualizadoEm=carimbo;
       tx.set(principal,base,{merge:false});
       tx.set(evento,{schemaVersion:1,operationId:op,clienteId:base.beneficiarioRef,tipo:tipoEvento,competenciaInicio:base.competencia,ultimaCompetencia:null,dataEfetiva:base.dataCaixa||new Date(),valor:base.valor,sourceType:'financeiro_lancamento',sourceId:docId,reversalOf,preHash:pre,postHash:post,criadoPor:uid,criadoEm:carimbo});
-    });
-    const [recibo,reciboEvento]=await Promise.all([getDoc(principal),getDoc(evento)]);
-    if(!recibo.exists()||recibo.data().operationId!==op||!reciboEvento.exists()) throw new Error('Recibo incompleto. Não repita; atualize a tela.');
+    });}catch(erro){erroTentativaI136=erro;console.warn('I136 — conferir resposta do lançamento:',erro);}
+    const pendenteI136=()=>new Error('Não consegui concluir a conferência deste lançamento. Ele pode ter sido salvo. Atualize a tela antes de repetir.');
+    let recibo,reciboEvento;
+    try{
+      if(typeof deps.getDocFromServer!=='function')throw pendenteI136();
+      [recibo,reciboEvento]=await Promise.all([deps.getDocFromServer(principal),deps.getDocFromServer(evento)]);
+      if([recibo,reciboEvento].some(x=>x.metadata?.fromCache!==false||x.metadata?.hasPendingWrites!==false))throw pendenteI136();
+    }catch(erro){throw pendenteI136();}
+    if(!recibo.exists()||!reciboEvento.exists())throw new Error('O recibo desta tentativa ainda não foi confirmado. Confira o lançamento antes de repetir.');
+    const p=recibo.data(),e=reciboEvento.data(),dataIgual=(a,b)=>{const ms=x=>x?.toMillis?.()??x?.getTime?.()??(x?Date.parse(x):null);return ms(a)===ms(b);};
+    const campos=['schemaVersion','competencia','tipo','descricao','valor','status','beneficiarioRef','observacao','autorUid','revision','operationId'];
+    if(campos.some(k=>p[k]!==base[k])||!dataIgual(p.dataCaixa,base.dataCaixa)||e.operationId!==op||e.sourceType!=='financeiro_lancamento'||e.sourceId!==docId||e.tipo!==tipoEvento||e.valor!==base.valor||e.preHash!==pre||e.postHash!==post||e.criadoPor!==uid||e.competenciaInicio!==comp||e.reversalOf!==reversalOf||(base.status==='pago'&&!dataIgual(e.dataEfetiva,base.dataCaixa))||!p.atualizadoEm?.toMillis?.()||!e.criadoEm?.toMillis?.())throw new Error('O lançamento e o recibo precisam de conferência. Não repita esta alteração.');
+    return {confirmado:true,respostaRecuperada:!!erroTentativaI136};
   }
 
   w.salvarLancamentoFinanceiroV103=async function(){
     if(!canFinanceiro()||locks.has('lancamento')) return false; locks.add('lancamento');
-    try{await gravarLancamento();invalidar();mostrarToast('Lançamento salvo com evento e recibo.');await w.renderFinanceiro();return true;}
-    catch(e){console.error(e);mostrarToast('Nada foi alterado: '+(e.message||e),'erro');return false;}
+    const uidI136=auth.currentUser?.uid,sessaoI136=deps.sessaoContratosAusentes?.(),compI136=campoCompetencia('finMes');
+    const vigenteI136=()=>canFinanceiro()&&auth.currentUser?.uid===uidI136&&deps.sessaoContratosAusentes?.()===sessaoI136&&campoCompetencia('finMes')===compI136;
+    let confirmadoI136=false;
+    try{const resultado=await gravarLancamento();confirmadoI136=true;invalidar();if(!vigenteI136())return true;await w.renderFinanceiro();if(vigenteI136())mostrarToast(resultado.respostaRecuperada?'Lançamento confirmado pelo recibo; a resposta inicial não chegou. Nenhum lançamento foi repetido.':'Lançamento salvo com evento e recibo.');return true;}
+    catch(e){console.warn(e);if(vigenteI136())mostrarToast(confirmadoI136?'Lançamento confirmado. Reabra a tela para atualizar a conferência.':(e.message||'Não foi possível confirmar o lançamento.'),'erro');return confirmadoI136;}
     finally{locks.delete('lancamento');}
   };
 
@@ -727,8 +760,11 @@ function competenciaDeDataCaixa(valor){
     if(status==='pago'&&!timestampData(dataCaixaReal)){ mostrarToast('Informe a data real do pagamento.','erro'); return false; }
     if(!confirm(status==='pago'?`Confirmar pagamento na data real ${dataCaixaReal.split('-').reverse().join('/')}?`:'Cancelar preservando o histórico?')) return false;
     locks.add('lanc:'+id);
-    try{const fontes=await carregarSnapshot({forcar:true});const existente=fontes.financeiro_lancamentos.find(v=>v.id===id);if(!existente)throw new Error('Lançamento não encontrado.');await gravarLancamento({existente,statusNovo:status,dataCaixaReal});invalidar();mostrarToast('Lançamento atualizado com recibo.');await w.renderFinanceiro();return true;}
-    catch(e){mostrarToast('Nada foi alterado: '+(e.message||e),'erro');return false;}
+    const uidI136=auth.currentUser?.uid,sessaoI136=deps.sessaoContratosAusentes?.(),compI136=campoCompetencia('finMes');
+    const vigenteI136=()=>canFinanceiro()&&auth.currentUser?.uid===uidI136&&deps.sessaoContratosAusentes?.()===sessaoI136&&campoCompetencia('finMes')===compI136;
+    let confirmadoI136=false;
+    try{const fontes=await carregarSnapshot({forcar:true});if(!vigenteI136())return false;const existente=fontes.financeiro_lancamentos.find(v=>v.id===id);if(!existente)throw new Error('Lançamento não encontrado.');const resultado=await gravarLancamento({existente,statusNovo:status,dataCaixaReal});confirmadoI136=true;invalidar();if(!vigenteI136())return true;await w.renderFinanceiro();if(vigenteI136())mostrarToast(resultado.semAlteracao?'Alteração já confirmada pelo recibo; nenhuma baixa foi repetida.':resultado.respostaRecuperada?'Alteração confirmada pelo recibo; não foi repetida.':'Lançamento atualizado com recibo.');return true;}
+    catch(e){console.warn(e);if(vigenteI136())mostrarToast(confirmadoI136?'Alteração confirmada. Reabra a tela para atualizar a conferência.':(e.message||'Não foi possível confirmar a alteração.'),'erro');return confirmadoI136;}
     finally{locks.delete('lanc:'+id);}
   };
 

@@ -681,7 +681,7 @@
 /* I85: o atalho global não deve cobrir os botões do detalhe da gravação. */
 body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:none!important;}
 /* I93: o editor de acompanhamento fica acima do menu e atalhos móveis. */
-#overlayView:has(#demI93Salvar){z-index:500;}
+#overlayView:has(#demI93Salvar, #ideiaI140Salvar){z-index:500;}
 </style>
 </head>
 <body class="semUsuario">
@@ -20251,6 +20251,7 @@ window.arquivarMesCampanhas=async function(mes,token){
   // re-renderizarem no lugar certo em vez de assumir a Gerencia
   let __portalAdminContainer = 'gerenciaPortalCliente';
   let __portalAdminLeitura = false;
+  let __portalRenderI140=0;
 
   function reRenderPortalAdmin(){
     return renderPortalClienteAdmin(__portalAdminContainer, __portalAdminLeitura);
@@ -20443,7 +20444,7 @@ window.arquivarMesCampanhas=async function(mes,token){
       return '<div class="card" style="border-color:var(--red);"><div class="empty">Nao consegui carregar as demandas agora. Nenhum dado foi alterado.</div></div>';
     }
 
-    const podeCriar = usuarioAtual === 'Amanda';
+    const podeCriar = usuarioAtual === 'Amanda',podeAcompanhar=['Amanda','Cecília'].includes(usuarioAtual);
     const valorTempo = v => v?.seconds ? v.seconds*1000 : Date.parse(v||'')||0;
     registros.sort((a,b)=>valorTempo(b.criadoEm)-valorTempo(a.criadoEm));
     const abertas = gruposDemandasI93(registros).abertas;
@@ -20461,7 +20462,7 @@ window.arquivarMesCampanhas=async function(mes,token){
         ${d.descricao ? '<div class="meta" style="margin-top:7px;white-space:pre-wrap;">'+esc(d.descricao)+'</div>' : ''}
         ${d.observacoes ? '<div class="meta" style="margin-top:7px;background:var(--deep);padding:8px 10px;border-radius:7px;">📝 '+esc(d.observacoes)+'</div>' : ''}
         ${responsaveis.length ? '<div class="meta" style="margin-top:8px;line-height:1.7;"><b>Responsaveis:</b> '+responsaveis.map(n => esc(n)+' — '+esc(STATUS[mapa[n]]||'Pendente')).join('<br>')+'</div>' : ''}
-        ${podeCriar&&d.status!=='cancelada'?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;"><button class="btn secondary" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'editar')">Editar acompanhamento</button><button class="btn ${d.status==='concluida'?'secondary':''}" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'${d.status==='concluida'?'reabrir':'concluir'}')">${d.status==='concluida'?'Reabrir acompanhamento':'✓ Concluir acompanhamento'}</button></div>`:''}
+        ${podeAcompanhar&&d.status!=='cancelada'?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">${podeCriar?`<button class="btn secondary" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'editar')">Editar acompanhamento</button>`:''}<button class="btn secondary" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'prazo')">Atualizar prazo</button>${d.status==='pendente'?`<button class="btn secondary" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'andamento')">Marcar em andamento</button>`:''}<button class="btn ${d.status==='concluida'?'secondary':''}" style="width:auto;" onclick="abrirDemandaPortalI93(${atributoDemandaI93(JSON.stringify(d.id))},'${d.status==='concluida'?'reabrir':'concluir'}')">${d.status==='concluida'?'Reabrir acompanhamento':'✓ Concluir acompanhamento'}</button></div>`:''}
       </div>`;
     };
 
@@ -20497,55 +20498,57 @@ window.arquivarMesCampanhas=async function(mes,token){
 
   // I93: comando manual sobre o acompanhamento; nenhuma tarefa individual é alterada.
   function atributoDemandaI93(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');}
-  let __editorDemandaPortalI93=null;
+  let __editorDemandaPortalI93=null,__aberturaDemandaI140=0;
   window.abrirDemandaPortalI93=async function(id,acao){
-    if(usuarioAtual!=='Amanda'||!['editar','concluir','reabrir'].includes(acao))return;
-    const sessao=sessaoServicoManual();
+    if(!['Amanda','Cecília'].includes(usuarioAtual)||!['editar','prazo','andamento','concluir','reabrir'].includes(acao)||acao==='editar'&&usuarioAtual!=='Amanda')return;
+    const ticket=++__aberturaDemandaI140,sessao=sessaoServicoManual(),pessoa=usuarioAtual,origem=origemPortalI140(),modal=document.getElementById('modalConteudo'),anterior=modal.firstChild;
     try{
       const snap=await _getDocFromServerFB(doc(db,'demandas_cliente',id));
-      if(sessao!==sessaoServicoManual()||usuarioAtual!=='Amanda')return;
+      if(ticket!==__aberturaDemandaI140||sessao!==sessaoServicoManual()||usuarioAtual!==pessoa||!origem()||modal.firstChild!==anterior)return;
       if(!snap.exists()||snap.data().excluido||statusDemandaI93(snap.data())==='cancelada')throw Error('Esta demanda não está mais disponível. Atualize a lista.');
       const d=snap.data(),estado=statusDemandaI93(d);
+      if(acao==='andamento'&&estado!=='pendente')throw Error('O estado mudou. Atualize a lista antes de marcar em andamento.');
       if((acao==='concluir'&&estado==='concluida')||(acao==='reabrir'&&estado!=='concluida')){reRenderPortalAdmin();return;}
-      const op={id,acao,sessao,base:assinaturaDemandaI93(d),d,token:crypto.randomUUID(),salvando:false};
+      const op={id,acao,sessao,pessoa,origem,estado,base:assinaturaDemandaI93(d),d,token:crypto.randomUUID(),salvando:false};
       __editorDemandaPortalI93=op;
-      document.getElementById('modalConteudo').innerHTML=`<h2>${acao==='editar'?'Editar acompanhamento':acao==='concluir'?'Concluir acompanhamento':'Reabrir acompanhamento'}</h2><p><b>${esc(d.clienteNome||d.cliente)}</b> · ${esc(d.titulo||d.texto||'Demanda')}</p><div class="desc">Atualiza o acompanhamento do cliente. As tarefas e os comprovantes da equipe permanecem iguais.</div>
-      ${acao==='editar'?`<div class="field"><label for="demI93Titulo">Título</label><input id="demI93Titulo" maxlength="500" value="${atributoDemandaI93(d.titulo||d.texto||'')}"></div><div class="field"><label for="demI93Descricao">Descrição</label><textarea id="demI93Descricao" maxlength="15000">${esc(d.descricao||'')}</textarea></div><div class="field"><label for="demI93Observacoes">Observações</label><textarea id="demI93Observacoes" maxlength="15000">${esc(d.observacoes||'')}</textarea></div><div class="field"><label for="demI93Prazo">Entrega até (opcional)</label><input id="demI93Prazo" type="date" value="${atributoDemandaI93(d.prazoData||'')}"></div>`:`<p>${acao==='concluir'?'O cliente verá como concluída por cinco dias. Depois, poderá consultar no histórico.':'O pedido voltará para a lista em andamento do cliente.'}</p>`}
-      <div id="demI93Mensagem" role="status" style="margin:12px 0;"></div><button id="demI93Salvar" class="btn" onclick="salvarDemandaPortalI93()">${acao==='editar'?'Salvar acompanhamento':acao==='concluir'?'Confirmar conclusão':'Confirmar reabertura'}</button><button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Voltar</button>`;
+      document.getElementById('modalConteudo').innerHTML=`<h2>${acao==='editar'?'Editar acompanhamento':acao==='prazo'?'Atualizar prazo':acao==='andamento'?'Marcar em andamento':acao==='concluir'?'Concluir acompanhamento':'Reabrir acompanhamento'}</h2><p><b>${esc(d.clienteNome||d.cliente)}</b> · ${esc(d.titulo||d.texto||'Demanda')}</p><div class="desc">Atualiza o acompanhamento do cliente. As tarefas e os comprovantes da equipe permanecem iguais.</div>
+      ${acao==='editar'?`<div class="field"><label for="demI93Titulo">Título</label><input id="demI93Titulo" maxlength="500" value="${atributoDemandaI93(d.titulo||d.texto||'')}"></div><div class="field"><label for="demI93Descricao">Descrição</label><textarea id="demI93Descricao" maxlength="15000">${esc(d.descricao||'')}</textarea></div><div class="field"><label for="demI93Observacoes">Observações</label><textarea id="demI93Observacoes" maxlength="15000">${esc(d.observacoes||'')}</textarea></div><div class="field"><label for="demI93Prazo">Entrega até (opcional)</label><input id="demI93Prazo" type="date" value="${atributoDemandaI93(d.prazoData||'')}"></div>`:acao==='prazo'?`<div class="field"><label for="demI93Prazo">Entrega até (opcional)</label><input id="demI93Prazo" type="date" value="${atributoDemandaI93(d.prazoData||'')}"></div>`:`<p>${acao==='concluir'?'O cliente verá como concluída por cinco dias. Depois, poderá consultar no histórico.':'O pedido ficará na lista em andamento do cliente.'}</p>`}
+      <div id="demI93Mensagem" role="status" style="margin:12px 0;"></div><button id="demI93Salvar" class="btn" onclick="salvarDemandaPortalI93()">${acao==='editar'?'Salvar acompanhamento':acao==='prazo'?'Salvar prazo':acao==='andamento'?'Confirmar andamento':acao==='concluir'?'Confirmar conclusão':'Confirmar reabertura'}</button><button class="btn secondary" style="margin-top:8px;" onclick="fecharModal()">Voltar</button>`;
       document.getElementById('overlayView').classList.add('show');
-    }catch(e){if(sessao===sessaoServicoManual())mostrarToast('Não consegui abrir: '+e.message,'erro');}
+    }catch(e){if(ticket===__aberturaDemandaI140&&sessao===sessaoServicoManual()&&origem()&&modal.firstChild===anterior)mostrarToast('Não consegui abrir: '+e.message,'erro');}
   };
   window.salvarDemandaPortalI93=async function(){
     const op=__editorDemandaPortalI93;
-    if(!op||op.salvando||usuarioAtual!=='Amanda'||op.sessao!==sessaoServicoManual())return;
-    const vigente=()=>op===__editorDemandaPortalI93&&op.sessao===sessaoServicoManual()&&usuarioAtual==='Amanda'&&document.getElementById('demI93Salvar')===btn;
+    if(!op||op.salvando||usuarioAtual!==op.pessoa||!['Amanda','Cecília'].includes(usuarioAtual)||op.acao==='editar'&&usuarioAtual!=='Amanda'||op.sessao!==sessaoServicoManual()||!op.origem())return;
+    const vigente=()=>op===__editorDemandaPortalI93&&op.sessao===sessaoServicoManual()&&usuarioAtual===op.pessoa&&op.origem()&&document.getElementById('overlayView').classList.contains('show')&&document.getElementById('demI93Salvar')===btn;
     const msg=document.getElementById('demI93Mensagem'),btn=document.getElementById('demI93Salvar');
     let campos={};
-    try{if(op.acao==='editar')campos=camposEdicaoI93({titulo:document.getElementById('demI93Titulo').value,descricao:document.getElementById('demI93Descricao').value,observacoes:document.getElementById('demI93Observacoes').value,prazoData:document.getElementById('demI93Prazo').value});}
+    try{if(op.acao==='editar')campos=camposEdicaoI93({titulo:document.getElementById('demI93Titulo').value,descricao:document.getElementById('demI93Descricao').value,observacoes:document.getElementById('demI93Observacoes').value,prazoData:document.getElementById('demI93Prazo').value});else if(op.acao==='prazo')campos={prazoData:prazoPortalI140(document.getElementById('demI93Prazo').value)};}
     catch(e){msg.textContent=e.message;return;}
     op.salvando=true;btn.disabled=true;msg.textContent='Salvando…';
     const inputs=Array.from(document.querySelectorAll('#modalConteudo input,#modalConteudo textarea'));inputs.forEach(el=>el.disabled=true);
     const ref=doc(db,'demandas_cliente',op.id);
+    const confereI140=d=>!d.excluido&&d.cliente===op.d.cliente&&Object.entries(campos).every(([k,v])=>d[k]===v)&&(['editar','prazo'].includes(op.acao)||statusDemandaI93(d)===(op.acao==='concluir'?'concluida':'andamento'));
     try{
       try{await runTransaction(db,async tx=>{
         const snap=await tx.get(ref);
         if(!vigente())throw Error('O perfil mudou. Feche esta janela e abra a demanda novamente.');
         if(!snap.exists()||snap.data().excluido||statusDemandaI93(snap.data())==='cancelada')throw Error('Demanda não disponível.');
         const atual=snap.data();
-        if(atual.operacaoAcompanhamentoI93===op.token)return;
-        if(assinaturaDemandaI93(atual)!==op.base)throw Error('O acompanhamento mudou em outra janela. Seu texto continua aqui; copie-o antes de fechar e conferir a versão atual.');
+        if(atual.operacaoAcompanhamentoI93===op.token){if(!confereI140(atual))throw Error('A operação anterior foi gravada, mas o acompanhamento mudou. Confira a versão atual.');return;}
+        if(assinaturaDemandaI93(atual)!==op.base||!['editar','prazo'].includes(op.acao)&&statusDemandaI93(atual)!==op.estado)throw Error('O acompanhamento mudou em outra janela. Seu texto continua aqui; copie-o antes de fechar e conferir a versão atual.');
         const patch={...campos,revisaoAcompanhamentoI93:(Number(atual.revisaoAcompanhamentoI93)||0)+1,operacaoAcompanhamentoI93:op.token,atualizadoEm:serverTimestamp()};
-        if(op.acao!=='editar'){
+        if(!['editar','prazo'].includes(op.acao)){
           const status=op.acao==='concluir'?'concluida':'andamento';
-          patch.status=status;patch.acompanhamentoManualI93={status,por:'Amanda',em:serverTimestamp(),concluidoEm:status==='concluida'?serverTimestamp():null};
+          patch.status=status;patch.acompanhamentoManualI93={status,por:op.pessoa,em:serverTimestamp(),concluidoEm:status==='concluida'?serverTimestamp():null};
         }
         const antes={};for(const k of ['titulo','texto','descricao','observacoes','prazoData'])antes[k]=atual[k]??'';
-        patch.historico=arrayUnion({acao:'Acompanhamento: '+op.acao,por:'Amanda',em:new Date().toISOString(),operacao:op.token,antes:{...antes,status:statusDemandaI93(atual)}});
+        patch.historico=arrayUnion({acao:'Acompanhamento: '+op.acao,por:op.pessoa,em:new Date().toISOString(),operacao:op.token,antes:{...antes,status:statusDemandaI93(atual)}});
         tx.update(ref,patch);
       });}catch(e){
         // Resposta perdida não autoriza repetir a operação como se ela não tivesse ocorrido.
         const recibo=await _getDocFromServerFB(ref).catch(()=>null);
-        if(!recibo?.exists()||recibo.data().operacaoAcompanhamentoI93!==op.token)throw e;
+        if(!recibo?.exists()||recibo.data().operacaoAcompanhamentoI93!==op.token||!confereI140(recibo.data()))throw e;
       }
       if(vigente()){__editorDemandaPortalI93=null;fecharModal();mostrarToast('Acompanhamento atualizado.');await reRenderPortalAdmin();}
     }catch(e){if(vigente())msg.textContent='Não foi possível confirmar: '+e.message;}
@@ -20605,11 +20608,12 @@ window.arquivarMesCampanhas=async function(mes,token){
     __portalAdminLeitura = apenasLeitura;
     const cont = document.getElementById(containerId);
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
-    const sub = window.__portalAdminSub;
+    const sub = window.__portalAdminSub,geracao=++__portalRenderI140,sessaoI140=sessaoServicoManual(),viewI140=viewAtiva;
+    const renderVigenteI140=()=>geracao===__portalRenderI140&&sub===window.__portalAdminSub&&sessaoI140===sessaoServicoManual()&&viewI140===viewAtiva&&cont===document.getElementById(containerId)&&cont.isConnected;
 
     let html = `<div class="card">
       <h2><svg class="ic"><use href="#i-external"/></svg>Portal do Cliente ${apenasLeitura ? '' : '— Gerenciar'}</h2>
-      <div class="desc">Tudo que os clientes enviam pelo portal deles cai aqui — banco de ideias, atas e informações extras.${apenasLeitura ? ' Só a Amanda e a Gabi podem editar; o resto da equipe acompanha aqui.' : ' Stories saiu daqui e virou tela própria — está no menu lateral, em 📸 Stories.'}</div>
+      <div class="desc">Tudo que os clientes enviam pelo portal deles cai aqui — banco de ideias, atas e informações extras.${apenasLeitura ? usuarioAtual==='Cecília'?' Você pode atualizar prazos e estados nas Demandas e no Banco de Ideias. As demais áreas são de consulta.':' Só a Amanda e a Gabi podem editar; o resto da equipe acompanha aqui.' : ' Stories saiu daqui e virou tela própria — está no menu lateral, em 📸 Stories.'}</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <button class="btn ${sub==='checklist'?'':'secondary'}" style="width:auto;padding:8px 16px;" onclick="setPortalAdminSub('checklist','${containerId}',${apenasLeitura})">✅ Checklist do Cliente</button>
@@ -20630,63 +20634,24 @@ window.arquivarMesCampanhas=async function(mes,token){
        portal. Quando o status vira "Concluida", a ideia cai na fila de
        aprovacao final da Amanda, que encerra oficialmente a sugestao. */
     if(sub === 'checklist'){
-      cont.innerHTML = html + await htmlChecklistAdmin(containerId, apenasLeitura);
+      const body=await htmlChecklistAdmin(containerId, apenasLeitura);if(renderVigenteI140())cont.innerHTML=html+body;
       return;
     }
 
     if(sub === 'demandas'){
-      cont.innerHTML = html + await htmlDemandasPortalAdmin(apenasLeitura);
+      const body=await htmlDemandasPortalAdmin(apenasLeitura);if(renderVigenteI140())cont.innerHTML=html+body;
       return;
     }
 
     if(sub === 'ideias'){
-      const podeMexer = !apenasLeitura;
-      const snap = await getDocs(collection(db,'ideias_cliente'));
-      const todas = []; snap.forEach(d => { const v = d.data(); if(!v.excluido) todas.push({id:d.id, ...v}); });
-      todas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
-
-      const LBL = { pendente:'Pendente', no_calendario:'Inserida no calendário', concluida:'Concluída' };
-      const dataIdeia = ts => ts?.seconds ? new Date(ts.seconds*1000).toLocaleDateString('pt-BR') : '';
-
-      if(podeMexer){
-        html += `<div class="card">
-          <h2>💡 Registrar ideia</h2>
-          <div class="desc">Surgiu um insight numa conversa, numa reunião, no WhatsApp? Registra aqui na hora — o cliente vê no portal dele.</div>
-          <div class="field"><label>Cliente</label><select id="ideiaCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div>
-          <div class="field"><label>Título</label><input type="text" id="ideiaTitulo" placeholder="Ex: Série de bastidores da produção"></div>
-          <div class="field"><label>Descrição</label><textarea id="ideiaDescricao"></textarea></div>
-          <div class="field"><label>Observações (opcional)</label><textarea id="ideiaObservacoes"></textarea></div>
-          <button class="btn" onclick="criarIdeiaEquipe()">Registrar ideia</button>
-        </div>`;
-      }
-
-      const aguardandoAmanda = todas.filter(r => r.status === 'concluida' && !r.aprovadaAmanda);
-      if(aguardandoAmanda.length && podeMexer){
-        html += `<div class="painelResumo" style="margin-bottom:14px;">
-          <div class="resumoCard yellow"><div class="num">${aguardandoAmanda.length}</div><div class="lbl">Concluída(s) esperando encerramento</div></div>
-        </div>`;
-      }
-
-      html += `<div class="grupoFuncionario"><h3>Ideias registradas</h3>`;
-      html += todas.length ? todas.map(r => `
-        <div class="item" style="border-left:3px solid ${r.aprovadaAmanda ? 'var(--green)' : r.status==='concluida' ? 'var(--yellow2)' : 'var(--line)'};">
-          <div class="top"><div class="nome">${esc(r.titulo || '(sem título)')}</div><span class="selo ${r.status==='concluida'?'aprovada':'pendente'}">${LBL[r.status]||'Pendente'}</span></div>
-          <div class="meta" style="margin-top:4px;">${esc(r.clienteNome||'')} · criada por ${esc(r.criadoPor||'—')}${r.criadoEm ? ' em '+dataIdeia(r.criadoEm) : ''}</div>
-          ${r.descricao ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap;">'+esc(r.descricao)+'</div>' : ''}
-          ${r.observacoes ? '<div class="meta" style="margin-top:6px;opacity:.8;">📝 '+esc(r.observacoes)+'</div>' : ''}
-          ${r.aprovadaAmanda ? '<div class="meta" style="margin-top:6px;color:var(--green);font-weight:700;">✔ Encerrada por '+esc(r.aprovadaAmandaPor||'—')+'</div>' : ''}
-          ${podeMexer ? `
-          <div class="row2" style="margin-top:8px;align-items:center;">
-            <select onchange="atualizarStatusIdeia('${r.id}', this.value)" style="background:var(--deep);border:1px solid var(--line);color:#fff;padding:6px;border-radius:6px;font-size:11px;">
-              ${['pendente','no_calendario','concluida'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${LBL[s]}</option>`).join('')}
-            </select>
-            ${r.status==='concluida' && !r.aprovadaAmanda ? `<button class="btn green" style="padding:6px 12px;font-size:11px;" onclick="aprovarIdeiaFinal('${r.id}')">✔ Encerrar oficialmente</button>` : '<span></span>'}
-          </div>
-          <button class="btn secondary" style="margin-top:6px;width:auto;padding:5px 12px;font-size:11px;" onclick="editarObsIdeia('${r.id}')">📝 Editar observações</button>
-          <button class="btn red" style="margin-top:6px;width:auto;padding:5px 12px;font-size:11px;opacity:.8;" onclick="excluirIdeiaCliente('${r.id}')">🗑️ Excluir</button>` : ''}
-        </div>
-      `).join('') : '<div class="empty">Nenhuma ideia registrada ainda.</div>';
-      html += `</div>`;
+      const podeMexer=podeConteudoIdeiaI140(),podeAcompanhar=podeAcompanharIdeiaI140();
+      let snap;try{snap=await _getDocsFromServerFB(collection(db,'ideias_cliente'));}catch(e){if(renderVigenteI140())cont.innerHTML=html+'<div class="card" role="alert">Não foi possível ler as ideias agora. Nenhuma ideia foi alterada. Abra Banco de Ideias novamente para tentar.</div>';return;}
+      const todas=[];snap.forEach(d=>{const v=d.data();if(!v.excluido)todas.push({...v,id:d.id});});todas.sort((a,b)=>(b.criadoEm?.seconds||0)-(a.criadoEm?.seconds||0));
+      const dataIdeia=ts=>ts?.seconds?new Date(ts.seconds*1000).toLocaleDateString('pt-BR'):'';
+      if(podeMexer)html+=`<div class="card"><h2>💡 Registrar ideia</h2><div class="desc">Registre a ideia para o cliente. O prazo é opcional e pode ser atualizado no acompanhamento.</div><div class="field"><label>Cliente</label><select id="ideiaCliente">${CLIENTES_LISTA.map(c=>`<option value="${c.slug}" data-nome="${esc(c.nome)}">${esc(c.nome)}</option>`).join('')}</select></div><div class="field"><label>Título</label><input id="ideiaTitulo" maxlength="500"></div><div class="field"><label>Descrição</label><textarea id="ideiaDescricao"></textarea></div><div class="field"><label>Observações (opcional)</label><textarea id="ideiaObservacoes"></textarea></div><div class="field"><label for="ideiaPrazoI140">Prazo da ideia (opcional)</label><input type="date" id="ideiaPrazoI140"></div><button class="btn" id="ideiaCriarI140" onclick="criarIdeiaEquipe()">Registrar ideia</button></div>`;
+      const abertas=todas.filter(r=>r.status!=='concluida'&&!r.aprovadaAmanda),historico=todas.filter(r=>r.status==='concluida'||r.aprovadaAmanda);
+      const card=r=>`<div class="item" style="border-left:3px solid ${r.aprovadaAmanda?'var(--green)':r.status==='concluida'?'var(--yellow2)':'var(--line)'};"><div class="top"><div class="nome">${esc(r.titulo||'(sem título)')}</div><span class="selo ${r.status==='concluida'?'aprovada':'pendente'}">${IDEIA_ESTADOS_I140[r.status]||'Pendente'}</span></div><div class="meta">${esc(r.clienteNome||r.cliente||'')} · criada por ${esc(r.criadoPor||'—')}${r.criadoEm?' em '+dataIdeia(r.criadoEm):''}</div><div class="meta">${r.prazoData?'Prazo: '+formatarDataBR(r.prazoData):'Sem prazo definido'}</div>${r.descricao?'<div class="meta" style="white-space:pre-wrap;">'+esc(r.descricao)+'</div>':''}${r.observacoes?'<div class="meta">📝 '+esc(r.observacoes)+'</div>':''}${r.aprovadaAmanda?'<div class="meta">✔ Encerrada por '+esc(r.aprovadaAmandaPor||'—')+'</div>':r.status==='concluida'?'<div class="meta">Concluída · aguardando encerramento oficial</div>':''}${podeAcompanhar?`<button class="btn secondary" style="width:auto;margin-top:8px;" onclick="abrirIdeiaPortalI140(${atributoDemandaI93(JSON.stringify(r.id))})">Atualizar prazo e estado</button>`:''}${podeMexer?` ${r.status==='concluida'&&!r.aprovadaAmanda?`<button class="btn green" style="width:auto;" onclick="aprovarIdeiaFinal(${atributoDemandaI93(JSON.stringify(r.id))})">✔ Encerrar oficialmente</button>`:''}<button class="btn secondary" style="width:auto;" onclick="editarObsIdeia(${atributoDemandaI93(JSON.stringify(r.id))})">Editar observações</button><button class="btn red" style="width:auto;" onclick="excluirIdeiaCliente(${atributoDemandaI93(JSON.stringify(r.id))})">Excluir</button>`:''}</div>`;
+      html+=`<div class="card"><h2>Ideias em aberto (${abertas.length})</h2>${abertas.length?abertas.map(card).join(''):'<div class="empty">Nenhuma ideia em aberto.</div>'}</div><details class="card"><summary>Concluídas / histórico (${historico.length})</summary><p class="desc">As ideias concluídas permanecem aqui, com autoria, observações e encerramento preservados.</p>${historico.map(card).join('')||'<div class="empty">Nenhuma ideia concluída.</div>'}</details>`;
     }
 
     /* ===== BANCO DE REFERENCIAS (Onda 2 — 24/07/2026) =====
@@ -20829,7 +20794,7 @@ window.arquivarMesCampanhas=async function(mes,token){
       }).join('') || '<div class="empty">Nenhum Portal ativo confirmado.</div>';
     }
 
-    cont.innerHTML = html;
+    if(renderVigenteI140())cont.innerHTML = html;
   }
 
   window.abrirPortalDoCliente = function(){
@@ -20871,15 +20836,54 @@ window.arquivarMesCampanhas=async function(mes,token){
     reRenderPortalAdmin();
   };
 
-  window.atualizarStatusIdeia = async function(id, status){
-    await updateDoc(doc(db,'ideias_cliente', id), { status });
-    mostrarToast(status === 'concluida' ? 'Marcada como concluída — agora é só encerrar oficialmente.' : 'Status atualizado!');
-    reRenderPortalAdmin();
+  // I140: acompanhamento mantém a ideia e a sua autoria; não cria tarefas.
+  const IDEIA_ESTADOS_I140={pendente:'Pendente',andamento:'Em andamento',no_calendario:'Inserida no calendário',concluida:'Concluída'};
+  function prazoPortalI140(v){v=String(v||'');if(v&&(!/^20\d{2}-\d{2}-\d{2}$/.test(v)||isNaN(Date.parse(v+'T12:00:00Z'))||new Date(v+'T12:00:00Z').toISOString().slice(0,10)!==v))throw Error('Informe uma data válida ou deixe sem prazo.');return v;}
+  function podeConteudoIdeiaI140(){return !__portalAdminLeitura&&['Chris','Amanda','Gabrielle','Fernanda'].includes(usuarioAtual);}
+  function podeAcompanharIdeiaI140(){return podeConteudoIdeiaI140()||['Amanda','Cecília'].includes(usuarioAtual);}
+  function origemPortalI140(){const sessao=sessaoServicoManual(),pessoa=usuarioAtual,view=viewAtiva,sub=window.__portalAdminSub,geracao=__portalRenderI140,cont=document.getElementById(__portalAdminContainer);return()=>sessao===sessaoServicoManual()&&pessoa===usuarioAtual&&view===viewAtiva&&sub===window.__portalAdminSub&&geracao===__portalRenderI140&&cont===document.getElementById(__portalAdminContainer)&&cont?.isConnected;}
+  function assinaturaIdeiaI140(d){return JSON.stringify(d,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);}
+  let __editorIdeiaI140=null,__aberturaIdeiaI140=0;
+  window.abrirIdeiaPortalI140=async function(id,modo='acompanhar'){
+    if(!podeAcompanharIdeiaI140()||!['acompanhar','observacoes','encerrar'].includes(modo)||modo!=='acompanhar'&&!podeConteudoIdeiaI140())return;
+    const origem=origemPortalI140(),ticket=++__aberturaIdeiaI140,modal=document.getElementById('modalConteudo'),anterior=modal.firstChild;
+    try{
+      const snap=await _getDocFromServerFB(doc(db,'ideias_cliente',id));
+      if(!origem()||ticket!==__aberturaIdeiaI140||modal.firstChild!==anterior)return;
+      if(!snap.exists()||snap.data().excluido)throw Error('Ideia indisponível. Atualize a lista.');
+      const d=snap.data();if(modo==='encerrar'&&(d.status!=='concluida'||d.aprovadaAmanda))throw Error('Confira a conclusão atual antes de encerrar oficialmente.');
+      const op={id,modo,origem,pessoa:usuarioAtual,base:assinaturaIdeiaI140(d),d,token:crypto.randomUUID(),em:new Date().toISOString(),conteudo:podeConteudoIdeiaI140(),salvando:false};__editorIdeiaI140=op;
+      modal.innerHTML=`<h2>${modo==='encerrar'?'Encerrar oficialmente':'Acompanhar ideia'}</h2><p><b>${esc(d.clienteNome||d.cliente)}</b> · ${esc(d.titulo||'(sem título)')}</p><div class="desc">Prazo e estado são da ideia. As tarefas da equipe e os itens do calendário permanecem iguais.</div>${modo==='encerrar'?'<p>Confirme o encerramento desta ideia já concluída. Ela permanecerá no histórico do cliente.</p>':`<div class="field"><label for="ideiaI140Prazo">Prazo da ideia (opcional)</label><input id="ideiaI140Prazo" type="date" value="${atributoDemandaI93(d.prazoData||'')}"></div><div class="field"><label for="ideiaI140Status">Estado da ideia</label><select id="ideiaI140Status" ${d.aprovadaAmanda?'disabled':''}>${Object.entries(IDEIA_ESTADOS_I140).map(([k,v])=>`<option value="${k}" ${(d.status||'pendente')===k?'selected':''}>${v}</option>`).join('')}</select>${d.aprovadaAmanda?'<p class="desc">Encerrada oficialmente. O estado permanece concluído.</p>':''}</div>${op.conteudo?`<div class="field"><label for="ideiaI140Obs">Observações</label><textarea id="ideiaI140Obs" maxlength="15000">${esc(d.observacoes||'')}</textarea></div>`:''}`}<div id="ideiaI140Mensagem" role="status"></div><button id="ideiaI140Salvar" class="btn" onclick="salvarIdeiaPortalI140()">${modo==='encerrar'?'Confirmar encerramento':'Salvar acompanhamento da ideia'}</button><button class="btn secondary" onclick="fecharModal()">Voltar</button>`;
+      op.ancora=document.getElementById('ideiaI140Salvar');document.getElementById('overlayView').classList.add('show');
+    }catch(e){if(origem()&&ticket===__aberturaIdeiaI140&&modal.firstChild===anterior)mostrarToast('Não consegui abrir: '+e.message,'erro');}
   };
+  window.salvarIdeiaPortalI140=async function(){
+    const op=__editorIdeiaI140;if(!op||op.salvando)return;
+    const vigente=()=>op===__editorIdeiaI140&&op.origem()&&podeAcompanharIdeiaI140()&&op.ancora===document.getElementById('ideiaI140Salvar')&&document.getElementById('overlayView').classList.contains('show');if(!vigente())return;
+    const msg=document.getElementById('ideiaI140Mensagem');let patch={};
+    try{if(op.modo==='encerrar'){if(!op.conteudo||!podeConteudoIdeiaI140())throw Error('Reabra a ideia no perfil autorizado.');patch={aprovadaAmanda:true,aprovadaAmandaPor:op.pessoa,aprovadaAmandaEm:op.em};}else{const status=document.getElementById('ideiaI140Status').value;if(!Object.hasOwn(IDEIA_ESTADOS_I140,status)||op.d.aprovadaAmanda&&status!=='concluida')throw Error('Confira o estado da ideia.');patch={prazoData:prazoPortalI140(document.getElementById('ideiaI140Prazo').value),status};if(op.conteudo){if(!podeConteudoIdeiaI140())throw Error('O acesso mudou. Reabra a ideia.');patch.observacoes=document.getElementById('ideiaI140Obs').value.trim();if(patch.observacoes.length>15000)throw Error('Observações: máximo de 15000 caracteres.');}}}catch(e){msg.textContent=e.message;return;}
+    op.salvando=true;op.ancora.disabled=true;msg.textContent='Confirmando no servidor…';const inputs=[...document.querySelectorAll('#modalConteudo input,#modalConteudo textarea,#modalConteudo select')],disabled=inputs.map(e=>e.disabled);inputs.forEach(e=>e.disabled=true);const ref=doc(db,'ideias_cliente',op.id);
+    const confere=d=>!d.excluido&&d.cliente===op.d.cliente&&Object.entries(patch).every(([k,v])=>d[k]===v);
+    try{
+      try{await runTransaction(db,async tx=>{
+        const s=await tx.get(ref);if(!vigente())throw Error('A tela ou o perfil mudou. Reabra a ideia.');if(!s.exists()||s.data().excluido)throw Error('Ideia indisponível.');const atual=s.data();
+        if(atual.operacaoIdeiaI140===op.token){if(!confere(atual))throw Error('A ideia mudou após a operação. Confira a versão atual.');return;}
+        if(assinaturaIdeiaI140(atual)!==op.base)throw Error('A ideia mudou em outra janela. Seu preenchimento continua aqui; copie-o antes de conferir a versão atual.');
+        if(atual.historico!==undefined&&!Array.isArray(atual.historico)||atual.revisaoIdeiaI140!==undefined&&(!Number.isInteger(atual.revisaoIdeiaI140)||atual.revisaoIdeiaI140<0))throw Error('O histórico precisa ser conferido antes de salvar.');
+        tx.update(ref,{...patch,revisaoIdeiaI140:(atual.revisaoIdeiaI140||0)+1,operacaoIdeiaI140:op.token,atualizadoPor:op.pessoa,atualizadoEm:serverTimestamp(),historico:arrayUnion({acao:op.modo==='encerrar'?'Ideia encerrada oficialmente':'Acompanhamento da ideia atualizado',por:op.pessoa,em:op.em,operacao:op.token,antes:{status:atual.status||'pendente',prazoData:atual.prazoData||'',observacoes:atual.observacoes||''}})});
+      });}catch(e){const s=await _getDocFromServerFB(ref).catch(()=>null);if(!s?.exists()||s.data().operacaoIdeiaI140!==op.token||!confere(s.data()))throw e;}
+      const recibo=await _getDocFromServerFB(ref);if(!recibo.exists()||recibo.data().operacaoIdeiaI140!==op.token||!confere(recibo.data()))throw Error('A operação requer conferência da versão atual.');
+      if(vigente()){__editorIdeiaI140=null;fecharModal();mostrarToast('Ideia atualizada. O cliente recebe o mesmo prazo e estado.');await reRenderPortalAdmin();}
+    }catch(e){if(vigente())msg.textContent='Não foi possível confirmar: '+e.message+' O preenchimento foi mantido. Não crie outra ideia para repetir.';}
+    finally{op.salvando=false;if(vigente()){op.ancora.disabled=false;inputs.forEach((e,i)=>e.disabled=disabled[i]);}}
+  };
+
+  window.atualizarStatusIdeia=(id)=>abrirIdeiaPortalI140(id);
 
   /* Soft delete — some da tela, fica recuperavel no banco (mesmo padrao
      das anotacoes e dos videos: um clique errado nao pode apagar pra sempre). */
   window.excluirIdeiaCliente = async function(id){
+    if(!podeConteudoIdeiaI140())return;
     if(!confirm('Excluir essa ideia? Ela some da sua tela e da do cliente (fica recuperável no banco).')) return;
     await updateDoc(doc(db,'ideias_cliente', id), { excluido: true, excluidoPor: usuarioAtual || '?', excluidoEm: new Date().toISOString() });
     mostrarToast('Ideia excluída.');
@@ -20899,18 +20903,21 @@ window.arquivarMesCampanhas=async function(mes,token){
   };
 
   window.criarIdeiaEquipe = async function(){
+    if(!podeConteudoIdeiaI140())return;
+    const btn=document.getElementById('ideiaCriarI140');if(!btn||btn.disabled)return;
+    let prazoData;try{prazoData=prazoPortalI140(document.getElementById('ideiaPrazoI140').value);}catch(e){mostrarToast(e.message,'erro');return;}
     const sel = document.getElementById('ideiaCliente');
     const titulo = document.getElementById('ideiaTitulo').value.trim();
     if(!titulo){ mostrarToast('Escreve o título da ideia.', 'erro'); return; }
-    await addDoc(collection(db,'ideias_cliente'), {
+    const origem=origemPortalI140(),pessoa=usuarioAtual,modalAnterior=document.getElementById('modalConteudo').firstChild,inputs=[...btn.closest('.card').querySelectorAll('input,textarea,select')],disabled=inputs.map(e=>e.disabled);btn.disabled=true;inputs.forEach(e=>e.disabled=true);let salvo=false;try{await addDoc(collection(db,'ideias_cliente'), {
       cliente: sel.value, clienteNome: sel.selectedOptions[0]?.dataset.nome || sel.value,
       titulo, descricao: document.getElementById('ideiaDescricao').value.trim(),
       observacoes: document.getElementById('ideiaObservacoes').value.trim(),
-      status: 'pendente', aprovadaAmanda: false,
-      criadoPor: usuarioAtual || '?', criadoPorTipo: 'equipe', criadoEm: serverTimestamp()
+      prazoData,status: 'pendente', aprovadaAmanda: false,
+      criadoPor: pessoa, criadoPorTipo: 'equipe', criadoEm: serverTimestamp()
     });
-    mostrarToast('Ideia registrada! O cliente já vê no portal dele.');
-    reRenderPortalAdmin();
+    salvo=true;if(origem()&&btn.isConnected){if(document.getElementById('modalConteudo').firstChild===modalAnterior){mostrarToast('Ideia registrada! O cliente já vê no portal dele.');await reRenderPortalAdmin();}else{btn.textContent='Ideia registrada — atualize a lista para consultar';}}
+    }catch(e){if(origem()&&btn.isConnected)mostrarToast('Não foi possível confirmar a criação. Confira a lista antes de tentar de novo.','erro');}finally{if(origem()&&btn.isConnected&&!salvo){btn.disabled=false;inputs.forEach((e,i)=>e.disabled=disabled[i]);}}
   };
 
   window.criarReferenciaEquipe = async function(){
@@ -20934,24 +20941,8 @@ window.arquivarMesCampanhas=async function(mes,token){
 
   /* Encerramento oficial da sugestao — so faz sentido depois que a ideia
      ja foi marcada como concluida (o botao so aparece nesse caso). */
-  window.aprovarIdeiaFinal = async function(id){
-    if(!confirm('Encerrar oficialmente essa ideia? Ela fica registrada como finalizada pro cliente.')) return;
-    await updateDoc(doc(db,'ideias_cliente', id), {
-      aprovadaAmanda: true, aprovadaAmandaPor: usuarioAtual || '?', aprovadaAmandaEm: new Date().toISOString()
-    });
-    mostrarToast('Ideia encerrada oficialmente.');
-    reRenderPortalAdmin();
-  };
-
-  window.editarObsIdeia = async function(id){
-    const snap = await getDoc(doc(db,'ideias_cliente', id));
-    const atual = snap.exists() ? (snap.data().observacoes || '') : '';
-    const nova = prompt('Observações da ideia:', atual);
-    if(nova === null) return;
-    await updateDoc(doc(db,'ideias_cliente', id), { observacoes: nova });
-    mostrarToast('Observações atualizadas!');
-    reRenderPortalAdmin();
-  };
+  window.aprovarIdeiaFinal=id=>abrirIdeiaPortalI140(id,'encerrar');
+  window.editarObsIdeia=id=>abrirIdeiaPortalI140(id,'observacoes');
 
   /* 28/07/2026 — criarStoryCliente REMOVIDA. Era o formulário antigo de
      um story por vez; os campos dela (storyTitulo, storyDia...) já não

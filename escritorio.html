@@ -20965,93 +20965,58 @@ window.arquivarMesCampanhas=async function(mes,token){
     cont.innerHTML = html;
   }
 
-  /* ===== EDITOR RAPIDO POR CLIENTE (Prompt Mestre 2 - P8.3, 23/07/2026) =====
-     Abre o calendario daquele cliente (colecao `calendarios/{slug}`) e
-     deixa editar titulo/legenda, remover ou reposicionar (mudar o dia) de
-     qualquer item ainda nao postado - sem sair da tela de Conteudo Ate
-     Quando. */
-  window.abrirDetalheConteudoCliente = async function(slug){
-    const modal = document.getElementById('modalConteudo');
-    const info = __conteudoAteQuandoCache.find(l => l.slug === slug);
-    modal.innerHTML = '<h2>Carregando...</h2>';
+  /* I135: atalhos antigos usam a mesma edição por ID/mês do calendário oficial.
+     Não existe mais gravação de array inteiro por índice nem exclusão física aqui. */
+  let atalhoCalendarioI135=null,geracaoAtalhoCalendarioI135=0;
+  async function prepararAtalhoCalendarioI135(slug,nome,instrucao){
+    if(!exigirSubabaCalendariosV127('editar','Peça à Social Media ou à Amanda a correção deste calendário.')) return false;
+    const alvo={slug:String(slug||''),nome:String(nome||slug||''),instrucao:String(instrucao||''),
+      sessao:sessaoServicoManual(),view:viewAtiva,geracao:++geracaoAtalhoCalendarioI135};
+    if(!alvo.slug || alvo.slug.includes('/')) return false;
+    atalhoCalendarioI135=alvo;
+    const modal=document.getElementById('modalConteudo');
+    modal.innerHTML='<div id="atalhoCalendarioI135Leitura" role="status">Conferindo o calendário…</div>';
     document.getElementById('overlayView').classList.add('show');
-    const calRef = doc(db,'calendarios', slug);
-    const calSnap = await getDoc(calRef);
-    const items = calSnap.exists() ? (calSnap.data().items || []) : [];
-    const pendentes = items.map((it,i) => ({...it, __idx:i})).filter(it => !it.posted).sort((a,b)=>(a.day||0)-(b.day||0));
-    modal.innerHTML = `
-      <h2>${esc(info?.nome || slug)}</h2>
-      <div class="linha"><b>Conteúdo ainda não postado</b> — clica em editar, remover ou mudar o dia de qualquer item.</div>
-      ${!pendentes.length ? '<div class="empty" style="margin-top:10px;">Nada pendente no calendário desse cliente.</div>' : pendentes.map(it => `
-        <div class="item" style="margin-top:8px;">
-          <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div></div>
-          ${/* 28/07/2026 — mostrava `desc`, que é o ROTEIRO INTERNO de produção.
-                A Cecília abria e via pedaço de instrução da Gabi no meio da
-                lista, sem contexto. Agora mostra a legenda, que é o texto
-                acabado; o roteiro só aparece quando não há legenda. */''}
-          ${(it.legenda||'').trim()
-            ? '<div class="meta" style="margin-top:4px;">'+esc(String(it.legenda).trim().slice(0,160))+((it.legenda||'').length>160?'…':'')+'</div>'
-            : (it.desc ? '<div class="meta" style="margin-top:4px;opacity:.7;">📝 roteiro: '+esc(String(it.desc).slice(0,120))+'</div>' : '')}
-          ${it.dataPostagem ? '<div class="meta" style="margin-top:4px;color:var(--yellow2);">📆 data de publicação combinada: '+formatarDataBR(it.dataPostagem)+'</div>' : ''}
-          <div class="btnrow" style="margin-top:8px;">
-            <button class="btn secondary" style="font-size:11px;" onclick="editarItemConteudoCliente('${slug}', ${it.__idx})">✏️ Editar</button>
-            <button class="btn secondary" style="font-size:11px;" onclick="reposicionarItemConteudoCliente('${slug}', ${it.__idx})">📆 Mudar dia</button>
-            <button class="btn red" style="font-size:11px;" onclick="removerItemConteudoCliente('${slug}', ${it.__idx})">🗑️ Remover</button>
-          </div>
-        </div>
-      `).join('')}
-      <button class="btn secondary" style="margin-top:12px;" onclick="fecharModal()">Fechar</button>
-    `;
+    const vigente=()=>atalhoCalendarioI135===alvo&&alvo.sessao===sessaoServicoManual()&&alvo.view===viewAtiva&&!!modal.querySelector('#atalhoCalendarioI135Leitura');
+    try{
+      const snap=await comTimeoutCalendarioOperacional(_getDocFromServerFB(doc(db,'calendarios',alvo.slug)),'Conferir calendário do atalho',12000);
+      if(!vigente()) return false;
+      const cal=snap.exists()?snap.data():{};
+      exigirClienteOperacionalR4(alvo.slug,cal);
+      const mes=competenciaOperacionalCalendario();
+      const meses=[...new Set([...mesesDeCalendario(cal),mes])].filter(mesPertenceAoPeriodoDoSite).sort().reverse();
+      modal.innerHTML=`<h2>📅 ${esc(alvo.nome)}</h2>
+        <div class="desc" style="margin:10px 0;">${esc(alvo.instrucao)}</div>
+        <div class="field"><label for="atalhoCalendarioI135Mes">Mês do calendário</label>
+          <select id="atalhoCalendarioI135Mes">${meses.map(m=>`<option value="${m}"${m===mes?' selected':''}>${esc(rotuloCompetenciaControleEditorial(m))}</option>`).join('')}</select></div>
+        <div class="meta" style="margin:12px 0;">Abra o conteúdo no calendário oficial. Meses publicados ou em revisão mantêm a proteção existente. A alteração só é confirmada depois de Salvar no site.</div>
+        <div class="btnrow"><button class="btn" onclick="continuarAtalhoCalendarioI135(${alvo.geracao})">Abrir calendário oficial</button>
+        <button class="btn secondary" onclick="fecharModal()">Cancelar</button></div>`;
+      return true;
+    }catch(e){
+      if(vigente()) modal.innerHTML='<h2>Calendário não confirmado</h2><div class="desc">'+esc(e?.message||e)+'</div><button class="btn secondary" onclick="fecharModal()">Fechar</button>';
+      return false;
+    }
+  }
+  window.continuarAtalhoCalendarioI135=function(geracao){
+    const alvo=atalhoCalendarioI135;
+    if(!alvo||alvo.geracao!==geracao||alvo.sessao!==sessaoServicoManual()||alvo.view!==viewAtiva){mostrarToast('O perfil ou a tela mudou. Abra o atalho novamente.','erro');return false;}
+    const mes=String(document.getElementById('atalhoCalendarioI135Mes')?.value||'');
+    if(!mesPertenceAoPeriodoDoSite(mes)){mostrarToast('Escolha o mês do calendário.','erro');return false;}
+    if(abrirCalendarioParaEditar(alvo.slug,alvo.nome,mes)===false) return false;
+    atalhoCalendarioI135=null;
+    fecharModal();
+    mostrarToast('Abra o conteúdo, revise os campos e confirme em Salvar no site.');
+    return true;
   };
-
-  window.editarItemConteudoCliente = async function(slug, idx){
-    const calRef = doc(db,'calendarios', slug);
-    const calSnap = await getDoc(calRef);
-    if(!calSnap.exists()) return;
-    const dados = calSnap.data();
-    const items = dados.items || [];
-    const atual = items[idx];
-    if(!atual) return;
-    const novoNome = prompt('Título:', atual.name || '');
-    if(novoNome === null) return;
-    const novaDesc = prompt('Legenda/descrição:', atual.desc || '');
-    if(novaDesc === null) return;
-    items[idx] = { ...atual, name: novoNome.trim() || atual.name, desc: novaDesc };
-    await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
-    mostrarToast('Conteúdo atualizado!');
-    abrirDetalheConteudoCliente(slug);
+  window.abrirDetalheConteudoCliente=function(slug){
+    const info=__conteudoAteQuandoCache.find(l=>l.slug===slug);
+    return prepararAtalhoCalendarioI135(slug,info?.nome||slug,'Para editar, mudar o dia ou excluir um conteúdo, escolha o mês e use o editor oficial. Os conteúdos anteriores e o histórico ficam preservados.');
   };
-
-  window.reposicionarItemConteudoCliente = async function(slug, idx){
-    const calRef = doc(db,'calendarios', slug);
-    const calSnap = await getDoc(calRef);
-    if(!calSnap.exists()) return;
-    const dados = calSnap.data();
-    const items = dados.items || [];
-    const atual = items[idx];
-    if(!atual) return;
-    const novoDiaStr = prompt('Novo dia do mês (1-31):', atual.day || '');
-    if(novoDiaStr === null) return;
-    const novoDia = parseInt(novoDiaStr, 10);
-    if(!novoDia || novoDia < 1 || novoDia > 31){ mostrarToast('Dia inválido.', 'erro'); return; }
-    items[idx] = { ...atual, day: novoDia };
-    await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
-    mostrarToast('Conteúdo reposicionado pro dia ' + novoDia + '!');
-    abrirDetalheConteudoCliente(slug);
-  };
-
-  window.removerItemConteudoCliente = async function(slug, idx){
-    if(!confirm('Remover esse conteúdo do calendário desse cliente? Isso não pode ser desfeito.')) return;
-    const calRef = doc(db,'calendarios', slug);
-    const calSnap = await getDoc(calRef);
-    if(!calSnap.exists()) return;
-    const dados = calSnap.data();
-    const items = (dados.items || []).filter((_,i) => i !== idx);
-    await setDoc(calRef, { ...dados, items, updatedAt: new Date().toISOString() });
-    mostrarToast('Conteúdo removido.');
-    abrirDetalheConteudoCliente(slug);
-  };
-
+  // Compatibilidade: favoritos antigos não usam a posição do item como identidade.
+  window.editarItemConteudoCliente=function(slug){return abrirDetalheConteudoCliente(slug);};
+  window.reposicionarItemConteudoCliente=function(slug){return abrirDetalheConteudoCliente(slug);};
+  window.removerItemConteudoCliente=function(slug){return abrirDetalheConteudoCliente(slug);};
 
   /* ===== ARQUIVO DE ENTREGAS (Prompt Mestre 2 - P3, 23/07/2026) — URGENTE =====
      Antes, um vídeo já entregue existia mas ficava espalhado por status
@@ -22781,66 +22746,29 @@ async function registrarGravacaoRealizadaNucleo(agId){
     renderReferencias();
   };
 
-  /* ===== PONTE REFERÊNCIA → CALENDÁRIO (21/07/2026) =====
-     A referência arquivada por cliente é jogada direto num dia do calendário
-     editorial daquele cliente (coleção calendarios/<slug>.items[].ref). Só
-     preenche o LINK de referência do conteúdo — nunca mexe no roteiro, nome
-     ou legenda que a Gabi já escreveu. Assim ela para de caçar referência no
-     Instagram: puxa do banco que já tem, direto pro calendário. */
-  window.abrirUsarNoCalendario = async function(refId, origem){
-    const col = origem === 'portal' ? 'referencias_cliente' : 'referencias';
-    const refSnap = await getDoc(doc(db, col, refId));
-    if(!refSnap.exists()) return;
-    const r = refSnap.data();
-    const modal = document.getElementById('modalConteudo');
-    if(!r.cliente){ mostrarToast('Essa referência não tem cliente destino — edita e escolhe o cliente primeiro.', 'erro'); return; }
-    const calSnap = await getDoc(doc(db,'calendarios', r.cliente));
-    if(!calSnap.exists()){
-      modal.innerHTML = `<h2>📅 Cliente ainda sem calendário</h2><div class="desc" style="margin:8px 0;">${esc(r.clienteNome||r.cliente)} ainda não tem calendário editorial criado. Cria o calendário dele primeiro (aba Calendários) e depois volta aqui pra aplicar a referência.</div><button class="btn secondary" onclick="fecharModal()">Fechar</button>`;
-      document.getElementById('overlayView').classList.add('show'); return;
-    }
-    const cal = calSnap.data(); const its = cal.items || [];
-    const linkAtual = String(r.link||'').trim();
-    const lista = its.map((it,idx)=>{
-      const temRef = it.ref && String(it.ref).trim();
-      const jaEssa = temRef && String(it.ref).trim() === linkAtual;
-      const selo = jaEssa ? '<span class="selo aprovada">Já é essa ref</span>' : (temRef ? '<span class="selo pendente">Já tem outra ref</span>' : '<span class="selo hoje">🟢 Sem referência</span>');
-      return `<div class="item" style="border-left:3px solid ${temRef?'var(--line)':'var(--yellow)'};${jaEssa?'':'cursor:pointer;'}" ${jaEssa?'':`onclick="aplicarRefNoDia('${refId}','${escJs(r.cliente)}',${idx},'${origem||'hub'}')"`}>
-        <div class="top"><div class="nome">Dia ${it.day||'?'} — ${esc(it.name||'(sem título)')}</div>${selo}</div>
-        ${it.fmt ? '<div class="meta" style="margin-top:3px;">'+esc(it.fmt)+'</div>' : ''}
-      </div>`;
-    }).join('');
-    modal.innerHTML = `<h2>📅 Jogar referência no calendário</h2>
-      <div class="desc" style="margin-bottom:8px;">Cliente: <b>${esc(r.clienteNome||r.cliente)}</b>${cal.month?' · '+esc(cal.month):''}. Clica no dia onde quer usar essa referência — preenche só o link, sem mexer no roteiro nem na legenda que já estiver lá.</div>
-      <div style="max-height:52vh;overflow-y:auto;">${lista || '<div class="empty">Esse calendário ainda não tem conteúdos pra receber a referência.</div>'}</div>
-      <button class="btn secondary" style="margin-top:10px;" onclick="fecharModal()">Fechar</button>`;
-    document.getElementById('overlayView').classList.add('show');
-  };
-  window.aplicarRefNoDia = async function(refId, slug, idx, origem){
+  /* I135: usar uma referência passa pelo editor e seu salvamento protegido.
+     A biblioteca oficial já reúne Hub, Portal e perfis do mesmo cliente. */
+  window.abrirUsarNoCalendario=async function(refId,origem){
+    const sessao=sessaoServicoManual(),tela=viewAtiva,geracao=++geracaoAtalhoCalendarioI135;
+    atalhoCalendarioI135=null;
+    const modal=document.getElementById('modalConteudo'),marca='atalhoReferenciaI135_'+geracao;
+    const vigente=()=>sessao===sessaoServicoManual()&&tela===viewAtiva&&geracao===geracaoAtalhoCalendarioI135&&!!modal.querySelector('#'+marca);
     try{
-      const col = origem === 'portal' ? 'referencias_cliente' : 'referencias';
-      const refSnap = await getDoc(doc(db, col, refId));
-      const calRef = doc(db,'calendarios', slug);
-      const calSnap = await getDoc(calRef);
-      if(!refSnap.exists() || !calSnap.exists()) return;
-      const link = String(refSnap.data().link||'').trim();
-      const its = (calSnap.data().items || []).slice();
-      if(!its[idx]){ mostrarToast('Esse dia não existe mais no calendário.', 'erro'); return; }
-      its[idx] = { ...its[idx], ref: link };
-      await updateDoc(calRef, { items: its });
-      registrarHistorico('calendarios', slug, 'Referência aplicada no dia ' + (its[idx].day||'') + ' via Hub de Referências' + (origem === 'portal' ? ' (referência vinda do portal do cliente)' : ''));
-      /* Se veio do banco do portal, marca como utilizada la tambem — senao
-         o cliente continua vendo como "nao utilizada" a referencia que ja
-         foi pro calendario dele. */
-      if(origem === 'portal'){
-        try{ await updateDoc(doc(db,'referencias_cliente', refId), { status:'utilizada', utilizadaEm: new Date().toISOString(), utilizadaNoDia: its[idx].day||null }); }
-        catch(e){ console.error('Falha ao marcar referência do portal como utilizada:', e); }
-      }
-      mostrarToast('✅ Referência aplicada no dia ' + (its[idx].day||'') + ' do calendário!');
-      fecharModal();
-      renderReferencias();
-    }catch(e){ mostrarToast('Erro ao aplicar: ' + e.message, 'erro'); }
+      if(!exigirSubabaCalendariosV127('editar','Peça à Social Media ou à Amanda para usar esta referência.')) return false;
+      modal.innerHTML='<div id="'+marca+'" role="status">Conferindo a referência…</div>';
+      document.getElementById('overlayView').classList.add('show');
+      const col=origem==='portal'?'referencias_cliente':'referencias';
+      const snap=await comTimeoutCalendarioOperacional(_getDocFromServerFB(doc(db,col,refId)),'Conferir referência',12000);
+      if(!vigente()) return false;
+      if(!snap.exists()||snap.data().excluido) throw Error('Esta referência não está disponível. Atualize a lista.');
+      const ref=snap.data();
+      if(!ref.cliente||!String(ref.link||'').trim()) throw Error('Escolha o cliente e preencha o link desta referência antes de usá-la.');
+      return prepararAtalhoCalendarioI135(ref.cliente,ref.clienteNome||ref.cliente,
+        'No conteúdo escolhido, use Referência → Escolher do banco de referências e selecione este link: '+String(ref.link).trim()+'. Depois clique em Salvar no site.');
+    }catch(e){if(vigente())modal.innerHTML='<h2>Referência não confirmada</h2><div class="desc">'+esc(e?.message||e)+'</div><button class="btn secondary" onclick="fecharModal()">Fechar</button>';return false;}
   };
+  // O índice recebido por páginas antigas nunca é usado para gravar outro conteúdo.
+  window.aplicarRefNoDia=function(refId,slug,idx,origem){return abrirUsarNoCalendario(refId,origem);};
 
   /* 03/08/2026 — `ELEGIVEIS` era cópia exata de FUNCIONARIOS. E o
      ranking do mês é FUNCIONARIOS sem a Amanda, de propósito: ela avalia,

@@ -38629,13 +38629,13 @@ window.setGerenciaSub = function(qual, el){
     const achados = [];
     const push = (grav, titulo, detalhe, quantos) => achados.push({ grav, titulo, detalhe, quantos });
 
-    let vids=[], posts=[], agends=[], cals={}, dems=[], enc=[];
+    let vids=[], videosPorId=new Map(), posts=[], agends=[], cals={}, dems=[], enc=[];
     try{
       const [v,p,a,c,e,d] = await comTimeoutCalendarioOperacional(Promise.all(
         ['videos_producao','postagens','agendamentos','calendarios','clientes_encerrados','demandas']
           .map(nome=>_getDocsFromServerFB(collection(db,nome)))
       ), 'Conferir fontes do sistema', 12000);
-      v.forEach(x=>{ const y=x.data(); if(!y.excluido) vids.push({...y,id:x.id}); });
+      v.forEach(x=>{ const y=x.data(); videosPorId.set(x.id,{...y,id:x.id}); if(!y.excluido) vids.push({...y,id:x.id}); });
       p.forEach(x=>{ const y=x.data(); if(!y.excluido) posts.push({...y,id:x.id}); });
       a.forEach(x=>{ const y=x.data(); if(!y.excluido) agends.push({...y,id:x.id}); });
       c.forEach(x=>{ cals[x.id]=x.data(); });
@@ -38656,29 +38656,10 @@ window.setGerenciaSub = function(qual, el){
       if(slugsFora.has(c)) return true;
       return [...nomesFora].some(n => n && (c === n || c.replace(/-/g,' ') === n)); };
 
-    /* 1. O CASO MAIS GRAVE: postagem AGENDADA de quem já saiu.
-          Agendada não é planejamento — é fila dentro do Instagram. Sobe
-          sozinha no perfil de quem não é mais cliente. */
-    const agendadasDeQuemSaiu = posts.filter(p => daSaida(p) && p.status === 'agendado');
-    if(agendadasDeQuemSaiu.length){
-      push('urgente', 'Postagem agendada no Instagram de cliente que SAIU',
-        agendadasDeQuemSaiu.map(p => (p.clienteNome||p.cliente) + ' — ' + (p.dataAgendada||'sem data') + (p.horaAgendada?' '+p.horaAgendada:'')).join(' · ')
-        + '. Isso sobe sozinho no perfil dele. Tira do agendador hoje.',
-        agendadasDeQuemSaiu.length);
-    }
-
-    /* 2. O resto do trabalho aberto de quem saiu. */
-    const restoDeQuemSaiu = [
-      ...posts.filter(p => daSaida(p) && !['agendado','postado','arquivada_sem_postagem','cancelada_manual','cancelada_video_trafego'].includes(p.status)),
-      ...vids.filter(v => daSaida(v) && !['finalizado','arquivado'].includes(v.status)),
-      ...agends.filter(a => daSaida(a) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && String(a.data||'') >= hoje)
-    ];
-    if(restoDeQuemSaiu.length){
-      const porQuem = {}; restoDeQuemSaiu.forEach(x => { const k = x.clienteNome || x.cliente || '?'; porQuem[k]=(porQuem[k]||0)+1; });
-      push('alto', 'Trabalho na esteira de cliente que saiu',
-        Object.entries(porQuem).map(([k,n]) => k+' ('+n+')').join(', ') + '. Legenda e edição disso é trabalho jogado fora.',
-        restoDeQuemSaiu.length);
-    }
+    /* I143: saída não prova erro em entregas já criadas ou programadas.
+       O encerramento preserva essas entregas; não ordenar cancelamento,
+       reativar cliente ou gerar trabalho novo por causa desta conferência.
+       As guardas dos fluxos operacionais seguem responsáveis pela operação. */
 
     /* R2: só há alerta de pauta para uma sessão concreta, próxima e ativa.
        A idade editorial não prova erro e não altera nenhuma competência. */
@@ -38709,11 +38690,21 @@ window.setGerenciaSub = function(qual, el){
     if(semNascimento.length) push('urgente', 'Demanda sem data de criação — some das telas',
       semNascimento.length + ' demanda(s). Documento sem esse campo desaparece de consulta ordenada, sem dar erro. Me avisa que eu acho a origem.', semNascimento.length);
 
-    /* 5. Postagem viva apontando pra vídeo que foi pra lixeira. */
-    const idsVivos = new Set(vids.map(v=>v.id));
-    const orfas = posts.filter(p => p.videoId && !idsVivos.has(p.videoId) && !['postado','arquivada_sem_postagem','cancelada_manual','cancelada_video_trafego'].includes(p.status));
-    if(orfas.length) push('alto', 'Postagem viva com o vídeo na lixeira',
-      orfas.map(p=>(p.clienteNome||p.cliente)+' — '+String(p.titulo||'').slice(0,26)).join(' · ') + '. Vai pra postagem sem arquivo.', orfas.length);
+    /* I143: ausência física e exclusão deliberada são estados diferentes.
+       Resíduo em correção/legenda não é publicação iminente: os writers já
+       bloqueiam a fonte arquivada. Uma fonte ausente, ou fonte arquivada
+       em etapa avançada ou desconhecida, continua exigindo revisão. */
+    const orfas = posts.filter(p => {
+      if(!p.videoId || ['postado','arquivada_sem_postagem','cancelada_manual','cancelada_video_trafego'].includes(p.status)) return false;
+      const video=videosPorId.get(String(p.videoId));
+      return !video || (video.excluido && !['em_correcao','aguardando_legenda','aguardando_reconfirmacao_cliente','legenda_pronta'].includes(p.status));
+    });
+    if(orfas.length) push('alto', 'Postagem com vídeo indisponível',
+      orfas.map(p=>{
+        const video=videosPorId.get(String(p.videoId));
+        return (p.clienteNome||p.cliente)+' — '+String(p.titulo||'').slice(0,60)+
+          ' · vídeo '+p.videoId+' · '+(video?'arquivado; confira a etapa atual da postagem':'não encontrado');
+      }).join(' · ')+'. Dá uma olhada no vínculo e na situação dessa postagem antes de continuar.', orfas.length);
 
     /* 6. Gravação futura sem saber qual gravação do mês é — o filmmaker
           abre em campo e recebe a lista do bloco errado. */
@@ -38759,9 +38750,8 @@ window.setGerenciaSub = function(qual, el){
 
     const demanda={
       titulo: 'Conferência do sistema — ' + achados.length + ' ponto(s) pra olhar',
-      descricao: 'O sistema conferiu o banco sozinho e achou o seguinte.\n\n' + corpo
-        + '\n\n———\nIsto é uma conferência automática, roda uma vez por dia. Ela NÃO conserta nada: '
-        + 'só conta e avisa. Se algum ponto não fizer sentido, fala comigo que eu ajusto a régua.',
+      descricao: 'Amanda, apareceram estes pontos na conferência de hoje. Dá uma olhada quando puder:\n\n' + corpo
+        + '\n\nA conferência só avisa; nenhum conteúdo foi alterado. Se algum ponto já estiver combinado ou resolvido, me conta pra eu ajustar o aviso.',
       destinatario: 'Amanda', origem: 'sistema', clienteNome: '',
       ehAviso: true, tipoEspecial: CONFERENCIA_MARCA,
       prazoData: hoje, prazoHora: '19:00', status: 'pendente',

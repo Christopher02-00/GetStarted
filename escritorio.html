@@ -5819,13 +5819,85 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   function editoresVisiveisI53(videos){
     return [...new Set([...editoresAtuaisI53(),...videos.map(v=>v.editorAtribuido).filter(Boolean)])];
   }
-  window.filtrarListaEnviosI53=function(texto){
-    const normalizar=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[’']/g,'');
-    window.__buscaEnviosI53=String(texto||'');const busca=normalizar(texto);let visiveis=0;
-    document.querySelectorAll('#gerenciaVideos [data-i53-busca]').forEach(el=>{el.hidden=!normalizar(el.dataset.i53Busca).includes(busca);if(!el.hidden)visiveis++;});
-    document.querySelectorAll('#gerenciaVideos [data-i53-grupo]').forEach(el=>{el.hidden=!!busca&&![...el.querySelectorAll('[data-i53-busca]')].some(v=>!v.hidden);});
-    const vazio=document.getElementById('vazioBuscaEnviosI53');if(vazio)vazio.hidden=!busca||visiveis>0;
+  /* I145 — filtros de leitura, combináveis, sem reconstruir cartões/rascunhos. */
+  let listaFiltrosAmandaI145={sessao:'',videos:new Map()};
+  function estadoFiltrosAmandaI145(){
+    const sessao=sessaoServicoManual();
+    if(listaFiltrosAmandaI145.sessao!==sessao){
+      listaFiltrosAmandaI145={sessao,videos:new Map(),filtros:{cliente:'',editor:'',situacao:'abertos',prazo:'todos',de:'',ate:'',prioridade:'',gravacao:'todos'}};
+      window.__buscaEnviosI53='';
+    }
+    return listaFiltrosAmandaI145;
+  }
+  function normalizarBuscaAmandaI145(s){return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').replace(/[’']/g,'').trim();}
+  function dataPrazoAmandaI145(v){
+    const d=String(v?.prazoEntrega||'');
+    if(!/^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d))return '';
+    return new Date(d+'T12:00:00Z').toISOString().slice(0,10)===d?d:'';
+  }
+  function correspondeFiltrosAmandaI145(v,f,busca,hoje,amanha){
+    if(v.excluido)return false;
+    const historico=['aprovado','finalizado'].includes(v.status);
+    if(f.situacao==='historico'?!historico:!['aguardando_edicao','correcao'].includes(v.status))return false;
+    if(['aguardando_edicao','correcao'].includes(f.situacao)&&v.status!==f.situacao)return false;
+    if(f.cliente&&chaveIdentidadeVideo(v)!==f.cliente)return false;
+    if(f.editor==='sem_editor'?!!v.editorAtribuido:f.editor&&v.editorAtribuido!==f.editor)return false;
+    if(f.prioridade&&(v.prioridade||'amarelo')!==f.prioridade)return false;
+    if(f.gravacao==='hoje'&&String(v.data||'')!==hoje)return false;
+    if(busca&&!normalizarBuscaAmandaI145((v.clienteNome||v.cliente||'')+' '+(v.titulo||'')).includes(normalizarBuscaAmandaI145(busca)))return false;
+    const prazo=dataPrazoAmandaI145(v);
+    if(f.prazo==='hoje'&&prazo!==hoje||f.prazo==='amanha'&&prazo!==amanha||f.prazo==='atrasados'&&(!prazo||prazo>=hoje)||f.prazo==='sem_prazo'&&!!prazo)return false;
+    if(f.prazo==='periodo'&&(!prazo||f.de&&prazo<f.de||f.ate&&prazo>f.ate))return false;
+    return true;
+  }
+  function aplicarFiltrosAmandaI145(){
+    const cont=document.getElementById('gerenciaVideos');if(!cont||!['Amanda','Chris'].includes(usuarioAtual))return;
+    const estado=estadoFiltrosAmandaI145(),f=estado.filtros,hoje=hojeLocal();
+    const d=new Date(hoje+'T12:00:00');d.setDate(d.getDate()+1);const amanha=dataLocal(d);
+    const intervaloInvalido=f.prazo==='periodo'&&f.de&&f.ate&&f.de>f.ate;
+    let total=0,mostrados=0;
+    cont.querySelectorAll('[data-i145-video-id]').forEach(el=>{
+      const v=estado.videos.get(el.dataset.i145VideoId);
+      const corresponde=!intervaloInvalido&&!!v&&correspondeFiltrosAmandaI145(v,f,window.__buscaEnviosI53||'',hoje,amanha);
+      if(corresponde)total++;
+      el.hidden=!corresponde||(f.situacao==='historico'&&mostrados>=15);
+      if(!el.hidden)mostrados++;
+    });
+    cont.querySelectorAll('[data-i145-grupo],[data-i53-grupo]').forEach(el=>{const quantidade=[...el.querySelectorAll('[data-i145-video-id]')].filter(v=>!v.hidden).length;el.hidden=quantidade===0;const total=el.querySelector('[data-i145-qtd]');if(total)total.textContent=String(quantidade);});
+    const vazio=document.getElementById('vazioBuscaEnviosI53');if(vazio){vazio.hidden=total>0;vazio.textContent=intervaloInvalido?'A data inicial precisa ser anterior ou igual à data final.':'Nenhum vídeo corresponde aos filtros. Você pode limpar e conferir a lista completa.';}
+    const recibo=cont.querySelector('[data-i145-contagem]');if(recibo)recibo.textContent=intervaloInvalido?'Confira o período.':f.situacao==='historico'&&total>15?'Mostrando os 15 mais recentes de '+total+' vídeos que correspondem aos filtros.':total+' vídeo(s) encontrado(s).';
+    const periodo=cont.querySelector('[data-i145-periodo]');if(periodo)periodo.hidden=f.prazo!=='periodo';
+    cont.querySelectorAll('[data-i145-filtro]').forEach(el=>{if(el.value!==f[el.dataset.i145Filtro])el.value=f[el.dataset.i145Filtro];});
+  }
+  window.filtrarVideosAmandaI145=function(campo,valor){
+    const estado=estadoFiltrosAmandaI145();
+    if(!Object.hasOwn(estado.filtros,campo))return;
+    estado.filtros[campo]=String(valor||'');aplicarFiltrosAmandaI145();
   };
+  window.limparFiltrosAmandaI145=function(){
+    estadoFiltrosAmandaI145().filtros={cliente:'',editor:'',situacao:'abertos',prazo:'todos',de:'',ate:'',prioridade:'',gravacao:'todos'};
+    window.__buscaEnviosI53='';const campo=document.getElementById('buscaEnviosI53');if(campo)campo.value='';aplicarFiltrosAmandaI145();
+  };
+  window.filtrarListaEnviosI53=function(texto){window.__buscaEnviosI53=String(texto||'');aplicarFiltrosAmandaI145();};
+  function htmlFiltrosAmandaI145(videos){
+    const estado=estadoFiltrosAmandaI145();estado.videos=new Map(videos.map(v=>[v.id,{...v}]));
+    const clientes=new Map();videos.forEach(v=>clientes.set(chaveIdentidadeVideo(v),String(v.clienteNome||v.cliente||'Cliente sem nome')));
+    const opcoes=(arr,atual)=>arr.map(([valor,nome])=>'<option value="'+escAttr(valor)+'" '+(atual===valor?'selected':'')+'>'+esc(nome)+'</option>').join('');
+    const f=estado.filtros;
+    const campo=(chave,nome,arr)=>'<div class="field" style="min-width:150px;flex:1;margin-bottom:8px;"><label for="i145_'+chave+'">'+nome+'</label><select id="i145_'+chave+'" data-i145-filtro="'+chave+'" onchange="filtrarVideosAmandaI145(\''+chave+'\',this.value)" style="width:100%;min-height:44px;">'+opcoes(arr,f[chave])+'</select></div>';
+    return `<div class="card" style="border-top:3px solid var(--yellow)"><h2>Vídeos enviados para edição</h2><p class="desc">Combine os filtros para organizar a fila. Em Editar envio você ajusta o responsável e os dados do vídeo.</p>
+      <label for="buscaEnviosI53">Buscar por cliente ou título</label><input type="search" id="buscaEnviosI53" placeholder="Digite o cliente ou o conteúdo" value="${escAttr(window.__buscaEnviosI53||'')}" oninput="filtrarListaEnviosI53(this.value)" style="width:100%;min-height:44px;box-sizing:border-box;">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;">
+        ${campo('cliente','Cliente',[['','Todos os clientes'],...[...clientes].sort((a,b)=>a[1].localeCompare(b[1],'pt-BR'))])}
+        ${campo('editor','Editor',[['','Todos os editores'],['sem_editor','Sem editor'],...editoresVisiveisI53(videos).map(e=>[e,e])])}
+        ${campo('situacao','Situação',[['abertos','Edição e ajustes'],['aguardando_edicao','Aguardando edição'],['correcao','Precisa ajuste'],['historico','Concluídos — histórico']])}
+        ${campo('prazo','Prazo de entrega',[['todos','Todos os prazos'],['hoje','Prazo hoje'],['amanha','Prazo amanhã'],['atrasados','Atrasados'],['sem_prazo','Sem prazo / a conferir'],['periodo','Escolher período']])}
+        ${campo('gravacao','Gravação',[['todos','Todas as gravações'],['hoje','Gravados hoje']])}
+        ${campo('prioridade','Prioridade',[['','Todas as prioridades'],['vermelho','Urgente'],['laranja','Alta'],['amarelo','Normal'],['verde','Sem pressa']])}
+      </div>
+      <div data-i145-periodo ${f.prazo==='periodo'?'':'hidden'} style="margin:8px 0;"><div style="display:flex;gap:12px;flex-wrap:wrap;"><label>Prazo a partir de<input type="date" aria-label="Prazo a partir de" data-i145-filtro="de" value="${escAttr(f.de)}" onchange="filtrarVideosAmandaI145('de',this.value)" style="min-height:44px;"></label><label>Prazo até<input type="date" aria-label="Prazo até" data-i145-filtro="ate" value="${escAttr(f.ate)}" onchange="filtrarVideosAmandaI145('ate',this.value)" style="min-height:44px;"></label></div></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:10px;"><button class="btn secondary" style="width:auto;min-height:44px;" onclick="limparFiltrosAmandaI145()">Limpar filtros</button><span data-i145-contagem role="status" aria-live="polite"></span></div></div>`;
+  }
   function assinaturaEnvioI53(v){
     return JSON.stringify(['cliente','clienteSlug','clienteNome','agendamentoId','calendarClienteSlug','calendarCompetencia','calendarItemId','calendarItemIdx',
       'status','excluido','titulo','editorAtribuido','observacao','materialUrl','linkFinalizado'].map(k=>v[k]??null).concat(v.correcaoEnvioI53?.operacaoId||''));
@@ -8902,26 +8974,20 @@ window.marcarClienteAprovouVideo = async function(id){
       if(ca !== cb) return ca < cb ? -1 : 1;
       return String(a.titulo||'').localeCompare(String(b.titulo||''));
     });
-    const concluidosRecentes = todos.filter(v => (v.status === 'aprovado' || v.status === 'finalizado') && v.clienteAprovouEm)
-      .sort((a,b) => new Date(b.clienteAprovouEm) - new Date(a.clienteAprovouEm)).slice(0, 15);
-    const concluidosTotal = todos.filter(v => v.status === 'aprovado' || v.status === 'finalizado').length;
-
-    window.__filtroVideosGerencia = window.__filtroVideosGerencia || 'todos';
-    const filtro = window.__filtroVideosGerencia;
-    const hojeStr = hojeLocal();
-    const amanhaStr = dataLocal(new Date(Date.now()+86400000));
-
-    let html = `<div class="card" style="border-top:3px solid var(--yellow)"><h2>Vídeos enviados para edição</h2><p class="desc">Use Editar envio para corrigir os dados ou mudar quem edita, mesmo depois de distribuir.</p><label for="buscaEnviosI53">Buscar por cliente ou título</label><input type="search" id="buscaEnviosI53" placeholder="Ex.: Camargo’s" value="${escAttr(window.__buscaEnviosI53||'')}" oninput="filtrarListaEnviosI53(this.value)"></div>`;
+    const concluidosRecentes = todos.filter(v => ['aprovado','finalizado'].includes(v.status))
+      .sort((a,b)=>String(b.clienteAprovouEm||'').localeCompare(String(a.clienteAprovouEm||''))||String(a.id).localeCompare(String(b.id)));
+    const hojeStr=hojeLocal(),filtro='todos';
+    let html=htmlFiltrosAmandaI145([...abertos,...concluidosRecentes]);
 
     // ===== SEÇÃO 1 — DISTRIBUIÇÃO PENDENTE, SEMPRE NO TOPO =====
     // Essa é a tarefa diária da Amanda — nunca escondida embaixo de nada.
     if(semEditor.length){
-      html += `<div class="card" style="border:2px solid var(--red);">
-        <h2>🆕 Sem editor — distribuir agora (${semEditor.length})</h2>
+      html += `<section data-i145-grupo><div class="card" style="border:2px solid var(--red);">
+        <h2>🆕 Sem editor — distribuir agora (<span data-i145-qtd>${semEditor.length}</span>)</h2>
         <div class="desc">Vídeos esperando você confirmar e decidir quem edita — tanto o que a equipe gravou quanto edição avulsa que o cliente mandou. Isso é rotina diária: o quanto antes, melhor.</div>
       </div>`;
       html += semEditor.map(v => `
-        <div class="item" data-i53-busca="${escAttr((v.clienteNome||v.cliente)+' '+v.titulo)}" style="border:2px solid var(--red);">
+        <div class="item" data-i145-video-id="${escAttr(v.id)}" data-i53-busca="${escAttr((v.clienteNome||v.cliente)+' '+v.titulo)}" style="border:2px solid var(--red);">
           <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${v.data}</div></div>
           <div class="meta" style="margin-top:4px;">
             ${v.soEdicao ? '<span class="selo" style="border-color:var(--yellow2);color:var(--yellow2);">✂️ edição avulsa — sem gravação</span>' : '<span class="selo">🎥 gravação nossa</span>'}
@@ -8937,12 +9003,12 @@ window.marcarClienteAprovouVideo = async function(id){
             </select>
           </div>
         </div>
-      `).join('');
+      `).join('')+'</section>';
     }
 
     // ===== SEÇÃO 2 — CARDS-FILTRO, com afordance visível mesmo sem hover
     // (celular não tem hover) — seta e "toque pra filtrar" sempre visíveis =====
-    html += `<details class="card"><summary style="cursor:pointer;font-weight:700;min-height:30px">Resumo por editor e filtros</summary><div class="desc" style="margin:14px 0 6px;">👆 Toque num card pra filtrar a lista abaixo por aquilo especificamente:</div>`;
+    html += `<details class="card"><summary style="cursor:pointer;font-weight:700;min-height:30px">Resumo por editor</summary><div class="desc" style="margin:14px 0 6px;">Resumo total da fila. Toque no editor para combinar com os filtros acima:</div>`;
     html += `<div class="painelResumo">`;
     editoresVisiveis.forEach(ed => {
       /* 27/07/2026 — o cartão mostrava o TOTAL, incluindo vídeo já entregue
@@ -8953,56 +9019,21 @@ window.marcarClienteAprovouVideo = async function(id){
       const naMao = dele.filter(v => ['aguardando_edicao','correcao'].includes(v.status)).length;
       const esperando = dele.length - naMao;
       const alvo = EDITORES_CONFIG[ed]?.capacidade || 0;
-      html += `<div class="resumoCard clicavel ${filtro===ed?'yellow':''} ${naMao>alvo?'red':''}" onclick="window.__filtroVideosGerencia=${escAttr(JSON.stringify(ed))};renderGerenciaVideos();">
+      html += `<div class="resumoCard clicavel  ${naMao>alvo?'red':''}" onclick="filtrarVideosAmandaI145('editor',${escAttr(JSON.stringify(ed))});">
         <div class="num">${naMao}</div>
         <div class="lbl">${esc(ed)} · pra editar <span class="videoCapacidade">${editoresAtuaisI53().includes(ed)?'(alvo '+alvo+')':'— revisar responsável'}</span></div>
         <div style="font-size:10px;color:var(--muted);margin-top:3px;">${esperando} esperando outros</div>
         <div style="font-size:10px;color:var(--yellow);margin-top:3px;">Ver tudo →</div>
       </div>`;
     });
-    html += `<div class="resumoCard clicavel green ${filtro==='concluidos'?'yellow':''}" onclick="window.__filtroVideosGerencia='concluidos';renderGerenciaVideos();">
-      <div class="num">${concluidosTotal}</div>
+    html += `<div class="resumoCard clicavel green " onclick="filtrarVideosAmandaI145('situacao','historico');">
+      <div class="num">${concluidosRecentes.length}</div>
       <div class="lbl">Concluídos (histórico)</div>
       <div style="font-size:10px;color:var(--yellow);margin-top:4px;">Ver últimos 15 →</div>
     </div></div>`;
 
-    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
-      <!-- 27/07/2026 — os cartões de editor acima funcionavam, mas não
-           pareciam clicáveis. Um seletor explícito resolve a dúvida: você
-           escolhe de quem quer ver e a lista abaixo só mostra os dele. -->
-      <div class="field" style="width:100%;margin-bottom:10px;">
-        <label>Ver os vídeos de</label>
-        <select onchange="window.__filtroVideosGerencia=this.value;renderGerenciaVideos();" style="width:100%;">
-          <option value="todos" ${filtro==='todos'?'selected':''}>Todos os editores (${abertos.length} vídeos)</option>
-          ${editoresVisiveis.map(ed => { const q = abertos.filter(v=>v.editorAtribuido===ed).length;
-            return `<option value="${escAttr(ed)}" ${filtro===ed?'selected':''}>${esc(ed)} — ${q} vídeo(s)</option>`; }).join('')}
-        </select>
-      </div>
-      <button class="btn ${filtro==='todos'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='todos';renderGerenciaVideos();">Todos (${abertos.length})</button>
-      <button class="btn ${filtro==='hoje'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='hoje';renderGerenciaVideos();">Gravados hoje</button>
-      <button class="btn ${filtro==='amanha'?'':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='amanha';renderGerenciaVideos();">Prazo amanhã</button>
-      <button class="btn ${filtro==='atrasados'?'red':'secondary'}" style="width:auto;padding:6px 14px;font-size:11px;" onclick="window.__filtroVideosGerencia='atrasados';renderGerenciaVideos();">⚠️ Atrasados (${abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr).length})</button>
-    </div>`;
-
     html += '</details>';
-    // ===== SEÇÃO 3 — LISTA, organizada de acordo com o filtro =====
-    if(filtro === 'concluidos'){
-      html += `<div class="grupoFuncionario"><h3>✅ Concluídos recentemente (últimos 15)</h3>`;
-      html += concluidosRecentes.length ? concluidosRecentes.map(v => `
-        <div class="item">
-          <div class="top"><div class="nome">${esc(v.titulo)}</div><div class="meta">${esc(v.clienteNome||'')}</div></div>
-          <div class="meta" style="margin-top:4px;">Editor: <b>${esc(v.editorAtribuido||'—')}</b> · Cliente aprovou em ${v.clienteAprovouEm ? new Date(v.clienteAprovouEm).toLocaleDateString('pt-BR') : '—'}</div>
-        </div>
-      `).join('') : '<div class="empty">Nenhum concluído recente.</div>';
-      html += `</div>`;
-    } else {
-      let abertosFiltrados = abertos;
-      if(filtro === 'hoje') abertosFiltrados = abertos.filter(v => v.data === hojeStr);
-      else if(filtro === 'amanha') abertosFiltrados = abertos.filter(v => v.prazoEntrega === amanhaStr);
-      else if(filtro === 'atrasados') abertosFiltrados = abertos.filter(v => v.prazoEntrega && v.prazoEntrega < hojeStr);
-      else if(editoresVisiveis.includes(filtro)) abertosFiltrados = abertos.filter(v => v.editorAtribuido === filtro);
-      abertosFiltrados = abertosFiltrados.filter(v => v.editorAtribuido); // os sem editor já apareceram na Seção 1
-
+    let abertosFiltrados=abertos.filter(v=>v.editorAtribuido);
       /* 27/07/2026 — o cartão trazia editor, prazo, prioridade e excluir
          empilhados, todos abertos ao mesmo tempo. Agora o resumo é uma
          linha; os campos continuam os mesmos, só ficam atrás do clique. */
@@ -9012,7 +9043,7 @@ window.marcarClienteAprovouVideo = async function(id){
         const selo = v.status==='finalizado' ? ['aprovada','Finalizado'] : v.status==='aprovado' ? ['aprovada','Aprovado']
           : v.status==='aguardando_aprovacao' ? ['pendente','Aguardando aprovação'] : v.status==='aguardando_cliente' ? ['hoje','Aguardando cliente']
           : v.status==='correcao' ? ['atrasado','Precisa ajuste'] : ['pendente','Em edição'];
-        return `<div class="item" data-i53-video-id="${escAttr(v.id)}" data-video-status-i57="${escAttr(v.status)}" data-i53-busca="${escAttr((v.clienteNome||v.cliente)+' '+v.titulo)}" style="border-left:3px solid ${atrasado?'var(--red)':v.status==='correcao'?'var(--red)':'var(--line)'};">
+        return `<div class="item" data-i53-video-id="${escAttr(v.id)}" data-i145-video-id="${escAttr(v.id)}" data-video-status-i57="${escAttr(v.status)}" data-i53-busca="${escAttr((v.clienteNome||v.cliente)+' '+v.titulo)}" style="border-left:3px solid ${atrasado?'var(--red)':v.status==='correcao'?'var(--red)':'var(--line)'};">
           <div class="top" style="cursor:pointer;" onclick="const d=this.parentElement.querySelector('.detVideo');d.style.display=d.style.display==='none'?'block':'none';">
             <div class="nome">${esc(v.titulo)}</div><span class="selo ${selo[0]}">${selo[1]}</span>
           </div>
@@ -9062,21 +9093,17 @@ window.marcarClienteAprovouVideo = async function(id){
         // do outro, sem organização nenhuma". Cada editor vira uma seção
         // própria, com cabeçalho e contagem — só quando não tem filtro
         // aplicado (com filtro, já está naturalmente estreito).
-        html += `<div class="grupoFuncionario"><h3>🎬 Vídeos em aberto — por editor</h3>`;
+        html += `<div class="grupoFuncionario" data-i145-grupo><h3>🎬 Vídeos em aberto — por editor</h3>`;
         if(!abertosFiltrados.length) html += `<div class="empty">Nada em aberto com editor definido agora.</div>`;
         editoresVisiveis.forEach(ed => {
           const dele = abertosFiltrados.filter(v => v.editorAtribuido === ed);
           if(!dele.length) return;
-          html += `<section data-i53-grupo><div style="margin-top:14px;margin-bottom:4px;"><b style="font-size:12.5px;color:var(--yellow);">🎞️ ${esc(ed)} (${dele.length})</b></div>`;
+          html += `<section data-i53-grupo><div style="margin-top:14px;margin-bottom:4px;"><b style="font-size:12.5px;color:var(--yellow);">🎞️ ${esc(ed)} (<span data-i145-qtd>${dele.length}</span>)</b></div>`;
           html += dele.map(itemVideoHtml).join('')+'</section>';
         });
         html += `</div>`;
-      } else {
-        html += `<div class="grupoFuncionario"><h3>🎬 Vídeos em aberto — filtrado</h3>`;
-        html += abertosFiltrados.length ? abertosFiltrados.map(itemVideoHtml).join('') : `<div class="empty">Nenhum vídeo aqui com esse filtro.</div>`;
-        html += `</div>`;
       }
-    }
+    html += '<section class="grupoFuncionario" data-i145-grupo><h3>Concluídos — histórico</h3>'+concluidosRecentes.map(v=>`<div class="item" data-i145-video-id="${escAttr(v.id)}"><div class="top"><div class="nome">${esc(v.titulo||'Conteúdo')}</div><div class="meta">${esc(v.clienteNome||v.cliente||'')}</div></div><div class="meta">Editor: ${esc(v.editorAtribuido||'sem editor')} · ${v.clienteAprovouEm?'Cliente aprovou em '+esc(new Date(v.clienteAprovouEm).toLocaleDateString('pt-BR')):'Data de aprovação não informada'}</div></div>`).join('')+'</section>';
 
     ctxI34.validar();
     if(cont.dataset.geracaoI34!==geracaoI34)return;
@@ -9152,6 +9179,8 @@ window.marcarClienteAprovouVideo = async function(id){
       });
       if(telaAtual()){
         leitura.esperado={...esperado,prazo:novo};pintarPrazoVideoI57(campo,novo);
+        const modeloI145=estadoFiltrosAmandaI145().videos.get(id);if(modeloI145)modeloI145.prazoEntrega=novo;
+        aplicarFiltrosAmandaI145();if(campo.closest('[data-i145-video-id]')?.hidden)mostrarToast('Prazo salvo. O vídeo saiu deste filtro.');
         recibo.textContent='✓ Prazo salvo: '+formatarDataBR(novo);recibo.style.color='var(--green)';
       }
       return true;

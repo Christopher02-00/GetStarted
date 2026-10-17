@@ -2051,7 +2051,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
 </div>
 
 <script type="module">
-import * as RadarI110 from './gs-radar-i110.mjs?v=1';
+import * as RadarI110 from './gs-radar-i110.mjs?v=147';
 import {referenciaI106,resolverI106,resumoI106,precisaRevisarI106,chaveI106,referenciaEscolhidaI106,escolherConteudosI106} from './gs-identidade-conteudo-i106.mjs?v=i144-1';
 import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,patchSincroniaDemandaI93} from './gs-demandas-cliente-i93.mjs?v=i144-1';
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
@@ -12640,6 +12640,8 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
   window.__arteYasI129=null;
   window.abrirArteYasI129=async function(videoId=''){
     if(!['Amanda','Chris'].includes(usuarioAtual)){mostrarToast('A gestão encaminha as artes para Yas.','erro');return false;}
+    if(window.__radarDemandaI147?.busy){mostrarToast('Espere a confirmação desta demanda.','erro');return false;}
+    window.__radarDemandaI147=null;
     if(window.__arteYasI129?.emCurso&&window.__arteYasI129.atual()){mostrarToast('Espere a confirmação da arte atual.','erro');return false;}
     const card=Array.from(document.querySelectorAll('[data-edicao-video]')).find(el=>el.dataset.edicaoVideo===String(videoId));
     const rascunhoCard=card?{revisao:Number(card.dataset.edicaoRevisao),descricao:card.querySelector('[data-edicao-nota]')?.value,link:card.querySelector('[data-edicao-link]')?.value}:null;
@@ -32591,6 +32593,7 @@ window.setGerenciaSub = function(qual, el){
     modal.innerHTML = `
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
+      ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${contextoCalendarioDemandaI117(d)&&papelPodeSubabaCalendariosV127(usuarioAtual,'editar')?`<div class="card" style="border:1px solid var(--yellow);margin:12px 0;"><div class="meta">Calendário de ${esc(d.clienteNome||d.clienteSlug||d.cliente)} · ${esc(d.competencia.split('-').reverse().join('/'))}</div><button type="button" class="btn" style="margin-top:8px;" onclick="abrirCalendarioDemandaI117('${escJs(d.id)}')">Abrir calendário deste ajuste</button><div class="meta" style="margin-top:8px;">Corrija o conteúdo indicado e envie o calendário para Amanda revisar.</div></div>`:''}
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
@@ -39214,6 +39217,9 @@ window.setGerenciaSub = function(qual, el){
     if(pessoaDoOuvinte==='Fernanda'){
       iniciarDemandasFernandaI118(ouvinteAindaAtualV135);
     }else{
+    if(ehGestao){
+      for(const ref of [collection(db,'stories_semanais'),query(collection(db,'config_painel'),where('tipo','==','radar_i110'))])__ouvintesTempoReal.push(onSnapshot(ref,()=>{if(ouvinteAindaAtualV135())agendarRadarI147();},()=>{if(ouvinteAindaAtualV135())agendarRadarI147();}));
+    }
     let primeiroSnapshotDemandas = true;
     const refDemandas = ehGestao
       ? collection(db,'demandas')
@@ -39401,6 +39407,7 @@ window.setGerenciaSub = function(qual, el){
     clearTimeout(window.__timerRenderAgoraV135);
   }
   function onDadosTempoRealMudaram(colecao){
+    if(['demandas','videos_producao','postagens','agendamentos','stories_semanais','radar_i110'].includes(colecao))agendarRadarI147();
     limparCacheIndicadores();
     const sessao=sessaoServicoManual();
     if(__filaTempoRealI104 && __filaTempoRealI104.sessao!==sessao)cancelarAtualizacaoTempoRealI104();
@@ -48580,48 +48587,67 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   /* I110: leitura por identidade; acompanhamento interno não altera a produção. */
-  let radarAtualI110=[], radarModalI110=null, radarSequenciaI110=0, radarLeituraI110=null;
+  let radarAtualI110=[], radarResolvidosI147=[], radarModalI110=null, radarSequenciaI110=0, radarLeituraI110=null, radarDadosSessaoI147=null, radarTimerI147=null;
   const radarFiltrosI110=new Map();
   function exigirRadarI110(sessao){
     if(!['Chris','Amanda'].includes(usuarioAtual)||sessao!==sessaoServicoManual())throw Error('O perfil mudou. Reabra o Radar.');
   }
   async function calcularRadarPerdas(forcar=false){
     const sessao=sessaoServicoManual();
-    if(radarLeituraI110?.sessao===sessao&&!forcar)return radarLeituraI110.promise;
+    if(radarLeituraI110?.sessao===sessao)return radarLeituraI110.promise;
     const promise=(async()=>{
       try{
         exigirRadarI110(sessao);
         const nomes=['agendamentos','videos_producao','postagens','stories_semanais'];
-        const snaps=await Promise.all(nomes.map(n=>comTimeoutCalendarioOperacional(forcar?_getDocsFromServerFB(collection(db,n)):getDocs(collection(db,n)),'Conferir Radar: '+n,12000)));
+        const snaps=await Promise.all(nomes.map(n=>comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,n)),'Conferir Radar: '+n,12000)));
         const notes=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'config_painel'),where('tipo','==','radar_i110'))),'Conferir acompanhamentos do Radar',12000);
         exigirRadarI110(sessao);
         const data=Object.fromEntries(nomes.map((n,i)=>[n,snaps[i].docs.map(d=>({...d.data(),id:d.id}))]));
-        const items=RadarI110.applyFollowups(RadarI110.calculate(data),notes.docs.map(d=>({...d.data(),id:d.id})));
-        radarAtualI110=items;
+        const demandas=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'demandas'),where('radarI147.versao','==',1))),'Conferir demandas do Radar',12000);
+        exigirRadarI110(sessao);
+        for(const snap of [...snaps,notes,demandas])if(snap.metadata?.fromCache||snap.metadata?.hasPendingWrites||snap.docs.some(d=>d.metadata?.hasPendingWrites))throw Error('Há dados locais ainda não confirmados. A última conferência foi mantida.');
+        const videosEmpresa=new Map(data.videos_producao.map(v=>[v.id,v]));
+        data.empresasI147=Object.fromEntries(Object.entries(data).filter(([,v])=>Array.isArray(v)).flatMap(([col,rows])=>rows.map(r=>[col+'/'+r.id,GetEmpresasOtavioI144.bruto(col==='postagens'?GetEmpresasOtavioI144.projetarPostagem(r,videosEmpresa.get(r.videoId)):r)])));
+        const projection=RadarI110.project(data,notes.docs.map(d=>({...d.data(),id:d.id})),demandas.docs.map(d=>({...d.data(),id:d.id})));
+        const items=projection.items;
+        radarAtualI110=items;radarResolvidosI147=projection.resolved;radarDadosSessaoI147=sessao;
         return items;
       }catch(e){
-        const items=[];items.erro=String(e.message||e);return items;
+        const items=radarDadosSessaoI147===sessao?radarAtualI110.slice():[];items.erro=String(e.message||e);return items;
       }
     })();
     const ctx={sessao,promise};radarLeituraI110=ctx;
     try{return await promise;}finally{if(radarLeituraI110===ctx)radarLeituraI110=null;}
   }
+  function seloRadarI147(i){return GetEmpresasOtavioI144.selo(i.cliente,i);}
   function renderRadarPerdasHtml(items,id){
-    const filter=radarFiltrosI110.get(id)||'aberto';
-    const s=RadarI110.summary(items), labels={aberto:'Para agir',conferencia:'Conferir registros',acompanhamento:'Em acompanhamento',conferido:'Conferidos'};
-    const counts={aberto:s.acao,conferencia:s.conferencia,acompanhamento:s.acompanhamento,conferido:s.conferido};
-    const shown=items.filter(i=>filter==='aberto'?i.state==='aberto'&&i.kind==='acao':filter==='conferencia'?i.state==='aberto'&&i.kind==='conferencia':i.state===filter);
-    const color=items.erro?'var(--yellow)':s.acao?'var(--red)':s.conferencia?'var(--yellow)':'var(--green)';
-    return `<section class="card radar-i110" data-radar-id="${escAttr(id)}" style="border:2px solid ${color}">
-      <h2>📡 Radar de Perdas</h2><p class="meta">Abra a ocorrência para entender o motivo e escolher o próximo passo.</p>
+    const filter=radarFiltrosI110.get(id)||'todos';
+    const labels={todos:'Pendências',em_resolucao:'Em resolução',acompanhamento:'Espera combinada',conferido:'Conferidos',historico:'Resolvidos'};
+    const resolved=radarDadosSessaoI147===sessaoServicoManual()?radarResolvidosI147:[];
+    const pending=items.filter(i=>i.state!=='conferido');
+    const counts={todos:pending.length,em_resolucao:items.filter(i=>i.autoStatus==='em_resolucao').length,acompanhamento:items.filter(i=>i.state==='acompanhamento').length,conferido:items.filter(i=>i.state==='conferido').length,historico:resolved.length};
+    const shown=filter==='historico'?resolved:items.filter(i=>(filter==='todos'&&i.state!=='conferido')||(filter==='em_resolucao'?i.autoStatus===filter:i.state===filter));
+    const card=i=>`<article class="item" style="padding:14px;margin-top:8px"><button type="button" class="btn secondary" style="text-align:left;white-space:normal" data-key="${escAttr(i.key)}" onclick="abrirRadarI110(this.dataset.key)"><b>${esc(i.clienteNome)} · ${esc(i.titulo)}</b><br>${esc(i.description)}<br><small>Ver pendência, pessoas e próximos passos</small></button>${seloRadarI147(i)}<p><b>${esc(RadarI110.progressLabel(i))}</b> · ${esc(i.autoReason)}</p><p class="meta">Envolvidos: ${esc(i.pessoas.map(nomeEquipeI126).join(' · ')||'a conferir na origem')}</p>${i.dias!==null?`<p class="meta">${i.dias} dia(s) nesta etapa</p>`:''}${i.note?.motivo?`<p class="meta">${esc(i.note.motivo)}${i.note.reverEm?' · rever '+esc(formatarDataBR(i.note.reverEm)):''}</p>`:''}${i.demandas?.length?`<p class="meta">${i.demandas.length} demanda(s) vinculada(s)</p>`:''}</article>`;
+    const timeline=pending.slice().sort((a,b)=>(b.dias??-1)-(a.dias??-1)||a.key.localeCompare(b.key));
+    return `<section class="card radar-i110" data-radar-id="${escAttr(id)}" style="border:2px solid ${items.erro?'var(--yellow)':items.length?'var(--red)':'var(--green)'}">
+      <h2>📡 Radar de Perdas</h2><p class="meta">Cada pendência acompanha a origem. Abra para ver o que falta, comentar ou encaminhar uma demanda.</p>
       <button type="button" class="btn secondary" onclick="atualizarRadarI110()">Atualizar Radar</button>
-      ${items.erro?`<p role="alert">Não foi possível conferir agora. Nenhum item foi considerado resolvido.</p><p class="meta">${esc(items.erro)}</p>`:`
+      ${items.erro?`<p role="alert">Leitura indisponível. Mantive a última conferência; nenhum item foi considerado resolvido.</p><p class="meta">${esc(items.erro)}</p>`:'<p class="meta">Atualiza automaticamente enquanto esta tela está aberta.</p>'}
       <div class="btnrow" style="margin:12px 0;flex-wrap:wrap">${Object.entries(labels).map(([value,label])=>`<button type="button" class="btn ${value===filter?'':'secondary'}" data-radar="${escAttr(id)}" data-filter="${value}" onclick="filtrarRadarI110(this.dataset.radar,this.dataset.filter)">${label} (${counts[value]})</button>`).join('')}</div>
-      <div style="max-height:560px;overflow:auto">${shown.length?shown.map(i=>`<article class="item" style="padding:14px;margin-top:8px"><h3 style="margin:0 0 6px">${esc(i.clienteNome)} · ${esc(i.titulo)}</h3><p>${esc(i.description)}</p>${i.dias!==null?`<p class="meta">${i.dias} dia(s) nesta etapa</p>`:''}${i.changed?'<p class="meta">O registro mudou depois da última conferência. Confira novamente.</p>':''}${i.expired?'<p class="meta">Chegou a data combinada para rever.</p>':''}${i.note?`<p class="meta">${esc(i.note.motivo)}${i.note.reverEm?' · rever '+esc(formatarDataBR(i.note.reverEm)):''}</p>`:''}<button type="button" class="btn" data-key="${escAttr(i.key)}" onclick="abrirRadarI110(this.dataset.key)">Ver detalhes e resolver</button></article>`).join(''):'<p class="meta">Nenhuma ocorrência neste grupo.</p>'}</div>`}
+      <div style="max-height:560px;overflow:auto">${shown.length?shown.map(card).join(''):'<p class="meta">Nenhuma ocorrência neste grupo.</p>'}</div>
+      <details style="margin-top:14px"><summary>Linha do tempo das pendências (${pending.length})</summary><p class="meta">Mais tempo de espera primeiro. Resolvidos saem desta lista; comentários e demandas ficam em Resolvidos.</p>${timeline.map(i=>`<button type="button" class="btn secondary" style="margin-top:8px;text-align:left;white-space:normal" data-key="${escAttr(i.key)}" onclick="abrirRadarI110(this.dataset.key)">${i.dias===null?'Data a conferir':i.dias+' dia(s)'} · ${esc(i.clienteNome)} · ${esc(i.titulo)} · ${esc(RadarI110.progressLabel(i))}</button>`).join('')||'<p class="meta">Sem pendências.</p>'}</details>
     </section>`;
   }
+  function agendarRadarI147(){
+    if(!['Chris','Amanda'].includes(usuarioAtual)||!document.querySelector('.radar-i110')||document.visibilityState==='hidden')return;
+    clearTimeout(radarTimerI147);const sessao=sessaoServicoManual();
+    radarTimerI147=setTimeout(()=>{if(sessao===sessaoServicoManual())atualizarRadarI110();},350);
+  }
+  setInterval(agendarRadarI147,60000);
+  window.addEventListener('focus',agendarRadarI147);
+  document.addEventListener('visibilitychange',agendarRadarI147);
   window.filtrarRadarI110=function(id,filter){
-    if(!['aberto','conferencia','acompanhamento','conferido'].includes(filter))return;
+    if(!['todos','em_resolucao','acompanhamento','conferido','historico'].includes(filter))return;
     radarFiltrosI110.set(id,filter);
     const node=[...document.querySelectorAll('.radar-i110')].find(n=>n.dataset.radarId===id);
     if(node)node.outerHTML=renderRadarPerdasHtml(radarAtualI110,id);
@@ -48632,6 +48658,11 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const items=await calcularRadarPerdas(true);
     if(sessao!==sessaoServicoManual())return;
     for(const n of nodes)if(n.isConnected)n.outerHTML=renderRadarPerdasHtml(items,n.dataset.radarId);
+    const ctx=radarModalI110,status=document.getElementById('radarAutoStatusI147');
+    if(ctx?.sessao===sessao&&ctx.root===document.getElementById('modalConteudo')?.firstElementChild&&status){
+      const current=items.erro?null:[...items,...radarResolvidosI147].find(i=>i.key===ctx.item.key);
+      status.textContent=items.erro?'Leitura indisponível. Última situação mantida.':current?RadarI110.progressLabel(current)+' · '+current.autoReason:'A condição não está mais ativa. Reabra para conferir.';
+    }
   };
   window.abrirRadarI110=async function(key){
     const seq=++radarSequenciaI110,sessao=sessaoServicoManual();
@@ -48641,18 +48672,20 @@ Observações do cliente: ${l.observacoes||'—'}`;
     document.getElementById('overlayView').classList.add('show');
     const root=modal.firstElementChild,items=await calcularRadarPerdas(true);
     if(seq!==radarSequenciaI110||sessao!==sessaoServicoManual()||modal.firstElementChild!==root||!document.getElementById('overlayView').classList.contains('show'))return;
-    const i=items.find(x=>x.key===key);
+    const i=[...items,...radarResolvidosI147].find(x=>x.key===key);
     if(items.erro||!i){modal.innerHTML=`<h2>${items.erro?'Não foi possível conferir':'A ocorrência não está mais aberta na fonte'}</h2><p>${esc(items.erro||'Atualize o Radar para ver a situação atual. Nenhuma alteração foi feita.')}</p><button class="btn secondary" onclick="fecharModal();atualizarRadarI110()">Voltar e atualizar</button>`;return;}
     radarModalI110={item:i,sessao,revision:Number(i.note?.revisao)||0,busy:false,op:null};
-    modal.innerHTML=`<h2>${esc(i.clienteNome)} · ${esc(i.titulo)}</h2><p>${esc(i.description)}</p><div class="card">${i.details.map(t=>`<p class="meta" style="overflow-wrap:anywhere">${esc(t)}</p>`).join('')}<p class="meta">Registro: ${esc(i.id)}</p><button type="button" class="btn" onclick="origemRadarI110()">${esc(i.route)}</button></div>
+    modal.innerHTML=`<h2>${esc(i.clienteNome)} · ${esc(i.titulo)}</h2><p>${esc(i.description)}</p>${seloRadarI147(i)}<p id="radarAutoStatusI147" role="status">${esc(RadarI110.progressLabel(i))} · ${esc(i.autoReason)}</p><p>Envolvidos: ${esc(i.pessoas.map(nomeEquipeI126).join(' · ')||'a conferir na origem')}</p><div class="card">${i.details.map(t=>`<p class="meta" style="overflow-wrap:anywhere">${esc(t)}</p>`).join('')}<p class="meta">Registro: ${esc(i.id)}</p><button type="button" class="btn" onclick="origemRadarI110()">${esc(i.route)}</button></div>
       <div class="card"><h3>Acompanhamento da Amanda e do Chris</h3><p class="meta">Organiza somente este Radar. Não publica vídeos, não altera a fila da equipe e não suspende cobranças automáticas.</p>
-      <label for="radarEstadoI110">Situação</label><select id="radarEstadoI110"><option value="aberto">Precisa de ação / conferir</option><option value="acompanhamento">Espera combinada — rever depois</option><option value="conferido">Conferido manualmente</option></select>
+      <label for="radarEstadoI110">Organização da conferência (não encerra a pendência)</label><select id="radarEstadoI110"><option value="aberto">Precisa de ação / conferir</option><option value="acompanhamento">Espera combinada — rever depois</option><option value="conferido">Conferido manualmente</option></select>
       <label for="radarMotivoI110">Motivo e o que foi combinado</label><textarea id="radarMotivoI110" maxlength="2000" placeholder="Ex.: material pronto; aguardando o lançamento do almoço do cliente."></textarea>
       <label for="radarReverI110">Rever em (para espera combinada)</label><input id="radarReverI110" type="date"><p class="meta">Na data escolhida, a ocorrência volta para conferência. Se a fonte mudar, a conferência anterior deixa de encobrir a mudança.</p>
       <button type="button" id="radarSalvarI110" class="btn" onclick="salvarRadarI110()">Salvar acompanhamento</button><p id="radarReciboI110" role="status"></p></div>
-      <button type="button" class="btn secondary" onclick="demandaRadarI110()">Preparar demanda para a equipe</button><p class="meta">Você escolhe a pessoa e revisa antes de enviar.</p>
+      ${i.autoStatus!=='concluido'?'<button type="button" class="btn secondary" onclick="demandaRadarI110()">Gerar demanda vinculada</button><p class="meta">Escolha a pessoa e o prazo. A pendência acompanha a origem mesmo após a entrega da demanda.</p>':''}
+      <div class="card"><h3>Demandas vinculadas</h3>${i.demandas.map(d=>`<p>${esc(nomeEquipeI126(d.destinatario))} · ${esc(d.excluido?'Arquivada':d.status)}${d.provaTexto?' · '+esc(d.provaTexto):''}</p><button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="abrirDemandaRadarI147(this.dataset.id)">Conferir demanda</button>`).join('')||'<p class="meta">Nenhuma demanda vinculada ainda.</p>'}</div>
       <details><summary>Histórico desta conferência</summary>${(Array.isArray(i.note?.historico)?i.note.historico:[]).slice().reverse().map(h=>`<p class="meta">${esc(h.em)} · ${esc(h.por)} · ${esc(h.estado)}<br>${esc(h.motivo)}</p>`).join('')||'<p class="meta">Primeiro acompanhamento.</p>'}</details><button type="button" class="btn secondary" style="margin-top:12px" onclick="fecharModal()">Voltar</button>`;
     document.getElementById('radarEstadoI110').value=i.state;
+    if(i.autoStatus==='concluido')document.getElementById('radarSalvarI110').disabled=true;
     document.getElementById('radarMotivoI110').value=i.note?.motivo||'';
     document.getElementById('radarReverI110').value=i.note?.reverEm||'';
     radarModalI110.root=modal.firstElementChild;
@@ -48666,13 +48699,90 @@ Observações do cliente: ${l.observacoes||'—'}`;
     else if(i.col==='postagens')await abrirPostagemDeAtraso(i.id);
     else {window.__storyClienteSel=i.cliente;if(i.semana)window.__semanaStories=i.semana;irPara('stories');mostrarToast('Confira '+i.clienteNome+' · semana '+i.semana);}
   };
+  function podeOrigemDemandaRadarI147(d){
+    const a=d?.radarI147;if(a?.versao!==1)return false;
+    if(['Chris','Amanda'].includes(usuarioAtual))return true;
+    if(d.destinatario!==usuarioAtual)return false;
+    if(a.origemColecao==='agendamentos')return ['Nathan','Luís','Cecília'].includes(usuarioAtual);
+    if(a.origemColecao==='postagens')return ['Gabrielle','Fernanda','Cecília'].includes(usuarioAtual);
+    if(a.origemColecao==='stories_semanais')return papelSocialMediaI126(usuarioAtual);
+    return false;
+  }
+  window.origemDemandaRadarI147=async function(id){
+    const sessao=sessaoServicoManual(),pessoa=usuarioAtual;
+    try{const snap=await _getDocFromServerFB(doc(db,'demandas',id));if(sessao!==sessaoServicoManual())return;const d=snap.exists()?{...snap.data(),id}:null;if(!podeOrigemDemandaRadarI147(d))throw Error('Esta etapa não pertence ao seu perfil. Confira com a Amanda.');const a=d.radarI147;fecharModal();
+      if(a.origemColecao==='agendamentos')await abrirAgendaI85(a.origemId);
+      else if(a.origemColecao==='videos_producao')await abrirVideoDeAtraso(a.origemId);
+      else if(a.origemColecao==='postagens'){if(['Chris','Amanda','Cecília'].includes(pessoa))await abrirPostagemDeAtraso(a.origemId);else await abrirLegendaDemandaI84({...d,postagemId:a.origemId});}
+      else {window.__storyClienteSel=a.cliente;window.__semanaStories=a.alerta?.semana||window.__semanaStories;irPara('stories');}
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast(e.message,'erro');}
+  };
+  window.abrirDemandaRadarI147=async function(id){
+    const sessao=sessaoServicoManual();try{exigirRadarI110(sessao);await carregarTodasDemandas({servidor:true});exigirRadarI110(sessao);const d=todasDemandas.find(d=>d.id===id&&d.radarI147?.versao===1);if(!d)throw Error('Demanda não encontrada. Atualize o Radar.');abrirDemandaGerencia(id);}catch(e){if(sessao===sessaoServicoManual())mostrarToast(e.message,'erro');}
+  };
   window.demandaRadarI110=function(){
     const ctx=radarModalI110;if(!ctx)return;
     try{exigirRadarI110(ctx.sessao);}catch(e){mostrarToast(e.message,'erro');return;}
-    const i=ctx.item;radarSequenciaI110++;abrirModalNovaDemanda();
+    const i=ctx.item;if(i.autoStatus==='concluido')return;
+    radarSequenciaI110++;if(abrirModalNovaDemanda()===false)return;
+    const root=document.getElementById('modalConteudo').firstElementChild;
+    window.__radarDemandaI147={item:i,sessao:ctx.sessao,root,op:crypto.randomUUID(),busy:false};
     document.getElementById('novoTituloModal').value='Conferir '+i.clienteNome+' — '+i.titulo;
-    document.getElementById('novaDescModal').value=i.description+'\n'+i.details.join('\n')+'\nRegistro: '+i.col+'/'+i.id+'\nConfira a origem e registre a solução no caminho normal. A conferência do Radar não altera o conteúdo.';
+    document.getElementById('novaDescModal').value='Dá uma olhada neste ponto, por favor: '+i.description+'\n'+i.details.join('\n')+'\nOrigem: '+i.col+'/'+i.id+'\nDepois de ajustar na etapa indicada, conta aqui o que foi feito.';
+    const suggested=({C:'Gabrielle',D:'Cecília',E:'Cecília',F:'Gabrielle',B:'Amanda'})[i.elo]||i.pessoas.find(p=>DESTINATARIOS_DEMANDA.includes(p));
+    if(suggested)document.getElementById('novoDestinatarioModal').value=suggested;
+    document.getElementById('colabRows_modal').parentElement.style.display='none';
+    root.insertAdjacentHTML('afterend',`<p class="meta">Vinculada ao Radar · ${esc(i.col)}/${esc(i.id)} ${seloRadarI147(i)}</p>`);
   };
+  async function criarDemandaRadarI147(){
+    const ctx=window.__radarDemandaI147;if(!ctx||ctx.busy)return;
+    const vigente=()=>window.__radarDemandaI147===ctx&&document.getElementById('overlayView').classList.contains('show')&&ctx.root===document.getElementById('modalConteudo').firstElementChild&&ctx.sessao===sessaoServicoManual();
+    const ids=['novoTituloModal','novaDescModal','novoDestinatarioModal','novoDataModal','novoHoraModal','novoLinkAnexoModal'],fields=ids.map(id=>document.getElementById(id)),[titulo,descricao,destinatario,prazoData,hora,linkAnexo]=fields.map(f=>f.value.trim());
+    const btn=document.getElementById('btnCriarModal');
+    if(!vigente())return;
+    if(ctx.confirmedId){await abrirDemandaRadarI147(ctx.confirmedId);return;}
+    if(!titulo||!/^\d{4}-\d{2}-\d{2}$/.test(prazoData)||!DESTINATARIOS_DEMANDA.includes(destinatario)){mostrarToast('Preencha título, pessoa e prazo.','erro');return;}
+    const ref=doc(db,'demandas','radar_i147_'+ctx.op),noteRef=doc(db,'config_painel','radar_i110_'+ctx.item.key);
+    ctx.busy=true;btn.disabled=true;fields.forEach(f=>f.disabled=true);btn.textContent='Gravando e confirmando…';
+    try{
+      exigirRadarI110(ctx.sessao);let result;
+      const prior=await _getDocFromServerFB(ref);exigirRadarI110(ctx.sessao);
+      if(prior.exists()){
+        const saved=prior.data();if(saved.protocoloCriacao!==ctx.op||saved.radarI147?.chave!==ctx.item.key||saved.radarI147?.origemId!==ctx.item.id||saved.radarI147?.cliente!==ctx.item.cliente)throw Error('Protocolo incompatível. Nenhuma demanda foi criada.');
+        result={id:ref.id,created:false};
+      }else{
+      const items=await calcularRadarPerdas(true);exigirRadarI110(ctx.sessao);
+      if(items.erro)throw Error(items.erro);
+      const actual=items.find(i=>i.key===ctx.item.key);
+      // Se a origem resolveu durante confirmação incerta, ainda reler o mesmo protocolo.
+      if(!actual){const receipt=await _getDocFromServerFB(ref);if(!receipt.exists())throw Error('A condição já não está ativa. Atualize o Radar.');}
+      else if(actual.signature!==ctx.item.signature)throw Error('A origem mudou. Seu texto foi mantido; reabra a ocorrência para conferir antes de encaminhar.');
+      ctx.sent=fields.map(f=>f.value);
+      await runTransaction(db,async tx=>{
+        const snap=await tx.get(noteRef),old=snap.exists()?snap.data():null;exigirRadarI110(ctx.sessao);
+        if(old&&(old.tipo!=='radar_i110'||old.chave!==ctx.item.key||!Array.isArray(old.historico)))throw Error('Acompanhamento incompatível. Nenhum dado foi sobrescrito.');
+        const lastId=old?.demandasI147?.slice(-1)[0],last=lastId?await tx.get(doc(db,'demandas',lastId)):null;
+        if(last?.exists()&&(last.data().radarI147?.chave!==ctx.item.key||last.data().radarI147?.origemColecao!==ctx.item.col||last.data().radarI147?.origemId!==ctx.item.id||last.data().radarI147?.cliente!==ctx.item.cliente))throw Error('Vínculo anterior incompatível. Confira a demanda existente.');
+        if(last?.exists()&&!last.data().excluido&&!['cancelada','aprovada'].includes(last.data().status)){result={id:lastId,created:false};return;}
+        const own=await tx.get(ref);if(own.exists()){result={id:ref.id,created:false};return;}
+        const source=actual?await tx.get(doc(db,actual.col,actual.id)):null;
+        if(actual&&(!source.exists()||RadarI110.stable({...source.data(),id:source.id})!==actual.sourceStamp))throw Error('A origem mudou durante o envio. Reabra a ocorrência para conferir.');
+        if(!actual)throw Error('A condição não está mais ativa.');
+        const alerta=RadarI110.snapshotAlert(actual),em=new Date().toISOString(),event={operacaoId:ctx.op,por:usuarioAtual,em,estado:'demanda_vinculada',motivo:'Demanda encaminhada para '+nomeEquipeI126(destinatario),demandaId:ref.id};
+        const dados={...GetEmpresasOtavioI144.campos(actual.cliente,actual),titulo,descricao,destinatario,prazoData,prazoHora:hora||'19:00',linkAnexo,origem:usuarioAtual.toLowerCase(),criadoPor:usuarioAtual,clienteNome:actual.clienteNome,cliente:actual.cliente,status:'pendente',provaTexto:'',provaImagemUrl:'',protocoloCriacao:ctx.op,criadoEm:serverTimestamp(),radarI147:{versao:1,chave:actual.key,origemColecao:actual.col,origemId:actual.id,cliente:actual.cliente,assinatura:actual.signature,alerta}};
+        tx.set(ref,dados);tx.set(noteRef,{...(old||{}),tipo:'radar_i110',versao:1,chave:actual.key,cliente:actual.cliente,origemColecao:actual.col,origemId:actual.id,assinatura:old?.assinatura||actual.signature,titulo:actual.titulo,estado:old?.estado||'aberto',motivo:old?.motivo||'',reverEm:old?.reverEm||'',alertaI147:old?.alertaI147||alerta,demandasI147:[...(old?.demandasI147||[]),ref.id],revisao:(Number(old?.revisao)||0)+1,historico:[...(old?.historico||[]),event]});result={id:ref.id,created:true};
+      });
+      }
+      exigirRadarI110(ctx.sessao);const receipt=await _getDocFromServerFB(doc(db,'demandas',result.id));exigirRadarI110(ctx.sessao);
+      if(!receipt.exists()||receipt.metadata?.fromCache||receipt.metadata?.hasPendingWrites||receipt.data().radarI147?.chave!==ctx.item.key||receipt.data().radarI147?.origemColecao!==ctx.item.col||receipt.data().radarI147?.origemId!==ctx.item.id||receipt.data().radarI147?.cliente!==ctx.item.cliente)throw Error('Não consegui confirmar o vínculo. Tente novamente; o mesmo protocolo será conferido.');
+      __cacheColecoes.delete('demandas');
+      if(result.created)dispararEmailIndividual(destinatario,'demanda',{titulo,prazoData,prazoHora:hora||'19:00',itemId:result.id,colecao:'demandas'}).catch(()=>{});
+      if(vigente()&&ctx.sent&&fields.some((f,i)=>f.value!==ctx.sent[i])){mostrarToast('A versão enviada já está confirmada. O texto alterado depois foi mantido aqui e ainda não foi enviado.');ctx.confirmedId=result.id;btn.textContent='Conferir demanda já criada';return;}
+      if(vigente()){window.__radarDemandaI147=null;fecharModal();mostrarToast(result.created?'Demanda confirmada e vinculada ao Radar.':'Esta pendência já tem uma demanda vinculada.');await abrirDemandaRadarI147(result.id);}
+      agendarRadarI147();
+    }catch(e){if(vigente()){mostrarToast('Não confirmado: '+e.message+' Seu texto foi mantido.','erro');btn.textContent='Conferir e tentar novamente';}}
+    finally{ctx.busy=false;if(vigente()){btn.disabled=false;fields.forEach(f=>f.disabled=false);}}
+  }
   window.salvarRadarI110=async function(){
     const ctx=radarModalI110;if(!ctx||ctx.busy)return false;
     const modal=document.getElementById('modalConteudo'),vigente=()=>ctx===radarModalI110&&ctx.root===modal.firstElementChild&&ctx.sessao===sessaoServicoManual();
@@ -48696,7 +48806,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         if(old?.operacaoId===op)return;
         if((Number(old?.revisao)||0)!==ctx.revision)throw Error('Outro gestor atualizou esta conferência. Seu texto foi mantido; copie-o e reabra para comparar.');
         const entry={operacaoId:op,por:usuarioAtual,em:new Date().toISOString(),...values};
-        tx.set(ref,{tipo:'radar_i110',versao:1,chave:ctx.item.key,cliente:ctx.item.cliente,origemColecao:ctx.item.col,origemId:ctx.item.id,assinatura:ctx.item.signature,titulo:ctx.item.titulo,...values,por:usuarioAtual,em:entry.em,revisao:ctx.revision+1,operacaoId:op,historico:[...(old?.historico||[]),entry]});
+        tx.set(ref,{...(old||{}),alertaI147:old?.alertaI147||RadarI110.snapshotAlert(atual),tipo:'radar_i110',versao:1,chave:ctx.item.key,cliente:ctx.item.cliente,origemColecao:ctx.item.col,origemId:ctx.item.id,assinatura:ctx.item.signature,titulo:ctx.item.titulo,...values,por:usuarioAtual,em:entry.em,revisao:ctx.revision+1,operacaoId:op,historico:[...(old?.historico||[]),entry]});
       });
       const s=await _getDocFromServerFB(ref);exigirRadarI110(ctx.sessao);
       if(!s.exists()||s.data().operacaoId!==op)throw Error('Não foi possível confirmar. Reabra a ocorrência antes de tentar novamente.');
@@ -49016,6 +49126,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(nomeEquipeI126(d.destinatario))}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
+      ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${podeMexerNoPrazo ? `
       <div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">
         <b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}
@@ -49402,6 +49513,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
      Gerência. Usa IDs próprios (sufixo "Modal") pra não colidir com o
      formulário original, que continua existindo do jeito que estava. */
   window.abrirModalNovaDemanda = function(){
+    if(window.__radarDemandaI147?.busy){mostrarToast('Espere a confirmação desta demanda.','erro');return false;}
+    window.__radarDemandaI147=null;
     if(window.__arteYasI129?.emCurso&&window.__arteYasI129.atual()){mostrarToast('Espere a confirmação da arte antes de abrir outra demanda.','erro');return false;}
     window.__arteYasI129=null;
     if(!usuarioAtual){ mostrarToast('Seleciona seu nome na tela de Início primeiro.', 'erro'); return; }
@@ -49523,6 +49636,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.gravarEConfirmarDemandas=gravarEConfirmarDemandas;
 
   window.criarDemandaModal = async function(){
+    if(window.__radarDemandaI147)return criarDemandaRadarI147();
     if(window.__arteYasI129)return salvarArteYasI129();
     const titulo = document.getElementById('novoTituloModal').value.trim();
     const desc = document.getElementById('novaDescModal').value.trim();

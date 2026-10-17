@@ -129,3 +129,57 @@ export function digest(items) {
   const s=summary(items);
   return `${s.acao} para agir · ${s.conferencia} para conferir · ${s.acompanhamento} em acompanhamento · ${s.conferido} conferido(s). Ver detalhes na Gerência.`;
 }
+
+// I147: acompanhamento projetado das fontes confirmadas; não escreve nem dá baixa nelas.
+export function snapshotAlert(i) {
+  return Object.fromEntries(['key','elo','col','id','cliente','clienteNome','titulo','description','details','route','dias','kind','signature','semana','empresaOtavio'].filter(k=>i[k]!==undefined).map(k=>[k,i[k]]));
+}
+export function people(i, data) {
+  const r=data[i.col]?.find(r=>r.id===i.id)||{};
+  const names=[r.registradoPor,r.filmmaker,r.editorAtribuido,r.legendaPor,r.agendadoPor,r.aprovadoPor,r.criadoPor];
+  if(i.elo==='B')names.push('Amanda','Cecília');
+  if(i.elo==='C')names.push('Gabrielle','Fernanda');
+  if(['D','E'].includes(i.elo))names.push('Cecília');
+  if(i.elo==='F')names.push('Gabrielle',i.clienteNome+' (cliente)');
+  return [...new Set(names.filter(n=>typeof n==='string'&&n.trim()))];
+}
+export function sourceState(i,data,current) {
+  const r=data[i.col]?.find(r=>r.id===i.id);
+  if(!r||slug(r)!==i.cliente)return {status:'incerto',reason:'A origem não foi localizada com a mesma identidade. Confira antes de encerrar.'};
+  if(!active(r)||['cancelada_manual','cancelada_video_trafego','arquivado_sem_postagem'].includes(r.status))return {status:'concluido',reason:'Condição encerrada na origem: registro retirado ou arquivado. O histórico foi preservado.'};
+  const known={agendamentos:['agendado','realizado'],videos_producao:['aguardando_aprovacao','aguardando_cliente','aguardando_edicao','aguardando_encaminhamento','aprovado','correcao','finalizado'],postagens:['aguardando_legenda','aguardando_agendamento','agendado','postado','em_correcao','legenda_pronta'],stories_semanais:['pendente','aguardando','aprovado','postado','correcao','ajuste','recusado']};
+  const incomplete=!known[i.col]?.includes(r.status)||(i.elo==='A'&&r.status==='realizado'&&(r.qtdVideosRealizados===undefined||r.qtdVideosRealizados===null||!Number.isFinite(Number(r.qtdVideosRealizados))))||(i.elo==='E'&&(r.publicacaoStokki?(!Array.isArray(r.publicacaoStokki.selecionadas)||!r.publicacaoStokki.selecionadas.length||r.publicacaoStokki.selecionadas.some(n=>!r.publicacaoStokki.redes?.[n]||(!r.publicacaoStokki.redes[n].retirada&&!r.publicacaoStokki.redes[n].publicadaEm&&!validDate(r.publicacaoStokki.redes[n].data)))):(r.status==='agendado'&&!validDate(r.dataAgendada))));
+  if(incomplete)return {status:'incerto',reason:'A origem está incompleta ou em situação não reconhecida. Confira antes de encerrar.'};
+  if(current)return {status:'pendente',reason:current.description};
+  // Uma espera reiniciada não conclui a pendência se o trabalho ainda está na mesma etapa.
+  if((i.elo==='C'&&r.status==='aguardando_legenda')||(i.elo==='D'&&r.status==='aguardando_agendamento')||(i.elo==='F'&&r.status==='pendente'))
+    return {status:'pendente',reason:'A espera foi atualizada, mas esta etapa ainda precisa ser resolvida.'};
+  return {status:'concluido',reason:({A:'Os envios e a gravação já não apresentam esta pendência.',B:'O vídeo avançou ou recebeu a postagem vinculada.',C:'A legenda saiu da etapa pendente.',D:'O agendamento saiu da etapa pendente.',E:'Não há mais confirmação vencida pendente nas plataformas.',F:'O Stories recebeu retorno ou avançou de etapa.'})[i.elo]||'A condição não está mais presente na origem.'};
+}
+function validAlert(a){return !!a&&['A','B','C','D','E','F'].includes(a.elo)&&a.key===a.elo+'_'+a.id&&typeof a.id==='string'&&typeof a.cliente==='string'&&['agendamentos','videos_producao','postagens','stories_semanais'].includes(a.col)&&Array.isArray(a.details)&&a.details.every(t=>typeof t==='string')&&typeof a.signature==='string'&&typeof a.titulo==='string';}
+export function project(data,notes,demands,now=Date.now()) {
+  if(!Array.isArray(notes)||!Array.isArray(demands))throw Error('Acompanhamentos incompletos.');
+  const current=calculate(data,now),byKey=new Map(current.map(i=>[i.key,i])),tracked=new Map(current.map(i=>[i.key,i]));
+  for(const n of notes){
+    if(byKey.has(n.chave)&&n.cliente&&byKey.get(n.chave).cliente!==n.cliente)throw Error('A identidade da origem mudou. Confira antes de vincular o acompanhamento.');
+    const saved=n.alertaI147;if(saved&&!validAlert(saved))throw Error('Há um acompanhamento incompatível. Confira o registro sem sobrescrevê-lo.');
+    if(!tracked.has(n.chave)&&saved?.key===n.chave&&saved.col===n.origemColecao&&saved.id===n.origemId&&saved.cliente===n.cliente)tracked.set(n.chave,saved);
+  }
+  // Permite reler vínculo mesmo se a nota for legada/parcial; somente metadados exatos.
+  for(const d of demands){const a=d.radarI147?.alerta;if(d.radarI147?.versao===1&&!validAlert(a))throw Error('Há uma demanda com vínculo incompleto. Confira antes de encerrar a pendência.');if(d.radarI147?.versao===1&&a?.key===d.radarI147.chave&&!tracked.has(a.key))tracked.set(a.key,a);}
+  const withNotes=applyFollowups([...tracked.values()],notes,civil(now)),activeItems=[],resolved=[];
+  for(const base of withNotes){
+    const actual=byKey.get(base.key),r=data[base.col]?.find(x=>x.id===base.id),i={...base,...actual,note:base.note,state:base.state,changed:base.changed,expired:base.expired};
+    i.empresaOtavio=data.empresasI147?.[i.col+'/'+i.id]||r?.empresaOtavio||r?.referenciaLegendaI78?.empresaOtavio||r?.vinculoCalendarioAnteriorV138?.empresaOtavio||'';i.pessoas=people(i,data);i.sourceStamp=stable(r||null);
+    i.demandas=demands.filter(d=>d.radarI147?.versao===1&&d.radarI147.chave===i.key&&d.radarI147.origemId===i.id&&d.radarI147.origemColecao===i.col&&d.radarI147.cliente===i.cliente);
+    const source=sourceState(i,data,actual);i.autoStatus=source.status;i.autoReason=source.reason;
+    const reopened=Math.max(instant(r?.reabertoEm),instant(r?.desfeitoEm));
+    const working=i.demandas.filter(d=>!d.excluido&&d.status!=='cancelada'&&(!reopened||instant(d.criadoEm)>=reopened));
+    const baseline=i.note?.alertaI147?.signature||working[0]?.radarI147.assinatura;
+    const returned=working.some(d=>['concluida_aguardando_aprovacao','aprovada'].includes(d.status));
+    if(source.status==='pendente'&&((baseline&&baseline!==i.signature)||returned||working.some(d=>d.provaTexto||d.status==='em_andamento'))){i.autoStatus='em_resolucao';i.autoReason=returned?'A demanda teve retorno, mas a origem ainda apresenta a pendência.': 'Houve movimentação. A condição ainda precisa ser resolvida na origem.';}
+    if(source.status==='concluido')resolved.push(i);else activeItems.push(i);
+  }
+  return {items:activeItems,resolved,at:now};
+}
+export const progressLabel=i=>({pendente:'Pendente',em_resolucao:'Em resolução',concluido:'Concluído na origem',incerto:'Precisa conferir a origem'})[i.autoStatus]||'Pendente';

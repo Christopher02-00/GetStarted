@@ -26,7 +26,7 @@ export async function referenciaPublicacaoI92(cliente,mes,cal,itens){
   // Para legado sem instante, comparar somente conteúdo editorial, nunca índices.
   const campos=['itemId','day','name','desc','roteiroDispensado','legenda','ref','referenciaDispensada','obs','obsCliente','fmt','dataFlexivel','dataPostagem','bloco'];
   const editorial=publicadoEm?null:(retrato?.items||itens||[]).filter(i=>i&&!i.excluido).map(i=>
-    Object.fromEntries(campos.map(k=>[k,i[k]??null]))).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    ({...Object.fromEntries(campos.map(k=>[k,i[k]??null])),...(i.empresaOtavio?{empresaOtavio:i.empresaOtavio}:{})})).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
   const dados=JSON.stringify([cliente,mes,publicadoEm,editorial]);
   const hash=await globalThis.crypto.subtle.digest('SHA-256',new TextEncoder().encode(dados));
   return {assinatura:Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join(''),publicadoEm};

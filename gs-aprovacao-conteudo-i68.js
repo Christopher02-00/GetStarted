@@ -7,8 +7,10 @@
     'aprovacoesAnterioresI68','pedidoRevisadoI68'];
   const booleanos = new Set(['roteiroDispensado','referenciaDispensada','dataFlexivel']);
   const valor = (it,k) => booleanos.has(k) ? !!it?.[k] : String(it?.[k] ?? '');
-  const assinatura = it => JSON.stringify(campos.map(k=>valor(it,k)));
-  const mudou = (a,b) => campos.some(k => valor(a,k) !== valor(b,k));
+  const empresaI144=it=>String(it?.empresaOtavio||'');
+  const valoresAssinaturaI144=it=>empresaI144(it)?[...campos.map(k=>valor(it,k)),['empresaOtavio',empresaI144(it)]]:campos.map(k=>valor(it,k));
+  const assinatura = it => JSON.stringify(valoresAssinaturaI144(it));
+  const mudou = (a,b) => campos.some(k => valor(a,k) !== valor(b,k))||empresaI144(a)!==empresaI144(b);
   function revisar(antes, depois, {por='Equipe',em,forcar=false,pedido=''}={}) {
     if ((!forcar&&!mudou(antes,depois)) || depois.excluido || depois.posted || depois.agendado) return {...depois};
     const item={...depois};
@@ -126,7 +128,7 @@
   }
   function versaoPublica(item,mes) {
     const it={...item,mes};
-    return JSON.stringify([String(it.itemId||''),campos.map(k=>valor(it,k)),!!it.excluido,!!it.posted,!!it.agendado]);
+    return JSON.stringify([String(it.itemId||''),valoresAssinaturaI144(it),!!it.excluido,!!it.posted,!!it.agendado]);
   }
   function prepararReenvio(cal,mes,em,mesDoItem=(c,it)=>it.mes||c.mesLegado) {
     let items=cal.items,alterou=false;

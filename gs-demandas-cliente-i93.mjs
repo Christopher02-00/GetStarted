@@ -25,7 +25,7 @@ export function gruposDemandasI93(lista,agora=Date.now()){
 export function assinaturaDemandaI93(d){
   // Firestore pode devolver mapas iguais em ordens diferentes entre leituras.
   const ordenar=v=>Array.isArray(v)?v.map(ordenar):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordenar(v[k])])):v;
-  return JSON.stringify(ordenar(['cliente','clienteNome','titulo','texto','descricao','observacoes','prazoData','excluido','acompanhamentoManualI93','revisaoAcompanhamentoI93'].map(k=>d?.[k]??null)));
+  return JSON.stringify(ordenar(['empresaOtavio','cliente','clienteNome','titulo','texto','descricao','observacoes','prazoData','excluido','acompanhamentoManualI93','revisaoAcompanhamentoI93'].map(k=>d?.[k]??null)));
 }
 export function camposEdicaoI93(v){
   const titulo=String(v.titulo||'').trim(),descricao=String(v.descricao||'').trim(),observacoes=String(v.observacoes||'').trim(),prazoData=String(v.prazoData||'');

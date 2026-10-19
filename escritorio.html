@@ -1246,6 +1246,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
         <div class="field"><label>Planejamento / objetivo</label><textarea id="campIdeia" placeholder="Do que se trata e qual é a direção da campanha..."></textarea></div>
         <button class="btn" onclick="criarCampanha()">Criar e abrir planejamento</button>
       </div>
+      <p class="desc" id="avisosCampanhasI153" role="status"></p>
       <div id="campanhasKanban"><div class="card"><div class="desc">Carregando quadro mensal…</div></div></div>
       <div id="campanhaDetalheBox"></div>
     </div>
@@ -2061,6 +2062,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
 <script type="module">
 import * as RadarI110 from './gs-radar-i110.mjs?v=147';
 import {revisaoI148,exigirRevisaoI148,reciboPublicacaoI148,novosAvisosI148} from './gs-aprovacoes-calendarios-i148.mjs?v=148';
+import {TIPO_I153,gruposCampanhaI153,idAvisoI153,avisoValidoI153,textoAvisoI153,unirPostagensI153} from './gs-campanhas-conferencia-i153.mjs?v=153';
 import {referenciaI106,resolverI106,resumoI106,precisaRevisarI106,chaveI106,referenciaEscolhidaI106,escolherConteudosI106} from './gs-identidade-conteudo-i106.mjs?v=i144-1';
 import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,patchSincroniaDemandaI93} from './gs-demandas-cliente-i93.mjs?v=i144-1';
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
@@ -18272,9 +18274,92 @@ async function renderCampanhasKanban(){
     }
     if(detectadasMes.length)html+='<div class="card"><h3>📅 Pautas — somente leitura</h3><p class="desc">Não são copiadas ou ocultadas por título igual.</p>'+detectadasMes.map(c=>'<div class="item"><b>'+esc(c.cliente)+' — '+esc(c.titulo)+'</b><div class="meta">'+esc(c.dataCampanha||'Sem data')+' · '+(c.postado?'postado':c.agendado?'agendado':c.gravado?'gravado':'planejado')+'</div></div>').join('')+'</div>';
     if(doMes.length&&!window.__historicoCampanhas&&window.podePrazoCampanha())html+=campBotaoI7('Arquivar as '+doMes.length+' campanhas deste mês','arquivarMesCampanhas',[mes,token]);
-    cont.innerHTML=html;return true;
+    cont.innerHTML=html;void conferirAvisosCampanhasI153(true);return true;
   }catch(e){if(turno===campI7.carregamento&&sessao===sessaoServicoManual()){cont.innerHTML='<div class="card" style="border-color:var(--red);">Campanhas indisponíveis: '+esc(e.message||e)+'. Nenhum erro foi interpretado como lista vazia. '+campBotaoI7('Tentar carregar','renderAcompCampanhas')+'</div>';window.atualizarBadgeCampanhas('!');}console.error('Campanhas:',e);return false;}
 }
+/* I153: cada aviso é uma demanda normal, identificada pela fonte e data. */
+let __rodadaCampanhasI153=null,__ultimaCampanhasI153=null;
+function contextoCampanhaI153(d){const c=d?.conferenciaCampanhaI153;return d?.tipoEspecial===TIPO_I153&&c?.versao===1&&typeof c.campanhaId==='string'&&c.campanhaId&&!c.campanhaId.includes('/')&&Array.isArray(c.postagens)?c:null;}
+function htmlOrigemCampanhaI153(d){
+  const c=contextoCampanhaI153(d);if(!c||!window.podeVerCampanha())return '';
+  return '<div class="card"><b>Conferência de campanha · '+esc(formatarDataBR(c.dataPublicacao))+'</b><p class="meta">'+c.postagens.map(p=>esc(p.clienteNome+' — '+p.titulo)).join('<br>')+'</p><button type="button" class="btn secondary" data-id="'+escAttr(d.id)+'" onclick="abrirOrigemCampanhaI153(this.dataset.id)">Abrir campanha desta conferência</button><p class="meta">Confira a programação no agendador. Concluir esta demanda não publica conteúdo.</p></div>';
+}
+window.abrirOrigemCampanhaI153=async function(id){
+  const d=todasDemandas.find(x=>x.id===id),c=contextoCampanhaI153(d),sessao=sessaoServicoManual();if(!c||!window.podeVerCampanha())return;
+  const vigente=()=>sessao===sessaoServicoManual()&&window.podeVerCampanha()&&viewAtiva==='campanhas';
+  fecharModal();if(irPara('campanhas',document.getElementById('navAcompCampanhas'))===false||!vigente())return;
+  if(await renderCampanhasKanban()!==true||!vigente())return;
+  if(await window.abrirCampanha(c.campanhaId)&&vigente()&&campI7.detalhe?.id===c.campanhaId){
+    const box=document.getElementById('campanhaDetalheBox'),aviso=document.createElement('div');aviso.className='card';
+    aviso.innerHTML='<b>Conferência de '+esc(formatarDataBR(c.dataPublicacao))+'</b><p>'+c.postagens.map(p=>esc(p.clienteNome+' — '+p.titulo)).join('<br>')+'</p><p class="meta">Abaixo estão os dados atuais. Mudança de data, arquivo ou publicação não apaga o registro desta conferência.</p>';
+    box.prepend(aviso);box.scrollIntoView({block:'start'});
+  }
+};
+function campanhaGruposI153(raw,id,hoje){
+  if(!campLegadoI7(raw)&&(!Array.isArray(raw.clientes)||raw.clientes.some(cl=>!campMapaI7(cl)||!Array.isArray(cl.postagens)||cl.postagens.some(p=>!campMapaI7(p)))))throw Error('Estrutura de campanha incompleta; conferência pendente.');
+  const c=normalizarCampanhaMensal({...raw,id});c.clientes.forEach(cl=>cl.postagens.forEach(p=>{p.status=statusAutomaticoPostCampanha(p);}));
+  return gruposCampanhaI153(c,id,hoje,campFonteI7);
+}
+function sessaoAvisosCampanhasI153(sessao,hoje){if(!['Chris','Amanda'].includes(usuarioAtual)||sessao!==sessaoServicoManual()||!auth.currentUser?.uid||campHojeI7()!==hoje)throw Error('Sessão ou dia mudou durante a conferência de campanhas.');}
+async function sincronizarGrupoCampanhaI153(id,data,sessao,hoje){
+  const ref=doc(db,'campanhas',id),grupoChave={campanhaId:id,dataPublicacao:data};
+  const destinos=await Promise.all(['Amanda','Cecília'].map(async pessoa=>({pessoa,id:await idAvisoI153(grupoChave,pessoa)})));
+  return runTransaction(db,async tx=>{
+    sessaoAvisosCampanhasI153(sessao,hoje);
+    const origem=await tx.get(ref);if(!origem.exists())return 0;
+    const g=campanhaGruposI153(origem.data(),id,hoje).find(x=>x.dataPublicacao===data);if(!g)return 0;
+    const raizes=await Promise.all(destinos.map(x=>tx.get(doc(db,'demandas',x.id))));
+    const operacoes=[];let criadas=0;
+    for(let i=0;i<destinos.length;i++){
+      const alvo=destinos[i],root=raizes[i],antigo=root.exists()?root.data():null;
+      if(antigo&&!avisoValidoI153(antigo,g,alvo.pessoa))throw Error('Identificação de aviso divergente; registro preservado.');
+      const anteriores=antigo?.conferenciaCampanhaI153.postagens||[],novas=g.postagens.filter(p=>!anteriores.some(a=>a.chave===p.chave));
+      if(antigo&&!novas.length)continue;
+      const completo={...g,postagens:unirPostagensI153(anteriores,g.postagens)};
+      if(antigo&&antigo.status==='pendente'&&!antigo.excluido&&!antigo.provaTexto&&!antigo.provaImagemUrl){
+        const texto=textoAvisoI153(completo,hoje),patch={conferenciaCampanhaI153:completo,atualizadoEm:serverTimestamp()};
+        if(antigo.descricao===antigo.descricaoGeradaI153){patch.descricao=texto.descricao;patch.descricaoGeradaI153=texto.descricao;}
+        operacoes.push(()=>tx.update(root.ref,patch));continue;
+      }
+      const complemento=!!antigo,conteudo=complemento?{...g,postagens:novas}:g;
+      const avisoId=complemento?await idAvisoI153(g,alvo.pessoa,novas.map(p=>p.chave)):alvo.id,avisoref=doc(db,'demandas',avisoId);
+      const suplemento=complemento?await tx.get(avisoref):null;
+      if(suplemento?.exists()&&!avisoValidoI153(suplemento.data(),g,alvo.pessoa))throw Error('Complemento divergente; registro preservado.');
+      if(antigo)operacoes.push(()=>tx.update(root.ref,{conferenciaCampanhaI153:completo,atualizadoEm:serverTimestamp()}));
+      if(!suplemento?.exists()){
+        const texto=textoAvisoI153(conteudo,hoje,complemento);
+        operacoes.push(()=>tx.set(avisoref,{...texto,descricaoGeradaI153:texto.descricao,origem:'sistema',destinatario:alvo.pessoa,clienteNome:'',tipoEspecial:TIPO_I153,conferenciaCampanhaI153:conteudo,demandaCampanhaOrigemI153:complemento?alvo.id:'',prazoData:hoje,prazoHora:'19:00',status:'pendente',provaTexto:'',provaImagemUrl:'',emailEnviado:false,excluido:false,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()}));criadas++;
+      }
+    }
+    sessaoAvisosCampanhasI153(sessao,hoje);for(const executar of operacoes)executar();return criadas;
+  });
+}
+async function conferirAvisosCampanhasI153(forcar=false){
+  if(!['Chris','Amanda'].includes(usuarioAtual)||!auth.currentUser?.uid)return;
+  const sessao=sessaoServicoManual(),hoje=campHojeI7();
+  if(__rodadaCampanhasI153?.sessao===sessao)return __rodadaCampanhasI153.promessa;
+  if(!forcar&&__ultimaCampanhasI153?.sessao===sessao&&__ultimaCampanhasI153.hoje===hoje&&Date.now()-__ultimaCampanhasI153.em<60000)return;
+  const rodada={sessao};__rodadaCampanhasI153=rodada;
+  rodada.promessa=(async()=>{
+    try{
+      const snap=await campServidorI7(_getDocsFromServerFB(collection(db,'campanhas')),'Conferir avisos de campanhas');sessaoAvisosCampanhasI153(sessao,hoje);
+      let criadas=0;const falhas=[];
+      for(const registro of snap.docs){
+        try{const grupos=campanhaGruposI153(registro.data(),registro.id,hoje);for(const g of grupos)criadas+=await sincronizarGrupoCampanhaI153(registro.id,g.dataPublicacao,sessao,hoje);}
+        catch(e){sessaoAvisosCampanhasI153(sessao,hoje);falhas.push(registro.id);console.error('Conferência de campanha '+registro.id+':',e);}
+      }
+      sessaoAvisosCampanhasI153(sessao,hoje);if(falhas.length)throw Error(falhas.length+' campanha(s) precisam de conferência; nada foi encerrado.');
+      __ultimaCampanhasI153={sessao,hoje,em:Date.now()};
+      const el=document.getElementById('avisosCampanhasI153');if(el)el.textContent='Avisos de hoje e amanhã conferidos. Amanda e Cecília recebem nas demandas. A checagem roda com o portal aberto.';
+      return {criadas};
+    }catch(e){
+      console.error('Avisos de campanhas pendentes:',e);if(sessao===sessaoServicoManual()){const el=document.getElementById('avisosCampanhasI153');if(el)el.textContent='Não foi possível confirmar todos os avisos. Abra Campanhas novamente para tentar; nenhuma conferência foi encerrada.';}
+      // Falha permanece elegível para a próxima rodada; nunca vira sucesso vazio.
+      return {erro:true};
+    }finally{if(__rodadaCampanhasI153===rodada)__rodadaCampanhasI153=null;}
+  })();return rodada.promessa;
+}
+
 window.renderAcompCampanhas=renderCampanhasKanban;
 window.fecharCampanhaI7=function(){campI7.detalhe=null;++campI7.abertura;const b=document.getElementById('campanhaDetalheBox');if(b)b.innerHTML='';};
 window.abrirCampanha=async function(id){
@@ -31963,6 +32048,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   window.renderMinhasDemandasAtribuidas = async function(soRefiltrar,opcoes={}){
+    void conferirAvisosCampanhasI153();
     const lista = document.getElementById('listaMinhasDemandasAtribuidas');
     const empty = document.getElementById('emptyMinhasDemandasAtribuidas');
     if(!lista || !empty) return;
@@ -32605,6 +32691,7 @@ window.setGerenciaSub = function(qual, el){
     modal.innerHTML = `
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
+      ${htmlOrigemCampanhaI153(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${contextoCalendarioDemandaI117(d)&&papelPodeSubabaCalendariosV127(usuarioAtual,'editar')?`<div class="card" style="border:1px solid var(--yellow);margin:12px 0;"><div class="meta">Calendário de ${esc(d.clienteNome||d.clienteSlug||d.cliente)} · ${esc(d.competencia.split('-').reverse().join('/'))}</div><button type="button" class="btn" style="margin-top:8px;" onclick="abrirCalendarioDemandaI117('${escJs(d.id)}')">Abrir calendário deste ajuste</button><div class="meta" style="margin-top:8px;">Corrija o conteúdo indicado e envie o calendário para Amanda revisar.</div></div>`:''}
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
@@ -38557,6 +38644,7 @@ window.setGerenciaSub = function(qual, el){
       if(!demandaOperacionalVisivel(v) || v.status !== 'pendente') return;
       if(demandaIdentificadaServicoI19(v)) return; // Destinos exatos não se deduplicam por título.
       if(ehAvisoDistribuicaoI105(v)) return; // I53 já encerra só a atribuição exata.
+      if(v.tipoEspecial===TIPO_I153) return; // Campanha/data/IDs físicos não se deduplicam por título.
       const k = (v.destinatario||'') + '||' + norm(v.titulo) + identidadeRecorrenteDemanda(v) + (avisoLegadoServicoI19(v)?'|servico:'+JSON.stringify(v.leadId):'');
       (grupos[k] = grupos[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
     });
@@ -38938,6 +39026,7 @@ window.setGerenciaSub = function(qual, el){
       { nome: 'kitsGravacaoAmanha', fn: enviarKitsGravacaoAmanha },
       { nome: 'retaFinalPrazos', fn: verificarRetaFinalPrazos },
       { nome: 'coberturaPostagensAmanda', fn: verificarCoberturaPostagensAmanda },
+      { nome: 'conferenciaCampanhasI153', fn: () => conferirAvisosCampanhasI153(true) },
       { nome: 'emailsDemandasNovas', fn: verificarEmailsDemandasNovas },
       { nome: 'lembretesPrazoHoje', fn: verificarLembretesPrazoHoje },
       { nome: 'videosAtrasados', fn: verificarVideosAtrasadosEAlertar },
@@ -49263,6 +49352,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(nomeEquipeI126(d.destinatario))}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
+      ${htmlOrigemCampanhaI153(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${podeMexerNoPrazo ? `
       <div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">

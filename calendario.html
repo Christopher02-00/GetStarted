@@ -198,7 +198,7 @@
 <script type="module">
   import { nomeSessaoPublicaI39 } from './sessao-publica-i39.mjs?v=i39-1';
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, getDoc, getDocFromServer, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, getDocFromServer, getDocsFromServer, setDoc as _setDocFB, onSnapshot, collection, getDocs, addDoc as _addDocFB, query, where, serverTimestamp, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { initializeAuth, getAuth, browserLocalPersistence, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -541,9 +541,11 @@
     return true;
   })();
 
-  window.__fb = { docRef, doc, getDoc, getDocFromServer, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction };
+  window.__fb = { docRef, doc, getDoc, getDocFromServer, getDocsFromServer, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
   window.__mesSolicitadoCal = /^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) && mesSolicitado>='2026-07' ? mesSolicitado : '';
+  const authPlanejamentoI155=window.__calPronto;
+  window.__calPronto=(async()=>{const ok=await authPlanejamentoI155;if(ok)await window.prepararPlanejamentoEditorI155();return ok;})().catch(e=>{barrar('Planejamento não confirmado',e.message);return false;});
 </script>
 <script src="gs-gravacoes-cliente-i65.js?v=i144-2"></script>
 <script src="gs-aprovacao-conteudo-i68.js?v=i144-1"></script>
@@ -1441,9 +1443,12 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
   marcaPacote.mes=alvo;
   marcaPacote.por=marcaPacote.por||pacote.por||'equipe';
   marcaPacote.em=marcaPacote.em||pacote.em||new Date().toISOString();
+  if(window.__planejamentoEditorI155&&!pacote.operacaoI155)pacote.operacaoI155=crypto.randomUUID();
   let servidorConflitante=null;
   try{
     const confirmacao=await fb.runTransaction(fb.db,async transacao=>{
+      const contextoEnvioI155=window.__planejamentoEditorI155;
+      if(contextoEnvioI155){const ciclo=await transacao.get(fb.doc(fb.db,'planejamento_social_i155',contextoEnvioI155.ciclo));if(!ciclo.exists()||ciclo.data().documentos?.consolidadoEnviado!==contextoEnvioI155.base||ciclo.data().criacao?.base!==contextoEnvioI155.base)throw Error('A base do planejamento mudou. Compare o consolidado antes de enviar para a Amanda.');}
       const snap=await transacao.get(fb.docRef);
       if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
       const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data());
@@ -1468,6 +1473,7 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
       };
       if(window.__papelCalendarioEquipe==='Fernanda') patch.competenciaEdicaoSM=alvo;
       if(mesUsaCampoLegadoNoCalendario(servidor,alvo)) patch.aprovacaoInterna=marca;
+      if(contextoEnvioI155){patch.planejamentoBasesI155={...(servidor.planejamentoBasesI155||{}),[alvo]:contextoEnvioI155.base};patch.planejamentoMutacaoI155={mes:alvo,ciclo:contextoEnvioI155.ciclo,base:contextoEnvioI155.base,operacaoId:pacote.operacaoI155,autorUid:String(window.__fbAuthUid||'')};}
       transacao.set(fb.docRef,patch,{merge:true});
       return {marca,updatedAt,jaConfirmado:false};
     });
@@ -1485,6 +1491,10 @@ async function confirmarEnvioAprovacaoNoBanco(pacote){
     const conteudoConfirmado=assinaturaConteudoCompetenciaV125(retrato,alvo)===assinaturaConteudoCompetenciaV125(pacote.data,alvo);
     if(!marcaConfirmada||marcaConfirmada.status!=='aguardando_interna'||!conteudoConfirmado){
       return {ok:false,motivo:'recibo-pendente',etapa:'recibo',codigo:'gs/recibo-pendente',servidor:retrato};
+    }
+    if(window.__planejamentoEditorI155){
+      try{const {criarRepositorio}=await import('./gs-planejamento-social-i155.mjs');const fbAtual=window.__fb,ctx=window.__planejamentoEditorI155;const repo=criarRepositorio(fbAtual,()=>({uid:String(window.__fbAuthUid||''),nome:String(window.__papelCalendarioEquipe||''),atorReal:String(window.__atorRealCalendarioEquipe||''),sessao:String(window.__fbAuthUid||'')}),{});const atual=await repo.ler(ctx.ciclo);if(atual.ciclo.criacao?.base===ctx.base&&!atual.ciclo.criacao.enviadoRevisao)await repo.mutar(ctx.ciclo,'enviado_revisao',{},atual.ciclo.revisao,'revisao_'+pacote.operacaoI155);}
+      catch(e){console.warn('O envio foi confirmado; o acompanhamento do Planejamento será relido na aprovação.',e);}
     }
     return {ok:true,...confirmacao,marca:marcaConfirmada,
       updatedAt:String(retrato.updatedAt||confirmacao.updatedAt||''),
@@ -2445,6 +2455,34 @@ async function lerReciboServidorI36(ref,documentoEsperado,competencia,estadoEspe
 }
 /* Fim I36. */
 
+
+function podeCriarPlanejamentoI155(){return !!window.__planejamentoEditorI155&&window.__modoCal==='equipe'&&window.__papelCalendarioEquipe==='Chris'&&window.__atorRealCalendarioEquipe==='Chris';}
+window.prepararPlanejamentoEditorI155=async function(){
+  const p=new URLSearchParams(location.search),ciclo=p.get('planejamentoI155'),base=p.get('baseI155');
+  if(!ciclo&&!base)return;
+  if(window.__modoCal!=='equipe'||window.__papelCalendarioEquipe!=='Chris'||window.__atorRealCalendarioEquipe!=='Chris')throw Error('A criação deste planejamento pertence ao acesso Chris.');
+  const cliente=String(window.__clienteId||''),competencia=p.get('mes')||'';
+  if(ciclo!==competencia+'__'+cliente||!base)throw Error('Vínculo de planejamento inválido.');
+  const fb=window.__fb,ref=fb.doc(fb.db,'planejamento_social_i155',ciclo),s=await fb.getDocFromServer(ref);
+  if(!s.exists()||s.data().cliente!==cliente||s.data().competencia!==competencia||s.data().criacao?.base!==base||s.data().documentos?.consolidadoEnviado!==base)throw Error('A base de criação mudou. Confira o Planejamento antes de abrir este editor.');
+  window.__planejamentoEditorI155={ciclo,base,cliente,competencia};
+  const aviso=document.createElement('div');aviso.id='planejamentoEditorI155';aviso.style.cssText='padding:12px 18px;background:#293742;color:#d7edff;border-bottom:1px solid #83bfe7;font:600 13px system-ui;white-space:pre-wrap';aviso.textContent='Planejamento '+competencia+' · criação como Chris · base '+base;document.body.prepend(aviso);
+  const off=fb.onSnapshot(ref,snap=>{if(snap.metadata.fromCache)return;const mudou=!snap.exists()||snap.data().documentos?.consolidadoEnviado!==window.__planejamentoEditorI155?.base||snap.data().criacao?.base!==window.__planejamentoEditorI155?.base;aviso.textContent=mudou?'A base do planejamento mudou. Seus textos continuam aqui. Volte ao dossiê, compare as versões e confirme a nova base antes de salvar.':'Planejamento '+competencia+' · criação como Chris · base '+window.__planejamentoEditorI155.base;aviso.style.background=mudou?'#662b28':'#293742';},()=>{aviso.textContent='Não consegui acompanhar a base. Cada gravação será conferida no servidor; seus textos continuam protegidos.';});window.addEventListener('beforeunload',off,{once:true});
+};
+
+/* A comparação e a confirmação já foram registradas no dossiê. Conserva a tela e os rascunhos ao atualizar somente a base. */
+window.adotarBasePlanejamentoI155=async function(ciclo,base){
+  const atual=window.__planejamentoEditorI155;
+  if(!atual||atual.ciclo!==ciclo||atual.cliente!==String(window.__clienteId||'')||atual.competencia!==String(mesVisivel||'')||window.__papelCalendarioEquipe!=='Chris'||window.__atorRealCalendarioEquipe!=='Chris')return {ok:false};
+  if(pendingWrite||gravacoesCalendarioNaFila>0||salvandoItemI35||window.__enviandoAprovacaoInterna)return {ok:false};
+  const fb=window.__fb,uid=String(window.__fbAuthUid||''),s=await fb.getDocFromServer(fb.doc(fb.db,'planejamento_social_i155',ciclo));
+  if(window.__fb!==fb||String(window.__fbAuthUid||'')!==uid||window.__papelCalendarioEquipe!=='Chris'||window.__atorRealCalendarioEquipe!=='Chris'||window.__planejamentoEditorI155!==atual||atual.cliente!==String(window.__clienteId||'')||atual.competencia!==String(mesVisivel||'')||pendingWrite||gravacoesCalendarioNaFila>0||salvandoItemI35||window.__enviandoAprovacaoInterna)return {ok:false};
+  if(!s.exists()||s.data().documentos?.consolidadoEnviado!==base||s.data().criacao?.base!==base)return {ok:false};
+  guardarFormularioI35();guardarRascunho();window.__planejamentoEditorI155={...atual,base};
+  const aviso=document.getElementById('planejamentoEditorI155');if(aviso){aviso.textContent='Nova base confirmada no Planejamento. Seus textos continuam aqui; confira o conteúdo antes de salvar. Base '+base;aviso.style.background='#293742';}
+  return {ok:true,preservado:true};
+};
+
 async function executarGravacaoComSeguranca(){
   if(!window.__fb){pendingWrite=false;return {ok:false, motivo:'sem-conexao'};}
   const {docRef,doc,getDoc,db,runTransaction}=window.__fb;
@@ -2462,8 +2500,15 @@ async function executarGravacaoComSeguranca(){
     const local=clonarCalendarioV125(data);
     const clienteDaOperacaoI35=String(window.__clienteId||'');
     const agora=new Date().toISOString();
+    const operacaoI155=crypto.randomUUID();
     const backupRef=doc(db,'calendarios_versoes',String(window.__clienteId||'calendario')+'__'+agora.replace(/[:.]/g,'-'));
     const resultado=await runTransaction(db,async transacao=>{
+      const contextoI155=window.__planejamentoEditorI155;
+      if(contextoI155){
+        if(contextoI155.cliente!==String(window.__clienteId||'')||contextoI155.competencia!==alvo||window.__papelCalendarioEquipe!=='Chris'||window.__atorRealCalendarioEquipe!=='Chris')throw Error('Reabra a criação pelo ciclo e competência corretos.');
+        const planejamento=await transacao.get(doc(db,'planejamento_social_i155',contextoI155.ciclo));
+        if(!planejamento.exists()||planejamento.data().documentos?.consolidadoEnviado!==contextoI155.base||planejamento.data().criacao?.base!==contextoI155.base)throw Object.assign(Error('Amanda enviou uma nova base. Seus textos foram preservados; compare o consolidado no Planejamento antes de continuar.'),{code:'gs/base-planejamento-alterada-i155'});
+      }
       const snap=await transacao.get(docRef);
       if(!snap.exists()) throw Object.assign(new Error('Calendário ausente.'),{code:'gs/calendario-ausente'});
       const servidor=window.validarFonteCalendarioR4(docRef,snap.data());
@@ -2511,6 +2556,7 @@ async function executarGravacaoComSeguranca(){
       const patch={items:conciliado.itens,blocosPorMes:conciliado.documento.blocosPorMes||{},
         aprovacaoMeses:conciliado.documento.aprovacaoMeses||{},updatedAt:agora};
       if(window.__papelCalendarioEquipe==='Fernanda') patch.competenciaEdicaoSM=alvo;
+      if(contextoI155){patch.planejamentoBasesI155={...(servidor.planejamentoBasesI155||{}),[alvo]:contextoI155.base};patch.planejamentoMutacaoI155={mes:alvo,ciclo:contextoI155.ciclo,base:contextoI155.base,operacaoId:operacaoI155,autorUid:String(window.__fbAuthUid||'')};}
       transacao.set(docRef,patch,{merge:true});
       return {deveGuardarVersao,documentoConfirmado:{...servidor,...patch}};
     });
@@ -2834,7 +2880,7 @@ function podeEditarLegendaCalendarioI75(){
   // I86: o calendário e a Central leem a mesma legenda editorial.
   // Cópias de postagens mantêm o texto operacional na Central, sem outro editor.
   const item=editIdx!==null?data.items[editIdx]:null;
-  return window.__modoCal==='equipe'&&papelSocialMediaCalendarioI126()&&!!window.__fbAuthUid&&
+  return window.__modoCal==='equipe'&&(papelSocialMediaCalendarioI126()||podeCriarPlanejamentoI155())&&!!window.__fbAuthUid&&
     (window.__atorRealCalendarioEquipe===window.__papelCalendarioEquipe||window.__atorRealCalendarioEquipe==='Chris')&&item?.origemAgendamentoManualV118!==true;
 }
 function aplicarModoConsultaItem(ativo){
@@ -2963,7 +3009,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
   if(edicaoBloqueadaPorRevisao() && !legado){ exigirRetiradaAntesDeEditar(); return; }
   if(!itensDoMes(mesVisivel).length){ avisarTela('Este mês está vazio — monta o mês antes de enviar.', 'erro'); return; }
   if(legado && !confirm('Este calendário antigo está visível para o cliente. Ao enviar para a Amanda, ele entra no ciclo formal de revisão e fica temporariamente indisponível ao cliente até a decisão dela.\n\nContinuar?')) return;
-  const quem = papelSocialMediaCalendarioI126()&&window.__papelCalendarioEquipe!=='Gabrielle'?window.__atorRealCalendarioEquipe:prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
+  const quem = (podeCriarPlanejamentoI155()||papelSocialMediaCalendarioI126()&&window.__papelCalendarioEquipe!=='Gabrielle')?window.__atorRealCalendarioEquipe:prompt('Seu nome (pra registrar quem enviou):', 'Gabrielle');
   if(quem === null) return;
   const alvo = mesVisivel || mesDoTexto(data.month) || '';
   const rotuloOriginal=btn&&btn.textContent;
@@ -2978,7 +3024,7 @@ window.enviarParaAprovacaoInterna = async function(btn){
     const marca={status:'aguardando_interna',por:quem||'equipe',em:new Date().toISOString(),motivoAjuste:'',mes:alvo};
     const pacoteEnvioPendente={data:JSON.parse(JSON.stringify(data)),marca,em:marca.em,
       mes:alvo,competencia:alvo,cliente:String(window.__clienteId||''),por:marca.por,
-      hash:assinaturaConteudoCompetenciaV125(data,alvo),tentativas:0};
+      hash:assinaturaConteudoCompetenciaV125(data,alvo),tentativas:0,...(window.__planejamentoEditorI155?{operacaoI155:crypto.randomUUID()}:{} )};
     if(!conteudo||!conteudo.ok){
       guardarEnvioPendente(pacoteEnvioPendente);
       guardarRascunho(); pintarEstado(); renderAprovacaoInterna();
@@ -3061,7 +3107,7 @@ window.retirarDaAprovacaoInterna = async function(btn){
     ? 'A aprovação já dada pela Amanda será cancelada e o mês sairá da fila de envio ao cliente.'
     : 'O mês sairá da fila de revisão da Amanda.';
   if(!confirm('Retirar este mês da aprovação e voltar para rascunho?\n\n' + avisoEstado + '\n\nTodos os conteúdos serão preservados. Depois das alterações, será necessário enviar novamente.')) return;
-  const quem = papelSocialMediaCalendarioI126()&&window.__papelCalendarioEquipe!=='Gabrielle'?window.__atorRealCalendarioEquipe:prompt('Seu nome (pra registrar quem retirou):', 'Gabrielle');
+  const quem = (podeCriarPlanejamentoI155()||papelSocialMediaCalendarioI126()&&window.__papelCalendarioEquipe!=='Gabrielle')?window.__atorRealCalendarioEquipe:prompt('Seu nome (pra registrar quem retirou):', 'Gabrielle');
   if(quem === null) return;
 
   const alvo = mesVisivel || mesDoTexto(data.month) || '';
@@ -3207,7 +3253,7 @@ window.reabrirCalendarioPorPedidoClienteV113 = async function(btn){
    estética: é a diferença entre "ele não consegue" e "ele não vê como". */
 function aplicarModoCalendario(){
   const acoesV132=document.getElementById('acoesEditorCalendarioV132');
-  const gabiPodeCriar=window.__modoCal==='equipe'&&papelSocialMediaCalendarioI126();
+  const gabiPodeCriar=window.__modoCal==='equipe'&&(papelSocialMediaCalendarioI126()||podeCriarPlanejamentoI155());
   if(acoesV132){acoesV132.hidden=!gabiPodeCriar;acoesV132.setAttribute('aria-hidden',gabiPodeCriar?'false':'true');}
   if(window.__modoCal === 'equipe') return;
 
@@ -3909,8 +3955,8 @@ function quickPost(i){if(window.__modoCal!=='equipe')return false;if(clienteEmCo
 function quickUnpost(i){if(window.__modoCal!=='equipe')return false;if(clienteEmConsultaDeAjusteV115())return;if(exigirRetiradaAntesDeEditar())return;data.items[i].posted=false;renderAll();}
 
 window.abrirNovoConteudoMesV132=function(){
-  if(window.__modoCal!=='equipe'||!papelSocialMediaCalendarioI126()){
-    avisarTela('Esta ação rápida pertence à criação editorial da Gabi.','erro');return false;
+  if(window.__modoCal!=='equipe'||!(papelSocialMediaCalendarioI126()||podeCriarPlanejamentoI155())){
+    avisarTela('Abra a criação editorial pelo seu fluxo autorizado.','erro');return false;
   }
   const usados=new Set(itensEmpresaCalendarioI144(itensDoMes(mesVisivel)).map(i=>Number(i.day)).filter(n=>n>=1&&n<=diasDoMes()));
   let dia=1;while(dia<diasDoMes()&&usados.has(dia))dia++;
@@ -4113,7 +4159,7 @@ window.classificarVinculoLegendaEditorialV114=classificarVinculoLegendaEditorial
 
 async function sincronizarLegendaEditorialComCeciliaV114(item,itemIdx){
   const textoInicial=String(item?.legenda||'').trim();
-  if(!legendaUtilizavelI79(textoInicial)||window.__modoCal!=='equipe'||!papelSocialMediaCalendarioI126()) return {estado:'somente_planejamento'};
+  if(!legendaUtilizavelI79(textoInicial)||window.__modoCal!=='equipe'||!(papelSocialMediaCalendarioI126()||podeCriarPlanejamentoI155())) return {estado:'somente_planejamento'};
   const fb=window.__fb;
   const [porCliente,porSlug]=await Promise.all([
     fb.getDocs(fb.query(fb.collection(fb.db,'postagens'),fb.where('cliente','==',window.__clienteId))),
@@ -4313,7 +4359,7 @@ async function salvarItemNoSiteI35(){
   }
   limparFormularioConfirmadoI35(formularioEnviadoI35?.id);formularioI35=null;closeModal();
   avisarTela('Conteúdo confirmado no site.');
-  if(window.__modoCal==='equipe'&&papelSocialMediaCalendarioI126()&&String(it.legenda||'').trim()){
+  if(window.__modoCal==='equipe'&&(papelSocialMediaCalendarioI126()||podeCriarPlanejamentoI155())&&String(it.legenda||'').trim()){
     try{
       const confirmado=await confirmarConteudoAntesDoEnvio();
       if(!confirmado?.ok) throw new Error('A legenda ficou protegida como rascunho, mas o calendário ainda não foi confirmado na nuvem. Nada foi enviado para a Cecília.');

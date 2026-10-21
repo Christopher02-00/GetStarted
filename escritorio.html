@@ -9562,18 +9562,24 @@ window.marcarClienteAprovouVideo = async function(id){
   const FILMMAKERS_PAGAMENTO = [...DESTINATARIOS_DEMANDA];
   /* Conferir e liberar: grava as correções da Amanda E aprova, num
      clique. Antes eram duas coisas que não conversavam. */
-  window.conferirELiberarExtra = async function(id){
+  window.conferirELiberarExtra = async function(id, botao){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('Conferir e liberar extra é da Amanda.', 'erro'); return; }
-    const num = el => { const v = document.getElementById(el)?.value; return v === '' || v == null ? 0 : (parseFloat(v) || 0); };
+    const sessaoConferenciaI157 = sessaoServicoManual();
+    const cartaoConferenciaI157=botao?.closest('.item');
+    const camposConferenciaI157=new Map([...(cartaoConferenciaI157?.querySelectorAll('input[id]')||[])].map(el=>[el.id,el]));
+    if(!botao?.isConnected||!['apFilm_','apIda_','apVolta_','apLink_'].every(prefixo=>camposConferenciaI157.has(prefixo+id))){ mostrarToast('Abra o cartão deste extra na fila de conferência da Amanda.', 'erro'); return; }
+    const num = el => { const v = camposConferenciaI157.get(el)?.value; return v === '' || v == null ? 0 : (parseFloat(v) || 0); };
     const filmagem = num('apFilm_'+id);
     const ida = num('apIda_'+id), volta = num('apVolta_'+id);
     const uber = ida + volta;
-    const link = (document.getElementById('apLink_'+id)?.value||'').trim();
+    const link = (camposConferenciaI157.get('apLink_'+id)?.value||'').trim();
 
     let reg = null;
     try{ const sn = await getDoc(doc(db,'pagamentos_extra', id)); if(sn.exists()) reg = sn.data(); }
     catch(e){ console.error(e); mostrarToast('Não consegui ler o lançamento.', 'erro'); return; }
+    if(usuarioAtual !== 'Amanda' || sessaoServicoManual() !== sessaoConferenciaI157){ mostrarToast('Reabra a conferência no perfil da Amanda.', 'erro'); return; }
     if(!reg) return;
+    if(!extraAguardandoConferenciaI157(reg)){ mostrarToast('Este extra já foi excluído, pago ou liberado. Atualize a lista para conferir o estado atual.', 'erro'); renderGerenciaPagamentos(); return; }
     const tipo = tipoDoExtra(reg);
 
     if(uber > 0 && !link){
@@ -9710,6 +9716,7 @@ window.marcarClienteAprovouVideo = async function(id){
      divida e divida ate ser paga. Quem quiser recortar por mes recorta
      em cima disso, nao no lugar dela. */
   const extraLiberado = p => !p.informadoPelaPessoa || p.aprovadoPeloChris;
+  const extraAguardandoConferenciaI157 = p => !!p && !p.excluido && !p.pago && !extraLiberado(p);
 
   /* ===== COMPETENCIA DOS EXTRAS — 05/08/2026 ==========================
      Um extra tem dois meses diferentes, e confundir os dois fazia julho
@@ -10187,7 +10194,9 @@ window.marcarClienteAprovouVideo = async function(id){
       if(alvoExtrasNegado) alvoExtrasNegado.replaceChildren();
       return;
     }
-    await mapaTipoCliente();   // classifica antes de desenhar (ver tipoDoExtra)
+    const pessoaExtrasI157=usuarioAtual, sessaoExtrasI157=sessaoServicoManual();
+    await mapaTipoCliente();
+    if(usuarioAtual!==pessoaExtrasI157||sessaoServicoManual()!==sessaoExtrasI157) return;   // classifica antes de desenhar (ver tipoDoExtra)
     /* 30/07/2026 — a mesma tela agora é desenhada em dois lugares (o
        painel da Amanda e o Financeiro do Chris). Em vez de copiar o
        conteúdo, ela recebe onde desenhar. Uma implementação, dois
@@ -10195,6 +10204,8 @@ window.marcarClienteAprovouVideo = async function(id){
     if(alvoId) __alvoExtras = alvoId;
     const cont = document.getElementById(__alvoExtras) || document.getElementById('gerenciaPagamentos');
     if(!cont) return;   /* sem a guarda, um alvo ausente derruba o Promise.all inteiro */
+    const geracaoExtrasI157=Number(cont.dataset.renderExtrasI157||0)+1;
+    cont.dataset.renderExtrasI157=String(geracaoExtrasI157);
 
     /* ===== A CEGUEIRA DE MES — CONSERTADA EM 03/08/2026 ================
        A Amanda abriu a tela em 03/08 e ela estava ZERADA. Fui ao banco
@@ -10226,6 +10237,7 @@ window.marcarClienteAprovouVideo = async function(id){
     const mesDeHoje = hojeLocal().slice(0,7);
     if(!__mesExtras) __mesExtras = mesDeHoje;
     const snap = await getDocs(collection(db,'pagamentos_extra'));
+    if(usuarioAtual!==pessoaExtrasI157||sessaoServicoManual()!==sessaoExtrasI157||Number(cont.dataset.renderExtrasI157)!==geracaoExtrasI157||document.getElementById(cont.id)!==cont) return;
     const pagamentos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) pagamentos.push({id:d.id, ...v}); });
 
     /* Um lancamento sem mes nao pode desaparecer: ele cai no mes da data
@@ -10368,11 +10380,11 @@ window.marcarClienteAprovouVideo = async function(id){
 
        E o botão de aprovar checa o que não pode faltar: comprovante
        quando há Uber, valor quando é filmagem de cliente avulso. */
-    const informados = doMes.filter(p => p.informadoPelaPessoa && !p.aprovadoPeloChris);
+    const informados = usuarioAtual === 'Amanda' ? pagamentos.filter(extraAguardandoConferenciaI157) : [];
     if(informados.length){
       html += `<div class="card" style="border:2px solid var(--yellow);">
         <div class="metaSecTit">🔔 Conferir e liberar (${informados.length})</div>
-        <div class="desc" style="margin-bottom:12px;">O filmmaker registrou, você confere. <b>Só entra na folha do dia 15 depois que você liberar.</b> Dá pra corrigir os valores aqui mesmo antes de liberar.</div>
+        <div class="desc" style="margin-bottom:12px;">Pendências de todos os meses. O filmmaker registrou, você confere. <b>Só entra na folha do dia 15 depois que você liberar.</b> Confira a data e os valores de cada registro; o seletor acima filtra apenas o extrato.</div>
         ${informados.map(p => {
           const tipo = tipoDoExtra(p);
           const cc = contasDoExtra(p);
@@ -10408,7 +10420,7 @@ window.marcarClienteAprovouVideo = async function(id){
 
           <div class="btnrow" style="margin-top:14px;">
             <button class="btn red" style="padding:11px;font-size:12px;opacity:.8;" onclick="excluirPagamentoExtra('${p.id}')">Recusar</button>
-            <button class="btn green" style="padding:11px;font-size:12px;" onclick="conferirELiberarExtra('${p.id}')">✔ Conferir e liberar</button>
+            <button class="btn green" style="padding:11px;font-size:12px;" onclick="conferirELiberarExtra('${p.id}', this)">✔ Conferir e liberar</button>
           </div>
         </div>`;
         }).join('')}
@@ -10524,7 +10536,15 @@ window.marcarClienteAprovouVideo = async function(id){
         </div>`;
       });
     }
+    // A chegada de outro extra não apaga valores que a Amanda ainda está conferindo.
+    const camposExtrasI157=pessoaExtrasI157==='Amanda'?[...cont.querySelectorAll('input[id^="apFilm_"],input[id^="apIda_"],input[id^="apVolta_"],input[id^="apLink_"]')].filter(e=>e.value!==e.defaultValue).map(e=>({id:e.id,valor:e.value})):[];
+    const focoExtrasI157=cont.contains(document.activeElement)?document.activeElement:null;
+    const selecaoExtrasI157=focoExtrasI157&&typeof focoExtrasI157.selectionStart==='number'?[focoExtrasI157.selectionStart,focoExtrasI157.selectionEnd]:null;
     cont.innerHTML = html;
+    const camposAtuaisExtrasI157=new Map([...cont.querySelectorAll('input[id]')].map(el=>[el.id,el]));
+    for(const campo of camposExtrasI157){const el=camposAtuaisExtrasI157.get(campo.id);if(el)el.value=campo.valor;}
+    if(focoExtrasI157?.id){const el=camposAtuaisExtrasI157.get(focoExtrasI157.id);if(el){el.focus({preventScroll:true});if(selecaoExtrasI157)el.setSelectionRange(...selecaoExtrasI157);}}
+
   }
 
   window.aoTrocarClienteGestao = async function(){
@@ -26946,7 +26966,7 @@ window.setGerenciaSub = function(qual, el){
        que é onde vídeo e demanda são aprovados juntos. */
     if(qual==='aprovarVideos'){ irParaAprovacoes(); return; }
     if(qual==='lixeiraVideos') renderLixeiraVideos();
-    if(qual==='pagamentos') renderGerenciaPagamentos();
+    if(qual==='pagamentos') renderGerenciaPagamentos('gerenciaPagamentos');
     if(qual==='avaliacoes') renderGerenciaAvaliacoes();
     if(qual==='saudeClientes') renderGerenciaSaudeClientes();
     if(qual==='clientesExtras') renderClientesExtras();
@@ -32456,6 +32476,14 @@ window.setGerenciaSub = function(qual, el){
        decidir — vídeo esperando revisão + demanda pela regra da tela.
        Mesma regra da tela, de propósito: foi a divergência entre badge e
        tela que fez o Chris ver 6 e não achar 6. */
+    // A fila de conferência pode ficar aberta enquanto um extra é liberado em outra tela.
+    // Atualizar só o contador conserva os valores ainda digitados nos demais cartões.
+    const pendentesConferenciaI157 = usuarioAtual === 'Amanda' ? (cacheExtrasMenu||[]).filter(extraAguardandoConferenciaI157).length : 0;
+    document.querySelectorAll('[data-conferencia-extras-i157]').forEach(b => {
+      b.textContent = pendentesConferenciaI157 ? String(pendentesConferenciaI157) : '';
+      b.style.display = pendentesConferenciaI157 ? 'inline-flex' : 'none';
+    });
+
     /* Badge dos extras: somente pagamento já vencido. Extras de folhas
        futuras continuam visíveis no extrato, sem virar falso alarme. */
     try{
@@ -46105,8 +46133,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const prazosMeus = (pessoaDaFilaAprovacoes === 'Amanda' || (pessoaDaFilaAprovacoes === 'Chris' && estaAusente('Amanda'))) ? pedidosDePrazo : [];
     const filtro = window.__filtroAprov || 'tudo';
     const calendariosPendentesI148=__avisosCalendariosI148.sessao===sessaoServicoManual()?__avisosCalendariosI148.linhas.length:0;
-    const bolinha = n => n ? '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;">' + n + '</span>' : '';
-    const chip = (id, rot, n) => `<button class="btn ${filtro===id?'':'secondary'}" style="width:auto;padding:8px 15px;font-size:12px;" onclick="filtrarAprovacoes('${id}')">${rot}${bolinha(n)}</button>`;
+    const bolinha = (n, extras=false) => n || extras ? '<span '+(extras?'data-conferencia-extras-i157 ':'')+'style="display:'+(n?'inline-flex':'none')+';align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;">' + (n||'') + '</span>' : '';
+    const chip = (id, rot, n) => `<button class="btn ${filtro===id?'':'secondary'}" style="width:auto;padding:8px 15px;font-size:12px;" onclick="filtrarAprovacoes('${id}')">${rot}${bolinha(n,id==='extras')}</button>`;
 
     /* ===== 04/08/2026 — OS FILTROS ESTAVAM DEPOIS DA LISTA =====
        A fileira existia, mas nascia dentro do segundo card: a Amanda
@@ -46114,7 +46142,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
        como filtra-la. Filtro que aparece depois do conteudo nao filtra
        nada — ele explica, tarde, o que a pessoa ja leu.
        Agora ele e a PRIMEIRA coisa da tela, em todos os ramos. */
-    const extrasProConferir = pessoaDaFilaAprovacoes === 'Amanda' ? (cacheExtrasMenu||[]).filter(p => !p.pago && !extraLiberado(p)) : [];
+    const extrasProConferir = pessoaDaFilaAprovacoes === 'Amanda' ? (cacheExtrasMenu||[]).filter(extraAguardandoConferenciaI157) : [];
     const barraFiltros = `<div class="card" style="margin-bottom:14px;">
         <div style="font-size:12.5px;font-weight:800;margin-bottom:9px;">Filtrar o que precisa de você</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">

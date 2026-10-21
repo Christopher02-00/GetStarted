@@ -796,6 +796,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
       <div class="navitem" id="navDesafio" onclick="irPara('desafio', this)" style="background:var(--green);color:#fff;font-weight:800;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-star"/></svg></span> Desafio do Mês</div>
       <div class="navitem" id="navAcompCampanhas" onclick="irPara('campanhas', this)" style="background:var(--green);color:#fff;font-weight:800;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-bulb"/></svg></span> Campanhas<span class="navbadge" id="badgeCampanhasAcomp" style="display:none;"></span></div>
       <div class="navitem active" id="navInicio" onclick="irPara('inicio', this)"><span class="ico"><svg><use href="#i-home"/></svg></span> Início</div>
+      <div class="navitem" id="navPlanejamentoI155" style="display:none" onclick="abrirPlanejamentoI155()"><span class="ico"><svg><use href="#i-calendar"/></svg></span> Planejamento Social Media</div>
       <a class="navitem" id="navPedidosClientes" style="display:none;" href="https://docs.google.com/spreadsheets/d/1xeBHQDCH5NlCpfzM6FFy_1xIPqLQ82ddNvZgurQcP9E/edit?gid=798616005#gid=798616005" target="_blank" rel="noopener noreferrer"><span class="ico"><svg><use href="#i-clipboard"/></svg></span> Pedidos dos clientes</a>
       <div class="navitem" id="navCentral" onclick="irPara('central', this)" style="background:var(--yellow);color:var(--graphite);font-weight:800;border-radius:8px;margin:4px 0;"><span class="ico"><svg><use href="#i-video"/></svg></span> Central de Vídeos<span class="navbadge" id="badgeCentralMenu" style="display:none;"></span></div>
       <!-- 27/07/2026 — a Gerência ficava lá embaixo, depois de Vendas, e o
@@ -901,6 +902,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
       </div>
       <div id="avisosCalendariosI148" style="display:none"></div>
       <div id="avisosPlanejamentoI113" style="display:none"></div>
+      <div id="planejamentoInicioI155"></div>
       <div id="diarioInicioI118"></div>
       <div id="analisesInicioI108"></div>
       <div id="direcaoInicioI101"></div>
@@ -1252,6 +1254,7 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
     </div>
 
     <!-- I70: os atalhos de roteiros usam a Central de Calendários. -->
+    <div class="view" id="view-planejamentoSocial"><div id="planejamentoBoxI155"></div></div>
     <div class="view" id="view-referencias">
       <h1>🔗 <span class="y">Referências</span></h1>
       <div class="subtabs" id="subtabsRefs">
@@ -14341,17 +14344,18 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
   }
 
   async function renderFuncoesFixas(ano, mes, mesChave){
+    try{await garantirIndicePlanejamentoI155();}catch(e){__indicePlanejamentoI155.erro=e;}
     const resumoBox = document.getElementById('funcoesFixasResumo');
     const gridBox = document.getElementById('funcoesFixasGrid');
     const [snap,tiposSnap] = await Promise.all([
       getDocs(collection(db,'demandas')),
       ['Amanda','Chris'].includes(usuarioAtual)?getDocs(collection(db,'tipos_tarefa_fixa')):Promise.resolve(null)
     ]);
-    const tarefas = []; snap.forEach(d => { const v=d.data(); if(!v.excluido && v.tipoFuncaoFixa && v.prazoData?.startsWith(mesChave)) tarefas.push(v); });
+    const tarefas = []; snap.forEach(d => { const v=d.data(); if(!v.excluido&&v.tipoFuncaoFixa&&v.prazoData?.startsWith(mesChave)&&(!['calendario'].includes(v.tipoFuncaoFixa)||demandaOperacionalVisivel(v)))tarefas.push(v); });
     if(['Amanda','Chris'].includes(usuarioAtual)){
       const centralCalendarios=tarefas.find(t=>t.tipoFuncaoFixa==='calendario' && Array.isArray(t.checklistClientes));
       (centralCalendarios?.checklistClientes||[]).forEach(item=>{
-        if(!String(item.prazoData||'').startsWith(mesChave)) return;
+        if(!String(item.prazoData||'').startsWith(mesChave)||calendarioAssumidoPlanejamentoI155(centralCalendarios,item)) return;
         tarefas.push({
           titulo:'Calendário — '+(item.nome||item.slug),destinatario:'Gabrielle',
           prazoData:item.prazoData,status:item.feito?'aprovada':'programada',
@@ -14381,17 +14385,18 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
       const comChecklist = doTipo.filter(t => Array.isArray(t.checklistClientes) && t.checklistClientes.length);
       if(comChecklist.length){
         let tot=0, ok=0;
-        comChecklist.forEach(t => { tot += t.checklistClientes.length; ok += t.checklistClientes.filter(c=>c.feito).length; });
+        comChecklist.forEach(t => { tot += t.checklistClientes.filter(c=>!calendarioAssumidoPlanejamentoI155(t,c)).length; ok += t.checklistClientes.filter(c=>c.feito).length; });
         return { ok, tot };
       }
       return { ok: doTipo.filter(t=>t.status==='aprovada').length, tot: doTipo.length };
     };
     const pReuniao = progresso('reuniao');
-    const pCalend  = progresso('calendario');
+    const pCalend  = __indicePlanejamentoI155.pronto?progresso('calendario'):{ok:'—',tot:'—'};
+    const acompanhadosPlanejamentoI155=snap.docs.flatMap(d=>{const v=d.data();return v.tipoFuncaoFixa==='calendario'&&v.mesRef===mesChave?(v.checklistClientes||[]).filter(c=>calendarioAssumidoPlanejamentoI155(v,c)):[];}).length;
 
     resumoBox.innerHTML = `<div class="painelResumo">
       <div class="resumoCard"><div class="num">${pReuniao.ok}/${pReuniao.tot}</div><div class="lbl">Reuniões agendadas (Gabrielle)</div></div>
-      <div class="resumoCard"><div class="num">${pCalend.ok}/${pCalend.tot}</div><div class="lbl">Calendários entregues (Gabrielle)</div></div>
+      <div class="resumoCard"><div class="num">${pCalend.ok}/${pCalend.tot}</div><div class="lbl">Calendários na rotina mensal (Gabrielle)${acompanhadosPlanejamentoI155?' · '+acompanhadosPlanejamentoI155+' acompanhados na Central':''}${!__indicePlanejamentoI155.pronto?' · conferência indisponível':''}</div></div>
     </div>`;
 
     const [ano2, mes2] = mesChave.split('-').map(Number);
@@ -18522,19 +18527,11 @@ window.arquivarMesCampanhas=async function(mes,token){
     item.inicioData=inicioData; item.visivelAPartir=dataLocal(addDias(new Date(inicioData+'T12:00:00'),-2));
     item.prazoData=novaData; item.prazoHora='19:00'; item.obsPrazo=String(observacao||item.obsPrazo||'').trim();
     item.prazoConfiguradoPor='Amanda'; item.prazoConfiguradoEm=new Date().toISOString();
-    const configRef=doc(db,'tipos_tarefa_fixa','prazo_calendario_'+clienteSlug.replace(/[^a-zA-Z0-9_-]/g,'_'));
-    await setDoc(configRef,{
-      categoria:'prazo_calendario_cliente', clienteSlug, nome:'Calendário '+cliente.nome,
-      descricao:item.obsPrazo, responsavel:'Gabrielle', modo:'unica',
-      diaInicio:Number(inicioData.slice(8,10)), diaFixo:Number(novaData.slice(8,10)), antecedenciaDias:2, ativo:true, excluido:false,
-      atualizadoPor:'Amanda', atualizadoEm:serverTimestamp()
-    },{merge:true});
-    const novoPrazoPai=menorPrazoPendenteChecklist(checklist,principal.prazoData);
-    await updateDoc(doc(db,'demandas',principal.id),{
-      checklistClientes:checklist,
-      visivelAPartir:menorVisibilidadePendenteChecklist(checklist,principal.visivelAPartir),
-      ...camposAoAlterarPrazoDemanda(novoPrazoPai,'19:00','Amanda'),
-      atualizadoPor:'Amanda', atualizadoEm:serverTimestamp()
+    await runTransaction(db,async tx=>{
+      const ref=doc(db,'demandas',principal.id),[s,indice]=await Promise.all([tx.get(ref),tx.get(doc(db,'planejamento_social_indice_i155',mesAtual+'__'+clienteSlug))]);
+      if(usuarioAtual!=='Amanda')throw Error('O perfil mudou.');if(indice.data()?.incluido===true)throw Error('Este cliente é organizado no Planejamento Social Media. Ajuste as datas na agenda de lá.');if(!s.exists())throw Error('Demanda não encontrada.');const atual=s.data(),linhas=(atual.checklistClientes||[]).map(l=>({...l}));const i=linhas.findIndex(l=>l.slug===clienteSlug);if(i<0)linhas.push(item);else linhas[i]={...linhas[i],inicioData:item.inicioData,visivelAPartir:item.visivelAPartir,prazoData:item.prazoData,prazoHora:item.prazoHora,obsPrazo:item.obsPrazo,prazoConfiguradoPor:item.prazoConfiguradoPor,prazoConfiguradoEm:item.prazoConfiguradoEm};
+      tx.set(doc(db,'tipos_tarefa_fixa','prazo_calendario_'+clienteSlug.replace(/[^a-zA-Z0-9_-]/g,'_')),{categoria:'prazo_calendario_cliente',clienteSlug,nome:'Calendário '+cliente.nome,descricao:item.obsPrazo,responsavel:'Gabrielle',modo:'unica',diaInicio:Number(inicioData.slice(8,10)),diaFixo:Number(novaData.slice(8,10)),antecedenciaDias:2,ativo:true,excluido:false,atualizadoPor:'Amanda',atualizadoEm:serverTimestamp()},{merge:true});
+      tx.update(ref,{checklistClientes:linhas,visivelAPartir:menorVisibilidadePendenteChecklist(linhas,atual.visivelAPartir),...camposAoAlterarPrazoDemanda(menorPrazoPendenteChecklist(linhas,atual.prazoData),'19:00','Amanda'),atualizadoPor:'Amanda',atualizadoEm:serverTimestamp()});
     });
     registrarHistorico('demandas',principal.id,'Prazo do calendário de '+cliente.nome+' ajustado para '+novaData);
     mostrarToast('Prazo de '+cliente.nome+' salvo na demanda mensal e no calendário da Gabi.');
@@ -18550,6 +18547,7 @@ window.arquivarMesCampanhas=async function(mes,token){
   };
 
   async function gerarHtmlPrazosCalendarios(){
+    await garantirIndicePlanejamentoI155();
     const mesAtual=hojeLocal().slice(0,7);
     const principal=await demandaCalendariosDoMes(mesAtual);
     if(!principal) return '<div class="card"><h2>📅 Prazos dos calendários por cliente</h2><div class="desc">A demanda mensal ainda não foi gerada.</div></div>';
@@ -18557,7 +18555,7 @@ window.arquivarMesCampanhas=async function(mes,token){
     return `<div class="card" style="border:2px solid var(--yellow);">
       <h2>📅 Prazos dos calendários por cliente — ${mesAtual}</h2>
       <div class="desc">Os calendários e as datas que você configurou ficam aqui. Continua existindo uma única demanda mensal para a Gabi; cada cliente mantém seu próprio prazo dentro dela. O mês seguinte só será criado no dia 01.</div>
-      ${lista.map(item=>`<div class="item" style="margin-top:8px;">
+      ${lista.map(item=>calendarioAssumidoPlanejamentoI155(principal,item)?`<div class="item"><b>${esc(item.nome||item.slug)}</b><p>Acompanhado no Planejamento Social Media. A Amanda organiza as datas por lá.</p></div>`:`<div class="item" style="margin-top:8px;">
         <div class="top"><div class="nome">${esc(item.nome||item.slug)}</div><span class="selo ${item.feito?'aprovada':'pendente'}">${item.feito?'feito':'pendente'}</span></div>
         <div class="row2" style="margin-top:7px;">
           <div class="field"><label>Início</label><input type="date" id="inicioCal_${escAttr(item.slug)}" value="${escAttr(item.inicioData||item.prazoData||principal.prazoData||'')}" min="${mesAtual}-01" max="${mesAtual}-31"></div>
@@ -23182,6 +23180,44 @@ async function registrarGravacaoRealizadaNucleo(agId){
   }
   window.abrirAnalisesI108=abrirAnalisesI108;
 
+
+  // I155: a central privada projeta a mesma obrigação em Minhas Demandas e na agenda.
+  let planejamentoModuloI155=null,planejamentoMontadoI155=null,planejamentoGeracaoI155=0,planejamentoChaveI155='',planejamentoDestinoI155=null;
+  function limparPlanejamentoI155(){++planejamentoGeracaoI155;planejamentoChaveI155='';planejamentoMontadoI155?.destroy();planejamentoMontadoI155=null;['planejamentoInicioI155','planejamentoBoxI155'].forEach(id=>document.getElementById(id)?.replaceChildren());}
+  const contextoPlanejamentoI155=()=>({uid:auth.currentUser?.uid||'',nome:usuarioAtual,atorReal:atorRealDaSessao(),sessao:sessaoServicoManual()});
+  async function repoPlanejamentoI155(){
+    planejamentoModuloI155??=import('./gs-planejamento-social-i155.mjs?v=155');const mod=await planejamentoModuloI155;
+    const repo=mod.criarRepositorio({db,doc,collection,query,where,getDocsFromServer:_getDocsFromServerFB,getDocFromServer:_getDocFromServerFB,runTransaction,serverTimestamp},contextoPlanejamentoI155,{
+      clientes:async(mes,forcar)=>{if(forcar)await revalidarCarteiraCalendarioV127();return clientesCalendarioRecorrentesConfirmados(mes);},
+      origens:async cliente=>{const snaps=await Promise.all(['referencias','referencias_cliente'].map(col=>_getDocsFromServerFB(query(collection(db,col),where('cliente','==',cliente)))));return snaps.flatMap((s,i)=>s.docs.filter(d=>d.data().excluido!==true).map(d=>({...d.data(),id:d.id,origemColecao:i?'referencias_cliente':'referencias'})));},
+      calendario:async(cliente,mes,cal)=>{const m=cal?.aprovacaoMeses?.[mes],r=m?.retratoLiberadoV115;return {disponivel:estadoMesCal(cal,mes)==='liberado'&&r?.mes===mes&&!!r.items?.length,assinatura:JSON.stringify(r?.items||[])};},
+      feriados:async mes=>{const ano=Number(String(mes||hojeLocal()).slice(0,4));return [...new Set([...obterFeriados(ano-1),...obterFeriados(ano),...obterFeriados(ano+1)])];},
+      ausencias:async()=>{const s=await _getDocsFromServerFB(collection(db,'ausencias'));return s.docs.map(d=>({...d.data(),id:d.id}));}
+    });return {mod,repo};
+  }
+  async function montarPlanejamentoI155(){
+    const pessoa=usuarioAtual,sessao=sessaoServicoManual(),rota=viewAtiva,chave=[pessoa,sessao,rota].join('|');
+    if(planejamentoMontadoI155&&planejamentoChaveI155===chave)return;
+    limparPlanejamentoI155();const n=planejamentoGeracaoI155;
+    if(!['Chris','Amanda','Fernanda'].includes(pessoa)||!['inicio','planejamentoSocial'].includes(rota)||!auth.currentUser?.uid)return;
+    const box=document.getElementById(rota==='inicio'?'planejamentoInicioI155':'planejamentoBoxI155');if(!box)return;
+    box.innerHTML='<div class="card" role="status">Preparando o planejamento do mês…</div>';
+    try{const {mod,repo}=await repoPlanejamentoI155();if(n!==planejamentoGeracaoI155||sessao!==sessaoServicoManual()||rota!==viewAtiva)return;
+      planejamentoMontadoI155=mod.montarCentral(box,{repo,contexto:contextoPlanejamentoI155,compacto:rota==='inicio',mesInicial:planejamentoDestinoI155?.mes,
+        abrir:(id,mes,etapa)=>abrirPlanejamentoI155(id,mes,etapa),
+        editor:async(c,base)=>{if(base&&usuarioAtual!=='Chris')throw Error('A criação desta etapa é operada como Chris.');if(window.irParaCentralCalendarios('editar')===false)return;await window.abrirCalendarioFerramentas(c.cliente,c.clienteNome,c.competencia,base?{ciclo:c.id,base}:null);},
+        agendaAnterior:async(cliente,mes)=>{const s=await _getDocsFromServerFB(query(collection(db,'demandas'),where('tipoFuncaoFixa','==','calendario')));return s.docs.flatMap(d=>(d.data().checklistClientes||[]).filter(l=>l.slug===cliente).map(l=>({origemId:d.id,mesOperacional:d.data().mesRef||'',competenciaEscolhida:mes,cliente,linha:l})));}
+      });planejamentoChaveI155=chave;
+      if(planejamentoDestinoI155&&rota==='planejamentoSocial'){const dest=planejamentoDestinoI155;planejamentoDestinoI155=null;await planejamentoMontadoI155.ready;if(n!==planejamentoGeracaoI155||sessao!==sessaoServicoManual())return;if(dest.id)await planejamentoMontadoI155.abrir(dest.id,dest.etapa);}
+    }catch(e){if(n===planejamentoGeracaoI155&&sessao===sessaoServicoManual()){box.innerHTML='<div class="card"><p>O planejamento não carregou. As outras áreas continuam disponíveis.</p><button class="btn secondary" onclick="montarPlanejamentoI155()">Tentar novamente</button></div>';mostrarToast(e.message,'erro');}planejamentoModuloI155=null;}
+  }
+  window.montarPlanejamentoI155=montarPlanejamentoI155;
+  window.abrirPlanejamentoI155=function(id,mes,etapa){if(!['Chris','Amanda','Fernanda'].includes(usuarioAtual)){mostrarToast('Este planejamento não pertence ao seu perfil.','erro');return false;}planejamentoDestinoI155={id,mes,etapa};if(viewAtiva==='planejamentoSocial'&&planejamentoMontadoI155){planejamentoDestinoI155=null;if(id)return planejamentoMontadoI155.abrir(id,etapa);return;}return irPara('planejamentoSocial',document.getElementById('navPlanejamentoI155'));};
+  function htmlOrigemPlanejamentoI155(d){const p=d?.planejamentoI155;if(p?.versao!==1||!['Chris','Amanda','Fernanda'].includes(usuarioAtual))return '';return '<div class="card"><b>Planejamento · '+esc(p.competencia)+'</b><p class="meta">'+esc(d.clienteNome||p.cliente)+' · '+esc(p.etapa)+'</p><button type="button" class="btn secondary" data-id="'+escAttr(d.id)+'" onclick="origemPlanejamentoI155(this.dataset.id)">Abrir esta etapa e os materiais</button><p class="meta">A conclusão da etapa é conferida na origem. Esta demanda organiza o mesmo trabalho.</p></div>';}
+  function fichaDemandaPlanejamentoI155(d,modal){if(d?.tipoEspecial!=='planejamento_social_i155'||d.planejamentoI155?.versao!==1)return false;modal.innerHTML='<h2>'+tituloDemanda(d)+'</h2><div class="linha" style="white-space:pre-wrap;">'+linkifyDescricao(d.descricao||'')+'</div><p>Responsável: '+esc(nomeEquipeI126(d.destinatario))+' · prazo '+esc(formatarDataBR(d.prazoData))+'</p>'+htmlOrigemPlanejamentoI155(d)+'<p class="meta">Faça o trabalho pelo botão acima. Quando a etapa for concluída lá, esta demanda acompanha a atualização. A Amanda organiza os prazos na agenda do Planejamento.</p><details><summary>Histórico desta etapa</summary>'+((d.historico||[]).map(h=>'<p>'+esc(h.acao||'Atualização')+' · '+esc(h.por||'Equipe')+'</p>').join('')||'<p>Sem alteração de prazo registrada.</p>')+'</details><button class="btn secondary" onclick="fecharModal()">Fechar</button>';document.getElementById('overlayView').classList.add('show');return true;}
+  window.origemPlanejamentoI155=async function(id){const sessao=sessaoServicoManual(),s=await _getDocFromServerFB(doc(db,'demandas',id));if(sessao!==sessaoServicoManual()||!s.exists())return;const d=s.data(),p=d.planejamentoI155;if(p?.versao!==1||!['Chris','Amanda','Fernanda'].includes(usuarioAtual)||!['Chris','Amanda'].includes(usuarioAtual)&&d.destinatario!==usuarioAtual)return;fecharModal();return abrirPlanejamentoI155(p.ciclo,p.competencia,p.etapa);};
+  async function conferirEntregaPlanejamentoI155(cliente,mes){if(!['Amanda','Chris'].includes(usuarioAtual))return;const ref=doc(db,'planejamento_social_i155',mes+'__'+cliente);let s=await _getDocFromServerFB(ref);if(!s.exists()||!s.data().criacao)return;const {repo}=await repoPlanejamentoI155();if(!s.data().criacao.enviadoRevisao){const sincronizado=await repo.mutar(ref.id,'enviado_revisao',{},s.data().revisao,'sync_revisao_'+crypto.randomUUID().replaceAll('-',''));s= {exists:()=>true,data:()=>sincronizado.ciclo};}const cal=await _getDocFromServerFB(doc(db,'calendarios',cliente));const publicacao=cal.data()?.aprovacaoMeses?.[mes]?.aprovadoEm||'';const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ref.id+'|'+s.data().criacao.base+'|'+publicacao));const op='entrega_'+Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');return repo.mutar(ref.id,'entrega',{},s.data().revisao,op);}
+
   // I118: registro humano por dia, independente das filas e do checklist oficial.
   let diarioModuloI118=null,diarioMontadoI118=null,diarioAberturaI118=0,diarioChaveI118='',diarioDataI118='';
   function podeSairDiarioI118(){return diarioMontadoI118?.canLeave?.()!==false;}
@@ -23298,9 +23334,27 @@ async function registrarGravacaoRealizadaNucleo(agId){
     toastTimeout = setTimeout(()=>{ t.classList.remove('show'); }, 3500);
   };
 
+  // Projeção mínima de organização: não contém referências, reuniões ou textos privados.
+  let __indicePlanejamentoI155={uid:'',pronto:false,mapa:new Map(),promessa:null};
+  function aplicarIndicePlanejamentoI155(snap){const uid=String(auth.currentUser?.uid||'');__indicePlanejamentoI155={uid,pronto:true,mapa:new Map(snap.docs.map(d=>[d.id,d.data()])),promessa:null};}
+  async function garantirIndicePlanejamentoI155(forcar=false){
+    const uid=String(auth.currentUser?.uid||'');if(!uid)throw Error('Entre novamente para conferir a organização dos calendários.');
+    if(__indicePlanejamentoI155.uid===uid&&__indicePlanejamentoI155.pronto&&!forcar)return __indicePlanejamentoI155.mapa;
+    if(__indicePlanejamentoI155.uid===uid&&__indicePlanejamentoI155.promessa)return __indicePlanejamentoI155.promessa;
+    const estado={uid,pronto:false,mapa:new Map(),promessa:null};__indicePlanejamentoI155=estado;
+    estado.promessa=comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,'planejamento_social_indice_i155')),'A organização das etapas de calendário',12000).then(snap=>{if(String(auth.currentUser?.uid||'')!==uid)throw Error('A sessão mudou.');if(__indicePlanejamentoI155!==estado&&__indicePlanejamentoI155.uid===uid&&__indicePlanejamentoI155.pronto)return __indicePlanejamentoI155.mapa;aplicarIndicePlanejamentoI155(snap);return __indicePlanejamentoI155.mapa;}).catch(e=>{if(__indicePlanejamentoI155===estado)estado.promessa=null;throw e;});return estado.promessa;
+  }
+  function calendarioAssumidoPlanejamentoI155(d,item){if(d?.tipoFuncaoFixa!=='calendario'||item?.feito)return false;const mes=String(d.mesRef||'');if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)||!item?.slug)return false;return __indicePlanejamentoI155.uid===String(auth.currentUser?.uid||'')&&__indicePlanejamentoI155.pronto&&__indicePlanejamentoI155.mapa.get(mes+'__'+item.slug)?.incluido===true;}
+  function projetarCobrancaCalendarioI155(d){
+    if(d?.tipoFuncaoFixa!=='calendario'||d.ehLinhaCalendarioMensal===true||!Array.isArray(d.checklistClientes)||!__indicePlanejamentoI155.pronto||__indicePlanejamentoI155.uid!==String(auth.currentUser?.uid||''))return d;
+    const pendentes=d.checklistClientes.filter(c=>!c.feito&&!calendarioAssumidoPlanejamentoI155(d,c));
+    const datas=pendentes.map(c=>c.prazoData||d.prazoData).filter(Boolean).sort(),visiveis=pendentes.map(c=>c.visivelAPartir||d.visivelAPartir).filter(Boolean).sort();
+    return {...d,...(datas.length?{prazoData:datas[0],prazoHora:pendentes.find(c=>(c.prazoData||d.prazoData)===datas[0])?.prazoHora||d.prazoHora||'19:00'}:{}),...(visiveis.length?{visivelAPartir:visiveis[0]}:{})};
+  }
+  function calendarioLegadoSemAcaoI155(d){return d?.tipoFuncaoFixa==='calendario'&&d.status==='pendente'&&Array.isArray(d.checklistClientes)&&d.checklistClientes.some(c=>!c.feito)&&d.checklistClientes.every(c=>c.feito||calendarioAssumidoPlanejamentoI155(d,c));}
   let todasDemandas = [];
   function demandaOperacionalVisivel(demanda){
-    if(!demanda || demanda.excluido===true) return false;
+    if(!demanda || demanda.excluido===true || demanda.planejamentoI155?.ativo===false) return false;
     if(String(demanda.status||'').toLowerCase().startsWith('cancelad')) return false;
     /* Aviso de extra não pode continuar como demanda depois que o
        lançamento já foi conferido, pago ou removido. A cache financeira
@@ -23308,6 +23362,8 @@ async function registrarGravacaoRealizadaNucleo(agId){
        nem consulta valores de colegas. Também neutraliza avisos legados
        que ficaram abertos antes da correção V27. */
     if(demandaDeExtraJaResolvida(demanda)) return false;
+    if(demanda.tipoFuncaoFixa==='calendario'&&(!__indicePlanejamentoI155.pronto||__indicePlanejamentoI155.uid!==String(auth.currentUser?.uid||'')))return false;
+    if(calendarioLegadoSemAcaoI155(demanda))return false;
     if(!['Amanda','Chris'].includes(usuarioAtual) && demanda.visivelAPartir && demanda.visivelAPartir>hojeLocal()) return false;
     return true;
   }
@@ -23331,7 +23387,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       }
       const pendentes = demanda.checklistClientes
         .map((item, indice) => ({item, indice}))
-        .filter(x => !x.item.feito && (!x.item.visivelAPartir || x.item.visivelAPartir <= hoje));
+        .filter(x => !x.item.feito && !calendarioAssumidoPlanejamentoI155(demanda,x.item) && (!x.item.visivelAPartir || x.item.visivelAPartir <= hoje));
       if(!pendentes.length && demanda.status !== 'pendente'){
         resultado.push(demanda);
         return;
@@ -23360,7 +23416,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       d.destinatario === pessoa &&
       (opts.somentePendentes ? d.status === 'pendente' : d.status !== 'aprovada') &&
       (opts.incluirEscalacao || !d.escalacaoGerencial));
-    return expandirCalendariosDaPessoa(base, pessoa);
+    return expandirCalendariosDaPessoa(base, pessoa).map(projetarCobrancaCalendarioI155);
   }
   window.demandasVisiveisDaPessoa = demandasVisiveisDaPessoa;
   let usuarioAtual = '';
@@ -23400,6 +23456,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       const snap = await getDocs(collection(db,colecao));
       docs = snap.docs;
     }
+    if(colecao==='demandas')docs=docs.map(registro=>({id:registro.id,ref:registro.ref,exists:()=>registro.exists(),data:()=>projetarCobrancaCalendarioI155(registro.data())}));
     if(typeof filtro === 'function') docs = docs.filter(registro => filtro(registro.data()));
     return { docs, size:docs.length, empty:!docs.length, forEach:fn=>docs.forEach(fn) };
   }
@@ -23410,7 +23467,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
   /* Itens exclusivos não ficam apenas escondidos: fora do papel certo
      eles são retirados do DOM e voltam pelo marcador ao trocar de conta. */
   const __sidebarExclusivos = new Map();
-  ['navCadastro','view-cadastro','navContratosAmanda','view-contratos','navAprovacoes','navExtras','navgroupVendas','view-mensalidades','view-financeiro','view-cobranca','navMensagensClientesChris','view-mensagensClientesChris','view-centralVendas','subtabGerenciaAvulsos','gerenciaAvulsos','gerenciaFunilNegocios','navAcompCampanhas','view-campanhas','navCofreCecilia','view-cofreCecilia','navVideos','view-videos'].forEach(id=>{
+  ['navPlanejamentoI155','view-planejamentoSocial','navCadastro','view-cadastro','navContratosAmanda','view-contratos','navAprovacoes','navExtras','navgroupVendas','view-mensalidades','view-financeiro','view-cobranca','navMensagensClientesChris','view-mensagensClientesChris','view-centralVendas','subtabGerenciaAvulsos','gerenciaAvulsos','gerenciaFunilNegocios','navAcompCampanhas','view-campanhas','navCofreCecilia','view-cofreCecilia','navVideos','view-videos'].forEach(id=>{
     const no=document.getElementById(id); if(!no?.parentNode) return;
     const marca=document.createComment('slot-'+id);
     no.parentNode.insertBefore(marca,no);
@@ -23426,6 +23483,8 @@ async function registrarGravacaoRealizadaNucleo(agId){
   }
   function sincronizarSidebarDOMPorPapel(){
     const gestao=['Chris','Amanda'].includes(usuarioAtual);
+    definirItemExclusivoNoDOM('navPlanejamentoI155',['Chris','Amanda','Fernanda'].includes(usuarioAtual));
+    definirItemExclusivoNoDOM('view-planejamentoSocial',['Chris','Amanda','Fernanda'].includes(usuarioAtual));
     const podeCampanhas=['Chris','Amanda','Cecília','Gabrielle','Fernanda'].includes(usuarioAtual);
     definirItemExclusivoNoDOM('navCadastro',gestao);
     definirItemExclusivoNoDOM('view-cadastro',gestao);
@@ -24207,9 +24266,11 @@ async function registrarGravacaoRealizadaNucleo(agId){
   const VIEWS_SO_CHRIS = ['mensalidades','financeiro','centralVendas','cobranca','mensagensClientesChris'];
   window.irPara = function(nome, el, opcoes){
     // I118: o primeiro incremento libera apenas estas jornadas; atalhos antigos respeitam a mesma porta.
-    if(usuarioAtual==='Fernanda'&&!['inicio','minhasDemandasAtribuidas','minhasDemandas','checklist','diarioEquipe','postagens','desafio','analisesMensais','campanhas','funcoesFixas','portalGeral','getAcademy','roteiros','referencias','briefings','acompanhamento','relatorioMensal','calendarios','manualFuncao','duvidasBit','arquivoEntregas','stories'].includes(nome)){
+    if(usuarioAtual==='Fernanda'&&!['inicio','planejamentoSocial','minhasDemandasAtribuidas','minhasDemandas','checklist','diarioEquipe','postagens','desafio','analisesMensais','campanhas','funcoesFixas','portalGeral','getAcademy','roteiros','referencias','briefings','acompanhamento','relatorioMensal','calendarios','manualFuncao','duvidasBit','arquivoEntregas','stories'].includes(nome)){
       mostrarToast('Esta área ainda não está disponível no seu perfil. Use Minhas Demandas ou Registro do dia.','erro');return false;
     }
+    if(nome!==viewAtiva&&planejamentoMontadoI155?.canLeave?.()===false)return false;
+    if(nome==='planejamentoSocial'&&!['Chris','Amanda','Fernanda'].includes(usuarioAtual)){mostrarToast('Este planejamento pertence à Amanda, Júlia e Chris.','erro');return false;}
     if(nome!==viewAtiva&&!podeSairDiarioI118())return false;
     if(nome==='diarioEquipe'&&!['Fernanda','Amanda','Chris'].includes(usuarioAtual)){mostrarToast('Este registro é da Júlia e da gestão.','erro');return false;}
     if(nome==='metas'){nome='desafio';el=document.getElementById('navDesafio');}
@@ -24318,6 +24379,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       try{ window.tentarAbrirGerenciaLembrada(); }
       catch(e){ console.error('Falha ao tentar a gerência lembrada:', e); }
     }
+    if(['inicio','planejamentoSocial'].includes(nome))montarPlanejamentoI155();else limparPlanejamentoI155();
     if(['inicio','diarioEquipe'].includes(nome))abrirDiarioI118();else limparDiarioI118();
     if(['inicio','analisesMensais'].includes(nome))abrirAnalisesI108();else limparAnalisesI108();
     if(nome === 'desafio')abrirDesafioI99();
@@ -27258,6 +27320,7 @@ window.setGerenciaSub = function(qual, el){
   };
 
   function calcularUrgencia(demanda){
+    demanda=projetarCobrancaCalendarioI155(demanda);
     if(ehAvisoDistribuicaoI105(demanda)) return 'normal';
     if(demanda.status !== 'pendente') return 'normal';
     /* Espera do cliente sai do atraso. A equipe não pode ser cobrada por
@@ -28181,6 +28244,8 @@ window.setGerenciaSub = function(qual, el){
     const ler=opcoes.servidor===true?_getDocsFromServerFB:getDocs;
     try{
       validar();
+      try{await garantirIndicePlanejamentoI155();}catch(e){__indicePlanejamentoI155.erro=e;console.warn('Cobrança de calendários indisponível; demais demandas preservadas.',e);}
+      validar();
       const ehGestao = usuarioAtual === 'Amanda' || usuarioAtual === 'Chris';
       const snaps = ehGestao
         ? [await ler(collection(db,'demandas'))]
@@ -28311,6 +28376,7 @@ window.setGerenciaSub = function(qual, el){
      respostas assíncronas; depois remove todo retrato privilegiado que
      poderia atravessar Chris ↔ Amanda ↔ equipe no mesmo navegador. */
   function limparEstadoPrivadoTrocaIdentidade(){
+    limparPlanejamentoI155();planejamentoDestinoI155=null;
     limparDiarioI118();diarioDataI118='';
     limparAvisosPlanejamentoI113();
     pararBadgeCampanhasI104();
@@ -28554,7 +28620,7 @@ window.setGerenciaSub = function(qual, el){
 
     await etapaSegura('recarregar demandas', carregarTodasDemandas);
     await etapaSegura('aviso início', async () => renderAvisoInicio());
-    if(viewAtiva==='inicio'){abrirDirecaoI101();abrirAnalisesI108();abrirDiarioI118();}
+    if(viewAtiva==='inicio'){abrirDirecaoI101();abrirAnalisesI108();abrirDiarioI118();montarPlanejamentoI155();}
     await etapaSegura('meu dia', async () => renderMeuDia());
     /* ===== REMOVIDO 22/07/2026 — pedido do Chris =====
        "Resumo do Dia" e "Atrasadas" eram quase duplicatas, e o Resumo do
@@ -29174,14 +29240,14 @@ window.setGerenciaSub = function(qual, el){
        de fora da lista e perdeu o acesso por completo: o botão de criar
        story pro cliente simplesmente sumiu pra ela. Ela é a Social Media
        chefe — é a dona natural disso. */
-    'Amanda': ['navPedidosClientes','navDiarioI118','navAnalisesI108','navDirecao','navAcompCampanhas','navMetas','navExtras','navRoteiros','navCentral','navAprovacoes','navChecklist','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos','navControlePostagem'],
+    'Amanda': ['navPlanejamentoI155','navPedidosClientes','navDiarioI118','navAnalisesI108','navDirecao','navAcompCampanhas','navMetas','navExtras','navRoteiros','navCentral','navAprovacoes','navChecklist','navAgendamento','navFuncoesFixas','navPostagens','navStories','navPortalGeral','navGetAcademy','navRelatorio','navCalendarios','navCadastro','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navReferencias','navVideos','navControlePostagem'],
     'Cecília': ['navAcompCampanhas','navChecklist','navVideos','navAgendamento','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navCalendarios','navBriefings','navAcompanhamento','navManualFuncao','navDuvidasBit','navArquivoEntregas','navControlePostagem','navCofreCecilia'],
     'Gabrielle': ['navPedidosClientes','navAnalisesI108','navAcompCampanhas','navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
     'Helo': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'João Victor': ['navVideos','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'Nathan': ['navAcompanhamento','navVideos','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
     'Luís': ['navDirecao','navAcompanhamento','navVideos','navChecklist','navAgendamento','navCalendarios','navGetAcademy','navManualFuncao','navDuvidasBit','navArquivoEntregas'],
-    'Fernanda': ['navPedidosClientes','navAnalisesI108','navAcompCampanhas','navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas','navDiarioI118'],
+    'Fernanda': ['navPlanejamentoI155','navPedidosClientes','navAnalisesI108','navAcompCampanhas','navChecklist','navFuncoesFixas','navPostagens','navPortalGeral','navGetAcademy','navRoteiros','navReferencias','navBriefings','navAcompanhamento','navRelatorio','navCalendarios','navManualFuncao','navDuvidasBit','navArquivoEntregas','navDiarioI118'],
     'Yas': ['navGetAcademy','navManualFuncao','navDuvidasBit','navChecklist','navArquivoEntregas'],
   };
   function papelPodeControlePostagem(pessoa){
@@ -29189,6 +29255,7 @@ window.setGerenciaSub = function(qual, el){
   }
   window.papelPodeControlePostagem=papelPodeControlePostagem;
   const ITENS_CONTROLADOS = [
+    'navPlanejamentoI155',
     'navPedidosClientes',
     'navDiarioI118',
     'navAnalisesI108',
@@ -29216,17 +29283,17 @@ window.setGerenciaSub = function(qual, el){
        não achar mais a tela: "quero ela visível e fácil de achar como
        era antes". Tirar a porta não é o mesmo que tirar a sala
        duplicada. */
-    'Chris': ['navPedidosClientes','navDiarioI118','navAnalisesI108','navDirecao','navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes','navExtras'],
+    'Chris': ['navPlanejamentoI155','navPedidosClientes','navDiarioI118','navAnalisesI108','navDirecao','navVideos','navAgendamento','navPostagens','navCalendarios','navAprovacoes','navExtras'],
     /* 29/07/2026 — o dia a dia dela passou a incluir o que ela realmente
        faz de manhã: distribuir vídeo e acompanhar referência. */
-    'Amanda': ['navPedidosClientes','navDiarioI118','navAnalisesI108','navDirecao','navCentral','navAprovacoes','navAgendamento','navVideos','navStories','navPostagens','navControlePostagem','navCalendarios','navReferencias','navAcompCampanhas','navFuncoesFixas'],
+    'Amanda': ['navPlanejamentoI155','navPedidosClientes','navDiarioI118','navAnalisesI108','navDirecao','navCentral','navAprovacoes','navAgendamento','navVideos','navStories','navPostagens','navControlePostagem','navCalendarios','navReferencias','navAcompCampanhas','navFuncoesFixas'],
     'Cecília': ['navCalendarios','navAcompCampanhas','navControlePostagem','navAgendamento','navPostagens','navVideos','navCofreCecilia'],
     'Gabrielle': ['navPedidosClientes','navAnalisesI108','navCalendarios','navPostagens','navAcompCampanhas','navReferencias'],
     'Helo': ['navVideos'],
     'João Victor': ['navVideos'],
     'Nathan': ['navVideos','navAgendamento','navCalendarios','navChecklist'],
     'Luís': ['navDirecao','navVideos','navAgendamento','navCalendarios'],
-    'Fernanda': ['navPedidosClientes','navAnalisesI108','navCalendarios','navPostagens','navAcompCampanhas','navReferencias','navDiarioI118'],
+    'Fernanda': ['navPlanejamentoI155','navPedidosClientes','navAnalisesI108','navCalendarios','navPostagens','navAcompCampanhas','navReferencias','navDiarioI118'],
     'Yas': [],
   };
   const ORDEM_BASE_SIDEBAR = ['navInicio','navMinhasDemandasAtribuidas','navAtrasadas','navMinhasDemandas','navChecklist'];
@@ -30833,7 +30900,7 @@ window.setGerenciaSub = function(qual, el){
     const mesStr = dataLocal(hoje).slice(0,7);
     const doMes = temCalendarioGravacao ? agendamentos.filter(a => a.data && a.data.startsWith(mesStr)) : [];
     const funcoesFixasDoMes = demandasVisiveisDaPessoa(usuarioAtual).filter(d =>
-      !d.excluido && !!d.tipoFuncaoFixa &&
+      !d.excluido && (!!d.tipoFuncaoFixa||d.tipoEspecial==='planejamento_social_i155') &&
       String(d.prazoData||'').startsWith(mesStr) && !['aprovada','cancelada'].includes(String(d.status||'')));
     if(!temCalendarioGravacao && !funcoesFixasDoMes.length){ box.innerHTML=''; return; }
 
@@ -31905,6 +31972,7 @@ window.setGerenciaSub = function(qual, el){
   const DIAS_PRA_ENCALHAR = 15;
 
   function estaEncalhada(d){
+    d=projetarCobrancaCalendarioI155(d);
     if(ehAvisoDistribuicaoI105(d)) return false;
     if(d.status === 'concluida_aguardando_aprovacao') return false;
     const automatica = (d.origem === 'sistema' || d.criadoPor === 'sistema');
@@ -32068,6 +32136,10 @@ window.setGerenciaSub = function(qual, el){
       if(soRefiltrar!==true)await carregarTodasDemandas(opcoes);
     }
     if(opcoes.validar)opcoes.validar();
+    let avisoCalendariosI155=document.getElementById('statusCalendariosDemandasI155');
+    if(!avisoCalendariosI155){avisoCalendariosI155=document.createElement('div');avisoCalendariosI155.id='statusCalendariosDemandasI155';avisoCalendariosI155.className='card';avisoCalendariosI155.setAttribute('role','status');lista.before(avisoCalendariosI155);}
+    avisoCalendariosI155.style.display=['Chris','Amanda','Gabrielle'].includes(usuarioAtual)&&!__indicePlanejamentoI155.pronto?'block':'none';
+    avisoCalendariosI155.textContent='Não consegui conferir a organização das etapas de calendário agora. Essa cobrança está suspensa até atualizar; as outras demandas continuam disponíveis. Os registros foram preservados.';
     const todasMinhas = demandasVisiveisDaPessoa(usuarioAtual,{},demandasCanonicasContadoresI123());
     /* mesma regra do badge lateral — um número só no site inteiro */
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
@@ -32557,15 +32629,16 @@ window.setGerenciaSub = function(qual, el){
       podeVerFuturos || d.tipoFuncaoFixa!=='calendario' || !item.visivelAPartir || item.visivelAPartir<=hojeLocal()
     );
     const feitos = listaCompleta.filter(c=>c.feito).length;
+    const acompanhadosI155=listaCompleta.filter(c=>calendarioAssumidoPlanejamentoI155(d,c)).length;
     const pct = Math.round(feitos/listaCompleta.length*100);
     const podeMarcar = (usuarioAtual === d.destinatario) || usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
     return `<div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:10px 12px;border-radius:6px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-        <b>Clientes — ${feitos} de ${listaCompleta.length}</b>
+        <b>Clientes — ${feitos} concluídos de ${listaCompleta.length}${acompanhadosI155?' · '+acompanhadosI155+' no Planejamento':''}</b>
         <span class="selo ${feitos===listaCompleta.length?'aprovada':'pendente'}">${pct}%</span>
       </div>
       <div style="max-height:46vh;overflow-y:auto;">
-        ${itensVisiveis.map(({item:c,indice:i})=>`<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:4px;border-radius:6px;background:${c.feito?'rgba(80,180,120,.10)':'transparent'};border:1px solid var(--line);${podeMarcar?'cursor:pointer;':''}">
+        ${itensVisiveis.map(({item:c,indice:i})=>calendarioAssumidoPlanejamentoI155(d,c)?`<div class="item"><b>${esc(c.nome||c.slug)}</b><p class="meta">Acompanhado no Planejamento Social Media. O registro original fica preservado aqui.</p></div>`:`<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:4px;border-radius:6px;background:${c.feito?'rgba(80,180,120,.10)':'transparent'};border:1px solid var(--line);${podeMarcar?'cursor:pointer;':''}">
           <input type="checkbox" ${c.feito?'checked':''} ${podeMarcar?'':'disabled'} onchange="marcarClienteChecklist('${d.id}', ${i}, this.checked)">
           <span style="flex:1;font-size:12px;${c.feito?'opacity:.6;text-decoration:line-through;':''}">${esc(c.nome||c.slug)}</span>
           ${c.prazoData ? '<span class="meta" style="font-size:10px;color:' + (!c.feito && c.prazoData<hojeLocal()?'var(--red)':'var(--yellow2)') + ';">Prazo '+formatarDataBR(c.prazoData)+'</span>' : ''}
@@ -32590,41 +32663,11 @@ window.setGerenciaSub = function(qual, el){
     return '<div id="agendaSlot_' + d.id + '"><div class="desc">Carregando a agenda da ' + esc(d.mostrarAgendaDe) + '...</div></div>';
   };
 
-  window.marcarClienteChecklist = async function(id, idx, marcado){
-    const d = todasDemandas.find(x=>x.id===id);
-    if(!d || !Array.isArray(d.checklistClientes)) return;
-    const podeMarcar = (usuarioAtual === d.destinatario) || usuarioAtual === 'Chris' || usuarioAtual === 'Amanda';
-    if(!podeMarcar){ mostrarToast('Essa lista não é sua pra marcar.', 'erro'); return; }
-    const lista = d.checklistClientes.map(c=>({...c}));
-    if(!lista[idx]) return;
-    lista[idx].feito = !!marcado;
-    lista[idx].data = marcado ? hojeLocal() : '';
-    lista[idx].por  = marcado ? (usuarioAtual||'?') : '';
-
-    const feitos = lista.filter(c=>c.feito).length;
-    const dados = { checklistClientes: lista };
-    if(d.tipoFuncaoFixa==='calendario'){
-      const novoPrazo=menorPrazoPendenteChecklist(lista,d.prazoData);
-      Object.assign(dados,camposAoAlterarPrazoDemanda(novoPrazo,d.prazoHora||'19:00',usuarioAtual||'?'));
-      dados.visivelAPartir=menorVisibilidadePendenteChecklist(lista,d.visivelAPartir);
-    }
-    let fechou = false;
-    if(feitos === lista.length){
-      dados.status = 'concluida_aguardando_aprovacao';
-      dados.concluidoPor = usuarioAtual || '?';
-      dados.provaTexto = 'Todos os ' + lista.length + ' clientes marcados.';
-      fechou = true;
-    } else if(d.status === 'concluida_aguardando_aprovacao'){
-      dados.status = 'pendente';  // desmarcou algum: volta pra pendente
-    }
-    await updateDoc(doc(db,'demandas', id), dados);
-    registrarHistorico('demandas', id, (marcado?'Marcou ':'Desmarcou ') + (lista[idx].nome||''), feitos + ' de ' + lista.length + ' clientes');
-    d.checklistClientes = lista; if(dados.status) d.status = dados.status; if(dados.prazoData) d.prazoData=dados.prazoData; if(dados.visivelAPartir) d.visivelAPartir=dados.visivelAPartir;
-    mostrarToast(fechou ? '✅ Todos os clientes marcados — demanda concluída!' : (feitos + ' de ' + lista.length + ' clientes.'));
-    const modal = document.getElementById('modalConteudo');
-    if(modal && modal.innerHTML.includes('marcarClienteChecklist')){
-      if(usuarioAtual === 'Chris' || usuarioAtual === 'Amanda') abrirDemandaGerencia(id); else abrirDemandaMinha(id);
-    }
+  window.marcarClienteChecklist=async function(id,idx,marcado){
+    const sessao=sessaoServicoManual(),pessoa=usuarioAtual,modalInicial=document.getElementById('modalConteudo'),primeiroInicial=modalInicial?.firstElementChild,camposIniciais=Array.from(modalInicial?.querySelectorAll('input:not([type=checkbox]),textarea,select')||[]).map(el=>({el,valor:el.value}));let confirmado;
+    const mesmaFicha=()=>document.getElementById('modalConteudo')===modalInicial&&!!primeiroInicial&&modalInicial.firstElementChild===primeiroInicial&&document.getElementById('overlayView')?.classList.contains('show')&&camposIniciais.every(c=>c.el.isConnected&&c.el.value===c.valor);
+    try{await runTransaction(db,async tx=>{const ref=doc(db,'demandas',id),snap=await tx.get(ref);if(sessao!==sessaoServicoManual())throw Error('O perfil mudou.');if(!snap.exists())throw Error('Demanda não encontrada.');const d=snap.data();if(!Array.isArray(d.checklistClientes)||!d.checklistClientes[idx])throw Error('Confira a lista atual.');if(pessoa!==d.destinatario&&!['Chris','Amanda'].includes(pessoa))throw Error('Essa lista não é sua para marcar.');const lista=d.checklistClientes.map(c=>({...c})),item=lista[idx];if(d.tipoFuncaoFixa==='calendario'&&!item.feito&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(d.mesRef||'')){const indice=await tx.get(doc(db,'planejamento_social_indice_i155',d.mesRef+'__'+item.slug));if(indice.data()?.incluido===true)throw Error('Este calendário é acompanhado no Planejamento. Use a etapa de lá; a marcação antiga foi preservada.');}item.feito=!!marcado;item.data=marcado?hojeLocal():'';item.por=marcado?pessoa:'';const feitos=lista.filter(c=>c.feito).length,dados={checklistClientes:lista};if(d.tipoFuncaoFixa==='calendario'){Object.assign(dados,camposAoAlterarPrazoDemanda(menorPrazoPendenteChecklist(lista,d.prazoData),d.prazoHora||'19:00',pessoa));dados.visivelAPartir=menorVisibilidadePendenteChecklist(lista,d.visivelAPartir);}if(feitos===lista.length)Object.assign(dados,{status:'concluida_aguardando_aprovacao',concluidoPor:pessoa,provaTexto:'Todos os '+lista.length+' clientes marcados.'});else if(d.status==='concluida_aguardando_aprovacao')dados.status='pendente';tx.update(ref,dados);confirmado={d,lista,dados,feitos};});if(sessao!==sessaoServicoManual())return;const {d,lista,dados,feitos}=confirmado;registrarHistorico('demandas',id,(marcado?'Marcou ':'Desmarcou ')+(lista[idx].nome||''),feitos+' de '+lista.length+' clientes');const atual=todasDemandas.find(d=>d.id===id);if(atual)Object.assign(atual,dados);mostrarToast(feitos+' de '+lista.length+' clientes.');if(calendarioLegadoSemAcaoI155({...d,...dados})){if(mesmaFicha())fecharModal();if(viewAtiva==='minhasDemandasAtribuidas')renderMinhasDemandasAtribuidas(true);mostrarToast('As entregas desta rotina foram conferidas. Os outros calendários seguem no Planejamento.');return;}const modal=document.getElementById('modalConteudo');if(mesmaFicha()&&modal&&modal.innerHTML.includes('marcarClienteChecklist')){if(['Chris','Amanda'].includes(pessoa))abrirDemandaGerencia(id);else abrirDemandaMinha(id);}}
+    catch(e){if(sessao===sessaoServicoManual())mostrarToast(e.message||'Não confirmei esta marcação. A lista anterior foi preservada.','erro');}
   };
 
   function contextoCalendarioDemandaI117(d){
@@ -32687,14 +32730,15 @@ window.setGerenciaSub = function(qual, el){
       return;
     }
 
+    if(fichaDemandaPlanejamentoI155(d,modal))return;
     const jaTemProva = d.status === 'concluida_aguardando_aprovacao';
     modal.innerHTML = `
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
-      ${htmlOrigemCampanhaI153(d)}
+      ${htmlOrigemCampanhaI153(d)}${htmlOrigemPlanejamentoI155(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${contextoCalendarioDemandaI117(d)&&papelPodeSubabaCalendariosV127(usuarioAtual,'editar')?`<div class="card" style="border:1px solid var(--yellow);margin:12px 0;"><div class="meta">Calendário de ${esc(d.clienteNome||d.clienteSlug||d.cliente)} · ${esc(d.competencia.split('-').reverse().join('/'))}</div><button type="button" class="btn" style="margin-top:8px;" onclick="abrirCalendarioDemandaI117('${escJs(d.id)}')">Abrir calendário deste ajuste</button><div class="meta" style="margin-top:8px;">Corrija o conteúdo indicado e envie o calendário para Amanda revisar.</div></div>`:''}
-      <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
+      <div class="linha"><b>${d.tipoFuncaoFixa==='calendario'?'Prazo geral da lista (confira cada cliente abaixo)':'Prazo'}:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
       ${d.prazoSolicitado ? '<div class="linha" style="color:var(--yellow2);">🕓 Você pediu mudar pra '+formatarDataBR(d.prazoSolicitado)+' — esperando a Amanda autorizar.</div>' : ''}
       ${d.linkAnexo ? '<a href="'+esc(d.linkAnexo)+'" target="_blank" class="btn secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;border:2px solid var(--yellow);">📎 Abrir material anexado ↗</a>' : ''}
       ${d.redirecionamentoPedido
@@ -33154,6 +33198,7 @@ window.setGerenciaSub = function(qual, el){
     }
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return { ok:false, motivo:'demanda não encontrada' };
+    if(d.tipoEspecial==='planejamento_social_i155')return {ok:false,motivo:'Ajuste esta etapa na agenda do Planejamento Social Media.'};
     novaHora = novaHora || '19:00';
     if(!novaData) return { ok:false, motivo:'sem data' };
     const mesmoPrazo = novaData === d.prazoData && novaHora === (d.prazoHora||'19:00');
@@ -34310,13 +34355,14 @@ window.setGerenciaSub = function(qual, el){
     if(document.visibilityState==='visible'&&calendarioFerramentasAbertoSlug) void revalidarEditorCalendarioVisivelV127();
   });
 
-  window.abrirCalendarioFerramentas = async function(slug, nome, competencia){
+  window.abrirCalendarioFerramentas = async function(slug, nome, competencia, planejamentoI155=null){
     if(!exigirSubabaCalendariosV127('editar','A edição de calendário não pertence a este perfil.')) return false;
     const iframe=document.getElementById('iframeCalendarioFerramentas');
     if(!iframe) return false;
     if(iframe.getAttribute('src')&&iframe.getAttribute('src')!=='about:blank'){
-      let pode=false;
-      try{pode=iframe.contentWindow?.podeTrocarCalendarioI129?.().ok===true;}catch(e){}
+      let pode=false;const guardaI155={uid:String(auth.currentUser?.uid||''),pessoa:usuarioAtual,identidade:__geracaoIdentidade,view:viewAtiva,delegacao:String(window.__operacaoDelegadaChris||'')};
+      const guardaAtualI155=()=>iframe===document.getElementById('iframeCalendarioFerramentas')&&guardaI155.uid===String(auth.currentUser?.uid||'')&&guardaI155.pessoa===usuarioAtual&&guardaI155.identidade===__geracaoIdentidade&&guardaI155.view===viewAtiva&&guardaI155.delegacao===String(window.__operacaoDelegadaChris||'');
+      try{if(planejamentoI155&&iframe.contentWindow?.__planejamentoEditorI155?.ciclo===planejamentoI155.ciclo){const adotado=await iframe.contentWindow.adotarBasePlanejamentoI155?.(planejamentoI155.ciclo,planejamentoI155.base);if(!guardaAtualI155())return false;if(adotado?.ok){mostrarToast('Base conferida. Seus textos continuam no editor; revise antes de salvar.');return true;}}pode=iframe.contentWindow?.podeTrocarCalendarioI129?.().ok===true;}catch(e){}
       if(!pode){mostrarToast('Salve ou feche o conteúdo atual e aguarde a confirmação antes de trocar de calendário.','erro');return false;}
     }
     const slugSolicitado=String(slug||''),slugCanonico=slugClienteCanonico(slugSolicitado);
@@ -34349,7 +34395,8 @@ window.setGerenciaSub = function(qual, el){
       calendarioFerramentasLeituraEstado=calSnap.exists()?'confirmado':'ausente';
       atualizarDiagnosticoCalendarioFerramentas(competenciaEscolhida);
       const operacaoChris=delegacao?'&operacaoChris=1&papelOperado='+encodeURIComponent(delegacao):'';
-      iframe.src='calendario.html?cliente='+encodeURIComponent(slugDocumento)+'&interno=1&mes='+encodeURIComponent(competenciaEscolhida)+operacaoChris+'&v='+Date.now();
+      const vinculoI155=planejamentoI155?'&planejamentoI155='+encodeURIComponent(planejamentoI155.ciclo)+'&baseI155='+encodeURIComponent(planejamentoI155.base||''):'';
+      iframe.src='calendario.html?cliente='+encodeURIComponent(slugDocumento)+'&interno=1&mes='+encodeURIComponent(competenciaEscolhida)+operacaoChris+vinculoI155+'&v='+Date.now();
       iframe.inert=false;iframe.style.visibility='';
       __aberturaCalendarioI129Pendente=false;
       return true;
@@ -37430,6 +37477,7 @@ window.setGerenciaSub = function(qual, el){
     const agora = new Date();
     for(const docSnap of snap.docs){
       const dem = docSnap.data();
+      if(dem.tipoEspecial==='planejamento_social_i155')continue; // A origem confirma a etapa; a lista e o Meu Dia continuam normais.
       if(!demandaOperacionalVisivel(dem)) continue;
       if(ehAvisoDistribuicaoI105(dem)) continue;
       if(dem.status !== 'pendente') continue;
@@ -37656,6 +37704,7 @@ window.setGerenciaSub = function(qual, el){
     const snap = await snapshotOperacional('demandas');
     for(const docSnap of snap.docs){
       const d = docSnap.data();
+      if(d.tipoEspecial==='planejamento_social_i155')continue; // A origem confirma a etapa; a lista e o Meu Dia continuam normais.
       if(!demandaOperacionalVisivel(d)) continue;
       if(d.emailEnviado) continue;
       if(d.status !== 'pendente' || !d.destinatario){
@@ -37889,6 +37938,7 @@ window.setGerenciaSub = function(qual, el){
     const snap = await snapshotOperacional('demandas');
     for(const docSnap of snap.docs){
       const d = docSnap.data();
+      if(d.tipoEspecial==='planejamento_social_i155')continue; // A origem confirma a etapa; a lista e o Meu Dia continuam normais.
       if(!demandaOperacionalVisivel(d)) continue;
       if(ehAvisoDistribuicaoI105(d)) continue;
       if(d.status !== 'pendente' || !d.destinatario) continue;
@@ -37949,6 +37999,7 @@ window.setGerenciaSub = function(qual, el){
     const snapDRF = await snapshotOperacional('demandas', d=>d.status==='pendente');
     for(const ddRF of snapDRF.docs){
       const d = ddRF.data();
+      if(d.tipoEspecial==='planejamento_social_i155')continue; // A origem confirma a etapa; a lista e o Meu Dia continuam normais.
       if(!demandaOperacionalVisivel(d)) continue;
       if(ehAvisoDistribuicaoI105(d)) continue;
       if(d.prazoData !== hojeRF || d.avisoRetaFinalEm === hojeRF) continue;
@@ -38550,6 +38601,7 @@ window.setGerenciaSub = function(qual, el){
       '||' + (d.clienteSlug || d.cliente || d.clienteNome || '');
   }
   function mesmaDemandaPendente(a,b){
+    if(a?.tipoEspecial==='planejamento_social_i155'||b?.tipoEspecial==='planejamento_social_i155')return false;
     if(ehAvisoDistribuicaoI105(a)||ehAvisoDistribuicaoI105(b)) return ehAvisoDistribuicaoI105(a)&&ehAvisoDistribuicaoI105(b)&&!!a.videoId&&a.videoId===b.videoId&&a.tipoEspecial===b.tipoEspecial&&a.destinatario===b.destinatario&&String(a.correcaoEnvioOperacaoI53||'')===String(b.correcaoEnvioOperacaoI53||'');
     return norm(a?.titulo)===norm(b?.titulo) && identidadeRecorrenteDemanda(a)===identidadeRecorrenteDemanda(b);
   }
@@ -38644,6 +38696,7 @@ window.setGerenciaSub = function(qual, el){
       if(!demandaOperacionalVisivel(v) || v.status !== 'pendente') return;
       if(demandaIdentificadaServicoI19(v)) return; // Destinos exatos não se deduplicam por título.
       if(ehAvisoDistribuicaoI105(v)) return; // I53 já encerra só a atribuição exata.
+      if(v.tipoEspecial==='planejamento_social_i155') return; // Identidade física ciclo/etapa/versão, reconciliada na origem.
       if(v.tipoEspecial===TIPO_I153) return; // Campanha/data/IDs físicos não se deduplicam por título.
       const k = (v.destinatario||'') + '||' + norm(v.titulo) + identidadeRecorrenteDemanda(v) + (avisoLegadoServicoI19(v)?'|servico:'+JSON.stringify(v.leadId):'');
       (grupos[k] = grupos[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
@@ -38993,6 +39046,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   async function motorAutomacoes(origem){
+    try{await garantirIndicePlanejamentoI155(true);}catch(e){console.error('A organização dos calendários está indisponível; cobranças dessa rotina ficam suspensas até a releitura. As outras áreas seguem sua própria conferência.',e);}
     const lockRef = doc(db, 'sistema', 'motor_lock');
     const diaMotor = hojeLocal();
     let rodarManutencaoDiaria = false;
@@ -39277,6 +39331,7 @@ window.setGerenciaSub = function(qual, el){
       __ouvinteTempoRealAindaAtualV135(pessoaDoOuvinte, geracaoDoOuvinteV135);
     const ehGestao = pessoaDoOuvinte === 'Amanda' || pessoaDoOuvinte === 'Chris';
     listenersTempoRealAtivos = true;
+    __ouvintesTempoReal.push(onSnapshot(collection(db,'planejamento_social_indice_i155'),snap=>{if(!ouvinteAindaAtualV135()||snap.metadata.fromCache)return;aplicarIndicePlanejamentoI155(snap);carregarTodasDemandas({validar:()=>{if(!ouvinteAindaAtualV135())throw Error('O perfil mudou.');}}).then(()=>{if(ouvinteAindaAtualV135())onDadosTempoRealMudaram('demandas');}).catch(e=>{if(ouvinteAindaAtualV135())console.error('Organização dos calendários indisponível:',e);});},e=>{if(!ouvinteAindaAtualV135())return;__indicePlanejamentoI155.pronto=false;__indicePlanejamentoI155.erro=e;mostrarToast('Não consegui conferir a organização dos calendários. Os registros anteriores foram preservados.','erro');}));
     if(['Amanda','Cecília','Chris'].includes(pessoaDoOuvinte)){
       obterOperacaoStokkiI30().then(operacao=>{
         if(!ouvinteAindaAtualV135())return;
@@ -40881,13 +40936,13 @@ window.setGerenciaSub = function(qual, el){
       ]);
       const agora = new Date();
       const itens = [];
-      demSnap.forEach(d => { const v=d.data();
+      demSnap.forEach(d => { const v=projetarCobrancaCalendarioI155(d.data());
         if(!demandaOperacionalVisivel(v) || v.status!=='pendente' || v.destinatario!==nome) return;
         const prazo = new Date(v.prazoData+'T'+(v.prazoHora||'19:00'));
         const dias = Math.floor((agora-prazo)/86400000);
         if(dias>=0) itens.push({ txt: nomeDaDemanda(v).nome, dias })   /* idem */;
       });
-      vidSnap.forEach(d => { const v=d.data();
+      vidSnap.forEach(d => { const v=projetarCobrancaCalendarioI155(d.data());
         if(v.excluido || ['finalizado','arquivado'].includes(v.status)) return;
         if((v.editorAtribuido||v.editor) !== nome) return;
         if((v.nivelEscalonamento||0) >= 1) itens.push({ txt:'Vídeo: ' + (v.clienteNome||'') + ' — ' + (v.titulo||''), dias:null });
@@ -45036,6 +45091,7 @@ window.salvarPrazoVideo = async function(id){
   ];
 
   function faixaDaDemanda(d){
+    d=projetarCobrancaCalendarioI155(d);
     if(ehAvisoDistribuicaoI105(d)) return 'avisoEdicao';
     if(esperandoCliente(d)) return 'esperaCliente';
     const u = calcularUrgencia(d);
@@ -45052,6 +45108,7 @@ window.salvarPrazoVideo = async function(id){
   }
 
   function diasDeAtraso(d){
+    d=projetarCobrancaCalendarioI155(d);
     if(ehAvisoDistribuicaoI105(d)) return 0;
     if(!d.prazoData) return 0;
     const a = new Date(hojeLocal() + 'T00:00:00');
@@ -45113,6 +45170,7 @@ window.salvarPrazoVideo = async function(id){
   }
 
   function cardDemanda(d, comCaixa, aoAbrir){
+    d=projetarCobrancaCalendarioI155(d);if(d.tipoEspecial==='planejamento_social_i155')comCaixa=false;
     if(ehAvisoDistribuicaoI105(d)) return cardAvisoDistribuicaoI105(d);
     const f = faixaDaDemanda(d);
     const info = FAIXAS_DEMANDA.find(x=>x.chave===f);
@@ -45238,7 +45296,7 @@ window.salvarPrazoVideo = async function(id){
   };
 
   window.marcarTodasDemandas = function(ligar){
-    document.querySelectorAll('#atrasadasConteudo .chkDem').forEach(c => c.checked = ligar);
+    document.querySelectorAll('#atrasadasConteudo .chkDem').forEach(c => c.checked = ligar&&todasDemandas.find(d=>d.id===c.value)?.tipoEspecial!=='planejamento_social_i155');
     atualizarBarraLote();
   };
 
@@ -45251,7 +45309,7 @@ window.salvarPrazoVideo = async function(id){
     if(c) c.textContent = n + ' selecionada(s)';
   };
 
-  const idsSelecionados = () => Array.from(document.querySelectorAll('#atrasadasConteudo .chkDem:checked')).map(c=>c.value);
+  const idsSelecionados = () => Array.from(document.querySelectorAll('#atrasadasConteudo .chkDem:checked')).map(c=>c.value).filter(id=>todasDemandas.find(d=>d.id===id)?.tipoEspecial!=='planejamento_social_i155');
 
   window.loteNovoPrazo = async function(){
     const ids = idsSelecionados();
@@ -47070,7 +47128,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         <div class="desc">Calendário novo ainda não aparece; numa correção, o cliente continua vendo somente a última versão publicada. ${somenteLeitura ? 'Aqui é acompanhamento: a decisão continua exclusivamente com a Amanda.' : 'Confira o mês e escolha entre publicar ou pedir ajuste.'}</div>
         ${somenteLeitura ? '' : `<div class="desc" style="margin-top:6px;line-height:1.7;">
           <b style="color:var(--green);">✅ Aprovar e publicar</b> — aparece imediatamente no Portal; os outros meses publicados permanecem isolados e disponíveis.<br>
-          <b style="color:var(--red);">↩️ Pedir ajuste</b> — volta pra Gabi com o motivo escrito.
+          <b style="color:var(--red);">↩️ Pedir ajuste</b> — retorna à pessoa responsável com o motivo escrito.
         </div>`}
         ${fila.map(c => `<div class="item" data-calendario-revisao-card="true" data-calendario-chave="${escAttr(c.slug+'|'+(c.mesKey||''))}" style="margin-top:10px;border-left:3px solid var(--yellow2);">
           <div class="top"><div class="nome">${esc(c.nome)}</div><span class="selo pendente">${esc(c.mes||'sem mês')}</span></div>
@@ -47187,7 +47245,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       if(!itens.length) throw new Error('O mês não possui conteúdos para revisar.');
       const estadoI148=estadoMesCal(cal,mes);
       if(!['aguardando_interna','aprovado_interno'].includes(estadoI148))throw Error('Este mês já mudou de etapa. Atualize a fila.');
-      const contextoI148={sessao:sessaoI148,revisao:revisaoI148(slug,mes,cal,itens,estadoI148)};
+      const contextoI148={sessao:sessaoI148,revisao:revisaoI148(slug,mes,cal,itens,estadoI148),planejamentoI155Base:cal.planejamentoBasesI155?.[mes]||''};
       __revisoesCalendariosI148.set(chave,contextoI148);if(cartao)cartao.__revisaoI148=contextoI148;
       alvo.dataset.aberto = '1';
       atualizarBotaoAnaliseCalendarioRevisao(botao,'aberto');
@@ -47203,7 +47261,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         </div>
         <div class="btnrow" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
           <button type="button" class="btn secondary" style="font-size:11.5px;" onclick="abrirCalendarioDeCliente('${escJs(slug)}','${escJs(cal.client||slug)}','${escJs(mes)}')">↗ Abrir calendário completo</button>
-          ${usuarioAtual==='Amanda'?`<button type="button" class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${escJs(slug)}','${escJs(mes)}',this)">↩️ Pedir ajuste à Gabi</button>
+          ${usuarioAtual==='Amanda'?`<button type="button" class="btn red" style="font-size:11.5px;" onclick="devolverCalendario('${escJs(slug)}','${escJs(mes)}',this)">↩️ Pedir ajuste</button>
           <button type="button" class="btn green" style="font-size:11.5px;" onclick="liberarCalendario('${escJs(slug)}','${escJs(mes)}',this)">✅ Aprovar e publicar ao cliente</button>`:''}
         </div>
       </div>`;
@@ -47739,6 +47797,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         }
         if(alterou) registrarHistorico('calendarios',a.slug,'Calendário de '+(a.mes||'mês único')+' aprovado e publicado por '+(usuarioAtual||'?')+'; outros meses preservados');
         resultado.enviados.push({slug:a.slug,mes:a.mes||'',nome,jaPublicado});
+        void conferirEntregaPlanejamentoI155(a.slug,a.mes).catch(e=>console.error('Conferência do planejamento pendente:',e));
       }catch(e){
         console.error('Falha ao enviar ' + a.slug + ':', e);
         resultado.falhas.push({slug:a.slug,mes:a.mes||'',nome,erro:String(e?.message||e)});
@@ -47808,10 +47867,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(usuarioAtual!=='Amanda'){mostrarToast('A revisão de calendários é exclusiva da Amanda.','erro');return false;}
     const contexto=obterRevisaoCalendarioI148(slug,mes,btn);
     if(!contexto){await abrirAnaliseCalendarioRevisao(slug,mes,btn?.closest('[data-calendario-revisao-card]')?.querySelector('[data-abrir-analise-calendario]'));mostrarToast('Confira a análise antes de pedir ajuste.');return false;}
-    const motivo=prompt('O que precisa ser ajustado? (a Gabi vê exatamente este texto)');if(motivo===null)return false;
-    if(!motivo.trim()){mostrarToast('Escreva o que precisa mudar.','erro');return false;}
+    const motivo=contexto.planejamentoI155Base?rascunhoCalendarioI148(btn?.closest('[data-calendario-revisao-card]')):prompt('O que precisa ser ajustado? (a pessoa que enviou vê exatamente este texto)');if(motivo===null)return false;
+    if(!motivo.trim()){mostrarToast(contexto.planejamentoI155Base?'Escreva o motivo no campo de observação desta análise e clique em Pedir ajuste.':'Escreva o que precisa mudar.','erro');return false;}
     const sessao=sessaoServicoManual(),validar=()=>{if(sessao!==sessaoServicoManual()||usuarioAtual!=='Amanda')throw Error('O perfil mudou.');};
-    const retornoPara=JSON.parse(contexto.revisao.envio)[0]==='Fernanda'?'Fernanda':'Gabrielle';
+    const retornoPara=contexto.planejamentoI155Base?'Chris':JSON.parse(contexto.revisao.envio)[0]==='Fernanda'?'Fernanda':'Gabrielle';
     const tentativa=contexto.retorno?.motivo===motivo.trim()?contexto.retorno:{motivo:motivo.trim(),em:new Date().toISOString()};contexto.retorno=tentativa;
     const corresponde=cal=>{const a=cal?.aprovacaoMeses?.[mes];return a?.status==='ajuste_interno'&&a.em===tentativa.em&&a.por==='Amanda'&&a.motivoAjuste===tentativa.motivo;};
     const ref=doc(db,'calendarios',slug);let nome=slug;
@@ -47828,7 +47887,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       });}catch(e){erroCommit=e;}
       const recibo=await _getDocFromServerFB(ref);validar();if(!recibo.exists()||!corresponde(recibo.data()))throw erroCommit||Error('O recibo ainda não confirmou a devolução. Preserve a análise e confira pelo mesmo botão.');
       let avisoCriado=true;
-      try{await criarDemandaSegura({titulo:'↩️ Ajustar o calendário de '+nome,descricao:'Amanda pediu um ajuste no calendário de '+mes+':\n\n'+tentativa.motivo+'\n\nPode corrigir e enviar de novo para ela revisar? A última versão publicada continua disponível ao cliente.',destinatario:retornoPara,origem:'sistema',clienteNome:nome,prazoData:hojeLocal(),prazoHora:'19:00',status:'pendente'},{janelaMinutos:120});}catch(e){avisoCriado=false;console.error('Ajuste salvo; aviso não confirmado:',e);}
+      try{if(contexto.planejamentoI155Base){const {repo}=await repoPlanejamentoI155(),id=mes+'__'+slug,atual=await repo.ler(id);const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id+'|'+tentativa.em));await repo.mutar(id,'devolvido_revisao',{},atual.ciclo.revisao,'devolucao_'+Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join(''));}else await criarDemandaSegura({titulo:'↩️ Ajustar o calendário de '+nome,descricao:'Amanda pediu um ajuste no calendário de '+mes+':\n\n'+tentativa.motivo+'\n\nPode corrigir e enviar de novo para ela revisar? A última versão publicada continua disponível ao cliente.',destinatario:retornoPara,origem:'sistema',clienteNome:nome,prazoData:hojeLocal(),prazoHora:'19:00',status:'pendente'},{janelaMinutos:120});}catch(e){avisoCriado=false;console.error('Ajuste salvo; aviso não confirmado:',e);}
       validar();if(!contexto.retornoRegistrado){contexto.retornoRegistrado=true;registrarHistorico('calendarios',slug,'Calendário de '+mes+' devolvido para ajuste por Amanda',tentativa.motivo);}
       const card=btn?.closest('[data-calendario-revisao-card]');if(card&&!rascunhoCalendarioI148(card))card.remove();
       mostrarToast(avisoCriado?'Devolvido para '+nomeEquipeI126(retornoPara)+' com o motivo.':'O ajuste está salvo no calendário. O aviso complementar ainda não foi confirmado.');
@@ -49337,6 +49396,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     if(pedidoExclusaoAtivoI112(d)&&['Amanda','Chris'].includes(usuarioAtual)) return abrirDecisaoExclusaoI112(id);
     if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
     const modal = document.getElementById('modalConteudo');
+    if(fichaDemandaPlanejamentoI155(d,modal))return;
     /* ===== CORREÇÃO 22/07/2026 (pedido do Chris) =====
        Bug: a demanda da própria Amanda (ou do próprio Chris, se algum dia
        tiver demanda pra ele) aparecia na fila de aprovação PARA ELA MESMA
@@ -49352,11 +49412,11 @@ Observações do cliente: ${l.observacoes||'—'}`;
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(nomeEquipeI126(d.destinatario))}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
-      ${htmlOrigemCampanhaI153(d)}
+      ${htmlOrigemCampanhaI153(d)}${htmlOrigemPlanejamentoI155(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${podeMexerNoPrazo ? `
       <div class="linha" style="background:var(--deep);border-left:3px solid var(--yellow);padding:8px 10px;border-radius:6px;">
-        <b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}
+        <b>${d.tipoFuncaoFixa==='calendario'?'Prazo geral da lista (confira cada cliente abaixo)':'Prazo'}:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}
         ${d.prazoSolicitado ? '<div style="color:var(--yellow2);margin-top:4px;">🕓 '+esc(d.prazoSolicitadoPor||'')+' pediu '+formatarDataBR(d.prazoSolicitado)+' — salvar aqui encerra o pedido.</div>' : ''}
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
           <input type="date" id="prazoGerData_${d.id}" value="${d.prazoData||''}" style="width:auto;">
@@ -49374,7 +49434,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           </select>
           ${d.urgenciaManual ? '<span class="selo pendente">fixada na mão por '+esc(d.urgenciaFixadaPor||'?')+'</span>' : ''}
         </div>
-      </div>` : `<div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>`}
+      </div>` : `<div class="linha"><b>${d.tipoFuncaoFixa==='calendario'?'Prazo geral da lista (confira cada cliente abaixo)':'Prazo'}:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>`}
       ${/* 03/08/2026 — o botão da espera do cliente, na ficha. Fica junto
             do prazo porque é a alternativa a mudar prazo: quando o que
             trava não é a equipe, não é prazo que resolve. */''}

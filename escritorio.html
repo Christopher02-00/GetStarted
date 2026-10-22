@@ -32739,6 +32739,7 @@ window.setGerenciaSub = function(qual, el){
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
       ${htmlOrigemCampanhaI153(d)}
+      ${htmlMotivoRefazerI161(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${contextoCalendarioDemandaI117(d)&&papelPodeSubabaCalendariosV127(usuarioAtual,'editar')?`<div class="card" style="border:1px solid var(--yellow);margin:12px 0;"><div class="meta">Calendário de ${esc(d.clienteNome||d.clienteSlug||d.cliente)} · ${esc(d.competencia.split('-').reverse().join('/'))}</div><button type="button" class="btn" style="margin-top:8px;" onclick="abrirCalendarioDemandaI117('${escJs(d.id)}')">Abrir calendário deste ajuste</button><div class="meta" style="margin-top:8px;">Corrija o conteúdo indicado e envie o calendário para Amanda revisar.</div></div>`:''}
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
@@ -49418,6 +49419,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(nomeEquipeI126(d.destinatario))}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
+      ${htmlMotivoRefazerI161(d)}
       ${htmlOrigemCampanhaI153(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${podeMexerNoPrazo ? `
@@ -49675,7 +49677,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.aprovarDemanda = async function(id){
     if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     const d = todasDemandas.find(x=>x.id===id);
-    await updateDoc(doc(db,'demandas', id), { status: 'aprovada', aprovadoEm: new Date().toISOString(), aprovadoPor: usuarioAtual||'?' });
+    if(!d)return mostrarToast('Atualize a fila para conferir essa entrega.','erro');
+    const assinaturaI161=assinaturaEntregaI161(d),pessoaI161=usuarioAtual,uidI161=auth.currentUser?.uid,sessaoI161=sessaoServicoManual();
+    try{await runTransaction(db,async tx=>{const ref=doc(db,'demandas',id),snap=await tx.get(ref);if(!snap.exists()||snap.data().excluido||assinaturaEntregaI161(snap.data())!==assinaturaI161||usuarioAtual!==pessoaI161||auth.currentUser?.uid!==uidI161||sessaoServicoManual()!==sessaoI161)throw Error('A entrega ou o perfil mudou. Atualize a fila e confira novamente.');tx.update(ref,{status:'aprovada',aprovadoEm:new Date().toISOString(),aprovadoPor:pessoaI161||'?'});});}
+    catch(err){mostrarToast(err.message||'Não consegui confirmar a aprovação. Consulte a demanda antes de repetir.','erro');return false;}
     registrarHistorico('demandas', id, 'Aprovada por ' + (usuarioAtual||'?'));
     /* 27/07/2026 — quem entregou nunca sabia que tinha sido aprovado. */
     if(d?.destinatario && d.destinatario !== usuarioAtual){
@@ -49741,62 +49746,67 @@ Observações do cliente: ${l.observacoes||'—'}`;
       titulo.startsWith('🎥 Liberar gravação reagendada — ');
   }
 
+  function assinaturaEntregaI161(d){
+    const ts=d.concluidaEm;return JSON.stringify([d.status||'',d.destinatario||'',d.paraQuem||'',d.provaTexto||'',d.provaImagemUrl||'',ts?.seconds??ts??null,ts?.nanoseconds??0,d.rejeitadoEm||'',d.refazerUltimoI161?.operacao||'',d.excluido===true,d.agendamentoId||'',d.ehDecisao===true,d.ehAviso===true,d.decisaoSim||'',d.decisaoNao||'',d.tipoEspecial||'',d.titulo||'']);
+  }
+  function htmlMotivoRefazerI161(d){
+    const r=d.refazerUltimoI161;if(!r?.motivo)return '';
+    return `<div class="card" style="border-left:3px solid var(--yellow);margin:12px 0;"><b>${d.status==='pendente'?'O que precisa ajustar':'Último ajuste pedido'}</b><p style="white-space:pre-wrap;">${esc(r.motivo)}</p><div class="meta">Pedido por ${esc(nomeEquipeI126(r.por||'Amanda'))}${r.em?' · '+esc(new Date(r.em).toLocaleString('pt-BR')):''}</div></div>`;
+  }
+  let aberturaRefazerI161=0;
+  function contextoRefazerI161(pessoa,uid,sessao){return ['Amanda','Chris'].includes(pessoa)&&usuarioAtual===pessoa&&auth.currentUser?.uid===uid&&sessaoServicoManual()===sessao;}
   window.rejeitarDemanda = async function(id){
     if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
-    const demandaRef=doc(db,'demandas',id);
-    let resultado;
+    if(window.__refazerI161?.busy){mostrarToast('Espere a confirmação da devolução.','erro');return false;}
+    const pessoa=usuarioAtual,uid=auth.currentUser?.uid,sessao=sessaoServicoManual(),abertura=++aberturaRefazerI161;
+    if(!contextoRefazerI161(pessoa,uid,sessao))return false;
+    const modal=document.getElementById('modalConteudo'),overlay=document.getElementById('overlayView'),view=viewAtiva,painel=document.createElement('div');
+    modal.replaceChildren(painel);painel.innerHTML='<p role="status">Conferindo a entrega…</p><button class="btn secondary" onclick="fecharModal()">Voltar</button>';overlay.classList.add('show');
+    const aberturaVigente=()=>abertura===aberturaRefazerI161&&contextoRefazerI161(pessoa,uid,sessao)&&view===viewAtiva&&painel.isConnected&&overlay.classList.contains('show');
+    try{
+      const snap=await _getDocFromServerFB(doc(db,'demandas',id));
+      if(!aberturaVigente())return false;
+      if(!snap.exists())throw Error('Essa demanda não existe mais.');
+      const d={id:snap.id,...snap.data()};
+      if(d.excluido||d.status!=='concluida_aguardando_aprovacao')throw Error('Essa entrega mudou. Atualize a fila antes de devolver.');
+      const e={id,d,pessoa,uid,sessao,assinatura:assinaturaEntregaI161(d),operacao:'refazer_i161_'+crypto.randomUUID(),busy:false};window.__refazerI161=e;
+      painel.innerHTML=`<h2>Devolver para ${esc(nomeEquipeI126(d.destinatario||'a pessoa'))} ajustar</h2><p><b>${esc(d.titulo||'Demanda')}</b></p><div class="card"><b>Entrega que você está conferindo</b><div style="white-space:pre-wrap;">${linkifyDescricao(d.provaTexto||'Sem texto de entrega.')}</div>${d.provaImagemUrl?'<p>'+linkifyDescricao(d.provaImagemUrl)+'</p>':''}</div><div class="field"><label for="motivoRefazerI161">O que precisa ajustar?</label><textarea id="motivoRefazerI161" maxlength="4000" placeholder="Ex.: troca a última frase e mantém o restante como está."></textarea></div><p class="desc">Esse recado volta junto da mesma demanda. A entrega anterior fica no histórico.</p><p id="erroRefazerI161" role="alert"></p><div class="btnrow"><button class="btn secondary" onclick="fecharModal()">Voltar</button><button class="btn" id="btnRefazerI161" onclick="confirmarRefazerI161()">Enviar para ajustar</button></div>`;
+      e.campo=document.getElementById('motivoRefazerI161');e.atual=aberturaVigente;e.campo.focus();return true;
+    }catch(err){if(contextoRefazerI161(pessoa,uid,sessao))mostrarToast(err.message||'Não consegui abrir a entrega.','erro');return false;}
+  };
+  window.confirmarRefazerI161=async function(){
+    const e=window.__refazerI161;if(!e||e.busy||!e.campo?.isConnected||!e.atual())return false;
+    const motivo=String(e.motivoConfirmado||e.campo.value||'').trim(),erro=document.getElementById('erroRefazerI161'),btn=document.getElementById('btnRefazerI161');
+    if(!motivo||motivo.length>4000){erro.textContent='Escreve o que precisa ajustar antes de enviar.';return false;}
+    e.motivoConfirmado=motivo;e.busy=true;e.campo.disabled=true;btn.disabled=true;erro.textContent='';
+    const demandaRef=doc(db,'demandas',e.id);let resultado;
     try{
       resultado=await runTransaction(db,async tx=>{
-        const demandaSnap=await tx.get(demandaRef);
-        if(!demandaSnap.exists()) throw new Error('Essa demanda não existe mais.');
+        if(!contextoRefazerI161(e.pessoa,e.uid,e.sessao))throw Error('O perfil mudou. Abra a demanda novamente.');
+        const demandaSnap=await tx.get(demandaRef);if(!demandaSnap.exists())throw Error('Essa demanda não existe mais.');
         const d={id:demandaSnap.id,...demandaSnap.data()};
-        const podeCancelarFonte=ehDecisaoCancelavelDeGravacaoV135(d);
-        let agendamentoRef=null,agendamento=null;
-        if(podeCancelarFonte){
-          agendamentoRef=doc(db,'agendamentos',String(d.agendamentoId));
-          const agendamentoSnap=await tx.get(agendamentoRef);
-          if(agendamentoSnap.exists()) agendamento=agendamentoSnap.data()||{};
-        }
-        tx.update(demandaRef,{
-          status:'pendente',provaTexto:'',provaImagemUrl:'',rejeitadoEm:new Date().toISOString()
-        });
-        const fonteCancelavel=!!agendamento &&
-          agendamento.excluido!==true &&
-          String(agendamento.status||'')==='agendado' &&
-          agendamento.precisaAprovacao===true &&
-          agendamento.aprovado!==true;
-        if(fonteCancelavel){
-          const agoraCancelamento=new Date().toISOString();
-          tx.update(agendamentoRef,{
-            status:'cancelado',excluido:true,canceladoPor:usuarioAtual||'?',
-            canceladoEm:agoraCancelamento,motivoCancelamento:'Decisão de gravação rejeitada para refazer',
-            excluidoPor:usuarioAtual||'?',excluidoEm:agoraCancelamento,
-            motivoExclusao:'decisão de gravação rejeitada para refazer'
-          });
-        }
+        if(d.refazerUltimoI161?.operacao===e.operacao)return {d,cancelouAgendamento:false,recuperado:true};
+        if(d.excluido||d.status!=='concluida_aguardando_aprovacao'||assinaturaEntregaI161(d)!==e.assinatura)throw Error('Essa entrega mudou enquanto você conferia. Feche e abra a demanda para ver a versão atual.');
+        const podeCancelarFonte=ehDecisaoCancelavelDeGravacaoV135(d);let agendamentoRef=null,agendamento=null;
+        if(podeCancelarFonte){agendamentoRef=doc(db,'agendamentos',String(d.agendamentoId));const fonte=await tx.get(agendamentoRef);if(fonte.exists())agendamento=fonte.data()||{};}
+        if(!contextoRefazerI161(e.pessoa,e.uid,e.sessao)||!e.atual())throw Error('A tela ou o perfil mudou. Abra a demanda novamente.');
+        const agora=new Date().toISOString(),anterior={texto:d.provaTexto||'',link:d.provaImagemUrl||'',concluidaEm:d.concluidaEm||null};
+        const retorno={operacao:e.operacao,motivo,por:e.pessoa,atorReal:atorRealDaSessao(),em:agora,entregaAnterior:anterior};
+        tx.update(demandaRef,{status:'pendente',provaTexto:'',provaImagemUrl:'',rejeitadoEm:agora,refazerUltimoI161:retorno,historico:arrayUnion({acao:'Devolvida para ajustar',por:e.pessoa,em:agora,detalhe:motivo,operacao:e.operacao,provaAnterior:anterior})});
+        const fonteCancelavel=!!agendamento&&agendamento.excluido!==true&&String(agendamento.status||'')==='agendado'&&agendamento.precisaAprovacao===true&&agendamento.aprovado!==true;
+        if(fonteCancelavel)tx.update(agendamentoRef,{status:'cancelado',excluido:true,canceladoPor:e.pessoa,canceladoEm:agora,motivoCancelamento:'Decisão de gravação rejeitada para refazer',excluidoPor:e.pessoa,excluidoEm:agora,motivoExclusao:'decisão de gravação rejeitada para refazer'});
         return {d,cancelouAgendamento:fonteCancelavel};
       });
-    }catch(e){
-      mostrarToast(String(e?.message||e||'Não consegui devolver a demanda.')+' Nada foi alterado.','erro');
-      return false;
+    }catch(err){
+      try{const snap=await _getDocFromServerFB(demandaRef);if(snap.exists()&&snap.data().refazerUltimoI161?.operacao===e.operacao)resultado={d:{id:snap.id,...snap.data()},recuperado:true};}catch(consulta){}
+      if(!resultado){e.busy=false;if(e.campo.isConnected&&contextoRefazerI161(e.pessoa,e.uid,e.sessao)){btn.disabled=false;erro.textContent=(err.message||'Não consegui confirmar a devolução.')+' O recado continua aqui. Tente confirmar novamente ou consulte a demanda.';}return false;}
     }
-    const d=resultado.d;
-    registrarHistorico('demandas', id, 'Rejeitada — pedido pra refazer');
-    mostrarToast('Devolvido pra ' + (d?.destinatario || 'a pessoa') + ' refazer.');
-    sincronizarStatusDemandaCliente(id, 'pendente').catch(()=>{});
-    if(resultado.cancelouAgendamento){
-      mostrarToast('Rejeitado — a gravação extra foi cancelada.');
-    }
-    if(d?.destinatario && d.destinatario !== usuarioAtual){
-      Promise.resolve(dispararEmailIndividual(d.destinatario, 'demanda_refazer', {
-        titulo: '🔄 Pedido pra refazer: ' + (d.titulo||''), prazoData: d.prazoData, prazoHora: d.prazoHora,
-        colecao:'demandas', itemId:id
-      })).catch(e => console.error('Falha ao avisar do pedido de refazer:', e));
-    }
-    fecharModal();
-    carregarGerencia();
-    atualizarFilaAprovacao();
-    return true;
+    e.busy=false;
+    if(!contextoRefazerI161(e.pessoa,e.uid,e.sessao))return true;
+    const d=resultado.d;sincronizarStatusDemandaCliente(e.id,'pendente').catch(()=>{});
+    if(d.destinatario&&d.destinatario!==e.pessoa&&!resultado.recuperado)Promise.resolve(dispararEmailIndividual(d.destinatario,'demanda_refazer',{titulo:'🔄 Pedido pra refazer: '+(d.titulo||''),prazoData:d.prazoData,prazoHora:d.prazoHora,colecao:'demandas',itemId:e.id})).catch(err=>console.error('Aviso do ajuste:',err));
+    if(window.__refazerI161===e&&e.campo.isConnected){fecharModal();window.__refazerI161=null;}
+    mostrarToast('Recado enviado para '+nomeEquipeI126(d.destinatario||'a pessoa')+' ajustar.');carregarGerencia();atualizarFilaAprovacao();return true;
   };
 
   /* ===== Botão "+ Nova Demanda" — sempre visível, qualquer subtab da Gerência =====

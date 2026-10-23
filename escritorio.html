@@ -23103,6 +23103,102 @@ async function registrarGravacaoRealizadaNucleo(agId){
     renderReferencias();
   };
 
+  // I167: agenda de organização antecipada; não ativa o novo ciclo editorial.
+  let agendaMontadaI167=null,agendaImportI167=null,agendaAberturaI167=0,agendaChaveI167='';
+  const papeisAgendaI167=()=>['Chris','Amanda','Fernanda'].includes(usuarioAtual);
+  function limparAgendaI167(){
+    ++agendaAberturaI167;agendaChaveI167='';agendaMontadaI167?.destroy();agendaMontadaI167=null;
+    ['agendaInicioI167','agendaBoxI167'].forEach(id=>document.getElementById(id)?.replaceChildren());
+  }
+  function podeSairAgendaI167(){return agendaMontadaI167?.podeSair?.()!==false;}
+  function sincronizarAcessoAgendaI167(){
+    if(!papeisAgendaI167()||!auth.currentUser?.uid){
+      limparAgendaI167();['navAgendaOrganizacaoI167','view-agendaOrganizacao','agendaInicioI167'].forEach(id=>document.getElementById(id)?.remove());return;
+    }
+    let nav=document.getElementById('navAgendaOrganizacaoI167');
+    if(!nav){
+      nav=document.createElement('button');nav.className='navitem';nav.id='navAgendaOrganizacaoI167';nav.type='button';
+      nav.style.cssText='background:#bce9dc;color:#102f29;font-weight:800;border:0;width:100%;text-align:left;margin:4px 0;';
+      nav.innerHTML='<span class="ico"><svg><use href="#i-calendar"/></svg></span> Organização das datas';
+      nav.addEventListener('click',()=>irPara('agendaOrganizacao',nav));
+    }
+    document.getElementById('navInicio')?.insertAdjacentElement('afterend',nav);
+    if(!document.getElementById('view-agendaOrganizacao')){
+      const view=document.createElement('div');view.className='view';view.id='view-agendaOrganizacao';
+      view.innerHTML='<div id="agendaBoxI167"></div>';document.querySelector('.main')?.appendChild(view);
+    }
+    if(!document.getElementById('agendaInicioI167')){
+      const box=document.createElement('div');box.id='agendaInicioI167';document.getElementById('cardQuemSouEu')?.insertAdjacentElement('afterend',box);
+    }
+    if(['inicio','agendaOrganizacao'].includes(viewAtiva))abrirAgendaI167();
+  }
+  async function carteiraAgendaI167(){
+    const sessao=sessaoServicoManual();
+    const [extras,config]=await comTimeoutCalendarioOperacional(Promise.all([
+      _getDocsFromServerFB(collection(db,'clientes_extras')),_getDocsFromServerFB(collection(db,'clientes_config'))
+    ]),'Conferir clientes da organização',12000);
+    if(sessao!==sessaoServicoManual())throw Error('O perfil mudou. Reabra a organização.');
+    const p=projetarListaClientesI21(extras,config);
+    return p.ativos.filter(c=>fonteFisicaClienteR4(c.slug,c)).map(c=>({id:String(c.slug),slug:String(c.slug),nome:nomeClienteCanonico(c.slug,c.nome),
+      fontesExtras:extras.docs.filter(x=>x.data().slug===c.slug&&!x.data().excluido&&fonteFisicaClienteR4(x.data().slug,x.data())).map(x=>x.id),
+      empresas:GetEmpresasOtavioI144.ativo(c.slug)?GetEmpresasOtavioI144.empresas.map(e=>({id:e.id,nome:e.nome})):[]}));
+  }
+  async function validarClienteAgendaTxI167(tx,entrada,carteira){
+    const slug=String(entrada.cliente||'');
+    if(!slug||slug!==slugClienteCanonico(slug)||!fonteFisicaClienteR4(slug))throw Error('Escolha o cadastro atual do cliente.');
+    const [cfg,cal]=await Promise.all([tx.get(doc(db,'clientes_config',slug)),tx.get(doc(db,'calendarios',slug))]);
+    const dados=cfg.exists()?cfg.data():{},fonte=cal.exists()?cal.data():{},registro=carteira.find(c=>c.slug===slug);
+    if(!registro)throw Error('Este cliente não foi confirmado na carteira.');
+    const extras=await Promise.all((registro.fontesExtras||[]).map(id=>tx.get(doc(db,'clientes_extras',id))));
+    const extraValido=extras.find(s=>s.exists()&&s.data().slug===slug&&!s.data().excluido&&s.data().ativo!==false&&fonteFisicaClienteR4(slug,s.data()));
+    if(!cfg.exists()&&!cal.exists()&&!CLIENTES_BASE.some(c=>c.slug===slug)&&!extraValido)throw Error('Este cliente não foi confirmado no cadastro.');
+    exigirClienteOperacionalR4(slug,dados);exigirClienteOperacionalR4(slug,fonte);
+    if(dados.excluido===true||dados.ativo===false||clienteInativoEfetivo(dados))throw Error('Este cliente está fora da carteira ativa. O histórico foi preservado.');
+    const empresa=String(entrada.empresaId||'');
+    if(empresa&&(!GetEmpresasOtavioI144.ativo(slug)||!GetEmpresasOtavioI144.empresas.some(e=>e.id===empresa)))throw Error('Confira a empresa deste cliente.');
+    const nome=nomeClienteCanonico(slug,dados.nome||dados.clienteNome||fonte.clienteNome||extraValido?.data().nome||CLIENTES_BASE.find(c=>c.slug===slug)?.nome||registro.nome);
+    if(!nome)throw Error('O nome do cliente não foi confirmado.');
+    return {cliente:slug,clienteNome:nome,ativo:true};
+  }
+  async function abrirDemandaAgendaI167(id){
+    const sessao=sessaoServicoManual(),pessoa=usuarioAtual,uid=auth.currentUser?.uid;
+    const validar=()=>{if(sessao!==sessaoServicoManual()||pessoa!==usuarioAtual||uid!==auth.currentUser?.uid)throw Error('O perfil mudou. Reabra a demanda.');};
+    try{
+      if(!papeisAgendaI167()||!/^org167_[A-Za-z0-9_-]{12,100}$/.test(id))return;
+      await carregarTodasDemandas({servidor:true,validar});validar();
+      const d=todasDemandas.find(x=>x.id===id&&x.tipoEspecial==='organizacao_social_i167'&&!x.excluido);
+      if(!d)throw Error('Não consegui confirmar esta etapa. Atualize o calendário.');
+      if(pessoa==='Fernanda'&&d.destinatario!=='Fernanda')throw Error('Esta etapa está com '+nomeEquipeI126(d.destinatario)+'. Você pode acompanhar as datas no calendário.');
+      if(!podeSairAgendaI167())return;
+      if(d.destinatario===pessoa)abrirDemandaMinha(id);else abrirDemandaGerencia(id);
+    }catch(e){if(sessao===sessaoServicoManual())mostrarToast(e.message||'Não foi possível abrir esta etapa.','erro');}
+  }
+  async function abrirAgendaI167(){
+    const pessoa=usuarioAtual,rota=viewAtiva,uid=auth.currentUser?.uid,sessao=sessaoServicoManual(),chave=sessao+'|'+rota;
+    if(!papeisAgendaI167()||!uid||!['inicio','agendaOrganizacao'].includes(rota))return;
+    if(agendaMontadaI167&&agendaChaveI167===chave)return;
+    limparAgendaI167();const n=agendaAberturaI167;
+    const box=document.getElementById(rota==='inicio'?'agendaInicioI167':'agendaBoxI167');if(!box)return;
+    const vigente=()=>n===agendaAberturaI167&&sessao===sessaoServicoManual()&&rota===viewAtiva&&box===document.getElementById(rota==='inicio'?'agendaInicioI167':'agendaBoxI167');
+    box.innerHTML='<div class="card" role="status">Conferindo nossa organização de datas…</div>';
+    try{
+      agendaImportI167??=Promise.all([import('./gs-organizacao-social-repo-i167.mjs?v=i167-1'),import('./gs-agenda-organizacao-i167.mjs?v=i167-1')]);
+      const [repositorio,ui]=await agendaImportI167;if(!vigente())return;
+      const contexto=()=>({uid:auth.currentUser?.uid||'',nome:usuarioAtual,atorReal:atorRealDaSessao(),sessao:sessaoServicoManual()});
+      const carteira=await carteiraAgendaI167();if(!vigente())return;
+      const repo=repositorio.criarRepositorioOrganizacaoI167({db,doc,collection,query,where,runTransaction,serverTimestamp,
+        getDocFromServer:_getDocFromServerFB,getDocsFromServer:_getDocsFromServerFB,validarClienteTx:(tx,entrada)=>validarClienteAgendaTxI167(tx,entrada,carteira)},contexto);
+      agendaMontadaI167=ui.montarAgenda(box,{repo,contexto,carteira,pessoas:DESTINATARIOS_DEMANDA.map(p=>({id:p,nome:nomeEquipeI126(p)})),
+        compacto:rota==='inicio',abrirCompleto:()=>irPara('agendaOrganizacao',document.getElementById('navAgendaOrganizacaoI167')),abrirDemanda:abrirDemandaAgendaI167});
+      agendaChaveI167=chave;
+    }catch(e){
+      if(vigente()){
+        agendaImportI167=null;box.innerHTML='<div class="card" role="alert"><h2>Organização não conferida</h2><p class="desc">'+esc(e.message||'Não consegui confirmar as datas. Isso não significa que a agenda esteja vazia.')+'</p><button class="btn secondary" data-retomar-agenda-i167>Tentar novamente</button></div>';
+        box.querySelector('[data-retomar-agenda-i167]')?.addEventListener('click',()=>abrirAgendaI167());
+      }
+    }
+  }
+
   /* I135: usar uma referência passa pelo editor e seu salvamento protegido.
      A biblioteca oficial já reúne Hub, Portal e perfis do mesmo cliente. */
   window.abrirUsarNoCalendario=async function(refId,origem){
@@ -24324,9 +24420,11 @@ async function registrarGravacaoRealizadaNucleo(agId){
   const VIEWS_SO_CHRIS = ['mensalidades','financeiro','centralVendas','cobranca','mensagensClientesChris'];
   window.irPara = function(nome, el, opcoes){
     // I118: o primeiro incremento libera apenas estas jornadas; atalhos antigos respeitam a mesma porta.
-    if(usuarioAtual==='Fernanda'&&!['inicio','minhasDemandasAtribuidas','minhasDemandas','checklist','diarioEquipe','postagens','desafio','analisesMensais','campanhas','funcoesFixas','portalGeral','getAcademy','roteiros','referencias','briefings','acompanhamento','relatorioMensal','calendarios','manualFuncao','duvidasBit','arquivoEntregas','stories'].includes(nome)){
+    if(usuarioAtual==='Fernanda'&&!['inicio','minhasDemandasAtribuidas','minhasDemandas','checklist','diarioEquipe','postagens','desafio','analisesMensais','campanhas','funcoesFixas','portalGeral','getAcademy','roteiros','referencias','briefings','acompanhamento','relatorioMensal','calendarios','manualFuncao','duvidasBit','arquivoEntregas','stories','agendaOrganizacao'].includes(nome)){
       mostrarToast('Esta área ainda não está disponível no seu perfil. Use Minhas Demandas ou Registro do dia.','erro');return false;
     }
+    if(nome==='agendaOrganizacao'&&!papeisAgendaI167()){mostrarToast('Esta organização é da Amanda, do Chris e da Júlia.','erro');return false;}
+    if(nome!==viewAtiva&&!podeSairAgendaI167())return false;
     if(nome!==viewAtiva&&!podeSairDiarioI118())return false;
     if(nome==='diarioEquipe'&&!['Fernanda','Amanda','Chris'].includes(usuarioAtual)){mostrarToast('Este registro é da Júlia e da gestão.','erro');return false;}
     if(nome==='metas'){nome='desafio';el=document.getElementById('navDesafio');}
@@ -24419,6 +24517,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       mostrarToast('Esta área não está disponível para este perfil.', 'erro');
       return false;
     }
+    if(!['inicio','agendaOrganizacao'].includes(nome))limparAgendaI167();
     if(nome !== 'calendarios') pararOuvinteCalendarioCampo(false);
     registrarAtividadeUsuario();
     if(nome!=='acompanhamento')pararDeclaracoesI141();
@@ -24440,6 +24539,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
     if(nome === 'desafio')abrirDesafioI99();
     if(usuarioAtual==='Amanda'){const avisos=document.getElementById('avisosPlanejamentoI113'),destino=document.getElementById(nome==='direcao'?'view-direcao':'view-inicio');if(avisos&&destino)destino.prepend(avisos);}
     if(rotaDirecaoI102())abrirDirecaoI101();else limparDirecaoI101();
+    if(['inicio','agendaOrganizacao'].includes(nome))abrirAgendaI167();
     if(nome === 'central') renderCentral();
     if(nome === 'cadastro') setCadastroSub('central', document.querySelector('#view-cadastro .subtab'));
     if(nome === 'centralVendas') renderCentralVendas();
@@ -27214,7 +27314,12 @@ window.setGerenciaSub = function(qual, el){
     const bruto = String((d && d.titulo) || '').trim();
     const m = bruto.match(FAIXA_EMOJI_TITULO);
     const icone = m ? m[0].trim() : '';
-    const nome = bruto.replace(FAIXA_EMOJI_TITULO, '').trim();
+    let nome = bruto.replace(FAIXA_EMOJI_TITULO, '').trim();
+    if(d?.tipoEspecial==='organizacao_social_i167'){
+      const competencia=String(d.agendaOrganizacaoI167?.mes||'');
+      const mes=/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)?competencia.slice(5)+'/'+competencia.slice(0,4):'competência a conferir';
+      nome+=(d.clienteNome?' · '+String(d.clienteNome):'')+' · '+mes;
+    }
     return {
       icone,
       nome: nome || 'Demanda sem título',
@@ -28429,6 +28534,7 @@ window.setGerenciaSub = function(qual, el){
      respostas assíncronas; depois remove todo retrato privilegiado que
      poderia atravessar Chris ↔ Amanda ↔ equipe no mesmo navegador. */
   function limparEstadoPrivadoTrocaIdentidade(){
+    limparAgendaI167();
     limparDiarioI118();diarioDataI118='';
     limparAvisosPlanejamentoI113();
     pararBadgeCampanhasI104();
@@ -29563,6 +29669,7 @@ window.setGerenciaSub = function(qual, el){
     montarBotaoTelasAntigas();
     montarAtalhoDestaque();
     montarControleEditorialCalendariosPorPapel();
+    sincronizarAcessoAgendaI167();
     const campoI67=PESSOAS_DE_CAMPO.includes(usuarioAtual);
     // Os elementos de vídeos saem do DOM quando o papel não tem essa área.
     const rotuloI67=(id,texto)=>{const el=document.getElementById(id);if(el)el.textContent=texto;};
@@ -38773,6 +38880,7 @@ window.setGerenciaSub = function(qual, el){
       if(demandaIdentificadaServicoI19(v)) return; // Destinos exatos não se deduplicam por título.
       if(ehAvisoDistribuicaoI105(v)) return; // I53 já encerra só a atribuição exata.
       if(v.tipoEspecial===TIPO_I153) return; // Campanha/data/IDs físicos não se deduplicam por título.
+      if(v.tipoEspecial==='organizacao_social_i167') return; // I167: cada ocorrência tem ID próprio; o título não identifica compromisso.
       const k = (v.destinatario||'') + '||' + norm(v.titulo) + identidadeRecorrenteDemanda(v) + (avisoLegadoServicoI19(v)?'|servico:'+JSON.stringify(v.leadId):'');
       (grupos[k] = grupos[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
     });

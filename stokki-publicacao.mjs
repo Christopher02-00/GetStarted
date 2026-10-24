@@ -260,6 +260,7 @@ export function criarOperacao(api){
         <details><summary>Histórico de correções</summary>${(p.historico||[]).filter(x=>String(x.acao).startsWith('Stokki —')).slice().reverse().map(x=>`<div style="margin:10px 0">${esc(x.em)} · ${esc(x.por)} · ${esc(x.acao)}<br><small>${historicoLegivel(x)}</small></div>`).join('')||'Sem correções registradas.'}</details></article>`;}
       catch(e){return `<p role="alert">${esc(p.titulo)}: ${esc(e.message)}</p>`;}
     }).join('')||'<p>Nenhum vídeo no novo fluxo ainda. Os antigos continuam na fila anterior; os novos entram após a Gabi selecionar as plataformas.</p>');
+    api.aoDesenharI165?.(painel,posts);
   }
   function fecharComConferenciaI84(){
     if(ocupado||!painel)return;
@@ -269,6 +270,7 @@ export function criarOperacao(api){
   async function abrir(){
     if(!['Amanda','Cecília','Chris'].includes(contexto().papel))return;
     if(painel)painel.remove();
+    const identidadePainelI165=JSON.stringify(contexto());
     painel=doc.createElement('dialog');painel.dataset.stokkiPainel='';painel.style.cssText='width:min(900px,94vw);max-height:90vh;overflow:auto;color:inherit;background:var(--bg,#242526);border:1px solid #888;border-radius:12px;padding:20px;box-sizing:border-box';
     doc.body.append(painel);painel.showModal();redesenharPreservandoI84();
     painel.addEventListener('cancel',ev=>{ev.preventDefault();fecharComConferenciaI84();});
@@ -284,6 +286,7 @@ export function criarOperacao(api){
         catch{campo.focus();campo.select();api.toast('Texto selecionado. Use Copiar no seu dispositivo.');}return;
       }
       const botao=ev.target.closest('[data-stokki-acao]');if(!botao||ocupado)return;
+      if(api.usarServidorI165&&identidadePainelI165!==JSON.stringify(contexto())){api.toast('O acesso mudou. Reabra o painel para conferir a publicação.');return;}
       if(botao.closest('[data-stokki-conflito]')){api.toast('Este material mudou. Confira os dados atuais antes de salvar.');return;}
       const bloco=botao.closest('[data-stokki-rede]'),id=botao.closest('[data-stokki-post]').dataset.stokkiPost;
       const p=retratos.get(id),tipo=botao.dataset.stokkiAcao,rede=bloco.dataset.stokkiRede||bloco.querySelector('[data-stokki-adicionar]')?.value;
@@ -296,8 +299,8 @@ export function criarOperacao(api){
       }
       if(tipo==='publicar'&&!api.confirm('Confirma que este vídeo realmente foi publicado nesta plataforma? O checklist ficará pendente para Amanda e Cecília.'))return;
       const feedback=painel.querySelector('[data-stokki-feedback]');feedback.textContent='Salvando e confirmando no servidor…';ocupado=true;botao.disabled=true;
-      try{alterar(p,acao,{...contexto(),em:new Date().toISOString()});const recibo=await api.salvar(p,acao,contexto());ocupado=false;botao.disabled=false;await carregar({id,acao,recibo:recibo?.postagem});api.toast('Registro confirmado. Amanda e Cecília veem a mesma situação.');}
-      catch(e){ocupado=false;botao.disabled=false;feedback.textContent=e.message||String(e);feedback.setAttribute('role','alert');}
+      try{const identidadeI165=JSON.stringify(contexto()),painelI165=painel;const servidorI165=api.usarServidorI165?await api.usarServidorI165():false;if(JSON.stringify(contexto())!==identidadeI165||painel!==painelI165||!painelI165.isConnected)throw Error('O acesso mudou. Reabra esta publicação.');if(!servidorI165)alterar(p,acao,{...contexto(),em:new Date().toISOString()});const recibo=await api.salvar(p,acao,contexto(),{servidorI165});ocupado=false;botao.disabled=false;if(JSON.stringify(contexto())!==identidadeI165||painel!==painelI165||!painelI165.isConnected)return;if(recibo?.conferenciaAbertaI165===true){feedback.textContent='Confira a ação no formulário deste cartão. Nada foi marcado como concluído ainda.';return;}await carregar({id,acao,recibo:recibo?.postagem});api.toast('Registro confirmado. Amanda e Cecília veem a mesma situação.');}
+      catch(e){ocupado=false;botao.disabled=false;if(feedback.isConnected){feedback.textContent=e.message||String(e);feedback.setAttribute('role','alert');}}
     });
     await carregar();
   }

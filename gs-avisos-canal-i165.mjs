@@ -9,6 +9,7 @@ export function mesmaIdentidadeAvisosI165(a,b){return !!a?.uid&&['uid','papel','
 export function cadastroProprioAvisosI165(c,g,d){
  return c?.papel===c?.atorReal&&!c?.delegada&&g?.uid===c?.uid&&g?.email===c?.email&&g?.emailVerificado===true&&g?.provedor==='google.com'&&d?.ativo===true&&d.excluido!==true&&d.pessoa===c.atorReal&&(!d.uid||d.uid===c.uid)&&(!d.email||String(d.email).trim().toLowerCase()===c.email);
 }
+export function fontesAvisosHabilitadasI165(config){return programacaoAtivaI165(config)?[...(config.habilidades?.edicao===true?['videos_producao']:[]),...(config.habilidades?.programacao===true?['postagens']:[])]:[];}
 export function avisoFisicoI165(d,id,papel){return idAviso(id)&&d?.id===id&&d.escopo===ESCOPO_AVISOS_I165&&d.destinatario===papel&&typeof d.ativacaoId==='string'&&d.ativacaoId.length>=12&&['pendente','resolvida'].includes(d.estado)&&['videos_producao','postagens'].includes(d.fonte?.colecao)&&idValido(d.fonte?.id);}
 export function saudeAvisosI165(d,agora=Date.now()){
  const t=Date.parse(d?.ultimaExecucao||'');return d?.escopo===ESCOPO_AVISOS_I165&&d.estado==='conferido'&&Number.isFinite(t)&&agora-t>=-60000&&agora-t<=15*60000;
@@ -67,7 +68,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  let vivo=true,ciclo=0,linhas=[],config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0,cancelarEsperaSW=null;
  const vigente=()=>vivo&&root.isConnected!==false&&mesmaIdentidadeAvisosI165(c,contexto());
  const atual=e=>vigente()&&e===ciclo;
- const ativo=()=>estadoConfig==='confirmada'&&programacaoAtivaI165(config)&&config.habilidades?.edicao===true;
+ const ativo=()=>estadoConfig==='confirmada'&&fontesAvisosHabilitadasI165(config).length>0;
  const pushAtivo=()=>ativo()&&config.habilidades?.push===true;
  const ambienteBase=()=>ambiente.window.location.href,swURL=()=>new URL('./firebase-messaging-sw.js',ambienteBase()).href;
  const pararCanal=()=>{foregroundSeq++;const cancelar=cancelarEsperaSW;cancelarEsperaSW=null;cancelar?.();try{pararForeground?.();}catch{}pararForeground=null;sdkAtual=null;};
@@ -78,8 +79,8 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
   root.hidden=!teveAtivo&&['conferindo','desligada'].includes(estadoConfig);
   const pendentes=linhas.filter(n=>n.estado==='pendente'&&n.ativacaoId===config?.ativacaoId),confirmada=ativo()&&estadoLista==='confirmada';
   el('[data-contagem]').textContent=confirmada?'· '+pendentes.length+(truncado?' nesta página':''):pendentes.length?'· '+pendentes.length+' no último retrato':'';
-  el('[data-saude]').textContent=teveAtivo?'Edição: '+(confirmada&&saudeAvisosI165(saude,ambiente.agora())?'acompanhamento conferido.':'acompanhamento a conferir.')+' '+resumoSaudeCanaisI165(saude):'';
-  el('[data-estado]').textContent=recado||(!confirmada?'Não consegui confirmar toda a fila agora. O último retrato foi preservado; isso não confirma fila vazia.':truncado?'Há mais avisos além dos 100 desta página. Confira também a sua fila de edição.':pendentes.length?'Abra o conteúdo para conferir o que precisa ser feito.':'Nenhum aviso pendente na última conferência do servidor.');
+  el('[data-saude]').textContent=teveAtivo?'Conteúdos: '+(confirmada&&saudeAvisosI165(saude,ambiente.agora())?'acompanhamento conferido.':'acompanhamento a conferir.')+' '+resumoSaudeCanaisI165(saude):'';
+  el('[data-estado]').textContent=recado||(!confirmada?'Não consegui confirmar toda a fila agora. O último retrato foi preservado; isso não confirma fila vazia.':truncado?'Há mais avisos além dos 100 desta página. Confira também a sua fila de conteúdos.':pendentes.length?'Abra o conteúdo para conferir o que precisa ser feito.':'Nenhum aviso pendente na última conferência do servidor.');
   el('[data-aparelho]').textContent=c.papel!==c.atorReal||c.delegada?'Para receber no aparelho, entre com o Google da própria pessoa.':ambiente.Notification?.permission==='denied'?'Os avisos estão bloqueados neste navegador. A fila continua no sistema.':aparelho?.pronto?'Você pode ativar os avisos neste aparelho. A entrega depende do navegador e do serviço.':aparelho?.motivo||'Conferindo se os avisos deste aparelho podem ser ativados.';
   el('[data-ativar]').disabled=busy||!pushAtivo()||!aparelho?.pronto||ambiente.Notification?.permission==='denied';
   el('[data-lista]').innerHTML=pendentes.map(n=>'<div style="padding:12px 0;border-top:1px solid #444;display:flex;gap:12px;justify-content:space-between;align-items:center"><div><strong>'+esc(n.titulo||'Conteúdo para conferir')+'</strong><div style="font-size:13px;color:#ccc;margin-top:4px">'+esc(n.texto||'Confira o próximo passo na origem.')+'</div>'+(n.urgencia==='urgente'?'<b style="color:#ffbe65">Prioridade</b>':'')+(n.bloqueada?'<small style="display:block">Aguardando outra etapa.</small>':'')+(n.faseAviso==='atrasado'?'<small style="display:block;color:#ffbe65">O prazo passou. Confira este conteúdo.</small>':'')+(resumoCanalAvisoI165(n)?'<small style="display:block;color:#ffbe65">'+esc(resumoCanalAvisoI165(n))+'</small>':'')+'</div><button class="btn secondary" type="button" data-abrir="'+esc(n.id)+'" '+(!confirmada?'disabled':'')+'>Abrir conteúdo</button></div>').join('');
@@ -107,7 +108,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
    if(!ativo()){estadoConfig='desligada';aparelho=null;pararCanal();render();return false;}
    teveAtivo=true;
    const l=await io.listarAvisos();if(!atual(e))return false;
-   if(l?.schema!==1||l.listaConfirmada!==true||l.ativacaoId!==config.ativacaoId||!Array.isArray(l.avisos)||l.avisos.length>100||l.limite!==100||typeof l.truncado!=='boolean'||l.avisos.some(n=>!avisoFisicoI165(n,n.id,c.papel)||n.estado!=='pendente'||n.fonte?.colecao!=='videos_producao'||n.ativacaoId!==config.ativacaoId))throw Error('A fila de avisos precisa ser conferida. O último retrato foi preservado.');
+   if(l?.schema!==1||l.listaConfirmada!==true||l.ativacaoId!==config.ativacaoId||!Array.isArray(l.avisos)||l.avisos.length>100||l.limite!==100||typeof l.truncado!=='boolean'||l.avisos.some(n=>!avisoFisicoI165(n,n.id,c.papel)||n.estado!=='pendente'||!fontesAvisosHabilitadasI165(config).includes(n.fonte?.colecao)||n.ativacaoId!==config.ativacaoId))throw Error('A fila de avisos precisa ser conferida. O último retrato foi preservado.');
    linhas=l.avisos;truncado=l.truncado;estadoLista='confirmada';recado='';render();
    const a=await preConferir(e,r);if(a&&atual(e))await prepararForeground(e);
    if(pendenteURL&&idAviso(pendenteURL)&&atual(e)){const id=pendenteURL;pendenteURL=null;await abrir(id);}
@@ -118,16 +119,18 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  }
  async function lerNota(id,{paraNotificar=false}={}){
   if(!vigente()||!idAviso(id))throw Error('Este aviso precisa ser conferido no acesso original.');
-  const r=await configFresh();if(!programacaoAtivaI165(r.config)||r.config.habilidades?.edicao!==true)throw Error('O acompanhamento está pausado. A atividade continua na origem.');
+  const r=await configFresh();if(!fontesAvisosHabilitadasI165(r.config).length)throw Error('O acompanhamento está pausado. A atividade continua na origem.');
   if(paraNotificar&&r.config.habilidades?.push!==true)return null;
   const n=await io.lerAviso(id);if(!vigente())throw Error('O perfil mudou. Abra o aviso no acesso original.');
-  if(!avisoFisicoI165(n,id,c.papel)||n.ativacaoId!==r.config.ativacaoId||n.fonte?.colecao!=='videos_producao'||n.fonteConferida!==true||n.leituraNaoResolve!==true||n.semAlterarEstadoPersistido!==true)throw Error('Não consegui confirmar a origem atual deste aviso. A atividade continua preservada.');
+  if(!avisoFisicoI165(n,id,c.papel)||n.ativacaoId!==r.config.ativacaoId||!fontesAvisosHabilitadasI165(r.config).includes(n.fonte?.colecao)||n.fonteConferida!==true||n.leituraNaoResolve!==true||n.semAlterarEstadoPersistido!==true)throw Error('Não consegui confirmar a origem atual deste aviso. A atividade continua preservada.');
   if(paraNotificar&&(n.estado!=='pendente'||n.fonteAvancou||n.pausada||n.bloqueada))return null;
   return n;
  }
  async function abrir(id){const token=++abertura,navegacao=contexto()?.navegacao;
   try{const n=await lerNota(id);if(!vigente()||token!==abertura||navegacao!==contexto()?.navegacao)return {abriu:false,contextoVigente:false};
-   const resultado=await abrirEditor(n.fonte.id);if(!vigente()||token!==abertura)return {abriu:false,contextoVigente:false};
+   const abrirFonte=n.fonte.colecao==='postagens'?abrirPostagem:abrirEditor;
+   if(typeof abrirFonte!=='function')throw Error('Abra a fila de conteúdos para conferir esta atividade.');
+   const resultado=await abrirFonte(n.fonte.id);if(!vigente()||token!==abertura)return {abriu:false,contextoVigente:false};
    if(resultado?.abriu===false||resultado===false)throw Error('A origem mudou de etapa. Confira a fila atual.');
    recado=n.estado==='resolvida'?'Este aviso já avançou. A origem atual foi aberta.':'Conteúdo aberto. A pendência só sai quando a atividade avançar na origem.';render();
    const u=new URL(ambienteBase());if(u.searchParams.get('avisoI165')===id){u.searchParams.delete('avisoI165');ambiente.window.history.replaceState(null,'',u.href);}return {abriu:true,contextoVigente:true};

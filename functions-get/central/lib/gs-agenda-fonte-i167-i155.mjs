@@ -1,5 +1,6 @@
 /* A obrigação e suas datas permanecem na demanda I167. Esta ponte não escreve nela. */
 import {assinaturaOrganizacaoI167} from './gs-organizacao-social-repo-i167.mjs';
+import {PAPEIS_HISTORICOS_PLANEJAMENTO_R81,PAPEL_PESQUISA_ANTERIOR_R81} from './gs-papeis-planejamento-r81.mjs';
 const ETAPAS = ['pesquisa','previa','reuniao','consolidado','criacao','revisao','disponivel'];
 const CORRESPONDENCIA = Object.freeze({referencias:'pesquisa',pesquisa:'pesquisa',previa:'previa',reuniao:'reuniao',consolidado:'consolidado',criacao:'criacao',revisao:'revisao',liberacao:'disponivel',disponivel:'disponivel'});
 const EMPRESAS = ['', 'otica_hauer','otica_sao_jose','clinica_olhos_hauer','clinica_sao_jose'];
@@ -17,7 +18,7 @@ function validarFonte(d,c,etapa,empresaId) {
   if(!ETAPAS.includes(etapa))erro('Confira a etapa do Planejamento.');
   if(!EMPRESAS.includes(empresaId)||String(m.empresaId||'')!==empresaId||String(d.empresaOtavio||'')!==empresaId||c.cliente!=='zeiss'&&empresaId!=='')erro('A empresa do compromisso não corresponde à escolha.');
   if(CORRESPONDENCIA[m.etapa]&&CORRESPONDENCIA[m.etapa]!==etapa)erro('Este compromisso está identificado como outra etapa. Escolha a etapa correspondente.');
-  if(!['Chris','Amanda','Fernanda'].includes(d.destinatario)||!/^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d.prazoData||'')||!/^([01]\d|2[0-3]):[0-5]\d$/.test(d.prazoHora||'19:00'))erro('Confira o responsável e o prazo na Organização das datas antes de vincular.');
+  if(!PAPEIS_HISTORICOS_PLANEJAMENTO_R81.includes(d.destinatario)||!/^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d.prazoData||'')||!/^([01]\d|2[0-3]):[0-5]\d$/.test(d.prazoHora||'19:00'))erro('Confira o responsável e o prazo na Organização das datas antes de vincular.');
   return m;
 }
 export async function candidatasAgendaI167(linhas,{cliente,competencia}) {
@@ -39,14 +40,14 @@ export function selecionarFonteAgendaI167(candidatas,{etapa,empresaId='',demanda
 }
 export function proporVinculoAgendaI167(r,c,etapa) {
   if(!idValido(r?.id)||!/^[a-f0-9]{64}$/.test(r.assinatura||''))erro('A versão do compromisso não foi conferida. Consulte novamente.');
-  const d=dados(r),empresaId=String(d.agendaOrganizacaoI167?.empresaId||''),m=validarFonte(d,c,etapa,empresaId),campos=camposAgendaI167(d);
+  const d=dados(r);if(d.destinatario===PAPEL_PESQUISA_ANTERIOR_R81)erro('Este compromisso continua atribuído à Júlia. Amanda precisa atualizar a mesma ficha na Organização antes de vinculá-la à Gabi.');const empresaId=String(d.agendaOrganizacaoI167?.empresaId||''),m=validarFonte(d,c,etapa,empresaId),campos=camposAgendaI167(d);
   return {...c.agenda[etapa],...campos,origemI167:{schema:1,demandaId:r.id,cliente:c.cliente,competencia:c.competencia,empresaId,etapa,etapaOrganizacao:m.etapa,assinatura:r.assinatura,campos}};
 }
 export async function conferirVinculoAgendaI167(tx,io,c,etapa,a,{adocao=false}={}) {
   const o=a?.origemI167;
   if(o?.schema!==1||!idValido(o.demandaId)||o.cliente!==c.cliente||o.competencia!==c.competencia||o.etapa!==etapa)erro('O vínculo da organização está inconsistente. Nada foi alterado.');
   const s=await tx.get(io.doc(io.db,'demandas',o.demandaId));if(!s.exists())erro('Não consegui confirmar a ficha de origem. A etapa não foi recriada.');
-  const d=s.data(),m=validarFonte(d,c,etapa,o.empresaId),campos=camposAgendaI167(d);
+  const d=s.data(),m=validarFonte(d,c,etapa,o.empresaId),campos=camposAgendaI167(d);if(adocao&&d.destinatario===PAPEL_PESQUISA_ANTERIOR_R81)erro('Atualize o responsável na mesma ficha da Organização antes de adotar este compromisso. A atribuição e a prova anteriores foram preservadas.');
   if(m.etapa!==o.etapaOrganizacao||JSON.stringify(campos)!==JSON.stringify(o.campos)||Object.keys(campos).some(k=>a[k]!==campos[k]))erro('As datas ou o responsável mudaram na Organização das datas. Consulte e confirme essa ficha novamente; as entregas foram preservadas.');
   if(adocao&&await assinaturaOrganizacaoI167(d)!==o.assinatura)erro('A ficha mudou depois da sua leitura. Consulte novamente antes de vincular; a entrega atual foi preservada.');
   return {id:o.demandaId,etapa,empresaId:o.empresaId,titulo:d.titulo||'',status:d.status||'pendente',aguardandoAmanda:d.status==='concluida_aguardando_aprovacao',fonte:'demandas',campos};

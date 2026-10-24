@@ -1,4 +1,5 @@
 /* Arquivos internos: leitura local, bytes privados e recibo atômico. Não usa URL pública. */
+import {PAPEIS_PLANEJAMENTO_R81} from './gs-papeis-planejamento-r81.mjs';
 export const LIMITE_ARQUIVO = 4 * 1024 * 1024;
 export const TAMANHO_PARTE = 700 * 1024;
 export const TIPOS_ARQUIVO = Object.freeze({pdf:'application/pdf',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',txt:'text/plain',md:'text/markdown'});
@@ -38,7 +39,7 @@ export async function prepararArquivo(file){
 }
 export function criarArquivosPlanejamento(io,contexto){
   const {db,doc,getDocFromServer,writeBatch,serverTimestamp}=io;
-  function ctx(){const c={...contexto()};if(!c.uid||!['Chris','Amanda','Fernanda'].includes(c.nome))throw Error('Entre no seu perfil para enviar documentos.');return c;}
+  function ctx(){const c={...contexto()};if(!c.uid||!PAPEIS_PLANEJAMENTO_R81.includes(c.nome))throw Error('Entre no seu perfil para enviar documentos.');return c;}
   function conferir(c){const n=ctx();if(n.uid!==c.uid||n.nome!==c.nome||n.sessao!==c.sessao||n.atorReal!==c.atorReal)throw Error('O perfil mudou. Reabra o documento; nada foi confirmado para o novo perfil.');}
   const ref=(ciclo,id)=>doc(db,'planejamento_social_i155',ciclo,'arquivos',id);
   async function enviar(ciclo,preparado){

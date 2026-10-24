@@ -34,16 +34,43 @@ export function opcoesVapidAvisosI165(d){
  throw Error('O canal de aparelho ainda precisa ser configurado. A fila continua no sistema.');
 }
 function ambientePadrao(){return {window,Notification:globalThis.Notification,serviceWorker:globalThis.navigator?.serviceWorker,crypto:globalThis.crypto,setInterval:(...a)=>globalThis.setInterval(...a),clearInterval:(...a)=>globalThis.clearInterval(...a),agora:()=>Date.now(),carregarMessaging:()=>import('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js')};}
+export function esperarServiceWorkerAtivoI165(reg,{vigente=()=>true,timeoutMs=20000,programar=(f,t)=>globalThis.setTimeout(f,t),cancelarTimer=t=>globalThis.clearTimeout(t)}={}){
+ let encerrar=()=>{};
+ const pronto=new Promise((resolve,reject)=>{
+  let fim=false,timer;const workers=new Set();
+  const limpar=()=>{cancelarTimer(timer);reg?.removeEventListener?.('updatefound',verificar);for(const w of workers)w.removeEventListener?.('statechange',verificar);};
+  const concluir=(codigo)=>{if(fim)return;fim=true;limpar();if(codigo)reject(Object.assign(Error('O serviço de avisos não confirmou a ativação.'),{code:codigo}));else resolve(reg);};
+  function verificar(){
+   if(fim)return;if(!vigente()){concluir('i165/sw-contexto');return;}
+   if(reg?.active?.state==='activated'){concluir();return;}
+   if(!reg||typeof reg.addEventListener!=='function'){concluir('i165/sw-falha');return;}
+   for(const w of [reg.installing,reg.waiting,reg.active])if(w&&!workers.has(w)){workers.add(w);w.addEventListener?.('statechange',verificar);}
+   if(workers.size&&[...workers].every(w=>w.state==='redundant'))concluir('i165/sw-falha');
+  }
+  encerrar=()=>concluir('i165/sw-contexto');
+  timer=programar(()=>concluir(vigente()?'i165/sw-tempo':'i165/sw-contexto'),timeoutMs);
+  reg?.addEventListener?.('updatefound',verificar);verificar();
+ });
+ return {pronto,cancelar:()=>encerrar()};
+}
+export function mensagemAtivacaoAvisosI165(err){
+ if(err?.code==='i165/sw-tempo')return 'Os avisos do navegador ainda estão iniciando. Aguarde um pouco e tente novamente; a fila continua no sistema.';
+ if(err?.code==='i165/sw-contexto')return 'A ativação foi interrompida. Confira seu perfil antes de tentar novamente.';
+ if(err?.code==='i165/sw-falha'||err?.code==='messaging/failed-service-worker-registration')return 'O serviço de avisos do navegador não iniciou. Recarregue o site e tente novamente; a fila continua no sistema.';
+ const locais=new Set(['O Google e o cadastro ativo da própria pessoa precisam ser confirmados.','Precisa conferir a chave de avisos. A fila continua no sistema.','O canal de aparelho ainda precisa ser configurado. A fila continua no sistema.','Os avisos não foram permitidos neste navegador. A fila continua no sistema.','O navegador não confirmou o aparelho.','Não consegui confirmar o registro deste aparelho.']);
+ if(locais.has(err?.message))return err.message;
+ return 'Não consegui ativar os avisos deste aparelho agora. Recarregue o site e tente novamente; a fila continua no sistema.';
+}
 export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostagem,central=null,ambiente=ambientePadrao()}={}){
  if(!root||!io||central||typeof contexto!=='function')throw Error('Os avisos precisam de acesso confirmado.');
  const c=Object.freeze({...contexto()});
- let vivo=true,ciclo=0,linhas=[],config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0;
+ let vivo=true,ciclo=0,linhas=[],config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0,cancelarEsperaSW=null;
  const vigente=()=>vivo&&root.isConnected!==false&&mesmaIdentidadeAvisosI165(c,contexto());
  const atual=e=>vigente()&&e===ciclo;
  const ativo=()=>estadoConfig==='confirmada'&&programacaoAtivaI165(config)&&config.habilidades?.edicao===true;
  const pushAtivo=()=>ativo()&&config.habilidades?.push===true;
  const ambienteBase=()=>ambiente.window.location.href,swURL=()=>new URL('./firebase-messaging-sw.js',ambienteBase()).href;
- const pararCanal=()=>{foregroundSeq++;try{pararForeground?.();}catch{}pararForeground=null;sdkAtual=null;};
+ const pararCanal=()=>{foregroundSeq++;const cancelar=cancelarEsperaSW;cancelarEsperaSW=null;cancelar?.();try{pararForeground?.();}catch{}pararForeground=null;sdkAtual=null;};
  root.innerHTML='<section class="card" style="border-color:#6198cb;margin:0 0 18px" aria-label="Avisos de conteúdos"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><h2 style="margin:0;font-size:19px">Conteúdos que precisam de você <span data-contagem></span></h2><p style="margin:7px 0;color:#c9c9c9;font-size:13px" data-saude></p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn secondary" data-reconferir>Conferir avisos</button><button type="button" class="btn" data-ativar>Avisar neste aparelho</button></div></div><p style="font-size:13px;margin:8px 0" role="status" aria-live="polite" data-estado></p><p style="font-size:12px;color:#c9c9c9" data-aparelho></p><div data-lista></div><small style="display:block;margin-top:10px;color:#c9c9c9">Abrir ou ler um aviso não conclui a atividade. O sistema acompanha o andamento na origem.</small></section>';
  const el=s=>root.querySelector(s);
  function render(){
@@ -69,7 +96,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
   try{const g=await io.confirmarGoogle();if(!atual(e)||!pushAtivo())return null;
    if(!cadastroProprioAvisosI165(c,g,r?.cadastroProprio))throw Error('O Google e o cadastro ativo da própria pessoa precisam ser confirmados.');
    aparelho={pronto:true,opcoesVapid:opcoesVapidAvisosI165(r.web)};render();return aparelho;
-  }catch(err){if(atual(e)){aparelho={pronto:false,motivo:err.message||'Não consegui conferir este aparelho.'};render();}return null;}
+  }catch(err){if(atual(e)){aparelho={pronto:false,motivo:mensagemAtivacaoAvisosI165(err)};render();}return null;}
  }
  async function consultar(){
   if(!vigente())return false;if(consulta)return consulta;
@@ -127,11 +154,14 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
    const a=await preConferir(e,r);if(!a||!atual(e)||!pushAtivo())return false;
    const sdk=sdkAtual||await ambiente.carregarMessaging();if(!atual(e)||!pushAtivo())return false;
    const reg=await ambiente.serviceWorker.register(swURL());if(!atual(e)||!pushAtivo())return false;
+   const espera=esperarServiceWorkerAtivoI165(reg,{vigente:()=>atual(e)&&pushAtivo()});cancelarEsperaSW=espera.cancelar;
+   try{await espera.pronto;}finally{if(cancelarEsperaSW===espera.cancelar)cancelarEsperaSW=null;}
+   if(!atual(e)||!pushAtivo())return false;
    const token=await sdk.getToken(sdk.getMessaging(io.app),{...a.opcoesVapid,serviceWorkerRegistration:reg});if(!atual(e)||!pushAtivo())return false;
    if(typeof token!=='string'||!token)throw Error('O navegador não confirmou o aparelho.');
    await io.registrarDispositivo({token});if(!atual(e)||!pushAtivo())return false;
    recado='Aparelho registrado. Os avisos também continuam na fila do sistema.';await prepararForeground(e);return true;
-  }catch(err){if(atual(e))recado=err.message||'Não consegui confirmar este aparelho. A fila continua no sistema.';return false;
+  }catch(err){if(atual(e))recado=mensagemAtivacaoAvisosI165(err);return false;
   }finally{if(atual(e)){busy=false;render();}}
  }
  let pendenteURL;try{pendenteURL=new URL(ambienteBase()).searchParams.get('avisoI165');}catch{}

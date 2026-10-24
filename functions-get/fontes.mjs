@@ -1,3 +1,4 @@
+import {resolverCompatLegadoProgramacaoI165} from './compat-legado-programacao-r83.mjs';
 import {lerPostCampanhaI165} from './campanhas.mjs';
 import {exigirI165,idFisicoI165,jsonCanonicoI165,entregaSemPostagemI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {origemEditorialI165,conferirVinculoCanonicoI165,conferirDiretrizAtualI165,retratoEditorialProgramacaoI165} from './lib/gs-diretriz-publicacao-i165.mjs';
@@ -31,6 +32,7 @@ export async function fontesPostagemTxI165(db,tx,id,agora,{conferirDiretriz=true
  conferirVinculoCanonicoI165(post,video);
  const [diretriz,controle,editorial]=await Promise.all([tx.get(db.doc((video?'video_programacao_i165/':'post_programacao_i165/')+(video?.id||post.id))),tx.get(db.doc('programacao_controles_i165/'+id)),tx.get(db.doc('processo_calendarios_i164/ativo'))]);
  const cliente=await clienteTxI165(db,tx,post.cliente,agora),d=diretriz.data()||null;
+ const legadoProgramacao=d?null:resolverCompatLegadoProgramacaoI165({cfg:(await tx.get(db.doc('programacao_config_i165/ativo'))).data(),post,video,postCreateTime:ps.createTime,videoCreateTime:vs?.createTime,diretriz:d});
  if(d&&conferirDiretriz){conferirDiretrizAtualI165(d,video,post);if(video&&d.origemConferida){const origem=await origemTxI165(db,tx,video);exigirI165(jsonCanonicoI165(origem)===jsonCanonicoI165(d.origemConferida),'origem-avancou','A peça editorial mudou; a Amanda precisa reconferir o compromisso.');}if(video){const campanha=await compromissoVideoTxI165(db,tx,video);exigirI165((d.compromisso||'')===(campanha.compromisso?jsonCanonicoI165(campanha.compromisso):'')&&(d.decisaoCompromisso||'')===(campanha.decisao?jsonCanonicoI165(campanha.decisao):''),'campanha-avancou','A campanha mudou depois da orientação. A Amanda precisa reconferir a data antes de programar.');}}
- return {post,video,diretriz:d,controle:controle.data()||null,processoEditorial:editorial.data()||null,...cliente,configEntrega:entregaSemPostagemI165(video||{cliente:post.cliente},cliente.config)?{modo:'entrega_direta'}:cliente.configEntrega};
+ return {post,video,diretriz:d,legadoProgramacao,controle:controle.data()||null,processoEditorial:editorial.data()||null,...cliente,configEntrega:entregaSemPostagemI165(video||{cliente:post.cliente},cliente.config)?{modo:'entrega_direta'}:cliente.configEntrega};
 }

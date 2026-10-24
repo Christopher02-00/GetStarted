@@ -1,3 +1,4 @@
+import {compatLegadoConfirmadaI165,obrigacoesLegadoProgramacaoI165} from './compat-legado-programacao-r83.mjs';
 import {faseAvisoI165,preservarCanalIncertoI165} from './lib/gs-cadencia-avisos-i165.mjs';
 import {exigirI165,idFisicoI165,jsonCanonicoI165,instanteI165,programacaoAtivaI165,horarioBrasiliaI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {assinaturaDiretrizI165,chaveExcecaoI165} from './lib/gs-diretriz-publicacao-i165.mjs';
@@ -20,6 +21,7 @@ function visaoPost(f) {
 export function projetarPostagemServidorI165(f,cfg,agora){
  exigirI165(typeof cfg.permitirAgendarSemLegendaI90==='boolean','i90','O serviço precisa confirmar a política I90 vigente.');
  if(f.post.publicacaoStokki?.versao!==1&&['cancelada_manual','arquivada_sem_postagem','finalizado'].includes(f.post.status))return {estado:'encerrado_sem_pendencia_de_programacao',motivo:'estado_terminal_fisico',postagemId:f.post.id,obrigacoes:[]};
+ if(compatLegadoConfirmadaI165(f))return obrigacoesLegadoProgramacaoI165(f,cfg,agora);
  return obrigacoesConteudoI165({postagem:f.diretriz?visaoPost(f):f.post,video:f.video,diretriz:f.diretriz,configEntrega:f.configEntrega,clienteAtivo:f.clienteAtivo,processoEditorial:f.processoEditorial,permitirAgendarSemLegendaI90:cfg.permitirAgendarSemLegendaI90,agora});
 }
 function textoAviso(o,fonte){

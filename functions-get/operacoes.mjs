@@ -1,3 +1,4 @@
+import {ACOES_RESIDUAL_R5_R83,operarResidualPublicacaoR5R83} from './residual-publicacao-r5-r83.mjs';
 import {ACOES_CENTRAL_HTTP_R80,operarCentralPreparacaoR80} from './central-preparacao-r80.mjs';
 import {ACOES_AVISOS_HTTP_I165,operarAvisosHttpI165} from './avisos-http-i165.mjs';
 import {ACOES_MIDIA_I166} from './midia-servico-i166.mjs';
@@ -24,6 +25,7 @@ export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  validarContaEsperadaI165(auth,dados);
  if(ACOES_CENTRAL_HTTP_R80.includes(dados.acao))return operarCentralPreparacaoR80(db,auth,dados,{agora});
  if(ACOES_AVISOS_HTTP_I165.includes(dados.acao))return operarAvisosHttpI165(db,auth,dados,{agora});
+ if(ACOES_RESIDUAL_R5_R83.includes(dados.acao))return operarResidualPublicacaoR5R83(db,auth,dados,{agora});
  if(ACOES_MIDIA_I166.includes(dados.acao))return operarMidiaRuntimeI166(db,auth,dados,{agora,midia});
  if(ACOES_UPLOAD_POST_I166.includes(dados.acao))return (await despacharUploadPostI166(db,auth,dados,{agora,lerDependenciasTx:lerDependenciasUploadPostTxI166})).resultado;
  if(dados.acao==='legendas_stokki'){const ator=identidadeTokenI165(auth,dados.papelOperado,dados.sessao||'legendas_stokki');return operarLegendasStokkiI165(db,ator,dados,agora);}
@@ -51,9 +53,11 @@ export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  if(['ler_aviso','marcar_visto'].includes(dados.acao)){
   exigirI165(idFisicoI165(dados.id),'aviso','Aviso inválido.');return db.runTransaction(async tx=>{
    const ref=db.doc('notificacoes_operacionais_i165/'+dados.id),s=await tx.get(ref),n=s.data();exigirI165(s.exists&&n.escopo===ESCOPO_I165&&n.destinatario===ator.papel,'aviso','Este aviso pertence a outro perfil.');
-   const {cfg}=await contextoTxI165(db,tx,ator,n.fonte?.colecao==='videos_producao'?'edicao':'programacao');
+   exigirI165(['videos_producao','postagens'].includes(n.fonte?.colecao)&&idFisicoI165(n.fonte?.id),'aviso-fonte','A origem deste aviso precisa de conferência.');
+   const {cfg}=await contextoTxI165(db,tx,ator,n.fonte.colecao==='videos_producao'?'edicao':'programacao');
    exigirI165(n.ativacaoId===cfg.ativacaoId,'aviso-ativacao','Este aviso pertence a uma ativação anterior. Confira a fila atual.');
    const fonte=await fontePendenteTxI165(db,tx,n,{agora});
+   exigirI165(fonte&&typeof fonte.pendente==='boolean','aviso-fonte','Não consegui confirmar a origem atual deste aviso.');
    if(dados.acao==='marcar_visto')tx.update(ref,{leituras:{...n.leituras,[ator.uid]:{uid:ator.uid,papel:ator.papel,atorReal:ator.real,em:instanteI165(agora)}}});
    return {id:s.id,escopo:n.escopo,destinatario:n.destinatario,ativacaoId:n.ativacaoId,tipo:n.tipo,fonte:n.fonte,estado:fonte.pendente?'pendente':'resolvida',estadoPersistido:n.estado,titulo:n.titulo,texto:n.texto,link:n.link,bloqueada:fonte.bloqueada===true,pausada:fonte.pausada===true,fonteConferida:true,fonteAvancou:fonte.pendente===false,conferidoEm:instanteI165(agora),leituraNaoResolve:true,semAlterarEstadoPersistido:true};
   });

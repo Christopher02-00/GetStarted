@@ -12,6 +12,7 @@ export function chave(m,c){if(!mesValido(m)||!(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,15
 export function linkSeguro(v){try{const u=new URL(String(v));return u.protocol==='https:'&&!u.username&&!u.password&&!/\s/.test(v)&&u.hostname.includes('.');}catch{return false;}}
 export function texto(v,n){const s=String(v??'').trim();if(s.length>n)throw Error('Texto maior que o limite indicado.');return s;}
 export function transicao(anterior,acao,campos,ctx){
+ if(ctx.processoAtivoI164&&ctx.nome==='Gabrielle')throw Error('Neste processo, Chris e Júlia preparam as análises. Seu histórico continua disponível.');
  if(!PAPEIS.includes(ctx.nome))throw Error('Esta área é da Gabi e da gestão.');
  let d={cliente:campos.cliente,clienteNome:texto(campos.clienteNome,160),mes:campos.mes,link:texto(campos.link,2000),resumo:texto(campos.resumo,4000),proximos:texto(campos.proximos,2000),status:'rascunho',parecer:anterior?.parecer||''};
  chave(d.mes,d.cliente);if(!d.clienteNome)throw Error('Cliente sem identificação.');
@@ -58,7 +59,7 @@ export function criarRepositorio(s,contexto){
 
 export function montarAnalises(root,{repo,contexto,clientes,compacto=false,abrir,mesInicial,aoMudarMes=()=>{}}){
  let vivo=true,geracao=0,abertura=0,off=null,mes=mesValido(mesInicial)?mesInicial:hojeBRT().slice(0,7),carteira=[],registros=[],confirmado=false,carteiraOk=false,selecionado=null,edicao=null,alterado=false,ocupado=false,filtro='',busca='';
- const pessoa=contexto().nome,podeEscrever=['Gabrielle','Fernanda','Chris'].includes(pessoa),gestao=['Amanda','Chris'].includes(pessoa),ctx=contexto();
+ const pessoa=contexto().nome,podeEscrever=['Gabrielle','Fernanda','Chris'].includes(pessoa)&&!(contexto().processoAtivoI164&&pessoa==='Gabrielle'),gestao=['Amanda','Chris'].includes(pessoa),ctx=contexto();
  const sessaoValida=()=>vivo&&contexto().sessao===ctx.sessao&&contexto().uid===ctx.uid&&contexto().nome===ctx.nome;
  const idDraft=id=>'get-i108:'+ctx.uid+':'+pessoa+':'+id;
  const lerDraft=id=>{try{return JSON.parse(sessionStorage.getItem(idDraft(id))||'null');}catch{return null;}};

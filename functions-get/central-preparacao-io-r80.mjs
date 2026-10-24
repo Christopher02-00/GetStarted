@@ -1,0 +1,83 @@
+/* Superfície privada para a fábrica compartilhada. Não é uma API de paths ou de CRUD. */
+import {isDeepStrictEqual} from 'node:util';
+import {PESQUISA_RESPONSAVEL_R81,PAPEL_PESQUISA_ANTERIOR_R81} from './central/lib/gs-papeis-planejamento-r81.mjs';
+import {exigirCentralR80 as e,cicloR80,clienteR80,idR80,chavesR80,textoR80,agendaR80,configR80} from './central-preparacao-validacao-r80.mjs';
+import {PAPEIS,ETAPAS,TIPOS_DOCUMENTO,idCiclo,empresaMaterial,estadoEtapas} from './central/lib/gs-planejamento-social-i155.mjs';
+const MAX_LEITURA=1000;
+const topCiclo=['schema','cliente','clienteNome','competencia','criadoEm','incluido','contexto','pendencias','premium','primeiroCiclo','agenda','documentos','lote','criacao','entrega','publicacaoAtual','revisao','acao','operacao','autorUid','autorNome','perfil','atualizadoEm'];
+const baseMudanca=['revisao','acao','operacao','autorUid','autorNome','perfil','atualizadoEm'];
+const camposAcao={incluir:[],agenda:['agenda'],contexto:['contexto','pendencias','premium','primeiroCiclo'],referencia:[],entregar_lote:['lote'],excluir_referencia:[],restaurar_referencia:[],excluir_lote:[],documento:['documentos'],confirmar_documento:['documentos'],enviar_consolidado:['documentos'],retirar:['incluido']};
+const delta=(a,b)=>[...new Set([...Object.keys(a||{}),...Object.keys(b||{})])].filter(k=>!isDeepStrictEqual(a?.[k],b?.[k]));
+const so=(a,campos)=>a.every(k=>campos.includes(k));
+function permitidoDocumento(path){
+ const p=path.split('/');if(p.some(x=>!x||x==='.'||x==='..'))return false;
+ if(p[0]==='planejamento_social_i155'){try{cicloR80(p[1]);}catch{return false;}if(p.length===2)return true;if(['registros','eventos','lotes'].includes(p[2])&&p.length===4){try{idR80(p[3]);return true;}catch{return false;}}if(p[2]==='arquivos'&&/^arq_[a-f0-9]{64}$/u.test(p[3]||''))return p.length===4||p.length===6&&p[4]==='partes'&&/^[0-5]$/u.test(p[5]);return false;}
+ if(p.length!==2)return false;if(p[0]==='planejamento_social_config_i155')return p[1]==='agenda';
+ if(['clientes_config','clientes_extras','info_extras_cliente','calendarios'].includes(p[0])){try{clienteR80(p[1]);return true;}catch{return false;}}
+ if(['demandas','referencias','referencias_cliente','ausencias','analises_mensais_i108','planejamento_social_indice_i155'].includes(p[0])){try{idR80(p[1]);return true;}catch{return false;}}
+ return false;
+}
+function permitidoColecao(path){if(['planejamento_social_i155','clientes_config','clientes_extras','ausencias','referencias','referencias_cliente','demandas'].includes(path))return true;const p=path.split('/');if(p.length===3&&p[0]==='planejamento_social_i155'&&['registros','eventos'].includes(p[2])){try{cicloR80(p[1]);return true;}catch{return false;}}return false;}
+const snap=s=>({id:s.id,ref:s.ref,exists:()=>s.exists,data:()=>s.data(),metadata:{fromCache:false,hasPendingWrites:false}});
+export function criarIoAdminCentralR80(db,{ator,pedido,conferirGate,stamp}){
+ let txAtual=null; // Uma closure nova por requisição, nunca compartilhada entre atores ou chamadas HTTP.
+ const contexto=()=>({uid:ator.uid,nome:ator.papel,atorReal:ator.real,sessao:ator.sessao});
+ function descr(tipo,path){e(tipo==='doc'?permitidoDocumento(path):permitidoColecao(path),'A fábrica tentou acessar uma fonte fora da preparação.');return {tipo,path,ref:tipo==='doc'?db.doc(path):db.collection(path)};}
+ const validarRef=r=>e(r&&['doc','col','query'].includes(r.tipo)&&typeof r.path==='string','Referência interna inválida.');
+ async function obter(tx,r){validarRef(r);const s=await tx.get(r.ref);if(r.tipo==='doc')return snap(s);e(s.size<=MAX_LEITURA,'Há mais registros do que esta leitura comporta. Nenhum dado foi cortado; refine o cliente ou mês.');return {docs:s.docs.map(snap),size:s.size,forEach(fn){this.docs.forEach(fn);}};}
+ async function ler(r){validarRef(r);if(txAtual)return obter(txAtual,r);return db.runTransaction(async tx=>{await conferirGate(tx);return obter(tx,r);});}
+ function colQuery(r,clausulas){e(r?.tipo==='col','Consulta interna inválida.');let q=r.ref;for(const [campo,op,valor]of clausulas){e(op==='=='&&['cliente','competencia'].includes(campo),'Filtro interno fora da preparação.');if(campo==='cliente')clienteR80(valor);else e(/^20\d{2}-(0[1-9]|1[0-2])$/u.test(valor),'Competência inválida.');q=q.where(campo,op,valor);}return {...r,tipo:'query',ref:q.limit(MAX_LEITURA+1)};}
+ async function lerSeguro(tx,r){if(r.tipo==='col')r={...r,ref:r.ref.limit(MAX_LEITURA+1)};return obter(tx,r);}
+ async function leituraPublica(r){if(r.tipo==='col')r={...r,ref:r.ref.limit(MAX_LEITURA+1)};return ler(r);}
+ function validarAutoria(d){e(d.autorUid===ator.uid&&d.autorNome===ator.real&&d.perfil===ator.papel,'Autoria da preparação inconsistente.');}
+ async function validarEscritas(tx,writes){
+  const mapa=new Map();for(const w of writes){e(!mapa.has(w.r.path),'Escrita duplicada na mesma operação.');mapa.set(w.r.path,w);}
+  const cicloId=pedido.ciclo,cw=mapa.get('planejamento_social_i155/'+cicloId),c=cw?.d;
+  const olds=new Map();for(const w of writes){e(w.r.tipo==='doc','A escrita não aponta a um documento interno.');olds.set(w.r.path,await tx.get(w.r.ref));}
+  for(const w of writes){const path=w.r.path,d=w.d,s=olds.get(path),old=s.exists?s.data():null;
+   if(path==='planejamento_social_config_i155/agenda'){
+    e(pedido.acao==='central_config_salvar'&&['Chris','Amanda'].includes(ator.papel),'Configuração fora do perfil.');chavesR80(d,['dias','capacidades','modelos','indisponibilidades','feriados','recorrencia','revisao','autorUid','autorNome','atualizadoEm']);configR80(Object.fromEntries(['dias','capacidades','modelos','indisponibilidades','feriados','recorrencia'].map(k=>[k,d[k]])),{permitirHistorico:!!old,anterior:old});e(d.revisao===(old?.revisao||0)+1&&d.autorUid===ator.uid&&d.autorNome===ator.real&&d.atualizadoEm===stamp,'Versão da configuração inconsistente.');continue;
+   }
+   e(pedido.acao==='central_mutar'&&cicloId,'A escrita não pertence à ação de preparação.');
+   if(path==='planejamento_social_i155/'+cicloId){
+    chavesR80(d,topCiclo,topCiclo);const ci=cicloR80(cicloId);e(d.schema===1&&d.cliente===ci.cliente&&d.competencia===ci.competencia&&d.acao===pedido.acaoPreparacao&&d.operacao===pedido.operacao&&Number.isInteger(d.revisao)&&d.revisao===(old?.revisao||0)+1&&typeof d.incluido==='boolean'&&typeof d.primeiroCiclo==='boolean'&&d.atualizadoEm===stamp,'Ciclo ou revisão inconsistente.');validarAutoria(d);textoR80(d.clienteNome,180,'o nome do cliente');textoR80(d.contexto,20000,'o contexto');textoR80(d.pendencias,10000,'as pendências');e(['nao_premium','primeiro_indisponivel','aguardando_dados','parcial','concluido'].includes(d.premium)&&(d.premium!=='primeiro_indisponivel'||d.primeiroCiclo),'Diagnóstico inválido.');agendaR80(d.agenda,d.cliente,{permitirHistorico:!!old,anterior:old?.agenda});
+    if(old){e(d.cliente===old.cliente&&d.competencia===old.competencia&&d.criadoEm===old.criadoEm&&so(delta(d,old),baseMudanca.concat(camposAcao[d.acao])),'A operação alteraria campos fora da sua etapa.');}
+    else{e(d.acao==='incluir'&&['Chris','Amanda'].includes(ator.papel)&&d.lote===null&&d.criacao===null&&d.entrega===null&&Object.keys(d.documentos).length===0,'Inclusão inválida.');const [ca,cf]=await Promise.all([tx.get(db.doc('calendarios/'+d.cliente)),tx.get(db.doc('clientes_config/'+d.cliente))]);e(ca.exists||cf.exists,'Cliente sem cadastro físico confirmado.');}
+    const ev=mapa.get(path+'/eventos/'+d.operacao)?.d;e(ev&&ev.revisao===d.revisao&&ev.autorUid===ator.uid,'O ciclo precisa do seu recibo atômico.');continue;
+   }
+   e(c&&c.cliente&&c.competencia,'A alteração depende do ciclo na mesma transação.');
+   if(path==='planejamento_social_indice_i155/'+cicloId){chavesR80(d,['cliente','competencia','incluido','operacao','atualizadoEm']);e(['incluir','retirar'].includes(c.acao)&&d.cliente===c.cliente&&d.competencia===c.competencia&&d.incluido===c.incluido&&d.operacao===c.operacao&&d.atualizadoEm===stamp,'Índice inconsistente.');continue;}
+   const pp=path.split('/');
+   if(pp[0]==='planejamento_social_i155'&&pp[1]===cicloId&&pp[2]==='eventos'){
+    e(!old&&pp[3]===c.operacao&&d.operacao===c.operacao&&d.acao===c.acao&&d.revisao===c.revisao&&d.autorUid===ator.uid&&d.em===stamp,'Recibo de operação inválido ou já existente.');continue;
+   }
+   if(pp[0]==='planejamento_social_i155'&&pp[1]===cicloId&&pp[2]==='lotes'){
+    e(!old&&c.acao==='entregar_lote'&&Array.isArray(d.ids)&&d.ids.length===6&&new Set(d.ids).size===6&&Array.isArray(d.fontes)&&d.fontes.length===6&&d.cliente===c.cliente&&d.competencia===c.competencia&&d.versao===c.lote.versao&&pp[3]===d.versao+'__'+d.parte&&[0,1].includes(d.parte)&&d.operacao===c.operacao&&d.autorUid===ator.uid&&d.em===stamp,'Parte de lote inconsistente.');continue;
+   }
+   if(pp[0]==='planejamento_social_i155'&&pp[1]===cicloId&&pp[2]==='registros'){
+    e(d.cliente===c.cliente&&d.competencia===c.competencia&&d.revisaoCiclo===c.revisao&&d.operacao===c.operacao&&d.editadoUid===ator.uid&&d.editadoPor===ator.real,'Registro fora do ciclo.');
+    if(d.tipo==='referencia'){
+     e(typeof d.fonte==='string'&&typeof d.link==='string'&&/^https:\/\//u.test(d.link)&&typeof d.autorPerfil==='string'&&typeof d.ideia==='string'&&typeof d.filtro==='string'&&typeof d.selecionada==='boolean'&&typeof d.parecerAmanda==='string'&&typeof d.excluido==='boolean'&&Array.isArray(d.usos)&&d.usos.length<=300,'Referência inconsistente ou com usos acima do limite.');
+     if(!old)e(c.acao==='referencia'&&d.autorUid===ator.uid&&d.autorNome===ator.real&&(ator.papel!==PESQUISA_RESPONSAVEL_R81||d.filtro===''&&!d.selecionada&&d.parecerAmanda===''),'Autoria ou seleção da referência inválida.');
+     else{e(old.tipo==='referencia'&&d.autorUid===old.autorUid&&d.autorNome===old.autorNome,'A autoria anterior é preservada.');if(c.acao==='documento')e(so(delta(d,old),['usos','revisaoCiclo','operacao','editadoPor','editadoUid']),'A versão do documento só pode registrar o uso da referência.');else if(ator.papel===PESQUISA_RESPONSAVEL_R81)e(d.filtro===old.filtro&&d.parecerAmanda===old.parecerAmanda&&d.selecionada===old.selecionada||c.acao==='restaurar_referencia'&&!d.selecionada&&d.parecerAmanda==='','A seleção pertence à revisão.');}
+    }else{
+     e(!old&&c.acao==='documento'&&d.tipo==='documento'&&TIPOS_DOCUMENTO.includes(d.finalidade)&&d.destinatario==='interno'&&d.autorUid===ator.uid&&d.autorNome===ator.real&&d.texto.length>0&&d.texto.length<=60000&&Number.isInteger(d.versao)&&d.versao>0,'Versão de documento inválida.');e(ator.papel!==PESQUISA_RESPONSAVEL_R81||['reuniao','referencias'].includes(d.finalidade),'Finalidade fora do perfil.');empresaMaterial(c.cliente,d.empresaOtavio);e(d.finalidade==='campanha'||d.datasCampanha.length===0,'Datas de campanha fora da finalidade.');e(c.documentos.rascunhos[d.chaveMaterial]===pp[3],'Documento sem ponte ao rascunho.');
+    }continue;
+   }
+   if(pp[0]==='demandas'&&pp.length===2){
+    const l=d.planejamentoI155;e(d.tipoEspecial==='planejamento_social_i155'&&l?.ciclo===cicloId&&l.cliente===c.cliente&&l.competencia===c.competencia&&l.revisao===c.revisao&&(PAPEIS.includes(d.destinatario)||old?.destinatario===PAPEL_PESQUISA_ANTERIOR_R81&&d.destinatario===old.destinatario)&&pp[1].startsWith('sm155_'+cicloId+'__'),'A demanda não é uma etapa legada deste ciclo.');
+    if(old){e(old.tipoEspecial==='planejamento_social_i155'&&old.planejamentoI155?.ciclo===cicloId&&d.destinatario===old.destinatario&&d.provaTexto===old.provaTexto&&d.provaImagemUrl===old.provaImagemUrl&&so(delta(d,old),l.substituidaPor?['planejamentoI155','status','historico']:['titulo','descricao','prazoData','prazoHora','planejamentoI155','status','historico']),'A demanda anterior deve manter destino e prova.');e(!['aprovada','cancelada'].includes(old.status)||d.status===old.status,'A demanda encerrada é preservada.');}
+    else e(d.status==='pendente'||d.status==='aprovada','Estado inicial inconsistente.');continue;
+   }
+   e(false,'A fábrica tentou escrever fora da etapa autorizada.');
+  }
+ }
+ async function transacao(_,fn){e(!txAtual,'Transação aninhada não é permitida.');return db.runTransaction(async tx=>{await conferirGate(tx);txAtual=tx;const writes=[];const facade={get:r=>lerSeguro(tx,r),set:(r,d)=>{validarRef(r);e(r.tipo==='doc','Documento esperado.');writes.push({r,d});}};try{const ret=await fn(facade);await validarEscritas(tx,writes);for(const w of writes)tx.set(w.r.ref,w.d);return ret;}finally{txAtual=null;}});}
+ function lote(){const writes=[];return {set(r,d){validarRef(r);e(r.tipo==='doc','Documento esperado.');writes.push({r,d});return this;},async commit(){e(pedido.acao==='central_arquivo_enviar'&&writes.length>=2&&writes.length<=7,'Lote de arquivo inválido.');return db.runTransaction(async tx=>{await conferirGate(tx);const ciclo=await tx.get(db.doc('planejamento_social_i155/'+pedido.ciclo));e(ciclo.exists,'Inclua o ciclo antes do arquivo.');const meta=writes.find(w=>w.r.path.split('/').length===4),m=meta?.d;const arq=pedido.arquivo;e(m&&meta.r.path==='planejamento_social_i155/'+pedido.ciclo+'/arquivos/arq_'+arq.sha256&&m.sha256===arq.sha256&&m.bytes===arq.bytes&&m.texto===arq.texto&&m.tipo===arq.tipo&&m.nome===arq.nome&&m.paginas===arq.paginas&&m.partes===arq.partesBase64.length&&m.estado==='completo'&&m.ciclo===pedido.ciclo&&m.criadoEm===stamp,'Metadados do arquivo inconsistentes.');validarAutoria(m);
+   const old=await Promise.all(writes.map(w=>tx.get(w.r.ref)));const existe=old.some(s=>s.exists);for(let i=0;i<writes.length;i++){const w=writes[i];if(w===meta)continue;const n=w.d.indice;e(Number.isInteger(n)&&n>=0&&n<m.partes&&w.r.path===meta.r.path+'/partes/'+n&&w.d.dados===arq.partesBase64[n].dados&&w.d.arquivo==='arq_'+arq.sha256&&w.d.ciclo===pedido.ciclo&&w.d.autorUid===ator.uid,'Parte do arquivo inconsistente.');}
+   if(existe){e(old.every(s=>s.exists),'Arquivo parcialmente existente; nenhum byte foi sobrescrito.');for(let i=0;i<writes.length;i++){const w=writes[i],v=old[i].data();if(w===meta)e(v.sha256===m.sha256&&v.bytes===m.bytes&&v.texto===m.texto&&v.tipo===m.tipo&&v.partes===m.partes&&v.ciclo===m.ciclo&&v.estado==='completo','Recibo de arquivo incompatível.');else e(v.dados===w.d.dados&&v.indice===w.d.indice&&v.arquivo===w.d.arquivo&&v.ciclo===w.d.ciclo,'Parte existente diferente; preservada.');}return;}
+   for(const w of writes)tx.create(w.r.ref,w.d);
+  });}};}
+ const io={db,doc:(_, ...p)=>descr('doc',p.join('/')),collection:(_, ...p)=>descr('col',p.join('/')),where:(...a)=>a,query:(r,...c)=>colQuery(r,c),getDocFromServer:leituraPublica,getDocsFromServer:leituraPublica,serverTimestamp:()=>stamp,runTransaction:transacao,writeBatch:lote,onSnapshot:null};
+ return {io,contexto};
+}

@@ -1,3 +1,4 @@
+import {ACOES_CENTRAL_HTTP_R80,operarCentralPreparacaoR80} from './central-preparacao-r80.mjs';
 import {ACOES_AVISOS_HTTP_I165,operarAvisosHttpI165} from './avisos-http-i165.mjs';
 import {ACOES_MIDIA_I166} from './midia-servico-i166.mjs';
 import {operarMidiaRuntimeI166} from './midia-runtime-i166.mjs';
@@ -21,6 +22,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_CENTRAL_HTTP_R80.includes(dados.acao))return operarCentralPreparacaoR80(db,auth,dados,{agora});
  if(ACOES_AVISOS_HTTP_I165.includes(dados.acao))return operarAvisosHttpI165(db,auth,dados,{agora});
  if(ACOES_MIDIA_I166.includes(dados.acao))return operarMidiaRuntimeI166(db,auth,dados,{agora,midia});
  if(ACOES_UPLOAD_POST_I166.includes(dados.acao))return (await despacharUploadPostI166(db,auth,dados,{agora,lerDependenciasTx:lerDependenciasUploadPostTxI166})).resultado;

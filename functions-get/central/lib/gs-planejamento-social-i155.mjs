@@ -4,9 +4,11 @@ import {retratoInfoClienteI164,mesmaInfoClienteI164} from './gs-contexto-cliente
 import {validarRecorrenciaI164} from './gs-processo-calendarios-i164.mjs';
 import {criarArquivosPlanejamento,prepararArquivo} from './gs-arquivos-planejamento-i164.mjs';
 export const COLECAO = 'planejamento_social_i155';
-export const PAPEIS = ['Chris','Amanda','Fernanda'];
+import {PESQUISA_RESPONSAVEL_R81,PAPEL_PESQUISA_ANTERIOR_R81,PAPEIS_PLANEJAMENTO_R81,atribuicaoAnteriorPreservadaR81} from './gs-papeis-planejamento-r81.mjs';
+export {pesquisaAnteriorPendenteR81,responsavelOperacionalPlanejamentoR81} from './gs-papeis-planejamento-r81.mjs';
+export const PAPEIS = PAPEIS_PLANEJAMENTO_R81;
 export const ETAPAS = [
-  ['pesquisa','Pesquisar e entregar referências','Fernanda','referências'],
+  ['pesquisa','Pesquisar e entregar referências',PESQUISA_RESPONSAVEL_R81,'referências'],
   ['previa','Preparar prévia','Chris','prévias'],
   ['reuniao','Reunião e retorno','Amanda','reuniões'],
   ['consolidado','Enviar consolidado','Amanda','consolidados'],
@@ -159,7 +161,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         c=novoCiclo(dados.cliente,cl.nome||cl.clienteNome||dados.cliente,dados.competencia);if(dados.agendaInicial){const a=clone(dados.agendaInicial);if(Object.keys(a).length!==7||ETAPAS.some(([k,,p])=>!a[k]||(!a[k].origemI167&&a[k].responsavel!==p||a[k].origemI167&&!PAPEIS.includes(a[k].responsavel))||!diaValido(a[k].prazo)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(a[k].prazoHora||'')))throw Error('O modelo inicial de prazos precisa ser conferido.');c.agenda=a;}for(const [k]of ETAPAS)c.agenda[k].fonteOrganizacaoI167=true;if(idCiclo(c.cliente,c.competencia)!==id)throw Error('Destino inválido.');
       }else if(acao==='agenda'){
         exigirPapel(ctx,GESTAO);const agenda=clone(dados.agenda);
-        for(const [k,,p]of ETAPAS){const a=agenda[k];if(!a||!PAPEIS.includes(a.responsavel||p)||a.inicio&&!diaValido(a.inicio)||a.prazo&&!diaValido(a.prazo)||a.prazoHora&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(a.prazoHora))throw Error('Confira datas, horários e responsáveis.');if(estadoEtapas(c)[k]&&JSON.stringify(a)!==JSON.stringify(c.agenda[k]))throw Error('Etapa concluída preservada. Remarque somente etapas abertas.');if(c.agenda[k].fixo&&JSON.stringify(a)!==JSON.stringify(c.agenda[k])&&!dados.confirmarFixos)throw Error('Há compromisso fixo. Confirme a alteração explicitamente.');}
+        for(const [k,,p]of ETAPAS){const a=agenda[k];if(!a||!(PAPEIS.includes(a.responsavel||p)||atribuicaoAnteriorPreservadaR81(a,c.agenda[k]))||a.inicio&&!diaValido(a.inicio)||a.prazo&&!diaValido(a.prazo)||a.prazoHora&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(a.prazoHora))throw Error('Confira datas, horários e responsáveis.');if(estadoEtapas(c)[k]&&JSON.stringify(a)!==JSON.stringify(c.agenda[k]))throw Error('Etapa concluída preservada. Remarque somente etapas abertas.');if(c.agenda[k].fixo&&JSON.stringify(a)!==JSON.stringify(c.agenda[k])&&!dados.confirmarFixos)throw Error('Há compromisso fixo. Confirme a alteração explicitamente.');}
         for(const [k]of ETAPAS){const origem=agenda[k].origem;if(origem&&JSON.stringify(origem)!==JSON.stringify(c.agenda[k].origem)){const fonte=await tx.get(doc(db,'demandas',origem.demandaId));const item=fonte.data()?.checklistClientes?.find(x=>x.slug===c.cliente);if(!fonte.exists()||origem.cliente!==c.cliente||!item||JSON.stringify(item)!==JSON.stringify(origem.linha))throw Error('A programação de origem mudou. Consulte novamente antes de adotar as datas.');}}
         conferirIdsAgendaI167(agenda);for(const [k]of ETAPAS){if(c.agenda[k].origemI167&&!agenda[k].origemI167)throw Error('O compromisso vinculado permanece na Organização das datas. Não remova a origem por este formulário.');if(agenda[k].origemI167)await conferirVinculoAgendaI167(tx,io,c,k,agenda[k],{adocao:JSON.stringify(agenda[k].origemI167)!==JSON.stringify(c.agenda[k].origemI167)});}
         c.agenda=agenda;
@@ -177,10 +179,10 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         }
         const fonte=fonteReferencia(r.link,r.origemColecao,r.origemId);
         const nova={...(velho||{}),empresaOtavio:empresaMaterial(c.cliente,r.empresaOtavio||''),tipo:'referencia',cliente:c.cliente,competencia:c.competencia,link:strings(r.link,2000),fonte,autorPerfil:strings(r.autorPerfil,500),ideia:strings(r.ideia,3000),motivo:strings(r.motivo,3000),adaptacao:strings(r.adaptacao,3000),postadoEm:r.postadoEm||'',consultadoEm:r.consultadoEm||new Date().toISOString(),metricas:strings(r.metricas,4000),comentarios:strings(r.comentarios,4000),origemColecao:r.origemColecao||'',origemId:r.origemId||'',filtro:strings(r.filtro,10000),selecionada:!!r.selecionada,parecerAmanda:strings(r.parecerAmanda,4000),excluido:velho?.excluido||false,usos:velho?.usos||[],autorUid:velho?.autorUid||ctx.uid,autorNome:velho?.autorNome||ctx.atorReal,criadoEm:velho?.criadoEm||new Date().toISOString()};
-        if(ctx.nome==='Fernanda'&&(nova.filtro!==(velho?.filtro||'')||nova.selecionada!==(velho?.selecionada||false)||nova.parecerAmanda!==(velho?.parecerAmanda||'')))throw Error('Entregue as candidatas. A seleção e a revisão têm seus próprios responsáveis.');
+        if(ctx.nome===PESQUISA_RESPONSAVEL_R81&&(nova.filtro!==(velho?.filtro||'')||nova.selecionada!==(velho?.selecionada||false)||nova.parecerAmanda!==(velho?.parecerAmanda||'')))throw Error('Entregue as candidatas. A seleção e a revisão têm seus próprios responsáveis.');
         gravarRegistros.push([rid,nova]);resultado={id:rid};
       }else if(acao==='entregar_lote'){
-        exigirPapel(ctx,['Fernanda','Chris']);const ids=[...new Set(dados.ids||[])];if(ids.length!==12)throw Error('Entregue 12 candidatas completas e únicas neste recibo.');
+        exigirPapel(ctx,[PESQUISA_RESPONSAVEL_R81,'Chris']);const ids=[...new Set(dados.ids||[])];if(ids.length!==12)throw Error('Entregue 12 candidatas completas e únicas neste recibo.');
         const regs=await Promise.all(ids.map(r=>tx.get(regRef(id,r))));const refs=regs.map(s=>s.exists()?s.data():null);
         if(refs.some(r=>!r||r.tipo!=='referencia'||r.excluido||!r.ideia||!r.autorPerfil)||new Set(refs.map(r=>r.fonte)).size!==refs.length)throw Error('Há referência incompleta, duplicada ou retirada. Confira o lote.');
         c.lote={ids,contagem:ids.length,identidades:refs.map(r=>r.fonte),versao:(c.lote?.versao||0)+1,em:new Date().toISOString(),por:ctx.atorReal,autorUid:ctx.uid,fontes:refs.map((r,i)=>({id:ids[i],fonte:r.fonte,link:r.link,autorPerfil:r.autorPerfil,ideia:r.ideia,empresaOtavio:r.empresaOtavio||'',autorUid:r.autorUid,autorNome:r.autorNome}))};
@@ -192,7 +194,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
           gravarRegistros.push([ids[i],{...r,excluido:acao!=='restaurar_referencia',...(acao==='restaurar_referencia'?{selecionada:false,parecerAmanda:'',restauradoEm:new Date().toISOString()}:{excluidoEm:new Date().toISOString()})}]);quantidade++;});resultado={quantidade,preservadas};
       }else if(acao==='documento'){
         const d=dados.documento,tipo=d.finalidade;if(!TIPOS_DOCUMENTO.includes(tipo))throw Error('Finalidade inválida.');
-        if(ctx.nome==='Fernanda'&&!['reuniao','referencias'].includes(tipo))throw Error('Esta versão é preparada pelo operador ou pela gestão.');
+        if(ctx.nome===PESQUISA_RESPONSAVEL_R81&&!['reuniao','referencias'].includes(tipo))throw Error('Esta versão é preparada pelo operador ou pela gestão.');
         if(tipo==='previa'&&(!c.lote||!c.contexto.trim()))throw Error('Antes da prévia: entregue as 12 referências e preencha o direcionamento deste mês em Etapas → Contexto. A ficha permanente do cliente continua em Informações do cliente.');
         if(tipo==='reuniao'&&!estadoEtapas(c).previa)throw Error('Vincule a prévia apresentada antes de registrar a reunião.');
         if(tipo==='consolidado'&&!estadoEtapas(c).reuniao)throw Error('Registre o retorno da reunião antes de consolidar.');
@@ -221,7 +223,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
       }else if(acao==='confirmar_documento'){
         const tipo=String(dados.finalidade||''),rid=String(dados.id||'');
         if(!TIPOS_DOCUMENTO.includes(tipo)||tipo==='consolidado')throw Error('Confirme a base pelo botão de enviar para criação.');
-        exigirPapel(ctx,tipo==='previa'?['Chris']:tipo==='reuniao'||tipo==='campanha'?['Amanda']:tipo==='referencias'?['Fernanda','Chris']:['Chris','Amanda']);
+        exigirPapel(ctx,tipo==='previa'?['Chris']:tipo==='reuniao'||tipo==='campanha'?['Amanda']:tipo==='referencias'?[PESQUISA_RESPONSAVEL_R81,'Chris']:['Chris','Amanda']);
         const ds=await tx.get(regRef(id,rid)),d=ds.data(),chave=d?.chaveMaterial||chaveMaterial(tipo,d?.empresaOtavio||'');
         if(!ds.exists()||d.tipo!=='documento'||d.finalidade!==tipo||c.documentos.rascunhos?.[chave]!==rid)throw Error('A versão em revisão mudou. Abra e confira o documento atual.');
         if(tipo==='previa'&&d.baseLote!==c.lote?.versao)throw Error('Chegou um lote novo. Atualize a prévia antes de confirmar.');
@@ -263,7 +265,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
       conferirIdsAgendaI167(c.agenda);resultado.agendaI167=[];resultado.compromissosSemVinculo=[];for(const [k]of ETAPAS){if(c.agenda[k]?.origemI167)resultado.agendaI167.push(await conferirVinculoAgendaI167(tx,io,c,k,c.agenda[k],{adocao:acao==='incluir'}));}
       for(const [etapa,titulo,padrao]of ETAPAS){if(etapa==='disponivel')continue;const a=c.agenda[etapa],responsavel=a.responsavel||padrao,did=idDemanda(c,etapa,responsavel),dr=doc(db,'demandas',did),ds=await tx.get(dr);const velha=ds.exists()?ds.data():null;
         if(a.origemI167){if(velha&&!['aprovada','cancelada'].includes(velha.status))throw Error('Esta etapa já tem uma demanda anterior aberta. A ficha foi preservada; confira a continuidade antes de adotar outro compromisso.');continue;}
-        if(!velha&&a.fonteOrganizacaoI167===true){resultado.compromissosSemVinculo.push(etapa);continue;} // Ciclos novos usam I167; versões/demandas do fluxo legado conservam o writer anterior.
+        if(!velha&&(a.fonteOrganizacaoI167===true||responsavel===PAPEL_PESQUISA_ANTERIOR_R81)){resultado.compromissosSemVinculo.push(etapa);continue;} // Ciclos novos usam I167; versões/demandas do fluxo legado conservam o writer anterior.
         if(antes){const anteriorId=idDemanda(antes,etapa,antes.agenda[etapa].responsavel||padrao);if(anteriorId!==did){const refAnterior=doc(db,'demandas',anteriorId),anterior=await tx.get(refAnterior);if(anterior.exists()){const d=anterior.data();demandas.push([refAnterior,{...d,planejamentoI155:{...d.planejamentoI155,ativo:false,revisao:c.revisao+1,substituidaPor:did},status:['aprovada','cancelada'].includes(d.status)?d.status:'cancelada',historico:[...(d.historico||[]),{acao:'Versão substituída no planejamento; nova etapa vinculada',por:ctx.atorReal,em:new Date().toISOString(),demandaAtual:did}]}]);}}}
         if(!velha&&(!c.incluido||!a.prazo||dependencias(c,etapa).length))continue;
         // Uma mudança de responsável precisa de reconciliação explícita; não abandona obrigação antiga.

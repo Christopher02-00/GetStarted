@@ -233,11 +233,11 @@ export function criarOperacao(api){
     const a=(tipo,texto)=>`<button type="button" class="btn secondary" data-stokki-acao="${tipo}" style="width:auto">${texto}</button>`;
     return `<section data-stokki-rede="${r}" style="border:1px solid var(--line,#777);border-radius:10px;padding:14px;margin:12px 0;min-width:0">
       ${badge(d)} <b>${v.retirada?'Retirada do plano':v.conferidaEm?'Conferida por '+esc(v.conferidaPor):v.publicadaEm?'Publicação confirmada — conferir':v.data?'Agendada':'Aguardando agendamento'}</b>
-      ${!v.retirada&&!legendaExternaAprovadaI79(p)&&!legendaUtilizavelI79(p[d.campo])?'<p style="color:var(--yellow)">Legenda pendente com a Gabi · o agendamento pode ser registrado.</p>':''}<details><summary>Legenda / correção manual</summary><textarea data-stokki-legenda maxlength="20000" style="width:100%;min-height:100px">${esc(p[d.campo]||'')}</textarea><button type="button" data-stokki-copiar>Copiar legenda</button>${!v.retirada?a('corrigir_legenda','Salvar legenda corrigida'):''}<p>Corrigir aqui registra o texto usado na rede. Se já publicou, ajuste também na plataforma; a conferência será reaberta.</p></details>
+      ${!v.retirada&&!legendaExternaAprovadaI79(p)&&!legendaUtilizavelI79(p[d.campo])?`<p style="color:var(--yellow)">Legenda pendente com ${esc(api.nomeResponsavelLegenda?.()||'Gabi')} · o agendamento pode ser registrado.</p>`:''}<details><summary>Legenda / correção manual</summary><textarea data-stokki-legenda maxlength="20000" style="width:100%;min-height:100px">${esc(p[d.campo]||'')}</textarea><button type="button" data-stokki-copiar>Copiar legenda</button>${!v.retirada?a('corrigir_legenda','Salvar legenda corrigida'):''}<p>Corrigir aqui registra o texto usado na rede. Se já publicou, ajuste também na plataforma; a conferência será reaberta.</p></details>
       ${v.retirada?a('restaurar','Restaurar esta plataforma'):!v.publicadaEm?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0"><label>Data<input data-stokki-data type="date" value="${esc(v.data)}"></label><label>Horário de Brasília<input data-stokki-hora type="time" value="${esc(v.hora)}"></label></div>
         ${a('agendar',v.data?'Corrigir data/horário':'Registrar agendamento')}${v.data?a('desagendar','Desfazer agendamento'):''}
-        ${v.data?`<label>Link da publicação (opcional)<input data-stokki-url type="url" placeholder="https://..."></label>${a('publicar','Confirmar que publicou nesta plataforma')}`:''}
-        ${a('retirar','Retirar esta plataforma do plano')}`:`<p>${esc(v.data)} às ${esc(v.hora)} · Confirmada por ${esc(v.publicadaPor)}<br>${linkSeguro(v.url,'Abrir publicação para conferir')}</p>
+        ${v.data?`<label>Link da publicação${api.validarNoServidor?.()?'':' (opcional)'}<input data-stokki-url type="url" placeholder="https://..."></label>${api.validarNoServidor?.()?`<div style="border:1px solid var(--line,#777);border-radius:8px;padding:12px;margin:10px 0"><b>Registrar o que realmente foi publicado</b><p>A data planejada acima continua no histórico. Informe o dia e o horário reais; se forem diferentes do combinado, Amanda verá a divergência.</p><label>Data real da publicação<input data-stokki-data-real type="date"></label><label>Horário real em Brasília<input data-stokki-hora-real type="time"></label><label>Como você confirmou, se não tiver o link<input data-stokki-prova type="text" maxlength="8000" placeholder="Confirmação da publicação na plataforma"></label><label><input data-stokki-publicada-real type="checkbox">Conferi que este conteúdo já foi publicado nesta plataforma</label></div>`:''}${a('publicar','Confirmar que publicou nesta plataforma')}`:''}
+        ${a('retirar','Retirar esta plataforma do plano')}`:`<p>${api.validarNoServidor?.()?`Planejado: ${esc(v.data)} às ${esc(v.hora)}<br>${p.provasPublicacaoI165?.[r]?`Publicado de fato: ${esc(p.provasPublicacaoI165[r].data)} às ${esc(p.provasPublicacaoI165[r].hora)} (Brasília)<br>`:''}`:`${esc(v.data)} às ${esc(v.hora)} · `}Confirmada por ${esc(v.publicadaPor)}<br>${linkSeguro(v.url,'Abrir publicação para conferir')}</p>
         ${!v.conferidaEm?CHECKS.map((t,i)=>`<label style="display:flex;align-items:flex-start;gap:8px;margin:8px 0"><input type="checkbox" data-stokki-check="${i}" style="width:auto">${t}</label>`).join('')+a('conferir','Concluir conferência para Amanda e Cecília'):''}
         ${a('desfazer_publicacao','Desfazer confirmação feita por engano')}`}
     </section>`;
@@ -252,23 +252,34 @@ export function criarOperacao(api){
     const validos=registros.filter(p=>mostrarHistorico||!encerrado(p));
     painel.insertAdjacentHTML('beforeend',`<button type="button" class="btn secondary" data-stokki-historico>${mostrarHistorico?'Mostrar somente em operação':'Mostrar também concluídos e retirados'} (${registros.filter(encerrado).length})</button>`);
     painel.insertAdjacentHTML('beforeend',validos.map(p=>{
+      const tentativa=api.tentativaPendente?.(p),avisoTentativa=tentativa?'<div role="status" style="padding:12px;border:1px solid #ffc400;border-radius:8px;margin:10px 0"><b>Uma tentativa anterior precisa de conferência.</b><p>Seus campos foram preservados. Confira o resultado antes de fazer outra mudança.</p><button class="btn secondary" data-stokki-retomar>Conferir tentativa anterior</button></div>':'';
       const video=linkSeguro(p.linkVideo,'Abrir vídeo aprovado')||'<span>Link do vídeo indisponível: confira a origem na esteira de vídeos.</span>';
-      if(!p.publicacaoStokki)return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3><p>${video}</p>${api.htmlReferencia?.(p)||''}<p>Escolha onde este vídeo será publicado. A legenda pode ser completada depois, sem alterar o agendamento.</p><details><summary>Legenda já existente (para copiar)</summary><p style="white-space:pre-wrap">${esc(p.legenda||'')}</p></details><section data-stokki-rede="">${formularioLegendas(p)}<button type="button" class="btn" data-stokki-acao="definir_redes">Confirmar plataformas deste vídeo</button></section></article>`;
-      try{validarPlano(p);return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3><p>${video}</p>${api.htmlReferencia?.(p)||''}
+      if(!p.publicacaoStokki)return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3>${avisoTentativa}<p>${video}</p>${api.htmlReferencia?.(p)||''}<p>Escolha onde este vídeo será publicado. A legenda pode ser completada depois, sem alterar o agendamento.</p><details><summary>Legenda já existente (para copiar)</summary><p style="white-space:pre-wrap">${esc(p.legenda||'')}</p></details><section data-stokki-rede="">${formularioLegendas(p)}<button type="button" class="btn" data-stokki-acao="definir_redes">Confirmar plataformas deste vídeo</button></section></article>`;
+      try{validarPlano(p);return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3>${avisoTentativa}<p>${video}</p>${api.htmlReferencia?.(p)||''}
         ${['aguardando_agendamento','agendado','postado','cancelada_manual'].includes(p.status)?p.publicacaoStokki.selecionadas.map(r=>formulario(p,r)).join('')+
           (p.publicacaoStokki.selecionadas.length<4?`<details><summary>Adicionar uma plataforma que faltou</summary><section data-stokki-rede=""><label>Plataforma<select data-stokki-adicionar>${REDES.filter(r=>!p.publicacaoStokki.selecionadas.includes(r.id)).map(r=>`<option value="${r.id}">${r.nome}</option>`).join('')}</select></label><label>Legenda<textarea data-stokki-legenda maxlength="20000"></textarea></label><button type="button" class="btn secondary" data-stokki-acao="adicionar">Adicionar plataforma e legenda</button></section></details>`:''):'<p>O vídeo está em revisão/legenda. As publicações anteriores ficam preservadas; aguarde o fluxo de aprovação.</p>'}
         <details><summary>Histórico de correções</summary>${(p.historico||[]).filter(x=>String(x.acao).startsWith('Stokki —')).slice().reverse().map(x=>`<div style="margin:10px 0">${esc(x.em)} · ${esc(x.por)} · ${esc(x.acao)}<br><small>${historicoLegivel(x)}</small></div>`).join('')||'Sem correções registradas.'}</details></article>`;}
       catch(e){return `<p role="alert">${esc(p.titulo)}: ${esc(e.message)}</p>`;}
-    }).join('')||'<p>Nenhum vídeo no novo fluxo ainda. Os antigos continuam na fila anterior; os novos entram após a Gabi selecionar as plataformas.</p>');
+    }).join('')||`<p>Nenhum vídeo no novo fluxo ainda. Os antigos continuam na fila anterior; os novos entram após ${esc(api.nomeResponsavelLegenda?.()||'Gabi')} selecionar as plataformas.</p>`);
+    api.aoDesenharI165?.(painel,posts);
+    if(api.validarNoServidor?.())for(const bloco of painel.querySelectorAll('[data-stokki-rede]'))if(bloco.querySelector('[data-stokki-acao]')&&!bloco.querySelector('[data-stokki-motivo]'))bloco.insertAdjacentHTML('beforeend','<label>Motivo desta mudança<textarea data-stokki-motivo maxlength="8000" placeholder="Conte em poucas palavras o que está ajustando"></textarea></label>');
   }
   function fecharComConferenciaI84(){
     if(ocupado||!painel)return;
     if(capturarPreenchimentoI84().some(r=>r.campos.length)&&!api.confirm('Há preenchimento não salvo. Fechar e descartar apenas esse preenchimento?'))return;
     painel.close();painel.remove();painel=null;retratos.clear();
   }
+  async function executarAcaoConfirmadaI165(p,acao,botao){
+    const feedback=painel.querySelector('[data-stokki-feedback]');feedback.textContent='Salvando e confirmando no servidor…';ocupado=true;botao.disabled=true;
+    const bloco=botao.closest('[data-stokki-rede]'),bloqueados=acao.tipo==='publicar'?[...(bloco?.querySelectorAll('[data-stokki-data],[data-stokki-hora],[data-stokki-url],[data-stokki-data-real],[data-stokki-hora-real],[data-stokki-prova],[data-stokki-publicada-real]')||[])].map(el=>[el,el.disabled]):[];for(const [el]of bloqueados)el.disabled=true;
+    try{const identidadeI165=JSON.stringify(contexto()),painelI165=painel,servidorI165=api.usarServidorI165?await api.usarServidorI165():!!api.validarNoServidor?.();if(JSON.stringify(contexto())!==identidadeI165||painel!==painelI165||!painelI165.isConnected)throw Error('O acesso mudou. Reabra esta publicação.');if(!servidorI165)alterar(p,acao,{...contexto(),em:new Date().toISOString()});const recibo=await api.salvar(p,acao,contexto(),{servidorI165});if(JSON.stringify(contexto())!==identidadeI165||painel!==painelI165||!painelI165.isConnected)return;if(recibo?.conferenciaAbertaI165===true){feedback.textContent='Confira a ação no formulário deste cartão. Nada foi marcado como concluído ainda.';return;}const ok=await carregar({id:p.id,acao:recibo?.acaoConfirmadaI165||acao,recibo:recibo?.postagem},null,true);if(ok===true)api.toast('Registro confirmado. Amanda e Cecília veem a mesma situação.');}
+    catch(e){if(feedback?.isConnected){feedback.innerHTML=esc(e.message||String(e))+(api.tentativaPendente?.(p)?' <button type="button" class="btn secondary" data-stokki-retomar="'+esc(p.id)+'">Conferir tentativa anterior</button>':'');feedback.setAttribute('role','alert');}else api.toast(e.message||String(e));}
+    finally{ocupado=false;for(const [el,era]of bloqueados)if(el.isConnected)el.disabled=era;if(botao?.isConnected)botao.disabled=false;}
+  }
   async function abrir(){
     if(!['Amanda','Cecília','Chris'].includes(contexto().papel))return;
     if(painel)painel.remove();
+    const identidadePainelI165=JSON.stringify(contexto());
     painel=doc.createElement('dialog');painel.dataset.stokkiPainel='';painel.style.cssText='width:min(900px,94vw);max-height:90vh;overflow:auto;color:inherit;background:var(--bg,#242526);border:1px solid #888;border-radius:12px;padding:20px;box-sizing:border-box';
     doc.body.append(painel);painel.showModal();redesenharPreservandoI84();
     painel.addEventListener('cancel',ev=>{ev.preventDefault();fecharComConferenciaI84();});
@@ -283,7 +294,9 @@ export function criarOperacao(api){
         try{await navigator.clipboard.writeText(campo.value);api.toast('Legenda copiada.');}
         catch{campo.focus();campo.select();api.toast('Texto selecionado. Use Copiar no seu dispositivo.');}return;
       }
+      const retomar=ev.target.closest('[data-stokki-retomar]');if(retomar){if(ocupado)return;const id=retomar.dataset.stokkiRetomar||retomar.closest('[data-stokki-post]')?.dataset.stokkiPost,p=retratos.get(id),t=p&&api.tentativaPendente?.(p);if(t)await executarAcaoConfirmadaI165(p,t.acao,retomar);return;}
       const botao=ev.target.closest('[data-stokki-acao]');if(!botao||ocupado)return;
+      if(api.usarServidorI165&&identidadePainelI165!==JSON.stringify(contexto())){api.toast('O acesso mudou. Reabra o painel para conferir a publicação.');return;}
       if(botao.closest('[data-stokki-conflito]')){api.toast('Este material mudou. Confira os dados atuais antes de salvar.');return;}
       const bloco=botao.closest('[data-stokki-rede]'),id=botao.closest('[data-stokki-post]').dataset.stokkiPost;
       const p=retratos.get(id),tipo=botao.dataset.stokkiAcao,rede=bloco.dataset.stokkiRede||bloco.querySelector('[data-stokki-adicionar]')?.value;
@@ -292,12 +305,11 @@ export function criarOperacao(api){
       if(tipo==='definir_redes')Object.assign(acao,lerLegendas(bloco.querySelector('[data-stokki-legendas]')),{permitirSemLegendaI90:true});
       if(tipo==='agendar')acao.permitirSemLegendaI90=true;
       if(['desagendar','retirar','restaurar','desfazer_publicacao','corrigir_legenda','adicionar','definir_redes'].includes(tipo)||(tipo==='agendar'&&p.publicacaoStokki.redes[rede].data)){
-        const motivo=api.prompt('Motivo curto desta correção (fica no histórico):');if(motivo===null)return;acao.motivo=motivo;
+        if(api.validarNoServidor?.()){const motivo=bloco.querySelector('[data-stokki-motivo]')?.value.trim();if(!motivo){painel.querySelector('[data-stokki-feedback]').textContent='Escreva o motivo desta mudança no campo da plataforma. Seus outros textos continuam aqui.';return;}acao.motivo=motivo;}else{const motivo=api.prompt('Motivo curto desta correção (fica no histórico):');if(motivo===null)return;acao.motivo=motivo;}
       }
-      if(tipo==='publicar'&&!api.confirm('Confirma que este vídeo realmente foi publicado nesta plataforma? O checklist ficará pendente para Amanda e Cecília.'))return;
-      const feedback=painel.querySelector('[data-stokki-feedback]');feedback.textContent='Salvando e confirmando no servidor…';ocupado=true;botao.disabled=true;
-      try{alterar(p,acao,{...contexto(),em:new Date().toISOString()});const recibo=await api.salvar(p,acao,contexto());ocupado=false;botao.disabled=false;await carregar({id,acao,recibo:recibo?.postagem});api.toast('Registro confirmado. Amanda e Cecília veem a mesma situação.');}
-      catch(e){ocupado=false;botao.disabled=false;feedback.textContent=e.message||String(e);feedback.setAttribute('role','alert');}
+      if(tipo==='publicar'&&api.validarNoServidor?.()){Object.assign(acao,{dataRealI165:bloco.querySelector('[data-stokki-data-real]')?.value||'',horaRealI165:bloco.querySelector('[data-stokki-hora-real]')?.value||'',provaI165:bloco.querySelector('[data-stokki-prova]')?.value||''});if(!bloco.querySelector('[data-stokki-publicada-real]')?.checked||!acao.dataRealI165||!acao.horaRealI165||!(acao.url||acao.provaI165).trim()){painel.querySelector('[data-stokki-feedback]').textContent='Confira a publicação real e preencha o dia, o horário e o link ou uma confirmação. Seus campos continuam aqui.';return;}}
+      else if(tipo==='publicar'&&!api.confirm('Confirma que este vídeo realmente foi publicado nesta plataforma? O checklist ficará pendente para Amanda e Cecília.'))return;
+      await executarAcaoConfirmadaI165(p,acao,botao);
     });
     await carregar();
   }
@@ -316,7 +328,7 @@ export function criarOperacao(api){
     if(!painel?.isConnected)return [];
     return [...painel.querySelectorAll('[data-stokki-post]')].map(card=>({
       id:card.dataset.stokkiPost,card,base:retratos.get(card.dataset.stokkiPost),
-      campos:[...card.querySelectorAll('input,textarea,select')].filter(el=>el.type==='checkbox'?el.checked!==el.defaultChecked:el.value!==(el.tagName==='SELECT'?[...el.options].find(o=>o.defaultSelected)?.value||el.options[0]?.value||'':el.defaultValue)).map(el=>({
+      campos:[...card.querySelectorAll('input,textarea,select')].filter(el=>el.hasAttribute('data-stokki-retido')||(el.type==='checkbox'?el.checked!==el.defaultChecked:el.value!==(el.tagName==='SELECT'?[...el.options].find(o=>o.defaultSelected)?.value||el.options[0]?.value||'':el.defaultValue))).map(el=>({
         rede:el.closest('[data-stokki-rede]')?.dataset.stokkiRede||'',
         atributo:[...el.attributes].find(a=>a.name.startsWith('data-stokki-'))?.name||'',
         chave:[...el.attributes].find(a=>a.name.startsWith('data-stokki-'))?.value||'',
@@ -334,7 +346,8 @@ export function criarOperacao(api){
       if(!r.base)continue;
       let seguro=!!card&&!!atual&&assinatura(atual)===assinatura(r.base);
       if(confirmacao&&r.id===confirmacao.id&&atual?.publicacaoStokki?.operacaoId===confirmacao.acao.operacaoId){
-        try{const esperado=alterar(r.base,confirmacao.acao,{...contexto(),em:atual.publicacaoStokki.em});seguro=assinatura({...r.base,...esperado.patch})===assinatura(atual);}catch{}
+        if(api.validarNoServidor?.())seguro=confirmacao.leituraConfirmadaI165===true&&assinatura(atual)===assinatura(confirmacao.recibo);
+        else try{const esperado=alterar(r.base,confirmacao.acao,{...contexto(),em:atual.publicacaoStokki.em});seguro=assinatura({...r.base,...esperado.patch})===assinatura(atual);}catch{}
       }
       if(r.campos.length&&!seguro){
         if(card)card.replaceWith(r.card);else painel.append(r.card);
@@ -346,14 +359,14 @@ export function criarOperacao(api){
       if(!card)continue;
       for(const f of r.campos){
         const a=confirmacao?.acao||{},mesmo=r.id===confirmacao?.id&&f.rede===(a.rede||'');
-        const gravado=mesmo&&((['agendar','desagendar'].includes(a.tipo)&&((f.atributo==='data-stokki-data'&&f.valor===a.data)||(f.atributo==='data-stokki-hora'&&f.valor===a.hora)))||
+        const gravado=mesmo&&((f.atributo==='data-stokki-motivo'&&f.valor===a.motivo)||(['agendar','desagendar'].includes(a.tipo)&&((f.atributo==='data-stokki-data'&&f.valor===a.data)||(f.atributo==='data-stokki-hora'&&f.valor===a.hora)))||
           (a.tipo==='corrigir_legenda'&&f.atributo==='data-stokki-legenda'&&f.valor===a.texto)||
-          (a.tipo==='publicar'&&f.atributo==='data-stokki-url'&&f.valor===a.url)||
+          (a.tipo==='publicar'&&((f.atributo==='data-stokki-url'&&f.valor===a.url)||(f.atributo==='data-stokki-data-real'&&f.valor===a.dataRealI165)||(f.atributo==='data-stokki-hora-real'&&f.valor===a.horaRealI165)||(f.atributo==='data-stokki-prova'&&f.valor===a.provaI165)||f.atributo==='data-stokki-publicada-real'))||
           (a.tipo==='conferir'&&f.atributo==='data-stokki-check'));
         if(gravado)continue;
         const bloco=[...card.querySelectorAll('[data-stokki-rede]')].find(el=>el.dataset.stokkiRede===f.rede);
         const el=[...(bloco?.querySelectorAll('input,textarea,select')||[])].find(el=>el.getAttribute(f.atributo)===f.chave);
-        if(el){el.value=f.valor;if(el.type==='checkbox')el.checked=f.marcado;}
+        if(el){el.value=f.valor;if(el.type==='checkbox')el.checked=f.marcado;}else{const nomes={'data-stokki-prova':'Confirmação da publicação','data-stokki-data-real':'Data real preenchida','data-stokki-hora-real':'Horário real preenchido','data-stokki-url':'Link preenchido','data-stokki-data':'Data em edição','data-stokki-hora':'Horário em edição','data-stokki-publicada-real':'Conferência em edição'};let guardado=card.querySelector('[data-stokki-campos-preservados]');if(!guardado){card.insertAdjacentHTML('beforeend','<details data-stokki-campos-preservados open><summary>Preenchimento que não entrou nesta confirmação</summary><p>O registro já avançou. Este rascunho continua disponível para consulta e cópia.</p></details>');guardado=card.querySelector('[data-stokki-campos-preservados]');}guardado.insertAdjacentHTML('beforeend','<label>'+esc(nomes[f.atributo]||'Texto em edição')+' · '+esc(f.rede)+'<textarea data-stokki-retido="'+esc(f.atributo+'|'+f.chave)+'" readonly>'+esc(f.atributo==='data-stokki-publicada-real'?(f.marcado?'Conferido':'Não conferido'):f.valor)+'</textarea></label>');}
       }
       for(const el of card.querySelectorAll('details'))if(r.abertos.some(a=>a.rede===(el.closest('[data-stokki-rede]')?.dataset.stokkiRede||'')&&a.texto===el.querySelector('summary')?.textContent))el.open=true;
     }
@@ -369,14 +382,15 @@ export function criarOperacao(api){
     }
     painel.scrollTop=rolagem;
   }
-  async function carregar(confirmacao=null,descartarId=null){const g=++geracao,c=contexto();
-    try{const novos=await api.listar();if(g!==geracao||JSON.stringify(c)!==JSON.stringify(contexto()))return;
-      if(confirmacao?.recibo){const i=novos.findIndex(p=>p.id===confirmacao.id),atual=novos[i];
+  async function carregar(confirmacao=null,descartarId=null,duranteGravacao=false){const g=++geracao,c=contexto();
+    try{const novos=await api.listar();if(g!==geracao||JSON.stringify(c)!==JSON.stringify(contexto()))return false;
+      if(api.validarNoServidor?.()){if(confirmacao){const atual=novos.find(p=>p.id===confirmacao.id);if(!atual)throw Error('O registro ainda não foi relido do servidor.');await api.confirmarRetorno?.(atual,confirmacao.acao);if(assinatura(atual)!==assinatura(confirmacao.recibo)){posts=novos;erro='';throw Error('A ação foi recebida, mas a publicação já mudou novamente. Seu preenchimento foi preservado; confira os dados atuais.');}confirmacao={...confirmacao,leituraConfirmadaI165:true};}else for(const p of novos)await api.confirmarRetorno?.(p);}
+      if(confirmacao?.recibo&&!api.validarNoServidor?.()){const i=novos.findIndex(p=>p.id===confirmacao.id),atual=novos[i];
         if(!atual||(atual.publicacaoStokki?.revisao||0)<confirmacao.recibo.publicacaoStokki.revisao){if(i<0)novos.push(confirmacao.recibo);else novos[i]=confirmacao.recibo;}}
       posts=novos;erro='';
-    }catch(e){if(g!==geracao)return;console.warn('Falha ao conferir publicações da Stokki',e);erro='Não foi possível atualizar as publicações. Confira sua conexão e tente novamente.';
-      if(painel?.isConnected){painel.querySelector('[data-stokki-feedback]').innerHTML=esc(erro+' O preenchimento continua aqui.')+' <button type="button" data-stokki-recarregar>Tentar atualizar novamente</button>';return;}}
-    avisar();redesenharPreservandoI84(confirmacao,descartarId);
+    }catch(e){if(g!==geracao)return false;console.warn('Falha ao conferir publicações da Stokki',e);erro='Não foi possível atualizar as publicações. '+(e.message||'Confira sua conexão e tente novamente.');
+      if(painel?.isConnected){painel.querySelector('[data-stokki-feedback]').innerHTML=esc(erro+' O preenchimento continua aqui.')+' <button type="button" data-stokki-recarregar>Tentar atualizar novamente</button>';}return false;}
+    avisar();if(duranteGravacao){ocupado=false;redesenharPreservandoI84(confirmacao,descartarId);ocupado=true;}else redesenharPreservandoI84(confirmacao,descartarId);return true;
   }
   function incorporarReparoI79(p){
     // A conferência também abre sem este painel, inclusive após fechá-lo ou trocar de perfil.

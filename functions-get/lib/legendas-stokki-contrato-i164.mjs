@@ -1,0 +1,4 @@
+/* Compatibilidade literal do contrato de legenda I164; sem motor de programação. */
+export const jsonI165=v=>JSON.stringify(v,(_k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x);
+export function assinaturaPostagemCompletaI165(v){const normalizar=x=>{if(x&&typeof x.toDate==='function'){const s=x.seconds??x._seconds,n=x.nanoseconds??x._nanoseconds??0;if(Number.isFinite(s))return{__timestampI165:{seconds:s,nanoseconds:n}};}if(Array.isArray(x))return x.map(normalizar);if(x&&typeof x==='object')return Object.fromEntries(Object.keys(x).sort().map(k=>[k,normalizar(x[k])]));return x;};return jsonI165(normalizar(v));}
+export function processoAtivoI164(c){return c?.schema===1&&c.ativo===true&&Number.isInteger(c.revisao)&&c.revisao>0&&typeof c.ativacaoId==='string'&&c.ativacaoId.length>=12;}

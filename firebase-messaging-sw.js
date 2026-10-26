@@ -1,6 +1,14 @@
 /* I165 R63: push genérico. Não instala cache nem altera fontes ou calendários. */
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js','https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 firebase.initializeApp({apiKey:'AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw',authDomain:'get-started-4956d.firebaseapp.com',projectId:'get-started-4956d',storageBucket:'get-started-4956d.firebasestorage.app',messagingSenderId:'27813235721',appId:'1:27813235721:web:38c8e840153e2ae3853cd8'});
+const VERSAO_SERVICO_AVISOS_I171='get-i171-ativacao-explicita-r86-v1';
+self.addEventListener('message',event=>{
+ let origem;try{origem=new URL(event.source?.url);}catch{return;}
+ if(origem.origin!==self.location.origin||origem.pathname!=='/escritorio.html'||event.origin&&event.origin!==self.location.origin)return;
+ const d=event.data;if(!d||typeof d!=='object'||Array.isArray(d))return;
+ if(d.tipo==='conferir_versao_avisos_i171'&&Object.keys(d).length===2&&typeof d.nonce==='string'&&/^sw_i171_[0-9_]+$/.test(d.nonce)&&d.nonce.length<=100){event.ports?.[0]?.postMessage({tipo:'versao_avisos_i171',nonce:d.nonce,versao:VERSAO_SERVICO_AVISOS_I171});return;}
+ if(d.tipo==='ativar_versao_avisos_i171'&&Object.keys(d).length===2&&d.versao===VERSAO_SERVICO_AVISOS_I171)event.waitUntil(self.skipWaiting());
+});
 function alvoAvisoI165(link,id){
  if(typeof id!=='string'||!/^[A-Za-z0-9_-]{12,160}$/.test(id))return null;
  try{const u=new URL(link,self.location.origin);if(u.origin!==self.location.origin||u.pathname!=='/escritorio.html'||u.searchParams.get('avisoI165')!==id||u.username||u.password)return null;const seguro=new URL('/escritorio.html',self.location.origin);seguro.searchParams.set('avisoI165',id);return seguro;}catch{return null;}

@@ -54,6 +54,30 @@ export function esperarServiceWorkerAtivoI165(reg,{vigente=()=>true,timeoutMs=20
  });
  return {pronto,cancelar:()=>encerrar()};
 }
+export const VERSAO_SERVICO_AVISOS_I171='get-i171-ativacao-explicita-r86-v1';
+let sequenciaServicoI171=0;
+export function conferirVersaoWorkerI171(worker,{vigente=()=>true,MessageChannel=globalThis.MessageChannel,timeoutMs=1200,programar=(f,t)=>globalThis.setTimeout(f,t),cancelarTimer=t=>globalThis.clearTimeout(t)}={}){
+ if(!worker||!vigente()||typeof MessageChannel!=='function')return Promise.resolve(false);
+ return new Promise(resolve=>{let fim=false,timer;const canal=new MessageChannel(),nonce='sw_i171_'+Date.now()+'_'+(++sequenciaServicoI171);
+  const concluir=v=>{if(fim)return;fim=true;cancelarTimer(timer);canal.port1.close();canal.port2.close();resolve(v&&vigente());};
+  canal.port1.onmessage=e=>concluir(e.data?.tipo==='versao_avisos_i171'&&e.data.nonce===nonce&&e.data.versao===VERSAO_SERVICO_AVISOS_I171);
+  timer=programar(()=>concluir(false),timeoutMs);
+  try{worker.postMessage({tipo:'conferir_versao_avisos_i171',nonce},[canal.port2]);}catch{concluir(false);}
+ });
+}
+export function ativarWorkerEsperandoI171(reg,worker,{serviceWorker,vigente=()=>true,timeoutMs=20000,programar=(f,t)=>globalThis.setTimeout(f,t),cancelarTimer=t=>globalThis.clearTimeout(t)}={}){
+ let encerrar=()=>{};
+ const pronto=new Promise((resolve,reject)=>{let fim=false,timer;const controleAnterior=serviceWorker?.controller;
+  const limpar=()=>{cancelarTimer(timer);worker?.removeEventListener?.('statechange',verificar);serviceWorker?.removeEventListener?.('controllerchange',verificar);};
+  const concluir=code=>{if(fim)return;fim=true;limpar();if(code)reject(Object.assign(Error('A versão dos avisos não confirmou a ativação.'),{code}));else resolve(reg);};
+  function verificar(){if(fim)return;if(!vigente()){concluir('i165/sw-contexto');return;}if(worker?.state==='redundant'){concluir('i165/sw-falha');return;}if(reg?.active===worker&&worker?.state==='activated'&&(!controleAnterior||serviceWorker?.controller===worker))concluir();}
+  encerrar=()=>concluir('i165/sw-contexto');
+  if(!vigente()||!worker||reg?.waiting!==worker){concluir('i165/sw-contexto');return;}
+  timer=programar(()=>concluir(vigente()?'i165/sw-tempo':'i165/sw-contexto'),timeoutMs);worker.addEventListener?.('statechange',verificar);serviceWorker?.addEventListener?.('controllerchange',verificar);
+  try{worker.postMessage({tipo:'ativar_versao_avisos_i171',versao:VERSAO_SERVICO_AVISOS_I171});}catch{concluir('i165/sw-falha');}verificar();
+ });
+ return {pronto,cancelar:()=>encerrar()};
+}
 export function mensagemAtivacaoAvisosI165(err){
  if(err?.code==='i165/sw-tempo')return 'Os avisos do navegador ainda estão iniciando. Aguarde um pouco e tente novamente; a fila continua no sistema.';
  if(err?.code==='i165/sw-contexto')return 'A ativação foi interrompida. Confira seu perfil antes de tentar novamente.';
@@ -65,7 +89,7 @@ export function mensagemAtivacaoAvisosI165(err){
 export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostagem,central=null,ambiente=ambientePadrao()}={}){
  if(!root||!io||central||typeof contexto!=='function')throw Error('Os avisos precisam de acesso confirmado.');
  const c=Object.freeze({...contexto()});
- let vivo=true,ciclo=0,linhas=[],config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0,cancelarEsperaSW=null,registro=null,teste=null,statusConta=null,tokenRegistrado=null,tentativaTeste=null;
+ let vivo=true,ciclo=0,linhas=[],config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0,cancelarEsperaSW=null,registro=null,teste=null,statusConta=null,tokenRegistrado=null,tentativaTeste=null,servico=null,servicoSeq=0,cancelarAtualizacaoSW=null;
  const vigente=()=>vivo&&root.isConnected!==false&&mesmaIdentidadeAvisosI165(c,contexto());
  const atual=e=>vigente()&&e===ciclo;
  const ativo=()=>estadoConfig==='confirmada'&&fontesAvisosHabilitadasI165(config).length>0;
@@ -73,8 +97,8 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  const proprio=()=>vigente()&&c.papel===c.atorReal&&!c.delegada&&!contexto()?.delegada;
  const registroAtual=()=>proprio()&&pushAtivo()&&registro?.uid===c.uid&&registro?.pessoa===c.atorReal&&registro?.ativacaoId===config?.ativacaoId;
  const ambienteBase=()=>ambiente.window.location.href,swURL=()=>new URL('./firebase-messaging-sw.js',ambienteBase()).href;
- const pararCanal=()=>{foregroundSeq++;const cancelar=cancelarEsperaSW;cancelarEsperaSW=null;cancelar?.();try{pararForeground?.();}catch{}pararForeground=null;sdkAtual=null;};
- root.innerHTML='<section class="card" style="border-color:#6198cb;margin:0 0 18px" aria-label="Avisos de conteúdos"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><h2 style="margin:0;font-size:19px">Conteúdos que precisam de você <span data-contagem></span></h2><p style="margin:7px 0;color:#c9c9c9;font-size:13px" data-saude></p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn secondary" data-reconferir>Conferir avisos</button><button type="button" class="btn" data-ativar>Ativar no meu aparelho</button><button type="button" class="btn secondary" data-testar hidden>Enviar teste para mim</button><button type="button" class="btn secondary" data-conferir-teste hidden>Conferir se chegou</button><button type="button" class="btn secondary" data-vi hidden>Vi o aviso de teste</button></div></div><p style="font-size:13px;margin:8px 0" role="status" aria-live="polite" data-estado></p><p style="font-size:13px;color:#c9c9c9" data-aparelho></p><p style="font-size:12px;color:#c9c9c9" role="status" aria-live="polite" data-teste></p><div data-lista></div><small style="display:block;margin-top:10px;color:#c9c9c9">Abrir ou ler um aviso não conclui a atividade. O sistema acompanha o andamento na origem.</small></section>';
+ const pararCanal=()=>{foregroundSeq++;servicoSeq++;servico=null;cancelarAtualizacaoSW?.();cancelarAtualizacaoSW=null;const cancelar=cancelarEsperaSW;cancelarEsperaSW=null;cancelar?.();try{pararForeground?.();}catch{}pararForeground=null;sdkAtual=null;};
+ root.innerHTML='<section class="card" style="border-color:#6198cb;margin:0 0 18px" aria-label="Avisos de conteúdos"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><h2 style="margin:0;font-size:19px">Conteúdos que precisam de você <span data-contagem></span></h2><p style="margin:7px 0;color:#c9c9c9;font-size:13px" data-saude></p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn secondary" data-reconferir>Conferir avisos</button><button type="button" class="btn" data-ativar>Ativar no meu aparelho</button><button type="button" class="btn secondary" data-servico hidden>Conferir versão dos avisos</button><button type="button" class="btn secondary" data-testar hidden>Enviar teste para mim</button><button type="button" class="btn secondary" data-conferir-teste hidden>Conferir se chegou</button><button type="button" class="btn secondary" data-vi hidden>Vi o aviso de teste</button></div></div><p style="font-size:13px;margin:8px 0" role="status" aria-live="polite" data-estado></p><p style="font-size:13px;color:#c9c9c9" data-aparelho></p><p style="font-size:12px;color:#c9c9c9" role="status" aria-live="polite" data-servico-estado></p><p style="font-size:12px;color:#c9c9c9" role="status" aria-live="polite" data-teste></p><div data-lista></div><small style="display:block;margin-top:10px;color:#c9c9c9">Abrir ou ler um aviso não conclui a atividade. O sistema acompanha o andamento na origem.</small></section>';
  const el=s=>root.querySelector(s);
  function render(){
   if(!vigente())return;
@@ -88,7 +112,9 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
   el('[data-ativar]').disabled=busy||!proprio()||!pushAtivo()||!aparelho?.pronto||ambiente.Notification?.permission==='denied';
   el('[data-testar]').hidden=!proprio();el('[data-testar]').textContent=tentativaTeste||['reservado','em_andamento','resultado_desconhecido'].includes(teste?.estado)?'Conferir mesma tentativa':'Enviar teste para mim';
   const esperaTeste=teste?.proximoTesteEm&&Date.parse(teste.proximoTesteEm)>ambiente.agora()&&!tentativaTeste&&!['reservado','em_andamento','resultado_desconhecido'].includes(teste?.estado);
-  el('[data-testar]').disabled=busy||!registroAtual()||!tokenRegistrado||statusConta?.testeServidorDisponivel!==true||!!esperaTeste||ambiente.Notification?.permission!=='granted';
+  el('[data-servico]').hidden=!proprio()||!pushAtivo();el('[data-servico]').disabled=busy||!aparelho?.pronto;el('[data-servico]').textContent=servico?.esperandoConfirmado?'Atualizar avisos neste navegador':'Conferir versão dos avisos';
+  el('[data-servico-estado]').textContent=!proprio()?'':servico?.pronto?'A versão atual dos avisos está ativa neste navegador. Isso ainda não comprova a chegada de um teste.':servico?.esperandoConfirmado?'Há uma versão nova aguardando. Toque em “Atualizar avisos neste navegador”; seus textos e sua tentativa anterior ficam preservados.':servico?.falha?'Não consegui confirmar a versão ativa agora. O teste está pausado; sua fila e a tentativa anterior continuam preservadas.':servico?.temAtivo?'Há um serviço ativo, mas a versão atual ainda não foi confirmada. Confira a versão antes de pedir um teste.':'A versão dos avisos deste navegador ainda não foi conferida.';
+  el('[data-testar]').disabled=busy||servico?.pronto!==true||!registroAtual()||!tokenRegistrado||statusConta?.testeServidorDisponivel!==true||!!esperaTeste||ambiente.Notification?.permission!=='granted';
   el('[data-conferir-teste]').hidden=!proprio()||!teste?.operacaoId;el('[data-conferir-teste]').disabled=busy||ambiente.Notification?.permission!=='granted';
   el('[data-vi]').hidden=!proprio()||!registroAtual()||!teste?.objetoConfirmado||teste.visto===true;el('[data-vi]').disabled=busy;
   el('[data-teste]').textContent=!proprio()?'O aparelho de outra pessoa não pode ser ativado por este acesso.':teste?.visto?'Você confirmou que viu o teste enviado pelo servidor neste aparelho. Isso não garante todos os avisos futuros.':teste?.objetoConfirmado?'O navegador confirmou o aviso de teste do servidor. Confira a tela e toque em “Vi o aviso de teste”. A exibição pelo aparelho ainda depende dessa conferência.':teste?.estado==='aceito_pelo_provedor'?'O serviço aceitou o envio do teste. Ainda não confirmei que chegou neste navegador. Você pode fechar o site, aguardar o aviso e depois voltar em “Conferir se chegou”.':teste?.estado==='resultado_desconhecido'?'O envio do teste ficou sem confirmação. Nenhum novo envio automático foi feito. Confira a mesma tentativa.':teste?.estado==='em_andamento'||teste?.estado==='reservado'?'A mesma tentativa de teste continua em conferência. Não foi criado outro envio.':teste?.estado==='recusado'?'O serviço recusou o teste. A fila continua no sistema; aguarde dez minutos antes de solicitar um novo teste.':statusConta?.contaComAparelhoAtivo===true?'Sua conta tem aparelho cadastrado. Ative aqui para conferir este navegador e enviar um teste só para você.':'Cada pessoa precisa ativar o aparelho com o próprio Google. Um registro não comprova que o aviso já chegou';
@@ -118,6 +144,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
    if(registro?.ativacaoId!==config?.ativacaoId){registro=null;tokenRegistrado=null;}
    if(!ativo()){estadoConfig='desligada';aparelho=null;pararCanal();render();return false;}
    teveAtivo=true;
+   if(proprio())void conferirServico();
    const a=await preConferir(e,r);if(a&&atual(e)){await prepararForeground(e);await conferirTesteNoNavegador();}
    if(!atual(e))return false;
    const l=await io.listarAvisos();if(!atual(e))return false;
@@ -182,8 +209,34 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
    const recibo=await io.registrarDispositivo({token});if(!atual(e)||!proprio()||!pushAtivo())return false;
    if(recibo?.schema!==1||recibo.registrado!==true||recibo.uid!==c.uid||recibo.pessoa!==c.atorReal||recibo.ativacaoId!==config.ativacaoId)throw Error('Não consegui confirmar o registro deste aparelho.');
    registro={uid:recibo.uid,pessoa:recibo.pessoa,ativacaoId:recibo.ativacaoId};tokenRegistrado=token;statusConta=r.aparelhoProprio||null;adotarTesteDaConta();
+   await conferirServico(reg);if(!atual(e)||!registroAtual())return false;
    recado='Registro confirmado para você. Se quiser, confira agora o aviso de teste neste navegador.';await prepararForeground(e);return true;
   }catch(err){if(atual(e))recado=mensagemAtivacaoAvisosI165(err);return false;
+  }finally{if(atual(e)){busy=false;render();}}
+ }
+ async function conferirServico(regFornecido=null){
+  if(!proprio()||!pushAtivo())return false;const s=++servicoSeq,e=ciclo;
+  try{const reg=regFornecido||await ambiente.serviceWorker.getRegistration(swURL());if(!atual(e)||s!==servicoSeq||!proprio())return false;
+   const ativoWorker=reg?.active,esperandoWorker=reg?.waiting,op={vigente:()=>atual(e)&&s===servicoSeq&&proprio()&&pushAtivo(),MessageChannel:ambiente.MessageChannel||globalThis.MessageChannel};
+   const [ativoConfirmado,esperandoConfirmado]=await Promise.all([conferirVersaoWorkerI171(ativoWorker,op),conferirVersaoWorkerI171(esperandoWorker,op)]);
+   if(!op.vigente())return false;
+   servico={reg,ativoWorker,esperandoWorker,temAtivo:!!reg?.active,ativoConfirmado:ativoConfirmado&&reg.active===ativoWorker,esperandoConfirmado:esperandoConfirmado&&reg.waiting===esperandoWorker,pronto:ativoConfirmado&&reg.active===ativoWorker&&ativoWorker.state==='activated',falha:false};render();return servico.pronto;
+  }catch{if(atual(e)&&s===servicoSeq){servico={pronto:false,falha:true};render();}return false;}
+ }
+ async function atualizarServico(){
+  if(!proprio()||!pushAtivo()||!aparelho?.pronto||busy)return false;
+  const anterior=servico,e=ciclo;busy=true;render();
+  try{const r=await configFresh();if(!atual(e)||!proprio()||r.config?.ativacaoId!==config?.ativacaoId||r.config?.habilidades?.push!==true)return false;
+   const a=await preConferir(e,r);if(!a||!atual(e)||!proprio())return false;
+   if(!anterior?.esperandoConfirmado){const reg=await ambiente.serviceWorker.register(swURL());if(!atual(e)||!proprio())return false;await reg.update?.();if(!atual(e)||!proprio())return false;await conferirServico(reg);recado=servico?.esperandoConfirmado?'A nova versão foi encontrada. Toque em “Atualizar avisos neste navegador” para ativar.':'Versão conferida. Se a atualização ainda estiver iniciando, aguarde um pouco e confira novamente.';return servico?.pronto===true;}
+   const reg=await ambiente.serviceWorker.getRegistration(swURL());if(!atual(e)||!proprio()||reg?.waiting!==anterior.esperandoWorker)return false;
+   if(!await conferirVersaoWorkerI171(reg.waiting,{vigente:()=>atual(e)&&proprio()&&pushAtivo(),MessageChannel:ambiente.MessageChannel||globalThis.MessageChannel}))throw Object.assign(Error('Versão não confirmada.'),{code:'i165/sw-falha'});
+   if(!atual(e)||!proprio()||reg.waiting!==anterior.esperandoWorker)return false;
+   const espera=ativarWorkerEsperandoI171(reg,anterior.esperandoWorker,{serviceWorker:ambiente.serviceWorker,vigente:()=>atual(e)&&proprio()&&pushAtivo()});cancelarAtualizacaoSW=espera.cancelar;
+   try{await espera.pronto;}finally{if(cancelarAtualizacaoSW===espera.cancelar)cancelarAtualizacaoSW=null;}
+   if(!atual(e)||!proprio())return false;const pronto=await conferirServico(reg);if(!atual(e)||!proprio())return false;
+   recado=pronto?'A nova versão dos avisos está ativa. Sua tentativa anterior foi preservada; nenhum teste foi reenviado.':'A versão ainda precisa ser conferida. Nenhum teste foi reenviado.';return pronto;
+  }catch(err){if(atual(e)){servico={pronto:false,falha:true};recado=mensagemAtivacaoAvisosI165(err);}return false;
   }finally{if(atual(e)){busy=false;render();}}
  }
  function adotarTesteDaConta(){
@@ -205,6 +258,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
   try{
    const r=await configFresh();if(!atual(e)||!registroAtual()||r.config?.ativacaoId!==registro.ativacaoId||r.config?.habilidades?.push!==true||r.aparelhoProprio?.testeServidorDisponivel!==true)return false;
    statusConta=r.aparelhoProprio;adotarTesteDaConta();
+   if(!await conferirServico()||!atual(e)||!registroAtual()){recado='Confira e, se necessário, atualize a versão dos avisos antes de pedir o teste. A tentativa anterior foi preservada.';return false;}
    if(!tentativaTeste&&['aceito_pelo_provedor','recusado'].includes(teste?.estado)&&Date.parse(teste.proximoTesteEm)>ambiente.agora()){recado='Aguarde dez minutos entre os testes. Você ainda pode conferir se o teste anterior chegou.';return false;}
    const a=await preConferir(e,r);if(!a||!atual(e)||!registroAtual())return false;
    if(!tentativaTeste){
@@ -223,10 +277,10 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  }
  function confirmarTesteVisto(){if(!registroAtual()||busy||!teste?.objetoConfirmado)return false;teste.visto=true;render();return true;}
  let pendenteURL;try{pendenteURL=new URL(ambienteBase()).searchParams.get('avisoI165');}catch{}
- const click=ev=>{const b=ev.target?.closest?.('[data-abrir],[data-ativar],[data-reconferir],[data-testar],[data-conferir-teste],[data-vi]');if(!b||!root.contains(b)||!vigente())return;if(b.hasAttribute('data-abrir'))abrir(b.getAttribute('data-abrir'));else if(b.hasAttribute('data-ativar'))ativar();else if(b.hasAttribute('data-testar'))testarNoServidor();else if(b.hasAttribute('data-conferir-teste'))conferirTesteNoNavegador();else if(b.hasAttribute('data-vi'))confirmarTesteVisto();else consultar();};
+ const click=ev=>{const b=ev.target?.closest?.('[data-abrir],[data-ativar],[data-reconferir],[data-testar],[data-conferir-teste],[data-vi],[data-servico]');if(!b||!root.contains(b)||!vigente())return;if(b.hasAttribute('data-abrir'))abrir(b.getAttribute('data-abrir'));else if(b.hasAttribute('data-ativar'))ativar();else if(b.hasAttribute('data-servico'))atualizarServico();else if(b.hasAttribute('data-testar'))testarNoServidor();else if(b.hasAttribute('data-conferir-teste'))conferirTesteNoNavegador();else if(b.hasAttribute('data-vi'))confirmarTesteVisto();else consultar();};
  const mensagem=ev=>{if(!vigente()||ev.data?.tipo!=='abrir_aviso_i165'||!idAviso(ev.data.id))return;let origem;try{origem=new URL(ev.source?.scriptURL);}catch{return;}if(origem.href!==swURL()||ev.origin&&ev.origin!==new URL(ambienteBase()).origin)return;ev.ports?.[0]?.postMessage({recebido:true});abrir(ev.data.id);};
  root.addEventListener('click',click);ambiente.serviceWorker?.addEventListener('message',mensagem);
  const timer=ambiente.setInterval(()=>{if(vigente())consultar();},60000);
  consultar();render();
- return {abrir,ativar,testarNoServidor,conferirTesteNoNavegador,confirmarTesteVisto,reconferir:consultar,estado:()=>({estadoConfig,estadoLista,linhas:structuredClone(linhas),truncado,aparelhoPronto:!!aparelho?.pronto,registroConfirmado:registroAtual(),testeServidor:teste?{operacaoId:teste.operacaoId,estado:teste.estado,aceiteProvedor:teste.aceiteProvedor===true,objetoConfirmado:teste.objetoConfirmado===true,visto:teste.visto===true}:null,ciclo,vivo}),destroy(){if(!vivo)return;vivo=false;ciclo++;abertura++;registro=null;teste=null;tokenRegistrado=null;tentativaTeste=null;pararCanal();ambiente.clearInterval(timer);ambiente.serviceWorker?.removeEventListener('message',mensagem);root.removeEventListener('click',click);root.replaceChildren();root.hidden=true;}};
+ return {abrir,ativar,conferirServico,atualizarServico,testarNoServidor,conferirTesteNoNavegador,confirmarTesteVisto,reconferir:consultar,estado:()=>({estadoConfig,estadoLista,linhas:structuredClone(linhas),truncado,aparelhoPronto:!!aparelho?.pronto,registroConfirmado:registroAtual(),servicoAvisos:servico?{versaoEsperada:VERSAO_SERVICO_AVISOS_I171,ativoConfirmado:servico.ativoConfirmado===true,esperandoConfirmado:servico.esperandoConfirmado===true,pronto:servico.pronto===true}:null,testeServidor:teste?{operacaoId:teste.operacaoId,estado:teste.estado,aceiteProvedor:teste.aceiteProvedor===true,objetoConfirmado:teste.objetoConfirmado===true,visto:teste.visto===true}:null,ciclo,vivo}),destroy(){if(!vivo)return;vivo=false;ciclo++;abertura++;registro=null;teste=null;tokenRegistrado=null;tentativaTeste=null;pararCanal();ambiente.clearInterval(timer);ambiente.serviceWorker?.removeEventListener('message',mensagem);root.removeEventListener('click',click);root.replaceChildren();root.hidden=true;}};
 }

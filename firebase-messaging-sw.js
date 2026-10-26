@@ -18,6 +18,10 @@ self.addEventListener('notificationclick',event=>{
  })());
 });
 firebase.messaging().onBackgroundMessage(async p=>{
+ if(p?.data?.tipo==='teste_dispositivo_i165'){
+  const id=p.data.testeId;if(typeof id!=='string'||!/^[A-Za-z0-9_-]{12,100}$/.test(id))return;
+  await self.registration.showNotification('Get · Seu teste de aviso',{body:'Este é o teste enviado pelo servidor que você pediu. Volte ao site para confirmar se viu.',tag:'i165_teste_servidor_'+id});return;
+ }
  const u=alvoAvisoI165(p?.data?.link,p?.data?.id);if(!u)return;
  // O payload não comprova destinatário. A página relê o aviso no Google atual.
  await self.registration.showNotification('Get · Conteúdos',{body:'Tem uma ação de conteúdo para você conferir no sistema.',tag:'i165_'+p.data.id,data:{link:u.href}});

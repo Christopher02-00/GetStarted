@@ -1,5 +1,6 @@
 /* Preparação interna via callable existente. Não publica, não migra e não ativa a troca I164. */
 import {FieldValue} from 'firebase-admin/firestore';
+import {lerLegendasPendentesI170,projetarRespostaPesquisaI170} from './legendas-preparacao-i170.mjs';
 import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {validarCadastroI165} from './contexto.mjs';
 import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
@@ -25,6 +26,7 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
  }
  if(pedido.acao==='central_capacidades')return envelopeCentralR80(await db.runTransaction(tx=>gate(tx,{capacidades:true})));
  await db.runTransaction(tx=>gate(tx));
+ if(pedido.acao==='central_legendas_pendentes')return envelopeCentralR80(await lerLegendasPendentesI170(db,{ator,pedido,gate}));
  const stamp=FieldValue.serverTimestamp(),{io,contexto}=criarIoAdminCentralR80(db,{ator,pedido,conferirGate:gate,stamp});
  const hoje=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(agora);
  async function clientes(mes){const [ex,co]=await Promise.all([io.getDocsFromServer(io.collection(db,'clientes_extras')),io.getDocsFromServer(io.collection(db,'clientes_config'))]);return carteiraCanonicaI164({extras:linhas(ex),configs:linhas(co),hoje,competencia:mes}).carteira;}
@@ -48,10 +50,10 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
    const a=await repo.arquivos.ler(pedido.ciclo,pedido.arquivoId),{buffer,...arquivo}=a,partesBase64=[];for(let i=0;i<buffer.length;i+=PARTE_R80)partesBase64.push({indice:partesBase64.length,dados:Buffer.from(buffer.subarray(i,i+PARTE_R80)).toString('base64')});dados={arquivo,partesBase64};break;
   }
   case 'central_versao_ciclo':{
-   const [s,cal]=await Promise.all([io.getDocFromServer(io.doc(db,'planejamento_social_i155',pedido.ciclo)),io.getDocFromServer(io.doc(db,'calendarios',pedido.cliente))]);e(s.exists(),'O ciclo não foi encontrado; a última leitura foi preservada.');const c=s.data();e(c.cliente===pedido.cliente&&c.competencia===pedido.competencia,'A versão pertence a outro ciclo.');dados={ciclo:{id:s.id,revisao:c.revisao,operacao:c.operacao||''},calendario:calendarioMes(cal.exists()?cal.data():null,pedido.competencia)};break;
+   const [s,cal]=await Promise.all([io.getDocFromServer(io.doc(db,'planejamento_social_i155',pedido.ciclo)),ator.papel==='Gabrielle'?null:io.getDocFromServer(io.doc(db,'calendarios',pedido.cliente))]);e(s.exists(),'O ciclo não foi encontrado; a última leitura foi preservada.');const c=s.data();e(c.cliente===pedido.cliente&&c.competencia===pedido.competencia,'A versão pertence a outro ciclo.');dados={ciclo:{id:s.id,revisao:c.revisao,operacao:c.operacao||''},calendario:calendarioMes(cal?.exists()?cal.data():null,pedido.competencia)};break;
   }
   default:e(false,'Ação fora da preparação.');
  }
  // Readback só sai ao mesmo Google/cadastro e capacidade ainda válidos após a operação.
- await db.runTransaction(tx=>gate(tx));return envelopeCentralR80(dados);
+ await db.runTransaction(tx=>gate(tx));return envelopeCentralR80(ator.papel==='Gabrielle'?projetarRespostaPesquisaI170(dados):dados);
 }

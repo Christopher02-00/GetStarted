@@ -30,7 +30,11 @@ export async function operarAvisosHttpNucleoI165(db,auth,dados,{agora=new Date()
    exigir(ativa&&fontes.length>0,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
    const q=db.collection('notificacoes_operacionais_i165').where('escopo','==',ESCOPO).where('destinatario','==',ator.papel).where('estado','==','pendente').where('ativacaoId','==',cfg.ativacaoId).where('fonte.colecao',fontes.length===1?'==':'in',fontes.length===1?fontes[0]:fontes).orderBy('__name__').limit(LIMITE+1);
    const qs=await tx.get(q),avisos=[];
-   for(const s of qs.docs.slice(0,LIMITE)){const n=s.data();exigir(id(s.id)&&/^[A-Za-z0-9_-]{12,160}$/.test(s.id)&&n.id===s.id&&n.escopo===ESCOPO&&n.destinatario===ator.papel&&n.estado==='pendente'&&n.ativacaoId===cfg.ativacaoId&&fontes.includes(n.fonte?.colecao)&&id(n.fonte.id),'aviso-contrato','Um aviso precisa de conferência. A última lista foi preservada.');const f=await fontePendenteTx(db,tx,n,{agora});exigir(f&&typeof f.pendente==='boolean','aviso-fonte','Não consegui confirmar a origem de um aviso.');if(f.pendente)avisos.push(notaPublica(n,s.id,f,em));}
+   const candidatas=qs.docs.slice(0,LIMITE);
+   for(let i=0;i<candidatas.length;i+=4){
+    const bloco=await Promise.allSettled(candidatas.slice(i,i+4).map(async s=>{const n=s.data();exigir(id(s.id)&&/^[A-Za-z0-9_-]{12,160}$/.test(s.id)&&n.id===s.id&&n.escopo===ESCOPO&&n.destinatario===ator.papel&&n.estado==='pendente'&&n.ativacaoId===cfg.ativacaoId&&fontes.includes(n.fonte?.colecao)&&id(n.fonte.id),'aviso-contrato','Um aviso precisa de conferência. A última lista foi preservada.');const f=await fontePendenteTx(db,tx,n,{agora});exigir(f&&typeof f.pendente==='boolean','aviso-fonte','Não consegui confirmar a origem de um aviso.');return f.pendente?notaPublica(n,s.id,f,em):null;}));
+    for(const r of bloco){if(r.status==='rejected')throw r.reason;if(r.value)avisos.push(r.value);}
+   }
    return {schema:1,listaConfirmada:true,ativacaoId:cfg.ativacaoId,avisos,limite:LIMITE,truncado:qs.size>LIMITE,conferidoEm:em};
   }
   const hash=createHash('sha256').update(dados.token).digest('hex'),pr=db.doc('notificacoes_dispositivos_i165/'+ator.uid),tr=pr.collection('tokens').doc(hash);

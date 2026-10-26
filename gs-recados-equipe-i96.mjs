@@ -77,7 +77,7 @@ export function montar({root,alvo,repo,contexto,antesSeparar=()=>{},separado=()=
   let rascunho;try{rascunho=JSON.parse(storage.getItem(draftKey)||'null');}catch{}
   root.classList.add('recado-i96');root.replaceChildren();
   function el(tag,txt,parent=root){const e=document.createElement(tag);if(txt)e.textContent=txt;parent.append(e);return e;}
-  el('h3','Recado interno · só a equipe');el('p','Gabi, Júlia, Cecília e Amanda usam este espaço. O cliente não recebe este texto.');
+  el('h3','Recado interno · só a equipe');el('p','Este espaço é interno da equipe. O cliente não recebe este texto.');
   const titulo=el('p',alvo.titulo||''),label=el('label','Recado para a equipe'),input=el('textarea',null,label);input.maxLength=8000;input.setAttribute('aria-label','Recado para a equipe');input.disabled=true;
   const salvar=el('button','Salvar recado');salvar.type='button';salvar.className='principal';salvar.disabled=true;
   const atualizar=el('button','Conferir recado salvo');atualizar.type='button';

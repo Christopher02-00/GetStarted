@@ -2072,9 +2072,9 @@ body.central-unica-cp110 #view-postagens .subtabs{display:none!important}
 
 <script type="module">
 import * as RadarI110 from './gs-radar-i110.mjs?v=147';
-import {criarUiOperacionalI165} from './gs-operacional-ui-i165.mjs?v=3c968220ed2112a291fed0e6d71593a74881e7f040c150e59dde6234408e2b35';
-import {criarUiPostagensI165} from './gs-postagem-controles-i165.mjs?v=ff2d619b491c7968d48bf459ed1ba6619cadf11a84e84a26654d8a49536c0a15';
-import {montarAvisosCanalI165} from './gs-avisos-canal-i165.mjs?v=31093e94ecabacee8012deb5724f36c129758dc1944df46f417a28e79dbaddde';
+import {criarUiOperacionalI165} from './gs-operacional-ui-i165.mjs?v=ec794a6be60d41a0091145a94d43868e856b1f4a57c5b8b6806bc203bbf46c35';
+import {criarUiPostagensI165} from './gs-postagem-controles-i165.mjs?v=9530e8f341a48855b72ba0f5ca5bbfa4116cfa6820f797d62f607cb893cdb6f8';
+import {montarAvisosCanalI165} from './gs-avisos-canal-i165.mjs?v=1fbf2b2a8881d02901435e47989e7eac15509e3c778d5ec5cf26c05a840d9a22';
 import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js';
 import {revisaoI148,exigirRevisaoI148,reciboPublicacaoI148,novosAvisosI148} from './gs-aprovacoes-calendarios-i148.mjs?v=148';
 import {TIPO_I153,gruposCampanhaI153,idAvisoI153,avisoValidoI153,textoAvisoI153,unirPostagensI153} from './gs-campanhas-conferencia-i153.mjs?v=153';
@@ -13019,25 +13019,41 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
      agenda edita, quem marca só consulta. Guardado em agenda_reunioes/<pessoa_mes>. */
   const FAIXAS_REUNIAO = ['manhã (9h–12h)','tarde (13h–17h)','fim de tarde (17h–19h)'];
 
-  window.htmlAgendaReunioes = async function(pessoa, somenteLeitura){
+  window.htmlAgendaReunioes = async function(pessoa, somenteLeitura, mesRef){
     const hoje = new Date();
-    const mesChave = hoje.getFullYear() + '-' + String(hoje.getMonth()+1).padStart(2,'0');
-    const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth()+1, 0).getDate();
+    const mesChave = mesRef || hoje.getFullYear() + '-' + String(hoje.getMonth()+1).padStart(2,'0');
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mesChave))throw Error('Confira o mês desta agenda.');
+    const [anoAgenda,mesAgenda]=mesChave.split('-').map(Number);
+    const ultimoDia = new Date(anoAgenda, mesAgenda, 0).getDate();
     const dias = [];
     for(let d = Math.max(1, ultimoDia-6); d <= ultimoDia; d++){
-      const dt = new Date(hoje.getFullYear(), hoje.getMonth(), d);
+      const dt = new Date(anoAgenda, mesAgenda-1, d);
       if([0,6].includes(dt.getDay())) continue;
-      dias.push({ d, rot: String(d).padStart(2,'0') + '/' + String(hoje.getMonth()+1).padStart(2,'0'), dow: ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dt.getDay()] });
+      dias.push({ d, rot: String(d).padStart(2,'0') + '/' + String(mesAgenda).padStart(2,'0'), dow: ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dt.getDay()] });
     }
-    let marcados = {};
+    let marcados = {}, mensal=null, moduloMensal=null;
     try{
-      const snap = await getDoc(doc(db,'agenda_reunioes', pessoa + '_' + mesChave));
-      if(snap.exists()) marcados = snap.data().slots || {};
-    }catch(e){ console.error('Falha ao ler agenda de reuniões:', e); }
+      if(pessoa==='Amanda'){
+        moduloMensal=await import('./gs-reunioes-mensais-cp111.mjs?v=3ceeb76ce9b2df8648f40e0d9a031722c59de65489685397b2779e4ff2bf2f9f');
+        mensal=await chamarUiOperacionalI165('reunioes_mes_ler_cp111',{pessoa:'Amanda',mes:mesChave});
+        if(mensal?.schema!==1||mensal.pessoa!=='Amanda'||mensal.mes!==mesChave||!['normal','ja_realizadas','dispensadas'].includes(mensal.regraMensalCp111?.modo))throw Error('A situação mensal ainda não foi confirmada.');
+        marcados=mensal.agenda?.slots||{};
+      }else{const snap=await getDoc(doc(db,'agenda_reunioes',pessoa+'_'+mesChave));if(snap.exists())marcados=snap.data().slots||{};}
+    }catch(e){return '<div class="card" role="alert"><b>Não consegui conferir a agenda de '+esc(pessoa)+' — '+esc(mesChave)+'</b><p>'+esc(e.message||'Tente atualizar a agenda.')+'</p><p>Nenhum horário ou decisão foi alterado.</p></div>';}
 
     const total = Object.values(marcados).filter(Boolean).length;
-    return `<div class="card metaSec" style="border-color:${total?'var(--green)':'var(--yellow)'};">
+    const idMensal='agendaReunioesCp111_'+(++window.__sequenciaAgendaMensalCp111|| (window.__sequenciaAgendaMensalCp111=1));
+    if(mensal){
+      const contextoInicial=contextoUiOperacionalI165(),mesmo=()=>{const c=contextoUiOperacionalI165();return ['uid','papel','atorReal'].every(k=>c[k]===contextoInicial[k]);};
+      const montar=()=>{const box=document.getElementById(idMensal);if(!box)return false;if(!mesmo())return true;
+        let storage=null;try{storage=window.localStorage;}catch{}
+        box.__mensalCp111=moduloMensal.montarControleReunioesMensaisCp111(box.querySelector('[data-reunioes-mensais-cp111]'),{mes:mesChave,inicial:mensal,contexto:contextoUiOperacionalI165,chamar:chamarUiOperacionalI165,storage,aoAtualizar:atual=>{if(!atual)return;const normal=atual.regraMensalCp111.modo==='normal';box.querySelector('[data-grade-reunioes-cp111]').hidden=!normal;box.querySelector('[data-grade-oculta-cp111]').hidden=normal;},aoTrocarMes:async mes=>{if(!mesmo())throw Error('O perfil mudou. Reabra a agenda.');box.inert=true;try{const html=await htmlAgendaReunioes(pessoa,somenteLeitura,mes);if(mesmo()&&box.isConnected){box.__mensalCp111?.destroy();box.outerHTML=html;}}finally{box.inert=false;}}});return true;};
+      queueMicrotask(()=>{if(montar())return;const obs=new MutationObserver(()=>{if(montar())obs.disconnect();});obs.observe(document.body,{childList:true,subtree:true});setTimeout(()=>obs.disconnect(),10000);});
+    }
+    return `<div id="${idMensal}" data-agenda-reunioes-cp111="${escAttr(mesChave)}" class="card metaSec" style="border-color:${total?'var(--green)':'var(--yellow)'};">
       <div class="metaSecTit">🗓️ Reuniões do mês — ${somenteLeitura ? 'quando a ' + esc(pessoa) + ' pode' : 'quando você pode'}</div>
+      ${mensal?'<div data-reunioes-mensais-cp111="'+escAttr(mesChave)+'">Carregando a situação mensal…</div><p data-grade-oculta-cp111 '+(mensal.regraMensalCp111.modo==='normal'?'hidden':'')+'>Neste mês, a abertura de horários não está sendo exigida. Os horários anteriores continuam preservados. Retome a programação normal para voltar a usar esta grade.</p>':''}
+      <div data-grade-reunioes-cp111 ${mensal&&mensal.regraMensalCp111.modo!=='normal'?'hidden':''}>
       <div class="desc" style="margin-bottom:10px;">${somenteLeitura
         ? 'Marca as reuniões com os clientes só dentro dos horários abertos aqui. Se não couber todo mundo, fala com ela antes.'
         : 'Marca as faixas em que você consegue reunião na última semana. A Cecília só marca dentro do que você abrir — ela não vai te perguntar por mensagem.'}</div>
@@ -13056,6 +13072,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
         </table>
       </div>
       <div class="meta" style="margin-top:8px;">${total} faixa(s) aberta(s)${somenteLeitura?'':' — clica pra abrir ou fechar'}</div>
+      </div>
     </div>`;
   };
 
@@ -13064,10 +13081,8 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
       mostrarToast('Essa agenda é da ' + pessoa + '.', 'erro'); return;
     }
     const ref = doc(db,'agenda_reunioes', pessoa + '_' + mesChave);
-    const snap = await getDoc(ref);
-    const slots = snap.exists() ? (snap.data().slots || {}) : {};
-    slots[chave] = !slots[chave];
-    await setDoc(ref, { pessoa, mes: mesChave, slots, atualizadoPor: usuarioAtual||'?', atualizadoEm: serverTimestamp() }, { merge:true });
+    if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mesChave))throw Error('Confira o mês desta agenda.');
+    await runTransaction(db,async tx=>{const snap=await tx.get(ref),slots={...(snap.exists()?snap.data().slots||{}:{})};slots[chave]=!slots[chave];tx.set(ref,{pessoa,mes:mesChave,slots,atualizadoPor:usuarioAtual||'?',atualizadoEm:serverTimestamp()},{merge:true});});
     renderMinhaAgendaFilmmaker();
   };
 
@@ -14461,12 +14476,22 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
   }
 
   async function criarFuncaoFixaAusenteCp109(ref,dados,conferir){
-    return runTransaction(db,async tx=>{conferir();const atual=await tx.get(ref);conferir();if(atual.exists())return false;tx.set(ref,dados);return true;});
+    return runTransaction(db,async tx=>{conferir();
+      const mensal=['agendaReuniao','reuniao'].includes(dados.tipoFuncaoFixa)&&dados.mostrarAgendaDe==='Amanda';
+      if(mensal){if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(dados.mesRef||'')||ref.id!==idDeterministicoFuncaoFixa('padrao|'+dados.tipoFuncaoFixa+'|'+dados.mesRef))throw Error('Confira os dois identificadores mensais antes de criar cobranças.');const agenda=await tx.get(doc(db,'agenda_reunioes','Amanda_'+dados.mesRef));const mod=await import('./gs-reunioes-mensais-cp111.mjs?v=3ceeb76ce9b2df8648f40e0d9a031722c59de65489685397b2779e4ff2bf2f9f');if(!mod.podeGerarCobrancasReunioesCp111(agenda.exists()?agenda.data():null))return false;}
+      const atual=await tx.get(ref);conferir();if(atual.exists())return false;tx.set(ref,dados);return true;});
+  }
+
+  async function conferirCobrancasMensaisCp111(mesChave,responsavel){
+    if(responsavel!=='Amanda')return true;
+    try{const d=await chamarUiOperacionalI165('reunioes_mes_ler_cp111',{pessoa:'Amanda',mes:mesChave});if(d?.schema!==1||d.pessoa!=='Amanda'||d.mes!==mesChave)throw Error('O mês não foi confirmado.');const mod=await import('./gs-reunioes-mensais-cp111.mjs?v=3ceeb76ce9b2df8648f40e0d9a031722c59de65489685397b2779e4ff2bf2f9f');return mod.podeGerarCobrancasReunioesCp111(d.agenda);}
+    catch(e){mostrarToast('Não consegui conferir as cobranças de reuniões deste mês. As existentes foram preservadas.','erro');throw e;}
   }
 
   async function gerarFuncoesFixasDoMes(ano, mes, mesChave){
     const responsabilidadesCp109=await responsabilidadesEditoraisCp109();
     const pessoaReunioesCp109=responsabilidadesCp109.reunioes;
+    const gerarReunioesMesCp111=await conferirCobrancasMensaisCp111(mesChave,pessoaReunioesCp109);
     const nomeReunioesCp109=pessoaReunioesCp109==='Gabrielle'?'Gabi':pessoaReunioesCp109;
     const uteis = diasUteisDoMes(ano, mes);
     const ultimoDiaMes = new Date(ano, mes, 0).getDate();
@@ -14516,7 +14541,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     const abreAgenda = uteis.filter(d => Number(d.split('-')[2]) > ultimoDiaMes - 12)[0] || inicioUltimaSemana;
 
     responsabilidadesCp109.conferir();
-    if(!fixasPadraoExistentes.has('agendaReuniao')) await criarFuncaoFixaAusenteCp109(doc(db,'demandas',idDeterministicoFuncaoFixa('padrao|agendaReuniao|'+mesChave)), {
+    if(gerarReunioesMesCp111&&!fixasPadraoExistentes.has('agendaReuniao')) await criarFuncaoFixaAusenteCp109(doc(db,'demandas',idDeterministicoFuncaoFixa('padrao|agendaReuniao|'+mesChave)), {
       titulo: '🗓️ Abrir sua agenda de reuniões — ' + mesChave,
       descricao: 'Antes da Cecília marcar as reuniões do mês com os clientes, ela precisa saber quando você pode.\n\n'
         + 'Acontecem na última semana, a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
@@ -14534,7 +14559,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     },responsabilidadesCp109.conferir);
 
     responsabilidadesCp109.conferir();
-    if(!fixasPadraoExistentes.has('reuniao')) await criarFuncaoFixaAusenteCp109(doc(db,'demandas',idDeterministicoFuncaoFixa('padrao|reuniao|'+mesChave)), {
+    if(gerarReunioesMesCp111&&!fixasPadraoExistentes.has('reuniao')) await criarFuncaoFixaAusenteCp109(doc(db,'demandas',idDeterministicoFuncaoFixa('padrao|reuniao|'+mesChave)), {
       titulo: '🤝 Marcar as reuniões mensais com os clientes — ' + mesChave,
       descricao: 'Marcar a reunião mensal de alinhamento do próximo calendário com CADA cliente da lista. Quem conduz a reunião é a ' + nomeReunioesCp109 + '; você marca.\n\n'
         + 'Acontecem na última semana do mês — a partir de ' + formatarDataBR(inicioUltimaSemana) + '.\n\n'
@@ -14567,6 +14592,9 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
 
   async function garantirFuncoesFixasPadraoDoMesAtual(){
     const mesChave=hojeLocal().slice(0,7);
+    const responsabilidadeMensalCp111=await responsabilidadesEditoraisCp109();
+    if(!await conferirCobrancasMensaisCp111(mesChave,responsabilidadeMensalCp111.reunioes))return false;
+    responsabilidadeMensalCp111.conferir();
     const ids=['agendaReuniao','reuniao'].map(tipo=>idDeterministicoFuncaoFixa('padrao|'+tipo+'|'+mesChave));
     const registros=await Promise.all(ids.map(id=>getDoc(doc(db,'demandas',id))));
     if(registros.every(s=>s.exists() && !s.data().excluido)) return false;
@@ -16353,7 +16381,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
         <button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11.5px;" onclick="abrirFormPostAvulso()">+ Adicionar</button>
       </h2>
       <div class="desc">Pra arte, vídeo extra que o cliente mandou, ou qualquer coisa que vai ser postada mas não passou pela esteira de produção.
-      <b>Dá pra registrar só o essencial</b> — cliente, título e link. Gabi prepara a legenda; Amanda define a orientação. Depois, a pessoa responsável confere essa orientação e registra o agendamento na mesma postagem.</div>
+      <b>Dá pra registrar só o essencial</b> — cliente, título e link. Gabi pode ajudar com a legenda; Cecília organiza a postagem. Amanda intervém nas campanhas e nos compromissos específicos. O agendamento e o texto ficam na mesma postagem.</div>
       <div id="formPostAvulso" style="display:none;margin-top:12px;">
         <div class="row2">
           <div class="field"><label>Cliente</label>
@@ -16538,7 +16566,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
   }
   function htmlLiberadosSemLegendaI90(posts,permitirSemLegenda=false){
     const lista=[...posts].sort((a,b)=>(b.__liberacaoI90||0)-(a.__liberacaoI90||0));
-    return `<section class="card" id="fila-texto-i90" style="border-color:var(--yellow)"><h2>Liberados · aguardando legenda (${lista.length})</h2><p class="meta">${permitirSemLegenda?'A política atual permite conferir agendamento com legenda pendente, sempre dentro da orientação da Amanda.':'A legenda ainda precisa ser preparada. Confira a orientação da Amanda; o agendamento depende da legenda e da política atual.'}</p>${lista.map(p=>`<article data-liberado-post-i90="${escAttr(p.id)}" style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:10px"><h3>${esc(p.clienteNome||p.cliente)} — ${esc(p.titulo)}</h3>${GetEmpresasOtavioI144.selo(p.cliente,p)}<p class="meta">${esc(rotuloLiberacaoAgendamentoI90(p))}</p>${htmlReferenciaLegendaI78(p)}${htmlArquivoMidiaI166(p.videoId,'Conferir arquivo e pendência da legenda')}<button type="button" class="btn secondary" onclick="abrirPostagemDeAtraso('${escJs(p.id)}')">Conferir orientação e conteúdo</button>${permitirSemLegenda?(p.cliente==='stokki'?`<button class="btn" onclick="abrirStokkiI30()">Conferir plataformas e orientação</button>`:`<div class="row2"><div class="field"><label>Data da proposta</label><input type="date" id="dataPost_${escAttr(p.id)}"></div><div class="field"><label>Hora</label><input type="time" id="horaPost_${escAttr(p.id)}" value="12:00"></div></div><button class="btn" onclick="salvarAgendamentoPostagem('${escJs(p.id)}',undefined,undefined,true)">Conferir agendamento com legenda pendente</button>`):'<p class="meta">Complete a legenda na mesma origem. Nenhuma data será marcada por esta conferência.</p>'}</article>`).join('')||'<p class="meta">Nenhum material aguardando legenda nesta leitura.</p>'}</section>`;
+    return `<section class="card" id="fila-texto-i90" style="border-color:var(--yellow)"><h2>Liberados · aguardando legenda (${lista.length})</h2><p class="meta">${permitirSemLegenda?'A política atual permite conferir agendamento com legenda pendente, respeitando a origem e os compromissos desta postagem.':'A legenda ainda precisa ser preparada. O agendamento depende da legenda e da política atual; campanhas mantêm seus compromissos.'}</p>${lista.map(p=>`<article data-liberado-post-i90="${escAttr(p.id)}" style="border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:10px"><h3>${esc(p.clienteNome||p.cliente)} — ${esc(p.titulo)}</h3>${GetEmpresasOtavioI144.selo(p.cliente,p)}<p class="meta">${esc(rotuloLiberacaoAgendamentoI90(p))}</p>${htmlReferenciaLegendaI78(p)}${htmlArquivoMidiaI166(p.videoId,'Conferir arquivo e pendência da legenda')}<button type="button" class="btn secondary" onclick="abrirPostagemDeAtraso('${escJs(p.id)}')">Conferir orientação e conteúdo</button>${permitirSemLegenda?(p.cliente==='stokki'?`<button class="btn" onclick="abrirStokkiI30()">Conferir plataformas e orientação</button>`:`<div class="row2"><div class="field"><label>Data da proposta</label><input type="date" id="dataPost_${escAttr(p.id)}"></div><div class="field"><label>Hora</label><input type="time" id="horaPost_${escAttr(p.id)}" value="12:00"></div></div><button class="btn" onclick="salvarAgendamentoPostagem('${escJs(p.id)}',undefined,undefined,true)">Conferir agendamento com legenda pendente</button>`):'<p class="meta">Complete a legenda na mesma origem. Nenhuma data será marcada por esta conferência.</p>'}</article>`).join('')||'<p class="meta">Nenhum material aguardando legenda nesta leitura.</p>'}</section>`;
   }
 
   async function projetarEmpresasPostagensI144(posts){
@@ -16672,7 +16700,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     const atrasadasCount = [...pendentes,...resumoStokki.pendentes].filter(p => diasEsperaAgendamentoI90(p)>=1).length;
     const recuperadasCount = pendentes.filter(p => p.recuperadoDoDemandaId).length;
 
-    let resumo = `<div class="card" data-resumo-liberacoes-i90><h2>Liberações e agendamento</h2><p class="meta">Confira a data ou semana e o recado da Amanda para esta mesma postagem, inclusive quando o dia fica fora do mês da pauta. O conteúdo e a legenda continuam vinculados ao calendário de origem.</p><div class="row2"><a class="btn secondary" href="#fila-texto-i90">${aguardandoTextoI90.length} aguardando legenda</a><a class="btn secondary" href="#fila-agendar-i90">${totalPraAgendar===null?'A conferir':totalPraAgendar} na etapa de agendamento</a></div><button type="button" class="btn secondary" style="width:auto;margin-top:10px" onclick="setPostagensSub('agendar')">Atualizar esta lista</button></div><div class="painelResumo">
+    let resumo = `<div class="card" data-resumo-liberacoes-i90><h2>Liberações e agendamento</h2><p class="meta">Confira a data do calendário e a programação do cliente. Campanhas e orientações específicas da Amanda continuam obrigatórias, inclusive quando o dia fica fora do mês da pauta. O conteúdo e a legenda continuam vinculados ao calendário de origem.</p><div class="row2"><a class="btn secondary" href="#fila-texto-i90">${aguardandoTextoI90.length} aguardando legenda</a><a class="btn secondary" href="#fila-agendar-i90">${totalPraAgendar===null?'A conferir':totalPraAgendar} na etapa de agendamento</a></div><button type="button" class="btn secondary" style="width:auto;margin-top:10px" onclick="setPostagensSub('agendar')">Atualizar esta lista</button></div><div class="painelResumo">
       <div class="resumoCard"><div class="num">${gravacoesHoje}</div><div class="lbl">Gravações hoje — todos os clientes</div></div>
       <div class="resumoCard ${totalPraAgendar ? 'yellow' : ''}"><div class="num" id="totalAgendamentoI77C" data-comuns="${pendentes.length}">${totalPraAgendar===null?'A conferir':totalPraAgendar}</div><div class="lbl">Vídeos/postagens pra agendar</div></div>
       <div class="resumoCard ${atrasadasCount ? 'red' : ''}"><div class="num" id="atrasadasAgendamentoI77C" data-comuns="${pendentes.filter(p=>diasEsperaAgendamentoI90(p)>=1).length}">${resumoStokki.erro?'A conferir':atrasadasCount}</div><div class="lbl">Atrasadas — priorize</div></div>
@@ -16730,7 +16758,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
         <p class="meta">${esc(rotuloLiberacaoAgendamentoI90(p))}</p>
         ${htmlLegendasAgendamentoV124(p)}
         ${htmlArquivoMidiaI166(p.videoId,'Conferir arquivo e legenda')}
-        ${['Amanda','Chris','Cecília'].includes(usuarioAtual)?`<button type="button" class="btn secondary" data-orientacao-postagem-cp110="${escAttr(p.id)}" onclick="abrirPostagemDeAtraso('${escJs(p.id)}')">${usuarioAtual==='Amanda'?'Definir data e orientação':'Conferir orientação da Amanda'}</button>`:''}
+        ${['Amanda','Chris','Cecília'].includes(usuarioAtual)?`<button type="button" class="btn secondary" data-orientacao-postagem-cp110="${escAttr(p.id)}" onclick="abrirPostagemDeAtraso('${escJs(p.id)}')">${usuarioAtual==='Amanda'?'Definir data e orientação':'Conferir origem e compromissos'}</button>`:''}
         <div class="row2">
           <div class="field"><label>Data da postagem</label><input type="date" id="dataPost_${p.id}"></div>
           <div class="field"><label>Hora</label><input type="time" id="horaPost_${p.id}" value="12:00"></div>
@@ -33183,7 +33211,7 @@ window.setGerenciaSub = function(qual, el){
     setTimeout(async () => {
       const alvo = document.getElementById('agendaSlot_' + d.id);
       if(!alvo) return;
-      try{ alvo.innerHTML = await htmlAgendaReunioes(d.mostrarAgendaDe, usuarioAtual !== d.mostrarAgendaDe); }
+      try{ const mesRef=d.mesRef||String(d.id||'').match(/^fixa_padrao_(?:agendaReuniao|reuniao)_(20\d{2}-(?:0[1-9]|1[0-2]))$/)?.[1]||String(d.prazoData||'').slice(0,7);if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mesRef))throw Error('Não consegui confirmar o mês desta demanda.');alvo.innerHTML = await htmlAgendaReunioes(d.mostrarAgendaDe, usuarioAtual !== d.mostrarAgendaDe,mesRef); }
       catch(e){ alvo.innerHTML = '<div class="desc">Não consegui carregar a agenda da ' + esc(d.mostrarAgendaDe) + '.</div>'; console.error(e); }
     }, 30);
     return '<div id="agendaSlot_' + d.id + '"><div class="desc">Carregando a agenda da ' + esc(d.mostrarAgendaDe) + '...</div></div>';
@@ -51012,7 +51040,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   async function desenharCentralUnificadaR87(){
     const chave=chaveCentralUnificadaR87(),c=contextoPreparacaoR80();
     if(!['Chris','Amanda','Gabrielle','Cecília'].includes(c.nome)||!c.uid){cascaCentralR87?.destroy();cascaCentralR87=null;return;}
-    moduloCascaCentralR87??=import('./gs-central-unificada-r87.mjs?v=7fdf03402aa37abea0554fcf4f3b28d1311e2ca7180b64964a974803841a8830');
+    moduloCascaCentralR87??=import('./gs-central-unificada-r87.mjs?v=7e449641286a772e35ee14cc6aedf01f26a09360683d4ffec12998167433b2df');
     const mod=await moduloCascaCentralR87;if(chave!==chaveCentralUnificadaR87())return;
     cascaCentralR87??=mod.criarCentralUnificadaR87({documento:document,contexto:contextoPreparacaoR80,abrir:abrirAreaCentralR87,conferir:()=>conferirModoCentralR87(true),aoErro:e=>mostrarToast(e.message||'Não consegui conferir o processo.','erro')});
     cascaCentralR87.sincronizar({ativo:centralAtivaConfirmadaR87(),view:viewAtiva,calSub:calSubAtualR87,postSub:__postSubI84});
@@ -51153,9 +51181,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       }else if(area==='planos'){
         const mod=await import('./gs-planos-acao-cp109.mjs?v=eadbf4782c7a3a46c00d686c3bc5c7a72001dab3d93cb479b7bd3a933da32e4a');if(!vigente())return false;instancia=mod.montarPlanosAcaoCp109(box,{...comum,acaoId:opcoes.acaoId||''});
       }else if(area==='ajustes'){
-        const mod=await import('./gs-ajustes-clientes-cp109.mjs?v=cbbd858a0378b708c241304616b9c4670d51b218f9390ef5ff7e537e10f71dc4');if(!vigente())return false;instancia=mod.montarAjustesClientesCp109(box,comum);
+        const mod=await import('./gs-ajustes-clientes-cp109.mjs?v=bd44da9adb878c267bb9f3f47c65b80051dfb5cf7aee84e2fe59b1ca18c4544e');if(!vigente())return false;instancia=mod.montarAjustesClientesCp109(box,comum);
       }else{
-        const mod=await import('./gs-planejamento-estrategico-cp109.mjs?v=ae491e18b0dd5a263742db4cdb6020466a4a5afbaa8c54a30829d73a0c89252c');if(!vigente())return false;
+        const mod=await import('./gs-planejamento-estrategico-cp109.mjs?v=dc3cefacdc9fc4550d018e07cfcfe6bacff24ddd0a611f851980eadf7c37ccaa');if(!vigente())return false;
         instancia=area==='visaoMes'?mod.montarVisaoMesCp109(box,comum):mod.montarPlanejamentoEstrategicoCp109(box,comum);
       }
       painelCp109=instancia;cascaCentralR87?.selecionar(area);const pronto=await instancia?.ready;if(pronto===false||!vigente())return false;await desenharCentralUnificadaR87();return true;
@@ -51167,7 +51195,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const competencia=id.slice(0,7),cliente=id.slice(9),chave=chaveCentralUnificadaR87();viewCp109('estrategiaCp109');if(irPara('estrategiaCp109')===false)return false;
     limparPainelCp109();estiloCp109();const g=geracaoPainelCp109,box=viewCp109('estrategiaCp109'),vigente=()=>g===geracaoPainelCp109&&chave===chaveCentralUnificadaR87()&&viewAtiva==='estrategiaCp109';
     box.innerHTML='<div class="card"><button type="button" data-voltar-cp109>← Voltar ao planejamento</button></div><div data-editor-cp109></div>';
-    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=4eb10be26137e63d75e6fd9107d92dbed76ec28669d0a7db0a70152946e9398b'),import('./codec-central-r80.mjs')]);if(!vigente())return false;
+    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=20076ed1a983d406d0013982335d5583d7368928d5f51d3710c94ae6524ce88d'),import('./codec-central-r80.mjs')]);if(!vigente())return false;
     painelCp109=mod.montarEditorCalendarioCentralI172(box.querySelector('[data-editor-cp109]'),{ciclo:id,origemEditorial:'estrategico_cp109',contexto:contextoPreparacaoR80,chamar:async(acao,dados)=>codec.abrirEnvelopeCentralR80(await chamarUiOperacionalI165(acao,dados),{timestamp:(s,n)=>new Timestamp(s,n)}),aoAtualizar:()=>{if(vigente())mostrarToast('Revisão confirmada. O pedido e o histórico continuam vinculados.');}});
     box.querySelector('[data-voltar-cp109]').onclick=()=>abrirEtapaCp109('estrategia',{cliente,competencia,ciclo:id});
     cascaCentralR87?.selecionar('rascunho');const pronto=await painelCp109.ready;if(!pronto||pronto.schema!==1)return false;if(vigente())await desenharCentralUnificadaR87();return vigente();
@@ -51208,7 +51236,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     box.innerHTML='<div class="card" role="status">Preparando os materiais do próximo mês…</div>';
     let repo;
     try{
-      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=legado-i172-p1'),import('./gs-central-preparacao-http-r80.mjs?v=ab37abd6293133528907f6485d5ac0bb464ccba62f35eef30c2a8b48b05a472a')]);
+      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=a805e2e116d5a2afaf2dd02b7ddbe5459c37a71b12723c11a17dbbf9b4937049'),import('./gs-central-preparacao-http-r80.mjs?v=13235b99ebb855a4354e99cbff6ca3d5d0501a8926211d88a2f360dcbc4a396a')]);
       const [ui,fachada]=await moduloPreparacaoR80;if(!vigente())return;
       const chamar=async(acao,dados)=>{
         if(!vigente())throw Error('O perfil ou a tela mudou. Reabra o planejamento.');
@@ -51229,7 +51257,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         editorCalendarioCentralI172?.destroy();editorCalendarioCentralI172=null;
         const host=document.getElementById('planejamentoEditorI172');if(!host)return false;
         host.hidden=false;host.innerHTML='<div class="card"><button type="button" class="btn secondary" data-voltar-editor>← Voltar aos materiais deste mês</button></div><div data-editor-central></div>';
-        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=4eb10be26137e63d75e6fd9107d92dbed76ec28669d0a7db0a70152946e9398b');if(!vigente())return false;
+        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=20076ed1a983d406d0013982335d5583d7368928d5f51d3710c94ae6524ce88d');if(!vigente())return false;
         const ed=mod.montarEditorCalendarioCentralI172(host.querySelector('[data-editor-central]'),{ciclo:ciclo.id,origemEditorial,contexto:contextoPreparacaoR80,chamar:(acao,payload)=>repo.editorial(acao,payload),aoAtualizar:()=>{if(vigente())mostrarToast('Versão confirmada. O andamento também será conferido ao voltar aos materiais.');}});
         editorCalendarioCentralI172=ed;
         host.querySelector('[data-voltar-editor]').onclick=async()=>{if(!vigente()||editorCalendarioCentralI172!==ed||ed.canLeave?.()===false)return;ed.destroy();editorCalendarioCentralI172=null;host.hidden=true;host.replaceChildren();if(origemEditorial==='continuar_legado'){await planejamentoPreparacaoR80?.ready;}else await planejamentoPreparacaoR80?.abrir(ciclo.id,'criacao');};

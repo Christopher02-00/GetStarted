@@ -2,7 +2,7 @@
 import {abrirEnvelopeCentralR80} from './codec-central-r80.mjs';
 const MAX_RAW=4*1024*1024,PART=700*1024,MAX_WIRE=6*1024*1024,MAX_NORMAL=1024*1024;
 const MES=/^20\d{2}-(0[1-9]|1[0-2])$/,CLIENTE=/^[a-z0-9][a-z0-9._-]{0,119}$/,CICLO=/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/;
-const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','enviar_consolidado','retirar']);
+const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','enviar_consolidado','retirar','desconsiderar_confirmacao','registrar_insumos_transicao']);
 const TIPOS=new Set(['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/plain','text/markdown']);
 const exigir=(ok,m)=>{if(!ok)throw Error(m);};
 const selecionar=(v,keys)=>Object.fromEntries(keys.filter(k=>v?.[k]!==undefined).map(k=>[k,v[k]]));
@@ -48,7 +48,7 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
   }
   exigir(PREPARACAO.has(acao),'Esta etapa será liberada depois da preparação. Mantenham os envios atuais.');
   exigir(Number.isInteger(esperada)&&esperada>=0&&/^[A-Za-z0-9_-]{8,100}$/.test(operacao||''),'Confira a mesma tentativa antes de continuar.');
-  if(acao==='referencia')dados={referencia:selecionar(dados?.referencia,['id','empresaOtavio','link','autorPerfil','postadoEm','consultadoEm','ideia','motivo','adaptacao','metricas','comentarios','filtro','selecionada','parecerAmanda','origemColecao','origemId'])};
+  if(acao==='referencia')dados={referencia:selecionar(dados?.referencia,['id','empresaOtavio','link','autorPerfil','postadoEm','consultadoEm','ideia','motivo','adaptacao','metricas','comentarios','filtro','selecionada','parecerAmanda','origemColecao','origemId','estadoTriagemCp111'])};
   const r=await pedir('central_mutar',{ciclo:id,acaoPreparacao:acao,dados,esperadaRevisao:esperada,operacao});
   exigir(r?.ciclo?.id===id&&Array.isArray(r.registros),'Não consegui confirmar o ciclo desta gravação. Confira a mesma tentativa.');return r;
  }

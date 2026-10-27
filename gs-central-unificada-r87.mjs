@@ -5,7 +5,7 @@ export function areasCentralR87(papel){
  if(papel==='Gabrielle')return [ITEM('materiais','Referências e materiais','preparar'),ITEM('datas','Minhas datas','preparar'),ITEM('legendas','Apoiar com legendas','conteudo')];
  if(![...GESTAO,'Cecília'].includes(papel))return [];
  return [
-  ...(GESTAO.includes(papel)?[ITEM('materiais','Materiais do mês','preparar'),ITEM('datas','Organização das datas','preparar'),ITEM('informacoes','Informações dos clientes','preparar'),ITEM('acervo','Banco de referências','preparar'),ITEM('resultados','Resultados e análises','preparar')]:[]),
+  ...(GESTAO.includes(papel)?[ITEM('materiais','Materiais do mês','preparar'),ITEM('datas',papel==='Chris'?'Agenda da equipe':'Organização das datas','preparar'),ITEM('informacoes','Informações dos clientes','preparar'),ITEM('acervo','Banco de referências','preparar'),ITEM('resultados','Resultados e análises','preparar')]:[]),
   ITEM('calendarios','Calendários e roteiros','conteudo'),
   ...(GESTAO.includes(papel)?[ITEM('aprovar','Revisar calendários','conteudo'),ITEM('stories','Stories','conteudo')]:[]),
   ITEM('legendas','Legendas','conteudo'),
@@ -29,7 +29,7 @@ export function criarCentralUnificadaR87({documento=document,contexto,abrir,conf
  function montar(){
   if(box?.isConnected)return box;
   if(!documento.getElementById('central-r87-estilo')){const style=documento.createElement('style');style.id='central-r87-estilo';style.textContent=CSS;documento.head.appendChild(style);}
-  box=documento.createElement('section');box.id='centralUnificadaR87';box.className='central-r87';box.hidden=true;box.setAttribute('aria-label','Planejamento Social Media');
+  box=documento.createElement('section');box.id='centralUnificadaR87';box.className='central-r87';box.hidden=true;box.setAttribute('aria-label','Calendários e conteúdos');
   const primeira=documento.querySelector('.view');if(!primeira?.parentNode)return null;primeira.parentNode.insertBefore(box,primeira);
   click=ev=>{const btn=ev.target.closest?.('[data-area-r87],[data-grupo-r87],[data-conferir-r87]');if(!btn||!vivo||!atual?.ativo||chave(contexto())!==contextKey)return;
    if(btn.hasAttribute('data-conferir-r87')){Promise.resolve(conferir()).catch(aoErro);return;}
@@ -43,20 +43,20 @@ export function criarCentralUnificadaR87({documento=document,contexto,abrir,conf
   restaurar();if(!ativo){if(box)box.hidden=true;documento.getElementById('navCentralCeciliaR87')?.remove();return;}
   for(const id of NAVS){const n=documento.getElementById(id);if(!n)continue;escondidos.set(n,{hidden:n.hidden,display:n.style.display});n.hidden=true;n.style.display='none';n.dataset.centralR87Oculto='1';}
   if(c.nome==='Cecília'&&!documento.getElementById('navCentralCeciliaR87')){
-   const nav=documento.createElement('button');nav.id='navCentralCeciliaR87';nav.type='button';nav.className='navitem';nav.textContent='Planejamento Social Media';nav.style.cssText='background:#d8cdf3;color:#322349;font-weight:800;border:0;width:100%;text-align:left;margin:4px 0';
+   const nav=documento.createElement('button');nav.id='navCentralCeciliaR87';nav.type='button';nav.className='navitem';nav.textContent='Calendários e conteúdos';nav.style.cssText='background:#d8cdf3;color:#322349;font-weight:800;border:0;width:100%;text-align:left;margin:4px 0';
    nav.onclick=()=>abrir('agendar');documento.getElementById('navInicio')?.insertAdjacentElement('afterend',nav);
   }
   const area=areaDaRotaR87(estado.view,{calSub:estado.calSub,postSub:estado.postSub,ultima}),permitida=areas.find(a=>a.id===area);
   if(!montar())return;box.hidden=!permitida;if(!permitida){ultima='';return;}ultima=area;
   const grupo=permitida.grupo;box.replaceChildren();
   const header=documento.createElement('header'),titulo=documento.createElement('div');
-  titulo.innerHTML='<small>DO PLANEJAMENTO À PUBLICAÇÃO</small><h1>Planejamento Social Media</h1><p>O mesmo cliente, os mesmos materiais e o próximo passo no mesmo lugar.</p>';
+  titulo.innerHTML='<small>DO PLANEJAMENTO À PUBLICAÇÃO</small><h1>Calendários e conteúdos</h1>';const guia=documento.createElement('p');guia.textContent=c.nome==='Chris'?'Comece em Calendários e roteiros para criar ou ajustar os conteúdos. Consulte a Agenda da equipe para acompanhar as datas que a Amanda organiza.':c.nome==='Amanda'?'Organize as datas, confira os materiais do mês e revise os calendários antes de liberar. Cada etapa abre o trabalho que já existe.':c.nome==='Gabrielle'?'Coloque as referências e os documentos em Referências e materiais, por cliente e mês. Minhas datas mostra os seus prazos; o apoio de legendas continua disponível.':'Use a Fila de agendamento para programar os conteúdos com a mesma legenda. Confira Campanhas e datas e acompanhe os Programados.';titulo.appendChild(guia);
   header.appendChild(titulo);const retry=documento.createElement('button');retry.type='button';retry.dataset.conferirR87='1';retry.textContent='Conferir processo';header.appendChild(retry);box.appendChild(header);
   const grupos=documento.createElement('nav');grupos.className='central-r87-grupos';grupos.setAttribute('aria-label','Etapas do trabalho');
   for(const [id,t,d]of GRUPOS){if(!areas.some(a=>a.grupo===id))continue;const b=documento.createElement('button');b.type='button';b.dataset.grupoR87=id;b.dataset.grupo=id;if(id===grupo)b.setAttribute('aria-current','true');const strong=documento.createElement('strong');strong.textContent=t;const small=documento.createElement('span');small.textContent=d;b.append(strong,small);grupos.appendChild(b);}box.appendChild(grupos);
   const tabs=documento.createElement('nav');tabs.className='central-r87-etapas';tabs.setAttribute('aria-label','Ferramentas do planejamento');
   for(const a of areas.filter(a=>a.grupo===grupo)){const b=documento.createElement('button');b.type='button';b.dataset.areaR87=a.id;b.textContent=a.titulo;if(a.id===area)b.setAttribute('aria-current','page');tabs.appendChild(b);}box.appendChild(tabs);
-  const status=documento.createElement('p');status.className='central-r87-status';status.textContent=c.nome==='Gabrielle'?'Referências e documentos por cliente e mês. O apoio de legenda conserva a mesma publicação.':'As datas vêm da Organização; cada conteúdo mantém sua origem, sua legenda e seu histórico.';box.appendChild(status);
+  const status=documento.createElement('p');status.className='central-r87-status';status.textContent=c.nome==='Gabrielle'?'Referências e documentos por cliente e mês. O apoio de legenda conserva a mesma publicação.':c.nome==='Chris'?'Você cria e ajusta os calendários; a Amanda organiza as datas e revisa as entregas.':c.nome==='Amanda'?'Você organiza as datas, revisa e libera. Conteúdos e entregas conservam a origem e o histórico.':'Conteúdo, legenda e orientação de postagem seguem a mesma publicação.';box.appendChild(status);
  }
  return{sincronizar,selecionar:id=>{ultima=id;},destroy(){vivo=false;restaurar();box?.removeEventListener('click',click);box?.remove();documento.getElementById('navCentralCeciliaR87')?.remove();}};
 }

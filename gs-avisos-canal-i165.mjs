@@ -129,12 +129,12 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  function render(){
   if(!vigente())return;
   root.hidden=!teveAtivo&&['conferindo','desligada'].includes(estadoConfig);
-  const pendentes=linhas.filter(n=>n.estado==='pendente'&&avisoHabilitadoNoFeedR87(n,n.id,c.papel,config,{ativacaoCentralId})),confirmada=ativo()&&estadoLista==='confirmada';
+  const pendentes=linhas.filter(n=>n.estado==='pendente'&&avisoHabilitadoNoFeedR87(n,n.id,c.papel,config,{ativacaoCentralId})),confirmada=ativo()&&estadoLista==='confirmada',conferindo=estadoConfig==='conferindo'||estadoLista==='conferindo';
   el('[data-contagem]').textContent=confirmada?'· '+pendentes.length+(truncado?' nesta página':''):pendentes.length?'· '+pendentes.length+' no último retrato':'';
   el('[data-saude]').textContent=teveAtivo?'Conteúdos: '+(confirmada&&saudeAvisosI165(saude,ambiente.agora())?'acompanhamento conferido.':'acompanhamento a conferir.')+' '+resumoSaudeCanaisI165(saude):'';
-  el('[data-estado]').textContent=recado||(!confirmada?'Não consegui confirmar toda a fila agora. O último retrato foi preservado; isso não confirma fila vazia.':truncado?'Há mais avisos além dos 100 desta página. Confira também a sua fila de conteúdos.':pendentes.length?'Abra o conteúdo para conferir o que precisa ser feito.':'Nenhum aviso pendente na última conferência do servidor.');
-  el('[data-aparelho]').textContent=!proprio()?'Você está vendo outro perfil. Cada pessoa precisa entrar com o próprio Google e ativar os avisos no aparelho que usa.':ambiente.Notification?.permission==='denied'?'Os avisos estão bloqueados neste navegador. Libere as notificações nas configurações do site e volte aqui. A fila continua no sistema.':registroAtual()?'Registro deste aparelho confirmado para você nesta entrada. Agora você pode conferir o aviso de teste.':aparelho?.pronto?'Entre com seu próprio Google e toque em “Ativar no meu aparelho”. O registro deste aparelho ainda não foi confirmado nesta entrada.':aparelho?.motivo||'Conferindo se os avisos deste aparelho podem ser ativados.';
-  el('[data-ativar]').textContent=registroAtual()?'Conferir meu aparelho':'Ativar no meu aparelho';
+  el('[data-estado]').textContent=recado||(!confirmada?(conferindo?'Conferindo os avisos atuais. As atividades continuam na sua fila.':'Não consegui confirmar toda a fila agora. O último retrato foi preservado; isso não confirma fila vazia.'):truncado?'Há mais avisos além dos 100 desta página. Confira também a sua fila de conteúdos.':pendentes.length?'Abra o conteúdo para conferir o que precisa ser feito.':'Nenhum aviso pendente na última conferência do servidor.');
+  el('[data-aparelho]').textContent=!proprio()?'Você está vendo outro perfil. Cada pessoa precisa entrar com o próprio Google e ativar os avisos no aparelho que usa.':ambiente.Notification?.permission==='denied'?'Os avisos estão bloqueados neste navegador. Libere as notificações nas configurações do site e volte aqui. A fila continua no sistema.':registroAtual()?'Registro deste aparelho confirmado para você nesta entrada. Agora você pode conferir o aviso de teste.':aparelho?.pronto?(statusConta?.contaComAparelhoAtivo===true?'Seu Google já tem aparelho cadastrado. Toque em “Conferir este navegador” para confirmar o recebimento aqui.':'Ative os avisos neste aparelho para receber os lembretes fora do site. A fila continua disponível mesmo se você não permitir.'):aparelho?.motivo||'Conferindo se os avisos deste aparelho podem ser ativados.';
+  el('[data-ativar]').textContent=registroAtual()?'Conferir meu aparelho':statusConta?.contaComAparelhoAtivo===true?'Conferir este navegador':'Ativar no meu aparelho';
   el('[data-ativar]').disabled=busy||!proprio()||!pushAtivo()||!aparelho?.pronto||ambiente.Notification?.permission==='denied';
   el('[data-testar]').hidden=!proprio();el('[data-testar]').textContent=tentativaTeste||['reservado','em_andamento','resultado_desconhecido'].includes(teste?.estado)?'Conferir mesma tentativa':'Enviar teste para mim';
   const esperaTeste=teste?.proximoTesteEm&&Date.parse(teste.proximoTesteEm)>ambiente.agora()&&!tentativaTeste&&!['reservado','em_andamento','resultado_desconhecido'].includes(teste?.estado);
@@ -163,6 +163,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  async function consultar(){
   if(!vigente())return false;if(consulta)return consulta;
   const e=ciclo;let configuracaoConferida=false;
+  estadoLista='conferindo';recado='';render();
   consulta=(async()=>{try{
    const r=await configFresh();if(!atual(e))return false;
    config=r.config;web=r.web;cadastro=r.cadastroProprio;saude=r.saude;estadoConfig='confirmada';configuracaoConferida=true;statusConta=r.aparelhoProprio||null;

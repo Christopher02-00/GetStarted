@@ -1,3 +1,4 @@
+import {ACOES_SAUDE_MIDIA_I166,conferirSaudeMidiaI166} from './saude-midia-i166.mjs';
 import {lerNotaCentralTxR87} from './avisos-central-http-i164.mjs';
 import {notaCentralI164} from './central/notificacoes.mjs';
 import {validarCadastroI165} from './contexto.mjs';
@@ -20,6 +21,7 @@ import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {exigirI165,idFisicoI165,instanteI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {ESCOPO_I165,identidadeTokenI165,contextoTxI165} from './contexto.mjs';
 import {aprovarVideoI165,prepararAprovacaoVideoI165,conferirOperacaoI165,abortarOperacaoI165} from './aprovacao.mjs';
+import {prepararOrientacaoVideoCp108,salvarOrientacaoVideoCp108} from './orientacao-video-cp108.mjs';
 import {sincronizarPostagemI165,fontePendenteTxI165} from './acompanhamento.mjs';
 import {exigirProgramacaoTxI165} from './guardas-programacao.mjs';
 export {exigirProgramacaoTxI165} from './guardas-programacao.mjs';
@@ -27,6 +29,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_SAUDE_MIDIA_I166.includes(dados.acao))return conferirSaudeMidiaI166(db,auth,dados,{agora});
  if(ACOES_EDITORIAL_I172.includes(dados.acao))return operarEditorialCalendariosI172(db,auth,dados,{agora});
  if(ACOES_CENTRAL_HTTP_R80.includes(dados.acao))return operarCentralPreparacaoR80(db,auth,dados,{agora});
  if(ACOES_AVISOS_HTTP_I165.includes(dados.acao))return operarAvisosHttpI165(db,auth,dados,{agora});
@@ -43,6 +46,8 @@ export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  if(dados.acao==='adotar_diretriz')return adotarDiretrizLegadoI165(db,auth,dados,{agora});
  if(['consultar_postagens','consultar_edicao'].includes(dados.acao))return consultarOperacionaisI165(db,auth,dados,{agora});
  if(dados.acao==='abortar_op')return abortarOperacaoI165(db,auth,dados,{agora});
+ if(dados.acao==='preparar_orientacao_video')return prepararOrientacaoVideoCp108(db,auth,dados,{agora});
+ if(dados.acao==='salvar_orientacao_video')return salvarOrientacaoVideoCp108(db,auth,dados,{agora});
  if(dados.acao==='aprovar_video')return aprovarVideoI165(db,auth,dados,{agora});
  if(dados.acao==='preparar_aprovacao_video')return prepararAprovacaoVideoI165(db,auth,dados,{agora});
  if(dados.acao==='conferir_op')return conferirOperacaoI165(db,auth,dados,{agora});

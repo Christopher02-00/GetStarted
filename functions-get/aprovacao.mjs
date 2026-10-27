@@ -6,22 +6,22 @@ import {identidadeTokenI165,contextoTxI165,clienteTxI165,hashI165} from './conte
 import {origemTxI165,compromissoVideoTxI165} from './fontes.mjs';
 const configPublica=c=>({modoAprovacaoCliente:c.modoAprovacaoCliente,tipoEntrega:c.tipoEntrega});
 const semPostagem=(video,cliente)=>entregaSemPostagemI165(video,cliente.config);
-function qualidadeSemPostagem(video,dados,ctx,reciboAnterior,em){
- const intencao=jsonCanonicoI165({tipo:'qualidade_sem_postagem',videoId:video.id,operacaoId:dados.operacaoId,assinaturaEsperada:dados.assinaturaEsperada,uid:ctx.uid,papel:ctx.papel,atorReal:ctx.atorReal});
+function qualidadeSomenteChrisCp108(video,dados,ctx,reciboAnterior,em){
+ const intencao=jsonCanonicoI165({tipo:'qualidade_chris_cp108',videoId:video.id,operacaoId:dados.operacaoId,assinaturaEsperada:dados.assinaturaEsperada,uid:ctx.uid,papel:ctx.papel,atorReal:ctx.atorReal});
  if(reciboAnterior){exigirI165(reciboAnterior.operacaoId===dados.operacaoId&&reciboAnterior.intencao===intencao,'operacao-reutilizada','Esta tentativa já foi usada com outra intenção.');return {estado:'recuperado',patchVideo:null,diretriz:null,recibo:reciboAnterior,requerLeituraAtual:true};}
  exigirI165(video.excluido!==true&&video.status==='aguardando_aprovacao'&&typeof video.linkFinalizado==='string'&&video.linkFinalizado.trim(),'estado-video','A entrega atual não está disponível para esta aprovação.');
  exigirI165(typeof dados.assinaturaEsperada==='string'&&assinaturaVideoAprovacaoI165(video)===dados.assinaturaEsperada,'versao','A entrega mudou depois de abrir. Confira a versão atual.');
- return {estado:'novo',patchVideo:{status:'aguardando_cliente',aprovadoInternoEm:em,aprovadoPor:ctx.papel,clienteAprovou:false,ultimaCorrecaoSolicitada:'',enviadoParaCliente:false},diretriz:null,recibo:{schema:1,tipo:'qualidade_sem_postagem',escopo:'operacional_i165_cp101',videoId:video.id,operacaoId:dados.operacaoId,intencao,autoria:{uid:ctx.uid,papel:ctx.papel,atorReal:ctx.atorReal},em},requerLeituraAtual:true,acaoPosterior:'conferir-configuracao-e-usar-confirmacao-cliente-canonica'};
+ return {estado:'novo',patchVideo:{status:'aguardando_cliente',aprovadoInternoEm:em,aprovadoPor:ctx.papel,clienteAprovou:false,ultimaCorrecaoSolicitada:'',enviadoParaCliente:false},diretriz:null,recibo:{schema:1,tipo:'qualidade_chris_cp108',escopo:'operacional_i165_cp101',videoId:video.id,operacaoId:dados.operacaoId,intencao,autoria:{uid:ctx.uid,papel:ctx.papel,atorReal:ctx.atorReal},em},requerLeituraAtual:true,acaoPosterior:'conferir-configuracao-e-usar-confirmacao-cliente-canonica'};
 }
 export async function prepararAprovacaoVideoI165(db,auth,dados,{agora=new Date()}={}){
- const ator=identidadeTokenI165(auth,dados.papelOperado,dados.sessao||'aprovacao');exigirI165(['Amanda','Chris'].includes(ator.papel)&&idFisicoI165(dados.videoId),'aprovacao','Confira o perfil e o vídeo.');
+ const ator=identidadeTokenI165(auth,dados.papelOperado,dados.sessao||'aprovacao');exigirI165(ator.papel==='Chris'&&idFisicoI165(dados.videoId),'aprovacao','A revisão principal de qualidade é do Chris. A Amanda organiza a postagem na fila dela.');
  return db.runTransaction(async tx=>{
   await contextoTxI165(db,tx,ator,'aprovacao');const s=await tx.get(db.doc('videos_producao/'+dados.videoId));exigirI165(s.exists,'video','O vídeo não existe mais.');const v={...s.data(),id:s.id};
   exigirI165(v.excluido!==true&&v.status==='aguardando_aprovacao'&&typeof v.linkFinalizado==='string'&&v.linkFinalizado.trim(),'estado-video','A entrega atual não está disponível para esta aprovação.');
   const cliente=await clienteTxI165(db,tx,v.cliente,agora);exigirI165(cliente.clienteAtivo,'cliente-inativo','O cliente saiu da operação; confira o trabalho antes de aprovar.');
-  const fora=semPostagem(v,cliente),[origem,campanha,d,opcoes]=await Promise.all([fora?{tipo:'fora_da_postagem',assinatura:hashI165(null)}:origemTxI165(db,tx,v),fora?{compromisso:null,decisao:null}:compromissoVideoTxI165(db,tx,v),tx.get(db.doc('video_programacao_i165/'+v.id)),fora?{opcoesCampanha:[],campanhasSemOpcao:[],consultaCompleta:true}:listarOpcoesCampanhaTxI165(db,tx,v)]);
+  const fora=semPostagem(v,cliente),[origem,campanha,d]=await Promise.all([fora?{tipo:'fora_da_postagem',assinatura:hashI165(null)}:origemTxI165(db,tx,v),fora?{compromisso:null,decisao:null}:compromissoVideoTxI165(db,tx,v),tx.get(db.doc('video_programacao_i165/'+v.id))]);const opcoes={opcoesCampanha:[],campanhasSemOpcao:[],consultaCompleta:true};
   const campos=['id','cliente','clienteNome','empresaOtavio','calendarClienteSlug','calendarCompetencia','calendarItemId','titulo','observacao','correcao','ultimaCorrecaoSolicitada','editorAtribuido','linkFinalizado','enviadoEm','status','trabalhoExterno','vinculoCliente','clienteExternoNome'];
-  return {video:Object.fromEntries(campos.filter(k=>v[k]!==undefined).map(k=>[k,v[k]])),assinaturaEsperada:assinaturaVideoAprovacaoI165(v),diretrizAnterior:d.data()||null,compromisso:campanha.compromisso,...opcoes,origemConferida:origem,configuracaoCliente:configPublica(cliente.config),diretrizNecessaria:!semPostagem(v,cliente),lidoEm:instanteI165(agora),updateTime:s.updateTime?.toDate?.().toISOString()||null,nenhumaEscrita:true,cancelamentoAtomicoDisponivel:true,contratoUiRevisao:2};
+  return {video:Object.fromEntries(campos.filter(k=>v[k]!==undefined).map(k=>[k,v[k]])),assinaturaEsperada:assinaturaVideoAprovacaoI165(v),diretrizAnterior:d.data()||null,compromisso:campanha.compromisso,...opcoes,origemConferida:origem,configuracaoCliente:configPublica(cliente.config),diretrizNecessaria:false,orientacaoAmandaNecessaria:!fora,fluxoCp108:'qualidade_chris',lidoEm:instanteI165(agora),updateTime:s.updateTime?.toDate?.().toISOString()||null,nenhumaEscrita:true,cancelamentoAtomicoDisponivel:true,contratoUiRevisao:2};
  });
 }
 export async function conferirOperacaoI165(db,auth,dados,{agora=new Date()}={}){
@@ -40,21 +40,16 @@ export async function aprovarVideoI165(db,auth,dados,{agora=new Date()}={}) {
  const vr=db.doc('videos_producao/'+dados.videoId),dr=db.doc('video_programacao_i165/'+dados.videoId),rr=refOperacaoI165(db,ator,dados.operacaoId),pedidoHash=hashPedidoI165(ator,dados);
  return db.runTransaction(async tx=>{
   const [contexto,vs,ds,rs]=await Promise.all([contextoTxI165(db,tx,ator,'aprovacao'),tx.get(vr),tx.get(dr),tx.get(rr)]);if(rs.exists)return {...conferirReciboPedidoI165(rs.data(),ator,pedidoHash),nenhumaPostagemCriada:true};exigirI165(vs.exists,'video','O vídeo não existe mais.');const video={...vs.data(),id:vs.id};
+  exigirI165(ator.papel==='Chris','papel','Novas aprovações de qualidade são do Chris. A Amanda organiza a postagem sem reaprovar o vídeo.');
+  exigirI165(dados.diretriz===undefined&&dados.campanhaEscolhida==null,'somente-qualidade','A aprovação do Chris não define datas, prioridade ou nova campanha. Reabra a entrega na versão atual.');
   const cliente=await clienteTxI165(db,tx,video.cliente,em);exigirI165(cliente.clienteAtivo,'cliente-inativo','O cliente saiu da operação; confira o trabalho antes de aprovar.');
-  if(semPostagem(video,cliente)){
-   exigirI165(dados.campanhaEscolhida==null&&dados.compromissoEsperado===null,'campanha-direta','Uma entrega sem postagem não pode adquirir um compromisso de publicação.');
-   const r=qualidadeSemPostagem(video,dados,contexto.ctx,rs.data()||null,em);if(r.estado==='novo'){tx.update(vr,r.patchVideo);tx.set(rr,{...r.recibo,estado:'confirmada',pedidoHash});}return {...r,configuracaoCliente:configPublica(cliente.config),diretrizNecessaria:false,nenhumaPostagemCriada:true};
-  }
-  const origem=await origemTxI165(db,tx,video),anteriorCampanha=await compromissoVideoTxI165(db,tx,video);
-  exigirI165(jsonCanonicoI165(anteriorCampanha.compromisso)===jsonCanonicoI165(dados.compromissoEsperado),'campanha-avancou','O vínculo ou a campanha mudou desde sua conferência. Reabra a entrega antes de aprovar.');
-  const selecao=await escolherCampanhaTxI165(db,tx,video,dados.campanhaEscolhida,ator,em),campanha=selecao?{compromisso:compromissoSelecionadoI165(video,selecao),decisao:null}:anteriorCampanha;
-  if(campanha.compromisso)exigirI165(dados.diretriz?.modalidade==='data'&&dados.diretriz.data===campanha.compromisso.data&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(dados.diretriz.hora||'')&&(!campanha.compromisso.hora||dados.diretriz.hora===campanha.compromisso.hora),'campanha-data','A campanha exige a data física e um horário explícito para esta postagem.');
-  const resultado=aplicarAprovacaoComDiretrizI165({video,assinaturaEsperada:dados.assinaturaEsperada,entrada:dados.diretriz,ator:{...contexto.ctx,cadastroAtivo:true},operacaoId:dados.operacaoId,reciboAnterior:rs.data()||null,diretrizAnterior:ds.data()||null,compromisso:campanha.compromisso,decisaoCompromisso:campanha.decisao,agora:em});
-  if(resultado.estado==='recuperado')return {...resultado,configuracaoCliente:configPublica(cliente.config),nenhumaPostagemCriada:true};
-  const diretriz={...resultado.diretriz,ativacaoId:contexto.cfg.ativacaoId,origemConferida:origem};
-  const recibo={...resultado.recibo,estado:'confirmada',pedidoHash,campanhaEscolhida:dados.campanhaEscolhida||null,assinaturaDiretriz:assinaturaDiretrizI165(diretriz),escopo:'operacional_i165_cp101'};
-  if(selecao?.gravar)tx.set(selecao.ref,selecao.vinculo);tx.update(vr,resultado.patchVideo);tx.set(dr,diretriz);tx.set(dr.collection('versoes').doc(String(diretriz.revisao)),diretriz);tx.set(rr,recibo);
-  return {...resultado,diretriz,recibo,configuracaoCliente:configPublica(cliente.config),nenhumaPostagemCriada:true};
+  const fora=semPostagem(video,cliente);
+  const campanha=fora?{compromisso:null,decisao:null}:await compromissoVideoTxI165(db,tx,video);
+  exigirI165(jsonCanonicoI165(campanha.compromisso)===jsonCanonicoI165(dados.compromissoEsperado),'campanha-avancou','O vínculo da campanha mudou desde sua conferência. Reabra a entrega antes de aprovar.');
+  if(!fora)await origemTxI165(db,tx,video);
+  const r=qualidadeSomenteChrisCp108(video,dados,contexto.ctx,rs.data()||null,em);
+  if(r.estado==='novo'){tx.update(vr,r.patchVideo);tx.set(rr,{...r.recibo,estado:'confirmada',pedidoHash});}
+  return {...r,configuracaoCliente:configPublica(cliente.config),diretrizNecessaria:false,orientacaoAmandaNecessaria:!fora,fluxoCp108:'qualidade_chris',diretrizAnteriorPreservada:true,nenhumaPostagemCriada:true};
  });
 }
 

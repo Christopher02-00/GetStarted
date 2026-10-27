@@ -29,6 +29,14 @@ export async function operarAvisosHttpNucleoI165(db,auth,dados,{agora=new Date()
    return {schema:1,configConfirmada:true,config:configPublica(cfg,ativa),web:webPublica(w.data()),saude:saudePublica(s.data()),aparelhoProprio:await estadoContaDispositivoTxI165(db,tx,ator,agora),cadastroProprio:{uid:ator.uid,pessoa:ator.real,email:ator.email,ativo:true,excluido:false}};
   }
   if(dados.acao==='listar_avisos'){
+   // Uma transação lê um único retrato. Só GET de documento sem opções é reutilizado.
+   // A memória nasce nesta chamada/transação: nunca cruza pessoa, sessão, requisição ou retry.
+   const txOriginal=tx,documentosDestaLeitura=new Map();
+   tx={get:(ref,...opcoes)=>{
+    if(opcoes.length||typeof ref?.path!=='string'||typeof ref?.collection!=='function')return txOriginal.get(ref,...opcoes);
+    if(!documentosDestaLeitura.has(ref.path))documentosDestaLeitura.set(ref.path,Promise.resolve().then(()=>txOriginal.get(ref)));
+    return documentosDestaLeitura.get(ref.path);
+   }};
    const fontes=[...(cfg?.habilidades?.edicao===true?['videos_producao']:[]),...(cfg?.habilidades?.programacao===true?['postagens']:[])];
    exigir(ativa,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
    const central=await candidatasCentralTxR87(db,tx,ator,cfg,LIMITE);

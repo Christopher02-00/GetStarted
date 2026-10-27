@@ -2,17 +2,19 @@
 const GESTAO=['Chris','Amanda'];
 const ITEM=(id,titulo,grupo)=>({id,titulo,grupo});
 export function areasCentralR87(papel){
- if(papel==='Gabrielle')return [ITEM('materiais','Referências e materiais','preparar'),ITEM('datas','Minhas datas','preparar'),ITEM('legendas','Apoiar com legendas','conteudo')];
+ if(papel==='Gabrielle')return [ITEM('acervo','Banco de referências','preparar'),ITEM('planos','Planos de ação','preparar'),ITEM('consulta','Informações e calendários','preparar'),ITEM('materiais','Documentos do mês','preparar'),ITEM('datas','Minhas datas','preparar'),ITEM('legendas','Apoiar com legendas','conteudo')];
  if(![...GESTAO,'Cecília'].includes(papel))return [];
  return [
-  ...(GESTAO.includes(papel)?[ITEM('materiais','Materiais do mês','preparar'),ITEM('datas',papel==='Chris'?'Agenda da equipe':'Organização das datas','preparar'),ITEM('informacoes','Informações dos clientes','preparar'),ITEM('acervo','Banco de referências','preparar'),ITEM('resultados','Resultados e análises','preparar')]:[]),
-  ITEM('calendarios','Calendários e roteiros','conteudo'),
-  ...(GESTAO.includes(papel)?[ITEM('aprovar','Revisar calendários','conteudo'),ITEM('stories','Stories','conteudo')]:[]),
-  ITEM('legendas','Legendas','conteudo'),
-  ITEM('campanhas','Campanhas e datas','publicar'),ITEM('agendar','Fila de agendamento','publicar'),ITEM('programados','Programados','publicar'),ITEM('envios','Enviar ao cliente','publicar'),ITEM('captacao','Captação','publicar'),ITEM('cobertura','Postagem até quando','publicar')
+  ...(GESTAO.includes(papel)?[ITEM('estrategia','Central de calendários','preparar'),ITEM('acervo','Banco de referências','preparar'),ITEM('planos','Planos de ação','preparar'),ITEM('materiais','Documentos do mês','preparar'),ITEM('informacoes','Informações dos clientes','preparar'),ITEM('datas',papel==='Chris'?'Agenda da equipe':'Organização das datas','preparar'),ITEM('resultados','Resultados e análises','preparar'),ITEM('rascunho',papel==='Chris'?'Meus roteiros':'Calendário rascunho','conteudo'),ITEM('aprovar','Revisar e enviar','conteudo'),ITEM('visaoMes','Visão do mês','conteudo'),ITEM('ajustes','Ajustes dos clientes','conteudo')]:[]),
+  ITEM('calendarios','Calendários existentes','conteudo'),
+  ...(GESTAO.includes(papel)?[ITEM('stories','Stories','conteudo')]:[]),ITEM('legendas','Legendas','conteudo'),
+  ...(papel==='Cecília'?[ITEM('visaoMes','Prazos do mês','publicar')]:[]),
+  ITEM('campanhas','Campanhas e datas','publicar'),ITEM('agendar','Fila de agendamento','publicar'),ITEM('programados','Programados','publicar'),ITEM('envios','Links de envio e resgate','publicar'),ITEM('captacao','Captação','publicar'),ITEM('cobertura','Postagem até quando','publicar')
  ];
 }
 export function areaDaRotaR87(view,{calSub='',postSub='',ultima=''}={}){
+ if(view==='estrategiaCp109')return ['estrategia','rascunho'].includes(ultima)?ultima:'estrategia';
+ const novas={referenciasCp109:'acervo',planosAcaoCp109:'planos',consultaClienteCp109:'consulta',ajustesCp109:'ajustes',visaoMesCp109:'visaoMes'};if(novas[view])return novas[view];
  const mapa={planejamentoPreparacaoR80:'materiais',agendaOrganizacao:'datas',informacoesCentralR87:'informacoes',referencias:'acervo',analisesMensais:'resultados',stories:'stories',campanhas:'campanhas',agendamento:'captacao',controlePostagem:'cobertura'};
  if(view==='postagens')return postSub==='legenda'?'legendas':postSub==='gradeMes'?'programados':'agendar';
  if(view==='calendarios')return ['links','envio'].includes(calSub)?'envios':'calendarios';
@@ -50,13 +52,13 @@ export function criarCentralUnificadaR87({documento=document,contexto,abrir,conf
   if(!montar())return;box.hidden=!permitida;if(!permitida){ultima='';return;}ultima=area;
   const grupo=permitida.grupo;box.replaceChildren();
   const header=documento.createElement('header'),titulo=documento.createElement('div');
-  titulo.innerHTML='<small>DO PLANEJAMENTO À PUBLICAÇÃO</small><h1>Calendários e conteúdos</h1>';const guia=documento.createElement('p');guia.textContent=c.nome==='Chris'?'Comece em Calendários e roteiros para criar ou ajustar os conteúdos. Consulte a Agenda da equipe para acompanhar as datas que a Amanda organiza.':c.nome==='Amanda'?'Organize as datas, confira os materiais do mês e revise os calendários antes de liberar. Cada etapa abre o trabalho que já existe.':c.nome==='Gabrielle'?'Coloque as referências e os documentos em Referências e materiais, por cliente e mês. Minhas datas mostra os seus prazos; o apoio de legendas continua disponível.':'Use a Fila de agendamento para programar os conteúdos com a mesma legenda. Confira Campanhas e datas e acompanhe os Programados.';titulo.appendChild(guia);
+  titulo.innerHTML='<small>DO PLANEJAMENTO À PUBLICAÇÃO</small><h1>Calendários e conteúdos</h1>';const guia=documento.createElement('p');guia.textContent=c.nome==='Chris'?'Amanda prepara a estratégia; você trabalha em Meus roteiros e confere os Ajustes dos clientes. Depois, Amanda revisa. A qualidade dos vídeos continua com você; as datas ficam com ela.':c.nome==='Amanda'?'Monte a estratégia na Central de calendários, escolha as referências e envie para os roteiros do Chris. Depois revise e libere. Nos vídeos prontos, você define data ou semana e prazo para Cecília agendar.':c.nome==='Gabrielle'?'Comece no Banco de referências: 10 novas por dia, com meta de 20 disponíveis por cliente. Os Planos de ação ficam por cliente e mês. Consulte informações e calendários sem alterar a criação.':'Na Fila de agendamento, confira a data ou semana, o prazo e o recado da Amanda. Use o mesmo conteúdo e a mesma legenda. As campanhas conservam suas datas combinadas.';titulo.appendChild(guia);
   header.appendChild(titulo);const retry=documento.createElement('button');retry.type='button';retry.dataset.conferirR87='1';retry.textContent='Conferir processo';header.appendChild(retry);box.appendChild(header);
   const grupos=documento.createElement('nav');grupos.className='central-r87-grupos';grupos.setAttribute('aria-label','Etapas do trabalho');
   for(const [id,t,d]of GRUPOS){if(!areas.some(a=>a.grupo===id))continue;const b=documento.createElement('button');b.type='button';b.dataset.grupoR87=id;b.dataset.grupo=id;if(id===grupo)b.setAttribute('aria-current','true');const strong=documento.createElement('strong');strong.textContent=t;const small=documento.createElement('span');small.textContent=d;b.append(strong,small);grupos.appendChild(b);}box.appendChild(grupos);
   const tabs=documento.createElement('nav');tabs.className='central-r87-etapas';tabs.setAttribute('aria-label','Ferramentas do planejamento');
   for(const a of areas.filter(a=>a.grupo===grupo)){const b=documento.createElement('button');b.type='button';b.dataset.areaR87=a.id;b.textContent=a.titulo;if(a.id===area)b.setAttribute('aria-current','page');tabs.appendChild(b);}box.appendChild(tabs);
-  const status=documento.createElement('p');status.className='central-r87-status';status.textContent=c.nome==='Gabrielle'?'Referências e documentos por cliente e mês. O apoio de legenda conserva a mesma publicação.':c.nome==='Chris'?'Você cria e ajusta os calendários; a Amanda organiza as datas e revisa as entregas.':c.nome==='Amanda'?'Você organiza as datas, revisa e libera. Conteúdos e entregas conservam a origem e o histórico.':'Conteúdo, legenda e orientação de postagem seguem a mesma publicação.';box.appendChild(status);
+  const status=documento.createElement('p');status.className='central-r87-status';status.textContent=c.nome==='Gabrielle'?'Você pesquisa e prepara planos; Amanda decide as referências e organiza o calendário. O apoio de legenda conserva a mesma publicação.':c.nome==='Chris'?'Você desenvolve roteiros, corrige os pedidos dos clientes e aprova a qualidade dos vídeos. Amanda organiza a estratégia, as datas e a revisão.':c.nome==='Amanda'?'Você organiza a estratégia e as datas, envia para os roteiros e revisa antes do cliente. Conteúdos e entregas conservam a origem e o histórico.':'Conteúdo, legenda e orientação de postagem seguem a mesma publicação.';box.appendChild(status);
  }
  return{sincronizar,selecionar:id=>{ultima=id;},destroy(){vivo=false;restaurar();box?.removeEventListener('click',click);box?.remove();documento.getElementById('navCentralCeciliaR87')?.remove();}};
 }

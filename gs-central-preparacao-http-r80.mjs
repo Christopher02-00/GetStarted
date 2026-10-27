@@ -30,10 +30,10 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  const EDITORIAL=new Set(['central_editor_ler','central_editor_iniciar','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir']);
  async function editorial(acao,dados){
   exigir(['Chris','Amanda'].includes(c.nome)&&EDITORIAL.has(acao),'Esta etapa pertence à criação do Chris e à revisão da Amanda.');
-  ciclo(dados?.ciclo);const origem=dados?.origemEditorial||'';exigir(origem===''||origem==='continuar_legado','Origem editorial inválida.');
+  ciclo(dados?.ciclo);const origem=dados?.origemEditorial||'';exigir(origem===''||origem==='continuar_legado'||origem==='estrategico_cp109','Origem editorial inválida.');
   const r=await pedir(acao,dados),recusa=r?.operacao?.estado==='recusada_por_versao',d=recusa?r.estadoAtual:r;
   exigir(r?.schema===1&&d?.ciclo?.id===dados.ciclo&&typeof d.assinatura==='string'&&
-    (origem==='continuar_legado'?d.ciclo.modo==='continuar_legado':d.ciclo.modo!=='continuar_legado')&&
+    (origem==='continuar_legado'?d.ciclo.modo==='continuar_legado':origem==='estrategico_cp109'?d.ciclo.modo==='estrategico_cp109':!['continuar_legado','estrategico_cp109'].includes(d.ciclo.modo))&&
     (!recusa||r.operacao.id===dados.operacao&&r.operacao.confirmada===true&&r.operacao.calendarioAlterado===false&&r.requerComparacao===true),
     'Não consegui confirmar a versão editorial. Preserve a mesma tentativa.');return r;
  }

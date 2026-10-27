@@ -1,0 +1,42 @@
+/* Fronteira tipada; não recebe paths, documentos completos ou patches Firestore. */
+import {createHash} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
+import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
+import {processoAtivoI164} from './central/lib/gs-processo-calendarios-i164.mjs';
+import {exigirCentralR80 as e,chavesR80,textoR80,cicloR80,idR80,inteiroR80,mapaR80} from './central-preparacao-validacao-r80.mjs';
+export const ACOES_EDITORIAL_I172=Object.freeze(['central_editor_ler','central_editor_iniciar','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir']);
+export const MUTACOES_EDITORIAL_I172=Object.freeze(['iniciar_criacao','enviado_revisao','devolvido_revisao','entrega']);
+export const CAMPOS_EDITORIAIS_I172=Object.freeze(['itemId','empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','mes','stage','fmt','dataFlexivel','bloco','dataPostagem']);
+const comuns=['acao','uidEsperado','atorRealEsperado','papelOperado','sessao'];
+function json(v,n=0){e(n<=25,'O conteúdo ultrapassa o limite de profundidade.');if(v===null||['boolean','string'].includes(typeof v))return;if(typeof v==='number'){e(Number.isFinite(v),'Número inválido.');return;}e(Array.isArray(v)||mapaR80(v),'Objeto inválido.');for(const [k,d]of Object.entries(v)){e(!['__proto__','constructor','prototype'].includes(k),'Campo reservado.');json(d,n+1);}}
+export function hashEditorialI172(v){json(v);const canon=x=>Array.isArray(x)?x.map(canon):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canon(x[k])])):x;return createHash('sha256').update(JSON.stringify(canon(v))).digest('hex');}
+export function hashPedidoEditorialI172(d,ator){const {uidEsperado,atorRealEsperado,papelOperado,sessao,...negocio}=d;return hashEditorialI172({negocio,autoria:{uid:ator.uid,papel:ator.papel,atorReal:ator.real}});}
+function listaIds(v,max){e(Array.isArray(v)&&v.length<=max&&new Set(v).size===v.length,'Confira os conteúdos selecionados.');v.forEach(idR80);}
+export function validarEntradaEditorialI172(d){
+ e(ACOES_EDITORIAL_I172.includes(d?.acao),'Operação editorial desconhecida.');
+ const porAcao={central_editor_ler:['ciclo'],central_editor_iniciar:['ciclo','operacao','esperadaRevisao','pecas','confirmarDelta'],central_editor_salvar:['ciclo','operacao','assinaturaEsperada','itens','excluirIds','blocos'],central_editor_enviar_revisao:['ciclo','operacao','assinaturaEsperada','esperadaRevisao'],central_editor_decidir:['ciclo','operacao','assinaturaEsperada','esperadaRevisao','decisao','motivo']};
+ chavesR80(d,comuns.concat(porAcao[d.acao],['origemEditorial']),comuns.concat(porAcao[d.acao]));if(d.origemEditorial!==undefined)e(d.origemEditorial==='continuar_legado','A origem editorial é inválida.');cicloR80(d.ciclo);textoR80(d.sessao,180,'a sessão',false);json(d);e(Buffer.byteLength(JSON.stringify(d),'utf8')<=1024*1024,'O pedido editorial ultrapassa 1MiB. Nada foi cortado.');
+ if(d.acao==='central_editor_ler')return d;
+ e(/^[A-Za-z0-9_-]{8,80}$/u.test(d.operacao),'Operação inválida.');if(d.esperadaRevisao!==undefined)inteiroR80(d.esperadaRevisao,1,1e9);
+ if(d.assinaturaEsperada!==undefined)e(/^[a-f0-9]{64}$/u.test(d.assinaturaEsperada),'Reabra a versão deste mês antes de decidir.');
+ if(d.origemEditorial==='continuar_legado'&&d.acao==='central_editor_iniciar')e(Array.isArray(d.pecas)&&d.pecas.length===0&&d.confirmarDelta===false,'A continuidade usa as peças existentes, sem uma base preparatória nova.');
+ if(d.origemEditorial==='continuar_legado'&&d.acao==='central_editor_salvar')e(Array.isArray(d.excluirIds)&&d.excluirIds.length===0&&d.blocos===null,'Este ajuste conserva os IDs e a organização do calendário existente.');
+ if(d.acao==='central_editor_iniciar'){e(Array.isArray(d.pecas)&&d.pecas.length<=300,'Use até300peças.');d.pecas.forEach(v=>textoR80(v,500,'a peça',false));e(typeof d.confirmarDelta==='boolean','Confirme a base utilizada.');}
+ if(d.acao==='central_editor_salvar'){
+  e(Array.isArray(d.itens)&&d.itens.length<=300,'Use até300conteúdos por operação.');listaIds(d.excluirIds,300);e(d.blocos===null||Number.isInteger(d.blocos)&&d.blocos>=1&&d.blocos<=12,'Confira os blocos de captação.');const vistos=new Set();
+  for(const it of d.itens){chavesR80(it,CAMPOS_EDITORIAIS_I172,['itemId','mes']);idR80(it.itemId);e(!vistos.has(it.itemId),'Há dois conteúdos com o mesmo ID.');vistos.add(it.itemId);e(it.mes===cicloR80(d.ciclo).competencia,'O conteúdo pertence a outro mês.');for(const [k,v]of Object.entries(it)){if(['itemId','mes'].includes(k))continue;if(['roteiroDispensado','referenciaDispensada','dataFlexivel'].includes(k))e(typeof v==='boolean','Confira as opções do conteúdo.');else if(k==='day')e(Number.isInteger(v)&&v>=1&&v<=31,'Dia inválido.');else if(k==='bloco')e(Number.isInteger(v)&&v>=1&&v<=12,'Bloco inválido.');else textoR80(v,['desc','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin'].includes(k)?30000:k==='obs'?10000:2000,k);}
+  }e(!d.excluirIds.some(id=>vistos.has(id)),'Um conteúdo não pode ser alterado e excluído no mesmo pedido.');
+ }
+ if(d.acao==='central_editor_decidir'){e(['devolver','publicar'].includes(d.decisao),'Decisão inválida.');textoR80(d.motivo,10000,'o que precisa ajustar',d.decisao!=='devolver');e(d.decisao!=='publicar'||d.motivo==='','A publicação não recebe motivo de devolução.');}
+ return d;
+}
+export function validarEntradaMutacaoEditorialInternaI172(d){chavesR80(d,comuns.concat(['ciclo','acaoPreparacao','dados','esperadaRevisao','operacao','hashPedidoEditorial']),comuns.concat(['ciclo','acaoPreparacao','dados','esperadaRevisao','operacao','hashPedidoEditorial']));cicloR80(d.ciclo);e(MUTACOES_EDITORIAL_I172.includes(d.acaoPreparacao),'Transição editorial inválida.');e(/^[A-Za-z0-9_-]{8,100}$/u.test(d.operacao)&&/^[a-f0-9]{64}$/u.test(d.hashPedidoEditorial),'Recibo editorial inválido.');inteiroR80(d.esperadaRevisao,1,1e9);if(d.acaoPreparacao==='iniciar_criacao'){chavesR80(d.dados,['pecas','confirmarDelta'],['pecas','confirmarDelta']);e(Array.isArray(d.dados.pecas)&&d.dados.pecas.length<=300&&typeof d.dados.confirmarDelta==='boolean','Dados de criação inválidos.');d.dados.pecas.forEach(x=>textoR80(x,500,'a peça',false));}else chavesR80(d.dados,[]);return d;}
+export function validarDeltaCicloEditorialI172(antes,depois,acao,ator){
+ e(['Chris','Amanda'].includes(ator.papel)&&antes&&antes.schema===1&&depois.schema===1,'A etapa editorial exige um ciclo atual confirmado.');e(acao!=='iniciar_criacao'||ator.papel==='Chris','A criação pertence ao Chris.');
+ const cr=depois.criacao;e(cr&&typeof cr.base==='string'&&cr.base===depois.documentos.consolidadoEnviado,'A criação precisa da base consolidada atual.');chavesR80(cr,['base','iniciadaEm','por','pecas','enviadoRevisao','rodada','retornoEm','retornoMotivo'],['base','iniciadaEm','por','pecas','enviadoRevisao','rodada']);e(Array.isArray(cr.pecas)&&cr.pecas.length<=300&&typeof cr.enviadoRevisao==='boolean'&&Number.isInteger(cr.rodada)&&cr.rodada>0,'Registro de criação inválido.');cr.pecas.forEach(x=>textoR80(x,500,'a peça',false));
+ if(acao==='enviado_revisao')e(cr.enviadoRevisao===true&&isDeepStrictEqual({...antes.criacao,enviadoRevisao:true},cr),'O envio não pode alterar a criação.');
+ if(acao==='devolvido_revisao')e(cr.enviadoRevisao===false&&isDeepStrictEqual(Object.fromEntries(Object.entries(antes.criacao).filter(([k])=>!['enviadoRevisao','rodada','retornoEm','retornoMotivo'].includes(k))),Object.fromEntries(Object.entries(cr).filter(([k])=>!['enviadoRevisao','rodada','retornoEm','retornoMotivo'].includes(k)))),'A devolução preserva a criação anterior.');
+ if(acao==='entrega'){e(cr.enviadoRevisao===true&&depois.publicacaoAtual?.base===cr.base&&depois.publicacaoAtual?.retrato?.mes===depois.competencia&&depois.entrega?.calendarId===depois.cliente&&depois.entrega?.competencia===depois.competencia&&depois.entrega?.aprovadoPor==='Amanda','A disponibilidade depende da publicação oficial.');if(antes.entrega)e(isDeepStrictEqual(antes.entrega,depois.entrega),'A primeira entrega é preservada.');}
+}
+
+export function capacidadePreparacaoEditorialI172(cfg,existe,processo){return programacaoAtivaI165(cfg)&&cfg.habilidades?.preparacaoCentral===true&&(!existe||processo?.ativo===false||processoAtivoI164(processo));}

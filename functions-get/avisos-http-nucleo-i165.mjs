@@ -1,5 +1,6 @@
 // Operações fechadas de avisos. Somente o adaptador do servidor fornece as dependências.
 import {createHash} from 'node:crypto';
+import {candidatasCentralTxR87,lerNotaCentralTxR87,leituraCentralTxR87} from './avisos-central-http-i164.mjs';
 import {estadoContaDispositivoTxI165,testarDispositivoProprioI165} from './teste-dispositivo-i165.mjs';
 export const ACOES_AVISOS_HTTP_I165=Object.freeze(['config_avisos','listar_avisos','registrar_dispositivo','desativar_dispositivo','testar_dispositivo']);
 const ESCOPO='operacional_i165_cp101',LIMITE=100;
@@ -29,15 +30,19 @@ export async function operarAvisosHttpNucleoI165(db,auth,dados,{agora=new Date()
   }
   if(dados.acao==='listar_avisos'){
    const fontes=[...(cfg?.habilidades?.edicao===true?['videos_producao']:[]),...(cfg?.habilidades?.programacao===true?['postagens']:[])];
-   exigir(ativa&&fontes.length>0,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
-   const q=db.collection('notificacoes_operacionais_i165').where('escopo','==',ESCOPO).where('destinatario','==',ator.papel).where('estado','==','pendente').where('ativacaoId','==',cfg.ativacaoId).where('fonte.colecao',fontes.length===1?'==':'in',fontes.length===1?fontes[0]:fontes).orderBy('__name__').limit(LIMITE+1);
-   const qs=await tx.get(q),avisos=[];
-   const candidatas=qs.docs.slice(0,LIMITE);
+   exigir(ativa,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
+   const central=await candidatasCentralTxR87(db,tx,ator,cfg,LIMITE);
+   exigir(fontes.length>0||central.centralAtiva||central.organizacaoAtiva,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
+   const q=fontes.length?db.collection('notificacoes_operacionais_i165').where('escopo','==',ESCOPO).where('destinatario','==',ator.papel).where('estado','==','pendente').where('ativacaoId','==',cfg.ativacaoId).where('fonte.colecao',fontes.length===1?'==':'in',fontes.length===1?fontes[0]:fontes).orderBy('__name__').limit(LIMITE+1):null;
+   const qs=fontes.length?await tx.get(q):{docs:[],size:0},avisos=[];
+   const unicas=new Map([...qs.docs.map(s=>({s,central:false})),...central.docs.map(s=>({s,central:true}))].map(v=>[v.s.id,v]));
+   const ordenadas=[...unicas.values()].sort((a,b)=>a.s.id.localeCompare(b.s.id));
+   const candidatas=ordenadas.slice(0,LIMITE),leituraCentral=leituraCentralTxR87(db,tx);
    for(let i=0;i<candidatas.length;i+=4){
-    const bloco=await Promise.allSettled(candidatas.slice(i,i+4).map(async s=>{const n=s.data();exigir(id(s.id)&&/^[A-Za-z0-9_-]{12,160}$/.test(s.id)&&n.id===s.id&&n.escopo===ESCOPO&&n.destinatario===ator.papel&&n.estado==='pendente'&&n.ativacaoId===cfg.ativacaoId&&fontes.includes(n.fonte?.colecao)&&id(n.fonte.id),'aviso-contrato','Um aviso precisa de conferência. A última lista foi preservada.');const f=await fontePendenteTx(db,tx,n,{agora});exigir(f&&typeof f.pendente==='boolean','aviso-fonte','Não consegui confirmar a origem de um aviso.');return f.pendente?notaPublica(n,s.id,f,em):null;}));
+    const bloco=await Promise.allSettled(candidatas.slice(i,i+4).map(async entrada=>{const s=entrada.s,n=s.data();if(entrada.central){exigir(n.id===s.id,'aviso-contrato','O identificador do aviso precisa de conferência.');const dto=await lerNotaCentralTxR87(db,tx,n,ator,{cfg,processo:central.processo,agora,leitura:leituraCentral});return dto.fonteAvancou?null:dto;}exigir(id(s.id)&&/^[A-Za-z0-9_-]{12,160}$/.test(s.id)&&n.id===s.id&&n.escopo===ESCOPO&&n.destinatario===ator.papel&&n.estado==='pendente'&&n.ativacaoId===cfg.ativacaoId&&fontes.includes(n.fonte?.colecao)&&id(n.fonte.id),'aviso-contrato','Um aviso precisa de conferência. A última lista foi preservada.');const f=await fontePendenteTx(db,tx,n,{agora});exigir(f&&typeof f.pendente==='boolean','aviso-fonte','Não consegui confirmar a origem de um aviso.');return f.pendente?notaPublica(n,s.id,f,em):null;}));
     for(const r of bloco){if(r.status==='rejected')throw r.reason;if(r.value)avisos.push(r.value);}
    }
-   return {schema:1,listaConfirmada:true,ativacaoId:cfg.ativacaoId,avisos,limite:LIMITE,truncado:qs.size>LIMITE,conferidoEm:em};
+   return {schema:1,listaConfirmada:true,ativacaoId:cfg.ativacaoId,avisos,limite:LIMITE,truncado:qs.size>LIMITE||central.truncado||ordenadas.length>LIMITE,ativacaoCentralId:central.centralAtiva?central.processo.ativacaoId:'',conferidoEm:em};
   }
   const hash=createHash('sha256').update(dados.token).digest('hex'),pr=db.doc('notificacoes_dispositivos_i165/'+ator.uid),tr=pr.collection('tokens').doc(hash);
   const [ps,ts]=await Promise.all([tx.get(pr),tx.get(tr)]),p=ps.data(),t=ts.data();

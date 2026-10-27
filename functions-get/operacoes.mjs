@@ -1,3 +1,7 @@
+import {lerNotaCentralTxR87} from './avisos-central-http-i164.mjs';
+import {notaCentralI164} from './central/notificacoes.mjs';
+import {validarCadastroI165} from './contexto.mjs';
+import {ACOES_EDITORIAL_I172,operarEditorialCalendariosI172} from './editorial-calendarios-i172.mjs';
 import {ACOES_RESIDUAL_R5_R83,operarResidualPublicacaoR5R83} from './residual-publicacao-r5-r83.mjs';
 import {ACOES_CENTRAL_HTTP_R80,operarCentralPreparacaoR80} from './central-preparacao-r80.mjs';
 import {ACOES_AVISOS_HTTP_I165,operarAvisosHttpI165} from './avisos-http-i165.mjs';
@@ -23,6 +27,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_EDITORIAL_I172.includes(dados.acao))return operarEditorialCalendariosI172(db,auth,dados,{agora});
  if(ACOES_CENTRAL_HTTP_R80.includes(dados.acao))return operarCentralPreparacaoR80(db,auth,dados,{agora});
  if(ACOES_AVISOS_HTTP_I165.includes(dados.acao))return operarAvisosHttpI165(db,auth,dados,{agora});
  if(ACOES_RESIDUAL_R5_R83.includes(dados.acao))return operarResidualPublicacaoR5R83(db,auth,dados,{agora});
@@ -52,7 +57,16 @@ export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  if(dados.acao==='conferir_programacao')return db.runTransaction(async tx=>{const r=await exigirProgramacaoTxI165(db,tx,ator,dados,agora);return {...r.resultado,somenteDiagnostico:true,naoAutorizaEscritaPosterior:true};});
  if(['ler_aviso','marcar_visto'].includes(dados.acao)){
   exigirI165(idFisicoI165(dados.id),'aviso','Aviso inválido.');return db.runTransaction(async tx=>{
-   const ref=db.doc('notificacoes_operacionais_i165/'+dados.id),s=await tx.get(ref),n=s.data();exigirI165(s.exists&&n.escopo===ESCOPO_I165&&n.destinatario===ator.papel,'aviso','Este aviso pertence a outro perfil.');
+   const ref=db.doc('notificacoes_operacionais_i165/'+dados.id),s=await tx.get(ref),n=s.data();
+   if(s.exists&&notaCentralI164(n)){
+    exigirI165(n.id===s.id,'aviso','O identificador do aviso precisa de conferência.');
+    const [cfg,cad,processo]=await Promise.all([tx.get(db.doc('programacao_config_i165/ativo')),tx.get(db.doc('usuarios_equipe/'+ator.email)),tx.get(db.doc('processo_calendarios_i164/ativo'))]);
+    validarCadastroI165(ator,cad.data());
+    const dto=await lerNotaCentralTxR87(db,tx,n,ator,{cfg:cfg.data(),processo:processo.data(),agora});
+    if(dados.acao==='marcar_visto')tx.update(ref,{leituras:{...n.leituras,[ator.uid]:{uid:ator.uid,papel:ator.papel,atorReal:ator.real,em:instanteI165(agora)}}});
+    return dto;
+   }
+   exigirI165(s.exists&&n.escopo===ESCOPO_I165&&n.destinatario===ator.papel,'aviso','Este aviso pertence a outro perfil.');
    exigirI165(['videos_producao','postagens'].includes(n.fonte?.colecao)&&idFisicoI165(n.fonte?.id),'aviso-fonte','A origem deste aviso precisa de conferência.');
    const {cfg}=await contextoTxI165(db,tx,ator,n.fonte.colecao==='videos_producao'?'edicao':'programacao');
    exigirI165(n.ativacaoId===cfg.ativacaoId,'aviso-ativacao','Este aviso pertence a uma ativação anterior. Confira a fila atual.');

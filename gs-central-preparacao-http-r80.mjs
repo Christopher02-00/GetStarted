@@ -27,8 +27,26 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  async function listar(m){mes(m);const r=await pedir('central_listar',{competencia:m});exigir(Array.isArray(r)&&r.every(x=>x.competencia===m),'Não consegui conferir todos os ciclos deste mês.');return r;}
  async function config(m){mes(m);return pedir('central_config_ler',{competencia:m});}
  async function salvarConfig(d,rev,m){mes(m);exigir(Number.isInteger(rev)&&rev>=0,'Confira a versão da organização.');return pedir('central_config_salvar',{competencia:m,config:selecionar(d,['dias','capacidades','modelos','indisponibilidades','feriados','recorrencia']),esperadaRevisao:rev});}
+ const EDITORIAL=new Set(['central_editor_ler','central_editor_iniciar','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir']);
+ async function editorial(acao,dados){
+  exigir(['Chris','Amanda'].includes(c.nome)&&EDITORIAL.has(acao),'Esta etapa pertence à criação do Chris e à revisão da Amanda.');
+  ciclo(dados?.ciclo);const origem=dados?.origemEditorial||'';exigir(origem===''||origem==='continuar_legado','Origem editorial inválida.');
+  const r=await pedir(acao,dados),recusa=r?.operacao?.estado==='recusada_por_versao',d=recusa?r.estadoAtual:r;
+  exigir(r?.schema===1&&d?.ciclo?.id===dados.ciclo&&typeof d.assinatura==='string'&&
+    (origem==='continuar_legado'?d.ciclo.modo==='continuar_legado':d.ciclo.modo!=='continuar_legado')&&
+    (!recusa||r.operacao.id===dados.operacao&&r.operacao.confirmada===true&&r.operacao.calendarioAlterado===false&&r.requerComparacao===true),
+    'Não consegui confirmar a versão editorial. Preserve a mesma tentativa.');return r;
+ }
  async function mutar(id,acao,dados,esperada,operacao){
-  ciclo(id);exigir(PREPARACAO.has(acao),'Esta etapa será liberada depois da preparação. Mantenham os envios atuais.');
+  ciclo(id);
+  if(acao==='iniciar_criacao'){
+   await editorial('central_editor_iniciar',{ciclo:id,esperadaRevisao:esperada,operacao,pecas:dados.pecas||[],confirmarDelta:dados.confirmarDelta===true});return ler(id);
+  }
+  if(['enviado_revisao','devolvido_revisao','entrega'].includes(acao)){
+   const r=await editorial('central_editor_ler',{ciclo:id});
+   exigir(acao==='entrega'?r.estado==='liberado'&&!!r.ciclo.entrega:acao==='devolvido_revisao'?r.estado==='ajuste_interno':['aguardando_interna','aprovado_interno','liberado'].includes(r.estado),'Abra o editor desta competência para concluir a etapa. Esta conferência não altera o calendário.');return ler(id);
+  }
+  exigir(PREPARACAO.has(acao),'Esta etapa será liberada depois da preparação. Mantenham os envios atuais.');
   exigir(Number.isInteger(esperada)&&esperada>=0&&/^[A-Za-z0-9_-]{8,100}$/.test(operacao||''),'Confira a mesma tentativa antes de continuar.');
   if(acao==='referencia')dados={referencia:selecionar(dados?.referencia,['id','empresaOtavio','link','autorPerfil','postadoEm','consultadoEm','ideia','motivo','adaptacao','metricas','comentarios','filtro','selecionada','parecerAmanda','origemColecao','origemId'])};
   const r=await pedir('central_mutar',{ciclo:id,acaoPreparacao:acao,dados,esperadaRevisao:esperada,operacao});
@@ -77,5 +95,5 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  const ouvir=(id,proximo,erro)=>{ciclo(id);const m=id.slice(0,7),cl=id.slice(9);return assinar(id,cl,m,'ciclo',proximo,erro);};
  const ouvirCalendario=(cl,proximo,erro,{ciclo:id,competencia:m}={})=>assinar(id,cl,m,'calendario',proximo,erro);
  function destroy(){if(!vivo)return;vivo=false;for(const job of jobs.values()){job.geracao++;ambiente.clearInterval(job.timer);job.assinantes.clear();}jobs.clear();}
- return {ler,listar,config,salvarConfig,mutar,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo},ouvir,ouvirCalendario,capacidades,destroy};
+ return {ler,listar,config,salvarConfig,mutar,editorial,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo},ouvir,ouvirCalendario,capacidades,destroy};
 }

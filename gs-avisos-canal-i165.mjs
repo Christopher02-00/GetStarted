@@ -11,6 +11,32 @@ export function cadastroProprioAvisosI165(c,g,d){
 }
 export function fontesAvisosHabilitadasI165(config){return programacaoAtivaI165(config)?[...(config.habilidades?.edicao===true?['videos_producao']:[]),...(config.habilidades?.programacao===true?['postagens']:[])]:[];}
 export function avisoFisicoI165(d,id,papel){return idAviso(id)&&d?.id===id&&d.escopo===ESCOPO_AVISOS_I165&&d.destinatario===papel&&typeof d.ativacaoId==='string'&&d.ativacaoId.length>=12&&['pendente','resolvida'].includes(d.estado)&&['videos_producao','postagens'].includes(d.fonte?.colecao)&&idValido(d.fonte?.id);}
+
+export const ESCOPO_AVISOS_CENTRAL_R87='central_i164';
+const TIPOS_CENTRAL_R87=['planejamento','calendario_revisao','calendario_envio','organizacao_i167'];
+const cicloCentralR87=x=>typeof x==='string'&&/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/.test(x);
+const mesCentralR87=x=>typeof x==='string'&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(x);
+const clienteCentralR87=x=>typeof x==='string'&&/^[a-z0-9][a-z0-9._-]{0,119}$/.test(x);
+export function avisoFisicoCentralR87(d,id,papel,{ativacaoI165='',ativacaoCentralId='',fresco=false}={}){
+ if(!idAviso(id)||d?.schema!==1||d.id!==id||d.escopo!==ESCOPO_AVISOS_CENTRAL_R87||d.destinatario!==papel||!TIPOS_CENTRAL_R87.includes(d.tipo)||d.origem?.tipo!==d.tipo||!idValido(d.origem?.id)||d.fonte?.id!==d.origem.id||!/^[a-f0-9]{64}$/.test(d.versao||'')||!['pendente','resolvida'].includes(d.estado)||typeof d.ativacaoId!=='string'||d.ativacaoId.length<12)return false;
+ const org=d.tipo==='organizacao_i167',legado=d.origem.origemEditorial==='continuar_legado';
+ if(d.origem.origemEditorial!==undefined&&!legado)return false;
+ if(d.fonte.colecao!==(org?'demandas':legado?'continuidade_calendarios_i164':'planejamento_social_i155'))return false;
+ if(org?d.ativacaoId!==ativacaoI165:!fresco&&d.ativacaoId!==ativacaoCentralId)return false;
+ if(d.tipo==='calendario_revisao'&&papel!=='Amanda'||d.tipo==='calendario_envio'&&papel!=='Cecília'||d.tipo==='planejamento'&&!['Chris','Amanda','Gabrielle'].includes(papel)||papel==='Gabrielle'&&d.tipo==='planejamento'&&d.origem.etapa!=='pesquisa')return false;
+ if(!org&&!cicloCentralR87(d.origem.id))return false;
+ if(d.fonteAvancou===true||d.estado==='resolvida')return d.link===null;
+ const l=d.link;if(!l||typeof l!=='object'||Array.isArray(l))return false;
+ if(org)return l.area==='organizacao'&&l.demandaId===d.origem.id&&clienteCentralR87(l.cliente)&&mesCentralR87(l.competencia)&&l.cliente===d.origem.cliente&&l.competencia===d.origem.competencia&&typeof (l.empresaId??'')==='string'&&(l.empresaId??'').length<=80;
+ if(l.ciclo!==d.origem.id||!mesCentralR87(l.competencia)||!l.ciclo.startsWith(l.competencia+'__')||(l.origemEditorial||'')!==(d.origem.origemEditorial||''))return false;
+ if(d.tipo==='planejamento')return l.area==='planejar'&&['pesquisa','previa','reuniao','consolidado','criacao','revisao','disponivel'].includes(l.etapa)&&l.etapa===d.origem.etapa;
+ return l.area===(d.tipo==='calendario_revisao'?'aprovar':'enviar')&&clienteCentralR87(l.cliente)&&l.cliente===d.origem.cliente&&l.competencia===d.origem.competencia&&l.ciclo===l.competencia+'__'+l.cliente;
+}
+export function avisoHabilitadoNoFeedR87(n,id,papel,config,{ativacaoCentralId='',fresco=false}={}){
+ if(n?.escopo===ESCOPO_AVISOS_CENTRAL_R87)return programacaoAtivaI165(config)&&avisoFisicoCentralR87(n,id,papel,{ativacaoI165:config.ativacaoId,ativacaoCentralId,fresco});
+ return avisoFisicoI165(n,id,papel)&&n.ativacaoId===config?.ativacaoId&&fontesAvisosHabilitadasI165(config).includes(n.fonte?.colecao);
+}
+
 export function saudeAvisosI165(d,agora=Date.now()){
  const t=Date.parse(d?.ultimaExecucao||'');return d?.escopo===ESCOPO_AVISOS_I165&&d.estado==='conferido'&&Number.isFinite(t)&&agora-t>=-60000&&agora-t<=15*60000;
 }
@@ -86,13 +112,13 @@ export function mensagemAtivacaoAvisosI165(err){
  if(locais.has(err?.message))return err.message;
  return 'Não consegui ativar os avisos deste aparelho agora. Recarregue o site e tente novamente; a fila continua no sistema.';
 }
-export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostagem,central=null,ambiente=ambientePadrao()}={}){
+export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostagem,abrirCentral,central=null,ambiente=ambientePadrao()}={}){
  if(!root||!io||central||typeof contexto!=='function')throw Error('Os avisos precisam de acesso confirmado.');
  const c=Object.freeze({...contexto()});
- let vivo=true,ciclo=0,linhas=[],config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0,cancelarEsperaSW=null,registro=null,teste=null,statusConta=null,tokenRegistrado=null,tentativaTeste=null,servico=null,servicoSeq=0,cancelarAtualizacaoSW=null;
+ let vivo=true,ciclo=0,linhas=[],ativacaoCentralId='',config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0,cancelarEsperaSW=null,registro=null,teste=null,statusConta=null,tokenRegistrado=null,tentativaTeste=null,servico=null,servicoSeq=0,cancelarAtualizacaoSW=null;
  const vigente=()=>vivo&&root.isConnected!==false&&mesmaIdentidadeAvisosI165(c,contexto());
  const atual=e=>vigente()&&e===ciclo;
- const ativo=()=>estadoConfig==='confirmada'&&fontesAvisosHabilitadasI165(config).length>0;
+ const ativo=()=>estadoConfig==='confirmada'&&programacaoAtivaI165(config);
  const pushAtivo=()=>ativo()&&config.habilidades?.push===true;
  const proprio=()=>vigente()&&c.papel===c.atorReal&&!c.delegada&&!contexto()?.delegada;
  const registroAtual=()=>proprio()&&pushAtivo()&&registro?.uid===c.uid&&registro?.pessoa===c.atorReal&&registro?.ativacaoId===config?.ativacaoId;
@@ -103,7 +129,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  function render(){
   if(!vigente())return;
   root.hidden=!teveAtivo&&['conferindo','desligada'].includes(estadoConfig);
-  const pendentes=linhas.filter(n=>n.estado==='pendente'&&n.ativacaoId===config?.ativacaoId),confirmada=ativo()&&estadoLista==='confirmada';
+  const pendentes=linhas.filter(n=>n.estado==='pendente'&&avisoHabilitadoNoFeedR87(n,n.id,c.papel,config,{ativacaoCentralId})),confirmada=ativo()&&estadoLista==='confirmada';
   el('[data-contagem]').textContent=confirmada?'· '+pendentes.length+(truncado?' nesta página':''):pendentes.length?'· '+pendentes.length+' no último retrato':'';
   el('[data-saude]').textContent=teveAtivo?'Conteúdos: '+(confirmada&&saudeAvisosI165(saude,ambiente.agora())?'acompanhamento conferido.':'acompanhamento a conferir.')+' '+resumoSaudeCanaisI165(saude):'';
   el('[data-estado]').textContent=recado||(!confirmada?'Não consegui confirmar toda a fila agora. O último retrato foi preservado; isso não confirma fila vazia.':truncado?'Há mais avisos além dos 100 desta página. Confira também a sua fila de conteúdos.':pendentes.length?'Abra o conteúdo para conferir o que precisa ser feito.':'Nenhum aviso pendente na última conferência do servidor.');
@@ -148,8 +174,8 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
    const a=await preConferir(e,r);if(a&&atual(e)){await prepararForeground(e);await conferirTesteNoNavegador();}
    if(!atual(e))return false;
    const l=await io.listarAvisos();if(!atual(e))return false;
-   if(l?.schema!==1||l.listaConfirmada!==true||l.ativacaoId!==config.ativacaoId||!Array.isArray(l.avisos)||l.avisos.length>100||l.limite!==100||typeof l.truncado!=='boolean'||l.avisos.some(n=>!avisoFisicoI165(n,n.id,c.papel)||n.estado!=='pendente'||!fontesAvisosHabilitadasI165(config).includes(n.fonte?.colecao)||n.ativacaoId!==config.ativacaoId))throw Error('A fila de avisos precisa ser conferida. O último retrato foi preservado.');
-   linhas=l.avisos;truncado=l.truncado;estadoLista='confirmada';recado='';render();
+   if(l?.schema!==1||l.listaConfirmada!==true||l.ativacaoId!==config.ativacaoId||!Array.isArray(l.avisos)||l.avisos.length>100||l.limite!==100||typeof l.truncado!=='boolean'||l.ativacaoCentralId!==undefined&&typeof l.ativacaoCentralId!=='string'||l.avisos.some(n=>!avisoHabilitadoNoFeedR87(n,n.id,c.papel,config,{ativacaoCentralId:l.ativacaoCentralId||''})||n.estado!=='pendente'))throw Error('A fila de avisos precisa ser conferida. O último retrato foi preservado.');
+   linhas=l.avisos;ativacaoCentralId=l.ativacaoCentralId||'';truncado=l.truncado;estadoLista='confirmada';recado='';render();
    if(pendenteURL&&idAviso(pendenteURL)&&atual(e)){const id=pendenteURL;pendenteURL=null;await abrir(id);}
    return true;
   }catch(err){if(atual(e)){estadoLista='erro';if(!configuracaoConferida){estadoConfig='erro';aparelho=null;registro=null;tokenRegistrado=null;pararCanal();}recado='Não consegui conferir toda a fila agora. O último retrato foi preservado. Você pode conferir seu aparelho quando a configuração estiver confirmada.';render();}return false;
@@ -158,18 +184,19 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  }
  async function lerNota(id,{paraNotificar=false}={}){
   if(!vigente()||!idAviso(id))throw Error('Este aviso precisa ser conferido no acesso original.');
-  const r=await configFresh();if(!fontesAvisosHabilitadasI165(r.config).length)throw Error('O acompanhamento está pausado. A atividade continua na origem.');
+  const r=await configFresh();if(!programacaoAtivaI165(r.config))throw Error('O acompanhamento está pausado. A atividade continua na origem.');
   if(paraNotificar&&r.config.habilidades?.push!==true)return null;
   const n=await io.lerAviso(id);if(!vigente())throw Error('O perfil mudou. Abra o aviso no acesso original.');
-  if(!avisoFisicoI165(n,id,c.papel)||n.ativacaoId!==r.config.ativacaoId||!fontesAvisosHabilitadasI165(r.config).includes(n.fonte?.colecao)||n.fonteConferida!==true||n.leituraNaoResolve!==true||n.semAlterarEstadoPersistido!==true)throw Error('Não consegui confirmar a origem atual deste aviso. A atividade continua preservada.');
+  if(!avisoHabilitadoNoFeedR87(n,id,c.papel,r.config,{ativacaoCentralId,fresco:true})||n.fonteConferida!==true||n.leituraNaoResolve!==true||n.semAlterarEstadoPersistido!==true)throw Error('Não consegui confirmar a origem atual deste aviso. A atividade continua preservada.');
   if(paraNotificar&&(n.estado!=='pendente'||n.fonteAvancou||n.pausada||n.bloqueada))return null;
   return n;
  }
  async function abrir(id){const token=++abertura,navegacao=contexto()?.navegacao;
   try{const n=await lerNota(id);if(!vigente()||token!==abertura||navegacao!==contexto()?.navegacao)return {abriu:false,contextoVigente:false};
-   const abrirFonte=n.fonte.colecao==='postagens'?abrirPostagem:abrirEditor;
+   if(n.escopo===ESCOPO_AVISOS_CENTRAL_R87&&(n.estado!=='pendente'||n.fonteAvancou||!n.link)){recado='Esta atividade já avançou na origem. Confira a fila atual; nenhuma pendência foi concluída por esta leitura.';render();return {abriu:false,fonteAvancou:true,contextoVigente:true};}
+   const abrirFonte=n.escopo===ESCOPO_AVISOS_CENTRAL_R87?abrirCentral:n.fonte.colecao==='postagens'?abrirPostagem:abrirEditor;
    if(typeof abrirFonte!=='function')throw Error('Abra a fila de conteúdos para conferir esta atividade.');
-   const resultado=await abrirFonte(n.fonte.id);if(!vigente()||token!==abertura)return {abriu:false,contextoVigente:false};
+   const resultado=await abrirFonte(n.escopo===ESCOPO_AVISOS_CENTRAL_R87?n:n.fonte.id);if(!vigente()||token!==abertura)return {abriu:false,contextoVigente:false};
    if(resultado?.abriu===false||resultado===false)throw Error('A origem mudou de etapa. Confira a fila atual.');
    recado=n.estado==='resolvida'?'Este aviso já avançou. A origem atual foi aberta.':'Conteúdo aberto. A pendência só sai quando a atividade avançar na origem.';render();
    const u=new URL(ambienteBase());if(u.searchParams.get('avisoI165')===id){u.searchParams.delete('avisoI165');ambiente.window.history.replaceState(null,'',u.href);}return {abriu:true,contextoVigente:true};

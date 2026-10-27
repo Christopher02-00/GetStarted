@@ -10,8 +10,11 @@ import{horarioI165,jsonI165}from'./lib/gs-programacao-i165.mjs';
 import{processoAtivoI164}from'./lib/gs-processo-calendarios-i164.mjs';
 import{calendarioEnviavelI164}from'./lib/elegibilidade-envio-i164.mjs';
 import{chaveEnvioI92,referenciaPublicacaoI92,validarRegistroEnvioI92}from'./lib/gs-envio-calendarios-i92.mjs';
+import{ocorrenciasReferenciasCp109}from'../referencias-cp109.mjs';
+import{ocorrenciasPlanejamentoCp109}from'../planejamento-estrategico-cp109.mjs';
+import{ocorrenciasPlanosCp109}from'../planos-acao-cp109.mjs';
 const hash=v=>crypto.createHash('sha256').update(jsonI165(v)).digest('hex');
-export const notaCentralI164=n=>!!n&&!n.escopo&&['planejamento','calendario_revisao','calendario_envio','organizacao_i167'].includes(n.origem?.tipo);
+export const notaCentralI164=n=>!!n&&!n.escopo&&['planejamento','calendario_revisao','calendario_envio','organizacao_i167','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109'].includes(n.origem?.tipo);
 export function ocorrenciasPlanejamentoI164(c,agora=new Date()){
  if(!c.incluido)return [];const agoraLocal=horarioI165(agora),estados=estadoEtapas(c),out=[];
  for(const [etapa,titulo,padrao]of ETAPAS){const a=c.agenda?.[etapa];if(a?.origemI167||a?.fonteOrganizacaoI167===true||etapa==='revisao'&&c.criacao?.base||estados[etapa]||!a?.prazo||dependencias(c,etapa).length)continue;const prazo=a.prazo+'T'+(a.prazoHora||'19:00'),falta=new Date(prazo+'-03:00').getTime()-agora.getTime();if(falta>86400000)continue;
@@ -70,6 +73,9 @@ export async function registrarOcorrenciaI165(db,o,agora=new Date()){
 }
 /* O leitor HTTP e o runner usam a mesma projeção da fonte, sem confirmar entrega por leitura. */
 export async function ocorrenciasDaFonteCentralI164(db,n,agora=new Date()){
+  if(n.origem?.tipo==='referencias_cp109')return ocorrenciasReferenciasCp109(db,n,agora);
+  if(n.origem?.tipo==='planejamento_estrategico_cp109')return ocorrenciasPlanejamentoCp109(db,n,agora);
+  if(n.origem?.tipo==='plano_acao_cp109')return ocorrenciasPlanosCp109(db,n,agora);
  if(n.origem?.tipo==='organizacao_i167'){
   const atual=await lerOcorrenciaOrganizacaoI167(db,n.origem.id,agora);
   return atual?[atual]:[];
@@ -105,8 +111,9 @@ export async function despacharOcorrenciaI165(db,id,{agora=new Date(),enviarPush
  try{
   const ativo=await db.doc(n.origem?.tipo==='organizacao_i167'?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo').get();const ligada=n.origem?.tipo==='organizacao_i167'?ativo.data()?.schema===1&&ativo.data()?.ativo===true&&ativo.data()?.habilidades?.organizacao===true:processoAtivoI164(ativo.data());if(!ligada||!await fonteAindaPendenteI165(db,n,agora)){await finalizar({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte avançou, mudou de versão ou a rotina foi desativada.'});return {resolvida:true};}
   if(n.origem?.tipo==='organizacao_i167'&&n.nivel==='aguardando'){await finalizar({conferidaEm:agora.toISOString()});return {aguardandoPrazo:true};}
-  const canais={...n.canais};for(const canal of canaisHabilitados){const a=canais[canal];if(a?.estado!=='resultado_desconhecido'||!a.tentativaId)continue;const recibo=await db.doc('transmissoes_i165/'+a.tentativaId).get(),r=recibo.data();if(r?.estado==='aceita_pelo_provedor'&&r.chave===n.id&&r.canal===canal&&r.destinatario===n.destinatario)canais[canal]={...a,estado:'aceita_pelo_provedor',aceitaEm:r.aceitaEm,recibo:r.recibo,recuperada:true};}
-  for(const [canal,enviar]of [['push',enviarPush],['email',enviarEmail]].filter(([c])=>canaisHabilitados.includes(c))){const a=canais[canal]||{estado:'pendente',tentativas:0};if(['aceita_pelo_provedor','resultado_desconhecido'].includes(a.estado)||a.proximaTentativa>agora.toISOString())continue;
+   const habilitados=n.origem?.tipo==='referencias_cp109'?[]:canaisHabilitados;
+   const canais={...n.canais};for(const canal of habilitados){const a=canais[canal];if(a?.estado!=='resultado_desconhecido'||!a.tentativaId)continue;const recibo=await db.doc('transmissoes_i165/'+a.tentativaId).get(),r=recibo.data();if(r?.estado==='aceita_pelo_provedor'&&r.chave===n.id&&r.canal===canal&&r.destinatario===n.destinatario)canais[canal]={...a,estado:'aceita_pelo_provedor',aceitaEm:r.aceitaEm,recibo:r.recibo,recuperada:true};}
+   for(const [canal,enviar]of [['push',enviarPush],['email',enviarEmail]].filter(([c])=>habilitados.includes(c))){const a=canais[canal]||{estado:'pendente',tentativas:0};if(['aceita_pelo_provedor','resultado_desconhecido'].includes(a.estado)||a.proximaTentativa>agora.toISOString())continue;
    // Fonte é relida antes de cada transmissão; nenhum cache encerra ou autoriza envio.
    if(!await fonteAindaPendenteI165(db,n,agora)){await finalizar({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'Fonte atualizada antes do envio.'});return {resolvida:true};}
    const tentativas=(a.tentativas||0)+1;
@@ -128,7 +135,11 @@ export async function sincronizarOcorrenciasI165(db,{agora=new Date(),enviarPush
   if(d.data().ativacaoId!==p.data().ativacaoId||ciclosAtuais.has(d.id)&&!d.data().preparacaoPreservadaI155)continue;
   try{for(const o of await consultarCalendarioLegadoI164(db,d.id,agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'calendario_legado',ciclo:d.id,erro:e.message});}
  }
- const pendentes=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get(),enviar=[];for(const d of pendentes.docs){const n=d.data();if(!notaCentralI164(n))continue;let pendente;try{pendente=await fonteAindaPendenteI165(db,n,agora);}catch(e){erros.push({origem:n.origem?.tipo,aviso:d.id,erro:e.message});continue;}if(!pendente){await d.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte foi conferida e avançou ou saiu da operação.'});continue;}if(canais.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString())))enviar.push(d);}enviar.sort((a,b)=>(a.data().conferidaEm||'').localeCompare(b.data().conferidaEm||''));for(let i=0;i<Math.min(limite,enviar.length);i+=5)await Promise.all(enviar.slice(i,Math.min(i+5,limite)).map(d=>despacharOcorrenciaI165(db,d.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canais}).catch(e=>erros.push({aviso:d.id,erro:e.message}))));
+  // A estratégia tem fonte própria: não fabrica ciclo I155 nem demanda para gerar o aviso.
+  const estrategias=await db.collection('planejamento_estrategico_cp109').limit(1001).get();
+  if(estrategias.size>1000)throw Error('Há mais planejamentos estratégicos que esta conferência comporta; nenhuma fonte foi truncada.');
+  for(const d of estrategias.docs)try{for(const o of await ocorrenciasPlanejamentoCp109(db,{origem:{id:d.id}},agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'planejamento_estrategico_cp109',ciclo:d.id,erro:e.message});}
+  const pendentes=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get(),enviar=[];for(const d of pendentes.docs){const n=d.data();if(!notaCentralI164(n))continue;let pendente;try{pendente=await fonteAindaPendenteI165(db,n,agora);}catch(e){erros.push({origem:n.origem?.tipo,aviso:d.id,erro:e.message});continue;}if(!pendente){await d.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte foi conferida e avançou ou saiu da operação.'});continue;}const canaisNota=n.origem?.tipo==='referencias_cp109'?[]:canais;if(canaisNota.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString())))enviar.push(d);}enviar.sort((a,b)=>(a.data().conferidaEm||'').localeCompare(b.data().conferidaEm||''));for(let i=0;i<Math.min(limite,enviar.length);i+=5)await Promise.all(enviar.slice(i,Math.min(i+5,limite)).map(d=>despacharOcorrenciaI165(db,d.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canais}).catch(e=>erros.push({aviso:d.id,erro:e.message}))));
  await db.doc('servicos_i164/notificacoes').set({estado:erros.length?'conferir_origens':'conferida',ultimaExecucao:agora.toISOString(),ocorrenciasConferidas:criadas,pendentesProcessadas:pendentes.size,erros:erros.slice(0,100),servico:'Functions · executa com o portal fechado'},{merge:true});return {ativa:true,ocorrenciasConferidas:criadas,processadas:pendentes.size,erros};
 }
 

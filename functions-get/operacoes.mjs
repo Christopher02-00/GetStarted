@@ -1,3 +1,4 @@
+import {ACOES_AJUSTES_CP112,operarAjustesCalendariosCp112} from './ajustes-calendarios-cp112.mjs';
 import {ACOES_REUNIOES_MENSAIS_CP111,operarReunioesMensaisCp111} from './reunioes-mensais-cp111.mjs';
 import {ACOES_AJUSTES_CP109,operarAjustesClientesCp109} from './ajustes-clientes-cp109.mjs';
 import {ACOES_REFERENCIAS_CP109,operarReferenciasCp109} from './referencias-cp109.mjs';
@@ -7,7 +8,7 @@ import {ACOES_SAUDE_MIDIA_I166,conferirSaudeMidiaI166} from './saude-midia-i166.
 import {lerNotaCentralTxR87} from './avisos-central-http-i164.mjs';
 import {notaCentralI164} from './central/notificacoes.mjs';
 import {validarCadastroI165} from './contexto.mjs';
-import {ACOES_EDITORIAL_I172,operarEditorialCalendariosI172} from './editorial-calendarios-i172.mjs';
+import {ACOES_EDITORIAL_I172,operarEditorialCalendariosI172,fontesTx} from './editorial-calendarios-i172.mjs';
 import {ACOES_RESIDUAL_R5_R83,operarResidualPublicacaoR5R83} from './residual-publicacao-r5-r83.mjs';
 import {ACOES_CENTRAL_HTTP_R80,operarCentralPreparacaoR80} from './central-preparacao-r80.mjs';
 import {ACOES_AVISOS_HTTP_I165,operarAvisosHttpI165} from './avisos-http-i165.mjs';
@@ -34,6 +35,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_AJUSTES_CP112.includes(dados.acao))return operarAjustesCalendariosCp112(db,auth,dados,{agora,fontesEditorialTx:fontesTx});
  if(ACOES_REUNIOES_MENSAIS_CP111.includes(dados.acao))return operarReunioesMensaisCp111(db,auth,dados,{agora});
  if(ACOES_AJUSTES_CP109.includes(dados.acao))return operarAjustesClientesCp109(db,auth,dados,{agora});
  if(ACOES_REFERENCIAS_CP109.includes(dados.acao))return operarReferenciasCp109(db,auth,dados,{agora});

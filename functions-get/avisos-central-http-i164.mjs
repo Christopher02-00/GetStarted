@@ -6,11 +6,30 @@ import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {jsonI165} from './central/lib/gs-programacao-i165.mjs';
 
 export const ESCOPO_AVISOS_CENTRAL_R87 = 'central_i164';
-export const TIPOS_AVISOS_CENTRAL_R87 = Object.freeze(['planejamento', 'calendario_revisao', 'calendario_envio']);
+export const TIPOS_AVISOS_CENTRAL_R87 = Object.freeze(['planejamento', 'calendario_revisao', 'calendario_envio', 'referencias_cp109', 'planejamento_estrategico_cp109', 'plano_acao_cp109']);
 const tipos = new Set([...TIPOS_AVISOS_CENTRAL_R87, 'organizacao_i167']);
 const id = v => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,220}$/.test(v) && !['.', '..'].includes(v);
 const exigir = (ok, mensagem) => { if (!ok) throw Object.assign(new Error(mensagem), {code: 'i164/aviso'}); };
 const texto = (v, limite) => typeof v === 'string' ? v.slice(0, limite) : '';
+function cicloCp109(v){return typeof v==='string'&&/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/.test(v);}
+function clienteCp109(v){return typeof v==='string'&&/^[a-z0-9][a-z0-9._-]{0,119}$/.test(v);}
+function novoCp109(tipo){return ['referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109'].includes(tipo);}
+function validarNotaCp109(n,papel){
+ const o=n.origem;exigir(/^[a-f0-9]{64}$/.test(n.id),'O aviso novo precisa do ID físico determinístico.');
+ if(o.tipo==='referencias_cp109'){
+  exigir(papel==='Gabrielle','O retorno das referências pertence à Gabi.');
+  if(o.subtipo==='diario'){exigir(/^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(o.dia||'')&&o.id==='diario_'+o.dia,'Confira o dia da rotina de referências.');}
+  else exigir(o.subtipo==='reprovada'&&/^decisao_[a-f0-9]{64}$/.test(o.id)&&['referencias','referencias_cliente'].includes(o.colecao)&&id(o.referenciaId)&&id(o.operacao)&&clienteCp109(o.cliente),'O retorno precisa confirmar a origem física da referência.');
+ }else if(o.tipo==='planejamento_estrategico_cp109'){
+  exigir(cicloCp109(o.id)&&['roteiros','revisao','retorno','envio'].includes(o.etapa)&&o.ativacaoId===n.ativacaoId,'A estratégia precisa confirmar o mesmo cliente, mês e ativação.');
+  exigir(papel===(o.etapa==='revisao'?'Amanda':o.etapa==='envio'?'Cecília':'Chris'),'Esta etapa estratégica pertence a outro responsável.');
+ }else exigir(cicloCp109(o.id)&&o.subtipo==='solicitacao_conteudo'&&id(o.acaoId)&&id(o.operacao)&&papel==='Amanda','Esta solicitação pertence à Amanda e à mesma ação física.');
+}
+function origemDtoCp109(n,atual){const o=n.origem,tipo=o.tipo;
+ if(tipo==='referencias_cp109')return {tipo,id:o.id,subtipo:o.subtipo,...(o.subtipo==='diario'?{dia:o.dia,competencia:o.dia.slice(0,7)}:{colecao:o.colecao,referenciaId:o.referenciaId,operacao:o.operacao,cliente:o.cliente,competencia:(atual?.link?.competencia||n.link?.competencia||'')})};
+ return {tipo,id:o.id,cliente:o.id.slice(9),competencia:o.id.slice(0,7),...(tipo==='planejamento_estrategico_cp109'?{etapa:o.etapa,ativacaoId:o.ativacaoId}:{subtipo:o.subtipo,acaoId:o.acaoId,operacao:o.operacao})};
+}
+function fonteDtoCp109(n){const o=n.origem;if(o.tipo==='referencias_cp109')return o.subtipo==='diario'?{colecao:'notificacoes_operacionais_i165',id:n.id}:{colecao:o.colecao,id:o.referenciaId};return {colecao:o.tipo==='plano_acao_cp109'?'planos_acao_cp109':'planejamento_estrategico_cp109',id:o.id};}
 
 /* Adaptador só de leitura: todas as fontes pertencem à mesma transação.
  * Cache é da requisição, nunca compartilhado por Google/perfil/revisão. */
@@ -44,6 +63,7 @@ export function validarPapelNotaCentralR87(n, papel) {
     exigir(['Chris', 'Amanda', 'Gabrielle'].includes(papel), 'Esta etapa pertence à preparação.');
     if (papel === 'Gabrielle') exigir(n.origem.etapa === 'pesquisa', 'A pesquisa não dá acesso à criação ou revisão editorial.');
   }
+  if(novoCp109(tipo))validarNotaCp109(n,papel);
   return tipo;
 }
 
@@ -77,13 +97,13 @@ export async function lerNotaCentralTxR87(db, tx, n, ator, {cfg, processo, agora
   const ocorrencias = await ocorrenciasDaFonteCentralI164(leitura || leituraCentralTxR87(db, tx), n, agora);
   const atual = ocorrencias.find(o => o.versao === n.versao && o.destinatario === n.destinatario && o.nivel === n.nivel && jsonI165(o.origem) === jsonI165(n.origem));
   const origem = atual?.origem || n.origem;
-  const fonte = {colecao: organizacao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
+  const fonte = novoCp109(tipo)?fonteDtoCp109(n):{colecao: organizacao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
   const prazo = atual?.prazo || n.prazo || '';
   const prazoIso = prazo && Number.isFinite(Date.parse(prazo + '-03:00')) ? new Date(prazo + '-03:00').toISOString() : null;
   return {
     schema: 1, id: n.id, escopo: ESCOPO_AVISOS_CENTRAL_R87, destinatario: n.destinatario,
     ativacaoId: n.ativacaoId, tipo, fonte,
-    origem: {tipo, id: origem.id, ...(origem.etapa ? {etapa: origem.etapa} : {}), ...(origem.cliente ? {cliente: origem.cliente, competencia: origem.competencia} : {}), ...(origem.origemEditorial ? {origemEditorial: origem.origemEditorial} : {})},
+    origem: novoCp109(tipo)?origemDtoCp109(n,atual):{tipo, id: origem.id, ...(origem.etapa ? {etapa: origem.etapa} : {}), ...(origem.cliente ? {cliente: origem.cliente, competencia: origem.competencia} : {}), ...(origem.origemEditorial ? {origemEditorial: origem.origemEditorial} : {})},
     versao: n.versao, estado: atual ? 'pendente' : 'resolvida', estadoPersistido: n.estado,
     titulo: texto(atual?.titulo || n.titulo, 240), texto: texto(atual?.texto || n.texto, 1600),
     link: atual ? {...atual.link} : null, bloqueada: false, pausada: false,

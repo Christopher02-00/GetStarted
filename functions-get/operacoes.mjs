@@ -1,3 +1,7 @@
+import {ACOES_AJUSTES_CP109,operarAjustesClientesCp109} from './ajustes-clientes-cp109.mjs';
+import {ACOES_REFERENCIAS_CP109,operarReferenciasCp109} from './referencias-cp109.mjs';
+import {ACOES_PLANEJAMENTO_CP109,operarPlanejamentoEstrategicoCp109} from './planejamento-estrategico-cp109.mjs';
+import {ACOES_PLANOS_CP109,operarPlanosCp109} from './planos-acao-cp109.mjs';
 import {ACOES_SAUDE_MIDIA_I166,conferirSaudeMidiaI166} from './saude-midia-i166.mjs';
 import {lerNotaCentralTxR87} from './avisos-central-http-i164.mjs';
 import {notaCentralI164} from './central/notificacoes.mjs';
@@ -29,6 +33,10 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_AJUSTES_CP109.includes(dados.acao))return operarAjustesClientesCp109(db,auth,dados,{agora});
+ if(ACOES_REFERENCIAS_CP109.includes(dados.acao))return operarReferenciasCp109(db,auth,dados,{agora});
+ if(ACOES_PLANEJAMENTO_CP109.includes(dados.acao))return operarPlanejamentoEstrategicoCp109(db,auth,dados,{agora});
+ if(ACOES_PLANOS_CP109.includes(dados.acao))return operarPlanosCp109(db,auth,dados,{agora});
  if(ACOES_SAUDE_MIDIA_I166.includes(dados.acao))return conferirSaudeMidiaI166(db,auth,dados,{agora});
  if(ACOES_EDITORIAL_I172.includes(dados.acao))return operarEditorialCalendariosI172(db,auth,dados,{agora});
  if(ACOES_CENTRAL_HTTP_R80.includes(dados.acao))return operarCentralPreparacaoR80(db,auth,dados,{agora});

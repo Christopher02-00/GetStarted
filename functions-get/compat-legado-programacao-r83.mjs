@@ -45,6 +45,7 @@ export function resolverCompatLegadoProgramacaoI165({cfg,post,video=null,postCre
 export const compatLegadoConfirmadaI165=f=>!f?.diretriz&&f?.legadoProgramacao?.schema===1&&f.legadoProgramacao.autorizada===true;
 export function validarAcaoFonteProgramacaoI165(f,acao,ator){
  if(f.diretriz)return validarOperacaoProgramacaoI165(f.diretriz,acao);
+ exigirI165(acao.acao!=='agendar','orientacao-amanda-obrigatoria','A Amanda precisa definir a orientação antes de um novo agendamento, inclusive para conteúdos anteriores.');
  exigirI165(compatLegadoConfirmadaI165(f),'diretriz','A orientação precisa ser definida para este conteúdo novo.');
  exigirI165(['agendar','desfazer','publicar','cancelar'].includes(acao.acao)&&['geral',...REDES_I165].includes(acao.rede||'geral'),'acao','Confira esta ação e a plataforma.');
  if(acao.acao==='agendar')exigirI165(dataCivilI165(acao.data)&&horaCivilI165(acao.hora),'agenda','Confira a data e o horário de Brasília.');
@@ -70,9 +71,11 @@ export function obrigacoesLegadoProgramacaoI165(f,cfg,agora){
  if(pendente)add('preparar_legenda',responsavelLegendaI165({processoEditorial:f.processoEditorial}));
  const s=p.publicacaoStokki,redes=s?.versao===1?s.selecionadas:['geral'];
  exigirI165(Array.isArray(redes)&&redes.length>0&&redes.length<=4&&new Set(redes).size===redes.length&&redes.every(r=>r==='geral'||REDES_I165.includes(r)),'redes','Confira as plataformas da postagem anterior.');
+ let precisaOrientacao=false;
  for(const rede of redes){const r=rede==='geral'?{data:p.dataAgendada,hora:p.horaAgendada,publicadaEm:p.status==='postado'?p.postadoEm:'',retirada:false}:s.redes?.[rede];exigirI165(r&&typeof r==='object','rede-ausente','Uma plataforma anterior precisa de conferência.');if(r.retirada||r.publicadaEm)continue;
   if(dataCivilI165(r.data)&&horaCivilI165(r.hora))add('confirmar_publicacao','Cecília',{rede,prazo:r.data+'T'+r.hora});
-  else add('programar','Cecília',{rede,bloqueada:pendente&&!cfg.permitirAgendarSemLegendaI90});
+  else {precisaOrientacao=true;add('programar','Cecília',{rede,bloqueada:true,motivoBloqueio:'aguardando_orientacao_Amanda'});}
  }
+ if(precisaOrientacao)add('definir_compromisso','Amanda',{legadoSemDiretriz:true,motivoBloqueio:'novo_agendamento_exige_orientacao_Amanda'});
  return res;
 }

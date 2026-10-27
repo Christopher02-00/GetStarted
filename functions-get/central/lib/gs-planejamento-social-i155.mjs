@@ -3,6 +3,7 @@ import {candidatasAgendaI167,selecionarFonteAgendaI167,proporVinculoAgendaI167,c
 import {retratoInfoClienteI164,mesmaInfoClienteI164} from './gs-contexto-cliente-i164.mjs';
 import {validarRecorrenciaI164} from './gs-processo-calendarios-i164.mjs';
 import {criarArquivosPlanejamento,prepararArquivo} from './gs-arquivos-planejamento-i164.mjs';
+import {ACOES_CORRECAO_I155_CP111,SITUACOES_REUNIAO_CP111,desconsideracaoI155Cp111,documentoEfetivoI155Cp111,materiaisEfetivosI155Cp111,estadoEtapasI155Cp111,validadeBaseI155Cp111,situacaoReuniaoI155Cp111,estadoTriagemI155Cp111,assinaturaTriagemI155Cp111,assinaturaPedidoCorrecaoI155Cp111} from './gs-transicao-insumos-cp111.mjs';
 export const COLECAO = 'planejamento_social_i155';
 import {PESQUISA_RESPONSAVEL_R81,PAPEL_PESQUISA_ANTERIOR_R81,PAPEIS_PLANEJAMENTO_R81,atribuicaoAnteriorPreservadaR81} from './gs-papeis-planejamento-r81.mjs';
 export {pesquisaAnteriorPendenteR81,responsavelOperacionalPlanejamentoR81} from './gs-papeis-planejamento-r81.mjs';
@@ -22,7 +23,7 @@ export function empresaMaterial(cliente,valor=''){if(!valor)return '';if(cliente
 export function tituloDocumento(t){return {previa:'Prévia para a reunião',reuniao:'Retorno da reunião',consolidado:'Base para criar o calendário',diagnostico:'Resultados e contexto',campanha:'Campanhas e datas importantes',referencias:'Documento de referências'}[t]||t;}
 export const tipoMaterial = t => ['campanha','referencias','diagnostico'].includes(t);
 export const chaveMaterial = (t,e='') => tipoMaterial(t)?t+'__'+(e||'geral'):t;
-export const materiaisVigentes = c => c.documentos?.materiais||{};
+export const materiaisVigentes = materiaisEfetivosI155Cp111;
 const mesmosMateriais = (a,b) => JSON.stringify(Object.entries(a||{}).sort())===JSON.stringify(Object.entries(b||{}).sort());
 const GESTAO = ['Chris','Amanda'];
 const clone = v => JSON.parse(JSON.stringify(v));
@@ -48,18 +49,11 @@ export function fonteReferencia(link,origem='',id=''){
 export function contadores(refs,ciclo){
   const unicas=new Set();let incompletas=0,duplicadas=0;
   for(const r of refs){if(!r.link||!r.ideia||!r.autorPerfil){incompletas++;continue;}if(unicas.has(r.fonte)){duplicadas++;continue;}unicas.add(r.fonte);}
-  return {recebidas:unicas.size,entregues:ciclo?.lote?.contagem||0,incompletas,duplicadas,ativas:refs.filter(r=>!r.excluido).length,triadas:refs.filter(r=>r.filtro).length,selecionadas:refs.filter(r=>!r.excluido&&r.selecionada).length,usadas:refs.filter(r=>(r.usos||[]).length).length,excluidas:refs.filter(r=>r.excluido).length};
+  return {recebidas:unicas.size,entregues:ciclo?.lote?.contagem||0,incompletas,duplicadas,ativas:refs.filter(r=>!r.excluido).length,triadas:refs.filter(r=>!r.excluido&&estadoTriagemI155Cp111(r)==='analisada').length,pendentesTriagem:refs.filter(r=>!r.excluido&&estadoTriagemI155Cp111(r)!=='analisada').length,recebidasAtivas:new Set(refs.filter(r=>!r.excluido&&r.link&&r.ideia&&r.autorPerfil).map(r=>r.fonte)).size,selecionadas:refs.filter(r=>!r.excluido&&r.selecionada).length,usadas:refs.filter(r=>(r.usos||[]).length).length,excluidas:refs.filter(r=>r.excluido).length};
 }
 export function novaAgenda(){return Object.fromEntries(ETAPAS.map(([id,,pessoa])=>[id,{inicio:'',prazo:'',prazoHora:'19:00',responsavel:pessoa,prioridade:'normal',fixo:false,excecao:''}]));}
 export function novoCiclo(cliente,nome,mes){return {schema:1,cliente,clienteNome:nome,competencia:mes,criadoEm:new Date().toISOString(),incluido:true,contexto:'',pendencias:'',premium:'nao_premium',primeiroCiclo:false,agenda:novaAgenda(),documentos:{},lote:null,criacao:null,entrega:null,publicacaoAtual:null,revisao:0};}
-export function estadoEtapas(c){
-  const d=c.documentos||{},pesquisa=!!c.lote,previa=pesquisa&&!!d.previa&&d.previaLote===c.lote.versao;
-  const reuniao=previa&&!!d.reuniao&&d.reuniaoBasePrevia===d.previa;
-  const consolidado=reuniao&&!!d.consolidadoEnviado&&d.consolidadoEnviado===d.consolidado&&d.enviadoReuniao===d.reuniao&&d.enviadoCampanha===(d.campanha||'')&&mesmosMateriais(d.enviadoMateriais,d.materiais);
-  const criacao=consolidado&&!!c.criacao?.enviadoRevisao&&c.criacao.base===d.consolidadoEnviado;
-  const revisao=criacao&&!!c.publicacaoAtual&&c.publicacaoAtual.base===d.consolidadoEnviado;
-  return {pesquisa,previa,reuniao,consolidado,criacao,revisao,disponivel:revisao};
-}
+export function estadoEtapas(c){return estadoEtapasI155Cp111(c);}
 /* Projeção de leitura: não reabre demandas nem modifica a primeira entrega. */
 export function situacaoCalendarioI164(c,cal,erro=''){
  const base=c.criacao?.base,mes=c.competencia;
@@ -90,9 +84,10 @@ export function pacoteCriacao(c,registros){
   const ids=new Set([base.id,base.baseReuniao,base.basePrevia,base.baseCampanha,...Object.values(base.baseMateriais||{}),...(base.documentosVinculados||[])] .filter(Boolean));
   const documentos=registros.filter(x=>x.tipo==='documento'&&ids.has(x.id));
   const referencias=(base.referencias||[]).map(x=>({...x,empresaOtavio:x.empresaOtavio||''}));
-  return {schema:1,ciclo:idCiclo(c.cliente,c.competencia),cliente:c.cliente,clienteNome:c.clienteNome,competencia:c.competencia,revisao:c.revisao,baseId:base.id,baseVersao:base.versao,enviadoEm:c.documentos.enviadoEm,enviadoPor:c.documentos.enviadoPor,empresa:'cada material conserva sua empresa; Geral é explícito',infoCliente:base.infoCliente,documentos,referencias,agenda:c.agenda,contexto:c.contexto,pendencias:base.pendencias||'',novaBasePendente:!estadoEtapas(c).consolidado,uso:'INTERNO. Criar no editor oficial como Chris; Amanda aprova antes do cliente e da Cecília.'};
+  const validade=validadeBaseI155Cp111(c);
+  return {validade,schema:1,ciclo:idCiclo(c.cliente,c.competencia),cliente:c.cliente,clienteNome:c.clienteNome,competencia:c.competencia,revisao:c.revisao,baseId:base.id,baseVersao:base.versao,enviadoEm:c.documentos.enviadoEm,enviadoPor:c.documentos.enviadoPor,empresa:'cada material conserva sua empresa; Geral é explícito',infoCliente:base.infoCliente,documentos,referencias,agenda:c.agenda,contexto:c.contexto,pendencias:base.pendencias||'',novaBasePendente:!validade.valida,uso:validade.valida?'INTERNO. Criação pelo editor oficial; liberação ao cliente permanece explícita.':'HISTÓRICO INVÁLIDO PARA CRIAÇÃO ATUAL. Somente consulta; não autoriza conteúdo, confirmação ou envio.'};
 }
-export function textoPacoteCriacao(c,registros){const p=pacoteCriacao(c,registros);return 'BASE ENVIADA PELA AMANDA — '+p.clienteNome+' / '+p.competencia+'\n'+JSON.stringify(p,null,2)+'\n\nVERSÕES ANTERIORES E REFERÊNCIAS DESCARTADAS NÃO SÃO INSTRUÇÕES DE CRIAÇÃO.';}
+export function textoPacoteCriacao(c,registros){const p=pacoteCriacao(c,registros);return (p.validade.valida?'BASE VIGENTE ENVIADA — ':'HISTÓRICO · BASE INVÁLIDA PARA CRIAÇÃO — ')+p.clienteNome+' / '+p.competencia+'\n'+JSON.stringify(p,null,2)+'\n\nVERSÕES ANTERIORES E REFERÊNCIAS DESCARTADAS NÃO SÃO INSTRUÇÕES DE CRIAÇÃO.';}
 export function dependencias(c,etapa){
   const e=estadoEtapas(c),i=ETAPAS.findIndex(x=>x[0]===etapa);
   if(i<1)return [];
@@ -150,7 +145,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
     const ref=refCiclo(id),er=evRef(id,operacao);let resultado;
     try{await runTransaction(db,async tx=>{
       const [s,ev]=await Promise.all([tx.get(ref),tx.get(er)]);mesmaSessao(ctx);
-      if(ev.exists()){if(ev.data().autorUid!==ctx.uid||ev.data().acao!==acao)throw Error('Recibo incompatível.');resultado=ev.data().resultado;return;}
+      if(ev.exists()){if(ev.data().autorUid!==ctx.uid||ev.data().acao!==acao)throw Error('Recibo incompatível.');if(ACOES_CORRECAO_I155_CP111.includes(acao)&&assinaturaPedidoCorrecaoI155Cp111(ev.data().resultado?.pedidoCorrecao)!==assinaturaPedidoCorrecaoI155Cp111(dados))throw Error('A mesma operação pertence a outra correção.');resultado=ev.data().resultado;return;}
       let c=s.exists()?validarCiclo({...s.data()},id):null;
       if(!c&&acao!=='incluir')throw Error('Abra um ciclo existente.');
       if(c&&c.revisao!==esperada&&acao!=='excluir_lote')throw Error('O ciclo mudou em outra tela. Seus campos foram preservados. Confira a versão atual.');
@@ -170,6 +165,21 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         if(!['nao_premium','primeiro_indisponivel','aguardando_dados','parcial','concluido'].includes(dados.premium))throw Error('Estado de diagnóstico inválido.');
         c.premium=dados.premium;c.primeiroCiclo=!!dados.primeiroCiclo;
         if(c.premium==='primeiro_indisponivel'&&!c.primeiroCiclo)throw Error('A exceção Reportei é do primeiro ciclo. Nos seguintes registre aguardando dados ou parcial.');
+      }else if(acao==='desconsiderar_confirmacao'){
+        exigirPapel(ctx,['Amanda']);const tipo=String(dados.finalidade||''),rid=String(dados.id||''),motivo=strings(dados.motivo,2000);
+        if(!TIPOS_DOCUMENTO.includes(tipo)||!rid||!motivo)throw Error('Escolha a confirmação exata e registre o motivo da correção.');
+        const ds=await tx.get(regRef(id,rid)),d=ds.data();if(!ds.exists()||d.tipo!=='documento'||d.finalidade!==tipo||d.cliente!==c.cliente||d.competencia!==c.competencia)throw Error('A confirmação não pertence ao documento deste cliente e mês.');
+        const atual=tipoMaterial(tipo)?Object.values(c.documentos.materiais||{}).includes(rid):tipo==='consolidado'?[c.documentos.consolidado,c.documentos.consolidadoEnviado].includes(rid):c.documentos[tipo]===rid;
+        if(!atual||desconsideracaoI155Cp111(c,rid))throw Error('A confirmação atual mudou ou já foi desconsiderada. O histórico foi mantido.');
+        c.documentos.desconsideracoesCp111={...(c.documentos.desconsideracoesCp111||{}),[rid]:{id:rid,finalidade:tipo,motivo,por:ctx.atorReal,perfil:ctx.nome,autorUid:ctx.uid,em:new Date().toISOString(),operacao}};
+        resultado={id:rid,desconsiderada:true,rascunhoConfirmado:false,pedidoCorrecao:clone(dados)};
+      }else if(acao==='registrar_insumos_transicao'){
+        exigirPapel(ctx,[PESQUISA_RESPONSAVEL_R81,'Chris','Amanda']);const ids=[...new Set(dados.ids||[])],motivo=strings(dados.motivo,2000),origem=String(dados.documentoOrigemId||'');
+        if(!ids.length||ids.length>12||ids.length!==(dados.ids||[]).length||!motivo)throw Error('Registre de 1 a 12 insumos originais únicos e o motivo da transição. Não complete uma quota.');
+        const snaps=await Promise.all(ids.map(r=>tx.get(regRef(id,r)))),refs=snaps.map(s=>s.data());if(snaps.some(s=>!s.exists())||refs.some(r=>r.tipo!=='referencia'||r.excluido||r.cliente!==c.cliente||r.competencia!==c.competencia||!r.link||!r.ideia||!r.autorPerfil)||new Set(refs.map(r=>r.fonte)).size!==ids.length)throw Error('Confira os insumos ativos, completos e únicos deste cliente e mês.');
+        if(origem){const source=await tx.get(regRef(id,origem));if(!source.exists()||source.data().tipo!=='documento'||source.data().finalidade!=='referencias'||source.data().cliente!==c.cliente||source.data().competencia!==c.competencia)throw Error('Escolha o documento de referências do mesmo ciclo.');}
+        c.documentos.insumosTransicaoCp111={ativa:true,ids,quantidade:ids.length,documentoOrigemId:origem,motivo,por:ctx.atorReal,perfil:ctx.nome,autorUid:ctx.uid,em:new Date().toISOString(),operacao};
+        resultado={insumosRegistrados:ids.length,pesquisaConcluida:false,loteRegularPreservado:true,pedidoCorrecao:clone(dados)};
       }else if(acao==='referencia'){
         const r=dados.referencia,rid=String(r.id||operacao),sr=await tx.get(regRef(id,rid));let velho=sr.exists()?sr.data():null;
         if(velho&&velho.tipo!=='referencia')throw Error('Registro incompatível.');
@@ -180,12 +190,13 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         const fonte=fonteReferencia(r.link,r.origemColecao,r.origemId);
         const nova={...(velho||{}),empresaOtavio:empresaMaterial(c.cliente,r.empresaOtavio||''),tipo:'referencia',cliente:c.cliente,competencia:c.competencia,link:strings(r.link,2000),fonte,autorPerfil:strings(r.autorPerfil,500),ideia:strings(r.ideia,3000),motivo:strings(r.motivo,3000),adaptacao:strings(r.adaptacao,3000),postadoEm:r.postadoEm||'',consultadoEm:r.consultadoEm||new Date().toISOString(),metricas:strings(r.metricas,4000),comentarios:strings(r.comentarios,4000),origemColecao:r.origemColecao||'',origemId:r.origemId||'',filtro:strings(r.filtro,10000),selecionada:!!r.selecionada,parecerAmanda:strings(r.parecerAmanda,4000),excluido:velho?.excluido||false,usos:velho?.usos||[],autorUid:velho?.autorUid||ctx.uid,autorNome:velho?.autorNome||ctx.atorReal,criadoEm:velho?.criadoEm||new Date().toISOString()};
         if(ctx.nome===PESQUISA_RESPONSAVEL_R81&&(nova.filtro!==(velho?.filtro||'')||nova.selecionada!==(velho?.selecionada||false)||nova.parecerAmanda!==(velho?.parecerAmanda||'')))throw Error('Entregue as candidatas. A seleção e a revisão têm seus próprios responsáveis.');
+        const triagem=r.estadoTriagemCp111||velho?.estadoTriagemCp111||'pendente';if(!['pendente','analisada'].includes(triagem))throw Error('Escolha triagem pendente ou análise realizada.');if(ctx.nome===PESQUISA_RESPONSAVEL_R81&&triagem!==(velho?.estadoTriagemCp111||'pendente'))throw Error('A triagem pertence à gestão.');if(triagem==='analisada'&&GESTAO.includes(ctx.nome)){if(!nova.filtro.trim())throw Error('Registre a análise antes de declará-la realizada.');nova.triagemCp111={estado:triagem,assinatura:assinaturaTriagemI155Cp111(nova),autorUid:ctx.uid,por:ctx.atorReal,perfil:ctx.nome,em:new Date().toISOString()};}nova.estadoTriagemCp111=triagem;
         gravarRegistros.push([rid,nova]);resultado={id:rid};
       }else if(acao==='entregar_lote'){
         exigirPapel(ctx,[PESQUISA_RESPONSAVEL_R81,'Chris']);const ids=[...new Set(dados.ids||[])];if(ids.length!==12)throw Error('Entregue 12 candidatas completas e únicas neste recibo.');
         const regs=await Promise.all(ids.map(r=>tx.get(regRef(id,r))));const refs=regs.map(s=>s.exists()?s.data():null);
         if(refs.some(r=>!r||r.tipo!=='referencia'||r.excluido||!r.ideia||!r.autorPerfil)||new Set(refs.map(r=>r.fonte)).size!==refs.length)throw Error('Há referência incompleta, duplicada ou retirada. Confira o lote.');
-        c.lote={ids,contagem:ids.length,identidades:refs.map(r=>r.fonte),versao:(c.lote?.versao||0)+1,em:new Date().toISOString(),por:ctx.atorReal,autorUid:ctx.uid,fontes:refs.map((r,i)=>({id:ids[i],fonte:r.fonte,link:r.link,autorPerfil:r.autorPerfil,ideia:r.ideia,empresaOtavio:r.empresaOtavio||'',autorUid:r.autorUid,autorNome:r.autorNome}))};
+        if(c.documentos.insumosTransicaoCp111?.ativa)c.documentos.insumosTransicaoCp111={...c.documentos.insumosTransicaoCp111,ativa:false,encerradaPorLote:operacao};c.lote={ids,contagem:ids.length,identidades:refs.map(r=>r.fonte),versao:(c.lote?.versao||0)+1,em:new Date().toISOString(),por:ctx.atorReal,autorUid:ctx.uid,fontes:refs.map((r,i)=>({id:ids[i],fonte:r.fonte,link:r.link,autorPerfil:r.autorPerfil,ideia:r.ideia,empresaOtavio:r.empresaOtavio||'',autorUid:r.autorUid,autorNome:r.autorNome}))};
         for(let i=0;i<2;i++){const rid=c.lote.versao+'__'+i,ref=doc(db,COLECAO,id,'lotes',rid),s=await tx.get(ref);if(s.exists())throw Error('Este recibo de lote já existe. Confira a versão atual.');partesLote.push([ref,{ids:ids.slice(i*6,i*6+6),fontes:c.lote.fontes.slice(i*6,i*6+6),identidades:c.lote.identidades.slice(i*6,i*6+6),versao:c.lote.versao,parte:i,cliente:c.cliente,competencia:c.competencia,autorUid:ctx.uid,operacao,em:serverTimestamp()}]);}
       }else if(['excluir_referencia','restaurar_referencia','excluir_lote'].includes(acao)){
         const ids=[...new Set(dados.ids||[])];if(!ids.length||ids.length>40)throw Error('Escolha até 40 referências do ciclo.');
@@ -194,9 +205,10 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
           gravarRegistros.push([ids[i],{...r,excluido:acao!=='restaurar_referencia',...(acao==='restaurar_referencia'?{selecionada:false,parecerAmanda:'',restauradoEm:new Date().toISOString()}:{excluidoEm:new Date().toISOString()})}]);quantidade++;});resultado={quantidade,preservadas};
       }else if(acao==='documento'){
         const d=dados.documento,tipo=d.finalidade;if(!TIPOS_DOCUMENTO.includes(tipo))throw Error('Finalidade inválida.');
-        if(ctx.nome===PESQUISA_RESPONSAVEL_R81&&!['reuniao','referencias'].includes(tipo))throw Error('Esta versão é preparada pelo operador ou pela gestão.');
-        if(tipo==='previa'&&(!c.lote||!c.contexto.trim()))throw Error('Antes da prévia: entregue as 12 referências e preencha o direcionamento deste mês em Etapas → Contexto. A ficha permanente do cliente continua em Informações do cliente.');
-        if(tipo==='reuniao'&&!estadoEtapas(c).previa)throw Error('Vincule a prévia apresentada antes de registrar a reunião.');
+        if(ctx.nome===PESQUISA_RESPONSAVEL_R81&&tipo!=='referencias')throw Error('Esta versão é preparada pelo operador ou pela gestão.');
+        const situacaoReuniao=tipo==='reuniao'?(d.situacaoReuniaoCp111||'normal'):'normal',motivoTransicao=tipo==='reuniao'?strings(d.motivoTransicaoCp111,2000):'';if(!SITUACOES_REUNIAO_CP111.includes(situacaoReuniao)||situacaoReuniao!=='normal'&&!motivoTransicao)throw Error('Escolha a situação real e explique a transição sem inventar uma prévia.');
+        if(tipo==='previa'&&(!estadoEtapas(c).pesquisa||!c.contexto.trim()))throw Error('Antes da prévia: entregue as 12 referências e preencha o direcionamento deste mês em Etapas → Contexto. A ficha permanente do cliente continua em Informações do cliente.');
+        if(tipo==='reuniao'&&situacaoReuniao==='normal'&&!estadoEtapas(c).previa)throw Error('Vincule a prévia apresentada antes de registrar a reunião.');
         if(tipo==='consolidado'&&!estadoEtapas(c).reuniao)throw Error('Registre o retorno da reunião antes de consolidar.');
         const infoSnap=await tx.get(doc(db,'info_extras_cliente',c.cliente)),infoCliente=retratoInfoClienteI164(infoSnap.exists(),infoSnap.data());
         const arquivoId=String(d.arquivoId||''),arq=arquivoId?await tx.get(doc(db,COLECAO,id,'arquivos',arquivoId)):null;
@@ -205,18 +217,18 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         const empresaOtavio=empresaMaterial(c.cliente,d.empresaOtavio||'');if(empresaOtavio&&!tipoMaterial(tipo))throw Error('Prévia, reunião e base de criação reúnem todas as empresas do cliente. Separe a empresa nos materiais, nas referências e nos conteúdos.');const chave=chaveMaterial(tipo,empresaOtavio);
         const datasCampanha=(d.datasCampanha||[]).map(x=>({titulo:strings(x.titulo,200),data:x.data,hora:x.hora||'12:00',programarAte:x.programarAte||x.data,empresaOtavio:empresaMaterial(c.cliente,x.empresaOtavio||empresaOtavio)}));
         if(datasCampanha.length>100||datasCampanha.some(x=>!x.titulo||!diaValido(x.data)||!diaValido(x.programarAte)||x.programarAte>x.data||!/^([01]\d|2[0-3]):[0-5]\d$/.test(x.hora)))throw Error('Confira a data da campanha, o horário e o prazo para programar.');
-        const selecionadas=[...new Set(d.idsReferencias||[])];if(selecionadas.length>12)throw Error('Use até 12 referências candidatas por versão. Ideias autorais podem ser registradas no texto.');const rs=await Promise.all(selecionadas.map(r=>tx.get(regRef(id,r))));
+        const selecionadas=[...new Set(d.idsReferencias||[])];if(tipo==='reuniao'&&situacaoReuniao!=='normal'&&(selecionadas.length||(d.decisoes||[]).length))throw Error('O registro factual não declara apresentação ou decisão de referências de uma prévia.');if(selecionadas.length>12)throw Error('Use até 12 referências candidatas por versão. Ideias autorais podem ser registradas no texto.');const rs=await Promise.all(selecionadas.map(r=>tx.get(regRef(id,r))));
         if(rs.some(r=>!r.exists()||r.data().tipo!=='referencia'||r.data().excluido||!r.data().selecionada))throw Error('Seleção alterada. Confira as referências antes de salvar.');
         const anteriorId=c.documentos.rascunhos?.[chave]||(tipoMaterial(tipo)?c.documentos.materiais?.[chave]:c.documentos[tipo])||'',ant=anteriorId?await tx.get(regRef(id,anteriorId)):null;
-        const reuniaoConsolidado=tipo==='consolidado'?await tx.get(regRef(id,c.documentos.reuniao)):null;
-        const previaId=tipo==='reuniao'?String(d.previaApresentada||''):tipo==='consolidado'?reuniaoConsolidado.data()?.basePrevia||'':'';
+        const reuniaoConsolidado=tipo==='consolidado'?await tx.get(regRef(id,documentoEfetivoI155Cp111(c,'reuniao'))):null;
+        const previaCandidata=tipo==='reuniao'&&situacaoReuniao==='normal'?String(d.previaApresentada||''):tipo==='consolidado'&&(reuniaoConsolidado.data()?.situacaoReuniaoCp111||'normal')==='normal'?reuniaoConsolidado.data()?.basePrevia||'':'',previaId=previaCandidata&&!desconsideracaoI155Cp111(c,previaCandidata)?previaCandidata:'';
         const previo=previaId?await tx.get(regRef(id,previaId)):null;
-        if(tipo==='reuniao'&&(!previo?.exists()||previo.data().finalidade!=='previa'))throw Error('Escolha a versão da prévia efetivamente apresentada.');
+        if(tipo==='reuniao'&&situacaoReuniao==='normal'&&(!previo?.exists()||previo.data().finalidade!=='previa'))throw Error('Escolha a versão da prévia efetivamente apresentada.');
         const rid='doc_'+tipo+'_'+operacao;
-        const novo={infoCliente,chaveMaterial:chave,baseMateriais:clone(materiaisVigentes(c)),documentosVinculados:Object.values(materiaisVigentes(c)),empresaOtavio,arquivoId,arquivo:arq?.exists()?{id:arquivoId,nome:arq.data().nome,sha256:arq.data().sha256,bytes:arq.data().bytes,tipo:arq.data().tipo}:null,datasCampanha,baseCampanha:c.documentos.campanha||'',baseLote:c.lote?.versao||0,tipo:'documento',cliente:c.cliente,competencia:c.competencia,finalidade:tipo,versao:(ant?.data()?.versao||0)+1,texto,fonte:strings(d.fonte,2000)||'Texto registrado no sistema',link:strings(d.link,2000),destinatario:'interno',basePrevia:previaId,basePreviaTexto:previo?.data()?.texto||'',baseAnterior:anteriorId,decisoes:clone(d.decisoes||[]),referencias:rs.map(s=>({id:s.id,...Object.fromEntries(['fonte','link','autorPerfil','ideia','motivo','adaptacao','filtro','parecerAmanda','autorUid','autorNome','metricas','consultadoEm','empresaOtavio'].filter(k=>s.data()[k]!==undefined).map(k=>[k,s.data()[k]]))})),pendencias:strings(d.pendencias,10000),autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,criadoEm:new Date().toISOString()};
+        const novo={...(tipo==='reuniao'?{situacaoReuniaoCp111:situacaoReuniao,motivoTransicaoCp111:motivoTransicao}:{}),infoCliente,chaveMaterial:chave,baseMateriais:clone(materiaisVigentes(c)),documentosVinculados:Object.values(materiaisVigentes(c)),empresaOtavio,arquivoId,arquivo:arq?.exists()?{id:arquivoId,nome:arq.data().nome,sha256:arq.data().sha256,bytes:arq.data().bytes,tipo:arq.data().tipo}:null,datasCampanha,baseCampanha:documentoEfetivoI155Cp111(c,'campanha'),baseLote:c.lote?.versao||0,tipo:'documento',cliente:c.cliente,competencia:c.competencia,finalidade:tipo,versao:(ant?.data()?.versao||0)+1,texto,fonte:strings(d.fonte,2000)||'Texto registrado no sistema',link:strings(d.link,2000),destinatario:'interno',basePrevia:previaId,basePreviaTexto:previo?.data()?.texto||'',baseAnterior:anteriorId,decisoes:clone(d.decisoes||[]),referencias:rs.map(s=>({id:s.id,...Object.fromEntries(['fonte','link','autorPerfil','ideia','motivo','adaptacao','filtro','parecerAmanda','autorUid','autorNome','metricas','consultadoEm','empresaOtavio'].filter(k=>s.data()[k]!==undefined).map(k=>[k,s.data()[k]]))})),pendencias:strings(d.pendencias,10000),autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,criadoEm:new Date().toISOString()};
         if(novo.link&&!/^https:\/\//.test(novo.link))throw Error('O link de origem precisa ser https.');
         if(tipo==='consolidado'){
-          const reuniao=reuniaoConsolidado;novo.baseReuniao=c.documentos.reuniao;novo.decisoesReuniao=clone(reuniao.data()?.decisoes||[]);
+          const reuniao=reuniaoConsolidado;novo.baseReuniao=documentoEfetivoI155Cp111(c,'reuniao');novo.decisoesReuniao=clone(reuniao.data()?.decisoes||[]);
           if(novo.referencias.some(r=>novo.decisoesReuniao.some(d=>d.referencia===r.id&&d.estado==='recusado')))throw Error('Há uma referência recusada na reunião. Retire-a da seleção do consolidado.');
         }
         gravarRegistros.push([rid,novo]);rs.forEach(s=>gravarRegistros.push([s.id,{...s.data(),usos:[...new Set([...(s.data().usos||[]),rid])]}]));c.documentos.rascunhos={...(c.documentos.rascunhos||{}),[chave]:rid};c.documentos.ultimaEdicao=rid;resultado={id:rid,rascunho:true};
@@ -226,18 +238,19 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         exigirPapel(ctx,tipo==='previa'?['Chris']:tipo==='reuniao'||tipo==='campanha'?['Amanda']:tipo==='referencias'?[PESQUISA_RESPONSAVEL_R81,'Chris']:['Chris','Amanda']);
         const ds=await tx.get(regRef(id,rid)),d=ds.data(),chave=d?.chaveMaterial||chaveMaterial(tipo,d?.empresaOtavio||'');
         if(!ds.exists()||d.tipo!=='documento'||d.finalidade!==tipo||c.documentos.rascunhos?.[chave]!==rid)throw Error('A versão em revisão mudou. Abra e confira o documento atual.');
-        if(tipo==='previa'&&d.baseLote!==c.lote?.versao)throw Error('Chegou um lote novo. Atualize a prévia antes de confirmar.');
-        if(tipo==='reuniao'&&(!estadoEtapas(c).previa||d.basePrevia!==c.documentos.previa))throw Error('Confirme o retorno sobre a prévia apresentada e vigente.');
-        if(tipoMaterial(tipo)){c.documentos.materiais={...(c.documentos.materiais||{}),[chave]:rid};c.documentos.materiaisRevisao=(c.documentos.materiaisRevisao||0)+1;c.documentos.ultimaConfirmacao=chave;}else c.documentos[tipo]=rid;if(tipo==='previa')c.documentos.previaLote=d.baseLote;if(tipo==='reuniao')c.documentos.reuniaoBasePrevia=d.basePrevia;
+        if(tipo==='previa'&&(!estadoEtapas(c).pesquisa||d.baseLote!==c.lote?.versao))throw Error('Chegou um lote novo. Atualize a prévia antes de confirmar.');
+        if(desconsideracaoI155Cp111(c,rid))throw Error('Esta versão foi desconsiderada. Prepare e confira uma nova versão.');
+        if(tipo==='reuniao'&&(d.situacaoReuniaoCp111||'normal')==='normal'&&(!estadoEtapas(c).previa||d.basePrevia!==documentoEfetivoI155Cp111(c,'previa')))throw Error('Confirme o retorno sobre a prévia apresentada e vigente.');
+        if(tipoMaterial(tipo)){c.documentos.materiais={...(c.documentos.materiais||{}),[chave]:rid};c.documentos.materiaisRevisao=(c.documentos.materiaisRevisao||0)+1;c.documentos.ultimaConfirmacao=chave;}else c.documentos[tipo]=rid;if(tipo==='previa')c.documentos.previaLote=d.baseLote;if(tipo==='reuniao'){c.documentos.reuniaoBasePrevia=d.basePrevia;c.documentos.reuniaoSituacaoCp111={id:rid,situacao:d.situacaoReuniaoCp111||'normal',motivo:d.motivoTransicaoCp111||''};}
         c.documentos.confirmacoes={...(c.documentos.confirmacoes||{}),[chave]:{id:rid,por:ctx.atorReal,perfil:ctx.nome,em:new Date().toISOString()}};resultado={id:rid,confirmado:true};
       }else if(acao==='enviar_consolidado'){
         exigirPapel(ctx,['Amanda']);const rid=c.documentos.rascunhos?.consolidado||c.documentos.consolidado;if(!rid)throw Error('Salve a base completa antes de enviar.');
-        const ds=await tx.get(regRef(id,rid)),d=ds.data();if(!ds.exists()||d.finalidade!=='consolidado')throw Error('A base salva não foi encontrada.');const info=await tx.get(doc(db,'info_extras_cliente',c.cliente));if(!mesmaInfoClienteI164(d.infoCliente,retratoInfoClienteI164(info.exists(),info.data())))throw Error('As informações do cliente mudaram. Confira a ficha e salve uma nova base antes de enviar; a anterior foi preservada.');
+        const ds=await tx.get(regRef(id,rid)),d=ds.data();if(!ds.exists()||d.finalidade!=='consolidado'||desconsideracaoI155Cp111(c,rid))throw Error('A base salva não foi encontrada.');const info=await tx.get(doc(db,'info_extras_cliente',c.cliente));if(!mesmaInfoClienteI164(d.infoCliente,retratoInfoClienteI164(info.exists(),info.data())))throw Error('As informações do cliente mudaram. Confira a ficha e salve uma nova base antes de enviar; a anterior foi preservada.');
         c.documentos.consolidado=rid;c.documentos.consolidadoBaseReuniao=d.baseReuniao;c.documentos.consolidadoBaseCampanha=d.baseCampanha||'';
-        if(!estadoEtapas(c).reuniao||c.documentos.consolidadoBaseReuniao!==c.documentos.reuniao||c.documentos.consolidadoBaseCampanha!==(c.documentos.campanha||'')||!mesmosMateriais(d.baseMateriais,materiaisVigentes(c)))throw Error('Chegou uma prévia, reunião ou campanha nova. Confira as diferenças e salve a base atual antes de enviar. A versão anterior foi preservada.');
-        c.documentos.consolidadoEnviado=c.documentos.consolidado;c.documentos.enviadoReuniao=c.documentos.reuniao;c.documentos.enviadoCampanha=c.documentos.campanha||'';c.documentos.enviadoMateriais=clone(materiaisVigentes(c));c.documentos.enviadoEm=new Date().toISOString();c.documentos.enviadoPor=ctx.atorReal;
+        if(!estadoEtapas(c).reuniao||c.documentos.consolidadoBaseReuniao!==c.documentos.reuniao||c.documentos.consolidadoBaseCampanha!==documentoEfetivoI155Cp111(c,'campanha')||!mesmosMateriais(d.baseMateriais,materiaisVigentes(c)))throw Error('Chegou uma prévia, reunião ou campanha nova. Confira as diferenças e salve a base atual antes de enviar. A versão anterior foi preservada.');
+        c.documentos.consolidadoEnviado=c.documentos.consolidado;c.documentos.enviadoReuniao=c.documentos.reuniao;c.documentos.enviadoCampanha=documentoEfetivoI155Cp111(c,'campanha');c.documentos.enviadoMateriais=clone(materiaisVigentes(c));c.documentos.enviadoEm=new Date().toISOString();c.documentos.enviadoPor=ctx.atorReal;
       }else if(acao==='iniciar_criacao'){
-        exigirPapel(ctx,['Chris']);if(!c.documentos.consolidadoEnviado)throw Error('A criação depende do consolidado enviado pela Amanda.');const [baseEnv,infoAtual]=await Promise.all([tx.get(regRef(id,c.documentos.consolidadoEnviado)),tx.get(doc(db,'info_extras_cliente',c.cliente))]);if(!estadoEtapas(c).consolidado||!mesmaInfoClienteI164(baseEnv.data()?.infoCliente,retratoInfoClienteI164(infoAtual.exists(),infoAtual.data())))throw Error('Há informação ou material novo. Amanda precisa conferir e enviar a base atual antes da criação.');
+        exigirPapel(ctx,['Chris','Amanda']);if(!c.documentos.consolidadoEnviado)throw Error('A criação depende do consolidado enviado pela Amanda.');const [baseEnv,infoAtual]=await Promise.all([tx.get(regRef(id,c.documentos.consolidadoEnviado)),tx.get(doc(db,'info_extras_cliente',c.cliente))]);if(!estadoEtapas(c).consolidado||!mesmaInfoClienteI164(baseEnv.data()?.infoCliente,retratoInfoClienteI164(infoAtual.exists(),infoAtual.data())))throw Error('Há informação ou material novo. Amanda precisa conferir e enviar a base atual antes da criação.');
         if(c.criacao&&c.criacao.base!==c.documentos.consolidadoEnviado&&!dados.confirmarDelta)throw Error('A base mudou. Compare o pacote e confirme a nova revisão antes de continuar.');
         c.criacao=c.criacao?.base===c.documentos.consolidadoEnviado?{...c.criacao,pecas:clone(dados.pecas||c.criacao.pecas||[])}:{base:c.documentos.consolidadoEnviado,iniciadaEm:new Date().toISOString(),por:ctx.atorReal,pecas:clone(dados.pecas||[]),enviadoRevisao:false,rodada:1};
       }else if(acao==='devolvido_revisao'){
@@ -245,14 +258,14 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         if(!c.criacao||c.criacao.base!==c.documentos.consolidadoEnviado||cal.data()?.planejamentoBasesI155?.[c.competencia]!==c.criacao.base||marca?.status!=='ajuste_interno'||marca.por!=='Amanda'||!marca.motivoAjuste)throw Error('Ainda não há devolução confirmada desta base pela Amanda.');
         if(c.criacao.retornoEm!==marca.em)c.criacao={...c.criacao,enviadoRevisao:false,rodada:(c.criacao.rodada||1)+1,retornoEm:marca.em,retornoMotivo:marca.motivoAjuste};
       }else if(acao==='enviado_revisao'){
-        exigirPapel(ctx,GESTAO);if(!c.criacao||c.criacao.base!==c.documentos.consolidadoEnviado)throw Error('A base da criação mudou; confira a nova revisão.');
+        exigirPapel(ctx,GESTAO);if(!estadoEtapas(c).consolidado||!c.criacao||c.criacao.base!==c.documentos.consolidadoEnviado)throw Error('A base da criação mudou; confira a nova revisão.');
         const cal=await tx.get(doc(db,'calendarios',c.cliente)),m=cal.data()?.aprovacaoMeses?.[c.competencia];
         if(!m||!['aguardando_interna','aprovado_interno','liberado'].includes(m.status)||cal.data()?.planejamentoBasesI155?.[c.competencia]!==c.criacao.base)throw Error('Envie esta base pelo editor oficial antes de confirmar a revisão.');
         c.criacao.enviadoRevisao=true;
       }else if(acao==='entrega'){
         exigirPapel(ctx,GESTAO);
         const s=await tx.get(doc(db,'calendarios',c.cliente)),cal=s.data(),m=cal?.aprovacaoMeses?.[c.competencia],snapshot=m?.retratoLiberadoV115;
-        if(!c.criacao?.enviadoRevisao||cal?.planejamentoBasesI155?.[c.competencia]!==c.criacao.base||m?.status!=='liberado'||!m.aprovadoEm||m.aprovadoEm<c.criadoEm||!snapshot||snapshot.mes!==c.competencia||!snapshot.items?.length||m.aprovadoPor!=='Amanda')throw Error('Ainda falta a aprovação da Amanda e a versão deste ciclo efetivamente disponível no Portal.');
+        if(!estadoEtapas(c).consolidado||!c.criacao?.enviadoRevisao||cal?.planejamentoBasesI155?.[c.competencia]!==c.criacao.base||m?.status!=='liberado'||!m.aprovadoEm||m.aprovadoEm<c.criadoEm||!snapshot||snapshot.mes!==c.competencia||!snapshot.items?.length||m.aprovadoPor!=='Amanda')throw Error('Ainda falta a aprovação da Amanda e a versão deste ciclo efetivamente disponível no Portal.');
         const visivel=await calendario(c.cliente,c.competencia,cal);if(!visivel.disponivel||visivel.assinatura!==JSON.stringify(snapshot.items))throw Error('A projeção do Portal não confirmou a mesma versão.');
         const instante=m.aprovadoEm>snapshot.publicadoEm?m.aprovadoEm:snapshot.publicadoEm;
         c.publicacaoAtual={base:c.criacao.base,aprovadoEm:m.aprovadoEm,retrato:snapshot};
@@ -262,6 +275,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
       }else throw Error('Ação desconhecida.');
       // Todas as leituras de negócio precedem as escritas. A demanda é a própria etapa operacional.
       const estados=estadoEtapas(c),antEstados=antes?estadoEtapas(antes):{};const demandas=[];
+      if(!ACOES_CORRECAO_I155_CP111.includes(acao)){
       conferirIdsAgendaI167(c.agenda);resultado.agendaI167=[];resultado.compromissosSemVinculo=[];for(const [k]of ETAPAS){if(c.agenda[k]?.origemI167)resultado.agendaI167.push(await conferirVinculoAgendaI167(tx,io,c,k,c.agenda[k],{adocao:acao==='incluir'}));}
       for(const [etapa,titulo,padrao]of ETAPAS){if(etapa==='disponivel')continue;const a=c.agenda[etapa],responsavel=a.responsavel||padrao,did=idDemanda(c,etapa,responsavel),dr=doc(db,'demandas',did),ds=await tx.get(dr);const velha=ds.exists()?ds.data():null;
         if(a.origemI167){if(velha&&!['aprovada','cancelada'].includes(velha.status))throw Error('Esta etapa já tem uma demanda anterior aberta. A ficha foi preservada; confira a continuidade antes de adotar outro compromisso.');continue;}
@@ -275,6 +289,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         const d={...(velha||{}),titulo:titulo+' — '+c.clienteNome+' · '+c.competencia,descricao:etapa==='criacao'&&c.criacao?.retornoMotivo?'A Amanda pediu um ajuste neste calendário. Dá uma olhada no retorno e nos materiais pelo botão abaixo.\n\n'+c.criacao.retornoMotivo:'Vamos seguir esta etapa do planejamento. Os materiais e o que falta estão no botão abaixo.',destinatario:responsavel,cliente:c.cliente,clienteNome:c.clienteNome,prazoData:a.prazo||velha?.prazoData||'',prazoHora:a.prazoHora||'19:00',tipoEspecial:'planejamento_social_i155',planejamentoI155:{versao:1,ciclo:id,etapa,cliente:c.cliente,competencia:c.competencia,ativo:c.incluido,base:c.documentos.consolidadoEnviado||'',revisao:c.revisao+1},status:terminal?velha.status:concluida?'aprovada':velha?.status||'pendente',origem:'planejamento',criadoPor:velha?.criadoPor||ctx.atorReal,provaTexto:velha?.provaTexto||'',provaImagemUrl:velha?.provaImagemUrl||'',historico:[...hist,...(mudancaPrazo?[{acao:'Prazo atualizado no planejamento',por:ctx.atorReal,em:new Date().toISOString(),antes:velha.prazoData,depois:a.prazo}]:[]),...(!antEstados[etapa]&&concluida?[{acao:'Etapa confirmada na origem',por:ctx.atorReal,em:new Date().toISOString()}]:[])],...(velha?{}:{criadoEm:serverTimestamp()})};
         demandas.push([dr,d]);
       }
+      } // Correção de validade/insumos não cria nem altera demandas.
       const revisao=(antes?.revisao||0)+1;
       c={...c,revisao,acao,operacao,autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,atualizadoEm:serverTimestamp()};
       mesmaSessao(ctx);tx.set(ref,c);if(['incluir','retirar'].includes(acao))tx.set(doc(db,'planejamento_social_indice_i155',id),{cliente:c.cliente,competencia:c.competencia,incluido:c.incluido,operacao,atualizadoEm:serverTimestamp()});for(const [rid,r]of gravarRegistros)tx.set(regRef(id,rid),{...r,revisaoCiclo:revisao,operacao,editadoPor:ctx.atorReal,editadoUid:ctx.uid});
@@ -283,7 +298,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
       tx.set(er,{acao,operacao,revisao,autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,em:serverTimestamp(),resultado,antes:antes?{revisao:antes.revisao,agenda:antes.agenda,documentos:antes.documentos,lote:antes.lote}:null,depois:{agenda:c.agenda,documentos:c.documentos,lote:c.lote},registros:gravarRegistros.map(x=>x[0])});
     });}catch(e){
       // Resposta perdida: recupera somente o recibo da mesma operação, nunca repete com outro ID.
-      try{const s=await getDocFromServer(er);mesmaSessao(ctx);if(s.exists()&&s.data().autorUid===ctx.uid&&s.data().acao===acao)return {...await ler(id),resultado:s.data().resultado,recuperado:true};}catch{}
+      try{const s=await getDocFromServer(er);mesmaSessao(ctx);if(s.exists()&&s.data().autorUid===ctx.uid&&s.data().acao===acao&&(!ACOES_CORRECAO_I155_CP111.includes(acao)||assinaturaPedidoCorrecaoI155Cp111(s.data().resultado?.pedidoCorrecao)===assinaturaPedidoCorrecaoI155Cp111(dados)))return {...await ler(id),resultado:s.data().resultado,recuperado:true};}catch{}
       throw e;
     }
     const receipt=await getDocFromServer(er);mesmaSessao(ctx);if(!receipt.exists()||receipt.data().acao!==acao)throw Error('Não consegui confirmar a gravação. Seu rascunho continua aqui; tente novamente com a mesma operação.');

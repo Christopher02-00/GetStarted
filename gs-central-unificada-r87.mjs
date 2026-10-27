@@ -9,13 +9,14 @@ export function areasCentralR87(papel){
   ITEM('calendarios','Calendários existentes','conteudo'),
   ...(GESTAO.includes(papel)?[ITEM('stories','Stories','conteudo')]:[]),ITEM('legendas','Legendas','conteudo'),
   ...(papel==='Cecília'?[ITEM('visaoMes','Prazos do mês','publicar')]:[]),
-  ITEM('campanhas','Campanhas e datas','publicar'),ITEM('agendar','Fila de agendamento','publicar'),ITEM('programados','Programados','publicar'),ITEM('envios','Links de envio e resgate','publicar'),ITEM('captacao','Captação','publicar'),ITEM('cobertura','Postagem até quando','publicar')
+  ITEM('campanhas','Campanhas e datas','publicar'),ITEM('agendar','Fila de agendamento','publicar'),ITEM('programados','Programados','publicar'),...(papel==='Cecília'?[ITEM('entregas','Entregas finalizadas','publicar'),ITEM('esteira','Consultar esteira de vídeos','publicar')]:[]),ITEM('envios','Links de envio e resgate','publicar'),ITEM('captacao','Captação','publicar'),ITEM('cobertura','Postagem até quando','publicar')
  ];
 }
 export function areaDaRotaR87(view,{calSub='',postSub='',ultima=''}={}){
  if(view==='estrategiaCp109')return ['estrategia','rascunho'].includes(ultima)?ultima:'estrategia';
  const novas={referenciasCp109:'acervo',planosAcaoCp109:'planos',consultaClienteCp109:'consulta',ajustesCp109:'ajustes',visaoMesCp109:'visaoMes'};if(novas[view])return novas[view];
  const mapa={planejamentoPreparacaoR80:'materiais',agendaOrganizacao:'datas',informacoesCentralR87:'informacoes',referencias:'acervo',analisesMensais:'resultados',stories:'stories',campanhas:'campanhas',agendamento:'captacao',controlePostagem:'cobertura'};
+ if(view==='videos')return 'entregas';if(view==='producao')return 'esteira';
  if(view==='postagens')return postSub==='legenda'?'legendas':postSub==='gradeMes'?'programados':'agendar';
  if(view==='calendarios')return ['links','envio'].includes(calSub)?'envios':'calendarios';
  if(view==='gerencia'&&ultima==='aprovar')return 'aprovar';
@@ -42,8 +43,9 @@ export function criarCentralUnificadaR87({documento=document,contexto,abrir,conf
  function sincronizar(estado){
   if(!vivo)return;const c=contexto(),key=chave(c);if(key!==contextKey){restaurar();ultima='';contextKey=key;}atual=estado;
   const areas=areasCentralR87(c.nome),ativo=estado?.ativo===true&&!!c.uid&&areas.length>0;
+  documento.body?.classList?.toggle('central-unica-cp110',ativo&&c.nome==='Cecília');
   restaurar();if(!ativo){if(box)box.hidden=true;documento.getElementById('navCentralCeciliaR87')?.remove();return;}
-  for(const id of NAVS){const n=documento.getElementById(id);if(!n)continue;escondidos.set(n,{hidden:n.hidden,display:n.style.display});n.hidden=true;n.style.display='none';n.dataset.centralR87Oculto='1';}
+  for(const id of [...NAVS,...(c.nome==='Cecília'?['navVideos','navitemProducao']:[])]){const n=documento.getElementById(id);if(!n)continue;escondidos.set(n,{hidden:n.hidden,display:n.style.display});n.hidden=true;n.style.display='none';n.dataset.centralR87Oculto='1';}
   if(c.nome==='Cecília'&&!documento.getElementById('navCentralCeciliaR87')){
    const nav=documento.createElement('button');nav.id='navCentralCeciliaR87';nav.type='button';nav.className='navitem';nav.textContent='Calendários e conteúdos';nav.style.cssText='background:#d8cdf3;color:#322349;font-weight:800;border:0;width:100%;text-align:left;margin:4px 0';
    nav.onclick=()=>abrir('agendar');documento.getElementById('navInicio')?.insertAdjacentElement('afterend',nav);
@@ -60,5 +62,5 @@ export function criarCentralUnificadaR87({documento=document,contexto,abrir,conf
   for(const a of areas.filter(a=>a.grupo===grupo)){const b=documento.createElement('button');b.type='button';b.dataset.areaR87=a.id;b.textContent=a.titulo;if(a.id===area)b.setAttribute('aria-current','page');tabs.appendChild(b);}box.appendChild(tabs);
   const status=documento.createElement('p');status.className='central-r87-status';status.textContent=c.nome==='Gabrielle'?'Você pesquisa e prepara planos; Amanda decide as referências e organiza o calendário. O apoio de legenda conserva a mesma publicação.':c.nome==='Chris'?'Você desenvolve roteiros, corrige os pedidos dos clientes e aprova a qualidade dos vídeos. Amanda organiza a estratégia, as datas e a revisão.':c.nome==='Amanda'?'Você organiza a estratégia e as datas, envia para os roteiros e revisa antes do cliente. Conteúdos e entregas conservam a origem e o histórico.':'Conteúdo, legenda e orientação de postagem seguem a mesma publicação.';box.appendChild(status);
  }
- return{sincronizar,selecionar:id=>{ultima=id;},destroy(){vivo=false;restaurar();box?.removeEventListener('click',click);box?.remove();documento.getElementById('navCentralCeciliaR87')?.remove();}};
+ return{sincronizar,selecionar:id=>{ultima=id;},destroy(){vivo=false;documento.body?.classList?.remove('central-unica-cp110');restaurar();box?.removeEventListener('click',click);box?.remove();documento.getElementById('navCentralCeciliaR87')?.remove();}};
 }

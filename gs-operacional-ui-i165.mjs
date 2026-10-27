@@ -7,6 +7,7 @@ export const escI165=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 export function urlSeguraI165(v){try{const u=new URL(v);return ['https:','http:'].includes(u.protocol)?u.href:'';}catch{return '';}}
 export function resumoContinuidadePostagemI165(l){
  const a=l?.legadoProgramacao,p=l?.postagem;
+ if(p?.status!=='agendado'&&!(l?.obrigacoes||[]).some(o=>o?.tipo==='confirmar_publicacao'))return null;
  if(l?.politica!=null||a?.schema!==1||a.autorizada!==true||a.semDiretriz!==true||!['postagem_anterior','video_aprovado_anterior'].includes(a.modo)||!idFisicoI165(p?.id))return null;
  const mostrar=(data,hora)=>data.split('-').reverse().join('/')+' às '+hora;
  const datas=[];

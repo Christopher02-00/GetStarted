@@ -32551,6 +32551,7 @@ window.setGerenciaSub = function(qual, el){
   };
 
   window.encerrarDemandaEncalhada = async function(id){
+    if(await abrirSeAjusteCp112(id))return;
     if(!confirm('Encerrar essa demanda?\n\nUse quando ela já foi feita, foi substituída por outra, ou deixou de fazer sentido. Fica registrado quem encerrou.')) return;
     await updateDoc(doc(db,'demandas', id), {
       status: 'aprovada', concluidoPor: (usuarioAtual||'?') + ' (encerrada por encalhe)', concluidoEm: serverTimestamp(),
@@ -33012,7 +33013,7 @@ window.setGerenciaSub = function(qual, el){
      portal), que nunca deveriam ter pedido aprovacao. */
   window.limparAvisosDaFila = async function(){
     await carregarTodasDemandas();
-    const avisos = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && (d.ehAviso === true || d.origem === 'cliente'));
+    const avisos = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && !ehAjusteEditorialCp112(d) && (d.ehAviso === true || d.origem === 'cliente'));
     if(!avisos.length){ mostrarToast('Nenhum aviso preso na fila.'); return; }
     if(!confirm('Encerrar ' + avisos.length + ' aviso(s) que estão ocupando a fila de aprovação?\n\nSão avisos do portal (cliente mandou ideia/referência), não tarefas — eles não precisam da sua aprovação.')) return;
     for(const d of avisos){
@@ -33265,6 +33266,17 @@ window.setGerenciaSub = function(qual, el){
     }
   };
 
+  // CP112: ajustes editoriais têm uma única revisão por pedido e versão.
+  function ehAjusteEditorialCp112(d){return !!d&&/^entrada_i54_[a-f0-9]{64}$/.test(String(d.id||''))&&d.origem==='cliente'&&d.origemAvisoColecao==='avisos_do_cliente'&&d.tipoPedidoCliente==='ajuste_calendario';}
+  async function abrirSeAjusteCp112(id){
+    if(!/^entrada_i54_[a-f0-9]{64}$/.test(String(id||'')))return false;
+    const antes=contextoPreparacaoR80(),snap=await _getDocFromServerFB(doc(db,'demandas',id)),depois=contextoPreparacaoR80();
+    if(!['uid','nome','atorReal','sessao'].every(k=>antes[k]===depois[k]))return true;
+    const d=snap.exists()?{id:snap.id,...snap.data()}:null;if(!ehAjusteEditorialCp112(d))return false;
+    if(!['Chris','Amanda'].includes(usuarioAtual)){mostrarToast('Este ajuste segue a execução do Chris e a revisão da Amanda.','erro');return true;}
+    const ctx=contextoCalendarioDemandaI117(d);if(!ctx){mostrarToast('Confira a origem deste ajuste. Nenhuma conclusão foi enviada.','erro');return true;}
+    await abrirCalendarioTipadoSeAtivoI172(ctx.cliente,ctx.nome,ctx.mes,id);return true;
+  }
   function contextoCalendarioDemandaI117(d){
     if(d?.origemAvisoColecao!=='avisos_do_cliente'||d.tipoPedidoCliente!=='ajuste_calendario')return null;
     const cliente=String(d.clienteSlug||d.cliente||''),mes=String(d.competencia||'');
@@ -33273,7 +33285,7 @@ window.setGerenciaSub = function(qual, el){
     return {cliente,mes,nome:String(d.clienteNome||cliente)};
   }
   // R4: a leitura decide apenas a rota; a autoridade continua no writer HTTP.
-  async function abrirCalendarioTipadoSeAtivoI172(cliente,nome,mes){
+  async function abrirCalendarioTipadoSeAtivoI172(cliente,nome,mes,demandaId=""){
     if(!['Chris','Amanda'].includes(usuarioAtual))return true;
     const c=contextoPreparacaoR80(),mesmo=()=>['uid','nome','atorReal','sessao','geracao'].every(k=>contextoPreparacaoR80()[k]===c[k]);
     try{
@@ -33287,7 +33299,7 @@ window.setGerenciaSub = function(qual, el){
       if(!cal||cal.excluido||cal.arquivado||cal.archived||cal.deletedAt||!Array.isArray(cal.items)||!fonteFisicaClienteR4(cliente,cal)||!itensDoMesCalendario(cal,mes).some(i=>i&&!i.excluido))throw Error('O calendário não confirma os conteúdos ativos deste cliente e mês.');
       const planoCp109=await chamarUiOperacionalI165('planejamento_ler_cp109',{ciclo:mes+'__'+cliente});if(!mesmo())return true;
       if(planoCp109?.schema!==1||planoCp109.ciclo!==mes+'__'+cliente)throw Error('A origem estratégica não foi confirmada.');
-      if(planoCp109.plano?.itens?.length){fecharModal();await abrirEtapaCp109('rascunho',{ciclo:mes+'__'+cliente,cliente,competencia:mes});return true;}
+      if(planoCp109.plano?.itens?.length){fecharModal();await abrirEtapaCp109('rascunho',{ciclo:mes+'__'+cliente,cliente,competencia:mes,demandaId});return true;}
       const bases=cal.planejamentoBasesI155;
       if(bases!==undefined&&(bases===null||typeof bases!=='object'||Array.isArray(bases)))throw Error('A origem deste calendário precisa ser conferida.');
       const base=bases?.[mes];if(base!==undefined&&typeof base!=='string')throw Error('A base deste mês não foi confirmada.');
@@ -33296,7 +33308,7 @@ window.setGerenciaSub = function(qual, el){
       fecharModal();if(irPara('planejamentoPreparacaoR80',document.getElementById('navPlanejamentoPreparacaoR80'))===false)return true;
       await montarPreparacaoR80();if(!mesmo()||viewAtiva!=='planejamentoPreparacaoR80')return true;
       if(typeof abrirEditorCentralI172!=='function')throw Error('O editor ainda não confirmou esta entrada. Reabra o mesmo ajuste; seus dados foram preservados.');
-      const ciclo={id:mes+'__'+cliente,cliente,competencia:mes,clienteNome:String(cal.client||nome||cliente)};
+      const ciclo={id:mes+'__'+cliente,cliente,competencia:mes,clienteNome:String(cal.client||nome||cliente),demandaId};
       await abrirEditorCentralI172(ciclo,origemEditorial);
       return true;
     }catch(e){if(mesmo())mostrarToast(e.message||'Não consegui conferir este calendário. Os dados e os textos continuam preservados.','erro');return true;}
@@ -33304,13 +33316,14 @@ window.setGerenciaSub = function(qual, el){
   window.abrirCalendarioDemandaI117=async function(id){
     const d=todasDemandas.find(x=>x.id===id),ctx=contextoCalendarioDemandaI117(d);
     if(!ctx||!['Chris','Amanda'].includes(usuarioAtual)||!papelPodeSubabaCalendariosV127(usuarioAtual,'editar'))return;
-    if(await abrirCalendarioTipadoSeAtivoI172(ctx.cliente,ctx.nome,ctx.mes))return;
+    if(await abrirCalendarioTipadoSeAtivoI172(ctx.cliente,ctx.nome,ctx.mes,id))return;
     fecharModal();
     abrirCalendarioDeCliente(ctx.cliente,ctx.nome,ctx.mes);
   };
   window.abrirDemandaMinha = function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAjusteEditorialCp112(d)&&['Chris','Amanda'].includes(usuarioAtual))return abrirCalendarioDemandaI117(id);
     if(ehAvisoExclusaoI112(d)) return abrirPedidosExclusaoI112(id);
     if(pedidoExclusaoAtivoI112(d)&&['Amanda','Chris'].includes(usuarioAtual)) return abrirDecisaoExclusaoI112(id);
     if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
@@ -33884,6 +33897,7 @@ window.setGerenciaSub = function(qual, el){
   };
 
   window.desfazerEnvioDemanda = async function(id){
+    if(await abrirSeAjusteCp112(id))return;
     if(!confirm('Voltar essa demanda pra pendente? Você vai poder refazer e enviar de novo.')) return;
     await updateDoc(doc(db,'demandas', id), { status: 'pendente', provaTexto: '', provaImagemUrl: '' });
     registrarHistorico('demandas', id, 'Envio desfeito — voltou pra pendente');
@@ -34104,6 +34118,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   window.enviarProva = async function(id){
+    if(await abrirSeAjusteCp112(id))return;
     if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     const legendaI84=todasDemandas.find(d=>d.id===id&&d.postagemId&&ehTituloDemandaLegenda(d.titulo));
     if(legendaI84)return abrirLegendaDemandaI84(legendaI84);
@@ -50079,6 +50094,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   window.abrirDemandaGerencia = function(id){
     const d = todasDemandas.find(x=>x.id===id);
     if(!d) return;
+    if(ehAjusteEditorialCp112(d)&&['Chris','Amanda'].includes(usuarioAtual))return abrirCalendarioDemandaI117(id);
     if(ehAvisoExclusaoI112(d)) return abrirPedidosExclusaoI112(id);
     if(pedidoExclusaoAtivoI112(d)&&['Amanda','Chris'].includes(usuarioAtual)) return abrirDecisaoExclusaoI112(id);
     if(ehAvisoDistribuicaoI105(d)) return abrirAvisoDistribuicaoI105(id);
@@ -50354,6 +50370,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
 
   window.aprovarDemanda = async function(id){
+    if(await abrirSeAjusteCp112(id))return;
     if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     const d = todasDemandas.find(x=>x.id===id);
     if(!d)return mostrarToast('Atualize a fila para conferir essa entrega.','erro');
@@ -50435,6 +50452,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   let aberturaRefazerI161=0;
   function contextoRefazerI161(pessoa,uid,sessao){return ['Amanda','Chris'].includes(pessoa)&&usuarioAtual===pessoa&&auth.currentUser?.uid===uid&&sessaoServicoManual()===sessao;}
   window.rejeitarDemanda = async function(id){
+    if(await abrirSeAjusteCp112(id))return;
     if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     if(window.__refazerI161?.busy){mostrarToast('Espere a confirmação da devolução.','erro');return false;}
     const pessoa=usuarioAtual,uid=auth.currentUser?.uid,sessao=sessaoServicoManual(),abertura=++aberturaRefazerI161;
@@ -50455,6 +50473,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
   window.confirmarRefazerI161=async function(){
     const e=window.__refazerI161;if(!e||e.busy||!e.campo?.isConnected||!e.atual())return false;
+    if(await abrirSeAjusteCp112(e.id))return false;
     const motivo=String(e.motivoConfirmado||e.campo.value||'').trim(),erro=document.getElementById('erroRefazerI161'),btn=document.getElementById('btnRefazerI161');
     if(!motivo||motivo.length>4000){erro.textContent='Escreve o que precisa ajustar antes de enviar.';return false;}
     e.motivoConfirmado=motivo;e.busy=true;e.campo.disabled=true;btn.disabled=true;erro.textContent='';
@@ -51185,7 +51204,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
         abrirReferencia:p=>abrirEtapaCp109('acervo',{cliente:p?.cliente||opcoes.cliente,competencia:p?.competencia||competencia}),
         abrirPlanejamento:p=>abrirEtapaCp109('estrategia',{...p,ciclo:p.ciclo||p.id}),abrirCampanhas:async p=>{if(await abrirAreaCentralR87('campanhas')===false)return false;return p?.id?window.abrirCampanha(p.id):true;},
         abrirRevisao:p=>abrirRevisaoEstrategicaCp109(p),
-        abrirCalendarioExistente:p=>abrirCalendarioTipadoSeAtivoI172(p.cliente,nomeDeSlugSeguro(p.cliente),p.competencia)};
+        abrirCalendarioExistente:p=>abrirCalendarioTipadoSeAtivoI172(p.cliente,nomeDeSlugSeguro(p.cliente),p.competencia,p.demandaId||'')};
       let instancia;
       if(area==='acervo'||area==='consulta'){
         const mod=await import('./gs-referencias-cp109.mjs?v=6b0973d7554cc9f37b2c84c4089c3a9c7093a1bc7db34a6bc045610ddf8e4498');if(!vigente())return false;
@@ -51207,8 +51226,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const competencia=id.slice(0,7),cliente=id.slice(9),chave=chaveCentralUnificadaR87();viewCp109('estrategiaCp109');if(irPara('estrategiaCp109')===false)return false;
     limparPainelCp109();estiloCp109();const g=geracaoPainelCp109,box=viewCp109('estrategiaCp109'),vigente=()=>g===geracaoPainelCp109&&chave===chaveCentralUnificadaR87()&&viewAtiva==='estrategiaCp109';
     box.innerHTML='<div class="card"><button type="button" data-voltar-cp109>← Voltar ao planejamento</button></div><div data-editor-cp109></div>';
-    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=2c5ba7d5881c384c82654869c8de44c73cf759b76c3dae191becd952c12f084e'),import('./codec-central-r80.mjs')]);if(!vigente())return false;
-    painelCp109=mod.montarEditorCalendarioCentralI172(box.querySelector('[data-editor-cp109]'),{ciclo:id,origemEditorial:'estrategico_cp109',contexto:contextoPreparacaoR80,chamar:async(acao,dados)=>codec.abrirEnvelopeCentralR80(await chamarUiOperacionalI165(acao,dados),{timestamp:(s,n)=>new Timestamp(s,n)}),aoAtualizar:()=>{if(vigente())mostrarToast('Revisão confirmada. O pedido e o histórico continuam vinculados.');}});
+    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=22cc15bd325000a84d76dbb68a0ca7b2a416eb10907cfa0442dceeac7442a484'),import('./codec-central-r80.mjs')]);if(!vigente())return false;
+    painelCp109=mod.montarEditorCalendarioCentralI172(box.querySelector('[data-editor-cp109]'),{ciclo:id,demandaId:ciclo.demandaId||'',origemEditorial:'estrategico_cp109',contexto:contextoPreparacaoR80,chamar:async(acao,dados)=>codec.abrirEnvelopeCentralR80(await chamarUiOperacionalI165(acao,dados),{timestamp:(s,n)=>new Timestamp(s,n)}),aoAtualizar:()=>{if(vigente())mostrarToast('Revisão confirmada. O pedido e o histórico continuam vinculados.');}});
     box.querySelector('[data-voltar-cp109]').onclick=()=>abrirEtapaCp109('estrategia',{cliente,competencia,ciclo:id});
     cascaCentralR87?.selecionar('rascunho');const pronto=await painelCp109.ready;if(!pronto||pronto.schema!==1)return false;if(vigente())await desenharCentralUnificadaR87();return vigente();
   }
@@ -51248,7 +51267,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     box.innerHTML='<div class="card" role="status">Preparando os materiais do próximo mês…</div>';
     let repo;
     try{
-      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=a805e2e116d5a2afaf2dd02b7ddbe5459c37a71b12723c11a17dbbf9b4937049'),import('./gs-central-preparacao-http-r80.mjs?v=13235b99ebb855a4354e99cbff6ca3d5d0501a8926211d88a2f360dcbc4a396a')]);
+      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=a805e2e116d5a2afaf2dd02b7ddbe5459c37a71b12723c11a17dbbf9b4937049'),import('./gs-central-preparacao-http-r80.mjs?v=b57099dca056719b90ec1e7343002c9bef062956c5eaac3f2e75d3a4753f275a')]);
       const [ui,fachada]=await moduloPreparacaoR80;if(!vigente())return;
       const chamar=async(acao,dados)=>{
         if(!vigente())throw Error('O perfil ou a tela mudou. Reabra o planejamento.');
@@ -51269,8 +51288,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
         editorCalendarioCentralI172?.destroy();editorCalendarioCentralI172=null;
         const host=document.getElementById('planejamentoEditorI172');if(!host)return false;
         host.hidden=false;host.innerHTML='<div class="card"><button type="button" class="btn secondary" data-voltar-editor>← Voltar aos materiais deste mês</button></div><div data-editor-central></div>';
-        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=2c5ba7d5881c384c82654869c8de44c73cf759b76c3dae191becd952c12f084e');if(!vigente())return false;
-        const ed=mod.montarEditorCalendarioCentralI172(host.querySelector('[data-editor-central]'),{ciclo:ciclo.id,origemEditorial,contexto:contextoPreparacaoR80,chamar:(acao,payload)=>repo.editorial(acao,payload),aoAtualizar:()=>{if(vigente())mostrarToast('Versão confirmada. O andamento também será conferido ao voltar aos materiais.');}});
+        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=22cc15bd325000a84d76dbb68a0ca7b2a416eb10907cfa0442dceeac7442a484');if(!vigente())return false;
+        const ed=mod.montarEditorCalendarioCentralI172(host.querySelector('[data-editor-central]'),{ciclo:ciclo.id,demandaId:ciclo.demandaId||'',origemEditorial,contexto:contextoPreparacaoR80,chamar:(acao,payload)=>repo.editorial(acao,payload),aoAtualizar:()=>{if(vigente())mostrarToast('Versão confirmada. O andamento também será conferido ao voltar aos materiais.');}});
         editorCalendarioCentralI172=ed;
         host.querySelector('[data-voltar-editor]').onclick=async()=>{if(!vigente()||editorCalendarioCentralI172!==ed||ed.canLeave?.()===false)return;ed.destroy();editorCalendarioCentralI172=null;host.hidden=true;host.replaceChildren();if(origemEditorial==='continuar_legado'){await planejamentoPreparacaoR80?.ready;}else await planejamentoPreparacaoR80?.abrir(ciclo.id,'criacao');};
         const confirmado=await ed.ready;if(!confirmado||!vigente())return false;host.scrollIntoView({block:'start'});return true;

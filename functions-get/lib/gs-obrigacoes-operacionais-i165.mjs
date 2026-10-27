@@ -83,6 +83,8 @@ export function obrigacoesConteudoI165({postagem, video = null, diretriz = null,
   if (video && ((!finalizadoPorPublicacao&&video.status !== 'aprovado') || video.clienteAprovou !== true)) return {...resultado,estado:'aguardando_cliente',motivo:'sem_liberacao_cliente'};
   if (!diretriz) { add('definir_compromisso','Amanda',{legadoSemDiretriz:true}); return {...resultado,estado:'conferir_legado',motivo:'sem_reprovar_ou_reescrever_fatos'}; }
   const p = conferirDiretrizAtualI165(diretriz,video,postagem);
+  const orientacaoAmanda = diretriz.autoria?.papel === 'Amanda';
+  let precisaOrientacaoAmanda = false;
   if (p.modalidade === 'a_definir') add('definir_compromisso','Amanda',{prazo:p.definirAte + 'T' + p.definirHora});
   const legendaPendente = postagem.status === 'aguardando_legenda' || pendenciaLegendaI79(postagem);
   if (legendaPendente) add('preparar_legenda',responsavelLegendaI165({processoEditorial,responsavelExplicito:responsavelLegendaExplicito}),{prazo:p.programarAte ? p.programarAte + 'T' + p.programarHora : ''});
@@ -104,8 +106,10 @@ export function obrigacoesConteudoI165({postagem, video = null, diretriz = null,
       if (r.data + 'T' + r.hora <= local) add('confirmar_publicacao','Cecília',{rede:r.rede,prazo:r.data + 'T' + r.hora});
       continue;
     }
-    add('programar','Cecília',{rede:r.rede,prazo:p.programarAte ? p.programarAte + 'T' + p.programarHora : '',bloqueada:p.modalidade === 'a_definir' || legendaPendente && !permitirAgendarSemLegendaI90,motivoBloqueio:p.modalidade === 'a_definir' ? 'aguardando_definicao_Amanda' : legendaPendente && !permitirAgendarSemLegendaI90 ? 'aguardando_legenda_politica_I90' : ''});
+    if (!orientacaoAmanda) precisaOrientacaoAmanda = true;
+    add('programar','Cecília',{rede:r.rede,prazo:p.programarAte ? p.programarAte + 'T' + p.programarHora : '',bloqueada:!orientacaoAmanda || p.modalidade === 'a_definir' || legendaPendente && !permitirAgendarSemLegendaI90,motivoBloqueio:!orientacaoAmanda ? 'aguardando_orientacao_Amanda' : p.modalidade === 'a_definir' ? 'aguardando_definicao_Amanda' : legendaPendente && !permitirAgendarSemLegendaI90 ? 'aguardando_legenda_politica_I90' : '',conferenciaOrientacaoCp110Obrigatoria:true});
   }
+  if (precisaOrientacaoAmanda && p.modalidade !== 'a_definir') add('definir_compromisso','Amanda',{legadoSemDiretriz:true,motivoBloqueio:'novo_agendamento_exige_orientacao_Amanda'});
   return resultado;
 }
 

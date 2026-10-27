@@ -45,7 +45,7 @@ export function criarCentralUnificadaR87({documento=document,contexto,abrir,conf
   const areas=areasCentralR87(c.nome),ativo=estado?.ativo===true&&!!c.uid&&areas.length>0;
   documento.body?.classList?.toggle('central-unica-cp110',ativo&&c.nome==='Cecília');
   restaurar();if(!ativo){if(box)box.hidden=true;documento.getElementById('navCentralCeciliaR87')?.remove();return;}
-  for(const id of [...NAVS.filter(id=>!(c.nome==='Amanda'&&id==='navPostagens')&&!(c.nome==='Cecília'&&['navPostagens','navCalendarios'].includes(id))),...(c.nome==='Cecília'?['navitemProducao']:[])]){const n=documento.getElementById(id);if(!n)continue;escondidos.set(n,{hidden:n.hidden,display:n.style.display});n.hidden=true;n.style.display='none';n.dataset.centralR87Oculto='1';}
+  for(const id of [...NAVS.filter(id=>!(c.nome==='Amanda'&&id==='navPostagens')&&!(c.nome==='Cecília'&&['navPostagens','navCalendarios','navControlePostagem'].includes(id))),...(c.nome==='Cecília'?['navitemProducao']:[])]){const n=documento.getElementById(id);if(!n)continue;escondidos.set(n,{hidden:n.hidden,display:n.style.display});n.hidden=true;n.style.display='none';n.dataset.centralR87Oculto='1';}
   documento.getElementById('navCentralCeciliaR87')?.remove();
   const area=areaDaRotaR87(estado.view,{calSub:estado.calSub,postSub:estado.postSub,ultima}),permitida=areas.find(a=>a.id===area);
   if(!montar())return;const familiar=c.nome==='Cecília'&&(estado.view==='postagens'||estado.view==='videos'&&documento.getElementById('subtabMeusVideos')?.classList.contains('active'));box.hidden=!permitida||familiar;if(!permitida){ultima='';return;}ultima=area;if(familiar)return;

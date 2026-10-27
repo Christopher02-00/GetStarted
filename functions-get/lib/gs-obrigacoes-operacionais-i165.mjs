@@ -1,3 +1,4 @@
+import {resolverProgramacaoCp111} from '../compat-legado-programacao-r83.mjs';
 import {exigirI165, idFisicoI165, jsonCanonicoI165, dataCivilI165, horaCivilI165, instanteI165, horarioBrasiliaI165, responsavelLegendaI165} from './gs-contexto-operacional-i165.mjs';
 import {REDES_I165, conferirVinculoCanonicoI165, conferirDiretrizAtualI165, validarOperacaoProgramacaoI165} from './gs-diretriz-publicacao-i165.mjs';
 import {pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs';
@@ -59,7 +60,7 @@ function redesDaPostagem(post) {
   return s.selecionadas.map(rede => { const r = s.redes?.[rede]; exigirI165(r && typeof r === 'object', 'rede-ausente', 'A leitura de uma plataforma falhou; ela não foi concluída.'); return {rede,...r}; });
 }
 /** Returns obligations, never writes a post, completes a task or equates a provider receipt with a human action. */
-export function obrigacoesConteudoI165({postagem, video = null, diretriz = null, configEntrega, processoEditorial = null, responsavelLegendaExplicito, permitirAgendarSemLegendaI90, agora, clienteAtivo}) {
+export function obrigacoesConteudoI165({postagem, video = null, diretriz = null, programacaoCp111 = null, configEntrega, processoEditorial = null, responsavelLegendaExplicito, permitirAgendarSemLegendaI90, agora, clienteAtivo}) {
   exigirI165(typeof clienteAtivo === 'boolean' && ['postagem','entrega_direta'].includes(configEntrega?.modo), 'configuracao', 'Confirme o estado operacional e o modo real de entrega do cliente.');
   exigirI165(typeof permitirAgendarSemLegendaI90 === 'boolean', 'i90', 'Confirme a política existente de agendamento com legenda pendente.');
   conferirVinculoCanonicoI165(postagem, video);
@@ -81,7 +82,18 @@ export function obrigacoesConteudoI165({postagem, video = null, diretriz = null,
   // Quality approval alone is insufficient; it must follow the existing client confirmation contract.
   const finalizadoPorPublicacao=video?.status==='finalizado'&&(postagem.status==='postado'&&['postagem_publicada','publicacao_stokki_i30'].includes(video.finalizadoVia)||postagem.status==='cancelada_manual'&&video.finalizadoVia==='publicacao_stokki_i30'&&postagem.publicacaoStokki?.versao===1&&Array.isArray(postagem.publicacaoStokki.selecionadas)&&postagem.publicacaoStokki.selecionadas.length>0&&postagem.publicacaoStokki.selecionadas.every(r=>postagem.publicacaoStokki.redes?.[r]?.retirada===true));
   if (video && ((!finalizadoPorPublicacao&&video.status !== 'aprovado') || video.clienteAprovou !== true)) return {...resultado,estado:'aguardando_cliente',motivo:'sem_liberacao_cliente'};
-  if (!diretriz) { add('definir_compromisso','Amanda',{legadoSemDiretriz:true}); return {...resultado,estado:'conferir_legado',motivo:'sem_reprovar_ou_reescrever_fatos'}; }
+  const referencia=programacaoCp111||resolverProgramacaoCp111({diretriz});
+  if(referencia.modo!=='orientacao_amanda'){
+    const pendente=postagem.status==='aguardando_legenda'||pendenciaLegendaI79(postagem);
+    if(pendente)add('preparar_legenda',responsavelLegendaI165({processoEditorial,responsavelExplicito:responsavelLegendaExplicito}));
+    for(const r of redesDaPostagem(postagem)){
+      if(r.retirada||r.publicadaEm)continue;
+      if(r.data){exigirI165(dataCivilI165(r.data)&&horaCivilI165(r.hora),'agenda-fonte','A data agendada precisa ser conferida.');if(r.data+'T'+r.hora<=local)add('confirmar_publicacao','Cecília',{rede:r.rede,prazo:r.data+'T'+r.hora});continue;}
+      const bloqueada=!referencia.disponivel||pendente&&!permitirAgendarSemLegendaI90;
+      add('programar','Cecília',{rede:r.rede,bloqueada,motivoBloqueio:!referencia.disponivel?'origem_programacao_a_conferir':pendente&&!permitirAgendarSemLegendaI90?'aguardando_legenda_politica_I90':'',conferenciaOrientacaoCp110Obrigatoria:true,fonteProgramacaoCp111:referencia.modo});
+    }
+    return {...resultado,estado:referencia.disponivel?'referencia_programacao_atual':'conferir_origem',motivo:referencia.motivo||''};
+  }
   const p = conferirDiretrizAtualI165(diretriz,video,postagem);
   const orientacaoAmanda = diretriz.autoria?.papel === 'Amanda';
   let precisaOrientacaoAmanda = false;

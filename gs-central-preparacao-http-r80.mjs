@@ -29,7 +29,7 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  async function salvarConfig(d,rev,m){mes(m);exigir(Number.isInteger(rev)&&rev>=0,'Confira a versão da organização.');return pedir('central_config_salvar',{competencia:m,config:selecionar(d,['dias','capacidades','modelos','indisponibilidades','feriados','recorrencia']),esperadaRevisao:rev});}
  const EDITORIAL=new Set(['central_editor_ler','central_editor_iniciar','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir']);
  async function editorial(acao,dados){
-  const ajusteCp112=['ajuste_calendario_ler_cp112','ajuste_calendario_salvar_cp112','ajuste_calendario_enviar_cp112','ajuste_calendario_adotar_cp112','ajuste_calendario_decidir_cp112'].includes(acao);
+  const ajusteCp112=['ajuste_calendario_ler_cp112','ajuste_calendario_salvar_cp112','ajuste_calendario_enviar_cp112','ajuste_calendario_adotar_cp112','ajuste_calendario_decidir_cp112','ajuste_calendario_iniciar_correcao_cp115','ajuste_calendario_salvar_conteudo_cp115'].includes(acao);
   exigir(['Chris','Amanda'].includes(c.nome)&&(EDITORIAL.has(acao)||ajusteCp112),'Esta etapa pertence à criação do Chris e à revisão da Amanda.');
   ciclo(dados?.ciclo);const origem=dados?.origemEditorial||'';exigir(origem===''||origem==='continuar_legado'||origem==='estrategico_cp109','Origem editorial inválida.');
   if(ajusteCp112){const r=await pedir(acao,dados);exigir(r?.schema===1&&r.ciclo===dados.ciclo&&Array.isArray(r.ajustes)&&r.liberacaoMensal&&r.ajustes.every(x=>typeof x.demandaId==='string'&&typeof x.assinatura==='string'),'Não consegui confirmar a revisão dos pedidos. Preserve a mesma tentativa.');return r;}

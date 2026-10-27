@@ -1,4 +1,4 @@
-import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=2f1d74ea24fa286d90ef08fd81b3f5acbb774d23bc4ff640b14de0753950bd94';
+import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=21d2f6f281c840be2466863cd51414a9007bd88e6c56c039ea46e5c9effc1828';
 /* Editor humano; persistência editorial pertence exclusivamente às ações HTTP I172. */
 export const CAMPOS_EDITOR_I172=Object.freeze(['itemId','empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','mes','stage','fmt','dataFlexivel','bloco','dataPostagem']);
 const EMPRESAS=Object.freeze([{id:'otica_hauer',nome:'Ótica Hauer'},{id:'otica_sao_jose',nome:'Ótica São José'},{id:'clinica_olhos_hauer',nome:'Clínica dos Olhos Hauer'},{id:'clinica_sao_jose',nome:'Clínica São José'}]);

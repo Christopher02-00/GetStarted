@@ -24,7 +24,7 @@ export async function demandasCicloTxI165(db,tx,p){
  const q=await tx.get(db.collection('demandas').where('postagemId','==',p.id).limit(101));exigirI165(q.size<=100,'demandas-volume','Há muitas demandas deste conteúdo. Nenhuma baixa parcial foi feita.');const ciclo=cicloFonteAlertaCanonicoV135('postagem',p);return{ciclo,docs:q.docs.filter(s=>demandaAbertaParaLimpezaV135({...s.data(),id:s.id})&&demandaPertenceLimpezaCanonicaV135({...s.data(),id:s.id},{tipo:'postagem',fonteId:p.id,ciclo}))};
 }
 export function exigirFonteFactualI165(f){
- exigirI165(f.post.excluido!==true&&!f.post.arquivado&&f.configEntrega.modo==='postagem'&&(f.diretriz||compatLegadoConfirmadaI165(f)),'fonte','A postagem e a orientação precisam estar confirmadas.');
+ exigirI165(f.post.excluido!==true&&!f.post.arquivado&&f.configEntrega.modo==='postagem'&&(f.diretriz||compatLegadoConfirmadaI165(f)||f.programacaoCp111?.schema===1),'fonte','A postagem e a orientação precisam estar confirmadas.');
  if(f.video)exigirI165(f.video.excluido!==true&&f.video.clienteAprovou===true&&['aprovado','finalizado'].includes(f.video.status),'cliente','O vídeo e a confirmação real do cliente precisam estar preservados.');
 }
 export async function operarPublicacaoI165(db,auth,d,{agora=new Date()}={}){

@@ -1,9 +1,10 @@
+import {resolverProgramacaoCp111} from './compat-legado-programacao-r83.mjs';
 import {hashPedidoI165,refOperacaoI165,conferirReciboPedidoI165} from './intencao-operacao.mjs';
 import {listarOpcoesCampanhaTxI165,escolherCampanhaTxI165,compromissoSelecionadoI165} from './campanhas.mjs';
 import {exigirI165,idFisicoI165,instanteI165,jsonCanonicoI165,entregaSemPostagemI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {normalizarDiretrizI165,identidadeMaterialI165,assinaturaEntregaI165,assinaturaDiretrizI165,conferirDiretrizAtualI165,conferirVinculoCanonicoI165} from './lib/gs-diretriz-publicacao-i165.mjs';
 import {identidadeTokenI165,contextoTxI165,clienteTxI165,hashI165} from './contexto.mjs';
-import {origemTxI165,compromissoVideoTxI165} from './fontes.mjs';
+import {lerOrigemProgramacaoTxCp111,compromissoVideoTxI165} from './fontes.mjs';
 
 const atorAmanda=(auth,d)=>{const a=identidadeTokenI165(auth,d.papelOperado,d.sessao||'orientacao_video_cp108');exigirI165(a.papel==='Amanda','papel','A Amanda combina data, semana, prazo e prioridade. A qualidade permanece com o Chris.');return a;};
 const camposVideo=['id','cliente','clienteNome','empresaOtavio','calendarClienteSlug','calendarCompetencia','calendarItemId','titulo','editorAtribuido','linkFinalizado','enviadoEm','status','aprovadoPor','aprovadoInternoEm','clienteAprovou','ultimaCorrecaoSolicitada'];
@@ -20,10 +21,12 @@ async function fonteOrientacaoTx(db,tx,id,agora){
  exigirI165(!video.postagemId||postSnap?.exists,'postagem','A postagem vinculada não foi confirmada. Não será criada uma substituta.');
  const post=postSnap?.exists?{...postSnap.data(),id:postSnap.id}:null;
  if(post){conferirVinculoCanonicoI165(post,video);if(post.excluido===true||post.arquivado||!['aguardando_legenda','aguardando_agendamento'].includes(post.status))return fora(video,'O agendamento, publicação ou retirada já avançou. Use o fluxo correspondente, sem reabrir esta aprovação.');}
- const [ds,origem,campanha]=await Promise.all([tx.get(db.doc('video_programacao_i165/'+id)),origemTxI165(db,tx,video),compromissoVideoTxI165(db,tx,video)]);
+ const [ds,origemAtual,campanha]=await Promise.all([tx.get(db.doc('video_programacao_i165/'+id)),lerOrigemProgramacaoTxCp111(db,tx,video),compromissoVideoTxI165(db,tx,video)]);
+ const origem={tipo:origemAtual.tipo,assinatura:origemAtual.assinatura};
  const diretriz=ds.data()||null,assinaturaEsperada=hashI165({video,post,diretriz,origem,campanha});
- let pendente=!diretriz,motivo=pendente?'A Amanda ainda precisa combinar a postagem.':'';
- if(diretriz)try{const p=conferirDiretrizAtualI165(diretriz,video,post);exigirI165(!diretriz.origemConferida||jsonCanonicoI165(diretriz.origemConferida)===jsonCanonicoI165(origem),'origem-avancou','A origem mudou.');exigirI165((diretriz.compromisso||'')===(campanha.compromisso?jsonCanonicoI165(campanha.compromisso):'')&&(diretriz.decisaoCompromisso||'')===(campanha.decisao?jsonCanonicoI165(campanha.decisao):''),'campanha-avancou','A campanha mudou.');pendente=p.modalidade==='a_definir';if(pendente)motivo='A data ainda precisa ser definida pela Amanda.';}catch{pendente=true;motivo='O material, a origem ou a campanha mudou. A Amanda precisa reconferir a orientação.';}
+ const programacaoCp111=resolverProgramacaoCp111({diretriz,origem:origemAtual,campanha});
+ let pendente=!programacaoCp111.disponivel,motivo=pendente?programacaoCp111.motivo:programacaoCp111.modo==='orientacao_amanda'?'A orientação explícita da Amanda está preservada.':programacaoCp111.protegida?'A data específica já está na origem. Amanda pode conferir ou decidir uma exceção.':'Cecília usa a origem do calendário ou organiza a data na fila; Amanda pode orientar quando necessário.';
+ if(diretriz)try{const p=conferirDiretrizAtualI165(diretriz,video,post);exigirI165(!diretriz.origemConferida||jsonCanonicoI165(diretriz.origemConferida)===jsonCanonicoI165(origem),'origem-avancou','A origem mudou.');exigirI165((diretriz.compromisso||'')===(campanha.compromisso?jsonCanonicoI165(campanha.compromisso):'')&&(diretriz.decisaoCompromisso||'')===(campanha.decisao?jsonCanonicoI165(campanha.decisao):''),'campanha-avancou','A campanha mudou.');if(p.modalidade==='a_definir'&&!pendente)motivo='Cecília usa a origem do calendário ou organiza a data na fila; a orientação anterior ainda não fixava um dia.';}catch{pendente=true;motivo='O material, a origem ou a campanha mudou. A Amanda precisa reconferir a orientação.';}
  return {video,post,diretriz,origem,campanha,cliente,assinaturaEsperada,pendente,motivo,foraDoFluxo:false};
 }
 
@@ -59,7 +62,7 @@ export async function prepararOrientacaoVideoCp108(db,auth,dados,{agora=new Date
  return db.runTransaction(async tx=>{await contextoTxI165(db,tx,ator,'programacao');const f=await fonteOrientacaoTx(db,tx,dados.videoId,agora);
   if(f.foraDoFluxo)return {video:selecionar(f.video),foraDoFluxo:true,diretrizNecessaria:false,fluxoCp108:'orientacao_amanda',motivo:f.motivo,nenhumaEscrita:true};
   const opcoes=f.campanha.compromisso?{opcoesCampanha:[],campanhasSemOpcao:[],consultaCompleta:true}:await listarOpcoesCampanhaTxI165(db,tx,f.video);
-  return {video:selecionar(f.video),assinaturaEsperada:f.assinaturaEsperada,diretrizAnterior:f.diretriz,compromisso:f.campanha.compromisso,...opcoes,origemConferida:f.origem,pendente:f.pendente,motivo:f.motivo,fluxoCp108:'orientacao_amanda',diretrizNecessaria:true,nenhumaEscrita:true,cancelamentoAtomicoDisponivel:true,qualidadePreservada:true,clientePreservado:true,lidoEm:instanteI165(agora)};
+  return {video:selecionar(f.video),assinaturaEsperada:f.assinaturaEsperada,diretrizAnterior:f.diretriz,compromisso:f.campanha.compromisso,...opcoes,origemConferida:f.origem,pendente:f.pendente,motivo:f.motivo,fluxoCp108:'orientacao_amanda',diretrizNecessaria:true,orientacaoOpcional:!f.pendente,nenhumaEscrita:true,cancelamentoAtomicoDisponivel:true,qualidadePreservada:true,clientePreservado:true,lidoEm:instanteI165(agora)};
  });
 }
 

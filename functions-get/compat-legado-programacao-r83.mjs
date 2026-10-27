@@ -1,5 +1,5 @@
 import {exigirI165,idFisicoI165,jsonCanonicoI165,dataCivilI165,horaCivilI165,horarioBrasiliaI165,programacaoAtivaI165,responsavelLegendaI165} from './lib/gs-contexto-operacional-i165.mjs';
-import {validarOperacaoProgramacaoI165,REDES_I165} from './lib/gs-diretriz-publicacao-i165.mjs';
+import {validarOperacaoProgramacaoI165,normalizarDiretrizI165,assinaturaDiretrizI165,chaveExcecaoI165,REDES_I165} from './lib/gs-diretriz-publicacao-i165.mjs';
 import {camposPendentesI79} from './lib/gs-legenda-qualidade-i79.mjs';
 const plain=x=>x&&typeof x==='object'&&!Array.isArray(x)&&Object.getPrototypeOf(x)===Object.prototype;
 const keys=(x,names)=>plain(x)&&Object.keys(x).every(k=>names.includes(k));
@@ -43,20 +43,46 @@ export function resolverCompatLegadoProgramacaoI165({cfg,post,video=null,postCre
  return {schema:1,autorizada:true,modo:p?'postagem_anterior':'video_aprovado_anterior',censoSHA256:l.censoSHA256,semDiretriz:true,semReaprovar:true};
 }
 export const compatLegadoConfirmadaI165=f=>!f?.diretriz&&f?.legadoProgramacao?.schema===1&&f.legadoProgramacao.autorizada===true;
+// Referência derivada em memória: não cria guia, autoria ou revisão da Amanda.
+export function resolverProgramacaoCp111({diretriz=null,origem=null,campanha=null}={}){
+ const p=diretriz?normalizarDiretrizI165(diretriz.politica):null;
+ const guiaAmanda=diretriz?.autoria?.papel==='Amanda'&&p?.modalidade!=='a_definir';
+ const base={schema:1,modo:'escolha_cecilia',disponivel:true,protegida:false,dataSugerida:'',horaSugerida:'',origem:origem||null,compromisso:campanha?.compromisso||null,politica:null,motivo:''};
+ if(origem?.erro||campanha?.erro)return {...base,disponivel:false,motivo:origem?.erro||campanha?.erro};
+ if(guiaAmanda)return {...base,modo:'orientacao_amanda',protegida:true,politica:p,dataSugerida:p.modalidade==='data'?p.data:'',horaSugerida:p.hora||''};
+ const cp=campanha?.compromisso;
+ if(cp)return {...base,modo:'campanha',protegida:true,dataSugerida:cp.data,horaSugerida:cp.hora||''};
+ if(origem?.dataFixa)return {...base,modo:'compromisso_calendario',protegida:true,dataSugerida:origem.dataFixa,horaSugerida:origem.hora||''};
+ if(origem?.dataSugerida)return {...base,modo:'calendario_sugestao',dataSugerida:origem.dataSugerida,horaSugerida:origem.hora||''};
+ return base;
+}
+export const assinaturaBaseProgramacaoCp111=f=>f.programacaoCp111?.modo==='orientacao_amanda'||!f.programacaoCp111?assinaturaDiretrizI165(f.diretriz):jsonCanonicoI165({schema:1,referenciaProgramacaoCp111:f.programacaoCp111});
+export const assinaturaFonteProgramacaoCp111=f=>jsonCanonicoI165({post:f.post,video:f.video,diretriz:f.diretriz,...(f.programacaoCp111&&f.programacaoCp111.modo!=='orientacao_amanda'?{programacaoCp111:f.programacaoCp111}:{})});
+export function validarProgramacaoCp111(f,acao){
+ const p=f.programacaoCp111;exigirI165(p?.schema===1&&p.disponivel,'fonte-programacao',p?.motivo||'Confira a origem atual desta proposta.');
+ exigirI165(dataCivilI165(acao.data)&&horaCivilI165(acao.hora),'agenda','Confira a data e o horário de Brasília.');
+ if(!p.protegida)return {permitida:true,excecaoAplicada:false,fonteProgramacaoCp111:p.modo};
+ if(p.modo==='orientacao_amanda')return validarOperacaoProgramacaoI165(f.diretriz,acao);
+ if(acao.data===p.dataSugerida&&(!p.horaSugerida||acao.hora===p.horaSugerida))return {permitida:true,excecaoAplicada:false,fonteProgramacaoCp111:p.modo};
+ const ex=acao.excecao;
+ exigirI165(ex?.autorizada===true&&ex.por==='Amanda'&&typeof ex.motivo==='string'&&ex.motivo.trim()&&ex.revisaoDiretriz===(f.diretriz?.revisao||0)&&ex.assinaturaDiretriz===assinaturaBaseProgramacaoCp111(f)&&ex.proposta===chaveExcecaoI165(acao),'excecao-necessaria','Este compromisso tem data específica. A Amanda precisa decidir esta mudança.');
+ return {permitida:true,excecaoAplicada:true,fonteProgramacaoCp111:p.modo};
+}
 export function validarAcaoFonteProgramacaoI165(f,acao,ator){
+ if(acao.acao==='agendar'&&f.programacaoCp111)return validarProgramacaoCp111(f,acao);
  if(f.diretriz)return validarOperacaoProgramacaoI165(f.diretriz,acao);
  exigirI165(acao.acao!=='agendar','orientacao-amanda-obrigatoria','A Amanda precisa definir a orientação antes de um novo agendamento, inclusive para conteúdos anteriores.');
- exigirI165(compatLegadoConfirmadaI165(f),'diretriz','A orientação precisa ser definida para este conteúdo novo.');
+ exigirI165(compatLegadoConfirmadaI165(f)||f.programacaoCp111?.schema===1,'diretriz','A orientação precisa ser definida para este conteúdo novo.');
  exigirI165(['agendar','desfazer','publicar','cancelar'].includes(acao.acao)&&['geral',...REDES_I165].includes(acao.rede||'geral'),'acao','Confira esta ação e a plataforma.');
  if(acao.acao==='agendar')exigirI165(dataCivilI165(acao.data)&&horaCivilI165(acao.hora),'agenda','Confira a data e o horário de Brasília.');
  if(acao.acao==='publicar'){
   const prova=typeof acao.prova==='string'?acao.prova.trim():'';
   exigirI165(dataCivilI165(acao.data)&&horaCivilI165(acao.hora)&&prova&&prova.length<=3000,'prova','Registre data, horário e prova da publicação real.');
   exigirI165(acao.data+'T'+acao.hora<=horarioBrasiliaI165(acao.agora),'fato-futuro','Uma publicação futura ainda não é um fato confirmado.');
-  return {permitida:true,fato:{data:acao.data,hora:acao.hora,prova,rede:acao.rede||'geral'},divergente:false,semPromessaAnterior:true,alteraPlano:false,continuidadeLegada:true};
+  return {permitida:true,fato:{data:acao.data,hora:acao.hora,prova,rede:acao.rede||'geral'},divergente:false,semPromessaAnterior:true,alteraPlano:false,continuidadeLegada:compatLegadoConfirmadaI165(f)};
  }
  if(acao.acao==='cancelar')exigirI165(ator?.papel==='Amanda'&&typeof acao.motivo==='string'&&acao.motivo.trim(),'papel','A Amanda precisa registrar o motivo da retirada deste conteúdo anterior.');
- return {permitida:true,excecaoAplicada:false,continuidadeLegada:true,resolveObrigacao:false};
+ return {permitida:true,excecaoAplicada:false,continuidadeLegada:compatLegadoConfirmadaI165(f),resolveObrigacao:false};
 }
 export function obrigacoesLegadoProgramacaoI165(f,cfg,agora){
  exigirI165(compatLegadoConfirmadaI165(f)&&typeof cfg.permitirAgendarSemLegendaI90==='boolean','legado-config','A continuidade e a política de legenda precisam estar confirmadas.');
@@ -74,7 +100,7 @@ export function obrigacoesLegadoProgramacaoI165(f,cfg,agora){
  let precisaOrientacao=false;
  for(const rede of redes){const r=rede==='geral'?{data:p.dataAgendada,hora:p.horaAgendada,publicadaEm:p.status==='postado'?p.postadoEm:'',retirada:false}:s.redes?.[rede];exigirI165(r&&typeof r==='object','rede-ausente','Uma plataforma anterior precisa de conferência.');if(r.retirada||r.publicadaEm)continue;
   if(dataCivilI165(r.data)&&horaCivilI165(r.hora))add('confirmar_publicacao','Cecília',{rede,prazo:r.data+'T'+r.hora});
-  else {precisaOrientacao=true;add('programar','Cecília',{rede,bloqueada:true,motivoBloqueio:'aguardando_orientacao_Amanda'});}
+  else add('programar','Cecília',{rede,bloqueada:f.programacaoCp111?.disponivel===false||pendente&&!cfg.permitirAgendarSemLegendaI90,motivoBloqueio:f.programacaoCp111?.disponivel===false?'origem_programacao_a_conferir':pendente&&!cfg.permitirAgendarSemLegendaI90?'aguardando_legenda_politica_I90':'',conferenciaOrientacaoCp110Obrigatoria:true});
  }
  if(precisaOrientacao)add('definir_compromisso','Amanda',{legadoSemDiretriz:true,motivoBloqueio:'novo_agendamento_exige_orientacao_Amanda'});
  return res;

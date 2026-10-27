@@ -1,4 +1,4 @@
-import {compatLegadoConfirmadaI165,obrigacoesLegadoProgramacaoI165} from './compat-legado-programacao-r83.mjs';
+import {assinaturaBaseProgramacaoCp111} from './compat-legado-programacao-r83.mjs';
 import {faseAvisoI165,preservarCanalIncertoI165} from './lib/gs-cadencia-avisos-i165.mjs';
 import {exigirI165,idFisicoI165,jsonCanonicoI165,instanteI165,programacaoAtivaI165,horarioBrasiliaI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {assinaturaDiretrizI165,chaveExcecaoI165} from './lib/gs-diretriz-publicacao-i165.mjs';
@@ -12,7 +12,7 @@ async function cfgTx(db,tx,habilidade){const s=await tx.get(db.doc('programacao_
 function visaoPost(f) {
  const c=f.controle,post={...f.post};
  post.excecoesProgramacaoI165={};post.conferenciasPublicacaoI165={};
- if(c?.assinaturaDiretriz===assinaturaDiretrizI165(f.diretriz)){
+ if(c?.assinaturaDiretriz===assinaturaBaseProgramacaoCp111(f)){
   const redes=post.publicacaoStokki?.versao===1?post.publicacaoStokki.selecionadas:['geral'];
   for(const rede of redes){const r=rede==='geral'?{data:post.dataAgendada||'',hora:post.horaAgendada||''}:post.publicacaoStokki.redes?.[rede];if(r){const k=chaveExcecaoI165({acao:'agendar',data:r.data||'',hora:r.hora||'',rede});post.excecoesProgramacaoI165[rede]=c.excecoes?.[k]||null;}const x=c.conferenciasPublicacao?.[rede];if(x)post.conferenciasPublicacaoI165[rede]={...x,motivo:x.motivo||x.observacao||''};}
  }
@@ -21,8 +21,7 @@ function visaoPost(f) {
 export function projetarPostagemServidorI165(f,cfg,agora){
  exigirI165(typeof cfg.permitirAgendarSemLegendaI90==='boolean','i90','O serviço precisa confirmar a política I90 vigente.');
  if(f.post.publicacaoStokki?.versao!==1&&['cancelada_manual','arquivada_sem_postagem','finalizado'].includes(f.post.status))return {estado:'encerrado_sem_pendencia_de_programacao',motivo:'estado_terminal_fisico',postagemId:f.post.id,obrigacoes:[]};
- if(compatLegadoConfirmadaI165(f))return obrigacoesLegadoProgramacaoI165(f,cfg,agora);
- return obrigacoesConteudoI165({postagem:f.diretriz?visaoPost(f):f.post,video:f.video,diretriz:f.diretriz,configEntrega:f.configEntrega,clienteAtivo:f.clienteAtivo,processoEditorial:f.processoEditorial,permitirAgendarSemLegendaI90:cfg.permitirAgendarSemLegendaI90,agora});
+ return obrigacoesConteudoI165({postagem:f.diretriz?visaoPost(f):f.post,video:f.video,diretriz:f.diretriz,programacaoCp111:f.programacaoCp111,configEntrega:f.configEntrega,clienteAtivo:f.clienteAtivo,processoEditorial:f.processoEditorial,permitirAgendarSemLegendaI90:cfg.permitirAgendarSemLegendaI90,agora});
 }
 function textoAviso(o,fonte){
  const titulos={editar_video:'Um vídeo chegou para edição',corrigir_video:'Tem um ajuste de vídeo para conferir',preparar_legenda:'Tem uma legenda esperando por você',programar:'Conteúdo liberado para agendar',confirmar_publicacao:'Pode conferir esta publicação?',definir_compromisso:'Falta combinar a data deste conteúdo',conferir_publicacao_divergente:'Pode conferir a data da publicação?',conferir_agendamento_divergente:'Pode conferir esta data agendada?',conferir_publicacao_legada:'Pode conferir esta publicação anterior?',definir_responsavel_correcao:'Pode conferir quem vai fazer este ajuste?'};
@@ -75,7 +74,7 @@ export async function sincronizarPostagemI165(db,id,{agora=new Date()}={}){
   // The actual video episode owns an editing alert. Its post remains visible in the queue without a second email/push.
   const obr=projecao.obrigacoes.filter(o=>!(f.video&&o.tipo==='corrigir_video'));
   const notas=await materializarTx(db,tx,'postagens',id,f.post,obr,em,cfg,{preservar:!f.clienteAtivo});
-  if(f.diretriz){const assinatura=assinaturaDiretrizI165(f.diretriz),mesma=f.controle?.assinaturaDiretriz===assinatura;tx.set(db.doc('programacao_controles_i165/'+id),{schema:1,postagemId:id,videoId:f.video?.id||'',cliente:f.post.cliente,empresaOtavio:f.post.empresaOtavio||'',diretriz:f.diretriz,assinaturaDiretriz:assinatura,revisao:f.diretriz.revisao,excecoes:mesma?f.controle.excecoes||{}:{},conferenciasPublicacao:f.controle?.conferenciasPublicacao||{},ativacaoId:cfg.ativacaoId,atualizadoEm:em});}
+  if(f.diretriz||f.programacaoCp111){const assinatura=assinaturaBaseProgramacaoCp111(f),mesma=f.controle?.assinaturaDiretriz===assinatura;tx.set(db.doc('programacao_controles_i165/'+id),{schema:1,postagemId:id,videoId:f.video?.id||'',cliente:f.post.cliente,empresaOtavio:f.post.empresaOtavio||'',diretriz:f.diretriz,assinaturaDiretriz:assinatura,revisao:f.diretriz?.revisao||0,excecoes:mesma?f.controle.excecoes||{}:{},conferenciasPublicacao:f.controle?.conferenciasPublicacao||{},ativacaoId:cfg.ativacaoId,atualizadoEm:em});}
   return {ativa:true,estado:projecao.estado,...notas};
  });
 }

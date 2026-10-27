@@ -1,3 +1,4 @@
+import {ACOES_REUNIOES_MENSAIS_CP111,operarReunioesMensaisCp111} from './reunioes-mensais-cp111.mjs';
 import {ACOES_AJUSTES_CP109,operarAjustesClientesCp109} from './ajustes-clientes-cp109.mjs';
 import {ACOES_REFERENCIAS_CP109,operarReferenciasCp109} from './referencias-cp109.mjs';
 import {ACOES_PLANEJAMENTO_CP109,operarPlanejamentoEstrategicoCp109} from './planejamento-estrategico-cp109.mjs';
@@ -33,6 +34,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_REUNIOES_MENSAIS_CP111.includes(dados.acao))return operarReunioesMensaisCp111(db,auth,dados,{agora});
  if(ACOES_AJUSTES_CP109.includes(dados.acao))return operarAjustesClientesCp109(db,auth,dados,{agora});
  if(ACOES_REFERENCIAS_CP109.includes(dados.acao))return operarReferenciasCp109(db,auth,dados,{agora});
  if(ACOES_PLANEJAMENTO_CP109.includes(dados.acao))return operarPlanejamentoEstrategicoCp109(db,auth,dados,{agora});

@@ -22,6 +22,7 @@ const DTO_ORIGEM=['link','descricao','ideia','autorPerfil','autor','empresaOtavi
 function calendarioMes(c,mes){if(!c)return null;return {excluido:c.excluido||false,planejamentoBasesI155:{[mes]:c.planejamentoBasesI155?.[mes]||''},aprovacaoMeses:{[mes]:c.aprovacaoMeses?.[mes]||null},items:(c.items||[]).filter(x=>x?.mes===mes),blocosPorMes:{[mes]:c.blocosPorMes?.[mes]||null}};}
 export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(),editorialInterna=false}={}){
  if(editorialInterna)validarEntradaMutacaoEditorialInternaI172(pedido);else entradaCentralR80(pedido);const ator=validarContaEsperadaI165(auth,pedido);e(papeis.includes(ator.papel)||pedido.acao==='central_capacidades'&&ator.papel==='Cecília','A preparação pertence ao Christopher, Amanda e Gabi.');
+ if(pedido.acao==='central_mutar'&&pedido.acaoPreparacao==='desconsiderar_confirmacao')e(ator.papel==='Amanda','A desconsideração de confirmação pertence à Amanda.');
  async function gate(tx,{capacidades=false}={}){
   const [cfg,cad,processo]=await Promise.all([tx.get(db.doc('programacao_config_i165/ativo')),tx.get(db.doc('usuarios_equipe/'+ator.email)),tx.get(db.doc('processo_calendarios_i164/ativo'))]);
   validarCadastroI165(ator,cad.data());const exclusivo=processoAtivoI164(processo.data()),ativa=capacidadePreparacaoEditorialI172(cfg.data(),processo.exists,processo.data());

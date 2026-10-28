@@ -12,7 +12,21 @@ export async function operarDispensaRetroativaI118(db,auth,d,{agora=new Date()}=
  exigirI165((projetar?['Chris','Amanda','Cecília']:['Chris','Amanda']).includes(a.papel),'i118-papel','A dispensa administrativa pertence ao Chris e à Amanda.');
  if(['conferir_dispensa_retroativa_i118','dispensar_confirmacao_retroativa_i118'].includes(d.acao))exigirI165(idFisicoI165(d.operacaoId),'i118-operacao','Confira a mesma tentativa administrativa.');
  if(d.acao==='conferir_dispensa_retroativa_i118')return db.runTransaction(async tx=>{await contextoTxI165(db,tx,a,'programacao');const r=await tx.get(refOp(db,a,d.operacaoId));return {schema:1,estado:r.exists?'confirmada':'ausente_no_instante',...(r.exists?{recibo:r.data()}:{}),retrySomenteMesmaIntencao:true};});
- if(projetar)return db.runTransaction(async tx=>{await contextoTxI165(db,tx,a,'programacao');const projecoes=[],erros=[];for(const id of lista(d.ids)){try{const f=await fontesPostagemTxI165(db,tx,id,em,{conferirDiretriz:false});projecoes.push({postagemId:id,assinaturaFonte:hashI165(f.post),redes:redesPostagemDispensaI118(f.post).map(r=>dispensaServidorRedeI118(f,r)).filter(Boolean)});}catch(e){erros.push({postagemId:id,codigo:e.code||'i118/fonte',mensagem:e.message});}}return {schema:1,projecoes,erros,nenhumaEscrita:true};});
+ if(projetar)return db.runTransaction(async tx=>{
+  const ids=lista(d.ids);await contextoTxI165(db,tx,a,'programacao');
+  const refs=ids.flatMap(id=>[db.doc('postagens/'+id),refDispensaI118(db,id)]);
+  const snaps=refs.length?await tx.getAll(...refs):[],leituras=new Map(snaps.map(s=>[s.ref.path,Promise.resolve(s)]));
+  // Todos os leitores compartilham o snapshot read-only e a mesma leitura de cada referência.
+  const leitura={get:ref=>{if(!leituras.has(ref.path))leituras.set(ref.path,tx.get(ref));return leituras.get(ref.path);}};
+  const resultados=await Promise.all(ids.map(async id=>{try{
+   const [ps,marker]=await Promise.all([leitura.get(db.doc('postagens/'+id)),leitura.get(refDispensaI118(db,id))]);
+   exigirI165(ps.exists,'postagem','A postagem não existe.');const post={...ps.data(),id:ps.id};
+   if(!marker.exists)return {projecao:{postagemId:id,assinaturaFonte:hashI165(post),redes:[]}};
+   const f=await fontesPostagemTxI165(db,leitura,id,em,{conferirDiretriz:false});
+   return {projecao:{postagemId:id,assinaturaFonte:hashI165(f.post),redes:redesPostagemDispensaI118(f.post).map(r=>dispensaServidorRedeI118(f,r)).filter(Boolean)}};
+  }catch(e){return {erro:{postagemId:id,codigo:e.code||'i118/fonte',mensagem:e.message}};}}));
+  return {schema:1,projecoes:resultados.filter(r=>r.projecao).map(r=>r.projecao),erros:resultados.filter(r=>r.erro).map(r=>r.erro),nenhumaEscrita:true};
+ },{readOnly:true});
  const preparar=d.acao==='preparar_dispensa_retroativa_i118';
  let corte,ids;
  if(preparar){corte=d.corte||em;exigirI165(typeof corte==='string'&&new Date(corte).toISOString()===corte&&corte<=em,'i118-corte','Confira um corte válido, anterior ou igual ao instante atual.');ids=lista(d.ids);}

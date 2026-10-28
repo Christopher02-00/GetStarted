@@ -7,6 +7,32 @@ const digesto = async bytes => Array.from(new Uint8Array(await crypto.subtle.dig
 const base64 = bytes => {let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(s);};
 const binario = texto => Uint8Array.from(atob(texto),c=>c.charCodeAt(0));
 let mammothPromise;
+const LIMITE_TEXTO_CP124=60000;
+function entidadesCp124(valor){return String(valor||'').replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi,(original,codigo)=>{if(codigo[0]!=='#')return {amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:'\u00a0'}[codigo.toLowerCase()]||original;const n=codigo[1].toLowerCase()==='x'?parseInt(codigo.slice(2),16):parseInt(codigo.slice(1),10);return n>0&&n<=0x10ffff&&!(n>=0xd800&&n<=0xdfff)?String.fromCodePoint(n):original;});}
+function adicionarLinkCp124(links,rotulo,url){
+  let u;try{u=new URL(entidadesCp124(url).trim());}catch{return;}
+  if(!['http:','https:'].includes(u.protocol)||u.username||u.password)return;
+  const destino=u.href,nome=entidadesCp124(rotulo).replace(/\s+/g,' ').trim()||destino;
+  if(destino.length>2000||nome.length>2000)throw Error('Há um link ou rótulo com mais de 2 mil caracteres. Divida o documento; nenhum trecho foi cortado.');
+  if(!links.some(x=>x.url===destino&&x.rotulo===nome))links.push({rotulo:nome,url:destino});
+  if(links.length>1000)throw Error('Este documento tem mais de mil links. Divida o arquivo; nenhum link foi cortado.');
+}
+export function linksHtmlDocumentoCp124(html){
+  const links=[];for(const match of String(html||'').matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)){
+    const href=match[1].match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
+    if(href)adicionarLinkCp124(links,match[2].replace(/<[^>]*>/g,' '),href[1]??href[2]??href[3]);
+  }return links;
+}
+export function textoDocumentoComLinksCp124(preparado,textoAnterior=''){
+  if(typeof preparado?.texto!=='string'||typeof textoAnterior!=='string')throw Error('Confira o texto lido antes de preparar o documento.');
+  const links=[];if(preparado.linksExtraidos!==undefined&&!Array.isArray(preparado.linksExtraidos))throw Error('Confira os links lidos do documento.');
+  for(const link of preparado.linksExtraidos||[]){if(typeof link?.rotulo!=='string'||typeof link?.url!=='string')throw Error('Um link do documento precisa ser conferido.');adicionarLinkCp124(links,link.rotulo,link.url);}
+  const urlsVisiveis=new Set();for(const token of preparado.texto.match(/https?:\/\/[^\s<>"']+/gi)||[]){try{const u=new URL(token);if(['http:','https:'].includes(u.protocol)&&!u.username&&!u.password)urlsVisiveis.add(u.href);}catch{}}
+  const novos=links.filter(link=>!urlsVisiveis.has(link.url)),secao=novos.length?'\n\nLINKS DO DOCUMENTO\n'+novos.map((link,i)=>(i+1)+'. '+link.rotulo+'\n'+link.url).join('\n\n'):'';
+  const corpo=preparado.texto+secao,completo=textoAnterior.trim()?textoAnterior+'\n\n— TEXTO DO ARQUIVO: '+String(preparado.nome||'documento')+' —\n'+corpo:corpo;
+  if(completo.length>LIMITE_TEXTO_CP124)throw Error('O texto completo, incluindo os links e suas anotações, tem mais de 60 mil caracteres. Divida o documento; nada foi cortado ou confirmado.');
+  return completo;
+}
 function mammothLocal(){
   if(globalThis.mammoth)return Promise.resolve(globalThis.mammoth);
   return mammothPromise ||= new Promise((resolve,reject)=>{
@@ -19,23 +45,24 @@ export async function prepararArquivo(file){
   if(!file||!Number.isInteger(file.size)||file.size<1||file.size>LIMITE_ARQUIVO)throw Error('Escolha um PDF, DOCX ou texto de até 4 MB.');
   const extensao=String(file.name||'').split('.').pop().toLowerCase(),tipo=TIPOS_ARQUIVO[extensao];
   if(!tipo)throw Error('Use PDF, DOCX, TXT ou MD. Outros formatos não são enviados.');
-  const buffer=await file.arrayBuffer(),bytes=new Uint8Array(buffer);let texto='',paginas=0;
+  const buffer=await file.arrayBuffer(),bytes=new Uint8Array(buffer);let texto='',paginas=0;const linksExtraidos=[];
   if(extensao==='pdf'){
     if(new TextDecoder().decode(bytes.subarray(0,5))!=='%PDF-')throw Error('O conteúdo deste arquivo não é um PDF.');
     const pdfjs=await import('./vendor-planejamento/pdf.min.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc=new URL('./vendor-planejamento/pdf.worker.min.mjs',import.meta.url).href;
     const tarefa=pdfjs.getDocument({data:bytes.slice(),isEvalSupported:false,useSystemFonts:false,disableFontFace:true});let pdf;
     try{pdf=await tarefa.promise;if(pdf.numPages>100)throw Error('Este PDF tem mais de 100 páginas. Divida o documento antes de enviar.');paginas=pdf.numPages;
-      const partes=[];for(let n=1;n<=pdf.numPages;n++){const pagina=await pdf.getPage(n),conteudo=await pagina.getTextContent();partes.push(conteudo.items.map(x=>x.str+(x.hasEOL?'\n':' ')).join(''));pagina.cleanup();}texto=partes.join('\n\n');
+      const partes=[];for(let n=1;n<=pdf.numPages;n++){const pagina=await pdf.getPage(n),conteudo=await pagina.getTextContent();partes.push(conteudo.items.map(x=>x.str+(x.hasEOL?'\n':' ')).join(''));const anotacoes=await pagina.getAnnotations({intent:'display'});for(const [i,a]of anotacoes.entries())if(a.subtype==='Link')adicionarLinkCp124(linksExtraidos,a.contentsObj?.str||a.titleObj?.str||'PDF · página '+n+' · referência '+(i+1),a.url||a.unsafeUrl||'');pagina.cleanup();}texto=partes.join('\n\n');
     }finally{await tarefa.destroy();}
   }else if(extensao==='docx'){
     if(bytes[0]!==0x50||bytes[1]!==0x4b)throw Error('O conteúdo deste arquivo não é um DOCX.');
     const leitor=await mammothLocal(),resultado=await leitor.extractRawText({arrayBuffer:buffer.slice(0)},{externalFileAccess:false});texto=resultado.value;
+    const html=await leitor.convertToHtml({arrayBuffer:buffer.slice(0)},{externalFileAccess:false});for(const link of linksHtmlDocumentoCp124(html.value))adicionarLinkCp124(linksExtraidos,link.rotulo,link.url);
   }else texto=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
   texto=String(texto||'').replace(/\u0000/g,'').trim();
   if(!texto)throw Error('Não encontrei texto legível. Se for um documento escaneado, envie a versão com texto ou registre o conteúdo no campo antes de confirmar. Nenhuma etapa foi concluída.');
   if(texto.length>60000)throw Error('O documento tem mais de 60 mil caracteres. Divida em documentos menores; não cortamos o conteúdo.');
-  return {nome:String(file.name).slice(0,180),tipo,bytes:bytes.length,sha256:await digesto(bytes),texto,paginas,buffer:bytes};
+  return {nome:String(file.name).slice(0,180),tipo,bytes:bytes.length,sha256:await digesto(bytes),texto,paginas,buffer:bytes,linksExtraidos};
 }
 export function criarArquivosPlanejamento(io,contexto){
   const {db,doc,getDocFromServer,writeBatch,serverTimestamp}=io;

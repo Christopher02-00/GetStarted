@@ -142,6 +142,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
   async function salvarConfig(d,rev,mes){const c=contextoSeguro(contexto);exigirPapel(c,GESTAO);const ref=doc(db,'planejamento_social_config_i155','agenda');await runTransaction(db,async tx=>{const s=await tx.get(ref);mesmaSessao(c);if((s.data()?.revisao||0)!==rev)throw Error('A configuração mudou. Reabra antes de salvar.');if(!Array.isArray(d.dias)||!d.dias.length||d.dias.some(n=>!Number.isInteger(n)||n<0||n>6)||Object.values(d.capacidades).some(n=>!Number.isInteger(n)||n<1||n>500))throw Error('Confira dias e capacidades.');tx.set(ref,{dias:d.dias,capacidades:d.capacidades,modelos:d.modelos,indisponibilidades:d.indisponibilidades||[],feriados:d.feriados||[],recorrencia:validarRecorrenciaI164(d.recorrencia),revisao:rev+1,autorUid:c.uid,autorNome:c.atorReal,atualizadoEm:serverTimestamp()});});mesmaSessao(c);const salvo=await config(mes);mesmaSessao(c);return salvo;}
   async function mutar(id,acao,dados,esperada,operacao){
     const ctx=contextoSeguro(contexto);if(!/^[A-Za-z0-9_-]{8,100}$/.test(operacao||''))throw Error('Operação inválida.');
+    if(acao==='incluir'&&ctx.nome===PESQUISA_RESPONSAVEL_R81){if(!dados||Object.keys(dados).length!==2||!['cliente','competencia'].every(k=>Object.hasOwn(dados,k))||Object.keys(dados).some(k=>!['cliente','competencia'].includes(k))||idCiclo(dados.cliente,dados.competencia)!==id)throw Error('A Gabi inicia somente a pasta de referências deste cliente e mês, sem datas ou opções de gestão.');}
     const ref=refCiclo(id),er=evRef(id,operacao);let resultado;
     try{await runTransaction(db,async tx=>{
       const [s,ev]=await Promise.all([tx.get(ref),tx.get(er)]);mesmaSessao(ctx);
@@ -151,7 +152,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
       if(c&&c.revisao!==esperada&&acao!=='excluir_lote')throw Error('O ciclo mudou em outra tela. Seus campos foram preservados. Confira a versão atual.');
       const antes=c?clone(c):null;let gravarRegistros=[],partesLote=[];resultado={};
       if(acao==='incluir'){
-        exigirPapel(ctx,GESTAO);if(c)throw Error('Este cliente já tem um ciclo nesta competência.');
+        exigirPapel(ctx,[...GESTAO,PESQUISA_RESPONSAVEL_R81]);if(c)throw Error('Este cliente já tem um ciclo nesta competência.');
         const lista=await clientes(dados.competencia,true);mesmaSessao(ctx);const cl=lista.find(x=>(x.slug||x.id)===dados.cliente);if(!cl)throw Error('Cliente não confirmado na carteira desta competência.');
         c=novoCiclo(dados.cliente,cl.nome||cl.clienteNome||dados.cliente,dados.competencia);if(dados.agendaInicial){const a=clone(dados.agendaInicial);if(Object.keys(a).length!==7||ETAPAS.some(([k,,p])=>!a[k]||(!a[k].origemI167&&a[k].responsavel!==p||a[k].origemI167&&!PAPEIS.includes(a[k].responsavel))||!diaValido(a[k].prazo)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(a[k].prazoHora||'')))throw Error('O modelo inicial de prazos precisa ser conferido.');c.agenda=a;}for(const [k]of ETAPAS)c.agenda[k].fonteOrganizacaoI167=true;if(idCiclo(c.cliente,c.competencia)!==id)throw Error('Destino inválido.');
       }else if(acao==='agenda'){

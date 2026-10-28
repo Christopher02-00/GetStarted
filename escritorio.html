@@ -14694,7 +14694,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     gridBox.innerHTML = html;
   }
 
-  let __postSubI84='', __geracaoAgendarI84=0;
+  let __postSubI84='', __geracaoAgendarI84=0, __geracaoConfirmarCp119=0;
   window.setPostagensSub = function(qual, el){
     if(gabiRestritaI170()){if(qual!=='legenda')return !negarEditorialGabiI170();__etapaLegendasI66='videos';}
     if(qual==='legendasCalendario'){__etapaLegendasI66='calendario';qual='legenda';}
@@ -14884,23 +14884,43 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     if(b) b.style.display = (b.style.display === 'none' || !b.style.display) ? 'block' : 'none';
   };
 
+  async function videosPorIdsCp119(ids){
+    const unicos=[...new Set(ids.map(id=>String(id||'').trim()).filter(Boolean))];
+    const lotes=[];for(let i=0;i<unicos.length;i+=10)lotes.push(unicos.slice(i,i+10));
+    const snaps=await Promise.all(lotes.map(lote=>_getDocsFromServerFB(query(collection(db,'videos_producao'),where(documentId(),'in',lote)))));
+    const videos=new Map();
+    snaps.forEach((snap,i)=>snap.forEach(d=>{if(!lotes[i].includes(d.id)||videos.has(d.id))throw new Error('A leitura dos vídeos não confirmou os IDs solicitados.');videos.set(d.id,{...d.data(),id:d.id});}));
+    return videos;
+  }
+
   async function renderConfirmarPublicacoes(){
     const cont = document.getElementById('postagensConteudo');
-    if(!cont) return;
+    if(!cont||!document.getElementById('view-postagens')?.classList.contains('active')||__postSubI84!=='confirmar')return;
+    const leitura=++__geracaoConfirmarCp119,rota=__geracaoAgendarI84,sessao=sessaoServicoManual();
+    const vigente=()=>leitura===__geracaoConfirmarCp119&&rota===__geracaoAgendarI84&&sessao===sessaoServicoManual()&&__postSubI84==='confirmar'&&document.getElementById('view-postagens')?.classList.contains('active')&&document.getElementById('postagensConteudo')===cont;
     cont.innerHTML = '<div class="card"><div class="desc">Procurando o que ainda não foi confirmado...</div></div>';
 
+    const hoje = hojeLocal();
     let posts = [], vids = {};
     try{
-      const [pS, vS] = await Promise.all([getDocs(collection(db,'postagens')), getDocs(collection(db,'videos_producao'))]);
-      pS.forEach(d => { const x=d.data(); if(!x.excluido) posts.push({...x,id:d.id}); });
-      vS.forEach(d => { const x=d.data(); if(!x.excluido) vids[d.id]=x; });
-      posts=await projetarCobrancasRetroativasI118(posts);
+      const snaps=await Promise.all([
+        getDocs(query(collection(db,'postagens'),where('status','==','agendado'))),
+        getDocs(query(collection(db,'postagens'),where('cliente','==','stokki')))
+      ]);
+      if(!vigente())return;
+      const porId=new Map();snaps.forEach(snap=>snap.forEach(d=>{const x=d.data();if(!x.excluido)porId.set(d.id,{...x,id:d.id});}));
+      posts=await projetarCobrancasRetroativasI118([...porId.values()]);
+      if(!vigente())return;
+      const idsVideo=posts.filter(p=>p.status==='agendado'&&!todasCobrancasRetroativasDispensadasI118(p)&&String(p.dataAgendada||'')<hoje).map(p=>p.videoId);
+      const videos=await videosPorIdsCp119(idsVideo);
+      if(!vigente())return;
+      videos.forEach((v,id)=>{if(!v.excluido)vids[id]=v;});
     }catch(e){
+      if(!vigente())return;
       console.error('Falha ao carregar as publicações:', e);
       cont.innerHTML = '<div class="card"><div class="empty">Não consegui carregar. Recarrega a página.</div></div>'; return;
     }
 
-    const hoje = hojeLocal();
     /* Só o que está agendado — legenda e agendamento ainda são trabalho de
        verdade, não têm o que confirmar. */
     const historicoDispensaI118=htmlCobrancasEncerradasI118(posts);
@@ -16607,7 +16627,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     if(!cont||!document.getElementById('view-postagens')?.classList.contains('active')||__postSubI84!=='agendar')return;
     const leitura=++__geracaoAgendarI84,sessao=sessaoServicoManual();
     let idsCompromissosI165=[],permitirSemLegendaCp110=false;
-    try{const cfg=await carregarConfigOperacionalI165();permitirSemLegendaCp110=cfg.permitirAgendarSemLegendaI90===true;}catch{}
+    const configCp119=carregarConfigOperacionalI165().then(cfg=>cfg.permitirAgendarSemLegendaI90===true).catch(()=>false);
     const vigente=()=>leitura===__geracaoAgendarI84&&sessao===sessaoServicoManual()&&__postSubI84==='agendar'&&document.getElementById('view-postagens')?.classList.contains('active');
     guardarRascunhosProgramacaoI165();
     const campos=new Map([...cont.querySelectorAll('input[id],textarea[id],select[id]')].map(el=>[el.id,{value:el.value,checked:el.checked}]));
@@ -16634,13 +16654,14 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     if(!cont.querySelector('input,textarea,select'))leituraStatus.textContent='Confirmando liberações e agendamentos…';
     let postSnap,agSnap;
     try{
-      [postSnap,agSnap] = await Promise.all([
+      [postSnap,agSnap,permitirSemLegendaCp110] = await Promise.all([
         /* A aprovação pode chegar antes da legenda. Mostrar a etapa anterior
            junto do agendamento, mantendo fora os estados encerrados. */
         _getDocsFromServerFB(query(collection(db,'postagens'), where('status','in',['aguardando_legenda','aguardando_agendamento','agendado']))),
         /* Para o cartão "gravações hoje", nenhum outro dia precisa chegar ao
            navegador dela. */
-        _getDocsFromServerFB(query(collection(db,'agendamentos'), where('data','==',hojeLocal())))
+        _getDocsFromServerFB(query(collection(db,'agendamentos'), where('data','==',hojeLocal()))),
+        configCp119
       ]);
     }catch(e){
       if(!vigente())return;
@@ -16668,13 +16689,12 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
         else confirmadas.delete(String(idAlteradoI84));
       }catch(e){falhaLeituraI90();if(vigente())mostrarToast('O registro foi salvo, mas a fila ainda precisa ser conferida. Seus campos continuam preservados.','erro');return;}
     }
-    let projetadasI118;try{projetadasI118=await projetarCobrancasRetroativasI118([...confirmadas.values()]);}catch(e){if(!vigente())return;falhaLeituraI90();leituraStatus.textContent='Não consegui conferir as cobranças anteriores. A lista e os campos foram preservados. '+String(e.message||'');mostrarToast(leituraStatus.textContent,'erro');return;}if(!vigente())return;confirmadas.clear();projetadasI118.forEach(p=>confirmadas.set(p.id,p));
-    confirmadas.forEach(p=>{if(p.excluido!==true&&['aguardando_legenda','aguardando_agendamento','agendado'].includes(p.status)){if(usaPublicacaoStokkiI30(p)&&p.status!=='aguardando_legenda')filaStokkiI30.push(p);else fila.push(p);}});
-    const idsVideo=[...new Set(fila.map(p=>String(p.videoId||'').trim()).filter(Boolean))];
-    const videosPorId=new Map();
+    const fontesCp119=[...confirmadas.values()];
+    const idsVideo=fontesCp119.filter(p=>p.excluido!==true&&['aguardando_legenda','aguardando_agendamento','agendado'].includes(p.status)&&(!usaPublicacaoStokkiI30(p)||p.status==='aguardando_legenda')).map(p=>p.videoId);
+    const projecaoCp119=projetarCobrancasRetroativasI118(fontesCp119).then(posts=>({posts}),erro=>({erro}));
+    let videosPorId,projecao;
     try{
-      const snaps=await Promise.all(idsVideo.map(id=>_getDocFromServerFB(doc(db,'videos_producao',id))));
-      snaps.forEach((snap,idx)=>{ if(snap.exists()) videosPorId.set(idsVideo[idx],{...snap.data(),id:snap.id}); });
+      [videosPorId,projecao]=await Promise.all([videosPorIdsCp119(idsVideo),projecaoCp119]);
     }catch(e){
       if(!vigente())return;
       console.error('V118: vídeos da fila da Cecília indisponíveis:',e);
@@ -16684,6 +16704,9 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
       return;
     }
     if(!vigente())return;
+    if(projecao.erro){falhaLeituraI90();leituraStatus.textContent='Não consegui conferir as cobranças anteriores. A lista e os campos foram preservados. '+String(projecao.erro.message||'');mostrarToast(leituraStatus.textContent,'erro');return;}
+    confirmadas.clear();projecao.posts.forEach(p=>confirmadas.set(p.id,p));
+    confirmadas.forEach(p=>{if(p.excluido!==true&&['aguardando_legenda','aguardando_agendamento','agendado'].includes(p.status)){if(usaPublicacaoStokkiI30(p)&&p.status!=='aguardando_legenda')filaStokkiI30.push(p);else fila.push(p);}});
     const porVideo=new Map();
     fila.forEach(p=>{ const id=String(p.videoId||'').trim(); if(id){ const lista=porVideo.get(id)||[]; lista.push(p); porVideo.set(id,lista); } });
     const pendentes=[]; const agendadasParaConfirmar=[]; const conflitos=[]; const aguardandoTextoI90=[];

@@ -33158,8 +33158,10 @@ window.setGerenciaSub = function(qual, el){
         const vidRev = (cacheVideosProducao || []).filter(v => !v.excluido && v.status === 'aguardando_aprovacao').length;
         const demRev = demandasBadgesV135.filter(d => d.status === 'concluida_aguardando_aprovacao' && aprovacaoEhDe(d, usuarioAtual)).length;
         const calRev=__avisosCalendariosI148.sessao===sessaoServicoManual()?__avisosCalendariosI148.linhas.length:0;
-        const tot = vidRev + demRev + (usuarioAtual==='Amanda'?calRev:0);
-        if(tot && ['Chris','Amanda'].includes(usuarioAtual)){
+        const tot = vidRev + demRev + (usuarioAtual==='Amanda'?calRev+contarFilaInternaCp123():0);
+        if(usuarioAtual==='Amanda'&&estadoFilaInternaCp123().estado==='falha'){
+          ba.textContent=tot?String(tot)+' !':'!';ba.title='Não consegui confirmar os ajustes internos. Abra Aprovações para conferir.';ba.style.display='flex';
+        }else if(tot && ['Chris','Amanda'].includes(usuarioAtual)){
           ba.textContent = tot; ba.removeAttribute('title'); ba.style.display = 'flex';
         }else{
           ba.removeAttribute('title'); ba.style.display = 'none';
@@ -39957,6 +39959,7 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function pararListenersTempoReal(limparDemandas, limparCachesColecoes){
+    pararFilaInternaCp123();
     pararBadgeCampanhasI104();
     cancelarAtualizacaoTempoRealI104();
     __stokkiOperacaoI30?.parar();
@@ -40009,6 +40012,7 @@ window.setGerenciaSub = function(qual, el){
       __ouvinteTempoRealAindaAtualV135(pessoaDoOuvinte, geracaoDoOuvinteV135);
     const ehGestao = pessoaDoOuvinte === 'Amanda' || pessoaDoOuvinte === 'Chris';
     listenersTempoRealAtivos = true;
+    if(ehGestao)iniciarFilaInternaCp123();
     if(['Amanda','Cecília','Chris'].includes(pessoaDoOuvinte)){
       obterOperacaoStokkiI30().then(operacao=>{
         if(!ouvinteAindaAtualV135())return;
@@ -46792,7 +46796,9 @@ Observações do cliente: ${l.observacoes||'—'}`;
       return;
     }
     if(!cont.children.length)cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+    const filaInternaCp123=atualizarFilaInternaCp123();
     await carregarTodasDemandas();
+    await filaInternaCp123;
     if(!renderAindaAtual()) return;
 
     /* ═══ UMA TELA SÓ PRA APROVAR — 01/08/2026 ════════════════════════
@@ -46860,7 +46866,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
        se estiver cobrindo a ausência dela. */
     const prazosMeus = (pessoaDaFilaAprovacoes === 'Amanda' || (pessoaDaFilaAprovacoes === 'Chris' && estaAusente('Amanda'))) ? pedidosDePrazo : [];
     const filtro = window.__filtroAprov || 'tudo';
-    const calendariosPendentesI148=__avisosCalendariosI148.sessao===sessaoServicoManual()?__avisosCalendariosI148.linhas.length:0;
+    const calendariosPendentesI148=(__avisosCalendariosI148.sessao===sessaoServicoManual()?__avisosCalendariosI148.linhas.length:0)+contarFilaInternaCp123();
     const bolinha = (n, extras=false) => n || extras ? '<span '+(extras?'data-conferencia-extras-i157 ':'')+'style="display:'+(n?'inline-flex':'none')+';align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;font-weight:800;">' + (n||'') + '</span>' : '';
     const chip = (id, rot, n) => `<button class="btn ${filtro===id?'':'secondary'}" style="width:auto;padding:8px 15px;font-size:12px;" onclick="filtrarAprovacoes('${id}')">${rot}${bolinha(n,id==='extras')}</button>`;
 
@@ -47705,6 +47711,77 @@ Observações do cliente: ${l.observacoes||'—'}`;
     }
   };
 
+  /* CP123 — a mesma fila interna abastece Início, Aprovações e o contador. */
+  let __filaInternaCp123={chave:'',estado:'nao_lida',ajustes:[]},__consultaFilaInternaCp123=null,__geracaoFilaInternaCp123=0;
+  let __timerFilaInternaCp123=null,__focoFilaInternaCp123=null;
+  function chaveFilaInternaCp123(){const c=contextoPreparacaoR80();return JSON.stringify([c.uid,c.nome,c.atorReal,c.sessao,c.geracao]);}
+  function estadoFilaInternaCp123(){return __filaInternaCp123.chave===chaveFilaInternaCp123()?__filaInternaCp123:{chave:chaveFilaInternaCp123(),estado:'nao_lida',ajustes:[]};}
+  function validarFilaInternaCp123(d,papel){
+    if(!d||d.schema!==1||d.papel!==papel||d.truncado!==false||!Array.isArray(d.ajustes)||d.ajustes.length>100)throw Error('Não consegui confirmar a fila de ajustes internos.');
+    const ids=new Set(),estados=papel==='Amanda'?['enviado','aprovado']:['rascunho','devolvido','enviado','aprovado'];
+    for(const r of d.ajustes){
+      if(!r||!/^interno_cp123_[a-f0-9]{64}$/.test(r.id||'')||ids.has(r.id)||r.origem!=='interna'||!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(r.cliente||'')||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(r.competencia||'')||r.ciclo!==r.competencia+'__'+r.cliente||!/^[A-Za-z0-9_-]{1,160}$/.test(r.itemId||'')||!estados.includes(r.estado)||!Number.isInteger(r.versao)||r.versao<0||!r.link||r.link.cliente!==r.cliente||r.link.mes!==r.competencia||r.link.itemId!==r.itemId||r.link.origemEditorial!=='continuar_legado'||!['clienteNome','titulo','estadoLabel','motivoInterno','motivoDevolucao','atualizadoEm'].every(k=>typeof r[k]==='string'&&r[k].length<=10000))throw Error('Um ajuste interno precisa ser conferido novamente.');
+      ids.add(r.id);
+    }
+    return d;
+  }
+  function contarFilaInternaCp123(){const q=estadoFilaInternaCp123();return usuarioAtual==='Amanda'?q.ajustes.length:0;}
+  function htmlFilaInternaCp123(){
+    if(!['Chris','Amanda'].includes(usuarioAtual))return '';
+    const q=estadoFilaInternaCp123();
+    if(q.estado==='nao_lida'||q.estado==='carregando')return '<div class="card" role="status" data-fila-interna-cp123>Conferindo os ajustes internos…</div>';
+    if(!q.ajustes.length&&q.estado==='confirmada')return '';
+    const amanda=usuarioAtual==='Amanda';
+    return `<section class="card" data-fila-interna-cp123 style="border:2px solid var(--yellow);"><h2>📝 ${amanda?'Ajustes internos para revisar':'Meus ajustes internos'}</h2><p class="desc">${amanda?'Chris preparou estas mudanças. Abra o conteúdo para revisar ou devolver com um recado. A liberação ao cliente continua sendo uma confirmação separada.':'Retome seus textos aqui. Depois de enviar, Amanda revisa antes de liberar ao cliente.'}</p>${q.estado==='falha'?'<p role="alert">Não consegui confirmar as mudanças agora. A última leitura foi mantida; isso não confirma fila vazia.</p><button type="button" class="btn secondary" onclick="conferirFilaInternaCp123()">Conferir ajustes novamente</button>':''}${q.ajustes.map(r=>`<article class="item" data-interno-fila-cp123="${r.id}"><div class="top"><div class="nome">${esc(r.clienteNome||r.cliente)} · ${esc(r.titulo)}</div><span class="selo pendente">${esc(r.estadoLabel)}</span></div><p class="meta">${esc(rotuloCompetenciaControleEditorial(r.competencia))} · dia ${esc(String(r.dia||'—'))}</p><p class="desc" style="white-space:pre-wrap">${esc(r.motivoDevolucao||r.motivoInterno)}</p><button type="button" class="btn secondary" onclick="abrirAjusteInternoFilaCp123('${r.id}')">${amanda?'Conferir ajuste interno':r.estado==='rascunho'||r.estado==='devolvido'?'Continuar ajuste':'Acompanhar ajuste'}</button></article>`).join('')}</section>`;
+  }
+  function desenharFilaInternaCp123(){
+    const slot=document.getElementById('centralAprovInternosCp123');if(slot)slot.innerHTML=htmlFilaInternaCp123();
+    desenharAvisosCalendariosI148();atualizarTodosOsBadges();
+    const chip=document.querySelector('#gerenciaDemandasAguardando button[onclick="filtrarAprovacoes(\'calendarios\')"]');
+    if(chip){const n=(__avisosCalendariosI148.sessao===sessaoServicoManual()?__avisosCalendariosI148.linhas.length:0)+contarFilaInternaCp123();chip.textContent='🗓️ Calendários'+(n?' ('+n+')':'');}
+  }
+  async function atualizarFilaInternaCp123(forcar=false){
+    const c=contextoPreparacaoR80(),chave=chaveFilaInternaCp123();
+    if(!['Chris','Amanda'].includes(c.nome)||!c.uid)return null;
+    if(__consultaFilaInternaCp123?.chave===chave)return __consultaFilaInternaCp123.promise;
+    const anterior=estadoFilaInternaCp123();if(!forcar&&anterior.estado==='confirmada'&&Date.now()-(anterior.em||0)<15000)return anterior;
+    const g=++__geracaoFilaInternaCp123,vigente=()=>chave===chaveFilaInternaCp123()&&g===__geracaoFilaInternaCp123;
+    __filaInternaCp123={...anterior,chave,estado:anterior.ajustes.length?anterior.estado:'carregando'};
+    const promise=(async()=>{
+      try{
+        const [raw,codec]=await Promise.all([chamarUiOperacionalI165('central_editor_interno_fila_cp123'),import('./codec-central-r80.mjs')]);
+        if(!vigente())return null;
+        const d=validarFilaInternaCp123(codec.abrirEnvelopeCentralR80(raw,{timestamp:(s,n)=>new Timestamp(s,n)}),c.nome);
+        __filaInternaCp123={chave,estado:'confirmada',ajustes:d.ajustes,em:Date.now()};desenharFilaInternaCp123();return __filaInternaCp123;
+      }catch(e){if(!vigente())return null;__filaInternaCp123={...anterior,chave,estado:'falha',erro:e.message||'Não consegui conferir os ajustes.'};desenharFilaInternaCp123();return __filaInternaCp123;}
+      finally{if(__consultaFilaInternaCp123?.promise===promise)__consultaFilaInternaCp123=null;}
+    })();__consultaFilaInternaCp123={chave,promise};return promise;
+  }
+  function pararFilaInternaCp123(){
+    ++__geracaoFilaInternaCp123;if(__timerFilaInternaCp123)clearInterval(__timerFilaInternaCp123);__timerFilaInternaCp123=null;
+    if(__focoFilaInternaCp123){window.removeEventListener('focus',__focoFilaInternaCp123);document.removeEventListener('visibilitychange',__focoFilaInternaCp123);}__focoFilaInternaCp123=null;
+    __consultaFilaInternaCp123=null;__filaInternaCp123={chave:'',estado:'nao_lida',ajustes:[]};document.getElementById('centralAprovInternosCp123')?.replaceChildren();document.querySelectorAll('[data-fila-interna-cp123]').forEach(el=>el.remove());
+  }
+  function iniciarFilaInternaCp123(){
+    pararFilaInternaCp123();if(!['Chris','Amanda'].includes(usuarioAtual))return;
+    const chave=chaveFilaInternaCp123(),conferir=()=>{if(chave===chaveFilaInternaCp123()&&document.visibilityState==='visible')void atualizarFilaInternaCp123(true);};
+    __focoFilaInternaCp123=conferir;window.addEventListener('focus',conferir);document.addEventListener('visibilitychange',conferir);__timerFilaInternaCp123=setInterval(conferir,60000);void atualizarFilaInternaCp123(true);
+  }
+  window.conferirFilaInternaCp123=()=>atualizarFilaInternaCp123(true);
+  window.abrirAjusteInternoFilaCp123=async function(id){
+    const chave=chaveFilaInternaCp123();if(!['Chris','Amanda'].includes(usuarioAtual)||!/^interno_cp123_[a-f0-9]{64}$/.test(id||''))return false;
+    try{
+      await atualizarFilaInternaCp123(true);if(chave!==chaveFilaInternaCp123())return false;
+      const q=estadoFilaInternaCp123(),r=q.ajustes.find(x=>x.id===id);if(q.estado!=='confirmada'||!r)throw Error('Esse ajuste mudou. Confira a fila atual antes de abrir.');
+      if(!podeSairPreparacaoR80()||!podeSairCp109())return false;
+      if(irPara('planejamentoPreparacaoR80',document.getElementById('navPlanejamentoPreparacaoR80'))===false)return false;
+      await montarPreparacaoR80();if(chave!==chaveFilaInternaCp123()||viewAtiva!=='planejamentoPreparacaoR80')return false;
+      if(typeof abrirEditorCentralI172!=='function')throw Error('O editor ainda não confirmou esta entrada. Reabra o mesmo ajuste.');
+      return await abrirEditorCentralI172({id:r.ciclo,cliente:r.cliente,clienteNome:r.clienteNome,competencia:r.competencia,ajusteInternoId:r.id},'continuar_legado');
+    }catch(e){if(chave===chaveFilaInternaCp123())mostrarToast(e.message||'Não consegui abrir esse ajuste.','erro');return false;}
+  };
+  window.addEventListener('pagehide',pararFilaInternaCp123);
+
   /* I148 — avisos persistem nas fontes salvas; nenhuma fila paralela. */
   let __avisosCalendariosI148={sessao:'',linhas:[],estado:'carregando'};
   let __enviosSnapshotI148=null, __erroEnviosI148=null, __geracaoAvisosI148=0;
@@ -47731,11 +47808,13 @@ Observações do cliente: ${l.observacoes||'—'}`;
   function desenharAvisosCalendariosI148(){
     const box=document.getElementById('avisosCalendariosI148'),badge=document.getElementById('badgeEnvioCalendariosI148'),s=__avisosCalendariosI148;
     if(!box)return;
+    if(usuarioAtual==='Chris'){box.innerHTML=htmlFilaInternaCp123();box.style.display=box.innerHTML?'block':'none';if(badge){badge.textContent='';badge.style.display='none';}return;}
     if(!['Amanda','Cecília'].includes(usuarioAtual)||s.sessao!==sessaoServicoManual()){box.replaceChildren();box.style.display='none';if(badge){badge.textContent='';badge.style.display='none';}return;}
     const amanda=usuarioAtual==='Amanda',mes=mesAvisosCalendariosI158();
+    if(amanda&&!s.linhas.length&&s.estado!=='falha'){box.innerHTML=htmlFilaInternaCp123();box.style.display=box.innerHTML?'block':'none';if(badge){badge.textContent='';badge.style.display='none';}return;}
     const atuais=amanda?s.linhas:s.linhas.filter(l=>l.mes===mes),outros=amanda?[]:s.linhas.filter(l=>l.mes!==mes);
     const cartao=l=>`<div class="item"><b>${esc(l.nome)}</b> · ${esc(rotuloCompetenciaControleEditorial(l.mes))}<div class="meta">${amanda?'Aguardando sua revisão':l.atualizado?'Nova publicação — conferir reenvio':'Sem confirmação de compartilhamento desta versão'}</div><button class="btn secondary" style="width:auto;margin-top:7px" onclick="abrirAvisoCalendarioI148('${escJs(l.slug)}','${escJs(l.mes)}')">${amanda?'Revisar em Aprovações':'Abrir Links e envio'}</button></div>`;
-    box.style.display=s.linhas.length||s.estado==='falha'?'block':'none';
+    box.style.display=s.linhas.length||s.estado==='falha'||amanda&&htmlFilaInternaCp123()?'block':'none';
     box.innerHTML=`<div class="card" role="status" style="border:2px solid var(--yellow);"><h2>🗓️ ${amanda?'Calendários para aprovar':'Calendários para conferir · '+esc(rotuloCompetenciaControleEditorial(mes))}</h2>
       ${s.estado==='falha'?'<p class="meta">Não consegui confirmar as mudanças agora. A última leitura continua abaixo; isso não confirma que a fila está vazia.</p>':''}
       <p class="desc">${amanda?'A Gabi enviou estes calendários. Abra Aprovações para revisar e decidir.':'O número na Central de Calendários é deste mês, o mesmo escolhido em Links e envio. Confirme o compartilhamento somente depois de enviar ao cliente.'}</p>
@@ -47745,6 +47824,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       ${outros.length?`<details><summary>Outros meses · ${outros.length} calendário(s) sem confirmação</summary><p class="meta">O histórico foi preservado. Não ter uma confirmação no sistema não significa que o calendário nunca foi enviado. Confira cada mês antes de registrar.</p>${outros.map(cartao).join('')}</details>`:''}
       ${!amanda?'<button class="btn secondary" style="width:auto;margin-top:10px" onclick="abrirFilaAvisosCalendariosI158()">Conferir envios deste mês</button><button class="btn secondary" style="width:auto;margin-top:10px" onclick="irPara(\'agendamento\',document.getElementById(\'navAgendamento\'))">Ver agenda e combinar captação</button>':''}
     </div>`;
+    if(amanda)box.innerHTML+=htmlFilaInternaCp123();
     if(badge){badge.textContent=s.estado==='falha'?'!':String(atuais.length);badge.style.display=!amanda&&(atuais.length||s.estado==='falha')?'flex':'none';badge.title='Calendários sem confirmação em '+rotuloCompetenciaControleEditorial(mes)+' — abrir Links e envio';badge.setAttribute('aria-label',badge.title);}
   }
   window.abrirAvisoCalendarioI148=async function(slug,mes){
@@ -47760,6 +47840,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
   };
   async function atualizarAvisosCalendariosI148(){
     if(!['Amanda','Cecília','Chris'].includes(usuarioAtual))return;
+    if(['Amanda','Chris'].includes(usuarioAtual))void atualizarFilaInternaCp123();
     const sessao=sessaoServicoManual(),pessoa=usuarioAtual,geracao=++__geracaoAvisosI148;
     const atual=()=>sessao===sessaoServicoManual()&&pessoa===usuarioAtual&&geracao===__geracaoAvisosI148;
     try{
@@ -47790,7 +47871,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
           if(existia&&novos.length){localStorage.setItem(k,JSON.stringify([...new Set([...vistos,...novos.map(l=>l.chave)])].slice(-500)));mostrarToast('🗓️ Amanda liberou '+novos.length+' calendário(s). Confira os avisos no Início.');dispararNotificacaoNavegador('Calendários liberados pela Amanda','Abra o Início para enviar os links aos clientes e combinar a captação.');}
         }catch(e){console.warn('Aviso do navegador indisponível:',e);}
       }
-      const chip=document.querySelector('#gerenciaDemandasAguardando button[onclick="filtrarAprovacoes(\'calendarios\')"]');if(chip)chip.textContent='🗓️ Calendários'+(linhas.length?' ('+linhas.length+')':'');
+      const chip=document.querySelector('#gerenciaDemandasAguardando button[onclick="filtrarAprovacoes(\'calendarios\')"]');if(chip){const n=linhas.length+contarFilaInternaCp123();chip.textContent='🗓️ Calendários'+(n?' ('+n+')':'');}
       atualizarTodosOsBadges();
     }catch(e){if(!atual())return;__avisosCalendariosI148={...__avisosCalendariosI148,sessao,estado:'falha'};desenharAvisosCalendariosI148();console.warn('I148: última fila preservada',e);}
   }
@@ -47807,9 +47888,10 @@ Observações do cliente: ${l.observacoes||'—'}`;
   async function atualizarBlocoAprovacoesCalendariosI148(){
     const box=document.getElementById('centralAprovCalendariosI148'),sessao=sessaoServicoManual();
     if(!box||box.offsetParent===null)return;
-    const html=await htmlCalendariosParaRevisar({somenteLeitura:usuarioAtual!=='Amanda'});
+    const [html]=await Promise.all([htmlCalendariosParaRevisar({somenteLeitura:usuarioAtual!=='Amanda'}),atualizarFilaInternaCp123()]);
     if(sessao!==sessaoServicoManual()||document.getElementById(box.id)!==box)return;
-    reconciliarRevisoesCalendariosI148(box,html||'<div class="card"><div class="empty">Nenhum calendário aguardando aprovação.</div></div>');
+    const internos=htmlFilaInternaCp123(),mensal=html||(!internos?'<div class="card"><div class="empty">Nenhum calendário aguardando aprovação.</div></div>':'');
+    reconciliarRevisoesCalendariosI148(box,mensal+'<div id="centralAprovInternosCp123">'+internos+'</div>');
   }
   function rascunhoCalendarioI148(card){const campo=card?.querySelector('[data-comentario-calendario]');return campo?campo.value:String(card?.__rascunhoI148||'');}
   function obterRevisaoCalendarioI148(slug,mes,botao){
@@ -51290,7 +51372,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     const competencia=id.slice(0,7),cliente=id.slice(9),chave=chaveCentralUnificadaR87();viewCp109('estrategiaCp109');if(irPara('estrategiaCp109')===false)return false;
     limparPainelCp109();estiloCp109();const g=geracaoPainelCp109,box=viewCp109('estrategiaCp109'),vigente=()=>g===geracaoPainelCp109&&chave===chaveCentralUnificadaR87()&&viewAtiva==='estrategiaCp109';
     box.innerHTML='<div class="card"><button type="button" data-voltar-cp109>← Voltar ao planejamento</button></div><div data-editor-cp109></div>';
-    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=94389a77d7345a3051f70e5aa41773b7a8138c9ec602b1fe41afc35f46a619f8'),import('./codec-central-r80.mjs')]);if(!vigente())return false;
+    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=aa3a6aa77f3276f68303dde63a2b65463b73442b3b146e900cb053875f582821'),import('./codec-central-r80.mjs')]);if(!vigente())return false;
     painelCp109=mod.montarEditorCalendarioCentralI172(box.querySelector('[data-editor-cp109]'),{ciclo:id,demandaId:ciclo.demandaId||'',origemEditorial:'estrategico_cp109',contexto:contextoPreparacaoR80,chamar:async(acao,dados)=>codec.abrirEnvelopeCentralR80(await chamarUiOperacionalI165(acao,dados),{timestamp:(s,n)=>new Timestamp(s,n)}),aoAtualizar:()=>{if(vigente())mostrarToast('Revisão confirmada. O pedido e o histórico continuam vinculados.');}});
     box.querySelector('[data-voltar-cp109]').onclick=()=>abrirEtapaCp109('estrategia',{cliente,competencia,ciclo:id});
     cascaCentralR87?.selecionar('rascunho');const pronto=await painelCp109.ready;if(!pronto||pronto.schema!==1)return false;if(vigente())await desenharCentralUnificadaR87();return vigente();
@@ -51331,7 +51413,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
     box.innerHTML='<div class="card" role="status">Preparando os materiais do próximo mês…</div>';
     let repo;
     try{
-      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=f412833d9fff40706c90347fadf30e5cf3dba23f472db0d23966baa6fcaac779'),import('./gs-central-preparacao-http-r80.mjs?v=10b95fa600c5aa61319cd2666adac0b6bc44e46dd58581f473b58e448aa375fa')]);
+      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=f412833d9fff40706c90347fadf30e5cf3dba23f472db0d23966baa6fcaac779'),import('./gs-central-preparacao-http-r80.mjs?v=f3c4fbab660d035fbb7672882c7c9ba499e985c7e008e116f16964c91cef1de6')]);
       const [ui,fachada]=await moduloPreparacaoR80;if(!vigente())return;
       const chamar=async(acao,dados)=>{
         if(!vigente())throw Error('O perfil ou a tela mudou. Reabra o planejamento.');
@@ -51352,8 +51434,8 @@ Observações do cliente: ${l.observacoes||'—'}`;
         editorCalendarioCentralI172?.destroy();editorCalendarioCentralI172=null;
         const host=document.getElementById('planejamentoEditorI172');if(!host)return false;
         host.hidden=false;host.innerHTML='<div class="card"><button type="button" class="btn secondary" data-voltar-editor>← Voltar aos materiais deste mês</button></div><div data-editor-central></div>';
-        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=94389a77d7345a3051f70e5aa41773b7a8138c9ec602b1fe41afc35f46a619f8');if(!vigente())return false;
-        const ed=mod.montarEditorCalendarioCentralI172(host.querySelector('[data-editor-central]'),{ciclo:ciclo.id,demandaId:ciclo.demandaId||'',origemEditorial,contexto:contextoPreparacaoR80,chamar:(acao,payload)=>repo.editorial(acao,payload),aoAtualizar:()=>{if(vigente())mostrarToast('Versão confirmada. O andamento também será conferido ao voltar aos materiais.');}});
+        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=aa3a6aa77f3276f68303dde63a2b65463b73442b3b146e900cb053875f582821');if(!vigente())return false;
+        const ed=mod.montarEditorCalendarioCentralI172(host.querySelector('[data-editor-central]'),{ciclo:ciclo.id,demandaId:ciclo.demandaId||'',ajusteInternoId:ciclo.ajusteInternoId||'',origemEditorial,contexto:contextoPreparacaoR80,chamar:(acao,payload)=>repo.editorial(acao,payload),aoAtualizar:()=>{if(vigente()){mostrarToast('Versão confirmada. O andamento também será conferido ao voltar aos materiais.');void atualizarFilaInternaCp123(true);}}});
         editorCalendarioCentralI172=ed;
         host.querySelector('[data-voltar-editor]').onclick=async()=>{if(!vigente()||editorCalendarioCentralI172!==ed||ed.canLeave?.()===false)return;ed.destroy();editorCalendarioCentralI172=null;host.hidden=true;host.replaceChildren();if(origemEditorial==='continuar_legado'){await planejamentoPreparacaoR80?.ready;}else await planejamentoPreparacaoR80?.abrir(ciclo.id,'criacao');};
         const confirmado=await ed.ready;if(!confirmado||!vigente())return false;host.scrollIntoView({block:'start'});return true;

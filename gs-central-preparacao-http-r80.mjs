@@ -27,13 +27,13 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  async function listar(m){mes(m);const r=await pedir('central_listar',{competencia:m});exigir(Array.isArray(r)&&r.every(x=>x.competencia===m),'Não consegui conferir todos os ciclos deste mês.');return r;}
  async function config(m){mes(m);return pedir('central_config_ler',{competencia:m});}
  async function salvarConfig(d,rev,m){mes(m);exigir(Number.isInteger(rev)&&rev>=0,'Confira a versão da organização.');return pedir('central_config_salvar',{competencia:m,config:selecionar(d,['dias','capacidades','modelos','indisponibilidades','feriados','recorrencia']),esperadaRevisao:rev});}
- const EDITORIAL=new Set(['central_editor_ler','central_editor_iniciar','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir']);
+ const EDITORIAL=new Set(['central_editor_ler','central_editor_iniciar','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir','central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123']);
  async function editorial(acao,dados){
   const ajusteCp112=['ajuste_calendario_ler_cp112','ajuste_calendario_salvar_cp112','ajuste_calendario_enviar_cp112','ajuste_calendario_adotar_cp112','ajuste_calendario_decidir_cp112','ajuste_calendario_iniciar_correcao_cp115','ajuste_calendario_salvar_conteudo_cp115'].includes(acao);
   exigir(['Chris','Amanda'].includes(c.nome)&&(EDITORIAL.has(acao)||ajusteCp112),'Esta etapa pertence à criação do Chris e à revisão da Amanda.');
   ciclo(dados?.ciclo);const origem=dados?.origemEditorial||'';exigir(origem===''||origem==='continuar_legado'||origem==='estrategico_cp109','Origem editorial inválida.');
   if(ajusteCp112){const r=await pedir(acao,dados);exigir(r?.schema===1&&r.ciclo===dados.ciclo&&Array.isArray(r.ajustes)&&r.liberacaoMensal&&r.ajustes.every(x=>typeof x.demandaId==='string'&&typeof x.assinatura==='string'),'Não consegui confirmar a revisão dos pedidos. Preserve a mesma tentativa.');return r;}
-  const r=await pedir(acao,dados),recusa=r?.operacao?.estado==='recusada_por_versao',d=recusa?r.estadoAtual:r;
+  const r=await pedir(acao,dados),recusa=r?.operacao?.estado==='recusada_por_versao',internoCp123=acao.startsWith('central_editor_interno_')&&acao.endsWith('_cp123'),d=recusa&&!internoCp123?r.estadoAtual:r;
   exigir(r?.schema===1&&d?.ciclo?.id===dados.ciclo&&typeof d.assinatura==='string'&&
     (origem==='continuar_legado'?d.ciclo.modo==='continuar_legado':origem==='estrategico_cp109'?d.ciclo.modo==='estrategico_cp109':!['continuar_legado','estrategico_cp109'].includes(d.ciclo.modo))&&
     (!recusa||r.operacao.id===dados.operacao&&r.operacao.confirmada===true&&r.operacao.calendarioAlterado===false&&r.requerComparacao===true),

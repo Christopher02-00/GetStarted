@@ -2074,6 +2074,8 @@ body:has(#overlayView.show #agendaDetalheI85) #botaoNovaDemandaGlobal{display:no
 import * as RadarI110 from './gs-radar-i110.mjs?v=147';
 import {criarUiOperacionalI165} from './gs-operacional-ui-i165.mjs?v=ec794a6be60d41a0091145a94d43868e856b1f4a57c5b8b6806bc203bbf46c35';
 import {criarUiPostagensI165,regularizacaoHistoricaPostagemCp117} from './gs-postagem-controles-i165.mjs?v=c341bef6a7eb56f749c4661b4ebaa3ab23e2097d37a8cf128d8825987cebb9ba';
+import {criarUiRegularizacaoRetroativaI118} from './gs-regularizacao-retroativa-i118.mjs?v=09e35a6988ee417d8f6d0bb162a7b67ab7621267c53e76bc1c815d2f92a9acce';
+import {dispensaRetroativaRedeI118,copiarProjecaoDispensaI118,todasCobrancasRetroativasDispensadasI118,redesPostagemDispensaI118,agendaRedeDispensaI118} from './gs-dispensa-retroativa-i118.mjs';
 import {montarAvisosCanalI165} from './gs-avisos-canal-i165.mjs?v=1fbf2b2a8881d02901435e47989e7eac15509e3c778d5ec5cf26c05a840d9a22';
 import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js';
 import {revisaoI148,exigirRevisaoI148,reciboPublicacaoI148,novosAvisosI148} from './gs-aprovacoes-calendarios-i148.mjs?v=148';
@@ -2103,11 +2105,12 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   let __avisosMinimosI165=null,__aberturaAvisosMinimosI165=0,__navegacaoAvisosMinimosI165=0;
 
   // I165 R83: same callable and session. Controllers are created only on first use.
-  let uiOperacionalMontadoI165=null,uiPostagensMontadoI165=null;
+  let uiOperacionalMontadoI165=null,uiPostagensMontadoI165=null,uiRegularizacaoMontadoI118=null;
   let geracaoFichaPostagemI165=0,arquivoMidiaMontadoI166=null,arquivoMidiaGeracaoI166=0,arquivoMidiaVideoI166='';
   const armazenamentoUiI165={get length(){try{return window.localStorage.length;}catch{return 0;}},key:i=>{try{return window.localStorage.key(i);}catch{return null;}},getItem:k=>{try{return window.localStorage.getItem(k);}catch{return null;}},setItem:(k,v)=>window.localStorage.setItem(k,v),removeItem:k=>window.localStorage.removeItem(k)};
   const uiOperacionalI165=new Proxy({}, {get:(_,key)=>{const c=obterUiOperacionalI165(),v=c[key];return typeof v==='function'?v.bind(c):v;}});
   const uiPostagensI165=new Proxy({}, {get:(_,key)=>{const c=obterUiPostagensI165(),v=c[key];return typeof v==='function'?v.bind(c):v;}});
+  const uiRegularizacaoI118=new Proxy({}, {get:(_,key)=>{const c=obterUiRegularizacaoI118(),v=c[key];return typeof v==='function'?v.bind(c):v;}});
 
 
   // A fronteira de identidade e o menu podem chamar a preparação durante o boot.
@@ -14889,8 +14892,9 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     let posts = [], vids = {};
     try{
       const [pS, vS] = await Promise.all([getDocs(collection(db,'postagens')), getDocs(collection(db,'videos_producao'))]);
-      pS.forEach(d => { const x=d.data(); if(!x.excluido) posts.push({id:d.id, ...x}); });
+      pS.forEach(d => { const x=d.data(); if(!x.excluido) posts.push({...x,id:d.id}); });
       vS.forEach(d => { const x=d.data(); if(!x.excluido) vids[d.id]=x; });
+      posts=await projetarCobrancasRetroativasI118(posts);
     }catch(e){
       console.error('Falha ao carregar as publicações:', e);
       cont.innerHTML = '<div class="card"><div class="empty">Não consegui carregar. Recarrega a página.</div></div>'; return;
@@ -14899,7 +14903,8 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     const hoje = hojeLocal();
     /* Só o que está agendado — legenda e agendamento ainda são trabalho de
        verdade, não têm o que confirmar. */
-    const abertas = posts.filter(p => p.status === 'agendado');
+    const historicoDispensaI118=htmlCobrancasEncerradasI118(posts);
+    const abertas = posts.filter(p => p.status === 'agendado'&&!todasCobrancasRetroativasDispensadasI118(p));
     const vencidas = abertas.filter(p => String(p.dataAgendada||'') < hoje);
     const futuras  = abertas.filter(p => String(p.dataAgendada||'') >= hoje);
 
@@ -14929,10 +14934,10 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
 
     if(!vencidas.length){
       html += `<div class="card" style="border-color:var(--green);">
-        <div class="empty" style="color:var(--green);font-weight:700;">Nada esperando confirmação — todas as postagens com data passada já foram confirmadas.</div>
+        <div class="empty" style="color:var(--green);font-weight:700;">Nenhuma cobrança de confirmação anterior pendente nesta lista.</div>
       </div>`;
       if(futuras.length) html += `<div class="card"><div class="meta">${futuras.length} postagem(ns) agendada(s) pra frente. Elas aparecem aqui quando a data chegar.</div></div>`;
-      cont.innerHTML = html; return;
+      cont.innerHTML = html+historicoDispensaI118;uiRegularizacaoI118.anexar(cont); return;
     }
 
     html += `<div id="barraConfirmarPub" style="display:none;position:sticky;top:8px;z-index:20;gap:10px;flex-wrap:wrap;align-items:center;background:var(--yellow);color:var(--graphite);padding:11px 15px;border-radius:10px;margin-bottom:12px;box-shadow:0 6px 18px rgba(0,0,0,.35);">
@@ -14997,7 +15002,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     html += `<div class="card"><button class="btn secondary" style="width:auto;padding:6px 14px;font-size:11px;" onclick="marcarTodasConfirmarPub('', true)">Marcar todas as ${vencidas.length}</button>
       <div class="desc" style="margin-top:8px;">Só use isto se tiver certeza de que todas já foram ao ar.</div></div>`;
 
-    cont.innerHTML = html;
+    cont.innerHTML = html+historicoDispensaI118;uiRegularizacaoI118.anexar(cont);
     atualizarBarraConfirmarPub();
   }
 
@@ -15095,7 +15100,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
   }
   function contextoStokkiI30(){return {papel:usuarioAtual,ator:atorRealDaSessao(),geracao:__geracaoIdentidade};}
   async function carregarModuloStokkiI30(){
-    if(!__stokkiModuloI30) __stokkiModuloI30=import('./stokki-publicacao.mjs?v=i165-r60-ui1').catch(e=>{__stokkiModuloI30=null;throw e;});
+    if(!__stokkiModuloI30) __stokkiModuloI30=import('./stokki-publicacao.mjs?v=ee4e45813a456b77ea4992a0fca6e9b24bc1733ce9e19ab2a2f768d1f5b5eee6').catch(e=>{__stokkiModuloI30=null;throw e;});
     const m=await __stokkiModuloI30;m.instalarCampos(document);return m;
   }
   async function obterOperacaoStokkiI30(){
@@ -15104,7 +15109,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
       prompt:t=>prompt(t),confirm:t=>confirm(t),toast:t=>mostrarToast(t),salvar:salvarAcaoStokkiI30,avisosNoMenu:true,usarServidorI165:()=>uiPostagensI165.bloquearWriterCliente(),aoDesenharI165:(painel,posts)=>uiPostagensI165.anexarStokki(painel,posts),
       listar:async()=>{
         const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'postagens'),where('cliente','==','stokki'))),'Publicações Stokki',12000);
-        const lista=snap.docs.map(d=>({...d.data(),id:d.id}));
+        const lista=await projetarCobrancasRetroativasI118(snap.docs.map(d=>({...d.data(),id:d.id})));
         await prepararIdentidadesI106(lista);
         // I77A: atualizar só o resumo; preservar formulários e o painel aberto.
         const resumo=document.getElementById('resumoStokkiAgendamentoI77');
@@ -16583,7 +16588,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
   async function projetarEmpresasPostagensI144(posts){
     if(!posts.some(p=>GetEmpresasOtavioI144.ativo(p.cliente)&&!GetEmpresasOtavioI144.bruto(p)&&p.videoId))return posts;
     const snap=await _getDocsFromServerFB(query(collection(db,'videos_producao'),where('cliente','==','zeiss'))),videos=new Map(snap.docs.map(d=>[d.id,{...d.data(),id:d.id}]));
-    return posts.map(p=>GetEmpresasOtavioI144.projetarPostagem(p,videos.get(String(p.videoId||''))));
+    return posts.map(p=>copiarProjecaoDispensaI118(p,GetEmpresasOtavioI144.projetarPostagem(p,videos.get(String(p.videoId||'')))));
   }
   const filtrosEmpresaPostagensI144=new Map();
   function chaveEmpresaPostagensI144(area){return sessaoServicoManual()+'|'+area;}
@@ -16663,6 +16668,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
         else confirmadas.delete(String(idAlteradoI84));
       }catch(e){falhaLeituraI90();if(vigente())mostrarToast('O registro foi salvo, mas a fila ainda precisa ser conferida. Seus campos continuam preservados.','erro');return;}
     }
+    let projetadasI118;try{projetadasI118=await projetarCobrancasRetroativasI118([...confirmadas.values()]);}catch(e){if(!vigente())return;falhaLeituraI90();leituraStatus.textContent='Não consegui conferir as cobranças anteriores. A lista e os campos foram preservados. '+String(e.message||'');mostrarToast(leituraStatus.textContent,'erro');return;}if(!vigente())return;confirmadas.clear();projetadasI118.forEach(p=>confirmadas.set(p.id,p));
     confirmadas.forEach(p=>{if(p.excluido!==true&&['aguardando_legenda','aguardando_agendamento','agendado'].includes(p.status)){if(usaPublicacaoStokkiI30(p)&&p.status!=='aguardando_legenda')filaStokkiI30.push(p);else fila.push(p);}});
     const idsVideo=[...new Set(fila.map(p=>String(p.videoId||'').trim()).filter(Boolean))];
     const videosPorId=new Map();
@@ -16682,7 +16688,7 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     fila.forEach(p=>{ const id=String(p.videoId||'').trim(); if(id){ const lista=porVideo.get(id)||[]; lista.push(p); porVideo.set(id,lista); } });
     const pendentes=[]; const agendadasParaConfirmar=[]; const conflitos=[]; const aguardandoTextoI90=[];
     fila.forEach(originalI144=>{
-      const p=GetEmpresasOtavioI144.projetarPostagem(originalI144,videosPorId.get(String(originalI144.videoId||'')));
+      const p=copiarProjecaoDispensaI118(originalI144,GetEmpresasOtavioI144.projetarPostagem(originalI144,videosPorId.get(String(originalI144.videoId||''))));
       if(!correspondePostagensI144(p,'agendar'))return;
       const videoId=String(p.videoId||'').trim();
       let erroEmpresaI144='';try{GetEmpresasOtavioI144.conferir(p.cliente,p,videosPorId.get(videoId));}catch(e){erroEmpresaI144=e.message;}
@@ -16722,7 +16728,8 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
 
     // Melhoria 6A — postagens já agendadas com data igual/passada, esperando
     // 1 clique confirmando que realmente foram ao ar
-    const jaPassaramOuHoje = agendadasParaConfirmar.filter(p => p.dataAgendada && p.dataAgendada <= hoje);
+    const jaPassaramOuHoje = agendadasParaConfirmar.filter(p => p.dataAgendada && p.dataAgendada <= hoje&&!todasCobrancasRetroativasDispensadasI118(p));
+    resumo+=htmlCobrancasEncerradasI118(agendadasParaConfirmar);
     if(empresaPostagensI144('agendar')==='todos')resumo+=`<div class="card"><h2>Stokki — por plataforma</h2><div class="desc" id="resumoStokkiAgendamentoI77">${resumoStokki.erro?'Não foi possível conferir a Stokki: '+esc(resumoStokki.erro):resumoStokki.videos+' vídeo(s) com '+resumoStokki.plataformas+' plataforma(s) aguardando data.'} Programações e conferências ficam neste painel.</div><button class="btn" onclick="abrirStokkiI30()">Abrir publicações e conferências da Stokki</button></div>`;
     if(jaPassaramOuHoje.length){
       jaPassaramOuHoje.sort((a,b) => (a.dataAgendada||'').localeCompare(b.dataAgendada||''));
@@ -18127,9 +18134,10 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
 
   async function renderTodasPostagens(){
     const cont = document.getElementById('postagensConteudo');
+    try{
     const snap = await getDocs(collection(db,'postagens'));
-    let todas = []; snap.forEach(d => { const p={id:d.id,...d.data()}; if(!ehTrabalhoExternoVideo(p)) todas.push(p); });
-    todas=(await projetarEmpresasPostagensI144(todas)).filter(p=>correspondePostagensI144(p,'todas'));
+    let todas = []; snap.forEach(d => { const p={...d.data(),id:d.id}; if(!ehTrabalhoExternoVideo(p)) todas.push(p); });
+    todas=(await projetarCobrancasRetroativasI118(await projetarEmpresasPostagensI144(todas))).filter(p=>correspondePostagensI144(p,'todas'));
     todas.sort((a,b) => (a.dataAgendada||'9999').localeCompare(b.dataAgendada||'9999'));
     if(!todas.length){ cont.innerHTML = controleEmpresaPostagensI144('todas')+'<div class="empty">Nenhuma postagem nesta seleção.</div>'; return; }
     cont.innerHTML = controleEmpresaPostagensI144('todas')+todas.map(p => {
@@ -18141,12 +18149,13 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
                    '<span class="selo pendente">Aguardando legenda</span>';
       return `<div class="item">
         <div class="top"><div class="nome">${esc(p.clienteNome)} — ${esc(p.titulo)}</div>${GetEmpresasOtavioI144.selo(p.cliente,p)}</div>
-        <div style="margin-top:6px;">${selo}</div>${pendenciaAgendadaI90(p)?'<p class="meta" style="color:var(--yellow2);">Legenda pendente com a Gabi</p>':''}
+        <div style="margin-top:6px;">${selo}</div>${todasCobrancasRetroativasDispensadasI118(p)?'<p class="meta">Cobrança antiga encerrada administrativamente; programação preservada, sem declaração de publicação ou qualidade.</p>':''}${pendenciaAgendadaI90(p)?'<p class="meta" style="color:var(--yellow2);">Legenda pendente com a Gabi</p>':''}
         <div class="meta" style="margin-top:4px;">✅ Aprovado por <b>${esc(p.aprovadoPor||'—')}</b></div>
         ${p.legenda ? '<div class="meta" style="margin-top:6px;">"'+esc(p.legenda)+'"</div>' : ''}
-        ${p.status==='agendado' ? '<button class="btn secondary" style="margin-top:8px;width:auto;padding:8px 16px;" onclick="confirmarPostagemPublicada(\''+p.id+'\')">Conferir publicação</button>' : ''}
+        ${p.status==='agendado'&&!todasCobrancasRetroativasDispensadasI118(p) ? '<button class="btn secondary" style="margin-top:8px;width:auto;padding:8px 16px;" onclick="confirmarPostagemPublicada(\''+p.id+'\')">Conferir publicação</button>' : ''}
       </div>`;
     }).join('');
+    }catch(e){const aviso=document.createElement('section');aviso.className='card';aviso.setAttribute('role','alert');aviso.textContent='Não consegui conferir esta lista. O conteúdo anterior foi preservado. '+String(e.message||'');cont.prepend(aviso);}
   }
 
   /* ===== V45 — QUADRO MENSAL ÚNICO DE CAMPANHAS =====================
@@ -28084,10 +28093,11 @@ window.setGerenciaSub = function(qual, el){
     /* Conta a lixeira nesta MESMA passada. Antes eu relia a coleção
        inteira só pra isso — 252 documentos lidos duas vezes. */
     percorrer(fontes[0], d => { const x=d.data(); if(x.excluido){ naLixeira++; return; } vids.push({id:d.id, ...x}); });
-    percorrer(fontes[1], d => { const x=d.data(); if(!x.excluido) posts.push({id:d.id, ...x}); });
+    percorrer(fontes[1], d => { const x=d.data(); if(!x.excluido) posts.push({...x,id:d.id}); });
     percorrer(fontes[2], d => cals.push({id:d.id, ...d.data()}));
     percorrer(fontes[3], d => { const x=d.data(); if(!x.excluido) extras.push({id:d.id, ...x}); });
     percorrer(fontes[4], d => { const x=d.data(); if(!x.excluido) agends.push({id:d.id, ...x}); });
+    try{posts=await projetarCobrancasRetroativasI118(posts);}catch(e){errosLeitura.push('postagens (cobranças anteriores indisponíveis)');console.error('CP118: projeção dos indicadores indisponível',e);}
     if(__erroCalendariosCompartilhado && !errosLeitura.includes('calendários')) errosLeitura.push('calendários (dados anteriores)');
 
     /* V135 — o cabeçalho do Painel e seus atalhos não podem contar a
@@ -40120,13 +40130,14 @@ window.setGerenciaSub = function(qual, el){
       }else if(pessoaDoOuvinte === 'Cecília'){
         refPostagens = query(refPostagens, where('status','in',['aguardando_agendamento','agendado']));
       }
+      let leituraDispensaI118=0;
       __ouvintesTempoReal.push(onSnapshot(refPostagens, (snap)=>{
         if(!ouvinteAindaAtualV135()) return;
+        const leitura=++leituraDispensaI118;
         if(ehGestao) __alimentarCacheTempoReal('postagens',snap);
-        cachePostagens = [];
-        snap.forEach(d => cachePostagens.push({id:d.id, ...d.data()}));
-        __cacheTempoRealPronto.postagens = true;
-        onDadosTempoRealMudaram('postagens');
+        const novos=snap.docs.map(d=>({...d.data(),id:d.id}));
+        __cacheTempoRealPronto.postagens=false;
+        projetarCobrancasRetroativasI118(novos).then(projetadas=>{if(!ouvinteAindaAtualV135()||leitura!==leituraDispensaI118)return;cachePostagens=projetadas;__cacheTempoRealPronto.postagens=true;__errosTempoRealPorColecaoV135.delete('postagens');onDadosTempoRealMudaram('postagens');}).catch(e=>{if(!ouvinteAindaAtualV135()||leitura!==leituraDispensaI118)return;__errosTempoRealPorColecaoV135.set('postagens',{em:Date.now(),erro:e});onDadosTempoRealMudaram('postagens');console.error('CP118: cobrança anterior não conferida; cache anterior preservado.',e);});
       }, (erro)=>{
         if(!ouvinteAindaAtualV135()) return;
         if(ehGestao) __falhouCacheTempoReal('postagens',erro);
@@ -40712,6 +40723,7 @@ window.setGerenciaSub = function(qual, el){
     const especie=String(tipo||'').toLowerCase();
     if(fonte === undefined) return {estado:'inconsistente',motivo:'fonte_indisponivel'};
     if(!fonte || typeof fonte !== 'object') return {estado:'inativo',motivo:'fonte_ausente'};
+    if(especie==='postagem'&&todasCobrancasRetroativasDispensadasI118(fonte))return {estado:'inativo',motivo:'cobranca_retroativa_dispensada_i118'};
     if(especie==='postagem'&&usaPublicacaoStokkiI30(fonte))return {estado:'inativo',motivo:'conferencia_por_plataforma_i30'};
     const status=String(fonte.status||'').toLowerCase();
     if(fonte.excluido===true || fonte.arquivado===true || fonte.deletedAt ||
@@ -40969,8 +40981,10 @@ window.setGerenciaSub = function(qual, el){
        têm autorização para alterar demandas antigas. O resolvedor puro já
        impede o falso alerta na tela; reparo persistente exige uma operação
        separada, explícita e previamente autorizada. */
-    for(const docSnap of new Map([...snap.docs,...semTextoI90.docs].map(d=>[d.id,d])).values()){
-      const p = docSnap.data();
+    const fontesI118=[...new Map([...snap.docs,...semTextoI90.docs].map(d=>[d.id,d])).values()];
+    const mapaDispensasI118=new Map((await projetarCobrancasRetroativasI118(fontesI118.map(d=>({...d.data(),id:d.id})))).map(p=>[p.id,p]));validarSessaoI89();
+    for(const docSnap of fontesI118){
+      const p = mapaDispensasI118.get(docSnap.id);
       if(p.excluido===true) continue;
       validarSessaoI89();
 
@@ -40993,14 +41007,14 @@ window.setGerenciaSub = function(qual, el){
       }
 
       // Etapa 3 — identidade determinística + revalidação na mesma transação.
-      const estadoPublicacao=classificarAlertaFonteCanonicaV135('postagem',{id:docSnap.id,...p},hojeStr);
+      const estadoPublicacao=classificarAlertaFonteCanonicaV135('postagem',copiarProjecaoDispensaI118(p,{id:docSnap.id,...p}),hojeStr);
       if(estadoPublicacao.estado==='aberto'){
         const postagemRef=doc(db,'postagens',docSnap.id);
         const criada=await runTransaction(db,async tx=>{
           const postAtualSnap=await tx.get(postagemRef);
           if(!postAtualSnap.exists()) return false;
           validarSessaoI89();
-          const postAtual={id:postAtualSnap.id,...postAtualSnap.data()};
+          const [postAtual]=await projetarCobrancasRetroativasI118([{...postAtualSnap.data(),id:postAtualSnap.id}]);validarSessaoI89();
           const estadoAtual=classificarAlertaFonteCanonicaV135('postagem',postAtual,hojeLocal());
           if(estadoAtual.estado!=='aberto') return false;
           const ciclo=cicloFonteAlertaCanonicoV135('postagem',postAtual);
@@ -51464,6 +51478,15 @@ Observações do cliente: ${l.observacoes||'—'}`;
     },
   });
   }
+  function obterUiRegularizacaoI118(){return uiRegularizacaoMontadoI118??=criarUiRegularizacaoRetroativaI118({
+    document,contexto:contextoUiOperacionalI165,storage:armazenamentoUiI165,chamar:chamarUiOperacionalI165,
+    novoId:()=> 'i118_'+crypto.randomUUID().replaceAll('-',''),toast:mostrarToast,fecharModal:()=>window.fecharModal(),
+    idsPreparar:async()=>{const c=contextoUiOperacionalI165();if(!['Chris','Amanda'].includes(c.papel))throw Error('Este encerramento pertence à gestão.');const snap=await _getDocsFromServerFB(query(collection(db,'postagens'),where('status','in',['agendado','postado'])));if(!mesmaUiOperacionalI165(c))throw Error('O acesso mudou. Reabra a prévia.');const hoje=hojeLocal();return snap.docs.map(d=>({...d.data(),id:d.id})).filter(p=>!p.excluido&&!p.arquivado&&redesPostagemDispensaI118(p).some(rede=>{const a=agendaRedeDispensaI118(p,rede);return a&&!a.retirada&&a.data&&a.data<=hoje&&(p.status==='agendado'||rede!=='geral');})).map(p=>p.id);},
+    aposConfirmar:async()=>{const c=contextoUiOperacionalI165();__invalidarCacheColecaoNome('postagens');__invalidarCacheColecaoNome('demandas');window.limparCacheIndicadores();const snap=await _getDocsFromServerFB(collection(db,'postagens'));const atuais=await uiRegularizacaoI118.projetar(snap.docs.map(d=>({...d.data(),id:d.id})));if(!mesmaUiOperacionalI165(c))return;cachePostagens=atuais;await carregarTodasDemandas({servidor:true});if(!mesmaUiOperacionalI165(c))return;await window.calcularIndicadores(true);if(viewAtiva==='postagens'){if(__postSubI84==='confirmar')await renderConfirmarPublicacoes();else if(__postSubI84==='agendar')await renderAgendarPostagens();}if(mesmaUiOperacionalI165(c))atualizarTodosOsBadges();}
+  });}
+  async function projetarCobrancasRetroativasI118(posts){return uiRegularizacaoI118.projetar(posts);}
+  function htmlCobrancasEncerradasI118(posts){const lista=posts.filter(p=>todasCobrancasRetroativasDispensadasI118(p));return lista.length?'<details class="card" data-historico-dispensa-i118><summary>Programados · cobrança anterior encerrada ('+lista.length+')</summary><p class="meta">A programação continua preservada. Este encerramento não informa publicação real nem confirma qualidade.</p>'+lista.map(p=>'<div class="item"><b>'+esc(p.clienteNome||p.cliente||'Cliente')+' — '+esc(p.titulo||'Conteúdo')+'</b><p class="meta">Cobrança antiga encerrada administrativamente · programação '+esc(p.dataAgendada||'por plataforma')+' '+esc(p.horaAgendada||'')+'</p></div>').join('')+'</details>':'';}
+
   function chaveRascunhosProgramacaoI165(){return 'get-programacao-rascunhos-i165:'+String(auth.currentUser?.uid||'')+':'+usuarioAtual;}
   function guardarRascunhosProgramacaoI165(){if(!auth.currentUser?.uid||viewAtiva!=='postagens'||__postSubI84!=='agendar')return;try{const key=chaveRascunhosProgramacaoI165(),v=JSON.parse(localStorage.getItem(key)||'{}');for(const e of document.querySelectorAll('#postagensConteudo input[id^="dataPost_"],#postagensConteudo input[id^="horaPost_"]')){if(e.value&&(e.id.startsWith('dataPost_')||e.value!=='12:00'))v[e.id]=e.value;}localStorage.setItem(key,JSON.stringify(v));}catch{mostrarToast('Não consegui guardar as datas neste navegador. Mantenha esta tela aberta até salvar.','erro');}}
   function restaurarRascunhosProgramacaoI165(cont){try{const v=JSON.parse(localStorage.getItem(chaveRascunhosProgramacaoI165())||'{}');for(const e of cont.querySelectorAll('input[id^="dataPost_"],input[id^="horaPost_"]')){if(v[e.id]===undefined)continue;e.value=v[e.id];const card=e.closest('.card');if(card&&!card.querySelector('[data-rascunho-programacao-i165]')){const aviso=document.createElement('p');aviso.dataset.rascunhoProgramacaoI165='';aviso.className='meta';aviso.textContent='Data em rascunho neste aparelho. Confira antes de confirmar a programação.';e.parentElement.after(aviso);}}}catch{}}

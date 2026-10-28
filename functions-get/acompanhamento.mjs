@@ -1,3 +1,5 @@
+import {redesPostagemDispensaI118} from './lib/gs-dispensa-retroativa-i118.mjs';
+import {dispensaServidorRedeI118,demandasRetroativasTxI118,encerrarDemandasRetroativasI118} from './dispensa-retroativa-suporte-i118.mjs';
 import {assinaturaBaseProgramacaoCp111} from './compat-legado-programacao-r83.mjs';
 import {faseAvisoI165,preservarCanalIncertoI165} from './lib/gs-cadencia-avisos-i165.mjs';
 import {exigirI165,idFisicoI165,jsonCanonicoI165,instanteI165,programacaoAtivaI165,horarioBrasiliaI165} from './lib/gs-contexto-operacional-i165.mjs';
@@ -21,20 +23,21 @@ function visaoPost(f) {
 export function projetarPostagemServidorI165(f,cfg,agora){
  exigirI165(typeof cfg.permitirAgendarSemLegendaI90==='boolean','i90','O serviço precisa confirmar a política I90 vigente.');
  if(f.post.publicacaoStokki?.versao!==1&&['cancelada_manual','arquivada_sem_postagem','finalizado'].includes(f.post.status))return {estado:'encerrado_sem_pendencia_de_programacao',motivo:'estado_terminal_fisico',postagemId:f.post.id,obrigacoes:[]};
- return obrigacoesConteudoI165({postagem:f.diretriz?visaoPost(f):f.post,video:f.video,diretriz:f.diretriz,programacaoCp111:f.programacaoCp111,configEntrega:f.configEntrega,clienteAtivo:f.clienteAtivo,processoEditorial:f.processoEditorial,permitirAgendarSemLegendaI90:cfg.permitirAgendarSemLegendaI90,agora});
+ const resultado=obrigacoesConteudoI165({postagem:f.diretriz?visaoPost(f):f.post,video:f.video,diretriz:f.diretriz,programacaoCp111:f.programacaoCp111,configEntrega:f.configEntrega,clienteAtivo:f.clienteAtivo,processoEditorial:f.processoEditorial,permitirAgendarSemLegendaI90:cfg.permitirAgendarSemLegendaI90,agora});
+ return {...resultado,obrigacoes:resultado.obrigacoes.filter(o=>!(['confirmar_publicacao','conferir_publicacao_legada'].includes(o.tipo)&&dispensaServidorRedeI118(f,o.rede||'geral')))};
 }
 function textoAviso(o,fonte){
  const titulos={editar_video:'Um vídeo chegou para edição',corrigir_video:'Tem um ajuste de vídeo para conferir',preparar_legenda:'Tem uma legenda esperando por você',programar:'Conteúdo liberado para agendar',confirmar_publicacao:'Pode conferir esta publicação?',definir_compromisso:'Falta combinar a data deste conteúdo',conferir_publicacao_divergente:'Pode conferir a data da publicação?',conferir_agendamento_divergente:'Pode conferir esta data agendada?',conferir_publicacao_legada:'Pode conferir esta publicação anterior?',definir_responsavel_correcao:'Pode conferir quem vai fazer este ajuste?'};
  return {titulo:titulos[o.tipo]||'Tem um conteúdo para conferir',texto:(fonte.clienteNome||fonte.cliente||'Conteúdo')+' · '+(fonte.titulo||'Conteúdo')+(o.prazo?' · prazo '+o.prazo.replace('T',' às '):'')+'. Abra o sistema para conferir o passo atual.'};
 }
-async function materializarTx(db,tx,colecao,id,fonte,obrigacoes,em,cfg,{preservar=false}={}){
+async function materializarTx(db,tx,colecao,id,fonte,obrigacoes,em,cfg,{preservar=false,redesDispensadas=[]}={}){
  const ir=indiceRef(db,colecao,id),is=await tx.get(ir),prev=is.data()||{},antIds=prev.avisos||[];
  exigirI165(Array.isArray(antIds)&&antIds.length<=100&&antIds.every(idFisicoI165),'indice','O índice de avisos precisa de conferência.');
  if(preservar)return {preservadas:antIds.length,criadas:0};
  const atuais=obrigacoes.map(o=>({o,ref:refAviso(db,o.chave)})),refs=[...new Map([...antIds.map(x=>db.doc('notificacoes_operacionais_i165/'+x)),...atuais.map(x=>x.ref)].map(r=>[r.path,r])).values()];
  const snaps=await Promise.all(refs.map(r=>tx.get(r))),map=new Map(snaps.map(s=>[s.id,s]));
  const vivos=new Set(atuais.map(x=>x.ref.id));
- for(const aid of antIds){const a=map.get(aid);if(a?.exists&&!vivos.has(aid)&&a.data().escopo===ESCOPO_I165&&a.data().fonte?.colecao===colecao&&a.data().fonte.id===id)tx.update(a.ref,{estado:'resolvida',resolvidaEm:em,motivoResolucao:'A fonte física foi conferida e avançou.'});}
+ for(const aid of antIds){const a=map.get(aid);if(a?.exists&&!vivos.has(aid)&&a.data().escopo===ESCOPO_I165&&a.data().fonte?.colecao===colecao&&a.data().fonte.id===id)tx.update(a.ref,{estado:'resolvida',resolvidaEm:em,motivoResolucao:['confirmar_publicacao','conferir_publicacao_legada'].includes(a.data().tipo)&&redesDispensadas.includes(a.data().rede||'geral')?'Cobrança retroativa dispensada administrativamente; não confirma publicação nem qualidade.':'A fonte física foi conferida e avançou.'});}
  for(const {o,ref} of atuais){
   const ant=map.get(ref.id)?.data(),faseAviso=faseAvisoI165(o,horarioBrasiliaI165(em)),abertura=(ant?.aberturaAviso||1)+(ant?.estado==='resolvida'?1:0),versao=hashI165({tipo:o.tipo,chave:o.chave,prazo:o.prazo||'',urgencia:o.urgencia||'normal',bloqueada:!!o.bloqueada,faseAviso,abertura});
   exigirI165(!ant||ant.escopo===ESCOPO_I165&&ant.fonte?.colecao===colecao&&ant.fonte.id===id,'aviso-colisao','O identificador já pertence a outra origem.');
@@ -73,7 +76,9 @@ export async function sincronizarPostagemI165(db,id,{agora=new Date()}={}){
   const f=await fontesPostagemTxI165(db,tx,id,em),projecao=projetarPostagemServidorI165(f,cfg,em);
   // The actual video episode owns an editing alert. Its post remains visible in the queue without a second email/push.
   const obr=projecao.obrigacoes.filter(o=>!(f.video&&o.tipo==='corrigir_video'));
-  const notas=await materializarTx(db,tx,'postagens',id,f.post,obr,em,cfg,{preservar:!f.clienteAtivo});
+  const dispensadas=await demandasRetroativasTxI118(db,tx,f);
+ const notas=await materializarTx(db,tx,'postagens',id,f.post,obr,em,cfg,{preservar:!f.clienteAtivo,redesDispensadas:redesPostagemDispensaI118(f.post).filter(r=>dispensaServidorRedeI118(f,r))});
+ encerrarDemandasRetroativasI118(tx,dispensadas,f,em,Object.values(f.dispensaRetroativaI118?.redes||{})[0]?.operacaoId||'', 'Sistema');
   if(f.diretriz||f.programacaoCp111){const assinatura=assinaturaBaseProgramacaoCp111(f),mesma=f.controle?.assinaturaDiretriz===assinatura;tx.set(db.doc('programacao_controles_i165/'+id),{schema:1,postagemId:id,videoId:f.video?.id||'',cliente:f.post.cliente,empresaOtavio:f.post.empresaOtavio||'',diretriz:f.diretriz,assinaturaDiretriz:assinatura,revisao:f.diretriz?.revisao||0,excecoes:mesma?f.controle.excecoes||{}:{},conferenciasPublicacao:f.controle?.conferenciasPublicacao||{},ativacaoId:cfg.ativacaoId,atualizadoEm:em});}
   return {ativa:true,estado:projecao.estado,...notas};
  });

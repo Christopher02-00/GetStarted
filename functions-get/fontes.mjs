@@ -1,3 +1,4 @@
+import {refDispensaI118,tempoFisicoI118} from './dispensa-retroativa-suporte-i118.mjs';
 import {resolverCompatLegadoProgramacaoI165,resolverProgramacaoCp111} from './compat-legado-programacao-r83.mjs';
 import {lerPostCampanhaI165} from './campanhas.mjs';
 import {exigirI165,idFisicoI165,jsonCanonicoI165,dataCivilI165,horaCivilI165,entregaSemPostagemI165} from './lib/gs-contexto-operacional-i165.mjs';
@@ -34,7 +35,7 @@ export async function fontesPostagemTxI165(db,tx,id,agora,{conferirDiretriz=true
  exigirI165(idFisicoI165(id),'postagem','Postagem inválida.');const ps=await tx.get(db.doc('postagens/'+id));exigirI165(ps.exists,'postagem','A postagem não existe.');const post=fisico(ps);
  const vs=post.videoId?await tx.get(db.doc('videos_producao/'+post.videoId)):null,video=fisico(vs);exigirI165(!post.videoId||video,'video','O vídeo da postagem não foi confirmado.');
  conferirVinculoCanonicoI165(post,video);
- const [diretriz,controle,editorial]=await Promise.all([tx.get(db.doc((video?'video_programacao_i165/':'post_programacao_i165/')+(video?.id||post.id))),tx.get(db.doc('programacao_controles_i165/'+id)),tx.get(db.doc('processo_calendarios_i164/ativo'))]);
+ const [diretriz,controle,editorial,dispensa]=await Promise.all([tx.get(db.doc((video?'video_programacao_i165/':'post_programacao_i165/')+(video?.id||post.id))),tx.get(db.doc('programacao_controles_i165/'+id)),tx.get(db.doc('processo_calendarios_i164/ativo')),tx.get(refDispensaI118(db,id))]);
  const cliente=await clienteTxI165(db,tx,post.cliente,agora),d=diretriz.data()||null;
  const legadoProgramacao=d?null:resolverCompatLegadoProgramacaoI165({cfg:(await tx.get(db.doc('programacao_config_i165/ativo'))).data(),post,video,postCreateTime:ps.createTime,videoCreateTime:vs?.createTime,diretriz:d});
  if(d&&conferirDiretriz){conferirDiretrizAtualI165(d,video,post);if(video&&d.origemConferida){const origem=await origemTxI165(db,tx,video);exigirI165(jsonCanonicoI165(origem)===jsonCanonicoI165(d.origemConferida),'origem-avancou','A peça editorial mudou; a Amanda precisa reconferir o compromisso.');}if(video){const campanha=await compromissoVideoTxI165(db,tx,video);exigirI165((d.compromisso||'')===(campanha.compromisso?jsonCanonicoI165(campanha.compromisso):'')&&(d.decisaoCompromisso||'')===(campanha.decisao?jsonCanonicoI165(campanha.decisao):''),'campanha-avancou','A campanha mudou depois da orientação. A Amanda precisa reconferir a data antes de programar.');}}
@@ -42,5 +43,5 @@ export async function fontesPostagemTxI165(db,tx,id,agora,{conferirDiretriz=true
  try{origem=await lerOrigemProgramacaoTxCp111(db,tx,video||{...post,postagemId:post.id});}catch(e){origem={erro:e.message,codigo:e.code||'i165/origem-indisponivel'};}
  if(video)try{campanha=await compromissoVideoTxI165(db,tx,video);}catch(e){campanha={erro:e.message,codigo:e.code||'i165/campanha-indisponivel'};}
  const programacaoCp111=resolverProgramacaoCp111({diretriz:d,origem,campanha});
- return {post,video,diretriz:d,programacaoCp111,legadoProgramacao,controle:controle.data()||null,processoEditorial:editorial.data()||null,...cliente,configEntrega:entregaSemPostagemI165(video||{cliente:post.cliente},cliente.config)?{modo:'entrega_direta'}:cliente.configEntrega};
+ return {post,postCreateTime:tempoFisicoI118(ps.createTime),dispensaRetroativaI118:dispensa.data()||null,video,diretriz:d,programacaoCp111,legadoProgramacao,controle:controle.data()||null,processoEditorial:editorial.data()||null,...cliente,configEntrega:entregaSemPostagemI165(video||{cliente:post.cliente},cliente.config)?{modo:'entrega_direta'}:cliente.configEntrega};
 }

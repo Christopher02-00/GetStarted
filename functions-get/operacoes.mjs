@@ -1,3 +1,4 @@
+import {ACOES_DISPENSA_I118,operarDispensaRetroativaI118} from './dispensa-retroativa-i118.mjs';
 import {ACOES_AJUSTES_CP112,operarAjustesCalendariosCp112} from './ajustes-calendarios-cp112.mjs';
 import {ACOES_REUNIOES_MENSAIS_CP111,operarReunioesMensaisCp111} from './reunioes-mensais-cp111.mjs';
 import {ACOES_AJUSTES_CP109,operarAjustesClientesCp109} from './ajustes-clientes-cp109.mjs';
@@ -35,6 +36,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_DISPENSA_I118.includes(dados.acao))return operarDispensaRetroativaI118(db,auth,dados,{agora});
  if(ACOES_AJUSTES_CP112.includes(dados.acao))return operarAjustesCalendariosCp112(db,auth,dados,{agora,fontesEditorialTx:fontesTx});
  if(ACOES_REUNIOES_MENSAIS_CP111.includes(dados.acao))return operarReunioesMensaisCp111(db,auth,dados,{agora});
  if(ACOES_AJUSTES_CP109.includes(dados.acao))return operarAjustesClientesCp109(db,auth,dados,{agora});

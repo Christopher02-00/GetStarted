@@ -1,3 +1,4 @@
+import {operarAdocaoPreparacaoCp129} from './adocao-preparacao-cp129.mjs';
 import {coletarInternosTxCp123,dtoInternosCp123,resumoInternosCp123,operarInternoCp123,prepararPublicacaoInternosCp123,concluirPublicacaoInternosCp123,filaInternosCp123} from './ajustes-internos-cp123.mjs';
 import {coletarAjustesTxCp112,resumoAjustesCp112,exigirLiberacaoAjustesCp112,notasLiberadasCp112,pedidosLiberadosCp112,invalidacoesAjustesCp112,prepararReenvioAjustesCp112,elegibilidadeReliberacaoAjustesCp121} from './ajustes-calendarios-cp112.mjs';
 import {validadeBaseI155Cp111} from './central/lib/gs-transicao-insumos-cp111.mjs';
@@ -14,7 +15,7 @@ import {editorialI148,revisaoI148,reciboPublicacaoI148} from './central/lib/gs-a
 import {envelopeCentralR80} from './codec-central-r80.mjs';
 import {exigirCentralR80 as e,cicloR80} from './central-preparacao-validacao-r80.mjs';
 import {operarCentralPreparacaoR80} from './central-preparacao-r80.mjs';
-import {validarEntradaEditorialI172,hashEditorialI172,hashPedidoEditorialI172,ACOES_EDITORIAL_I172,ACOES_INTERNOS_CP123} from './editorial-contrato-i172.mjs';
+import {validarEntradaEditorialI172,hashEditorialI172,hashPedidoEditorialI172,ACOES_EDITORIAL_I172,ACOES_INTERNOS_CP123,ACOES_ADOCAO_CP129} from './editorial-contrato-i172.mjs';
 import {mesclarCompetenciaCalendarioV125,assinaturaConteudoCompetenciaV125,criarRetratoLiberadoV115,mapaAprovacaoAposPublicar} from './editorial-helpers-oficiais-i172.mjs';
 import aprovacao from './gs-aprovacao-conteudo-i68-editorial.mjs';
 import {legadoEditorialI172,contextoLegadoEditorialI172,stampLegadoEditorialI172,assinaturaLegadoEditorialI172,capacidadesLegadoEditorialI172,proximoEstadoLegadoEditorialI172,contextoDepoisLegadoEditorialI172} from './editorial-legado-i172.mjs';
@@ -45,6 +46,7 @@ async function dtoAtualTx(db,tx,c,cal,ator,operacao=null){const [rows,internos]=
 function interna(d,acao,dados,revisao,hash){return {acao:'central_mutar',uidEsperado:d.uidEsperado,atorRealEsperado:d.atorRealEsperado,papelOperado:d.papelOperado,sessao:d.sessao,ciclo:d.ciclo,acaoPreparacao:acao,dados,esperadaRevisao:revisao,operacao:d.operacao+'_ciclo',hashPedidoEditorial:hash};}
 export async function operarEditorialCalendariosI172(db,auth,pedido,{agora=new Date()}={}){
  validarEntradaEditorialI172(pedido);const ator=validarContaEsperadaI165(auth,pedido);e(['Chris','Amanda'].includes(ator.papel),'A pesquisa e o apoio de legenda não dão acesso ao editor.');
+ if(ACOES_ADOCAO_CP129.includes(pedido.acao))return envelopeCentralR80(await operarAdocaoPreparacaoCp129(db,auth,pedido,{gate:gateEditorialI172,agora}));
  if(pedido.acao==='central_editor_interno_fila_cp123'){await db.runTransaction(tx=>gateEditorialI172(db,tx,ator));return envelopeCentralR80(await filaInternosCp123(db,ator));}
  if(ACOES_INTERNOS_CP123.includes(pedido.acao))return envelopeCentralR80(await operarInternoCp123(db,ator,pedido,{agora,fontes:tx=>fontesTx(db,tx,ator,pedido,agora),assinaturaEditor:assinatura,lerDto:(tx,c,cal,op)=>dtoAtualTx(db,tx,c,cal,ator,op)}));
  const hash=hashPedidoEditorialI172(pedido,ator),em=agora.toISOString(),id=cicloR80(pedido.ciclo),backup=pedido.operacao?db.doc('calendarios_versoes/'+id.cliente+'__i172_'+pedido.operacao):null,autoridade=backup?db.doc(backup.path+'/editorial_i172/recibo'):null;

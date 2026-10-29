@@ -1,6 +1,6 @@
 /* Módulo de trabalho injetável: não initializeApp, não exporta Scheduler, não cria canais. */
 import {executarRecorrenciaI164} from './agenda.mjs';
-import {sincronizarOcorrenciasI165,sincronizarOrganizacaoI167} from './notificacoes.mjs';
+import {sincronizarOcorrenciasI165,sincronizarOrganizacaoI167,sincronizarDemandasRefazerCp131} from './notificacoes.mjs';
 import {processoAtivoI164} from './lib/gs-processo-calendarios-i164.mjs';
 import {tickRefsCp109} from '../referencias-cp109.mjs';
 const linkNota=id=>{const u=new URL('https://get-started.agency/escritorio.html');u.searchParams.set('avisoI165',id);return u.href;};
@@ -16,7 +16,9 @@ export async function executarCentralNoTickI165(db,{agora=new Date(),enviarPush,
  const canais=['push','email'].filter(c=>cfg?.schema===1&&cfg.ativo===true&&cfg.habilidades?.[c]===true&&(c==='push'?enviarPush:enviarEmail));
  const push=enviarPush?(n=>enviarPush({...n,link:linkNota(n.id)})):undefined,email=enviarEmail?(n=>enviarEmail({...n,link:linkNota(n.id)})):undefined;
  const executarAgenda=operadores.recorrencia||executarRecorrenciaI164,executarNotas=operadores.notas||sincronizarOcorrenciasI165,executarOrganizacao=operadores.organizacao||sincronizarOrganizacaoI167,executarReferencias=operadores.referencias||tickRefsCp109;
- const r={organizacao:{ativa:false},agenda:{ativa:false},referencias:{ativa:false},notas:{ativa:false},erros:[]};
+ const r={devolucoes:{ativa:false},organizacao:{ativa:false},agenda:{ativa:false},referencias:{ativa:false},notas:{ativa:false},erros:[]};
+ // Devoluções usam o mesmo tick e canais, sem depender do calendário ou da organização.
+ if(cfg?.schema===1&&cfg.ativo===true)try{r.devolucoes=await (operadores.devolucoes||sincronizarDemandasRefazerCp131)(db,{agora,enviarPush:push,enviarEmail:email,canais,limite});}catch(e){r.erros.push({servico:'demanda_refazer_i161',erro:String(e.message).slice(0,500)});}
  // Agenda já publicada usa a ativação operacional I165 existente; não depende do corte editorial I164.
  if(cfg?.schema===1&&cfg.ativo===true&&cfg.habilidades?.organizacao===true)try{r.organizacao=await executarOrganizacao(db,{agora,enviarPush:push,enviarEmail:email,canais,limite});}catch(e){r.erros.push({servico:'organizacao_i167',erro:String(e.message).slice(0,500)});}
  if(processoAtivoI164(processo)) {
@@ -25,8 +27,8 @@ export async function executarCentralNoTickI165(db,{agora=new Date(),enviarPush,
   try{r.referencias=await executarReferencias(db,{agora});}catch(e){r.erros.push({servico:'referencias_cp109',erro:String(e.message).slice(0,500)});}
   try{r.notas=await executarNotas(db,{agora,enviarPush:push,enviarEmail:email,canais,limite});}catch(e){r.erros.push({servico:'notificacoes_central',erro:String(e.message).slice(0,500)});}
  }
- for(const [servico,x]of [['organizacao_i167',r.organizacao],['notificacoes_central',r.notas]])for(const e of x.erros||[])r.erros.push({servico,...e});
- const tipos=[...(r.organizacao.ativa?['organizacao_i167']:[]),...(processoAtivoI164(processo)?['planejamento','calendario_revisao','calendario_envio','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109']:[])];
+ for(const [servico,x]of [['demanda_refazer_i161',r.devolucoes],['organizacao_i167',r.organizacao],['notificacoes_central',r.notas]])for(const e of x.erros||[])r.erros.push({servico,...e});
+ const tipos=[...(r.devolucoes.ativa?['demanda_refazer_i161']:[]),...(r.organizacao.ativa?['organizacao_i167']:[]),...(processoAtivoI164(processo)?['planejamento','calendario_revisao','calendario_envio','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109']:[])];
  try{const ler=operadores.notasAtuais||(async()=>{const s=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get();return s.docs.map(d=>d.data());});const notas=await ler();r.canais=resumirCanaisCentralI165(notas.filter(n=>!n.escopo&&tipos.includes(n.origem?.tipo)),canais);}catch(e){r.erros.push({servico:'saude_canais_central',erro:String(e.message).slice(0,500)});r.canais={estado:'nao_conferido',falhas:0,desconhecidas:0};}
  const estado=r.erros.length?'conferir_origens':r.canais.estado==='conferidos'?'conferida':'conferir_canais',em=agora.toISOString();
  await db.doc('servicos_i164/execucao').set({estado,ultimaExecucao:em,agendaCriadas:r.agenda.criadas?.length||0,organizacaoConferida:r.organizacao.conferidas||0,notas:r.notas.processadas||0,canais:r.canais,erros:r.erros.slice(0,100),origem:'tick operacional I165 existente',portalAbertoNecessario:false},{merge:true});

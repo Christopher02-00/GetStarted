@@ -1,4 +1,7 @@
 import{ocorrenciaOrganizacaoI167,lerOcorrenciaOrganizacaoI167,canaisDaVersaoOrganizacaoI167}from'./organizacao-i167.mjs';
+import{TIPO_DEMANDA_REFAZER_CP131,ocorrenciaDemandaRefazerCp131,lerOcorrenciaDemandaRefazerCp131}from'./demandas-refazer-cp131.mjs';
+import{programacaoAtivaI165}from'../lib/gs-contexto-operacional-i165.mjs';
+const ativacaoOperacionalCp131=n=>n?.origem?.tipo==='organizacao_i167'||n?.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131;
 import{fonteFisicaClienteR4,mesDoItemCalendario}from'./lib/guardas-stokki-i165.mjs';
 import{carteiraCanonicaI164}from'./lib/gs-carteira-calendarios-i164.mjs';
 import{revisaoI148}from'./lib/gs-aprovacoes-calendarios-i148.mjs';
@@ -14,7 +17,7 @@ import{ocorrenciasReferenciasCp109}from'../referencias-cp109.mjs';
 import{ocorrenciasPlanejamentoCp109}from'../planejamento-estrategico-cp109.mjs';
 import{ocorrenciasPlanosCp109}from'../planos-acao-cp109.mjs';
 const hash=v=>crypto.createHash('sha256').update(jsonI165(v)).digest('hex');
-export const notaCentralI164=n=>!!n&&!n.escopo&&['planejamento','calendario_revisao','calendario_envio','organizacao_i167','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109'].includes(n.origem?.tipo);
+export const notaCentralI164=n=>!!n&&!n.escopo&&['planejamento','calendario_revisao','calendario_envio','organizacao_i167','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109',TIPO_DEMANDA_REFAZER_CP131].includes(n.origem?.tipo);
 export function ocorrenciasPlanejamentoI164(c,agora=new Date()){
  if(!c.incluido)return [];const agoraLocal=horarioI165(agora),estados=estadoEtapas(c),out=[];
  for(const [etapa,titulo,padrao]of ETAPAS){const a=c.agenda?.[etapa];if(a?.origemI167||a?.fonteOrganizacaoI167===true||etapa==='revisao'&&c.criacao?.base||estados[etapa]||!a?.prazo||dependencias(c,etapa).length)continue;const prazo=a.prazo+'T'+(a.prazoHora||'19:00'),falta=new Date(prazo+'-03:00').getTime()-agora.getTime();if(falta>86400000)continue;
@@ -54,9 +57,9 @@ async function consultarEnvioCalendarioI164(db,c,agora=new Date()){
  return ocorrenciasCalendarioEnvioI164(c,cal.data(),registro.exists?registro.data():null);
 }
 export async function registrarOcorrenciaI165(db,o,agora=new Date()){
- const id=o.origem?.tipo==='organizacao_i167'?o.id:hash([o.origem,o.versao,o.destinatario,o.nivel]),ref=db.doc('notificacoes_operacionais_i165/'+id);
- const configRef=db.doc(o.origem?.tipo==='organizacao_i167'?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo');
- async function ativacao(tx){const s=await tx.get(configRef),c=s.data();if(o.origem?.tipo==='organizacao_i167'){if(c?.schema!==1||c.ativo!==true||c.habilidades?.organizacao!==true||typeof c.ativacaoId!=='string')throw Error('A organização está pausada.');}else if(!processoAtivoI164(c))throw Error('O processo de calendários está pausado.');return c.ativacaoId;}
+ const id=ativacaoOperacionalCp131(o)?o.id:hash([o.origem,o.versao,o.destinatario,o.nivel]),ref=db.doc('notificacoes_operacionais_i165/'+id);
+ const configRef=db.doc(ativacaoOperacionalCp131(o)?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo');
+ async function ativacao(tx){const s=await tx.get(configRef),c=s.data();if(o.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131){if(!programacaoAtivaI165(c))throw Error('Os avisos de demandas estão pausados.');}else if(o.origem?.tipo==='organizacao_i167'){if(c?.schema!==1||c.ativo!==true||c.habilidades?.organizacao!==true||typeof c.ativacaoId!=='string')throw Error('A organização está pausada.');}else if(!processoAtivoI164(c))throw Error('O processo de calendários está pausado.');return c.ativacaoId;}
 
  if(o.origem?.tipo==='organizacao_i167'){await db.runTransaction(async tx=>{const [s,ativacaoId]=await Promise.all([tx.get(ref),ativacao(tx)]),a=s.data();if(a&&(a.origem?.tipo!=='organizacao_i167'||a.origem.id!==o.origem.id))throw Error('O aviso já pertence a outra origem.');if(a?.versao===o.versao&&a.estado==='pendente'){if(a.ativacaoId!==ativacaoId)tx.update(ref,{ativacaoId,conferidaEm:agora.toISOString()});return;}if(a?.versao&&a.versao!==o.versao)tx.set(ref.collection('versoes').doc(a.versao),a);tx.set(ref,{schema:1,...o,id,ativacaoId,criadaEm:a?.criadaEm||agora.toISOString(),conferidaEm:agora.toISOString(),estado:'pendente',canais:canaisDaVersaoOrganizacaoI167(a,o.versao),leituras:a?.leituras||{},reaberturas:(a?.reaberturas||0)+(a?.estado==='resolvida'?1:0)});});return id;}
  await db.runTransaction(async tx=>{
@@ -64,7 +67,7 @@ export async function registrarOcorrenciaI165(db,o,agora=new Date()){
   if(s.exists){
    const antiga=s.data();
    if(jsonI165(antiga.origem)!==jsonI165(o.origem)||antiga.versao!==o.versao||antiga.destinatario!==o.destinatario||antiga.nivel!==o.nivel)throw Error('O aviso já pertence a outra versão ou origem.');
-   const patch={...(antiga.ativacaoId!==ativacaoId?{ativacaoId}:{}),...(['calendario_envio','calendario_revisao'].includes(o.origem.tipo)&&antiga.estado==='resolvida'?{estado:'pendente',reabertaEm:agora.toISOString(),reaberturas:(antiga.reaberturas||0)+1,motivo:'A fonte voltou a exigir conferência; canais já aceitos preservados.'}:{})};
+   const patch={...(antiga.ativacaoId!==ativacaoId?{ativacaoId}:{}),...(['calendario_envio','calendario_revisao',TIPO_DEMANDA_REFAZER_CP131].includes(o.origem.tipo)&&antiga.estado==='resolvida'?{estado:'pendente',reabertaEm:agora.toISOString(),reaberturas:(antiga.reaberturas||0)+1,motivo:'A fonte voltou a exigir conferência; canais já aceitos preservados.'}:{})};
    if(Object.keys(patch).length)tx.update(ref,patch);
    return;
   }
@@ -73,6 +76,7 @@ export async function registrarOcorrenciaI165(db,o,agora=new Date()){
 }
 /* O leitor HTTP e o runner usam a mesma projeção da fonte, sem confirmar entrega por leitura. */
 export async function ocorrenciasDaFonteCentralI164(db,n,agora=new Date()){
+ if(n.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131){const atual=await lerOcorrenciaDemandaRefazerCp131(db,n.origem.id);return atual?[atual]:[];}
   if(n.origem?.tipo==='referencias_cp109')return ocorrenciasReferenciasCp109(db,n,agora);
   if(n.origem?.tipo==='planejamento_estrategico_cp109')return ocorrenciasPlanejamentoCp109(db,n,agora);
   if(n.origem?.tipo==='plano_acao_cp109')return ocorrenciasPlanosCp109(db,n,agora);
@@ -96,9 +100,11 @@ export async function ocorrenciasDaFonteCentralI164(db,n,agora=new Date()){
  return [];
 }
 export async function fonteAindaPendenteI165(db,n,agora=new Date()){
- const config=await db.doc(n.origem?.tipo==='organizacao_i167'?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo').get();
+ const config=await db.doc(ativacaoOperacionalCp131(n)?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo').get();
  const atual=config.data();
- if(n.origem?.tipo==='organizacao_i167'){
+ if(n.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131){
+  if(!programacaoAtivaI165(atual)||n.ativacaoId!==atual.ativacaoId)return false;
+ }else if(n.origem?.tipo==='organizacao_i167'){
   if(atual?.schema!==1||atual.ativo!==true||atual.habilidades?.organizacao!==true||n.ativacaoId!==atual.ativacaoId)return false;
  }else if(!processoAtivoI164(atual)||n.ativacaoId!==atual.ativacaoId)return false;
  return (await ocorrenciasDaFonteCentralI164(db,n,agora)).some(x=>x.versao===n.versao&&x.destinatario===n.destinatario&&x.nivel===n.nivel&&jsonI165(x.origem)===jsonI165(n.origem));
@@ -109,7 +115,7 @@ export async function despacharOcorrenciaI165(db,id,{agora=new Date(),enviarPush
  const ref=db.doc('notificacoes_operacionais_i165/'+id),token=crypto.randomUUID();let n;
  const claim=await db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists||!notaCentralI164(s.data())||s.data().estado!=='pendente'||s.data().concessaoAte>new Date().toISOString())return false;n=s.data();tx.update(ref,{concessao:token,concessaoAte:new Date(Date.now()+90000).toISOString()});return true;});if(!claim)return {ocupada:true};
  try{
-  const ativo=await db.doc(n.origem?.tipo==='organizacao_i167'?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo').get();const ligada=n.origem?.tipo==='organizacao_i167'?ativo.data()?.schema===1&&ativo.data()?.ativo===true&&ativo.data()?.habilidades?.organizacao===true:processoAtivoI164(ativo.data());if(!ligada||!await fonteAindaPendenteI165(db,n,agora)){await finalizar({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte avançou, mudou de versão ou a rotina foi desativada.'});return {resolvida:true};}
+  const ativo=await db.doc(ativacaoOperacionalCp131(n)?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo').get();const ligada=n.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131?programacaoAtivaI165(ativo.data()):n.origem?.tipo==='organizacao_i167'?ativo.data()?.schema===1&&ativo.data()?.ativo===true&&ativo.data()?.habilidades?.organizacao===true:processoAtivoI164(ativo.data());if(!ligada||!await fonteAindaPendenteI165(db,n,agora)){await finalizar({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte avançou, mudou de versão ou a rotina foi desativada.'});return {resolvida:true};}
   if(n.origem?.tipo==='organizacao_i167'&&n.nivel==='aguardando'){await finalizar({conferidaEm:agora.toISOString()});return {aguardandoPrazo:true};}
    const habilitados=n.origem?.tipo==='referencias_cp109'?[]:canaisHabilitados;
    const canais={...n.canais};for(const canal of habilitados){const a=canais[canal];if(a?.estado!=='resultado_desconhecido'||!a.tentativaId)continue;const recibo=await db.doc('transmissoes_i165/'+a.tentativaId).get(),r=recibo.data();if(r?.estado==='aceita_pelo_provedor'&&r.chave===n.id&&r.canal===canal&&r.destinatario===n.destinatario)canais[canal]={...a,estado:'aceita_pelo_provedor',aceitaEm:r.aceitaEm,recibo:r.recibo,recuperada:true};}
@@ -139,7 +145,7 @@ export async function sincronizarOcorrenciasI165(db,{agora=new Date(),enviarPush
   const estrategias=await db.collection('planejamento_estrategico_cp109').limit(1001).get();
   if(estrategias.size>1000)throw Error('Há mais planejamentos estratégicos que esta conferência comporta; nenhuma fonte foi truncada.');
   for(const d of estrategias.docs)try{for(const o of await ocorrenciasPlanejamentoCp109(db,{origem:{id:d.id}},agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'planejamento_estrategico_cp109',ciclo:d.id,erro:e.message});}
-  const pendentes=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get(),enviar=[];for(const d of pendentes.docs){const n=d.data();if(!notaCentralI164(n))continue;let pendente;try{pendente=await fonteAindaPendenteI165(db,n,agora);}catch(e){erros.push({origem:n.origem?.tipo,aviso:d.id,erro:e.message});continue;}if(!pendente){await d.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte foi conferida e avançou ou saiu da operação.'});continue;}const canaisNota=n.origem?.tipo==='referencias_cp109'?[]:canais;if(canaisNota.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString())))enviar.push(d);}enviar.sort((a,b)=>(a.data().conferidaEm||'').localeCompare(b.data().conferidaEm||''));for(let i=0;i<Math.min(limite,enviar.length);i+=5)await Promise.all(enviar.slice(i,Math.min(i+5,limite)).map(d=>despacharOcorrenciaI165(db,d.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canais}).catch(e=>erros.push({aviso:d.id,erro:e.message}))));
+  const pendentes=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get(),enviar=[];for(const d of pendentes.docs){const n=d.data();if(!notaCentralI164(n)||n.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131)continue;let pendente;try{pendente=await fonteAindaPendenteI165(db,n,agora);}catch(e){erros.push({origem:n.origem?.tipo,aviso:d.id,erro:e.message});continue;}if(!pendente){await d.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte foi conferida e avançou ou saiu da operação.'});continue;}const canaisNota=n.origem?.tipo==='referencias_cp109'?[]:canais;if(canaisNota.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString())))enviar.push(d);}enviar.sort((a,b)=>(a.data().conferidaEm||'').localeCompare(b.data().conferidaEm||''));for(let i=0;i<Math.min(limite,enviar.length);i+=5)await Promise.all(enviar.slice(i,Math.min(i+5,limite)).map(d=>despacharOcorrenciaI165(db,d.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canais}).catch(e=>erros.push({aviso:d.id,erro:e.message}))));
  await db.doc('servicos_i164/notificacoes').set({estado:erros.length?'conferir_origens':'conferida',ultimaExecucao:agora.toISOString(),ocorrenciasConferidas:criadas,pendentesProcessadas:pendentes.size,erros:erros.slice(0,100),servico:'Functions · executa com o portal fechado'},{merge:true});return {ativa:true,ocorrenciasConferidas:criadas,processadas:pendentes.size,erros};
 }
 
@@ -192,4 +198,20 @@ async function consultarCalendarioLegadoI164(db,id,agora,tipo=''){
  if(!carteira.carteira.some(x=>x.slug===cliente))return [];
  const ocorrencias=await ocorrenciasCalendarioLegadoI164(legado.data(),cal.data(),registro.exists?registro.data():null,processo.data(),ciclo.exists?ciclo.data():null);
  return ocorrencias.filter(o=>(!tipo||o.origem.tipo===tipo)&&(o.origem.tipo!=='calendario_envio'||calendarioEnviavelI164({cliente,competencia},cal.data(),{extras:rows(extras),configs:rows(configs),agora})));
+}
+
+/* Mesmo tick, registro e dispatcher I165. A fonte I161 continua sendo a demanda. */
+export async function sincronizarDemandasRefazerCp131(db,{agora=new Date(),enviarPush,enviarEmail,canais=['push','email'],limite=60}={}){
+ const cfg=(await db.doc('programacao_config_i165/ativo').get()).data();if(!programacaoAtivaI165(cfg))return {ativa:false};
+ const fontes=await db.collection('demandas').where('refazerUltimoI161.operacao','>=','').limit(1001).get();
+ if(fontes.size>1000)throw Error('Há mais devoluções que esta conferência comporta. Nenhuma lista foi cortada.');
+ const canaisAtivos=canais.filter(c=>cfg.habilidades?.[c]===true),erros=[];let conferidas=0,processadas=0;
+ for(const s of fontes.docs)try{const o=ocorrenciaDemandaRefazerCp131({...s.data(),id:s.id});if(o){await registrarOcorrenciaI165(db,o,agora);conferidas++;}}catch(e){erros.push({demandaId:s.id,erro:String(e.message).slice(0,500)});}
+ const notas=await db.collection('notificacoes_operacionais_i165').where('origem.tipo','==',TIPO_DEMANDA_REFAZER_CP131).where('estado','==','pendente').limit(1001).get();
+ if(notas.size>1000)throw Error('Há mais avisos devolvidos que esta conferência comporta. Nenhuma lista foi cortada.');
+ const enviar=[];
+ for(const s of notas.docs)try{const n=s.data();if(!await fonteAindaPendenteI165(db,n,agora)){await s.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A mesma demanda foi entregue, repassada, arquivada ou mudou de rodada.'});continue;}if(canaisAtivos.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString())))enviar.push(s);}catch(e){erros.push({aviso:s.id,erro:String(e.message).slice(0,500)});}
+ enviar.sort((a,b)=>(a.data().conferidaEm||'').localeCompare(b.data().conferidaEm||'')||a.id.localeCompare(b.id));
+ for(const s of enviar.slice(0,limite))try{await despacharOcorrenciaI165(db,s.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canaisAtivos});processadas++;}catch(e){erros.push({aviso:s.id,erro:String(e.message).slice(0,500)});}
+ return {ativa:true,conferidas,processadas,erros};
 }

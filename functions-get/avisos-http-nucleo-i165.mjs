@@ -40,11 +40,11 @@ export async function operarAvisosHttpNucleoI165(db,auth,dados,{agora=new Date()
    const fontes=[...(cfg?.habilidades?.edicao===true?['videos_producao']:[]),...(cfg?.habilidades?.programacao===true?['postagens']:[])];
    exigir(ativa,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
    const central=await candidatasCentralTxR87(db,tx,ator,cfg,LIMITE);
-   exigir(fontes.length>0||central.centralAtiva||central.organizacaoAtiva,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
+   exigir(fontes.length>0||central.centralAtiva||central.organizacaoAtiva||central.devolucoesAtivas,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
    const q=fontes.length?db.collection('notificacoes_operacionais_i165').where('escopo','==',ESCOPO).where('destinatario','==',ator.papel).where('estado','==','pendente').where('ativacaoId','==',cfg.ativacaoId).where('fonte.colecao',fontes.length===1?'==':'in',fontes.length===1?fontes[0]:fontes).orderBy('__name__').limit(LIMITE+1):null;
    const qs=fontes.length?await tx.get(q):{docs:[],size:0},avisos=[];
    const unicas=new Map([...qs.docs.map(s=>({s,central:false})),...central.docs.map(s=>({s,central:true}))].map(v=>[v.s.id,v]));
-   const ordenadas=[...unicas.values()].sort((a,b)=>a.s.id.localeCompare(b.s.id));
+   const ordenadas=[...unicas.values()].sort((a,b)=>Number(b.s.data().origem?.tipo==='demanda_refazer_i161')-Number(a.s.data().origem?.tipo==='demanda_refazer_i161')||a.s.id.localeCompare(b.s.id));
    const candidatas=ordenadas.slice(0,LIMITE),leituraCentral=leituraCentralTxR87(db,tx);
    for(let i=0;i<candidatas.length;i+=4){
     const bloco=await Promise.allSettled(candidatas.slice(i,i+4).map(async entrada=>{const s=entrada.s,n=s.data();if(entrada.central){exigir(n.id===s.id,'aviso-contrato','O identificador do aviso precisa de conferência.');const dto=await lerNotaCentralTxR87(db,tx,n,ator,{cfg,processo:central.processo,agora,leitura:leituraCentral});return dto.fonteAvancou?null:dto;}exigir(id(s.id)&&/^[A-Za-z0-9_-]{12,160}$/.test(s.id)&&n.id===s.id&&n.escopo===ESCOPO&&n.destinatario===ator.papel&&n.estado==='pendente'&&n.ativacaoId===cfg.ativacaoId&&fontes.includes(n.fonte?.colecao)&&id(n.fonte.id),'aviso-contrato','Um aviso precisa de conferência. A última lista foi preservada.');const f=await fontePendenteTx(db,tx,n,{agora});exigir(f&&typeof f.pendente==='boolean','aviso-fonte','Não consegui confirmar a origem de um aviso.');return f.pendente?notaPublica(n,s.id,f,em):null;}));

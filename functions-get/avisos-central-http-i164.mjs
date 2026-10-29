@@ -1,13 +1,14 @@
 /* A mesma caixa de avisos, com leitura tipada das fontes da Central.
  * Não cria demanda, não conclui atividade e não expõe documentos privados. */
 import {notaCentralI164, ocorrenciasDaFonteCentralI164} from './central/notificacoes.mjs';
+import {TIPO_DEMANDA_REFAZER_CP131,PAPEIS_DEMANDA_REFAZER_CP131,idAvisoDemandaRefazerCp131} from './central/demandas-refazer-cp131.mjs';
 import {processoAtivoI164} from './central/lib/gs-processo-calendarios-i164.mjs';
 import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {jsonI165} from './central/lib/gs-programacao-i165.mjs';
 
 export const ESCOPO_AVISOS_CENTRAL_R87 = 'central_i164';
 export const TIPOS_AVISOS_CENTRAL_R87 = Object.freeze(['planejamento', 'calendario_revisao', 'calendario_envio', 'referencias_cp109', 'planejamento_estrategico_cp109', 'plano_acao_cp109']);
-const tipos = new Set([...TIPOS_AVISOS_CENTRAL_R87, 'organizacao_i167']);
+const tipos = new Set([...TIPOS_AVISOS_CENTRAL_R87, 'organizacao_i167',TIPO_DEMANDA_REFAZER_CP131]);
 const id = v => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,220}$/.test(v) && !['.', '..'].includes(v);
 const exigir = (ok, mensagem) => { if (!ok) throw Object.assign(new Error(mensagem), {code: 'i164/aviso'}); };
 const texto = (v, limite) => typeof v === 'string' ? v.slice(0, limite) : '';
@@ -63,6 +64,7 @@ export function validarPapelNotaCentralR87(n, papel) {
     exigir(['Chris', 'Amanda', 'Gabrielle'].includes(papel), 'Esta etapa pertence à preparação.');
     if (papel === 'Gabrielle') exigir(n.origem.etapa === 'pesquisa', 'A pesquisa não dá acesso à criação ou revisão editorial.');
   }
+  if(tipo===TIPO_DEMANDA_REFAZER_CP131)exigir(PAPEIS_DEMANDA_REFAZER_CP131.includes(papel)&&n.id===idAvisoDemandaRefazerCp131(n.origem,papel)&&id(n.origem.operacao)&&n.origem.operacao.length>=8&&Object.keys(n.origem).every(k=>['tipo','id','operacao'].includes(k)),'O retorno precisa confirmar a rodada da própria demanda.');
   if(novoCp109(tipo))validarNotaCp109(n,papel);
   return tipo;
 }
@@ -70,15 +72,16 @@ export function validarPapelNotaCentralR87(n, papel) {
 export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100) {
   const ps = await tx.get(db.doc('processo_calendarios_i164/ativo')), processo = ps.data();
   if (ps.exists && processo?.ativo !== false) exigir(processoAtivoI164(processo), 'A configuração do processo precisa de conferência; a lista anterior foi preservada.');
-  const centralAtiva = processoAtivoI164(processo), organizacaoAtiva = cfg?.habilidades?.organizacao === true;
+  const centralAtiva = processoAtivoI164(processo), organizacaoAtiva = cfg?.habilidades?.organizacao === true, devolucoesAtivas=programacaoAtivaI165(cfg)&&PAPEIS_DEMANDA_REFAZER_CP131.includes(ator.papel);
   const base = () => db.collection('notificacoes_operacionais_i165').where('destinatario', '==', ator.papel).where('estado', '==', 'pendente');
   const consultas = [];
   if (centralAtiva && ['Chris', 'Amanda', 'Gabrielle', 'Cecília'].includes(ator.papel)) {
     consultas.push(base().where('ativacaoId', '==', processo.ativacaoId).where('origem.tipo', 'in', TIPOS_AVISOS_CENTRAL_R87).orderBy('__name__').limit(limite + 1));
   }
+  if(devolucoesAtivas)consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','==',TIPO_DEMANDA_REFAZER_CP131).orderBy('__name__').limit(limite+1));
   if (organizacaoAtiva) consultas.push(base().where('ativacaoId', '==', cfg.ativacaoId).where('origem.tipo', '==', 'organizacao_i167').orderBy('__name__').limit(limite + 1));
   const snapshots = await Promise.all(consultas.map(q => tx.get(q)));
-  return {processo, centralAtiva, organizacaoAtiva, docs: snapshots.flatMap(s => s.docs), truncado: snapshots.some(s => s.size > limite)};
+  return {processo, centralAtiva, organizacaoAtiva, devolucoesAtivas, docs: snapshots.flatMap(s => s.docs), truncado: snapshots.some(s => s.size > limite)};
 }
 
 function canaisPublicos(canais) {
@@ -91,19 +94,19 @@ function canaisPublicos(canais) {
 export async function lerNotaCentralTxR87(db, tx, n, ator, {cfg, processo, agora = new Date(), leitura} = {}) {
   const tipo = validarPapelNotaCentralR87(n, ator.papel);
   exigir(programacaoAtivaI165(cfg), 'Os avisos operacionais estão pausados. A fila anterior foi preservada.');
-  const organizacao = tipo === 'organizacao_i167';
-  exigir(organizacao ? cfg?.schema === 1 && cfg.ativo === true && cfg.habilidades?.organizacao === true : processoAtivoI164(processo), 'Esta rotina está pausada. Confira a fila atual.');
-  exigir(n.ativacaoId === (organizacao ? cfg.ativacaoId : processo.ativacaoId), 'Este aviso pertence a uma ativação anterior. Confira a fila atual.');
+  const organizacao = tipo === 'organizacao_i167',devolucao=tipo===TIPO_DEMANDA_REFAZER_CP131;
+  exigir(devolucao?programacaoAtivaI165(cfg):organizacao ? cfg?.schema === 1 && cfg.ativo === true && cfg.habilidades?.organizacao === true : processoAtivoI164(processo), 'Esta rotina está pausada. Confira a fila atual.');
+  exigir(n.ativacaoId === (organizacao||devolucao ? cfg.ativacaoId : processo.ativacaoId), 'Este aviso pertence a uma ativação anterior. Confira a fila atual.');
   const ocorrencias = await ocorrenciasDaFonteCentralI164(leitura || leituraCentralTxR87(db, tx), n, agora);
   const atual = ocorrencias.find(o => o.versao === n.versao && o.destinatario === n.destinatario && o.nivel === n.nivel && jsonI165(o.origem) === jsonI165(n.origem));
   const origem = atual?.origem || n.origem;
-  const fonte = novoCp109(tipo)?fonteDtoCp109(n):{colecao: organizacao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
+  const fonte = novoCp109(tipo)?fonteDtoCp109(n):{colecao: organizacao||devolucao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
   const prazo = atual?.prazo || n.prazo || '';
   const prazoIso = prazo && Number.isFinite(Date.parse(prazo + '-03:00')) ? new Date(prazo + '-03:00').toISOString() : null;
   return {
     schema: 1, id: n.id, escopo: ESCOPO_AVISOS_CENTRAL_R87, destinatario: n.destinatario,
     ativacaoId: n.ativacaoId, tipo, fonte,
-    origem: novoCp109(tipo)?origemDtoCp109(n,atual):{tipo, id: origem.id, ...(origem.etapa ? {etapa: origem.etapa} : {}), ...(origem.cliente ? {cliente: origem.cliente, competencia: origem.competencia} : {}), ...(origem.origemEditorial ? {origemEditorial: origem.origemEditorial} : {})},
+    origem: devolucao?{tipo,id:origem.id,operacao:origem.operacao}:novoCp109(tipo)?origemDtoCp109(n,atual):{tipo, id: origem.id, ...(origem.etapa ? {etapa: origem.etapa} : {}), ...(origem.cliente ? {cliente: origem.cliente, competencia: origem.competencia} : {}), ...(origem.origemEditorial ? {origemEditorial: origem.origemEditorial} : {})},
     versao: n.versao, estado: atual ? 'pendente' : 'resolvida', estadoPersistido: n.estado,
     titulo: texto(atual?.titulo || n.titulo, 240), texto: texto(atual?.texto || n.texto, 1600),
     link: atual ? {...atual.link} : null, bloqueada: false, pausada: false,

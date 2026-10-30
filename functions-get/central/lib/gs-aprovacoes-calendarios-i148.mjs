@@ -1,5 +1,5 @@
 /* I148: identidade da revisão editorial. Não grava nem decide a publicação. */
-const campos = ['itemId','day','name','desc','roteiroDispensado','legenda','ref','referenciaDispensada','obs','obsFilmmaker','obsCliente','fmt','stage','dataFlexivel','dataPostagem','bloco','empresaOtavio'];
+const campos = ['itemId','day','name','desc','roteiroDispensado','legenda','ref','referenciaDispensada','obs','preparacaoGravacao','obsFilmmaker','obsCliente','fmt','stage','dataFlexivel','dataPostagem','bloco','empresaOtavio'];
 function ordenar(v){return Array.isArray(v)?v.map(ordenar):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordenar(v[k])])):v;}
 export function editorialI148(itens,blocos=null){
   return JSON.stringify(ordenar({itens:(itens||[]).filter(i=>i&&i.excluido!==true).map(i=>Object.fromEntries(campos.filter(k=>i[k]!==undefined).map(k=>[k,i[k]]))),blocos}));

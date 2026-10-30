@@ -2,7 +2,7 @@
 import {mesDoItemCalendario as mesDoItemNoCalendario} from './lib/guardas-stokki-i165.mjs';
 const itensDoMesCalendario=(cal,mes)=>(cal.items||[]).filter(i=>i&&mesDoItemNoCalendario(cal,i)===mes);
 const CAMPOS_EDITORIAIS_CAL_V125=[
-  'empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','mes','stage','fmt',
+  'empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','mes','stage','fmt',
   'dataFlexivel','bloco','dataPostagem','legendaAtualizadaPor',
   'legendaAtualizadaEm','apr','aprPor','aprEm','aprovadoPeloClienteEm',
   'excluido','excluidoPor','excluidoEm','revisaoPendenteI68','aprovacoesAnterioresI68','pedidoRevisadoI68'
@@ -123,7 +123,7 @@ function mesclarCompetenciaCalendarioV125(base,local,servidor,competencia,prefer
 }
 
   function itemRetratoLiberadoV115(item,mes){
-    const campos=['empresaOtavio','itemId','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','obsFilmmaker','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
+    const campos=['empresaOtavio','itemId','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','obsFilmmaker','obsCliente','stage','fmt','apr','posted','agendado','gravado','dataFlexivel','dataPostagem','bloco'];
     const retrato={mes:String(item?.mes||mes||'')};
     campos.forEach(campo=>{if(item&&item[campo]!==undefined) retrato[campo]=JSON.parse(JSON.stringify(item[campo]));});
     return retrato;

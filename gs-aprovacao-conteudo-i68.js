@@ -9,8 +9,11 @@
   const valor = (it,k) => booleanos.has(k) ? !!it?.[k] : String(it?.[k] ?? '');
   const empresaI144=it=>String(it?.empresaOtavio||'');
   const valoresAssinaturaI144=it=>empresaI144(it)?[...campos.map(k=>valor(it,k)),['empresaOtavio',empresaI144(it)]]:campos.map(k=>valor(it,k));
-  const assinatura = it => JSON.stringify(valoresAssinaturaI144(it));
-  const mudou = (a,b) => campos.some(k => valor(a,k) !== valor(b,k))||empresaI144(a)!==empresaI144(b);
+  const possuiPreparoCp140=it=>!!it&&Object.hasOwn(it,'preparacaoGravacao');
+  const preparoMudouCp140=(a,b)=>possuiPreparoCp140(a)!==possuiPreparoCp140(b)||(possuiPreparoCp140(a)&&String(a.preparacaoGravacao??'')!==String(b.preparacaoGravacao??''));
+  const valoresAssinaturaCp140=it=>possuiPreparoCp140(it)?[...valoresAssinaturaI144(it),['preparacaoGravacao',String(it.preparacaoGravacao??'')]]:valoresAssinaturaI144(it);
+  const assinatura = it => JSON.stringify(valoresAssinaturaCp140(it));
+  const mudou = (a,b) => campos.some(k => valor(a,k) !== valor(b,k))||empresaI144(a)!==empresaI144(b)||preparoMudouCp140(a,b);
   function revisar(antes, depois, {por='Equipe',em,forcar=false,pedido=''}={}) {
     if ((!forcar&&!mudou(antes,depois)) || depois.excluido || depois.posted || depois.agendado) return {...depois};
     const item={...depois};
@@ -128,7 +131,7 @@
   }
   function versaoPublica(item,mes) {
     const it={...item,mes};
-    return JSON.stringify([String(it.itemId||''),valoresAssinaturaI144(it),!!it.excluido,!!it.posted,!!it.agendado]);
+    return JSON.stringify([String(it.itemId||''),valoresAssinaturaCp140(it),!!it.excluido,!!it.posted,!!it.agendado]);
   }
   function prepararReenvio(cal,mes,em,mesDoItem=(c,it)=>it.mes||c.mesLegado) {
     let items=cal.items,alterou=false;

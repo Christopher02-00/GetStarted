@@ -1,5 +1,5 @@
 /* Fachada de preparação: usa o mesmo repositório no servidor, sem Firestore no navegador. */
-import {abrirEnvelopeCentralR80} from './codec-central-r80.mjs';
+import {abrirEnvelopeCentralR80} from './codec-central-r80.mjs?v=000e1d41f7937787cf50c53904f5e8392d2873f152fc10d3a4837697d5e67925';
 const MAX_RAW=4*1024*1024,PART=700*1024,MAX_WIRE=6*1024*1024,MAX_NORMAL=1024*1024;
 const MES=/^20\d{2}-(0[1-9]|1[0-2])$/,CLIENTE=/^[a-z0-9][a-z0-9._-]{0,119}$/,CICLO=/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/;
 const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','enviar_consolidado','retirar','desconsiderar_confirmacao','registrar_insumos_transicao']);

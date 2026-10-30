@@ -50,13 +50,18 @@ export function envelopeCentralR80(valor,{limiteBytes=6*1024*1024}={}){
  const texto=JSON.stringify(r),bytes=new TextEncoder().encode(texto).length;
  exigir(bytes<=limiteBytes,'A resposta é grande demais para esta conferência. Nada foi cortado; refine o cliente ou o mês.');return r;
 }
+/* CP138: this named receipt field is an exact request origin, not a projected cycle. */
+function origemDocumentalCp138(v,chave){
+ if(chave!=='origemDemandaCp138'||!obj(v)||Object.keys(v).sort().join('|')!=='assinatura|classificacaoConfirmada|cliente|competencia|empresaOtavio|finalidade|id|schema')return false;
+ return v.schema===1&&v.classificacaoConfirmada===true&&typeof v.id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(v.id)&&typeof v.assinatura==='string'&&/^[a-f0-9]{64}$/.test(v.assinatura)&&typeof v.cliente==='string'&&/^[a-z0-9][a-z0-9._-]{0,119}$/.test(v.cliente)&&typeof v.competencia==='string'&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(v.competencia)&&['referencias','campanha'].includes(v.finalidade)&&typeof v.empresaOtavio==='string'&&(v.empresaOtavio===''||v.cliente==='zeiss'&&['otica_hauer','otica_sao_jose','clinica_olhos_hauer','clinica_sao_jose'].includes(v.empresaOtavio));
+}
 export function abrirEnvelopeCentralR80(r,opcoes){
  exigir(r?.schema===1&&r.codec===CODEC_CENTRAL_R80&&r.completude?.completa===true,'Não consegui confirmar a resposta completa do planejamento.');
  const valor=decodificarCentralR80(r.dados,opcoes),projecoes=decodificarCentralR80(r.projecoesPorCiclo,opcoes);
  exigir(obj(projecoes),'Projeções inválidas.');
- function anexar(v){if(!v||typeof v!=='object'||typeof v.toDate==='function'||v instanceof Date)return;
-  if(v.id&&v.schema===1&&v.competencia&&v.cliente){const p=projecoes[v.id];exigir(obj(p)&&obj(p.fontesAgendaI167)&&obj(p.andamentoCalendarioI164)&&typeof p.assinaturaCalendarioI164==='string','A situação atual do ciclo não foi confirmada.');for(const k of ['andamentoCalendarioI164','assinaturaCalendarioI164','fontesAgendaI167'])Object.defineProperty(v,k,{value:p[k],enumerable:false,configurable:true});}
-  if(Array.isArray(v))v.forEach(anexar);else Object.values(v).forEach(anexar);
+ function anexar(v,chave=''){if(!v||typeof v!=='object'||typeof v.toDate==='function'||v instanceof Date)return;
+  if(v.id&&v.schema===1&&v.competencia&&v.cliente&&!origemDocumentalCp138(v,chave)){const p=projecoes[v.id];exigir(obj(p)&&obj(p.fontesAgendaI167)&&obj(p.andamentoCalendarioI164)&&typeof p.assinaturaCalendarioI164==='string','A situação atual do ciclo não foi confirmada.');for(const k of ['andamentoCalendarioI164','assinaturaCalendarioI164','fontesAgendaI167'])Object.defineProperty(v,k,{value:p[k],enumerable:false,configurable:true});}
+  if(Array.isArray(v))v.forEach(x=>anexar(x,''));else Object.entries(v).forEach(([k,x])=>anexar(x,k));
  }
  anexar(valor);return valor;
 }

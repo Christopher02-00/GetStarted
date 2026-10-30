@@ -1,5 +1,6 @@
 /* Superfície privada para a fábrica compartilhada. Não é uma API de paths ou de CRUD. */
 import {isDeepStrictEqual} from 'node:util';
+import {assinaturaOrigemDemandaCp138,hashPedidoDocumentoCp138,identidadeOrigemCompativelCp138,validarOrigemDemandaCp138,podeEntregarOrigemCp138} from './central/lib/gs-planejamento-social-i155.mjs';
 import {createHash} from 'node:crypto';
 import {MUTACOES_EDITORIAL_I172,validarDeltaCicloEditorialI172} from './editorial-contrato-i172.mjs';
 import {PESQUISA_RESPONSAVEL_R81,PAPEL_PESQUISA_ANTERIOR_R81} from './central/lib/gs-papeis-planejamento-r81.mjs';
@@ -55,6 +56,14 @@ export function criarIoAdminCentralR80(db,{ator,pedido,conferirGate,stamp,editor
     if(old&&['desconsiderar_confirmacao','registrar_insumos_transicao'].includes(d.acao)){e(so(delta(d.documentos,old.documentos),[d.acao==='desconsiderar_confirmacao'?'desconsideracoesCp111':'insumosTransicaoCp111']),'A correção preserva os apontadores e documentos históricos.');if(d.acao==='desconsiderar_confirmacao')e(ator.papel==='Amanda','A desconsideração pertence à Amanda.');}
     const ev=mapa.get(path+'/eventos/'+d.operacao)?.d;e(ev&&ev.revisao===d.revisao&&ev.autorUid===ator.uid,'O ciclo precisa do seu recibo atômico.');continue;
    }
+   if(path==='planejamento_social_i155/'+cicloId+'/eventos/'+pedido.operacao&&d.terminalCp138===true){
+    const o=pedido.dados?.origemDemandaCp138,ci=cicloR80(cicloId);e(pedido.acao==='central_mutar'&&pedido.acaoPreparacao==='confirmar_documento'&&writes.length===1&&!old&&o,'Recusa documental fora da operação.');
+    validarOrigemDemandaCp138(o,{cliente:ci.cliente,competencia:ci.competencia,finalidade:pedido.dados.finalidade,empresaOtavio:o.empresaOtavio});const [cs,os,ms]=await Promise.all([tx.get(db.doc('planejamento_social_i155/'+cicloId)),tx.get(db.doc('demandas/'+o.id)),tx.get(db.doc('planejamento_social_i155/'+cicloId+'/registros/'+pedido.dados.id))]);const atual=cs.data(),origem=os.data(),material=ms.data();
+    e(cs.exists&&os.exists&&['Amanda','Gabrielle'].includes(origem.destinatario)&&(origem.destinatario===ator.papel||ator.papel==='Chris'&&ator.real==='Chris')&&(pedido.dados.finalidade==='campanha'?ator.papel==='Amanda':['Gabrielle','Chris'].includes(ator.papel)),'Recusa fora da identidade autorizada.');
+    const mudou=atual.revisao!==pedido.esperadaRevisao||!podeEntregarOrigemCp138(origem,{nome:ator.papel,atorReal:ator.real})||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura||!identidadeOrigemCompativelCp138(origem,o)||!ms.exists||material.tipo!=='documento'||material.finalidade!==pedido.dados.finalidade||material.cliente!==ci.cliente||material.competencia!==ci.competencia||(material.empresaOtavio||'')!==o.empresaOtavio||atual.documentos.rascunhos?.[material.chaveMaterial||pedido.dados.finalidade+'__'+(o.empresaOtavio||'geral')]!==pedido.dados.id;
+    e(mudou,'Não há conflito confirmado para recusar esta operação.');const hash=await hashPedidoDocumentoCp138({id:cicloId,acao:'confirmar_documento',dados:pedido.dados,esperada:pedido.esperadaRevisao,operacao:pedido.operacao}),r=d.resultado;
+    chavesR80(d,['terminalCp138','acao','operacao','revisao','autorUid','autorNome','perfil','em','resultado']);e(d.acao==='confirmar_documento'&&d.operacao===pedido.operacao&&d.revisao===atual.revisao&&d.autorUid===ator.uid&&d.autorNome===ator.real&&d.perfil===ator.papel&&d.em===stamp&&r?.recusadaCp138===true&&r.pedidoHashCp138===hash&&isDeepStrictEqual(r.origemDemandaCp138,o)&&r.codigo==='CP138_VERSAO_MUDOU'&&typeof r.motivo==='string'&&r.motivo.length<=1000,'Recibo terminal inválido.');continue;
+   }
    e(c&&c.cliente&&c.competencia,'A alteração depende do ciclo na mesma transação.');
    if(path==='planejamento_social_indice_i155/'+cicloId){chavesR80(d,['cliente','competencia','incluido','operacao','atualizadoEm']);e(['incluir','retirar'].includes(c.acao)&&d.cliente===c.cliente&&d.competencia===c.competencia&&d.incluido===c.incluido&&d.operacao===c.operacao&&d.atualizadoEm===stamp,'Índice inconsistente.');continue;}
    const pp=path.split('/');
@@ -74,6 +83,16 @@ export function criarIoAdminCentralR80(db,{ator,pedido,conferirGate,stamp,editor
     }else{
      e(!old&&c.acao==='documento'&&d.tipo==='documento'&&TIPOS_DOCUMENTO.includes(d.finalidade)&&d.destinatario==='interno'&&d.autorUid===ator.uid&&d.autorNome===ator.real&&d.texto.length>0&&d.texto.length<=60000&&Number.isInteger(d.versao)&&d.versao>0,'Versão de documento inválida.');e(ator.papel!==PESQUISA_RESPONSAVEL_R81||d.finalidade==='referencias','Finalidade fora do perfil.');empresaMaterial(c.cliente,d.empresaOtavio);e(d.finalidade==='campanha'||d.datasCampanha.length===0,'Datas de campanha fora da finalidade.');e(c.documentos.rascunhos[d.chaveMaterial]===pp[3],'Documento sem ponte ao rascunho.');
     }continue;
+   }
+   if(pp[0]==='demandas'&&pp.length===2&&pedido.acaoPreparacao==='confirmar_documento'&&pedido.dados?.origemDemandaCp138?.id===pp[1]){
+    const o=pedido.dados.origemDemandaCp138,rec=d.entregaDocumentoCp138,key=pedido.dados.finalidade+'__'+(o.empresaOtavio||'geral'),ev=mapa.get('planejamento_social_i155/'+cicloId+'/eventos/'+pedido.operacao)?.d;
+    validarOrigemDemandaCp138(o,{cliente:c.cliente,competencia:c.competencia,finalidade:pedido.dados.finalidade,empresaOtavio:o.empresaOtavio});
+    e(old&&podeEntregarOrigemCp138(old,{nome:ator.papel,atorReal:ator.real})&&await assinaturaOrigemDemandaCp138(old)===o.assinatura&&identidadeOrigemCompativelCp138(old,o),'A origem da entrega mudou.');
+    const ds=await tx.get(db.doc('planejamento_social_i155/'+cicloId+'/registros/'+pedido.dados.id)),material=ds.data();
+    e(ds.exists&&material.finalidade===pedido.dados.finalidade&&material.cliente===c.cliente&&material.competencia===c.competencia&&(material.empresaOtavio||'')===o.empresaOtavio&&c.documentos.materiais?.[key]===pedido.dados.id&&c.documentos.confirmacoes?.[key]?.id===pedido.dados.id,'Documento e confirmação não correspondem à origem.');
+    e(rec?.schema===1&&rec.demandaId===pp[1]&&rec.ciclo===cicloId&&rec.cliente===c.cliente&&rec.competencia===c.competencia&&rec.finalidade===material.finalidade&&rec.empresaOtavio===o.empresaOtavio&&rec.documentoId===pedido.dados.id&&rec.versao===material.versao&&rec.hashTexto===createHash('sha256').update(material.texto,'utf8').digest('hex')&&rec.operacao===pedido.operacao&&rec.autorUid===ator.uid&&rec.por===ator.real&&rec.perfil===ator.papel&&rec.em===c.documentos.confirmacoes[key].em&&isDeepStrictEqual(rec,ev?.resultado?.origemDemandaCp138),'Recibo documental inconsistente.');e(ev.resultado.pedidoHashCp138===await hashPedidoDocumentoCp138({id:cicloId,acao:'confirmar_documento',dados:pedido.dados,esperada:pedido.esperadaRevisao,operacao:pedido.operacao}),'A assinatura do pedido documental mudou.');
+    const prova='Documento confirmado: '+c.clienteNome+' · '+c.competencia+' · '+({referencias:'Documento de referências',campanha:'Campanhas e datas importantes'}[rec.finalidade])+' · versão '+material.versao+' · '+rec.documentoId;
+    e(d.status==='concluida_aguardando_aprovacao'&&d.provaTexto===prova&&d.concluidaEm===stamp&&so(delta(d,old),['status','provaTexto','concluidaEm','entregaDocumentoCp138','historico'])&&isDeepStrictEqual(d.historico,[...(old.historico||[]),{acao:'Documento confirmado e entregue para revisão',por:ator.real,perfil:ator.papel,em:rec.em,operacao:pedido.operacao,documento:rec,provaAnterior:{texto:old.provaTexto||'',link:old.provaImagemUrl||''}}]),'A entrega alteraria outros dados da demanda.');continue;
    }
    if(pp[0]==='demandas'&&pp.length===2){
     e(!['desconsiderar_confirmacao','registrar_insumos_transicao'].includes(c.acao),'A correção não cria ou altera demandas.');

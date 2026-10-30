@@ -129,12 +129,43 @@ function contextoSeguro(contexto){const c={...contexto()};exigirPapel(c,PAPEIS);
 function strings(v,max=60000){const t=String(v||'').trim();if(t.length>max)throw Error('O texto ultrapassa o limite de '+max+' caracteres. Divida em versões legíveis.');return t;}
 function eventoEtapa(c,etapa){const documental=fontePesquisaDocumentalCp124(c);if(etapa==='previa'&&documental)return 'doc124_'+documental.versao+'_'+documental.hashTexto.slice(0,24);const rodada=(c.criacao?.rodada||1)>1?'__r'+c.criacao.rodada:'';return etapa==='previa'?String(c.lote?.versao||'inicial'):etapa==='reuniao'?c.documentos.previa||'inicial':etapa==='consolidado'?(c.documentos.reuniao||'inicial')+'__m_'+(c.documentos.materiaisRevisao||0):etapa==='criacao'?(c.documentos.consolidadoEnviado||'inicial')+rodada:etapa==='revisao'?(c.criacao?.base||'inicial')+rodada:'inicial';}
 function idDemanda(c,etapa,pessoa){return 'sm155_'+idCiclo(c.cliente,c.competencia)+'__'+etapa+'__'+pessoa+'__'+eventoEtapa(c,etapa);}
+/* CP138: identidade editorial explicita; mes operacional da demanda nunca e inferido. */
+async function assinaturaTextoCp138(texto){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(texto))),b=>b.toString(16).padStart(2,'0')).join('');}
+export async function hashPedidoDocumentoCp138(d){
+ const canon=v=>v&&typeof v.toMillis==='function'?{__timestamp:[v.seconds,v.nanoseconds]}:v instanceof Date?{__date:v.toISOString()}:Array.isArray(v)?v.map(canon):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canon(v[k])])):v;
+ return assinaturaTextoCp138(JSON.stringify(canon(d)));
+}
+export async function assinaturaOrigemDemandaCp138(d){
+ const campos=['status','destinatario','paraQuem','cliente','clienteSlug','clienteNome','competencia','empresaOtavio','empresaId','tipoEspecial','tipoFuncaoFixa','tipoFuncaoFixaId','origem','titulo','descricao','prazoData','prazoHora','mesRef','agendaOrganizacaoI167','planejamentoI155','checklistClientes','provaTexto','provaImagemUrl','provaLink','linkAnexo','concluidaEm','concluidoEm','concluidoPor','aprovadoEm','aprovadoPor','rejeitadoEm','refazerUltimoI161','entregaDocumentoCp138','redirecionamentoPedido','redirecionadaEm','bloqueio','excluido','arquivado','historico','protocoloCriacao'];
+ return hashPedidoDocumentoCp138(Object.fromEntries(campos.filter(k=>Object.hasOwn(d||{},k)).map(k=>[k,d[k]])));
+}
+export function finalidadeOrigemDocumentalCp138(d){
+ const etapa=d?.tipoEspecial==='organizacao_social_i167'?d.agendaOrganizacaoI167?.etapa:d?.tipoEspecial==='planejamento_social_i155'?d.planejamentoI155?.etapa:'';
+ return ['pesquisa','referencias'].includes(etapa)?'referencias':['campanha','campanhas'].includes(etapa)?'campanha':'';
+}
+export function identidadeOrigemCompativelCp138(d,{cliente,competencia,empresaOtavio='',finalidade=''}){
+ const canonica=finalidadeOrigemDocumentalCp138(d);if(canonica&&finalidade&&canonica!==finalidade)return false;
+ const clientes=[d?.cliente,d?.clienteSlug,d?.planejamentoI155?.cliente].filter(x=>x!==undefined&&x!==null&&x!=='');
+ const meses=[d?.competencia,d?.planejamentoI155?.competencia].filter(x=>x!==undefined&&x!==null&&x!=='');
+ const empresas=[d?.empresaOtavio,d?.empresaId,d?.agendaOrganizacaoI167?.empresaId].filter(x=>x!==undefined&&x!==null);
+ if(clientes.some(x=>x!==cliente)||meses.some(x=>x!==competencia)||empresas.some(x=>x!==empresaOtavio))return false;
+ const linhas=Array.isArray(d?.checklistClientes)?d.checklistClientes:[];
+ return linhas.every(x=>[x?.slug,x?.cliente,x?.clienteSlug].filter(v=>v!==undefined&&v!==null&&v!=='').every(v=>v===cliente)&&[x?.competencia].filter(v=>v!==undefined&&v!==null&&v!=='').every(v=>v===competencia)&&[x?.empresaOtavio].filter(v=>v!==undefined&&v!==null).every(v=>v===empresaOtavio));
+}
+export function validarOrigemDemandaCp138(o,{cliente,competencia,finalidade,empresaOtavio=''}){
+ const keys=['schema','id','assinatura','cliente','competencia','finalidade','empresaOtavio','classificacaoConfirmada'];
+ if(!o||typeof o!=='object'||Array.isArray(o)||Object.keys(o).length!==keys.length||Object.keys(o).some(k=>!keys.includes(k))||o.schema!==1||!(/^[A-Za-z0-9_-]{1,180}$/).test(o.id||'')||!(/^[a-f0-9]{64}$/).test(o.assinatura||'')||o.classificacaoConfirmada!==true||!['referencias','campanha'].includes(o.finalidade)||o.cliente!==cliente||o.competencia!==competencia||o.finalidade!==finalidade||o.empresaOtavio!==empresaOtavio)throw Error('Confira a demanda, o cliente, o mês dos conteúdos e o tipo do documento. Nada foi associado por título ou prazo.');
+}
+export function podeEntregarOrigemCp138(d,ctx){
+ return !!d&&!d.excluido&&!d.arquivado&&['Gabrielle','Amanda'].includes(d.destinatario)&&['pendente','em_andamento','refazer','concluida_aguardando_aprovacao'].includes(d.status)&&!d.entregaDocumentoCp138&&(d.destinatario===ctx.nome||ctx.nome==='Chris'&&ctx.atorReal==='Chris');
+}
+
 export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausencias,feriados}={}){
   const {db,doc,collection,query,where,getDocsFromServer,getDocFromServer,runTransaction,serverTimestamp,onSnapshot}=io;
   const arquivos=criarArquivosPlanejamento(io,contexto);
   async function fontesAgendaI167(cliente,competencia){const ctx=contextoSeguro(contexto),s=await getDocsFromServer(query(collection(db,'demandas'),where('cliente','==',cliente)));mesmaSessao(ctx);return candidatasAgendaI167(s.docs.map(d=>({id:d.id,documento:d.data()})),{cliente,competencia});}
   const refCiclo=id=>doc(db,COLECAO,id),regRef=(id,r)=>doc(db,COLECAO,id,'registros',r),evRef=(id,op)=>doc(db,COLECAO,id,'eventos',op);
-  const mesmaSessao=c=>{const n=contextoSeguro(contexto);if(n.uid!==c.uid||n.nome!==c.nome||n.atorReal!==c.atorReal||n.sessao!==c.sessao)throw Error('O perfil mudou. Reabra o planejamento.');};
+  const mesmaSessao=c=>{const n=contextoSeguro(contexto);if(n.uid!==c.uid||n.nome!==c.nome||n.atorReal!==c.atorReal||n.sessao!==c.sessao||n.geracao!==c.geracao)throw Error('O perfil mudou. Reabra o planejamento.');};
   async function projetar(c){const projetado=await projetarFontesAgendaI167(io,c);if(!c.criacao?.base)return anexarAndamentoCalendarioI164(projetado,null);try{const cal=await getDocFromServer(doc(db,'calendarios',c.cliente));return anexarAndamentoCalendarioI164(projetado,cal.exists()?cal.data():null);}catch(e){return anexarAndamentoCalendarioI164(projetado,null,e.message||'Leitura não confirmada');}}
   async function ler(id){const ctx=contextoSeguro(contexto);const [s,r]=await Promise.all([getDocFromServer(refCiclo(id)),getDocsFromServer(collection(db,COLECAO,id,'registros'))]);mesmaSessao(ctx);if(!s.exists())throw Error('Ciclo não encontrado.');const ciclo=await projetar(validarCiclo({...s.data(),id},id));mesmaSessao(ctx);return {ciclo,registros:r.docs.map(x=>({...x.data(),id:x.id}))};}
   async function listar(mes){const ctx=contextoSeguro(contexto);const s=await getDocsFromServer(query(collection(db,COLECAO),where('competencia','==',mes)));mesmaSessao(ctx);const ciclos=await Promise.all(s.docs.map(x=>projetar(validarCiclo({...x.data(),id:x.id},x.id))));mesmaSessao(ctx);return ciclos;}
@@ -143,14 +174,23 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
   async function mutar(id,acao,dados,esperada,operacao){
     const ctx=contextoSeguro(contexto);if(!/^[A-Za-z0-9_-]{8,100}$/.test(operacao||''))throw Error('Operação inválida.');
     if(acao==='incluir'&&ctx.nome===PESQUISA_RESPONSAVEL_R81){if(!dados||Object.keys(dados).length!==2||!['cliente','competencia'].every(k=>Object.hasOwn(dados,k))||Object.keys(dados).some(k=>!['cliente','competencia'].includes(k))||idCiclo(dados.cliente,dados.competencia)!==id)throw Error('A Gabi inicia somente a pasta de referências deste cliente e mês, sem datas ou opções de gestão.');}
+    const pedidoHashCp138=acao==='confirmar_documento'&&Object.hasOwn(dados||{},'origemDemandaCp138')?await hashPedidoDocumentoCp138({id,acao,dados,esperada,operacao}):'';
     const ref=refCiclo(id),er=evRef(id,operacao);let resultado;
     try{await runTransaction(db,async tx=>{
       const [s,ev]=await Promise.all([tx.get(ref),tx.get(er)]);mesmaSessao(ctx);
-      if(ev.exists()){if(ev.data().autorUid!==ctx.uid||ev.data().acao!==acao)throw Error('Recibo incompatível.');if(ACOES_CORRECAO_I155_CP111.includes(acao)&&assinaturaPedidoCorrecaoI155Cp111(ev.data().resultado?.pedidoCorrecao)!==assinaturaPedidoCorrecaoI155Cp111(dados))throw Error('A mesma operação pertence a outra correção.');resultado=ev.data().resultado;return;}
+      if(ev.exists()){if(ev.data().autorUid!==ctx.uid||ev.data().acao!==acao)throw Error('Recibo incompatível.');if((pedidoHashCp138||ev.data().resultado?.pedidoHashCp138)&&(pedidoHashCp138!==ev.data().resultado?.pedidoHashCp138||ev.data().perfil!==ctx.nome||ev.data().autorNome!==ctx.atorReal))throw Error('Esta operação pertence a outra entrega documental ou perfil. Confira a tentativa original.');if(ACOES_CORRECAO_I155_CP111.includes(acao)&&assinaturaPedidoCorrecaoI155Cp111(ev.data().resultado?.pedidoCorrecao)!==assinaturaPedidoCorrecaoI155Cp111(dados))throw Error('A mesma operação pertence a outra correção.');resultado=ev.data().resultado;return;}
       let c=s.exists()?validarCiclo({...s.data()},id):null;
       if(!c&&acao!=='incluir')throw Error('Abra um ciclo existente.');
+      if(pedidoHashCp138){
+        const o=dados.origemDemandaCp138;validarOrigemDemandaCp138(o,{cliente:c.cliente,competencia:c.competencia,finalidade:dados.finalidade,empresaOtavio:o.empresaOtavio});
+        const [origemSnap,documentoSnap]=await Promise.all([tx.get(doc(db,'demandas',o.id)),tx.get(regRef(id,dados.id))]);const origem=origemSnap.data(),material=documentoSnap.data();
+        if(!origemSnap.exists()||!['Gabrielle','Amanda'].includes(origem.destinatario)||!(origem.destinatario===ctx.nome||ctx.nome==='Chris'&&ctx.atorReal==='Chris'))throw Error('Esta origem não está disponível para este perfil.');
+        exigirPapel(ctx,dados.finalidade==='campanha'?['Amanda']:[PESQUISA_RESPONSAVEL_R81,'Chris']);
+        const mudou=c.revisao!==esperada||!podeEntregarOrigemCp138(origem,ctx)||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura||!identidadeOrigemCompativelCp138(origem,o)||!documentoSnap.exists()||material.tipo!=='documento'||material.finalidade!==dados.finalidade||material.cliente!==c.cliente||material.competencia!==c.competencia||(material.empresaOtavio||'')!==o.empresaOtavio||c.documentos.rascunhos?.[material.chaveMaterial||chaveMaterial(dados.finalidade,o.empresaOtavio)]!==dados.id;
+        if(mudou){resultado={recusadaCp138:true,pedidoHashCp138,origemDemandaCp138:clone(o),codigo:'CP138_VERSAO_MUDOU',motivo:'A demanda ou a pasta mudou depois da sua leitura. Nada foi confirmado ou entregue. Compare a origem e a versão atual antes de tentar novamente.'};tx.set(er,{terminalCp138:true,acao,operacao,revisao:c.revisao,autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,em:serverTimestamp(),resultado});return;}
+      }
       if(c&&c.revisao!==esperada&&acao!=='excluir_lote')throw Error('O ciclo mudou em outra tela. Seus campos foram preservados. Confira a versão atual.');
-      const antes=c?clone(c):null;let gravarRegistros=[],partesLote=[];resultado={};
+      const antes=c?clone(c):null;let gravarRegistros=[],partesLote=[],demandasDocumentoCp138=[];resultado={};
       if(acao==='incluir'){
         exigirPapel(ctx,[...GESTAO,PESQUISA_RESPONSAVEL_R81]);if(c)throw Error('Este cliente já tem um ciclo nesta competência.');
         const lista=await clientes(dados.competencia,true);mesmaSessao(ctx);const cl=lista.find(x=>(x.slug||x.id)===dados.cliente);if(!cl)throw Error('Cliente não confirmado na carteira desta competência.');
@@ -242,10 +282,20 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         if(tipo==='previa'&&(!estadoEtapas(c).pesquisa||(fontePesquisaDocumentalCp124(c)?!mesmaFontePesquisaCp124(d.basePesquisaCp124,fontePesquisaDocumentalCp124(c)):!!d.basePesquisaCp124||d.baseLote!==c.lote?.versao)))throw Error('A entrega de referências mudou. Atualize a prévia sobre o documento ou lote vigente antes de confirmar.');
         if(desconsideracaoI155Cp111(c,rid))throw Error('Esta versão foi desconsiderada. Prepare e confira uma nova versão.');
         if(tipo==='reuniao'&&(d.situacaoReuniaoCp111||'normal')==='normal'&&(!estadoEtapas(c).previa||d.basePrevia!==documentoEfetivoI155Cp111(c,'previa')))throw Error('Confirme o retorno sobre a prévia apresentada e vigente.');
+        const confirmadoEm=new Date().toISOString();let entregaDocumentoCp138=null;
+        if(Object.hasOwn(dados,'origemDemandaCp138')){
+          const o=dados.origemDemandaCp138;validarOrigemDemandaCp138(o,{cliente:c.cliente,competencia:c.competencia,finalidade:tipo,empresaOtavio:d.empresaOtavio||''});
+          const dr=doc(db,'demandas',o.id),dsOrigem=await tx.get(dr),origem=dsOrigem.data();
+          if(!dsOrigem.exists()||!podeEntregarOrigemCp138(origem,ctx)||!identidadeOrigemCompativelCp138(origem,o)||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura)throw Error('A demanda mudou ou já recebeu outra entrega. Seus documentos continuam preservados; confira a origem antes de continuar.');
+          if(origem.historico!==undefined&&!Array.isArray(origem.historico))throw Error('O histórico desta demanda precisa ser conferido antes da entrega.');
+          const hashTexto=await assinaturaTextoCp138(d.texto);entregaDocumentoCp138={schema:1,demandaId:o.id,ciclo:id,cliente:c.cliente,competencia:c.competencia,finalidade:tipo,empresaOtavio:d.empresaOtavio||'',documentoId:rid,versao:d.versao,hashTexto,operacao,autorUid:ctx.uid,por:ctx.atorReal,perfil:ctx.nome,em:confirmadoEm};
+          const prova='Documento confirmado: '+c.clienteNome+' · '+c.competencia+' · '+tituloDocumento(tipo)+' · versão '+d.versao+' · '+rid;
+          demandasDocumentoCp138.push([dr,{...origem,status:'concluida_aguardando_aprovacao',provaTexto:prova,concluidaEm:serverTimestamp(),entregaDocumentoCp138,historico:[...(origem.historico||[]),{acao:'Documento confirmado e entregue para revisão',por:ctx.atorReal,perfil:ctx.nome,em:confirmadoEm,operacao,documento:entregaDocumentoCp138,provaAnterior:{texto:origem.provaTexto||'',link:origem.provaImagemUrl||''}}]}]);
+        }
         if(tipoMaterial(tipo)){c.documentos.materiais={...(c.documentos.materiais||{}),[chave]:rid};c.documentos.materiaisRevisao=(c.documentos.materiaisRevisao||0)+1;c.documentos.ultimaConfirmacao=chave;}else c.documentos[tipo]=rid;if(tipo==='previa'){c.documentos.previaLote=d.baseLote;if(d.basePesquisaCp124)c.documentos.previaFontePesquisaCp124=clone(d.basePesquisaCp124);else delete c.documentos.previaFontePesquisaCp124;}if(tipo==='reuniao'){c.documentos.reuniaoBasePrevia=d.basePrevia;c.documentos.reuniaoSituacaoCp111={id:rid,situacao:d.situacaoReuniaoCp111||'normal',motivo:d.motivoTransicaoCp111||''};}
-        const confirmadoEm=new Date().toISOString();c.documentos.confirmacoes={...(c.documentos.confirmacoes||{}),[chave]:{id:rid,por:ctx.atorReal,perfil:ctx.nome,em:confirmadoEm}};
+        c.documentos.confirmacoes={...(c.documentos.confirmacoes||{}),[chave]:{id:rid,por:ctx.atorReal,perfil:ctx.nome,em:confirmadoEm}};
         if(tipo==='referencias'){const hashTexto=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(d.texto))),b=>b.toString(16).padStart(2,'0')).join('');const folha={schema:1,ciclo:id,cliente:c.cliente,competencia:c.competencia,chaveMaterial:chave,empresaOtavio:d.empresaOtavio||'',documentoId:rid,versao:d.versao,hashTexto,autorUid:d.autorUid,autorNome:d.autorNome,perfil:d.perfil,confirmadoUid:ctx.uid,confirmadoPor:ctx.atorReal,confirmadoEm,operacao},anterior=c.documentos.entregaReferenciasCp124,anteriores=anterior?.fontes||(anterior?{[anterior.chaveMaterial]:anterior}:{});c.documentos.entregaReferenciasCp124={...folha,fontes:{...anteriores,[chave]:folha}};}
-        resultado={id:rid,confirmado:true,...(tipo==='referencias'?{entregaDocumentalCp124:clone(c.documentos.entregaReferenciasCp124)}:{})};
+        resultado={id:rid,confirmado:true,...(entregaDocumentoCp138?{origemDemandaCp138:entregaDocumentoCp138,pedidoHashCp138}:{}),...(tipo==='referencias'?{entregaDocumentalCp124:clone(c.documentos.entregaReferenciasCp124)}:{})};
       }else if(acao==='enviar_consolidado'){
         exigirPapel(ctx,['Amanda']);const rid=c.documentos.rascunhos?.consolidado||c.documentos.consolidado;if(!rid)throw Error('Salve a base completa antes de enviar.');
         const ds=await tx.get(regRef(id,rid)),d=ds.data();if(!ds.exists()||d.finalidade!=='consolidado'||desconsideracaoI155Cp111(c,rid))throw Error('A base salva não foi encontrada.');const info=await tx.get(doc(db,'info_extras_cliente',c.cliente));if(!mesmaInfoClienteI164(d.infoCliente,retratoInfoClienteI164(info.exists(),info.data())))throw Error('As informações do cliente mudaram. Confira a ficha e salve uma nova base antes de enviar; a anterior foi preservada.');
@@ -297,11 +347,11 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
       c={...c,revisao,acao,operacao,autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,atualizadoEm:serverTimestamp()};
       mesmaSessao(ctx);tx.set(ref,c);if(['incluir','retirar'].includes(acao))tx.set(doc(db,'planejamento_social_indice_i155',id),{cliente:c.cliente,competencia:c.competencia,incluido:c.incluido,operacao,atualizadoEm:serverTimestamp()});for(const [rid,r]of gravarRegistros)tx.set(regRef(id,rid),{...r,revisaoCiclo:revisao,operacao,editadoPor:ctx.atorReal,editadoUid:ctx.uid});
       for(const [r,d]of partesLote)tx.set(r,d);
-      for(const [r,d]of demandas)tx.set(r,d);
+      for(const [r,d]of demandas)tx.set(r,d);for(const [r,d]of demandasDocumentoCp138)tx.set(r,d);
       tx.set(er,{acao,operacao,revisao,autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,em:serverTimestamp(),resultado,antes:antes?{revisao:antes.revisao,agenda:antes.agenda,documentos:antes.documentos,lote:antes.lote}:null,depois:{agenda:c.agenda,documentos:c.documentos,lote:c.lote},registros:gravarRegistros.map(x=>x[0])});
     });}catch(e){
       // Resposta perdida: recupera somente o recibo da mesma operação, nunca repete com outro ID.
-      try{const s=await getDocFromServer(er);mesmaSessao(ctx);if(s.exists()&&s.data().autorUid===ctx.uid&&s.data().acao===acao&&(!ACOES_CORRECAO_I155_CP111.includes(acao)||assinaturaPedidoCorrecaoI155Cp111(s.data().resultado?.pedidoCorrecao)===assinaturaPedidoCorrecaoI155Cp111(dados)))return {...await ler(id),resultado:s.data().resultado,recuperado:true};}catch{}
+      try{const s=await getDocFromServer(er);mesmaSessao(ctx);if(s.exists()&&s.data().autorUid===ctx.uid&&s.data().acao===acao&&(!(pedidoHashCp138||s.data().resultado?.pedidoHashCp138)||pedidoHashCp138===s.data().resultado?.pedidoHashCp138&&s.data().perfil===ctx.nome&&s.data().autorNome===ctx.atorReal)&&(!ACOES_CORRECAO_I155_CP111.includes(acao)||assinaturaPedidoCorrecaoI155Cp111(s.data().resultado?.pedidoCorrecao)===assinaturaPedidoCorrecaoI155Cp111(dados)))return {...await ler(id),resultado:s.data().resultado,recuperado:true};}catch{}
       throw e;
     }
     const receipt=await getDocFromServer(er);mesmaSessao(ctx);if(!receipt.exists()||receipt.data().acao!==acao)throw Error('Não consegui confirmar a gravação. Seu rascunho continua aqui; tente novamente com a mesma operação.');

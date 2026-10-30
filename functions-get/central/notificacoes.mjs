@@ -1,4 +1,4 @@
-import{TIPO_PROVIDENCIA_GRAVACAO_CP140,ocorrenciaProvidenciaCp140,lerOcorrenciaProvidenciaCp140}from'./providencias-gravacao-cp140.mjs';
+import{TIPO_PROVIDENCIA_GRAVACAO_CP140,COLECAO_PROVIDENCIAS_CP140,ocorrenciaProvidenciaCp140,lerOcorrenciaProvidenciaCp140}from'./providencias-gravacao-cp140.mjs';
 import{ocorrenciaOrganizacaoI167,lerOcorrenciaOrganizacaoI167,canaisDaVersaoOrganizacaoI167}from'./organizacao-i167.mjs';
 import{TIPO_DEMANDA_REFAZER_CP131,ocorrenciaDemandaRefazerCp131,lerOcorrenciaDemandaRefazerCp131}from'./demandas-refazer-cp131.mjs';
 import{programacaoAtivaI165}from'../lib/gs-contexto-operacional-i165.mjs';
@@ -220,10 +220,10 @@ export async function sincronizarDemandasRefazerCp131(db,{agora=new Date(),envia
  return {ativa:true,conferidas,processadas,erros};
 }
 
-/* Providências manuais tipadas: mesma demanda, registry e transmissão I165. */
+/* Providências privadas: coleção própria, mesmo registry e transmissão I165. */
 export async function sincronizarProvidenciasGravacaoCp140(db,{agora=new Date(),enviarPush,enviarEmail,canais=['push','email'],limite=60}={}){
  const cfg=(await db.doc('programacao_config_i165/ativo').get()).data();if(!programacaoAtivaI165(cfg)||cfg.habilidades?.preparacaoCentral!==true)return {ativa:false};
- const fontes=await db.collection('demandas').where('providenciaAtivaCp140','==',true).limit(301).get();if(fontes.size>300)throw Error('Há mais de300providências ativas. Nenhuma lista foi cortada.');
+ const fontes=await db.collection(COLECAO_PROVIDENCIAS_CP140).where('providenciaAtivaCp140','==',true).limit(301).get();if(fontes.size>300)throw Error('Há mais de300providências ativas. Nenhuma lista foi cortada.');
  const canaisAtivos=canais.filter(c=>cfg.habilidades?.[c]===true),erros=[];let conferidas=0,processadas=0;
  for(const s of fontes.docs)try{const o=ocorrenciaProvidenciaCp140(s.data(),agora);if(o){await registrarOcorrenciaI165(db,o,agora);conferidas++;}}catch(e){erros.push({demandaId:s.id,erro:String(e.message).slice(0,500)});}
  const notas=await db.collection('notificacoes_operacionais_i165').where('origem.tipo','==',TIPO_PROVIDENCIA_GRAVACAO_CP140).where('estado','==','pendente').limit(1001).get();if(notas.size>1000)throw Error('Há mais de1000avisos de providências. Nenhuma lista foi cortada.');

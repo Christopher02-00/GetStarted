@@ -5,6 +5,11 @@ const MES=/^20\d{2}-(0[1-9]|1[0-2])$/,CLIENTE=/^[a-z0-9][a-z0-9._-]{0,119}$/,CIC
 const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','enviar_consolidado','retirar','desconsiderar_confirmacao','registrar_insumos_transicao']);
 const TIPOS=new Set(['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/plain','text/markdown']);
 const exigir=(ok,m)=>{if(!ok)throw Error(m);};
+/* Proveniência local: depois de chamar o transporte, uma falha nunca prova ausência de commit. */
+function falhaEnvioCp144(original,iniciado){
+ const erro=Error(original?.message||'Não consegui confirmar o envio.');erro.envioCentralCp144=iniciado?'resultado_incerto':'nao_iniciado';
+ if(typeof original?.code==='string')erro.code=original.code;return erro;
+}
 const selecionar=(v,keys)=>Object.fromEntries(keys.filter(k=>v?.[k]!==undefined).map(k=>[k,v[k]]));
 const mesmo=(a,b)=>!!a?.uid&&['uid','nome','atorReal','sessao','geracao'].every(k=>a[k]===b?.[k]);
 const utf8=v=>new TextEncoder().encode(JSON.stringify(v)).length;
@@ -19,19 +24,26 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  const cliente=x=>exigir(CLIENTE.test(x||''),'Escolha um cliente existente.');
  const ciclo=id=>exigir(CICLO.test(id||''),'Abra o cliente e o mês corretos.');
  async function pedir(acao,dados={}){
-  conferir();exigir(utf8({acao,...dados})<=(acao==='central_arquivo_enviar'?MAX_WIRE:MAX_NORMAL),'Este envio é grande demais. Divida o documento; nenhum texto foi cortado.');
-  const r=await chamar(acao,dados);conferir();exigir(utf8(r)<=MAX_WIRE,'Não consegui conferir a resposta inteira. Os dados anteriores foram preservados.');
-  return abrirEnvelopeCentralR80(r,{timestamp});
+  let iniciado=false;
+  try{
+   conferir();exigir(utf8({acao,...dados})<=(acao==='central_arquivo_enviar'?MAX_WIRE:MAX_NORMAL),'Este envio é grande demais. Divida o documento; nenhum texto foi cortado.');
+   iniciado=true;const r=await chamar(acao,dados);conferir();exigir(utf8(r)<=MAX_WIRE,'Não consegui conferir a resposta inteira. Os dados anteriores foram preservados.');
+   return abrirEnvelopeCentralR80(r,{timestamp});
+  }catch(erro){throw falhaEnvioCp144(erro,iniciado);}
  }
  async function ler(id){ciclo(id);const r=await pedir('central_ler',{ciclo:id});exigir(r?.ciclo?.id===id&&Array.isArray(r.registros),'O ciclo lido precisa ser conferido.');return r;}
  async function listar(m){mes(m);const r=await pedir('central_listar',{competencia:m});exigir(Array.isArray(r)&&r.every(x=>x.competencia===m),'Não consegui conferir todos os ciclos deste mês.');return r;}
  async function config(m){mes(m);return pedir('central_config_ler',{competencia:m});}
  async function salvarConfig(d,rev,m){mes(m);exigir(Number.isInteger(rev)&&rev>=0,'Confira a versão da organização.');return pedir('central_config_salvar',{competencia:m,config:selecionar(d,['dias','capacidades','modelos','indisponibilidades','feriados','recorrencia']),esperadaRevisao:rev});}
- const EDITORIAL=new Set(['central_editor_ler','central_editor_interno_conferir_cp142','central_editor_iniciar','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir','central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123','central_editor_adocao_ler_cp129','central_editor_adotar_preparacao_cp129']);
+ const EDITORIAL=new Set(['central_editor_ler','central_editor_interno_conferir_cp142','central_editor_iniciar','central_editor_preparacao_cp140','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir','central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123','central_editor_adocao_ler_cp129','central_editor_adotar_preparacao_cp129']);
  async function editorial(acao,dados){
   const ajusteCp112=['ajuste_calendario_cancelar_cp143','ajuste_calendario_ler_cp112','ajuste_calendario_salvar_cp112','ajuste_calendario_enviar_cp112','ajuste_calendario_adotar_cp112','ajuste_calendario_decidir_cp112','ajuste_calendario_iniciar_correcao_cp115','ajuste_calendario_salvar_conteudo_cp115'].includes(acao);
-  exigir(['Chris','Amanda'].includes(c.nome)&&(EDITORIAL.has(acao)||ajusteCp112),'Esta etapa pertence à criação do Chris e à revisão da Amanda.');
-  ciclo(dados?.ciclo);const origem=dados?.origemEditorial||'';exigir(origem===''||origem==='continuar_legado'||origem==='estrategico_cp109','Origem editorial inválida.');
+  let origem;
+  try{
+   conferir();exigir(['Chris','Amanda'].includes(c.nome)&&(EDITORIAL.has(acao)||ajusteCp112),'Esta etapa pertence à criação do Chris e à revisão da Amanda.');
+   ciclo(dados?.ciclo);origem=dados?.origemEditorial||'';exigir(origem===''||origem==='continuar_legado'||origem==='estrategico_cp109','Origem editorial inválida.');
+   if(acao==='central_editor_preparacao_cp140')exigir(c.nome==='Chris'&&c.atorReal==='Chris'&&origem!=='estrategico_cp109','Somente Chris pode complementar a preparação desta primeira revisão. A revisão e a liberação continuam com a Amanda.');
+  }catch(erro){throw falhaEnvioCp144(erro,false);}
   if(ajusteCp112){const r=await pedir(acao,dados);exigir(r?.schema===1&&r.ciclo===dados.ciclo&&Array.isArray(r.ajustes)&&r.liberacaoMensal&&r.ajustes.every(x=>typeof x.demandaId==='string'&&typeof x.assinatura==='string'),'Não consegui confirmar a revisão dos pedidos. Preserve a mesma tentativa.');return r;}
   if(['central_editor_adocao_ler_cp129','central_editor_adotar_preparacao_cp129'].includes(acao)){const r=await pedir(acao,dados);exigir(r?.schema===1&&r.ciclo===dados.ciclo&&typeof r.necessaria==='boolean'&&typeof r.elegivel==='boolean'&&Array.isArray(r.motivos)&&/^[a-f0-9]{64}$/.test(r.assinatura||'')&&(acao==='central_editor_adocao_ler_cp129'||r.operacao?.id===dados.operacao&&r.operacao.confirmada===true&&r.operacao.calendarioAlterado===false),'Não consegui confirmar a adoção desta versão. Preserve a mesma tentativa.');return r;}
   if(acao==='central_editor_interno_conferir_cp142'){

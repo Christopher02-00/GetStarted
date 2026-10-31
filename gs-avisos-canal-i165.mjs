@@ -144,6 +144,7 @@ export function ativarWorkerEsperandoI171(reg,worker,{serviceWorker,vigente=()=>
 }
 export function mensagemAtivacaoAvisosI165(err){
  if(err?.code==='i165/renovacao-contexto')return 'O perfil mudou durante a renovação. Volte ao seu próprio perfil; nenhum aparelho de outra pessoa foi registrado.';
+ if(err?.code==='i165/renovacao-legado')return 'Não consegui finalizar a troca de um registro antigo dos avisos neste navegador. Recarregue a página e confira novamente; sua fila e a tentativa anterior continuam guardadas.';
  if(err?.code==='i165/renovacao-falha')return 'Não consegui renovar o registro deste navegador agora. A fila e a tentativa de teste anterior continuam preservadas.';
  if(err?.code==='i165/sw-tempo')return 'Os avisos do navegador ainda estão iniciando. Aguarde um pouco e tente novamente; a fila continua no sistema.';
  if(err?.code==='i165/sw-contexto')return 'A ativação foi interrompida. Confira seu perfil antes de tentar novamente.';
@@ -152,6 +153,35 @@ export function mensagemAtivacaoAvisosI165(err){
  if(locais.has(err?.message))return err.message;
  return 'Não consegui ativar os avisos deste aparelho agora. Recarregue o site e tente novamente; a fila continua no sistema.';
 }
+// Cache FCM é por appId. Somente o escopo padrão push-only deste Get pode ser reconciliado.
+// A API Window não comprova Clients0 ou execução stopped; nenhum desses estados é inferido.
+export async function reconciliarEscopoLegadoProprioCp146({serviceWorker,regRaiz,app,baseURL,vigente=()=>false,timeoutMs=10000,programar=(f,t)=>globalThis.setTimeout(f,t),cancelarTimer=t=>globalThis.clearTimeout(t)}={}){
+ const erro=(reason)=>Object.assign(Error('A inscrição antiga dos avisos precisa de conferência.'),{code:'i165/renovacao-legado',reason});
+ const check=()=>{if(!vigente())throw Object.assign(Error('Contexto alterado.'),{code:'i165/renovacao-contexto'});};
+ check();let u;try{u=new URL(baseURL);}catch{throw erro('origem');}
+ if(!['https://get-started.agency','https://www.get-started.agency'].includes(u.origin)||u.username||u.password||app?.options?.projectId!=='get-started-4956d'||app?.options?.appId!=='1:27813235721:web:38c8e840153e2ae3853cd8'||typeof serviceWorker?.getRegistrations!=='function')throw erro('aplicacao');
+ const scopeRaiz=u.origin+'/',scopeLegado=u.origin+'/firebase-cloud-messaging-push-scope',script=u.origin+'/firebase-messaging-sw.js',workerRaiz=regRaiz?.active,controlador=serviceWorker.controller;
+ function raiz(){check();if(regRaiz?.scope!==scopeRaiz||regRaiz.installing||regRaiz.waiting||!workerRaiz||regRaiz.active!==workerRaiz||workerRaiz.state!=='activated'||workerRaiz.scriptURL!==script||serviceWorker.controller!==controlador||typeof regRaiz.pushManager?.getSubscription!=='function')throw erro('raiz_mudou');}
+ const bytes=b=>{if(b==null)throw erro('inscricao');try{return Array.from(new Uint8Array(b)).join(',');}catch{throw erro('inscricao');}};
+ const assinatura=s=>{if(s===null)return null;if(!s||typeof s.endpoint!=='string'||!s.endpoint||typeof s.getKey!=='function')throw erro('inscricao');return JSON.stringify([s.endpoint,bytes(s.getKey('auth')),bytes(s.getKey('p256dh')),s.options?.applicationServerKey==null?null:bytes(s.options.applicationServerKey)]);};
+ raiz();const subRaiz=await regRaiz.pushManager.getSubscription();raiz();const assinaturaRaiz=assinatura(subRaiz);
+ async function registros(){raiz();const regs=await serviceWorker.getRegistrations();raiz();if(!Array.isArray(regs)||regs.length>100)throw erro('registros');const roots=regs.filter(r=>r.scope===scopeRaiz);if(roots.length!==1||roots[0].active!==workerRaiz||roots[0].waiting||roots[0].installing)throw erro('raiz_mudou');return regs;}
+ async function conferirRaiz(){const atual=await regRaiz.pushManager.getSubscription();raiz();if(assinatura(atual)!==assinaturaRaiz)throw erro('inscricao_raiz_mudou');}
+ let regs=await registros();raiz();const legados=regs.filter(r=>r.scope===scopeLegado);if(legados.length>1)throw erro('ambiguo');
+ if(!legados.length){await conferirRaiz();raiz();return {reconciliado:true,legadoEncontrado:false,unregister:0,semTesteAutomatico:true};}
+ const legado=legados[0],workerAntigo=legado.active;
+ const conferirLegado=()=>{raiz();if(legado.scope!==scopeLegado||legado===regRaiz||legado.installing||legado.waiting||!workerAntigo||legado.active!==workerAntigo||workerAntigo.scriptURL!==script||workerAntigo.state!=='activated'||workerAntigo===workerRaiz||workerAntigo===controlador||typeof legado.unregister!=='function'||typeof legado.pushManager?.getSubscription!=='function')throw erro('legado_ambiguo');};
+ conferirLegado();const subAntiga=await legado.pushManager.getSubscription();conferirLegado();if(subAntiga&&(typeof subAntiga.unsubscribe!=='function'||typeof subAntiga.endpoint!=='string'||!subAntiga.endpoint))throw erro('inscricao_legada');if(legado.pushManager===regRaiz.pushManager||subAntiga&&subRaiz&&(subAntiga===subRaiz||subAntiga.endpoint===subRaiz.endpoint))throw erro('inscricao_compartilhada');
+ regs=await registros();conferirLegado();if(regs.filter(r=>r.scope===scopeLegado).length!==1||regs.find(r=>r.scope===scopeLegado).active!==workerAntigo)throw erro('legado_mudou');await conferirRaiz();conferirLegado();
+ const retirou=await legado.unregister();raiz();if(retirou!==true)throw erro('unregister_nao_confirmado');
+ if(workerAntigo.state!=='redundant')await new Promise((resolve,reject)=>{let fim=false,timer;const limpar=()=>{cancelarTimer(timer);workerAntigo.removeEventListener?.('statechange',verificar);};const encerrar=e=>{if(fim)return;fim=true;limpar();e?reject(e):resolve();};function verificar(){try{raiz();if(legado.waiting||legado.installing)throw erro('legado_em_transicao');if(workerAntigo.state==='redundant')encerrar();}catch(e){encerrar(e);}}timer=programar(()=>{try{raiz();encerrar(erro('tempo'));}catch(e){encerrar(e);}},timeoutMs);workerAntigo.addEventListener?.('statechange',verificar);verificar();});
+ raiz();if(legado.waiting||legado.installing)throw erro('legado_em_transicao');regs=await registros();raiz();if(regs.some(r=>r.scope===scopeLegado))throw erro('legado_recriado');
+ if(subAntiga){const ok=await subAntiga.unsubscribe();raiz();if(ok!==true&&ok!==false)throw erro('unsubscribe_nao_confirmado');}
+ const restante=await legado.pushManager.getSubscription();raiz();if(restante!==null)throw erro('inscricao_legada_persistiu');
+ await conferirRaiz();raiz();regs=await registros();raiz();if(regs.some(r=>r.scope===scopeLegado))throw erro('legado_recriado');
+ return {reconciliado:true,legadoEncontrado:true,unregister:1,semTesteAutomatico:true};
+}
+
 // Somente APIs públicas: gira a inscrição deste SW; nunca apaga Auth ou o banco do navegador.
 export async function renovarTokenProprioCp146({sdk,messaging,reg,opcoes={},vigente=()=>false,tokenAnterior=''}={}){
  const check=()=>{if(!vigente())throw Object.assign(Error('Contexto alterado.'),{code:'i165/renovacao-contexto'});},fail=()=>{throw Object.assign(Error('A renovação deste navegador não foi confirmada.'),{code:'i165/renovacao-falha'});};check();if(typeof sdk?.deleteToken!=='function'||typeof sdk?.getToken!=='function'||!reg)fail();
@@ -193,6 +223,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
   el('[data-saude]').textContent=teveAtivo?'Conteúdos: '+(confirmada&&saudeAvisosI165(saude,ambiente.agora())?'acompanhamento conferido.':'acompanhamento a conferir.')+' '+resumoSaudeCanaisI165(saude):'';
   el('[data-estado]').textContent=recado||(!confirmada?(conferindo?'Conferindo os avisos atuais. As atividades continuam na sua fila.':'Não consegui confirmar toda a fila agora. O último retrato foi preservado; isso não confirma fila vazia.'):truncado?'Há mais avisos além dos 100 desta página. Confira também a sua fila de conteúdos.':pendentes.length?'Abra o conteúdo para conferir o que precisa ser feito.':'Nenhum aviso pendente na última conferência do servidor.');
   el('[data-aparelho]').textContent=!proprio()?'Você está vendo outro perfil. Cada pessoa precisa entrar com o próprio Google e ativar os avisos no aparelho que usa.':ambiente.Notification?.permission==='denied'?'Os avisos estão bloqueados neste navegador. Libere as notificações nas configurações do site e volte aqui. A fila continua no sistema.':registroAtual()?'Registro deste aparelho confirmado para você nesta entrada. Agora você pode conferir o aviso de teste.':aparelho?.pronto?(statusConta?.contaComAparelhoAtivo===true?'Seu Google já tem aparelho cadastrado. Toque em “Conferir este navegador” para confirmar o recebimento aqui.':'Ative os avisos neste aparelho para receber os lembretes fora do site. A fila continua disponível mesmo se você não permitir.'):aparelho?.motivo||'Conferindo se os avisos deste aparelho podem ser ativados.';
+  if(proprio())el('[data-aparelho]').textContent+=' Renovar avisos também confere um registro antigo deste navegador, sem apagar seus dados e sem enviar um teste sozinho.';
   el('[data-ativar]').textContent=registroAtual()?'Conferir meu aparelho':statusConta?.contaComAparelhoAtivo===true?'Conferir este navegador':'Ativar no meu aparelho';
   el('[data-ativar]').disabled=busy||!proprio()||!pushAtivo()||!aparelho?.pronto||ambiente.Notification?.permission==='denied';
   el('[data-renovar]').hidden=!proprio()||!pushAtivo();el('[data-renovar]').disabled=busy||!aparelho?.pronto||ambiente.Notification?.permission!=='granted'||!!tentativaTeste||['reservado','em_andamento','resultado_desconhecido'].includes(teste?.estado);
@@ -292,13 +323,14 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
    const espera=esperarServiceWorkerAtivoI165(reg,{vigente:()=>atual(e)&&proprio()&&pushAtivo()});cancelarEsperaSW=espera.cancelar;
    try{await espera.pronto;}finally{if(cancelarEsperaSW===espera.cancelar)cancelarEsperaSW=null;}
    if(!atual(e)||!proprio()||!pushAtivo())return false;
+   if(renovar){await reconciliarEscopoLegadoProprioCp146({serviceWorker:ambiente.serviceWorker,regRaiz:reg,app:io.app,baseURL:ambienteBase(),vigente:()=>atual(e)&&proprio()&&pushAtivo()});if(!atual(e)||!proprio()||!pushAtivo())return false;}
    const token=renovar?await renovarTokenProprioCp146({sdk,messaging:sdk.getMessaging(io.app),reg,opcoes:a.opcoesVapid,vigente:()=>atual(e)&&proprio()&&pushAtivo(),tokenAnterior:anteriorToken||''}):await sdk.getToken(sdk.getMessaging(io.app),{...a.opcoesVapid,serviceWorkerRegistration:reg});if(!atual(e)||!proprio()||!pushAtivo())return false;
    if(typeof token!=='string'||!token)throw Error('O navegador não confirmou o aparelho.');
    const recibo=await io.registrarDispositivo({token});if(!atual(e)||!proprio()||!pushAtivo())return false;
    if(recibo?.schema!==1||recibo.registrado!==true||recibo.uid!==c.uid||recibo.pessoa!==c.atorReal||recibo.ativacaoId!==config.ativacaoId)throw Error('Não consegui confirmar o registro deste aparelho.');
    registro={uid:recibo.uid,pessoa:recibo.pessoa,ativacaoId:recibo.ativacaoId};tokenRegistrado=token;statusConta=r.aparelhoProprio||null;adotarTesteDaConta();
    await conferirServico(reg);if(!atual(e)||!registroAtual())return false;
-   recado=renovar?'Registro renovado somente neste navegador. Nenhum teste novo foi enviado; a tentativa anterior e o intervalo de dez minutos foram preservados.':'Registro confirmado para você. Se quiser, confira agora o aviso de teste neste navegador.';await prepararForeground(e);return true;
+   recado=renovar?'Registro antigo conferido e avisos renovados somente neste navegador. Nenhum teste novo foi enviado; a tentativa anterior e o intervalo de dez minutos foram preservados.':'Registro confirmado para você. Se quiser, confira agora o aviso de teste neste navegador.';await prepararForeground(e);return true;
   }catch(err){if(atual(e))recado=mensagemAtivacaoAvisosI165(err);return false;
   }finally{if(atual(e)){busy=false;render();}}
  }

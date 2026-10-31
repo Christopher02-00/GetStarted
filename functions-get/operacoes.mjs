@@ -1,3 +1,4 @@
+import {ACOES_VINCULOS_CP142,operarVinculosProvidenciasCp142} from './providencias-vinculos-cp142.mjs';
 import {ACOES_PROVIDENCIAS_CP140,operarProvidenciasGravacaoCp140} from './providencias-gravacoes-cp140.mjs';
 import {ACOES_ENTRADA_PERFIL_CP126,operarEntradaPerfilCp126} from './entrada-perfil-cp126.mjs';
 import {ACOES_DISPENSA_I118,operarDispensaRetroativaI118} from './dispensa-retroativa-i118.mjs';
@@ -38,6 +39,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ if(ACOES_VINCULOS_CP142.includes(dados.acao))return operarVinculosProvidenciasCp142(db,auth,dados,{agora});
  if(ACOES_PROVIDENCIAS_CP140.includes(dados.acao))return operarProvidenciasGravacaoCp140(db,auth,dados,{agora});
  if(ACOES_ENTRADA_PERFIL_CP126.includes(dados.acao))return operarEntradaPerfilCp126(db,auth,dados,{agora});
  if(ACOES_DISPENSA_I118.includes(dados.acao))return operarDispensaRetroativaI118(db,auth,dados,{agora});

@@ -1,5 +1,6 @@
 /* Adapter Admin estreito do callable I165 existente. Não modifica calendários, gravações ou publicações. */
 import {isDeepStrictEqual as igual} from 'node:util';
+import {COLECAO_PROVIDENCIAS_CP140} from './central/providencias-gravacao-cp140.mjs';
 import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {validarCadastroI165,saidaEfetivaI165} from './contexto.mjs';
 import {capacidadePreparacaoEditorialI172,CAMPOS_EDITORIAIS_I172} from './editorial-contrato-i172.mjs';
@@ -8,8 +9,8 @@ import {TIPO_PROVIDENCIA_GRAVACAO_CP140,META_PROVIDENCIA_CP140,ACOES_PROVIDENCIA
 export {ACOES_PROVIDENCIAS_CP140};
 const gestores=a=>['Chris','Amanda'].includes(a.papel),autoria=a=>({uid:a.uid,papel:a.papel,atorReal:a.real}),clone=v=>structuredClone(v);
 const stamp=s=>s?.updateTime?.toJSON?.()||s?.updateTime||null;
-const refDemanda=(db,id)=>db.doc('demandas/'+id);
-const reciboRef=(db,id,op)=>db.doc('demandas/'+id+'/providencias_cp140/'+op);
+const refDemanda=(db,id)=>db.doc(COLECAO_PROVIDENCIAS_CP140+'/'+id);
+const reciboRef=(db,id,op)=>db.doc(COLECAO_PROVIDENCIAS_CP140+'/'+id+'/providencias_cp140/'+op);
 const finais=d=>d.excluido===true||['aprovada','cancelada'].includes(d.status);
 const tamanho=v=>{e(Buffer.byteLength(JSON.stringify(v),'utf8')<=950*1024,'A leitura da providência ultrapassa950KiB; nada foi omitido.','limite');return v;};
 async function gate(db,tx,ator){
@@ -43,10 +44,11 @@ function capacidades(d,a,atual){
  return {salvar:gestores(a)&&aberto,esperar:aberto,confirmar:aberto&&atual&&!d[META_PROVIDENCIA_CP140].espera,cancelar:gestores(a)&&d.status!=='cancelada'&&!d.excluido,substituir:gestores(a)&&d.status!=='cancelada'&&!d.excluido,aprovar:a.papel==='Amanda'&&review&&atual,refazer:a.papel==='Amanda'&&review};
 }
 async function dto(d,a,fonte=null,motivo=''){
- if(!d)return {schema:1,providencia:null,assinatura:null,fonteAtual:fonte,capacidades:capacidades(null,a,false)};
+ if(!d)return {schema:1,fonteColecao:COLECAO_PROVIDENCIAS_CP140,providencia:null,assinatura:null,fonteAtual:fonte,capacidades:capacidades(null,a,false)};
  validarRegistroProvidenciaCp140(d,d.id);const atual=fonteConfere(d,fonte);
- return tamanho({schema:1,providencia:clone(d),resumo:resumoProvidenciaCp140(d),assinatura:await hashProvidenciaCp140(d),fonteAtual:fonte,fonteConferida:atual,motivoFonte:atual?'':motivo||'A origem mudou ou o cliente saiu da operação. A pendência não foi concluída; Chris ou Amanda precisa reconferir esta providência.',capacidades:capacidades(d,a,atual),naoPublicaCliente:true,naoAlteraCalendario:true});
+ return tamanho({schema:1,providencia:clone(d),fonteColecao:COLECAO_PROVIDENCIAS_CP140,resumo:resumoPrivadoCp142(d),assinatura:await hashProvidenciaCp140(d),fonteAtual:fonte,fonteConferida:atual,motivoFonte:atual?'':motivo||'A origem mudou ou o cliente saiu da operação. A pendência não foi concluída; Chris ou Amanda precisa reconferir esta providência.',capacidades:capacidades(d,a,atual),naoPublicaCliente:true,naoAlteraCalendario:true});
 }
+function resumoPrivadoCp142(d){return {...resumoProvidenciaCp140(d),motivoDevolucao:d.status==='pendente'?d.refazerUltimoI161?.motivo||'':'',retornoOperacao:d.status==='pendente'?d.refazerUltimoI161?.operacao||'':''};}
 function conferirRecibo(r,a,pedidoHash=null){
  e(r?.schema===1&&r.tipo===TIPO_PROVIDENCIA_GRAVACAO_CP140&&igual(r.autoria,autoria(a))&&(!pedidoHash||r.pedidoHash===pedidoHash),'Esta tentativa pertence a outro conteúdo ou perfil.','operacao');return r;
 }
@@ -59,11 +61,11 @@ export async function operarProvidenciasGravacaoCp140(db,auth,entrada,{agora=new
  if(acao==='listar_fonte')return db.runTransaction(async tx=>{const g=await gate(db,tx,ator),fonte=await fonteTx(db,tx,d.cliente,d.competencia,g,agora);return {schema:1,fonte,assinaturaFonte:fonte.assinatura,itens:fonte.itens,clienteNome:fonte.clienteNome,capacidades:{salvar:gestores(ator)&&fonte.clienteAtivo&&fonte.itens.length>0},somenteConsulta:true};},{readOnly:true});
  if(acao==='listar')return db.runTransaction(async tx=>{
   await gate(db,tx,ator);e(!d.incluirFinalizadas||d.cliente&&d.competencia,'Para consultar o histórico completo, escolha cliente e mês.','filtro');
-  const q=d.incluirFinalizadas?db.collection('demandas').where('providenciaEscopoCp140','==',d.competencia+'__'+d.cliente):db.collection('demandas').where('providenciaAtivaCp140','==',true);
+  const q=d.incluirFinalizadas?db.collection(COLECAO_PROVIDENCIAS_CP140).where('providenciaEscopoCp140','==',d.competencia+'__'+d.cliente):db.collection(COLECAO_PROVIDENCIAS_CP140).where('providenciaAtivaCp140','==',true);
   const s=await tx.get(q.limit(301));e(s.size<=300,'Há mais de300providências nesta consulta. Refine o escopo; nenhum registro foi omitido.','limite');
-  const itens=[];for(const snap of s.docs){const row=snap.data();validarRegistroProvidenciaCp140(row,snap.id);e(row.id===await idProvidenciaGravacaoCp140(row.cliente,row.competencia,row[META_PROVIDENCIA_CP140].origem.chaveRecurso),'A identidade do recurso precisa de conferência.','registro');if(d.cliente&&row.cliente!==d.cliente||d.competencia&&row.competencia!==d.competencia||!d.incluirFinalizadas&&finais(row))continue;itens.push({...resumoProvidenciaCp140(row),assinatura:await hashProvidenciaCp140(row)});}
+  const itens=[];for(const snap of s.docs){const row=snap.data();validarRegistroProvidenciaCp140(row,snap.id);e(row.id===await idProvidenciaGravacaoCp140(row.cliente,row.competencia,row[META_PROVIDENCIA_CP140].origem.chaveRecurso),'A identidade do recurso precisa de conferência.','registro');if(d.cliente&&row.cliente!==d.cliente||d.competencia&&row.competencia!==d.competencia||!d.incluirFinalizadas&&finais(row))continue;itens.push({...resumoPrivadoCp142(row),assinatura:await hashProvidenciaCp140(row)});}
   itens.sort((a,b)=>(a.prazoData||'9999').localeCompare(b.prazoData||'9999')||(a.prazoHora||'').localeCompare(b.prazoHora||'')||a.clienteNome.localeCompare(b.clienteNome,'pt-BR')||a.id.localeCompare(b.id));
-  return tamanho({schema:1,itens,total:itens.length,somenteConsulta:true,completo:true,pendenciasIncluemEsperaEAtraso:true});
+  return tamanho({schema:1,fonteColecao:COLECAO_PROVIDENCIAS_CP140,itens,total:itens.length,somenteConsulta:true,completo:true,pendenciasIncluemEsperaEAtraso:true});
  },{readOnly:true});
  const id=acao==='salvar'?await idProvidenciaGravacaoCp140(d.providencia.cliente,d.providencia.competencia,d.providencia.chaveRecurso):d.id,ref=refDemanda(db,id),rr=d.operacao?reciboRef(db,id,d.operacao):null;
  const {uidEsperado,atorRealEsperado,papelOperado,sessao,...negocio}=entrada;
@@ -98,3 +100,5 @@ export async function operarProvidenciasGravacaoCp140(db,auth,entrada,{agora=new
   return {...out,operacao:{id:d.operacao,estado:'novo',confirmada:true,recibo},naoAlteraGravacao:true};
  });
 }
+
+export {gate as gateProvidenciasCp140,fonteTx as fonteProvidenciasTxCp140};

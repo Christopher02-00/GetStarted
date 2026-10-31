@@ -1,7 +1,7 @@
 /* A mesma caixa de avisos, com leitura tipada das fontes da Central.
  * Não cria demanda, não conclui atividade e não expõe documentos privados. */
 import {notaCentralI164, ocorrenciasDaFonteCentralI164} from './central/notificacoes.mjs';
-import {TIPO_PROVIDENCIA_GRAVACAO_CP140,idAvisoProvidenciaCp140} from './central/providencias-gravacao-cp140.mjs';
+import {TIPO_PROVIDENCIA_GRAVACAO_CP140,COLECAO_PROVIDENCIAS_CP140,idAvisoProvidenciaCp140} from './central/providencias-gravacao-cp140.mjs';
 import {TIPO_DEMANDA_REFAZER_CP131,PAPEIS_DEMANDA_REFAZER_CP131,idAvisoDemandaRefazerCp131} from './central/demandas-refazer-cp131.mjs';
 import {processoAtivoI164} from './central/lib/gs-processo-calendarios-i164.mjs';
 import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
@@ -104,7 +104,7 @@ export async function lerNotaCentralTxR87(db, tx, n, ator, {cfg, processo, agora
   const ocorrencias = await ocorrenciasDaFonteCentralI164(leitura || leituraCentralTxR87(db, tx), n, agora);
   const atual = ocorrencias.find(o => o.versao === n.versao && o.destinatario === n.destinatario && o.nivel === n.nivel && jsonI165(o.origem) === jsonI165(n.origem));
   const origem = atual?.origem || n.origem;
-  const fonte = novoCp109(tipo)?fonteDtoCp109(n):{colecao: organizacao||devolucao||providencia ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
+  const fonte = novoCp109(tipo)?fonteDtoCp109(n):{colecao: providencia?COLECAO_PROVIDENCIAS_CP140:organizacao||devolucao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
   const prazo = atual?.prazo || n.prazo || '';
   const prazoIso = prazo && Number.isFinite(Date.parse(prazo + '-03:00')) ? new Date(prazo + '-03:00').toISOString() : null;
   return {

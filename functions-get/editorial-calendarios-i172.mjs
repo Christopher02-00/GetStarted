@@ -1,5 +1,5 @@
 import {operarAdocaoPreparacaoCp129} from './adocao-preparacao-cp129.mjs';
-import {coletarInternosTxCp123,dtoInternosCp123,resumoInternosCp123,operarInternoCp123,prepararPublicacaoInternosCp123,concluirPublicacaoInternosCp123,filaInternosCp123} from './ajustes-internos-cp123.mjs';
+import {coletarInternosTxCp123,dtoInternosCp123,resumoInternosCp123,operarInternoCp123,conferirOperacaoInternaCp142,prepararPublicacaoInternosCp123,concluirPublicacaoInternosCp123,filaInternosCp123} from './ajustes-internos-cp123.mjs';
 import {coletarAjustesTxCp112,resumoAjustesCp112,exigirLiberacaoAjustesCp112,notasLiberadasCp112,pedidosLiberadosCp112,invalidacoesAjustesCp112,prepararReenvioAjustesCp112,elegibilidadeReliberacaoAjustesCp121} from './ajustes-calendarios-cp112.mjs';
 import {validadeBaseI155Cp111} from './central/lib/gs-transicao-insumos-cp111.mjs';
 /* Writers oficiais mensais por ações fechadas no callable instalado. Nenhum CRUD ou ativação. */
@@ -61,6 +61,7 @@ export async function operarEditorialCalendariosI172(db,auth,pedido,{agora=new D
  validarEntradaEditorialI172(pedido);const ator=validarContaEsperadaI165(auth,pedido);e(['Chris','Amanda'].includes(ator.papel),'A pesquisa e o apoio de legenda não dão acesso ao editor.');
  if(ACOES_ADOCAO_CP129.includes(pedido.acao))return envelopeCentralR80(await operarAdocaoPreparacaoCp129(db,auth,pedido,{gate:gateEditorialI172,agora}));
  if(pedido.acao==='central_editor_interno_fila_cp123'){await db.runTransaction(tx=>gateEditorialI172(db,tx,ator));return envelopeCentralR80(await filaInternosCp123(db,ator));}
+ if(pedido.acao==='central_editor_interno_conferir_cp142')return envelopeCentralR80(await conferirOperacaoInternaCp142(db,ator,pedido,{fontes:tx=>fontesTx(db,tx,ator,pedido,agora),lerDto:(tx,c,cal)=>dtoAtualTx(db,tx,c,cal,ator)}));
  if(ACOES_INTERNOS_CP123.includes(pedido.acao))return envelopeCentralR80(await operarInternoCp123(db,ator,pedido,{agora,fontes:tx=>fontesTx(db,tx,ator,pedido,agora),assinaturaEditor:assinatura,lerDto:(tx,c,cal,op)=>dtoAtualTx(db,tx,c,cal,ator,op)}));
  const hash=hashPedidoEditorialI172(pedido,ator),em=agora.toISOString(),id=cicloR80(pedido.ciclo),backup=pedido.operacao?db.doc('calendarios_versoes/'+id.cliente+'__i172_'+pedido.operacao):null,autoridade=backup?db.doc(backup.path+'/editorial_i172/recibo'):null;
  if(pedido.acao==='central_editor_ler')return envelopeCentralR80(await db.runTransaction(async tx=>{const {c,cal}=await fontesTx(db,tx,ator,pedido,agora);return dtoAtualTx(db,tx,c,cal,ator);}));

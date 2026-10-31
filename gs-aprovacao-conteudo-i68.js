@@ -68,7 +68,8 @@
     const publicado=String(marca.retratoLiberadoV115?.publicadoEm||marca.liberadoEmAnterior||'');
     const todos={...(cal.pedidosAjusteClienteI71||{})},anterior=cal.pedidoAjusteCliente;
     if(anterior?.operationId&&!todos[anterior.operationId])todos[anterior.operationId]=anterior;
-    return Object.values(todos).filter(p=>p?.operationId&&p.competencia===mes&&
+    const cancelado=p=>{const x=p?.cancelamentoCp143;return x?.schema===1&&x.estado==='cancelado'&&x.operationId===p.operationId&&x.itemId===p.itemId&&x.por==='Chris'&&x.atorReal==='Chris'&&typeof x.motivo==='string'&&!!x.motivo.trim()&&typeof x.uid==='string'&&!!x.uid&&typeof x.operacao==='string'&&!!x.operacao;};
+    return Object.values(todos).filter(p=>p?.operationId&&p.competencia===mes&&!cancelado(p)&&
       (!publicado||String(p.criadoEm||'')>publicado)).sort((a,b)=>String(a.criadoEm).localeCompare(String(b.criadoEm)));
   }
   function pedidoDoItem(cal,mes,item) {

@@ -1,6 +1,6 @@
 import {montarPortaContinuidadeCp129} from './gs-adocao-continuidade-cp129.mjs?v=db5b1206a7bdb1929c6638d30645095fbfa8644335a1aa36d31ecb449132f5e0';
 import {montarAjustesInternosCp123} from './gs-ajustes-internos-cp123.mjs?v=fa0e819ee77a03e7abc6ce970a088e2829caef9b3ea898a776a0dfe8fc8e7e8e';
-import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=67638446fa6dcf5a613d4368fd5882981b29cedc3588f5eb90f4c4ac235d2220';
+import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=e04e316429f187cf6f9ddffd736bd9f402e973ad8dc2c3c946d2fe19780fb59a';
 /* Editor humano; persistência editorial pertence exclusivamente às ações HTTP I172. */
 export const CAMPOS_EDITOR_I172=Object.freeze(['itemId','empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','mes','stage','fmt','dataFlexivel','bloco','dataPostagem']);
 const EMPRESAS=Object.freeze([{id:'otica_hauer',nome:'Ótica Hauer'},{id:'otica_sao_jose',nome:'Ótica São José'},{id:'clinica_olhos_hauer',nome:'Clínica dos Olhos Hauer'},{id:'clinica_sao_jose',nome:'Clínica São José'}]);
@@ -88,7 +88,7 @@ export function ajusteAtualEditorialI172(d){
  if(d?.estado!=='ajuste_interno')return null;
  const mes=d?.ciclo?.competencia,m=d?.calendario?.aprovacaoMeses?.[mes];
  const marca=m?.status==='ajuste_interno'&&(!Object.hasOwn(m,'mes')||m.mes===mes)?m:null;
- const autor=marca?.por==='Cliente'?'cliente':marca?.por==='Amanda'?'amanda':'';
+ const cancelado=marca&&Array.isArray(d?.ajustesCp112?.canceladosCp143)&&d.ajustesCp112.canceladosCp143.find(x=>x.operationId===marca.pedidoAjusteOperationId&&x.itemId===marca.pedidoAjusteItemId);if(cancelado)return {autor:'chris',rotulo:d.ajustesCp112.liberacaoPermitida?'Pedido do cliente cancelado':'Há outros pedidos para revisar',titulo:'Pedido cancelado · histórico',motivo:'Pedido original: '+String(cancelado.texto||'')+'\nMotivo do cancelamento: '+String(cancelado.motivo||'')+'\nA revisão e a liberação do calendário continuam com a Amanda.',fonte:'cancelamento_confirmado_cp143',cancelado:true};const autor=marca?.por==='Cliente'?'cliente':marca?.por==='Amanda'?'amanda':'';
  return {autor,rotulo:autor==='cliente'?'Ajustes pedidos pelo cliente':autor==='amanda'?'Ajustes pedidos pela Amanda':'Ajustes pedidos neste calendário',titulo:autor==='cliente'?'O que o cliente pediu para ajustar':autor==='amanda'?'O que a Amanda pediu para ajustar':'O que precisa ser ajustado',motivo:typeof marca?.motivoAjuste==='string'?marca.motivoAjuste:'',fonte:marca?'marca_atual':'sem_marca_atual'};
 }
 const rotuloEstadoEditorialI172=d=>ajusteAtualEditorialI172(d)?.rotulo||ESTADOS[d?.estado]||d?.estado||'Conferindo versão';

@@ -1,9 +1,11 @@
+import {ACOES_CIENCIA_CP146,operarCienciaProvidenciasCp146,estadoCienciaCp146} from './conferencia-providencias-cp146.mjs';
 /* Só escreve vínculos e seus recibos. O fluxo normal continua único escritor da demanda. */
 import {isDeepStrictEqual as igual} from 'node:util';
 import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {gateProvidenciasCp140,fonteProvidenciasTxCp140} from './providencias-gravacoes-cp140.mjs';
 import {hashProvidenciaCp140,exigirProvidenciaCp140 as e} from './central/lib/gs-providencias-gravacao-cp140.mjs';
 import {ACOES_VINCULOS_CP142,validarEntradaVinculoCp142,demandaNormalVinculavelCp142,podeLerVinculoCp142,finalizadaVinculoCp142,validarRegistroVinculoCp142,resumoVinculoCp142,prepararVinculoCp142} from './central/lib/gs-providencias-vinculos-cp142.mjs';
+export const ACOES_VINCULOS_CP142_COM_CIENCIA=Object.freeze([...ACOES_VINCULOS_CP142,...ACOES_CIENCIA_CP146]);
 export {ACOES_VINCULOS_CP142};
 const autoria=a=>({uid:a.uid,papel:a.papel,atorReal:a.real});
 const vinculoRef=(db,id)=>db.doc('providencias_vinculos_cp142/'+id);
@@ -15,13 +17,14 @@ function lerDemanda(s,id,ator){e(s.exists,'A demanda original não foi encontrad
 async function dto(s,v,ator){const d=lerDemanda(s,s.id,ator);return limitado({schema:1,id:s.id,demanda:d,assinaturaDemanda:await hashProvidenciaCp140(retrato(s)),vinculo:v||null,assinaturaVinculo:v?await hashProvidenciaCp140(v):null,resumo:v?resumoVinculoCp142(v,d):null,podeVincular:['Chris','Amanda'].includes(ator.papel)&&!d.excluido&&!d.arquivado,somenteVinculo:true,demandaNaoAlterada:true});}
 function conferirRecibo(rec,ator,hash=null){e(rec?.schema===1&&igual(rec.autoria,autoria(ator))&&(!hash||rec.pedidoHash===hash),'A tentativa guardada pertence a outro conteúdo ou perfil.','operacao');return rec;}
 export async function operarVinculosProvidenciasCp142(db,auth,entrada,{agora=new Date()}={}){
+ if(ACOES_CIENCIA_CP146.includes(entrada?.acao))return operarCienciaProvidenciasCp146(db,auth,entrada,{agora});
  const {acao,pedido:p}=validarEntradaVinculoCp142(entrada),ator=validarContaEsperadaI165(auth,p);e(['Chris','Amanda','Cecília'].includes(ator.papel),'Este espaço pertence à coordenação e à gerência.','papel');
  if(acao==='vincular')e(['Chris','Amanda'].includes(ator.papel),'Chris ou Amanda conferem os vínculos.','papel');e(agora instanceof Date&&Number.isFinite(agora.getTime()),'Relógio inválido.');const em=agora.toISOString();
  if(acao==='listar')return db.runTransaction(async tx=>{
   await gateProvidenciasCp140(db,tx,ator);let q=db.collection('providencias_vinculos_cp142');if(p.cliente)q=q.where('cliente','==',p.cliente);if(p.competencia)q=q.where('competencia','==',p.competencia);
   const links=await tx.get(q.limit(301));e(links.size<=300,'Há mais de300vínculos; refine cliente e mês. Nenhum registro foi cortado.','limite');const itens=[];
   const fontes=await Promise.all(links.docs.map(l=>tx.get(db.doc('demandas/'+l.id))));
-  for(let i=0;i<links.docs.length;i++){const s=links.docs[i],v=s.data();validarRegistroVinculoCp142(v,s.id);const ds=fontes[i];e(ds.exists,'Um vínculo está sem a demanda original. Reconfira o registro; não foi tratado como concluído.','demanda');const d={...ds.data(),id:ds.id};if(!podeLerVinculoCp142(d,ator))continue;demandaNormalVinculavelCp142(d,ds.id);if(!p.incluirFinalizadas&&finalizadaVinculoCp142(d))continue;itens.push(resumoVinculoCp142(v,d));}
+  for(let i=0;i<links.docs.length;i++){const s=links.docs[i],v=s.data();validarRegistroVinculoCp142(v,s.id);const ds=fontes[i];e(ds.exists,'Um vínculo está sem a demanda original. Reconfira o registro; não foi tratado como concluído.','demanda');const d={...ds.data(),id:ds.id};if(!podeLerVinculoCp142(d,ator))continue;demandaNormalVinculavelCp142(d,ds.id);if(!p.incluirFinalizadas&&finalizadaVinculoCp142(d))continue;itens.push({...resumoVinculoCp142(v,d),conferenciaCp146:await estadoCienciaCp146(db,tx,ator,v,d)});}
   itens.sort((a,b)=>(a.prazoData||'9999').localeCompare(b.prazoData||'9999')||a.id.localeCompare(b.id));return limitado({schema:1,itens,total:itens.length,completo:true,somenteConsulta:true,fonteEstado:'demanda_original_atual'});
  },{readOnly:true});
  const id=acao==='conferir'?p.id:p.vinculo.demandaId,vr=vinculoRef(db,id),rr=p.operacao?reciboRef(db,id,p.operacao):null;

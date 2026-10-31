@@ -1,10 +1,11 @@
 import {createHash} from 'node:crypto';
-import {transmitirI165,versaoReservaI165,falhaCanalI165} from './transmissoes.mjs';
+import {transmitirI165,versaoReservaI165,falhaCanalI165,codigoCanalSeguroCp146} from './transmissoes.mjs';
 const ESCOPO='teste_dispositivo_i165',COOLDOWN=10*60000;
 const op=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{12,100}$/.test(x);
 const sha=x=>createHash('sha256').update(x).digest('hex');
+const motivoPublico=x=>{const codigo=codigoCanalSeguroCp146(x);return codigo?{motivoCodigo:codigo,renovarRegistro:['token_nao_registrado','token_invalido'].includes(codigo)}:{}};
 const estados=new Set(['reservado','em_andamento','aceito_pelo_provedor','resultado_desconhecido','recusado']);
-export function statusTesteProprioI165(x){return x&&op(x.operacaoId)&&estados.has(x.estado)?{operacaoId:x.operacaoId,estado:x.estado,aceiteProvedor:x.estado==='aceito_pelo_provedor',iniciadaEm:x.iniciadaEm,proximoTesteEm:x.proximoTesteEm,recebimentoNoAparelho:'nao_conferido',reenvioAutomatico:false}:null;}
+export function statusTesteProprioI165(x){return x&&op(x.operacaoId)&&estados.has(x.estado)?{operacaoId:x.operacaoId,estado:x.estado,aceiteProvedor:x.estado==='aceito_pelo_provedor',iniciadaEm:x.iniciadaEm,proximoTesteEm:x.proximoTesteEm,recebimentoNoAparelho:'nao_conferido',reenvioAutomatico:false,...motivoPublico(x)}:null;}
 export async function estadoContaDispositivoTxI165(db,tx,ator,agora){
  if(ator.real!==ator.papel)return {perfilProprio:false,testeServidorDisponivel:false,conferenciaCompleta:true,escopo:'conta_google_atual',contaComAparelhoAtivo:false,esteNavegadorConferido:false,ultimoTeste:null,conferidoEm:agora.toISOString()};
  const pr=db.doc('notificacoes_dispositivos_i165/'+ator.uid),p=await tx.get(pr);
@@ -32,10 +33,10 @@ export async function testarDispositivoProprioI165(db,ator,dados,{agora=new Date
   const criado={...contrato,ativacaoId:cs.data().ativacaoId,iniciadaEm:agora.toISOString(),proximoTesteEm:new Date(agora.getTime()+COOLDOWN).toISOString(),resultado:'reservado'};
   tx.create(rr,criado);tx.update(pr,{ultimoTesteI165:{operacaoId:criado.id,estado:'reservado',iniciadaEm:criado.iniciadaEm,proximoTesteEm:criado.proximoTesteEm}});return criado;
  });
- const resposta=(estado,recuperado=false)=>({schema:1,testeDispositivo:true,operacaoId:dados.operacaoId,estado,aceiteProvedor:estado==='aceito_pelo_provedor',recebimentoNoAparelho:'nao_conferido',reenvioAutomatico:false,recuperado,proximoTesteEm:reserva.proximoTesteEm});
+ const resposta=(estado,recuperado=false,motivo=null)=>({schema:1,testeDispositivo:true,operacaoId:dados.operacaoId,estado,aceiteProvedor:estado==='aceito_pelo_provedor',recebimentoNoAparelho:'nao_conferido',reenvioAutomatico:false,recuperado,proximoTesteEm:reserva.proximoTesteEm,...motivoPublico(motivo||reserva)});
  if(['aceito_pelo_provedor','recusado'].includes(reserva.resultado))return resposta(reserva.resultado,true);
  // A reserva técnica é separada dos conteúdos. O mesmo motor grava recibo antes do único envio.
- if(reserva.transmissaoI165){const s=await db.doc('transmissoes_i165/'+reserva.transmissaoI165).get();if(s.data()?.estado==='recusada'){await concluir('recusado');return resposta('recusado',true);}}
+ if(reserva.transmissaoI165){const s=await db.doc('transmissoes_i165/'+reserva.transmissaoI165).get();if(s.data()?.estado==='recusada'){await concluir('recusado',s.data());return resposta('recusado',true,s.data());}}
  try{
   const r=await transmitirI165(db,{chave:ESCOPO+':'+ator.uid+':'+dados.operacaoId,canal:'push',destinatario:ator.real,carga:{tipo:ESCOPO,operacaoId:dados.operacaoId,uid:ator.uid,tokenHash:hash,ativacaoId:reserva.ativacaoId},reservas:[{ref:rr,campo:'transmissaoI165',versao:versaoReservaI165(reserva)}]},async()=>{
    await db.runTransaction(async tx=>{const [cs,ds,ps,ts,rs]=await Promise.all([tx.get(cfgRef),tx.get(cadRef),tx.get(pr),tx.get(tr),tx.get(rr)]);validar(cs.data(),ds.data(),ps.data(),ts.data());exigir(cs.data().ativacaoId===reserva.ativacaoId&&igual(rs.data()),'dispositivo-teste-versao','A configuração ou a tentativa mudou. Confira o aparelho novamente.');}).catch(()=>{throw falhaCanalI165('O aparelho ou a configuração mudou antes do envio.','antes_envio');});
@@ -43,6 +44,6 @@ export async function testarDispositivoProprioI165(db,ator,dados,{agora=new Date
    return enviarTeste(dados.token,dados.operacaoId);
   },{clock});
   await concluir('aceito_pelo_provedor');return resposta('aceito_pelo_provedor',r.recuperada===true);
- }catch(e){const estado=e.classificacaoCanalI165==='ocupada'?'em_andamento':['antes_envio','recusada'].includes(e.classificacaoCanalI165)?'recusado':'resultado_desconhecido';await concluir(estado);return resposta(estado,false);}
- async function concluir(estado){await db.runTransaction(async tx=>{const [r,p]=await Promise.all([tx.get(rr),tx.get(pr)]);exigir(r.exists&&igual(r.data()),'dispositivo-teste-versao','A tentativa de teste mudou.');tx.update(rr,{resultado:estado,conferidoEm:clock().toISOString()});if(p.data()?.ultimoTesteI165?.operacaoId===dados.operacaoId)tx.update(pr,{ultimoTesteI165:{operacaoId:dados.operacaoId,estado,iniciadaEm:reserva.iniciadaEm,proximoTesteEm:reserva.proximoTesteEm}});});}
+ }catch(e){const estado=e.classificacaoCanalI165==='ocupada'?'em_andamento':['antes_envio','recusada'].includes(e.classificacaoCanalI165)?'recusado':'resultado_desconhecido';await concluir(estado,e);return resposta(estado,false,e);}
+ async function concluir(estado,motivo=null){const extra=motivoPublico(motivo);await db.runTransaction(async tx=>{const [r,p]=await Promise.all([tx.get(rr),tx.get(pr)]);exigir(r.exists&&igual(r.data()),'dispositivo-teste-versao','A tentativa de teste mudou.');tx.update(rr,{resultado:estado,...extra,conferidoEm:clock().toISOString()});if(p.data()?.ultimoTesteI165?.operacaoId===dados.operacaoId)tx.update(pr,{ultimoTesteI165:{operacaoId:dados.operacaoId,estado,...extra,iniciadaEm:reserva.iniciadaEm,proximoTesteEm:reserva.proximoTesteEm}});});}
 }

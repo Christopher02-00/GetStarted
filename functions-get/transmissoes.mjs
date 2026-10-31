@@ -2,8 +2,12 @@ import crypto from 'node:crypto';
 import {jsonCanonicoI165 as jsonI165} from './lib/gs-contexto-operacional-i165.mjs';
 
 const hash = value => crypto.createHash('sha256').update(jsonI165(value)).digest('hex');
-export function falhaCanalI165(mensagem, classificacao='desconhecido') {
-  return Object.assign(new Error(mensagem), {classificacaoCanalI165: classificacao});
+const CODIGOS_CANAIS_CP146=new Set(['sem_aparelho_ativo','token_nao_registrado','token_invalido','credencial_divergente','argumento_recusado']);
+const CODIGOS_FCM_CP146=new Map([['messaging/registration-token-not-registered','token_nao_registrado'],['messaging/invalid-registration-token','token_invalido'],['messaging/mismatched-credential','credencial_divergente'],['messaging/invalid-argument','argumento_recusado']]);
+export const codigoFcmSeguroCp146=code=>CODIGOS_FCM_CP146.get(code)||'';
+export function codigoCanalSeguroCp146(d){const code=d?.motivoCodigo||d?.codigoCanalI165;if(CODIGOS_CANAIS_CP146.has(code))return code;const m=typeof d==='string'?d:d?.erro||d?.message;return ['Não há aparelho ativo confirmado; a ação continua no sistema.','Nenhum aparelho com avisos ativos. A pendência continua na Central.'].includes(m)?'sem_aparelho_ativo':'';}
+export function falhaCanalI165(mensagem, classificacao='desconhecido',codigo='') {
+  const seguro=codigoCanalSeguroCp146({motivoCodigo:codigo,message:mensagem});return Object.assign(new Error(mensagem), {classificacaoCanalI165: classificacao,...(seguro?{codigoCanalI165:seguro}:{})});
 }
 
 export function versaoReservaI165(d){
@@ -43,8 +47,8 @@ export async function transmitirI165(db, {chave, canal, destinatario, carga, res
     if(retorno?.aceita!==true)throw falhaCanalI165(retorno?.motivo||'O provedor não confirmou o aceite.');
   }catch(e){
     const conhecida=['antes_envio','recusada'].includes(e.classificacaoCanalI165), estado=conhecida?'recusada':'resultado_desconhecido';
-    await gravar({estado,erro:String(e.message||e).slice(0,500),conferidoEm:clock().toISOString()},conhecida).catch(()=>{});
-    throw Object.assign(falhaCanalI165(e.message,conhecida?'recusada':'desconhecido'),{tentativaId:id});
+    const codigo=codigoCanalSeguroCp146(e);await gravar({estado,erro:String(e.message||e).slice(0,500),...(codigo?{codigoCanalI165:codigo}:{}),conferidoEm:clock().toISOString()},conhecida).catch(()=>{});
+    throw Object.assign(falhaCanalI165(e.message,conhecida?'recusada':'desconhecido',codigo),{tentativaId:id});
   }
   const patch={estado:'aceita_pelo_provedor',recibo:retorno.recibo||'',aviso:retorno.aviso||'',aceitaEm:clock().toISOString()};
   let persistida=false;

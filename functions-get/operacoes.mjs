@@ -1,4 +1,4 @@
-import {ACOES_VINCULOS_CP142,operarVinculosProvidenciasCp142} from './providencias-vinculos-cp142.mjs';
+import {ACOES_VINCULOS_CP142_COM_CIENCIA as ACOES_VINCULOS_CP142,operarVinculosProvidenciasCp142} from './providencias-vinculos-cp142.mjs';
 import {ACOES_PROVIDENCIAS_CP140,operarProvidenciasGravacaoCp140} from './providencias-gravacoes-cp140.mjs';
 import {ACOES_ENTRADA_PERFIL_CP126,operarEntradaPerfilCp126} from './entrada-perfil-cp126.mjs';
 import {ACOES_DISPENSA_I118,operarDispensaRetroativaI118} from './dispensa-retroativa-i118.mjs';

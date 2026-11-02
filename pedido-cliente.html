@@ -57,7 +57,7 @@
         </select>
       </div>
     </div>
-    <button type="submit" class="btn" id="btnEnviar">Enviar pedido</button>
+    <div id="pendenteCp152" role="status" hidden><p>Um envio anterior aguarda confirmação.</p><button type="button" class="btn" onclick="enviarPedidoPublicoCp152(true)">Confirmar envio pendente</button></div><button type="submit" class="btn" id="btnEnviar">Enviar pedido</button><p id="erroPedidoCp152" role="alert"></p>
   </form>
 
   <div class="status" id="status">
@@ -71,7 +71,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, doc, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -86,63 +86,70 @@
   /* 28/07/2026 — sem esta sessão as regras novas do Firestore recusam a
      gravação e o formulário quebra em silêncio. Login anônimo não
      identifica ninguém: só dá às regras algo em que se apoiar. */
-  const authPronta = signInAnonymously(getAuth(app)).catch(e => { console.error('Falha na autenticação:', e); return null; });
+  const auth=getAuth(app);
+  const authPronta = signInAnonymously(auth).catch(e => { console.error('Falha na autenticação:', e); return null; });
   const db = getFirestore(app);
 
+  function dataCivilPedidoCp152(agora=new Date()){
+    const partes=Object.fromEntries(new Intl.DateTimeFormat('en',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(agora).filter(p=>['year','month','day'].includes(p.type)).map(p=>[p.type,p.value]));
+    return partes.year+'-'+partes.month+'-'+partes.day;
+  }
   function proximaDataUtil(hoje){
-    const d = new Date(hoje);
-    d.setDate(d.getDate() + 1);
-    while(d.getDay() === 0 || d.getDay() === 6){ d.setDate(d.getDate() + 1); }
+    const [ano,mes,dia]=hoje.split('-').map(Number),d=new Date(Date.UTC(ano,mes-1,dia,12));
+    do{d.setUTCDate(d.getUTCDate()+1);}while(d.getUTCDay()===0||d.getUTCDay()===6);
     return d.toISOString().slice(0,10);
   }
-
-  const form = document.getElementById('formPedido');
-  const btn = document.getElementById('btnEnviar');
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    btn.disabled = true; btn.textContent = 'Enviando...';
-
-    const hoje = new Date();
-    const hojeStr = hoje.toISOString().slice(0,10);
-    const urgencia = document.getElementById('urgencia').value;
-    const prazoData = urgencia === 'hoje' ? hojeStr : proximaDataUtil(hojeStr);
-
-    const destinatario=document.getElementById('tipoPedido').value;
-    const tipo=({Chris:'pedido_calendario',Gabrielle:'pedido_legenda','Cecília':'pedido_agendamento',Amanda:'pedido_geral'})[destinatario];
-    if(!tipo){alert('Escolha o assunto do pedido.');btn.disabled=false;btn.textContent='Enviar pedido';return;}
-
-    const dados = {
-      titulo: 'Pedido de cliente: ' + document.getElementById('clienteNome').value.trim(),
-      descricao: document.getElementById('pedidoDesc').value.trim(),
-      origem: 'cliente',
-      clienteNome: document.getElementById('clienteNome').value.trim(),
-      destinatario,tipo,
-      prazoData: prazoData,
-      prazoHora: '19:00',
-      status: 'pendente',
-      provaTexto: '', provaImagemUrl: '',
-      criadoEm: serverTimestamp()
-    };
-
-    try {
-      /* ===== O FORMULÁRIO PÚBLICO NÃO ESCREVE MAIS NA FILA INTERNA =====
-         Antes gravava direto em `demandas`, a lista de trabalho da equipe.
-         Ou seja: uma página aberta na internet tinha permissão de criar
-         tarefa pra qualquer pessoa da agência, com qualquer texto e
-         qualquer prazo — bastava um script rodando em loop pra encher o
-         painel de todo mundo.
-         Agora entra em `pedidos_publicos`, que é uma caixa de entrada. O
-         escritório converte em demanda de verdade, do lado de dentro. */
+  const form=document.getElementById('formPedido'),btn=document.getElementById('btnEnviar'),erroPedido=document.getElementById('erroPedidoCp152'),painelPendente=document.getElementById('pendenteCp152');
+  let enviandoPedidoCp152=false;
+  const chavePedidoCp152=uid=>'get_publico_cp152:'+uid;
+  async function hashPedidoPublicoCp152(payload){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload)));return [...new Uint8Array(b)].map(n=>n.toString(16).padStart(2,'0')).join('');}
+  async function lerPedidoPublicoCp152(uid){
+    const raw=localStorage.getItem(chavePedidoCp152(uid));if(!raw)return null;
+    const op=JSON.parse(raw),prefixo='publico_cp152_'+uid+'_';
+    if(op.schema!==1||op.uid!==uid||typeof op.id!=='string'||!op.id.startsWith(prefixo)||!/^[a-f0-9]{32}$/.test(op.id.slice(prefixo.length))||await hashPedidoPublicoCp152(op.payload)!==op.hash)throw Error('A tentativa guardada precisa de conferência. Nenhum segundo pedido foi criado.');
+    return op;
+  }
+  authPronta.then(async()=>{try{const uid=auth.currentUser?.uid;if(uid)painelPendente.hidden=!(await lerPedidoPublicoCp152(uid));}catch(e){erroPedido.textContent=e.message;}});
+  window.enviarPedidoPublicoCp152=async function(retomar=false){
+    if(enviandoPedidoCp152)return;
+    enviandoPedidoCp152=true;btn.disabled=true;btn.textContent='Conferindo…';erroPedido.textContent='';
+    try{
       await authPronta;
-      await addDoc(collection(db, 'pedidos_publicos'), { ...dados, lido: false, viraDemanda: true });
-      form.style.display = 'none';
+      const uid=auth.currentUser?.uid||'';if(!uid)throw Error('Não consegui confirmar seu acesso. Tente novamente.');
+      const conferir=()=>{if(auth.currentUser?.uid!==uid)throw Error('A sessão mudou. A tentativa anterior continua guardada.');};
+      const valores=['clienteNome','pedidoDesc','tipoPedido','urgencia'].map(id=>document.getElementById(id).value.trim());
+      const [clienteNome,descricao,destinatario,urgencia]=valores,tipo=({Chris:'pedido_calendario',Gabrielle:'pedido_legenda','Cecília':'pedido_agendamento',Amanda:'pedido_geral'})[destinatario];
+      let op=await lerPedidoPublicoCp152(uid);conferir();
+      if(!op){
+        if(retomar)throw Error('Não há envio pendente para confirmar.');
+        if(!clienteNome||!descricao||!tipo)throw Error('Informe seu nome, o pedido e o assunto.');
+        const hoje=dataCivilPedidoCp152(),prazoData=urgencia==='hoje'?hoje:proximaDataUtil(hoje);
+        const payload={titulo:'Pedido de cliente: '+clienteNome,descricao,origem:'cliente',clienteNome,destinatario,tipo,prazoData,prazoHora:'19:00',status:'pendente',provaTexto:'',provaImagemUrl:''};
+        op={schema:1,id:'publico_cp152_'+uid+'_'+crypto.randomUUID().replaceAll('-',''),uid,payload,valores,hash:await hashPedidoPublicoCp152(payload)};
+        conferir();localStorage.setItem(chavePedidoCp152(uid),JSON.stringify(op));
+      }else if(!retomar&&JSON.stringify(valores)!==JSON.stringify(op.valores))throw Error('Existe um envio anterior aguardando confirmação. Use Confirmar envio pendente; seu novo texto continua aqui.');
+      painelPendente.hidden=false;
+      const ref=doc(db,'pedidos_publicos',op.id);conferir();
+      await runTransaction(db,async tx=>{
+        const s=await tx.get(ref);conferir();
+        if(s.exists()){
+          const salvo=s.data();
+          if(salvo.autorUid!==uid||salvo.protocoloCriacaoCp152!==op.id||Object.entries(op.payload).some(([k,v])=>salvo[k]!==v))throw Error('O recibo não corresponde ao pedido guardado. Nenhum registro foi sobrescrito.');
+          return;
+        }
+        tx.set(ref,{...op.payload,autorUid:uid,protocoloCriacaoCp152:op.id,lido:false,viraDemanda:true,criadoEm:serverTimestamp()});
+      });
+      conferir();
+      const atual=localStorage.getItem(chavePedidoCp152(uid));if(atual&&JSON.parse(atual).id===op.id)localStorage.removeItem(chavePedidoCp152(uid));
+      painelPendente.hidden=true;
+      const mesmos=['clienteNome','pedidoDesc','tipoPedido','urgencia'].every((id,i)=>document.getElementById(id).value.trim()===op.valores[i]);
+      if(mesmos)form.style.display='none';
+      else erroPedido.textContent='Pedido anterior confirmado. O novo texto que você digitou continua neste formulário.';
       document.getElementById('status').classList.add('show');
-    } catch(err){
-      alert('Algo deu errado. Tenta de novo ou chama no WhatsApp.');
-      btn.disabled = false; btn.textContent = 'Enviar pedido';
-    }
-  });
+    }catch(e){erroPedido.textContent='Não consegui confirmar o envio: '+(e.message||'tente novamente')+' Seu texto continua nesta tela. Se houver um envio pendente, use Confirmar envio pendente.';try{painelPendente.hidden=!localStorage.getItem(chavePedidoCp152(auth.currentUser?.uid||''));}catch{painelPendente.hidden=true;}}
+    finally{enviandoPedidoCp152=false;btn.disabled=false;btn.textContent='Enviar pedido';}
+  };
+  form.addEventListener('submit',e=>{e.preventDefault();return window.enviarPedidoPublicoCp152(false);});
 </script>
 </body>
 </html>

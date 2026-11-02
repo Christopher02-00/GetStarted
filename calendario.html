@@ -827,7 +827,7 @@
     </div>
     <div class="modalbtns" style="justify-content:flex-end;">
       <button class="btn btn-o" onclick="closeFeedback()">Fechar</button>
-      <button class="btn btn-y" onclick="submitFeedback()">Enviar</button>
+      <button id="btnEnviarRecadoCp152" class="btn btn-y" onclick="submitFeedback()">Enviar</button>
     </div>
     <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">
       <div class="lbl" style="margin-bottom:8px;">Comentários anteriores</div>
@@ -3502,8 +3502,30 @@ async function salvarComentarioEquipeDuranteRevisao(registro){
   });
 }
 
+let recadoClienteEmCursoCp152=false;
+const tentativasRecadoCp152=new Map();
+async function prepararRecadoCp152(registro,contexto){
+  const identidade={uid:contexto.uid,cliente:contexto.cliente,mes:registro.mes,texto:registro.text};
+  const assinatura=JSON.stringify(identidade);
+  const resumo=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(assinatura)))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const chave='gs_recado_cp152_'+resumo;
+  let pendente=tentativasRecadoCp152.get(chave);
+  if(!pendente){try{pendente=JSON.parse(sessionStorage.getItem(chave)||'null');}catch(e){}}
+  if(pendente){
+    if(pendente.schema!==1||pendente.assinatura!==assinatura||!pendente.registro||pendente.registro.text!==registro.text||pendente.registro.mes!==registro.mes||pendente.registro.porCliente!==true||typeof pendente.registro.id!=='string'||!/^comentario_[A-Za-z0-9_-]{8,100}$/.test(pendente.registro.id)||!Number.isFinite(Date.parse(pendente.registro.date)))throw Error('A tentativa do recado precisa ser conferida. Seu texto continua nesta tela.');
+  }else pendente={schema:1,assinatura,registro:{...registro}};
+  tentativasRecadoCp152.set(chave,pendente);
+  try{sessionStorage.setItem(chave,JSON.stringify(pendente));}catch(e){}
+  return{chave,registro:pendente.registro};
+}
+function concluirRecadoCp152(chave){
+  tentativasRecadoCp152.delete(chave);
+  try{sessionStorage.removeItem(chave);}catch(e){}
+}
 async function submitFeedback(){
-  const txt=document.getElementById('fbText').value.trim();
+  const campoRecadoCp152=document.getElementById('fbText');
+  const valorRecadoCp152=campoRecadoCp152.value;
+  const txt=valorRecadoCp152.trim();
   if(!txt)return;
   if(!data.comments)data.comments=[];
   const ehCliente = window.__modoCal === 'cliente';
@@ -3522,13 +3544,28 @@ async function submitFeedback(){
      pra equipe era criado, mas o texto não ficava guardado no calendário,
      então ninguém achava depois. Agora grava pelo caminho dele. */
   if(ehCliente){
-    salvarComoCliente((itens, comentarios) => { comentarios.unshift(registro); return true; }, 'deixou um recado')
-      .then(ok => {
-        if(!ok||!mesmoContextoRecadoCp151()) return;
-        document.getElementById('fbText').value='';
-        renderFeedback();
-        avisarEquipeDoRecado(txt,registro,contextoRecadoCp151);
-      });
+    if(recadoClienteEmCursoCp152)return;
+    const botao=document.getElementById('btnEnviarRecadoCp152');
+    recadoClienteEmCursoCp152=true;
+    if(botao){botao.disabled=true;botao.textContent='Enviando…';}
+    try{
+      if(!contextoRecadoCp151.uid||!contextoRecadoCp151.cliente||!mesmoContextoRecadoCp151())throw Error('A sessão do cliente mudou. Reabra o calendário antes de enviar.');
+      const tentativa=await prepararRecadoCp152(registro,contextoRecadoCp151);
+      if(!mesmoContextoRecadoCp151())throw Error('A sessão mudou. Seu texto foi preservado.');
+      Object.assign(registro,tentativa.registro);
+      const confirmado=await avisarEquipeDoRecado(txt,registro,contextoRecadoCp151,{criarSeAusente:true});
+      if(!confirmado)throw Error('Não consegui confirmar o recado e seu encaminhamento no servidor. Seu texto continua aqui; tente novamente para conferir a mesma tentativa.');
+      if(!mesmoContextoRecadoCp151())return;
+      concluirRecadoCp152(tentativa.chave);
+      if(campoRecadoCp152.isConnected&&campoRecadoCp152.value===valorRecadoCp152)campoRecadoCp152.value='';
+      renderFeedback();
+    }catch(e){
+      console.error('Falha ao confirmar recado CP152:',e);
+      if(mesmoContextoRecadoCp151())avisarTela(String(e?.message||'Não consegui confirmar o recado. Seu texto continua aqui.'),'erro');
+    }finally{
+      recadoClienteEmCursoCp152=false;
+      if(botao?.isConnected){botao.disabled=false;botao.textContent='Enviar';}
+    }
     return;
   }
 
@@ -3658,7 +3695,7 @@ async function registrarPedidoAjusteClienteNoBancoV113({item,itemIdx,texto,opera
       texto,itemNome,paraQuem:'Chris',lido:false,viraDemanda:true,tipo:'ajuste_calendario',
       operationId,competencia,itemId,itemIdx:alvo.indice,criadoEm:agora,registradoEm:fb.serverTimestamp()};
     pedidos[operationId]=pedido;
-    transacao.set(fb.docRef,{aprovacaoMeses:mapa,pedidoAjusteCliente:pedido,pedidosAjusteClienteI71:pedidos,updatedAt:agora},{merge:true});
+    transacao.update(fb.docRef,{aprovacaoMeses:mapa,pedidoAjusteCliente:pedido,pedidosAjusteClienteI71:pedidos,updatedAt:agora});
     transacao.set(avisoRef,aviso);
     return {marca,pedido:{...pedido,registradoEm:null},pedidos:{...pedidos,[operationId]:{...pedido,registradoEm:null}},updatedAt:agora,jaConfirmado:false};
   });
@@ -3721,7 +3758,7 @@ async function avisarEquipeDaAprovacao(item, idx){
   }catch(e){ console.error('Falha ao avisar a equipe da aprovação:', e); }
 }
 
-async function avisarEquipeDoRecado(txt,registro,contexto={fb:window.__fb,cliente:String(window.__clienteId||''),uid:String(window.__fbAuthUid||'')}){
+async function avisarEquipeDoRecado(txt,registro,contexto={fb:window.__fb,cliente:String(window.__clienteId||''),uid:String(window.__fbAuthUid||'')},opcoes={}){
   const vigente=()=>window.__modoCal==='cliente'&&window.__fb===contexto.fb&&String(window.__clienteId||'')===contexto.cliente&&String(window.__fbAuthUid||'')===contexto.uid;
   const conferir=()=>{if(!contexto.uid||!contexto.cliente||!vigente())throw Error('O cliente ou a sessão mudou. O comentário foi preservado.');};
   try{
@@ -3737,8 +3774,8 @@ async function avisarEquipeDoRecado(txt,registro,contexto={fb:window.__fb,client
       const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{}),comments=servidor.comments;
       if(!Array.isArray(comments))throw Error('Os comentários de origem precisam ser conferidos.');
       const alvos=comments.map((c,i)=>({c,i})).filter(({c})=>c?.id===registro.id);
-      if(alvos.length!==1)throw Error('O comentário de origem não é único neste calendário.');
-      const {c:atual,i:indice}=alvos[0];
+      if(alvos.length>1||(!alvos.length&&!opcoes.criarSeAusente))throw Error('O comentário de origem não é único neste calendário.');
+      const atual=alvos.length?alvos[0].c:registro,indice=alvos.length?alvos[0].i:-1;
       if(atual.porCliente!==true||atual.text!==txt||atual.date!==registro.date||atual.mes!==registro.mes)throw Error('O comentário de origem mudou. Nenhum aviso foi enviado.');
       const marca={schema:1,avisoId,paraQuem:'Chris',texto:txt};
       if(Object.hasOwn(atual,'encaminhamentoCp151')){
@@ -3747,7 +3784,7 @@ async function avisarEquipeDoRecado(txt,registro,contexto={fb:window.__fb,client
         return{registro:atual,comments,jaConfirmado:true};
       }
       const nome=window.nomeClienteCalendarioR4(servidor.client||cliente);
-      const atualizado={...atual,encaminhamentoCp151:marca},novos=comments.slice();novos[indice]=atualizado;
+      const atualizado={...atual,encaminhamentoCp151:marca},novos=comments.slice();if(indice<0)novos.unshift(atualizado);else novos[indice]=atualizado;
       conferir();
       tx.set(avisoRef,{
         cliente,clienteNome:nome,titulo:'💬 '+nome+' comentou no calendário',
@@ -3755,7 +3792,7 @@ async function avisarEquipeDoRecado(txt,registro,contexto={fb:window.__fb,client
         texto:txt,paraQuem:'Chris',tipo:'comentario_calendario',operationId:registro.id,comentarioId:registro.id,
         competencia:registro.mes,lido:false,viraDemanda:true,criadoEm:registro.date
       });
-      tx.update(fb.docRef,{comments:novos});
+      tx.update(fb.docRef,{comments:novos,...(indice<0?{updatedAt:new Date().toISOString()}:{})});
       return{registro:atualizado,comments:novos,jaConfirmado:false};
     });
     if(!vigente())return confirmado;

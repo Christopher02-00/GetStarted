@@ -1818,7 +1818,7 @@ function conferirAprovacaoI56(cal,esperado){
         </select>
       </div>
       <div class="field"><label>O que você precisa?</label><textarea id="novaDemandaTexto" placeholder="Descreve aqui o que você precisa da equipe..."></textarea></div>
-      <button class="btn" onclick="enviarDemandaCliente()">Enviar pedido à equipe</button>
+      <div id="pendenciaPedidoCp152">${htmlTentativaClienteCp152('pedido')}</div><button class="btn" onclick="enviarDemandaCliente()">Enviar pedido à equipe</button>
     </div>`;
 
     html += '<div class="card"><h2>Suas demandas</h2><div class="sub" style="margin-bottom:10px;">Aqui aparecem tanto os pedidos que você enviou quanto os que a nossa equipe registrou depois de reuniões e alinhamentos.</div>';
@@ -1857,21 +1857,67 @@ function conferirAprovacaoI56(cal,esperado){
     }
   };
 
-  window.enviarDemandaCliente = async function(){
+  function chaveTentativaClienteCp152(tipo,uid=auth.currentUser?.uid,cliente=clienteAtual?.slug){return ['get_cp152',tipo,uid||'',cliente||''].join(':');}
+  function lerTentativaClienteCp152(tipo){const raw=localStorage.getItem(chaveTentativaClienteCp152(tipo));return raw?JSON.parse(raw):null;}
+  function guardarTentativaClienteCp152(tipo,op){localStorage.setItem(chaveTentativaClienteCp152(tipo,op.uid,op.cliente),JSON.stringify(op));}
+  function limparTentativaClienteCp152(tipo,op){const k=chaveTentativaClienteCp152(tipo,op.uid,op.cliente),raw=localStorage.getItem(k);if(raw&&JSON.parse(raw).id===op.id)localStorage.removeItem(k);}
+  async function hashTentativaClienteCp152(payload){const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload)));return [...new Uint8Array(bytes)].map(n=>n.toString(16).padStart(2,'0')).join('');}
+  async function tentativaClienteCp152(tipo,payload,retomar=false){
+    const uid=auth.currentUser?.uid||'',cliente=clienteAtual?.slug||'',contexto=contextoPortalI41();
+    if(!uid||!cliente)throw Error('Confirme seu acesso ao Portal antes de enviar.');
+    let op=lerTentativaClienteCp152(tipo);
+    if(op){
+      const prefixo='portal_'+tipo+'_cp152_'+uid+'_';
+      if(op.schema!==1||op.uid!==uid||op.cliente!==cliente||typeof op.id!=='string'||!op.id.startsWith(prefixo)||!/^[a-f0-9]{32}$/.test(op.id.slice(prefixo.length))||await hashTentativaClienteCp152(op.payload)!==op.hash)throw Error('A tentativa guardada precisa de conferência. Nenhum outro pedido foi criado.');
+      if(!retomar&&JSON.stringify(op.payload)!==JSON.stringify(payload))throw Error('Existe um envio anterior aguardando confirmação. Use Confirmar envio pendente; seu novo texto continua aqui.');
+    }else{
+      if(retomar)throw Error('Não há envio pendente para confirmar.');
+      op={schema:1,id:'portal_'+tipo+'_cp152_'+uid+'_'+crypto.randomUUID().replaceAll('-',''),uid,cliente,payload,hash:await hashTentativaClienteCp152(payload)};
+      if(contexto!==contextoPortalI41())throw Error('O cliente mudou antes do envio.');
+      guardarTentativaClienteCp152(tipo,op);
+    }
+    if(contexto!==contextoPortalI41())throw Error('O cliente mudou antes do envio.');
+    return op;
+  }
+  function htmlTentativaClienteCp152(tipo){
+    try{const op=lerTentativaClienteCp152(tipo);return op?'<p role="status">Um envio anterior aguarda confirmação.</p><button type="button" class="btn secondary" onclick="'+(tipo==='pedido'?'enviarDemandaCliente':'enviarReferenciaCliente')+'(true)">Confirmar envio pendente</button>':'';}
+    catch(e){return '<p role="alert">Não consegui ler a tentativa guardada. Seu texto deve ser preservado para conferência.</p>';}
+  }
+  function atualizarTentativaClienteCp152(tipo){const box=document.getElementById(tipo==='pedido'?'pendenciaPedidoCp152':'pendenciaReferenciaCp152');if(box)box.innerHTML=htmlTentativaClienteCp152(tipo);}
+  window.enviarDemandaCliente = async function(retomar=false){
     if(enviosEmpresaI144)return;
     const campo=document.getElementById('novaDemandaTexto'),texto=campo.value.trim();
-    if(!texto){alert('Escreve o que você precisa.');return;}
-    const cliente=clienteAtual,contexto=contextoPortalI41(),destinatario=document.getElementById('novaDemandaDestino').value;
+    if(!texto&&!retomar){alert('Escreve o que você precisa.');return;}
+    const cliente=clienteAtual,contexto=contextoPortalI41(),seletor=document.getElementById('novaDemandaDestino'),destinatario=seletor.value;
     const tipo=({Chris:'pedido_calendario',Gabrielle:'pedido_legenda','Cecília':'pedido_agendamento',Amanda:'pedido_geral'})[destinatario];
     if(!tipo){alert('Escolha o assunto do pedido.');return;}
     let empresa={};try{empresa=GetEmpresasOtavioI144.campos(cliente.slug,document.getElementById('novaDemandaEmpresaI144')?.value||'');}catch(e){alert(e.message);return;}
     enviosEmpresaI144++;
     try{
-      const refCliente=await addDoc(collection(db,'demandas_cliente'),{cliente:cliente.slug,clienteNome:cliente.nome,...empresa,texto,status:'pendente',criadoEm:serverTimestamp()});
-      if(contexto!==contextoPortalI41())return;
-      await addDoc(collection(db,'avisos_do_cliente'),{cliente:cliente.slug,clienteNome:cliente.nome,...empresa,titulo:'Cliente pediu: '+texto.slice(0,60),descricao:texto,paraQuem:destinatario,tipo,demandaClienteId:refCliente.id,lido:false,viraDemanda:true,criadoEm:serverTimestamp()});
-      if(contexto===contextoPortalI41()&&campo.isConnected&&campo.value.trim()===texto){campo.value='';await carregarDemandas();}
-    }finally{enviosEmpresaI144--;}
+      const op=await tentativaClienteCp152('pedido',{cliente:cliente.slug,clienteNome:cliente.nome,...empresa,texto,destinatario,tipo},retomar);
+      const conferir=()=>{if(contexto!==contextoPortalI41()||auth.currentUser?.uid!==op.uid||clienteAtual?.slug!==op.cliente)throw Error('O cliente ou a sessão mudou. O envio guardado continua pendente.');};
+      const p=op.payload,refCliente=doc(db,'demandas_cliente',op.id),avisoRef=doc(db,'avisos_do_cliente',op.id);
+      conferir();
+      await runTransaction(db,async tx=>{
+        const [fonte,aviso]=await Promise.all([tx.get(refCliente),tx.get(avisoRef)]);conferir();
+        if(fonte.exists()||aviso.exists()){
+          if(!fonte.exists()||!aviso.exists())throw Error('O recibo deste pedido está incompleto. Nenhum segundo pedido foi criado.');
+          const f=fonte.data(),a=aviso.data();
+          if(f.autorUid!==op.uid||a.autorUid!==op.uid||f.protocoloCriacaoCp152!==op.id||a.protocoloCriacaoCp152!==op.id||a.demandaClienteId!==op.id||f.cliente!==p.cliente||a.cliente!==p.cliente||f.texto!==p.texto||a.descricao!==p.texto||a.paraQuem!==p.destinatario||a.tipo!==p.tipo||String(f.empresaOtavio||'')!==String(p.empresaOtavio||'')||String(a.empresaOtavio||'')!==String(p.empresaOtavio||''))throw Error('A identidade ou o texto deste pedido mudou. Confira o recibo; nada foi sobrescrito.');
+          return;
+        }
+        const {destinatario:destino,tipo:assunto,...conteudo}=p,{texto:pedidoTexto,...identidadePedido}=conteudo,comum={autorUid:op.uid,protocoloCriacaoCp152:op.id,criadoEm:serverTimestamp()};
+        tx.set(refCliente,{...conteudo,status:'pendente',...comum});
+        tx.set(avisoRef,{...identidadePedido,titulo:'Cliente pediu: '+pedidoTexto.slice(0,60),descricao:pedidoTexto,paraQuem:destino,tipo:assunto,demandaClienteId:op.id,lido:false,viraDemanda:true,...comum});
+      });
+      conferir();limparTentativaClienteCp152('pedido',op);atualizarTentativaClienteCp152('pedido');
+      if(seletor.isConnected&&document.getElementById('novaDemandaDestino')===seletor&&seletor.value===p.destinatario){
+        for(const opcao of seletor.options)opcao.defaultSelected=opcao.value===p.destinatario;
+      }
+      if(campo.isConnected&&campo.value.trim()===p.texto){campo.value='';await carregarDemandas();}
+      else alert('Pedido confirmado para a equipe. O novo texto que você digitou continua nesta tela.');
+    }catch(e){if(contexto===contextoPortalI41()){atualizarTentativaClienteCp152('pedido');alert('Não consegui confirmar o envio: '+(e.message||'tente novamente')+' Seu texto continua nesta tela. Se houver um envio pendente, use Confirmar envio pendente.');}}
+    finally{enviosEmpresaI144--;}
   };
 
   async function carregarDrive(){
@@ -2176,7 +2222,7 @@ function conferirAprovacaoI56(cal,esperado){
       <div class="field" style="margin-top:8px;"><label>Link da imagem de capa (opcional)</label><input type="text" id="novaRefCapa" placeholder="Cola o link de uma imagem, se tiver"></div>
       <div class="field" style="margin-top:8px;"><label>Descrição da ideia</label><textarea id="novaRefDesc" placeholder="O que te chamou atenção nessa referência..."></textarea></div>
       <div class="field" style="margin-top:8px;"><label>Observações (opcional)</label><textarea id="novaRefObs"></textarea></div>
-      <button class="btn" onclick="enviarReferenciaCliente()">Adicionar referência</button>
+      <div id="pendenciaReferenciaCp152">${htmlTentativaClienteCp152('referencia')}</div><button class="btn" onclick="enviarReferenciaCliente()">Adicionar referência</button>
     </div>
     <div class="card"><h2>Suas referências</h2>
       ${falhaLeitura?'<div style="border-left:3px solid var(--yellow);background:#4a3a12;color:#ffe9a8;border-radius:7px;padding:10px 12px;margin:10px 0;font-size:12px;line-height:1.5;"><b>Não foi possível atualizar a lista agora.</b><br>'+(minhas.length?'Abaixo está a última lista confirmada; nada foi apagado.':'Nada foi considerado vazio ou apagado. Tente novamente quando a conexão voltar.')+'</div>':''}`;
@@ -2226,47 +2272,38 @@ function conferirAprovacaoI56(cal,esperado){
   window.idReferenciaClienteDeterministico=idReferenciaClienteDeterministico;
   window.referenciaClienteConfirmada=referenciaClienteConfirmada;
 
-  window.enviarReferenciaCliente = async function(){
-    if(window.__enviandoReferenciaCliente) return;
-    window.__enviandoReferenciaCliente=true;
+  window.enviarReferenciaCliente = async function(retomar=false){
+    if(window.__enviandoReferenciaCliente||enviosEmpresaI144)return;
+    const contexto=contextoPortalI41(),cliente={slug:clienteAtual.slug,nome:clienteAtual.nome},uid=auth.currentUser?.uid||'';
+    const ids=['novaRefLink','novaRefCapa','novaRefDesc','novaRefObs'],campos=ids.map(id=>document.getElementById(id)),valores=campos.map(c=>c.value.trim());
+    window.__enviandoReferenciaCliente=true;enviosEmpresaI144++;
     try{
-      const dados={
-        cliente:clienteAtual.slug, clienteNome:clienteAtual.nome,
-        link:document.getElementById('novaRefLink').value.trim(),
-        imagemCapa:document.getElementById('novaRefCapa').value.trim(),
-        descricao:document.getElementById('novaRefDesc').value.trim(),
-        observacoes:document.getElementById('novaRefObs').value.trim()
-      };
-      if(!dados.link && !dados.descricao){ alert('Cola o link ou escreve a descrição.'); return; }
-      const referenciaId=idReferenciaClienteDeterministico(dados);
-      const referenciaRef=doc(db,'referencias_cliente',referenciaId);
-      const criada=await runTransaction(db,async tx=>{
-        const existente=await tx.get(referenciaRef);
+      const dados={cliente:cliente.slug,clienteNome:cliente.nome,link:valores[0],imagemCapa:valores[1],descricao:valores[2],observacoes:valores[3]};
+      if(!dados.link&&!dados.descricao&&!retomar){alert('Cola o link ou escreve a descrição.');return;}
+      const op=await tentativaClienteCp152('referencia',dados,retomar),p=op.payload,referenciaId=idReferenciaClienteDeterministico(p),referenciaRef=doc(db,'referencias_cliente',referenciaId),avisoRef=doc(db,'avisos_do_cliente',op.id);
+      const conferir=()=>{if(contexto!==contextoPortalI41()||auth.currentUser?.uid!==uid||op.uid!==uid||p.cliente!==cliente.slug)throw Error('O cliente ou a sessão mudou. A referência guardada continua pendente.');};
+      conferir();
+      const confirmado=await runTransaction(db,async tx=>{
+        const existente=await tx.get(referenciaRef);conferir();
         if(existente.exists()){
-          if(!referenciaClienteConfirmada(existente,referenciaId,dados)) throw new Error('A identidade desta referência já pertence a outro conteúdo.');
-          return false;
+          const atual=existente.data(),marca=atual.encaminhamentoCp152;
+          if(!marca){if(!referenciaClienteConfirmada(existente,referenciaId,p))throw Error('A identidade desta referência já pertence a outro conteúdo ou estado.');return {legado:true};}
+          if(atual.criadoPorTipo!=='cliente'||Object.entries(p).some(([k,v])=>atual[k]!==v))throw Error('A identidade desta referência já pertence a outro conteúdo.');
+          if(marca.schema!==1||marca.sourceId!==referenciaId||marca.hashPayload!==op.hash||marca.autorUid!==uid||marca.paraQuem!=='Chris'||typeof marca.avisoId!=='string')throw Error('O recibo desta referência precisa ser conferido; nada foi sobrescrito.');
+          return {legado:false};
         }
-        tx.set(referenciaRef,{...dados,status:'nao_utilizada',aprovadaCliente:false,
-          criadoPor:clienteAtual.nome,criadoPorTipo:'cliente',criadoEm:serverTimestamp()});
-        return true;
+        const marca={schema:1,sourceId:referenciaId,avisoId:op.id,hashPayload:op.hash,autorUid:uid,paraQuem:'Chris'};
+        tx.set(referenciaRef,{...p,status:'nao_utilizada',aprovadaCliente:false,criadoPor:p.clienteNome,criadoPorTipo:'cliente',criadoEm:serverTimestamp(),encaminhamentoCp152:marca});
+        tx.set(avisoRef,{cliente:p.cliente,clienteNome:p.clienteNome,titulo:'🔗 '+p.clienteNome+' mandou uma referência nova',descricao:[p.link,p.descricao,p.observacoes].filter(Boolean).join('\n\n'),paraQuem:'Chris',tipo:'referencia_cliente',referenciaId,autorUid:uid,protocoloCriacaoCp152:op.id,lido:false,viraDemanda:true,criadoEm:serverTimestamp()});
+        return {legado:false};
       });
-      const recibo=await getDoc(referenciaRef);
-      if(!referenciaClienteConfirmada(recibo,referenciaId,dados)) throw new Error('A referência foi gravada, mas a confirmação ainda não pôde ser validada. Tente confirmar novamente; o sistema reutilizará o mesmo registro.');
-      /* O Hub de Referências já lê `referencias_cliente` diretamente. O
-         aviso é secundário: se falhar, a referência confirmada continua no
-         lugar certo e não parece ter falhado, evitando reenvio duplicado. */
-      if(criada){
-        try{ await alertarEquipe('🔗 '+clienteAtual.nome+' mandou uma referência nova',dados.link||dados.descricao,'Chris',null,'referencia_cliente'); }
-        catch(e){ console.error('Referência confirmada; apenas o aviso para a equipe falhou:',e); }
-      }
-      ['novaRefLink','novaRefCapa','novaRefDesc','novaRefObs'].forEach(id=>document.getElementById(id).value='');
-      await carregarReferenciasCliente();
-    }catch(e){
-      console.error('Falha ao confirmar referência do cliente:',e);
-      alert(e?.message||'Não foi possível confirmar a referência agora. Nada será duplicado numa nova tentativa.');
-    }finally{
-      window.__enviandoReferenciaCliente=false;
-    }
+      conferir();limparTentativaClienteCp152('referencia',op);atualizarTentativaClienteCp152('referencia');
+      if(confirmado.legado){alert('Esta referência já existia no banco. O envio à Central não possui recibo desta tentativa; a equipe pode conferir a referência original. Nenhum novo aviso foi criado.');return;}
+      const enviados=[p.link,p.imagemCapa,p.descricao,p.observacoes];
+      if(campos.every((c,i)=>c.isConnected&&c.value.trim()===enviados[i])){campos.forEach(c=>c.value='');await carregarReferenciasCliente();}
+      else alert('Referência confirmada na Central de ajustes. O novo texto que você digitou continua nesta tela.');
+    }catch(e){if(contexto===contextoPortalI41()){atualizarTentativaClienteCp152('referencia');alert('Não consegui confirmar a referência: '+(e.message||'tente novamente')+' Seu texto continua nesta tela. Se houver um envio pendente, use Confirmar envio pendente.');}}
+    finally{window.__enviandoReferenciaCliente=false;enviosEmpresaI144--;}
   };
 
   window.aprovarReferenciaCliente = async function(id){

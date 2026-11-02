@@ -2091,6 +2091,7 @@ import {TIPO_I153,gruposCampanhaI153,idAvisoI153,avisoValidoI153,textoAvisoI153,
 import {referenciaI106,resolverI106,resumoI106,precisaRevisarI106,chaveI106,referenciaEscolhidaI106,escolherConteudosI106} from './gs-identidade-conteudo-i106.mjs?v=i144-1';
 import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,patchSincroniaDemandaI93} from './gs-demandas-cliente-i93.mjs?v=i144-1';
   import { criarEsperaDemandaCp149, ehAvisoEsperaCp149, revisorEsperaAprovacaoCp149 } from "./gs-espera-demanda-cp149.mjs?v=03dd3869814d4db3d3c4295ea30191bb4a4e45b6ddca0a694d48deca5ff6020b";
+  import * as GetDestinoPedidosCp151 from "./gs-destino-pedidos-cp151.mjs?v=340c109b28053df042840712097f3ddb8bc67dc81558fba88b8faf17aa6a1fbf";
   import { criarRepasseDemandaCp148 } from "./gs-repasse-demanda-cp148.mjs?v=ef96a2c6dd5e64db58fca7bcca5e1566f19ac70c4057f379f9c25074938e4720";
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=8d4a6f999380940cdab7582646c4195361336d5652b762037aa7e5d332cbdfc2";
@@ -2965,30 +2966,43 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
 
   /* I54: a identidade é a entrada, nunca o título do pedido. A demanda e
      o recibo nascem juntos; repetir a leitura não duplica nem perde texto. */
-  async function converterEntradaClienteI54(caixa,entradaId,validar=()=>{}){
+  async function converterEntradaClienteI54(caixa,entradaId,validar=()=>{},reencaminharExistente=false){
     if(!['avisos_do_cliente','pedidos_publicos'].includes(caixa)||!entradaId) throw new Error('Origem do pedido inválida.');
+    const identidade=contextoPreparacaoR80();
+    const conferir=()=>{validar();if(!identidade.uid||auth.currentUser?.isAnonymous===true||JSON.stringify(contextoPreparacaoR80())!==JSON.stringify(identidade))throw Error('O perfil mudou. Confira os pedidos novamente.');};
+    conferir();
     const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([caixa,String(entradaId)])));
     const demandaId='entrada_i54_'+Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
-    validar();
+    conferir();
     const origemRef=doc(db,caixa,String(entradaId)),destinoRef=doc(db,'demandas',demandaId);
-    return runTransaction(db,async tx=>{
-      validar();
+    const resultado=await runTransaction(db,async tx=>{
+      conferir();
       const origem=await tx.get(origemRef);
-      validar();
+      conferir();
       if(!origem.exists()) return false;
       const a=origem.data()||{};
-      if(a.lido||a.viraDemanda===false||a.cancelado||a.excluido) return false;
+      if(a.viraDemanda===false||a.cancelado||a.excluido||(a.lido&&!reencaminharExistente)) return false;
       const cliente=String(a.cliente||a.clienteSlug||a.slug||'');
       if(!fonteFisicaClienteR4(cliente,a)) return false;
       const existente=await tx.get(destinoRef);
-      validar();
+      conferir();
+      const rota=GetDestinoPedidosCp151.roteamentoPedidoClienteCp151(a,caixa);
+      const pretendido=rota.pretendido,destino=DESTINATARIOS_DEMANDA.includes(rota.destinatario)?rota.destinatario:'Amanda';
+      let reencaminhado=false;
       if(existente.exists()){
         const d=existente.data()||{};
         if(d.origemAvisoColecao!==caixa||d.origemAvisoId!==String(entradaId)) throw new Error('O vínculo deste pedido precisa de conferência.');
+        if(a.demandaInternaId&&a.demandaInternaId!==demandaId)throw Error('O recibo deste pedido aponta a outra demanda. Nenhum vínculo foi alterado.');
+        if(GetDestinoPedidosCp151.reencaminhamentoPedidoClienteCp151(a,d,caixa,String(entradaId))){
+          const em=new Date().toISOString();
+          if(!Array.isArray(d.historico||[]))throw Error('O histórico do pedido precisa de conferência.');
+          conferir();
+          tx.update(destinoRef,{destinatario:'Chris',roteamentoPedidosCp151:{schema:1,caixa,entradaId:String(entradaId),anterior:'Gabrielle',destino:'Chris',em,atorReal:identidade.atorReal,papelOperado:identidade.nome},historico:[...(d.historico||[]),{acao:'Pedido encaminhado diretamente à Central de ajustes',de:'Gabrielle',para:'Chris',por:identidade.atorReal,papelOperado:identidade.nome,em,operacao:'cp151_'+demandaId.slice(12)}]});
+          reencaminhado=true;
+        }
+        if(a.lido)return reencaminhado?'reencaminhado':false;
       }else{
-        const pretendido=String(a.paraQuem||a.destinatario||'Amanda').trim()||'Amanda';
-        const ajusteCalendarioI172=caixa==='avisos_do_cliente'&&pretendido==='Gabrielle'&&['ajuste_calendario','observacao_calendario'].includes(a.tipo);
-        const destino=ajusteCalendarioI172?'Chris':DESTINATARIOS_DEMANDA.includes(pretendido)?pretendido:'Amanda';
+        if(a.lido||reencaminharExistente)return false;
         const nome=String(a.clienteNome||cliente||'');
         let titulo=String(a.titulo||('Pedido de '+(nome||'cliente')));
         const competencia=String(a.competencia||a.mes||a.mesRef||'');
@@ -2998,12 +3012,13 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
         if(/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)) descricao+='\n\nMês do pedido: '+competencia.split('-').reverse().join('/');
         if(a.itemNome) descricao+='\nConteúdo: '+String(a.itemNome);
         descricao+='\n\n— veio do '+deOnde;
-        if(ajusteCalendarioI172){
-          descricao+='\n\nEsse ajuste do calendário fica com o Chris. O retorno do cliente está preservado acima.';
-        }else if(destino!==pretendido){
+        if(rota.editorial&&destino==='Chris'){
+          descricao+='\n\nCentral de ajustes: análise e acompanhamento com Chris. O pedido original do cliente está preservado acima.';
+        }else if(destino!==pretendido&&!rota.legenda){
           titulo='↪️ (era pra '+pretendido+') '+titulo;
           descricao='Este pedido era para '+pretendido+', que não tem acesso ao sistema. Amanda, confira o encaminhamento.\n\n'+descricao;
         }
+        conferir();
         tx.set(destinoRef,{
           titulo,descricao,destinatario:destino,origem:'cliente',clienteNome:nome,...GetEmpresasOtavioI144.campos(cliente,a),
           ...(cliente?{cliente,clienteSlug:cliente}:{}),
@@ -3012,20 +3027,42 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
           criadoEm:new Date().toISOString(),origemAvisoColecao:caixa,origemAvisoId:String(entradaId),
           operationId:String(a.operationId||''),competencia,itemId,itemNome:String(a.itemNome||''),
           tipoPedidoCliente:String(a.tipo||''),conversaoVersao:'i54',
-          ...(ajusteCalendarioI172?{encaminhamentoEditorialI172:{anterior:pretendido,atual:destino,motivo:'Papel atual de preparação da Gabi; ajuste editorial com Chris',origemPreservada:true}}:{}),
-          ...(destino!==pretendido?{destinatarioPretendido:pretendido}:{})
+          roteamentoPedidosCp151:{schema:1,destino,classe:rota.legenda?'legenda':rota.editorial?'calendario':'equipe'},
+          ...(destino!==pretendido&&!rota.editorial&&!rota.legenda?{destinatarioPretendido:pretendido}:{})
         });
       }
+      conferir();
       tx.update(origemRef,{lido:true,convertidoEm:new Date().toISOString(),demandaInternaId:demandaId,conversaoVersao:'i54'});
-      return true;
+      return reencaminhado?'reencaminhado':true;
     });
+    conferir();
+    return resultado;
+  }
+
+  async function reconciliarDestinosClientesCp151(validar){
+    const identidade=contextoPreparacaoR80();
+    const conferir=()=>{validar();if(!identidade.uid||auth.currentUser?.isAnonymous===true||JSON.stringify(contextoPreparacaoR80())!==JSON.stringify(identidade))throw Error('O perfil mudou. Confira os encaminhamentos novamente.');};
+    conferir();
+    if(!['Chris','Amanda'].includes(identidade.nome))return 0;
+    const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'demandas'),where('destinatario','==','Gabrielle'),where('origem','==','cliente'),where('status','in',['pendente','em_andamento']),limit(151))),'Conferir encaminhamentos dos clientes',12000);
+    conferir();
+    if(snap.size>150)throw Error('Há mais pedidos antigos que o limite desta conferência. Nada foi reencaminhado; a gestão precisa conferir o lote.');
+    let atualizados=0;
+    for(const registro of snap.docs){
+      conferir();const d=registro.data()||{};
+      if(!['pendente','em_andamento'].includes(d.status)||d.excluido||d.arquivado||!['avisos_do_cliente','pedidos_publicos'].includes(d.origemAvisoColecao)||!d.origemAvisoId)continue;
+      const resultado=await converterEntradaClienteI54(d.origemAvisoColecao,String(d.origemAvisoId),conferir,true);
+      conferir();if(resultado==='reencaminhado')atualizados++;
+    }
+    return atualizados;
   }
 
   async function converterAvisosDoCliente(opcoes={}){
-    const resultado={recebidos:0,falhas:0};
+    const resultado={recebidos:0,atualizados:0,falhas:0};
     const validar=opcoes.validar||(()=>{});
     const pessoa=opcoes.pessoa||'';
     const gestao=!pessoa||['Amanda','Chris'].includes(pessoa);
+    if(gestao){try{resultado.atualizados=await reconciliarDestinosClientesCp151(validar);}catch(e){validar();resultado.falhas++;console.error('Os encaminhamentos anteriores continuam preservados:',e);}}
     for(const caixa of ['avisos_do_cliente','pedidos_publicos']){
       validar();
       const pendentes=new Set();
@@ -3047,7 +3084,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
       }
       for(const id of pendentes){
         validar();
-        try{if(await converterEntradaClienteI54(caixa,id,validar))resultado.recebidos++;}
+        try{const r=await converterEntradaClienteI54(caixa,id,validar);if(r==='reencaminhado')resultado.atualizados++;else if(r)resultado.recebidos++;}
         catch(e){validar();resultado.falhas++;console.error('O pedido '+id+' continua pendente de encaminhamento:',e);}
       }
     }
@@ -3089,7 +3126,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
           return false;
         }
         const alcance=['Amanda','Chris'].includes(pessoa)?'à equipe':'para você';
-        status.textContent='Conferido às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})+'. '+resultado.recebidos+' novo(s) pedido(s) encaminhado(s) '+alcance+'. Sua lista foi atualizada; os filtros escolhidos continuam valendo.';
+        status.textContent='Conferido às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})+'. '+resultado.recebidos+' novo(s) pedido(s) encaminhado(s) '+alcance+(resultado.atualizados?' · '+resultado.atualizados+' encaminhamento(s) anterior(es) atualizado(s) na mesma demanda.':'')+'. Sua lista foi atualizada; os filtros escolhidos continuam valendo.';
         return true;
       }catch(e){
         if(atual()){

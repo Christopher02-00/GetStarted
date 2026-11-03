@@ -6787,12 +6787,12 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     const documentos=docs.filter(d=>d.exists()).map(d=>({id:d.id,data:d.data()}));
     return {fontes,documentos,linhas:linhasReferenciaI78(documentos,canonico)};
   }
-  async function prepararIdentidadesI106(posts){
+  async function prepararIdentidadesI106(posts,leituraVigente=()=>true){
     const contexto=sessaoServicoManual();
     const clientes=[...new Set(posts.filter(p=>referenciaI106(p)).map(p=>p.cliente))];
     await Promise.all(clientes.map(async cliente=>{
       let valor;try{valor={...await lerIdentidadesClienteI106(cliente),disponivel:true};}catch(e){valor={linhas:[],disponivel:false};}
-      if(contexto===sessaoServicoManual())__identidadesI106.set(cliente,valor);
+      if(contexto===sessaoServicoManual()&&leituraVigente())__identidadesI106.set(cliente,valor);
     }));
   }
   function identidadePostI106(p){
@@ -16794,13 +16794,56 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
     if(editado){document.getElementById('empresaPostagensI144').value=atual;mostrarToast('Conclua ou limpe os campos que preencheu antes de trocar a empresa. Seus dados continuam aqui.','erro');return;}
     filtrosEmpresaPostagensI144.set(chaveEmpresaPostagensI144(area),GetEmpresasOtavioI144.selecao(valor));void renderizar();
   };
+  // CP164: somente a adoção desta leitura tem prazo; envios e decisões conservam seus contratos.
+  const LIMITE_LEITURA_AGENDAR_CP164_MS=90000;
+  let __leituraAgendarCp164=null;
+  function iniciarLeituraAgendarCp164(cont,contextoVigente,retomar){
+    __leituraAgendarCp164?.abandonar();
+    let estado='lendo',timer=null,rejeitar;
+    const interrupcao=new Promise((_,reject)=>{rejeitar=reject;});
+    interrupcao.catch(()=>{});
+    const anterior=cont.querySelector('[data-leitura-agendamento-i90]');anterior?.remove();
+    const painel=document.createElement('section');painel.dataset.leituraAgendamentoI90='';painel.className='card';
+    const texto=document.createElement('p');texto.setAttribute('role','status');
+    const acoes=document.createElement('div');acoes.className='btnrow';
+    const cancelar=document.createElement('button');cancelar.type='button';cancelar.className='btn secondary';cancelar.textContent='Cancelar consulta';
+    const tentar=document.createElement('button');tentar.type='button';tentar.className='btn secondary';tentar.textContent='Tentar novamente';tentar.hidden=true;
+    acoes.append(cancelar,tentar);painel.append(texto,acoes);cont.prepend(painel);
+    const ativa=()=>estado==='lendo'&&contextoVigente();
+    const pararTimer=()=>{if(timer!==null){clearTimeout(timer);timer=null;}};
+    const recado=mensagem=>{if(!contextoVigente()||!painel.isConnected)return;texto.textContent=mensagem;cancelar.hidden=true;tentar.hidden=false;};
+    function interromper(motivo, mensagem){
+      if(estado!=='lendo')return;estado=motivo;pararTimer();
+      if(mensagem)recado(mensagem);else painel.remove();
+      rejeitar(Object.assign(new Error(motivo==='tempo'?'A consulta demorou mais que o esperado.':'A consulta não será adotada.'),{code:'cp164/leitura-'+motivo}));
+    }
+    const consulta={
+      ativa,
+      esperar(fase,promessa){
+        if(!ativa()){interromper('contexto');return Promise.reject(Object.assign(new Error('O acesso ou a tela mudou.'),{code:'cp164/leitura-contexto'}));}
+        texto.textContent=fase+'… Você pode continuar usando o site. A lista anterior e os campos serão mantidos durante a consulta.';
+        return Promise.race([Promise.resolve(promessa),interrupcao]);
+      },
+      falhar(mensagem){if(!ativa())return;estado='falha';pararTimer();recado(mensagem);},
+      abandonar(){interromper('substituida');},
+      finalizar(){pararTimer();if(estado==='lendo'){estado='concluida';painel.remove();}if(__leituraAgendarCp164===consulta)__leituraAgendarCp164=null;}
+    };
+    cancelar.onclick=()=>interromper('cancelada','Consulta pausada. A lista anterior e os campos continuam aqui. Quando quiser, tente novamente; nenhum envio será repetido.');
+    tentar.onclick=()=>{if(contextoVigente()&&estado!=='lendo')void retomar();};
+    timer=setTimeout(()=>interromper('tempo','A consulta demorou mais que o esperado. A lista anterior e os campos continuam aqui. Tente novamente quando quiser.'),LIMITE_LEITURA_AGENDAR_CP164_MS);
+    __leituraAgendarCp164=consulta;return consulta;
+  }
+
   async function renderAgendarPostagens(idAlteradoI84=''){
     const cont = document.getElementById('postagensConteudo');
     if(!cont||!document.getElementById('view-postagens')?.classList.contains('active')||__postSubI84!=='agendar')return;
     const leitura=++__geracaoAgendarI84,sessao=sessaoServicoManual();
+    const contextoVigente=()=>leitura===__geracaoAgendarI84&&sessao===sessaoServicoManual()&&__postSubI84==='agendar'&&document.getElementById('view-postagens')?.classList.contains('active')&&document.getElementById('postagensConteudo')===cont;
+    const consultaCp164=iniciarLeituraAgendarCp164(cont,contextoVigente,()=>renderAgendarPostagens(idAlteradoI84));
+    const vigente=()=>consultaCp164.ativa();
     let idsCompromissosI165=[],permitirSemLegendaCp110=false;
+    try{
     const configCp119=carregarConfigOperacionalI165().then(cfg=>cfg.permitirAgendarSemLegendaI90===true).catch(()=>false);
-    const vigente=()=>leitura===__geracaoAgendarI84&&sessao===sessaoServicoManual()&&__postSubI84==='agendar'&&document.getElementById('view-postagens')?.classList.contains('active');
     guardarRascunhosProgramacaoI165();
     const campos=new Map([...cont.querySelectorAll('input[id],textarea[id],select[id]')].map(el=>[el.id,{value:el.value,checked:el.checked}]));
     const foco=document.activeElement?.id;
@@ -16817,16 +16860,9 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
       void uiOperacionalI165.anexarPostagens(cont,idsCompromissosI165);
       void uiPostagensI165.restaurarPendentes(cont);
     };
-    // A leitura preserva o formulário e sinaliza quando ainda mostra o retrato anterior.
-    let leituraStatus=cont.querySelector('[data-leitura-agendamento-i90]');
-    if(!leituraStatus){leituraStatus=document.createElement('p');leituraStatus.dataset.leituraAgendamentoI90='';leituraStatus.setAttribute('role','status');cont.prepend(leituraStatus);}
-    leituraStatus.textContent='Atualizando liberações e agendamentos… Os campos preenchidos serão mantidos.';
-    const falhaLeituraI90=()=>{if(vigente()&&leituraStatus.isConnected)leituraStatus.textContent='Não foi possível atualizar. A lista anterior foi mantida; tente novamente.';};
-    // Keep existing fields while the new read is pending, including on a network failure.
-    if(!cont.querySelector('input,textarea,select'))leituraStatus.textContent='Confirmando liberações e agendamentos…';
     let postSnap,agSnap;
     try{
-      [postSnap,agSnap,permitirSemLegendaCp110] = await Promise.all([
+      [postSnap,agSnap,permitirSemLegendaCp110] = await consultaCp164.esperar('Conferindo liberações e agendamentos',Promise.all([
         /* A aprovação pode chegar antes da legenda. Mostrar a etapa anterior
            junto do agendamento, mantendo fora os estados encerrados. */
         _getDocsFromServerFB(query(collection(db,'postagens'), where('status','in',['aguardando_legenda','aguardando_agendamento','agendado']))),
@@ -16834,18 +16870,12 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
            navegador dela. */
         _getDocsFromServerFB(query(collection(db,'agendamentos'), where('data','==',hojeLocal()))),
         configCp119
-      ]);
+      ]));
     }catch(e){
       if(!vigente())return;
       console.error('V114: falha ao confirmar a fila da Cecília:',e);
-      const aviso=`<div class="card" style="border:2px solid var(--red);">
-        <h2>Fila da Cecília indisponível</h2>
-        <div class="desc">O banco não confirmou as postagens agora. <b>Isso não significa que não existam legendas para agendar.</b> Nenhum item foi movido ou tratado como vazio.</div>
-        <div class="meta" style="margin-top:8px;">Código: ${esc(String(e?.code||e?.message||'erro desconhecido'))}</div>
-        <button class="btn secondary" style="width:auto;margin-top:10px;" onclick="setPostagensSub('agendar')">Tentar novamente</button>
-      </div>`;
+      consultaCp164.falhar('Não consegui confirmar as postagens agora. Isso não significa que a fila esteja vazia. A lista anterior e os campos foram mantidos.');
       mostrarToast('Não consegui atualizar a fila. Os campos digitados foram preservados.','erro');
-      falhaLeituraI90();if(!cont.querySelector('input,textarea,select'))desenhar(aviso);
       return;
     }
     if(!vigente())return;
@@ -16855,28 +16885,27 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
     // Read the exact document changed by this action; never substitute another item's state.
     if(idAlteradoI84){
       try{
-        const recibo=await _getDocFromServerFB(doc(db,'postagens',String(idAlteradoI84)));
+        const recibo=await consultaCp164.esperar('Conferindo o mesmo registro atualizado',_getDocFromServerFB(doc(db,'postagens',String(idAlteradoI84))));
         if(!vigente())return;
         if(recibo.exists())confirmadas.set(recibo.id,{...recibo.data(),id:recibo.id});
         else confirmadas.delete(String(idAlteradoI84));
-      }catch(e){falhaLeituraI90();if(vigente())mostrarToast('O registro foi salvo, mas a fila ainda precisa ser conferida. Seus campos continuam preservados.','erro');return;}
+      }catch(e){if(vigente()){consultaCp164.falhar('O registro foi salvo, mas a fila ainda precisa ser conferida. Seus campos continuam preservados.');mostrarToast('O registro foi salvo, mas a fila ainda precisa ser conferida. Seus campos continuam preservados.','erro');}return;}
     }
     const fontesCp119=[...confirmadas.values()];
     const idsVideo=fontesCp119.filter(p=>p.excluido!==true&&['aguardando_legenda','aguardando_agendamento','agendado'].includes(p.status)&&(!usaPublicacaoStokkiI30(p)||p.status==='aguardando_legenda')).map(p=>p.videoId);
     const projecaoCp119=projetarCobrancasRetroativasI118(fontesCp119).then(posts=>({posts}),erro=>({erro}));
     let videosPorId,projecao;
     try{
-      [videosPorId,projecao]=await Promise.all([videosPorIdsCp119(idsVideo),projecaoCp119]);
+      [videosPorId,projecao]=await consultaCp164.esperar('Conferindo vídeos de origem e cobranças anteriores',Promise.all([videosPorIdsCp119(idsVideo),projecaoCp119]));
     }catch(e){
       if(!vigente())return;
       console.error('V118: vídeos da fila da Cecília indisponíveis:',e);
-      const aviso=`<div class="card" style="border:2px solid var(--red);"><h2>Fila preservada</h2><div class="desc">As postagens chegaram, mas os vídeos de origem não puderam ser confirmados. <b>Nada foi tratado como vazio ou agendado.</b></div><button class="btn secondary" style="width:auto;margin-top:10px;" onclick="setPostagensSub('agendar')">Tentar novamente</button></div>`;
+      consultaCp164.falhar('As postagens chegaram, mas não consegui confirmar os vídeos de origem. A lista anterior e os campos foram mantidos; nenhum item foi tratado como agendado.');
       mostrarToast('Não consegui atualizar a fila. Os campos digitados foram preservados.','erro');
-      falhaLeituraI90();if(!cont.querySelector('input,textarea,select'))desenhar(aviso);
       return;
     }
     if(!vigente())return;
-    if(projecao.erro){falhaLeituraI90();leituraStatus.textContent='Não consegui conferir as cobranças anteriores. A lista e os campos foram preservados. '+String(projecao.erro.message||'');mostrarToast(leituraStatus.textContent,'erro');return;}
+    if(projecao.erro){consultaCp164.falhar('Não consegui conferir as cobranças anteriores. A lista e os campos foram preservados.');mostrarToast('Não consegui conferir as cobranças anteriores. A lista e os campos foram preservados.','erro');return;}
     confirmadas.clear();projecao.posts.forEach(p=>confirmadas.set(p.id,p));
     confirmadas.forEach(p=>{if(p.excluido!==true&&['aguardando_legenda','aguardando_agendamento','agendado'].includes(p.status)){if(usaPublicacaoStokkiI30(p)&&p.status!=='aguardando_legenda')filaStokkiI30.push(p);else fila.push(p);}});
     const porVideo=new Map();
@@ -16904,10 +16933,10 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
     let gravacoesHoje = 0;
     agSnap.forEach(d => { const a=d.data(); if(!a.excluido && a.data===hoje && a.status!=='cancelado' && !sessaoSemCaptacaoI34(a) && a.aprovado!==false) gravacoesHoje++; });
     let resumoStokki;
-    try{resumoStokki=(await carregarModuloStokkiI30()).resumoAgendamento(filaStokkiI30.filter(p=>correspondePostagensI144(p,'agendar')));}
+    try{resumoStokki=(await consultaCp164.esperar('Conferindo a programação por plataforma',carregarModuloStokkiI30())).resumoAgendamento(filaStokkiI30.filter(p=>correspondePostagensI144(p,'agendar')));}
     catch(e){resumoStokki={pendentes:[],videos:null,plataformas:null,erro:e.message};}
     if(!vigente())return;
-    await prepararIdentidadesI106([...fila,...filaStokkiI30]);if(!vigente())return;
+    await consultaCp164.esperar('Conferindo o vínculo com os calendários',prepararIdentidadesI106([...fila,...filaStokkiI30],vigente));if(!vigente())return;
     const totalPraAgendar=resumoStokki.erro?null:pendentes.length+resumoStokki.videos;
     const atrasadasCount = [...pendentes,...resumoStokki.pendentes].filter(p => diasEsperaAgendamentoI90(p)>=1).length;
     const recuperadasCount = pendentes.filter(p => p.recuperadoDoDemandaId).length;
@@ -16984,6 +17013,9 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
       </div>
     `;
     }).join(''));
+    }catch(e){
+      if(vigente()){consultaCp164.falhar('Não consegui terminar a conferência desta lista. Os campos e o retrato anterior foram mantidos.');mostrarToast('Não consegui terminar a consulta. Tente novamente; os campos continuam aqui.','erro');}
+    }finally{consultaCp164.finalizar();}
   }
 
   /* ===== MARCAR MANUALMENTE "NÃO PRECISA AGENDAR" (22/07/2026, pedido do Chris) =====

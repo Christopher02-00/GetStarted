@@ -1,7 +1,7 @@
 import {codigoCanalSeguroCp146} from './transmissoes.mjs';
 // Operações fechadas de avisos. Somente o adaptador do servidor fornece as dependências.
 import {createHash} from 'node:crypto';
-import {candidatasCentralTxR87,lerNotaCentralTxR87,leituraCentralTxR87} from './avisos-central-http-i164.mjs';
+import {capacidadeDevolucaoMensalCp155,candidatasCentralTxR87,lerNotaCentralTxR87,leituraCentralTxR87} from './avisos-central-http-i164.mjs';
 import {estadoContaDispositivoTxI165,testarDispositivoProprioI165} from './teste-dispositivo-i165.mjs';
 export const ACOES_AVISOS_HTTP_I165=Object.freeze(['config_avisos','listar_avisos','registrar_dispositivo','desativar_dispositivo','testar_dispositivo']);
 const ESCOPO='operacional_i165_cp101',LIMITE=100;
@@ -17,9 +17,9 @@ function notaPublica(n,idNota,f,agora){return {schema:1,id:idNota,escopo:ESCOPO,
 export async function operarAvisosHttpNucleoI165(db,auth,dados,{agora=new Date(),deps}={}){
  const {exigir,validarConta,validarCadastro,configAtiva,fontePendenteTx,serverTimestamp}=deps;
  exigir(dados&&typeof dados==='object'&&!Array.isArray(dados)&&ACOES_AVISOS_HTTP_I165.includes(dados.acao),'avisos-entrada','Operação de avisos inválida.');
- const dispositivo=['registrar_dispositivo','desativar_dispositivo','testar_dispositivo'].includes(dados.acao),permitidas=new Set(['acao','uidEsperado','atorRealEsperado','papelOperado','sessao',...(dispositivo?['token']:[]),...(dados.acao==='testar_dispositivo'?['operacaoId']:[])]);
+ const dispositivo=['registrar_dispositivo','desativar_dispositivo','testar_dispositivo'].includes(dados.acao),permitidas=new Set(['acao','uidEsperado','atorRealEsperado','papelOperado','sessao',...(dispositivo?['token']:[]),...(dados.acao==='listar_avisos'?['devolucaoMensalCp155']:[]),...(dados.acao==='testar_dispositivo'?['operacaoId']:[])]);
  exigir(Object.keys(dados).every(k=>permitidas.has(k)),'avisos-campos','Confira os dados desta operação de avisos.');
- const ator=validarConta(auth,dados),em=agora.toISOString();
+ const devolucaoMensalCp155=capacidadeDevolucaoMensalCp155(dados),ator=validarConta(auth,dados),em=agora.toISOString();
  if(dispositivo){exigir(ator.real===ator.papel,'dispositivo-delegado','Entre com o Google da própria pessoa para configurar este aparelho.');exigir(typeof dados.token==='string'&&dados.token.length>20&&dados.token.length<5000&&dados.token.trim().length>20,'dispositivo-token','O navegador não confirmou um token de aparelho válido.');}
  if(dados.acao==='testar_dispositivo')return testarDispositivoProprioI165(db,ator,dados,{agora,deps});
  return db.runTransaction(async tx=>{
@@ -40,7 +40,7 @@ export async function operarAvisosHttpNucleoI165(db,auth,dados,{agora=new Date()
    }};
    const fontes=[...(cfg?.habilidades?.edicao===true?['videos_producao']:[]),...(cfg?.habilidades?.programacao===true?['postagens']:[])];
    exigir(ativa,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
-   const central=await candidatasCentralTxR87(db,tx,ator,cfg,LIMITE);
+   const central=await candidatasCentralTxR87(db,tx,ator,cfg,LIMITE,{devolucaoMensalCp155});
    exigir(fontes.length>0||central.centralAtiva||central.organizacaoAtiva||central.devolucoesAtivas,'inativo','Os avisos de conteúdos ainda não estão ativos. A atividade continua na sua fila.');
    const q=fontes.length?db.collection('notificacoes_operacionais_i165').where('escopo','==',ESCOPO).where('destinatario','==',ator.papel).where('estado','==','pendente').where('ativacaoId','==',cfg.ativacaoId).where('fonte.colecao',fontes.length===1?'==':'in',fontes.length===1?fontes[0]:fontes).orderBy('__name__').limit(LIMITE+1):null;
    const qs=fontes.length?await tx.get(q):{docs:[],size:0},avisos=[];

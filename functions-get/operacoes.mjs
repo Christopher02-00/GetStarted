@@ -10,7 +10,7 @@ import {ACOES_REFERENCIAS_CP109,operarReferenciasCp109} from './referencias-cp10
 import {ACOES_PLANEJAMENTO_CP109,operarPlanejamentoEstrategicoCp109} from './planejamento-estrategico-cp109.mjs';
 import {ACOES_PLANOS_CP109,operarPlanosCp109} from './planos-acao-cp109.mjs';
 import {ACOES_SAUDE_MIDIA_I166,conferirSaudeMidiaI166} from './saude-midia-i166.mjs';
-import {lerNotaCentralTxR87} from './avisos-central-http-i164.mjs';
+import {capacidadeDevolucaoMensalCp155,lerNotaCentralTxR87} from './avisos-central-http-i164.mjs';
 import {notaCentralI164} from './central/notificacoes.mjs';
 import {validarCadastroI165} from './contexto.mjs';
 import {ACOES_EDITORIAL_I172,operarEditorialCalendariosI172,fontesTx} from './editorial-calendarios-i172.mjs';
@@ -40,6 +40,7 @@ import {programarI165,prepararProgramacaoI165,conferirOperacaoProgramacaoI165} f
 export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
+ const devolucaoMensalCp155=capacidadeDevolucaoMensalCp155(dados);
  if(ACOES_PEDIDOS_LEGENDA_CP152.includes(dados.acao))return operarPedidosLegendaCp152(db,auth,dados,{agora});
  if(ACOES_VINCULOS_CP142.includes(dados.acao))return operarVinculosProvidenciasCp142(db,auth,dados,{agora});
  if(ACOES_PROVIDENCIAS_CP140.includes(dados.acao))return operarProvidenciasGravacaoCp140(db,auth,dados,{agora});
@@ -86,6 +87,7 @@ export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
   exigirI165(idFisicoI165(dados.id),'aviso','Aviso inválido.');return db.runTransaction(async tx=>{
    const ref=db.doc('notificacoes_operacionais_i165/'+dados.id),s=await tx.get(ref),n=s.data();
    if(s.exists&&notaCentralI164(n)){
+    exigirI165(n.origem?.tipo!=='calendario_devolucao_cp155'||devolucaoMensalCp155,'aviso-versao','Atualize esta página para abrir este aviso novo. As outras atividades continuam na sua fila.');
     exigirI165(n.id===s.id,'aviso','O identificador do aviso precisa de conferência.');
     const [cfg,cad,processo]=await Promise.all([tx.get(db.doc('programacao_config_i165/ativo')),tx.get(db.doc('usuarios_equipe/'+ator.email)),tx.get(db.doc('processo_calendarios_i164/ativo'))]);
     validarCadastroI165(ator,cad.data());

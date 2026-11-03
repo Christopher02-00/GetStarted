@@ -77,7 +77,13 @@ export function validarPapelNotaCentralR87(n, papel) {
   return tipo;
 }
 
-export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100) {
+export function capacidadeDevolucaoMensalCp155(dados){
+ const presente=Object.hasOwn(dados||{},'devolucaoMensalCp155');
+ exigir(!presente||['listar_avisos','ler_aviso'].includes(dados.acao)&&dados.devolucaoMensalCp155===true,'Esta capacidade pertence somente à conferência atual dos avisos.');
+ return presente;
+}
+
+export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100, {devolucaoMensalCp155=false}={}) {
   const ps = await tx.get(db.doc('processo_calendarios_i164/ativo')), processo = ps.data();
   if (ps.exists && processo?.ativo !== false) exigir(processoAtivoI164(processo), 'A configuração do processo precisa de conferência; a lista anterior foi preservada.');
   const centralAtiva = processoAtivoI164(processo), organizacaoAtiva = cfg?.habilidades?.organizacao === true, devolucoesAtivas=programacaoAtivaI165(cfg)&&PAPEIS_DEMANDA_REFAZER_CP131.includes(ator.papel);
@@ -85,7 +91,7 @@ export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100) {
   const base = () => db.collection('notificacoes_operacionais_i165').where('destinatario', '==', ator.papel).where('estado', '==', 'pendente');
   const consultas = [];
   if (centralAtiva && ['Chris', 'Amanda', 'Gabrielle', 'Cecília'].includes(ator.papel)) {
-    consultas.push(base().where('ativacaoId', '==', processo.ativacaoId).where('origem.tipo', 'in', TIPOS_AVISOS_CENTRAL_R87.filter(t=>t!==TIPO_DEVOLUCAO_MENSAL_CP155||ator.papel==='Chris')).orderBy('__name__').limit(limite + 1));
+    consultas.push(base().where('ativacaoId', '==', processo.ativacaoId).where('origem.tipo', 'in', TIPOS_AVISOS_CENTRAL_R87.filter(t=>t!==TIPO_DEVOLUCAO_MENSAL_CP155||ator.papel==='Chris'&&devolucaoMensalCp155===true)).orderBy('__name__').limit(limite + 1));
   }
   if(devolucoesAtivas)consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','==',TIPO_DEMANDA_REFAZER_CP131).orderBy('__name__').limit(limite+1));
   if(providenciasAtivas)consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','==',TIPO_PROVIDENCIA_GRAVACAO_CP140).orderBy('__name__').limit(limite+1));

@@ -24987,6 +24987,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
   const VIEWS_SO_CHRIS = ['mensalidades','financeiro','centralVendas','cobranca','mensagensClientesChris'];
   window.irPara = function(nome, el, opcoes){
     if(controladorProvidenciasCp140?.canLeave?.()===false)return false;
+    window.cancelarAberturaFilaCp154?.(null,true);
     __navegacaoAvisosMinimosI165++;
     if(nome==='entradaPerfilCp126'&&!['Chris','Amanda'].includes(usuarioAtual)){mostrarToast('Esta entrada é da Amanda e do Chris.','erro');return false;}
     if(nome!==viewAtiva&&entradaPerfilMontadaCp126?.canLeave?.()===false)return false;
@@ -27857,11 +27858,22 @@ window.setGerenciaSub = function(qual, el){
      pra conferir, travar seria prender a demanda pra sempre (foi o que
      prendeu 20 da Amanda até 30/07). */
   const ORIGENS_DO_CHRIS = ['chris'];
+  // CP154: a agenda legada usa origem técnica; a entrega conserva quem pediu e quem executou.
+  // Isto só escolhe a fila. Aprovar/devolver continua conferindo o recibo oficial na transação.
+  function revisorEntregaOrganizacaoCp154(d){
+    const r=d?.entregaDocumentoCp138,tipo=finalidadeDocumentalCp138(d)||r?.finalidade,origem=String(d?.origem||'').toLowerCase();
+    if(d?.tipoEspecial!=='organizacao_social_i167'||d.excluido||d.arquivado||d.agendaOrganizacaoI167?.arquivada||!['organizacao','chris','amanda'].includes(origem)||!['referencias','campanha'].includes(tipo)||!r||r.schema!==1||r.demandaId!==d.id||r.finalidade!==tipo||r.perfil!==d.destinatario||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(r.competencia||'')||!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(r.cliente||'')||r.ciclo!==r.competencia+'__'+r.cliente||!/^[A-Za-z0-9_-]{1,180}$/.test(r.documentoId||'')||!Number.isInteger(r.versao)||r.versao<1||!/^[a-f0-9]{64}$/.test(r.hashTexto||'')||!/^[A-Za-z0-9_-]{8,100}$/.test(r.operacao||'')||typeof r.autorUid!=='string'||!r.autorUid||typeof r.por!=='string'||!r.por||typeof r.em!=='string'||!Number.isFinite(Date.parse(r.em))||typeof r.empresaOtavio!=='string')return null;
+    if(![d.cliente,d.clienteSlug].some(v=>v===r.cliente)||[d.cliente,d.clienteSlug,d.planejamentoI155?.cliente].filter(Boolean).some(v=>v!==r.cliente)||[d.competencia,d.planejamentoI155?.competencia].filter(Boolean).some(v=>v!==r.competencia)||[d.empresaOtavio,d.empresaId,d.agendaOrganizacaoI167?.empresaId].filter(v=>v!==undefined&&v!==null).some(v=>v!==r.empresaOtavio))return null;
+    const autor=origem==='chris'?'Chris':origem==='amanda'?'Amanda':['Chris','Amanda'].includes(d.criadoPor)?d.criadoPor:null;
+    if(!autor)return null;
+    return autor===d.destinatario?(autor==='Amanda'?'Chris':'Amanda'):autor;
+  }
   function aprovacaoEhDe(d, quem){
     if(d?.tipoEspecial==='providencia_gravacao_cp140')return quem==='Amanda';
     if(ehAvisoEsperaCp149(d))return false;
     // CP149: uma espera explícita por aprovação define o outro gestor desta tarefa normal.
     const revisorExplicitoCp149=revisorEsperaAprovacaoCp149(d);if(revisorExplicitoCp149)return quem===revisorExplicitoCp149;
+    const revisorDocumentoCp154=revisorEntregaOrganizacaoCp154(d);if(revisorDocumentoCp154)return quem===revisorDocumentoCp154;
     const o = String((d && d.origem) || '').toLowerCase();
     const dest = String((d && d.destinatario) || '').toLowerCase();
     if(o === dest) return o === String(quem||'').toLowerCase();   // mandou pra si mesma
@@ -31748,6 +31760,7 @@ window.setGerenciaSub = function(qual, el){
     // sobre trabalho de outra pessoa — ficam só no painel da Gerência,
     // não aparecem aqui nem em Minhas Demandas)
     demandasVisiveisDaPessoa(usuarioAtual).forEach(d => {
+      if(d.status==='concluida_aguardando_aprovacao'&&revisorEntregaOrganizacaoCp154(d))return;
       itens.push({
         icone: ehAvisoDistribuicaoI105(d)?'📨':'✅', titulo: d.titulo, meta: ehAvisoDistribuicaoI105(d)?resumoAvisoDistribuicaoI105(d):formatarDataBR(d.prazoData) + ' ' + (d.prazoHora||''),
         desc: d.descricao || '', urgencia: calcularUrgencia(d),
@@ -32914,6 +32927,48 @@ window.setGerenciaSub = function(qual, el){
     return esc(pessoa + ' · ' + data);
   }
 
+  function revisoesDocumentaisMinhasCp154(pessoa,base){
+    if(!['Chris','Amanda'].includes(pessoa))return [];
+    return (base||[]).filter(d=>demandaOperacionalVisivel(d)&&podeConferirEntregaCp149(d,pessoa)&&revisorEntregaOrganizacaoCp154(d)===pessoa);
+  }
+  function decisoesDocumentoParaConferirCp154(ctx){
+    if(!ctx?.uid||!['Chris','Amanda'].includes(ctx.nome)||!globalThis.sessionStorage)return [];
+    const storage=globalThis.sessionStorage,prefixo=chaveDecisaoDocumentoCp154(ctx,''),ids=[];
+    for(let i=0;i<storage.length;i++){const chave=storage.key(i);if(typeof chave!=='string'||!chave.startsWith(prefixo))continue;const id=chave.slice(prefixo.length);if(/^[A-Za-z0-9_-]{1,180}$/.test(id))ids.push(id);}
+    const linhas=[];for(const id of ids){try{const t=lerTentativaDecisaoDocumentoCp154(ctx,id);if(t)linhas.push(t);}catch{}}return linhas;
+  }
+  function htmlDecisoesDocumentoParaConferirCp154(linhas){
+    if(!linhas.length)return '';
+    return '<div class="card" style="border:2px solid var(--yellow);"><h2>Decisões para conferir · '+linhas.length+'</h2><p>O protocolo do envio anterior está guardado. Confira o resultado na mesma demanda, sem criar outro envio.</p>'+linhas.map(t=>'<div class="item"><b>'+esc(t.dados.decisao==='aprovar'?'Aprovação enviada':'Devolução enviada')+'</b><p class="meta">'+esc(t.dados.origemDemandaCp138.cliente)+' · '+esc(t.dados.origemDemandaCp138.competencia)+'</p><button class="btn" data-id="'+escAttr(t.id)+'" onclick="'+(t.recusada?'atualizarRevisaoDocumentoCp154':'conferirDecisaoDocumentoCp154')+'(this.dataset.id)">'+(t.recusada?'Conferir entrega atual':'Conferir a mesma tentativa')+'</button></div>').join('')+'</div>';
+  }
+  function htmlRevisoesDocumentaisMinhasCp154(linhas){
+    if(!linhas.length)return '';
+    return '<div class="card" style="border:2px solid var(--yellow);"><h2>Entregas para você conferir · '+linhas.length+'</h2><p>O documento já foi enviado. Confira e escolha aprovar ou pedir um ajuste na mesma demanda.</p>'+linhas.map(d=>'<div class="item"><b>'+esc(d.titulo||'Entrega documental')+'</b><p class="meta">'+esc(d.clienteNome||d.entregaDocumentoCp138.cliente)+' · '+esc(d.entregaDocumentoCp138.competencia)+' · entregue por '+esc(nomeEquipeI126(d.destinatario))+'</p><button class="btn" data-id="'+escAttr(d.id)+'" onclick="abrirRevisaoDocumentoMinhasCp154(this.dataset.id)">Conferir esta entrega</button></div>').join('')+'</div>';
+  }
+  function htmlDocumentoEntregueCp154(d){
+    let tentativaCp154=null;try{tentativaCp154=lerTentativaDecisaoDocumentoCp154(contextoPreparacaoR80(),d.id);}catch{}
+    const anteriorCp154=tentativaCp154?'<div class="card"><b>Há uma decisão anterior para conferir</b><p>O protocolo continua preservado. Confira o resultado antes de enviar outra decisão.</p><button class="btn secondary" data-id="'+escAttr(d.id)+'" onclick="'+(tentativaCp154.recusada?'atualizarRevisaoDocumentoCp154':'conferirDecisaoDocumentoCp154')+'(this.dataset.id)">'+(tentativaCp154.recusada?'Conferir a entrega atual':'Conferir a mesma tentativa anterior')+'</button></div>':'';
+    return anteriorCp154+(revisoesDocumentaisMinhasCp154(usuarioAtual,[d]).length?'<div class="card"><b>Documento completo · versão '+esc(d.entregaDocumentoCp138.versao)+'</b><p>Leia o material na pasta deste cliente e mês antes de decidir. Aprovar a demanda não publica o calendário.</p><button class="btn secondary" data-id="'+escAttr(d.id)+'" onclick="abrirDocumentoEntregueCp154(this.dataset.id)">Ler documento completo</button></div>':'');
+  }
+  window.abrirDocumentoEntregueCp154=async function(id){
+    const d=(todasDemandas||[]).find(d=>d.id===id),ctx={...contextoPreparacaoR80()};
+    if(!d||!revisoesDocumentaisMinhasCp154(ctx.nome,[d]).length)return false;
+    const assinatura=assinaturaRevisaoDocumentoCp138(d),r=structuredClone(d.entregaDocumentoCp138);
+    try{if(!podeSairPreparacaoR80())return false;fecharModal();mostrarToast('Abrindo o documento completo desta entrega…');
+      if(await abrirAreaCentralR87('materiais')===false||!mesmaIdentidadeDocumentoCp138(ctx)||viewAtiva!=='planejamentoPreparacaoR80')return false;
+      const atual=(todasDemandas||[]).find(d=>d.id===id);if(!atual||assinaturaRevisaoDocumentoCp138(atual)!==assinatura||!revisoesDocumentaisMinhasCp154(ctx.nome,[atual]).length)throw Error('Esta entrega mudou. Atualize a mesma demanda antes de revisar.');
+      if(typeof planejamentoPreparacaoR80?.abrirDocumentoRecebidoCp154!=='function')throw Error('A leitura desta versão ainda não está disponível. Reabra a mesma demanda; nada foi aprovado.');
+      const ok=await planejamentoPreparacaoR80.abrirDocumentoRecebidoCp154({ciclo:r.ciclo,id:r.documentoId,versao:r.versao,finalidade:r.finalidade,empresaOtavio:r.empresaOtavio,hashTexto:r.hashTexto});
+      if(!mesmaIdentidadeDocumentoCp138(ctx)||viewAtiva!=='planejamentoPreparacaoR80')return false;
+      if(ok!==false)mostrarToast('Documento completo aberto. Depois, volte à mesma demanda para aprovar ou pedir um ajuste.');return ok;
+    }catch(e){if(mesmaIdentidadeDocumentoCp138(ctx))mostrarToast(e.message||'Não consegui abrir esta versão. Nada foi aprovado.','erro');return false;}
+  };
+  window.abrirRevisaoDocumentoMinhasCp154=function(id){
+    const d=(todasDemandas||[]).find(d=>d.id===id);
+    if(!d||!revisoesDocumentaisMinhasCp154(usuarioAtual,[d]).length)return mostrarToast('Esta entrega mudou. Atualize a lista para conferir a mesma demanda.','erro');
+    return abrirDemandaGerencia(id);
+  };
+
   window.renderMinhasDemandasAtribuidas = async function(soRefiltrar,opcoes={}){
     void conferirAvisosCampanhasI153();
     const lista = document.getElementById('listaMinhasDemandasAtribuidas');
@@ -32922,6 +32977,7 @@ window.setGerenciaSub = function(qual, el){
     let providenciasMinhas=document.getElementById('providenciasMinhasCp142');if(!providenciasMinhas){providenciasMinhas=document.createElement('div');providenciasMinhas.id='providenciasMinhasCp142';lista.before(providenciasMinhas);}providenciasUiCp140().renderMinhas(providenciasMinhas);
     if(!usuarioAtual){ lista.innerHTML=''; empty.style.display='block'; return; }
     empty.style.display='none';
+    const revisoesAnterioresCp154=document.getElementById('revisoesDocumentaisMinhasCp154');if(revisoesAnterioresCp154){revisoesAnterioresCp154.hidden=true;revisoesAnterioresCp154.replaceChildren();}
     if(usuarioAtual==='Fernanda'){
       try{if(soRefiltrar!==true)await carregarTodasDemandas(opcoes);}
       catch(erro){
@@ -32937,6 +32993,8 @@ window.setGerenciaSub = function(qual, el){
     }
     if(opcoes.validar)opcoes.validar();
     const todasMinhas = demandasVisiveisDaPessoa(usuarioAtual,{},demandasCanonicasContadoresI123());
+    const decisoesConferirCp154=decisoesDocumentoParaConferirCp154(contextoPreparacaoR80()),revisoesDocumentaisCp154=revisoesDocumentaisMinhasCp154(usuarioAtual,todasDemandas).filter(d=>!decisoesConferirCp154.some(t=>t.id===d.id));
+    let revisoesHostCp154=document.getElementById('revisoesDocumentaisMinhasCp154');if(!revisoesHostCp154){revisoesHostCp154=document.createElement('div');revisoesHostCp154.id='revisoesDocumentaisMinhasCp154';lista.before(revisoesHostCp154);}revisoesHostCp154.hidden=!revisoesDocumentaisCp154.length&&!decisoesConferirCp154.length;revisoesHostCp154.innerHTML=htmlDecisoesDocumentoParaConferirCp154(decisoesConferirCp154)+htmlRevisoesDocumentaisMinhasCp154(revisoesDocumentaisCp154);
     let entradaMinhas=document.getElementById('entradasMinhasCp150');if(!entradaMinhas){entradaMinhas=document.createElement('div');entradaMinhas.id='entradasMinhasCp150';lista.before(entradaMinhas);}renderEntradasMinhasCp150(entradaMinhas,todasMinhas.filter(entradaAtivaCp150));
     /* mesma regra do badge lateral — um número só no site inteiro */
     atualizarBadgeMinhasDemandasAtribuidas(contarUrgentesBadge(
@@ -33010,7 +33068,7 @@ window.setGerenciaSub = function(qual, el){
       return;
     }
 
-    if(!todasMinhas.length && !enviadasAbertas.length){ lista.innerHTML = chips + '<div class="card"><div class="empty" style="color:var(--green);font-weight:700;">Nada aberto com você nem com quem você delegou. 🎉</div></div>'; return; }
+    if(!todasMinhas.length && !enviadasAbertas.length){ lista.innerHTML = chips + '<div class="card"><div class="empty" style="color:var(--green);font-weight:700;">'+(decisoesConferirCp154.length?'As decisões anteriores para conferir estão logo acima.':revisoesDocumentaisCp154.length?'As entregas aguardando sua conferência estão logo acima.':'Nada aberto com você nem com quem você delegou. 🎉')+'</div></div>'; return; }
     if(!todasMinhas.length){
       lista.innerHTML = chips + `<div class="card" style="border-color:var(--green);">
         <div class="empty" style="color:var(--green);font-weight:700;">Nenhuma demanda sua em aberto. 🎉</div>
@@ -33574,6 +33632,13 @@ window.setGerenciaSub = function(qual, el){
 
   let destinoDocumentoCp138=null,geracaoDocumentoCp138=0,relatoNaoDocumentalCp138=null;
   const mesmaIdentidadeDocumentoCp138=c=>['uid','nome','atorReal','sessao','geracao'].every(k=>contextoPreparacaoR80()[k]===c[k]);
+  function rodadaDocumentoDevolvidaCp154(d){
+ const r=d?.entregaDocumentoCp138,t=d?.refazerUltimoI161;
+ const canon=v=>Array.isArray(v)?v.map(canon):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canon(v[k])])):v;
+ const igual=(a,b)=>JSON.stringify(canon(a))===JSON.stringify(canon(b));
+ if(d?.status!=='pendente'||r?.schema!==1||!r.demandaId||!r.documentoId||!r.operacao||!['campanha','referencias'].includes(r.finalidade)||!Number.isInteger(r.versao)||r.versao<1||!(/^[a-f0-9]{64}$/).test(r.hashTexto||'')||r.ciclo!==r.competencia+'__'+r.cliente||!t||!t.operacao||t.operacao===r.operacao||typeof t.motivo!=='string'||!t.motivo.trim()||typeof t.em!=='string'||!Number.isFinite(Date.parse(t.em))||t.em!==d.rejeitadoEm||!igual(t.documentoAnteriorCp154,r)||!Array.isArray(d.historico))return null;
+ return d.historico.some(h=>h?.acao==='Devolvida para ajustar'&&h.operacao===t.operacao&&h.por===t.por&&h.em===t.em&&h.detalhe===t.motivo&&igual(h.documentoAnteriorCp154,r))?r:null;
+}
   function finalidadeDocumentalCp138(d){
     if(!d||!['Gabrielle','Amanda'].includes(d.destinatario))return '';
     const etapa=d.tipoEspecial==='organizacao_social_i167'?d.agendaOrganizacaoI167?.etapa:d.tipoEspecial==='planejamento_social_i155'?d.planejamentoI155?.etapa:'';
@@ -33585,7 +33650,8 @@ window.setGerenciaSub = function(qual, el){
     if(!d||!['Amanda','Gabrielle'].includes(d.destinatario)||!['pendente','em_andamento','refazer','concluida_aguardando_aprovacao'].includes(d.status))return;
     const obrigatoria=exigeCaminhoDocumentoCp138(d)&&!relatoLiberadoCp138(d);
     if(obrigatoria){for(const id of ['provaTextoInput','provaLinkInput']){const e=modal.querySelector('#'+id);if(e)e.closest('.field').hidden=true;}const b=modal.querySelector('#btnEnviarProva');if(b)b.hidden=true;}
-    modal.insertAdjacentHTML('afterbegin','<div class="card" data-entrega-documento-cp138><b>'+(obrigatoria?'Como esta etapa será entregue?':'Vai entregar um documento?')+'</b><p>Referências e campanhas completas ficam na pasta do cliente e mês. Escrever “feito” ou “enviados” não guarda o documento.</p><button type="button" class="btn" data-id="'+escAttr(d.id)+'" onclick="prepararEntregaDocumentoCp138(this.dataset.id)">Enviar documento desta demanda</button>'+(!finalidadeDocumentalCp138(d)&&obrigatoria?'<button type="button" class="btn secondary" data-id="'+escAttr(d.id)+'" onclick="liberarRelatoNaoDocumentalCp138(this.dataset.id)">Esta etapa é outra atividade · continuar com relato</button>':'')+'</div>');
+    const devolucaoCp154=rodadaDocumentoDevolvidaCp154(d);
+    modal.insertAdjacentHTML('afterbegin','<div class="card" data-entrega-documento-cp138><b>'+(devolucaoCp154?'Ajuste o documento e reenvie nesta mesma demanda':obrigatoria?'Como esta etapa será entregue?':'Vai entregar um documento?')+'</b><p>'+(devolucaoCp154?'A versão '+esc(devolucaoCp154.versao)+' continua preservada. Corrija o documento completo, salve uma nova versão e confirme o envio; ele volta para revisão, sem aprovação automática.':'Referências e campanhas completas ficam na pasta do cliente e mês. Escrever “feito” ou “enviados” não guarda o documento.')+'</p><button type="button" class="btn" data-id="'+escAttr(d.id)+'" onclick="prepararEntregaDocumentoCp138(this.dataset.id)">'+(devolucaoCp154?'Ajustar e reenviar documento':'Enviar documento desta demanda')+'</button>'+(!finalidadeDocumentalCp138(d)&&obrigatoria?'<button type="button" class="btn secondary" data-id="'+escAttr(d.id)+'" onclick="liberarRelatoNaoDocumentalCp138(this.dataset.id)">Esta etapa é outra atividade · continuar com relato</button>':'')+'</div>');
   }
   window.liberarRelatoNaoDocumentalCp138=function(id){const d=todasDemandas.find(x=>x.id===id),modal=document.getElementById('modalConteudo'),card=modal?.querySelector('[data-entrega-documento-cp138]');if(!d||finalidadeDocumentalCp138(d)||!['Amanda','Gabrielle'].includes(d.destinatario)||card?.querySelector('[data-id]')?.dataset.id!==id)return;relatoNaoDocumentalCp138={id,ctx:{...contextoPreparacaoR80()},fonte:JSON.stringify(d)};for(const campo of ['provaTextoInput','provaLinkInput']){const e=modal.querySelector('#'+campo);if(e)e.closest('.field').hidden=false;}const btn=modal.querySelector('#btnEnviarProva');if(btn)btn.hidden=false;card.remove();orientarEntregaDocumentoCp138(d,modal);modal.querySelector('#provaTextoInput')?.focus();};
   window.prepararEntregaDocumentoCp138=async function(id){
@@ -33595,20 +33661,20 @@ window.setGerenciaSub = function(qual, el){
     modal.innerHTML='<section data-abertura-documento-cp153><h2>Abrindo a pasta desta demanda…</h2><p role="status">Conferindo os documentos. Nenhum documento foi enviado ou concluído.</p><button type="button" class="btn secondary" onclick="fecharModal()">Cancelar abertura e voltar</button></section>';
     const marca=modal.firstElementChild;overlay.classList.add('show');
     const validar=()=>{if(!mesmaIdentidadeDocumentoCp138(ctx)||g!==geracaoDocumentoCp138||modal.firstElementChild!==marca||!overlay.classList.contains('show'))throw Error('A pessoa ou a tela mudou. Reabra a entrega da mesma demanda.');};
-    try{if(!/^[A-Za-z0-9_-]{1,180}$/.test(id)||!['Chris','Amanda','Gabrielle'].includes(ctx.nome))return;const snap=await _getDocFromServerFB(doc(db,'demandas',id));validar();if(!snap.exists())throw Error('Esta demanda não foi encontrada.');const d={...snap.data()},perfil=d.destinatario;
-      if(!['Amanda','Gabrielle'].includes(perfil)||perfil!==ctx.nome&&ctx.nome!=='Chris'||d.excluido||d.arquivado||!['pendente','em_andamento','refazer','concluida_aguardando_aprovacao'].includes(d.status)||d.entregaDocumentoCp138)throw Error('Esta demanda já mudou ou recebeu uma entrega. Confira o estado atual; não envie uma cópia.');
+    try{if(!/^[A-Za-z0-9_-]{1,180}$/.test(id)||!['Chris','Amanda','Gabrielle'].includes(ctx.nome))return;const snap=await _getDocFromServerFB(doc(db,'demandas',id));validar();if(!snap.exists())throw Error('Esta demanda não foi encontrada.');const d={id,...snap.data()},perfil=d.destinatario,rodadaCp154=rodadaDocumentoDevolvidaCp154(d);
+      if(!['Amanda','Gabrielle'].includes(perfil)||perfil!==ctx.nome&&ctx.nome!=='Chris'||d.excluido||d.arquivado||!['pendente','em_andamento','refazer','concluida_aguardando_aprovacao'].includes(d.status)||d.entregaDocumentoCp138&&(!rodadaCp154||rodadaCp154.demandaId!==id))throw Error('Esta demanda já mudou ou recebeu uma entrega. Confira o estado atual; não envie uma cópia.');
       if(await abrirAreaCentralR87('materiais')===false){validar();modal.replaceChildren(...anterior);return;}validar();await planejamentoPreparacaoR80?.ready;validar();if(!repoPreparacaoR80||!planejamentoPreparacaoR80)throw Error('Não consegui abrir a mesma pasta de documentos.');
-      const carteira=await repoPreparacaoR80.clientes(new Date().toISOString().slice(0,7),true);validar();const [ui]=await moduloPreparacaoR80,assinatura=await ui.assinaturaOrigemDemandaCp138(d);validar();const tipo=finalidadeDocumentalCp138({...d,id}),cliente=d.cliente||d.clienteSlug||d.planejamentoI155?.cliente||'',competenciaAncorada=d.competencia||d.planejamentoI155?.competencia||'',anchor=modal;if(competenciaAncorada&&!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competenciaAncorada))throw Error('O mês editorial desta demanda precisa ser conferido pela gerência.');
-      destinoDocumentoCp138={ctx,g,id,d,assinatura,modal:anchor,rascunho};
-      modal.innerHTML='<h2>Enviar documento desta demanda</h2><p>'+esc(d.titulo||'Demanda')+'</p><p>Escolha o cliente, o mês DOS CONTEÚDOS e o tipo do documento. O prazo da tarefa e o mês da organização não mudam. Não é preciso enviar cada conteúdo separadamente.</p><div class="field"><label>Cliente</label><select id="clienteDocumentoCp138"><option value="">Escolha o cliente</option>'+carteira.map(c=>{const slug=c.slug||c.id;return '<option value="'+escAttr(slug)+'" '+(cliente===slug?'selected':'')+'>'+esc(c.nome||c.clienteNome||slug)+'</option>';}).join('')+'</select></div><div class="field"><label>Mês dos conteúdos</label><input type="month" id="mesDocumentoCp138" value="'+escAttr(competenciaAncorada)+'"></div><div class="field"><label>Tipo de documento</label><select id="tipoDocumentoCp138"><option value="">Escolha o tipo</option>'+(perfil==='Gabrielle'?'<option value="referencias" '+(tipo==='referencias'?'selected':'')+'>Todas as referências</option>':'<option value="campanha" '+(tipo==='campanha'?'selected':'')+'>Campanhas e orientações</option>')+'</select></div><div class="field"><label>Empresa, se for Zeiss</label><select id="empresaDocumentoCp138"><option value="">Geral / todas as empresas</option><option value="otica_hauer">Ótica Hauer</option><option value="otica_sao_jose">Ótica São José</option><option value="clinica_olhos_hauer">Clínica dos Olhos Hauer</option><option value="clinica_sao_jose">Clínica São José</option></select></div><div class="field"><label>Link de origem do material, se houver</label><input type="text" id="linkDocumentoCp153" value="'+escAttr(rascunho.link)+'"><p>O link será levado para o rascunho. Confira o documento completo antes de salvar e confirmar o envio.</p></div><label><input type="checkbox" id="classificacaoDocumentoCp138"> Estou entregando um documento completo desta demanda para este cliente e mês.</label><p>Você vai usar o mesmo envio já existente. Guardar e salvar preparam a versão; confirmar o envio entrega a mesma demanda para revisão. Não aprova nem publica calendário.</p><button type="button" class="btn" onclick="confirmarDestinoDocumentoCp138()">Abrir a pasta e enviar documento</button><button type="button" class="btn secondary" onclick="fecharModal()">Voltar sem alterar</button><p id="erroDocumentoCp138" role="alert"></p>';
-      if(cliente)modal.querySelector('#clienteDocumentoCp138').disabled=true;if(competenciaAncorada)modal.querySelector('#mesDocumentoCp138').disabled=true;const empresa=d.empresaOtavio??d.empresaId??d.agendaOrganizacaoI167?.empresaId;if(empresa!==undefined&&empresa!==null){modal.querySelector('#empresaDocumentoCp138').value=String(empresa);modal.querySelector('#empresaDocumentoCp138').disabled=true;}document.getElementById('overlayView').classList.add('show');
+      const carteira=await repoPreparacaoR80.clientes(new Date().toISOString().slice(0,7),true);validar();const [ui]=await moduloPreparacaoR80,assinatura=await ui.assinaturaOrigemDemandaCp138(d);validar();const tipo=rodadaCp154?.finalidade||finalidadeDocumentalCp138({...d,id}),cliente=rodadaCp154?.cliente||d.cliente||d.clienteSlug||d.planejamentoI155?.cliente||'',competenciaAncorada=rodadaCp154?.competencia||d.competencia||d.planejamentoI155?.competencia||'',anchor=modal;if(competenciaAncorada&&!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competenciaAncorada))throw Error('O mês editorial desta demanda precisa ser conferido pela gerência.');
+      destinoDocumentoCp138={ctx,g,id,d,assinatura,modal:anchor,rascunho,rodadaCp154};
+      modal.innerHTML='<h2>'+(rodadaCp154?'Ajustar e reenviar o documento':'Enviar documento desta demanda')+'</h2><p>'+esc(d.titulo||'Demanda')+'</p>'+(rodadaCp154?'<p>O documento anterior está preservado. Corrija e salve uma nova versão do mesmo cliente, mês e tipo antes de reenviar para revisão.</p>':'')+'<p>Escolha o cliente, o mês DOS CONTEÚDOS e o tipo do documento. O prazo da tarefa e o mês da organização não mudam. Não é preciso enviar cada conteúdo separadamente.</p><div class="field"><label>Cliente</label><select id="clienteDocumentoCp138"><option value="">Escolha o cliente</option>'+carteira.map(c=>{const slug=c.slug||c.id;return '<option value="'+escAttr(slug)+'" '+(cliente===slug?'selected':'')+'>'+esc(c.nome||c.clienteNome||slug)+'</option>';}).join('')+'</select></div><div class="field"><label>Mês dos conteúdos</label><input type="month" id="mesDocumentoCp138" value="'+escAttr(competenciaAncorada)+'"></div><div class="field"><label>Tipo de documento</label><select id="tipoDocumentoCp138"><option value="">Escolha o tipo</option>'+(perfil==='Gabrielle'?'<option value="referencias" '+(tipo==='referencias'?'selected':'')+'>Todas as referências</option>':'<option value="campanha" '+(tipo==='campanha'?'selected':'')+'>Campanhas e orientações</option>')+'</select></div><div class="field"><label>Empresa, se for Zeiss</label><select id="empresaDocumentoCp138"><option value="">Geral / todas as empresas</option><option value="otica_hauer">Ótica Hauer</option><option value="otica_sao_jose">Ótica São José</option><option value="clinica_olhos_hauer">Clínica dos Olhos Hauer</option><option value="clinica_sao_jose">Clínica São José</option></select></div><div class="field"><label>Link de origem do material, se houver</label><input type="text" id="linkDocumentoCp153" value="'+escAttr(rascunho.link)+'"><p>O link será levado para o rascunho. Confira o documento completo antes de salvar e confirmar o envio.</p></div><label><input type="checkbox" id="classificacaoDocumentoCp138"> Estou entregando um documento completo desta demanda para este cliente e mês.</label><p>Você vai usar o mesmo envio já existente. Guardar e salvar preparam a versão; confirmar o envio entrega a mesma demanda para revisão. Não aprova nem publica calendário.</p><button type="button" class="btn" onclick="confirmarDestinoDocumentoCp138()">Abrir a pasta e enviar documento</button><button type="button" class="btn secondary" onclick="fecharModal()">Voltar sem alterar</button><p id="erroDocumentoCp138" role="alert"></p>';
+      if(cliente)modal.querySelector('#clienteDocumentoCp138').disabled=true;if(competenciaAncorada)modal.querySelector('#mesDocumentoCp138').disabled=true;const empresa=rodadaCp154?rodadaCp154.empresaOtavio:d.empresaOtavio??d.empresaId??d.agendaOrganizacaoI167?.empresaId;if(empresa!==undefined&&empresa!==null){modal.querySelector('#empresaDocumentoCp138').value=String(empresa);modal.querySelector('#empresaDocumentoCp138').disabled=true;}document.getElementById('overlayView').classList.add('show');
     }catch(e){if(mesmaIdentidadeDocumentoCp138(ctx)&&g===geracaoDocumentoCp138&&modal.firstElementChild===marca&&overlay.classList.contains('show')){modal.replaceChildren(...anterior);mostrarToast(e.message||'Não consegui abrir a entrega. Nada foi concluído.','erro');}}
   };
   window.confirmarDestinoDocumentoCp138=async function(){
     const x=destinoDocumentoCp138;if(!x||!mesmaIdentidadeDocumentoCp138(x.ctx)||x.g!==geracaoDocumentoCp138)return;const modal=x.modal,err=modal.querySelector('#erroDocumentoCp138');if(!err)return;
     const btn=modal.querySelector('button');if(btn.disabled)return;btn.disabled=true;
     try{const cliente=modal.querySelector('#clienteDocumentoCp138').value,competencia=modal.querySelector('#mesDocumentoCp138').value,finalidade=modal.querySelector('#tipoDocumentoCp138').value,empresaOtavio=modal.querySelector('#empresaDocumentoCp138').value;if(!modal.querySelector('#classificacaoDocumentoCp138').checked)throw Error('Confirme que esta entrega é um documento completo e confira o cliente e mês.');if(!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(cliente)||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)||!['referencias','campanha'].includes(finalidade)||cliente!=='zeiss'&&empresaOtavio)throw Error('Escolha o cliente, o mês dos conteúdos, o tipo e a empresa correta.');
-      if([x.d.cliente,x.d.clienteSlug,x.d.planejamentoI155?.cliente].filter(v=>v).some(v=>v!==cliente)||[x.d.competencia,x.d.planejamentoI155?.competencia].filter(v=>v).some(v=>v!==competencia))throw Error('O cliente e o mês editorial já identificados na demanda não podem ser trocados. O mês operacional é separado.');if(!mesmaIdentidadeDocumentoCp138(x.ctx)||x.g!==geracaoDocumentoCp138)return;const origem={schema:1,id:x.id,assinatura:x.assinatura,cliente,competencia,finalidade,empresaOtavio,classificacaoConfirmada:true};const rascunho={texto:x.rascunho?.texto||'',link:modal.querySelector('#linkDocumentoCp153').value};const ok=await planejamentoPreparacaoR80.abrirEntregaDemandaCp138(origem,rascunho);if(!mesmaIdentidadeDocumentoCp138(x.ctx)||x.g!==geracaoDocumentoCp138)return;if(ok){destinoDocumentoCp138=null;fecharModal();}else throw Error('Guarde os campos em edição antes de abrir esta entrega. Nenhum documento foi reenviado.');
+      if([x.d.cliente,x.d.clienteSlug,x.d.planejamentoI155?.cliente].filter(v=>v).some(v=>v!==cliente)||[x.d.competencia,x.d.planejamentoI155?.competencia].filter(v=>v).some(v=>v!==competencia))throw Error('O cliente e o mês editorial já identificados na demanda não podem ser trocados. O mês operacional é separado.');if(!mesmaIdentidadeDocumentoCp138(x.ctx)||x.g!==geracaoDocumentoCp138)return;if(x.rodadaCp154&&[cliente,competencia,finalidade,empresaOtavio].some((v,i)=>v!==[x.rodadaCp154.cliente,x.rodadaCp154.competencia,x.rodadaCp154.finalidade,x.rodadaCp154.empresaOtavio][i]))throw Error('A correção deve ficar no mesmo cliente, mês, tipo e empresa do documento devolvido.');const origem={schema:1,id:x.id,assinatura:x.assinatura,cliente,competencia,finalidade,empresaOtavio,classificacaoConfirmada:true};const rascunho={texto:x.rascunho?.texto||'',link:modal.querySelector('#linkDocumentoCp153').value};const ok=await planejamentoPreparacaoR80.abrirEntregaDemandaCp138(origem,rascunho);if(!mesmaIdentidadeDocumentoCp138(x.ctx)||x.g!==geracaoDocumentoCp138)return;if(ok){destinoDocumentoCp138=null;fecharModal();}else throw Error('Guarde os campos em edição antes de abrir esta entrega. Nenhum documento foi reenviado.');
     }catch(e){if(mesmaIdentidadeDocumentoCp138(x.ctx)&&x.g===geracaoDocumentoCp138)err.textContent=e.message||'Não consegui abrir esta pasta.';}finally{if(mesmaIdentidadeDocumentoCp138(x.ctx)&&x.g===geracaoDocumentoCp138&&modal.querySelector('button')===btn)btn.disabled=false;}
   };
 
@@ -33671,6 +33737,7 @@ window.setGerenciaSub = function(qual, el){
       ${htmlRepasseCp148(d)}
       ${htmlRevisaoEsperaCp149(d)}
       ${htmlMotivoRefazerI161(d)}
+      ${htmlDocumentoEntregueCp154(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${contextoCalendarioDemandaI117(d)&&papelPodeSubabaCalendariosV127(usuarioAtual,'editar')?`<div class="card" style="border:1px solid var(--yellow);margin:12px 0;"><div class="meta">Calendário de ${esc(d.clienteNome||d.clienteSlug||d.cliente)} · ${esc(d.competencia.split('-').reverse().join('/'))}</div><button type="button" class="btn" style="margin-top:8px;" onclick="abrirCalendarioDemandaI117('${escJs(d.id)}')">Abrir calendário deste ajuste</button><div class="meta" style="margin-top:8px;">Corrija o conteúdo indicado e envie o calendário para Amanda revisar.</div></div>`:''}
       <div class="linha"><b>Prazo:</b> ${formatarDataBR(d.prazoData)} às ${d.prazoHora}</div>
@@ -34581,6 +34648,7 @@ window.setGerenciaSub = function(qual, el){
     if(controladorProvidenciasCp140?.canLeave?.()===false)return false;
     if(window.__arteYasI129?.emCurso&&window.__arteYasI129.atual()){mostrarToast('Espere a confirmação da arte antes de fechar.','erro');return false;}
     if(__edicaoCentralLegendasV134)return fecharEditorLegendaCentralV134();
+    if(window.cancelarAberturaFilaCp154?.(null,false,true))return true;
     limparArquivoMidiaI166();
     geracaoDocumentoCp138++;destinoDocumentoCp138=null;
     geracaoFichaPostagemI165++;
@@ -48024,10 +48092,10 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     const q=estadoFilaInternaCp123();
     if(q.estado==='nao_lida'||q.estado==='carregando')return '<div class="card" role="status" data-fila-interna-cp123>Conferindo os ajustes internos…</div>';
     if(!q.ajustes.length&&q.estado==='confirmada')return '';
-    const amanda=usuarioAtual==='Amanda',grupos=new Map();
+    const amanda=usuarioAtual==='Amanda',grupos=new Map(),pendentesTotais=q.ajustes.filter(r=>r.estado==='enviado').length,aprovadosTotais=q.ajustes.filter(r=>r.estado==='aprovado').length;
     for(const r of q.ajustes){if(!grupos.has(r.ciclo))grupos.set(r.ciclo,[]);grupos.get(r.ciclo).push(r);}
     const card=r=>'<article class="item" data-interno-fila-cp123="'+r.id+'"><div class="top"><div class="nome">'+esc(r.titulo)+'</div><span class="selo pendente">'+esc(r.estadoLabel)+'</span></div><p class="meta">Dia '+esc(String(r.dia||'—'))+' · versão '+esc(String(r.versao))+'</p>'+(r.estado==='aprovado'?'<p class="desc"><b>Aprovado, aguardando a liberação ao cliente.</b></p>':'')+(r.motivoDevolucao?'<p class="desc" style="white-space:pre-wrap"><b>Recado da revisão:</b> '+esc(r.motivoDevolucao)+'</p>':'')+'<details><summary>Motivo inicial · histórico</summary><p class="desc" style="white-space:pre-wrap">'+esc(r.motivoInterno)+'</p></details><button type="button" class="btn secondary" onclick="abrirAjusteInternoFilaCp123(\''+r.id+'\')">'+(amanda?(r.estado==='aprovado'?'Conferir versão aprovada':'Revisar este conteúdo'):r.estado==='rascunho'||r.estado==='devolvido'?'Continuar ajuste':'Acompanhar ajuste')+'</button></article>';
-    return '<section class="card" data-fila-interna-cp123 style="border:2px solid var(--yellow);"><h2>📝 '+(amanda?'Alterações de calendário para revisar':'Meus ajustes internos')+'</h2><p class="desc">'+(amanda?'Abra o cliente e mês para conferir as versões novas. Você pode aprovar cada ajuste ou devolver com uma observação.':'Retome seus textos pelo mesmo cliente e mês. Amanda revisa antes de liberar.')+' A versão do cliente permanece preservada até a liberação explícita.</p>'+(q.estado==='falha'?'<p role="alert">Não consegui confirmar as mudanças agora. A última leitura foi mantida; isso não confirma fila vazia.</p><button type="button" class="btn secondary" onclick="conferirFilaInternaCp123()">Conferir ajustes novamente</button>':'')+[...grupos].map(([ciclo,rows])=>{const r=rows[0],pendentes=rows.filter(x=>x.estado==='enviado').length,aprovados=rows.filter(x=>x.estado==='aprovado').length;return '<details class="item" data-grupo-revisao-cp145="'+esc(ciclo)+'"><summary><b>'+esc(r.clienteNome||r.cliente)+' · '+esc(rotuloCompetenciaControleEditorial(r.competencia))+'</b><span class="desc"> · '+rows.length+' alteração(ões)</span></summary><p class="desc">'+pendentes+' para revisar · '+aprovados+' aprovada(s), ainda sem liberar ao cliente.</p>'+rows.map(card).join('')+'</details>';}).join('')+'</section>';
+    return '<section class="card" data-fila-interna-cp123 style="border:2px solid var(--yellow);"><h2>📝 '+(amanda?'Alterações de calendário para revisar':'Meus ajustes internos')+'</h2><p class="desc">'+(amanda?'Abra Revisar este conteúdo para conferir o roteiro, a legenda e a edição enviados. Você pode aprovar o ajuste ou devolver com uma observação.':'Retome seus textos pelo mesmo cliente e mês. Amanda revisa antes de liberar.')+' A versão do cliente permanece preservada até a liberação explícita.</p>'+(amanda?'<p><b>'+pendentesTotais+' para revisar agora · '+aprovadosTotais+' aprovados, aguardando liberação ao cliente.</b></p>':'')+(q.estado==='falha'?'<p role="alert">Não consegui confirmar as mudanças agora. A última leitura foi mantida; isso não confirma fila vazia.</p><button type="button" class="btn secondary" onclick="conferirFilaInternaCp123()">Conferir ajustes novamente</button>':'')+[...grupos].map(([ciclo,rows])=>{const r=rows[0],pendentes=rows.filter(x=>x.estado==='enviado').length,aprovados=rows.filter(x=>x.estado==='aprovado').length;return '<details class="item" data-grupo-revisao-cp145="'+esc(ciclo)+'"'+(amanda&&pendentes?' open':'')+'><summary><b>'+esc(r.clienteNome||r.cliente)+' · '+esc(rotuloCompetenciaControleEditorial(r.competencia))+'</b><span class="desc"> · '+rows.length+' alteração(ões)</span></summary><p class="desc">'+pendentes+' para revisar · '+aprovados+' aprovada(s), ainda sem liberar ao cliente.</p>'+rows.map(card).join('')+'</details>';}).join('')+'</section>';
   }
   function desenharFilaInternaCp123(){
     const slot=document.getElementById('centralAprovInternosCp123');if(slot)slot.innerHTML=htmlFilaInternaCp123();
@@ -48053,6 +48121,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     })();__consultaFilaInternaCp123={chave,promise};return promise;
   }
   function pararFilaInternaCp123(){
+    window.cancelarAberturaFilaCp154?.();
     ++__geracaoFilaInternaCp123;if(__timerFilaInternaCp123)clearInterval(__timerFilaInternaCp123);__timerFilaInternaCp123=null;
     if(__focoFilaInternaCp123){window.removeEventListener('focus',__focoFilaInternaCp123);document.removeEventListener('visibilitychange',__focoFilaInternaCp123);}__focoFilaInternaCp123=null;
     __consultaFilaInternaCp123=null;__filaInternaCp123={chave:'',estado:'nao_lida',ajustes:[]};document.getElementById('centralAprovInternosCp123')?.replaceChildren();document.querySelectorAll('[data-fila-interna-cp123]').forEach(el=>el.remove());
@@ -48063,17 +48132,37 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     __focoFilaInternaCp123=conferir;window.addEventListener('focus',conferir);document.addEventListener('visibilitychange',conferir);__timerFilaInternaCp123=setInterval(conferir,60000);void atualizarFilaInternaCp123(true);
   }
   window.conferirFilaInternaCp123=()=>atualizarFilaInternaCp123(true);
+  let __geracaoAberturaFilaCp154=0,__aberturaFilaCp154=null;
+  function encerrarAberturaFilaCp154(a,descartarEditor=false){
+    if(!a)return;
+    if(descartarEditor&&a.host?.dataset.aberturaFilaCp154===String(a.g)&&(!a.editor||editorCalendarioCentralI172===a.editor)){if(a.editor){a.editor.destroy();editorCalendarioCentralI172=null;}a.host.hidden=true;a.host.replaceChildren();delete a.host.dataset.aberturaFilaCp154;}
+    if(a.modal?.firstElementChild===a.marca){a.overlay.classList.remove('show');a.modal.replaceChildren();}
+    if(__aberturaFilaCp154===a)__aberturaFilaCp154=null;
+  }
+  window.cancelarAberturaFilaCp154=function(g=null,porNavegacao=false,somenteModalProprio=false){
+    const a=__aberturaFilaCp154;if(!a||g!==null&&Number(g)!==a.g||porNavegacao&&a.navegacaoPropria||somenteModalProprio&&a.modal?.firstElementChild!==a.marca)return false;
+    ++__geracaoAberturaFilaCp154;encerrarAberturaFilaCp154(a,true);return true;
+  };
   window.abrirAjusteInternoFilaCp123=async function(id){
     const chave=chaveFilaInternaCp123();if(!['Chris','Amanda'].includes(usuarioAtual)||!/^interno_cp123_[a-f0-9]{64}$/.test(id||''))return false;
+    if(!podeSairPreparacaoR80()||!podeSairCp109())return false;
+    window.cancelarAberturaFilaCp154();const modal=document.getElementById('modalConteudo'),overlay=document.getElementById('overlayView');if(!modal||!overlay)return false;
+    const g=++__geracaoAberturaFilaCp154,a={g,chave,modal,overlay,marca:null,nav:__navegacaoAvisosMinimosI165,navegacaoPropria:false,editor:null,host:null};
+    modal.innerHTML='<section data-abertura-fila-cp154><h2>Abrindo a versão enviada para revisão…</h2><p role="status">Conferindo o ajuste e os textos atuais. Você pode cancelar esta abertura e continuar no site. Cancelar não altera nem aprova o conteúdo.</p><button type="button" class="btn secondary" onclick="cancelarAberturaFilaCp154('+g+')">Cancelar abertura</button></section>';a.marca=modal.firstElementChild;__aberturaFilaCp154=a;overlay.classList.add('show');modal.querySelector('button')?.focus();
+    const atual=()=>__aberturaFilaCp154===a&&g===__geracaoAberturaFilaCp154&&chave===chaveFilaInternaCp123()&&a.nav===__navegacaoAvisosMinimosI165&&modal.firstElementChild===a.marca&&overlay.classList.contains('show');
     try{
-      await atualizarFilaInternaCp123(true);if(chave!==chaveFilaInternaCp123())return false;
+      await atualizarFilaInternaCp123(true);if(!atual())return false;
       const q=estadoFilaInternaCp123(),r=q.ajustes.find(x=>x.id===id);if(q.estado!=='confirmada'||!r)throw Error('Esse ajuste mudou. Confira a fila atual antes de abrir.');
       if(!podeSairPreparacaoR80()||!podeSairCp109())return false;
-      if(irPara('planejamentoPreparacaoR80',document.getElementById('navPlanejamentoPreparacaoR80'))===false)return false;
-      await montarPreparacaoR80();if(chave!==chaveFilaInternaCp123()||viewAtiva!=='planejamentoPreparacaoR80')return false;
+      let abriu;a.navegacaoPropria=true;try{abriu=irPara('planejamentoPreparacaoR80',document.getElementById('navPlanejamentoPreparacaoR80'));}finally{a.navegacaoPropria=false;}a.nav=__navegacaoAvisosMinimosI165;
+      if(abriu===false||!atual()||viewAtiva!=='planejamentoPreparacaoR80')return false;
+      await montarPreparacaoR80();if(!atual()||viewAtiva!=='planejamentoPreparacaoR80')return false;
       if(typeof abrirEditorCentralI172!=='function')throw Error('O editor ainda não confirmou esta entrada. Reabra o mesmo ajuste.');
-      return await abrirEditorCentralI172({id:r.ciclo,cliente:r.cliente,clienteNome:r.clienteNome,competencia:r.competencia,ajusteInternoId:r.id},r.preparacaoSomenteCp140===true?'':'continuar_legado');
-    }catch(e){if(chave===chaveFilaInternaCp123())mostrarToast(e.message||'Não consegui abrir esse ajuste.','erro');return false;}
+      const confirmado=await abrirEditorCentralI172({id:r.ciclo,cliente:r.cliente,clienteNome:r.clienteNome,competencia:r.competencia,ajusteInternoId:r.id},r.preparacaoSomenteCp140===true?'':'continuar_legado',{vigente:atual,registrarEditor:(ed,host)=>{if(!atual()){ed?.destroy();return;}a.editor=ed;a.host=host;host.dataset.aberturaFilaCp154=String(g);}});
+      if(!atual()||viewAtiva!=='planejamentoPreparacaoR80')return false;
+      encerrarAberturaFilaCp154(a,false);return confirmado===true;
+    }catch(e){if(atual())mostrarToast(e.message||'Não consegui abrir esse ajuste.','erro');return false;}
+    finally{if(__aberturaFilaCp154===a)encerrarAberturaFilaCp154(a,true);}
   };
   window.addEventListener('pagehide',pararFilaInternaCp123);
 
@@ -48103,6 +48192,8 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
   function desenharAvisosCalendariosI148(){
     const box=document.getElementById('avisosCalendariosI148'),badge=document.getElementById('badgeEnvioCalendariosI148'),s=__avisosCalendariosI148;
     if(!box)return;
+    const avisosInicioCp154=document.getElementById('localAvisosInicioCP108');
+    if(avisosInicioCp154&&box.parentElement===avisosInicioCp154.parentElement){if(usuarioAtual==='Amanda'&&box.nextElementSibling!==avisosInicioCp154)avisosInicioCp154.before(box);else if(usuarioAtual!=='Amanda'&&avisosInicioCp154.nextElementSibling!==box)avisosInicioCp154.after(box);}
     if(usuarioAtual==='Chris'){box.innerHTML=htmlFilaInternaCp123();box.style.display=box.innerHTML?'block':'none';if(badge){badge.textContent='';badge.style.display='none';}return;}
     if(!['Amanda','Cecília'].includes(usuarioAtual)||s.sessao!==sessaoServicoManual()){box.replaceChildren();box.style.display='none';if(badge){badge.textContent='';badge.style.display='none';}return;}
     const amanda=usuarioAtual==='Amanda',mes=mesAvisosCalendariosI158();
@@ -48112,7 +48203,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     box.style.display=s.linhas.length||s.estado==='falha'||amanda&&htmlFilaInternaCp123()?'block':'none';
     box.innerHTML=`<div class="card" role="status" style="border:2px solid var(--yellow);"><h2>🗓️ ${amanda?'Calendários para aprovar':'Calendários para conferir · '+esc(rotuloCompetenciaControleEditorial(mes))}</h2>
       ${s.estado==='falha'?'<p class="meta">Não consegui confirmar as mudanças agora. A última leitura continua abaixo; isso não confirma que a fila está vazia.</p>':''}
-      <p class="desc">${amanda?'A Gabi enviou estes calendários. Abra Aprovações para revisar e decidir.':'O número na Central de Calendários é deste mês, o mesmo escolhido em Links e envio. Confirme o compartilhamento somente depois de enviar ao cliente.'}</p>
+      <p class="desc">${amanda?'Estas versões foram enviadas para sua revisão. Abra Aprovações para conferir os conteúdos e decidir.':'O número na Central de Calendários é deste mês, o mesmo escolhido em Links e envio. Confirme o compartilhamento somente depois de enviar ao cliente.'}</p>
       ${(amanda?atuais.slice(0,8):atuais).map(cartao).join('')}
       ${amanda&&atuais.length>8?`<p class="meta">Mais ${atuais.length-8} calendário(s) na fila.</p>`:''}
       ${!amanda&&!atuais.length?'<p class="meta">Nenhum calendário sem confirmação neste mês.</p>':''}
@@ -50559,6 +50650,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
       ${htmlRepasseCp148(d)}
       ${htmlRevisaoEsperaCp149(d)}
       ${htmlMotivoRefazerI161(d)}
+      ${htmlDocumentoEntregueCp154(d)}
       ${htmlOrigemCampanhaI153(d)}
       ${d.radarI147?.versao===1?`<div class="card"><b>Vinculada ao Radar</b><p class="meta">${esc(d.radarI147.origemColecao)}/${esc(d.radarI147.origemId)} · ${esc(d.clienteNome||d.radarI147.cliente)}</p><p class="meta">Faça o ajuste na etapa indicada e registre aqui o retorno. O Radar confere a solução na origem.</p>${podeOrigemDemandaRadarI147(d)?`<button type="button" class="btn secondary" data-id="${escAttr(d.id)}" onclick="origemDemandaRadarI147(this.dataset.id)">Abrir etapa desta pendência</button>`:''}</div>`:''}
       ${podeMexerNoPrazo ? `
@@ -50705,6 +50797,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
   function podeConferirEntregaCp149(d,pessoa){
     if(d?.status!=='concluida_aguardando_aprovacao'||!['Chris','Amanda'].includes(pessoa)||ehAvisoEsperaCp149(d))return false;
     const explicito=revisorEsperaAprovacaoCp149(d);if(explicito&&explicito!==pessoa)return false;
+    const documental=revisorEntregaOrganizacaoCp154(d);if(documental)return documental===pessoa;
     return d.destinatario!==pessoa||(String(d.origem||'').toLowerCase()===String(d.destinatario||'').toLowerCase()&&aprovacaoEhDe(d,pessoa));
   }
   function htmlRevisaoEsperaCp149(d){const quem=revisorEsperaAprovacaoCp149(d);return quem&&d.status==='concluida_aguardando_aprovacao'?'<div class="card" style="border-left:3px solid var(--yellow);"><b>Entrega salva · aguardando '+esc(quem)+'</b><p>A conferência foi pedida para '+esc(quem)+'. O texto e o material já estão aqui; não precisa enviar tudo de novo.</p></div>':'';}
@@ -50872,7 +50965,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     }catch(e){ console.error('Falha ao registrar a decisão:', e); mostrarToast('Não consegui registrar agora.', 'erro'); }
   };
 
-  function assinaturaRevisaoDocumentoCp138(d){return jsonEstavel({recibo:d.entregaDocumentoCp138||null,cliente:d.cliente||'',clienteSlug:d.clienteSlug||'',competencia:d.competencia||'',empresaOtavio:d.empresaOtavio??null,empresaId:d.empresaId??null,agenda:d.agendaOrganizacaoI167||null,planejamento:d.planejamentoI155||null,checklist:d.checklistClientes||null,tipo:d.tipoEspecial||''});}
+  function assinaturaRevisaoDocumentoCp138(d){return jsonEstavel({recibo:d.entregaDocumentoCp138||null,origem:d.origem||'',criadoPor:d.criadoPor||'',cliente:d.cliente||'',clienteSlug:d.clienteSlug||'',competencia:d.competencia||'',empresaOtavio:d.empresaOtavio??null,empresaId:d.empresaId??null,agenda:d.agendaOrganizacaoI167||null,planejamento:d.planejamentoI155||null,checklist:d.checklistClientes||null,tipo:d.tipoEspecial||''});}
   async function conferirReciboDocumentoDemandaCp138(tx,id,d){
     const tipo=finalidadeDocumentalCp138(d),r=d.entregaDocumentoCp138;
     if(!tipo&&!r){if(exigeCaminhoDocumentoCp138(d)&&!relatoLiberadoCp138({...d,id}))throw Error('Escolha se esta etapa é uma entrega documental ou outra atividade antes de aprovar.');return;}
@@ -50880,9 +50973,64 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     if([d.cliente,d.clienteSlug,d.planejamentoI155?.cliente].filter(v=>v).some(v=>v!==r.cliente)||[d.competencia,d.planejamentoI155?.competencia].filter(v=>v).some(v=>v!==r.competencia)||[d.empresaOtavio,d.empresaId,d.agendaOrganizacaoI167?.empresaId].filter(v=>v!==undefined&&v!==null).some(v=>v!==r.empresaOtavio))throw Error('O recibo pertence a outro cliente, mês editorial ou empresa.');
     const [cSnap,docSnap,evSnap]=await Promise.all([tx.get(doc(db,'planejamento_social_i155',r.ciclo)),tx.get(doc(db,'planejamento_social_i155',r.ciclo,'registros',r.documentoId)),tx.get(doc(db,'planejamento_social_i155',r.ciclo,'eventos',r.operacao))]);
     const c=cSnap.data(),m=docSnap.data(),ev=evSnap.data(),chave=r.finalidade+'__'+(r.empresaOtavio||'geral');
-    if(!cSnap.exists()||!docSnap.exists()||!evSnap.exists()||m.tipo!=='documento'||m.cliente!==r.cliente||m.competencia!==r.competencia||m.finalidade!==r.finalidade||(m.empresaOtavio||'')!==r.empresaOtavio||m.versao!==r.versao||c.documentos?.materiais?.[chave]!==r.documentoId||c.documentos?.confirmacoes?.[chave]?.id!==r.documentoId||c.documentos?.confirmacoes?.[chave]?.em!==r.em||c.documentos?.desconsideracoesCp111?.[r.documentoId]||ev.acao!=='confirmar_documento'||ev.operacao!==r.operacao||ev.autorUid!==r.autorUid||ev.autorNome!==r.por||ev.perfil!==r.perfil||jsonEstavel(ev.resultado?.origemDemandaCp138)!==jsonEstavel(r))throw Error('A confirmação documental mudou. Confira a versão atual antes de aprovar esta demanda.');
+    const vinculoCp154=r.vinculoConfirmadoCp154,eventoDocumentoValidoCp154=ev?.acao==='confirmar_documento'&&!vinculoCp154||ev?.acao==='vincular_entrega_documento_cp154'&&vinculoCp154?.schema===1&&ev.resultado?.vinculoConfirmadoCp154===true&&vinculoCp154.autorUid===r.autorUid&&vinculoCp154.por===r.por&&vinculoCp154.perfil===r.perfil&&typeof vinculoCp154.em==='string'&&Number.isFinite(Date.parse(vinculoCp154.em))&&Number.isInteger(vinculoCp154.revisaoCiclo)&&vinculoCp154.revisaoCiclo>=0&&/^[a-f0-9]{64}$/.test(vinculoCp154.assinaturaDocumento||'')&&/^[A-Za-z0-9_-]{8,100}$/.test(vinculoCp154.confirmacaoOperacao||'')&&Number.isInteger(vinculoCp154.confirmacaoRevisao)&&vinculoCp154.confirmacaoRevisao<=vinculoCp154.revisaoCiclo&&jsonEstavel(vinculoCp154.confirmacaoOriginal)===jsonEstavel(c?.documentos?.confirmacoes?.[chave]);
+    if(!cSnap.exists()||!docSnap.exists()||!evSnap.exists()||m.tipo!=='documento'||m.cliente!==r.cliente||m.competencia!==r.competencia||m.finalidade!==r.finalidade||(m.empresaOtavio||'')!==r.empresaOtavio||m.versao!==r.versao||c.documentos?.materiais?.[chave]!==r.documentoId||c.documentos?.confirmacoes?.[chave]?.id!==r.documentoId||c.documentos?.confirmacoes?.[chave]?.em!==r.em||c.documentos?.desconsideracoesCp111?.[r.documentoId]||!eventoDocumentoValidoCp154||ev.operacao!==r.operacao||ev.autorUid!==r.autorUid||ev.autorNome!==r.por||ev.perfil!==r.perfil||jsonEstavel(ev.resultado?.origemDemandaCp138)!==jsonEstavel(r))throw Error('A confirmação documental mudou. Confira a versão atual antes de aprovar esta demanda.');
+    if(vinculoCp154){
+      const originalSnap=await tx.get(doc(db,'planejamento_social_i155',r.ciclo,'eventos',vinculoCp154.confirmacaoOperacao)),original=originalSnap.data(),cf=vinculoCp154.confirmacaoOriginal;
+      if(!originalSnap.exists()||original.acao!=='confirmar_documento'||original.operacao!==vinculoCp154.confirmacaoOperacao||original.revisao!==vinculoCp154.confirmacaoRevisao||original.resultado?.confirmado!==true||original.resultado.id!==r.documentoId||typeof original.autorUid!=='string'||!original.autorUid||original.autorNome!==cf.por||original.perfil!==cf.perfil||original.depois?.documentos?.materiais?.[chave]!==r.documentoId||jsonEstavel(original.depois?.documentos?.confirmacoes?.[chave])!==jsonEstavel(cf))throw Error('A confirmação original do documento precisa ser conferida. A entrega não foi aprovada.');
+    }
     const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(m.texto))),b=>b.toString(16).padStart(2,'0')).join('');if(hash!==r.hashTexto)throw Error('O texto do documento não corresponde ao recibo desta entrega.');
   }
+
+  const __decisoesDocumentoOcupadasCp154=new Set();
+  const chaveDecisaoDocumentoCp154=(c,id)=>'cp154:decisao-documento:'+c.uid+':'+c.nome+':'+c.atorReal+':'+id;
+  function lerTentativaDecisaoDocumentoCp154(c,id){
+    const valor=globalThis.sessionStorage?.getItem(chaveDecisaoDocumentoCp154(c,id));if(!valor)return null;
+    let t;try{t=JSON.parse(valor);}catch{throw Error('A tentativa anterior foi preservada. Confira esta demanda antes de tentar novamente.');}
+    if(t.schema!==1||t.id!==id||t.uid!==c.uid||t.perfil!==c.nome||t.atorReal!==c.atorReal||!['aprovar','devolver'].includes(t.dados?.decisao)||!/^[A-Za-z0-9_-]{8,100}$/.test(t.operacao||'')||!Number.isInteger(t.revisao)||t.revisao<0||t.dados.origemDemandaCp138?.id!==id||t.ciclo!==t.dados.origemDemandaCp138?.competencia+'__'+t.dados.origemDemandaCp138?.cliente||!/^[a-f0-9]{64}$/.test(t.dados.assinaturaEntregaCp154||''))throw Error('A tentativa anterior não corresponde a este acesso. Ela foi preservada.');return t;
+  }
+  function guardarTentativaDecisaoDocumentoCp154(c,t){
+    if(!globalThis.sessionStorage)throw Error('Não consegui guardar o protocolo desta decisão. Nada foi enviado.');
+    const chave=chaveDecisaoDocumentoCp154(c,t.id),texto=JSON.stringify(t);globalThis.sessionStorage.setItem(chave,texto);if(globalThis.sessionStorage.getItem(chave)!==texto)throw Error('Não consegui preservar o protocolo desta decisão. Nada foi enviado.');
+  }
+  async function decidirEntregaDocumentoUiCp154(d,decisao,motivo='',telaAtual=()=>true){
+    const ctx={...contextoPreparacaoR80()},id=d.id,chave=chaveDecisaoDocumentoCp154(ctx,id),vigente=()=>mesmaIdentidadeDocumentoCp138(ctx);
+    const anterior=lerTentativaDecisaoDocumentoCp154(ctx,id);if(!vigente()||!anterior&&!revisoesDocumentaisMinhasCp154(ctx.nome,[d]).length)throw Error('Esta entrega não está disponível para sua conferência.');
+    if(__decisoesDocumentoOcupadasCp154.has(chave))throw Error('Espere a confirmação desta mesma decisão.');
+    __decisoesDocumentoOcupadasCp154.add(chave);let repo;
+    try{
+      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=8aba467562cc31603be0e51cfdf056fb426626e2be3d9d3056b21d4ae8372620'),import('./gs-central-preparacao-http-r80.mjs?v=401254bb4156064bd3d24da61538fd4c4c25bb1db951be93d65586c22156a475')]);
+      const [ui,fachada]=await moduloPreparacaoR80;if(!vigente())throw Error('O perfil mudou. A tentativa anterior continua preservada.');
+      repo=fachada.criarRepositorioCentralHttpR80({contexto:contextoPreparacaoR80,timestamp:(s,n)=>new Timestamp(s,n),chamar:async(acao,dados)=>{if(!vigente())throw Error('O perfil mudou antes do envio.');const r=await chamadaCentralPreparacaoR80({acao,...dados,uidEsperado:ctx.uid,atorRealEsperado:ctx.atorReal,papelOperado:ctx.nome,sessao:ctx.sessao});if(!vigente())throw Error('O perfil mudou. Confira o resultado no mesmo acesso.');return r.data;}});
+      let t=lerTentativaDecisaoDocumentoCp154(ctx,id);
+      if(t){if(t.dados.decisao!==decisao)throw Error('Existe outra decisão desta entrega sem confirmação. Confira a tentativa anterior antes de escolher uma ação diferente.');if(decisao==='devolver'&&t.dados.motivo!==motivo)throw Object.assign(Error('O envio anterior ainda não foi conferido. Seu texto novo continua aqui; confira a tentativa anterior antes de enviar outro recado.'),{tentativaAnteriorCp154:true});if(t.recusada)throw Object.assign(Error(t.motivoRecusa||'Esta entrega mudou. Confira a versão atual antes de uma nova decisão.'),{recusaDocumentoCp154:true});}
+      else{
+        const snap=await _getDocFromServerFB(doc(db,'demandas',id));if(!vigente()||!snap.exists())throw Error('Não consegui conferir a mesma demanda.');const raw=snap.data(),atual={id,...raw};
+        if(assinaturaEntregaI161(atual)!==assinaturaEntregaI161(d)||assinaturaRevisaoDocumentoCp138(atual)!==assinaturaRevisaoDocumentoCp138(d)||!revisoesDocumentaisMinhasCp154(ctx.nome,[atual]).length)throw Error('A entrega mudou depois de abrir. Reabra a mesma demanda para conferir a versão atual.');
+        const r=atual.entregaDocumentoCp138,estado=await repo.ler(r.ciclo);if(!vigente()||estado?.ciclo?.id!==r.ciclo||!Number.isInteger(estado.ciclo.revisao))throw Error('Não consegui confirmar a pasta desta entrega.');
+        const [assinatura,assinaturaEntregaCp154]=await Promise.all([ui.assinaturaOrigemDemandaCp138(raw),ui.hashPedidoDocumentoCp138(raw)]);if(!vigente())throw Error('O perfil mudou. Nada novo foi enviado.');
+        const origemDemandaCp138={schema:1,id,assinatura,cliente:r.cliente,competencia:r.competencia,finalidade:r.finalidade,empresaOtavio:r.empresaOtavio,classificacaoConfirmada:true};
+        t={schema:1,id,uid:ctx.uid,perfil:ctx.nome,atorReal:ctx.atorReal,ciclo:r.ciclo,revisao:estado.ciclo.revisao,operacao:'dec_doc_cp154_'+crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g,''),dados:{decisao,motivo:decisao==='devolver'?motivo:'',origemDemandaCp138,assinaturaEntregaCp154}};guardarTentativaDecisaoDocumentoCp154(ctx,t);
+      }
+      if(typeof repo.decidirEntregaDocumentoCp154!=='function')throw Error('A decisão documental ainda não confirmou o serviço oficial. A tentativa foi preservada; reabra a mesma entrega.');
+      if(!vigente()||!telaAtual())throw Error('A tela ou o perfil mudou antes do envio. O protocolo continua preservado para conferir nesta mesma demanda.');
+      const resposta=await repo.decidirEntregaDocumentoCp154(t.ciclo,t.dados,t.revisao,t.operacao);if(!vigente())throw Error('O perfil mudou. A mesma tentativa continua no acesso original.');const r=resposta?.resultado;
+      if(r?.recusadaCp138){t.recusada=true;t.motivoRecusa=r.motivo||'Esta entrega mudou. Confira a versão atual antes de decidir.';guardarTentativaDecisaoDocumentoCp154(ctx,t);throw Object.assign(Error(t.motivoRecusa),{recusaDocumentoCp154:true});}
+      if(r?.decisaoDocumentoCp154!==true||r.id!==id||r.decisao!==decisao||r.operacao!==t.operacao||r.estado!==(decisao==='aprovar'?'aprovada':'pendente'))throw Error('Não consegui confirmar a decisão. O mesmo protocolo foi preservado; repita esta ação para conferir a tentativa anterior.');
+      const fresh=await _getDocFromServerFB(doc(db,'demandas',id));if(!vigente()||!fresh.exists())throw Error('A decisão foi recebida, mas a lista ainda precisa ser conferida. O mesmo protocolo continua guardado.');
+      const atual={id,...fresh.data()},i=todasDemandas.findIndex(v=>v.id===id);if(i>=0)todasDemandas[i]=atual;else todasDemandas.push(atual);
+      globalThis.sessionStorage.removeItem(chave);atualizarTodosOsBadges();atualizarFilaAprovacao();if(viewAtiva==='minhasDemandasAtribuidas')void Promise.resolve(renderMinhasDemandasAtribuidas(true)).catch(()=>{});return {...r,estadoAtualCp154:atual.status};
+    }finally{repo?.destroy?.();__decisoesDocumentoOcupadasCp154.delete(chave);}
+  }
+  window.conferirDecisaoDocumentoCp154=async function(id){
+    const ctx={...contextoPreparacaoR80()},t=lerTentativaDecisaoDocumentoCp154(ctx,id),e=window.__refazerI161,marca=document.getElementById('modalConteudo')?.firstElementChild,rota=viewAtiva;if(!t||t.recusada)return false;
+    try{let d=todasDemandas.find(d=>d.id===id);if(!d){const snap=await _getDocFromServerFB(doc(db,'demandas',id));if(!mesmaIdentidadeDocumentoCp138(ctx)||viewAtiva!==rota||document.getElementById('modalConteudo')?.firstElementChild!==marca||!snap.exists())throw Error('Não consegui conferir a mesma demanda. O protocolo continua guardado.');d={id,...snap.data()};todasDemandas.push(d);}const r=await decidirEntregaDocumentoUiCp154(d,t.dados.decisao,t.dados.motivo,()=>viewAtiva===rota&&document.getElementById('modalConteudo')?.firstElementChild===marca);if(!mesmaIdentidadeDocumentoCp138(ctx))return true;const erro=document.getElementById('erroRefazerI161');if(e?.id===id&&e.campo?.isConnected&&erro&&e.atual?.()){e.busy=false;e.campo.disabled=false;document.getElementById('btnRefazerI161').disabled=true;erro.textContent='O envio anterior foi confirmado. O texto que está neste campo continua aqui para você copiar; ele não foi enviado de novo.';}else mostrarToast('A mesma tentativa anterior foi confirmada. Confira o estado atualizado da demanda.');return r;}catch(err){if(mesmaIdentidadeDocumentoCp138(ctx))mostrarToast(err.message||'A tentativa anterior continua guardada.','erro');return false;}
+  };
+  window.atualizarRevisaoDocumentoCp154=async function(id){
+    const ctx={...contextoPreparacaoR80()},t=lerTentativaDecisaoDocumentoCp154(ctx,id),marca=document.getElementById('modalConteudo')?.firstElementChild,rota=viewAtiva;if(!t?.recusada||__decisoesDocumentoOcupadasCp154.has(chaveDecisaoDocumentoCp154(ctx,id)))return false;
+    const snap=await _getDocFromServerFB(doc(db,'demandas',id));if(!mesmaIdentidadeDocumentoCp138(ctx)||!snap.exists()||viewAtiva!==rota||document.getElementById('modalConteudo')?.firstElementChild!==marca)return false;
+    const chave=chaveDecisaoDocumentoCp154(ctx,id);globalThis.sessionStorage.setItem(chave+':historico:'+t.operacao,JSON.stringify(t));globalThis.sessionStorage.removeItem(chave);const atual={id,...snap.data()},i=todasDemandas.findIndex(d=>d.id===id);if(i>=0)todasDemandas[i]=atual;else todasDemandas.push(atual);return abrirDemandaGerencia(id);
+  };
 
   window.aprovarDemanda = async function(id){
     if(ehIdDemandaEntradaCp150(id))return abrirDemandaEntradaCp150(id);
@@ -50893,11 +51041,14 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     const d = todasDemandas.find(x=>x.id===id);
     if(!d)return mostrarToast('Atualize a fila para conferir essa entrega.','erro');
     const revisorCp149=revisorEsperaAprovacaoCp149(d);if(revisorCp149&&revisorCp149!==usuarioAtual)return mostrarToast('Esta entrega aguarda a conferência de '+revisorCp149+'.','erro');
+    const revisorDocumentoCp154=revisorEntregaOrganizacaoCp154(d),tentativaAnteriorCp154=revisorDocumentoCp154?lerTentativaDecisaoDocumentoCp154(contextoPreparacaoR80(),id):null,recuperarAprovacaoCp154=tentativaAnteriorCp154&&!tentativaAnteriorCp154.recusada&&tentativaAnteriorCp154.dados.decisao==='aprovar';if(revisorDocumentoCp154&&!podeConferirEntregaCp149(d,usuarioAtual)&&!recuperarAprovacaoCp154)return mostrarToast('Esta entrega não está aguardando uma nova decisão. Confira a situação atual da mesma demanda.','erro');
+    if(revisorDocumentoCp154){const ctx={...contextoPreparacaoR80()},marca=document.getElementById('modalConteudo')?.firstElementChild,rota=viewAtiva;try{const decisaoConfirmadaCp154=await decidirEntregaDocumentoUiCp154(d,'aprovar','',()=>viewAtiva===rota&&document.getElementById('modalConteudo')?.firstElementChild===marca);if(!mesmaIdentidadeDocumentoCp138(ctx))return true;if(document.getElementById('modalConteudo')?.firstElementChild===marca)fecharModal();mostrarToast(decisaoConfirmadaCp154.estadoAtualCp154==='aprovada'?'Entrega aprovada. O documento e o histórico continuam preservados; nenhum calendário foi publicado.':'A tentativa anterior foi confirmada. A lista mostra a situação atual da mesma demanda; nenhum calendário foi publicado.');return true;}catch(e){if(mesmaIdentidadeDocumentoCp138(ctx)){mostrarToast(e.message||'Não consegui confirmar. A mesma tentativa continua guardada.','erro');if(e.recusaDocumentoCp154){const modal=document.getElementById('modalConteudo');if(modal?.firstElementChild===marca)modal.insertAdjacentHTML('beforeend','<button class="btn secondary" data-id="'+escAttr(id)+'" onclick="atualizarRevisaoDocumentoCp154(this.dataset.id)">Conferir a entrega atual antes de decidir novamente</button>');}}return false;}}
+
     const contextoSincroniaCp149=contextoEsperaCp149();
     const assinaturaDocumentoCp138=assinaturaRevisaoDocumentoCp138(d),contextoDocumentoCp138={...contextoPreparacaoR80()},documentalCp138=!!finalidadeDocumentalCp138(d)||!!d.entregaDocumentoCp138;
     if(exigeCaminhoDocumentoCp138(d)||documentalCp138){if(d.status==='aprovada'){mostrarToast('Esta entrega já foi aprovada. O histórico não será reaberto.');return false;}if(!d.entregaDocumentoCp138&&(documentalCp138||!relatoLiberadoCp138(d))){const modal=document.getElementById('modalConteudo');orientarEntregaDocumentoCp138(d,modal);mostrarToast('Confira a entrega do documento antes de aprovar. Outra atividade precisa ser escolhida explicitamente.','erro');return false;}}
     const assinaturaI161=assinaturaEntregaI161(d),pessoaI161=usuarioAtual,uidI161=auth.currentUser?.uid,sessaoI161=sessaoServicoManual();
-    try{await runTransaction(db,async tx=>{const ref=doc(db,'demandas',id),snap=await tx.get(ref);if(!snap.exists()||snap.data().excluido||assinaturaEntregaI161(snap.data())!==assinaturaI161||usuarioAtual!==pessoaI161||auth.currentUser?.uid!==uidI161||sessaoServicoManual()!==sessaoI161)throw Error('A entrega ou o perfil mudou. Atualize a fila e confira novamente.');if((revisorEsperaAprovacaoCp149(d)||revisorEsperaAprovacaoCp149(snap.data()))&&(jsonEstavel(d.bloqueio??null)!==jsonEstavel(snap.data().bloqueio??null)||revisorEsperaAprovacaoCp149(snap.data())!==pessoaI161))throw Error('A pessoa chamada para conferir mudou. Abra a mesma entrega novamente.');if(exigeCaminhoDocumentoCp138(snap.data())||snap.data().entregaDocumentoCp138){if(assinaturaRevisaoDocumentoCp138(snap.data())!==assinaturaDocumentoCp138)throw Error('O documento ou a origem mudou depois de abrir esta revisão. Confira a mesma demanda novamente.');if(!mesmaIdentidadeDocumentoCp138(contextoDocumentoCp138))throw Error('O perfil mudou durante a revisão.');await conferirReciboDocumentoDemandaCp138(tx,id,snap.data());if(!mesmaIdentidadeDocumentoCp138(contextoDocumentoCp138))throw Error('O perfil mudou durante a revisão.');}tx.update(ref,{status:'aprovada',aprovadoEm:new Date().toISOString(),aprovadoPor:pessoaI161||'?'});});}
+    try{await runTransaction(db,async tx=>{const ref=doc(db,'demandas',id),snap=await tx.get(ref);if(!snap.exists()||snap.data().excluido||assinaturaEntregaI161(snap.data())!==assinaturaI161||usuarioAtual!==pessoaI161||auth.currentUser?.uid!==uidI161||sessaoServicoManual()!==sessaoI161)throw Error('A entrega ou o perfil mudou. Atualize a fila e confira novamente.');if((revisorEsperaAprovacaoCp149(d)||revisorEsperaAprovacaoCp149(snap.data()))&&(jsonEstavel(d.bloqueio??null)!==jsonEstavel(snap.data().bloqueio??null)||revisorEsperaAprovacaoCp149(snap.data())!==pessoaI161))throw Error('A pessoa chamada para conferir mudou. Abra a mesma entrega novamente.');if((revisorDocumentoCp154||revisorEntregaOrganizacaoCp154({id,...snap.data()}))&&revisorEntregaOrganizacaoCp154({id,...snap.data()})!==pessoaI161)throw Error('A pessoa responsável pela revisão documental mudou. Reabra a mesma entrega.');if(exigeCaminhoDocumentoCp138(snap.data())||snap.data().entregaDocumentoCp138){if(assinaturaRevisaoDocumentoCp138(snap.data())!==assinaturaDocumentoCp138)throw Error('O documento ou a origem mudou depois de abrir esta revisão. Confira a mesma demanda novamente.');if(!mesmaIdentidadeDocumentoCp138(contextoDocumentoCp138))throw Error('O perfil mudou durante a revisão.');await conferirReciboDocumentoDemandaCp138(tx,id,snap.data());if(!mesmaIdentidadeDocumentoCp138(contextoDocumentoCp138))throw Error('O perfil mudou durante a revisão.');}tx.update(ref,{status:'aprovada',aprovadoEm:new Date().toISOString(),aprovadoPor:pessoaI161||'?'});});}
     catch(err){mostrarToast(err.message||'Não consegui confirmar a aprovação. Consulte a demanda antes de repetir.','erro');return false;}
     if(!mesmaIdentidadeEsperaCp149(contextoSincroniaCp149))return true;
     registrarHistorico('demandas', id, 'Aprovada por ' + (usuarioAtual||'?'));
@@ -50983,6 +51134,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     if(await abrirSeAjusteCp112(id))return;
     if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
     if(window.__refazerI161?.busy){mostrarToast('Espere a confirmação da devolução.','erro');return false;}
+    const origemAtualCp154=todasDemandas.find(d=>d.id===id),tentativaRetornoCp154=origemAtualCp154&&revisorEntregaOrganizacaoCp154(origemAtualCp154)?lerTentativaDecisaoDocumentoCp154(contextoPreparacaoR80(),id):null;if(tentativaRetornoCp154&&!tentativaRetornoCp154.recusada&&tentativaRetornoCp154.dados.decisao==='devolver'&&origemAtualCp154.status!=='concluida_aguardando_aprovacao')return window.conferirDecisaoDocumentoCp154(id);
     const revisorCp149=revisorEsperaAprovacaoCp149(todasDemandas.find(d=>d.id===id));if(revisorCp149&&revisorCp149!==usuarioAtual)return mostrarToast('Esta entrega aguarda a conferência de '+revisorCp149+'.','erro');
     const pessoa=usuarioAtual,uid=auth.currentUser?.uid,sessao=sessaoServicoManual(),abertura=++aberturaRefazerI161;
     if(!contextoRefazerI161(pessoa,uid,sessao))return false;
@@ -50995,6 +51147,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
       if(!snap.exists())throw Error('Essa demanda não existe mais.');
       const d={id:snap.id,...snap.data()};
       if(d.excluido||d.status!=='concluida_aguardando_aprovacao')throw Error('Essa entrega mudou. Atualize a fila antes de devolver.');
+      const revisorDocumentoCp154=revisorEntregaOrganizacaoCp154(d);if(revisorDocumentoCp154&&!podeConferirEntregaCp149(d,pessoa))throw Error('Esta entrega aguarda a conferência de '+revisorDocumentoCp154+'.');
       const e={id,d,pessoa,uid,sessao,assinatura:assinaturaEntregaI161(d),operacao:'refazer_i161_'+crypto.randomUUID(),busy:false};window.__refazerI161=e;
       painel.innerHTML=`<h2>Devolver para ${esc(nomeEquipeI126(d.destinatario||'a pessoa'))} ajustar</h2><p><b>${esc(d.titulo||'Demanda')}</b></p><div class="card"><b>Entrega que você está conferindo</b><div style="white-space:pre-wrap;">${linkifyDescricao(d.provaTexto||'Sem texto de entrega.')}</div>${d.provaImagemUrl?'<p>'+linkifyDescricao(d.provaImagemUrl)+'</p>':''}</div><div class="field"><label for="motivoRefazerI161">O que precisa ajustar?</label><textarea id="motivoRefazerI161" maxlength="4000" placeholder="Ex.: troca a última frase e mantém o restante como está."></textarea></div><p class="desc">Esse recado volta junto da mesma demanda. A entrega anterior fica no histórico.</p><p id="erroRefazerI161" role="alert"></p><div class="btnrow"><button class="btn secondary" onclick="fecharModal()">Voltar</button><button class="btn" id="btnRefazerI161" onclick="confirmarRefazerI161()">Enviar para ajustar</button></div>`;
       e.campo=document.getElementById('motivoRefazerI161');e.atual=aberturaVigente;e.campo.focus();return true;
@@ -51006,6 +51159,10 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     const motivo=String(e.motivoConfirmado||e.campo.value||'').trim(),erro=document.getElementById('erroRefazerI161'),btn=document.getElementById('btnRefazerI161');
     if(!motivo||motivo.length>4000){erro.textContent='Escreve o que precisa ajustar antes de enviar.';return false;}
     e.motivoConfirmado=motivo;e.busy=true;e.campo.disabled=true;btn.disabled=true;erro.textContent='';
+    if(revisorEntregaOrganizacaoCp154(e.d)){
+      try{await decidirEntregaDocumentoUiCp154(e.d,'devolver',String(e.campo.value||'').trim(),()=>e.atual()&&contextoRefazerI161(e.pessoa,e.uid,e.sessao));e.busy=false;if(!contextoRefazerI161(e.pessoa,e.uid,e.sessao))return true;if(window.__refazerI161===e&&e.campo.isConnected&&e.atual()){fecharModal();window.__refazerI161=null;}mostrarToast('Recado enviado. A mesma demanda voltou para ajustar, com o documento anterior preservado.');return true;}
+      catch(err){e.busy=false;if(e.campo.isConnected&&contextoRefazerI161(e.pessoa,e.uid,e.sessao)){e.campo.disabled=false;btn.disabled=false;erro.textContent=(err.message||'Não consegui confirmar a decisão.')+' Seu recado foi preservado. Repetir esta ação confere a mesma tentativa anterior.';if(err.recusaDocumentoCp154)erro.insertAdjacentHTML('beforeend','<button class="btn secondary" data-id="'+escAttr(e.id)+'" onclick="atualizarRevisaoDocumentoCp154(this.dataset.id)">Conferir a entrega atual antes de decidir novamente</button>');else if(lerTentativaDecisaoDocumentoCp154(contextoPreparacaoR80(),e.id))erro.insertAdjacentHTML('beforeend','<button class="btn secondary" data-id="'+escAttr(e.id)+'" onclick="conferirDecisaoDocumentoCp154(this.dataset.id)">Conferir envio anterior sem reenviar o texto atual</button>');}return false;}
+    }
     const demandaRef=doc(db,'demandas',e.id);let resultado;
     try{
       resultado=await runTransaction(db,async tx=>{
@@ -51015,19 +51172,21 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
         if(d.refazerUltimoI161?.operacao===e.operacao)return {d,cancelouAgendamento:false,recuperado:true};
         if(d.excluido||d.status!=='concluida_aguardando_aprovacao'||assinaturaEntregaI161(d)!==e.assinatura)throw Error('Essa entrega mudou enquanto você conferia. Feche e abra a demanda para ver a versão atual.');
         if((revisorEsperaAprovacaoCp149(e.d)||revisorEsperaAprovacaoCp149(d))&&(jsonEstavel(e.d.bloqueio??null)!==jsonEstavel(d.bloqueio??null)||revisorEsperaAprovacaoCp149(d)!==e.pessoa))throw Error('A pessoa chamada para conferir mudou. Abra a mesma entrega novamente.');
+        if(revisorEntregaOrganizacaoCp154(e.d)||revisorEntregaOrganizacaoCp154(d)){if(revisorEntregaOrganizacaoCp154(d)!==e.pessoa||assinaturaRevisaoDocumentoCp138(d)!==assinaturaRevisaoDocumentoCp138(e.d))throw Error('A pessoa responsável ou o documento mudou. Reabra a mesma entrega.');await conferirReciboDocumentoDemandaCp138(tx,e.id,d);}
         const podeCancelarFonte=ehDecisaoCancelavelDeGravacaoV135(d);let agendamentoRef=null,agendamento=null;
         if(podeCancelarFonte){agendamentoRef=doc(db,'agendamentos',String(d.agendamentoId));const fonte=await tx.get(agendamentoRef);if(fonte.exists())agendamento=fonte.data()||{};}
         if(!contextoRefazerI161(e.pessoa,e.uid,e.sessao)||!e.atual())throw Error('A tela ou o perfil mudou. Abra a demanda novamente.');
         const agora=new Date().toISOString(),anterior={texto:d.provaTexto||'',link:d.provaImagemUrl||'',concluidaEm:d.concluidaEm||null};
-        const retorno={operacao:e.operacao,motivo,por:e.pessoa,atorReal:atorRealDaSessao(),em:agora,entregaAnterior:anterior};
-        tx.update(demandaRef,{status:'pendente',provaTexto:'',provaImagemUrl:'',rejeitadoEm:agora,refazerUltimoI161:retorno,historico:arrayUnion({acao:'Devolvida para ajustar',por:e.pessoa,em:agora,detalhe:motivo,operacao:e.operacao,provaAnterior:anterior})});
+        const documentoAnteriorCp154=revisorEntregaOrganizacaoCp154(d)?structuredClone(d.entregaDocumentoCp138):null;
+        const retorno={operacao:e.operacao,motivo,por:e.pessoa,atorReal:atorRealDaSessao(),em:agora,entregaAnterior:anterior,...(documentoAnteriorCp154?{documentoAnteriorCp154}:{})};
+        tx.update(demandaRef,{status:'pendente',provaTexto:'',provaImagemUrl:'',rejeitadoEm:agora,refazerUltimoI161:retorno,historico:arrayUnion({acao:'Devolvida para ajustar',por:e.pessoa,em:agora,detalhe:motivo,operacao:e.operacao,provaAnterior:anterior,...(documentoAnteriorCp154?{documentoAnteriorCp154}:{})})});
         const fonteCancelavel=!!agendamento&&agendamento.excluido!==true&&String(agendamento.status||'')==='agendado'&&agendamento.precisaAprovacao===true&&agendamento.aprovado!==true;
         if(fonteCancelavel)tx.update(agendamentoRef,{status:'cancelado',excluido:true,canceladoPor:e.pessoa,canceladoEm:agora,motivoCancelamento:'Decisão de gravação rejeitada para refazer',excluidoPor:e.pessoa,excluidoEm:agora,motivoExclusao:'decisão de gravação rejeitada para refazer'});
         return {d,cancelouAgendamento:fonteCancelavel};
       });
     }catch(err){
       try{const snap=await _getDocFromServerFB(demandaRef);if(snap.exists()&&snap.data().refazerUltimoI161?.operacao===e.operacao)resultado={d:{id:snap.id,...snap.data()},recuperado:true};}catch(consulta){}
-      if(!resultado){e.busy=false;if(e.campo.isConnected&&contextoRefazerI161(e.pessoa,e.uid,e.sessao)){btn.disabled=false;erro.textContent=(err.message||'Não consegui confirmar a devolução.')+' O recado continua aqui. Tente confirmar novamente ou consulte a demanda.';}return false;}
+      if(!resultado){e.busy=false;if(e.campo.isConnected&&contextoRefazerI161(e.pessoa,e.uid,e.sessao)){e.campo.disabled=false;btn.disabled=false;erro.textContent=(err.message||'Não consegui confirmar a devolução.')+' O recado continua aqui. Tente confirmar novamente ou consulte a demanda.';}return false;}
     }
     e.busy=false;
     if(!contextoRefazerI161(e.pessoa,e.uid,e.sessao))return true;
@@ -51685,6 +51844,11 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
         ok=irPara('planejamentoPreparacaoR80',document.getElementById('navPlanejamentoPreparacaoR80'));
         if(ok!==false){await montarPreparacaoR80();if(chave!==chaveCentralUnificadaR87()||viewAtiva!=='planejamentoPreparacaoR80')return false;await planejamentoPreparacaoR80?.ready;
           if(typeof planejamentoPreparacaoR80?.abrirDocumentos!=='function')throw Error('Não consegui abrir o envio de documentos. Confira novamente esta área; seus materiais continuam guardados.');
+          if(editorCalendarioCentralI172){
+            if(editorCalendarioCentralI172.canLeave?.()===false){mostrarToast('Seu rascunho da revisão continua guardado. Conclua ou cancele a edição aberta antes de voltar aos documentos.','erro');document.getElementById('planejamentoEditorI172')?.scrollIntoView({block:'start'});return false;}
+            editorCalendarioCentralI172.destroy();editorCalendarioCentralI172=null;
+            const host=document.getElementById('planejamentoEditorI172');if(host){host.hidden=true;host.replaceChildren();}
+          }
           ok=await planejamentoPreparacaoR80.abrirDocumentos();}
       }
       else if(area==='datas')ok=irPara('agendaOrganizacao',document.getElementById('navAgendaOrganizacaoI167'));
@@ -51844,7 +52008,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     box.innerHTML='<div class="card" role="status">Preparando os materiais do próximo mês…</div>';
     let repo;
     try{
-      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=447b3f4efc45c433bc861264cc9e771bb9fe5d12ed4f6286453b3cf3e3dfe2d1'),import('./gs-central-preparacao-http-r80.mjs?v=dfeb3879465de80c09d9ee58c2cf482c32498c5e927d4fbf32ad97a0659ec8f4')]);
+      moduloPreparacaoR80??=Promise.all([import('./gs-planejamento-social-i155.mjs?v=8aba467562cc31603be0e51cfdf056fb426626e2be3d9d3056b21d4ae8372620'),import('./gs-central-preparacao-http-r80.mjs?v=401254bb4156064bd3d24da61538fd4c4c25bb1db951be93d65586c22156a475')]);
       const [ui,fachada]=await moduloPreparacaoR80;if(!vigente())return;
       const chamar=async(acao,dados)=>{
         if(!vigente())throw Error('O perfil ou a tela mudou. Reabra o planejamento.');
@@ -51857,19 +52021,21 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
       const cap=await repo.capacidades();if(!vigente()){repo.destroy();return;}
       if(cap.preparacaoAtiva!==true||typeof cap.manterFluxoAtual!=='boolean'){repo.destroy();repoPreparacaoR80=null;box.innerHTML='<div class="card"><h2>Planejamento Social Media</h2><p>Esta preparação ainda não foi liberada. Mantenham os calendários e os envios atuais.</p></div>';return;}
       const exclusivoI172=cap.processoExclusivoAtivo===true;
-      const abrirEditorI172=async(ciclo,origemEditorial='')=>{
-        if(!vigente()||!['Chris','Amanda'].includes(c.nome))throw Error('A criação e a revisão pertencem ao Chris e à Amanda.');
+      const abrirEditorI172=async(ciclo,origemEditorial='',aberturaFilaCp154=null)=>{
+        const entradaAtualCp154=()=>vigente()&&(!aberturaFilaCp154||aberturaFilaCp154.vigente());
+        if(!entradaAtualCp154()||!['Chris','Amanda'].includes(c.nome))throw Error('A criação e a revisão pertencem ao Chris e à Amanda.');
         if(origemEditorial!==''&&!['continuar_legado','estrategico_cp109'].includes(origemEditorial))throw Error('Origem editorial não confirmada.');
         if(!exclusivoI172)throw Error('A preparação está disponível. Os calendários atuais continuam preservados até a liberação do novo processo.');
         if(editorCalendarioCentralI172?.canLeave?.()===false)return false;
         editorCalendarioCentralI172?.destroy();editorCalendarioCentralI172=null;
-        const host=document.getElementById('planejamentoEditorI172');if(!host)return false;
-        host.hidden=false;host.innerHTML='<div class="card"><button type="button" class="btn secondary" data-voltar-editor>← Voltar aos materiais deste mês</button></div><div data-editor-central></div>';
-        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=9aedfbe44b2e173a271346f332438bd5ea676cd5c7d4d4cefd4e18f132f32648');if(!vigente())return false;
+        const host=document.getElementById('planejamentoEditorI172');if(!host||!entradaAtualCp154())return false;
+        delete host.dataset.aberturaFilaCp154;host.hidden=false;host.innerHTML='<div class="card"><button type="button" class="btn secondary" data-voltar-editor>← Voltar aos materiais deste mês</button></div><div data-editor-central></div>';
+        aberturaFilaCp154?.registrarEditor?.(null,host);
+        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=9aedfbe44b2e173a271346f332438bd5ea676cd5c7d4d4cefd4e18f132f32648');if(!entradaAtualCp154())return false;
         const ed=mod.montarEditorCalendarioCentralI172(host.querySelector('[data-editor-central]'),{ciclo:ciclo.id,demandaId:ciclo.demandaId||'',ajusteInternoId:ciclo.ajusteInternoId||'',origemEditorial,contexto:contextoPreparacaoR80,chamar:(acao,payload)=>repo.editorial(acao,payload),aoAtualizar:()=>{if(vigente()){mostrarToast('Versão confirmada. O andamento também será conferido ao voltar aos materiais.');void atualizarFilaInternaCp123(true);}}});
-        editorCalendarioCentralI172=ed;
+        editorCalendarioCentralI172=ed;aberturaFilaCp154?.registrarEditor?.(ed,host);
         host.querySelector('[data-voltar-editor]').onclick=async()=>{if(!vigente()||editorCalendarioCentralI172!==ed||ed.canLeave?.()===false)return;ed.destroy();editorCalendarioCentralI172=null;host.hidden=true;host.replaceChildren();if(origemEditorial==='continuar_legado'){await planejamentoPreparacaoR80?.ready;}else await planejamentoPreparacaoR80?.abrir(ciclo.id,'criacao');};
-        const confirmado=await ed.ready;if(!vigente())return false;if(!ciclo.ajusteInternoId)host.scrollIntoView({block:'start'});return !!confirmado;
+        const confirmado=await ed.ready;if(!entradaAtualCp154()){if(editorCalendarioCentralI172===ed){ed.destroy();editorCalendarioCentralI172=null;if(host.dataset.aberturaFilaCp154){host.hidden=true;host.replaceChildren();delete host.dataset.aberturaFilaCp154;}}return false;}if(!ciclo.ajusteInternoId)host.scrollIntoView({block:'start'});return !!confirmado;
       };
       planejamentoPreparacaoR80=ui.montarCentral(box,{repo,contexto:contextoPreparacaoR80,preparacao:!exclusivoI172,
         editor:ciclo=>abrirEditorI172(ciclo),revisar:ciclo=>abrirEditorI172(ciclo),continuarLegado:exclusivoI172?ciclo=>abrirEditorI172(ciclo,'continuar_legado'):null,
@@ -51883,6 +52049,14 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
           return {estado:'confirmada',lidoEm:new Date().toISOString(),demandas:todasDemandas.map(d=>Object.fromEntries(campos.filter(k=>Object.hasOwn(d,k)).map(k=>[k,d[k]])))};
         }:null,
         abrirDemandaRecepcao:id=>{if(!vigente()||!['Chris','Amanda'].includes(c.nome))return false;return abrirDemandaCentralCp109(id);},
+        listarDemandasDocumentoCp154:async({cliente,ciclo,competencia,finalidade,empresaOtavio=''})=>{
+          if(!vigente()||!['Amanda','Gabrielle','Chris'].includes(c.nome)||ciclo!==competencia+'__'+cliente||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia||'')||!['campanha','referencias'].includes(finalidade))throw Error('Reabra o documento no seu perfil para escolher a demanda.');
+          const s=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(query(collection(db,'demandas'),where('destinatario','==',c.nome),where('status','in',['pendente','em_andamento','refazer','concluida_aguardando_aprovacao']),limit(501))),'Conferir demandas deste documento',12000);
+          if(!vigente())throw Error('O perfil ou a tela mudou. Seus documentos continuam preservados.');
+          if(s.size>500)throw Error('Há mais de500 demandas neste acesso. Abra a mesma demanda em Minhas Demandas para concluir a entrega sem reenviar o documento.');
+          const identidade={cliente,competencia,finalidade,empresaOtavio};
+          return {estado:'confirmada',demandas:s.docs.map(x=>({id:x.id,documento:x.data()})).filter(x=>ui.podeEntregarOrigemCp138(x.documento,c)&&ui.identidadeOrigemCompativelCp138(x.documento,identidade))};
+        },
         lerOrigemDemandaCp138:async id=>{if(!vigente()||!['Chris','Amanda','Gabrielle'].includes(c.nome)||!/^[-_A-Za-z0-9]{1,180}$/.test(id))throw Error('Reabra a origem no seu perfil.');const s=await _getDocFromServerFB(doc(db,'demandas',id));if(!vigente()||!s.exists())throw Error('Não consegui confirmar a demanda de origem.');const d=s.data();if(d.destinatario!==c.nome&&c.nome!=='Chris')throw Error('Esta demanda está com outro responsável.');return {id,documento:d};},
         informacoes:async ciclo=>{
           if(['Chris','Amanda'].includes(c.nome)&&exclusivoI172)return abrirInformacoesCentralR87(ciclo.cliente);

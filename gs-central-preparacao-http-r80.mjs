@@ -2,7 +2,7 @@
 import {abrirEnvelopeCentralR80} from './codec-central-r80.mjs?v=000e1d41f7937787cf50c53904f5e8392d2873f152fc10d3a4837697d5e67925';
 const MAX_RAW=4*1024*1024,PART=700*1024,MAX_WIRE=6*1024*1024,MAX_NORMAL=1024*1024;
 const MES=/^20\d{2}-(0[1-9]|1[0-2])$/,CLIENTE=/^[a-z0-9][a-z0-9._-]{0,119}$/,CICLO=/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/;
-const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','enviar_consolidado','retirar','desconsiderar_confirmacao','registrar_insumos_transicao']);
+const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','vincular_entrega_documento_cp154','decidir_entrega_documento_cp154','enviar_consolidado','retirar','desconsiderar_confirmacao','registrar_insumos_transicao']);
 const TIPOS=new Set(['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/plain','text/markdown']);
 const exigir=(ok,m)=>{if(!ok)throw Error(m);};
 /* Proveniência local: depois de chamar o transporte, uma falha nunca prova ausência de commit. */
@@ -71,6 +71,7 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
   const r=await pedir('central_mutar',{ciclo:id,acaoPreparacao:acao,dados,esperadaRevisao:esperada,operacao});
   exigir(r?.ciclo?.id===id&&Array.isArray(r.registros),'Não consegui confirmar o ciclo desta gravação. Confira a mesma tentativa.');return r;
  }
+ async function decidirEntregaDocumentoCp154(id,dados,esperada,operacao){exigir(['Chris','Amanda'].includes(c.nome),'Abra o perfil responsável pela revisão.');const r=await mutar(id,'decidir_entrega_documento_cp154',dados,esperada,operacao);exigir(r.resultado?.recusadaCp138===true||r.resultado?.decisaoDocumentoCp154===true&&r.resultado.operacao===operacao&&r.resultado.id===dados.origemDemandaCp138.id&&r.resultado.decisao===dados.decisao,'Não consegui confirmar esta mesma decisão. Preserve a tentativa antes de reenviar.');return r;}
  async function fontesAgendaI167(cl,m){cliente(cl);mes(m);return pedir('central_fontes_organizacao',{cliente:cl,competencia:m});}
  async function clientes(m,forcar=true){mes(m);exigir(forcar===true,'Confira a carteira atual antes de continuar.');return pedir('central_clientes',{competencia:m,forcar:true});}
  async function origens(cl){cliente(cl);return pedir('central_referencias_origem',{cliente:cl});}
@@ -114,5 +115,5 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  const ouvir=(id,proximo,erro)=>{ciclo(id);const m=id.slice(0,7),cl=id.slice(9);return assinar(id,cl,m,'ciclo',proximo,erro);};
  const ouvirCalendario=(cl,proximo,erro,{ciclo:id,competencia:m}={})=>assinar(id,cl,m,'calendario',proximo,erro);
  function destroy(){if(!vivo)return;vivo=false;for(const job of jobs.values()){job.geracao++;ambiente.clearInterval(job.timer);job.assinantes.clear();}jobs.clear();}
- return {ler,listar,config,salvarConfig,mutar,editorial,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo},ouvir,ouvirCalendario,capacidades,destroy};
+ return {ler,listar,config,salvarConfig,mutar,decidirEntregaDocumentoCp154,editorial,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo},ouvir,ouvirCalendario,capacidades,destroy};
 }

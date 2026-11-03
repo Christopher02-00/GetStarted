@@ -92,6 +92,15 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  async function analise(cl,m){cliente(cl);mes(m);return pedir('central_analise',{cliente:cl,competenciaResultados:m});}
  async function historico(id){ciclo(id);return pedir('central_historico',{ciclo:id});}
  async function capacidades(){const r=await pedir('central_capacidades');exigir(r?.papelConfirmado===c.nome&&r?.atorReal===c.atorReal,'Não consegui confirmar o seu perfil nesta área.');return r;}
+ async function listarArquivosGuardadosCp157(id){
+  ciclo(id);let apos='',paginas=0;const arquivos=new Map(),cursores=new Set();
+  while(true){const r=await pedir('central_arquivos_guardados_cp157',{ciclo:id,...(apos?{apos}:{})});
+   exigir(r?.schema===1&&r.ciclo===id&&r.somenteLeitura===true&&typeof r.completa==='boolean'&&Array.isArray(r.arquivos)&&r.arquivos.length<=50&&r.arquivos.every(a=>/^arq_[a-f0-9]{64}$/.test(a?.id||'')&&a.ciclo===id&&a.id==='arq_'+a.sha256&&typeof a.nome==='string'&&a.nome.length<=180&&TIPOS.has(a.tipo)&&Number.isInteger(a.bytes)&&a.bytes>=1&&a.bytes<=MAX_RAW&&a.estado==='completo'),'Não consegui conferir os originais guardados. Os arquivos continuam preservados.');
+   for(const a of r.arquivos){exigir(!arquivos.has(a.id),'A lista de originais repetiu um arquivo. Confira novamente.');arquivos.set(a.id,a);}paginas++;
+   if(r.completa){exigir(r.proxima===null,'O final da lista de originais precisa de conferência.');return [...arquivos.values()];}
+   exigir(/^arq_[a-f0-9]{64}$/.test(r.proxima||'')&&!cursores.has(r.proxima)&&paginas<100,'A lista de originais precisa de outra conferência. Nenhum arquivo foi descartado.');cursores.add(r.proxima);apos=r.proxima;
+  }
+ }
  async function enviarArquivo(id,p){
   ciclo(id);exigir(p?.buffer instanceof Uint8Array&&Number.isInteger(p.bytes)&&p.bytes>=1&&p.bytes<=MAX_RAW&&p.buffer.length===p.bytes,'Escolha um arquivo de até 4 MB.');
   exigir(typeof p.nome==='string'&&p.nome.length>=1&&p.nome.length<=180&&TIPOS.has(p.tipo)&&typeof p.texto==='string'&&p.texto.trim()&&p.texto.length<=60000&&Number.isInteger(p.paginas)&&p.paginas>=0&&p.paginas<=100,'Confira o arquivo e o texto antes de enviar.');
@@ -129,5 +138,5 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  const ouvir=(id,proximo,erro)=>{ciclo(id);const m=id.slice(0,7),cl=id.slice(9);return assinar(id,cl,m,'ciclo',proximo,erro);};
  const ouvirCalendario=(cl,proximo,erro,{ciclo:id,competencia:m}={})=>assinar(id,cl,m,'calendario',proximo,erro);
  function destroy(){if(!vivo)return;vivo=false;for(const job of jobs.values()){job.geracao++;ambiente.clearInterval(job.timer);job.assinantes.clear();}jobs.clear();}
- return {ler,listar,config,salvarConfig,mutar,decidirEntregaDocumentoCp154,filaDevolucoesMensaisCp155,lerDevolucaoMensalCp155,editorial,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo},ouvir,ouvirCalendario,capacidades,destroy};
+ return {ler,listar,config,salvarConfig,mutar,decidirEntregaDocumentoCp154,filaDevolucoesMensaisCp155,lerDevolucaoMensalCp155,editorial,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo,listarGuardadosCp157:listarArquivosGuardadosCp157},ouvir,ouvirCalendario,capacidades,destroy};
 }

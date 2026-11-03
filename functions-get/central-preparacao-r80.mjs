@@ -9,6 +9,7 @@ import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {validarCadastroI165} from './contexto.mjs';
 import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {criarRepositorio} from './central/lib/gs-planejamento-social-i155.mjs';
+import {ACAO_VINCULO_DOCUMENTO_CP154,vincularEntregaDocumentoCp154,ACAO_DECISAO_DOCUMENTO_CP154,decidirEntregaDocumentoCp154} from './vinculo-documento-cp154.mjs';
 import {carteiraCanonicaI164} from './central/lib/gs-carteira-calendarios-i164.mjs';
 import {obterFeriados} from './central-feriados-copia-r80.mjs';
 import {criarIoAdminCentralR80} from './central-preparacao-io-r80.mjs';
@@ -44,7 +45,11 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
   case 'central_listar':dados=await repo.listar(pedido.competencia);break;
   case 'central_config_ler':dados=await repo.config(pedido.competencia);break;
   case 'central_config_salvar':dados=await repo.salvarConfig(pedido.config,pedido.esperadaRevisao,pedido.competencia);break;
-  case 'central_mutar':dados=await repo.mutar(pedido.ciclo,pedido.acaoPreparacao,pedido.dados,pedido.esperadaRevisao,pedido.operacao);break;
+  case 'central_mutar':{
+   if(pedido.acaoPreparacao===ACAO_DECISAO_DOCUMENTO_CP154){const resultado=await decidirEntregaDocumentoCp154(db,ator,pedido,{conferirGate:gate,stamp,agora});dados={...await repo.ler(pedido.ciclo),resultado};}
+   else if(pedido.acaoPreparacao===ACAO_VINCULO_DOCUMENTO_CP154){const resultado=await vincularEntregaDocumentoCp154(db,ator,pedido,{conferirGate:gate,stamp,agora});dados={...await repo.ler(pedido.ciclo),resultado};}
+   else dados=await repo.mutar(pedido.ciclo,pedido.acaoPreparacao,pedido.dados,pedido.esperadaRevisao,pedido.operacao);break;
+  }
   case 'central_fontes_organizacao':dados=await repo.fontesAgendaI167(pedido.cliente,pedido.competencia);break;
   case 'central_clientes':dados=await repo.clientes(pedido.competencia,true);break;
   case 'central_referencias_origem':dados=await repo.origens(pedido.cliente);break;

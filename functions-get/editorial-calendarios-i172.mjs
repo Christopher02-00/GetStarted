@@ -1,3 +1,4 @@
+import {ACOES_LEITURA_DEVOLUCAO_CP155,operarLeituraDevolucoesCp155} from './devolucoes-mensais-cp155.mjs';
 import {operarAdocaoPreparacaoCp129} from './adocao-preparacao-cp129.mjs';
 import {coletarInternosTxCp123,dtoInternosCp123,resumoInternosCp123,operarInternoCp123,conferirOperacaoInternaCp142,prepararPublicacaoInternosCp123,concluirPublicacaoInternosCp123,filaInternosCp123} from './ajustes-internos-cp123.mjs';
 import {coletarAjustesTxCp112,resumoAjustesCp112,exigirLiberacaoAjustesCp112,notasLiberadasCp112,pedidosLiberadosCp112,invalidacoesAjustesCp112,prepararReenvioAjustesCp112,elegibilidadeReliberacaoAjustesCp121} from './ajustes-calendarios-cp112.mjs';
@@ -45,8 +46,16 @@ export async function gateEditorialI172(db,tx,ator){
  const [cfg,cad,p]=await Promise.all([tx.get(db.doc('programacao_config_i165/ativo')),tx.get(db.doc('usuarios_equipe/'+ator.email)),tx.get(db.doc('processo_calendarios_i164/ativo'))]);
  validarCadastroI165(ator,cad.data());e(['Chris','Amanda'].includes(ator.papel),'A criação e a revisão pertencem ao Chris e à Amanda.');e(programacaoAtivaI165(cfg.data())&&cfg.data().habilidades?.preparacaoCentral===true&&processoAtivoI164(p.data()),'O processo editorial novo ainda não foi ativado. Os calendários atuais continuam preservados.');return p.data();
 }
-export async function fontesTx(db,tx,ator,pedido,agora){
- const processo=await gateEditorialI172(db,tx,ator),ciclo=pedido.ciclo,id=cicloR80(ciclo),legado=legadoEditorialI172(pedido);
+
+const LEITURA_SISTEMA_CP155=Symbol('CP155_RO_SERVER_INTERNAL');
+async function gateLeituraSistemaCp155(db,tx){const [cfg,p]=await Promise.all([tx.get(db.doc('programacao_config_i165/ativo')),tx.get(db.doc('processo_calendarios_i164/ativo'))]);e(programacaoAtivaI165(cfg.data())&&cfg.data()?.habilidades?.preparacaoCentral===true&&processoAtivoI164(p.data()),'A leitura dos retornos mensais está pausada.');return p.data();}
+export async function lerDevolucoesSistemaCp155(db,tx,pedido,{agora=new Date()}={}){
+ e(pedido&&ACOES_LEITURA_DEVOLUCAO_CP155.includes(pedido.acao),'Leitor interno desconhecido.');const fila=pedido.acao==='central_editor_devolucoes_fila_cp155',permitidas=fila?['acao','apos']:['acao','ciclo','origemEditorial','versaoEsperada'];e(Object.keys(pedido).every(k=>permitidas.includes(k)),'O leitor interno não recebe identidades, documentos ou patches.');
+ const p=fila?pedido:{...pedido,versaoEsperada:pedido.versaoEsperada||'0'.repeat(64)};
+ return operarLeituraDevolucoesCp155(db,tx,{sistemaSomenteLeituraCp155:true},p,{gate:t=>gateLeituraSistemaCp155(db,t),fontes:(t,ciclo,origemEditorial)=>fontesTx(db,t,null,{ciclo,...(origemEditorial?{origemEditorial}:{})},agora,LEITURA_SISTEMA_CP155)});
+}
+export async function fontesTx(db,tx,ator,pedido,agora,leituraSistema=null){
+ const processo=await (leituraSistema===LEITURA_SISTEMA_CP155?gateLeituraSistemaCp155(db,tx):gateEditorialI172(db,tx,ator)),ciclo=pedido.ciclo,id=cicloR80(ciclo),legado=legadoEditorialI172(pedido);
  const [s,cal,ex,co,lc]=await Promise.all([tx.get(db.doc((origemEstrategicaCp109(pedido)?COLECAO_PLANEJAMENTO_CP109:'planejamento_social_i155')+'/'+ciclo)),tx.get(db.doc('calendarios/'+id.cliente)),tx.get(db.collection('clientes_extras').limit(1001)),tx.get(db.collection('clientes_config').limit(1001)),legado?tx.get(db.doc('continuidade_calendarios_i164/'+ciclo)):Promise.resolve(null)]);
  let c;if(origemEstrategicaCp109(pedido)){e(s.exists&&cal.exists,'O planejamento estratégico e o calendário precisam estar salvos.');c=contextoEstrategicoCp109({...id,id:ciclo},s.data(),cal.data());}
  else if(legado){e(cal.exists&&lc?.exists,'A continuidade precisa ser adotada e o calendário existente precisa estar confirmado.');c=contextoLegadoEditorialI172(id,lc.data(),processo,cal.data(),s.exists?s.data():null);}
@@ -59,6 +68,7 @@ async function dtoAtualTx(db,tx,c,cal,ator,operacao=null){const [rows,internos]=
 function interna(d,acao,dados,revisao,hash){return {acao:'central_mutar',uidEsperado:d.uidEsperado,atorRealEsperado:d.atorRealEsperado,papelOperado:d.papelOperado,sessao:d.sessao,ciclo:d.ciclo,acaoPreparacao:acao,dados,esperadaRevisao:revisao,operacao:d.operacao+'_ciclo',hashPedidoEditorial:hash};}
 export async function operarEditorialCalendariosI172(db,auth,pedido,{agora=new Date()}={}){
  validarEntradaEditorialI172(pedido);const ator=validarContaEsperadaI165(auth,pedido);e(['Chris','Amanda'].includes(ator.papel),'A pesquisa e o apoio de legenda não dão acesso ao editor.');
+ if(ACOES_LEITURA_DEVOLUCAO_CP155.includes(pedido.acao))return envelopeCentralR80(await db.runTransaction(tx=>operarLeituraDevolucoesCp155(db,tx,ator,pedido,{gate:t=>gateEditorialI172(db,t,ator),fontes:(t,ciclo,origemEditorial)=>fontesTx(db,t,ator,{ciclo,...(origemEditorial?{origemEditorial}:{})},agora)})));
  if(ACOES_ADOCAO_CP129.includes(pedido.acao))return envelopeCentralR80(await operarAdocaoPreparacaoCp129(db,auth,pedido,{gate:gateEditorialI172,agora}));
  if(pedido.acao==='central_editor_interno_fila_cp123'){await db.runTransaction(tx=>gateEditorialI172(db,tx,ator));return envelopeCentralR80(await filaInternosCp123(db,ator));}
  if(pedido.acao==='central_editor_interno_conferir_cp142')return envelopeCentralR80(await conferirOperacaoInternaCp142(db,ator,pedido,{fontes:tx=>fontesTx(db,tx,ator,pedido,agora),lerDto:(tx,c,cal)=>dtoAtualTx(db,tx,c,cal,ator)}));

@@ -1,4 +1,4 @@
-import {montarRecepcaoDocumentosCp133} from './gs-recepcao-documentos-cp133.mjs?v=2ca058a02eeaec4943ec49b736fc7237c834f57f705ac998f0108cbfcede2c3a';
+import {montarRecepcaoDocumentosCp133} from './gs-recepcao-documentos-cp133.mjs?v=96b67c6a804f4793d0e28b6b7d258693562fcd0e70c4482b23d73da1e2492004';
 /* Central privada por cliente físico/competência. O calendário continua no editor oficial. */
 import {candidatasAgendaI167,selecionarFonteAgendaI167,proporVinculoAgendaI167,conferirVinculoAgendaI167,conferirIdsAgendaI167,projetarFontesAgendaI167} from './gs-agenda-fonte-i167-i155.mjs';
 import {retratoInfoClienteI164,mesmaInfoClienteI164} from './gs-contexto-cliente-i164.mjs';
@@ -857,7 +857,7 @@ export function montarCentral(root,{repo,contexto,compacto=false,preparacao=fals
   }
   htmlBase();
   if(gestao&&!compacto&&typeof lerDemandasRecepcao==='function')recepcaoDocumentosCp133=montarRecepcaoDocumentosCp133(q('[data-recepcao-documentos-host-cp133]'),{
-    contexto,lerDemandas:lerDemandasRecepcao,podeOperar:()=>sessao()&&!busy&&!pending&&!confirmacao&&!sujo,antesDeAbrir:()=>!pending&&podeSair(),
+    contexto,lerDemandas:lerDemandasRecepcao,lerCatalogoMateriais:async competencia=>{const [ciclos,clientes]=await Promise.all([repo.listar(competencia),repo.clientes(competencia,true)]);return {estado:'confirmada',competencia,ciclos,clientes};},lerPastaMateriais:id=>repo.ler(id),podeOperar:()=>sessao()&&!busy&&!pending&&!confirmacao&&!sujo,antesDeAbrir:()=>!pending&&podeSair(),
     abrirDemanda:async id=>{if(!sessao()||pending||!podeSair())return false;return abrirDemandaRecepcao?.(id);},
     abrirPasta:abrirPastaDocumentoRecebidoCp154,
   });

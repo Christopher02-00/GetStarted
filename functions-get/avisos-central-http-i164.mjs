@@ -1,3 +1,5 @@
+import {TIPO_DEVOLUCAO_MENSAL_CP155,identidadeDevolucaoCp155} from './devolucoes-mensais-cp155.mjs';
+import {idAvisoDevolucaoMensalCp155,ocorrenciasDevolucaoMensalTxCp155} from './central/notificacoes.mjs';
 import {codigoCanalSeguroCp146} from './transmissoes.mjs';
 import {TIPO_VINCULO_CP146,idAvisoVinculoCp146} from './central/providencias-vinculadas-cp146.mjs';
 /* A mesma caixa de avisos, com leitura tipada das fontes da Central.
@@ -10,7 +12,7 @@ import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {jsonI165} from './central/lib/gs-programacao-i165.mjs';
 
 export const ESCOPO_AVISOS_CENTRAL_R87 = 'central_i164';
-export const TIPOS_AVISOS_CENTRAL_R87 = Object.freeze(['planejamento', 'calendario_revisao', 'calendario_envio', 'referencias_cp109', 'planejamento_estrategico_cp109', 'plano_acao_cp109']);
+export const TIPOS_AVISOS_CENTRAL_R87 = Object.freeze(['planejamento', 'calendario_revisao', 'calendario_envio', 'referencias_cp109', 'planejamento_estrategico_cp109', 'plano_acao_cp109',TIPO_DEVOLUCAO_MENSAL_CP155]);
 const tipos = new Set([...TIPOS_AVISOS_CENTRAL_R87, 'organizacao_i167',TIPO_DEMANDA_REFAZER_CP131,TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146]);
 const id = v => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,220}$/.test(v) && !['.', '..'].includes(v);
 const exigir = (ok, mensagem) => { if (!ok) throw Object.assign(new Error(mensagem), {code: 'i164/aviso'}); };
@@ -70,11 +72,18 @@ export function validarPapelNotaCentralR87(n, papel) {
   if(tipo===TIPO_DEMANDA_REFAZER_CP131)exigir(PAPEIS_DEMANDA_REFAZER_CP131.includes(papel)&&n.id===idAvisoDemandaRefazerCp131(n.origem,papel)&&id(n.origem.operacao)&&n.origem.operacao.length>=8&&Object.keys(n.origem).every(k=>['tipo','id','operacao'].includes(k)),'O retorno precisa confirmar a rodada da própria demanda.');
   if(tipo===TIPO_PROVIDENCIA_GRAVACAO_CP140)exigir(['Cecília','Amanda'].includes(papel)&&/^prov140_[a-f0-9]{64}$/.test(n.origem.id)&&Object.keys(n.origem).every(k=>['tipo','id'].includes(k))&&n.id===idAvisoProvidenciaCp140(n.origem,n.versao,papel,n.nivel),'A providência precisa confirmar a mesma demanda e seu destinatário.');
   if(tipo===TIPO_VINCULO_CP146)exigir(['Cecília','Amanda','Chris'].includes(papel)&&/^[A-Za-z0-9_-]{1,180}$/.test(n.origem.id)&&!n.origem.id.startsWith('prov140_')&&Object.keys(n.origem).every(k=>['tipo','id'].includes(k))&&n.id===idAvisoVinculoCp146(n.origem,n.versao,papel,n.nivel),'O compromisso precisa confirmar a mesma demanda e orientação.');
+  if(tipo===TIPO_DEVOLUCAO_MENSAL_CP155){const i=identidadeDevolucaoCp155(n.origem.id,n.origem.origemEditorial||'');exigir(papel==='Chris'&&n.nivel==='ajustar'&&jsonI165(i.origem)===jsonI165(n.origem)&&n.id===idAvisoDevolucaoMensalCp155(n.origem,n.versao),'O retorno mensal pertence ao Chris e à mesma origem/versão.');}
   if(novoCp109(tipo))validarNotaCp109(n,papel);
   return tipo;
 }
 
-export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100) {
+export function capacidadeDevolucaoMensalCp155(dados){
+ const presente=Object.hasOwn(dados||{},'devolucaoMensalCp155');
+ exigir(!presente||['listar_avisos','ler_aviso'].includes(dados.acao)&&dados.devolucaoMensalCp155===true,'Esta capacidade pertence somente à conferência atual dos avisos.');
+ return presente;
+}
+
+export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100, {devolucaoMensalCp155=false}={}) {
   const ps = await tx.get(db.doc('processo_calendarios_i164/ativo')), processo = ps.data();
   if (ps.exists && processo?.ativo !== false) exigir(processoAtivoI164(processo), 'A configuração do processo precisa de conferência; a lista anterior foi preservada.');
   const centralAtiva = processoAtivoI164(processo), organizacaoAtiva = cfg?.habilidades?.organizacao === true, devolucoesAtivas=programacaoAtivaI165(cfg)&&PAPEIS_DEMANDA_REFAZER_CP131.includes(ator.papel);
@@ -82,7 +91,7 @@ export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100) {
   const base = () => db.collection('notificacoes_operacionais_i165').where('destinatario', '==', ator.papel).where('estado', '==', 'pendente');
   const consultas = [];
   if (centralAtiva && ['Chris', 'Amanda', 'Gabrielle', 'Cecília'].includes(ator.papel)) {
-    consultas.push(base().where('ativacaoId', '==', processo.ativacaoId).where('origem.tipo', 'in', TIPOS_AVISOS_CENTRAL_R87).orderBy('__name__').limit(limite + 1));
+    consultas.push(base().where('ativacaoId', '==', processo.ativacaoId).where('origem.tipo', 'in', TIPOS_AVISOS_CENTRAL_R87.filter(t=>t!==TIPO_DEVOLUCAO_MENSAL_CP155||ator.papel==='Chris'&&devolucaoMensalCp155===true)).orderBy('__name__').limit(limite + 1));
   }
   if(devolucoesAtivas)consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','==',TIPO_DEMANDA_REFAZER_CP131).orderBy('__name__').limit(limite+1));
   if(providenciasAtivas)consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','==',TIPO_PROVIDENCIA_GRAVACAO_CP140).orderBy('__name__').limit(limite+1));
@@ -105,7 +114,7 @@ export async function lerNotaCentralTxR87(db, tx, n, ator, {cfg, processo, agora
   const organizacao = tipo === 'organizacao_i167',devolucao=tipo===TIPO_DEMANDA_REFAZER_CP131,providencia=tipo===TIPO_PROVIDENCIA_GRAVACAO_CP140||tipo===TIPO_VINCULO_CP146;
   exigir(providencia?programacaoAtivaI165(cfg)&&cfg.habilidades?.preparacaoCentral===true:devolucao?programacaoAtivaI165(cfg):organizacao ? cfg?.schema === 1 && cfg.ativo === true && cfg.habilidades?.organizacao === true : processoAtivoI164(processo), 'Esta rotina está pausada. Confira a fila atual.');
   exigir(n.ativacaoId === (organizacao||devolucao||providencia ? cfg.ativacaoId : processo.ativacaoId), 'Este aviso pertence a uma ativação anterior. Confira a fila atual.');
-  const ocorrencias = await ocorrenciasDaFonteCentralI164(leitura || leituraCentralTxR87(db, tx), n, agora);
+  const ocorrencias = tipo===TIPO_DEVOLUCAO_MENSAL_CP155?await ocorrenciasDevolucaoMensalTxCp155(db,tx,n,agora):await ocorrenciasDaFonteCentralI164(leitura || leituraCentralTxR87(db, tx), n, agora);
   const atual = ocorrencias.find(o => o.versao === n.versao && o.destinatario === n.destinatario && o.nivel === n.nivel && jsonI165(o.origem) === jsonI165(n.origem));
   const origem = atual?.origem || n.origem;
   const fonte = novoCp109(tipo)?fonteDtoCp109(n):{colecao: tipo===TIPO_VINCULO_CP146?'demandas':providencia?COLECAO_PROVIDENCIAS_CP140:organizacao||devolucao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
@@ -117,7 +126,7 @@ export async function lerNotaCentralTxR87(db, tx, n, ator, {cfg, processo, agora
     origem: devolucao?{tipo,id:origem.id,operacao:origem.operacao}:novoCp109(tipo)?origemDtoCp109(n,atual):{tipo, id: origem.id, ...(origem.etapa ? {etapa: origem.etapa} : {}), ...(origem.cliente ? {cliente: origem.cliente, competencia: origem.competencia} : {}), ...(origem.origemEditorial ? {origemEditorial: origem.origemEditorial} : {})},
     versao: n.versao, estado: atual ? 'pendente' : 'resolvida', estadoPersistido: n.estado,
     titulo: texto(atual?.titulo || n.titulo, 240), texto: texto(atual?.texto || n.texto, 1600),
-    link: atual ? {...atual.link} : null, bloqueada: false, pausada: false,
+    link: atual ? {...atual.link} : null, bloqueada: tipo===TIPO_DEVOLUCAO_MENSAL_CP155&&atual?.bloqueada===true, pausada: false,
     urgencia: ['atrasado', 'hoje'].includes(atual?.nivel || n.nivel) ? 'alta' : 'normal',
     faseAviso: texto(atual?.nivel || n.nivel, 40), prazo: prazoIso, canais: canaisPublicos(n.canais),
     fonteConferida: true, fonteAvancou: !atual, conferidoEm: agora.toISOString(),

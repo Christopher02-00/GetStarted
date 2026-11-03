@@ -1,3 +1,4 @@
+import {ACOES_LEITURA_DEVOLUCAO_CP155,cursorDevolucoesCp155} from './devolucoes-mensais-cp155.mjs';
 /* Fronteira tipada; não recebe paths, documentos completos ou patches Firestore. */
 import {validarConteudoAdicaoCp142} from './adicao-interna-cp142.mjs';
 import {createHash} from 'node:crypto';
@@ -7,7 +8,7 @@ import {processoAtivoI164} from './central/lib/gs-processo-calendarios-i164.mjs'
 import {exigirCentralR80 as e,chavesR80,textoR80,cicloR80,idR80,inteiroR80,mapaR80} from './central-preparacao-validacao-r80.mjs';
 export const ACOES_INTERNOS_CP123=Object.freeze(['central_editor_interno_fila_cp123','central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123']);
 export const ACOES_ADOCAO_CP129=Object.freeze(['central_editor_adocao_ler_cp129','central_editor_adotar_preparacao_cp129']);
-export const ACOES_EDITORIAL_I172=Object.freeze(['central_editor_ler','central_editor_interno_conferir_cp142','central_editor_iniciar','central_editor_preparacao_cp140','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir',...ACOES_INTERNOS_CP123,...ACOES_ADOCAO_CP129]);
+export const ACOES_EDITORIAL_I172=Object.freeze(['central_editor_ler','central_editor_interno_conferir_cp142','central_editor_iniciar','central_editor_preparacao_cp140','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir',...ACOES_INTERNOS_CP123,...ACOES_ADOCAO_CP129,...ACOES_LEITURA_DEVOLUCAO_CP155]);
 export const MUTACOES_EDITORIAL_I172=Object.freeze(['iniciar_criacao','enviado_revisao','devolvido_revisao','entrega']);
 export const CAMPOS_EDITORIAIS_I172=Object.freeze(['itemId','empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','mes','stage','fmt','dataFlexivel','bloco','dataPostagem']);
 const comuns=['acao','uidEsperado','atorRealEsperado','papelOperado','sessao'];
@@ -35,6 +36,11 @@ function validarEntradaInternaCp123(d){
 
 export function validarEntradaEditorialI172(d){
  e(ACOES_EDITORIAL_I172.includes(d?.acao),'Operação editorial desconhecida.');
+ if(ACOES_LEITURA_DEVOLUCAO_CP155.includes(d.acao)){
+  const fila=d.acao==='central_editor_devolucoes_fila_cp155';chavesR80(d,[...comuns,...(fila?['apos']:['ciclo','origemEditorial','versaoEsperada'])],[...comuns,...(fila?[]:['ciclo','versaoEsperada'])]);textoR80(d.sessao,180,'a sessão',false);json(d);e(Buffer.byteLength(JSON.stringify(d),'utf8')<=4096,'Esta leitura contém campos demais.');
+  if(fila)cursorDevolucoesCp155(d.apos);else{cicloR80(d.ciclo);e(d.origemEditorial===undefined||d.origemEditorial===''||d.origemEditorial==='continuar_legado','Origem editorial inválida.');e(/^[a-f0-9]{64}$/.test(d.versaoEsperada||''),'Confira a versão atual do retorno.');}return d;
+ }
+
  if(d.acao==='central_editor_interno_conferir_cp142'){
   const {acaoConferida,...base}=d;
   e(['central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123'].includes(acaoConferida),'Confira a ação original desta tentativa.');

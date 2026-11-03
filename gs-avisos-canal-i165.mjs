@@ -14,7 +14,7 @@ export function fontesAvisosHabilitadasI165(config){return programacaoAtivaI165(
 export function avisoFisicoI165(d,id,papel){return idAviso(id)&&d?.id===id&&d.escopo===ESCOPO_AVISOS_I165&&d.destinatario===papel&&typeof d.ativacaoId==='string'&&d.ativacaoId.length>=12&&['pendente','resolvida'].includes(d.estado)&&['videos_producao','postagens'].includes(d.fonte?.colecao)&&idValido(d.fonte?.id);}
 
 export const ESCOPO_AVISOS_CENTRAL_R87='central_i164';
-const TIPOS_CENTRAL_R87=['planejamento','calendario_revisao','calendario_envio','organizacao_i167','demanda_refazer_i161','providencia_gravacao_cp140','providencia_vinculada_cp146'];
+const TIPOS_CENTRAL_R87=['planejamento','calendario_revisao','calendario_envio','organizacao_i167','demanda_refazer_i161','providencia_gravacao_cp140','providencia_vinculada_cp146','calendario_devolucao_cp155'];
 const cicloCentralR87=x=>typeof x==='string'&&/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/.test(x);
 const mesCentralR87=x=>typeof x==='string'&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(x);
 const clienteCentralR87=x=>typeof x==='string'&&/^[a-z0-9][a-z0-9._-]{0,119}$/.test(x);
@@ -47,7 +47,16 @@ function avisoFisicoCp109(d,id,papel,{ativacaoCentralId='',fresco=false}={}){
  if(tipo==='plano_acao_cp109')return l.area==='planos_cp109'&&l.cliente===o.cliente&&l.competencia===o.competencia&&l.acaoId===o.acaoId&&idFisicoCp109(l.demandaId);
  return l.area==='estrategico_cp109'&&l.ciclo===o.id&&l.cliente===o.cliente&&l.competencia===o.competencia&&l.etapa===o.etapa;
 }
+export function avisoFisicoDevolucaoMensalCp155(d,id,papel,{ativacaoCentralId='',fresco=false}={}){
+ if(papel!=='Chris'||!/^[a-f0-9]{64}$/.test(id||'')||d?.schema!==1||d.id!==id||d.escopo!==ESCOPO_AVISOS_CENTRAL_R87||d.tipo!=='calendario_devolucao_cp155'||d.destinatario!=='Chris'||d.origem?.tipo!==d.tipo||!/^[a-f0-9]{64}$/.test(d.versao||'')||!['pendente','resolvida'].includes(d.estado)||typeof d.ativacaoId!=='string'||d.ativacaoId.length<12||!fresco&&d.ativacaoId!==ativacaoCentralId)return false;
+ const o=d.origem,legado=o.origemEditorial==='continuar_legado';
+ if(o.origemEditorial!==undefined&&!legado||Object.keys(o).some(k=>!['tipo','id','cliente','competencia','origemEditorial'].includes(k))||!cicloCentralR87(o.id)||!clienteCentralR87(o.cliente)||!mesCentralR87(o.competencia)||o.id!==o.competencia+'__'+o.cliente||d.fonte?.id!==o.id||d.fonte.colecao!==(legado?'continuidade_calendarios_i164':'planejamento_social_i155'))return false;
+ if(d.fonteAvancou===true||d.estado==='resolvida')return d.link===null;
+ const l=d.link;return !!l&&l.area==='editor'&&l.ciclo===o.id&&l.cliente===o.cliente&&l.competencia===o.competencia&&(l.origemEditorial||'')===(o.origemEditorial||'')&&Object.keys(l).every(k=>['area','ciclo','cliente','competencia','origemEditorial'].includes(k));
+}
+export function avisosSemDuplicacaoDevolucaoMensalCp155(avisos,cobertura=()=>false){return avisos.filter(n=>{if(n?.tipo!=='calendario_devolucao_cp155')return true;try{return cobertura(n)!==true;}catch{return true;}});}
 export function avisoFisicoCentralR87(d,id,papel,{ativacaoI165='',ativacaoCentralId='',fresco=false}={}){
+ if(d?.tipo==='calendario_devolucao_cp155')return avisoFisicoDevolucaoMensalCp155(d,id,papel,{ativacaoCentralId,fresco});
  if(tipoNovoCp109(d?.tipo))return avisoFisicoCp109(d,id,papel,{ativacaoCentralId,fresco});
  if(!idAviso(id)||d?.schema!==1||d.id!==id||d.escopo!==ESCOPO_AVISOS_CENTRAL_R87||d.destinatario!==papel||!TIPOS_CENTRAL_R87.includes(d.tipo)||d.origem?.tipo!==d.tipo||!idValido(d.origem?.id)||d.fonte?.id!==d.origem.id||!/^[a-f0-9]{64}$/.test(d.versao||'')||!['pendente','resolvida'].includes(d.estado)||typeof d.ativacaoId!=='string'||d.ativacaoId.length<12)return false;
  const org=d.tipo==='organizacao_i167',devolucao=d.tipo==='demanda_refazer_i161',providencia=d.tipo==='providencia_gravacao_cp140',vinculo=d.tipo==='providencia_vinculada_cp146',legado=d.origem.origemEditorial==='continuar_legado';
@@ -194,13 +203,14 @@ export async function renovarTokenProprioCp146({sdk,messaging,reg,opcoes={},vige
  }
  check();const token=await sdk.getToken(messaging,{...opcoes,serviceWorkerRegistration:reg});check();if(typeof token!=='string'||!token||antigo&&token===antigo)fail();return token;
 }
-export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostagem,abrirCentral,central=null,publicacoesUnificadas=false,coberturaPublicacoes=()=>null,atualizarPublicacoes=()=>{},ambiente=ambientePadrao()}={}){
+export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostagem,abrirCentral,central=null,publicacoesUnificadas=false,coberturaPublicacoes=()=>null,atualizarPublicacoes=()=>{},coberturaDevolucoesMensaisCp155=()=>false,aoListarDevolucoesMensaisCp155=()=>{},ambiente=ambientePadrao()}={}){
  if(!root||!io||central||typeof contexto!=='function')throw Error('Os avisos precisam de acesso confirmado.');
  const c=Object.freeze({...contexto()});
  let vivo=true,ciclo=0,linhas=[],ativacaoCentralId='',config=null,web=null,cadastro=null,saude=null,estadoConfig='conferindo',estadoLista='conferindo',teveAtivo=false,aparelho=null,busy=false,recado='',truncado=false,consulta=null,abertura=0,pararForeground=null,sdkAtual=null,foregroundSeq=0,cancelarEsperaSW=null,registro=null,teste=null,statusConta=null,tokenRegistrado=null,tentativaTeste=null,servico=null,servicoSeq=0,cancelarAtualizacaoSW=null;
  const vigente=()=>vivo&&root.isConnected!==false&&mesmaIdentidadeAvisosI165(c,contexto());
  const atual=e=>vigente()&&e===ciclo;
  const ativo=()=>estadoConfig==='confirmada'&&programacaoAtivaI165(config);
+ const informarDevolucoesMensaisCp155=ns=>{if(!vigente()||c.papel!=='Chris')return;try{Promise.resolve(aoListarDevolucoesMensaisCp155(structuredClone(ns))).catch(()=>{});}catch{}};
  const pushAtivo=()=>ativo()&&config.habilidades?.push===true;
  const proprio=()=>vigente()&&c.papel===c.atorReal&&!c.delegada&&!contexto()?.delegada;
  const registroAtual=()=>proprio()&&pushAtivo()&&registro?.uid===c.uid&&registro?.pessoa===c.atorReal&&registro?.ativacaoId===config?.ativacaoId;
@@ -211,7 +221,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  function render(){
   if(!vigente())return;
   root.hidden=!teveAtivo&&['conferindo','desligada'].includes(estadoConfig);
-  const pendentesLidos=linhas.filter(n=>n.estado==='pendente'&&avisoHabilitadoNoFeedR87(n,n.id,c.papel,config,{ativacaoCentralId})),pendentes=publicacoesUnificadas&&c.papel==='Cecília'?avisosSemDuplicacaoPublicacaoCp125(pendentesLidos,coberturaPublicacoes()||{}):pendentesLidos,confirmada=ativo()&&estadoLista==='confirmada',conferindo=estadoConfig==='conferindo'||estadoLista==='conferindo';
+  const pendentesLidos=avisosSemDuplicacaoDevolucaoMensalCp155(linhas.filter(n=>n.estado==='pendente'&&avisoHabilitadoNoFeedR87(n,n.id,c.papel,config,{ativacaoCentralId})),coberturaDevolucoesMensaisCp155),pendentes=publicacoesUnificadas&&c.papel==='Cecília'?avisosSemDuplicacaoPublicacaoCp125(pendentesLidos,coberturaPublicacoes()||{}):pendentesLidos,confirmada=ativo()&&estadoLista==='confirmada',conferindo=estadoConfig==='conferindo'||estadoLista==='conferindo';
   root.classList.toggle('avisos-central-cp109',pendentes.some(n=>tipoNovoCp109(n.tipo)));
   root.classList.toggle('avisos-obrigatorios-cp110',c.papel==='Cecília');
   el('[data-titulo]').textContent=c.papel==='Cecília'?'Sua fila de conteúdos ':'Avisos que precisam de você ';
@@ -267,7 +277,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
    if(!atual(e))return false;
    const l=await io.listarAvisos();if(!atual(e))return false;
    if(l?.schema!==1||l.listaConfirmada!==true||l.ativacaoId!==config.ativacaoId||!Array.isArray(l.avisos)||l.avisos.length>100||l.limite!==100||typeof l.truncado!=='boolean'||l.ativacaoCentralId!==undefined&&typeof l.ativacaoCentralId!=='string'||l.avisos.some(n=>!avisoHabilitadoNoFeedR87(n,n.id,c.papel,config,{ativacaoCentralId:l.ativacaoCentralId||''})||n.estado!=='pendente'))throw Error('A fila de avisos precisa ser conferida. O último retrato foi preservado.');
-   linhas=l.avisos;ativacaoCentralId=l.ativacaoCentralId||'';truncado=l.truncado;estadoLista='confirmada';recado='';render();
+   linhas=l.avisos;ativacaoCentralId=l.ativacaoCentralId||'';truncado=l.truncado;estadoLista='confirmada';recado='';render();informarDevolucoesMensaisCp155(linhas);
    if(pendenteURL&&idAviso(pendenteURL)&&atual(e)){const id=pendenteURL;pendenteURL=null;await abrir(id);}
    return true;
   }catch(err){if(atual(e)){estadoLista='erro';if(!configuracaoConferida){estadoConfig='erro';aparelho=null;registro=null;tokenRegistrado=null;pararCanal();}recado='Não consegui conferir toda a fila agora. O último retrato foi preservado. Você pode conferir seu aparelho quando a configuração estiver confirmada.';render();}return false;
@@ -281,6 +291,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
   const n=await io.lerAviso(id);if(!vigente())throw Error('O perfil mudou. Abra o aviso no acesso original.');
   if(!avisoHabilitadoNoFeedR87(n,id,c.papel,r.config,{ativacaoCentralId,fresco:true})||n.fonteConferida!==true||n.leituraNaoResolve!==true||n.semAlterarEstadoPersistido!==true)throw Error('Não consegui confirmar a origem atual deste aviso. A atividade continua preservada.');
   if(paraNotificar&&(n.estado!=='pendente'||n.fonteAvancou||n.pausada||n.bloqueada))return null;
+  if(n.tipo==='calendario_devolucao_cp155')informarDevolucoesMensaisCp155([n]);
   return n;
  }
  async function abrir(id){const token=++abertura,navegacao=contexto()?.navegacao;
@@ -402,5 +413,5 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  root.addEventListener('click',click);ambiente.serviceWorker?.addEventListener('message',mensagem);
  const timer=ambiente.setInterval(()=>{if(vigente()){consultar();if(publicacoesUnificadas&&c.papel==='Cecília')void atualizarPublicacoes();}},60000);
  consultar();render();
- return {abrir,ativar,renovarRegistro:()=>ativar(true),conferirServico,atualizarServico,testarNoServidor,conferirTesteNoNavegador,confirmarTesteVisto,reconferir:consultar,sincronizarFilaPublicacoes:render,estado:()=>({estadoConfig,estadoLista,linhas:structuredClone(linhas),truncado,aparelhoPronto:!!aparelho?.pronto,registroConfirmado:registroAtual(),servicoAvisos:servico?{versaoEsperada:VERSAO_SERVICO_AVISOS_I171,ativoConfirmado:servico.ativoConfirmado===true,esperandoConfirmado:servico.esperandoConfirmado===true,pronto:servico.pronto===true}:null,testeServidor:teste?{operacaoId:teste.operacaoId,estado:teste.estado,aceiteProvedor:teste.aceiteProvedor===true,objetoConfirmado:teste.objetoConfirmado===true,visto:teste.visto===true}:null,ciclo,vivo}),destroy(){if(!vivo)return;vivo=false;ciclo++;abertura++;registro=null;teste=null;tokenRegistrado=null;tentativaTeste=null;pararCanal();ambiente.clearInterval(timer);ambiente.serviceWorker?.removeEventListener('message',mensagem);root.removeEventListener('click',click);root.classList.remove('avisos-central-cp109');root.classList.remove('avisos-obrigatorios-cp110');root.replaceChildren();root.hidden=true;}};
+ return {abrir,ativar,renovarRegistro:()=>ativar(true),conferirServico,atualizarServico,testarNoServidor,conferirTesteNoNavegador,confirmarTesteVisto,reconferir:consultar,sincronizarFilaPublicacoes:render,sincronizarFilaDevolucoesCp155:render,estado:()=>({estadoConfig,estadoLista,linhas:structuredClone(linhas),truncado,aparelhoPronto:!!aparelho?.pronto,registroConfirmado:registroAtual(),servicoAvisos:servico?{versaoEsperada:VERSAO_SERVICO_AVISOS_I171,ativoConfirmado:servico.ativoConfirmado===true,esperandoConfirmado:servico.esperandoConfirmado===true,pronto:servico.pronto===true}:null,testeServidor:teste?{operacaoId:teste.operacaoId,estado:teste.estado,aceiteProvedor:teste.aceiteProvedor===true,objetoConfirmado:teste.objetoConfirmado===true,visto:teste.visto===true}:null,ciclo,vivo}),destroy(){if(!vivo)return;vivo=false;ciclo++;abertura++;registro=null;teste=null;tokenRegistrado=null;tentativaTeste=null;pararCanal();ambiente.clearInterval(timer);ambiente.serviceWorker?.removeEventListener('message',mensagem);root.removeEventListener('click',click);root.classList.remove('avisos-central-cp109');root.classList.remove('avisos-obrigatorios-cp110');root.replaceChildren();root.hidden=true;}};
 }

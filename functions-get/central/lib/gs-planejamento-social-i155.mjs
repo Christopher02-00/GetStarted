@@ -156,8 +156,20 @@ export function validarOrigemDemandaCp138(o,{cliente,competencia,finalidade,empr
  const keys=['schema','id','assinatura','cliente','competencia','finalidade','empresaOtavio','classificacaoConfirmada'];
  if(!o||typeof o!=='object'||Array.isArray(o)||Object.keys(o).length!==keys.length||Object.keys(o).some(k=>!keys.includes(k))||o.schema!==1||!(/^[A-Za-z0-9_-]{1,180}$/).test(o.id||'')||!(/^[a-f0-9]{64}$/).test(o.assinatura||'')||o.classificacaoConfirmada!==true||!['referencias','campanha'].includes(o.finalidade)||o.cliente!==cliente||o.competencia!==competencia||o.finalidade!==finalidade||o.empresaOtavio!==empresaOtavio)throw Error('Confira a demanda, o cliente, o mês dos conteúdos e o tipo do documento. Nada foi associado por título ou prazo.');
 }
+export function rodadaDocumentoDevolvidaCp154(d){
+ const r=d?.entregaDocumentoCp138,t=d?.refazerUltimoI161;
+ const canon=v=>Array.isArray(v)?v.map(canon):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canon(v[k])])):v;
+ const igual=(a,b)=>JSON.stringify(canon(a))===JSON.stringify(canon(b));
+ if(d?.status!=='pendente'||r?.schema!==1||!r.demandaId||!r.documentoId||!r.operacao||!['campanha','referencias'].includes(r.finalidade)||!Number.isInteger(r.versao)||r.versao<1||!(/^[a-f0-9]{64}$/).test(r.hashTexto||'')||r.ciclo!==r.competencia+'__'+r.cliente||!t||!t.operacao||t.operacao===r.operacao||typeof t.motivo!=='string'||!t.motivo.trim()||typeof t.em!=='string'||!Number.isFinite(Date.parse(t.em))||t.em!==d.rejeitadoEm||!igual(t.documentoAnteriorCp154,r)||!Array.isArray(d.historico))return null;
+ return d.historico.some(h=>h?.acao==='Devolvida para ajustar'&&h.operacao===t.operacao&&h.por===t.por&&h.em===t.em&&h.detalhe===t.motivo&&igual(h.documentoAnteriorCp154,r))?r:null;
+}
+export function documentoReentregavelCp154(d,ciclo,id,material,demandaId){
+ if(!d?.entregaDocumentoCp138)return true;
+ const r=rodadaDocumentoDevolvidaCp154(d);
+ return !!r&&r.demandaId===demandaId&&r.ciclo===ciclo&&r.documentoId!==id&&Number.isInteger(material?.versao)&&material.versao>r.versao&&material.cliente===r.cliente&&material.competencia===r.competencia&&material.finalidade===r.finalidade&&(material.empresaOtavio||'')===(r.empresaOtavio||'');
+}
 export function podeEntregarOrigemCp138(d,ctx){
- return !!d&&!d.excluido&&!d.arquivado&&['Gabrielle','Amanda'].includes(d.destinatario)&&['pendente','em_andamento','refazer','concluida_aguardando_aprovacao'].includes(d.status)&&!d.entregaDocumentoCp138&&(d.destinatario===ctx.nome||ctx.nome==='Chris'&&ctx.atorReal==='Chris');
+ return !!d&&!d.excluido&&!d.arquivado&&['Gabrielle','Amanda'].includes(d.destinatario)&&['pendente','em_andamento','refazer','concluida_aguardando_aprovacao'].includes(d.status)&&(!d.entregaDocumentoCp138||!!rodadaDocumentoDevolvidaCp154(d))&&(d.destinatario===ctx.nome||ctx.nome==='Chris'&&ctx.atorReal==='Chris');
 }
 
 export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausencias,feriados}={}){
@@ -186,7 +198,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         const [origemSnap,documentoSnap]=await Promise.all([tx.get(doc(db,'demandas',o.id)),tx.get(regRef(id,dados.id))]);const origem=origemSnap.data(),material=documentoSnap.data();
         if(!origemSnap.exists()||!['Gabrielle','Amanda'].includes(origem.destinatario)||!(origem.destinatario===ctx.nome||ctx.nome==='Chris'&&ctx.atorReal==='Chris'))throw Error('Esta origem não está disponível para este perfil.');
         exigirPapel(ctx,dados.finalidade==='campanha'?['Amanda']:[PESQUISA_RESPONSAVEL_R81,'Chris']);
-        const mudou=c.revisao!==esperada||!podeEntregarOrigemCp138(origem,ctx)||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura||!identidadeOrigemCompativelCp138(origem,o)||!documentoSnap.exists()||material.tipo!=='documento'||material.finalidade!==dados.finalidade||material.cliente!==c.cliente||material.competencia!==c.competencia||(material.empresaOtavio||'')!==o.empresaOtavio||c.documentos.rascunhos?.[material.chaveMaterial||chaveMaterial(dados.finalidade,o.empresaOtavio)]!==dados.id;
+        const mudou=c.revisao!==esperada||!podeEntregarOrigemCp138(origem,ctx)||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura||!identidadeOrigemCompativelCp138(origem,o)||!documentoSnap.exists()||material.tipo!=='documento'||material.finalidade!==dados.finalidade||material.cliente!==c.cliente||material.competencia!==c.competencia||(material.empresaOtavio||'')!==o.empresaOtavio||c.documentos.rascunhos?.[material.chaveMaterial||chaveMaterial(dados.finalidade,o.empresaOtavio)]!==dados.id||!documentoReentregavelCp154(origem,id,dados.id,material,o.id);
         if(mudou){resultado={recusadaCp138:true,pedidoHashCp138,origemDemandaCp138:clone(o),codigo:'CP138_VERSAO_MUDOU',motivo:'A demanda ou a pasta mudou depois da sua leitura. Nada foi confirmado ou entregue. Compare a origem e a versão atual antes de tentar novamente.'};tx.set(er,{terminalCp138:true,acao,operacao,revisao:c.revisao,autorUid:ctx.uid,autorNome:ctx.atorReal,perfil:ctx.nome,em:serverTimestamp(),resultado});return;}
       }
       if(c&&c.revisao!==esperada&&acao!=='excluir_lote')throw Error('O ciclo mudou em outra tela. Seus campos foram preservados. Confira a versão atual.');
@@ -286,7 +298,7 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
         if(Object.hasOwn(dados,'origemDemandaCp138')){
           const o=dados.origemDemandaCp138;validarOrigemDemandaCp138(o,{cliente:c.cliente,competencia:c.competencia,finalidade:tipo,empresaOtavio:d.empresaOtavio||''});
           const dr=doc(db,'demandas',o.id),dsOrigem=await tx.get(dr),origem=dsOrigem.data();
-          if(!dsOrigem.exists()||!podeEntregarOrigemCp138(origem,ctx)||!identidadeOrigemCompativelCp138(origem,o)||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura)throw Error('A demanda mudou ou já recebeu outra entrega. Seus documentos continuam preservados; confira a origem antes de continuar.');
+          if(!dsOrigem.exists()||!podeEntregarOrigemCp138(origem,ctx)||!identidadeOrigemCompativelCp138(origem,o)||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura||!documentoReentregavelCp154(origem,id,rid,d,o.id))throw Error('A demanda mudou ou já recebeu outra entrega. Seus documentos continuam preservados; confira a origem antes de continuar.');
           if(origem.historico!==undefined&&!Array.isArray(origem.historico))throw Error('O histórico desta demanda precisa ser conferido antes da entrega.');
           const hashTexto=await assinaturaTextoCp138(d.texto);entregaDocumentoCp138={schema:1,demandaId:o.id,ciclo:id,cliente:c.cliente,competencia:c.competencia,finalidade:tipo,empresaOtavio:d.empresaOtavio||'',documentoId:rid,versao:d.versao,hashTexto,operacao,autorUid:ctx.uid,por:ctx.atorReal,perfil:ctx.nome,em:confirmadoEm};
           const prova='Documento confirmado: '+c.clienteNome+' · '+c.competencia+' · '+tituloDocumento(tipo)+' · versão '+d.versao+' · '+rid;

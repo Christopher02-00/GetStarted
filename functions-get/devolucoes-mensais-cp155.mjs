@@ -63,7 +63,7 @@ export async function lerDevolucaoMensalTxCp155(db,tx,ator,{fontes,esperada=null
  const {c,cal}=await fontes(tx);e(c&&cal&&c.id===c.competencia+'__'+c.cliente,'O leitor não confirmou a fonte mensal.');
  const m=cal.aprovacaoMeses?.[c.competencia];let devolucao=null;
  const ativa=!cal.excluido&&!cal.arquivado&&!cal.archived&&!cal.deletedAt&&(c.modo==='continuar_legado'?c._continuidade?.ativo===true:c.incluido===true);
- if(ativa&&m?.status==='ajuste_interno'&&c.modo!=='estrategico_cp109'&&!m.correcaoIndividualCp115?.schema&&!c._estadoLegado?.correcaoIndividualCp115?.schema){
+ if(ativa&&m?.status==='ajuste_interno'&&m.por==='Amanda'&&c.modo!=='estrategico_cp109'&&!m.correcaoIndividualCp115?.schema&&!c._estadoLegado?.correcaoIndividualCp115?.schema){
   e(iso(m.em),'O marco mensal precisa de uma data de autoridade confirmada.');
   // One equality filter plus a field mask: do not scan historical editorial text.
   const q=db.collection('calendarios_versoes').where('__reciboEditorialI172.em','==',m.em).select('__cliente','__reciboEditorialI172').limit(101),s=await tx.get(q);
@@ -114,7 +114,7 @@ export async function operarLeituraDevolucoesCp155(db,tx,ator,pedido,{fontes,gat
    e(/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/.test(id),'O ID da fonte mensal precisa de conferência.');const identidade=identidadeDevolucaoCp155(id,modo);e(raw.schema===1&&raw.cliente===identidade.origem.cliente&&raw.competencia===identidade.origem.competencia,'A identidade da fonte não corresponde ao ciclo físico.');
    if(legado?raw.editorialI172?.fase!=='devolvida':!raw.criacao?.base){conferidas.push({ciclo:id,origemEditorial:modo});continue;}
    const cs=await calAtual(identidade.origem.cliente);if(!cs.exists){e(!legado&&!raw.criacao?.retornoEm,'O calendário do retorno não foi encontrado.');conferidas.push({ciclo:id,origemEditorial:modo});continue;}
-   const cal=cs.data();if(cal.excluido||cal.arquivado||cal.archived||cal.deletedAt||cal.aprovacaoMeses?.[identidade.origem.competencia]?.status!=='ajuste_interno'){conferidas.push({ciclo:id,origemEditorial:modo});continue;}
+   const cal=cs.data();if(cal.excluido||cal.arquivado||cal.archived||cal.deletedAt||cal.aprovacaoMeses?.[identidade.origem.competencia]?.status!=='ajuste_interno'||cal.aprovacaoMeses?.[identidade.origem.competencia]?.por!=='Amanda'){conferidas.push({ciclo:id,origemEditorial:modo});continue;}
    // Empty I155 preparation explicitly adopted by a continuity is not a second monthly source.
    if(!legado&&!cal.planejamentoBasesI155?.[identidade.origem.competencia]){conferidas.push({ciclo:id,origemEditorial:modo});continue;}
    const r=await ler(id,modo);if(r.devolucao)linhas.push(r.devolucao);conferidas.push({ciclo:id,origemEditorial:modo});

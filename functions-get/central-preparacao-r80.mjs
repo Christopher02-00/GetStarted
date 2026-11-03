@@ -1,5 +1,5 @@
 /* Preparação interna via callable existente. Não publica, não migra e não ativa a troca I164. */
-import {FieldValue} from 'firebase-admin/firestore';
+import {FieldValue,FieldPath} from 'firebase-admin/firestore';
 import {capacidadesConsultaCentralR87} from './central-capacidades-r87.mjs';
 import {calendarioEnviavelI164} from './central/lib/elegibilidade-envio-i164.mjs';
 import {processoAtivoI164} from './central/lib/gs-processo-calendarios-i164.mjs';
@@ -57,6 +57,17 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
   case 'central_ausencias':dados=await repo.ausencias();break;
   case 'central_historico':dados=await repo.historico(pedido.ciclo);break;
   case 'central_arquivo_enviar':dados=await repo.arquivos.enviar(pedido.ciclo,prepararArquivoWireR80(pedido.arquivo));break;
+  case 'central_arquivos_guardados_cp157':{
+   dados=await db.runTransaction(async tx=>{
+    await gate(tx);const ref=db.doc('planejamento_social_i155/'+pedido.ciclo),ciclo=await tx.get(ref);
+    e(ciclo.exists&&ciclo.data().cliente===pedido.ciclo.slice(9)&&ciclo.data().competencia===pedido.ciclo.slice(0,7),'Abra a mesma pasta do cliente e mês antes de retomar o arquivo.');
+    let consulta=ref.collection('arquivos').orderBy(FieldPath.documentId()).limit(51);if(pedido.apos)consulta=consulta.startAfter(pedido.apos);
+    const snap=await tx.get(consulta),pagina=snap.docs.slice(0,50),arquivos=pagina.filter(s=>s.data().estado==='completo').map(s=>{
+     const a=s.data();e(/^arq_[a-f0-9]{64}$/.test(s.id)&&s.id==='arq_'+a.sha256&&a.ciclo===pedido.ciclo&&typeof a.nome==='string'&&a.nome.length<=180&&Number.isInteger(a.bytes)&&a.bytes>=1&&a.bytes<=4*1024*1024,'Um original guardado precisa de conferência; nenhum arquivo foi descartado.');
+     return {id:s.id,ciclo:pedido.ciclo,nome:a.nome,tipo:a.tipo,bytes:a.bytes,sha256:a.sha256,autorNome:a.autorNome||'',perfil:a.perfil||'',criadoEm:a.criadoEm||null,estado:'completo'};
+    });return {schema:1,ciclo:pedido.ciclo,somenteLeitura:true,arquivos,completa:snap.docs.length<=50,proxima:snap.docs.length>50?pagina.at(-1).id:null};
+   });break;
+  }
   case 'central_arquivo_ler':{
    const a=await repo.arquivos.ler(pedido.ciclo,pedido.arquivoId),{buffer,...arquivo}=a,partesBase64=[];for(let i=0;i<buffer.length;i+=PARTE_R80)partesBase64.push({indice:partesBase64.length,dados:Buffer.from(buffer.subarray(i,i+PARTE_R80)).toString('base64')});dados={arquivo,partesBase64};break;
   }

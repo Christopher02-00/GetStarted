@@ -1,3 +1,5 @@
+import{TIPO_DEVOLUCAO_MENSAL_CP155,ocorrenciaDevolucaoCp155,identidadeDevolucaoCp155}from'../devolucoes-mensais-cp155.mjs';
+import{lerDevolucoesSistemaCp155}from'../editorial-calendarios-i172.mjs';
 import{TIPO_VINCULO_CP146,ocorrenciaVinculoCp146,lerOcorrenciaVinculoCp146}from'./providencias-vinculadas-cp146.mjs';
 import{TIPO_PROVIDENCIA_GRAVACAO_CP140,COLECAO_PROVIDENCIAS_CP140,ocorrenciaProvidenciaCp140,lerOcorrenciaProvidenciaCp140}from'./providencias-gravacao-cp140.mjs';
 import{ocorrenciaOrganizacaoI167,lerOcorrenciaOrganizacaoI167,canaisDaVersaoOrganizacaoI167}from'./organizacao-i167.mjs';
@@ -19,7 +21,7 @@ import{ocorrenciasReferenciasCp109}from'../referencias-cp109.mjs';
 import{ocorrenciasPlanejamentoCp109}from'../planejamento-estrategico-cp109.mjs';
 import{ocorrenciasPlanosCp109}from'../planos-acao-cp109.mjs';
 const hash=v=>crypto.createHash('sha256').update(jsonI165(v)).digest('hex');
-export const notaCentralI164=n=>!!n&&!n.escopo&&['planejamento','calendario_revisao','calendario_envio','organizacao_i167','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109',TIPO_DEMANDA_REFAZER_CP131,TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146].includes(n.origem?.tipo);
+export const notaCentralI164=n=>!!n&&!n.escopo&&['planejamento','calendario_revisao','calendario_envio','organizacao_i167','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109',TIPO_DEVOLUCAO_MENSAL_CP155,TIPO_DEMANDA_REFAZER_CP131,TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146].includes(n.origem?.tipo);
 export function ocorrenciasPlanejamentoI164(c,agora=new Date()){
  if(!c.incluido)return [];const agoraLocal=horarioI165(agora),estados=estadoEtapas(c),out=[];
  for(const [etapa,titulo,padrao]of ETAPAS){const a=c.agenda?.[etapa];if(a?.origemI167||a?.fonteOrganizacaoI167===true||etapa==='revisao'&&c.criacao?.base||estados[etapa]||!a?.prazo||dependencias(c,etapa).length)continue;const prazo=a.prazo+'T'+(a.prazoHora||'19:00'),falta=new Date(prazo+'-03:00').getTime()-agora.getTime();if(falta>86400000)continue;
@@ -61,7 +63,7 @@ async function consultarEnvioCalendarioI164(db,c,agora=new Date()){
 export async function registrarOcorrenciaI165(db,o,agora=new Date()){
  const id=ativacaoOperacionalCp131(o)?o.id:hash([o.origem,o.versao,o.destinatario,o.nivel]),ref=db.doc('notificacoes_operacionais_i165/'+id);
  const configRef=db.doc(ativacaoOperacionalCp131(o)?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo');
- async function ativacao(tx){const s=await tx.get(configRef),c=s.data();if(o.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131){if(!programacaoAtivaI165(c))throw Error('Os avisos de demandas estão pausados.');}else if([TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146].includes(o.origem?.tipo)){if(!programacaoAtivaI165(c)||c.habilidades?.preparacaoCentral!==true)throw Error('A preparação está pausada.');}else if(o.origem?.tipo==='organizacao_i167'){if(c?.schema!==1||c.ativo!==true||c.habilidades?.organizacao!==true||typeof c.ativacaoId!=='string')throw Error('A organização está pausada.');}else if(!processoAtivoI164(c))throw Error('O processo de calendários está pausado.');return c.ativacaoId;}
+ async function ativacao(tx){const s=await tx.get(configRef),c=s.data();if(o.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131){if(!programacaoAtivaI165(c))throw Error('Os avisos de demandas estão pausados.');}else if([TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146].includes(o.origem?.tipo)){if(!programacaoAtivaI165(c)||c.habilidades?.preparacaoCentral!==true)throw Error('A preparação está pausada.');}else if(o.origem?.tipo==='organizacao_i167'){if(c?.schema!==1||c.ativo!==true||c.habilidades?.organizacao!==true||typeof c.ativacaoId!=='string')throw Error('A organização está pausada.');}else if(!processoAtivoI164(c))throw Error('O processo de calendários está pausado.');if(o.origem?.tipo===TIPO_DEVOLUCAO_MENSAL_CP155){const cfg=(await tx.get(db.doc('programacao_config_i165/ativo'))).data();if(!programacaoAtivaI165(cfg)||cfg.habilidades?.preparacaoCentral!==true)throw Error('O processo editorial está pausado.');}return c.ativacaoId;}
 
  if(o.origem?.tipo==='organizacao_i167'){await db.runTransaction(async tx=>{const [s,ativacaoId]=await Promise.all([tx.get(ref),ativacao(tx)]),a=s.data();if(a&&(a.origem?.tipo!=='organizacao_i167'||a.origem.id!==o.origem.id))throw Error('O aviso já pertence a outra origem.');if(a?.versao===o.versao&&a.estado==='pendente'){if(a.ativacaoId!==ativacaoId)tx.update(ref,{ativacaoId,conferidaEm:agora.toISOString()});return;}if(a?.versao&&a.versao!==o.versao)tx.set(ref.collection('versoes').doc(a.versao),a);tx.set(ref,{schema:1,...o,id,ativacaoId,criadaEm:a?.criadaEm||agora.toISOString(),conferidaEm:agora.toISOString(),estado:'pendente',canais:canaisDaVersaoOrganizacaoI167(a,o.versao),leituras:a?.leituras||{},reaberturas:(a?.reaberturas||0)+(a?.estado==='resolvida'?1:0)});});return id;}
  await db.runTransaction(async tx=>{
@@ -78,6 +80,7 @@ export async function registrarOcorrenciaI165(db,o,agora=new Date()){
 }
 /* O leitor HTTP e o runner usam a mesma projeção da fonte, sem confirmar entrega por leitura. */
 export async function ocorrenciasDaFonteCentralI164(db,n,agora=new Date()){
+ if(n.origem?.tipo===TIPO_DEVOLUCAO_MENSAL_CP155)return db.runTransaction(tx=>ocorrenciasDevolucaoMensalTxCp155(db,tx,n,agora));
  if(n.origem?.tipo===TIPO_VINCULO_CP146){const atual=await lerOcorrenciaVinculoCp146(db,n.origem.id,agora);return atual?[atual]:[];}
  if(n.origem?.tipo===TIPO_PROVIDENCIA_GRAVACAO_CP140){const atual=await lerOcorrenciaProvidenciaCp140(db,n.origem.id,agora);return atual?[atual]:[];}
  if(n.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131){const atual=await lerOcorrenciaDemandaRefazerCp131(db,n.origem.id);return atual?[atual]:[];}
@@ -106,6 +109,7 @@ export async function ocorrenciasDaFonteCentralI164(db,n,agora=new Date()){
 export async function fonteAindaPendenteI165(db,n,agora=new Date()){
  const config=await db.doc(ativacaoOperacionalCp131(n)?'programacao_config_i165/ativo':'processo_calendarios_i164/ativo').get();
  const atual=config.data();
+ if(n.origem?.tipo===TIPO_DEVOLUCAO_MENSAL_CP155){const cfg=(await db.doc('programacao_config_i165/ativo').get()).data();if(!programacaoAtivaI165(cfg)||cfg.habilidades?.preparacaoCentral!==true)return false;}
  if(n.origem?.tipo===TIPO_DEMANDA_REFAZER_CP131){
   if(!programacaoAtivaI165(atual)||n.ativacaoId!==atual.ativacaoId)return false;
  }else if([TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146].includes(n.origem?.tipo)){
@@ -151,7 +155,7 @@ export async function sincronizarOcorrenciasI165(db,{agora=new Date(),enviarPush
   const estrategias=await db.collection('planejamento_estrategico_cp109').limit(1001).get();
   if(estrategias.size>1000)throw Error('Há mais planejamentos estratégicos que esta conferência comporta; nenhuma fonte foi truncada.');
   for(const d of estrategias.docs)try{for(const o of await ocorrenciasPlanejamentoCp109(db,{origem:{id:d.id}},agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'planejamento_estrategico_cp109',ciclo:d.id,erro:e.message});}
-  const pendentes=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get(),enviar=[];for(const d of pendentes.docs){const n=d.data();if(!notaCentralI164(n)||[TIPO_DEMANDA_REFAZER_CP131,TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146].includes(n.origem?.tipo))continue;let pendente;try{pendente=await fonteAindaPendenteI165(db,n,agora);}catch(e){erros.push({origem:n.origem?.tipo,aviso:d.id,erro:e.message});continue;}if(!pendente){await d.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte foi conferida e avançou ou saiu da operação.'});continue;}const canaisNota=n.origem?.tipo==='referencias_cp109'?[]:canais;if(canaisNota.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString())))enviar.push(d);}enviar.sort((a,b)=>(a.data().conferidaEm||'').localeCompare(b.data().conferidaEm||''));for(let i=0;i<Math.min(limite,enviar.length);i+=5)await Promise.all(enviar.slice(i,Math.min(i+5,limite)).map(d=>despacharOcorrenciaI165(db,d.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canais}).catch(e=>erros.push({aviso:d.id,erro:e.message}))));
+  const pendentes=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get(),enviar=[];for(const d of pendentes.docs){const n=d.data();if(!notaCentralI164(n)||[TIPO_DEVOLUCAO_MENSAL_CP155,TIPO_DEMANDA_REFAZER_CP131,TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146].includes(n.origem?.tipo))continue;let pendente;try{pendente=await fonteAindaPendenteI165(db,n,agora);}catch(e){erros.push({origem:n.origem?.tipo,aviso:d.id,erro:e.message});continue;}if(!pendente){await d.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A fonte foi conferida e avançou ou saiu da operação.'});continue;}const canaisNota=n.origem?.tipo==='referencias_cp109'?[]:canais;if(canaisNota.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString())))enviar.push(d);}enviar.sort((a,b)=>(a.data().conferidaEm||'').localeCompare(b.data().conferidaEm||''));for(let i=0;i<Math.min(limite,enviar.length);i+=5)await Promise.all(enviar.slice(i,Math.min(i+5,limite)).map(d=>despacharOcorrenciaI165(db,d.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canais}).catch(e=>erros.push({aviso:d.id,erro:e.message}))));
  await db.doc('servicos_i164/notificacoes').set({estado:erros.length?'conferir_origens':'conferida',ultimaExecucao:agora.toISOString(),ocorrenciasConferidas:criadas,pendentesProcessadas:pendentes.size,erros:erros.slice(0,100),servico:'Functions · executa com o portal fechado'},{merge:true});return {ativa:true,ocorrenciasConferidas:criadas,processadas:pendentes.size,erros};
 }
 
@@ -245,4 +249,38 @@ export async function sincronizarProvidenciasVinculadasCp146(db,{agora=new Date(
  const notas=await db.collection('notificacoes_operacionais_i165').where('origem.tipo','==',TIPO_VINCULO_CP146).where('estado','==','pendente').limit(1001).get();if(notas.size>1000)throw Error('Há mais de1000avisos vinculados; nenhuma lista foi cortada.');
  for(const s of notas.docs)try{const n=s.data();if(!await fonteAindaPendenteI165(db,n,agora)){await s.ref.update({estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A mesma demanda avançou, saiu da execução ou mudou de orientação; ciência não a concluiu.'});continue;}if(processadas<limite&&canaisAtivos.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString()))){await despacharOcorrenciaI165(db,s.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canaisAtivos});processadas++;}}catch(e){erros.push({aviso:s.id,erro:String(e.message).slice(0,500)});}
  return {ativa:true,conferidas,processadas,erros};
+}
+
+/* CP155 usa o mesmo projetor, registro e dispatcher; não fabrica demanda ou ator humano. */
+export function idAvisoDevolucaoMensalCp155(origem,versao){return hash([origem,versao,'Chris','ajustar']);}
+export async function ocorrenciasDevolucaoMensalTxCp155(db,tx,n,agora=new Date()){
+ const o=n.origem,identidade=identidadeDevolucaoCp155(o?.id,o?.origemEditorial||'');
+ if(n.destinatario!=='Chris'||n.nivel!=='ajustar'||jsonI165(identidade.origem)!==jsonI165(o)||!/^[a-f0-9]{64}$/.test(n.versao||''))throw Error('A origem do retorno mensal precisa ser conferida.');
+ const r=await lerDevolucoesSistemaCp155(db,tx,{acao:'central_editor_devolucao_ler_cp155',ciclo:o.id,...(o.origemEditorial?{origemEditorial:o.origemEditorial}:{}),versaoEsperada:n.versao},{agora});
+ if(r?.schema!==1||r.somenteLeitura!==true||r.fonteConferida!==true||!Object.hasOwn(r,'devolucao'))throw Error('A fonte mensal não foi conferida; o aviso anterior foi preservado.');
+ return r.devolucao?[{...ocorrenciaDevolucaoCp155(r.devolucao),bloqueada:r.devolucao.executavel!==true}]:[];
+}
+export async function sincronizarDevolucoesMensaisCp155(db,{agora=new Date(),enviarPush,enviarEmail,canais=['push','email'],limite=60}={}){
+ const [ps,cs]=await Promise.all([db.doc('processo_calendarios_i164/ativo').get(),db.doc('programacao_config_i165/ativo').get()]);
+ if(!processoAtivoI164(ps.data())||!programacaoAtivaI165(cs.data())||cs.data().habilidades?.preparacaoCentral!==true)return {ativa:false};
+ const linhas=new Map(),erros=[],vistos=new Set();let apos='',paginas=0;
+ do{
+  const r=await db.runTransaction(tx=>lerDevolucoesSistemaCp155(db,tx,{acao:'central_editor_devolucoes_fila_cp155',...(apos?{apos}:{})},{agora}));
+  if(r?.schema!==1||r.destinatario!=='Chris'||!Array.isArray(r.linhas)||!Array.isArray(r.erros)||typeof r.completa!=='boolean'||r.completa===!!r.proxima)throw Error('A coleta mensal não confirmou sua paginação; nenhum retrato foi tratado como vazio.');
+  for(const x of r.linhas){if(linhas.has(x.id)&&linhas.get(x.id).versao!==x.versao)throw Error('A fonte mudou durante a coleta mensal; preserve o aviso e atualize a origem.');linhas.set(x.id,x);}
+  erros.push(...r.erros.map(x=>({origem:TIPO_DEVOLUCAO_MENSAL_CP155,...x})));apos=r.proxima||'';paginas++;
+  if(apos&&(vistos.has(apos)||paginas>=100))throw Error('A coleta mensal não terminou com segurança; nenhuma origem foi omitida.');vistos.add(apos);
+ }while(apos);
+ let conferidas=0,processadas=0;
+ for(const dto of linhas.values()){await registrarOcorrenciaI165(db,ocorrenciaDevolucaoCp155(dto),agora);conferidas++;}
+ let ultima='';
+ do{
+  let q=db.collection('notificacoes_operacionais_i165').where('origem.tipo','==',TIPO_DEVOLUCAO_MENSAL_CP155).where('estado','==','pendente').orderBy('__name__').limit(150);if(ultima)q=q.startAfter(ultima);
+  const s=await q.get();for(const note of s.docs){const n=note.data();try{
+   if(!await fonteAindaPendenteI165(db,n,agora)){await db.runTransaction(async tx=>{const atual=await tx.get(note.ref),a=atual.data();if(a?.estado==='pendente'&&a.versao===n.versao&&jsonI165(a.origem)===jsonI165(n.origem))tx.update(note.ref,{estado:'resolvida',resolvidaEm:agora.toISOString(),motivo:'A mesma origem mensal avançou ou mudou de versão; a leitura não concluiu o trabalho.'});});continue;}
+   if(processadas<limite&&canais.some(k=>n.canais?.[k]?.estado==='resultado_desconhecido'&&n.canais?.[k]?.tentativaId||!['aceita_pelo_provedor','resultado_desconhecido'].includes(n.canais?.[k]?.estado)&&!(n.canais?.[k]?.proximaTentativa>agora.toISOString()))){await despacharOcorrenciaI165(db,note.id,{agora,enviarPush,enviarEmail,canaisHabilitados:canais});processadas++;}
+  }catch(error){erros.push({aviso:note.id,origem:TIPO_DEVOLUCAO_MENSAL_CP155,erro:String(error.message||error).slice(0,500)});}}
+  ultima=s.size===150?s.docs.at(-1).id:'';
+ }while(ultima);
+ return {ativa:true,paginas,conferidas,processadas,completa:erros.length===0,erros};
 }

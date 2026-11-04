@@ -10,7 +10,7 @@ import {criarReferenciaDePlanoCp109} from './referencias-cp109.mjs';
 
 export const ACOES_PLANOS_CP109=Object.freeze(['planos_ler_cp109','planos_salvar_cp109','planos_solicitar_conteudo_cp109','planos_adicionar_ideia_cp109','planos_publicar_cp109','planos_compartilhar_cp109','planos_revogar_compartilhamento_cp109','planos_conferir_operacao_cp109']);
 export const ACOES_PLANOS_PUBLICOS_CP109=Object.freeze(['planos_cliente_ler_cp109','planos_cliente_check_cp109']);
-const EDITORES=['Gabrielle','Amanda','Chris'],LEITORES=[...EDITORES,'Cecília'];
+const EDITORES=['Amanda','Chris'],LEITORES=[...EDITORES,'Cecília'];
 const ESTADOS=['pendente','em_andamento','concluida','cancelada'];
 const hash=v=>createHash('sha256').update(typeof v==='string'?v:jsonCanonicoI165(v)).digest('hex');
 const e=(ok,c,m)=>exigirI165(ok,'plano-'+c,m);
@@ -55,7 +55,7 @@ export async function operarPlanosCp109(db,auth,dados,{agora=new Date()}={}){
  const ator=validarContaEsperadaI165(auth,dados);e(LEITORES.includes(ator.papel),'perfil','Este acesso não acompanha os planos de ação.');
  e(Buffer.byteLength(jsonCanonicoI165(dados))<=250000,'volume','O plano excede o limite de gravação; nada foi cortado.');
  const i=identPedido(dados),em=agoraIso(agora),ler=dados.acao==='planos_ler_cp109',conferir=dados.acao==='planos_conferir_operacao_cp109';
- if(!ler)e(id(dados.operacaoId),'operacao','Preserve o identificador desta tentativa.');if(!ler&&!conferir)e(EDITORES.includes(ator.papel),'perfil','A elaboração do plano pertence à Gabi e à gestão.');
+ if(!ler)e(id(dados.operacaoId),'operacao','Preserve o identificador desta tentativa.');if(!ler&&!conferir)e(EDITORES.includes(ator.papel),'perfil','A elaboração do plano pertence à Amanda e à gestão.');
  const pedidoHash=hash({...dados,uid:ator.uid,atorReal:ator.real,papel:ator.papel,capability:dados.capability?hash(dados.capability):null});
  return db.runTransaction(async tx=>{
   const escritas=[];const gate=await gates(db,tx,ator),c=await clienteExistente(db,tx,i,agora,!ler&&!conferir),ref=db.doc('planos_acao_cp109/'+i.planoId),s=await tx.get(ref),ant=s.exists?s.data():null;if(ant)validarPlano(ant,i);
@@ -140,7 +140,7 @@ export const operarPlanoClienteCp109=operarPlanoPublicoCp109;
 function ocorrenciaSolicitacao(p,acaoId){
  const s=p.solicitacoes?.[acaoId];e(s&&id(s.demandaId)&&id(s.operacao),'aviso','A solicitação precisa de vínculo físico.');
  const origem={tipo:'plano_acao_cp109',id:p.id,acaoId,subtipo:'solicitacao_conteudo',operacao:s.operacao},versao=hash({demandaId:s.demandaId,objetivo:s.objetivo,formato:s.formato,prazo:s.prazo});
- return {origem,versao,destinatario:'Amanda',nivel:'solicitacao',titulo:'Conteúdo para ação · '+p.clienteNome,texto:'A Gabi encaminhou uma ação de '+p.competencia+'. Confira objetivo, formato e prazo na mesma demanda.',prazo:s.prazo+'T19:00',link:{area:'planos_cp109',cliente:p.cliente,competencia:p.competencia,acaoId,demandaId:s.demandaId}};
+ return {origem,versao,destinatario:'Amanda',nivel:'solicitacao',titulo:'Conteúdo para ação · '+p.clienteNome,texto:'Há uma ação encaminhada de '+p.competencia+'. Confira objetivo, formato e prazo na mesma demanda.',prazo:s.prazo+'T19:00',link:{area:'planos_cp109',cliente:p.cliente,competencia:p.competencia,acaoId,demandaId:s.demandaId}};
 }
 /** Releitura tipada para leitor/dispatcher: aviso não executa nem conclui produção. */
 export async function ocorrenciasPlanosCp109(db,n,agora=new Date()){

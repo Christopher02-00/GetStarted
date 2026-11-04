@@ -46,12 +46,12 @@ function validar(d){
 }
 function atorEsperado(auth,d){
  const ator=validarContaEsperadaI165(auth,d);
- e(ator.papel==='Gabrielle'&&['Gabrielle','Chris'].includes(ator.real),'legenda-papel','Este recebimento pertence à Gabi.');
+ e(ator.papel==='Chris'&&ator.real==='Chris','legenda-papel','Este recebimento pertence ao Chris no próprio perfil.');
  return ator;
 }
 async function cadastroTx(db,tx,ator){const s=await tx.get(db.doc('usuarios_equipe/'+ator.email));validarCadastroI165(ator,s.data());}
 function conferirFonte(a,caixa,id){
- e(a&&TIPOS.includes(a.tipo)&&CAIXAS.includes(caixa)&&idFisicoI165(id)&&String(a.paraQuem||a.destinatario||'').trim()==='Gabrielle','legenda-tipo','A fonte não é um pedido de legenda para a Gabi.');
+ e(a&&TIPOS.includes(a.tipo)&&CAIXAS.includes(caixa)&&idFisicoI165(id)&&['Chris','Gabrielle'].includes(String(a.paraQuem||a.destinatario||'').trim()),'legenda-tipo','A fonte não confirma um pedido de legenda atual ou sua origem legada.');
  const cliente=clienteFonte(a);
  const aliases=['cliente','clienteSlug','slug','canonicalId','clienteSlugRef','slugAtivado','calendarClienteSlug','clienteId','clientId','calendarioDocumentoIdPlanejado','calendarioDocumentoId'];
  e(aliases.every(k=>a[k]===undefined||a[k]===null||a[k]===''||typeof a[k]==='string'&&a[k]===cliente),'legenda-alias','A fonte contém identidades de cliente divergentes.');
@@ -61,7 +61,7 @@ function conferirFonte(a,caixa,id){
 }
 function conferirDemanda(d,a,caixa,sourceId,demandaId){
  const cliente=conferirFonte(a,caixa,sourceId);
- e(d&&demandaId===idI54(caixa,sourceId)&&d.origem==='cliente'&&d.destinatario==='Gabrielle'&&TIPOS.includes(d.tipoPedidoCliente)&&d.tipoPedidoCliente===a.tipo&&d.origemAvisoColecao===caixa&&d.origemAvisoId===sourceId&&d.conversaoVersao==='i54'&&d.ehAviso===true&&!d.excluido&&!d.arquivado&&!['cancelada','cancelado'].includes(d.status),'legenda-vinculo','A demanda não confirma a mesma legenda e origem.');
+ e(d&&demandaId===idI54(caixa,sourceId)&&d.origem==='cliente'&&(d.destinatario==='Chris'||d.destinatario==='Gabrielle'&&d.status==='aprovada')&&TIPOS.includes(d.tipoPedidoCliente)&&d.tipoPedidoCliente===a.tipo&&d.origemAvisoColecao===caixa&&d.origemAvisoId===sourceId&&d.conversaoVersao==='i54'&&d.ehAviso===true&&!d.excluido&&!d.arquivado&&!['cancelada','cancelado'].includes(d.status),'legenda-vinculo','A demanda não confirma a mesma legenda e origem.');
  e(String(d.clienteSlug||d.cliente||'')===cliente&&(!d.cliente||d.cliente===cliente)&&String(d.demandaClienteId||'')===String(a.demandaClienteId||'')&&String(d.operationId||'')===String(a.operationId||'')&&String(d.competencia||'')===String(a.competencia||a.mes||a.mesRef||'')&&String(d.itemId||'')===String(a.itemId||'')&&a.demandaInternaId===demandaId&&a.lido===true,'legenda-identidade','O cliente, conteúdo ou recibo do pedido mudou.');
  e(!d.postagemId&&!d.agendamentoId&&!d.videoId&&!d.entregaDocumentoCp138&&!d.entradaPerfilCp150&&!d.providenciaGravacaoCp140,'legenda-especial','Esta tarefa tem um fluxo próprio. Abra a mesma entrega.');
  e(['cliente','clienteSlug'].every(k=>d[k]===undefined||d[k]===null||d[k]===''||typeof d[k]==='string'&&d[k]===cliente),'legenda-demanda-alias','A demanda contém identidades de cliente divergentes.');
@@ -84,7 +84,7 @@ function construirI54(a,caixa,sourceId,em,hoje){
  descricao+='\n\n— veio do '+(caixa==='pedidos_publicos'?'formulário de pedidos do site':'portal de '+(nome||'?'));
  // Company identities are retained; the caption service never chooses one.
  const empresa=GetEmpresasOtavioI144.campos(cliente,a);
- return {titulo:String(a.titulo||('Pedido de '+(nome||'cliente'))),descricao,destinatario:'Gabrielle',origem:'cliente',clienteNome:nome,...empresa,...(cliente?{cliente,clienteSlug:cliente}:{}),ehAviso:true,demandaClienteId:String(a.demandaClienteId||''),prazoData:a.prazoData||hoje,prazoHora:a.prazoHora||'19:00',status:'pendente',criadoEm:em,origemAvisoColecao:caixa,origemAvisoId:sourceId,operationId:String(a.operationId||''),competencia,itemId,itemNome:String(a.itemNome||''),tipoPedidoCliente:String(a.tipo||''),conversaoVersao:'i54',roteamentoPedidosCp151:{schema:1,destino:'Gabrielle',classe:'legenda'}};
+ return {titulo:String(a.titulo||('Pedido de '+(nome||'cliente'))),descricao,destinatario:'Chris',origem:'cliente',clienteNome:nome,...empresa,...(cliente?{cliente,clienteSlug:cliente}:{}),ehAviso:true,demandaClienteId:String(a.demandaClienteId||''),prazoData:a.prazoData||hoje,prazoHora:a.prazoHora||'19:00',status:'pendente',criadoEm:em,origemAvisoColecao:caixa,origemAvisoId:sourceId,operationId:String(a.operationId||''),competencia,itemId,itemNome:String(a.itemNome||''),tipoPedidoCliente:String(a.tipo||''),conversaoVersao:'i54',roteamentoPedidosCp151:{schema:1,destino:'Chris',classe:'legenda'}};
 }
 async function converterTx(db,ator,caixa,sourceId,agora){
  return db.runTransaction(async tx=>{
@@ -106,7 +106,7 @@ async function fontesTx(db,tx,ator,p){
  if(parentId){e(idFisicoI165(parentId),'legenda-parent-id','Confira o acompanhamento.');pref=db.doc('demandas_cliente/'+parentId);const [ps,gs]=await Promise.all([tx.get(pref),tx.get(db.collection('demandas').where('demandaClienteId','==',parentId).limit(151))]);parent=ps.data();conferirParent(parent,cliente,a);e(gs.size<=150,'legenda-limite-grupo','O grupo precisa de conferência pela gestão.');grupo=gs.docs.map(s=>({id:s.id,body:s.data()})).sort((x,y)=>x.id.localeCompare(y.id));e(grupo.some(r=>r.id===p.demandaId)&&grupo.every(r=>['cliente','clienteSlug'].every(k=>r.body[k]===undefined||r.body[k]===null||r.body[k]===''||typeof r.body[k]==='string'&&r.body[k]===cliente)),'legenda-grupo','O grupo não confirma o mesmo cliente.');}
  const assinatura=hashI165({demanda:d,origem:a,parent,grupo});return {dref,d,a,parent,pref,grupo,cliente,assinatura};
 }
-function dto(f,p){return {schema:1,demandaId:p.demandaId,cliente:f.cliente,origemAvisoColecao:f.d.origemAvisoColecao,origemAvisoId:f.d.origemAvisoId,destinatario:'Gabrielle',tipoPedidoCliente:f.d.tipoPedidoCliente,status:f.d.status,assinatura:f.assinatura,provaTexto:String(f.d.provaTexto||''),provaImagemUrl:String(f.d.provaImagemUrl||''),podeEntregar:['pendente','em_andamento','andamento'].includes(f.d.status),podeRepararAcompanhamento:f.d.status==='aprovada'&&!!f.parent,acompanhamento:{necessario:!!f.parent,status:f.parent?.status||null},semAprovacaoEditorial:true};}
+function dto(f,p){return {schema:1,demandaId:p.demandaId,cliente:f.cliente,origemAvisoColecao:f.d.origemAvisoColecao,origemAvisoId:f.d.origemAvisoId,destinatario:f.d.destinatario,tipoPedidoCliente:f.d.tipoPedidoCliente,status:f.d.status,assinatura:f.assinatura,provaTexto:String(f.d.provaTexto||''),provaImagemUrl:String(f.d.provaImagemUrl||''),podeEntregar:['pendente','em_andamento','andamento'].includes(f.d.status),podeRepararAcompanhamento:f.d.destinatario==='Chris'&&f.d.status==='aprovada'&&!!f.parent,acompanhamento:{necessario:!!f.parent,status:f.parent?.status||null},semAprovacaoEditorial:true};}
 export async function operarPedidosLegendaCp152(db,auth,p,{agora=new Date()}={}){
  validar(p);const ator=atorEsperado(auth,p);
  // Active physical registration precedes every collection query, and is checked
@@ -117,8 +117,8 @@ export async function operarPedidosLegendaCp152(db,auth,p,{agora=new Date()}={})
   const cursores=p.cursores||Object.fromEntries(CAIXAS.map(c=>[c,'']));
   const conjuntos=await Promise.all(CAIXAS.map(async c=>{
    if(cursores[c]===null)return {docs:[],size:0,encerrada:true};
-   let q=db.collection(c).where('tipo','in',TIPOS).where(c==='avisos_do_cliente'?'paraQuem':'destinatario','==','Gabrielle').where('lido','==',false).where('viraDemanda','==',true).orderBy(FieldPath.documentId());
-   if(cursores[c]){const ultimo=await db.doc(c+'/'+cursores[c]).get();e(ultimo.exists&&TIPOS.includes(ultimo.data().tipo)&&String(ultimo.data().paraQuem||ultimo.data().destinatario||'').trim()==='Gabrielle','legenda-cursor','O ponto da conferência mudou. Recomece a conferência; nenhuma entrega foi descartada.');q=q.startAfter(ultimo);}
+   let q=db.collection(c).where('tipo','in',TIPOS).where(c==='avisos_do_cliente'?'paraQuem':'destinatario','==','Chris').where('lido','==',false).where('viraDemanda','==',true).orderBy(FieldPath.documentId());
+   if(cursores[c]){const ultimo=await db.doc(c+'/'+cursores[c]).get();e(ultimo.exists&&TIPOS.includes(ultimo.data().tipo)&&String(ultimo.data().paraQuem||ultimo.data().destinatario||'').trim()==='Chris','legenda-cursor','O ponto da conferência mudou. Recomece a conferência; nenhuma entrega foi descartada.');q=q.startAfter(ultimo);}
    return q.limit(151).get();
   }));
   const r={schema:1,recebidos:0,jaRecebidos:0,ignorados:0,falhas:0,maisPendentes:false,cursores:{}},observados=[],consumidos=Object.fromEntries(CAIXAS.map(c=>[c,0]));
@@ -149,12 +149,14 @@ export async function operarPedidosLegendaCp152(db,auth,p,{agora=new Date()}={})
   const aprovada=f.d.status==='aprovada',textoProva=aprovada?p.provaTexto:p.provaTexto.trim(),imagem=aprovada?p.provaImagemUrl:p.provaImagemUrl.trim();
   e(['pendente','em_andamento','andamento','aprovada'].includes(f.d.status),'legenda-estado','Esta entrega pertence a outra revisão.');
   if(aprovada)e(String(f.d.provaTexto||'')===textoProva&&String(f.d.provaImagemUrl||'')===imagem,'legenda-prova-anterior','A prova concluída não corresponde a esta tentativa. Nada foi refeito.');
-  e(!p.repararAcompanhamento||aprovada,'legenda-reparo','O reparo apenas acompanha uma legenda já concluída.');
+  e(!p.repararAcompanhamento||aprovada&&f.d.destinatario==='Chris','legenda-reparo','O reparo apenas acompanha uma legenda já concluída.');
   const atualizarParent=!!f.parent&&(!aprovada||p.repararAcompanhamento),finalizada={...f.d,status:'aprovada'},calculado=atualizarParent?calcularStatusPortalPorDemandasCp152(f.grupo.map(r=>r.id===p.demandaId?finalizada:r.body),'concluida'):null;
   const r={schema:1,demandaId:p.demandaId,operacao:{id:p.operacao,estado:aprovada&&!p.repararAcompanhamento?'ja_concluida':'novo',confirmada:true},statusDemanda:'aprovada',statusPortal:calculado?.status||f.parent?.status||null,reparoApenas:aprovada&&p.repararAcompanhamento,semAprovacaoEditorial:true};
-  if(!aprovada){e(Array.isArray(f.d.historico||[])&&(f.d.historico||[]).length<1000,'legenda-historico','Preserve o histórico antes de continuar.');tx.update(f.dref,{status:'aprovada',provaTexto:textoProva,provaImagemUrl:imagem,concluidaEm:FieldValue.serverTimestamp(),concluidoPor:'Gabrielle',notaConclusao:'Aviso — não precisa de aprovação.',entregaLegendaCp152:{schema:1,operacao:p.operacao,autorUid:ator.uid,atorReal:ator.real,papelOperado:ator.papel,em:agora.toISOString()},historico:[...(f.d.historico||[]),{acao:'Concluiu o pedido de legenda do cliente',por:ator.real,papelOperado:ator.papel,autorUid:ator.uid,em:agora.toISOString(),operacao:p.operacao}]});}
+  if(!aprovada){e(Array.isArray(f.d.historico||[])&&(f.d.historico||[]).length<1000,'legenda-historico','Preserve o histórico antes de continuar.');tx.update(f.dref,{status:'aprovada',provaTexto:textoProva,provaImagemUrl:imagem,concluidaEm:FieldValue.serverTimestamp(),concluidoPor:ator.real,notaConclusao:'Aviso — não precisa de aprovação.',entregaLegendaCp152:{schema:1,operacao:p.operacao,autorUid:ator.uid,atorReal:ator.real,papelOperado:ator.papel,em:agora.toISOString()},historico:[...(f.d.historico||[]),{acao:'Concluiu o pedido de legenda do cliente',por:ator.real,papelOperado:ator.papel,autorUid:ator.uid,em:agora.toISOString(),operacao:p.operacao}]});}
   if(atualizarParent){const patch={status:calculado.status,responsaveisStatus:calculado.responsaveisStatus,atualizadoEm:FieldValue.serverTimestamp()};if(calculado.status==='concluida'&&f.parent.status!=='concluida')patch.concluidaEmI93=FieldValue.serverTimestamp();if(calculado.status!=='concluida'&&f.parent.status==='concluida')patch.concluidaEmI93=null;tx.update(f.pref,patch);}
   tx.create(opref,{schema:1,hashPedido,uid:ator.uid,atorReal:ator.real,papel:ator.papel,em:agora.toISOString(),resultado:r});return r;
  });
  return envelopeCentralR80(resultado);
 }
+
+export {conferirFonte as conferirFonteLegendaCp152,conferirParent as conferirAcompanhamentoLegendaCp152,construirI54 as construirDemandaLegendaCp152,conferirDemanda as conferirDemandaLegendaCp152};

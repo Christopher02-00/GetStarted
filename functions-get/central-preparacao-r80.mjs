@@ -1,3 +1,4 @@
+import {lerRecebimentoDocumentoUnicoCp183} from './documento-unico-cp183.mjs';
 /* Preparação interna via callable existente. Não publica, não migra e não ativa a troca I164. */
 import {FieldValue,FieldPath} from 'firebase-admin/firestore';
 import {ACAO_RECONCILIAR_DOCUMENTOS_CP179,ACAO_SOLICITACAO_DOCUMENTAL_CP179,registrarSolicitacaoDocumentoCp179,concluirDocumentosConfirmadosCp179} from './conclusao-documento-cp179.mjs';
@@ -42,6 +43,10 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
  const repo=criarRepositorio(io,contexto,{clientes,origens,calendario:async(cliente,mes,cal)=>{e(editorialInterna&&['Chris','Amanda'].includes(ator.papel),'A preparação não libera calendários ao cliente.');const r=cal?.aprovacaoMeses?.[mes]?.retratoLiberadoV115,[ex,co]=await Promise.all([io.getDocsFromServer(io.collection(db,'clientes_extras')),io.getDocsFromServer(io.collection(db,'clientes_config'))]);return {disponivel:calendarioEnviavelI164({cliente,competencia:mes},cal,{extras:linhas(ex),configs:linhas(co),agora})&&r?.mes===mes&&!!r.items?.length,assinatura:JSON.stringify(r?.items||[])};},ausencias:async()=>{const s=await io.getDocsFromServer(io.collection(db,'ausencias'));return s.docs.map(d=>({...d.data(),id:d.id}));},feriados:async mes=>{const ano=Number(mes.slice(0,4));return [...new Set([...obterFeriados(ano-1),...obterFeriados(ano),...obterFeriados(ano+1)])];}});
  let dados;
  switch(pedido.acao){
+  case 'central_documento_unico_ler_cp183':{
+   e(['Chris','Amanda'].includes(ator.papel),'O recebimento documental pertence à gestão.');const r=await lerRecebimentoDocumentoUnicoCp183(db,pedido.reciboId);
+   dados=r?{schema:1,estado:'pendente',reciboId:pedido.reciboId,demandaChrisId:r.recibo.demandaChrisId,contextoAlterado:r.contextoAlterado===true,material:{ciclo:r.recibo.ciclo,id:r.recibo.documentoId,versao:r.recibo.versao,finalidade:'campanha',empresaOtavio:r.documento.empresaOtavio||'',hashTexto:r.recibo.hashTexto}}:{schema:1,estado:'resolvida',reciboId:pedido.reciboId};break;
+  }
   case 'central_ler':dados=await repo.ler(pedido.ciclo);break;
   case 'central_listar':dados=await repo.listar(pedido.competencia);break;
   case 'central_config_ler':dados=await repo.config(pedido.competencia);break;
@@ -82,6 +87,8 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
  }
  const operacoesDocumentoCp179=dados?.resultado?.conclusoesDocumentaisCp179?.operacoesDocumentoCp179||[];
  if(operacoesDocumentoCp179.length){const avisos={registrados:[],pendentes:[]};let registrar;try{({registrarRecebimentoDocumentoCp179:registrar}=await import('./central/notificacoes.mjs'));}catch{}for(const operacao of operacoesDocumentoCp179){try{e(typeof registrar==='function','O aviso documental continua em processamento.');await registrar(db,operacao,{agora});avisos.registrados.push(operacao);}catch{avisos.pendentes.push(operacao);}}dados.resultado.avisosDocumentaisCp179=avisos;}
+ const reciboUnicoCp183=dados?.resultado?.documentoUnicoCp183?.reciboId;
+ if(reciboUnicoCp183){try{const {registrarRecebimentoDocumentoUnicoCp183}=await import('./central/notificacoes.mjs');await registrarRecebimentoDocumentoUnicoCp183(db,reciboUnicoCp183,{agora});dados.resultado.avisoDocumentoUnicoCp183='registrado';}catch{dados.resultado.avisoDocumentoUnicoCp183='pendente_reparo_cron';}}
  // Readback só sai ao mesmo Google/cadastro e capacidade ainda válidos após a operação.
  await db.runTransaction(tx=>gate(tx));return envelopeCentralR80(ator.papel==='Gabrielle'?projetarRespostaPesquisaI170(dados):dados);
 }

@@ -8,10 +8,12 @@ export function identidadeTokenI165(auth,papelOperado,sessao='servidor') {
  const email=String(auth.token.email||'').trim().toLowerCase(),real=EMAILS_I165[email];
  exigirI165(!!real,'auth','Este acesso não pertence à equipe autorizada.');
  const papel=papelOperado||real;
+ exigirI165(real!=='Gabrielle'&&papel!=='Gabrielle','equipe-desligada-cp183','Este perfil não faz mais parte da operação. Consulte o histórico pelo seu próprio acesso.');
  exigirI165(Object.values(EMAILS_I165).includes(papel)&&(papel===real||real==='Chris'),'delegacao','Perfil operado inválido.');
  return {uid:auth.uid,email,real,papel,sessao};
 }
 export function validarCadastroI165(ator,cadastro) {
+ exigirI165(ator?.real!=='Gabrielle'&&ator?.papel!=='Gabrielle'&&cadastro?.desligamentoCp183==null,'equipe-desligada-cp183','O acesso da equipe foi encerrado. A identidade e o histórico continuam preservados.');
  exigirI165(cadastro?.ativo===true&&cadastro.excluido!==true&&cadastro.pessoa===ator.real&&(!cadastro.uid||cadastro.uid===ator.uid)&&(!cadastro.email||String(cadastro.email).toLowerCase()===ator.email),'cadastro','O cadastro ativo da equipe precisa estar confirmado.');
  return contextoOperacionalI165({uid:ator.uid,papel:ator.papel,atorReal:ator.real,sessao:ator.sessao,cadastroAtivo:true});
 }

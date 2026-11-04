@@ -1,3 +1,4 @@
+import{TIPO_DOCUMENTO_UNICO_CP183,idAvisoDocumentoUnicoCp183,reciboDocumentoUnicoCp183,lerOcorrenciaDocumentoUnicoCp183}from'./central/documentos-unicos-cp183.mjs';
 import{TIPO_DOCUMENTO_RECEBIDO_CP179,idAvisoDocumentoCp179,operacaoDocumentoCp179,lerOcorrenciaDocumentoRecebidoCp179}from'./central/documentos-recebidos-cp179.mjs';
 import{TIPO_PEDIDO_CLIENTE_CP175,idAvisoPedidoClienteCp175,idI54ClienteCp175}from'./central/pedidos-cliente-cp175.mjs';
 import {TIPO_DEVOLUCAO_MENSAL_CP155,identidadeDevolucaoCp155} from './devolucoes-mensais-cp155.mjs';
@@ -15,7 +16,7 @@ import {jsonI165} from './central/lib/gs-programacao-i165.mjs';
 
 export const ESCOPO_AVISOS_CENTRAL_R87 = 'central_i164';
 export const TIPOS_AVISOS_CENTRAL_R87 = Object.freeze(['planejamento', 'calendario_revisao', 'calendario_envio', 'referencias_cp109', 'planejamento_estrategico_cp109', 'plano_acao_cp109',TIPO_DEVOLUCAO_MENSAL_CP155]);
-const tipos = new Set([...TIPOS_AVISOS_CENTRAL_R87, 'organizacao_i167',TIPO_DOCUMENTO_RECEBIDO_CP179,TIPO_PEDIDO_CLIENTE_CP175,TIPO_DEMANDA_REFAZER_CP131,TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146]);
+const tipos = new Set([...TIPOS_AVISOS_CENTRAL_R87, 'organizacao_i167',TIPO_DOCUMENTO_UNICO_CP183,TIPO_DOCUMENTO_RECEBIDO_CP179,TIPO_PEDIDO_CLIENTE_CP175,TIPO_DEMANDA_REFAZER_CP131,TIPO_PROVIDENCIA_GRAVACAO_CP140,TIPO_VINCULO_CP146]);
 const id = v => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,220}$/.test(v) && !['.', '..'].includes(v);
 const exigir = (ok, mensagem) => { if (!ok) throw Object.assign(new Error(mensagem), {code: 'i164/aviso'}); };
 const texto = (v, limite) => typeof v === 'string' ? v.slice(0, limite) : '';
@@ -71,6 +72,7 @@ export function validarPapelNotaCentralR87(n, papel) {
     exigir(['Chris', 'Amanda', 'Gabrielle'].includes(papel), 'Esta etapa pertence à preparação.');
     if (papel === 'Gabrielle') exigir(n.origem.etapa === 'pesquisa', 'A pesquisa não dá acesso à criação ou revisão editorial.');
   }
+  if(tipo===TIPO_DOCUMENTO_UNICO_CP183)exigir(papel==='Chris'&&n.nivel==='recebido'&&reciboDocumentoUnicoCp183(n.origem.id)&&Object.keys(n.origem).every(k=>['tipo','id'].includes(k))&&n.id===idAvisoDocumentoUnicoCp183(n.origem.id),'O documento completo pertence ao Chris e ao mesmo recibo.');
   if(tipo===TIPO_DOCUMENTO_RECEBIDO_CP179)exigir(papel==='Chris'&&n.nivel==='recebido'&&operacaoDocumentoCp179(n.origem.id)&&Object.keys(n.origem).every(k=>['tipo','id'].includes(k))&&n.id===idAvisoDocumentoCp179(n.origem.id),'O recebimento pertence ao Chris e ao mesmo recibo documental.');
   if(tipo===TIPO_PEDIDO_CLIENTE_CP175)exigir(papel==='Chris'&&n.nivel==='conferir'&&idI54ClienteCp175(n.origem.id)&&Object.keys(n.origem).every(k=>['tipo','id'].includes(k))&&n.id===idAvisoPedidoClienteCp175(n.origem.id),'O pedido pertence ao Chris e à mesma I54.');
   if(tipo===TIPO_DEMANDA_REFAZER_CP131)exigir(PAPEIS_DEMANDA_REFAZER_CP131.includes(papel)&&n.id===idAvisoDemandaRefazerCp131(n.origem,papel)&&id(n.origem.operacao)&&n.origem.operacao.length>=8&&Object.keys(n.origem).every(k=>['tipo','id','operacao'].includes(k)),'O retorno precisa confirmar a rodada da própria demanda.');
@@ -101,7 +103,7 @@ export async function candidatasCentralTxR87(db, tx, ator, cfg, limite = 100, {d
   if(providenciasAtivas)consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','==',TIPO_PROVIDENCIA_GRAVACAO_CP140).orderBy('__name__').limit(limite+1));
   if(providenciasAtivas)consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','==',TIPO_VINCULO_CP146).orderBy('__name__').limit(limite+1));
   if (organizacaoAtiva) consultas.push(base().where('ativacaoId', '==', cfg.ativacaoId).where('origem.tipo', '==', 'organizacao_i167').orderBy('__name__').limit(limite + 1));
-  if(providenciasAtivas&&ator.papel==='Chris')consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','in',[TIPO_PEDIDO_CLIENTE_CP175,TIPO_DOCUMENTO_RECEBIDO_CP179]).orderBy('__name__').limit(limite+1));
+  if(providenciasAtivas&&ator.papel==='Chris')consultas.push(base().where('ativacaoId','==',cfg.ativacaoId).where('origem.tipo','in',[TIPO_PEDIDO_CLIENTE_CP175,TIPO_DOCUMENTO_RECEBIDO_CP179,TIPO_DOCUMENTO_UNICO_CP183]).orderBy('__name__').limit(limite+1));
   const snapshots = await Promise.all(consultas.map(q => tx.get(q)));
   return {processo, centralAtiva, organizacaoAtiva, devolucoesAtivas, docs: snapshots.flatMap(s => s.docs), truncado: snapshots.some(s => s.size > limite)};
 }
@@ -116,14 +118,15 @@ function canaisPublicos(canais) {
 export async function lerNotaCentralTxR87(db, tx, n, ator, {cfg, processo, agora = new Date(), leitura} = {}) {
   const tipo = validarPapelNotaCentralR87(n, ator.papel);
   exigir(programacaoAtivaI165(cfg), 'Os avisos operacionais estão pausados. A fila anterior foi preservada.');
-  const organizacao = tipo === 'organizacao_i167',devolucao=tipo===TIPO_DEMANDA_REFAZER_CP131,providencia=tipo===TIPO_PROVIDENCIA_GRAVACAO_CP140||tipo===TIPO_VINCULO_CP146,pedido=tipo===TIPO_PEDIDO_CLIENTE_CP175||tipo===TIPO_DOCUMENTO_RECEBIDO_CP179;
+  const organizacao = tipo === 'organizacao_i167',devolucao=tipo===TIPO_DEMANDA_REFAZER_CP131,providencia=tipo===TIPO_PROVIDENCIA_GRAVACAO_CP140||tipo===TIPO_VINCULO_CP146,pedido=tipo===TIPO_PEDIDO_CLIENTE_CP175||tipo===TIPO_DOCUMENTO_RECEBIDO_CP179||tipo===TIPO_DOCUMENTO_UNICO_CP183;
   exigir(providencia||pedido?programacaoAtivaI165(cfg)&&cfg.habilidades?.preparacaoCentral===true:devolucao?programacaoAtivaI165(cfg):organizacao ? cfg?.schema === 1 && cfg.ativo === true && cfg.habilidades?.organizacao === true : processoAtivoI164(processo), 'Esta rotina está pausada. Confira a fila atual.');
   exigir(n.ativacaoId === (organizacao||devolucao||providencia||pedido ? cfg.ativacaoId : processo.ativacaoId), 'Este aviso pertence a uma ativação anterior. Confira a fila atual.');
+  const documentoCp183=tipo===TIPO_DOCUMENTO_UNICO_CP183?await lerOcorrenciaDocumentoUnicoCp183(db,n.origem.id,{tx}):null;
   const documentoCp179=tipo===TIPO_DOCUMENTO_RECEBIDO_CP179?await lerOcorrenciaDocumentoRecebidoCp179(db,n.origem.id,{tx}):null;
-  const ocorrencias = tipo===TIPO_DOCUMENTO_RECEBIDO_CP179?(documentoCp179?[documentoCp179]:[]):tipo===TIPO_DEVOLUCAO_MENSAL_CP155?await ocorrenciasDevolucaoMensalTxCp155(db,tx,n,agora):await ocorrenciasDaFonteCentralI164(leitura || leituraCentralTxR87(db, tx), n, agora);
+  const ocorrencias = tipo===TIPO_DOCUMENTO_UNICO_CP183?(documentoCp183?[documentoCp183]:[]):tipo===TIPO_DOCUMENTO_RECEBIDO_CP179?(documentoCp179?[documentoCp179]:[]):tipo===TIPO_DEVOLUCAO_MENSAL_CP155?await ocorrenciasDevolucaoMensalTxCp155(db,tx,n,agora):await ocorrenciasDaFonteCentralI164(leitura || leituraCentralTxR87(db, tx), n, agora);
   const atual = ocorrencias.find(o => o.versao === n.versao && o.destinatario === n.destinatario && o.nivel === n.nivel && jsonI165(o.origem) === jsonI165(n.origem));
   const origem = atual?.origem || n.origem;
-  const fonte = tipo===TIPO_DOCUMENTO_RECEBIDO_CP179?{colecao:'recibos_documento_cp179',id:origem.id}:novoCp109(tipo)?fonteDtoCp109(n):{colecao: pedido||tipo===TIPO_VINCULO_CP146?'demandas':providencia?COLECAO_PROVIDENCIAS_CP140:organizacao||devolucao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
+  const fonte = tipo===TIPO_DOCUMENTO_UNICO_CP183?{colecao:'documentos_unicos_cp183',id:origem.id}:tipo===TIPO_DOCUMENTO_RECEBIDO_CP179?{colecao:'recibos_documento_cp179',id:origem.id}:novoCp109(tipo)?fonteDtoCp109(n):{colecao: pedido||tipo===TIPO_VINCULO_CP146?'demandas':providencia?COLECAO_PROVIDENCIAS_CP140:organizacao||devolucao ? 'demandas' : origem.origemEditorial === 'continuar_legado' ? 'continuidade_calendarios_i164' : 'planejamento_social_i155', id: origem.id};
   const prazo = atual?.prazo || n.prazo || '';
   const prazoIso = prazo && Number.isFinite(Date.parse(prazo + '-03:00')) ? new Date(prazo + '-03:00').toISOString() : null;
   return {

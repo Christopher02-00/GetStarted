@@ -1,3 +1,4 @@
+import {conferirRetornoDocumentoCp183} from './documento-unico-cp183.mjs';
 /* CP154: entregar a mesma demanda usando um documento já confirmado.
  * Não reconfirma o material, não avança o ciclo e não modifica a base editorial. */
 import {createHash} from 'node:crypto';
@@ -30,6 +31,7 @@ export async function vincularEntregaDocumentoCp154(db,ator,pedido,{conferirGate
   const valido=ms.exists&&material.tipo==='documento'&&material.finalidade===dados.finalidade&&material.cliente===cliente&&material.competencia===competencia&&(material.empresaOtavio||'')===o.empresaOtavio&&Number.isInteger(material.versao)&&material.versao>0&&typeof material.texto==='string'&&!!material.texto.trim()&&material.texto.length<=60000&&c.documentos?.materiais?.[chave]===dados.id&&cf?.id===dados.id&&typeof cf.em==='string'&&Number.isFinite(Date.parse(cf.em))&&typeof cf.por==='string'&&!!cf.por&&['Chris','Amanda','Gabrielle'].includes(cf.perfil)&&!c.documentos?.desconsideracoesCp111?.[dados.id]&&(!rascunho||rascunho===dados.id);
   const mudou=c.revisao!==pedido.esperadaRevisao||!podeEntregarOrigemCp138(origem,{nome:ator.papel,atorReal:ator.real})||await assinaturaOrigemDemandaCp138(origem)!==o.assinatura||!identidadeOrigemCompativelCp138(origem,o)||!valido||!documentoReentregavelCp154(origem,pedido.ciclo,dados.id,material,o.id)||assinatura!==dados.assinaturaDocumentoCp154;
   if(mudou){const resultado={recusadaCp138:true,pedidoHashCp138:hash,origemDemandaCp138:structuredClone(o),codigo:'CP154_VERSAO_MUDOU',motivo:'A demanda ou o documento confirmado mudou. Nada foi vinculado, reenviado ou concluído. Confira a mesma demanda e a versão vigente.'};tx.create(er,{terminalCp138:true,acao:ACAO_VINCULO_DOCUMENTO_CP154,operacao:pedido.operacao,revisao:c.revisao,autorUid:ator.uid,autorNome:ator.real,perfil:ator.papel,em:stamp,resultado});return resultado;}
+  await conferirRetornoDocumentoCp183(db,tx,origem);
   if(origem.entregaDocumentoCp138){const anterior=origem.entregaDocumentoCp138,ps=await tx.get(cr.collection('eventos').doc(anterior.operacao)),pe=ps.data();e(ps.exists&&['confirmar_documento','vincular_entrega_documento_cp154'].includes(pe.acao)&&pe.operacao===anterior.operacao&&pe.autorUid===anterior.autorUid&&pe.autorNome===anterior.por&&pe.perfil===anterior.perfil&&isDeepStrictEqual(pe.resultado?.origemDemandaCp138,anterior),'A autoridade da entrega anterior precisa ser conferida antes da reentrega.');}
   // A confirmação precisa conservar sua autoridade anterior, não apenas um apontador.
   const eventos=await tx.get(cr.collection('eventos').where('resultado.id','==',dados.id).limit(101));
@@ -89,7 +91,11 @@ export async function decidirEntregaDocumentoCp154(db,ator,pedido,{conferirGate,
   const historico=d.historico||[],devolver=dados.decisao==='devolver';let patch;
   if(devolver){const anterior={texto:d.provaTexto||'',link:d.provaImagemUrl||'',concluidaEm:d.concluidaEm||null},documentoAnteriorCp154=structuredClone(recibo),retorno={operacao:pedido.operacao,motivo:dados.motivo,por:ator.papel,atorReal:ator.real,em,entregaAnterior:anterior,documentoAnteriorCp154};patch={status:'pendente',provaTexto:'',provaImagemUrl:'',rejeitadoEm:em,refazerUltimoI161:retorno,historico:[...historico,{acao:'Devolvida para ajustar',por:ator.papel,atorReal:ator.real,perfil:ator.papel,em,detalhe:dados.motivo,operacao:pedido.operacao,provaAnterior:anterior,documentoAnteriorCp154}]};}
   else patch={status:'aprovada',aprovadoEm:em,aprovadoPor:ator.papel,historico:[...historico,{acao:'Entrega documental aprovada',por:ator.real,perfil:ator.papel,em,operacao:pedido.operacao,documento:structuredClone(recibo)}]};
-  const resultado={decisaoDocumentoCp154:true,decisao:dados.decisao,id:o.id,estado:patch.status,operacao:pedido.operacao,pedidoHashCp138:hash,documentoId:recibo.documentoId,versao:recibo.versao,autorUid:ator.uid,por:ator.real,perfil:ator.papel,em,calendarioAlterado:false,materialReconfirmado:false};
+  if(devolver&&d.destinatario==='Gabrielle'){
+   const m={schema:1,origem:'retorno_documental_gabi_cp183',demandaId:o.id,ciclo:recibo.ciclo,cliente:recibo.cliente,competencia:recibo.competencia,empresaOtavio:recibo.empresaOtavio,finalidadeAnterior:recibo.finalidade,finalidade:'campanha',destino:'Amanda',operacao:pedido.operacao,autorUid:ator.uid,autorNome:ator.real,perfil:ator.papel,em};
+   patch.destinatario='Amanda';patch.retornoDocumentoUnicoCp183=m;patch.refazerUltimoI161.retornoDocumentoUnicoCp183=m;patch.historico[patch.historico.length-1].retornoDocumentoUnicoCp183=m;
+  }
+  const resultado={decisaoDocumentoCp154:true,decisao:dados.decisao,id:o.id,estado:patch.status,operacao:pedido.operacao,pedidoHashCp138:hash,documentoId:recibo.documentoId,versao:recibo.versao,autorUid:ator.uid,por:ator.real,perfil:ator.papel,em,calendarioAlterado:false,materialReconfirmado:false,...(patch.retornoDocumentoUnicoCp183?{retornoDocumentoUnicoCp183:patch.retornoDocumentoUnicoCp183}:{} )};
   tx.update(dr,patch);tx.create(er,{acao:ACAO_DECISAO_DOCUMENTO_CP154,operacao:pedido.operacao,revisao:c.revisao,autorUid:ator.uid,autorNome:ator.real,perfil:ator.papel,em:stamp,resultado});return resultado;
  });
 }

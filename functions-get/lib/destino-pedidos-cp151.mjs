@@ -12,14 +12,21 @@ export function roteamentoPedidoClienteCp151(entrada, caixa){
   const editorial=!legenda&&(editoriais.has(tipo)||legado);
   // O aviso de coordenação do I35 anterior continua histórico, sem virar uma segunda tarefa Chris.
   const coordenacaoLegada=tipo==='observacao_calendario'&&pretendido==='Amanda'&&String(entrada.operationId||'').startsWith('cal_obs_i35_');
-  return {pretendido,tipo,legenda,editorial,legado,destinatario:legenda?'Gabrielle':editorial&&!coordenacaoLegada?'Chris':pretendido};
+  return {pretendido,tipo,legenda,editorial,legado,destinatario:legenda?'Chris':editorial&&!coordenacaoLegada?'Chris':pretendido};
 }
 export function reencaminhamentoPedidoClienteCp151(entrada, demanda, caixa, entradaId){
   const rota=roteamentoPedidoClienteCp151(entrada,caixa);
-  if(!rota.editorial||rota.destinatario!=='Chris'||demanda?.destinatario!=='Gabrielle'||!['pendente','em_andamento'].includes(demanda.status)||demanda.excluido||demanda.arquivado)return false;
+  if(!(rota.editorial||rota.legenda)||rota.destinatario!=='Chris'||demanda?.destinatario!=='Gabrielle'||!['pendente','em_andamento','andamento'].includes(demanda.status)||demanda.excluido||demanda.arquivado||demanda.cancelado||demanda.deleted||demanda.deletedAt||entrada.excluido||entrada.arquivado||entrada.cancelado||entrada.descartado||entrada.deleted||entrada.deletedAt)return false;
   if(demanda.origem!=='cliente'||demanda.origemAvisoColecao!==caixa||demanda.origemAvisoId!==entradaId)throw Error('O vínculo original do pedido precisa de conferência.');
   const cliente=String(entrada.cliente||entrada.clienteSlug||entrada.slug||'');
   if(String(demanda.clienteSlug||demanda.cliente||'')!==cliente||String(demanda.operationId||'')!==String(entrada.operationId||'')||(demanda.tipoPedidoCliente&&String(demanda.tipoPedidoCliente)!==rota.tipo))throw Error('A identidade do pedido mudou. Nenhum responsável foi alterado.');
   if(String(demanda.competencia||'')!==String(entrada.competencia||entrada.mes||entrada.mesRef||'')||String(demanda.itemId||'')!==String(entrada.itemId||'')||String(demanda.demandaClienteId||'')!==String(entrada.demandaClienteId||''))throw Error('O conteúdo ou o mês deste pedido mudou. Confira o vínculo antes de continuar.');
   return true;
+}
+
+/* Responsabilidade futura; chamar somente dentro da devolução real já autorizada. */
+export function destinoRetornoGabiCp183(demanda){
+  if(demanda?.destinatario!=='Gabrielle')return String(demanda?.destinatario||'');
+  const legenda=legendas.has(String(demanda.tipoPedidoCliente||''))||legendas.has(String(demanda.tipoEspecial||''))||['legenda','legendas'].includes(String(demanda.tipoFuncaoFixa||''));
+  return legenda?'Chris':'Amanda';
 }

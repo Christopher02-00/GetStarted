@@ -1,6 +1,7 @@
 /* CP154: entregar a mesma demanda usando um documento já confirmado.
  * Não reconfirma o material, não avança o ciclo e não modifica a base editorial. */
 import {createHash} from 'node:crypto';
+import {prepararConclusoesDocumentaisNaTxCp179,aplicarConclusoesDocumentaisNaTxCp179} from './conclusao-documento-cp179.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {assinaturaOrigemDemandaCp138,hashPedidoDocumentoCp138,identidadeOrigemCompativelCp138,validarOrigemDemandaCp138,podeEntregarOrigemCp138,documentoReentregavelCp154,finalidadeOrigemDocumentalCp138} from './central/lib/gs-planejamento-social-i155.mjs';
 import {exigirCentralR80 as e,cicloR80} from './central-preparacao-validacao-r80.mjs';
@@ -41,8 +42,11 @@ export async function vincularEntregaDocumentoCp154(db,ator,pedido,{conferirGate
   const rec={schema:1,demandaId:o.id,ciclo:pedido.ciclo,cliente,competencia,finalidade:dados.finalidade,empresaOtavio:o.empresaOtavio,documentoId:dados.id,versao:material.versao,hashTexto:createHash('sha256').update(material.texto,'utf8').digest('hex'),operacao:pedido.operacao,autorUid:ator.uid,por:ator.real,perfil:ator.papel,em:cf.em,vinculoConfirmadoCp154};
   const prova='Documento confirmado: '+c.clienteNome+' · '+competencia+' · '+({referencias:'Documento de referências',campanha:'Campanhas e datas importantes'}[rec.finalidade])+' · versão '+material.versao+' · '+dados.id;
   const resultado={id:dados.id,confirmado:true,vinculoConfirmadoCp154:true,pedidoHashCp138:hash,origemDemandaCp138:rec};
-  tx.update(dr,{status:'concluida_aguardando_aprovacao',provaTexto:prova,concluidaEm:stamp,entregaDocumentoCp138:rec,historico:[...(origem.historico||[]),{acao:'Entrega vinculada ao documento já confirmado',por:ator.real,perfil:ator.papel,em,operacao:pedido.operacao,documento:rec,provaAnterior:{texto:origem.provaTexto||'',link:origem.provaImagemUrl||''}}]});
+  const entregaPreparadaCp179={status:'concluida_aguardando_aprovacao',provaTexto:prova,concluidaEm:stamp,entregaDocumentoCp138:rec,historico:[...(origem.historico||[]),{acao:'Entrega vinculada ao documento já confirmado',por:ator.real,perfil:ator.papel,em,operacao:pedido.operacao,documento:rec,provaAnterior:{texto:origem.provaTexto||'',link:origem.provaImagemUrl||''}}]};
+  const conclusoesCp179=await prepararConclusoesDocumentaisNaTxCp179(db,tx,ator,{ciclo:pedido.ciclo,documentoId:dados.id,cicloDepois:c,demandasDepois:new Map([[o.id,{...origem,...entregaPreparadaCp179}]]),pedidoOrigem:{origem:o,operacao:pedido.operacao}},{stamp,agora});resultado.conclusoesDocumentaisCp179=conclusoesCp179.resultado;
+  tx.update(dr,entregaPreparadaCp179);
   tx.create(er,{acao:ACAO_VINCULO_DOCUMENTO_CP154,operacao:pedido.operacao,revisao:c.revisao,autorUid:ator.uid,autorNome:ator.real,perfil:ator.papel,em:stamp,resultado});
+  aplicarConclusoesDocumentaisNaTxCp179(tx,conclusoesCp179,stamp);
   return resultado;
  });
 }

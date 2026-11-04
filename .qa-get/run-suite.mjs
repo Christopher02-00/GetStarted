@@ -17,4 +17,4 @@ async function run(args, timeout) {
 }
 await run(['--test', '--test-concurrency=1', 'test/rpr.test.mjs'], 60000);
 await run(['run-mutants.mjs'], 160000);
-console.log('RPR: três seams passaram e cinco defeitos deliberados foram detectados. Alcance focal; não é B01–B10 integral.');
+console.log('RPR: quatro seams passaram e cinco defeitos deliberados foram detectados. Alcance focal; não é B01–B10 integral.');

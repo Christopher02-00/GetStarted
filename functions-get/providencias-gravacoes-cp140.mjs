@@ -5,7 +5,7 @@ import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {validarCadastroI165,saidaEfetivaI165} from './contexto.mjs';
 import {capacidadePreparacaoEditorialI172,CAMPOS_EDITORIAIS_I172} from './editorial-contrato-i172.mjs';
 import {fonteFisicaClienteR4,mesDoItemCalendario} from './lib/guardas-stokki-i165.mjs';
-import {TIPO_PROVIDENCIA_GRAVACAO_CP140,META_PROVIDENCIA_CP140,ACOES_PROVIDENCIAS_CP140,exigirProvidenciaCp140 as e,validarEntradaProvidenciaCp140,validarRegistroProvidenciaCp140,resumoProvidenciaCp140,idProvidenciaGravacaoCp140,hashProvidenciaCp140,transicionarProvidenciaCp140} from './central/lib/gs-providencias-gravacao-cp140.mjs';
+import {TIPO_PROVIDENCIA_GRAVACAO_CP140,META_PROVIDENCIA_CP140,ACOES_PROVIDENCIAS_CP140,exigirProvidenciaCp140 as e,validarEnvelopeProvidenciaCp162R3,validarEntradaProvidenciaCp140,validarRegistroProvidenciaCp140,resumoProvidenciaCp140,idProvidenciaGravacaoCp140,hashProvidenciaCp140,transicionarProvidenciaCp140} from './central/lib/gs-providencias-gravacao-cp140.mjs';
 export {ACOES_PROVIDENCIAS_CP140};
 const gestores=a=>['Chris','Amanda'].includes(a.papel),autoria=a=>({uid:a.uid,papel:a.papel,atorReal:a.real}),clone=v=>structuredClone(v);
 const stamp=s=>s?.updateTime?.toJSON?.()||s?.updateTime||null;
@@ -53,7 +53,7 @@ function conferirRecibo(r,a,pedidoHash=null){
  e(r?.schema===1&&r.tipo===TIPO_PROVIDENCIA_GRAVACAO_CP140&&igual(r.autoria,autoria(a))&&(!pedidoHash||r.pedidoHash===pedidoHash),'Esta tentativa pertence a outro conteúdo ou perfil.','operacao');return r;
 }
 export async function operarProvidenciasGravacaoCp140(db,auth,entrada,{agora=new Date()}={}){
- const {acao,pedido:d}=validarEntradaProvidenciaCp140(entrada),ator=validarContaEsperadaI165(auth,d);
+ const {acao,pedido:envelope}=validarEnvelopeProvidenciaCp162R3(entrada),ator=validarContaEsperadaI165(auth,envelope);let d=envelope;
  e(['Chris','Amanda','Cecília'].includes(ator.papel),'Este espaço pertence à coordenação das gravações e à gerência.','papel');
  if(['salvar','cancelar','substituir'].includes(acao))e(gestores(ator),'Chris e Amanda registram, alteram ou cancelam providências.','papel');
  if(acao==='revisar')e(ator.papel==='Amanda','A revisão desta providência pertence à Amanda.','papel');
@@ -74,6 +74,14 @@ export async function operarProvidenciasGravacaoCp140(db,auth,entrada,{agora=new
   const g=await gate(db,tx,ator),[old,os]=await Promise.all([tx.get(ref),rr?tx.get(rr):Promise.resolve(null)]),antes=old.exists?old.data():null;
   if(antes){validarRegistroProvidenciaCp140(antes,id);e(id===await idProvidenciaGravacaoCp140(antes.cliente,antes.competencia,antes[META_PROVIDENCIA_CP140].origem.chaveRecurso),'A identidade estável deste recurso não confere.','registro');}
   const rec=os?.exists?conferirRecibo(os.data(),ator,pedidoHash):null;
+  if(acao!=='ler'&&!rec){
+   try{d=validarEntradaProvidenciaCp140(entrada).pedido;}
+   catch(erro){
+    if(!erro?.code?.startsWith('i165/providencia-cp140-'))throw erro;
+    const anterior=await dto(antes,ator),recibo={schema:1,tipo:TIPO_PROVIDENCIA_GRAVACAO_CP140,id,operacao:d.operacao,acao,pedido:clone(entrada),pedidoHash,autoria:autoria(ator),em,estado:'recusada',estadoOperacao:'recusada_por_entrada',motivo:erro.message,codigo:erro.code,revisaoAntes:antes?.[META_PROVIDENCIA_CP140].revisao||0,revisaoDepois:antes?.[META_PROVIDENCIA_CP140].revisao||0,semEscritaNegocio:true,semPublicacao:true};
+    tx.create(rr,recibo);return {...anterior,motivoRecusa:erro.message,operacao:{id:d.operacao,estado:'recusada_por_entrada',confirmada:true,escrita:false,recibo}};
+   }
+  }
   const fs=antes?await fonteDaDemanda(db,tx,antes,g,agora):acao==='salvar'?{fonte:await fonteTx(db,tx,d.providencia.cliente,d.providencia.competencia,g,agora),motivo:''}:{fonte:null,motivo:''};
   if(acao==='ler'){
    e(antes||d.operacao,'A providência não foi encontrada.','registro');return {...await dto(antes,ator,fs.fonte,fs.motivo),...(d.operacao?{operacao:{id:d.operacao,estado:rec?(rec.estado==='recusada'?rec.estadoOperacao:'confirmada'):'ausente',confirmada:!!rec,recibo:rec}}:{})};

@@ -1,4 +1,4 @@
-import {criarVinculosUiCp142} from './gs-providencias-vinculos-ui-cp142.mjs?v=e5912dd8797ca5499fd77dd6641e9f7c4c0b061922f79d0228d81ee045e2af42';
+import {criarVinculosUiCp142} from './gs-providencias-vinculos-ui-cp142.mjs?v=dc9bc84b0ba777747148cf3f5302296f60222cfa9feaa76cb0a496ea183784e6';
 import {providenciaEhCp140,resumoProvidenciaCp140,idProvidenciaGravacaoCp140,hashProvidenciaCp140} from './gs-providencias-gravacao-cp140.mjs';
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

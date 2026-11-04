@@ -4,7 +4,7 @@ import {isDeepStrictEqual as igual} from 'node:util';
 import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {gateProvidenciasCp140,fonteProvidenciasTxCp140} from './providencias-gravacoes-cp140.mjs';
 import {hashProvidenciaCp140,exigirProvidenciaCp140 as e} from './central/lib/gs-providencias-gravacao-cp140.mjs';
-import {ACOES_VINCULOS_CP142,validarEntradaVinculoCp142,demandaNormalVinculavelCp142,podeLerVinculoCp142,finalizadaVinculoCp142,validarRegistroVinculoCp142,resumoVinculoCp142,prepararVinculoCp142} from './central/lib/gs-providencias-vinculos-cp142.mjs';
+import {ACOES_VINCULOS_CP142,validarEnvelopeVinculoCp178,validarEntradaVinculoCp142,demandaNormalVinculavelCp142,podeLerVinculoCp142,finalizadaVinculoCp142,validarRegistroVinculoCp142,resumoVinculoCp142,prepararVinculoCp142} from './central/lib/gs-providencias-vinculos-cp142.mjs';
 export const ACOES_VINCULOS_CP142_COM_CIENCIA=Object.freeze([...ACOES_VINCULOS_CP142,...ACOES_CIENCIA_CP146]);
 export {ACOES_VINCULOS_CP142};
 const autoria=a=>({uid:a.uid,papel:a.papel,atorReal:a.real});
@@ -18,7 +18,7 @@ async function dto(s,v,ator){const d=lerDemanda(s,s.id,ator);return limitado({sc
 function conferirRecibo(rec,ator,hash=null){e(rec?.schema===1&&igual(rec.autoria,autoria(ator))&&(!hash||rec.pedidoHash===hash),'A tentativa guardada pertence a outro conteúdo ou perfil.','operacao');return rec;}
 export async function operarVinculosProvidenciasCp142(db,auth,entrada,{agora=new Date()}={}){
  if(ACOES_CIENCIA_CP146.includes(entrada?.acao))return operarCienciaProvidenciasCp146(db,auth,entrada,{agora});
- const {acao,pedido:p}=validarEntradaVinculoCp142(entrada),ator=validarContaEsperadaI165(auth,p);e(['Chris','Amanda','Cecília'].includes(ator.papel),'Este espaço pertence à coordenação e à gerência.','papel');
+ const {acao,pedido:envelope}=validarEnvelopeVinculoCp178(entrada),ator=validarContaEsperadaI165(auth,envelope);let p=acao==='vincular'?envelope:validarEntradaVinculoCp142(entrada).pedido;e(['Chris','Amanda','Cecília'].includes(ator.papel),'Este espaço pertence à coordenação e à gerência.','papel');
  if(acao==='vincular')e(['Chris','Amanda'].includes(ator.papel),'Chris ou Amanda conferem os vínculos.','papel');e(agora instanceof Date&&Number.isFinite(agora.getTime()),'Relógio inválido.');const em=agora.toISOString();
  if(acao==='listar')return db.runTransaction(async tx=>{
   await gateProvidenciasCp140(db,tx,ator);let q=db.collection('providencias_vinculos_cp142');if(p.cliente)q=q.where('cliente','==',p.cliente);if(p.competencia)q=q.where('competencia','==',p.competencia);
@@ -36,7 +36,7 @@ export async function operarVinculosProvidenciasCp142(db,auth,entrada,{agora=new
   if(acao==='conferir')return {...atual,...(p.operacao?{operacao:{id:p.operacao,confirmada:!!rec,estado:rec?'confirmada':'ausente',recibo:rec}}:{})};
   if(rec)return {...atual,operacao:{id:p.operacao,confirmada:true,estado:'recuperado',recibo:rec},demandaNaoAlterada:true};
   let fonte,depois;
-  try{fonte=await fonteProvidenciasTxCp140(db,tx,p.vinculo.cliente,p.vinculo.competencia,g,agora);depois=await prepararVinculoCp142({antes,demanda:d,rawDemanda:retrato(s),id,pedido:p,ator,fonte,em});}
+  try{p=validarEntradaVinculoCp142(entrada).pedido;fonte=await fonteProvidenciasTxCp140(db,tx,p.vinculo.cliente,p.vinculo.competencia,g,agora);depois=await prepararVinculoCp142({antes,demanda:d,rawDemanda:retrato(s),id,pedido:p,ator,fonte,em});}
   catch(err){if(!err?.code?.startsWith('i165/providencia-cp140-'))throw err;const recusado={schema:1,id,operacao:p.operacao,acao:'vincular',pedido:structuredClone(entrada),pedidoHash,hashPayload:await hashProvidenciaCp140(negocio),autoria:autoria(ator),em,estado:'recusada',motivo:err.message,codigo:err.code,demandaNaoAlterada:true,semPublicacao:true};tx.create(rr,recusado);return {...atual,operacao:{id:p.operacao,confirmada:true,estado:'recusada',recibo:recusado},demandaNaoAlterada:true};}
   const recibo={schema:1,id,operacao:p.operacao,acao:'vincular',pedido:structuredClone(entrada),pedidoHash,hashPayload:await hashProvidenciaCp140(negocio),autoria:autoria(ator),em,estado:'confirmada',revisaoAntes:antes?.revisao||0,revisaoDepois:depois.revisao,assinaturaDepois:await hashProvidenciaCp140(depois),demandaNaoAlterada:true,semPublicacao:true};
   // Não há set/update/create da coleção demandas. Todos os leitores terminam antes do primeiro writer.

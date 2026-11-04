@@ -1,5 +1,5 @@
 import {hashProvidenciaCp140} from './gs-providencias-gravacao-cp140.mjs';
-import {idDemandaVinculoCp142} from './gs-providencias-vinculos-cp142.mjs?v=338d86bb259ecffeefb2e9636126da7ea9eb9b7f5dc01c2f3a27a794b6901943';
+import {idDemandaVinculoCp142,validarEntradaVinculoCp142,validarEnvelopeVinculoCp178} from './gs-providencias-vinculos-cp142.mjs?v=c428604578c471b0e03b376111b7ca78ef4b9730dc7763e3fedf4a963efd13bd';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const autor=c=>JSON.stringify([c.uid,c.nome,c.atorReal||c.nome]);
 const sessaoKey=c=>JSON.stringify([c.uid,c.nome,c.atorReal||c.nome,c.sessao,c.geracao]);
@@ -12,6 +12,11 @@ export function criarVinculosUiCp142({documento,contexto,chamar,clientes,demanda
  const ler=(k)=>{try{return JSON.parse(storage?.getItem(k)||'null');}catch{throw Error('Não consegui ler os campos guardados. Nada foi substituído.');}};
  function guardar(k,v){if(!storage)throw Error('Não consegui guardar os campos neste aparelho.');storage.setItem(k,JSON.stringify(v));if(JSON.stringify(ler(k))!==JSON.stringify(v))throw Error('Os campos não foram confirmados neste aparelho.');}
  function limpar(c,p){const atual=ler(chave(c));if(atual&&(atual.operacao!==p.operacao||atual.hash!==p.hash))throw Error('Outra tentativa está guardada e foi preservada.');storage.removeItem(chave(c));}
+ function entrada(c,payload){return {acao:'providencias_vinculos_vincular_cp142',uidEsperado:c.uid,atorRealEsperado:c.atorReal||c.nome,papelOperado:c.nome,sessao:c.sessao,...payload};}
+ function validarPayload(c,payload){try{return validarEntradaVinculoCp142(entrada(c,payload));}catch(err){if(typeof payload?.vinculo?.responsavelReal==='string'&&payload.vinculo.responsavelReal.length>180)err.message='No campo de quem organiza, use um resumo de até 180 caracteres. A descrição completa continua na mesma demanda.';throw err;}}
+ function envelopeSeguro(c,payload){try{validarEnvelopeVinculoCp178(entrada(c,payload));return true;}catch{return false;}}
+ function erroEntrada(c,payload){try{validarPayload(c,payload);return null;}catch(err){return err;}}
+ async function conferirTentativa(c,p){if(!p||p.autoria!==autor(c)||p.id!==p.payload?.vinculo?.demandaId||p.operacao!==p.payload?.operacao||!/^vinc142_[a-f0-9]{32}$/.test(p.operacao||'')||await hashProvidenciaCp140(p.payload)!==p.hash)throw Error('A tentativa guardada não confirma a mesma demanda, operação, conteúdo e perfil originais.');}
  async function recibo(c,r,p){const x=r.operacao?.recibo;if(r.id!==p.id||r.operacao?.id!==p.operacao||r.operacao.confirmada!==true||x?.id!==p.id||x.operacao!==p.operacao||!['confirmada','recusada'].includes(x.estado)||x.autoria?.uid!==c.uid||x.autoria?.papel!==c.nome||x.autoria?.atorReal!==(c.atorReal||c.nome)||await hashProvidenciaCp140(Object.fromEntries(Object.keys(p.payload).map(k=>[k,x.pedido?.[k]])))!==p.hash)throw Error('A resposta não confirmou a mesma demanda, tentativa, conteúdo e autoria. Consulte antes de repetir.');return x;}
  function bind(root,t=null){root.querySelectorAll('[data-vinculo-abrir]').forEach(b=>b.addEventListener('click',()=>{if(t)try{exigirTela(t);}catch{return;}void conferir(b.dataset.vinculoAbrir);}));}
  async function abrirOriginal(t,id){try{exigirTela(t);if(permitirTroca&&!permitirTroca())return;if(!abrirDemanda)throw Error('Reabra esta demanda pelo caminho Minhas demandas.');await abrirDemanda(id,t.ctx);}catch(err){try{exigirTela(t);aviso(t.painel,err.message,true);}catch{}}}
@@ -67,9 +72,39 @@ export function criarVinculosUiCp142({documento,contexto,chamar,clientes,demanda
   t.guardarAntesSair=()=>guardar(draft(c),{campos:campos(),itemIds:[...box.querySelectorAll('[data-cp142-item]:checked')].map(el=>el.dataset.cp142Item)});t.sujo=()=>JSON.stringify(estadoForm())!==originalCampos;
   box.querySelector('[data-vinculo-campo="selecao"]').onchange=ev=>{box.querySelector('[data-vinculo-campo="id"]').value=ev.target.value;};
   function recoverUi(p,message='Há uma tentativa guardada. Confira sua confirmação antes de fazer outro vínculo.'){
-   const el=box.querySelector('[data-cp142-recuperar]');el.innerHTML=`<p role="alert">${esc(message)}</p>${button('consultar-recibo','Conferir a mesma tentativa')}`;el.querySelector('button').onclick=async()=>{if(t.busy)return;t.busy=true;try{exigirTela(t);if(p.autoria!==autor(c)||await hashProvidenciaCp140(p.payload)!==p.hash)throw Error('A tentativa guardada não confirma o conteúdo e o perfil originais.');const r=await chamar('providencias_vinculos_conferir_cp142',{id:p.id,operacao:p.operacao});exigirTela(t);if(r.operacao?.confirmada){const rec=await recibo(c,r,p);exigirTela(t);limpar(c,p);el.replaceChildren();if(rec.estado==='recusada'){aviso(t.painel,rec.motivo||'Esta tentativa foi recusada. Reconfira a demanda e a pauta antes de preparar outra.',true);return;}storage.removeItem(draft(c));t.sujo=null;t.busy=false;await conferir(p.id);}else if(r.id===p.id&&r.operacao?.id===p.operacao&&r.operacao.estado==='ausente'){el.innerHTML=`<p>Esta consulta não encontrou recibo da mesma tentativa. Os campos e o identificador foram preservados.</p>${button('repetir','Repetir o mesmo vínculo')}`;el.querySelector('button').onclick=()=>{void enviar(p);};}else throw Error('A consulta não confirmou o mesmo identificador.');}catch(err){try{exigirTela(t);aviso(t.painel,err.message,true);}catch{}}finally{t.busy=false;}};
+   const el=box.querySelector('[data-cp142-recuperar]');el.innerHTML=`<p role="alert">${esc(message)}</p>${button('consultar-recibo','Conferir a mesma tentativa')}`;
+   el.querySelector('button').onclick=async()=>{
+    if(t.busy)return;t.busy=true;
+    try{
+     exigirTela(t);await conferirTentativa(c,p);exigirTela(t);
+     const r=await chamar('providencias_vinculos_conferir_cp142',{id:p.id,operacao:p.operacao});exigirTela(t);
+     if(r.operacao?.confirmada){
+      const rec=await recibo(c,r,p);exigirTela(t);limpar(c,p);el.replaceChildren();
+      if(rec.estado==='recusada'){request=null;fonte=null;aviso(t.painel,rec.motivo||'Esta tentativa foi recusada. Reconfira a demanda e a pauta antes de preparar outra.',true);return;}
+      storage.removeItem(draft(c));t.sujo=null;t.busy=false;await conferir(p.id);
+     }else if(r.id===p.id&&r.operacao?.id===p.operacao&&r.operacao.estado==='ausente'){
+      const invalida=erroEntrada(c,p.payload);
+      if(invalida&&!envelopeSeguro(c,p.payload)){el.innerHTML='<p role="alert">A tentativa não confirma um envelope seguro para registrar recusa. Ela e seus campos continuam guardados; nenhum envio foi repetido ou cancelado.</p>';return;}
+      el.innerHTML=invalida?`<p>Esta tentativa contém um campo inválido e ainda não tem recibo no servidor. Os campos continuam guardados. Encerre a mesma tentativa pelo servidor antes de corrigir e reconferir a demanda; isso não cria vínculo nem conclui trabalho.</p>${button('encerrar-invalida','Registrar recusa e corrigir os campos')}`:`<p>Esta consulta não encontrou recibo da mesma tentativa. Os campos e o identificador foram preservados.</p>${button('repetir','Repetir o mesmo vínculo')}`;
+      el.querySelector('button').onclick=()=>{void enviar(p,!!invalida);};
+     }else throw Error('A consulta não confirmou o mesmo identificador.');
+    }catch(err){try{exigirTela(t);aviso(t.painel,err.message,true);}catch{}}finally{t.busy=false;}
+   };
   }
-  async function enviar(p){if(t.busy)return;t.busy=true;try{exigirTela(t);const guardado=ler(chave(c));if(guardado&&(guardado.operacao!==p.operacao||guardado.hash!==p.hash))throw Error('Outra tentativa está guardada. Confira sua confirmação primeiro.');guardar(chave(c),p);const r=await chamar('providencias_vinculos_vincular_cp142',structuredClone(p.payload));exigirTela(t);const rec=await recibo(c,r,p);exigirTela(t);limpar(c,p);if(rec.estado==='recusada'){request=null;fonte=null;aviso(t.painel,rec.motivo||'O vínculo foi recusado; seus campos continuam aqui. Reconfira a demanda e a pauta.',true);return;}storage.removeItem(draft(c));t.sujo=null;try{await aoAtualizar();}catch{}exigirTela(t);t.busy=false;await conferir(p.id);}catch(err){try{exigirTela(t);aviso(t.painel,err.message,true);recoverUi(p);}catch{}}finally{t.busy=false;}}
+  async function enviar(p,recusaTerminal=false){
+   if(t.busy)return;t.busy=true;
+   try{
+    exigirTela(t);await conferirTentativa(c,p);exigirTela(t);
+    const guardado=ler(chave(c));if(guardado&&(guardado.operacao!==p.operacao||guardado.hash!==p.hash))throw Error('Outra tentativa está guardada. Confira sua confirmação primeiro.');
+    if(recusaTerminal){if(!guardado||!envelopeSeguro(c,p.payload)||!erroEntrada(c,p.payload))throw Error('A tentativa não confirma o campo inválido original. Consulte novamente antes de continuar.');}
+    else validarPayload(c,p.payload);
+    guardar(chave(c),p);
+    const r=await chamar('providencias_vinculos_vincular_cp142',structuredClone(p.payload));exigirTela(t);
+    const rec=await recibo(c,r,p);exigirTela(t);limpar(c,p);
+    if(rec.estado==='recusada'){request=null;fonte=null;box.querySelector('[data-cp142-recuperar]').replaceChildren();aviso(t.painel,(rec.motivo||'O vínculo foi recusado.')+' Seus campos continuam guardados. Corrija e reconfira a demanda e a pauta antes de preparar outro envio.',true);return;}
+    storage.removeItem(draft(c));t.sujo=null;try{await aoAtualizar();}catch{}exigirTela(t);t.busy=false;await conferir(p.id);
+   }catch(err){try{exigirTela(t);aviso(t.painel,err.message,true);if(ler(chave(c)))recoverUi(p);}catch{}}finally{t.busy=false;}
+  }
   async function conferirDemanda(){if(t.busy)return;t.busy=true;try{exigirTela(t);const id=value(box,'id');if(conferida?.id===id){camposRetomados=estadoForm();guardar(draft(c),camposRetomados);}const r=await chamar('providencias_vinculos_conferir_cp142',{id});exigirTela(t);if(id!==value(box,'id')||r.id!==id||!r.podeVincular)throw Error('Confira o ID e uma demanda normal acessível.');conferida=r;fonte=null;request=null;box.querySelector('[data-vinculo-campo="id"]').disabled=true;box.querySelector('[data-vinculo-campo="selecao"]').disabled=true;const d=r.demanda,v=r.vinculo,p=box.querySelector('[data-cp142-detalhe]');p.innerHTML=`<div class="card"><h3>${esc(d.titulo)}</h3><div style="white-space:pre-wrap;">${esc(d.descricao)}</div><p>ID ${esc(id)} · ${esc(d.destinatario)} · ${esc(d.status)} · prazo ${esc(d.prazoData||'a combinar')} ${esc(d.prazoHora||'')}</p>${button('original','Abrir a mesma demanda')}</div><label style="display:grid;gap:6px;">Cliente da pauta<select data-vinculo-campo="cliente" ${v?'disabled':''}><option value="">Escolha o cliente real</option>${clientes().map(x=>`<option value="${esc(x.slug)}" ${v?.cliente===x.slug?'selected':''}>${esc(x.nome||x.name||x.slug)}</option>`).join('')}</select></label>${input('competencia','Mês real da pauta',v?.competencia||'','month')}${input('chaveRecurso','Recurso ou compromisso confirmado',v?.chaveRecurso||'','text',160)}${input('responsavelReal','Quem realmente organiza ou fornece o recurso',v?.responsavelReal||'')}${button('fonte','Conferir os conteúdos deste mês')}<div data-cp142-itens></div><label style="display:block;margin:12px 0;"><input type="checkbox" data-vinculo-campo="confirmada"> Conferi esta mesma demanda, o destinatário, o prazo e o estado. Cliente, mês, recurso, responsável e conteúdos correspondem ao compromisso já autorizado.</label>${button('salvar','Vincular sem alterar a demanda')}`;
    originalCampos=JSON.stringify(estadoForm());
    if(camposRetomados?.campos.find(([n])=>n==='id')?.[1]===id){for(const [n,val]of camposRetomados.campos){if(!['cliente','competencia','chaveRecurso','responsavelReal'].includes(n)||v&&n!=='responsavelReal')continue;const el=p.querySelector(`[data-vinculo-campo="${n}"]`);if(el)el.value=String(val);}}

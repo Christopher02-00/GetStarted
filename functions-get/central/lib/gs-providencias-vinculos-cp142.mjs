@@ -12,13 +12,24 @@ export function demandaNormalVinculavelCp142(d,id){
 }
 export const podeLerVinculoCp142=(d,a)=>['Chris','Amanda'].includes(a.papel)||a.papel==='Cecília'&&d.destinatario==='Cecília';
 export const finalizadaVinculoCp142=d=>d.excluido===true||d.arquivado===true||['aprovada','cancelada','concluida'].includes(d.status);
-export function validarEntradaVinculoCp142(d){
+/* Só o envelope identificável. A semântica continua obrigatória antes de gravar vínculo. */
+export function validarEnvelopeVinculoCp178(d){
  e(ACOES_VINCULOS_CP142.includes(d?.acao),'Operação de vínculo desconhecida.','vinculo');
  const acao=d.acao.slice('providencias_vinculos_'.length,-'_cp142'.length),comuns=['acao','uidEsperado','atorRealEsperado','papelOperado','sessao'];
  const extras={conferir:['id','operacao'],listar:['cliente','competencia','incluirFinalizadas'],vincular:['operacao','assinaturaDemanda','assinaturaVinculo','assinaturaFonte','vinculo','conferencia']}[acao];
  fields(d,[...comuns,...extras],[...comuns,...extras.filter(k=>!(acao==='conferir'&&k==='operacao'||acao==='listar'))]);
  e(typeof d.sessao==='string'&&d.sessao.length>0&&d.sessao.length<=180,'Reabra o perfil autenticado.','vinculo');
  const r=structuredClone(d);
+ if(acao==='vincular'){
+  e(typeof d.operacao==='string'&&/^vinc142_[a-f0-9]{32}$/.test(d.operacao),'Preserve o identificador da mesma tentativa.','operacao');
+  fields(d.vinculo,['demandaId','cliente','competencia','chaveRecurso','responsavelReal','itemIds']);
+  e(idDemandaVinculoCp142(d.vinculo.demandaId),'Confira a demanda original.','demanda');
+ }
+ e(new TextEncoder().encode(JSON.stringify(r)).length<=200*1024,'O vínculo ultrapassa200KiB; nada foi cortado.','limite');
+ return {acao,pedido:r};
+}
+export function validarEntradaVinculoCp142(d){
+ const {acao,pedido:r}=validarEnvelopeVinculoCp178(d);
  if(acao==='listar'){r.cliente=d.cliente||'';r.competencia=d.competencia||'';r.incluirFinalizadas=d.incluirFinalizadas??false;if(r.cliente)clienteProvidenciaCp140(r.cliente);if(r.competencia)competenciaProvidenciaCp140(r.competencia);e(typeof r.incluirFinalizadas==='boolean'&&(!r.incluirFinalizadas||r.cliente&&r.competencia),'Para consultar encerradas, escolha cliente e mês.','filtro');}
  if(acao==='conferir')e(idDemandaVinculoCp142(d.id),'Escolha o identificador da demanda existente.','demanda');
  if(d.operacao!==undefined)e(typeof d.operacao==='string'&&/^vinc142_[a-f0-9]{32}$/.test(d.operacao),'Preserve o identificador da mesma tentativa.','operacao');

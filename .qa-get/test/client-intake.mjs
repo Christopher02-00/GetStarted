@@ -74,7 +74,7 @@ export async function runClientIntake() {
   for (const p of prior) {
     const a = p.body;
     // Independent preexisting I54 oracle, not the consumer's constructor.
-    await b.db.doc('demandas/' + p.id).create({titulo: a.titulo, descricao: a.descricao, destinatario: 'Chris', origem: 'cliente', cliente: 'qa-cliente', clienteSlug: 'qa-cliente', origemAvisoColecao: 'avisos_do_cliente', origemAvisoId: p.sourceId, operationId: a.operationId || '', competencia: a.competencia || '', itemId: a.itemId || '', itemNome: a.itemNome || '', tipoPedidoCliente: a.tipo, conversaoVersao: 'i54', status: 'pendente', criadoEm: now.toISOString()});
+    await b.db.doc('demandas/' + p.id).create({titulo: a.titulo, descricao: a.descricao, destinatario: 'Chris', origem: 'cliente', cliente: 'qa-cliente', clienteSlug: 'qa-cliente', origemAvisoColecao: 'avisos_do_cliente', origemAvisoId: p.sourceId, operationId: a.operationId || '', competencia: a.competencia || '', itemId: a.itemId || '', itemNome: a.itemNome || '', tipoPedidoCliente: a.tipo, demandaClienteId: a.demandaClienteId || '', conversaoVersao: 'i54', status: 'pendente', criadoEm: now.toISOString()});
     await b.db.doc('avisos_do_cliente/' + p.sourceId).create({...a, lido: true, demandaInternaId: p.id, conversaoVersao: 'i54'});
   }
   const existingBefore = Object.fromEntries(await Promise.all(prior.flatMap(p => ['demandas/' + p.id, 'avisos_do_cliente/' + p.sourceId]).map(async name => [name, record(await b.db.doc(name).get())])));
@@ -97,7 +97,7 @@ export async function runClientIntake() {
   for (const p of fresh) {
     const d = (await b.db.doc('demandas/' + p.id).get()).data(), a = (await b.db.doc('avisos_do_cliente/' + p.sourceId).get()).data();
     assert.equal(d.origemAvisoId, p.sourceId); assert.equal(d.operationId, p.body.operationId || '');
-    assert.equal(d.competencia, p.body.competencia || ''); assert.equal(d.itemId, p.body.itemId || '');
+    assert.equal(d.demandaClienteId, p.body.demandaClienteId || ''); assert.equal(d.competencia, p.body.competencia || ''); assert.equal(d.itemId, p.body.itemId || '');
     assert.equal(a.demandaInternaId, p.id); assert.equal(a.lido, true); assert.equal(d.status, 'pendente');
   }
   await sync();

@@ -7,11 +7,11 @@ const CAMPOS=['uid','nome','atorReal','sessao','geracao'];
 const exigir=(ok,mensagem)=>{if(!ok)throw Error(mensagem);};
 const texto=v=>typeof v==='string'?v:'';
 export function ehPedidoLegendaClienteCp152(d){
-  return !!d&&/^entrada_i54_[a-f0-9]{64}$/.test(texto(d.id))&&d.origem==='cliente'&&d.destinatario==='Gabrielle'&&
+  return !!d&&/^entrada_i54_[a-f0-9]{64}$/.test(texto(d.id))&&d.origem==='cliente'&&(d.destinatario==='Chris'||d.destinatario==='Gabrielle'&&d.status==='aprovada')&&
     TIPOS.has(d.tipoPedidoCliente)&&CAIXAS.has(d.origemAvisoColecao)&&/^[A-Za-z0-9_-]{1,180}$/.test(texto(d.origemAvisoId))&&!d.postagemId;
 }
 function identidade(d){
-  exigir(ehPedidoLegendaClienteCp152(d),'Abra o pedido de legenda original da Gabi.');
+  exigir(ehPedidoLegendaClienteCp152(d),'Abra o pedido de legenda original no seu perfil Chris.');
   return {demandaId:d.id,clienteEsperado:texto(d.clienteSlug||d.cliente),origemAvisoColecaoEsperada:d.origemAvisoColecao,origemAvisoIdEsperado:d.origemAvisoId};
 }
 function provaValida(p,reparo=false){
@@ -24,7 +24,7 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
   let paginaRecebimento=null;
   function capturar(){
     const c={...contexto()};
-    exigir(autenticado()&&!!c.uid&&c.nome==='Gabrielle'&&['Gabrielle','Chris'].includes(c.atorReal),'Entre com o Google da Gabi ou com Chris operando Gabi.');
+    exigir(autenticado()&&!!c.uid&&c.nome==='Chris'&&c.atorReal==='Chris','Entre com o Google do Chris e use o próprio perfil.');
     exigir(typeof c.sessao==='string'&&c.sessao.length>0,'Reabra o pedido no seu acesso.');
     return c;
   }
@@ -54,7 +54,7 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
   }
   function validarOne(r,i){
     exigir(r?.schema===1&&r.demandaId===i.demandaId&&r.cliente===i.clienteEsperado&&r.origemAvisoColecao===i.origemAvisoColecaoEsperada&&r.origemAvisoId===i.origemAvisoIdEsperado&&
-      TIPOS.has(r.tipoPedidoCliente)&&r.destinatario==='Gabrielle'&&/^[a-f0-9]{64}$/.test(texto(r.assinatura))&&typeof r.podeEntregar==='boolean'&&typeof r.podeRepararAcompanhamento==='boolean'&&
+      TIPOS.has(r.tipoPedidoCliente)&&(r.destinatario==='Chris'||r.destinatario==='Gabrielle'&&r.status==='aprovada')&&/^[a-f0-9]{64}$/.test(texto(r.assinatura))&&typeof r.podeEntregar==='boolean'&&typeof r.podeRepararAcompanhamento==='boolean'&&
       typeof r.provaTexto==='string'&&typeof r.provaImagemUrl==='string'&&r.semAprovacaoEditorial===true,'A identidade e a situação deste pedido não foram confirmadas.');
     return r;
   }
@@ -69,6 +69,7 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
     conferirContexto(c);paginaRecebimento=r.maisPendentes?{chave:chaveContexto,cursores:{...r.cursores}}:null;
     return {recebidos:r.recebidos,atualizados:0,falhas:r.falhas,maisPendentes:r.maisPendentes};
   }
+  async function conferirPedido(d){const c=capturar(),i=identidade(d);return validarOne(await solicitar(c,'pedidos_legenda_conferir_cp152',i),i);}
   function tentativaPendente(d){const c=capturar(),p=lerPendente(c,identidade(d));return p?JSON.parse(JSON.stringify(p)):null;}
   function conferirTentativa(d){
     const p=tentativaPendente(d);exigir(p,'Não existe um envio anterior guardado neste acesso.');
@@ -122,5 +123,5 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
     promessa.finally(()=>{if(emCurso.get(k)?.promessa===promessa)emCurso.delete(k);}).catch(()=>{});
     return promessa;
   }
-  return Object.freeze({conferir,entregar,conferirTentativa,conferirVersaoAtual,tentativaPendente});
+  return Object.freeze({conferir,conferirPedido,entregar,conferirTentativa,conferirVersaoAtual,tentativaPendente});
 }

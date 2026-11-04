@@ -27,15 +27,11 @@ const urlSegura = s => { try { const u = new URL(s); return ['https:', 'http:'].
 const ordemItens = (a, b) => String(a.prazoData || '9999').localeCompare(String(b.prazoData || '9999')) || Number(a.ordem || 0) - Number(b.ordem || 0) || String(a.prazoHora || '').localeCompare(String(b.prazoHora || '')) || String(a.id).localeCompare(String(b.id));
 
 export const ETAPAS_INICIAIS_I167 = Object.freeze([
-  { id: 'referencias', titulo: 'Referências', destinatario: 'Gabrielle', offsetDias: 0, quantidade: 12, unidade: 'referências', ordem: 1 },
-  { id: 'previa', titulo: 'Prévia para a reunião', destinatario: 'Chris', offsetDias: 1, quantidade: 1, unidade: 'prévia', ordem: 2 },
-  { id: 'reuniao', titulo: 'Reunião com o cliente', destinatario: 'Amanda', offsetDias: 2, quantidade: 1, unidade: 'reunião', ordem: 3 },
-  { id: 'consolidado', titulo: 'Consolidado da reunião', destinatario: 'Amanda', offsetDias: 3, quantidade: 1, unidade: 'documento', ordem: 4 },
-  { id: 'criacao', titulo: 'Criação do calendário', destinatario: 'Chris', offsetDias: 4, quantidade: 1, unidade: 'calendário', ordem: 5 },
-  { id: 'revisao', titulo: 'Revisão da Amanda', destinatario: 'Amanda', offsetDias: 5, quantidade: 1, unidade: 'revisão', ordem: 6 },
-  { id: 'liberacao', titulo: 'Liberação para envio', destinatario: 'Amanda', offsetDias: 6, quantidade: 1, unidade: 'liberação', ordem: 7 }
+  { id: 'campanhas', titulo: 'Documento completo do cliente', destinatario: 'Amanda', offsetDias: 0, quantidade: 1, unidade: 'documento', ordem: 1 },
+  { id: 'criacao', titulo: 'Criação do calendário', destinatario: 'Chris', offsetDias: 1, quantidade: 1, unidade: 'calendário', ordem: 2 },
+  { id: 'revisao', titulo: 'Revisão da Amanda', destinatario: 'Amanda', offsetDias: 2, quantidade: 1, unidade: 'revisão', ordem: 3 },
+  { id: 'liberacao', titulo: 'Liberação para envio', destinatario: 'Amanda', offsetDias: 3, quantidade: 1, unidade: 'liberação', ordem: 4 }
 ]);
-
 function itemPlano(i) {
   const m = i.agendaOrganizacaoI167 || {};
   const prazo = typeof i.prazo === 'string' ? i.prazo : '';
@@ -93,7 +89,7 @@ export function montarAgenda(root, { repo, contexto, abrirDemanda, carteira = []
   const style = doc.createElement('style'); style.textContent = CSS; shell.append(style);
   const conteudo = doc.createElement('div'); shell.append(conteudo); root.replaceChildren(shell);
   const clientes = () => array(fonte(carteira)).filter(c => c && c.ativo !== false && c.excluido !== true).map(c => typeof c === 'string' ? { id: c, nome: c, empresas: [] } : { id: String(c.id || c.slug || c.chave || c.cliente || ''), nome: String(c.nome || c.clienteNome || c.id || c.slug || ''), empresas: array(c.empresas).map(e => ({ id: String(e.id || ''), nome: String(e.nome || e.id || '') })) }).filter(c => c.id);
-  const equipe = () => array(fonte(pessoas)).map(p => typeof p === 'string' ? { id: p, nome: labelPessoa(p) } : { id: String(p.id || p.chave || p.pessoa || p.nome || ''), nome: labelPessoa(p.label || p.nome || p.id) }).filter(p => p.id);
+  const equipe = () => array(fonte(pessoas)).map(p => typeof p === 'string' ? { id: p, nome: labelPessoa(p) } : { id: String(p.id || p.chave || p.pessoa || p.nome || ''), nome: labelPessoa(p.label || p.nome || p.id) }).filter(p => p.id && p.id !== 'Gabrielle');
   const podeEditar = () => valido() && editavel(ctx());
   const sujo = () => !!(editor && JSON.stringify(editor) !== editorBase) || !!(modeloEdit && JSON.stringify(modeloEdit) !== modeloBase) || preview.length > 0;
   const message = e => String(e?.message || e || 'Não foi possível concluir. Tente novamente.');
@@ -139,7 +135,7 @@ export function montarAgenda(root, { repo, contexto, abrirDemanda, carteira = []
   }
   function renderModelos() {
     if (!configurando || !podeEditar()) return '';
-    const modelos = config?.modelos?.length ? config.modelos : [{ id: 'inicial_sete', nome: 'Começo com sete etapas', etapas: clone(ETAPAS_INICIAIS_I167) }];
+    const modelos = config?.modelos?.length ? config.modelos : [{ id: 'documento_unico_cp183', nome: 'Documento completo → Chris → Amanda', etapas: clone(ETAPAS_INICIAIS_I167) }];
     const m = modeloEdit || modelos[0];
     return `<section class="ag-panel" style="margin-bottom:18px"><div class="ag-topline"><h3>Modelos de organização</h3><button class="ag-textbtn" data-ag="close-models">Fechar</button></div><p class="ag-muted">Modelos são pontos de partida. Escolher ou ajustar um modelo não cria tarefas.</p>${configErro ? `<div class="ag-alert ag-error" role="alert">${h(configErro)}</div>` : ''}<div class="ag-grid"><label>Modelo<select data-filter="modelo">${modelos.map(x => option(x.id, x.nome, m.id)).join('')}</select></label><label>Nome do modelo<input data-model="nome" value="${h(m.nome)}" maxlength="100"></label><label>Primeiro dia da prévia<input type="date" data-model-base value="${h(estado.data)}"></label><label>Dias considerados na prévia<span class="ag-actions">${['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((x, n) => `<label class="ag-check"><input type="checkbox" data-workday="${n}"${(config?.diasTrabalho || [1, 2, 3, 4, 5]).includes(n) ? ' checked' : ''}>${x}</label>`).join('')}</span></label></div><div style="overflow:auto">${m.etapas.map((e, n) => `<div class="ag-model-row"><label>Etapa<input data-stage="${n}" data-key="titulo" value="${h(e.titulo)}" maxlength="180"></label><label>Responsável<select data-stage="${n}" data-key="destinatario">${optsPessoas(e.destinatario)}</select></label><label>+ dias<input data-stage="${n}" data-key="offsetDias" type="number" min="-365" max="365" value="${h(e.offsetDias)}"></label><label>Qtd.<input data-stage="${n}" data-key="quantidade" type="number" min="1" max="1000" value="${h(e.quantidade)}"></label><label>Unidade<input data-stage="${n}" data-key="unidade" value="${h(e.unidade)}" maxlength="60"></label><button class="ag-btn ag-danger" data-ag="remove-stage" data-index="${n}" aria-label="Remover etapa ${n + 1}">×</button></div>`).join('')}</div><div class="ag-actions"><button class="ag-btn" data-ag="add-stage">+ Etapa</button><button class="ag-btn" data-ag="new-model">+ Modelo</button><button class="ag-btn ag-danger" data-ag="remove-model">Remover modelo</button><button class="ag-btn" data-ag="save-model"${ocupado || pendente ? ' disabled' : ''}>Salvar modelo</button><button class="ag-btn ag-primary" data-ag="preview"${ocupado || pendente ? ' disabled' : ''}>Ver prévia para o cliente</button></div><p class="ag-muted">A prévia usa o filtro de cliente escolhido acima. As datas continuam ajustáveis antes de salvar cada etapa.</p></section>`;
   }
@@ -192,6 +188,7 @@ export function montarAgenda(root, { repo, contexto, abrirDemanda, carteira = []
     const out = Object.fromEntries(campos.map(k => [k, e[k]])); if (rascunho.id) out.id = rascunho.id;
     out.etapa = out.etapa || chaveEtapa(out.titulo); out.titulo = out.titulo.trim();
     if (!out.cliente || !out.destinatario || !out.titulo || !out.prazoData || !out.prazoHora || !out.mes) throw new Error('Escolha cliente, competência, etapa, responsável e prazo com horário.');
+    if (out.destinatario === 'Gabrielle') throw new Error('Escolha o responsável atual. A Gabrielle não recebe novas atribuições.');
     if (out.inicio && out.inicio > out.prazoData) throw new Error('O começo precisa ser no prazo ou antes dele.');
     if (out.linkAnexo && !urlSegura(out.linkAnexo)) throw new Error('O link de apoio precisa começar com https:// ou http://.');
     if (!Number.isInteger(out.quantidade) || out.quantidade < 1 || out.quantidade > 1000 || !Number.isInteger(out.ordem) || out.ordem < 0 || out.ordem > 1000000) throw new Error('Quantidade e ordem precisam ser números inteiros válidos.');
@@ -216,7 +213,7 @@ export function montarAgenda(root, { repo, contexto, abrirDemanda, carteira = []
     if (!r || (p.tipo !== 'config' && !r.id)) throw new Error('O servidor não confirmou o alvo desta tentativa.');
     pendente = null;
     if (p.loteIndex !== undefined) { lote.entradas[p.loteIndex].confirmadaId = r.id; preview[p.loteIndex]._salvoId = r.id; persistir(); sucesso = `Etapa ${p.loteIndex + 1} confirmada. As etapas já salvas não serão recriadas.`; return; }
-    if (p.tipo === 'config') { config = r; modeloEdit = clone(r.modelos.find(m => m.id === modeloEdit?.id) || r.modelos[0] || { id: 'inicial_sete', nome: 'Começo com sete etapas', etapas: clone(ETAPAS_INICIAIS_I167) }); modeloBase = JSON.stringify(modeloEdit); persistir(); sucesso = 'Modelo salvo. Nenhuma etapa foi criada.'; }
+    if (p.tipo === 'config') { config = r; modeloEdit = clone(r.modelos.find(m => m.id === modeloEdit?.id) || r.modelos[0] || { id: 'documento_unico_cp183', nome: 'Documento completo → Chris → Amanda', etapas: clone(ETAPAS_INICIAIS_I167) }); modeloBase = JSON.stringify(modeloEdit); persistir(); sucesso = 'Modelo salvo. Nenhuma etapa foi criada.'; }
     else {
       if (p.tipo === 'salvar') { if (p.previewIndex !== undefined) preview.splice(p.previewIndex, 1); editor = null; editorBase = ''; }
       persistir();
@@ -259,12 +256,13 @@ export function montarAgenda(root, { repo, contexto, abrirDemanda, carteira = []
   async function abrirModelos() {
     if (!podeEditar() || !liberarRascunho()) return;
     configurando = true; ocupado = true; configErro = ''; render();
-    try { const r = await repo.lerConfig(); if (!valido()) return; if (r?.origem !== 'servidor' || r.completo !== true || !Array.isArray(r.modelos)) throw new Error('Os modelos não tiveram sua leitura confirmada no servidor.'); config = r; modeloEdit = clone(r.modelos[0] || { id: 'inicial_sete', nome: 'Começo com sete etapas', etapas: clone(ETAPAS_INICIAIS_I167) }); modeloBase = JSON.stringify(modeloEdit); }
+    try { const r = await repo.lerConfig(); if (!valido()) return; if (r?.origem !== 'servidor' || r.completo !== true || !Array.isArray(r.modelos)) throw new Error('Os modelos não tiveram sua leitura confirmada no servidor.'); config = r; modeloEdit = clone(r.modelos[0] || { id: 'documento_unico_cp183', nome: 'Documento completo → Chris → Amanda', etapas: clone(ETAPAS_INICIAIS_I167) }); modeloBase = JSON.stringify(modeloEdit); }
     catch (e) { if (valido()) configErro = message(e); }
     finally { ocupado = false; if (valido()) render(); }
   }
   function configEntrada() {
     if (!config || !modeloEdit || configErro) throw new Error('Confira os modelos no servidor antes de salvar.');
+    if (modeloEdit.etapas.some(e => e.destinatario === 'Gabrielle')) throw new Error('Este modelo é anterior à transição. Escolha os responsáveis atuais; o modelo salvo ainda não foi alterado.');
     const m = clone(modeloEdit); m.etapas.forEach((e, n) => { e.ordem = n + 1; });
     const modelos = clone(config.modelos); const idx = modelos.findIndex(x => x.id === m.id); if (idx >= 0) modelos[idx] = m; else modelos.push(m);
     return { diasTrabalho: clone(config.diasTrabalho), modelos };
@@ -276,6 +274,7 @@ export function montarAgenda(root, { repo, contexto, abrirDemanda, carteira = []
     const c = clientes().find(x => x.id === estado.cliente);
     if (!c) throw new Error('Escolha o cliente no filtro antes de montar a prévia.');
     if (!config.diasTrabalho.length) throw new Error('Escolha pelo menos um dia de trabalho para a prévia.');
+    if (modeloEdit.etapas.some(e => e.destinatario === 'Gabrielle')) throw new Error('Confira os responsáveis atuais do modelo antes de montar a prévia. Nenhuma demanda foi criada.');
     const diaTrabalho = offset => { let dia = estado.data; let restantes = Math.abs(Number(offset) || 0); const sentido = Number(offset) < 0 ? -1 : 1; let limite = 0; while (!config.diasTrabalho.includes(date(dia).getDay()) && limite++ < 800) dia = add(dia, sentido); while (restantes > 0 && limite++ < 1600) { dia = add(dia, sentido); if (config.diasTrabalho.includes(date(dia).getDay())) restantes--; } return dia; };
     preview = modeloEdit.etapas.map((e, n) => ({ cliente: c.id, clienteNome: c.nome, empresaId: c.id === 'zeiss' ? estado.empresaId : '', titulo: e.titulo, etapa: e.id, destinatario: e.destinatario, prazoData: diaTrabalho(e.offsetDias), prazoHora: '19:00', mes: estado.mes, quantidade: Number(e.quantidade), unidade: e.unidade, ordem: n + 1, descricao: '', inicio: '', fixo: false, prioridade: 'normal', linkAnexo: '' }));
     sucesso = 'Prévia pronta. Nenhuma demanda foi criada.'; render();
@@ -306,7 +305,7 @@ export function montarAgenda(root, { repo, contexto, abrirDemanda, carteira = []
     }
     if (campo === 'modelo') {
       if (modeloEdit && JSON.stringify(modeloEdit) !== modeloBase && !win.confirm('Descartar as alterações deste modelo?')) { el.value = modeloEdit.id; return; }
-      modeloEdit = clone(config.modelos.find(x => x.id === el.value) || { id: 'inicial_sete', nome: 'Começo com sete etapas', etapas: clone(ETAPAS_INICIAIS_I167) }); modeloBase = JSON.stringify(modeloEdit); render(); return;
+      modeloEdit = clone(config.modelos.find(x => x.id === el.value) || { id: 'documento_unico_cp183', nome: 'Documento completo → Chris → Amanda', etapas: clone(ETAPAS_INICIAIS_I167) }); modeloBase = JSON.stringify(modeloEdit); render(); return;
     }
     estado[campo] = el.value; if (campo === 'cliente') estado.empresaId = ''; render();
   }

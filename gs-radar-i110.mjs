@@ -138,9 +138,9 @@ export function people(i, data) {
   const r=data[i.col]?.find(r=>r.id===i.id)||{};
   const names=[r.registradoPor,r.filmmaker,r.editorAtribuido,r.legendaPor,r.agendadoPor,r.aprovadoPor,r.criadoPor];
   if(i.elo==='B')names.push('Amanda','Cecília');
-  if(i.elo==='C')names.push('Gabrielle','Fernanda');
+  if(i.elo==='C')names.push('Chris','Fernanda');
   if(['D','E'].includes(i.elo))names.push('Cecília');
-  if(i.elo==='F')names.push('Gabrielle',i.clienteNome+' (cliente)');
+  if(i.elo==='F')names.push('Amanda',i.clienteNome+' (cliente)');
   return [...new Set(names.filter(n=>typeof n==='string'&&n.trim()))];
 }
 export function sourceState(i,data,current) {

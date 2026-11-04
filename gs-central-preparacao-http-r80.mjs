@@ -2,7 +2,7 @@
 import {abrirEnvelopeCentralR80} from './codec-central-r80.mjs?v=000e1d41f7937787cf50c53904f5e8392d2873f152fc10d3a4837697d5e67925';
 const MAX_RAW=4*1024*1024,PART=700*1024,MAX_WIRE=6*1024*1024,MAX_NORMAL=1024*1024;
 const MES=/^20\d{2}-(0[1-9]|1[0-2])$/,CLIENTE=/^[a-z0-9][a-z0-9._-]{0,119}$/,CICLO=/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/;
-const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','vincular_entrega_documento_cp154','decidir_entrega_documento_cp154','enviar_consolidado','retirar','desconsiderar_confirmacao','registrar_insumos_transicao']);
+const PREPARACAO=new Set(['incluir','agenda','contexto','referencia','entregar_lote','excluir_referencia','restaurar_referencia','excluir_lote','documento','confirmar_documento','adotar_documento_unico_cp183','vincular_entrega_documento_cp154','decidir_entrega_documento_cp154','enviar_consolidado','retirar','desconsiderar_confirmacao','registrar_insumos_transicao']);
 const TIPOS=new Set(['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/plain','text/markdown']);
 const exigir=(ok,m)=>{if(!ok)throw Error(m);};
 /* Proveniência local: depois de chamar o transporte, uma falha nunca prova ausência de commit. */
@@ -32,6 +32,7 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
   }catch(erro){throw falhaEnvioCp144(erro,iniciado);}
  }
  async function ler(id){ciclo(id);const r=await pedir('central_ler',{ciclo:id});exigir(r?.ciclo?.id===id&&Array.isArray(r.registros),'O ciclo lido precisa ser conferido.');return r;}
+ async function lerDocumentoUnicoCp183(reciboId){exigir(['Chris','Amanda'].includes(c.nome)&&/^[a-f0-9]{64}$/.test(reciboId||''),'Confira o recebimento do mesmo documento.');const r=await pedir('central_documento_unico_ler_cp183',{reciboId});exigir(r?.schema===1&&r.reciboId===reciboId&&['pendente','resolvida'].includes(r.estado)&&(r.estado==='resolvida'||CICLO.test(r.material?.ciclo||'')&&typeof r.demandaChrisId==='string'&&typeof r.material.id==='string'&&Number.isSafeInteger(r.material.versao)&&r.material.finalidade==='campanha'&&/^[a-f0-9]{64}$/.test(r.material.hashTexto||'')),'O documento recebido precisa de nova conferência.');return r;}
  async function reconciliarDocumentosCp179(id){ciclo(id);const r=await pedir('central_documentos_reconciliar_cp179',{ciclo:id});exigir(r?.ciclo?.id===id&&r?.resultado?.conclusoesDocumentaisCp179?.ciclo===id,'A conclusão documental precisa de conferência.');return r;}
  async function registrarSolicitacaoDocumentoCp179(id,solicitacao){ciclo(id);exigir(['Chris','Amanda'].includes(c.nome),'A identificação desta tarefa pertence à gestão.');return pedir('central_documento_solicitacao_cp179',{ciclo:id,solicitacao});}
  async function listar(m){mes(m);const r=await pedir('central_listar',{competencia:m});exigir(Array.isArray(r)&&r.every(x=>x.competencia===m),'Não consegui conferir todos os ciclos deste mês.');return r;}
@@ -140,5 +141,5 @@ export function criarRepositorioCentralHttpR80({chamar,contexto,timestamp,ambien
  const ouvir=(id,proximo,erro)=>{ciclo(id);const m=id.slice(0,7),cl=id.slice(9);return assinar(id,cl,m,'ciclo',proximo,erro);};
  const ouvirCalendario=(cl,proximo,erro,{ciclo:id,competencia:m}={})=>assinar(id,cl,m,'calendario',proximo,erro);
  function destroy(){if(!vivo)return;vivo=false;for(const job of jobs.values()){job.geracao++;ambiente.clearInterval(job.timer);job.assinantes.clear();}jobs.clear();}
- return {ler,listar,reconciliarDocumentosCp179,registrarSolicitacaoDocumentoCp179,config,salvarConfig,mutar,decidirEntregaDocumentoCp154,filaDevolucoesMensaisCp155,lerDevolucaoMensalCp155,editorial,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo,listarGuardadosCp157:listarArquivosGuardadosCp157},ouvir,ouvirCalendario,capacidades,destroy};
+ return {ler,listar,lerDocumentoUnicoCp183,reconciliarDocumentosCp179,registrarSolicitacaoDocumentoCp179,config,salvarConfig,mutar,decidirEntregaDocumentoCp154,filaDevolucoesMensaisCp155,lerDevolucaoMensalCp155,editorial,fontesAgendaI167,clientes,origens,analise,ausencias:()=>pedir('central_ausencias'),historico,arquivos:{enviar:enviarArquivo,ler:lerArquivo,listarGuardadosCp157:listarArquivosGuardadosCp157},ouvir,ouvirCalendario,capacidades,destroy};
 }

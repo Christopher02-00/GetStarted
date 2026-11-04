@@ -46,10 +46,11 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
   }
   function guardar(c,i,p){const s=JSON.stringify(p),k=chave(c,i.demandaId);storage.setItem(k,s);exigir(storage.getItem(k)===s,'Não consegui guardar esta tentativa. Nada foi enviado.');}
   function limparMesmaTentativa(c,i,p){try{const k=chave(c,i.demandaId);if(storage.getItem(k)===JSON.stringify(p))storage.removeItem(k);}catch{}}
-  const payloadTentativa=p=>({...p.identidade,operacao:p.operacao,assinaturaEsperada:p.assinaturaEsperada,provaTexto:p.provaTexto,provaImagemUrl:p.provaImagemUrl,repararAcompanhamento:p.repararAcompanhamento});
+  const payloadTentativa=p=>({...p.identidade,operacao:p.operacao,assinaturaEsperada:p.assinaturaEsperada,provaTexto:p.provaTexto,provaImagemUrl:p.provaImagemUrl,repararAcompanhamento:p.repararAcompanhamento,...(p.entregaPublicaCp183!==undefined?{entregaPublicaCp183:p.entregaPublicaCp183}:{})});
   function validarRecibo(r,i,p){
     exigir(r?.schema===1&&r.demandaId===i.demandaId&&r.operacao?.id===p.operacao&&r.operacao.confirmada===true&&['novo','recuperado','ja_concluida'].includes(r.operacao.estado)&&r.statusDemanda==='aprovada'&&
       typeof r.reparoApenas==='boolean'&&r.reparoApenas===p.repararAcompanhamento&&r.semAprovacaoEditorial===true&&(r.statusPortal===null||typeof r.statusPortal==='string'),'Não consegui confirmar o recibo desta mesma entrega. A tentativa continua guardada.');
+    exigir(p.entregaPublicaCp183===undefined||r.respostaClienteDisponivel===true,'O recibo não confirmou a resposta pública desta entrega. A mesma tentativa continua guardada.');
     return r;
   }
   function validarOne(r,i){
@@ -73,7 +74,7 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
   function tentativaPendente(d){const c=capturar(),p=lerPendente(c,identidade(d));return p?JSON.parse(JSON.stringify(p)):null;}
   function conferirTentativa(d){
     const p=tentativaPendente(d);exigir(p,'Não existe um envio anterior guardado neste acesso.');
-    return entregar(d,{provaTexto:p.provaTexto,provaImagemUrl:p.provaImagemUrl,repararAcompanhamento:p.repararAcompanhamento});
+    return entregar(d,{provaTexto:p.provaTexto,provaImagemUrl:p.provaImagemUrl,repararAcompanhamento:p.repararAcompanhamento,...(p.entregaPublicaCp183!==undefined?{entregaPublicaCp183:p.entregaPublicaCp183}:{})});
   }
   function conferirVersaoAtual(d){
     const c=capturar(),i=identidade(d),k=chave(c,i.demandaId),p=lerPendente(c,i);
@@ -92,20 +93,23 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
     promessa.finally(()=>{if(emCurso.get(k)?.promessa===promessa)emCurso.delete(k);}).catch(()=>{});
     return promessa;
   }
-  function entregar(d,{provaTexto='',provaImagemUrl='',repararAcompanhamento=false}={}){
+  function entregar(d,{provaTexto='',provaImagemUrl='',repararAcompanhamento=false,entregaPublicaCp183}={}){
     const c=capturar(),i=identidade(d),k=chave(c,i.demandaId);
     exigir(typeof repararAcompanhamento==='boolean','Confira qual entrega deseja confirmar.');
-    const pedido={provaTexto:provaTexto.trim(),provaImagemUrl:provaImagemUrl.trim(),repararAcompanhamento};
+    const pedido={provaTexto:provaTexto.trim(),provaImagemUrl:provaImagemUrl.trim(),repararAcompanhamento,...(entregaPublicaCp183!==undefined?{entregaPublicaCp183:{texto:entregaPublicaCp183?.texto,link:entregaPublicaCp183?.link}}:{})};
+    const validarPublica=()=>{const v=pedido.entregaPublicaCp183;exigir(v&&typeof v.texto==='string'&&typeof v.link==='string'&&v.texto.length<=10000&&v.link.length<=2048&&(v.texto.trim()||v.link.trim()),'Escreva a legenda ou resposta que o cliente receberá, ou informe o link público.');if(v.link.trim()){let u;try{u=new URL(v.link.trim());}catch{}exigir(u&&['http:','https:'].includes(u.protocol)&&!u.username&&!u.password,'Use um link público http ou https, sem senha.');}pedido.entregaPublicaCp183={texto:v.texto.trim(),link:v.link.trim()};};
     if(emCurso.has(k)){
       const atual=emCurso.get(k);exigir(atual.tipo!=='versao'&&atual.assinatura===JSON.stringify(pedido),'Uma entrega deste pedido já está sendo conferida. Preserve o texto atual.');return atual.promessa;
     }
     const promessa=(async()=>{
       let p=lerPendente(c,i);
       if(p){
-        exigir(p.repararAcompanhamento===repararAcompanhamento&&(repararAcompanhamento||p.provaTexto===pedido.provaTexto&&p.provaImagemUrl===pedido.provaImagemUrl),'Existe uma tentativa guardada com outro texto. Reabra a mesma entrega para conferir esse envio primeiro.');
+        exigir(p.repararAcompanhamento===repararAcompanhamento&&(repararAcompanhamento||p.provaTexto===pedido.provaTexto&&p.provaImagemUrl===pedido.provaImagemUrl)&&JSON.stringify(p.entregaPublicaCp183)===JSON.stringify(pedido.entregaPublicaCp183),'Existe uma tentativa guardada com outro texto. Reabra a mesma entrega para conferir esse envio primeiro.');
       }else{
+        if(!repararAcompanhamento||entregaPublicaCp183!==undefined)validarPublica();
         const estado=validarOne(await solicitar(c,'pedidos_legenda_conferir_cp152',i),i);conferirContexto(c);
         if(repararAcompanhamento){
+          exigir(entregaPublicaCp183===undefined||!estado.respostaClienteDisponivel,'Este pedido já tem resposta pública. Confira a mesma resposta no Portal.');
           exigir(estado.status==='aprovada'&&estado.podeRepararAcompanhamento,'Este acompanhamento não precisa ou não permite confirmação por esta entrega.');
           pedido.provaTexto=estado.provaTexto;pedido.provaImagemUrl=estado.provaImagemUrl;
         }else exigir(estado.podeEntregar,'Este pedido não permite uma nova entrega. Confira sua situação atual.');
@@ -114,7 +118,9 @@ export function criarPedidosLegendaCp152({contexto,chamar,storage,autenticado=()
         p={schema:1,identidade:i,operacao,assinaturaEsperada:estado.assinatura,...pedido};guardar(c,i,p);
       }
       conferirContexto(c);
-      const r=validarRecibo(await solicitar(c,'pedido_legenda_entregar_cp152',payloadTentativa(p)),i,p);
+      const bruto=await solicitar(c,'pedido_legenda_entregar_cp152',payloadTentativa(p));
+      if(bruto?.recusaPublicaCp183===true){exigir(bruto.schema===1&&bruto.demandaId===i.demandaId&&bruto.semAlterarNegocio===true&&bruto.operacao?.id===p.operacao&&bruto.operacao.confirmada===true&&['recusada_sem_resposta_publica','recuperado'].includes(bruto.operacao.estado),'Não consegui confirmar a recusa desta mesma tentativa.');conferirContexto(c);limparMesmaTentativa(c,i,p);throw Error('O serviço encerrou esta tentativa sem alterar a entrega. Escreva a legenda ou resposta pública e confirme pela ficha atual. O preenchimento foi preservado.');}
+      const r=validarRecibo(bruto,i,p);
       conferirContexto(c);
       limparMesmaTentativa(c,i,p);
       return r;

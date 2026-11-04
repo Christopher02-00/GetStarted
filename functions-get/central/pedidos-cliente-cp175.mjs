@@ -12,12 +12,12 @@ const exigir=(ok,msg)=>{if(!ok)throw Error(msg);};
 export function ocorrenciaPedidoClienteCp175(d,a){
  if(!d||d.origem!=='cliente'||d.origemAvisoColecao!=='avisos_do_cliente'||!TIPOS_EDITORIAIS_CP175.includes(d.tipoPedidoCliente)||d.destinatario!=='Chris'||d.status!=='pendente'||excluida(d)||d.refazerUltimoI161)return null;
  exigir(idI54ClienteCp175(d.id)&&typeof d.origemAvisoId==='string'&&d.id===idDemandaClienteCp175(d.origemAvisoId),'O pedido precisa confirmar a mesma I54 determinística.');
- if(excluida(a)||String(d.origemAvisoId).startsWith('cal_obs_i35_'))return null;
- const {cliente,mes}=conferirFonteClienteCp175(a,d.origemAvisoId);
- exigir(d.operationId===d.origemAvisoId&&d.tipoPedidoCliente===a.tipo&&(d.clienteSlug||d.cliente)===cliente&&(!d.cliente||d.cliente===cliente)&&d.competencia===mes&&String(d.itemId||'')===String(a.itemId||'')&&a.lido===true&&a.demandaInternaId===d.id&&a.conversaoVersao==='i54','A recepção precisa confirmar a origem, competência, conteúdo e recibo da mesma demanda.');
+ if(excluida(a)||a.tipo==='observacao_calendario'&&String(a.operationId||'').startsWith('cal_obs_i35_')&&String(a.paraQuem||a.destinatario||'')==='Amanda')return null;
+ const {cliente,mes,geralSemCompetencia}=conferirFonteClienteCp175(a,d.origemAvisoId);
+ exigir(String(d.operationId||'')===String(a.operationId||'')&&d.tipoPedidoCliente===a.tipo&&(d.clienteSlug||d.cliente)===cliente&&(!d.cliente||d.cliente===cliente)&&d.competencia===mes&&String(d.itemId||'')===String(a.itemId||'')&&a.lido===true&&a.demandaInternaId===d.id&&a.conversaoVersao==='i54','A recepção precisa confirmar a origem, competência, conteúdo e recibo da mesma demanda.');
  GetEmpresasOtavioI144.conferir(cliente,a,d);
  const origem={tipo:TIPO_PEDIDO_CLIENTE_CP175,id:d.id},versao=hash([origem,d.origemAvisoColecao,d.origemAvisoId,d.operationId,cliente,mes,d.tipoPedidoCliente,String(d.itemId||''),GetEmpresasOtavioI144.campos(cliente,a)]);
- return {id:idAvisoPedidoClienteCp175(d.id),origem,versao,destinatario:'Chris',nivel:'conferir',titulo:'Pedido do cliente para conferir',texto:'Chegou um pedido na Central de ajustes. Abra a mesma demanda para conferir o texto completo e dar andamento. Ler o aviso não conclui o trabalho.',link:{area:TIPO_PEDIDO_CLIENTE_CP175,demandaId:d.id,cliente,competencia:mes}};
+ return {id:idAvisoPedidoClienteCp175(d.id),origem,versao,destinatario:'Chris',nivel:'conferir',titulo:'Pedido do cliente para conferir',texto:'Chegou um pedido na Central de ajustes. Abra a mesma demanda para conferir o texto completo e dar andamento. Ler o aviso não conclui o trabalho.',link:{area:TIPO_PEDIDO_CLIENTE_CP175,demandaId:d.id,cliente,competencia:mes,...(geralSemCompetencia?{pedidoGeralCp152:true}:{})}};
 }
 export async function lerOcorrenciaPedidoClienteCp175(db,demandaId){
  exigir(idI54ClienteCp175(demandaId),'Abra o pedido pela mesma demanda I54.');

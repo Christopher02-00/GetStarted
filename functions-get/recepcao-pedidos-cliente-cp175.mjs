@@ -21,30 +21,32 @@ function fonteFisicaCliente(idCliente,a){
 }
 function candidata(a){return !!a&&TIPOS_EDITORIAIS_CP175.includes(a.tipo)&&a.viraDemanda===true&&a.lido===false&&!a.cancelado&&!a.excluido&&!a.arquivado&&!a.descartado&&!a.deleted&&!a.deletedAt;}
 export function conferirFonteClienteCp175(a,sourceId){
- exigir(id(sourceId)&&a?.schemaVersion===1,'A origem formal precisa da identificação e versão atuais.');
+ exigir(id(sourceId)&&a&&(!Object.hasOwn(a,'schemaVersion')||a.schemaVersion===1),'A origem formal precisa da identificação e versão atuais.');
  const cliente=fonteCliente(a),mes=String(a.competencia||a.mes||a.mesRef||'');
  exigir(/^[a-z0-9][a-z0-9._-]{0,119}$/.test(cliente)&&fonteFisicaCliente(cliente,a),'A origem não confirma o cliente físico; nenhum alias foi adotado.');
- exigir(String(a.operationId||'')===sourceId,'A operação não confirma a mesma origem.');
- exigir(/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes),'A competência do pedido precisa de conferência.');
+ const op=String(a.operationId||''),geralSemCompetencia=a.tipo==='pedido_calendario'&&typeof a.autorUid==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(a.autorUid)&&sourceId.startsWith('portal_pedido_cp152_'+a.autorUid+'_')&&/^[a-f0-9]{32}$/.test(sourceId.slice(('portal_pedido_cp152_'+a.autorUid+'_').length))&&a.protocoloCriacaoCp152===sourceId&&a.demandaClienteId===sourceId&&!op&&!mes&&!a.itemId&&!a.itemNome;
+ const identidade=a.tipo==='ajuste_calendario'?/^cal_ajuste_v113_[a-f0-9]{48}$/.test(sourceId)&&op===sourceId:a.tipo==='comentario_calendario'?id(a.comentarioId)&&op===a.comentarioId&&sourceId==='cal_recado_cp151_'+a.comentarioId:a.tipo==='observacao_calendario'?/^cal_obs_i35_[a-f0-9]{32}$/.test(op)&&sourceId===op+'_chris'&&a.paraQuem==='Chris':geralSemCompetencia;
+ exigir(identidade,'A operação não confirma a mesma origem oficial.');
+ exigir(geralSemCompetencia||/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes),'A competência do pedido precisa de conferência.');
  exigir(typeof a.titulo==='string'&&a.titulo.trim()&&a.titulo.length<=2000&&typeof a.descricao==='string'&&a.descricao.trim()&&a.descricao.length<=100000,'O pedido precisa de título e texto completos. Nada foi cortado.');
  if(a.tipo==='ajuste_calendario')exigir(/^cal_ajuste_v113_[a-f0-9]{48}$/.test(sourceId)&&id(a.itemId)&&String(a.calendarId||cliente)===cliente,'O ajuste precisa confirmar o mesmo cliente, conteúdo e operação.');
  const rota=roteamentoPedidoClienteCp151(a,CAIXA_CP175);
  exigir(rota.editorial&&!rota.legenda&&rota.destinatario==='Chris','Esta origem segue outro responsável ou um fluxo histórico.');
  GetEmpresasOtavioI144.campos(cliente,a);
- return {cliente,mes,rota};
+ return {cliente,mes,rota,geralSemCompetencia};
 }
 export function construirDemandaClienteCp175(a,sourceId,agora=new Date()){
  const {cliente,mes}=conferirFonteClienteCp175(a,sourceId),nome=String(a.clienteNome||cliente||''),em=agora.toISOString();
  let descricao=String(a.descricao||'');if(GetEmpresasOtavioI144.ativo(cliente)&&GetEmpresasOtavioI144.bruto(a))descricao+='\nEmpresa: '+GetEmpresasOtavioI144.nome(a);
- descricao+='\n\nMês do pedido: '+mes.split('-').reverse().join('/');if(a.itemNome)descricao+='\nConteúdo: '+String(a.itemNome);
+ if(mes)descricao+='\n\nMês do pedido: '+mes.split('-').reverse().join('/');if(a.itemNome)descricao+='\nConteúdo: '+String(a.itemNome);
  descricao+='\n\n— veio do portal de '+(nome||'?');
  descricao+='\n\nCentral de ajustes: análise e acompanhamento com Chris. O pedido original do cliente está preservado acima.';
  const hoje=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(agora);
- return {titulo:String(a.titulo),descricao,destinatario:'Chris',origem:'cliente',clienteNome:nome,...GetEmpresasOtavioI144.campos(cliente,a),cliente,clienteSlug:cliente,ehAviso:true,demandaClienteId:String(a.demandaClienteId||''),prazoData:a.prazoData||hoje,prazoHora:a.prazoHora||'19:00',status:'pendente',criadoEm:em,origemAvisoColecao:CAIXA_CP175,origemAvisoId:sourceId,operationId:String(a.operationId),competencia:mes,itemId:String(a.itemId||''),itemNome:String(a.itemNome||''),tipoPedidoCliente:String(a.tipo),conversaoVersao:'i54',roteamentoPedidosCp151:{schema:1,destino:'Chris',classe:'calendario'},recepcaoAutomaticaCp175:{schema:1,executor:'scheduler',em}};
+ return {titulo:String(a.titulo),descricao,destinatario:'Chris',origem:'cliente',clienteNome:nome,...GetEmpresasOtavioI144.campos(cliente,a),cliente,clienteSlug:cliente,ehAviso:true,demandaClienteId:String(a.demandaClienteId||''),prazoData:a.prazoData||hoje,prazoHora:a.prazoHora||'19:00',status:'pendente',criadoEm:em,origemAvisoColecao:CAIXA_CP175,origemAvisoId:sourceId,operationId:String(a.operationId||''),competencia:mes,itemId:String(a.itemId||''),itemNome:String(a.itemNome||''),tipoPedidoCliente:String(a.tipo),conversaoVersao:'i54',roteamentoPedidosCp151:{schema:1,destino:'Chris',classe:'calendario'},recepcaoAutomaticaCp175:{schema:1,executor:'scheduler',em}};
 }
 function conferirExistente(d,a,sourceId,demandaId){
  const cliente=fonteCliente(a),mes=String(a.competencia||a.mes||a.mesRef||'');
- exigir(d&&demandaId===idDemandaClienteCp175(sourceId)&&d.origem==='cliente'&&d.origemAvisoColecao===CAIXA_CP175&&d.origemAvisoId===sourceId&&d.operationId===sourceId&&(d.clienteSlug||d.cliente)===cliente&&(!d.cliente||d.cliente===cliente)&&d.competencia===mes&&String(d.itemId||'')===String(a.itemId||'')&&d.tipoPedidoCliente===a.tipo,'A demanda existente não confirma a mesma origem, cliente e conteúdo.');
+ exigir(d&&demandaId===idDemandaClienteCp175(sourceId)&&d.origem==='cliente'&&d.origemAvisoColecao===CAIXA_CP175&&d.origemAvisoId===sourceId&&String(d.operationId||'')===String(a.operationId||'')&&(d.clienteSlug||d.cliente)===cliente&&(!d.cliente||d.cliente===cliente)&&d.competencia===mes&&String(d.itemId||'')===String(a.itemId||'')&&d.tipoPedidoCliente===a.tipo,'A demanda existente não confirma a mesma origem, cliente e conteúdo.');
  GetEmpresasOtavioI144.conferir(cliente,a,d);
  exigir(d.destinatario==='Chris'||['aprovada','cancelada','cancelado'].includes(d.status)||d.excluido===true||d.arquivado===true,'O encaminhamento anterior precisa de conferência; nenhum destinatário foi trocado.');
 }

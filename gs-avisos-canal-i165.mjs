@@ -58,7 +58,7 @@ export function avisosSemDuplicacaoDevolucaoMensalCp155(avisos,cobertura=()=>fal
 export function avisoFisicoPedidoClienteCp175(d,id,papel,{ativacaoI165=''}={}){
  if(papel!=='Chris'||!/^[a-f0-9]{64}$/.test(id||'')||d?.schema!==1||d.id!==id||d.escopo!==ESCOPO_AVISOS_CENTRAL_R87||d.tipo!=='pedido_cliente'||d.destinatario!=='Chris'||d.origem?.tipo!==d.tipo||!/^entrada_i54_[a-f0-9]{64}$/.test(d.origem.id||'')||Object.keys(d.origem).some(k=>!['tipo','id'].includes(k))||d.fonte?.colecao!=='demandas'||d.fonte.id!==d.origem.id||!/^[a-f0-9]{64}$/.test(d.versao||'')||!['pendente','resolvida'].includes(d.estado)||d.ativacaoId!==ativacaoI165||typeof d.ativacaoId!=='string'||d.ativacaoId.length<12||d.faseAviso!=='conferir')return false;
  if(d.fonteAvancou===true||d.estado==='resolvida')return d.link===null;
- const l=d.link;return !!l&&l.area==='pedido_cliente'&&l.demandaId===d.origem.id&&clienteCentralR87(l.cliente)&&mesCentralR87(l.competencia)&&Object.keys(l).every(k=>['area','demandaId','cliente','competencia'].includes(k));
+ const l=d.link;return !!l&&l.area==='pedido_cliente'&&l.demandaId===d.origem.id&&clienteCentralR87(l.cliente)&&(l.pedidoGeralCp152===true?l.competencia==='':mesCentralR87(l.competencia)&&l.pedidoGeralCp152===undefined)&&Object.keys(l).every(k=>['area','demandaId','cliente','competencia','pedidoGeralCp152'].includes(k));
 }
 export function avisoFisicoCentralR87(d,id,papel,{ativacaoI165='',ativacaoCentralId='',fresco=false}={}){
  if(d?.tipo==='pedido_cliente')return avisoFisicoPedidoClienteCp175(d,id,papel,{ativacaoI165});

@@ -45,6 +45,21 @@ export function normalizarProvidenciaCp140(v){
  const sessaoId=texto(v.sessaoId,180);e(!sessaoId||/^[A-Za-z0-9_.:-]+$/u.test(sessaoId),'Confira a sessão vinculada.');
  return {cliente:v.cliente,competencia:v.competencia,chaveRecurso:texto(v.chaveRecurso,160,false),titulo:texto(v.titulo,300,false),acaoNecessaria:texto(v.acaoNecessaria,8000,false),responsavelReal:texto(v.responsavelReal,180,false),decisor:texto(v.decisor,180),criterio:texto(v.criterio,3000,false),tipoConfirmacao:v.tipoConfirmacao,prazoData,prazoHora,itemIds:[...v.itemIds].sort(),empresaOtavio,sessaoId,autorizacaoChris:true};
 }
+/* Envelope seguro para recuperar o mesmo recibo antes da validação de negócio. */
+export function validarEnvelopeProvidenciaCp162R3(d){
+ e(ACOES_PROVIDENCIAS_CP140.includes(d?.acao),'Operação de providência desconhecida.');
+ const acao=d.acao.slice('providencias_gravacao_'.length,-'_cp140'.length);
+ if(['ler','listar','listar_fonte'].includes(acao))return validarEntradaProvidenciaCp140(d);
+ const comuns=['acao','uidEsperado','atorRealEsperado','papelOperado','sessao'],extras={salvar:['operacao','assinaturaEsperada','assinaturaFonte','providencia','motivo'],esperar:['id','operacao','assinaturaEsperada','aguardandoPor','motivo','previsaoData'],confirmar:['id','operacao','assinaturaEsperada','criterioConfirmado','provaTexto','provaLink'],cancelar:['id','operacao','assinaturaEsperada','motivo'],substituir:['id','operacao','assinaturaEsperada','motivo','substituidaPorId'],revisar:['id','operacao','assinaturaEsperada','decisao','motivo']}[acao];
+ campos(d,[...comuns,...extras]);texto(d.sessao,180,false);
+ e(typeof d.operacao==='string'&&/^[A-Za-z0-9_-]{8,100}$/u.test(d.operacao),'Mantenha o identificador da mesma tentativa.','operacao');
+ if(acao==='salvar'){
+  campos(d.providencia,['cliente','competencia','chaveRecurso','titulo','acaoNecessaria','responsavelReal','decisor','criterio','tipoConfirmacao','prazoData','prazoHora','itemIds','empresaOtavio','sessaoId','autorizacaoChris']);
+  clienteProvidenciaCp140(d.providencia.cliente);competenciaProvidenciaCp140(d.providencia.competencia);texto(d.providencia.chaveRecurso,160,false);
+ }else e(idProvidenciaValidoCp140(d.id),'Abra a mesma providência.');
+ e(new TextEncoder().encode(canonicoProvidenciaCp140(d)).length<=200*1024,'O pedido ultrapassa200KiB; nada foi cortado.','limite');
+ return {acao,pedido:clone(d)};
+}
 export function validarEntradaProvidenciaCp140(d){
  e(ACOES_PROVIDENCIAS_CP140.includes(d?.acao),'Operação de providência desconhecida.');
  const acao=d.acao.slice('providencias_gravacao_'.length,-'_cp140'.length),comuns=['acao','uidEsperado','atorRealEsperado','papelOperado','sessao'];

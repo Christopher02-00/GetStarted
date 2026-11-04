@@ -1,5 +1,5 @@
-/* Client caption intake and its generic work receipt only. This does not write
- * calendar content, posts, editorial approval or the public request payload. */
+/* Typed caption work receipt and explicitly public response, committed together.
+ * No calendar content, posts, editorial approval or private-proof publication. */
 import {createHash} from 'node:crypto';
 import {FieldValue,FieldPath} from 'firebase-admin/firestore';
 import {validarContaEsperadaI165} from './intencao-operacao.mjs';
@@ -37,7 +37,7 @@ export function calcularStatusPortalPorDemandasCp152(grupo,statusFallback){
 function validar(d){
  e(d&&typeof d==='object'&&!Array.isArray(d)&&ACOES_PEDIDOS_LEGENDA_CP152.includes(d.acao),'legenda-entrada','Ação de legenda inválida.');
  const entrega=d.acao!=='pedidos_legenda_conferir_cp152',individual=entrega||Object.hasOwn(d,'demandaId');
- const keys=[...COMUNS,...(individual?ORIGEM:[]),...(!individual&&Object.hasOwn(d,'cursores')?['cursores']:[]),...(entrega?['operacao','assinaturaEsperada','provaTexto','provaImagemUrl','repararAcompanhamento']:[])];
+ const keys=[...COMUNS,...(individual?ORIGEM:[]),...(!individual&&Object.hasOwn(d,'cursores')?['cursores']:[]),...(entrega?['operacao','assinaturaEsperada','provaTexto','provaImagemUrl','repararAcompanhamento',...(Object.hasOwn(d,'entregaPublicaCp183')?['entregaPublicaCp183']:[])]:[])];
  e(Object.keys(d).length===keys.length&&Object.keys(d).every(k=>keys.includes(k))&&keys.every(k=>Object.hasOwn(d,k)),'legenda-campos','Confira os campos desta tentativa.');
  e(texto(d.sessao,180)&&d.sessao.length>0,'legenda-sessao','Confira a sessão atual.');
  if(!individual&&Object.hasOwn(d,'cursores'))e(d.cursores&&typeof d.cursores==='object'&&!Array.isArray(d.cursores)&&Object.keys(d.cursores).length===2&&CAIXAS.every(c=>Object.hasOwn(d.cursores,c)&&(d.cursores[c]===null||d.cursores[c]===''||idFisicoI165(d.cursores[c]))),'legenda-cursor','Recomece esta conferência de pedidos.');
@@ -104,9 +104,9 @@ async function fontesTx(db,tx,ator,p){
  e(d.origemAvisoColecao===p.origemAvisoColecaoEsperada&&d.origemAvisoId===p.origemAvisoIdEsperado&&String(d.clienteSlug||d.cliente||'')===p.clienteEsperado,'legenda-expectativa','A fonte ou o cliente mudou desde a leitura.');
  const aref=db.doc(d.origemAvisoColecao+'/'+d.origemAvisoId),as=await tx.get(aref);e(as.exists,'legenda-origem-ausente','A origem não foi encontrada.');const a=as.data(),cliente=conferirDemanda(d,a,d.origemAvisoColecao,d.origemAvisoId,p.demandaId),parentId=String(d.demandaClienteId||'');let parent=null,pref=null,grupo=[];
  if(parentId){e(idFisicoI165(parentId),'legenda-parent-id','Confira o acompanhamento.');pref=db.doc('demandas_cliente/'+parentId);const [ps,gs]=await Promise.all([tx.get(pref),tx.get(db.collection('demandas').where('demandaClienteId','==',parentId).limit(151))]);parent=ps.data();conferirParent(parent,cliente,a);e(gs.size<=150,'legenda-limite-grupo','O grupo precisa de conferência pela gestão.');grupo=gs.docs.map(s=>({id:s.id,body:s.data()})).sort((x,y)=>x.id.localeCompare(y.id));e(grupo.some(r=>r.id===p.demandaId)&&grupo.every(r=>['cliente','clienteSlug'].every(k=>r.body[k]===undefined||r.body[k]===null||r.body[k]===''||typeof r.body[k]==='string'&&r.body[k]===cliente)),'legenda-grupo','O grupo não confirma o mesmo cliente.');}
- const assinatura=hashI165({demanda:d,origem:a,parent,grupo});return {dref,d,a,parent,pref,grupo,cliente,assinatura};
+ const assinatura=hashI165({demanda:d,origem:a,parent,grupo});return {dref,d,a,aref,parent,pref,grupo,cliente,assinatura};
 }
-function dto(f,p){return {schema:1,demandaId:p.demandaId,cliente:f.cliente,origemAvisoColecao:f.d.origemAvisoColecao,origemAvisoId:f.d.origemAvisoId,destinatario:f.d.destinatario,tipoPedidoCliente:f.d.tipoPedidoCliente,status:f.d.status,assinatura:f.assinatura,provaTexto:String(f.d.provaTexto||''),provaImagemUrl:String(f.d.provaImagemUrl||''),podeEntregar:['pendente','em_andamento','andamento'].includes(f.d.status),podeRepararAcompanhamento:f.d.destinatario==='Chris'&&f.d.status==='aprovada'&&!!f.parent,acompanhamento:{necessario:!!f.parent,status:f.parent?.status||null},semAprovacaoEditorial:true};}
+function dto(f,p){return {schema:1,demandaId:p.demandaId,cliente:f.cliente,origemAvisoColecao:f.d.origemAvisoColecao,origemAvisoId:f.d.origemAvisoId,destinatario:f.d.destinatario,tipoPedidoCliente:f.d.tipoPedidoCliente,status:f.d.status,assinatura:f.assinatura,provaTexto:String(f.d.provaTexto||''),provaImagemUrl:String(f.d.provaImagemUrl||''),podeEntregar:['pendente','em_andamento','andamento'].includes(f.d.status),podeRepararAcompanhamento:f.d.destinatario==='Chris'&&f.d.status==='aprovada'&&(!!f.parent||f.d.origemAvisoColecao==='pedidos_publicos'),respostaClienteDisponivel:!!(f.parent||f.a).respostaLegendaPublicaCp183,acompanhamento:{necessario:!!f.parent,status:f.parent?.status||null},semAprovacaoEditorial:true};}
 export async function operarPedidosLegendaCp152(db,auth,p,{agora=new Date()}={}){
  validar(p);const ator=atorEsperado(auth,p);
  // Active physical registration precedes every collection query, and is checked
@@ -150,10 +150,23 @@ export async function operarPedidosLegendaCp152(db,auth,p,{agora=new Date()}={})
   e(['pendente','em_andamento','andamento','aprovada'].includes(f.d.status),'legenda-estado','Esta entrega pertence a outra revisão.');
   if(aprovada)e(String(f.d.provaTexto||'')===textoProva&&String(f.d.provaImagemUrl||'')===imagem,'legenda-prova-anterior','A prova concluída não corresponde a esta tentativa. Nada foi refeito.');
   e(!p.repararAcompanhamento||aprovada&&f.d.destinatario==='Chris','legenda-reparo','O reparo apenas acompanha uma legenda já concluída.');
+  // Confirmed receipts above remain authoritative, including old private deliveries.
+  const publica=p.entregaPublicaCp183;
+  if(!aprovada&&publica===undefined){const recusada={schema:1,demandaId:p.demandaId,recusaPublicaCp183:true,semAlterarNegocio:true,operacao:{id:p.operacao,estado:'recusada_sem_resposta_publica',confirmada:true},motivo:'Abra a versão atual da ficha e escreva a legenda ou resposta que o cliente receberá.'};tx.create(opref,{schema:1,estado:'recusada_sem_resposta_publica',hashPedido,uid:ator.uid,atorReal:ator.real,papel:ator.papel,em:agora.toISOString(),resultado:recusada});return recusada;}
+  let respostaPublica=null;
+  if(publica!==undefined){
+   e(publica&&typeof publica==='object'&&!Array.isArray(publica)&&Object.keys(publica).sort().join('|')==='link|texto'&&texto(publica.texto,10000)&&texto(publica.link,2048)&&(publica.texto.trim()||publica.link.trim()),'legenda-resposta-publica','Confira o texto ou link público antes de confirmar.');
+   let link='';if(publica.link.trim()){try{const u=new URL(publica.link.trim());e(['https:','http:'].includes(u.protocol)&&!u.username&&!u.password,'legenda-resposta-link','Use um link público http ou https, sem senha.');link=u.href;}catch{e(false,'legenda-resposta-link','Use um link público http ou https, sem senha.');}}
+   e(!!f.parent||f.d.origemAvisoColecao==='pedidos_publicos','legenda-resposta-destino','O pedido não confirma um acompanhamento público para esta entrega.');
+   const atual=(f.parent||f.a).respostaLegendaPublicaCp183;
+   e(atual===undefined,'legenda-resposta-existente','Este pedido já tem resposta pública. Confira a mesma resposta antes de tentar outra.');
+   respostaPublica={schema:1,cliente:f.cliente,origemId:f.d.origemAvisoId,demandaId:p.demandaId,texto:publica.texto.trim(),link,por:ator.real,em:agora.toISOString(),operacao:p.operacao};
+  }
   const atualizarParent=!!f.parent&&(!aprovada||p.repararAcompanhamento),finalizada={...f.d,status:'aprovada'},calculado=atualizarParent?calcularStatusPortalPorDemandasCp152(f.grupo.map(r=>r.id===p.demandaId?finalizada:r.body),'concluida'):null;
-  const r={schema:1,demandaId:p.demandaId,operacao:{id:p.operacao,estado:aprovada&&!p.repararAcompanhamento?'ja_concluida':'novo',confirmada:true},statusDemanda:'aprovada',statusPortal:calculado?.status||f.parent?.status||null,reparoApenas:aprovada&&p.repararAcompanhamento,semAprovacaoEditorial:true};
+  const r={schema:1,demandaId:p.demandaId,operacao:{id:p.operacao,estado:aprovada&&!p.repararAcompanhamento?'ja_concluida':'novo',confirmada:true},statusDemanda:'aprovada',statusPortal:calculado?.status||f.parent?.status||null,reparoApenas:aprovada&&p.repararAcompanhamento,respostaClienteDisponivel:!!respostaPublica,semAprovacaoEditorial:true};
   if(!aprovada){e(Array.isArray(f.d.historico||[])&&(f.d.historico||[]).length<1000,'legenda-historico','Preserve o histórico antes de continuar.');tx.update(f.dref,{status:'aprovada',provaTexto:textoProva,provaImagemUrl:imagem,concluidaEm:FieldValue.serverTimestamp(),concluidoPor:ator.real,notaConclusao:'Aviso — não precisa de aprovação.',entregaLegendaCp152:{schema:1,operacao:p.operacao,autorUid:ator.uid,atorReal:ator.real,papelOperado:ator.papel,em:agora.toISOString()},historico:[...(f.d.historico||[]),{acao:'Concluiu o pedido de legenda do cliente',por:ator.real,papelOperado:ator.papel,autorUid:ator.uid,em:agora.toISOString(),operacao:p.operacao}]});}
   if(atualizarParent){const patch={status:calculado.status,responsaveisStatus:calculado.responsaveisStatus,atualizadoEm:FieldValue.serverTimestamp()};if(calculado.status==='concluida'&&f.parent.status!=='concluida')patch.concluidaEmI93=FieldValue.serverTimestamp();if(calculado.status!=='concluida'&&f.parent.status==='concluida')patch.concluidaEmI93=null;tx.update(f.pref,patch);}
+  if(respostaPublica){e(Array.isArray(f.d.historico||[])&&(f.d.historico||[]).length<1000,'legenda-historico','Preserve o histórico antes de continuar.');tx.update(f.parent?f.pref:f.aref,{respostaLegendaPublicaCp183:respostaPublica});if(aprovada)tx.update(f.dref,{historico:[...(f.d.historico||[]),{acao:'Disponibilizou resposta pública ao cliente',por:ator.real,papelOperado:ator.papel,autorUid:ator.uid,em:agora.toISOString(),operacao:p.operacao}]});}
   tx.create(opref,{schema:1,hashPedido,uid:ator.uid,atorReal:ator.real,papel:ator.papel,em:agora.toISOString(),resultado:r});return r;
  });
  return envelopeCentralR80(resultado);

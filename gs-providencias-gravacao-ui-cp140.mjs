@@ -1,5 +1,5 @@
 import {criarVinculosUiCp142} from './gs-providencias-vinculos-ui-cp142.mjs?v=dc9bc84b0ba777747148cf3f5302296f60222cfa9feaa76cb0a496ea183784e6';
-import {providenciaEhCp140,resumoProvidenciaCp140,idProvidenciaGravacaoCp140,hashProvidenciaCp140} from './gs-providencias-gravacao-cp140.mjs';
+import {providenciaEhCp140,resumoProvidenciaCp140,idProvidenciaGravacaoCp140,hashProvidenciaCp140,validarEntradaProvidenciaCp140,validarEnvelopeProvidenciaCp162R3} from './gs-providencias-gravacao-cp140.mjs?v=52ef28ceb96504a6faefba76e01728164646d9fe14d5251e50626713ee1df3db';
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const gestor=c=>['Chris','Amanda'].includes(c.nome);
@@ -20,6 +20,10 @@ export function criarProvidenciasGravacoesUiCp140({documento=document,contexto,c
  const vinculos=criarVinculosUiCp142({documento,contexto,chamar,clientes,demandas,storage,novaTela,exigirTela,aviso,abrirDemanda,aoAtualizar,permitirTroca});
  const pendenteKey=c=>'get_cp140_tentativa_'+autoriaKey(c);
  const pendenteLegadoKey=c=>'get_cp140_tentativa_'+key(c);
+ function entradaCp162R3(c,acao,payload){return {acao:'providencias_gravacao_'+acao+'_cp140',uidEsperado:c.uid,atorRealEsperado:c.atorReal||c.nome,papelOperado:c.nome,sessao:c.sessao,...payload};}
+ function validarPayloadCp162R3(c,acao,payload){try{return validarEntradaProvidenciaCp140(entradaCp162R3(c,acao,payload));}catch(err){if(typeof payload?.providencia?.responsavelReal==='string'&&payload.providencia.responsavelReal.length>180)err.message='Em quem executa, use um resumo de até 180 caracteres. A orientação completa continua no campo do que precisa organizar.';throw err;}}
+ function erroPayloadCp162R3(c,acao,payload){try{validarPayloadCp162R3(c,acao,payload);return null;}catch(err){return err;}}
+ function envelopeSeguroCp162R3(c,acao,payload){try{validarEnvelopeProvidenciaCp162R3(entradaCp162R3(c,acao,payload));return true;}catch{return false;}}
  function pendente(c){try{const bruto=storage?.getItem(pendenteKey(c))||storage?.getItem(pendenteLegadoKey(c));return bruto?JSON.parse(bruto):null;}catch{throw Error('A tentativa guardada precisa ser conferida. Nada será substituído.');}}
  function guardar(c,v){if(!storage)throw Error('Não consegui guardar a tentativa neste navegador. Libere o armazenamento antes de enviar.');const anterior=pendente(c);if(anterior&&(anterior.operacao!==v.operacao||anterior.hashPayload&&anterior.hashPayload!==v.hashPayload))throw Error('Outra tentativa está guardada neste perfil. Confira antes de enviar outra.');storage.setItem(pendenteKey(c),JSON.stringify(v));if(JSON.stringify(pendente(c))!==JSON.stringify(v))throw Error('Não consegui reler a mesma tentativa guardada.');}
  function limpar(c,p){const atual=pendente(c);if(atual&&(!p||atual.operacao!==p.operacao||atual.hashPayload&&atual.hashPayload!==p.hashPayload))throw Error('Outra tentativa foi guardada neste perfil. A confirmação anterior não a removeu.');storage?.removeItem(pendenteKey(c));storage?.removeItem(pendenteLegadoKey(c));}
@@ -107,7 +111,7 @@ export function criarProvidenciasGravacoesUiCp140({documento=document,contexto,c
   if(t.busy)return;t.busy=true;t.leituraRecuperacao=true;const box=t.painel.querySelector('[data-conteudo]');box.inert=true;let camposPreservados=false;aviso(t.painel,'Conferindo a mesma tentativa…');
   try{exigirTela(t);camposPreservados=!!t.sujo?.();if(camposPreservados){t.guardarAntesSair?.();guardarRascunho(t);}p=await conferirTentativa(t.ctx,p);exigirTela(t);const r=await chamar('providencias_gravacao_ler_cp140',{id:p.id,operacao:p.operacao});exigirTela(t);
    if(r.operacao?.confirmada){const rec=await conferirRecibo(t,r,p);exigirTela(t);if(rec.estado!=='recusada'&&!camposPreservados)guardarConfirmada(t,p);limpar(t.ctx,p);if(rec.estado==='recusada'){recusa(t,r);return;}t.sujo=null;try{await atualizarProjecao(true);await aoAtualizar();}catch{}exigirTela(t);t.busy=false;await abrir(p.id);}
-   else{if(r.operacao?.id!==p.operacao||r.operacao?.estado!=='ausente')throw Error('A consulta não confirmou a ausência da mesma tentativa.');aviso(t.painel,'O servidor ainda não registrou esta tentativa. Seus campos foram preservados. Repetir usa a mesma identificação; não cria outro envio.');const el=t.painel.querySelector('[data-recuperacao]');el.innerHTML='<div class="card">'+resumoTentativaCp162(t,p)+'<p><b>Sem confirmação no servidor nesta consulta.</b> Você pode repetir a mesma tentativa. Ela continua guardada até o servidor confirmar ou recusar expressamente.</p>'+botao('repetir','Repetir este mesmo envio')+'</div>';el.querySelector('button').addEventListener('click',()=>{void enviar(t,p.acao,p.payload,p.id,true);});destacarRecuperacaoCp162(t);}
+   else{if(r.operacao?.id!==p.operacao||r.operacao?.estado!=='ausente')throw Error('A consulta não confirmou a ausência da mesma tentativa.');const invalida=!!erroPayloadCp162R3(t.ctx,p.acao,p.payload),segura=envelopeSeguroCp162R3(t.ctx,p.acao,p.payload);aviso(t.painel,'O servidor ainda não registrou esta tentativa. Seus campos e a mesma identificação foram preservados.');const el=t.painel.querySelector('[data-recuperacao]');el.innerHTML='<div class="card">'+resumoTentativaCp162(t,p)+(invalida&&!segura?'<p>A tentativa não confirma um envelope seguro para reenvio. Preserve a identificação e os campos; nenhum envio foi feito.</p>':invalida?'<p>Esta tentativa tem um campo inválido. Registre a recusa da mesma tentativa no servidor antes de corrigir os campos. Isso não cria providência, não conclui trabalho e não substitui demandas já encaminhadas.</p>'+botao('encerrar-invalida','Registrar recusa e corrigir os campos'):'<p><b>Sem confirmação no servidor nesta consulta.</b> Você pode repetir a mesma tentativa. Ela continua guardada até o servidor confirmar ou recusar expressamente.</p>'+botao('repetir','Repetir este mesmo envio'))+'</div>';el.querySelector('button')?.addEventListener('click',()=>{void enviar(t,p.acao,p.payload,p.id,true,invalida);});destacarRecuperacaoCp162(t);}
   }catch(e){if(vigente(t))aviso(t.painel,e.message||'Não consegui conferir. A tentativa foi mantida.',true);}finally{t.busy=false;t.leituraRecuperacao=false;if(vigente(t))box.inert=false;}
  }
  function recusa(t,r){
@@ -116,13 +120,15 @@ export function criarProvidenciasGravacoesUiCp140({documento=document,contexto,c
   el.querySelector('button')?.addEventListener('click',()=>{void abrir(r.providencia.id);});
   t.recusada=true;t.recusaRegistro=!!r.providencia;
  }
- async function enviar(t,acao,payload,id,repetir=false){
+ async function enviar(t,acao,payload,id,repetir=false,recusaTerminal=false){
   if(t.busy)return;exigirTela(t);if(t.recusada)throw Error('Confira o registro atual antes de enviar outra tentativa. Seus campos foram preservados.');
   const anterior=pendente(t.ctx);if(anterior&&!repetir){recuperacao(t);aviso(t.painel,'Confira a tentativa anterior antes de enviar outra.',true);return;}
   t.busy=true;const box=t.painel.querySelector('[data-conteudo]');box.inert=true;
   let tentativa=null,confirmada=false;
   try{
    const operacao=repetir?payload.operacao:'prov140_'+crypto.randomUUID().replaceAll('-',''),request=clonar(repetir?payload:{...payload,operacao});
+   if(recusaTerminal){if(!repetir||!anterior||!envelopeSeguroCp162R3(t.ctx,acao,request)||!erroPayloadCp162R3(t.ctx,acao,request))throw Error('A tentativa não confirma o campo inválido original. Consulte novamente antes de continuar.');}
+   else validarPayloadCp162R3(t.ctx,acao,request);
    tentativa=await conferirTentativa(t.ctx,{schema:1,id,operacao,acao,payload:request,autoria:autoriaKey(t.ctx),...(repetir&&anterior?.hashPayload?{hashPayload:anterior.hashPayload}:{})});exigirTela(t);
    guardar(t.ctx,tentativa);aviso(t.painel,'Conferindo e salvando no servidor…');
    const r=await chamar('providencias_gravacao_'+acao+'_cp140',clonar(request));exigirTela(t);const rec=await conferirRecibo(t,r,tentativa);exigirTela(t);if(rec.estado!=='recusada')guardarConfirmada(t,tentativa);limpar(t.ctx,tentativa);confirmada=true;

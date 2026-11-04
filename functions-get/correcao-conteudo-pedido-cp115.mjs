@@ -9,10 +9,19 @@ export const ACOES_CORRECAO_CONTEUDO_CP115=Object.freeze(['ajuste_calendario_ini
 export const CAMPOS_CORRECAO_CP115=Object.freeze({ref:2000,desc:30000,legenda:30000,obs:10000});
 export function validarConteudoCp115(v){chavesR80(v,Object.keys(CAMPOS_CORRECAO_CP115),[]);e(Object.keys(v).length>0,'Informe o conteúdo deste pedido.');for(const [k,t]of Object.entries(v))textoR80(t,CAMPOS_CORRECAO_CP115[k],k);}
 const validaData=v=>typeof v==='string'&&Number.isFinite(Date.parse(v));
+// O produtor V113 reabre a marca mensal antes do primeiro início individual.
+// A admissão depende do pedido autenticado já persistido e da mesma publicação.
+function reaberturaClienteCp182(c,cal,m,r,st){
+ if(m?.status!=='ajuste_interno'||!['publicada','aberta'].includes(st?.fase)||st?.correcaoIndividualCp115||m.por!=='Cliente'||!validaData(m.em)||m.liberadoEmAnterior!==r?.publicadoEm||m.liberadoPorAnterior!=='Amanda')return false;
+ const op=m.pedidoAjusteOperationId,p=cal.pedidosAjusteClienteI71?.[op]||(cal.pedidoAjusteCliente?.operationId===op?cal.pedidoAjusteCliente:null);
+ if(!/^cal_ajuste_v113_[a-f0-9]{48}$/.test(op||'')||p?.schemaVersion!==1||p.operationId!==op||p.calendarId!==c.cliente||p.competencia!==c.competencia||p.por!=='Cliente'||typeof p.autorUid!=='string'||!p.autorUid||!validaData(p.criadoEm)||Date.parse(p.criadoEm)<=Date.parse(r?.publicadoEm)||m.em!==p.criadoEm||typeof p.texto!=='string'||!p.texto.trim()||m.motivoAjuste!==p.texto||typeof p.itemId!=='string'||!p.itemId||m.pedidoAjusteItemId!==p.itemId||!Number.isInteger(p.itemIdx)||p.itemIdx<0||m.pedidoAjusteItemIdx!==p.itemIdx)return false;
+ const atual=cal.items?.[p.itemIdx];
+ return atual?.itemId===p.itemId&&mesDoItemCalendario(cal,atual)===c.competencia&&cal.items.filter(i=>i.itemId===p.itemId).length===1&&Array.isArray(r?.items)&&r.items.filter(i=>i.itemId===p.itemId&&mesDoItemCalendario({items:r.items,month:c.competencia},i)===c.competencia).length===1;
+}
 function contextoPublicado(c,cal){
  const m=cal.aprovacaoMeses?.[c.competencia],r=m?.retratoLiberadoV115,st=c._estadoLegado,p=st?.publicacaoAtual,scope=st?.correcaoIndividualCp115;
  const escopado=scope?.schema===1&&scope.ciclo===c.id&&scope.retratoPublicadoEm===r?.publicadoEm&&scope.retratoHash===hashEditorialI172(r||{})&&['aberta','enviada','devolvida'].includes(st?.fase)&&['ajuste_interno','aguardando_interna','aprovado_interno'].includes(m?.status);
- if(c.modo!=='continuar_legado'||!(m?.status==='liberado'&&st?.fase==='publicada'||escopado)||r?.schemaVersion!==1||r.mes!==c.competencia||r.publicadoPor!=='Amanda'||!validaData(r.publicadoEm)||!Array.isArray(r.items)||p?.em!==r.publicadoEm||!isDeepStrictEqual(p.retrato,r))return null;
+ if(c.modo!=='continuar_legado'||!(m?.status==='liberado'&&st?.fase==='publicada'||escopado||reaberturaClienteCp182(c,cal,m,r,st))||r?.schemaVersion!==1||r.mes!==c.competencia||r.publicadoPor!=='Amanda'||!validaData(r.publicadoEm)||!Array.isArray(r.items)||p?.em!==r.publicadoEm||!isDeepStrictEqual(p.retrato,r))return null;
  const evento=[...(st.historico||[])].reverse().find(x=>x.acao==='central_editor_decidir'&&x.decisao==='publicar');
  if(!evento||!/^[A-Za-z0-9_-]{8,80}$/.test(evento.operacao||'')||typeof evento.uid!=='string'||!evento.uid||!evento.por||evento.em!==r.publicadoEm)return null;
  return {evento,retrato:r,retratoHash:hashEditorialI172(r)};
@@ -27,7 +36,8 @@ export async function provaPublicacaoCorrecaoTxCp115(db,tx,c,cal){
 function autorizacao(r,ator){const a=r.s?.correcaoConteudoCp115,p=r.provaCorrecaoCp115;return !!a&&a.schema===1&&a.ciclo===r.s.ciclo&&a.demandaId===r.id&&a.itemId===r.item.itemId&&a.operationId===r.p.operationId&&a.uid===ator.uid&&a.atorReal===ator.real&&a.papel==='Chris'&&a.hashConteudo===r.hashConteudo&&a.retratoHash===p?.retratoHash&&a.publicacao===p?.publicacao&&Number.isInteger(a.revisao)&&a.revisao>0;}
 export function dtoCorrecaoCp115(r,ator){
  const old=r.s?.correcaoConteudoCp115,propria=!old||old.uid===ator.uid&&old.atorReal===ator.real&&old.demandaId===r.id&&old.itemId===r.item.itemId;const apto=propria&&ator.papel==='Chris'&&ator.real==='Chris'&&pedidoElegivelCorrecaoCp115(r)&&!!r.provaCorrecaoCp115,iniciada=apto&&autorizacao(r,ator);
- return {correcao:{iniciada,revisao:Number.isInteger(old?.revisao)&&old.revisao>0?old.revisao:0,item:{itemId:r.item.itemId,...Object.fromEntries(Object.keys(CAMPOS_CORRECAO_CP115).map(k=>[k,typeof r.item[k]==='string'?r.item[k]:'']))}},iniciarCorrecao:apto&&!iniciada,salvarConteudo:iniciada};
+ const motivo=apto||r.histPublico||r.cancelado?'':ator.papel!=='Chris'||ator.real!=='Chris'?'A correção do conteúdo é feita pelo Chris. Amanda revisa a versão enviada.':r.item.excluido||r.item.posted||r.item.postado||r.item.agendado?'Este conteúdo já foi excluído, agendado ou publicado. Confira a situação antes de solicitar outra alteração.':!propria?'A autorização deste pedido pertence a outro acesso. Confira a versão e a autoria antes de continuar.':!pedidoElegivelCorrecaoCp115(r)?'Este pedido já avançou ou sua demanda de origem precisa de conferência. Atualize os pedidos para ver o próximo passo.':!r.provaCorrecaoCp115?'A publicação anterior e a origem deste pedido precisam de conferência. Nenhum conteúdo foi alterado. Use Conferir pedidos no servidor.':'';
+ return {correcao:{iniciada,motivo,revisao:Number.isInteger(old?.revisao)&&old.revisao>0?old.revisao:0,item:{itemId:r.item.itemId,...Object.fromEntries(Object.keys(CAMPOS_CORRECAO_CP115).map(k=>[k,typeof r.item[k]==='string'?r.item[k]:'']))}},iniciarCorrecao:apto&&!iniciada,salvarConteudo:iniciada};
 }
 export async function prepararCorrecaoPedidoTxCp115(db,tx,{r,c,cal,ator,pedido,em,s,hashPedido,hashConteudo}){
  e(ator.papel==='Chris'&&ator.real==='Chris'&&pedidoElegivelCorrecaoCp115(r)&&r.provaCorrecaoCp115,'Este pedido não permite corrigir conteúdo nesta versão liberada. Os envios anteriores foram preservados.');

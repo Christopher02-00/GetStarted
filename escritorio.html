@@ -2096,6 +2096,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   import * as GetDestinoPedidosCp151 from "./gs-destino-pedidos-cp151.mjs?v=340c109b28053df042840712097f3ddb8bc67dc81558fba88b8faf17aa6a1fbf";
   import * as GetPedidosLegendaCp152 from "./gs-pedidos-legenda-cp152.mjs?v=2177c2bd17abb0bd6305533167b6eca773952fa5b06a9494fe0842715d6fb7fb";
   import { criarRepasseDemandaCp148 } from "./gs-repasse-demanda-cp148.mjs?v=ef96a2c6dd5e64db58fca7bcca5e1566f19ac70c4057f379f9c25074938e4720";
+  import {criarEdicaoDescricaoDemandaCp181,podeEditarDescricaoDemandaCp181} from "./gs-edicao-descricao-demanda-cp181.mjs?v=06711be4d246d7d967e05a8208de56f5eaff46ceb4a870c2a4f6cadcfceb12e8";
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=8d4a6f999380940cdab7582646c4195361336d5652b762037aa7e5d332cbdfc2";
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
@@ -2136,6 +2137,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   const papeisPreparacaoR80=()=>['Chris','Amanda','Gabrielle'].includes(usuarioAtual);
   let cascaCentralR87=null,moduloCascaCentralR87=null,estadoCentralR87=null,consultaCentralR87=null,calSubAtualR87='',infoCentralR87=null,infoCentralR87Geracao=0,montagemPreparacaoR87=null;
   let controladorProvidenciasCp140=null;
+  let __editorDescricaoCp181=null;
   const contextoPreparacaoR80=()=>({uid:auth.currentUser?.uid||'',nome:usuarioAtual,atorReal:atorRealDaSessao(),sessao:sessaoServicoManual(),geracao:__geracaoIdentidade});
 
 
@@ -33887,6 +33889,7 @@ window.setGerenciaSub = function(qual, el){
     modal.innerHTML = `
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
+      ${htmlEditarDescricaoCp181(d,'minha')}
       ${htmlOrigemCampanhaI153(d)}
       ${htmlRepasseCp148(d)}
       ${htmlRevisaoEsperaCp149(d)}
@@ -33977,6 +33980,9 @@ window.setGerenciaSub = function(qual, el){
     `;
     document.getElementById('overlayView').classList.add('show');
     orientarEntregaDocumentoCp138(d,modal);
+    // CP181: bind a normal delivery to the orientation actually displayed, never to a later cache.
+    const botaoDescricaoCp181=modal.querySelector('#btnEnviarProva');
+    if(botaoDescricaoCp181&&podeEditarDescricaoDemandaCp181(d))botaoDescricaoCp181.__descricaoCp181=Object.freeze({id:d.id,descricao:d.descricao,status:d.status,destinatario:d.destinatario,uid:auth.currentUser?.uid,pessoa:usuarioAtual,atorReal:atorRealDaSessao(),sessao:sessaoServicoManual(),geracao:__geracaoIdentidade,view:viewAtiva,nav:__navegacaoAvisosMinimosI165});
     if(d.grupoId) carregarStatusGrupo(d.grupoId, d.id);
   };
 
@@ -34781,7 +34787,17 @@ window.setGerenciaSub = function(qual, el){
         dadosExtras.prazoData = campoDataReal.value;
         dadosExtras.prazoHora = campoHoraReal.value;
       }
-      await updateDoc(doc(db,'demandas', id), dadosExtras);
+      const orientacaoCp181=btn.__descricaoCp181;
+      if(orientacaoCp181||podeEditarDescricaoDemandaCp181(d,id)){
+        const mesmaFichaCp181=()=>!!orientacaoCp181&&orientacaoCp181.id===id&&orientacaoCp181.uid===auth.currentUser?.uid&&orientacaoCp181.pessoa===usuarioAtual&&orientacaoCp181.atorReal===atorRealDaSessao()&&orientacaoCp181.sessao===sessaoServicoManual()&&orientacaoCp181.geracao===__geracaoIdentidade&&orientacaoCp181.view===viewAtiva&&orientacaoCp181.nav===__navegacaoAvisosMinimosI165&&document.getElementById('btnEnviarProva')===btn&&btn.isConnected&&document.getElementById('overlayView').classList.contains('show');
+        if(!mesmaFichaCp181())throw Error('A ficha ou o perfil mudou. Sua prova continua nos campos; reabra a orientação atual antes de entregar.');
+        await runTransaction(db,async tx=>{
+          if(!mesmaFichaCp181())throw Error('A ficha ou o perfil mudou. Nada foi entregue.');
+          const ref=doc(db,'demandas',id),snap=await tx.get(ref),atual=snap.exists()?snap.data():null;
+          if(!mesmaFichaCp181()||!podeEditarDescricaoDemandaCp181(atual,id)||atual.descricao!==orientacaoCp181.descricao||atual.status!==orientacaoCp181.status||atual.destinatario!==orientacaoCp181.destinatario)throw Error('A orientação ou a situação desta demanda mudou. Sua prova foi mantida nos campos. Confira a descrição atual antes de entregar.');
+          tx.update(ref,dadosExtras);
+        });
+      }else await updateDoc(doc(db,'demandas', id), dadosExtras);
       let avisoEspelhoI118='';
       if(fernandaI118){
         if(contextoI82.sessao===sessaoServicoManual()){
@@ -34799,6 +34815,7 @@ window.setGerenciaSub = function(qual, el){
   };
 
   window.fecharModal = function(){
+    if(__editorDescricaoCp181?.canLeave()===false){mostrarToast('Aguarde a confirmação da descrição.','erro');return false;}
     if(controladorProvidenciasCp140?.canLeave?.()===false)return false;
     if(window.__arteYasI129?.emCurso&&window.__arteYasI129.atual()){mostrarToast('Espere a confirmação da arte antes de fechar.','erro');return false;}
     if(__edicaoCentralLegendasV134)return fecharEditorLegendaCentralV134();
@@ -50922,6 +50939,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
       <h2>${d.grupoId?'🤝 ':''}${tituloDemanda(d)}</h2>
       <div class="linha"><b>Funcionário:</b> ${esc(nomeEquipeI126(d.destinatario))}</div>
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
+      ${htmlEditarDescricaoCp181(d,'gerencia')}
       ${htmlRepasseCp148(d)}
       ${htmlRevisaoEsperaCp149(d)}
       ${htmlMotivoRefazerI161(d)}
@@ -51111,6 +51129,24 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     transacionar:fn=>runTransaction(db,tx=>fn({get:id=>tx.get(doc(db,'demandas',id)),update:(id,p)=>tx.update(doc(db,'demandas',id),p)})),
     contexto:contextoRepasseCp148,destinatarios:()=>DESTINATARIOS_DEMANDA.filter(n=>n!=='Fernanda')
   });
+  // CP181: same ordinary task, description only. Dedicated server transaction owns CAS/history.
+  function htmlEditarDescricaoCp181(d,origem){return ['Chris','Amanda'].includes(usuarioAtual)&&podeEditarDescricaoDemandaCp181(d)?'<div class="linha"><button type="button" class="btn secondary" data-id="'+escAttr(d.id)+'" onclick="editarDescricaoDemandaCp181(this.dataset.id,\''+origem+'\')">Editar descrição</button></div>':'';}
+  window.editarDescricaoDemandaCp181=async function(id,origem='gerencia'){
+    const c={...contextoPreparacaoR80()},view=viewAtiva,nav=__navegacaoAvisosMinimosI165;
+    if(!['Chris','Amanda'].includes(c.nome)||!['Chris','Amanda'].includes(c.atorReal))return false;
+    if(__editorDescricaoCp181?.canLeave()===false){mostrarToast('Aguarde a confirmação da descrição.','erro');return false;}
+    const atual=()=>{const n=contextoPreparacaoR80();return ['uid','nome','atorReal','sessao','geracao'].every(k=>n[k]===c[k])&&viewAtiva===view&&nav===__navegacaoAvisosMinimosI165&&document.getElementById('overlayView').classList.contains('show');};
+    __editorDescricaoCp181?.destroy();
+    const host=document.createElement('div');host.dataset.edicaoDescricaoCp181=id;
+    document.getElementById('modalConteudo').replaceChildren(host);document.getElementById('overlayView').classList.add('show');
+    __editorDescricaoCp181=criarEdicaoDescricaoDemandaCp181({documento:document,contexto:contextoPreparacaoR80,storage:armazenamentoUiI165,visivel:atual,
+      chamar:async(acao,payload)=>{const n=contextoPreparacaoR80();const r=await chamadaCentralPreparacaoR80({acao,...payload,uidEsperado:n.uid,atorRealEsperado:n.atorReal,papelOperado:n.nome,sessao:n.sessao});return r.data;},
+      aoAtualizar:async()=>{if(!atual())return;const s=await _getDocFromServerFB(doc(db,'demandas',id));if(!atual())return;if(!s.exists())return;const d={...s.data(),id:s.id},i=todasDemandas.findIndex(x=>x.id===id);if(i>=0)todasDemandas[i]=d;},
+      voltar:()=>{if(!atual())return;__editorDescricaoCp181?.destroy();__editorDescricaoCp181=null;return origem==='minha'?window.abrirDemandaMinha(id):window.abrirDemandaGerencia(id);}
+    });
+    return __editorDescricaoCp181.abrir({id,host});
+  };
+
   function htmlRepasseCp148(d){
     if(!d.motivoRedirecionamento||!d.redirecionadaEm)return '';
     return `<div class="linha" style="border-left:3px solid var(--yellow);padding:12px;white-space:pre-wrap;"><b>Responsável atual: ${esc(nomeEquipeI126(d.destinatario))}</b><div>Repassada por ${esc(d.redirecionadaPor||'gestão')}: ${esc(d.motivoRedirecionamento)}</div><div class="meta">O pedido original e o prazo continuam preservados.</div></div>`;
@@ -51394,7 +51430,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
   }
 
   function assinaturaEntregaI161(d){
-    const ts=d.concluidaEm;return JSON.stringify([d.status||'',d.destinatario||'',d.paraQuem||'',d.provaTexto||'',d.provaImagemUrl||'',ts?.seconds??ts??null,ts?.nanoseconds??0,d.rejeitadoEm||'',d.refazerUltimoI161?.operacao||'',d.excluido===true,d.agendamentoId||'',d.ehDecisao===true,d.ehAviso===true,d.decisaoSim||'',d.decisaoNao||'',d.tipoEspecial||'',d.titulo||'']);
+    const ts=d.concluidaEm;return JSON.stringify([d.status||'',d.destinatario||'',d.paraQuem||'',d.provaTexto||'',d.provaImagemUrl||'',ts?.seconds??ts??null,ts?.nanoseconds??0,d.rejeitadoEm||'',d.refazerUltimoI161?.operacao||'',d.excluido===true,d.agendamentoId||'',d.ehDecisao===true,d.ehAviso===true,d.decisaoSim||'',d.decisaoNao||'',d.tipoEspecial||'',d.titulo||'',d.descricao||'']);
   }
   function htmlMotivoRefazerI161(d){
     const r=d.refazerUltimoI161;if(!r?.motivo)return '';
@@ -52277,7 +52313,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     const competencia=id.slice(0,7),cliente=id.slice(9),chave=chaveCentralUnificadaR87();viewCp109('estrategiaCp109');if(irPara('estrategiaCp109')===false)return false;
     limparPainelCp109();estiloCp109();const g=geracaoPainelCp109,box=viewCp109('estrategiaCp109'),vigente=()=>g===geracaoPainelCp109&&chave===chaveCentralUnificadaR87()&&viewAtiva==='estrategiaCp109';
     box.innerHTML='<div class="card"><button type="button" data-voltar-cp109>← Voltar ao planejamento</button></div><div data-editor-cp109></div>';
-    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=f98cc66580c664dde5bc7f1ad6fe1f3a4484fae630648d346631679e80f3cf4d'),import('./codec-central-r80.mjs?v=000e1d41f7937787cf50c53904f5e8392d2873f152fc10d3a4837697d5e67925')]);if(!vigente())return false;
+    const [mod,codec]=await Promise.all([import('./gs-editor-calendario-central-i172.mjs?v=817bc201b633f741c0c1a76bef0999eb5644279d54c8d488582428909b158bdf'),import('./codec-central-r80.mjs?v=000e1d41f7937787cf50c53904f5e8392d2873f152fc10d3a4837697d5e67925')]);if(!vigente())return false;
     painelCp109=mod.montarEditorCalendarioCentralI172(box.querySelector('[data-editor-cp109]'),{ciclo:id,demandaId:ciclo.demandaId||'',origemEditorial:'estrategico_cp109',contexto:contextoPreparacaoR80,chamar:async(acao,dados)=>codec.abrirEnvelopeCentralR80(await chamarUiOperacionalI165(acao,dados),{timestamp:(s,n)=>new Timestamp(s,n)}),aoAtualizar:()=>{if(vigente())mostrarToast('Revisão confirmada. O pedido e o histórico continuam vinculados.');}});
     box.querySelector('[data-voltar-cp109]').onclick=()=>abrirEtapaCp109('estrategia',{cliente,competencia,ciclo:id});
     cascaCentralR87?.selecionar('rascunho');const pronto=await painelCp109.ready;if(!pronto||pronto.schema!==1)return false;if(vigente())await desenharCentralUnificadaR87();return vigente();
@@ -52341,7 +52377,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
         const host=document.getElementById('planejamentoEditorI172');if(!host||!entradaAtualCp154())return false;
         delete host.dataset.aberturaFilaCp154;host.hidden=false;host.innerHTML='<div class="card"><button type="button" class="btn secondary" data-voltar-editor>← Voltar aos materiais deste mês</button></div><div data-editor-central></div>';
         aberturaFilaCp154?.registrarEditor?.(null,host);
-        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=f98cc66580c664dde5bc7f1ad6fe1f3a4484fae630648d346631679e80f3cf4d');if(!entradaAtualCp154())return false;
+        const mod=await import('./gs-editor-calendario-central-i172.mjs?v=817bc201b633f741c0c1a76bef0999eb5644279d54c8d488582428909b158bdf');if(!entradaAtualCp154())return false;
         const ed=mod.montarEditorCalendarioCentralI172(host.querySelector('[data-editor-central]'),{ciclo:ciclo.id,demandaId:ciclo.demandaId||'',ajusteInternoId:ciclo.ajusteInternoId||'',origemEditorial,contexto:contextoPreparacaoR80,chamar:(acao,payload)=>repo.editorial(acao,payload),aoAtualizar:()=>{if(vigente()){mostrarToast('Versão confirmada. O andamento também será conferido ao voltar aos materiais.');void atualizarFilaInternaCp123(true);invalidarRetornosMensaisCp155();}}});
         editorCalendarioCentralI172=ed;aberturaFilaCp154?.registrarEditor?.(ed,host);
         host.querySelector('[data-voltar-editor]').onclick=async()=>{if(!vigente()||editorCalendarioCentralI172!==ed||ed.canLeave?.()===false)return;ed.destroy();editorCalendarioCentralI172=null;host.hidden=true;host.replaceChildren();if(origemEditorial==='continuar_legado'){await planejamentoPreparacaoR80?.ready;}else await planejamentoPreparacaoR80?.abrir(ciclo.id,'criacao');};

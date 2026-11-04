@@ -1,3 +1,4 @@
+import {ACOES_DESCRICAO_CP181,operarDescricaoDemandaCp181} from './demandas-descricao-cp181.mjs';
 import {ACOES_PEDIDOS_LEGENDA_CP152,operarPedidosLegendaCp152} from './pedidos-legenda-cp152.mjs';
 import {ACOES_VINCULOS_CP142_COM_CIENCIA as ACOES_VINCULOS_CP142,operarVinculosProvidenciasCp142} from './providencias-vinculos-cp142.mjs';
 import {ACOES_PROVIDENCIAS_CP140,operarProvidenciasGravacaoCp140} from './providencias-gravacoes-cp140.mjs';
@@ -41,6 +42,7 @@ export async function operarI165(db,auth,dados,{agora=new Date(),midia={}}={}){
  exigirI165(dados&&typeof dados==='object'&&!Array.isArray(dados),'entrada','Operação inválida.');
  validarContaEsperadaI165(auth,dados);
  const devolucaoMensalCp155=capacidadeDevolucaoMensalCp155(dados);
+ if(ACOES_DESCRICAO_CP181.includes(dados.acao))return operarDescricaoDemandaCp181(db,auth,dados,{agora});
  if(ACOES_PEDIDOS_LEGENDA_CP152.includes(dados.acao))return operarPedidosLegendaCp152(db,auth,dados,{agora});
  if(ACOES_VINCULOS_CP142.includes(dados.acao))return operarVinculosProvidenciasCp142(db,auth,dados,{agora});
  if(ACOES_PROVIDENCIAS_CP140.includes(dados.acao))return operarProvidenciasGravacaoCp140(db,auth,dados,{agora});

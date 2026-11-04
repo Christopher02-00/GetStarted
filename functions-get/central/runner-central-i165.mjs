@@ -1,7 +1,8 @@
+import{TIPO_PEDIDO_CLIENTE_CP175}from'./pedidos-cliente-cp175.mjs';
 import {TIPO_DEVOLUCAO_MENSAL_CP155} from '../devolucoes-mensais-cp155.mjs';
 /* Módulo de trabalho injetável: não initializeApp, não exporta Scheduler, não cria canais. */
 import {executarRecorrenciaI164} from './agenda.mjs';
-import {sincronizarDevolucoesMensaisCp155,sincronizarOcorrenciasI165,sincronizarOrganizacaoI167,sincronizarDemandasRefazerCp131,sincronizarProvidenciasGravacaoCp140,sincronizarProvidenciasVinculadasCp146} from './notificacoes.mjs';
+import {sincronizarPedidosClienteCp175,sincronizarDevolucoesMensaisCp155,sincronizarOcorrenciasI165,sincronizarOrganizacaoI167,sincronizarDemandasRefazerCp131,sincronizarProvidenciasGravacaoCp140,sincronizarProvidenciasVinculadasCp146} from './notificacoes.mjs';
 import {processoAtivoI164} from './lib/gs-processo-calendarios-i164.mjs';
 import {tickRefsCp109} from '../referencias-cp109.mjs';
 const linkNota=id=>{const u=new URL('https://get-started.agency/escritorio.html');u.searchParams.set('avisoI165',id);return u.href;};
@@ -12,12 +13,13 @@ export function resumirCanaisCentralI165(linhas,canais) {
  }
  r.estado=r.falhas||r.desconhecidas||r.emAndamento||r.pendentes?'conferir_canais':canais.length?'conferidos':'sem_canais_ativos';return r;
 }
-export async function executarCentralNoTickI165(db,{agora=new Date(),enviarPush,enviarEmail,limite=40,operadores={}}={}) {
+export async function executarCentralNoTickI165(db,{agora=new Date(),enviarPush,enviarEmail,limite=40,operadores={},demandaIdsCp175=[],errosRecepcaoCp175=[]}={}) {
  const cfg=(await db.doc('programacao_config_i165/ativo').get()).data(),processo=(await db.doc('processo_calendarios_i164/ativo').get()).data();
  const canais=['push','email'].filter(c=>cfg?.schema===1&&cfg.ativo===true&&cfg.habilidades?.[c]===true&&(c==='push'?enviarPush:enviarEmail));
  const push=enviarPush?(n=>enviarPush({...n,link:linkNota(n.id)})):undefined,email=enviarEmail?(n=>enviarEmail({...n,link:linkNota(n.id)})):undefined;
  const executarAgenda=operadores.recorrencia||executarRecorrenciaI164,executarNotas=operadores.notas||sincronizarOcorrenciasI165,executarOrganizacao=operadores.organizacao||sincronizarOrganizacaoI167,executarReferencias=operadores.referencias||tickRefsCp109;
- const r={devolucoesMensais:{ativa:false},vinculos:{ativa:false},providencias:{ativa:false},devolucoes:{ativa:false},organizacao:{ativa:false},agenda:{ativa:false},referencias:{ativa:false},notas:{ativa:false},erros:[]};
+ const r={pedidosCliente:{ativa:false},devolucoesMensais:{ativa:false},vinculos:{ativa:false},providencias:{ativa:false},devolucoes:{ativa:false},organizacao:{ativa:false},agenda:{ativa:false},referencias:{ativa:false},notas:{ativa:false},erros:errosRecepcaoCp175.slice(0,100).map(e=>({servico:'recepcao_pedidos_cliente_cp175',...e}))};
+ if(cfg?.schema===1&&cfg.ativo===true&&cfg.habilidades?.preparacaoCentral===true)try{r.pedidosCliente=await (operadores.pedidosCliente||sincronizarPedidosClienteCp175)(db,{agora,enviarPush:push,enviarEmail:email,canais,limite,demandaIds:demandaIdsCp175});}catch(e){r.erros.push({servico:TIPO_PEDIDO_CLIENTE_CP175,erro:String(e.message).slice(0,500)});}
  // Devoluções usam o mesmo tick e canais, sem depender do calendário ou da organização.
  if(cfg?.schema===1&&cfg.ativo===true)try{r.devolucoes=await (operadores.devolucoes||sincronizarDemandasRefazerCp131)(db,{agora,enviarPush:push,enviarEmail:email,canais,limite});}catch(e){r.erros.push({servico:'demanda_refazer_i161',erro:String(e.message).slice(0,500)});}
  if(cfg?.schema===1&&cfg.ativo===true&&cfg.habilidades?.preparacaoCentral===true)try{r.providencias=await (operadores.providencias||sincronizarProvidenciasGravacaoCp140)(db,{agora,enviarPush:push,enviarEmail:email,canais,limite});}catch(e){r.erros.push({servico:'providencia_gravacao_cp140',erro:String(e.message).slice(0,500)});}
@@ -31,11 +33,11 @@ export async function executarCentralNoTickI165(db,{agora=new Date(),enviarPush,
   try{r.referencias=await executarReferencias(db,{agora});}catch(e){r.erros.push({servico:'referencias_cp109',erro:String(e.message).slice(0,500)});}
   try{r.notas=await executarNotas(db,{agora,enviarPush:push,enviarEmail:email,canais,limite});}catch(e){r.erros.push({servico:'notificacoes_central',erro:String(e.message).slice(0,500)});}
  }
- for(const [servico,x]of [[TIPO_DEVOLUCAO_MENSAL_CP155,r.devolucoesMensais],['providencia_vinculada_cp146',r.vinculos],['providencia_gravacao_cp140',r.providencias],['demanda_refazer_i161',r.devolucoes],['organizacao_i167',r.organizacao],['notificacoes_central',r.notas]])for(const e of x.erros||[])r.erros.push({servico,...e});
- const tipos=[...(r.devolucoesMensais.ativa?[TIPO_DEVOLUCAO_MENSAL_CP155]:[]),...(r.vinculos.ativa?['providencia_vinculada_cp146']:[]),...(r.providencias.ativa?['providencia_gravacao_cp140']:[]),...(r.devolucoes.ativa?['demanda_refazer_i161']:[]),...(r.organizacao.ativa?['organizacao_i167']:[]),...(processoAtivoI164(processo)?['planejamento','calendario_revisao','calendario_envio','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109']:[])];
+ for(const [servico,x]of [[TIPO_PEDIDO_CLIENTE_CP175,r.pedidosCliente],[TIPO_DEVOLUCAO_MENSAL_CP155,r.devolucoesMensais],['providencia_vinculada_cp146',r.vinculos],['providencia_gravacao_cp140',r.providencias],['demanda_refazer_i161',r.devolucoes],['organizacao_i167',r.organizacao],['notificacoes_central',r.notas]])for(const e of x.erros||[])r.erros.push({servico,...e});
+ const tipos=[...(r.pedidosCliente.ativa?[TIPO_PEDIDO_CLIENTE_CP175]:[]),...(r.devolucoesMensais.ativa?[TIPO_DEVOLUCAO_MENSAL_CP155]:[]),...(r.vinculos.ativa?['providencia_vinculada_cp146']:[]),...(r.providencias.ativa?['providencia_gravacao_cp140']:[]),...(r.devolucoes.ativa?['demanda_refazer_i161']:[]),...(r.organizacao.ativa?['organizacao_i167']:[]),...(processoAtivoI164(processo)?['planejamento','calendario_revisao','calendario_envio','referencias_cp109','planejamento_estrategico_cp109','plano_acao_cp109']:[])];
  try{const ler=operadores.notasAtuais||(async()=>{const s=await db.collection('notificacoes_operacionais_i165').where('estado','==','pendente').get();return s.docs.map(d=>d.data());});const notas=await ler();r.canais=resumirCanaisCentralI165(notas.filter(n=>!n.escopo&&tipos.includes(n.origem?.tipo)),canais);}catch(e){r.erros.push({servico:'saude_canais_central',erro:String(e.message).slice(0,500)});r.canais={estado:'nao_conferido',falhas:0,desconhecidas:0};}
  const estado=r.erros.length?'conferir_origens':r.canais.estado==='conferidos'?'conferida':'conferir_canais',em=agora.toISOString();
- await db.doc('servicos_i164/execucao').set({estado,ultimaExecucao:em,agendaCriadas:r.agenda.criadas?.length||0,organizacaoConferida:r.organizacao.conferidas||0,providenciasConferidas:r.providencias.conferidas||0,devolucoesMensaisConferidas:r.devolucoesMensais.conferidas||0,vinculosConferidos:r.vinculos.conferidas||0,notas:r.notas.processadas||0,canais:r.canais,erros:r.erros.slice(0,100),origem:'tick operacional I165 existente',portalAbertoNecessario:false},{merge:true});
+ await db.doc('servicos_i164/execucao').set({estado,ultimaExecucao:em,pedidosClienteConferidos:r.pedidosCliente.conferidas||0,agendaCriadas:r.agenda.criadas?.length||0,organizacaoConferida:r.organizacao.conferidas||0,providenciasConferidas:r.providencias.conferidas||0,devolucoesMensaisConferidas:r.devolucoesMensais.conferidas||0,vinculosConferidos:r.vinculos.conferidas||0,notas:r.notas.processadas||0,canais:r.canais,erros:r.erros.slice(0,100),origem:'tick operacional I165 existente',portalAbertoNecessario:false},{merge:true});
  await db.doc('config_notificacoes_i165/estado').set({estado,atualizadoEm:em,canais:r.canais,erros:r.erros.slice(0,100),alcance:'execução corrente e canais das notas pendentes nos escopos ativos; aceite não comprova exibição no aparelho'},{merge:true});
  return r;
 }

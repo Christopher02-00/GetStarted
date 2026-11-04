@@ -1,5 +1,6 @@
 /* Preparação interna via callable existente. Não publica, não migra e não ativa a troca I164. */
 import {FieldValue,FieldPath} from 'firebase-admin/firestore';
+import {ACAO_RECONCILIAR_DOCUMENTOS_CP179,ACAO_SOLICITACAO_DOCUMENTAL_CP179,registrarSolicitacaoDocumentoCp179,concluirDocumentosConfirmadosCp179} from './conclusao-documento-cp179.mjs';
 import {capacidadesConsultaCentralR87} from './central-capacidades-r87.mjs';
 import {calendarioEnviavelI164} from './central/lib/elegibilidade-envio-i164.mjs';
 import {processoAtivoI164} from './central/lib/gs-processo-calendarios-i164.mjs';
@@ -34,7 +35,7 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
  if(pedido.acao==='central_capacidades')return envelopeCentralR80(await db.runTransaction(tx=>gate(tx,{capacidades:true})));
  await db.runTransaction(tx=>gate(tx));
  if(pedido.acao==='central_legendas_pendentes')return envelopeCentralR80(await lerLegendasPendentesI170(db,{ator,pedido,gate}));
- const stamp=FieldValue.serverTimestamp(),{io,contexto}=criarIoAdminCentralR80(db,{ator,pedido,conferirGate:gate,stamp,editorialInterna});
+ const stamp=FieldValue.serverTimestamp(),{io,contexto}=criarIoAdminCentralR80(db,{ator,pedido,conferirGate:gate,stamp,agora,editorialInterna});
  const hoje=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(agora);
  async function clientes(mes){const [ex,co]=await Promise.all([io.getDocsFromServer(io.collection(db,'clientes_extras')),io.getDocsFromServer(io.collection(db,'clientes_config'))]);return carteiraCanonicaI164({extras:linhas(ex),configs:linhas(co),hoje,competencia:mes}).carteira;}
  async function origens(cliente){const snaps=await Promise.all(['referencias','referencias_cliente'].map(col=>io.getDocsFromServer(io.query(io.collection(db,col),io.where('cliente','==',cliente)))));return snaps.flatMap((s,i)=>s.docs.filter(d=>d.data().excluido!==true).map(d=>({id:d.id,origemColecao:i?'referencias_cliente':'referencias',...Object.fromEntries(DTO_ORIGEM.filter(k=>d.data()[k]!==undefined).map(k=>[k,d.data()[k]]))})));}
@@ -48,8 +49,11 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
   case 'central_mutar':{
    if(pedido.acaoPreparacao===ACAO_DECISAO_DOCUMENTO_CP154){const resultado=await decidirEntregaDocumentoCp154(db,ator,pedido,{conferirGate:gate,stamp,agora});dados={...await repo.ler(pedido.ciclo),resultado};}
    else if(pedido.acaoPreparacao===ACAO_VINCULO_DOCUMENTO_CP154){const resultado=await vincularEntregaDocumentoCp154(db,ator,pedido,{conferirGate:gate,stamp,agora});dados={...await repo.ler(pedido.ciclo),resultado};}
-   else dados=await repo.mutar(pedido.ciclo,pedido.acaoPreparacao,pedido.dados,pedido.esperadaRevisao,pedido.operacao);break;
+   else dados=await repo.mutar(pedido.ciclo,pedido.acaoPreparacao,pedido.dados,pedido.esperadaRevisao,pedido.operacao);
+   break;
   }
+  case ACAO_RECONCILIAR_DOCUMENTOS_CP179:{const resultado=await concluirDocumentosConfirmadosCp179(db,ator,{ciclo:pedido.ciclo},{conferirGate:gate,stamp,agora});dados={...await repo.ler(pedido.ciclo),resultado:{conclusoesDocumentaisCp179:resultado}};break;}
+  case ACAO_SOLICITACAO_DOCUMENTAL_CP179:{dados=await registrarSolicitacaoDocumentoCp179(db,ator,pedido,{conferirGate:gate,stamp,agora});break;}
   case 'central_fontes_organizacao':dados=await repo.fontesAgendaI167(pedido.cliente,pedido.competencia);break;
   case 'central_clientes':dados=await repo.clientes(pedido.competencia,true);break;
   case 'central_referencias_origem':dados=await repo.origens(pedido.cliente);break;
@@ -76,6 +80,8 @@ export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(
   }
   default:e(false,'Ação fora da preparação.');
  }
+ const operacoesDocumentoCp179=dados?.resultado?.conclusoesDocumentaisCp179?.operacoesDocumentoCp179||[];
+ if(operacoesDocumentoCp179.length){const avisos={registrados:[],pendentes:[]};let registrar;try{({registrarRecebimentoDocumentoCp179:registrar}=await import('./central/notificacoes.mjs'));}catch{}for(const operacao of operacoesDocumentoCp179){try{e(typeof registrar==='function','O aviso documental continua em processamento.');await registrar(db,operacao,{agora});avisos.registrados.push(operacao);}catch{avisos.pendentes.push(operacao);}}dados.resultado.avisosDocumentaisCp179=avisos;}
  // Readback só sai ao mesmo Google/cadastro e capacidade ainda válidos após a operação.
  await db.runTransaction(tx=>gate(tx));return envelopeCentralR80(ator.papel==='Gabrielle'?projetarRespostaPesquisaI170(dados):dados);
 }

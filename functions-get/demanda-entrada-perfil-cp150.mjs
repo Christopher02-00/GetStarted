@@ -2,17 +2,31 @@
 import {isDeepStrictEqual as igual} from 'node:util';
 import {hashI165} from './contexto.mjs';
 export const TIPO_DEMANDA_ENTRADA_CP150='analise_perfil_cp150';
-const ESTADOS=Object.freeze(['aguardando_analise','em_analise','aguardando_complemento','concluida']);
+const ESTADOS=Object.freeze(['aguardando_analise','em_analise','aguardando_complemento','concluida','acompanhamento_encerrado']);
 const KEYS=Object.freeze(['schema','processoId','cliente','empresaOtavio','snapshotNumero','snapshotHash','estado']);
 const obj=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const e=(ok,m)=>{if(!ok)throw Object.assign(new Error(m),{code:'i165/entrada-perfil-demanda'});};
 function ancora(p){e(obj(p)&&typeof p.id==='string'&&/^[A-Za-z0-9_.-]{1,200}$/.test(p.id)&&!['.','..'].includes(p.id)&&typeof p.cliente==='string'&&/^[a-z0-9][a-z0-9._-]{0,119}$/.test(p.cliente)&&typeof p.empresaOtavio==='string','Confira a identidade da entrada antes de vincular a demanda.');return [p.id,p.cliente,p.empresaOtavio];}
 export const idDemandaEntradaPerfilCp150=p=>'entrada_perfil_cp150_'+hashI165(ancora(p));
+/* CP180: encerramento operacional explícito; nunca aprova o resultado da base atual. */
+export function referenciaHistoricaCp180(f){
+ const r=f?.analiseConcluida,s=f?.snapshotEnvio;if(!r||!s||r.baseEnvio===s.hash||!['aguardando_analise','em_analise','aguardando_complemento'].includes(f.estado))return null;
+ const hash=hashI165(r),iguais=(f.resultados||[]).filter(x=>x?.numero===r.numero&&hashI165(x)===hash),bases=(f.envios||[]).filter(x=>x?.hash===r.baseEnvio);
+ if(!(Number.isSafeInteger(r.numero)&&r.numero>0&&iguais.length===1&&bases.length===1&&typeof r.baseEnvio==='string'&&/^[a-f0-9]{64}$/.test(r.baseEnvio)&&typeof r.concluidaEm==='string'&&Number.isFinite(Date.parse(r.concluidaEm))&&obj(r.concluidaPor)&&typeof r.concluidaPor.atorReal==='string'&&typeof r.texto==='string'&&typeof r.link==='string'&&Array.isArray(r.arquivos)&&(r.texto.trim()||r.link||r.arquivos.length)))return null;
+ const b=bases[0],{hash:baseHash,...corpo}=b;if(!(hashI165(corpo)===baseHash&&b.processoId===f.processoId&&b.cliente===f.cliente&&b.empresaOtavio===f.empresaOtavio&&Number.isSafeInteger(b.numero)&&b.numero>0))return null;
+ return {numero:r.numero,hash,baseEnvio:r.baseEnvio,envioNumero:b.numero,concluidaEm:r.concluidaEm};
+}
+export function encerramentoAcompanhamentoCp180(f){
+ const x=f?.encerramentoAcompanhamentoCp180;if(!x||!f.snapshotEnvio||x.snapshotHash!==f.snapshotEnvio.hash||x.retomada)return null;
+ const r=referenciaHistoricaCp180(f);e(r&&x.schema===1&&x.processoId===f.processoId&&x.cliente===f.cliente&&x.empresaOtavio===f.empresaOtavio&&x.snapshotNumero===f.snapshotEnvio.numero&&x.resultadoNumero===r.numero&&x.resultadoHash===r.hash&&x.resultadoBaseEnvio===r.baseEnvio&&x.resultadoEnvioNumero===r.envioNumero&&x.confirmoEnvioReal===true&&typeof x.motivo==='string'&&!!x.motivo.trim()&&x.motivo.length<=4000&&typeof x.comprovante==='string'&&!!x.comprovante.trim()&&x.comprovante.length<=4000&&obj(x.por)&&typeof x.por.uid==='string'&&!!x.por.uid&&['Chris','Amanda'].includes(x.por.atorReal)&&['Chris','Amanda'].includes(x.por.papel)&&typeof x.em==='string'&&Number.isFinite(Date.parse(x.em))&&/^[A-Za-z0-9_-]{8,100}$/.test(x.operacao||''),'O encerramento operacional precisa ser conferido; a análise atual não foi concluída.');
+ return {...x};
+}
+
 function projecao(p,f){
  ancora(p);const s=f?.snapshotEnvio;e(obj(s)&&s.processoId===p.id&&s.cliente===p.cliente&&s.empresaOtavio===p.empresaOtavio&&Number.isSafeInteger(s.numero)&&s.numero>0&&typeof s.hash==='string'&&/^[a-f0-9]{64}$/.test(s.hash)&&ESTADOS.includes(f.estado),'A demanda precisa de um envio confirmado válido da mesma entrada.');
  const {hash,...corpo}=s;e(hashI165(corpo)===hash,'O retrato enviado precisa ser conferido antes de vincular a demanda.');
  if(f.estado==='concluida')e(obj(f.analiseConcluida)&&f.analiseConcluida.baseEnvio===s.hash&&Number.isSafeInteger(f.analiseConcluida.numero)&&f.analiseConcluida.numero>0&&typeof f.analiseConcluida.concluidaEm==='string'&&obj(f.analiseConcluida.concluidaPor)&&typeof f.analiseConcluida.concluidaPor.atorReal==='string','A conclusão não corresponde ao mesmo envio da análise.');
- return {schema:1,processoId:p.id,cliente:p.cliente,empresaOtavio:p.empresaOtavio,snapshotNumero:s.numero,snapshotHash:s.hash,estado:f.estado};
+ return {schema:1,processoId:p.id,cliente:p.cliente,empresaOtavio:p.empresaOtavio,snapshotNumero:s.numero,snapshotHash:s.hash,estado:encerramentoAcompanhamentoCp180(f)?'acompanhamento_encerrado':f.estado};
 }
 export function validarDemandaEntradaPerfilCp150(d,id,p){
  const a=ancora(p),v=d?.entradaPerfilCp150;e(id===idDemandaEntradaPerfilCp150(p)&&obj(d)&&d.tipoEspecial===TIPO_DEMANDA_ENTRADA_CP150&&d.ehAviso===true&&d.cliente===p.cliente&&d.onboardingId===p.id&&(!d.id||d.id===id)&&obj(v)&&Object.keys(v).length===KEYS.length&&Object.keys(v).every(k=>KEYS.includes(k))&&v.schema===1&&v.processoId===a[0]&&v.cliente===a[1]&&v.empresaOtavio===a[2]&&Number.isSafeInteger(v.snapshotNumero)&&v.snapshotNumero>0&&/^[a-f0-9]{64}$/.test(v.snapshotHash||'')&&ESTADOS.includes(v.estado)&&['Chris','Amanda'].includes(d.destinatario)&&['pendente','aprovada'].includes(d.status)&&d.excluido!==true&&d.arquivado!==true&&(d.historico===undefined||Array.isArray(d.historico)),'O identificador calculado já possui uma demanda incompatível ou arquivada. Nada foi sobrescrito.');return d;
@@ -26,24 +40,25 @@ export function apresentacaoAnaliseCp158(f){
  if(a.estado==='enviada_cliente')e(obj(a.enviadaPor)&&typeof a.enviadaPor.atorReal==='string'&&typeof a.enviadaEm==='string'&&Number.isFinite(Date.parse(a.enviadaEm))&&typeof a.comprovante==='string'&&!!a.comprovante.trim(),'A confirmação de envio desta análise precisa ser conferida.');
  return {...a};
 }
-const destino=f=>f.estado==='aguardando_complemento'||f.estado==='concluida'&&!!f.apresentacaoAnalise?'Amanda':'Chris';
-const status=f=>f.estado==='concluida'&&(!f.apresentacaoAnalise||apresentacaoAnaliseCp158(f)?.estado==='enviada_cliente')?'aprovada':'pendente';
+const destino=f=>encerramentoAcompanhamentoCp180(f)?'Chris':f.estado==='aguardando_complemento'||f.estado==='concluida'&&!!f.apresentacaoAnalise?'Amanda':'Chris';
+const status=f=>encerramentoAcompanhamentoCp180(f)?'aprovada':f.estado==='concluida'&&(!f.apresentacaoAnalise||apresentacaoAnaliseCp158(f)?.estado==='enviada_cliente')?'aprovada':'pendente';
 export function resumoDemandaEntradaPerfilCp150(p,f,d){
  const id=idDemandaEntradaPerfilCp150(p);if(!f?.snapshotEnvio)return {id,confirmada:false,destinatario:'',estado:'sem_envio'};
- const atual=projecao(p,f),destinatario=destino(f);if(!d)return {id,confirmada:false,destinatario,estado:f.estado};
- try{validarDemandaEntradaPerfilCp150(d,id,p);}catch(err){return {id,confirmada:false,destinatario,estado:f.estado,conflito:true,motivo:err.message};}
- return {id,confirmada:igual(d.entradaPerfilCp150,atual)&&d.destinatario===destinatario&&d.status===status(f),destinatario,estado:f.estado};
+ const atual=projecao(p,f),destinatario=destino(f);if(!d)return {id,confirmada:false,destinatario,estado:atual.estado};
+ try{validarDemandaEntradaPerfilCp150(d,id,p);}catch(err){return {id,confirmada:false,destinatario,estado:atual.estado,conflito:true,motivo:err.message};}
+ return {id,confirmada:igual(d.entradaPerfilCp150,atual)&&d.destinatario===destinatario&&d.status===status(f),destinatario,estado:atual.estado};
 }
 export function prepararDemandaEntradaPerfilCp150({processo:p,fonte:f,antes=null,ator,em,acao,operacao}){
  const id=idDemandaEntradaPerfilCp150(p),meta=projecao(p,f);e(obj(ator)&&typeof ator.uid==='string'&&ator.uid&&['Chris','Amanda'].includes(ator.papel)&&['Chris','Amanda'].includes(ator.real)&&typeof em==='string'&&Number.isFinite(Date.parse(em))&&typeof operacao==='string'&&/^[A-Za-z0-9_-]{8,100}$/.test(operacao),'Confira a autoria e a operação do mesmo envio.');
- e(['enviar_material','iniciar_analise','salvar_analise','concluir_analise','pedir_complemento','vincular_demanda','aprovar_analise','devolver_analise','confirmar_envio_analise'].includes(acao),'Esta etapa não altera a demanda de análise.');
+ e(['enviar_material','iniciar_analise','salvar_analise','concluir_analise','pedir_complemento','vincular_demanda','aprovar_analise','devolver_analise','confirmar_envio_analise','encerrar_acompanhamento','retomar_acompanhamento'].includes(acao),'Esta etapa não altera a demanda de análise.');
  if(antes){validarDemandaEntradaPerfilCp150(antes,id,p);const anterior=antes.entradaPerfilCp150;e(anterior.snapshotNumero<=meta.snapshotNumero&&(anterior.snapshotNumero!==meta.snapshotNumero||anterior.snapshotHash===meta.snapshotHash),'A demanda aponta para outra versão de envio. Releia a origem e preserve a versão já vinculada.');}
  const sync=resumoDemandaEntradaPerfilCp150(p,f,antes);if(acao==='vincular_demanda'&&sync.confirmada)return {id,depois:antes,alterou:false};
- const op=hashI165([ator.uid,ator.real,ator.papel,operacao]),rotulos={enviar_material:'Material enviado para análise de perfil',iniciar_analise:'Análise de perfil iniciada',salvar_analise:'Rascunho da análise atualizado na origem',concluir_analise:'Análise de perfil concluída na origem',pedir_complemento:'Complemento solicitado na entrada protegida',vincular_demanda:'Demanda vinculada ao material já confirmado',aprovar_analise:'Análise de perfil aprovada na origem',devolver_analise:'Amanda pediu ajuste na análise de perfil',confirmar_envio_analise:'Amanda confirmou o envio da análise ao cliente'};
- const evento={acao:rotulos[acao],por:ator.real,em,detalhe:'Versão de envio '+meta.snapshotNumero+' · '+meta.estado,operacaoIdCp150:op,snapshotNumeroCp150:meta.snapshotNumero,...(f.estado==='concluida'?{resultadoNumeroCp150:f.analiseConcluida.numero}:{})};
+ const op=hashI165([ator.uid,ator.real,ator.papel,operacao]),rotulos={enviar_material:'Material enviado para análise de perfil',iniciar_analise:'Análise de perfil iniciada',salvar_analise:'Rascunho da análise atualizado na origem',concluir_analise:'Análise de perfil concluída na origem',pedir_complemento:'Complemento solicitado na entrada protegida',vincular_demanda:'Demanda vinculada ao material já confirmado',aprovar_analise:'Análise de perfil aprovada na origem',devolver_analise:'Amanda pediu ajuste na análise de perfil',confirmar_envio_analise:'Amanda confirmou o envio da análise ao cliente',encerrar_acompanhamento:'Acompanhamento encerrado manualmente com análise histórica já enviada',retomar_acompanhamento:'Acompanhamento da base atual retomado manualmente'};
+ const encerramento=encerramentoAcompanhamentoCp180(f);
+ const evento={acao:rotulos[acao],por:ator.real,em,detalhe:'Versão de envio '+meta.snapshotNumero+' · '+meta.estado,operacaoIdCp150:op,snapshotNumeroCp150:meta.snapshotNumero,...(['encerrar_acompanhamento','retomar_acompanhamento'].includes(acao)?{controleAcompanhamentoCp180:structuredClone(f.encerramentoAcompanhamentoCp180)}:{}),...(f.estado==='concluida'?{resultadoNumeroCp150:f.analiseConcluida.numero}:{})};
  const repetidos=(antes?.historico||[]).filter(x=>x?.operacaoIdCp150===op);if(repetidos.length){e(repetidos.length===1&&igual(repetidos[0],evento)&&sync.confirmada,'Esta operação já consta com outro estado. Releia o recibo da tentativa original.');return {id,depois:antes,alterou:false};}
  if(!antes)e(typeof p.nome==='string'&&p.nome.length>0&&p.nome.length<=2000,'Confira o nome do cliente antes de criar a demanda.');
  const novo=antes||{titulo:'Análise de perfil · '+p.nome,descricao:'O material deste cliente está na entrada protegida. Abra esta demanda para consultar briefing, reunião e documentos e continuar a análise no mesmo lugar. Não é necessário reenviar os arquivos. Esta tarefa acompanha a etapa real; abrir não conclui a análise.',tipoEspecial:TIPO_DEMANDA_ENTRADA_CP150,ehAviso:true,origem:'sistema',criadoPor:ator.real,cliente:p.cliente,clienteNome:p.nome,onboardingId:p.id,prazoData:'',prazoHora:'',provaTexto:'',provaImagemUrl:'',criadoEm:em};
- const depois={...novo,destinatario:destino(f),status:status(f),entradaPerfilCp150:meta,atualizadoEm:em,atualizadoPor:ator.real,historico:[...(antes?.historico||[]),evento],...(status(f)==='aprovada'?{concluidoPor:f.apresentacaoAnalise?.enviadaPor?.atorReal||f.analiseConcluida.concluidaPor.atorReal,concluidoEm:f.apresentacaoAnalise?.enviadaEm||f.analiseConcluida.concluidaEm,notaConclusao:f.apresentacaoAnalise?'Análise revisada e envio ao cliente confirmado na entrada protegida.':'Análise concluída na entrada protegida.'}:{concluidoPor:'',concluidoEm:'',notaConclusao:''})};
+ const depois={...novo,destinatario:destino(f),status:status(f),entradaPerfilCp150:meta,atualizadoEm:em,atualizadoPor:ator.real,historico:[...(antes?.historico||[]),evento],...(status(f)==='aprovada'?{concluidoPor:encerramento?.por.atorReal||f.apresentacaoAnalise?.enviadaPor?.atorReal||f.analiseConcluida.concluidaPor.atorReal,concluidoEm:encerramento?.em||f.apresentacaoAnalise?.enviadaEm||f.analiseConcluida.concluidaEm,notaConclusao:encerramento?'Acompanhamento encerrado por registro manual; a análise da base atual não foi declarada concluída nem aprovada.':f.apresentacaoAnalise?'Análise revisada e envio ao cliente confirmado na entrada protegida.':'Análise concluída na entrada protegida.'}:{concluidoPor:'',concluidoEm:'',notaConclusao:''})};
  validarDemandaEntradaPerfilCp150(depois,id,p);return {id,depois,alterou:true};
 }

@@ -1,3 +1,4 @@
+import {executarRecepcaoLegendasCp183} from './recepcao-legendas-cp183.mjs';
 /* Recepção administrativa limitada. Não escreve calendários, aprovação ou publicação. */
 import {createHash} from 'node:crypto';
 import GetEmpresasOtavioI144 from './lib/empresas-cp101-i165.mjs';
@@ -75,6 +76,7 @@ export async function executarRecepcaoPedidosClienteCp175(db,{agora=new Date(),l
  let query=db.collection(CAIXA_CP175).where('lido','==',false).orderBy('__name__').limit(limite+1);if(cursor)query=query.startAfter(cursor);
  const snap=await query.get(),pagina=snap.docs.slice(0,limite),resultado={ativa:true,conferidas:pagina.length,recebidas:0,jaExistentes:0,ignoradas:0,demandaIds:[],erros:[],maisPendentes:snap.docs.length>limite,cursor:''};
  for(const s of pagina){if(!candidata(s.data())){resultado.ignoradas++;continue;}try{const r=await receberPedidoClienteTxCp175(db,s.id,{agora});if(r.estado==='recebida')resultado.recebidas++;else if(r.estado==='ja_existente')resultado.jaExistentes++;else resultado.ignoradas++;if(['recebida','ja_existente'].includes(r.estado))resultado.demandaIds.push(r.demandaId);}catch(e){resultado.erros.push({origem:s.id,erro:String(e.message||e).slice(0,500)});}}
+ const limiteLegendas=Math.min(limite,100-resultado.demandaIds.length),legendas=limiteLegendas>0?await executarRecepcaoLegendasCp183(db,{agora,limite:limiteLegendas}):{ativa:true,estado:'aguarda_proximo_lote',demandaIds:[],erros:[],maisPendentes:true};resultado.legendasCp183=legendas;resultado.demandaIds.push(...legendas.demandaIds);resultado.erros.push(...legendas.erros.map(x=>({...x,servico:'legendas_cp183'})));
  resultado.cursor=resultado.maisPendentes?pagina.at(-1).id:'';
  await controle.set({schema:1,estado:resultado.erros.length?'conferir_origens':resultado.maisPendentes?'mais_pendentes':'conferida',ultimaExecucao:agora.toISOString(),cursor:resultado.cursor,conferidas:resultado.conferidas,recebidas:resultado.recebidas,jaExistentes:resultado.jaExistentes,ignoradas:resultado.ignoradas,maisPendentes:resultado.maisPendentes,erros:clonar(resultado.erros),limite,portalAbertoNecessario:false,origem:'cron operacional existente I165'},{merge:true});
  return resultado;

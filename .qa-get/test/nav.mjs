@@ -1,16 +1,57 @@
-import fs from'node:fs';import path from'node:path';import vm from'node:vm';import assert from'node:assert/strict';import{Window}from'happy-dom';import{SOURCE,MUTANT,moduleURL,until}from'./runtime.mjs';
-const shellCandidate=await import(moduleURL('gs-central-unificada-r87.mjs',MUTANT==='nav'?'nav':'')),apoio=await import(moduleURL('gs-apoio-legenda-flat-i170.mjs')),wire=await import(moduleURL('codec-central-r80.mjs')),base=fs.readFileSync(path.join(SOURCE,'escritorio.html'),'utf8'),candidate=base,slice=(s,a,b)=>{const i=s.indexOf(a),j=s.indexOf(b,i);assert(i>=0&&j>i,'Segmento oficial ausente:'+a);return s.slice(i,j);};
-function fixture(source=candidate,role='Gabrielle'){
- const selectedShell=shellCandidate;const w=new Window(),document=w.document,calls=[],errors=[];document.body.innerHTML='<aside>'+['navPostagens','navPlanejamentoPreparacaoR80','navCalendarios','navRoteiros','navReferencias','navAcompCampanhas','navControlePostagem','navAgendamento','navAnalisesI108','navStories','navPedidosClientes','navAnalisesI108','navPortalGeral','navBriefings','navAcompanhamento','navRelatorio','navArquivoEntregas'].map(id=>'<div id="'+id+'" class="navitem" onclick="irPara(\'postagens\', this)">Menu '+id+'</div>').join('')+'</aside><main>'+['inicio','planejamentoPreparacaoR80','gerencia','calendarios','informacoesCentralR87','cadastro','financeiro','postagens'].map(id=>'<div id="view-'+id+'" class="view">'+(id==='postagens'?'<div id="esteiraConteudoBox"></div><div class="subtabs">'+['subtabEscreverLegenda','subtabAgendarPostagem','subtabCalendarioPostagem','subtabConfirmarPub','subtabTodasPostagens','subtabStatusCompleto'].map(id=>'<div class="subtab" id="'+id+'"></div>').join('')+'</div><div id="calSubLegendas" style="display:none"></div><div id="postagensConteudo"></div>':'')+'</div>').join('')+'</main>';
- const current={uid:'synthetic-'+role,nome:role,atorReal:role,sessao:'synthetic-cp171',geracao:1};
- const s={window:w,document,console,Promise,JSON,Array,Object,Date,String,Error,Timestamp:class{},__shell:selectedShell,__apoio:apoio,__wire:wire,usuarioAtual:role,viewAtiva:'planejamentoPreparacaoR80',htmlNavPostagensI170:null,geracaoApoioLegendaI170:0,__postSubI84:'',__geracaoAgendarI84:0,__geracaoConfirmarCp119:0,__etapaLegendasI66:'',__navegacaoAvisosMinimosI165:0,controladorProvidenciasCp140:null,entradaPerfilMontadaCp126:null,infoCentralR87:null,cascaCentralR87:null,moduloCascaCentralR87:Promise.resolve(selectedShell),estadoCentralR87:null,consultaCentralR87:null,calSubAtualR87:'',PESSOAS_DE_CAMPO:['Luís','Nathan'],VIEWS_SO_CHRIS:['mensalidades','financeiro','centralVendas','cobranca','mensagensClientesChris'],ROTAS_CP109:['estrategiaCp109','referenciasCp109','planosAcaoCp109','consultaClienteCp109','ajustesCp109','visaoMesCp109'],contextoPreparacaoR80:()=>({...current}),chaveCentralUnificadaR87:()=>JSON.stringify(current),centralAtivaConfirmadaR87:()=>true,conferirModoCentralR87:async()=>({processoExclusivoAtivo:true}),abrirAreaCentralR87:async()=>true,mostrarToast:(...a)=>errors.push(a),esc:v=>String(v??''),escAttr:v=>String(v??''),escJs:v=>String(v??''),oferecerRascunhosFilaI84:()=>{},podeLerCentralLegendasV134:p=>['Fernanda','Gabrielle','Cecília','Amanda','Chris'].includes(p),podeSairCp109:()=>true,podeSairPreparacaoR80:()=>true,podeSairAgendaI167:()=>true,podeSairDiarioI118:()=>true,podeSairIframeAntigoCentralR87:()=>true,papeisPreparacaoR80:()=>['Chris','Amanda','Gabrielle'].includes(s.usuarioAtual),papeisAgendaI167:()=>['Chris','Amanda','Gabrielle'].includes(s.usuarioAtual),papelPodeCalendariosV127:p=>['Chris','Amanda','Cecília','Luís','Nathan'].includes(p),papelPodeControlePostagem:p=>['Chris','Amanda','Cecília'].includes(p),chamadaCentralPreparacaoR80:async p=>{calls.push(p);assert.equal(p.acao,'central_legendas_pendentes');return{data:wire.envelopeCentralR80({schema:1,postagens:[{id:'synth_post',cliente:'synth-client',clienteNome:'Cliente sintético',titulo:'Apoio de legenda',legenda:'Texto preservado',status:'aguardando_legenda',linkVideo:'https://example.test/video.mp4'}],proximaPagina:'',indisponiveis:0})};}};
- const route=slice(source,'  window.irPara = function(nome, el, opcoes){','  window.setCadastroSub = function');
- for(const match of route.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)){const n=match[1];if(!(n in s)&&!['if','for','switch','catch','function','setPostagensSub','irPara','desenharCentralUnificadaR87','gabiRestritaI170','rotaGabiI170','negarEditorialGabiI170'].includes(n))s[n]=()=>{};}
- for(const n of ['limparEntradaClienteCp126','renderEsteiraConteudo','limparAlvoLegendaI84'])s[n]=()=>{};
- let apoioFn=slice(source,'  async function renderApoioLegendasI170','  window.renderApoioLegendasI170=');apoioFn=apoioFn.replace(/import\('\.\/gs-apoio-legenda-flat-i170\.mjs\?v=i170-1'\)/g,'Promise.resolve(__apoio)').replace(/import\('\.\/codec-central-r80\.mjs\?v=[a-f0-9]+'\)/g,'Promise.resolve(__wire)');
- const menu=slice(source,'  function gabiRestritaI170(){','  async function renderApoioLegendasI170'),draw=slice(source,'  async function desenharCentralUnificadaR87(){','  async function conferirModoCentralR87(').replace(/import\('\.\/gs-central-unificada-r87\.mjs\?v=[a-f0-9]+'\)/g,'Promise.resolve(__shell)'),post=slice(source,'  window.setPostagensSub = function(qual, el){','  /* ===== CALENDÁRIO DE POSTAGEM DA CECÍLIA');
- const openArea=slice(source,'  async function abrirAreaCentralR87(area){','  window.abrirAreaCentralR87=abrirAreaCentralR87;');vm.createContext(s);vm.runInContext(menu+'\n'+apoioFn+'\n'+draw+'\n'+post+'\n'+openArea+'\nfunction irPara(...a){return window.irPara(...a); }'+'\nfunction setPostagensSub(...a){return window.setPostagensSub(...a);}\nfunction renderCentralLegendasV134(){return renderApoioLegendasI170();}\n'+route+'\nwindow.applyMenu=aplicarMenuGabiI170;window.draw=desenharCentralUnificadaR87;',s);
- const nav=document.getElementById('navPostagens');nav.addEventListener('click',()=>w.irPara('postagens',nav));
- return{w,s,document,current,calls,errors,nav,async start(){w.applyMenu();await w.draw();},async click(){nav.click();await new Promise(r=>setTimeout(r,8));},close(){s.cascaCentralR87?.destroy();w.happyDOM.abort();}};
+import assert from 'node:assert/strict';
+import {Window} from 'happy-dom';
+import {moduleURL,MUTANT,until,read} from './runtime.mjs';
+import vm from 'node:vm';
+const shell=await import(moduleURL('gs-central-unificada-r87.mjs',MUTANT==='nav'?'nav':''));
+function fixture(role){
+ const w=new Window(),d=w.document,calls=[];
+ d.body.innerHTML='<aside>'+['navPostagens','navCalendarios','navControlePostagem','navPlanejamentoPreparacaoR80'].map(id=>'<div id="'+id+'" style="display:flex">'+id+'</div>').join('')+'</aside><main><div class="view" id="view-postagens"></div></main>';
+ const context={uid:'qa_'+role,nome:role,atorReal:role,sessao:'qa_cp183_nav',geracao:1};
+ const state={ativo:true,view:'postagens',postSub:'legenda'};
+ const controller=shell.criarCentralUnificadaR87({documento:d,contexto:()=>context,abrir:async area=>{calls.push(area);return true;},conferir:async()=>true});
+ controller.sincronizar(state);
+ return {w,d,calls,context,controller,state,close(){controller.destroy();w.happyDOM.abort();}};
 }
-export async function runNav(){const f=fixture();try{await f.start();assert.equal(f.nav.hidden,false,'ApoioGabi precisa permanecer visível após montagemR87');assert.equal(f.nav.style.display,'flex');assert.equal(f.document.querySelectorAll('#navPostagens').length,1);for(let i=0;i<4;i++){const b=f.document.querySelector('[data-grupo-r87=conteudo]');assert(b);b.click();await until(()=>f.s.viewAtiva==='postagens'&&!!f.document.querySelector('[data-apoio-legendas-flat-i170]'),'R87→mesmafilaI170');assert.equal(f.nav.hidden,false,'syncinterno não pode ocultar entrada');}await f.click();assert.equal(f.s.__postSubI84,'legenda');assert(f.document.querySelector('#legenda_synth_post'));for(const a of['agendar','programados','rascunho','aprovar','ajustes','calendarios','envios','campanhas','informacoes'])assert.equal(await f.s.abrirAreaCentralR87(a),false,a);for(const sub of['agendar','gradeMes','confirmar','todas','statusCompleto'])assert.equal(f.w.setPostagensSub(sub),false,sub);assert(f.calls.length>0&&f.calls.every(p=>p.acao==='central_legendas_pendentes'&&p.papelOperado==='Gabrielle'));return{sameEntry:true,internalClicks:4,reader:'central_legendas_pendentes',editorialNegatives:9,schedulingNegatives:5};}finally{f.close();}}
+async function conferirDelegacao(){
+ const source=read('escritorio.html'),declaration=source.match(/const PAPEIS_OPERAVEIS_POR_CHRIS = Object\.freeze\(\[[^\n]+\]\);/),entry=source.match(/window\.entrarOperacaoPerfilChris = async function\(\)\{[\s\S]*?\n  \};/),guard=source.match(/function __operacaoDelegadaChrisAtiva\(\)\{[\s\S]*?\n  \}/);
+ assert(declaration&&entry&&guard,'Contratos de operação presentes no Office completo');
+ const w=new Window(),d=w.document;let changes=0,banners=0,motor=0;
+ d.body.innerHTML='<select id="operacaoPapelEscolhido"><option>Gabrielle</option><option>Amanda</option></select><select id="euSouGlobal"><option>Chris</option><option>Amanda</option><option>Gabrielle</option></select><div id="painelOperacaoPerfisChris"></div>';
+ w.__pessoaAutenticadaReal='Chris';w.__operacaoDelegadaChris='';w.mudarUsuarioGlobal=async()=>{changes++;};
+ const ctx=vm.createContext({window:w,document:d,Option:w.Option,podeSairDiarioI118:()=>true,pararMotorAutomacoes:()=>{motor++;},atualizarBannerOperacaoPerfilChris:()=>{banners++;},mostrarToast:()=>{}});
+ vm.runInContext(declaration[0]+'\n'+entry[0]+'\n'+guard[0],ctx);
+ try{
+  d.getElementById('operacaoPapelEscolhido').value='Gabrielle';await w.entrarOperacaoPerfilChris();
+  assert.equal(w.__operacaoDelegadaChris,'','Nome recusado antes de registrar operação ou banner ativo');assert.equal(changes,0);assert.equal(banners,0);assert.equal(motor,0);assert(d.getElementById('painelOperacaoPerfisChris'));
+  w.__operacaoDelegadaChris='Gabrielle';assert.throws(()=>vm.runInContext('__operacaoDelegadaChrisAtiva()',ctx),e=>e.code==='gs/operacao-delegada-invalida','Flag antiga não autoriza escritor delegado');w.__operacaoDelegadaChris='';
+  d.getElementById('operacaoPapelEscolhido').value='Amanda';await w.entrarOperacaoPerfilChris();assert.equal(w.__operacaoDelegadaChris,'Amanda');assert.equal(changes,1);assert.equal(banners,1);assert.equal(motor,1);assert.equal(d.getElementById('euSouGlobal').value,'Amanda');assert.equal(vm.runInContext('__operacaoDelegadaChrisAtiva()',ctx),true);
+  w.__pessoaAutenticadaReal='Cecília';w.__operacaoDelegadaChris='';await w.entrarOperacaoPerfilChris();assert.equal(w.__operacaoDelegadaChris,'');assert.equal(changes,1);
+  return {GabrielleRejectedBeforeState:true,staleFlagDenied:true,AmandaPositive:true,nonChrisDenied:true,qualification:'Callbacks literais do Office em DOM/VM; não é login pessoal nem escrita SDK.'};
+ }finally{w.happyDOM.abort();}
+}
+export async function runNav(){
+ const delegation=await conferirDelegacao();
+ const a=fixture('Amanda'),c=fixture('Chris'),g=fixture('Gabrielle'),ce=fixture('Cecília');
+ try{
+  const oldEntry=a.d.getElementById('navPostagens');
+  assert.equal(oldEntry.hidden,false,'Amanda conserva a entrada familiar de legendas e postagens');
+  assert.equal(oldEntry.style.display,'flex');
+  assert.equal(a.d.querySelectorAll('#navPostagens').length,1);
+  for(const f of[a,c]){
+   const button=f.d.querySelector('[data-area-r87="legendas"]');
+   assert(button,'Legendas disponível na Central do mesmo papel');
+   assert.equal(f.d.querySelectorAll('[data-area-r87="legendas"]').length,1);
+   for(let i=0;i<4;i++){
+    f.d.querySelector('[data-area-r87="legendas"]').click();await until(()=>f.calls.length===i+1,'mesma área de legendas');
+    assert.equal(f.calls[i],'legendas');
+   }
+  }
+  assert.equal(c.d.getElementById('navPostagens').hidden,true,'Chris usa a mesma Central sem outro atalho paralelo');
+  assert.deepEqual(shell.areasCentralR87('Gabrielle'),[],'Gabrielle não possui ferramentas ativas após saída');
+  assert.equal(g.d.querySelector('[data-area-r87]'),null);assert.deepEqual(g.calls,[]);
+  assert.equal(ce.d.getElementById('navPostagens').hidden,false,'Entrada familiar Cecília preservada');
+  assert.equal(ce.d.getElementById('navCalendarios').hidden,false);assert.equal(ce.d.getElementById('navControlePostagem').hidden,false);
+  a.controller.destroy();assert.equal(oldEntry.hidden,false,'Desmontar restaura o menu anterior');
+  return {AmandaSameEntry:true,ChrisSameCentral:true,internalClicks:8,GabrielleNoActiveArea:true,CeciliaEntriesPreserved:3,delegation,qualification:'R87 literal DOM e callbacks de delegação do Office; demais permissões/SDK em camadas separadas. Sem escritor nem conta pessoal.'};
+ }finally{for(const f of[a,c,g,ce])f.close();}
+}

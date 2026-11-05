@@ -1,3 +1,4 @@
+import {temDocumentoUnicoCp183,fonteDocumentoUnicoCp183,estadoDocumentoUnicoCp183} from './gs-documento-unico-cp183.mjs';
 /* Projeção pura I155. Registros antigos continuam história; validade não é inferida do texto. */
 export const ACOES_CORRECAO_I155_CP111=Object.freeze(['desconsiderar_confirmacao','registrar_insumos_transicao']);
 export const SITUACOES_REUNIAO_CP111=Object.freeze(['normal','nao_houve','anterior_sem_previa']);
@@ -22,6 +23,7 @@ export function fontePesquisaDocumentalCp124(c){
 export function fontePesquisaCp124(c){if(Object.hasOwn(docs(c),'entregaReferenciasCp124'))return fontePesquisaDocumentalCp124(c);return c?.lote&&docs(c).insumosTransicaoCp111?.ativa!==true?{tipo:'lote',versao:c.lote.versao}:null;}
 export function mesmaFontePesquisaCp124(a,b){const canon=x=>Array.isArray(x)?x.map(canon):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canon(x[k])])):x;return !!a&&!!b&&JSON.stringify(canon(a))===JSON.stringify(canon(b));}
 export function estadoEtapasI155Cp111(c){
+ if(temDocumentoUnicoCp183(c))return estadoDocumentoUnicoCp183(c);
  const d=docs(c),fontePesquisa=fontePesquisaCp124(c),pesquisa=!!fontePesquisa;
  const previaId=documentoEfetivoI155Cp111(c,'previa'),reuniaoId=documentoEfetivoI155Cp111(c,'reuniao'),consolidadoId=documentoEfetivoI155Cp111(c,'consolidado'),enviado=documentoEfetivoI155Cp111(c,'consolidadoEnviado');
  const previa=pesquisa&&!!previaId&&(fontePesquisa.tipo==='documento'?mesmaFontePesquisaCp124(d.previaFontePesquisaCp124,fontePesquisa):!d.previaFontePesquisaCp124&&d.previaLote===c.lote.versao),r=situacaoReuniaoI155Cp111(c);
@@ -31,6 +33,7 @@ export function estadoEtapasI155Cp111(c){
  return {pesquisa,previa,reuniao,consolidado,criacao,revisao,disponivel:revisao};
 }
 export function validadeBaseI155Cp111(c){
+ if(temDocumentoUnicoCp183(c)){const f=fonteDocumentoUnicoCp183(c);return {estado:f?'vigente':'historico_invalido',valida:!!f,baseId:c.documentos?.baseDocumentoUnicoCp183?.documentoId||'',motivos:f?[]:['O documento único ou sua confirmação mudou. Confira a versão atual; prévia e reunião não serão fabricadas.']};}
  const d=docs(c),baseId=d.consolidadoEnviado||'',e=estadoEtapasI155Cp111(c),motivos=[];
  if(!baseId)return {estado:'ausente',valida:false,baseId:'',motivos:['Ainda não há consolidado enviado.']};
  if(desconsideracaoI155Cp111(c,baseId))motivos.push('A confirmação deste envio foi desconsiderada.');

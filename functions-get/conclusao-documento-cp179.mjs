@@ -1,7 +1,8 @@
+import {conferirRetornoDocumentoCp183} from './documento-unico-cp183.mjs';
 /* CP179: conclusão de uma obrigação documental, nunca da criação do calendário. */
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import {assinaturaOrigemDemandaCp138,finalidadeOrigemDocumentalCp138,identidadeOrigemCompativelCp138,documentoReentregavelCp154,empresaMaterial} from './central/lib/gs-planejamento-social-i155.mjs';
+import {retornoDocumentoUnicoCp183,assinaturaOrigemDemandaCp138,finalidadeOrigemDocumentalCp138,identidadeOrigemCompativelCp138,documentoReentregavelCp154,empresaMaterial} from './central/lib/gs-planejamento-social-i155.mjs';
 import {cicloR80,exigirCentralR80 as e} from './central-preparacao-validacao-r80.mjs';
 
 export const ACAO_RECONCILIAR_DOCUMENTOS_CP179='central_documentos_reconciliar_cp179';
@@ -28,6 +29,8 @@ function descritorBase(d,demandaId){
  return null;
 }
 export function identidadeSolicitacaoDocumentoCp179(d,demandaId){
+ if(!id(demandaId)||excluida(d))return null;
+ const retorno=retornoDocumentoUnicoCp183(d);if(retorno&&retorno.demandaId===demandaId)return {schema:1,solicitacaoId:'cp179s_'+hash([demandaId,retorno.cliente,retorno.competencia,'campanha',retorno.empresaOtavio]),demandaId,cliente:retorno.cliente,competencia:retorno.competencia,finalidade:'campanha',empresaOtavio:retorno.empresaOtavio,modo:'documento_completo',fonte:'retorno_documental_cp183',retornoOperacao:retorno.operacao};
  const base=descritorBase(d,demandaId);if(base)return base;
  const s=d?.solicitacaoDocumentoCp179;
  if(!id(demandaId)||excluida(d)||!s||s.schema!==1||s.demandaId!==demandaId||s.modo!=='documento_completo'||!finalidades.includes(s.finalidade)||!/^cp179s_[a-f0-9]{64}$/.test(s.solicitacaoId||'')||d.destinatario!==papelFinalidade(s.finalidade)||clienteDaDemanda(d)!==s.cliente)return null;
@@ -41,6 +44,7 @@ export async function registrarSolicitacaoDocumentoCp179(db,ator,pedido,{conferi
  const sid='cp179s_'+hash([p.demandaId,cliente,competencia,p.finalidade,p.empresaOtavio||'']);
  return db.runTransaction(async tx=>{
   await conferirGate(tx);const dr=db.doc('demandas/'+p.demandaId),sr=db.doc(COLECAO_SOLICITACOES_DOCUMENTO_CP179+'/'+sid),[ds,ss]=await Promise.all([tx.get(dr),tx.get(sr)]),d=ds.data();
+  await conferirRetornoDocumentoCp183(db,tx,d);
   e(ds.exists&&!excluida(d)&&d.destinatario===papelFinalidade(p.finalidade)&&clienteDaDemanda(d)===cliente,'A tarefa não pertence ao responsável e ao cliente deste documento.');
   e(d.tipoEspecial==='organizacao_social_i167'||d.tipoEspecial==='planejamento_social_i155','Uma demanda genérica não é uma obrigação documental.');
   e(!['criacao','revisao','disponivel','liberacao'].includes(d.agendaOrganizacaoI167?.etapa||d.planejamentoI155?.etapa),'Criar, revisar ou liberar calendário não se conclui com um documento.');
@@ -76,6 +80,7 @@ export async function prepararConclusoesDocumentaisNaTxCp179(db,tx,ator,{ciclo,d
   const candidatas=[];for(const ds of tasks.docs){const original=ds.data(),d=demandasDepois.get(ds.id)||original;let s=identidadeSolicitacaoDocumentoCp179(d,ds.id);
    if(!s&&pedidoOrigem?.origem?.id===ds.id){const o=pedidoOrigem.origem,tipo=finalidadeOrigemDocumentalCp138(original),etapa=original.agendaOrganizacaoI167?.etapa||original.planejamentoI155?.etapa;const segura=o.classificacaoConfirmada===true&&o.cliente===c.cliente&&o.competencia===c.competencia&&finalidades.includes(o.finalidade)&&original.destinatario===papelFinalidade(o.finalidade)&&['Chris','Amanda'].includes(original.criadoPor)&&['organizacao_social_i167','planejamento_social_i155'].includes(original.tipoEspecial)&&!['criacao','revisao','disponivel','liberacao'].includes(etapa)&&(!tipo||tipo===o.finalidade)&&identidadeOrigemCompativelCp138(original,o)&&await assinaturaOrigemDemandaCp138(original)===o.assinatura;e(segura,'Esta origem não é uma obrigação puramente documental. A confirmação não foi gravada.');s={schema:1,solicitacaoId:'cp179s_'+hash([ds.id,c.cliente,c.competencia,o.finalidade,o.empresaOtavio]),demandaId:ds.id,cliente:c.cliente,competencia:c.competencia,finalidade:o.finalidade,empresaOtavio:o.empresaOtavio,modo:'documento_completo',fonte:'confirmacao_explicita_origem',confirmacaoOperacao:pedidoOrigem.operacao,registradoUid:ator.uid,registradoPor:ator.real,perfil:ator.papel,em:agora.toISOString()};}
    if(!s||s.cliente!==c.cliente||s.competencia!==c.competencia||!identidadeOrigemCompativelCp138(d,s)||!(d.destinatario===ator.papel||ator.papel==='Chris'&&ator.real==='Chris'))continue;
+   if(s.fonte==='retorno_documental_cp183')await conferirRetornoDocumentoCp183(db,tx,original);
    if(s.fonte==='classificacao_explicita_gestao'){const r=await tx.get(db.doc(COLECAO_SOLICITACOES_DOCUMENTO_CP179+'/'+s.solicitacaoId));e(r.exists&&isDeepStrictEqual(r.data().solicitacao,s),'A solicitação documental não possui autoridade confirmada.');}
    if(s.fonte==='confirmacao_explicita_origem'&&s.confirmacaoOperacao!==pedidoOrigem?.operacao){const ev=await tx.get(cr.collection('eventos').doc(s.confirmacaoOperacao)),v=ev.data();e(ev.exists&&v.autorUid===s.registradoUid&&v.autorNome===s.registradoPor&&v.perfil===s.perfil&&v.resultado?.origemDemandaCp138?.demandaId===ds.id,'A confirmação explícita da solicitação precisa de autoridade.');}
    candidatas.push({ds,d,s});}
@@ -94,7 +99,7 @@ export async function prepararConclusoesDocumentaisNaTxCp179(db,tx,ator,{ciclo,d
    e(d.historico===undefined||Array.isArray(d.historico)&&d.historico.length<1000,'O histórico desta demanda precisa ser preservado.');
    const conclusao={schema:1,estado:'concluida',demandaId:ds.id,ciclo,cliente:c.cliente,competencia:c.competencia,finalidade:s.finalidade,empresaOtavio:s.empresaOtavio,documentoId:rid,versao:a.m.versao,hashTexto:a.hashTexto,operacao,confirmacaoOperacao:a.confirmacaoOperacao,confirmacaoOriginal:clone(a.cf),autorConfirmacaoUid:a.autoridade.autorUid,autorConfirmacaoNome:a.autoridade.autorNome,perfilConfirmacao:a.autoridade.perfil,executadoUid:ator.uid,executadoPor:ator.real,perfilExecutado:ator.papel,em:agora.toISOString()};
    const prova='Documento completo confirmado: '+c.clienteNome+' · '+c.competencia+' · '+(s.finalidade==='campanha'?'Campanhas e orientações':'Referências')+' · versão '+a.m.versao+' · '+rid;
-   writes.push({ref:ds.ref,rec:rr,conclusao,patch:{...(s.fonte==='confirmacao_explicita_origem'&&!d.solicitacaoDocumentoCp179?{solicitacaoDocumentoCp179:s}:{}),status:'aprovada',concluidoPor:'sistema (documento confirmado)',concluidoEm:stamp,provaTexto:prova,conclusaoAutomaticaDocumentoCp179:conclusao,historico:[...(d.historico||[]),{acao:'Demanda documental concluída automaticamente após confirmação',por:ator.real,perfil:ator.papel,em:conclusao.em,operacao,documento:conclusao,statusAnterior:d.status,provaAnterior:{texto:d.provaTexto||'',link:d.provaImagemUrl||''}}]},antes:{status:d.status,provaTexto:d.provaTexto||'',provaImagemUrl:d.provaImagemUrl||''}});out.concluidas.push(ds.id);out.operacoesDocumentoCp179.push(operacao);
+   writes.push({ref:ds.ref,rec:rr,conclusao,patch:{...((s.fonte==='confirmacao_explicita_origem'&&!d.solicitacaoDocumentoCp179)||s.fonte==='retorno_documental_cp183'?{solicitacaoDocumentoCp179:s}:{}),status:'aprovada',concluidoPor:'sistema (documento confirmado)',concluidoEm:stamp,provaTexto:prova,conclusaoAutomaticaDocumentoCp179:conclusao,historico:[...(d.historico||[]),{acao:'Demanda documental concluída automaticamente após confirmação',por:ator.real,perfil:ator.papel,em:conclusao.em,operacao,documento:conclusao,statusAnterior:d.status,...(s.fonte==='retorno_documental_cp183'?{solicitacaoAnterior:d.solicitacaoDocumentoCp179||null}:{}),provaAnterior:{texto:d.provaTexto||'',link:d.provaImagemUrl||''}}]},antes:{status:d.status,provaTexto:d.provaTexto||'',provaImagemUrl:d.provaImagemUrl||''}});out.concluidas.push(ds.id);out.operacoesDocumentoCp179.push(operacao);
   }
   return {resultado:out,escritas:writes};
 }

@@ -35,6 +35,15 @@ try {
     try { await j.executar({ amb, seed, nav, erroGrave, registrar }); }
     catch (e) { registrar({ jornada: j.id, caso: 'execução', ok: false, ms: 0, detalhe: 'exceção: ' + String(e).slice(0, 200) }); }
   }
+  // Sentinela das rules (F-06): o Firebase para de avaliar uma regra acima de 1000 expressões e nega "por limite";
+  // qualquer ocorrência no log do emulador — ou erro de avaliação (campo lido sem default, F-02) — derruba o portão.
+  try {
+    const log = fs.readFileSync(path.join(RAIZ, 'ensaio/.runtime/firestore-debug.log'), 'utf8');
+    const mil = (log.match(/maximum of 1000 expressions/g) || []).length;
+    const aval = [...new Set((log.match(/evaluation error[^\n]{0,160}/gi) || []))];
+    registrar({ jornada: 'RULES', caso: 'nenhuma regra estourou o limite de 1000 expressões', ok: mil === 0, ms: 0, detalhe: mil ? `${mil} ocorrência(s) no log do emulador` : 'ok' });
+    registrar({ jornada: 'RULES', caso: 'nenhum erro de avaliação (campo sem default etc.)', ok: aval.length === 0, ms: 0, detalhe: aval.length ? aval.slice(0, 2).join(' | ') : 'ok' });
+  } catch (e) { registrar({ jornada: 'RULES', caso: 'leitura do log do emulador', ok: false, ms: 0, detalhe: String(e).slice(0, 120) }); }
 } finally { try { await nav?.fechar(); } catch {} await amb.parar(); }
 
 const ok = resultados.filter(r => r.ok).length, total = resultados.length;

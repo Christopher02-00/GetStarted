@@ -1,11 +1,30 @@
 # Ensaio Get — portão de jornadas em navegador real
-Sobe Firestore+Auth emulators com as rules do repo, serve o checkout, popula dados representativos e percorre jornadas por papel no Chromium (Playwright).
+Sobe Firestore + Auth + **Functions** emulators (rules e `functions-get/` do próprio checkout), serve o site, popula dados representativos e percorre jornadas por papel no Chromium (Playwright), do clique ao destinatário.
 ```bash
 cd ensaio && npm i && node montar-cdn.mjs        # uma vez: SDK Firebase local (sem CDN)
+(cd functions-get && npm ci)                     # uma vez: dependências das Cloud Functions que o emulador executa
 node ensaio/rodar.mjs                            # bateria inteira → ensaio/saida/resultado.json + screenshots
-node ensaio/rodar.mjs --jornadas J02             # só uma jornada
+node ensaio/rodar.mjs --jornadas J04             # só uma jornada
 node ensaio/explorar.mjs Cecília                 # abre o site como a pessoa e tira foto (debug)
+ENSAIO_CONSOLE=1 ENSAIO_LOG_FN=1 node ensaio/rodar.mjs --jornadas J03   # console completo + todas as chamadas do callable em ensaio/.runtime/
 ```
-Requisitos: Node ≥ 20, Java 21, firebase-tools 15 (`npm i -g firebase-tools@15`), jar do Firestore emulator em `~/.cache/firebase/emulators/` (baixado pelo `firebase setup:emulators:firestore`).
-Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html` só liga em `127.0.0.1?ensaio=1`.
-Regra: todo PR roda a bateria; falhou → corrigir a causa, não o teste. Bug novo → jornada nova no mesmo PR.
+Requisitos: Node ≥ 20, Java 21, firebase-tools 15 (`npm i -g firebase-tools@15`), jar do Firestore emulator em `~/.cache/firebase/emulators/` (baixado por `firebase setup:emulators:firestore`). Variáveis `*proxy*` são removidas do ambiente dos emuladores.
+Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cliente.html` só liga em `127.0.0.1?ensaio=1`. Login = credencial Google sintética no Auth emulator (mesmo provedor e claims que a produção exige).
+
+## Jornadas (R1 — 08/11/2026)
+| Id | Prova | Papéis |
+|---|---|---|
+| J01 | Login por papel: menu certo, itens dos outros fora do DOM | 8 |
+| J02 | Demanda: Chris cria → Cecília encontra e prova → Chris aprova | Chris, Cecília |
+| J03 | Gravação: Cecília agenda → Luís vê só a dele → Nathan não vê a do Luís | Cecília, Luís, Nathan |
+| J04 | Vídeo ponta a ponta: distribuir → editar → aprovar → cliente → postagem nasce (Function) → legenda → agendar → publicado → Portal | Amanda, Helo, Chris, Cecília, cliente |
+| J05 | Portal: cliente A não vê conteúdo de B (token/slug) | clientes |
+| J09 | Troca de papel na mesma aba: DOM do papel anterior some | Chris↔Cecília |
+| J10 | Financeiro: só Chris tem DOM e acesso; senha pessoal | Chris, Amanda |
+
+## Regras do próprio ensaio (aprendidas a duras penas)
+1. **Nunca listar uma coleção pelo REST enquanto a transação do app está em voo.** O emulador aborta o commit ("Transaction lock timeout"). Espere o sinal da UI (botão volta ao normal, toast) e só então leia o banco; polling ≥ 1 s.
+2. **Seed tem de ser consistente com as Functions.** Postagem sem vídeo, vídeo com editor sem `editorAtribuidoEm`, correção sem `correcaoSolicitadaEm` → a Function do gatilho morre, o worker morto não desfaz a transação e os locks ficam presos. `rodar.mjs` espera as Functions ficarem ociosas depois do seed (`aguardarFunctionsOciosas`).
+3. **O que o backend liga muda a UI.** Com `processo_calendarios_i164/ativo` a Central R87 tira "Gravações" da barra da Cecília e põe os atalhos amarelos. As expectativas seguem o estado do backend (R2 vai copiar o estado real).
+4. Falhou → corrigir a **causa** (no site ou no ensaio), nunca afrouxar o teste. Bug novo do site → jornada nova no mesmo PR. Negação legítima logada como erro (F-03/F-07) entra em `RUIDO` com o achado anotado — e vira ficha.
+5. Depois de rodar, confira que não ficaram emuladores órfãos (`pgrep -f firebase-tools/lib/emulator`); o `subir()` mata os anteriores.

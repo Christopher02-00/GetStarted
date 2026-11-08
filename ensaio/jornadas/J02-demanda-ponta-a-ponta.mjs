@@ -9,7 +9,7 @@ const amanha = () => { const d = new Date(Date.now() + 86400000); return `${d.ge
 
 async function esperarDemanda(seed, filtro, ms = 10000) {
   const fim = Date.now() + ms;
-  while (Date.now() < fim) { const d = (await seed.listar('demandas')).find(filtro); if (d) return d; await new Promise(r => setTimeout(r, 300)); }
+  while (Date.now() < fim) { const d = (await seed.listar('demandas')).find(filtro); if (d) return d; await new Promise(r => setTimeout(r, 1000)); } // 1 s: leitura REST frequente aborta transações no emulador
   return null;
 }
 

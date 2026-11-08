@@ -8,7 +8,7 @@ const amb = await subir();
 try {
   const seed = criarSeed(amb.portas);
   await seedPadrao(seed);
-  const nav = await abrirNavegador();
+  const nav = await abrirNavegador(amb.portas);
   const { page, erros, fechar } = await nav.novaPagina();
   const t0 = Date.now();
   try {

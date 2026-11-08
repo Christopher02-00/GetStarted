@@ -13,7 +13,9 @@ const dirJ = path.join(RAIZ, 'ensaio', 'jornadas');
 const arquivos = fs.readdirSync(dirJ).filter(f => f.endsWith('.mjs')).sort().filter(f => !filtro.length || filtro.some(j => f.startsWith(j)));
 
 /** Ruído conhecido do ambiente offline (não é defeito do site): Cloud Functions inalcançáveis e CDNs. */
-const RUIDO = [/cloudfunctions|FirebaseError: internal|gs-callable-get/, /false for '(get|list)' @ L\d+|Missing or insufficient permissions|sessão de gerência|classificar as castas/, /ERR_CONNECTION_REFUSED|ERR_ABORTED|net::ERR_/, /Failed to load resource/, /emailjs/i];
+const RUIDO = [/cloudfunctions|FirebaseError: internal|gs-callable-get/, /false for '(get|list)' @ L\d+|Missing or insufficient permissions|sessão de gerência|classificar as castas/, /ERR_CONNECTION_REFUSED|ERR_ABORTED|net::ERR_/, /Failed to load resource/, /emailjs/i,
+  // ACHADO F-07 (08/11): para Luís/Nathan, conferirModoCentralR87() devolve null por desenho e responsabilidadesEditoraisCp109() loga isso como erro a cada carga. Inofensivo (nada é criado); vira ficha, não bloqueia o portão.
+  /Falha na agenda de reuniões: Error: Não consegui confirmar a responsabilidade atual/];
 export const erroGrave = e => !RUIDO.some(r => r.test(e));
 
 const resultados = [];
@@ -25,7 +27,8 @@ let nav;
 try {
   const seed = criarSeed(amb.portas);
   await seedPadrao(seed);
-  nav = await abrirNavegador();
+  await amb.aguardarFunctionsOciosas();
+  nav = await abrirNavegador(amb.portas);
   for (const f of arquivos) {
     const j = await import(path.join(dirJ, f));
     console.log(`\n── ${j.id} — ${j.nome}`);

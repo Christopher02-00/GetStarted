@@ -1,4 +1,5 @@
-// Ensaio Get — portão de jornadas. Uso: node ensaio/rodar.mjs [--jornadas J01,J02] [--mutante caminho.js]
+// Ensaio Get — portão de jornadas. Uso: node ensaio/rodar.mjs [--jornadas J01,J02] [--movel] [--mutante caminho.js]
+// --movel = mesma bateria em 390x844 (celular), obrigatório antes de publicar mudança de interface.
 // Sobe emulador + seed + navegador real, roda as jornadas, imprime tabela, grava ensaio/saida/resultado.json. Sai com código 1 se algo falhar.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,6 +10,8 @@ import { abrirNavegador, SAIDA } from './lib/navegador.mjs';
 const args = process.argv.slice(2);
 const opt = k => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
 const filtro = (opt('--jornadas') || '').split(',').filter(Boolean);
+if (args.includes('--movel') && !process.env.ENSAIO_VIEWPORT) process.env.ENSAIO_VIEWPORT = '390x844';
+if (process.env.ENSAIO_VIEWPORT) console.log(`[ensaio] viewport ${process.env.ENSAIO_VIEWPORT}`);
 const dirJ = path.join(RAIZ, 'ensaio', 'jornadas');
 const arquivos = fs.readdirSync(dirJ).filter(f => f.endsWith('.mjs')).sort().filter(f => !filtro.length || filtro.some(j => f.startsWith(j)));
 

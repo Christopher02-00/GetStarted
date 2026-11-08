@@ -3,7 +3,7 @@
 // O servidor exige a ordem (central/preparacao); cada etapa é confirmada pelas Cloud Functions reais no emulador.
 import path from 'node:path';
 import fs from 'node:fs';
-import { entrarComo, foto } from '../lib/navegador.mjs';
+import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
 export const id = 'J06';
 export const nome = 'Calendário 4.0: preparação (Amanda) → criação (Chris) → revisão/liberação (Amanda) → cliente e filmmaker leem';
 
@@ -16,6 +16,7 @@ const esperar = async (fn, ms = 15000) => { const fim = Date.now() + ms; while (
 async function abrirCentral(page, viewId) {
   await page.waitForSelector('#navPlanejamentoPreparacaoR80', { timeout: 20000 }); await page.waitForTimeout(3000);
   for (let i = 0; i < 5; i++) {
+    await abrirMenuSeMovel(page);
     await page.click('#navPlanejamentoPreparacaoR80');
     try { await page.waitForFunction(idv => { const v = document.getElementById(idv); return v && getComputedStyle(v).display !== 'none' && v.innerText.trim().length > 50; }, viewId, { timeout: 6000 }); return; } catch {}
   }

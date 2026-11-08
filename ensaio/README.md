@@ -5,6 +5,7 @@ cd ensaio && npm i && node montar-cdn.mjs        # uma vez: SDK Firebase local (
 (cd functions-get && npm ci)                     # uma vez: dependências das Cloud Functions que o emulador executa
 node ensaio/rodar.mjs                            # bateria inteira → ensaio/saida/resultado.json + screenshots
 node ensaio/rodar.mjs --jornadas J04             # só uma jornada
+node ensaio/rodar.mjs --movel                    # bateria inteira como celular (390x844, touch) — obrigatória antes de publicar mudança de interface
 node ensaio/explorar.mjs Cecília                 # abre o site como a pessoa e tira foto (debug)
 ENSAIO_CONSOLE=1 ENSAIO_LOG_FN=1 node ensaio/rodar.mjs --jornadas J03   # console completo + todas as chamadas do callable em ensaio/.runtime/
 ```

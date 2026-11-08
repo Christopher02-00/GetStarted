@@ -87,7 +87,9 @@ export async function seedPadrao(seed, { log = console.log } = {}) {
   for (const p of EQUIPE) uids[p.pessoa] = await seed.criarUsuario(p.email);
   for (const p of EQUIPE) {
     await seed.set('emails_equipe', p.pessoa, { nome: p.pessoa, email: p.email, ativo: true, excluido: false });
-    await seed.set('usuarios_equipe', p.email, { pessoa: p.pessoa, email: p.email, ativo: true, excluido: false, uid: uids[p.pessoa], criadoEm: iso(hoje) });
+    // ENSAIO_SEED_SEM_EXCLUIDO=Nome → cadastro legado sem o campo `excluido` (F-02: as rules não podem negar tudo por isso)
+    const legado = process.env.ENSAIO_SEED_SEM_EXCLUIDO === p.pessoa;
+    await seed.set('usuarios_equipe', p.email, { pessoa: p.pessoa, email: p.email, ativo: true, ...(legado ? {} : { excluido: false }), uid: uids[p.pessoa], criadoEm: iso(hoje) });
   }
   const clientes = [
     { slug: 'bluefit', nome: 'Bluefit' }, { slug: 'stokki', nome: 'Stokki' }, { slug: 'hitech', nome: 'Hitech' }, { slug: 'zeiss', nome: 'Zeiss' }, { slug: 'mochi', nome: 'Mochi' },

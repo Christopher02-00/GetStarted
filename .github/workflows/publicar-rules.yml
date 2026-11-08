@@ -1,0 +1,43 @@
+name: Publicar firestore.rules no Firebase
+# Publica as rules do main no projeto get-started-4956d.
+# Pré-requisito único (uma vez, por Chris): criar o secret FIREBASE_SERVICE_ACCOUNT no repositório
+# (Settings → Secrets and variables → Actions) com o JSON de uma service account do projeto com o papel
+# "Firebase Rules Admin" (roles/firebaserules.admin). Sem o secret o job só avisa e não falha o main.
+on:
+  push:
+    branches: [main]
+    paths: ['firestore.rules']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publicar-rules
+  cancel-in-progress: false
+jobs:
+  publicar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Conferir se o secret existe
+        id: secret
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then echo "tem=false" >> "$GITHUB_OUTPUT"; echo "::warning::FIREBASE_SERVICE_ACCOUNT ausente — rules NÃO publicadas. Publique manualmente: firebase deploy --only firestore:rules --project get-started-4956d"; else echo "tem=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.secret.outputs.tem == 'true'
+        with:
+          node-version: '24.22.1'
+      - name: Publicar rules
+        if: steps.secret.outputs.tem == 'true'
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          printf '{"firestore":{"rules":"firestore.rules"}}' > firebase.json
+          npx --yes firebase-tools@15 deploy --only firestore:rules --project get-started-4956d --non-interactive
+          sha256sum firestore.rules

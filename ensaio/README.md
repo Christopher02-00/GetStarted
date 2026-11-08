@@ -11,7 +11,7 @@ ENSAIO_CONSOLE=1 ENSAIO_LOG_FN=1 node ensaio/rodar.mjs --jornadas J03   # consol
 Requisitos: Node ≥ 20, Java 21, firebase-tools 15 (`npm i -g firebase-tools@15`), jar do Firestore emulator em `~/.cache/firebase/emulators/` (baixado por `firebase setup:emulators:firestore`). Variáveis `*proxy*` são removidas do ambiente dos emuladores.
 Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cliente.html` só liga em `127.0.0.1?ensaio=1`. Login = credencial Google sintética no Auth emulator (mesmo provedor e claims que a produção exige).
 
-## Jornadas (R1 — 08/11/2026)
+## Jornadas (R1/R1.1/R1.2 — 08/11/2026)
 | Id | Prova | Papéis |
 |---|---|---|
 | J01 | Login por papel: menu certo, itens dos outros fora do DOM | 8 |
@@ -19,12 +19,16 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J03 | Gravação: Cecília agenda → Luís vê só a dele → Nathan não vê a do Luís | Cecília, Luís, Nathan |
 | J04 | Vídeo ponta a ponta: distribuir → editar → aprovar → cliente → postagem nasce (Function) → legenda → agendar → publicado → Portal | Amanda, Helo, Chris, Cecília, cliente |
 | J05 | Portal: cliente A não vê conteúdo de B (token/slug) | clientes |
+| J06 | Calendário 4.0: Amanda inclui ciclo + documento → Chris cria no editor oficial e envia → Amanda conclui revisão (libera) → cliente lê pelo link → Luís vê em modo gravação | Amanda, Chris, cliente, Luís |
 | J09 | Troca de papel na mesma aba: DOM do papel anterior some | Chris↔Cecília |
 | J10 | Financeiro: só Chris tem DOM e acesso; senha pessoal | Chris, Amanda |
+| J11 | Filmmaker envia materiais da sessão (V100) → vídeos sem editor na fila da Amanda → sessão realizada | Luís, Amanda |
+| RULES | Sentinela: nenhuma regra estourou 1000 expressões / nenhum erro de avaliação no log do emulador | — |
 
 ## Regras do próprio ensaio (aprendidas a duras penas)
 1. **Nunca listar uma coleção pelo REST enquanto a transação do app está em voo.** O emulador aborta o commit ("Transaction lock timeout"). Espere o sinal da UI (botão volta ao normal, toast) e só então leia o banco; polling ≥ 1 s.
 2. **Seed tem de ser consistente com as Functions.** Postagem sem vídeo, vídeo com editor sem `editorAtribuidoEm`, correção sem `correcaoSolicitadaEm` → a Function do gatilho morre, o worker morto não desfaz a transação e os locks ficam presos. `rodar.mjs` espera as Functions ficarem ociosas depois do seed (`aguardarFunctionsOciosas`).
 3. **O que o backend liga muda a UI.** Com `processo_calendarios_i164/ativo` a Central R87 tira "Gravações" da barra da Cecília e põe os atalhos amarelos. As expectativas seguem o estado do backend (R2 vai copiar o estado real).
 4. Falhou → corrigir a **causa** (no site ou no ensaio), nunca afrouxar o teste. Bug novo do site → jornada nova no mesmo PR. Negação legítima logada como erro (F-03/F-07) entra em `RUIDO` com o achado anotado — e vira ficha.
-5. Depois de rodar, confira que não ficaram emuladores órfãos (`pgrep -f firebase-tools/lib/emulator`); o `subir()` mata os anteriores.
+5. Botões sob o rodapé fixo do editor (I172) não recebem clique: centralize com `scrollIntoView({block:'center'})` antes. Conteúdo novo nasce com `day:1` e vai para o topo da lista — identifique pelo título vazio, nunca pela posição.
+6. Depois de rodar, confira que não ficaram emuladores órfãos (`pgrep -f firebase-tools/lib/emulator`); o `subir()` mata os anteriores.

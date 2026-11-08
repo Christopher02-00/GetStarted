@@ -14,7 +14,10 @@ export async function abrirNavegador(portas) {
   return {
     browser,
     async novaPagina() {
-      const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo' });
+      // ENSAIO_VIEWPORT=390x844 roda a mesma bateria como celular (iPhone 14/15); padrão = desktop 1400x900
+      const vp = (process.env.ENSAIO_VIEWPORT || '1400x900').split('x').map(Number);
+      const movel = vp[0] < 700;
+      const ctx = await browser.newContext({ viewport: { width: vp[0], height: vp[1] }, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', ...(movel ? { isMobile: true, hasTouch: true, deviceScaleFactor: 3 } : {}) });
       const page = await ctx.newPage();
       await instalarRotasOffline(page, portas);
       const erros = [];
@@ -75,7 +78,14 @@ export async function foto(page, nome) {
 }
 
 /** Itens de menu visíveis (nav* com display != none) — para checar isolamento por papel. */
+// no celular a barra lateral fica fechada: a pessoa toca no hambúrguer (como na vida real) antes de enxergar o menu
+export async function abrirMenuSeMovel(page) {
+  const vp = page.viewportSize(); if (!vp || vp.width >= 700) return;
+  const h = page.locator('#hamburgerBtn');
+  if (await h.isVisible().catch(() => false) && !(await page.evaluate(() => document.getElementById('sidebarEl')?.classList.contains('open')))) { await h.click(); await page.waitForTimeout(600); }
+}
 export async function menuVisivel(page) {
+  await abrirMenuSeMovel(page);
   return page.evaluate(() => Array.from(document.querySelectorAll('[id^="nav"]'))
     .filter(el => el.id !== 'navgroup' && el.offsetParent !== null && getComputedStyle(el).display !== 'none')
     .map(el => el.id));

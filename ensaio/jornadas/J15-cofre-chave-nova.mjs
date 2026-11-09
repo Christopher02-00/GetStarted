@@ -1,13 +1,13 @@
-// J15 — Cofre: a chave que protege as credenciais sai do HTML público (P9, ficha 2026-11-09-cofre-chave-fora-do-html).
-// Registros antigos (chave do HTML) continuam legíveis; o Chris vê a prévia sem gravar, protege, e depois disso
-// Cecília revela o mesmo texto com a chave nova, que não aparece no código. Rules: só Chris cria a chave; Helo não lê.
+// J15 — Cofre só com a chave nova (P9 fase B, 09/11/2026): a chave antiga e o PBKDF2 saíram do escritorio.html.
+// Seed: chave v2 em cofre_chaves, 2 registros v2 e 1 sobra v1. Esperado: Cecília revela os v2; o HTML não tem a chave
+// antiga nem a nova; a prévia aponta a sobra sem gravar; a sobra não abre; credencial nova nasce v2. Rules: só o Chris cria a chave; Helo não lê.
 import fs from 'node:fs';
 import path from 'node:path';
 import { webcrypto as wc } from 'node:crypto';
 import { entrarComo, foto, entrarGerencia } from '../lib/navegador.mjs';
 import { RAIZ } from '../lib/emulador.mjs';
 export const id = 'J15';
-export const nome = 'Cofre: chave nova fora do HTML, prévia sem gravar, migração e leitura por papel';
+export const nome = 'Cofre: só a chave nova (fase B), sobra antiga não abre; rules da chave';
 
 const REGISTROS = [
   { id: 'j15-instagram', cliente: 'Ensaio J15 — Instagram', usuario: 'j15@ensaio', segredo: 'J15-segredo-instagram-1' },
@@ -19,20 +19,12 @@ const NOVO = { cliente: 'Ensaio J15 — Novo depois', usuario: 'j15d@ensaio', se
 const b64 = u8 => Buffer.from(u8).toString('base64');
 const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1000)); } return null; };
 
-// A chave antiga é lida do próprio escritorio.html do checkout (nunca copiada para o ensaio).
-function chaveLegadaTexto() {
-  const html = fs.readFileSync(path.join(RAIZ, 'escritorio.html'), 'utf8');
-  const m = html.match(/const SENHA_GERENCIA_COFRE = '([^']+)';/);
-  if (!m) throw new Error('chave antiga não encontrada no escritorio.html');
-  return m[1];
-}
-async function cifrarV1(texto) {
-  const material = await wc.subtle.importKey('raw', new TextEncoder().encode(chaveLegadaTexto()), 'PBKDF2', false, ['deriveKey']);
-  const chave = await wc.subtle.deriveKey({ name: 'PBKDF2', salt: new TextEncoder().encode('get-started-cofre-salt'), iterations: 100000, hash: 'SHA-256' },
-    material, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+const CHAVE_V2 = wc.getRandomValues(new Uint8Array(32));
+async function cifrar(bytesChave, texto, versao) {
+  const chave = await wc.subtle.importKey('raw', bytesChave, { name: 'AES-GCM' }, false, ['encrypt']);
   const iv = wc.getRandomValues(new Uint8Array(12));
   const c = await wc.subtle.encrypt({ name: 'AES-GCM', iv }, chave, new TextEncoder().encode(texto));
-  return { iv: b64(iv), dados: b64(new Uint8Array(c)) };
+  return { iv: b64(iv), dados: b64(new Uint8Array(c)), ...(versao === 2 ? { versao: 2 } : {}) };
 }
 
 // Escrita/leitura direta pelo SDK da própria página (mesmo app, mesma sessão, mesmas rules).
@@ -57,10 +49,6 @@ function linhasRegraChaves() {
 }
 
 export async function executar({ amb, seed, nav, erroGrave, registrar, esperarNegacao }) {
-  for (const r of REGISTROS) {
-    await seed.set('cofre_senhas', r.id, { cliente: r.cliente, usuario: r.usuario, notas: '', senhaCriptografada: await cifrarV1(r.segredo), criadoPor: 'Amanda', ...(r.excluido ? { excluido: true } : {}) });
-  }
-
   const passo = async (caso, pessoa, corpo) => {
     const { page, erros, fechar } = await nav.novaPagina(); const t0 = Date.now();
     try {
@@ -86,70 +74,56 @@ export async function executar({ amb, seed, nav, erroGrave, registrar, esperarNe
     await page.evaluate(() => setGerenciaSub('cofreSenhas', document.querySelector('[data-sub="cofreSenhas"]')));
   };
 
-  // 1. Antes da migração: Cecília revela um registro antigo normalmente.
-  await passo('1 Cecília revela credencial antiga', 'Cecília', async page => {
-    const t = await revelarComoCecilia(page, 'j15-instagram');
-    return { ok: t === REGISTROS[0].segredo, detalhe: `revelado ${t === REGISTROS[0].segredo ? 'igual ao original' : JSON.stringify(t)}` };
-  });
-
-  // 2. Rules: Cecília e Amanda não criam a chave; Helo nem lê.
-  await passo('2 Rules: só o Chris cria a chave; Helo não lê', 'Helo', async page => {
+  // 1. Rules, antes de existir a chave: Helo não lê; Cecília e Amanda não criam.
+  await passo('1 Rules: só o Chris cria a chave; Helo não lê', 'Helo', async page => {
     const leHelo = await tentarNoBanco(page, 'ler');
     return { ok: /permission/i.test(leHelo), detalhe: `Helo lê cofre_chaves/v2 → ${leHelo}` };
   });
   const faixa = linhasRegraChaves();
-  if (faixa) esperarNegacao(id, 'create', faixa, 2); // Cecília e Amanda tentam criar a chave → a regra precisa negar
+  if (faixa) esperarNegacao(id, 'create', faixa, 2);
   for (const pessoa of ['Cecília', 'Amanda']) {
-    await passo(`2 Rules: ${pessoa} não cria a chave`, pessoa, async page => {
+    await passo(`1 Rules: ${pessoa} não cria a chave`, pessoa, async page => {
       const cria = await tentarNoBanco(page, 'criar');
       const existe = await seed.get('cofre_chaves', 'v2');
       return { ok: /permission/i.test(cria) && !existe, detalhe: `${pessoa} cria cofre_chaves/v2 → ${cria} · chave no banco: ${!!existe}` };
     });
   }
 
-  // 3. Prévia do Chris: mostra os 3 antigos e não grava nada.
+  // Estado de produção depois da proteção: chave v2 criada e registros v2; um v1 sobrando para provar que não abre.
+  await seed.set('cofre_chaves', 'v2', { chave: b64(CHAVE_V2), criadoPor: 'Chris' });
+  for (const [n, r] of REGISTROS.entries()) {
+    const pacote = n === 1 ? await cifrar(wc.getRandomValues(new Uint8Array(32)), r.segredo, 1) : await cifrar(CHAVE_V2, r.segredo, 2);
+    await seed.set('cofre_senhas', r.id, { cliente: r.cliente, usuario: r.usuario, notas: '', senhaCriptografada: pacote, criadoPor: 'Amanda', ...(r.excluido ? { excluido: true } : {}) });
+  }
+
+  // 2. Cecília revela com a chave nova; o HTML servido não tem a chave antiga, o PBKDF2 nem a chave nova.
+  await passo('2 Cecília revela; HTML sem chave', 'Cecília', async page => {
+    const t = await revelarComoCecilia(page, REGISTROS[0].id);
+    const html = await (await fetch(amb.url().split('?')[0])).text();
+    const antiga = /SENHA_GERENCIA_COFRE|PBKDF2/.test(html), nova = html.includes(b64(CHAVE_V2));
+    return { ok: t === REGISTROS[0].segredo && !antiga && !nova, detalhe: `revelado ${t === REGISTROS[0].segredo ? 'igual ao original' : JSON.stringify(t)} · chave antiga/PBKDF2 no HTML: ${antiga} · chave nova no HTML: ${nova}` };
+  });
+
+  // 3. Prévia do Chris aponta a sobra antiga e não grava nada.
   await passo('3 Chris vê a prévia sem gravar', 'Chris', async page => {
     await abrirCofreGerencia(page);
     await page.waitForSelector('#cofreProtecaoPrevia', { timeout: 20000 }); await page.click('#cofreProtecaoPrevia');
     const st = await esperar(() => page.evaluate(() => { const t = document.getElementById('cofreProtecaoStatus')?.innerText || ''; return /chave antiga/.test(t) ? t : null; }));
-    const chave = await seed.get('cofre_chaves', 'v2');
-    const docs = (await seed.listar('cofre_senhas')).filter(d => d.id.startsWith('j15-'));
-    const intactos = docs.every(d => d.senhaCriptografada?.versao !== 2);
-    const botao = await page.evaluate(() => !document.getElementById('cofreProtecaoAplicar')?.disabled);
-    return { ok: /na chave antiga: 3/.test(st || '') && !chave && intactos && botao, detalhe: `${(st || '').replace(/\s+/g, ' ').slice(0, 120)} · chave criada: ${!!chave} · registros intactos: ${intactos}` };
+    const sobra = (await seed.get('cofre_senhas', REGISTROS[1].id))?.senhaCriptografada;
+    return { ok: /na chave antiga: 1/.test(st || '') && /já na chave nova: 2/.test(st || '') && sobra && sobra.versao !== 2, detalhe: `${(st || '').replace(/\s+/g, ' ').slice(0, 120)} · sobra intacta: ${!!sobra && sobra.versao !== 2}` };
   });
 
-  // 4. Chris protege: chave nova criada, os 3 registros (inclusive o arquivado) passam para a versão 2.
-  await passo('4 Chris protege o cofre', 'Chris', async page => {
+  // 4. Credencial nova nasce v2 (Chris); a sobra antiga não abre para a Cecília (sem chave antiga no código).
+  await passo('4 Credencial nova nasce v2', 'Chris', async page => {
     await abrirCofreGerencia(page);
-    await page.waitForSelector('#cofreProtecaoPrevia', { timeout: 20000 }); await page.click('#cofreProtecaoPrevia');
-    await page.waitForFunction(() => !document.getElementById('cofreProtecaoAplicar')?.disabled, null, { timeout: 20000 });
-    await page.click('#cofreProtecaoAplicar');
-    const st = await esperar(() => page.evaluate(() => { const t = document.getElementById('cofreProtecaoStatus')?.innerText || ''; return /Convertidos/.test(t) ? t : null; }), 40000);
-    const chave = await seed.get('cofre_chaves', 'v2');
-    const docs = (await seed.listar('cofre_senhas')).filter(d => d.id.startsWith('j15-'));
-    const v2 = docs.filter(d => d.senhaCriptografada?.versao === 2).length;
-    return { ok: /Convertidos: 3/.test(st || '') && chave?.chave?.length === 44 && v2 === 3, detalhe: `${(st || '').replace(/\s+/g, ' ').slice(0, 90)} · chave: ${chave ? 'criada' : 'ausente'} · v2: ${v2}/3` };
-  });
-
-  // 5. Depois: Cecília revela o mesmo texto; a chave nova não está no HTML servido.
-  await passo('5 Cecília revela com a chave nova; chave fora do HTML', 'Cecília', async page => {
-    const t = await revelarComoCecilia(page, 'j15-meta');
-    const chave = (await seed.get('cofre_chaves', 'v2'))?.chave || '';
-    const html = await (await fetch(amb.url().split('?')[0])).text();
-    const fora = chave.length === 44 && !html.includes(chave);
-    return { ok: t === REGISTROS[1].segredo && fora, detalhe: `revelado ${t === REGISTROS[1].segredo ? 'igual ao original' : JSON.stringify(t)} · chave nova no HTML: ${!fora}` };
-  });
-
-  // 6. Segunda rodada não faz nada (idempotente) e credencial nova já nasce na versão 2.
-  await passo('6 Prévia de novo = nada a fazer; credencial nova nasce protegida', 'Chris', async page => {
-    await abrirCofreGerencia(page);
-    await page.waitForSelector('#cofreProtecaoPrevia', { timeout: 20000 }); await page.click('#cofreProtecaoPrevia');
-    const st = await esperar(() => page.evaluate(() => { const t = document.getElementById('cofreProtecaoStatus')?.innerText || ''; return /chave antiga/.test(t) ? t : null; }));
-    const desligado = await page.evaluate(() => document.getElementById('cofreProtecaoAplicar')?.disabled === true);
+    await page.waitForSelector('#cofreCliente', { timeout: 20000 });
     await page.fill('#cofreCliente', NOVO.cliente); await page.fill('#cofreUsuario', NOVO.usuario); await page.fill('#cofreSenha', NOVO.segredo);
     await page.evaluate(() => salvarSenhaCofre());
     const novo = await esperar(async () => (await seed.listar('cofre_senhas')).find(d => d.cliente === NOVO.cliente));
-    return { ok: /na chave antiga: 0/.test(st || '') && desligado && novo?.senhaCriptografada?.versao === 2, detalhe: `${(st || '').replace(/\s+/g, ' ').slice(0, 80)} · botão desligado: ${desligado} · novo registro versão: ${novo?.senhaCriptografada?.versao ?? 'ausente'}` };
+    return { ok: novo?.senhaCriptografada?.versao === 2, detalhe: `novo registro versão: ${novo?.senhaCriptografada?.versao ?? 'ausente'}` };
+  });
+  await passo('4 Sobra antiga não abre', 'Cecília', async page => {
+    const t = await revelarComoCecilia(page, REGISTROS[1].id);
+    return { ok: t !== REGISTROS[1].segredo, detalhe: `revelado: ${t === REGISTROS[1].segredo ? 'ABRIU com chave antiga' : 'não abriu'}` };
   });
 }

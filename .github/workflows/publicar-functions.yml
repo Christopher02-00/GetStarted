@@ -1,0 +1,58 @@
+name: Publicar Functions (get-operacao)
+# P14 (09/11/2026). Publica functions-get/ no codebase "get-operacao" (o mesmo das Functions em produção,
+# conferido no label firebase-functions-codebase do Cloud Run) em southamerica-east1.
+# - Em PR que toque functions-get/ ou este arquivo: só CONFERE (firebase deploy --dry-run). Nada muda em produção.
+# - Publicar de verdade: só manual (Actions → este workflow → Run workflow → modo "publicar"), com ok nominal do Chris.
+# Conta: secret FIREBASE_SERVICE_ACCOUNT (claude-site-get) com Cloud Functions Developer + Service Account User.
+on:
+  pull_request:
+    paths: ['functions-get/**', '.github/workflows/publicar-functions.yml']
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'conferir (dry-run) ou publicar'
+        required: true
+        default: conferir
+        type: choice
+        options: [conferir, publicar]
+permissions:
+  contents: read
+concurrency:
+  group: publicar-functions
+  cancel-in-progress: false
+jobs:
+  functions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Conferir se o secret existe
+        id: secret
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then echo "tem=false" >> "$GITHUB_OUTPUT"; echo "::warning::FIREBASE_SERVICE_ACCOUNT ausente (PR de fork ou secret não criado) — nada conferido."; else echo "tem=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.secret.outputs.tem == 'true'
+        with:
+          node-version: '22'
+      - name: Montar firebase.json e .env (fora do repositório)
+        if: steps.secret.outputs.tem == 'true'
+        run: |
+          cat > firebase.json <<'JSON'
+          {"functions":[{"source":"functions-get","codebase":"get-operacao","runtime":"nodejs22","ignore":["node_modules",".git","tests","*.md","runtime.example.env"]}]}
+          JSON
+          cp functions-get/runtime.example.env functions-get/.env.get-started-4956d
+          (cd functions-get && npm i --no-package-lock --no-audit --no-fund --silent)
+      - name: Firebase deploy (${{ github.event_name == 'workflow_dispatch' && inputs.modo || 'conferir' }})
+        if: steps.secret.outputs.tem == 'true'
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MODO: ${{ github.event_name == 'workflow_dispatch' && inputs.modo || 'conferir' }}
+        run: |
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          EXTRA="--dry-run"; [ "$MODO" = "publicar" ] && EXTRA=""
+          npx --yes firebase-tools@15.34.1 deploy --only functions:get-operacao --project get-started-4956d --non-interactive $EXTRA

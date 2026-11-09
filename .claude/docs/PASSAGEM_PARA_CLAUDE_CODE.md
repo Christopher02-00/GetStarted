@@ -168,12 +168,12 @@ Portão atual: **47/47 casos** (J01–J06, J09–J14 + 2 sentinelas), desktop e 
 | P6 D-01 | ✅ no ar; o conciliador para sozinho após 3 recusas; a postagem já estava arquivada desde 27/08 | #52, J17 |
 | P7 F-03/F-04 | ⏸ F-04 (ids trocados) não vale o risco de renomear; F-03 sem caso concreto restante | — |
 | P8 desligadas | ✅ Gabrielle fora da lista fixa das rules e do login (Fernanda/Júlia já estavam) | #57, J19 |
-| P9 segurança | ✅ docs internos fora do Pages (#45); cofre com chave v2 no ar (#54, J15). **Falta o Chris clicar em "Proteger agora"**; depois, fase B (tirar a chave antiga do HTML) | #45, #54 |
+| P9 segurança | ✅ docs internos fora do Pages (#45); cofre com chave v2 (#54); Chris protegeu (25/25 em v2); fase B no ar: chave antiga e PBKDF2 fora do HTML (#72, J15) | #45, #54, #72 |
 | P10 R3 cobertura | ⏳ ferramentas estáticas recriadas (#44); falta "handler sem jornada = vermelho" | #44 |
 | P11 R4 CI | ✅ portão no GitHub a cada PR e 6h diário (#47); "negação esperada" na sentinela (#51/#54); publicação de rules paciente (#53) | #47, #53 |
 | P12 R5 rede | ⏳ sondagem offline (Amanda, Cecília) sem violação no seed; repetir com a base real | — |
 | P13 backlog Codex | ✅ triado (#60); corrigidos 22/43 (#61), 24 (#62), 45 (#63); 11, 26, 37 já resolvidos; 44 é operacional | #60–#63 |
-| P14 deploy de Functions | ⛔ bloqueada: papéis IAM | — |
+| P14 deploy de Functions | 🟡 workflow `publicar-functions.yml` (#71): PR confere com dry-run, publicar é manual com ok do Chris. Papéis dados: Cloud Functions Developer, Service Account User e Firebase Viewer (09/11) | #71 |
 | P15 scripts legados | ✅ aposentados | #43 |
 | P16 J06 um clique | ✅ | #56 |
 | E-mail | ✅ cota do EmailJS (200/mês) estoura desde setembro; resumo diário cortado por decisão do Chris (#64) e envio para na cota (#63) | #63, #64 |

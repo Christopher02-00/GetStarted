@@ -40537,15 +40537,18 @@ window.setGerenciaSub = function(qual, el){
     const verificacoes = verificacoesFrequentes.concat(rodarManutencaoDiaria ? verificacoesDiarias : []);
     const nomesDiarios=new Set(verificacoesDiarias.map(v=>v.nome));
     let manutencaoDiariaSemFalhas=true;
+    // P4/F-14: mede cada rotina para decidir com dado de produção o que vale mover para o servidor.
+    const inicioRodadaF14=performance.now(), duracoesF14=[];
 
     for(const v of verificacoes){
+      const inicioF14=performance.now();
       try{
         await v.fn();
       }catch(e){
         console.error('motorAutomacoes: falha em ' + v.nome, e);
         if(rodarManutencaoDiaria&&nomesDiarios.has(v.nome)) manutencaoDiariaSemFalhas=false;
         registrarLogAutomacao('erro_verificacao', v.nome, String(e?.message || e));
-      }
+      }finally{ duracoesF14.push([v.nome, performance.now()-inicioF14]); }
     }
     if(rodarManutencaoDiaria&&manutencaoDiariaSemFalhas){
       try{ await setDoc(lockRef, {ultimaManutencaoDia:diaMotor, manutencaoConcluidaEm:serverTimestamp()}, {merge:true}); }
@@ -40553,7 +40556,10 @@ window.setGerenciaSub = function(qual, el){
     }else if(rodarManutencaoDiaria){
       registrarLogAutomacao('manutencao_diaria_incompleta',diaMotor,'Uma ou mais rotinas falharam; o dia não foi carimbado e será tentado novamente.');
     }
-    registrarLogAutomacao('motor_executado', origem || '?', 'rodada completa das verificações automáticas');
+    const lentasF14=duracoesF14.filter(([,ms])=>ms>=1000).sort((a,b)=>b[1]-a[1]).slice(0,6)
+      .map(([n,ms])=>n+' '+(ms/1000).toFixed(1)+'s').join(', ');
+    registrarLogAutomacao('motor_executado', origem || '?', 'rodada completa das verificações automáticas · ' + duracoesF14.length +
+      ' rotinas em ' + ((performance.now()-inicioRodadaF14)/1000).toFixed(1) + 's' + (lentasF14 ? ' · mais lentas: ' + lentasF14 : ''));
   }
 
   let motorIntervalId = null;

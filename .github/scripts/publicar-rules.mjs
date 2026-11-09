@@ -14,15 +14,16 @@ const token = (await client.getAccessToken()).token;
 const base = `https://firebaserules.googleapis.com/v1/projects/${projeto}`;
 const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 async function chamada(metodo, caminho, corpo) {
-  // o serviço de Rules responde 503 UNAVAILABLE de forma transitória ao compilar rulesets grandes → até 6 tentativas com espera crescente
+  // o serviço de Rules responde 503 UNAVAILABLE de forma transitória (em 09/11 por mais de 20 min) → até 10 tentativas,
+  // espera crescente de 20 s até no máximo 2 min por tentativa
   let ultimo;
-  for (let tentativa = 1; tentativa <= 6; tentativa++) {
+  for (let tentativa = 1; tentativa <= 10; tentativa++) {
     const r = await fetch(base + caminho, { method: metodo, headers: H, body: corpo ? JSON.stringify(corpo) : undefined });
     const txt = await r.text();
     if (r.ok) return txt ? JSON.parse(txt) : {};
     ultimo = `${metodo} ${caminho} → ${r.status} ${txt.replace(/\s+/g, ' ').slice(0, 400)}`;
     if (![500, 502, 503, 504, 429].includes(r.status)) break;
-    console.log(`tentativa ${tentativa} falhou (${r.status}); aguardando ${tentativa * 20}s…`); await new Promise(res => setTimeout(res, tentativa * 20000));
+    console.log(`tentativa ${tentativa} falhou (${r.status}); aguardando ${Math.min(tentativa * 20, 120)}s…`); await new Promise(res => setTimeout(res, Math.min(tentativa * 20, 120) * 1000));
   }
   throw new Error(ultimo);
 }

@@ -14,13 +14,12 @@ const esperar = async (fn, ms = 15000) => { const fim = Date.now() + ms; while (
 
 // ACHADO F-09: enquanto a Central ainda carrega, o clique em "Calendários e conteúdos" é ignorado em silêncio → repete até a view abrir
 async function abrirCentral(page, viewId) {
-  await page.waitForSelector('#navPlanejamentoPreparacaoR80', { timeout: 20000 }); await page.waitForTimeout(3000);
-  for (let i = 0; i < 5; i++) {
-    await abrirMenuSeMovel(page);
-    await page.click('#navPlanejamentoPreparacaoR80');
-    try { await page.waitForFunction(idv => { const v = document.getElementById(idv); return v && getComputedStyle(v).display !== 'none' && v.innerText.trim().length > 50; }, viewId, { timeout: 6000 }); return; } catch {}
-  }
-  throw new Error('Central não abriu: ' + viewId);
+  // P16: com a F-09 (PR #41) o primeiro clique abre a Central; insistir esconderia uma regressão da F-09.
+  await page.waitForSelector('#navPlanejamentoPreparacaoR80', { timeout: 20000 });
+  await abrirMenuSeMovel(page);
+  await page.click('#navPlanejamentoPreparacaoR80');
+  try { await page.waitForFunction(idv => { const v = document.getElementById(idv); return v && getComputedStyle(v).display !== 'none' && v.innerText.trim().length > 50; }, viewId, { timeout: 15000 }); }
+  catch { throw new Error('Central não abriu no primeiro clique: ' + viewId); }
 }
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {

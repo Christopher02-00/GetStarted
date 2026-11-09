@@ -26,6 +26,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J11 | Filmmaker envia materiais da sessão (V100) → vídeos sem editor na fila da Amanda → sessão realizada | Luís, Amanda |
 | J12 | Tour: cada papel abre todas as telas do próprio menu; vermelho em erro grave no console, tela vazia ou texto de indisponibilidade ("Não consegui…", "undefined", "NaN") — pensado para a cópia anonimizada do banco real (`ENSAIO_DADOS_REAIS=<pasta da exportação>`, `ENSAIO_PAPEIS=Chris,Amanda`) | 8 |
 | J13 | Minhas Demandas: o chip de filtro escolhido abre a faixa de mesmo nome, acima do estado guardado no navegador (F-01) | Helo |
+| J14 | Central R80 abre mesmo com a listagem da Entrada de perfil (CP126) em voo — leitura não trava navegação (F-09) | Chris |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 ## Regras do próprio ensaio (aprendidas a duras penas)

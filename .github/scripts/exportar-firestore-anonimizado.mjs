@@ -47,7 +47,7 @@ async function listarColecoes() { const r = await fetch(`${base}:listCollectionI
 async function baixar(colecao) {
   const docs = []; let token2 = '';
   do { const r = await fetch(`${base}/${colecao}?pageSize=300${token2 ? '&pageToken=' + token2 : ''}`, { headers: H }); if (!r.ok) throw new Error(`${colecao}: ${r.status} ${await r.text()}`); const j = await r.json();
-    for (const d of j.documents || []) docs.push({ id: d.name.split('/').pop(), ...anonValor('', Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, dv(v)])), { colecao }) });
+    for (const d of j.documents || []) docs.push({ __id: d.name.split('/').pop(), ...anonValor('', Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, dv(v)])), { colecao }) });
     token2 = j.nextPageToken || ''; } while (token2);
   return docs;
 }

@@ -47,3 +47,9 @@ Quem acessa o cofre (rules de `cofre_senhas` iguais); tela da Cecília (só leit
 - A chave antiga continua no histórico do git para sempre. Por isso a fase B só vem depois de recriptografar tudo.
 - Quem já leu `cofre_senhas` antes (Chris/Amanda/Cecília) já viu as credenciais. Trocar as senhas dos clientes é decisão operacional, fora do código.
 - Recomendação ao Chris: trocar a senha do escritório se ainda for uma das antigas (ela está pública).
+
+## Fase B — feita em 09/11/2026
+Conferido em produção (console do Firestore, só leitura): `cofre_senhas` com 25 de 25 registros em `versao: 2`.
+- `escritorio.html`: saem `SENHA_GERENCIA_COFRE`, `derivarChaveCofre` (PBKDF2) e os pedaços da chave/senha antiga. As duas checagens de senha (escritório e pessoal) passam a comparar o SHA-256 de cada trecho da senha nova com o hash dos textos expostos. Continuam recusando, sem guardar os textos.
+- `gs-cofre.mjs`: sem chave antiga. Cifrar exige a chave v2. Registro v1 dá "está na chave antiga… cadastre de novo". A prévia ainda conta v1, e `proteger` não grava em v1.
+- J15 reescrita para o estado pós-migração. Contraprova no `main`: vermelha (chave antiga no HTML; sobra v1 ainda legível).

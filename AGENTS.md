@@ -3,13 +3,17 @@
 
 Este repositório é um sistema operacional em produção, baseado principalmente em HTML/JavaScript e Firestore. Trate cada pedido como engenharia de manutenção: entender a causa, limitar o impacto e provar o resultado.
 
+## Processo vigente (decisão do Chris, 08–09/11/2026)
+
+A manutenção passou ao Claude (Claude Code no Mac do Chris). O processo detalhado está em `CLAUDE.md`, `.claude/docs/REGRAS_VIGENTES.md` e nas skills de `.claude/skills/`. Onde este arquivo falava em pacote ZIP, upload manual ou `scripts/preflight.mjs`/`regression-critical.mjs`, vale o que está abaixo. Os invariantes e incidentes deste arquivo continuam sendo lei.
+
 ## Autonomia e padrão de confirmação
 
 - Um relato de erro, ajuste ou atualização autoriza investigar e implementar imediatamente as mudanças locais necessárias, sem pedir uma nova confirmação para continuar.
-- Valide cada etapa antes de avançar: reprodução do incidente, teste dirigido do fluxo alterado, preflight, regressão crítica, revisão de diff e verificação visual quando houver interface.
+- Valide cada etapa antes de avançar: reprodução do incidente (jornada vermelha), teste dirigido do fluxo alterado, portão de jornadas `node ensaio/rodar.mjs` (e `--movel` quando houver interface), revisão de diff e verificação visual quando houver interface.
 - Só declare `corrigido + validado` quando o comportamento anterior falhar na reprodução e o mesmo cenário passar depois da mudança. Teste parcial, sintaxe ou marcador de versão não autorizam certeza maior que a evidência.
-- Push, publicação e alterações no Firebase/produção continuam fora da mudança local e exigem autorização específica, salvo quando o pedido atual nomear inequivocamente essa ação externa.
-- Toda entrega com arquivos alterados termina com um único pacote ZIP clicável e uma pasta descompactada na raiz privada `/Users/christopherbrito/site Get — atualizado`, preservando a estrutura relativa dos arquivos. Não espalhe cópias novas em Downloads ou Documentos. Antes de entregar, liste o ZIP, confira seu conteúdo e informe seu SHA-256; o usuário não deve precisar baixar arquivo por arquivo.
+- Código (HTML/módulos/ensaio/docs): Claude faz branch → PR → CI → merge → conferência no ar sem pedir confirmação a cada passo. Publicar `firestore.rules` (o merge publica sozinho pelo workflow), deploy de `functions-get/` e qualquer escrita em dados de produção exigem ok nominal do Chris para aquela operação.
+- Toda entrega é um PR por assunto no GitHub (`Christopher02-00/GetStarted`), com os cinco blocos de entrega. Não há mais pacote ZIP nem pasta em `/Users/christopherbrito/site Get — atualizado`; essa pasta passa a ser só histórico do Codex.
 
 ## Antes de editar
 
@@ -138,13 +142,13 @@ Baixa antiga que possui somente quantidade não prova quais títulos foram grava
 
 Quantidade planejada também não autoriza uma sessão nova. Uma sessão moderna existe somente quando `sessaoPlanejamentoVersao === 1` e `sessaoItensPlanejados` é array, inclusive vazio; registro com apenas um marcador permanece legado isolado no próprio agendamento. Plano moderno vazio ou malformado nunca ganha texto livre nem compatibilidade automática: Amanda, Cecília ou Chris precisa reler o calendário e confirmar, em transação, os títulos exatos. Extras exigem `permitirCaptacoesExtras === true`; valores truthy legados não ampliam a autorização. O escritor deve falhar antes da primeira gravação quando calendário, competência, bloco, identidade ou lista exata estiverem ausentes, ambíguos ou divergentes.
 
-Antes de entregar qualquer mudança, faça também a checagem curta do catálogo: confirme a base mais recente, procure substituições globais e prefixos `async` alterados, compare contagens/escopo das ocorrências, valide variáveis no escopo que as declara, normalize apenas o formato de linha esperado e carregue a versão nova em documento/iframe limpo. Essa checagem complementa, não substitui, `preflight` e `regression-critical`.
+Antes de entregar qualquer mudança, faça também a checagem curta do catálogo: confirme a base mais recente, procure substituições globais e prefixos `async` alterados, compare contagens/escopo das ocorrências, valide variáveis no escopo que as declara, normalize apenas o formato de linha esperado e carregue a versão nova em documento/iframe limpo. Essa checagem complementa, não substitui, o portão de jornadas (`ensaio/`).
 
 ## Depois de editar
 
 1. Inspecione o diff/arquivos tocados e procure mudanças fora do escopo.
 2. Busque implementações duplicadas, chamadas residuais, handlers órfãos, variáveis fora de escopo e caminhos de escrita não atualizados.
-3. Execute `scripts/preflight.mjs` e `scripts/regression-critical.mjs` com Node.js, além dos testes específicos do fluxo alterado em sandbox, com funções nomeadas próprias. Não chame uma função nua já carregada na página para provar código novo.
+3. Execute o portão de jornadas `node ensaio/rodar.mjs` (navegador real + emuladores com as rules e Functions do checkout), além dos testes específicos do fluxo alterado, com funções nomeadas próprias. Bug novo vira jornada nova no mesmo PR, vermelha antes e verde depois. Não chame uma função nua já carregada na página para provar código novo.
 4. Para UI, valide carregamento, erro/vazio, desktop e mobile e, quando possível, o DOM real. Para dados, diferencie teste local, leitura de produção e gravação de produção.
 5. Segurança, papéis, Firestore, login, financeiro e privacidade são sempre regressões obrigatórias, mesmo quando não forem o tema principal.
 
@@ -230,9 +234,8 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
 - Classifique o resultado como `validado`, `corrigido + validado`, `não validável` ou `bloqueado`.
 - Não invente arquivos para upload. Informe nome, caminho absoluto, hash, estado Git, estado de publicação e se existe ação manual.
 - Uma entrega com vários arquivos só pode ser chamada de publicada depois de consultar cada caminho anunciado na branch de publicação. HTML no ar não comprova scripts, catálogo, instruções nem `firestore.rules`; regra no Firebase também não comprova que o backup equivalente está no GitHub.
-- O usuário faz o upload manual para o GitHub, salvo autorização explícita diferente. Não diga que algo está no ar sem comparação da versão publicada.
-- A entrega local tem um único destino: `/Users/christopherbrito/site Get — atualizado`. Cada versão cria ali somente uma subpasta `ATUALIZACAO_ATUAL_VNN`, contendo o conjunto completo e atual para upload, e um ZIP equivalente na raiz. Depois de validar o pacote novo, versões anteriores desse destino são movidas para a Lixeira; nunca espalhar novas entregas em Documentos ou Downloads.
-- As suítes oficiais existem somente em `scripts/preflight.mjs` e `scripts/regression-critical.mjs`. Cópias com esses nomes na raiz são legado redundante, devem permanecer ausentes e o preflight precisa falhar se reaparecerem. `calendario.html` e `calendarios.html` continuam sendo a exceção intencional de compatibilidade e devem permanecer byte a byte idênticos.
+- A publicação é o merge do PR no `main` (GitHub Pages). Não diga que algo está no ar sem comparar o arquivo publicado com o do commit.
+- A suíte oficial é o portão de jornadas em `ensaio/` (ver `ensaio/README.md`) mais o CI `.qa-get/`. `scripts/preflight.mjs` e `scripts/regression-critical.mjs` são legado aposentado em 09/11/2026: já falhavam no `main` antes da troca de processo e não servem de portão. `calendario.html` e `calendarios.html` continuam sendo a exceção intencional de compatibilidade e devem permanecer byte a byte idênticos.
 - Nenhum painel operacional consulta Firestore durante a avaliação inicial do módulo. `carregarClientesExtras()` e `renderFuncionarioMesInicio()` rodam somente depois de identidade, isolamento do DOM e abertura protegida da sessão; sessão anônima não gera leitura negada nem fixa dado-base como resultado definitivo.
 - `negocios` é a fonte única de vendas. Pré-cadastros das três origens convergem por `origem + leadId` em documento determinístico; proposta manual e reunião não criam cliente, contrato, calendário ou receita. Mensalista só entra em produção depois que a identidade ativa já foi conferida na Entrada de Clientes.
 - O endereço público `avulso.html` é pré-cadastro comercial. O endereço `avulso.html?modo=cadastro` é onboarding final e só deve ser enviado após fechamento. Formulário público reserva protocolo, relê a mesma referência e não trata abertura de WhatsApp como envio.

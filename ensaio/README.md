@@ -23,6 +23,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J04 | Vídeo ponta a ponta: distribuir → editar → aprovar → cliente → postagem nasce (Function) → legenda → agendar → publicado → Portal | Amanda, Helo, Chris, Cecília, cliente |
 | J05 | Portal: cliente A não vê conteúdo de B (token/slug) | clientes |
 | J06 | Calendário 4.0: Amanda inclui ciclo + documento → Chris cria no editor oficial e envia → Amanda conclui revisão (libera) → cliente lê pelo link → Luís vê em modo gravação | Amanda, Chris, cliente, Luís |
+| J08 | Motor: Chris e Amanda entram com a trava liberada e a manutenção diária forçada → `motor_executado`, sem "falha em…", sem `erro_verificacao` novo, dia carimbado (P2). Mutante: uma rotina que lança erro deixa a J08 vermelha | Chris, Amanda |
 | J09 | Troca de papel na mesma aba: DOM do papel anterior some | Chris↔Cecília |
 | J10 | Financeiro: só Chris tem DOM e acesso; senha pessoal | Chris, Amanda |
 | J11 | Filmmaker envia materiais da sessão (V100) → vídeos sem editor na fila da Amanda → sessão realizada | Luís, Amanda |

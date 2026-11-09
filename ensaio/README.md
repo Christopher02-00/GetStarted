@@ -39,6 +39,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J21 | Cecília cancela duas sessões da Mochi (Luís) → o Luís recebe dois avisos, um por sessão (backlog Codex P18) | Cecília, Luís |
 | J22 | E-mail com EmailJS sem cota (dublê) e fila com pessoa desligada → 1 tentativa só, nenhuma para a Gabrielle, 1 aviso `email_cota_esgotada` (backlog P39) | Chris |
 | J23 | Resumo por e-mail desligado (decisão do Chris, 09/11): com fila pendente e EmailJS dublê, o motor não envia resumo e a fila fica intacta | Chris |
+| J24 | Sem rede: a Cecília abre Get Academy e cofre → as telas avisam indisponível em vez de "Nenhum…" (P12/R5) | Cecília |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 **Cobertura de cliques (P10):** `ENSAIO_COBERTURA=1 node ensaio/rodar.mjs` grava `ensaio/saida/cobertura.json` (funções do site que rodaram, pela cobertura do Chromium) e `python3 ferramentas/cobertura_handlers.py escritorio.html` cruza com todos os `onclick`. Linha de base de 09/11: 80/593 handlers do escritório com jornada, 2/25 do portal, 5/42 do calendário. O CI (desktop) falha quando entra um handler novo sem jornada.

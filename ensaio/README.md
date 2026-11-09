@@ -10,6 +10,7 @@ node ensaio/rodar.mjs --movel                    # bateria inteira como celular 
 node ensaio/explorar.mjs Cecília                 # abre o site como a pessoa e tira foto (debug)
 ENSAIO_CONSOLE=1 ENSAIO_LOG_FN=1 node ensaio/rodar.mjs --jornadas J03   # console completo + todas as chamadas do callable em ensaio/.runtime/
 ```
+No GitHub: o workflow `.github/workflows/ensaio-jornadas.yml` roda esta mesma bateria (desktop e `--movel`) em todo PR, em todo push no `main` e todo dia às 6h (BRT); fotos e logs ficam no artefato `ensaio-desktop`/`ensaio-movel` por 7 dias.
 Requisitos: Node ≥ 20, Java 21, firebase-tools 15 (`npm i -g firebase-tools@15`), jar do Firestore emulator em `~/.cache/firebase/emulators/` (baixado por `firebase setup:emulators:firestore`). Variáveis `*proxy*` são removidas do ambiente dos emuladores.
 Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cliente.html` só liga em `127.0.0.1?ensaio=1`. Login = credencial Google sintética no Auth emulator (mesmo provedor e claims que a produção exige).
 

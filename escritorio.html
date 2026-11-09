@@ -28154,6 +28154,17 @@ window.setGerenciaSub = function(qual, el){
     return !!d && d.origem==='sistema' && d.ehAviso===true &&
       ['video_atribuido','video_saiu_da_fila'].includes(d.tipoEspecial);
   }
+  /* F-16 (R2, 08/11/2026): a regra de `demandas` (x6) torna o pedido de ajuste do
+     cliente imutável para o site — só `emailEnviado` pode mudar. Varredura que
+     tenta gravar nele é negada e, pior, o `await` rejeitado derrubava a varredura
+     inteira: as demandas seguintes ficavam sem escalonar/lembrar. Espelha a
+     regra byte a byte; não decide nada além de "este documento não aceita
+     gravação do site". */
+  function demandaImutavelPorRegraV113(d){
+    if(!d) return false;
+    const a=String(d.origemAvisoId||''), b=String(d.operationId||'');
+    return d.tipoPedidoCliente==='ajuste_calendario' || /^cal_ajuste_v113_/.test(a) || /^cal_ajuste_v113_/.test(b);
+  }
   function resumoAvisoDistribuicaoI105(d){
     return d.tipoEspecial==='video_saiu_da_fila'
       ? 'Aviso de retirada · confira a distribuição atual'
@@ -38788,9 +38799,11 @@ window.setGerenciaSub = function(qual, el){
       const dem = docSnap.data();
       if(!demandaOperacionalVisivel(dem)) continue;
       if(ehAvisoDistribuicaoI105(dem)) continue;
+      if(demandaImutavelPorRegraV113(dem)) continue; // F-16: a regra nega a gravação; o pedido do cliente segue a execução CP112
       if(dem.status !== 'pendente') continue;
       if(dem.destinatario && estaAusente(dem.destinatario)) continue;
       if(!dem.prazoData) continue;
+      try{
       /* O nível é memória de uma ocorrência passada; nunca pode decidir
          sozinho se a demanda continua atrasada. Se a data vigente já a
          colocou em dia, o próprio motor apaga essa memória. */
@@ -38832,6 +38845,7 @@ window.setGerenciaSub = function(qual, el){
           itemId: docSnap.id, colecao: 'demandas'
         }).catch(()=>{});
       }
+      }catch(e){ console.error('escalonarDemandasAtrasadas: falha isolada em', docSnap.id, '— as demais continuam:', e); } // F-16: uma negação não interrompe a varredura
     }
   }
 
@@ -39247,15 +39261,18 @@ window.setGerenciaSub = function(qual, el){
       const d = docSnap.data();
       if(!demandaOperacionalVisivel(d)) continue;
       if(ehAvisoDistribuicaoI105(d)) continue;
+      if(demandaImutavelPorRegraV113(d)) continue; // F-16: sem a marca `lembretePrazoHojeEm` (gravação negada) o e-mail repetiria a cada login
       if(d.status !== 'pendente' || !d.destinatario) continue;
       if(d.prazoData !== hojeStr) continue;
       if(d.lembretePrazoHojeEm === hojeStr) continue; // já lembrou hoje
       if(estaAusente(d.destinatario)) continue;
-      await dispararEmailIndividual(d.destinatario, 'prazo_hoje', {
-        titulo: '⏰ Prazo é hoje: ' + d.titulo, prazoData: d.prazoData, prazoHora: d.prazoHora,
-        itemId: docSnap.id, colecao: 'demandas'
-      });
-      await updateDoc(doc(db,'demandas', docSnap.id), { lembretePrazoHojeEm: hojeStr });
+      try{
+        await dispararEmailIndividual(d.destinatario, 'prazo_hoje', {
+          titulo: '⏰ Prazo é hoje: ' + d.titulo, prazoData: d.prazoData, prazoHora: d.prazoHora,
+          itemId: docSnap.id, colecao: 'demandas'
+        });
+        await updateDoc(doc(db,'demandas', docSnap.id), { lembretePrazoHojeEm: hojeStr });
+      }catch(e){ console.error('verificarLembretesPrazoHoje: falha isolada em', docSnap.id, '— as demais continuam:', e); } // F-16
     }
   }
 
@@ -39307,14 +39324,17 @@ window.setGerenciaSub = function(qual, el){
       const d = ddRF.data();
       if(!demandaOperacionalVisivel(d)) continue;
       if(ehAvisoDistribuicaoI105(d)) continue;
+      if(demandaImutavelPorRegraV113(d)) continue; // F-16
       if(d.prazoData !== hojeRF || d.avisoRetaFinalEm === hojeRF) continue;
       if(!d.destinatario || estaAusente(d.destinatario)) continue;
       const prazoMs = new Date(d.prazoData + 'T' + (d.prazoHora||'19:00')).getTime();
       const diffMin = (prazoMs - agoraRF.getTime()) / 60000;
       if(diffMin <= 120 && diffMin > 0){
-        dispararEmailIndividual(d.destinatario, 'reta_final', { titulo: '⏳ Reta final — falta(m) ~' + Math.max(1, Math.round(diffMin/60)) + 'h: ' + (d.titulo||''), itemId: ddRF.id, colecao: 'demandas' }).catch(()=>{});
-        if(d.destinatario === usuarioAtual) dispararNotificacaoNavegador('⏳ Reta final', 'Faltam menos de 2h: ' + (d.titulo||''));
-        await updateDoc(doc(db,'demandas', ddRF.id), { avisoRetaFinalEm: hojeRF });
+        try{
+          dispararEmailIndividual(d.destinatario, 'reta_final', { titulo: '⏳ Reta final — falta(m) ~' + Math.max(1, Math.round(diffMin/60)) + 'h: ' + (d.titulo||''), itemId: ddRF.id, colecao: 'demandas' }).catch(()=>{});
+          if(d.destinatario === usuarioAtual) dispararNotificacaoNavegador('⏳ Reta final', 'Faltam menos de 2h: ' + (d.titulo||''));
+          await updateDoc(doc(db,'demandas', ddRF.id), { avisoRetaFinalEm: hojeRF });
+        }catch(e){ console.error('verificarRetaFinalPrazos: falha isolada em', ddRF.id, '— as demais continuam:', e); } // F-16
       }
     }
     if(agoraRF.getHours() >= 17 && agoraRF.getHours() < 19){

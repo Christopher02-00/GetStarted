@@ -35,6 +35,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J17 | Conciliador V118: vídeo aprovado com postagem arquivada → 5 rodadas da manutenção diária → tenta 3 vezes, avisa `postagem_orfa_suspensa` 1 vez e para (P6/D-01) | Chris |
 | J18 | Vídeo legado sem `data` atribuído à Helo → tela de vídeos sem "undefined" (P5/F-17) | Helo |
 | J20 | Cliente aprova um conteúdo de dezembro num calendário com outro mês → o aviso para Chris/Amanda diz "1 de 2" (o mês), não "2 de 3" (backlog Codex P16/P37). Usa o calendário criado pela J06 | cliente |
+| J22 | E-mail com EmailJS sem cota (dublê) e fila com pessoa desligada → 1 tentativa só, nenhuma para a Gabrielle, 1 aviso `email_cota_esgotada` (backlog P39) | Chris |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 **Negação esperada:** uma jornada que prova o lado "negado" de uma regra chama `esperarNegacao(id, metodo, [linhaIni, linhaFim], vezes)`. A sentinela desconta só essas negações (método + faixa de linhas do `firestore.rules` + quantidade exata) e mostra cada uma como caso próprio. Sobra ou falta é vermelho. Qualquer outra escrita negada continua vermelha.

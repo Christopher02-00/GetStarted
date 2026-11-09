@@ -39008,6 +39008,8 @@ window.setGerenciaSub = function(qual, el){
       for(const pessoa of Object.keys(porPessoa)){
         const itens = porPessoa[pessoa];
         if(!itens.length) continue;
+        // backlog P39: fila antiga de pessoa desligada não gasta a cota de e-mail da equipe.
+        if(!destinatariosAtivosCp183().includes(pessoa)) continue;
         const marcaRef = doc(db,'email_digest_controle', pessoa);
         const marcaSnap = await getDoc(marcaRef);
         if(marcaSnap.exists()){
@@ -39027,7 +39029,27 @@ window.setGerenciaSub = function(qual, el){
     }catch(e){ console.error('Falha ao enviar digests:', e); }
   }
 
+  /* backlog P39 (09/11/2026): o plano do EmailJS esgota a cota mensal (200 envios desde setembro) e
+     cada tentativa seguinte falhava e virava log (4.511 email_FALHOU). Depois da 1ª resposta de cota
+     esgotada, ninguém tenta de novo no mesmo dia; no dia seguinte uma tentativa confere se voltou. */
+  let __cotaEmailDiaP39 = null;
+  async function cotaEmailEsgotadaHojeP39(){
+    if(__cotaEmailDiaP39 === null){
+      try{ const s = await getDoc(doc(db,'sistema','email_cota')); __cotaEmailDiaP39 = s.exists() ? String(s.data().dia||'') : ''; }
+      catch(e){ __cotaEmailDiaP39 = ''; }
+    }
+    return __cotaEmailDiaP39 === hojeLocal();
+  }
+  async function marcarCotaEmailEsgotadaP39(detalhe){
+    const hoje = hojeLocal(); if(__cotaEmailDiaP39 === hoje) return;
+    __cotaEmailDiaP39 = hoje;
+    try{ await setDoc(doc(db,'sistema','email_cota'), { dia: hoje, em: new Date().toISOString(), detalhe: String(detalhe||'').slice(0,140) }, { merge:true }); }
+    catch(e){ console.error('Não consegui registrar a cota de e-mail esgotada:', e); }
+    registrarLogAutomacao('email_cota_esgotada', hoje, 'Cota mensal do EmailJS esgotada; novos envios ficam suspensos até amanhã. ' + String(detalhe||'').slice(0,100));
+  }
+
   async function dispararEmailAgora(destinatarioNome, tipo, dados, pularThrottle){
+    if(await cotaEmailEsgotadaHojeP39()) return false;
     if(!EMAILJS_CONFIGURADO){
       console.warn('Fase 11: EmailJS ainda não configurado — e-mail não enviado (ver Gerência → E-mails da Equipe). Destinatário seria: ' + destinatarioNome);
       return false;
@@ -39079,6 +39101,8 @@ window.setGerenciaSub = function(qual, el){
       registrarLogAutomacao('email_enviado', dados.itemId || '', tipo + ' pra ' + destinatarioNome);
       return true;
     }catch(e){
+      const textoErroP39 = String((e && (e.text || e.message)) || '');
+      if(/quota/i.test(textoErroP39)){ await marcarCotaEmailEsgotadaP39(textoErroP39); return false; }
       console.error('Fase 11: falha ao disparar e-mail individual pra ' + destinatarioNome + ':', e);
       // DIAGNÓSTICO 20/07/2026: descobrimos que TODO envio falhava com
       // "template ID not found" e ninguém via, porque a falha morria só no

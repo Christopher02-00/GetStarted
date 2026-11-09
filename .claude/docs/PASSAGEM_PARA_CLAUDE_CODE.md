@@ -157,6 +157,29 @@ Portão atual: **47/47 casos** (J01–J06, J09–J14 + 2 sentinelas), desktop e 
 
 ---
 
+## 5-A. Estado em 09/11/2026 (fim do dia, Claude Code)
+| # | Situação | Onde |
+|---|---|---|
+| P1 castas da Cecília | ✅ no ar, regra publicada; a projeção nasce na 1ª abertura da gerência | #51, J16 |
+| P2 J08 motor | ✅ | #58 |
+| P3 Stokki | ⏳ não começou: as ações passam pela Function (V118); precisa criar o vídeo pela esteira real, como a J04 | — |
+| P4 duração do motor | ✅ no ar; ler `motor_executado` em 1–2 semanas e decidir | #59 |
+| P5 vídeo sem data | ✅ (6 templates, não 3) | #55, J18 |
+| P6 D-01 | ✅ no ar; o conciliador para sozinho após 3 recusas; a postagem já estava arquivada desde 27/08 | #52, J17 |
+| P7 F-03/F-04 | ⏸ F-04 (ids trocados) não vale o risco de renomear; F-03 sem caso concreto restante | — |
+| P8 desligadas | ✅ Gabrielle fora da lista fixa das rules e do login (Fernanda/Júlia já estavam) | #57, J19 |
+| P9 segurança | ✅ docs internos fora do Pages (#45); cofre com chave v2 no ar (#54, J15). **Falta o Chris clicar em "Proteger agora"**; depois, fase B (tirar a chave antiga do HTML) | #45, #54 |
+| P10 R3 cobertura | ⏳ ferramentas estáticas recriadas (#44); falta "handler sem jornada = vermelho" | #44 |
+| P11 R4 CI | ✅ portão no GitHub a cada PR e 6h diário (#47); "negação esperada" na sentinela (#51/#54); publicação de rules paciente (#53) | #47, #53 |
+| P12 R5 rede | ⏳ sondagem offline (Amanda, Cecília) sem violação no seed; repetir com a base real | — |
+| P13 backlog Codex | ✅ triado (#60); corrigidos 22/43 (#61), 24 (#62), 45 (#63); 11, 26, 37 já resolvidos; 44 é operacional | #60–#63 |
+| P14 deploy de Functions | ⛔ bloqueada: papéis IAM | — |
+| P15 scripts legados | ✅ aposentados | #43 |
+| P16 J06 um clique | ✅ | #56 |
+| E-mail | ✅ cota do EmailJS (200/mês) estoura desde setembro; resumo diário cortado por decisão do Chris (#64) e envio para na cota (#63) | #63, #64 |
+
+Incidente do dia: o merge do #46 publicou o código do cofre antes de a regra chegar ao Firebase (503 por >20 min) e gravar credencial falhou por ~15 min → revertido (#50). Lições: publicação paciente (#53) e código tolerante a regra atrasada (#54).
+
 ## 5. Pendências
 
 | # | Título | O que fazer e por quê | Prioridade | Afeta | Situação |

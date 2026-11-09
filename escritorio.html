@@ -41903,6 +41903,24 @@ window.setGerenciaSub = function(qual, el){
 
     const videoSnap = await getDocs(collection(db,'videos_producao'));
     let conciliadas = 0;
+    /* P6/D-01 (09/11/2026): um vídeo que a V118 recusa sempre era tentado a cada rodada, para sempre
+       (196 logs de um só vídeo desde 31/08). Depois de RECUSAS_MAX_V118 recusas seguidas o conciliador
+       para de tentar aquele id e avisa uma vez; a gestão decide o dado. Leitura indisponível = segue como antes. */
+    const RECUSAS_MAX_V118 = 3;
+    const refRecusasV118 = doc(db,'sistema','conciliador_orfas_v118');
+    let recusasV118 = null;
+    try{ const s = await getDoc(refRecusasV118); recusasV118 = s.exists() ? (s.data().recusas || {}) : {}; }
+    catch(e){ console.error('V118: contador de recusas indisponível; esta rodada segue sem limite.', e); }
+    const suspensoV118 = id => !!recusasV118 && (recusasV118[id]?.n || 0) >= RECUSAS_MAX_V118;
+    const anotarRecusaV118 = async (id, motivo) => {
+      if(!recusasV118) return;
+      const n = (recusasV118[id]?.n || 0) + 1;
+      recusasV118[id] = { n, motivo: String(motivo || '').slice(0,200), em: new Date().toISOString() };
+      try{ await setDoc(refRecusasV118, { recusas: { [id]: recusasV118[id] } }, { merge:true }); }
+      catch(e){ console.error('V118: não consegui anotar a recusa.', id, e); }
+      if(n === RECUSAS_MAX_V118) registrarLogAutomacao('postagem_orfa_suspensa', id,
+        n + ' recusas seguidas: o conciliador parou de tentar este vídeo até a gestão resolver. Última: ' + String(motivo || ''));
+    };
     for(const docSnap of videoSnap.docs){
       const v = docSnap.data();
       if(v.excluido) continue;
@@ -41920,11 +41938,14 @@ window.setGerenciaSub = function(qual, el){
         if(resolucao.estado==='confirmado'&&String(v.postagemId||'')===String(resolucao.postagem?.id||'')) continue;
         if(resolucao.estado==='confirmacao_manual'&&ativas.length===1) continue;
         if(resolucao.estado!=='confirmado'){
+          if(suspensoV118(docSnap.id)) continue;
           console.error('V118: conciliador encontrou postagem existente sem identidade única; nenhuma nova cópia foi criada.',docSnap.id,resolucao.estado);
           registrarLogAutomacao('postagem_orfa_bloqueada',docSnap.id,resolucao.estado);
+          await anotarRecusaV118(docSnap.id,resolucao.estado);
           continue;
         }
       }
+      if(suspensoV118(docSnap.id)) continue;
 
       try{
         await confirmarAprovacaoClienteCore(docSnap.id,'sistema (conciliação canônica V118)');
@@ -41933,6 +41954,7 @@ window.setGerenciaSub = function(qual, el){
       }catch(e){
         console.error('V118: órfão preservado para conferência; nenhuma postagem aproximada foi criada.',docSnap.id,e);
         registrarLogAutomacao('postagem_orfa_bloqueada',docSnap.id,e?.code||e?.message||'erro');
+        await anotarRecusaV118(docSnap.id,e?.code||e?.message||'erro');
         continue;
       }
 

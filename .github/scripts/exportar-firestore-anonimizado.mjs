@@ -46,7 +46,11 @@ function dv(x) {
   if ('referenceValue' in x) return { __ref: x.referenceValue.split('/documents/')[1] }; if ('geoPointValue' in x) return { __geo: x.geoPointValue };
   return null;
 }
-async function listarColecoes() { const r = await fetch(`${base}:listCollectionIds`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: '{}' }); if (!r.ok) throw new Error('listCollectionIds ' + r.status + ' ' + await r.text()); return (await r.json()).collectionIds || []; }
+async function listarColecoes() { // paginado: a página padrão é de 100 ids e a base já passou disso ('sistema' ficava de fora)
+  const ids = []; let pageToken = '';
+  do { const r = await fetch(`${base}:listCollectionIds`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ pageSize: 300, ...(pageToken ? { pageToken } : {}) }) }); if (!r.ok) throw new Error('listCollectionIds ' + r.status + ' ' + await r.text()); const j = await r.json(); ids.push(...(j.collectionIds || [])); pageToken = j.nextPageToken || ''; } while (pageToken);
+  return ids;
+}
 async function baixar(colecao) {
   const docs = []; let token2 = '';
   do { const r = await fetch(`${base}/${colecao}?pageSize=300${token2 ? '&pageToken=' + token2 : ''}`, { headers: H }); if (!r.ok) throw new Error(`${colecao}: ${r.status} ${await r.text()}`); const j = await r.json();

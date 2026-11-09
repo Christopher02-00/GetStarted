@@ -22,10 +22,6 @@ const RUIDO = [/cloudfunctions|FirebaseError: internal|gs-callable-get/, /false 
 export const erroGrave = e => !RUIDO.some(r => r.test(e));
 
 const resultados = [];
-// Negação de ESCRITA provocada de propósito por uma jornada (prova da regra no sentido "negado").
-// Estreita: método + faixa de linhas do firestore.rules + quantidade exata. Sobra ou falta → vermelho.
-const negacoesEsperadas = [];
-const esperarNegacao = (jornada, metodo, linhas, vezes = 1) => negacoesEsperadas.push({ jornada, metodo, linhas, vezes, vistas: 0 });
 const registrar = r => { resultados.push(r); console.log(`${r.ok ? '✅' : '❌'} ${r.jornada} · ${r.caso} · ${r.ms} ms · ${r.detalhe}`); };
 
 fs.rmSync(SAIDA, { recursive: true, force: true }); fs.mkdirSync(SAIDA, { recursive: true });
@@ -39,7 +35,7 @@ try {
   for (const f of arquivos) {
     const j = await import(path.join(dirJ, f));
     console.log(`\n── ${j.id} — ${j.nome}`);
-    try { await j.executar({ amb, seed, nav, erroGrave, registrar, esperarNegacao }); }
+    try { await j.executar({ amb, seed, nav, erroGrave, registrar }); }
     catch (e) { registrar({ jornada: j.id, caso: 'execução', ok: false, ms: 0, detalhe: 'exceção: ' + String(e).slice(0, 200) }); }
   }
   // Sentinela das rules. O que o log do emulador prova: toda negação (PERMISSION_DENIED) aqui é negação em produção também.
@@ -54,14 +50,7 @@ try {
     const blocos = [...log.matchAll(/(?:PERMISSION_DENIED|Operation failed): ?\n([^\n]*for '(?:get|list|create|update|delete)'[^\n]*)/g)].map(m => m[1]);
     const metodos = b => [...new Set([...b.matchAll(/for '(get|list|create|update|delete)' @ (L\d+)/g)].map(m => m[1] + '@' + m[2]))];
     const escritas = [], leituras = [];
-    const daJornada = ms => negacoesEsperadas.find(e => e.vistas < e.vezes && ms.some(m => { const [met, l] = m.split('@L'); return met === e.metodo && +l >= e.linhas[0] && +l <= e.linhas[1]; }));
-    for (const b of blocos) {
-      const ms = metodos(b);
-      if (!ms.some(m => /^(create|update|delete)@/.test(m))) { leituras.push(ms.join(',')); continue; }
-      const e = daJornada(ms); if (e) { e.vistas++; continue; }
-      escritas.push(ms.join(','));
-    }
-    for (const e of negacoesEsperadas) registrar({ jornada: 'RULES', caso: `negação esperada (${e.jornada}): ${e.metodo} @ L${e.linhas[0]}–L${e.linhas[1]}`, ok: e.vistas === e.vezes, ms: 0, detalhe: `${e.vistas}/${e.vezes} vista(s) no log do emulador` });
+    for (const b of blocos) { const ms = metodos(b); (ms.some(m => /^(create|update|delete)@/.test(m)) ? escritas : leituras).push(ms.join(',')); }
     const resumo = arr => Object.entries(arr.reduce((a, k) => (a[k] = (a[k] || 0) + 1, a), {})).map(([k, n]) => `${n}× ${k}`).join(' | ');
     registrar({ jornada: 'RULES', caso: 'nenhuma ESCRITA negada pelas rules (site não tenta gravar onde a regra proíbe)', ok: escritas.length === 0, ms: 0, detalhe: escritas.length ? resumo(escritas) : 'ok' });
     registrar({ jornada: 'RULES', caso: 'leituras negadas (informativo — negação legítima por papel)', ok: true, ms: 0, detalhe: leituras.length ? resumo(leituras) : 'nenhuma' });

@@ -2100,7 +2100,6 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=8d4a6f999380940cdab7582646c4195361336d5652b762037aa7e5d332cbdfc2";
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
-  import { criarCofre } from "./gs-cofre.mjs?v=5293bfb36e5fa96fe8a9fd3937cb4f69388f635e0ec1e1f2e4e1ff0019f989fb";
   import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=i136-1";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { connectFirestoreEmulator, Timestamp, getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, or as _orFB, documentId, orderBy, limit, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -19692,14 +19691,21 @@ window.arquivarMesCampanhas=async function(mes,token){
      nenhum valor de acesso. */
   const SENHA_GERENCIA_COFRE = 'Cg@102030-cofre-v1';
 
-  // P9 (ficha 2026-11-09-cofre-chave-fora-do-html): chave v2 em cofre_chaves/v2, lida só por quem as rules deixam.
-  // A chave acima vira só leitura de registros antigos e sai do arquivo na fase B, depois da migração.
-  const cofreCredenciais = criarCofre({
-    db, doc, getDoc, getDocs, collection, runTransaction, serverTimestamp,
-    derivarChaveLegada: derivarChaveCofre, quem: () => usuarioAtual || '?'
-  });
-  async function criptografarTexto(texto){ return cofreCredenciais.cifrar(texto); }
-  async function descriptografarTexto(pacote){ return cofreCredenciais.decifrar(pacote); }
+  async function criptografarTexto(texto){
+    const chave = await derivarChaveCofre();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const enc = new TextEncoder();
+    const cifrado = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, chave, enc.encode(texto));
+    return { iv: btoa(String.fromCharCode(...iv)), dados: btoa(String.fromCharCode(...new Uint8Array(cifrado))) };
+  }
+
+  async function descriptografarTexto(pacote){
+    const chave = await derivarChaveCofre();
+    const iv = Uint8Array.from(atob(pacote.iv), c => c.charCodeAt(0));
+    const dados = Uint8Array.from(atob(pacote.dados), c => c.charCodeAt(0));
+    const decifrado = await crypto.subtle.decrypt({ name:'AES-GCM', iv }, chave, dados);
+    return new TextDecoder().decode(decifrado);
+  }
 
   async function carregarRegistrosCofre(){
     const snap = await getDocs(collection(db,'cofre_senhas'));
@@ -19757,12 +19763,6 @@ window.arquivarMesCampanhas=async function(mes,token){
       </div>
     </div>`;
     setTimeout(() => { try{ mostrarStatusSenhasPessoais(); }catch(e){} }, 60);
-    if(usuarioAtual === 'Chris') htmlSeg += `<div class="card" style="border:2px solid var(--yellow);">
-      <h2>🛡️ Proteger o cofre com a chave nova</h2>
-      <div class="desc">A chave antiga do cofre está escrita no código público do site. Este passo cria uma chave nova, que só Chris, Amanda e Cecília conseguem ler, e recifra cada credencial com ela. Primeiro mostra a prévia, sem gravar nada.</div>
-      <div id="cofreProtecaoStatus" class="meta" style="margin:10px 0;"></div>
-      <div class="btnrow"><button class="btn secondary" id="cofreProtecaoPrevia">Ver prévia</button><button class="btn" id="cofreProtecaoAplicar" disabled>Proteger agora</button></div>
-    </div>`;
 
     let html = htmlSeg + `<div class="card">
       <h2>🔐 Cofre de Senhas dos Clientes</h2>
@@ -19789,50 +19789,6 @@ window.arquivarMesCampanhas=async function(mes,token){
       </div>`;
     });
     cont.innerHTML = html;
-    if(usuarioAtual === 'Chris') ligarProtecaoCofre();
-  }
-
-  function ligarProtecaoCofre(){
-    const status = document.getElementById('cofreProtecaoStatus');
-    const bPrevia = document.getElementById('cofreProtecaoPrevia');
-    const bAplicar = document.getElementById('cofreProtecaoAplicar');
-    if(!status || !bPrevia || !bAplicar) return;
-    let alvos = null, emAndamento = false;
-    bPrevia.onclick = async () => {
-      if(emAndamento) return; emAndamento = true; bPrevia.disabled = true; bAplicar.disabled = true;
-      status.textContent = 'Conferindo o cofre (sem gravar nada)...';
-      try{
-        const r = await cofreCredenciais.previa();
-        alvos = r.v1;
-        status.innerHTML = `Total: <b>${r.total}</b> · na chave antiga: <b>${r.v1.length}</b> · já na chave nova: <b>${r.v2}</b>` +
-          (r.ilegiveis.length ? ` · <b style="color:var(--red);">ilegíveis: ${r.ilegiveis.length}</b>` : '') +
-          (r.semCifra.length ? ` · sem cifra: ${r.semCifra.length}` : '') +
-          ` · chave nova ${r.chaveExiste ? 'já existe' : 'ainda não existe'}.` +
-          (r.v1.length ? '' : ' <b>Nada a fazer.</b>');
-        bAplicar.disabled = !r.v1.length;
-      }catch(e){
-        alvos = null;
-        status.innerHTML = '<b style="color:var(--red);">Não consegui conferir o cofre.</b> ' + esc(e?.code || e?.message || String(e));
-      }finally{ emAndamento = false; bPrevia.disabled = false; }
-    };
-    bAplicar.onclick = async () => {
-      if(emAndamento || !alvos?.length) return;
-      if(!confirm(`Recifrar ${alvos.length} credencial(is) com a chave nova? As senhas não mudam; só a forma de guardar.`)) return;
-      emAndamento = true; bPrevia.disabled = true; bAplicar.disabled = true;
-      status.textContent = 'Protegendo... não feche esta tela.';
-      try{
-        const r = await cofreCredenciais.proteger(alvos);
-        await registrarLogAutomacao('cofre_chave_v2_migracao', 'cofre_senhas',
-          `convertidos ${r.convertidos.length} · já protegidos ${r.jaProtegidos.length} · falhas ${r.falhas.length}` +
-          (r.falhas.length ? ' · ' + r.falhas.map(f => f.id + ': ' + f.erro).join(' | ') : ''));
-        status.innerHTML = `Convertidos: <b>${r.convertidos.length}</b> · já estavam protegidos: <b>${r.jaProtegidos.length}</b>` +
-          (r.falhas.length ? ` · <b style="color:var(--red);">falharam: ${r.falhas.length}</b> (veja o log de automações)` : '') +
-          '. Clique em "Ver prévia" para conferir.';
-        alvos = null;
-      }catch(e){
-        status.innerHTML = '<b style="color:var(--red);">A proteção parou.</b> ' + esc(e?.code || e?.message || String(e)) + ' Nada foi apagado; rode a prévia de novo.';
-      }finally{ emAndamento = false; bPrevia.disabled = false; }
-    };
   }
 
   window.salvarSenhaCofre = async function(){

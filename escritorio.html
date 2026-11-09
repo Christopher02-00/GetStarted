@@ -2289,10 +2289,19 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     try{ if(typeof onDadosTempoRealMudaram==='function') onDadosTempoRealMudaram(nome); }catch(e){}
   }
 
+  /* P12 (09/11/2026): sem rede, o Firestore devolve uma lista VAZIA tirada do cache local em vez de erro,
+     e as telas mostravam "Nenhum…" (Get Academy, cofre da Cecília, Postagem Até Quando). Vazio que o
+     servidor não confirmou não é lista vazia: vira erro de conexão, que as telas tratam como indisponível.
+     Lista não vazia do cache continua valendo (é dado real, só pode estar desatualizado). */
+  function exigirListaConfirmadaP12(snap){
+    if(snap?.empty && snap?.metadata?.fromCache)
+      throw Object.assign(new Error('Sem conexão com o servidor: esta lista não pôde ser confirmada. Nada foi apagado.'), {code:'unavailable'});
+    return snap;
+  }
   async function getDocs(ref){
     // só cacheia coleção inteira; consulta com where/orderBy passa direto
     const nome = (ref && ref.type === 'collection' && ref.path && ref.path.indexOf('/') === -1) ? ref.path : null;
-    if(!nome) return _getDocsFB(ref);
+    if(!nome) return exigirListaConfirmadaP12(await _getDocsFB(ref));
 
     const agora = Date.now();
     const guardado = __cacheColecoes.get(nome);
@@ -2303,7 +2312,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     const geracaoGlobal=__geracaoCacheColecoes;
     const geracaoColecao=__geracaoCachePorColecao.get(nome)||0;
     const promessa = (async () => {
-      const snap = await _getDocsFB(ref);
+      const snap = exigirListaConfirmadaP12(await _getDocsFB(ref));
       __errosTempoRealPorColecaoV135.delete(nome);
       if(nome==='demandas') __erroDemandasOperacionaisV135=null;
       const itens = [];
@@ -19959,7 +19968,12 @@ window.arquivarMesCampanhas=async function(mes,token){
     const cont = document.getElementById('getAcademyConteudo');
     cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
     const podeEditar = ['Chris','Amanda'].includes(usuarioAtual);
-    const snap = await getDocs(collection(db,'get_academy'));
+    let snap;
+    try{ snap = await getDocs(collection(db,'get_academy')); }
+    catch(e){ // P12: falha de leitura não vira "nenhum curso"
+      cont.innerHTML = '<div class="card" style="border-color:var(--red);"><b style="color:var(--red);">Cursos indisponíveis agora.</b><div class="desc">Não consegui confirmar a lista com o servidor; nada foi apagado. Confira a internet e abra de novo. ' + esc(e?.code || e?.message || '') + '</div></div>';
+      return;
+    }
     const cursos = []; snap.forEach(d => { const v=d.data(); if(!v.excluido) cursos.push({id:d.id, ...v}); });
     cursos.sort((a,b) => (a.titulo||'').localeCompare(b.titulo||''));
 

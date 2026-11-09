@@ -16,15 +16,16 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const { page, erros, fechar } = await nav.novaPagina(); const t0 = Date.now();
     try {
       await entrarComo(page, amb.url(), pessoa);
-      const terminou = await esperar(async () => (await conta('motor_executado')) > antes.motor, 120000);
+      const terminou = await esperar(async () => { const l = (await seed.listar('log_automacoes')).filter(x => x.tipo === 'motor_executado'); return l.length > antes.motor ? l : null; }, 120000);
+      const medido = (terminou || []).some(l => /rotinas em [\d.]+s/.test(String(l.detalhe || ''))); // P4: duração registrada
       const depois = { erro: await conta('erro_verificacao'), incompleta: await conta('manutencao_diaria_incompleta') };
       const lock = await seed.get('sistema', 'motor_lock');
       const falhas = erros.filter(e => /motorAutomacoes: falha em/.test(e));
       const graves = erros.filter(erroGrave);
       await foto(page, `J08-${pessoa}`);
-      const ok = !!terminou && !falhas.length && depois.erro === antes.erro && depois.incompleta === antes.incompleta && lock?.ultimaManutencaoDia === hoje() && !graves.length;
+      const ok = !!terminou && medido && !falhas.length && depois.erro === antes.erro && depois.incompleta === antes.incompleta && lock?.ultimaManutencaoDia === hoje() && !graves.length;
       registrar({ jornada: id, caso: `${pessoa}: rodada completa do motor`, ok, ms: Date.now() - t0,
-        detalhe: `motor_executado: ${terminou ? 'sim' : 'não'} · falhas no console: ${falhas.length} · erro_verificacao +${depois.erro - antes.erro} · manutenção carimbada: ${lock?.ultimaManutencaoDia === hoje()}` + (falhas[0] ? ' | ' + falhas[0].slice(0, 120) : graves[0] ? ' | ' + graves[0].slice(0, 120) : '') });
+        detalhe: `motor_executado: ${terminou ? 'sim' : 'não'} · duração medida: ${medido} · falhas no console: ${falhas.length} · erro_verificacao +${depois.erro - antes.erro} · manutenção carimbada: ${lock?.ultimaManutencaoDia === hoje()}` + (falhas[0] ? ' | ' + falhas[0].slice(0, 120) : graves[0] ? ' | ' + graves[0].slice(0, 120) : '') });
     } catch (e) { await foto(page, `J08-${pessoa}-falha`); registrar({ jornada: id, caso: `${pessoa}: rodada completa do motor`, ok: false, ms: Date.now() - t0, detalhe: String(e).slice(0, 200) }); }
     finally { await fechar(); }
   }

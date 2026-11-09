@@ -15,6 +15,7 @@ const client = await auth.getClient(); const token = (await client.getAccessToke
 const base = `https://firestore.googleapis.com/v1/projects/${projeto}/databases/(default)/documents`;
 const H = { Authorization: `Bearer ${token}` };
 const h = s => crypto.createHash('sha256').update(String(s)).digest('hex');
+const EMAILS_EQUIPE = new Set(['christopherveloso0@gmail.com','amandachamorrosm@gmail.com','vitoriaboaron215@gmail.com','heloisaksc@gmail.com','victorvieiraj814@gmail.com','nathanocosta652@gmail.com','luissouza280507@gmail.com','yasmocelin@gmail.com','gabrielleromaomarketing@gmail.com','luanamassoquetojulia@gmail.com']);
 const EQUIPE = new Set(['Chris','Christopher','Amanda','Cecília','Cecilia','Helo','Heloísa','João Victor','Nathan','Luís','Luis','Yas','Yasmin','Gabrielle','Gabi','Fernanda','Júlia','Julia']);
 const CAMPOS_FINANCEIROS = /^(valor|preco|preço|mensalidade|salario|salário|total|desconto|caixa|receita|custo|faturamento)/i;
 const CAMPOS_PESSOA = /^(nomeContato|contato|responsavel|responsável|nomeResponsavel|nomeCliente|nomeCompleto|cpf|rg|endereco|endereço|cep)$/i;
@@ -25,7 +26,7 @@ function anonValor(chave, v, ctx) {
     // identificadores técnicos nunca são dado pessoal e os contratos do servidor os conferem byte a byte:
     // hashes hex (assinaturas, publicacao, operationId), ids com prefixo (prov140_…), datas ISO. Um hash com 10 dígitos seguidos já virou "telefone" uma vez.
     if (/^[a-f0-9]{32,}$/i.test(v) || /^[a-z0-9]+_[a-f0-9]{32,}$/i.test(v) || /^\d{4}-\d{2}-\d{2}(T|$)/.test(v)) return v;
-    if (/^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(v)) return `ensaio+${h(v).slice(0, 8)}@ensaio.get`;
+    if (/^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(v)) return EMAILS_EQUIPE.has(v.toLowerCase()) ? v : `ensaio+${h(v).slice(0, 8)}@ensaio.get`; // e-mail da equipe é identidade operacional (rules/Functions comparam com o token)
     if (/(^|\D)(\+?55)?\s?\(?\d{2}\)?\s?9?\d{4}[- ]?\d{4}(\D|$)/.test(v) && v.replace(/\D/g, '').length >= 10) return `41 9${h(v).replace(/\D/g, '').padEnd(8, '0').slice(0, 4)}-${h(v + 'b').replace(/\D/g, '').padEnd(4, '0').slice(0, 4)}`;
     if (/^https?:\/\//.test(v)) { try { return new URL(v).origin + '/ensaio-' + h(v).slice(0, 8); } catch { return 'https://ensaio.get/' + h(v).slice(0, 8); } }
     if (CAMPOS_PESSOA.test(chave)) return 'Pessoa ' + h(v).slice(0, 6);

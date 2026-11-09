@@ -106,6 +106,10 @@ export async function subir({ log = console.log } = {}) {
   return { aguardarFunctionsOciosas,
     portas,
     url: (pagina = 'escritorio.html', extra = '') => `http://127.0.0.1:${web}/${pagina}?ensaio=1&fsPort=${fs_}&authPort=${auth}${extra}`,
-    async parar() { srv.close(); proc.kill('SIGINT'); await new Promise(r => setTimeout(r, 1500)); try { proc.kill('SIGKILL'); } catch {} }
+    async parar() {
+      srv.close(); proc.kill('SIGINT'); await new Promise(r => setTimeout(r, 2500)); try { proc.kill('SIGKILL'); } catch {}
+      // o SIGINT ao firebase-tools nem sempre derruba o jar do Firestore e os workers das Functions: órfãos somam gigabytes
+      try { execSync("pkill -f cloud-firestore-emulator ; pkill -f 'firebase-tools/lib/emulator' ; pkill -f functionsEmulatorRuntime ; true", { stdio: 'ignore' }); } catch {}
+    }
   };
 }

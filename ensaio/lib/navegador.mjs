@@ -10,7 +10,7 @@ const { chromium } = require('playwright');
 export const SAIDA = path.join(RAIZ, 'ensaio', 'saida');
 
 export async function abrirNavegador(portas) {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ args: ['--disable-dev-shm-usage'] }); // /dev/shm pequeno em container derruba a aba com páginas grandes
   return {
     browser,
     async novaPagina() {

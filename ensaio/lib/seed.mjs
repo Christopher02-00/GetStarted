@@ -20,6 +20,9 @@ function v(x) {
   if (typeof x === 'number') return Number.isInteger(x) ? { integerValue: String(x) } : { doubleValue: x };
   if (typeof x === 'string') return { stringValue: x };
   if (x instanceof Date) return { timestampValue: x.toISOString() };
+  if (x && typeof x === 'object' && typeof x.__ts === 'string') return { timestampValue: x.__ts };
+  if (x && typeof x === 'object' && typeof x.__ref === 'string') return { referenceValue: `projects/${PROJETO}/databases/(default)/documents/${x.__ref}` };
+  if (x && typeof x === 'object' && x.__geo) return { geoPointValue: x.__geo };
   if (Array.isArray(x)) return { arrayValue: { values: x.map(v) } };
   if (typeof x === 'object') return { mapValue: { fields: Object.fromEntries(Object.entries(x).map(([k, y]) => [k, v(y)])) } };
   throw new Error('tipo não suportado: ' + typeof x);
@@ -129,7 +132,8 @@ export async function seedPadrao(seed, { log = console.log } = {}) {
     await seed.set('postagens', id, { videoId, cliente: slug, clienteNome: nome, titulo, status, dataAgendada: data || '', legenda: status === 'aguardando_legenda' ? '' : 'Legenda de ensaio', criadoEm: iso(mais(-4)), excluido: false, ...(status === 'postado' ? { postadoEm: iso(mais(-7)), postadoPor: 'Cecília' } : {}) });
   }
   for (const [id, slug, nome, titulo, status, editor, postagemId] of vids) {
-    await seed.set('videos_producao', id, { cliente: slug, clienteNome: nome, titulo, status, editorAtribuido: editor, ...(editor ? { editorAtribuidoEm: iso(mais(-5)), editorAtribuidoPor: 'Amanda' } : {}), ...(status === 'correcao' ? { correcaoSolicitadaEm: iso(mais(-2)), correcaoSolicitadaPor: 'Chris', motivoCorrecao: 'Ajustar cor (ensaio)' } : {}), criadoEm: iso(mais(-5)), excluido: false, nivelEscalonamento: 0, ...(postagemId ? { postagemId, aprovadoEm: iso(mais(-4)), aprovadoPor: 'Chris' } : {}) });
+    // `data` = dia da gravação: todo vídeo real tem (1101/1101 na R2); sem ele a lista do editor imprime 'undefined' (F-17)
+    await seed.set('videos_producao', id, { cliente: slug, clienteNome: nome, titulo, status, data: yyyymmdd(mais(-6)), editorAtribuido: editor, ...(editor ? { editorAtribuidoEm: iso(mais(-5)), editorAtribuidoPor: 'Amanda' } : {}), ...(status === 'correcao' ? { correcaoSolicitadaEm: iso(mais(-2)), correcaoSolicitadaPor: 'Chris', motivoCorrecao: 'Ajustar cor (ensaio)' } : {}), criadoEm: iso(mais(-5)), excluido: false, nivelEscalonamento: 0, ...(postagemId ? { postagemId, aprovadoEm: iso(mais(-4)), aprovadoPor: 'Chris' } : {}) });
   }
   // demandas existentes (uma por papel) + uma do cliente
   await seed.set('demandas', 'd-cecilia-1', { titulo: 'Agendar gravação Bluefit', descricao: 'Ensaio', destinatario: 'Cecília', remetente: 'Chris', status: 'pendente', prazoData: yyyymmdd(mais(2)), prazoHora: '18:00', criadoEm: iso(mais(-1)), excluido: false });
@@ -139,4 +143,32 @@ export async function seedPadrao(seed, { log = console.log } = {}) {
   await seed.set('agendamentos', 'ag-hitech-1', { cliente: 'hitech', clienteNome: 'Hitech', data: yyyymmdd(mais(4)), hora: '14:00', filmmaker: 'Nathan', equipe: 'Nathan', status: 'agendado', qtdVideosPlanejados: 3, criadoEm: iso(mais(-2)), excluido: false });
   log(`[seed] ${EQUIPE.length} pessoas, ${clientes.length} clientes, ${vids.length} vídeos (${posts.length} com postagem), 2 demandas, 2 gravações`);
   return { uids, clientes };
+}
+
+// ---- R2: seed = cópia ANONIMIZADA do banco real (exportada pelo workflow exportar-firestore.yml, só leitura).
+// ENSAIO_DADOS_REAIS=/caminho/exportacao → carrega as coleções operacionais (sem logs/filas de e-mail) em lote.
+// Os dados ficam só na máquina de ensaio; nunca entram no repositório.
+const COLECOES_IGNORADAS = new Set(['fila_emails', 'email_throttle', 'log_automacoes', 'log_acessos', 'log_operacoes_delegadas', 'calendarios_versoes', 'calendarios_backup_20260727', 'notificacoes_operacionais_i165', 'notificacoes_dispositivos_i165']);
+export async function seedReal(seed, dir, { log = console.log, portas } = {}) {
+  const fs = await import('node:fs'); const path = await import('node:path');
+  await seed.limparTudo(); await seed.limparAuth();
+  const uids = {}; for (const p of EQUIPE) uids[p.pessoa] = await seed.criarUsuario(p.email);
+  const base = `http://127.0.0.1:${portas.firestore}/v1/projects/${PROJETO}/databases/(default)/documents`;
+  const H = { 'Authorization': 'Bearer owner', 'Content-Type': 'application/json' };
+  let total = 0, cols = 0;
+  for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json') && !f.startsWith('_')).sort()) {
+    const colecao = f.slice(0, -5); if (COLECOES_IGNORADAS.has(colecao)) continue;
+    const docs = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    for (let i = 0; i < docs.length; i += 200) {
+      // `__id` é o caminho do documento (gravado pelo export); o campo de dados `id`, quando existe, fica intacto — contratos como o da CP140 exigem `d.id === caminho`.
+      const writes = docs.slice(i, i + 200).map(({ __id, ...dados }) => { if (!__id) throw new Error(`seedReal ${colecao}: documento sem __id — exporte de novo com o script atual`); return { update: { name: `projects/${PROJETO}/databases/(default)/documents/${colecao}/${__id}`, fields: v(dados).mapValue.fields } }; });
+      const r = await fetch(`${base}:batchWrite`, { method: 'POST', headers: H, body: JSON.stringify({ writes }) });
+      if (!r.ok) throw new Error(`seedReal ${colecao}: ${r.status} ${(await r.text()).slice(0, 300)}`);
+    }
+    total += docs.length; cols++;
+  }
+  // os usuários do emulador precisam bater com usuarios_equipe reais: garante uid/ativo para a equipe atual
+  for (const p of EQUIPE) { const atual = await seed.get('usuarios_equipe', p.email); await seed.set('usuarios_equipe', p.email, { ...(atual || { pessoa: p.pessoa, criadoEm: iso(hoje) }), pessoa: p.pessoa, email: p.email, ativo: true, excluido: false, uid: uids[p.pessoa] }); } // e-mail da equipe é identidade operacional (as Functions comparam com o token): nunca o valor anonimizado
+  log(`[seed real] ${cols} coleções · ${total} documentos anonimizados (de ${dir})`);
+  return { uids };
 }

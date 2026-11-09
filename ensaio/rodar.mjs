@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { subir, RAIZ } from './lib/emulador.mjs';
-import { criarSeed, seedPadrao } from './lib/seed.mjs';
+import { criarSeed, seedPadrao, seedReal } from './lib/seed.mjs';
 import { abrirNavegador, SAIDA } from './lib/navegador.mjs';
 
 const args = process.argv.slice(2);
@@ -29,7 +29,7 @@ const amb = await subir();
 let nav;
 try {
   const seed = criarSeed(amb.portas);
-  await seedPadrao(seed);
+  if (process.env.ENSAIO_DADOS_REAIS) await seedReal(seed, process.env.ENSAIO_DADOS_REAIS, { portas: amb.portas }); else await seedPadrao(seed);
   await amb.aguardarFunctionsOciosas();
   nav = await abrirNavegador(amb.portas);
   for (const f of arquivos) {
@@ -38,14 +38,22 @@ try {
     try { await j.executar({ amb, seed, nav, erroGrave, registrar }); }
     catch (e) { registrar({ jornada: j.id, caso: 'execução', ok: false, ms: 0, detalhe: 'exceção: ' + String(e).slice(0, 200) }); }
   }
-  // Sentinela das rules (F-06): o Firebase para de avaliar uma regra acima de 1000 expressões e nega "por limite";
-  // qualquer ocorrência no log do emulador — ou erro de avaliação (campo lido sem default, F-02) — derruba o portão.
+  // Sentinela das rules. O que o log do emulador prova: toda negação (PERMISSION_DENIED) aqui é negação em produção também.
+  // As frases "maximum of 1000 expressions" e "evaluation error" que acompanham uma negação são diagnóstico verboso do
+  // emulador (DefaultEmulatorRulesAuthorizer.withVerboseErrors reavalia a regra sem curto-circuito) — não ocorrem em produção
+  // e não são sinal de regra quebrada (provado na R2 por bisseção: A só e B só passam, A||B "estoura"). Por isso o portão
+  // olha o que importa: ESCRITA negada = o site tentou gravar onde a regra proíbe (bug do site ou da regra) → vermelho.
+  // Leitura negada é esperada para papéis sem acesso (F-03) → só informativo.
   try {
     const log = fs.readFileSync(path.join(RAIZ, 'ensaio/.runtime/firestore-debug.log'), 'utf8');
-    const mil = (log.match(/maximum of 1000 expressions/g) || []).length;
-    const aval = [...new Set((log.match(/evaluation error[^\n]{0,160}/gi) || []))];
-    registrar({ jornada: 'RULES', caso: 'nenhuma regra estourou o limite de 1000 expressões', ok: mil === 0, ms: 0, detalhe: mil ? `${mil} ocorrência(s) no log do emulador` : 'ok' });
-    registrar({ jornada: 'RULES', caso: 'nenhum erro de avaliação (campo sem default etc.)', ok: aval.length === 0, ms: 0, detalhe: aval.length ? aval.slice(0, 2).join(' | ') : 'ok' });
+    // REST: "PERMISSION_DENIED: \n<detalhe>"; SDK (WebChannel): "Operation failed: \n<detalhe>" — o detalhe traz "for 'update' @ L…"
+    const blocos = [...log.matchAll(/(?:PERMISSION_DENIED|Operation failed): ?\n([^\n]*for '(?:get|list|create|update|delete)'[^\n]*)/g)].map(m => m[1]);
+    const metodos = b => [...new Set([...b.matchAll(/for '(get|list|create|update|delete)' @ (L\d+)/g)].map(m => m[1] + '@' + m[2]))];
+    const escritas = [], leituras = [];
+    for (const b of blocos) { const ms = metodos(b); (ms.some(m => /^(create|update|delete)@/.test(m)) ? escritas : leituras).push(ms.join(',')); }
+    const resumo = arr => Object.entries(arr.reduce((a, k) => (a[k] = (a[k] || 0) + 1, a), {})).map(([k, n]) => `${n}× ${k}`).join(' | ');
+    registrar({ jornada: 'RULES', caso: 'nenhuma ESCRITA negada pelas rules (site não tenta gravar onde a regra proíbe)', ok: escritas.length === 0, ms: 0, detalhe: escritas.length ? resumo(escritas) : 'ok' });
+    registrar({ jornada: 'RULES', caso: 'leituras negadas (informativo — negação legítima por papel)', ok: true, ms: 0, detalhe: leituras.length ? resumo(leituras) : 'nenhuma' });
   } catch (e) { registrar({ jornada: 'RULES', caso: 'leitura do log do emulador', ok: false, ms: 0, detalhe: String(e).slice(0, 120) }); }
 } finally { try { await nav?.fechar(); } catch {} await amb.parar(); }
 

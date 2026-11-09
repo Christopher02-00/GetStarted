@@ -28,11 +28,13 @@ description: Usar ao implementar qualquer alteração de código no Site Get dep
 node --check <cada .mjs tocado>
 python3 ferramentas/extrair_inline.py escritorio.html | xargs -I{} node --check {}
 # 2. Integridade de caminhos (cliques → funções, irPara → views, getElementById → ids, duplicatas)
-python3 ferramentas/verificar_caminhos.py escritorio.html --out /tmp/vc.json   # deve manter 0 handlers quebrados
+python3 ferramentas/verificar_caminhos.py escritorio.html --out /tmp/vc.json   # 0 handlers quebrados; nada novo além de ferramentas/baseline.json
+# (repita para portal-cliente.html e calendario.html quando tocá-los)
 # 3. Duplicatas e órfãos
 python3 ferramentas/verificar_duplicatas.py .                                  # pares raiz×functions iguais; calendario==calendarios
-# 4. Jornadas (skill get-prova-de-jornada): as listadas na ficha + bateria mínima
-node ensaio/rodar.mjs --jornadas <ids da ficha> --minima
+# 4. Jornadas (skill get-prova-de-jornada): durante o trabalho, só as da ficha; antes do PR, a bateria inteira
+node ensaio/rodar.mjs --jornadas <ids da ficha>   # iteração
+node ensaio/rodar.mjs                            # obrigatório antes do PR (+ --movel se tocou interface)
 # 5. Diff revisado linha a linha: nada fora do escopo da ficha
 git diff --stat && git diff
 ```

@@ -30,7 +30,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J12 | Tour: cada papel abre todas as telas do próprio menu; vermelho em erro grave no console, tela vazia ou texto de indisponibilidade ("Não consegui…", "undefined", "NaN") — pensado para a cópia anonimizada do banco real (`ENSAIO_DADOS_REAIS=<pasta da exportação>`, `ENSAIO_PAPEIS=Chris,Amanda`) | 8 |
 | J13 | Minhas Demandas: o chip de filtro escolhido abre a faixa de mesmo nome, acima do estado guardado no navegador (F-01) | Helo |
 | J14 | Central R80 abre mesmo com a listagem da Entrada de perfil (CP126) em voo — leitura não trava navegação (F-09) | Chris |
-| J15 | Cofre: credencial antiga legível → rules (só Chris cria a chave; Helo não lê) → prévia do Chris sem gravar → proteção com chave nova (inclui arquivados) → Cecília revela o mesmo texto e a chave não está no HTML → 2ª rodada não grava; credencial nova nasce na versão 2 (P9) | Cecília, Helo, Amanda, Chris |
+| J15 | Cofre só com a chave nova (P9 fase B): rules (só Chris cria a chave; Helo não lê) → Cecília revela registro v2 e o HTML não tem a chave antiga, o PBKDF2 nem a chave nova → prévia do Chris aponta a sobra v1 sem gravar → credencial nova nasce v2 → sobra v1 não abre | Cecília, Helo, Amanda, Chris |
 | J16 | Casta: Amanda classifica e publica `castas_operacionais` → Cecília vê a mesma classificação sem ler o financeiro → Cecília não grava a projeção → mudança da gerência chega à Cecília (P1/F-12) | Amanda, Cecília |
 | J17 | Conciliador V118: vídeo aprovado com postagem arquivada → 5 rodadas da manutenção diária → tenta 3 vezes, avisa `postagem_orfa_suspensa` 1 vez e para (P6/D-01) | Chris |
 | J18 | Vídeo legado sem `data` atribuído à Helo → tela de vídeos sem "undefined" (P5/F-17) | Helo |

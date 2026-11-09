@@ -4,7 +4,7 @@
 // Antes: AES-GCM com chave derivada de uma string fixa no escritorio.html (pública).
 // Agora: chave aleatória de 32 bytes em cofre_chaves/v2, que as rules só deixam
 // Chris/Amanda/Cecília ler e só o Chris criar (uma vez, sem update/delete).
-// Registro v1 continua legível pela chave antiga até a migração (fase B a remove).
+// Fase B (09/11/2026): a chave antiga saiu do HTML. Registro v1 não é mais legível; a prévia o lista para conferência.
 
 export const COLECAO_CHAVES_COFRE = 'cofre_chaves';
 export const ID_CHAVE_COFRE_V2 = 'v2';
@@ -17,7 +17,8 @@ export function versaoPacoteCofre(pacote) {
   return pacote && typeof pacote === 'object' && pacote.versao === 2 ? 2 : 1;
 }
 
-export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransaction, serverTimestamp, derivarChaveLegada, quem }) {
+export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransaction, serverTimestamp, quem }) {
+  const SEM_CHAVE_ANTIGA = 'Esta credencial está na chave antiga, que foi removida. Cadastre-a de novo no cofre.';
   const refChave = () => doc(db, COLECAO_CHAVES_COFRE, ID_CHAVE_COFRE_V2);
 
   // Regra de cofre_chaves ainda não publicada no Firebase (o código pode chegar ao ar antes dela):
@@ -55,15 +56,13 @@ export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransactio
       if (!chave) throw new Error('A chave nova do cofre não foi encontrada.');
       return decifrarCom(chave, pacote);
     }
-    return decifrarCom(await derivarChaveLegada(), pacote);
+    throw new Error(SEM_CHAVE_ANTIGA);
   }
 
-  // Sem chave v2 ainda (antes do Chris proteger o cofre) a gravação segue como hoje;
-  // a migração converte esses registros depois. Nunca trava a Amanda por isso.
   async function cifrar(texto) {
-    const chave = await chaveV2({ tolerarRegraAusente: true });
-    if (chave) return cifrarCom(chave, texto, 2);
-    return cifrarCom(await derivarChaveLegada(), texto, 1);
+    const chave = await chaveV2();
+    if (!chave) throw new Error('A chave nova do cofre não foi encontrada. Avise o Chris.');
+    return cifrarCom(chave, texto, 2);
   }
 
   // Prévia: só leitura. Inclui arquivados (excluido:true), que também guardam segredo.
@@ -73,13 +72,12 @@ export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransactio
     catch (e) { if (!regraAusente(e)) throw e; regraPendente = true; }
     const snap = await getDocs(collection(db, COLECAO_COFRE));
     const r = { chaveExiste: !!snapChave?.exists(), regraPendente, total: 0, v1: [], v2: 0, semCifra: [], ilegiveis: [] };
-    const legada = await derivarChaveLegada();
     for (const d of snap.docs) {
       r.total++;
       const pacote = d.data()?.senhaCriptografada;
       if (!pacote || !pacote.iv || !pacote.dados) { r.semCifra.push(d.id); continue; }
       if (versaoPacoteCofre(pacote) === 2) { r.v2++; continue; }
-      try { await decifrarCom(legada, pacote); r.v1.push(d.id); } catch { r.ilegiveis.push(d.id); }
+      r.v1.push(d.id);
     }
     return r;
   }
@@ -99,10 +97,9 @@ export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransactio
     return chave;
   }
 
-  // Recriptografa cada registro v1 numa transação própria. Idempotente: v2 é pulado.
+  // Depois da fase B não há chave antiga: registro v1 vira falha explicada (nada é gravado nele).
   async function proteger(ids) {
-    const chave = await garantirChaveV2();
-    const legada = await derivarChaveLegada();
+    await garantirChaveV2();
     const r = { convertidos: [], jaProtegidos: [], falhas: [] };
     for (const id of ids) {
       const ref = doc(db, COLECAO_COFRE, id);
@@ -112,11 +109,7 @@ export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransactio
           if (!s.exists()) throw new Error('registro sumiu');
           const pacote = s.data()?.senhaCriptografada;
           if (versaoPacoteCofre(pacote) === 2) return 'ja';
-          const texto = await decifrarCom(legada, pacote);
-          const novo = await cifrarCom(chave, texto, 2);
-          if (await decifrarCom(chave, novo) !== texto) throw new Error('conferência da cifra nova falhou');
-          tx.update(ref, { senhaCriptografada: novo, recriptografadoEm: serverTimestamp(), recriptografadoPor: quem() });
-          return 'ok';
+          throw new Error(SEM_CHAVE_ANTIGA);
         });
         (resultado === 'ja' ? r.jaProtegidos : r.convertidos).push(id);
       } catch (e) {

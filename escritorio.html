@@ -2100,7 +2100,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=8d4a6f999380940cdab7582646c4195361336d5652b762037aa7e5d332cbdfc2";
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
-  import { criarCofre } from "./gs-cofre.mjs?v=9b7d3537fbc6918ce1e1535a4c689f624f4869faea3c24277ba52439f25e19e9";
+  import { criarCofre } from "./gs-cofre.mjs?v=e5edc471dc58c7f3d415297e6442a0889d8d18c6300ff8702b4a7d8f1b902da9";
   import { criarCastasOperacionais } from "./gs-castas-operacionais.mjs?v=3913918010933a758224a5915ce48441b9b194ec114f9d8ce1092e796be3a830";
   import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=i136-1";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -3384,6 +3384,17 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     }).join('');
   };
 
+  /* P9 fase B (09/11/2026): os textos que já vazaram (pedaços da chave antiga do cofre e uma senha antiga)
+     saíram do arquivo. Fica só o SHA-256 deles: a checagem continua recusando senha que os contenha. */
+  const HASHES_TEXTOS_EXPOSTOS_P9 = new Set(['048644dd8b112c90100330dbc098e8559ba34b2bb47d4292456c0be70d28d013', 'bb002a4beb24745a73384e91f93614155f57bce67124e66a11eab4ad359ad699']);
+  async function contemTextoExpostoP9(texto){
+    const n = String(texto||'').toLowerCase();
+    for(const tam of [8, 9]) for(let i=0;i+tam<=n.length;i++){
+      const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(n.slice(i,i+tam)));
+      if(HASHES_TEXTOS_EXPOSTOS_P9.has(Array.from(new Uint8Array(d)).map(b=>b.toString(16).padStart(2,'0')).join(''))) return true;
+    }
+    return false;
+  }
   window.definirSenhaPessoal = async function(nome){
     const p = await lerSenhasPessoais();
     if(p[nome]){
@@ -3394,7 +3405,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     const nova = prompt((p[nome] ? 'Nova senha pessoal de ' : 'Criar a senha pessoal de ') + nome + ' (mínimo 8 caracteres):');
     if(nova === null) return;
     if(String(nova).length < 8){ mostrarToast('Curta demais — pelo menos 8 caracteres.', 'erro'); return; }
-    if(String(nova).toLowerCase().includes('cg@102030') || String(nova).toLowerCase().includes('cofre-v1')){
+    if(await contemTextoExpostoP9(nova)){
       alert('Essa senha aparece escrita no código do site. Escolhe outra, sem relação com o sistema.'); return;
     }
     const conf = prompt('Digita de novo pra confirmar:');
@@ -3460,12 +3471,12 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
        Agora checa. Qualquer senha que contenha (ou esteja contida em)
        um dos textos que vivem no código é recusada na hora, com o
        motivo escrito. */
-    const TEXTOS_QUE_ESTAO_NO_CODIGO = [SENHA_GERENCIA_COFRE, 'Cg@102030', 'cofre-v1', 'get-started', 'getstarted'];
+    const TEXTOS_QUE_ESTAO_NO_CODIGO = ['get-started', 'getstarted'];
     const n = String(nova).toLowerCase();
     const conflito = TEXTOS_QUE_ESTAO_NO_CODIGO.find(t => {
       const tl = String(t).toLowerCase();
       return n === tl || n.includes(tl) || (tl.length >= 8 && tl.includes(n));
-    });
+    }) || (await contemTextoExpostoP9(n) ? 'texto exposto' : '');
     if(conflito){
       alert('Essa senha NÃO pode ser usada.\n\n' +
         'Ela aparece escrita no código do site, em texto puro — qualquer pessoa lê com Ctrl+U no navegador. ' +
@@ -19691,38 +19702,13 @@ window.arquivarMesCampanhas=async function(mes,token){
     cont.innerHTML = html;
   }
 
-  // ===== COFRE DE SENHAS — criptografia real via Web Crypto API (AES-GCM) =====
-  async function derivarChaveCofre(){
-    const enc = new TextEncoder();
-    const material = await crypto.subtle.importKey('raw', enc.encode(SENHA_GERENCIA_COFRE), 'PBKDF2', false, ['deriveKey']);
-    return crypto.subtle.deriveKey(
-      { name:'PBKDF2', salt: enc.encode('get-started-cofre-salt'), iterations: 100000, hash:'SHA-256' },
-      material, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']
-    );
-  }
-  /* ===== ATENÇÃO — 28/07/2026 =========================================
-     Esta string é a CHAVE AES do cofre, não uma senha de login. Ela não
-     pode mudar sem tornar ilegível tudo que já foi guardado, por isso
-     continua aqui.
-
-     O problema: ela foi derivada da senha antiga do escritório. Quem ler
-     este arquivo descobre qual era essa senha. Com as regras novas do
-     Firestore isso sozinho não abre o cofre — `cofre_senhas` só é legível
-     por uma sessão de gerência. Mas quem tiver a senha consegue abrir a
-     gerência e aí sim chegar no cofre.
-
-     Por isso a troca da senha do escritório deixou de ser recomendação e
-     virou obrigação: enquanto a senha for a antiga, o sistema cobra a
-     troca a cada login (ver exigirTrocaDeSenha logo abaixo). Depois de
-     trocada, esta string vira só uma chave de criptografia legada, sem
-     nenhum valor de acesso. */
-  const SENHA_GERENCIA_COFRE = 'Cg@102030-cofre-v1';
+  // ===== COFRE DE SENHAS — AES-GCM com a chave v2 de cofre_chaves (gs-cofre.mjs) =====
 
   // P9 (ficha 2026-11-09-cofre-chave-fora-do-html): chave v2 em cofre_chaves/v2, lida só por quem as rules deixam.
-  // A chave acima vira só leitura de registros antigos e sai do arquivo na fase B, depois da migração.
+  // Fase B (09/11/2026): os 25 registros de produção já estavam na v2; a chave antiga saiu do arquivo.
   const cofreCredenciais = criarCofre({
     db, doc, getDoc, getDocs, collection, runTransaction, serverTimestamp,
-    derivarChaveLegada: derivarChaveCofre, quem: () => usuarioAtual || '?'
+    quem: () => usuarioAtual || '?'
   });
   async function criptografarTexto(texto){ return cofreCredenciais.cifrar(texto); }
   async function descriptografarTexto(pacote){ return cofreCredenciais.decifrar(pacote); }

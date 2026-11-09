@@ -34,6 +34,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J16 | Casta: Amanda classifica e publica `castas_operacionais` → Cecília vê a mesma classificação sem ler o financeiro → Cecília não grava a projeção → mudança da gerência chega à Cecília (P1/F-12) | Amanda, Cecília |
 | J17 | Conciliador V118: vídeo aprovado com postagem arquivada → 5 rodadas da manutenção diária → tenta 3 vezes, avisa `postagem_orfa_suspensa` 1 vez e para (P6/D-01) | Chris |
 | J18 | Vídeo legado sem `data` atribuído à Helo → tela de vídeos sem "undefined" (P5/F-17) | Helo |
+| J21 | Cecília cancela duas sessões da Mochi (Luís) → o Luís recebe dois avisos, um por sessão (backlog Codex P18) | Cecília, Luís |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 **Negação esperada:** uma jornada que prova o lado "negado" de uma regra chama `esperarNegacao(id, metodo, [linhaIni, linhaFim], vezes)`. A sentinela desconta só essas negações (método + faixa de linhas do `firestore.rules` + quantidade exata) e mostra cada uma como caso próprio. Sobra ou falta é vermelho. Qualquer outra escrita negada continua vermelha.

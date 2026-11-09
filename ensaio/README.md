@@ -23,6 +23,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J04 | Vídeo ponta a ponta: distribuir → editar → aprovar → cliente → postagem nasce (Function) → legenda → agendar → publicado → Portal | Amanda, Helo, Chris, Cecília, cliente |
 | J05 | Portal: cliente A não vê conteúdo de B (token/slug) | clientes |
 | J06 | Calendário 4.0: Amanda inclui ciclo + documento → Chris cria no editor oficial e envia → Amanda conclui revisão (libera) → cliente lê pelo link → Luís vê em modo gravação | Amanda, Chris, cliente, Luís |
+| J08 | Motor: Chris e Amanda entram com a trava liberada e a manutenção diária forçada → `motor_executado`, sem "falha em…", sem `erro_verificacao` novo, dia carimbado (P2). Mutante: uma rotina que lança erro deixa a J08 vermelha | Chris, Amanda |
 | J09 | Troca de papel na mesma aba: DOM do papel anterior some | Chris↔Cecília |
 | J10 | Financeiro: só Chris tem DOM e acesso; senha pessoal | Chris, Amanda |
 | J11 | Filmmaker envia materiais da sessão (V100) → vídeos sem editor na fila da Amanda → sessão realizada | Luís, Amanda |
@@ -32,6 +33,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J15 | Cofre: credencial antiga legível → rules (só Chris cria a chave; Helo não lê) → prévia do Chris sem gravar → proteção com chave nova (inclui arquivados) → Cecília revela o mesmo texto e a chave não está no HTML → 2ª rodada não grava; credencial nova nasce na versão 2 (P9) | Cecília, Helo, Amanda, Chris |
 | J16 | Casta: Amanda classifica e publica `castas_operacionais` → Cecília vê a mesma classificação sem ler o financeiro → Cecília não grava a projeção → mudança da gerência chega à Cecília (P1/F-12) | Amanda, Cecília |
 | J17 | Conciliador V118: vídeo aprovado com postagem arquivada → 5 rodadas da manutenção diária → tenta 3 vezes, avisa `postagem_orfa_suspensa` 1 vez e para (P6/D-01) | Chris |
+| J18 | Vídeo legado sem `data` atribuído à Helo → tela de vídeos sem "undefined" (P5/F-17) | Helo |
 | J19 | Desligada (Gabrielle) sem cadastro tenta entrar → o site não reconhece e as rules negam a leitura (P8) | Gabrielle |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 

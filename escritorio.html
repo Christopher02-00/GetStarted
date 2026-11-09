@@ -2100,6 +2100,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   import {legendaUtilizavelI79,legendaExternaAprovadaI79,camposPendentesI79,pendenciaLegendaI79,pendenciaAgendadaI90,exigirLegendaI79,exigirPostagemI79,prepararReparoI79} from "./gs-legenda-qualidade-i79.mjs?v=i124-1";
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=8d4a6f999380940cdab7582646c4195361336d5652b762037aa7e5d332cbdfc2";
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
+  import { criarCastasOperacionais } from "./gs-castas-operacionais.mjs?v=3913918010933a758224a5915ce48441b9b194ec114f9d8ce1092e796be3a830";
   import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=i136-1";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { connectFirestoreEmulator, Timestamp, getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, or as _orFB, documentId, orderBy, limit, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -5791,12 +5792,27 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   /* tipo: 'interno' | 'mensalista' | 'avulso' | 'encerrado' | 'indefinido'
      `origem` diz DE ONDE veio a conclusao, pra ninguem ter que adivinhar
      por que um cliente esta numa lista. */
+  // F-12 (ficha 2026-11-09-casta-cecilia-projecao): papel operacional lê a projeção; nunca as coleções financeiras.
+  const castasOperacionaisF12 = criarCastasOperacionais({
+    db, collection, getDocs, doc, writeBatch, serverTimestamp, quem: () => usuarioAtual || '?'
+  });
   window.castaDosClientes = async function(){
     if(__cacheCasta) return __cacheCasta;
     const sessaoCompatI21=sessaoServicoManual();
     __indiceCompatExtrasI21=null;
     const m = {};
     const marca = (slug, tipo, origem) => ({ tipo, origem });
+    if(!['Amanda','Chris'].includes(usuarioAtual)){
+      const pessoaF12 = usuarioAtual;
+      try{
+        const projecao = await castasOperacionaisF12.ler();
+        CLIENTES_LISTA.forEach(c => { if(projecao[c.slug]) m[c.slug] = projecao[c.slug]; });
+      }catch(e){ console.error('Não consegui ler a classificação dos clientes:', e); }
+      __cacheCastaConfirmada = false;   // só a gerência confirma a fonte completa
+      if(usuarioAtual !== pessoaF12) return {};   // troca de papel no meio: não publica cache de outra pessoa
+      __cacheCasta = m;
+      return m;
+    }
     try{
       const [cfgSnap, contratoSnap, encSnap, mensSnap, extrasSnap] = await Promise.all([
         getDocs(collection(db,'clientes_config')),
@@ -5811,6 +5827,8 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
         __indiceCompatExtrasI21=construirIndiceCompatExtrasI21(cfgSnap,sessaoCompatI21);
       }
       __cacheCastaConfirmada = true;
+      // F-12: a equipe operacional passa a ver a mesma classificação. Só diferenças; falha não afeta a gerência.
+      castasOperacionaisF12.publicar(m).catch(e => console.error('Não consegui publicar a classificação para a equipe:', e));
     }catch(e){ __cacheCastaConfirmada = false; console.error('Não consegui classificar as castas:', e); }
     __cacheCasta = m;
     return m;

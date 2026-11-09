@@ -2,7 +2,8 @@
 Sobe Firestore + Auth + **Functions** emulators (rules e `functions-get/` do próprio checkout), serve o site, popula dados representativos e percorre jornadas por papel no Chromium (Playwright), do clique ao destinatário.
 ```bash
 cd ensaio && npm i && node montar-cdn.mjs        # uma vez: SDK Firebase local (sem CDN)
-(cd functions-get && npm ci)                     # uma vez: dependências das Cloud Functions que o emulador executa
+(cd functions-get && npm i --no-package-lock)    # uma vez: dependências das Cloud Functions (não há lockfile; npm ci falha)
+(cd ensaio && npx playwright install chromium)  # uma vez: navegador das jornadas
 node ensaio/rodar.mjs                            # bateria inteira → ensaio/saida/resultado.json + screenshots
 node ensaio/rodar.mjs --jornadas J04             # só uma jornada
 node ensaio/rodar.mjs --movel                    # bateria inteira como celular (390x844, touch) — obrigatória antes de publicar mudança de interface

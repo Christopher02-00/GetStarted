@@ -28,6 +28,7 @@ Fora do teto (honesto): Safari/iPhone físico, Cloud Functions **em produção**
 ## Regras vigentes (decisões de Chris — mais recente prevalece)
 | Data | Decisão |
 |---|---|
+| 09/11/2026 (Claude Code) | Chris: processo novo vale também no `AGENTS.md` — entrega por PR (sem ZIP nem upload manual), portão = `ensaio/`, `scripts/preflight.mjs`/`regression-critical.mjs` aposentados (P15). Cofre (P9): acesso por papel, sem senha no HTML. D-01: arquivar vídeo+postagem (prévia antes). P1: projeção `castas_operacionais` autorizada (ok nominal de novo antes de publicar rules/Function/dados). |
 | 09/11/2026 01:30 | Chris: linguagem simples ao fechar etapas; dizer sempre a próxima etapa e quantas faltam; nada em aberto; só concluir a 100%. Programação do Site Get passa ao **Claude Code** (Mac) com o pacote `SITE_GET_03`. |
 | 08/11/2026 | Manutenção do Site Get passa 100% para Claude (projeto Design Get). ChatGPT/Codex não é mais fonte de mudanças. |
 | 08/11/2026 | Gabrielle, Fernanda e Júlia estão desligadas. Autoria/histórico preservados; não reativar; remover das opções ativas no código (pendência). |

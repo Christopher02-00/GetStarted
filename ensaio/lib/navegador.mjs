@@ -8,6 +8,16 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
 export const SAIDA = path.join(RAIZ, 'ensaio', 'saida');
+/** P10 (ENSAIO_COBERTURA=1): nomes das funções do site que rodaram ao menos uma vez, por arquivo local. */
+export const coberturaFuncoes = new Map();
+function acumularCobertura(entradas) {
+  for (const e of entradas || []) {
+    let arq; try { const u = new URL(e.url); if (u.hostname !== '127.0.0.1') continue; arq = u.pathname.replace(/^\//, ''); } catch { continue; }
+    const nomes = coberturaFuncoes.get(arq) || new Set();
+    for (const f of e.functions || []) if (f.functionName && f.ranges?.[0]?.count > 0) nomes.add(f.functionName.split('.').pop());
+    coberturaFuncoes.set(arq, nomes);
+  }
+}
 
 export async function abrirNavegador(portas) {
   const browser = await chromium.launch({ args: ['--disable-dev-shm-usage'] }); // /dev/shm pequeno em container derruba a aba com páginas grandes
@@ -19,12 +29,17 @@ export async function abrirNavegador(portas) {
       const movel = vp[0] < 700;
       const ctx = await browser.newContext({ viewport: { width: vp[0], height: vp[1] }, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', ...(movel ? { isMobile: true, hasTouch: true, deviceScaleFactor: 3 } : {}) });
       const page = await ctx.newPage();
+      const cobrir = !!process.env.ENSAIO_COBERTURA;
+      if (cobrir) await page.coverage.startJSCoverage({ resetOnNavigation: false, reportAnonymousScripts: false });
       await instalarRotasOffline(page, portas);
       const erros = [];
       page.on('console', m => { if (m.type() === 'error') erros.push('[console] ' + m.text().slice(0, 300)); if (process.env.ENSAIO_CONSOLE) fs.appendFileSync(path.join(RAIZ, 'ensaio/.runtime/console.log'), `${new Date().toISOString()} [${m.type()}] ${m.text().slice(0, 400)}\n`); });
       page.on('pageerror', e => erros.push('[pageerror] ' + String(e).slice(0, 300)));
       page.on('requestfailed', r => { const u = r.url(); if (/127\.0\.0\.1/.test(u)) erros.push('[request] ' + u.slice(0, 200) + ' ' + r.failure()?.errorText); });
-      return { ctx, page, erros, async fechar() { await ctx.close(); } };
+      return { ctx, page, erros, async fechar() {
+        if (cobrir) { try { acumularCobertura(await page.coverage.stopJSCoverage()); } catch {} }
+        await ctx.close();
+      } };
     },
     async fechar() { await browser.close(); }
   };

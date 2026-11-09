@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { subir, RAIZ } from './lib/emulador.mjs';
 import { criarSeed, seedPadrao, seedReal } from './lib/seed.mjs';
-import { abrirNavegador, SAIDA } from './lib/navegador.mjs';
+import { abrirNavegador, SAIDA, coberturaFuncoes } from './lib/navegador.mjs';
 
 const args = process.argv.slice(2);
 const opt = k => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
@@ -69,6 +69,7 @@ try {
 } finally { try { await nav?.fechar(); } catch {} await amb.parar(); }
 
 const ok = resultados.filter(r => r.ok).length, total = resultados.length;
+if (process.env.ENSAIO_COBERTURA) fs.writeFileSync(path.join(SAIDA, 'cobertura.json'), JSON.stringify(Object.fromEntries([...coberturaFuncoes].map(([k, v]) => [k, [...v].sort()])), null, 1)); // P10
 fs.writeFileSync(path.join(SAIDA, 'resultado.json'), JSON.stringify({ em: new Date().toISOString(), git: (() => { try { return fs.readFileSync(path.join(RAIZ, '.git', 'HEAD'), 'utf8').trim(); } catch { return '?'; } })(), ok, total, resultados }, null, 2));
 console.log(`\nRESULTADO: ${ok}/${total} casos OK ${ok === total ? '— PORTÃO VERDE' : '— PORTÃO VERMELHO'}`);
 process.exit(ok === total ? 0 : 1);

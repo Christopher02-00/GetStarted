@@ -20,9 +20,15 @@ export function versaoPacoteCofre(pacote) {
 export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransaction, serverTimestamp, derivarChaveLegada, quem }) {
   const refChave = () => doc(db, COLECAO_CHAVES_COFRE, ID_CHAVE_COFRE_V2);
 
+  // Regra de cofre_chaves ainda não publicada no Firebase (o código pode chegar ao ar antes dela):
+  // a leitura é negada. Para gravar, isso equivale a "ainda sem chave nova" e o cofre segue como antes.
+  const regraAusente = e => /permission|insufficient/i.test(String(e?.code || e?.message || e));
+
   // A chave nunca fica guardada em variável do módulo: cada operação relê o documento.
-  async function chaveV2() {
-    const snap = await getDoc(refChave());
+  async function chaveV2({ tolerarRegraAusente = false } = {}) {
+    let snap;
+    try { snap = await getDoc(refChave()); }
+    catch (e) { if (tolerarRegraAusente && regraAusente(e)) return null; throw e; }
     if (!snap.exists()) return null;
     const bruta = deBase64(snap.data()?.chave);
     if (bruta.length !== 32) throw new Error('A chave do cofre está num formato inválido. Avise o Chris.');
@@ -55,15 +61,18 @@ export function criarCofre({ db, doc, getDoc, getDocs, collection, runTransactio
   // Sem chave v2 ainda (antes do Chris proteger o cofre) a gravação segue como hoje;
   // a migração converte esses registros depois. Nunca trava a Amanda por isso.
   async function cifrar(texto) {
-    const chave = await chaveV2();
+    const chave = await chaveV2({ tolerarRegraAusente: true });
     if (chave) return cifrarCom(chave, texto, 2);
     return cifrarCom(await derivarChaveLegada(), texto, 1);
   }
 
   // Prévia: só leitura. Inclui arquivados (excluido:true), que também guardam segredo.
   async function previa() {
-    const [snapChave, snap] = await Promise.all([getDoc(refChave()), getDocs(collection(db, COLECAO_COFRE))]);
-    const r = { chaveExiste: snapChave.exists(), total: 0, v1: [], v2: 0, semCifra: [], ilegiveis: [] };
+    let snapChave = null, regraPendente = false;
+    try { snapChave = await getDoc(refChave()); }
+    catch (e) { if (!regraAusente(e)) throw e; regraPendente = true; }
+    const snap = await getDocs(collection(db, COLECAO_COFRE));
+    const r = { chaveExiste: !!snapChave?.exists(), regraPendente, total: 0, v1: [], v2: 0, semCifra: [], ilegiveis: [] };
     const legada = await derivarChaveLegada();
     for (const d of snap.docs) {
       r.total++;

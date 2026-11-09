@@ -2,13 +2,15 @@
 Sobe Firestore + Auth + **Functions** emulators (rules e `functions-get/` do próprio checkout), serve o site, popula dados representativos e percorre jornadas por papel no Chromium (Playwright), do clique ao destinatário.
 ```bash
 cd ensaio && npm i && node montar-cdn.mjs        # uma vez: SDK Firebase local (sem CDN)
-(cd functions-get && npm ci)                     # uma vez: dependências das Cloud Functions que o emulador executa
+(cd functions-get && npm i --no-package-lock)    # uma vez: dependências das Cloud Functions (não há lockfile; npm ci falha)
+(cd ensaio && npx playwright install chromium)  # uma vez: navegador das jornadas
 node ensaio/rodar.mjs                            # bateria inteira → ensaio/saida/resultado.json + screenshots
 node ensaio/rodar.mjs --jornadas J04             # só uma jornada
 node ensaio/rodar.mjs --movel                    # bateria inteira como celular (390x844, touch) — obrigatória antes de publicar mudança de interface
 node ensaio/explorar.mjs Cecília                 # abre o site como a pessoa e tira foto (debug)
 ENSAIO_CONSOLE=1 ENSAIO_LOG_FN=1 node ensaio/rodar.mjs --jornadas J03   # console completo + todas as chamadas do callable em ensaio/.runtime/
 ```
+No GitHub: o workflow `.github/workflows/ensaio-jornadas.yml` roda esta mesma bateria (desktop e `--movel`) em todo PR, em todo push no `main` e todo dia às 6h (BRT); fotos e logs ficam no artefato `ensaio-desktop`/`ensaio-movel` por 7 dias.
 Requisitos: Node ≥ 20, Java 21, firebase-tools 15 (`npm i -g firebase-tools@15`), jar do Firestore emulator em `~/.cache/firebase/emulators/` (baixado por `firebase setup:emulators:firestore`). Variáveis `*proxy*` são removidas do ambiente dos emuladores.
 Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cliente.html` só liga em `127.0.0.1?ensaio=1`. Login = credencial Google sintética no Auth emulator (mesmo provedor e claims que a produção exige).
 

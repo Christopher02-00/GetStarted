@@ -36,8 +36,9 @@ Comece pelas pendências na ordem de prioridade da seção 5 e pergunte as dúvi
 ```bash
 git clone https://github.com/Christopher02-00/GetStarted.git && cd GetStarted
 npm i -g firebase-tools@15 && firebase setup:emulators:firestore   # Java 21 obrigatório
-(cd functions-get && npm ci)
+(cd functions-get && npm i --no-package-lock)   # não há lockfile: npm ci falha
 (cd ensaio && npm i && node montar-cdn.mjs)                           # SDK Firebase local, sem CDN
+(cd ensaio && npx playwright install chromium)                      # navegador das jornadas
 node ensaio/rodar.mjs                 # bateria inteira (desktop) → ensaio/saida/resultado.json + fotos
 node ensaio/rodar.mjs --movel         # mesma bateria como celular 390×844 — obrigatória quando mexe em interface
 node ensaio/rodar.mjs --jornadas J04  # só uma jornada
@@ -174,7 +175,7 @@ Portão atual: **47/47 casos** (J01–J06, J09–J14 + 2 sentinelas), desktop e 
 | P12 | **R5 — concorrência e rede** | Duas abas, falha de rede no meio da escrita ("erro nunca vira zero"), tempo até tela utilizável. | média | ensaio | não começou |
 | P13 | **Backlog do Codex** | `~/site Get — atualizado/07_PENDENCIAS_E_RETOMADA/PENDENCIAS.json` (47 itens, 20/10): P37 aviso soma meses, P38 observações públicas com instrução interna, P39 e-mail individual falha, P15 lentidão, P11 celular real. Triar um a um com ficha. | média | vários | não começou |
 | P14 | **Deploy das Functions por workflow** | Hoje não sei como as Functions chegam à produção; criar workflow (`firebase deploy --only functions`) com a conta de serviço (precisa de papel extra: Cloud Functions Developer + Service Account User) — só com ok do Chris. | média | `functions-get/`, workflows | bloqueada (papéis IAM) |
-| P15 | **Scripts legados vermelhos** | Decidir: consertar `scripts/preflight.mjs`/`regression-critical.mjs` (49 falhas) ou aposentar e deixar o `ensaio/` como suíte oficial (atualizando `AGENTS.md`). | baixa | `scripts/`, `AGENTS.md` | bloqueada (decisão do Chris) |
+| P15 | **Scripts legados vermelhos** | Resolvida em 09/11/2026: Chris decidiu aposentar `scripts/preflight.mjs`/`regression-critical.mjs`; o `ensaio/` é a suíte oficial e o `AGENTS.md` foi atualizado. | — | `AGENTS.md` | concluída |
 | P16 | **Simplificar `abrirCentral` na J06** | Com F-09 publicado, o laço de 5 tentativas da J06 pode cair para 1 clique. | baixa | `ensaio/jornadas/J06` | não começou |
 
 ---

@@ -30,6 +30,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J13 | Minhas Demandas: o chip de filtro escolhido abre a faixa de mesmo nome, acima do estado guardado no navegador (F-01) | Helo |
 | J14 | Central R80 abre mesmo com a listagem da Entrada de perfil (CP126) em voo — leitura não trava navegação (F-09) | Chris |
 | J17 | Conciliador V118: vídeo aprovado com postagem arquivada → 5 rodadas da manutenção diária → tenta 3 vezes, avisa `postagem_orfa_suspensa` 1 vez e para (P6/D-01) | Chris |
+| J18 | Vídeo legado sem `data` atribuído à Helo → tela de vídeos sem "undefined" (P5/F-17) | Helo |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 ## Regras do próprio ensaio (aprendidas a duras penas)

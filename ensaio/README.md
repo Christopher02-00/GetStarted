@@ -27,7 +27,10 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J12 | Tour: cada papel abre todas as telas do próprio menu; vermelho em erro grave no console, tela vazia ou texto de indisponibilidade ("Não consegui…", "undefined", "NaN") — pensado para a cópia anonimizada do banco real (`ENSAIO_DADOS_REAIS=<pasta da exportação>`, `ENSAIO_PAPEIS=Chris,Amanda`) | 8 |
 | J13 | Minhas Demandas: o chip de filtro escolhido abre a faixa de mesmo nome, acima do estado guardado no navegador (F-01) | Helo |
 | J14 | Central R80 abre mesmo com a listagem da Entrada de perfil (CP126) em voo — leitura não trava navegação (F-09) | Chris |
+| J15 | Cofre: credencial antiga legível → rules (só Chris cria a chave; Helo não lê) → prévia do Chris sem gravar → proteção com chave nova (inclui arquivados) → Cecília revela o mesmo texto e a chave não está no HTML → 2ª rodada não grava; credencial nova nasce na versão 2 (P9) | Cecília, Helo, Amanda, Chris |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
+
+**Negação esperada:** uma jornada que prova o lado "negado" de uma regra chama `esperarNegacao(id, metodo, [linhaIni, linhaFim], vezes)`. A sentinela desconta só essas negações (método + faixa de linhas do `firestore.rules` + quantidade exata) e mostra cada uma como caso próprio. Sobra ou falta é vermelho. Qualquer outra escrita negada continua vermelha.
 
 ## Regras do próprio ensaio (aprendidas a duras penas)
 1. **Nunca listar uma coleção pelo REST enquanto a transação do app está em voo.** O emulador aborta o commit ("Transaction lock timeout"). Espere o sinal da UI (botão volta ao normal, toast) e só então leia o banco; polling ≥ 1 s.

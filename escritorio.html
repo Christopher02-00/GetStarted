@@ -2101,6 +2101,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   import {COLECAO_ENVIOS_I92,chaveEnvioI92,referenciaPublicacaoI92,situacaoEnvioI92,exigirRevisaoEnvioI92,validarRegistroEnvioI92} from "./gs-envio-calendarios-i92.mjs?v=8d4a6f999380940cdab7582646c4195361336d5652b762037aa7e5d332cbdfc2";
   import * as FinanceiroCore from "./financeiro-core.mjs?v=109";
   import { criarCofre } from "./gs-cofre.mjs?v=9b7d3537fbc6918ce1e1535a4c689f624f4869faea3c24277ba52439f25e19e9";
+  import { criarCastasOperacionais } from "./gs-castas-operacionais.mjs?v=3913918010933a758224a5915ce48441b9b194ec114f9d8ce1092e796be3a830";
   import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=i136-1";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { connectFirestoreEmulator, Timestamp, getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, or as _orFB, documentId, orderBy, limit, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -5792,12 +5793,27 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   /* tipo: 'interno' | 'mensalista' | 'avulso' | 'encerrado' | 'indefinido'
      `origem` diz DE ONDE veio a conclusao, pra ninguem ter que adivinhar
      por que um cliente esta numa lista. */
+  // F-12 (ficha 2026-11-09-casta-cecilia-projecao): papel operacional lê a projeção; nunca as coleções financeiras.
+  const castasOperacionaisF12 = criarCastasOperacionais({
+    db, collection, getDocs, doc, writeBatch, serverTimestamp, quem: () => usuarioAtual || '?'
+  });
   window.castaDosClientes = async function(){
     if(__cacheCasta) return __cacheCasta;
     const sessaoCompatI21=sessaoServicoManual();
     __indiceCompatExtrasI21=null;
     const m = {};
     const marca = (slug, tipo, origem) => ({ tipo, origem });
+    if(!['Amanda','Chris'].includes(usuarioAtual)){
+      const pessoaF12 = usuarioAtual;
+      try{
+        const projecao = await castasOperacionaisF12.ler();
+        CLIENTES_LISTA.forEach(c => { if(projecao[c.slug]) m[c.slug] = projecao[c.slug]; });
+      }catch(e){ console.error('Não consegui ler a classificação dos clientes:', e); }
+      __cacheCastaConfirmada = false;   // só a gerência confirma a fonte completa
+      if(usuarioAtual !== pessoaF12) return {};   // troca de papel no meio: não publica cache de outra pessoa
+      __cacheCasta = m;
+      return m;
+    }
     try{
       const [cfgSnap, contratoSnap, encSnap, mensSnap, extrasSnap] = await Promise.all([
         getDocs(collection(db,'clientes_config')),
@@ -5812,6 +5828,8 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
         __indiceCompatExtrasI21=construirIndiceCompatExtrasI21(cfgSnap,sessaoCompatI21);
       }
       __cacheCastaConfirmada = true;
+      // F-12: a equipe operacional passa a ver a mesma classificação. Só diferenças; falha não afeta a gerência.
+      castasOperacionaisF12.publicar(m).catch(e => console.error('Não consegui publicar a classificação para a equipe:', e));
     }catch(e){ __cacheCastaConfirmada = false; console.error('Não consegui classificar as castas:', e); }
     __cacheCasta = m;
     return m;
@@ -41947,6 +41965,24 @@ window.setGerenciaSub = function(qual, el){
 
     const videoSnap = await getDocs(collection(db,'videos_producao'));
     let conciliadas = 0;
+    /* P6/D-01 (09/11/2026): um vídeo que a V118 recusa sempre era tentado a cada rodada, para sempre
+       (196 logs de um só vídeo desde 31/08). Depois de RECUSAS_MAX_V118 recusas seguidas o conciliador
+       para de tentar aquele id e avisa uma vez; a gestão decide o dado. Leitura indisponível = segue como antes. */
+    const RECUSAS_MAX_V118 = 3;
+    const refRecusasV118 = doc(db,'sistema','conciliador_orfas_v118');
+    let recusasV118 = null;
+    try{ const s = await getDoc(refRecusasV118); recusasV118 = s.exists() ? (s.data().recusas || {}) : {}; }
+    catch(e){ console.error('V118: contador de recusas indisponível; esta rodada segue sem limite.', e); }
+    const suspensoV118 = id => !!recusasV118 && (recusasV118[id]?.n || 0) >= RECUSAS_MAX_V118;
+    const anotarRecusaV118 = async (id, motivo) => {
+      if(!recusasV118) return;
+      const n = (recusasV118[id]?.n || 0) + 1;
+      recusasV118[id] = { n, motivo: String(motivo || '').slice(0,200), em: new Date().toISOString() };
+      try{ await setDoc(refRecusasV118, { recusas: { [id]: recusasV118[id] } }, { merge:true }); }
+      catch(e){ console.error('V118: não consegui anotar a recusa.', id, e); }
+      if(n === RECUSAS_MAX_V118) registrarLogAutomacao('postagem_orfa_suspensa', id,
+        n + ' recusas seguidas: o conciliador parou de tentar este vídeo até a gestão resolver. Última: ' + String(motivo || ''));
+    };
     for(const docSnap of videoSnap.docs){
       const v = docSnap.data();
       if(v.excluido) continue;
@@ -41964,11 +42000,14 @@ window.setGerenciaSub = function(qual, el){
         if(resolucao.estado==='confirmado'&&String(v.postagemId||'')===String(resolucao.postagem?.id||'')) continue;
         if(resolucao.estado==='confirmacao_manual'&&ativas.length===1) continue;
         if(resolucao.estado!=='confirmado'){
+          if(suspensoV118(docSnap.id)) continue;
           console.error('V118: conciliador encontrou postagem existente sem identidade única; nenhuma nova cópia foi criada.',docSnap.id,resolucao.estado);
           registrarLogAutomacao('postagem_orfa_bloqueada',docSnap.id,resolucao.estado);
+          await anotarRecusaV118(docSnap.id,resolucao.estado);
           continue;
         }
       }
+      if(suspensoV118(docSnap.id)) continue;
 
       try{
         await confirmarAprovacaoClienteCore(docSnap.id,'sistema (conciliação canônica V118)');
@@ -41977,6 +42016,7 @@ window.setGerenciaSub = function(qual, el){
       }catch(e){
         console.error('V118: órfão preservado para conferência; nenhuma postagem aproximada foi criada.',docSnap.id,e);
         registrarLogAutomacao('postagem_orfa_bloqueada',docSnap.id,e?.code||e?.message||'erro');
+        await anotarRecusaV118(docSnap.id,e?.code||e?.message||'erro');
         continue;
       }
 

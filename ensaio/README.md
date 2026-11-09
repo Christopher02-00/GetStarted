@@ -34,6 +34,8 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J16 | Casta: Amanda classifica e publica `castas_operacionais` → Cecília vê a mesma classificação sem ler o financeiro → Cecília não grava a projeção → mudança da gerência chega à Cecília (P1/F-12) | Amanda, Cecília |
 | J17 | Conciliador V118: vídeo aprovado com postagem arquivada → 5 rodadas da manutenção diária → tenta 3 vezes, avisa `postagem_orfa_suspensa` 1 vez e para (P6/D-01) | Chris |
 | J18 | Vídeo legado sem `data` atribuído à Helo → tela de vídeos sem "undefined" (P5/F-17) | Helo |
+| J20 | Cliente aprova um conteúdo de dezembro num calendário com outro mês → o aviso para Chris/Amanda diz "1 de 2" (o mês), não "2 de 3" (backlog Codex P16/P37). Usa o calendário criado pela J06 | cliente |
+| J19 | Desligada (Gabrielle) sem cadastro tenta entrar → o site não reconhece e as rules negam a leitura (P8) | Gabrielle |
 | J21 | Cecília cancela duas sessões da Mochi (Luís) → o Luís recebe dois avisos, um por sessão (backlog Codex P18) | Cecília, Luís |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 

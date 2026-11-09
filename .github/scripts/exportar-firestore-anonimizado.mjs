@@ -22,6 +22,9 @@ const CAMPOS_TEXTO_LIVRE = /(descricao|descrição|observa|roteiro|legenda|comen
 const fake = (s, i = 0) => { const n = Math.min(Math.max(String(s).length, 8), 160); return ('Texto anonimizado do ensaio ' + h(s + i).slice(0, 6) + ' ').repeat(Math.ceil(n / 36)).slice(0, n).trim(); };
 function anonValor(chave, v, ctx) {
   if (typeof v === 'string') {
+    // identificadores técnicos nunca são dado pessoal e os contratos do servidor os conferem byte a byte:
+    // hashes hex (assinaturas, publicacao, operationId), ids com prefixo (prov140_…), datas ISO. Um hash com 10 dígitos seguidos já virou "telefone" uma vez.
+    if (/^[a-f0-9]{32,}$/i.test(v) || /^[a-z0-9]+_[a-f0-9]{32,}$/i.test(v) || /^\d{4}-\d{2}-\d{2}(T|$)/.test(v)) return v;
     if (/^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(v)) return `ensaio+${h(v).slice(0, 8)}@ensaio.get`;
     if (/(^|\D)(\+?55)?\s?\(?\d{2}\)?\s?9?\d{4}[- ]?\d{4}(\D|$)/.test(v) && v.replace(/\D/g, '').length >= 10) return `41 9${h(v).replace(/\D/g, '').padEnd(8, '0').slice(0, 4)}-${h(v + 'b').replace(/\D/g, '').padEnd(4, '0').slice(0, 4)}`;
     if (/^https?:\/\//.test(v)) { try { return new URL(v).origin + '/ensaio-' + h(v).slice(0, 8); } catch { return 'https://ensaio.get/' + h(v).slice(0, 8); } }

@@ -14,9 +14,17 @@ const token = (await client.getAccessToken()).token;
 const base = `https://firebaserules.googleapis.com/v1/projects/${projeto}`;
 const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 async function chamada(metodo, caminho, corpo) {
-  const r = await fetch(base + caminho, { method: metodo, headers: H, body: corpo ? JSON.stringify(corpo) : undefined });
-  const txt = await r.text(); if (!r.ok) throw new Error(`${metodo} ${caminho} → ${r.status} ${txt.slice(0, 600)}`);
-  return txt ? JSON.parse(txt) : {};
+  // o serviço de Rules responde 503 UNAVAILABLE de forma transitória ao compilar rulesets grandes → até 6 tentativas com espera crescente
+  let ultimo;
+  for (let tentativa = 1; tentativa <= 6; tentativa++) {
+    const r = await fetch(base + caminho, { method: metodo, headers: H, body: corpo ? JSON.stringify(corpo) : undefined });
+    const txt = await r.text();
+    if (r.ok) return txt ? JSON.parse(txt) : {};
+    ultimo = `${metodo} ${caminho} → ${r.status} ${txt.replace(/\s+/g, ' ').slice(0, 400)}`;
+    if (![500, 502, 503, 504, 429].includes(r.status)) break;
+    console.log(`tentativa ${tentativa} falhou (${r.status}); aguardando ${tentativa * 20}s…`); await new Promise(res => setTimeout(res, tentativa * 20000));
+  }
+  throw new Error(ultimo);
 }
 // 1. valida a fonte (o servidor compila e devolve issues)
 const teste = await chamada('POST', ':test', { source: { files: [{ name: 'firestore.rules', content: fonte }] } });

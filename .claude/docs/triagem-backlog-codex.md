@@ -19,6 +19,10 @@ Fonte: `~/site Get — atualizado/03_MEMORIA_E_REGRAS_ATUAIS/07_PENDENCIAS_E_RET
 - **44** observações antigas públicas: o próprio Codex concluiu que é separação manual, caso a caso, sem segredo nos exemplos e sem migração em lote → operacional (Amanda), não código.
 - **37** conferência conta postagens canceladas de encerrados: a I143 (posterior ao diagnóstico de 28/09) tirou a checagem "cliente saiu" e o filtro de órfãs já exclui todos os estados terminais que existem na base real (postado, cancelada_manual, cancelada_video_trafego, arquivada_sem_postagem) → resolvido; confirmar na próxima conferência real.
 
+- **11** histórico das concluídas: resolvido pela I119 (ordena pela data real da aprovação).
+- **26** retorno de postagem com cadastro legado: resolvido por desenho — a Amanda/Chris confirma o cadastro antigo em `confirmarCadastroLegadoPostagemI77`; a mensagem já orienta.
+- **22/43, 24, 45**: corrigidos em #61, #62, #63.
+
 ## Precisa de reprodução ou medição antes (6)
 12 retorno ao Portal com atraso · 21 lentidão residual (P15 do pacote; a medição da P4 ajuda) · 23 copiar link fica em "Confirmando mês" · 39 TV legada · 46 desfazer agendamento após instabilidade · 17 celular real (precisa de aparelho físico, fora do ensaio).
 

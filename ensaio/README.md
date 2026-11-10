@@ -55,6 +55,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J41 | "Encaminhar ao editor" de vídeo somente edição (takes avulsos, sem gravação): vai para o editor (CP194, servidor) | Amanda |
 | J42 | Cliente pede ajuste num calendário grande (cópia anonimizada da Zeiss, 36 conteúdos): o servidor grava o pedido e o aviso para o Chris (CP193) | cliente |
 | J43 | "Não precisa agendar" com item do calendário sem ponteiro para a postagem: a Cecília retira com motivo e a pauta fica intacta | Cecília |
+| J44 | Portal do pagador de cobrança agrupada (Zeiss) mostra "Como se divide este valor": parte da Zeiss e de cada empresa, a mesma conta do escritório (CP195) | cliente |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 **Cobertura de cliques (P10):** `ENSAIO_COBERTURA=1 node ensaio/rodar.mjs` grava `ensaio/saida/cobertura.json` (funções do site que rodaram, pela cobertura do Chromium) e `python3 ferramentas/cobertura_handlers.py escritorio.html` cruza com todos os `onclick`. Linha de base de 09/11: 80/593 handlers do escritório com jornada, 2/25 do portal, 5/42 do calendário. O CI (desktop) falha quando entra um handler novo sem jornada.

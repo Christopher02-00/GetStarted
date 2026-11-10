@@ -178,6 +178,13 @@ Portão atual: **47/47 casos** (J01–J06, J09–J14 + 2 sentinelas), desktop e 
 | P16 J06 um clique | ✅ | #56 |
 | E-mail | ✅ cota do EmailJS (200/mês) estoura desde setembro; resumo diário cortado por decisão do Chris (#64) e envio para na cota (#63) | #63, #64 |
 
+**Empresas do Otávio (09/11/2026, noite):** as 6 empresas são clientes próprios.
+- **Clientes:** `zeiss` (Ótica Zeiss Araucária, pagador) mais `clinica-zeiss-araucaria`, `otica-hauer`, `clinica-dos-olhos-hauer`, `otica-sao-jose` e `clinica-sao-jose`. As 5 novas foram criadas pela Central, com contrato de R$ 750, novembro/2026 em cortesia, Portal, calendário e onboarding.
+- **Cobrança agrupada** (`config_financeiro/cobranca_agrupada`, revisão 1): pagador `zeiss` desde 2026-11, R$ 750 por empresa. A Zeiss fica com o restante (R$ 750) e a soma fecha R$ 4.500 (#75, J29).
+- **Etiquetas I144 aposentadas** (U3, J30).
+- **Instagram das 5:** demanda para a Amanda (protocolo `5zc64mso`, 10/11).
+- **Roteiros e calendários das empresas novas:** ficam com o Chris, em outra conversa.
+
 Incidente do dia: o merge do #46 publicou o código do cofre antes de a regra chegar ao Firebase (503 por >20 min) e gravar credencial falhou por ~15 min → revertido (#50). Lições: publicação paciente (#53) e código tolerante a regra atrasada (#54).
 
 ## 5. Pendências

@@ -52,6 +52,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 **Negação esperada:** uma jornada que prova o lado "negado" de uma regra chama `esperarNegacao(id, metodo, [linhaIni, linhaFim], vezes)`. A sentinela desconta só essas negações (método + faixa de linhas do `firestore.rules` + quantidade exata) e mostra cada uma como caso próprio. Sobra ou falta é vermelho. Qualquer outra escrita negada continua vermelha.
 
 ## Regras do próprio ensaio (aprendidas a duras penas)
+- **"Hoje" e "mês atual" nas jornadas = fuso de São Paulo** (`Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo'})`), igual ao navegador do ensaio. O CI roda em UTC: com `new Date().getDate()`, J08 e J22 ficavam vermelhas entre 21h e 0h de Brasília (09/11/2026).
 1. **Nunca listar uma coleção pelo REST enquanto a transação do app está em voo.** O emulador aborta o commit ("Transaction lock timeout"). Espere o sinal da UI (botão volta ao normal, toast) e só então leia o banco; polling ≥ 1 s.
 2. **Seed tem de ser consistente com as Functions.** Postagem sem vídeo, vídeo com editor sem `editorAtribuidoEm`, correção sem `correcaoSolicitadaEm` → a Function do gatilho morre, o worker morto não desfaz a transação e os locks ficam presos. `rodar.mjs` espera as Functions ficarem ociosas depois do seed (`aguardarFunctionsOciosas`).
 3. **O que o backend liga muda a UI.** Com `processo_calendarios_i164/ativo` a Central R87 tira "Gravações" da barra da Cecília e põe os atalhos amarelos. As expectativas seguem o estado do backend (R2 vai copiar o estado real).

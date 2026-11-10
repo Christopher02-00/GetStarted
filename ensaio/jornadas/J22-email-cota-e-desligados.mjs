@@ -6,7 +6,7 @@
 import { entrarComo, foto } from '../lib/navegador.mjs';
 export const id = 'J22';
 export const nome = 'E-mail: para na cota esgotada';
-const hoje = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const hoje = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); // mesmo fuso do site (CI roda em UTC)
 const VIDEOS = ['j22-video-a', 'j22-video-b'];
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {

@@ -5,7 +5,7 @@
 import { entrarComo, foto } from '../lib/navegador.mjs';
 export const id = 'J08';
 export const nome = 'Motor: rodada completa no login da gerência, sem falha';
-const hoje = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const hoje = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); // mesmo fuso do site (CI roda em UTC)
 const esperar = async (fn, ms) => { const fim = Date.now() + ms; while (Date.now() < fim) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1500)); } return null; };
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {

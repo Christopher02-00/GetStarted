@@ -39409,6 +39409,35 @@ window.setGerenciaSub = function(qual, el){
      destravar também: IDEIA 2 (rascunho automático de legenda pra Gabi),
      IDEIA 3 (agendamento sugerido com 1 clique pra Ceci) e IDEIA 9
      (aprovação do cliente com 1 clique no portal). NÃO ESQUECER. */
+  /* Auditoria 10/11/2026 (decisão do Chris): cliente que saiu não gera kit, demanda nem aprovação tácita. O que ficou
+     pendurado (gravação marcada, postagem na fila) vira UMA demanda para a Cecília e outra para a Amanda, com id
+     determinístico pelo conjunto de pendências — o mesmo conjunto não repete; nada é apagado nem cancelado sozinho. */
+  async function clienteSaiuMotorAud(slug, cache){
+    if(!slug) return false;
+    if(!cache.has(slug)){ let cfg=null; try{ cfg=await obterConfigClienteEstrito(slug); }catch(e){ cfg=null; } cache.set(slug,cfg); }
+    const cfg=cache.get(slug); return !!cfg && clienteInativoEfetivo(cfg);
+  }
+  async function avisarPendenciasClienteQueSaiuAud(pendencias){
+    const porCliente=new Map();
+    pendencias.forEach(x=>{ if(!porCliente.has(x.cliente)) porCliente.set(x.cliente,{nome:x.clienteNome||x.cliente,itens:[]}); porCliente.get(x.cliente).itens.push(x); });
+    for(const [slug,{nome,itens}] of porCliente){
+      const chaves=[...new Set(itens.map(x=>x.tipo+':'+x.id))].sort();
+      let h=2166136261; const txt=slug+'|'+chaves.join(','); for(let i=0;i<txt.length;i++){ h^=txt.charCodeAt(i); h=Math.imul(h,16777619); }
+      const linhas=itens.map(x=>x.tipo==='gravacao'?'🎥 Gravação '+formatarDataBR(x.data)+' às '+(x.hora||'?')+(x.filmmaker?' ('+x.filmmaker+')':''):'📲 Postagem "'+(x.titulo||'')+'" ('+x.status+(x.data?' · '+formatarDataBR(x.data):'')+')');
+      for(const quem of ['Cecília','Amanda']){
+        const ref=doc(db,'demandas','saida_pendencias_'+slug.replace(/[^a-z0-9_-]/gi,'_').slice(0,60)+'_'+(h>>>0).toString(36)+'_'+(quem==='Cecília'?'ce':'am'));
+        try{
+          const criada=await runTransaction(db,async tx=>{ const s=await tx.get(ref); if(s.exists()) return false; tx.set(ref,{
+            titulo:'🚪 Cliente que saiu ainda tem pendências — '+nome,
+            descricao:nome+' saiu da carteira, mas ainda tem itens marcados no sistema. Nada foi apagado nem avisado a ninguém automaticamente: cancele ou arquive cada um (e retire das redes o que já estiver agendado lá).\n\n'+linhas.join('\n'),
+            origem:'sistema',clienteNome:nome,cliente:slug,destinatario:quem,tipoEspecial:'pendencias_cliente_saiu_aud',
+            prazoData:hojeLocal(),prazoHora:'18:00',status:'pendente',provaTexto:'',provaImagemUrl:'',criadoEm:serverTimestamp(),excluido:false
+          }); return true; });
+          if(criada) registrarLogAutomacao('pendencias_cliente_saiu',slug,itens.length+' item(ns) para '+quem);
+        }catch(e){ console.error('Não consegui registrar as pendências do cliente que saiu:',slug,e); }
+      }
+    }
+  }
   async function enviarKitsGravacaoAmanha(){
     const agoraK = new Date();
     if(agoraK.getHours() < 15) return; // kit é da véspera, fim de tarde
@@ -39418,7 +39447,9 @@ window.setGerenciaSub = function(qual, el){
     if(mSnapK.exists() && mSnapK.data().ultimaData === hojeK) return;
     const amanhaK = dataStrDiasAtras(-1);
     const snapAgK = await snapshotOperacional('agendamentos');
-    const deAmanha = []; snapAgK.forEach(dd => { const a = dd.data(); if(!a.excluido && a.data === amanhaK && a.status === 'agendado' && a.aprovado !== false) deAmanha.push(a); });
+    const deAmanha = [], saiuK = [], cacheSaiuK = new Map(); snapAgK.forEach(dd => { const a = dd.data(); if(!a.excluido && a.data === amanhaK && a.status === 'agendado' && a.aprovado !== false) deAmanha.push({...a, __id: dd.id}); });
+    // cliente que saiu: sem kit (as pendências dele vão na demanda única da conferência de postagens)
+    for(let i=deAmanha.length-1;i>=0;i--){ if(await clienteSaiuMotorAud(deAmanha[i].cliente,cacheSaiuK)){ saiuK.push(deAmanha[i]); deAmanha.splice(i,1); } }
     if(deAmanha.length){
       const porFilmmakerK = {};
       deAmanha.forEach(a => { const f = a.filmmaker || ''; if(f) (porFilmmakerK[f] = porFilmmakerK[f]||[]).push(a); });
@@ -41790,9 +41821,11 @@ window.setGerenciaSub = function(qual, el){
        separada, explícita e previamente autorizada. */
     const fontesI118=[...new Map([...snap.docs,...semTextoI90.docs].map(d=>[d.id,d])).values()];
     const mapaDispensasI118=new Map((await projetarCobrancasRetroativasI118(fontesI118.map(d=>({...d.data(),id:d.id})))).map(p=>[p.id,p]));validarSessaoI89();
+    const cacheSaiuP = new Map(), saiuP = [];
     for(const docSnap of fontesI118){
       const p = mapaDispensasI118.get(docSnap.id);
       if(p.excluido===true) continue;
+      if(await clienteSaiuMotorAud(p.cliente,cacheSaiuP)){ saiuP.push({tipo:'postagem',id:docSnap.id,cliente:p.cliente,clienteNome:p.clienteNome,titulo:p.titulo,status:p.status,data:p.dataAgendada||''}); continue; }
       validarSessaoI89();
 
       /* ===== A REDE DE SEGURANÇA VIROU UM AVISO SÓ — 29/07/2026 ======
@@ -41851,6 +41884,12 @@ window.setGerenciaSub = function(qual, el){
         }
       }
     }
+    try{
+      const hojeG=hojeLocal(), agSnap=await snapshotOperacional('agendamentos');
+      for(const dd of agSnap.docs||[]){ const a=dd.data()||{}; if(a.excluido===true||a.status!=='agendado'||!(String(a.data||'')>=hojeG)) continue;
+        if(await clienteSaiuMotorAud(a.cliente,cacheSaiuP)) saiuP.push({tipo:'gravacao',id:dd.id,cliente:a.cliente,clienteNome:a.clienteNome,data:a.data,hora:a.hora,filmmaker:a.filmmaker}); }
+    }catch(e){ console.error('Gravações do cliente que saiu não foram conferidas:',e); }
+    if(saiuP.length){ validarSessaoI89(); await avisarPendenciasClienteQueSaiuAud(saiuP); }
     /* Um aviso vivo por fila, nunca uma cobrança órfã. A versão anterior
        criava uma demanda agregada sem `postagemId`; quando a Gabi zerava
        as legendas, a varredura antifantasma não tinha como relacionar o
@@ -42246,6 +42285,7 @@ window.setGerenciaSub = function(qual, el){
         continue;
       }
       if(config.modoAprovacaoCliente !== 'tacita') continue;
+      if(clienteInativoEfetivo(config)) continue; // cliente que saiu: nada é aprovado em nome dele (auditoria 10/11/2026)
       const prazo = config.prazoTacitaHorasUteis || 24;
       if(horasUteisDesde(new Date(v.aprovadoInternoEm), agoraT) >= prazo){
         try{

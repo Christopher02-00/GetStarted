@@ -9,7 +9,7 @@
 Você assume a manutenção do Site Get (repositório `Christopher02-00/GetStarted`, no Mac do Chris). Antes de qualquer coisa:
 1. Leia este documento inteiro — ele é a verdade sobre ambientes, estrutura, regras, o que já foi feito e o que falta.
 2. Leia o `AGENTS.md` do repositório inteiro. É lei.
-3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (97/97) antes de mexer em qualquer código.
+3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (107/107) antes de mexer em qualquer código.
 
 Regras com o Chris: um PR por assunto; portão de jornadas verde (e `--movel` quando mexer em tela) antes de todo PR; bug novo vira jornada nova (vermelha antes, verde depois); rules, Functions e dados de produção só com ok nominal dele. Ao fechar cada etapa: linguagem simples, diga a próxima etapa e quantas faltam, nunca deixe nada em aberto, só conclua a 100%.
 
@@ -103,7 +103,7 @@ Base real anonimizada (R2): workflow manual `exportar-firestore.yml` gera o arte
 **Processo (vigente desde 08/11/2026, decidido pelo Chris):**
 1. Todo pedido vira **árvore de impacto + 1 ficha por unidade** (escritores, leitores, papéis, rules, legado). Skill `get-arvore-do-pedido`.
 2. **Um PR por unidade**, branch própria, menor diff que resolve a causa-raiz. Skill `get-mudanca-segura`.
-3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 97/97) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
+3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 107/107) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
 4. PR com 5 blocos: **Entendimento / Alterações / Provas de validação / Riscos-pendências / Próximo passo**. Esperar o CI, merge, conferir no ar (`fetch` do arquivo em get-started.agency), atualizar os docs do projeto no mesmo dia. Rollback = `git revert`. Skill `get-publicacao-e-rollback`.
 5. Chris autorizou Claude a fazer branch → PR → CI → merge → conferência **sozinho** ("eu autorizo tudo, siga em frente"). O que ainda **pede aviso antes**: publicar **rules** no Firebase (hoje automático via workflow, então avisar no PR), deploy de **Functions**, qualquer **escrita em dados de produção** (migração/correção) — essas exigem ok nominal.
 6. Sempre que um pedido contrariar `AGENTS.md`/invariantes, **dizer qual é a regra vigente e esperar a decisão**, em vez de executar.
@@ -186,6 +186,18 @@ Portão atual: **47/47 casos** (J01–J06, J09–J14 + 2 sentinelas), desktop e 
 - **Roteiros e calendários das empresas novas:** ficam com o Chris, em outra conversa.
 
 Incidente do dia: o merge do #46 publicou o código do cofre antes de a regra chegar ao Firebase (503 por >20 min) e gravar credencial falhou por ~15 min → revertido (#50). Lições: publicação paciente (#53) e código tolerante a regra atrasada (#54).
+
+**Pedido de 09–10/11/2026 (4 unidades, Claude Code):**
+| U | O quê | PR / versão | Prova |
+|---|---|---|---|
+| U1 | Aprovar a qualidade do vídeo volta a ser **um clique** (o 2º botão era sobra do painel de datas de 24/10); link sem `https://` não trava; recusa mostra o motivo | #78 · `v2026.11.10-2` | J31 vermelha→verde |
+| U2 | Recado no lugar da legenda ("Não precisa de legenda", "ok", "teste"…) é recusado pelo validador único I79 (front + Functions); antigos aparecem como pendência | #79 · `v2026.11.10-3` | J32 vermelha→verde |
+| U3 | Lentidão: callable de toda a equipe presa em **1 instância** (latência até 55 s → tempo esgotado → faixa vermelha) → `maxInstances:10`; rodada de 5 min relia a carteira por ciclo (~420 mil leituras/dia) → 1 leitura por rodada | #80 · `v2026.11.10-4` + deploy das Functions | contador 3→1; métricas pós-deploy |
+| U4 | Cecília: recusa sem lixo guardado, tentativas antigas se limpam, "Saiu no horário" em um toque, "Já respondi" no aviso de espera, **retirada sem publicar pela Cecília** (decisão do Chris) | #81 · `v2026.11.10-5` + deploy das Functions | J33 vermelha→verde |
+- Medição base (10/11 ~01h): 2,3 mi leituras/dia no Firestore (15 mi em 7 dias); às 03h ~32 mil/h só de Functions. Comparar em 24–48 h após o deploy.
+- Deploy de Functions: workflow `publicar-functions.yml` (modo publicar) — o Chris autorizou de antemão (10/11). A conta `claude-site-get` **não tem** `cloudscheduler.jobs.update`: o código da agendada sobe, mas o job do agendador não é regravado (sem efeito enquanto o horário não mudar).
+- Hipótese descartada com prova: "recusas normais acendiam a faixa vermelha" (J34 verde também no código antigo; nenhum `console.error` junta o código do erro ao texto).
+- Próximo candidato de desempenho (ficha própria): a gestão assina as 4.671 demandas inteiras a cada abertura (~190 mil leituras/dia, 4,9 MB no celular da Amanda).
 
 ## 5. Pendências
 

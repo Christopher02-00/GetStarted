@@ -52,8 +52,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.evaluate(() => navegarGerenciaSub('aprovarVideos'));
     const btn = page.locator(`[onclick*="aprovarVideo('${VID}')"]`).first();
     await btn.waitFor({ timeout: 15000 }); await btn.click();
-    // com o backend ativo, abre o painel "Revisar a qualidade do vídeo" — segundo clique confirma
-    await page.getByRole('button', { name: /Aprovar a qualidade do vídeo/ }).click({ timeout: 15000 });
+    // U1 (10/11/2026): um clique só — a conferência do servidor roda e aprova na sequência (J31)
   }, () => esperar(async () => { const v = await video(); return v?.status === 'aguardando_cliente' ? 'status aguardando_cliente' : null; }))) return;
 
   // 4. Amanda confirma aprovação do cliente → postagem nasce

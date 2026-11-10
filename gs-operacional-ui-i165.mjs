@@ -4,7 +4,7 @@ import {idFisicoI165,jsonCanonicoI165,programacaoAtivaI165,dataCivilI165,horaCiv
 const copiar=x=>JSON.parse(JSON.stringify(x));
 const congelar=x=>{if(x&&typeof x==='object'){Object.values(x).forEach(congelar);Object.freeze(x);}return x;};
 export const escI165=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export function urlSeguraI165(v){try{const u=new URL(v);return ['https:','http:'].includes(u.protocol)?u.href:'';}catch{return '';}}
+export function urlSeguraI165(v){try{/* F-U1 (10/11/2026): link colado sem https:// ("drive.google.com/…") travava a aprovação só no front; o servidor aceita o mesmo texto. */const bruto=String(v??'').trim(),u=new URL(/^[a-z][a-z0-9+.-]*:/i.test(bruto)?bruto:(/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/|$)/i.test(bruto)?'https://'+bruto:bruto));return ['https:','http:'].includes(u.protocol)?u.href:'';}catch{return '';}}
 export function resumoContinuidadePostagemI165(l){
  const a=l?.legadoProgramacao,p=l?.postagem;
  if(p?.status!=='agendado'&&!(l?.obrigacoes||[]).some(o=>o?.tipo==='confirmar_publicacao'))return null;
@@ -85,7 +85,7 @@ export function criarFluxoAprovacaoI165({contexto,chamar,storage,novoId,quandoMu
    if(!s.editado&&r.compromisso?.data)s.campos={...s.campos,modalidade:'data',data:r.compromisso.data,hora:r.compromisso.hora||''};
    else if(!s.editado&&anterior&&['data','semana'].includes(anterior.modalidade))s.campos={...vazio(),...anterior};
    emitir(s,c);return copiar(s);
-  }catch(e){if(atual(c,s,ticket)){s.estado='erro_preparo';s.mensagem='Não consegui conferir a entrega agora. Seu formulário foi mantido. '+String(e.message||'');emitir(s,c);}return {erro:true};}
+  }catch(e){if(atual(c,s,ticket)){s.estado='erro_preparo';s.mensagem='Esta entrega não foi aprovada: '+(String(e.message||'').trim()||'o servidor não confirmou a versão atual.')+' Nada foi gravado. Se o motivo for do vídeo (link, cliente ou calendário), peça o ajuste e aprove de novo.';emitir(s,c);}return {erro:true};}
  }
  function editar(id,campos){const c=ctx(),s=restaurar(id,c);if(pendente(s)||s.estado==='confirmada')return false;const permitidos=Object.keys(vazio());for(const [k,v]of Object.entries(campos)){if(!permitidos.includes(k)||typeof v!=='string')throw Error('Campo inválido.');if(k==='campanhaChave'&&v){if(!s.snapshot||s.snapshot.diretrizNecessaria===false)throw Error('Confira primeiro se este conteúdo terá postagem.');const o=opcaoCampanhaI165(s.snapshot,v);s.campos={...s.campos,modalidade:'data',data:o.data,hora:o.hora};}s.campos[k]=v;}s.editado=true;salvar(s,c);return true;}
  async function enviar(s,c){
@@ -144,6 +144,10 @@ export function criarUiOperacionalI165({document,window,contexto,carregarConfig,
   abertura.promise=(async()=>{try{const existe=fluxo.pendente(id),c=alvoAprovacaoVisivelCp156(id);if(!c)throw Error('Abra novamente a lista de aprovação.');const el=montar(id,c);abertura.el=el;
     if(!existe)el.innerHTML='<section class="i165-operacional"><h3>Conferir entrega</h3><p role="status">Conferindo o acesso e a versão desta entrega…</p><button type="button" data-i165-acao="cancelar_leitura">Cancelar leitura</button></section>';
     const ativa=await habilitada();if(!vigente())return true;if(!ativa&&!existe){el.remove();return false;}await fluxo.abrir(id);
+    /* F-U1 (10/11/2026, pedido do Chris): aprovar a qualidade volta a ser um clique. A conferência do servidor
+       (mesma assinatura, recibo idempotente, revalidação na transação) continua; só o segundo botão saiu.
+       A orientação da Amanda (formulário com campos) continua em dois passos. */
+    const pronta=fluxo.estado(id);if(!existe&&vigente()&&pronta.estado==='pronta'&&pronta.snapshot?.fluxoCp108==='qualidade_chris'&&contexto().papel==='Chris')await fluxo.confirmar(id);
    }catch(e){if(!abertura.cancelada&&capturada===chaveContexto(contexto())){if(abertura.el?.isConnected)abertura.el.innerHTML='<section class="i165-operacional"><p role="alert">Não consegui abrir esta conferência agora. Seu rascunho foi mantido. Tente abrir novamente.</p></section>';toast('Não consegui abrir a conferência. '+e.message,'erro');}}finally{if(aberturasCp156.get(id)===abertura)aberturasCp156.delete(id);}return true;})();
   return abertura.promise;
  }

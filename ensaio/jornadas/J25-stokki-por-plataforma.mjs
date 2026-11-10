@@ -59,7 +59,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   if (!await passo('0c Chris aprova a qualidade', 'Chris', async page => {
     await entrarGerencia(page); await page.evaluate(() => navegarGerenciaSub('aprovarVideos'));
     const btn = page.locator(`[onclick*="aprovarVideo('${VID}')"]`).first(); await btn.waitFor({ timeout: 15000 }); await btn.click();
-    await page.getByRole('button', { name: /Aprovar a qualidade do vídeo/ }).click({ timeout: 15000 });
+    // U1 (10/11/2026): um clique só — conferência e aprovação na sequência (J31)
   }, () => esperar(async () => (await video())?.status === 'aguardando_cliente' ? 'aguardando_cliente' : null))) return;
 
   // 1. Amanda confirma que o cliente aprovou → postagem nasce

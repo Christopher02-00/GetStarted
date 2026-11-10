@@ -603,6 +603,79 @@ function somarTotaisObrigacoes(linhas) {
 }
 
 /**
+ * Cobrança agrupada (empresas do Otávio): um contrato pagador recebe a única
+ * cobrança; as empresas cobertas aparecem com a sua parte, sem cobrança própria.
+ * Fonte: `config_financeiro/cobranca_agrupada` (somente o Chris lê e grava).
+ */
+export function normalizarGruposCobranca(fonte, aliases = {}) {
+  const lista = Array.isArray(fonte?.grupos) ? fonte.grupos : Array.isArray(fonte) ? fonte : [];
+  const grupos = [];
+  const conflitos = [];
+  const membrosVistos = new Map();
+  lista.forEach((bruto, indice) => {
+    const id = String(bruto?.id || '').trim() || `grupo_${indice + 1}`;
+    if (bruto?.ativo === false || bruto?.excluido === true) return;
+    const pagador = canonicalizarId(bruto?.pagador, aliases);
+    const desde = String(bruto?.desde || '').trim();
+    if (!pagador || !competenciaValida(desde)) {
+      conflitos.push(conflito('GRUPO_COBRANCA_INVALIDO', { grupo: id }));
+      return;
+    }
+    const membros = [];
+    (Array.isArray(bruto?.membros) ? bruto.membros : []).forEach(m => {
+      const canonicalId = canonicalizarId(m?.slug || m?.canonicalId, aliases);
+      const parte = numeroFinitoNaoNegativo(m?.parte);
+      if (!canonicalId || canonicalId === pagador || parte === null || membrosVistos.has(canonicalId)) {
+        conflitos.push(conflito('MEMBRO_GRUPO_COBRANCA_INVALIDO', { grupo: id, canonicalId: canonicalId || String(m?.slug || '') }));
+        return;
+      }
+      membrosVistos.set(canonicalId, id);
+      membros.push({ canonicalId, parte });
+    });
+    grupos.push({ id, nome: String(bruto?.nome || id), pagador, desde, membros });
+  });
+  const pagadores = new Set(grupos.map(g => g.pagador));
+  grupos.forEach(g => g.membros.forEach(m => {
+    if (pagadores.has(m.canonicalId)) conflitos.push(conflito('MEMBRO_TAMBEM_PAGADOR', { grupo: g.id, canonicalId: m.canonicalId }));
+  }));
+  return { grupos, conflitos };
+}
+
+function coberturaNaCompetencia(grupos, canonicalId, competencia) {
+  for (const grupo of grupos || []) {
+    if (competencia < grupo.desde) continue;
+    const membro = grupo.membros.find(m => m.canonicalId === canonicalId);
+    if (membro) return { grupo: grupo.id, pagador: grupo.pagador, parte: membro.parte };
+  }
+  return null;
+}
+
+/** Soma das partes do grupo contra a única cobrança do pagador. Não escreve nada. */
+export function projetarGruposCobranca({ obrigacoes, grupos = [], competencia } = {}) {
+  const linhas = Array.isArray(obrigacoes?.linhas) ? obrigacoes.linhas : [];
+  const conflitos = [];
+  const resultado = (grupos || []).filter(g => competencia >= g.desde).map(g => {
+    const linhaPagador = linhas.find(l => l.canonicalId === g.pagador && l.estado === 'confirmado');
+    const partes = g.membros.map(m => {
+      const linha = linhas.find(l => l.canonicalId === m.canonicalId);
+      return { canonicalId: m.canonicalId, parte: m.parte, coberta: linha?.cobertoPor === g.pagador, temContrato: !!linha };
+    });
+    const somaMembros = partes.reduce((total, p) => total + p.parte, 0);
+    const statusPagador = linhaPagador ? statusMensalidade(linhaPagador) : '';
+    const valorPagador = linhaPagador && !['isento', 'cancelado'].includes(statusPagador)
+      ? Number(linhaPagador.valorDevido || 0) : 0;
+    const partePagador = valorPagador - somaMembros;
+    if (!linhaPagador || valorPagador <= 0) {
+      conflitos.push(conflito('PAGADOR_DO_GRUPO_SEM_COBRANCA', { canonicalId: g.pagador, competencia, grupo: g.id }));
+    } else if (partePagador < 0) {
+      conflitos.push(conflito('PARTES_DO_GRUPO_PASSAM_DO_VALOR', { canonicalId: g.pagador, competencia, grupo: g.id, valorPagador, somaMembros }));
+    }
+    return { id: g.id, nome: g.nome, pagador: g.pagador, desde: g.desde, valorPagador, statusPagador, partePagador, somaMembros, partes, fecha: valorPagador > 0 && partePagador >= 0 };
+  });
+  return { estado: 'confirmado', competencia, grupos: resultado, conflitos };
+}
+
+/**
  * Projeta obrigações sem escrever nada. A linha virtual tem a mesma identidade
  * que um futuro documento, mas `materializada:false` e nenhum efeito externo.
  */
@@ -612,6 +685,7 @@ export function projetarObrigacoes({
   competencia,
   aliases = {},
   contextosVigencia = {},
+  gruposCobranca = [],
 } = {}) {
   if (!competenciaValida(competencia)) return resultadoIndisponivel('COMPETENCIA_INVALIDA', { competencia });
   const contratosCanonicos = canonicalizarContratos(contratos, aliases, contextosVigencia);
@@ -654,6 +728,30 @@ export function projetarObrigacoes({
     }
 
     const pagamento = grupoPagamento?.selecionado || null;
+    const cobertura = coberturaNaCompetencia(gruposCobranca, canonicalId, competencia);
+    if (cobertura && pagamento && statusMensalidade(pagamento) === 'aberto') {
+      // Documento aberto numa empresa coberta seria uma segunda cobrança.
+      conflitos.push(conflito('EMPRESA_COBERTA_COM_MENSALIDADE_ABERTA', {
+        canonicalId, competencia, id: pagamento.id, pagador: cobertura.pagador,
+      }));
+    }
+    if (!pagamento && cobertura) {
+      linhas.push({
+        id: `${canonicalId}_${competencia}`,
+        canonicalId,
+        competencia,
+        estado: 'confirmado',
+        status: 'isento',
+        valorDevido: 0,
+        diaVencimento: Number(contrato.diaVencimento || 10),
+        materializada: false,
+        origem: 'cobertura_grupo',
+        cobertoPor: cobertura.pagador,
+        grupoCobranca: cobertura.grupo,
+        parteGrupo: cobertura.parte,
+      });
+      return;
+    }
     if (!pagamento) {
       const isento = cortesiaNaCompetencia(contrato, competencia);
       linhas.push({
@@ -1211,6 +1309,7 @@ export function projetarFinanceiroCompetencia({
   competenciaInicialOperacao = '',
   competenciasQuitadasAte = '',
   destinosPessoais = ['conta_pessoal'],
+  cobrancaAgrupada = null,
 } = {}) {
   if (!competenciaValida(competencia) || !competenciaValida(mesCaixa)) {
     return resultadoIndisponivel('COMPETENCIA_INVALIDA', { competencia, mesCaixa });
@@ -1220,12 +1319,14 @@ export function projetarFinanceiroCompetencia({
     competencia,
     proximaCompetencia(competencia),
   ].filter(competenciaValida))].sort();
+  const grupos = normalizarGruposCobranca(cobrancaAgrupada, aliases);
   const obrigacoesPorCompetencia = competencias.map(item => projetarObrigacoes({
     contratos,
     pagamentos,
     competencia: item,
     aliases,
     contextosVigencia,
+    gruposCobranca: grupos.grupos,
   }));
   const obrigacoes = obrigacoesPorCompetencia.find(item => item.competencia === competencia) ||
     resultadoIndisponivel('OBRIGACOES_DA_COMPETENCIA_AUSENTES');
@@ -1256,7 +1357,11 @@ export function projetarFinanceiroCompetencia({
       competenciasQuitadasAte,
     })
     : { estado: 'nao_solicitado', conflitos: [] };
-  const componentes = [obrigacoes, movimentos, reconciliacao, regua];
+  const gruposCobranca = obrigacoes.estado === 'indisponivel'
+    ? { estado: 'confirmado', grupos: [], conflitos: [] }
+    : projetarGruposCobranca({ obrigacoes, grupos: grupos.grupos, competencia });
+  gruposCobranca.conflitos.unshift(...grupos.conflitos);
+  const componentes = [obrigacoes, movimentos, reconciliacao, regua, gruposCobranca];
   const conflitos = deduplicarConflitosFinanceiros(
     componentes.flatMap(item => item.conflitos || []),
   );
@@ -1269,6 +1374,7 @@ export function projetarFinanceiroCompetencia({
       movimentos,
       reconciliacao,
       regua,
+      gruposCobranca,
       conflitos,
     };
   }
@@ -1280,6 +1386,7 @@ export function projetarFinanceiroCompetencia({
     movimentos,
     reconciliacao,
     regua,
+    gruposCobranca,
     conflitos,
     escritaExecutada: false,
   };

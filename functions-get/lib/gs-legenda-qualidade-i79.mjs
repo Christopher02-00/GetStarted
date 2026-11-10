@@ -5,8 +5,18 @@ export function legendaUtilizavelI79(valor){
   const texto=String(valor??'').replace(/[\u200B-\u200D\uFEFF]/g,'').trim();
   if(!texto || texto.length>20000 || /^[\p{P}\s]+$/u.test(texto))return false;
   const recado=texto.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[\p{P}\s]+/gu,' ').trim();
-  return !['disponivel no calendario','legenda disponivel no calendario','disponivel no doc','ja foi postado','esse video tera que esperar o lancamento nao postar','legenda ja definida fora do site combinado com o cliente'].includes(recado);
+  return !['disponivel no calendario','legenda disponivel no calendario','disponivel no doc','ja foi postado','esse video tera que esperar o lancamento nao postar','legenda ja definida fora do site combinado com o cliente'].includes(recado)&&!recadoNoLugarDaLegendaI79(recado);
 }
+/* U2 (10/11/2026): "Não precisa de legenda!!!!" passou como legenda válida (Place — Vídeo telão) e chegou à
+   Cecília. Recado sobre a própria legenda, ou anotação curta de trabalho, não é texto de publicação. */
+const RECADOS_CURTOS_I79=['ok','okay','x','xx','teste','test','n a','na','nada','pendente','a definir','sem','sem texto','depois','em breve','aguardando','tbd','todo'];
+export function recadoNoLugarDaLegendaI79(recado){
+  const r=String(recado||'');
+  return RECADOS_CURTOS_I79.includes(r)
+    || /^(nao|sem|nenhuma?)\b.{0,40}\blegendas?\b/.test(r)
+    || /^legendas?\b.{0,40}\b(depois|pendente|em breve|a definir|no doc|no calendario|no whatsapp|no drive|aguardando|nao precisa|sem)\b/.test(r);
+}
+export function pedeArquivarI79(texto){const r=String(texto??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[\p{P}\s]+/gu,' ').trim();return /^(nao|sem|nenhuma?)\b.{0,40}\blegendas?\b/.test(r)||/\b(nao (vai|precisa) (ser )?(postar|publicar|postado|publicado))\b/.test(r);}
 export function legendaExternaAprovadaI79(p){return p?.legendaOrigem==='pulo_aprovado_amanda_v118'&&p?.legenda===EXTERNA_I79;}
 export function camposPendentesI79(p){
   if(legendaExternaAprovadaI79(p))return [];
@@ -18,7 +28,7 @@ export function camposPendentesI79(p){
 }
 export function pendenciaAgendadaI90(p){return p?.legendaPendenteAoAgendarI90===true&&p?.excluido!==true&&['aguardando_agendamento','agendado','postado'].includes(p?.status)&&camposPendentesI79(p).length>0;}
 export function pendenciaLegendaI79(p){return pendenciaAgendadaI90(p)||(p?.excluido!==true && ['aguardando_agendamento','agendado'].includes(p?.status)&&camposPendentesI79(p).length>0);}
-export function exigirLegendaI79(texto){if(!legendaUtilizavelI79(texto))throw Error('Preencha a legenda com o texto da publicação. Ponto, vírgula e “Disponível no calendário” não são legendas. O que você digitou foi mantido.');return String(texto).trim();}
+export function exigirLegendaI79(texto){if(!legendaUtilizavelI79(texto))throw Error(pedeArquivarI79(texto)?'“'+String(texto).trim().slice(0,60)+'” é um recado, não uma legenda — a Cecília não pode agendar isso. Se este vídeo não vai ser publicado (ex.: vídeo de telão), use “📦 Arquivar — não vai ser postado”. O que você digitou foi mantido.':'Preencha a legenda com o texto da publicação. Ponto, “ok”, “teste”, “sem legenda” e “Disponível no calendário” não são legendas. O que você digitou foi mantido.');return String(texto).trim();}
 export function exigirPostagemI79(p){if(camposPendentesI79(p).length)throw Error('Esta postagem ainda precisa de legenda. Abra “Conteúdo e legenda” para conferir e completar o texto antes de agendar. As datas já registradas foram preservadas.');}
 // Apenas campos faltantes podem ser reparados; etapa, datas e editoriais permanecem.
 export function prepararReparoI79(p,textos,ctx){

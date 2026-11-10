@@ -9,7 +9,7 @@
 Você assume a manutenção do Site Get (repositório `Christopher02-00/GetStarted`, no Mac do Chris). Antes de qualquer coisa:
 1. Leia este documento inteiro — ele é a verdade sobre ambientes, estrutura, regras, o que já foi feito e o que falta.
 2. Leia o `AGENTS.md` do repositório inteiro. É lei.
-3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (93/93) antes de mexer em qualquer código.
+3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (97/97) antes de mexer em qualquer código.
 
 Regras com o Chris: um PR por assunto; portão de jornadas verde (e `--movel` quando mexer em tela) antes de todo PR; bug novo vira jornada nova (vermelha antes, verde depois); rules, Functions e dados de produção só com ok nominal dele. Ao fechar cada etapa: linguagem simples, diga a próxima etapa e quantas faltam, nunca deixe nada em aberto, só conclua a 100%.
 
@@ -103,7 +103,7 @@ Base real anonimizada (R2): workflow manual `exportar-firestore.yml` gera o arte
 **Processo (vigente desde 08/11/2026, decidido pelo Chris):**
 1. Todo pedido vira **árvore de impacto + 1 ficha por unidade** (escritores, leitores, papéis, rules, legado). Skill `get-arvore-do-pedido`.
 2. **Um PR por unidade**, branch própria, menor diff que resolve a causa-raiz. Skill `get-mudanca-segura`.
-3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 93/93) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
+3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 97/97) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
 4. PR com 5 blocos: **Entendimento / Alterações / Provas de validação / Riscos-pendências / Próximo passo**. Esperar o CI, merge, conferir no ar (`fetch` do arquivo em get-started.agency), atualizar os docs do projeto no mesmo dia. Rollback = `git revert`. Skill `get-publicacao-e-rollback`.
 5. Chris autorizou Claude a fazer branch → PR → CI → merge → conferência **sozinho** ("eu autorizo tudo, siga em frente"). O que ainda **pede aviso antes**: publicar **rules** no Firebase (hoje automático via workflow, então avisar no PR), deploy de **Functions**, qualquer **escrita em dados de produção** (migração/correção) — essas exigem ok nominal.
 6. Sempre que um pedido contrariar `AGENTS.md`/invariantes, **dizer qual é a regra vigente e esperar a decisão**, em vez de executar.
@@ -177,6 +177,13 @@ Portão atual: **47/47 casos** (J01–J06, J09–J14 + 2 sentinelas), desktop e 
 | P15 scripts legados | ✅ aposentados | #43 |
 | P16 J06 um clique | ✅ | #56 |
 | E-mail | ✅ cota do EmailJS (200/mês) estoura desde setembro; resumo diário cortado por decisão do Chris (#64) e envio para na cota (#63) | #63, #64 |
+
+**Empresas do Otávio (09/11/2026, noite):** as 6 empresas são clientes próprios.
+- **Clientes:** `zeiss` (Ótica Zeiss Araucária, pagador) mais `clinica-zeiss-araucaria`, `otica-hauer`, `clinica-dos-olhos-hauer`, `otica-sao-jose` e `clinica-sao-jose`. As 5 novas foram criadas pela Central, com contrato de R$ 750, novembro/2026 em cortesia, Portal, calendário e onboarding.
+- **Cobrança agrupada** (`config_financeiro/cobranca_agrupada`, revisão 1): pagador `zeiss` desde 2026-11, R$ 750 por empresa. A Zeiss fica com o restante (R$ 750) e a soma fecha R$ 4.500 (#75, J29).
+- **Etiquetas I144 aposentadas** (U3, J30).
+- **Instagram das 5:** demanda para a Amanda (protocolo `5zc64mso`, 10/11).
+- **Roteiros e calendários das empresas novas:** ficam com o Chris, em outra conversa.
 
 Incidente do dia: o merge do #46 publicou o código do cofre antes de a regra chegar ao Firebase (503 por >20 min) e gravar credencial falhou por ~15 min → revertido (#50). Lições: publicação paciente (#53) e código tolerante a regra atrasada (#54).
 

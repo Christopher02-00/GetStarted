@@ -814,6 +814,10 @@ export function projetarObrigacoes({
       estado: 'confirmado',
       materializada: true,
       origem: 'pagamento_materializado',
+      // Mensalidade já isenta numa empresa coberta: mostra a parte do grupo.
+      ...(cobertura && statusMensalidade(pagamento) === 'isento'
+        ? { cobertoPor: cobertura.pagador, grupoCobranca: cobertura.grupo, parteGrupo: cobertura.parte }
+        : {}),
     });
   });
 

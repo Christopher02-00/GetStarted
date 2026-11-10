@@ -5,8 +5,8 @@
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
-import { instalarEntradaFinanceiraI94 } from './financeiro-entrada-i94.mjs?v=i94-1';
-import * as Core from './financeiro-core.mjs?v=109';
+import { instalarEntradaFinanceiraI94 } from './financeiro-entrada-i94.mjs?v=8304d4c07f2e8dd0214e2798e359605a26c6d513fa19b59e4396a6d063b8b261';
+import * as Core from './financeiro-core.mjs?v=454d6707b98af4b8e9c211596686c7b410534374f05ec08a47c163bc1f58252e';
 import { instalarConferenciaPortalI38, lerFontesCobrancaI38 } from './cobranca-portal-manual.mjs?v=i38-1';
 
 const COLECOES_SNAPSHOT = [
@@ -186,8 +186,68 @@ function competenciaDeDataCaixa(valor){
       carenciaDias:5,
       competenciaInicialOperacao:texto(configRegua.inicioOperacao)||'2026-07',
       competenciasQuitadasAte:texto(configRegua.competenciasQuitadasAte)||'2026-08',
+      cobrancaAgrupada:configCobrancaAgrupada(fontes),
     });
   }
+
+  function configCobrancaAgrupada(fontes){
+    return (fontes.config_financeiro||[]).find(v=>v.id==='cobranca_agrupada')||null;
+  }
+
+  // Cobrança agrupada: 1 cobrança no pagador; as empresas cobertas mostram a parte.
+  function htmlCobrancaAgrupada(p,fontes,nomes){
+    const grupos=p.gruposCobranca?.grupos||[];
+    const config=configCobrancaAgrupada(fontes);
+    const bruto=(config?.grupos||[]).find(g=>g?.ativo!==false&&g?.excluido!==true)||null;
+    const nome=id=>nomes.get(id)||id;
+    const cards=grupos.map(g=>`<div class="item" data-grupo-cobranca="${escAttr(g.id)}" data-grupo-fecha="${g.fecha}" style="border-left:3px solid ${g.fecha?'var(--green)':'var(--red)'};"><div class="top"><div class="nome">${esc(g.nome)}</div><span class="selo ${g.fecha?'aprovada':'pendente'}">${g.fecha?'Conta fechada':'Conta não fecha'}</span></div><div class="meta">1 cobrança: <b>${esc(nome(g.pagador))}</b> · ${brl(g.valorPagador)} · desde ${esc(nomeMes(g.desde))}</div><div class="meta" style="margin-top:6px;">${g.partes.map(m=>`${esc(nome(m.canonicalId))}: ${brl(m.parte)}${m.temContrato?'':' (sem contrato)'}`).join('<br>')}<br><b>${esc(nome(g.pagador))} (restante): ${brl(g.partePagador)}</b></div></div>`).join('');
+    const linhas=bruto?(bruto.membros||[]).map(m=>`${texto(m.slug||m.canonicalId)} = ${numero(m.parte)}`).join('\n'):'';
+    return `<div class="card" data-cobranca-agrupada><b>Cobrança agrupada</b><div class="desc">Uma cobrança só no pagador; cada empresa coberta mostra a sua parte e fica fora da Régua. A parte do pagador é o que sobra.</div>${cards||'<div class="desc">Nenhum grupo vale para este mês.</div>'}
+      <details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:700;">Editar grupo</summary>
+        <div class="row2" style="margin-top:10px;"><div class="field"><label for="cagPagador">Pagador (slug do cliente)</label><input type="text" id="cagPagador" value="${escAttr(texto(bruto?.pagador))}" placeholder="zeiss"></div><div class="field"><label for="cagDesde">Vale a partir de</label><input type="month" id="cagDesde" value="${escAttr(texto(bruto?.desde))}"></div></div>
+        <div class="field"><label for="cagNome">Nome do grupo</label><input type="text" id="cagNome" value="${escAttr(texto(bruto?.nome)||'Empresas do Otávio')}"></div>
+        <div class="field"><label for="cagMembros">Empresas cobertas — uma por linha: slug = parte</label><textarea id="cagMembros" style="min-height:110px;" placeholder="otica-hauer = 750">${esc(linhas)}</textarea></div>
+        <div class="btnrow"><button class="btn" style="width:auto;" onclick="salvarCobrancaAgrupadaV104()">Salvar grupo</button></div>
+      </details></div>`;
+  }
+
+  w.salvarCobrancaAgrupadaV104=async function(){
+    if(!canFinanceiro()){ mostrarToast('A cobrança agrupada é exclusiva do Financeiro do Chris.','erro'); return false; }
+    if(locks.has('cobranca_agrupada')) return false;
+    const val=id=>texto(document.getElementById(id)?.value);
+    const pagador=val('cagPagador').toLowerCase(), desde=val('cagDesde'), nomeGrupo=val('cagNome')||'Cobrança agrupada';
+    if(!pagador){ mostrarToast('Informe o slug do pagador.','erro'); return false; }
+    if(!Core.competenciaValida(desde)){ mostrarToast('Informe o mês de início (AAAA-MM).','erro'); return false; }
+    const membros=[];
+    for(const bruta of (document.getElementById('cagMembros')?.value||'').split('\n').map(v=>v.trim()).filter(Boolean)){
+      const m=bruta.match(/^([a-z0-9][a-z0-9-]*)\s*=\s*([0-9]+(?:[.,][0-9]{1,2})?)$/i);
+      if(!m){ mostrarToast('Linha inválida: "'+bruta+'". Use: slug = 750','erro'); return false; }
+      membros.push({slug:m[1].toLowerCase(),parte:Number(m[2].replace(',','.'))});
+    }
+    locks.add('cobranca_agrupada');
+    try{
+      const fontes=await carregarSnapshot({forcar:true});
+      const existentes=new Set((fontes.contratos||[]).map(v=>v.canonicalId));
+      const faltando=[pagador,...membros.map(m=>m.slug)].filter(s=>!existentes.has(s));
+      if(faltando.length){ mostrarToast('Sem contrato: '+faltando.join(', ')+'. Cadastre o cliente antes de colocá-lo no grupo.','erro'); return false; }
+      const grupo={id:'grupo_'+pagador,nome:nomeGrupo,pagador,desde,membros,ativo:true};
+      const teste=Core.normalizarGruposCobranca({grupos:[grupo]});
+      if(teste.conflitos.length){ mostrarToast('Grupo recusado: empresa repetida, parte inválida ou o pagador na lista.','erro'); return false; }
+      const ref=doc(db,'config_financeiro','cobranca_agrupada');
+      await runTransaction(db,async tx=>{
+        const s=await tx.get(ref), atual=s.exists()?s.data():{};
+        tx.set(ref,{grupos:[grupo],versaoAnterior:atual.grupos||[],revisao:numero(atual.revisao)+1,atualizadoPor:pessoa(),atualizadoEm:serverTimestamp()});
+      });
+      invalidar();
+      mostrarToast('Cobrança agrupada salva.');
+      await w.renderMensalidades();
+      return true;
+    }catch(e){
+      console.error(e);
+      mostrarToast('Nada foi alterado: '+(e.message||e),'erro');
+      return false;
+    }finally{ locks.delete('cobranca_agrupada'); }
+  };
 
   function campoCompetencia(id){
     const el=document.getElementById(id);
@@ -226,6 +286,12 @@ function competenciaDeDataCaixa(valor){
       PAGAMENTO_DUPLICADO_DIVERGENTE:'Existem mensalidades diferentes para o mesmo cliente e competência.',
       CONTRATO_DUPLICADO_DIVERGENTE:'Existem contratos concorrentes para o mesmo cliente.',
       SAIDA_DUPLICADA_DIVERGENTE:'Existem registros de saída diferentes para o mesmo cliente.',
+      EMPRESA_COBERTA_COM_MENSALIDADE_ABERTA:'Esta empresa está coberta pela cobrança agrupada, mas tem uma mensalidade própria em aberto. Marque essa mensalidade como cortesia para não cobrar duas vezes.',
+      PAGADOR_DO_GRUPO_SEM_COBRANCA:'O pagador da cobrança agrupada não tem cobrança neste mês, então as empresas cobertas ficariam sem ninguém pagando.',
+      PARTES_DO_GRUPO_PASSAM_DO_VALOR:'A soma das partes das empresas cobertas passa do valor cobrado do pagador.',
+      GRUPO_COBRANCA_INVALIDO:'A cobrança agrupada está sem pagador ou sem mês de início.',
+      MEMBRO_GRUPO_COBRANCA_INVALIDO:'Uma empresa da cobrança agrupada está repetida, sem parte válida ou é o próprio pagador.',
+      MEMBRO_TAMBEM_PAGADOR:'Uma empresa aparece como coberta e também como pagadora de outro grupo.',
     };
     const linha=conflito=>{
       const codigo=texto(conflito.codigo||conflito.motivo)||'CONFLITO';
@@ -276,12 +342,12 @@ function competenciaDeDataCaixa(valor){
         <div class="resumoCard ${(t.aberto||0)>0?'yellow':'green'}"><div class="num" style="font-size:17px;">${brl(t.aberto||0)}</div><div class="lbl">Em aberto da competência</div></div>
         <div class="resumoCard"><div class="num">${t.virtuais||0}</div><div class="lbl">Obrigações derivadas · 0 writes</div></div>
       </div>
-      <div class="card"><div class="desc"><b>Fórmula única:</b> previsto = quitado + em aberto. Cortesias e cancelamentos ficam fora. Linhas “derivadas” só viram documento quando você executa uma ação.</div></div>${htmlConflitos(p,nomes)}`;
+      <div class="card"><div class="desc"><b>Fórmula única:</b> previsto = quitado + em aberto. Cortesias e cancelamentos ficam fora. Linhas “derivadas” só viram documento quando você executa uma ação.</div></div>${htmlConflitos(p,nomes)}${htmlCobrancaAgrupada(p,fontes,nomes)}`;
       if(!linhas.length){ box.innerHTML=html+'<div class="empty">Nenhuma obrigação corresponde ao filtro.</div>'; return true; }
       const porDia={}; linhas.forEach(v=>{const d=numero(v.diaVencimento)||10;(porDia[d]??=[]).push(v);});
       for(const dia of Object.keys(porDia).map(Number).sort((a,b)=>a-b)){
         const grupo=porDia[dia];
-        html+=`<div class="faixaDem aberta"><div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${grupo.length})</span><span class="seta">▾</span></div><div class="faixaItens">${grupo.map(v=>`<div class="item" style="border-left:3px solid ${v.sit.cor};"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${v.sit.selo}">${esc(v.sit.rotulo)}</span></div><div class="meta">${brl(v.valorDevido)} · ${v.materializada?'documento confirmado':'obrigação derivada, ainda sem documento'}</div><div class="btnrow" style="margin-top:8px;">${!['pago','isento','cancelado'].includes(v.sit.k)?`<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Recebi</button>${v.pagamentoEntradaPendente?'':`<button class="btn secondary" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','isento')">🎁 Cortesia</button>`}`:''}</div>${['pago','isento'].includes(v.sit.k)?'<div class="meta" style="margin-top:8px;">Estado encerrado. Uma correção exige lançamento auditado; esta tela não reabre cobranças silenciosamente.</div>':''}</div>`).join('')}</div></div>`;
+        html+=`<div class="faixaDem aberta"><div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${grupo.length})</span><span class="seta">▾</span></div><div class="faixaItens">${grupo.map(v=>`<div class="item" style="border-left:3px solid ${v.sit.cor};"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${v.sit.selo}">${esc(v.cobertoPor?'Coberta pelo grupo':v.sit.rotulo)}</span></div><div class="meta">${v.cobertoPor?`Parte: ${brl(v.parteGrupo)} · coberta pela cobrança de ${esc(nomes.get(v.cobertoPor)||v.cobertoPor)}`:`${brl(v.valorDevido)} · ${v.materializada?'documento confirmado':'obrigação derivada, ainda sem documento'}`}</div><div class="btnrow" style="margin-top:8px;">${!['pago','isento','cancelado'].includes(v.sit.k)?`<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Recebi</button>${v.pagamentoEntradaPendente?'':`<button class="btn secondary" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','isento')">🎁 Cortesia</button>`}`:''}</div>${['pago','isento'].includes(v.sit.k)&&!v.cobertoPor?'<div class="meta" style="margin-top:8px;">Estado encerrado. Uma correção exige lançamento auditado; esta tela não reabre cobranças silenciosamente.</div>':''}</div>`).join('')}</div></div>`;
       }
       box.innerHTML=html;
       return true;

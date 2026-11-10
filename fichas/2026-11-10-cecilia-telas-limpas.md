@@ -1,0 +1,19 @@
+# cecilia-telas-limpas — tirar o que trava a fila de agendamento e as Minhas Demandas da Cecília
+Pedido original (áudios da Cecília, 04–05/11/2026, transcritos): "Sempre aparece nas minhas demandas pra eu confirmar a publicação. Eu já confirmei, e agora aparece em vermelhinho 'A postagem mudou em outra aba. Seu preenchimento continua aqui.' … se tiver como tirar isso" · "só isso daí que eu não consigo tirar, aquele ali" · "tirar essa parte… está muito travado, horrível… não adianta pra nada" · "tirar isso aqui também, é vídeo de telão, não precisa ser publicado; eu aperto 'Não precisa agendar' e não dá certo, ele não sai."
+Unidade: U4 de 4 · Tipo: ajuste + erro
+Decisão item a item:
+A) "A postagem mudou em outra aba" (vermelho fixo) — MUDAR. Causa: toda recusa do servidor (assinatura do documento inteiro mudou, inclusive pelo eco da própria confirmação) virava tentativa "incerta" guardada no aparelho para sempre. Agora a recusa encerra a tentativa pelo caminho atômico do servidor (abortar_operacao — responde "confirmada" se ela tiver sido gravada) e o motivo aparece uma vez. Proteção mantida: o servidor continua recusando versão antiga.
+D) "Tentativa anterior para conferir" acumulando — AUTOMATIZAR. Tentativas incertas com mais de 10 min (ou antigas, sem horário) são encerradas sozinhas ao abrir a tela, pelo mesmo caminho atômico. Nada é reenviado.
+B) "Não consegui confirmar a tarefa original" que não sai — MUDAR. O aviso "Amanda está esperando você" não tinha nenhuma saída para a destinatária. Agora há "Já respondi — tirar das minhas atrasadas": grava a conclusão normal da demanda (concluida_aguardando_aprovacao + texto); o aviso fecha sozinho quando a origem avançar (sincronizarAvisosEsperaCp149, sem mudança).
+C) Dezenas de "Conferir publicação real" — AUTOMATIZAR o gesto. Publicação comum que passou do horário ganha "✔ Saiu no horário — conferi no perfil": preenche dia/hora agendados e a prova declarada e confirma pelo mesmo fluxo do servidor. Se a orientação exigir leitura ou o servidor recusar, a ficha fica aberta preenchida. Não retirada: a fila alimenta a conclusão do calendário, demandas do ciclo e o controle V101.
+E) "Não precisa agendar" que não sai — MUDAR A REGRA (decisão do Chris, 10/11/2026: "Cecília pode fazer isso, eu te dou o ok sim"). Antes o servidor só deixava a Amanda retirar sem publicação (conteúdo antigo: compat-legado-programacao-r83; com orientação: exceção autorizada pela Amanda; conteúdo extra sem orientação: recusado em exigirFonteFactualI165). Agora Cecília, Amanda ou Chris retiram com motivo obrigatório, nas três situações (functions-get: compat-legado-programacao-r83.mjs, publicacao.mjs, stokki.mjs). Versão, estado da postagem (não publicada), recibo e conclusão do calendário continuam iguais. Até o deploy das Functions, a recusa antiga abre na hora o pedido à Amanda (front).
+"Revisar agendamento" + "Não precisa agendar" repetidos: um cartão por postagem; não retirado (cada cartão é uma postagem real). Com U2, recados no lugar de legenda passam a aparecer como pendência.
+Árvore:
+RAIZ: gs-postagem-controles-i165.mjs (enviar/encerrarAntigas/onclick), gs-fila-publicacoes-cp125.mjs (botão rápido), escritorio.html (abrirPublicacaoDaFilaCp125, modal CP149)
+├─ ESCRITORES: callables publicacao/programar/abortar_operacao/solicitar_excecao (sem mudança no servidor); demandas (conclusão normal do aviso)
+├─ LEITORES: fila CP125, Minhas Demandas, conclusão do calendário (postado), Amanda (pedido de exceção)
+├─ PAPÉIS: Cecília (principal); Chris/Amanda herdam A/D
+├─ RULES/FUNCTIONS: sem mudança
+└─ LEGADO: tentativas antigas no localStorage do tablet da Cecília são encerradas na primeira abertura
+Testes: J33 (A, B, C, E; vermelha no main, verde depois) + bateria completa desktop e --movel.
+Risco residual: B deixa o aviso como "feito por mim — aguardando" até a Amanda avançar a tarefa dela.

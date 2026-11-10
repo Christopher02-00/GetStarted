@@ -69,6 +69,9 @@ export function validarProgramacaoCp111(f,acao){
  return {permitida:true,excecaoAplicada:true,fonteProgramacaoCp111:p.modo};
 }
 export function validarAcaoFonteProgramacaoI165(f,acao,ator){
+ /* U4 (10/11/2026, decisão do Chris): a Cecília pode retirar da fila, sem publicar, um conteúdo que não vai sair (ex.: vídeo de
+    telão), sem pedir exceção à Amanda. Motivo obrigatório; o estado da postagem e a versão continuam conferidos no endpoint. */
+ if(acao.acao==='cancelar'&&['Cecília','Amanda','Chris'].includes(ator?.papel)&&typeof acao.motivo==='string'&&acao.motivo.trim())return {permitida:true,excecaoAplicada:false,retiradaDireta:true,continuidadeLegada:compatLegadoConfirmadaI165(f),resolveObrigacao:false};
  if(acao.acao==='agendar'&&f.programacaoCp111)return validarProgramacaoCp111(f,acao);
  if(f.diretriz)return validarOperacaoProgramacaoI165(f.diretriz,acao);
  exigirI165(acao.acao!=='agendar','orientacao-amanda-obrigatoria','A Amanda precisa definir a orientação antes de um novo agendamento, inclusive para conteúdos anteriores.');

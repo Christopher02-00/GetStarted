@@ -13079,20 +13079,17 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
     const encaminhar=entrada.acao==='encaminhar', materialUrl=materialUrlI34(entrada.materialUrl), observacao=String(entrada.observacao||'').trim();
     if(observacao.length>2000)throw new Error('A observação deve ter até 2.000 caracteres.');
     if(encaminhar && (!entrada.materialConfirmado||!editoresAtuaisI53().includes(entrada.editor)))throw new Error('Escolha o editor e confirme que o material está disponível.');
-    const ref=doc(db,'videos_producao',videoId),em=new Date().toISOString();
-    const resultado=await runTransaction(db,async tx=>{
-      const snap=await tx.get(ref),arte=await tx.get(doc(db,'demandas','arte_yas_'+videoId));ctx.validar();
-      if(arte.exists())throw new Error('Este registro já tem uma demanda de arte. Confira o encaminhamento para Yas antes de distribuir como vídeo.');
-      if(!snap.exists())throw new Error('Este vídeo não existe mais.');
-      const v=snap.data();exigirClienteOperacionalR4(v.cliente,v);
-      if(!pendenteSomenteEdicaoI34(v)||v.status!=='aguardando_encaminhamento'||v.editorAtribuido)throw new Error('Este item já foi encaminhado ou alterado. Atualize a fila.');
-      if(v.edicaoManual.revisao!==entrada.revisao)throw new Error('Este item mudou em outra aba. Atualize a fila antes de confirmar.');
-      const edicaoManual={...v.edicaoManual,revisao:v.edicaoManual.revisao+1,estado:encaminhar?'encaminhado':'aguardando_material',materialUrl,observacao,
-        materialConfirmado:encaminhar,tratadoPor:ctx.ator,tratadoUid:ctx.uid,tratadoEm:em};
-      const patch={edicaoManual,observacao,materialUrl,historico:arrayUnion({acao:encaminhar?'Encaminhado para edição':'Aguardando material para edição',detalhe:encaminhar?'Editor: '+entrada.editor:observacao,por:ctx.ator,em})};
-      if(encaminhar)Object.assign(patch,{status:'aguardando_edicao',editorAtribuido:entrada.editor,editorAtribuidoPor:ctx.ator,editorAtribuidoEm:em});
-      tx.update(ref,patch);return {titulo:v.titulo,clienteNome:v.clienteNome,revisao:edicaoManual.revisao};
-    });
+    /* CP194 (10/11/2026): a gravação é do servidor — as rules do vídeo passavam do limite de 1000 expressões e o
+       Firestore recusava sem motivo. O servidor faz as mesmas conferências (papel, pendência, revisão, arte, cliente). */
+    const ref=doc(db,'videos_producao',videoId),c=contextoPreparacaoR80();
+    let resultado;
+    try{
+      const r=await chamadaCentralPreparacaoR80({acao:'somente_edicao_tratar_cp194',videoId,tipo:entrada.acao,editor:entrada.editor||'',revisao:entrada.revisao,observacao,materialUrl,materialConfirmado:entrada.materialConfirmado===true,
+        uidEsperado:c.uid,atorRealEsperado:c.atorReal,papelOperado:c.nome,sessao:c.sessao});
+      resultado=r?.data;
+    }catch(e){throw new Error(e?.message||'O servidor não confirmou o encaminhamento.');}
+    ctx.validar();
+    if(resultado?.schema!==1||!Number.isInteger(resultado.revisao))throw new Error('O servidor não confirmou o encaminhamento.');
     // O commit confirmado nunca é anunciado como zero escrita por falha posterior.
     try{
       const snap=await comTimeoutCalendarioOperacional(_getDocFromServerFB(ref),'Conferir encaminhamento salvo',12000);ctx.validar();

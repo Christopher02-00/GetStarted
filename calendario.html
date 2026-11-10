@@ -637,7 +637,9 @@
     return true;
   })();
 
-  window.__fb = { docRef, doc, getDoc, getDocFromServer, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction };
+  // CP193 (10/11/2026): o pedido de ajuste do cliente é gravado pelo servidor (as rules estouravam o limite em calendário grande).
+  const chamarGetCp193 = app ? httpsCallable(getFunctions(app,'southamerica-east1'),'programacaoIndependenteGetI165',{timeout:45000}) : null;
+  window.__fb = { docRef, doc, getDoc, getDocFromServer, setDoc, onSnapshot, db, collection, getDocs, addDoc, query, where, serverTimestamp, runTransaction, chamarGetCp193 };
   window.__clienteId = clienteId;  // modulos <script type="module"> nao compartilham escopo
   window.__mesSolicitadoCal = /^20\d{2}-(0[1-9]|1[0-2])$/.test(mesSolicitado) && mesSolicitado>='2026-07' ? mesSolicitado : '';
 </script>
@@ -3668,49 +3670,32 @@ async function registrarPedidoAjusteClienteNoBancoV113({item,itemIdx,texto,opera
   if(window.__modoCal!=='cliente') throw Object.assign(new Error('Apenas o cliente pode usar esta confirmação.'),{code:'gs/papel-invalido'});
   if(!fb.runTransaction||!fb.db||!fb.docRef||!fb.doc||!fb.serverTimestamp) throw Object.assign(new Error('Conexão transacional indisponível.'),{code:'gs/sem-conexao'});
   if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia)) throw Object.assign(new Error('Competência inválida.'),{code:'gs/competencia-invalida'});
-  const avisoRef=fb.doc(fb.db,'avisos_do_cliente',operationId);
-  return GetAprovacaoI68.transacionarPedido(fb,async (transacao,snap)=>{
-    if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
-    const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
-    const mapa={...(servidor.aprovacaoMeses||{})};
-    const pedidos={...(servidor.pedidosAjusteClienteI71||{})};
-    const anterior=servidor.pedidoAjusteCliente||{};
-    if(anterior.operationId&&!pedidos[anterior.operationId])pedidos[anterior.operationId]=anterior;
-    const pedidoExistente=pedidos[operationId];
+  if(!fb.chamarGetCp193||!fb.getDocFromServer) throw Object.assign(new Error('Conexão com o servidor indisponível.'),{code:'gs/sem-conexao'});
+  /* Conferência da tela (mesmas regras de antes), numa leitura do servidor. A gravação é do servidor (CP193). */
+  const snap=await fb.getDocFromServer(fb.docRef);
+  if(!snap.exists()) throw Object.assign(new Error('Calendário não encontrado.'),{code:'gs/calendario-ausente'});
+  const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
+  const pedidos={...(servidor.pedidosAjusteClienteI71||{})};
+  const pedidoExistente=pedidos[operationId];
+  let alvo=null;
+  if(pedidoExistente){
+    if(pedidoExistente.competencia!==competencia||pedidoExistente.texto!==texto||pedidoExistente.itemId!==String(item?.itemId||''))throw Error('O recibo não corresponde a este pedido.');
+    alvo={indice:pedidoExistente.itemIdx,item:{itemId:pedidoExistente.itemId}};
+  }else{
     const estadoAtual=estadoEfetivoNoCalendarioV113(servidor,competencia);
-    if(pedidoExistente){
-      if(pedidoExistente.competencia!==competencia||pedidoExistente.texto!==texto||pedidoExistente.itemId!==String(item?.itemId||''))throw Error('O recibo não corresponde a este pedido.');
-      return {marca:mapa[competencia],pedido:pedidoExistente,pedidos,updatedAt:String(servidor.updatedAt||''),jaConfirmado:true};
-    }
     const revisaoPublica=GetAprovacaoI68.revisaoPublica(servidor,competencia,estadoAtual);
     const liberacao=aprovacaoLiberadaExplicitaV113(servidor,competencia);
     if(estadoAtual==='liberado'&&!liberacao) throw Object.assign(new Error('Este calendário antigo exige que a equipe confirme a reabertura uma vez.'),{code:'gs/legado-sem-estado-explicito'});
     if(!liberacao&&!revisaoPublica) throw Object.assign(new Error('O calendário não está disponível para novos pedidos.'),{code:'gs/estado-alterado'});
     conferirAprovacaoI56(servidor,esperado);
-    const alvo=localizarItemPedidoAjusteV113(servidor,item,itemIdx,competencia);
+    alvo=localizarItemPedidoAjusteV113(servidor,item,itemIdx,competencia);
     if(!alvo) throw Object.assign(new Error('O conteúdo mudou de identidade ou competência. Recarregue antes de pedir o ajuste.'),{code:'gs/item-divergente'});
-    const agora=new Date().toISOString();
-    const itemId=String(alvo.item?.itemId||'').trim();
-    const itemNome=String(alvo.item?.name||alvo.item?.nome||'').trim();
-    const marcaAnterior=mapa[competencia]||{};
-    const marca={...marcaAnterior,status:'ajuste_interno',mes:competencia,por:'Cliente',em:agora,
-      motivoAjuste:texto,pedidoAjusteOperationId:operationId,pedidoAjusteItemId:itemId,
-      pedidoAjusteItemIdx:alvo.indice,liberadoEmAnterior:String(liberacao?.em||marcaAnterior.liberadoEmAnterior||marcaAnterior.retratoLiberadoV115?.publicadoEm||''),
-      liberadoPorAnterior:String(liberacao?.por||liberacao?.enviadoPor||marcaAnterior.liberadoPorAnterior||marcaAnterior.retratoLiberadoV115?.publicadoPor||'')};
-    mapa[competencia]=marca;
-    const pedido={schemaVersion:1,operationId,calendarId:slug,competencia,itemId,itemIdx:alvo.indice,
-      itemNome,texto,por:'Cliente',autorUid:String(window.__fbAuthUid||''),criadoEm:agora,
-      registradoEm:fb.serverTimestamp()};
-    const aviso={cliente:slug,clienteNome:window.nomeClienteCalendarioR4(servidor.client||data.client||slug),
-      titulo:'✏️ '+window.nomeClienteCalendarioR4(servidor.client||data.client||slug)+' pediu ajuste em: '+itemNome.slice(0,45),
-      descricao:'Conteúdo do dia '+(alvo.item?.day||'?')+' — '+itemNome+'\n\nO que o cliente escreveu:\n"'+texto+'"\n\nAjuste somente este conteúdo e envie para a Amanda revisar. Os demais pedidos têm acompanhamento próprio.',
-      texto,itemNome,paraQuem:'Chris',lido:false,viraDemanda:true,tipo:'ajuste_calendario',
-      operationId,competencia,itemId,itemIdx:alvo.indice,criadoEm:agora,registradoEm:fb.serverTimestamp()};
-    pedidos[operationId]=pedido;
-    transacao.update(fb.docRef,{aprovacaoMeses:mapa,pedidoAjusteCliente:pedido,pedidosAjusteClienteI71:pedidos,updatedAt:agora});
-    transacao.set(avisoRef,aviso);
-    return {marca,pedido:{...pedido,registradoEm:null},pedidos:{...pedidos,[operationId]:{...pedido,registradoEm:null}},updatedAt:agora,jaConfirmado:false};
-  });
+  }
+  let resposta;
+  try{ resposta=(await fb.chamarGetCp193({acao:'cliente_pedido_ajuste_cp193',competencia,itemId:String(alvo.item?.itemId||'').trim(),itemIdx:alvo.indice,texto,operationId})).data; }
+  catch(e){ const c=String(e?.details?.codigo||''); throw Object.assign(new Error(e?.message||'O servidor não confirmou.'),{code:c==='gs/ajuste-ja-aberto'?c:(c||'gs/servidor')}); }
+  if(resposta?.schema!==1||!resposta.pedido||resposta.pedido.operationId!==operationId) throw Object.assign(new Error('O servidor não confirmou o pedido.'),{code:'gs/servidor'});
+  return {marca:resposta.marca,pedido:resposta.pedido,pedidos:{...pedidos,[operationId]:resposta.pedido},updatedAt:resposta.updatedAt,jaConfirmado:resposta.jaConfirmado===true};
 }
 let pedidoAjusteClienteEmCursoV113=false;
 window.enviarObsDoCliente = async function(){

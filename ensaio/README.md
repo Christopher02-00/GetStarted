@@ -52,6 +52,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J34 | Comentário da revisão interna (Amanda) não aparece para o cliente em "Sugestões e comentários"; o recado do próprio cliente continua visível. Usa o calendário da J06 | cliente |
 | J35 | Legenda corrigida no calendário chega à postagem (CP190): A) cliente corrige pelo link → postagem não agendada recebe o texto e o Chris recebe "Cliente alterou o texto"; B) postagem agendada não muda e a Cecília recebe "Legenda mudou depois de agendada" em Minhas Demandas; C) correção feita direto na postagem não é sobrescrita → Chris recebe "Duas legendas diferentes". Usa o calendário da J06 | cliente, Cecília, Chris |
 | J36 | Postagem manual agendada (Cecília) num mês ainda não montado não deixa o mês "liberado": o Chris abre o editor do mês em criação | Amanda, Chris |
+| J37 | Contador "Esperando sua revisão" do Painel de controle não conta cliente fora da carteira (mesmo filtro da fila) | Amanda |
 | J41 | "Encaminhar ao editor" de vídeo somente edição (takes avulsos, sem gravação): vai para o editor (CP194, servidor) | Amanda |
 | J42 | Cliente pede ajuste num calendário grande (cópia anonimizada da Zeiss, 36 conteúdos): o servidor grava o pedido e o aviso para o Chris (CP193) | cliente |
 | J43 | "Não precisa agendar" com item do calendário sem ponteiro para a postagem: a Cecília retira com motivo e a pauta fica intacta | Cecília |

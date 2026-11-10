@@ -6,7 +6,7 @@ export const id = 'J29';
 export const nome = 'Cobrança agrupada: grupo salvo → empresas cobertas com a parte → Régua só cobra o pagador';
 
 const hoje = new Date();
-const MES = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+const MES = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7); // fuso do site
 const contrato = (nome, valor) => ({ clienteNome: nome, plano: 'Intermediário', valorCheio: valor, valorVigente: valor, diaVencimento: 10, status: 'ativo', ativo: true, excluido: false, primeiraCompetencia: '2026-07', cortesiaMeses: [] });
 
 async function abrir(page, navId, boxId, texto) {

@@ -1,6 +1,6 @@
 /* I94: primeiro recebimento, nos mesmos documentos criados pela ativação.
  * Sem migração, baixa automática ou alteração do contrato. */
-import * as Core from './financeiro-core.mjs?v=b5fcfec22e3b2316f4a8e3199c3828c26d3d15c54364f4c39eb1572bf4eef875';
+import * as Core from './financeiro-core.mjs?v=bd5028fb6d17b8375f846eabe1758a7351959ade459c523993d5e632e7a346c7';
 const texto=v=>String(v??'').trim();
 const finais=['pago','isento','cancelado'];
 const igual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);

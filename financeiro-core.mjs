@@ -660,7 +660,9 @@ export function projetarGruposCobranca({ obrigacoes, grupos = [], competencia } 
       const linha = linhas.find(l => l.canonicalId === m.canonicalId);
       return { canonicalId: m.canonicalId, parte: m.parte, coberta: linha?.cobertoPor === g.pagador, temContrato: !!linha };
     });
-    const somaMembros = partes.reduce((total, p) => total + p.parte, 0);
+    // Auditoria 10/11/2026 (decisão do Chris): empresa sem contrato no mês (saiu) não entra na soma — e vira aviso para revisar o grupo.
+    partes.filter(p => !p.temContrato).forEach(p => conflitos.push(conflito('MEMBRO_DO_GRUPO_SEM_CONTRATO', { canonicalId: p.canonicalId, competencia, grupo: g.id })));
+    const somaMembros = partes.filter(p => p.temContrato).reduce((total, p) => total + p.parte, 0);
     const statusPagador = linhaPagador ? statusMensalidade(linhaPagador) : '';
     const valorPagador = linhaPagador && !['isento', 'cancelado'].includes(statusPagador)
       ? Number(linhaPagador.valorDevido || 0) : 0;

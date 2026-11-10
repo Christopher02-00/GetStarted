@@ -12,6 +12,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   const retrato = { pagamentoId: PAG, cliente: 'zeiss', competencia: MES, valor: 4500, diaVencimento: 10, vencimento: MES + '-10' };
   await seed.set('pagamentos_mensais', PAG, { cliente: 'zeiss', clienteNome: 'Zeiss', competencia: MES, valorDevido: 4500, diaVencimento: 10, status: 'aberto', pagoEm: '', comprovante: '', excluido: false,
     cobrancaPortalI38: { versao: 1, estado: 'liberada', por: 'Chris', revisao: 1, operacao: 'ensaio_j44_op', em: agora, inicioOperacao: MES, quitadasAte: '2026-01', retrato } });
+  for (const [slug, nome] of [['hitech', 'Hitech'], ['mochi', 'Mochi']]) await seed.set('contratos_cliente', slug, { clienteNome: nome, plano: 'Intermediário', valorCheio: 750, valorVigente: 750, diaVencimento: 10, status: 'ativo', ativo: true, excluido: false, primeiraCompetencia: '2026-07', cortesiaMeses: [] });
   await seed.set('config_financeiro', 'cobranca_agrupada', { grupos: [{ id: 'grupo_zeiss', nome: 'Empresas do Otávio', pagador: 'zeiss', desde: MES, ativo: true,
     membros: [{ slug: 'hitech', parte: 750 }, { slug: 'mochi', parte: 750 }] }], versaoAnterior: [], revisao: 9, atualizadoPor: 'Chris', atualizadoEm: agora });
   const { page, erros, fechar } = await nav.novaPagina(); const t0 = Date.now();

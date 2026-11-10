@@ -5,8 +5,8 @@
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
-import { instalarEntradaFinanceiraI94 } from './financeiro-entrada-i94.mjs?v=76ab789005ee86461adc88ba8df4855d4c0aa08bfac9cb656b3e5b1d30ac6c8a';
-import * as Core from './financeiro-core.mjs?v=b5fcfec22e3b2316f4a8e3199c3828c26d3d15c54364f4c39eb1572bf4eef875';
+import { instalarEntradaFinanceiraI94 } from './financeiro-entrada-i94.mjs?v=012de8d482713585d016509a8c4ac5a53b442491be2a006d3a7927100423760c';
+import * as Core from './financeiro-core.mjs?v=bd5028fb6d17b8375f846eabe1758a7351959ade459c523993d5e632e7a346c7';
 import { instalarConferenciaPortalI38, lerFontesCobrancaI38 } from './cobranca-portal-manual.mjs?v=i38-1';
 
 const COLECOES_SNAPSHOT = [
@@ -289,6 +289,7 @@ function competenciaDeDataCaixa(valor){
       EMPRESA_COBERTA_COM_MENSALIDADE_ABERTA:'Esta empresa está coberta pela cobrança agrupada, mas tem uma mensalidade própria em aberto. Marque essa mensalidade como cortesia para não cobrar duas vezes.',
       PAGADOR_DO_GRUPO_SEM_COBRANCA:'O pagador da cobrança agrupada não tem cobrança neste mês, então as empresas cobertas ficariam sem ninguém pagando.',
       PARTES_DO_GRUPO_PASSAM_DO_VALOR:'A soma das partes das empresas cobertas passa do valor cobrado do pagador.',
+      MEMBRO_DO_GRUPO_SEM_CONTRATO:'Uma empresa do grupo não tem contrato ativo neste mês (saiu ou ainda não começou). A parte dela ficou fora da conta; revise o grupo em Mensalidades.',
       GRUPO_COBRANCA_INVALIDO:'A cobrança agrupada está sem pagador ou sem mês de início.',
       MEMBRO_GRUPO_COBRANCA_INVALIDO:'Uma empresa da cobrança agrupada está repetida, sem parte válida ou é o próprio pagador.',
       MEMBRO_TAMBEM_PAGADOR:'Uma empresa aparece como coberta e também como pagadora de outro grupo.',

@@ -5,8 +5,8 @@
  * competência ficam em `financeiro-core.mjs`; abrir ou trocar uma tela nunca
  * grava Firestore. Escritas existem somente em ações explícitas com recibo.
  */
-import { instalarEntradaFinanceiraI94 } from './financeiro-entrada-i94.mjs?v=8304d4c07f2e8dd0214e2798e359605a26c6d513fa19b59e4396a6d063b8b261';
-import * as Core from './financeiro-core.mjs?v=454d6707b98af4b8e9c211596686c7b410534374f05ec08a47c163bc1f58252e';
+import { instalarEntradaFinanceiraI94 } from './financeiro-entrada-i94.mjs?v=76ab789005ee86461adc88ba8df4855d4c0aa08bfac9cb656b3e5b1d30ac6c8a';
+import * as Core from './financeiro-core.mjs?v=b5fcfec22e3b2316f4a8e3199c3828c26d3d15c54364f4c39eb1572bf4eef875';
 import { instalarConferenciaPortalI38, lerFontesCobrancaI38 } from './cobranca-portal-manual.mjs?v=i38-1';
 
 const COLECOES_SNAPSHOT = [

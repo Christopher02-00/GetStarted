@@ -19,6 +19,8 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   await seed.set('contratos_cliente', 'zeiss', contrato('Zeiss', 4500));
   await seed.set('contratos_cliente', 'j29-otica', contrato('J29 Ótica Hauer', 800));
   await seed.set('contratos_cliente', 'j29-clinica', contrato('J29 Clínica São José', 1));
+  // empresa nova entra com o 1º mês em cortesia (cadastro da Central): o documento isento também mostra a parte do grupo
+  await seed.set('pagamentos_mensais', `j29-otica_${MES}`, { cliente: 'j29-otica', clienteNome: 'J29 Ótica Hauer', competencia: MES, valorDevido: 800, diaVencimento: 10, status: 'isento', cortesiaDoMes: true, motivoIsencao: 'cortesia combinada para este mês', pagoEm: '', comprovante: '', excluido: false });
   const { page, erros, fechar } = await nav.novaPagina();
   const t0 = Date.now();
   const caso = (c, ok, detalhe) => registrar({ jornada: id, caso: c, ok, ms: Date.now() - t0, detalhe });

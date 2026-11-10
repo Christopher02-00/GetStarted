@@ -57,11 +57,15 @@ export function ocorrenciasCalendarioRevisaoI164(c,cal){
  const revisao=revisaoI148(c.cliente,mes,cal,itens,marca.status),versao=hash([revisao,base]);
  return [{origem:{tipo:'calendario_revisao',id:c.id,cliente:c.cliente,competencia:mes,base},versao,destinatario:'Amanda',nivel:'revisar',titulo:'Calendário para revisar · '+c.clienteNome,texto:'A versão de '+mes+' está pronta para você conferir. Abra os conteúdos; depois aprove ou escreva o que precisa ajustar.',link:{area:'aprovar',ciclo:c.id,cliente:c.cliente,competencia:mes}}];
 }
-async function consultarRevisaoCalendarioI164(db,c,agora=new Date()){if(!c?.incluido||!c.criacao?.base)return [];const s=await db.doc('calendarios/'+c.cliente).get();if(!s.exists)return [];const ocorrencias=ocorrenciasCalendarioRevisaoI164(c,s.data());if(!ocorrencias.length)return [];const [extras,configs]=await Promise.all([db.collection('clientes_extras').get(),db.collection('clientes_config').get()]);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()})),carteira=carteiraCanonicaI164({extras:rows(extras),configs:rows(configs),competencia:c.competencia,hoje:horarioI165(agora).slice(0,10)});return carteira.carteira.some(x=>x.slug===c.cliente)?ocorrencias:[];}
-async function consultarEnvioCalendarioI164(db,c,agora=new Date()){
+/* U3 (10/11/2026): a rodada de 5 min lia clientes_extras + clientes_config inteiras POR CICLO (~6.400 vezes/dia,
+   ~420 mil leituras/dia). Dentro da mesma rodada a carteira é lida uma vez (memo); fora da rodada (antes de cada envio)
+   a leitura continua fresca, como antes. */
+function lerCarteiraBrutaI164(db,memo){if(memo&&memo.carteira)return memo.carteira;const p=Promise.all([db.collection('clientes_extras').get(),db.collection('clientes_config').get()]);if(memo)memo.carteira=p.catch(e=>{memo.carteira=null;throw e;});return p;}
+async function consultarRevisaoCalendarioI164(db,c,agora=new Date(),memo=null){if(!c?.incluido||!c.criacao?.base)return [];const s=await db.doc('calendarios/'+c.cliente).get();if(!s.exists)return [];const ocorrencias=ocorrenciasCalendarioRevisaoI164(c,s.data());if(!ocorrencias.length)return [];const [extras,configs]=await lerCarteiraBrutaI164(db,memo);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()})),carteira=carteiraCanonicaI164({extras:rows(extras),configs:rows(configs),competencia:c.competencia,hoje:horarioI165(agora).slice(0,10)});return carteira.carteira.some(x=>x.slug===c.cliente)?ocorrencias:[];}
+async function consultarEnvioCalendarioI164(db,c,agora=new Date(),memo=null){
  if(!c?.incluido||!c.criacao?.base||!c?.cliente||!c?.competencia)return [];
  const cal=await db.doc('calendarios/'+c.cliente).get();if(!cal.exists||cal.data()?.aprovacaoMeses?.[c.competencia]?.status!=='liberado')return [];
- const [registro,extras,configs]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(c.cliente,c.competencia)).get(),db.collection('clientes_extras').get(),db.collection('clientes_config').get()]);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()}));
+ const [registro,[extras,configs]]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(c.cliente,c.competencia)).get(),lerCarteiraBrutaI164(db,memo)]);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()}));
  if(!calendarioEnviavelI164(c,cal.data(),{extras:rows(extras),configs:rows(configs),agora}))return [];
  return ocorrenciasCalendarioEnvioI164(c,cal.data(),registro.exists?registro.data():null);
 }
@@ -150,14 +154,14 @@ export async function despacharOcorrenciaI165(db,id,{agora=new Date(),enviarPush
 }
 export async function sincronizarOcorrenciasI165(db,{agora=new Date(),enviarPush,enviarEmail,canais=['push','email'],limite=60}={}){
  const p=await db.doc('processo_calendarios_i164/ativo').get();if(!processoAtivoI164(p.data()))return {ativa:false};
- const ciclos=await db.collection('planejamento_social_i155').where('incluido','==',true).get();let criadas=0,erros=[];
- for(const d of ciclos.docs){const c={...d.data(),id:d.id};for(const o of ocorrenciasPlanejamentoI164(c,agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}try{for(const o of await consultarRevisaoCalendarioI164(db,c,agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'calendario_revisao',ciclo:d.id,erro:e.message});}try{for(const o of await consultarEnvioCalendarioI164(db,c,agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'calendario_envio',ciclo:d.id,erro:e.message});}}
+ const ciclos=await db.collection('planejamento_social_i155').where('incluido','==',true).get();let criadas=0,erros=[];const memo={};
+ for(const d of ciclos.docs){const c={...d.data(),id:d.id};for(const o of ocorrenciasPlanejamentoI164(c,agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}try{for(const o of await consultarRevisaoCalendarioI164(db,c,agora,memo)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'calendario_revisao',ciclo:d.id,erro:e.message});}try{for(const o of await consultarEnvioCalendarioI164(db,c,agora,memo)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'calendario_envio',ciclo:d.id,erro:e.message});}}
  const continuidades=await db.collection('continuidade_calendarios_i164').where('ativo','==',true).limit(1001).get();
  if(continuidades.size>1000)throw Error('Há mais continuidades do que esta conferência comporta; nenhuma lista foi truncada.');
  const ciclosAtuais=new Set(ciclos.docs.map(d=>d.id));
  for(const d of continuidades.docs){
   if(d.data().ativacaoId!==p.data().ativacaoId||ciclosAtuais.has(d.id)&&!d.data().preparacaoPreservadaI155)continue;
-  try{for(const o of await consultarCalendarioLegadoI164(db,d.id,agora)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'calendario_legado',ciclo:d.id,erro:e.message});}
+  try{for(const o of await consultarCalendarioLegadoI164(db,d.id,agora,'',memo)){await registrarOcorrenciaI165(db,o,agora);criadas++;}}catch(e){erros.push({origem:'calendario_legado',ciclo:d.id,erro:e.message});}
  }
   // A estratégia tem fonte própria: não fabrica ciclo I155 nem demanda para gerar o aviso.
   const estrategias=await db.collection('planejamento_estrategico_cp109').limit(1001).get();
@@ -204,13 +208,13 @@ export async function ocorrenciasCalendarioLegadoI164(raw,cal,registro,processo,
  if(!publicadaAgora&&!pendenciaConfirmada)return [];
  return [{origem:{tipo:'calendario_envio',...origem,publicacao:ref.assinatura},versao:hash([origem,ref.assinatura,registro?.revision||0,registro?.operacaoId||'']),destinatario:'Cecília',nivel:'liberado',titulo:'Calendário liberado · '+c.clienteNome,texto:'Amanda liberou '+mes+'. Confira a mesma versão, envie ao cliente e organize a captação. Confirme após compartilhar.',link:{area:'enviar',ciclo:id,cliente,competencia:mes,origemEditorial:'continuar_legado'}}];
 }
-async function consultarCalendarioLegadoI164(db,id,agora,tipo=''){
+async function consultarCalendarioLegadoI164(db,id,agora,tipo='',memo=null){
  if(!/^20\d{2}-(0[1-9]|1[0-2])__[a-z0-9][a-z0-9._-]{0,119}$/.test(id||''))throw Error('A continuidade precisa confirmar cliente e mês.');
  const cliente=id.slice(9),competencia=id.slice(0,7);
  const [legado,ciclo,cal,processo]=await Promise.all([db.doc('continuidade_calendarios_i164/'+id).get(),db.doc('planejamento_social_i155/'+id).get(),db.doc('calendarios/'+cliente).get(),db.doc('processo_calendarios_i164/ativo').get()]);
  if(!legado.exists||!cal.exists||!processoAtivoI164(processo.data()))return [];
  if(legado.data().cliente!==cliente||legado.data().competencia!==competencia)throw Error('A continuidade não pertence ao cliente e mês desta origem.');
- const [registro,extras,configs]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(cliente,competencia)).get(),db.collection('clientes_extras').get(),db.collection('clientes_config').get()]);
+ const [registro,[extras,configs]]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(cliente,competencia)).get(),lerCarteiraBrutaI164(db,memo)]);
  const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()}));
  const carteira=carteiraCanonicaI164({extras:rows(extras),configs:rows(configs),competencia,hoje:horarioI165(agora).slice(0,10)});
  if(!carteira.carteira.some(x=>x.slug===cliente))return [];

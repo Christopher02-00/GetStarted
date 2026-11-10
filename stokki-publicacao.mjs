@@ -1,5 +1,5 @@
 import {dispensaRetroativaRedeI118,copiarProjecaoDispensaI118,todasCobrancasRetroativasDispensadasI118} from './gs-dispensa-retroativa-i118.mjs';
-import {legendaUtilizavelI79,exigirLegendaI79,legendaExternaAprovadaI79,camposPendentesI79} from './gs-legenda-qualidade-i79.mjs?v=i90-1';
+import {legendaUtilizavelI79,exigirLegendaI79,legendaExternaAprovadaI79,camposPendentesI79} from './gs-legenda-qualidade-i79.mjs?v=3894f00ee572c762d75e28e54163c8fbf97128ee4465634f03070d28251a11cd';
 /* Stokki I30. Fonte única: postagens. Projeções não escrevem; o adaptador
    transacional do Escritório confirma sessão, vídeo, identidade e recibo. */
 export const REDES=Object.freeze([

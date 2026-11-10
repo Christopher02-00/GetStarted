@@ -1,5 +1,5 @@
 import {precisaRevisarI106} from './gs-identidade-conteudo-i106.mjs?v=i144-1';
-import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=i124-1';
+import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=3894f00ee572c762d75e28e54163c8fbf97128ee4465634f03070d28251a11cd';
 // I78: consulta compartilhada. Textos e vínculo de produção nunca são escritos aqui.
 export const CAMPOS = {legenda:'Legenda principal',legendaInstagram:'Instagram',legendaYoutube:'YouTube',legendaLinkedin:'LinkedIn',legendaTiktok:'TikTok'};
 export const EDITAVEIS = new Set(['aguardando_legenda','aguardando_agendamento','agendado']);

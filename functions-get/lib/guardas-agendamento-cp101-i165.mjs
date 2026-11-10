@@ -220,7 +220,13 @@ export function prepararItemCalendarioConfirmacaoR5(post,identidade,cal,id,acao)
     if(candidatos.length>1||(!candidatos.length&&identidade.moderna)) throw new Error('O item editorial está ausente ou duplicado. Nenhum item foi escolhido por posição.');
     if(!candidatos.length) return null;
     const {it,idx}=candidatos[0];
-    if(String(it.postagemId||'')!==id) throw new Error('O item aponta para outra postagem. A pauta foi preservada.');
+    /* Urgente do Chris 10/11/2026: sair da fila SEM publicar ("Não precisa agendar") não depende do ponteiro do item.
+       Item que nunca foi agendado não tem postagemId; item de outra postagem não é desta. Nos dois casos a pauta fica
+       intacta e só a postagem sai. Publicar/regularizar continua exigindo o ponteiro exato. */
+    if(String(it.postagemId||'')!==id){
+      if(['arquivar','devolver'].includes(acao)) return null;
+      throw new Error('O item aponta para outra postagem. A pauta foi preservada.');
+    }
     if(['arquivar','devolver'].includes(acao)&&it.posted===true) throw new Error('O item já registra publicação. Regularize o fato; não arquive como não publicado.');
     items[idx]={...it,agendado:false,...(['confirmar','regularizar'].includes(acao)?{posted:true}: {})};
     return items;

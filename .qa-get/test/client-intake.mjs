@@ -33,7 +33,8 @@ export async function runClientIntake() {
   const {sincronizarPedidosClienteCp175} = await import(moduleURL('functions-get/central/notificacoes.mjs'));
   const calendarSource = read('calendario.html'), portalSource = read('portal-cliente.html');
   const expressions = {
-    v113: literal(calendarSource, 'const aviso={cliente:slug,'),
+    // CP193 (10/11/2026): o aviso do pedido de ajuste é montado pelo servidor; o contrato é o mesmo.
+    v113: literal(read('functions-get/pedido-ajuste-cliente-cp193.mjs'), 'const aviso={cliente:slug,'),
     cp151: literal(calendarSource, "tx.set(avisoRef,{\n        cliente,clienteNome:nome,titulo:"),
     i35: literal(calendarSource, "tx.set(fb.doc(fb.db,'avisos_do_cliente',operationId+'_chris'),"),
     cp152: literal(portalSource, 'tx.set(avisoRef,{...identidadePedido,')

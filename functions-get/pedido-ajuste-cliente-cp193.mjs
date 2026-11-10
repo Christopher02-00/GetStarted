@@ -6,6 +6,19 @@
 // mesma marca/pedido/aviso que o calendario.html montava. Idempotente por operationId.
 import {mesDoItemCalendario} from './lib/guardas-agendamento-cp101-i165.mjs';
 
+import {FieldValue} from 'firebase-admin/firestore';
+
+const FB = { serverTimestamp: () => FieldValue.serverTimestamp() };
+/** Mesmo objeto que o calendario.html gravava (contrato lido pela recepção CP175 e pelo teste client-intake). */
+export function avisoPedidoAjusteCp193({ slug, nome, item, itemNome, texto, operationId, competencia, itemId, alvo, agora, fb }) {
+  const aviso={cliente:slug,clienteNome:nome,
+      titulo:'✏️ '+nome+' pediu ajuste em: '+itemNome.slice(0,45),
+      descricao:'Conteúdo do dia '+(alvo.item?.day||'?')+' — '+itemNome+'\n\nO que o cliente escreveu:\n"'+texto+'"\n\nAjuste somente este conteúdo e envie para a Amanda revisar. Os demais pedidos têm acompanhamento próprio.',
+      texto,itemNome,paraQuem:'Chris',lido:false,viraDemanda:true,tipo:'ajuste_calendario',
+      operationId,competencia,itemId,itemIdx:alvo.indice,criadoEm:agora,registradoEm:fb.serverTimestamp()};
+  return aviso;
+}
+
 export const ACOES_PEDIDO_AJUSTE_CLIENTE_CP193 = Object.freeze(['cliente_pedido_ajuste_cp193']);
 const ALIASES_ZEISS = ['zeens', 'otica-visao-araucaria'];
 const ESTADOS_AJUSTE = ['ajuste_interno', 'aguardando_interna', 'aprovado_interno'];
@@ -73,13 +86,11 @@ export async function operarPedidoAjusteClienteCp193(db, auth, dados, { agora = 
     const marca = { ...anterior, status: 'ajuste_interno', mes: competencia, por: 'Cliente', em, motivoAjuste: texto, pedidoAjusteOperationId: operationId,
       pedidoAjusteItemId: itemId, pedidoAjusteItemIdx: itemIdx, liberadoEmAnterior: liberadoEm, liberadoPorAnterior: liberadoPor };
     mapa[competencia] = marca;
-    const pedido = { schemaVersion: 1, operationId, calendarId: slug, competencia, itemId, itemIdx, itemNome, texto, por: 'Cliente', autorUid: uid, criadoEm: em, registradoEm: agora };
+    const pedido = { schemaVersion: 1, operationId, calendarId: slug, competencia, itemId, itemIdx, itemNome, texto, por: 'Cliente', autorUid: uid, criadoEm: em, registradoEm: FB.serverTimestamp() };
     pedidos[operationId] = pedido;
     const nome = String(cal.client || slug);
     tx.update(calRef, { aprovacaoMeses: mapa, pedidoAjusteCliente: pedido, pedidosAjusteClienteI71: pedidos, updatedAt: em });
-    tx.set(avisoRef, { cliente: slug, clienteNome: nome, titulo: '✏️ ' + nome + ' pediu ajuste em: ' + itemNome.slice(0, 45),
-      descricao: 'Conteúdo do dia ' + (item.day || '?') + ' — ' + itemNome + '\n\nO que o cliente escreveu:\n"' + texto + '"\n\nAjuste somente este conteúdo e envie para a Amanda revisar. Os demais pedidos têm acompanhamento próprio.',
-      texto, itemNome, paraQuem: 'Chris', lido: false, viraDemanda: true, tipo: 'ajuste_calendario', operationId, competencia, itemId, itemIdx, criadoEm: em, registradoEm: agora, origemCp193: true });
+    tx.set(avisoRef, avisoPedidoAjusteCp193({ slug, nome, item, itemNome, texto, operationId, competencia, itemId, alvo: { indice: itemIdx, item }, agora: em, fb: FB }));
     return { schema: 1, jaConfirmado: false, marca, pedido: { ...pedido, registradoEm: null }, updatedAt: em };
   });
 }

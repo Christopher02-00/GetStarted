@@ -1,5 +1,6 @@
 import {ACOES_PLANOS_PUBLICOS_CP109,operarPlanoPublicoCp109} from './planos-acao-cp109.mjs';
 import {ACOES_PEDIDO_AJUSTE_CLIENTE_CP193,operarPedidoAjusteClienteCp193} from './pedido-ajuste-cliente-cp193.mjs';
+import {ACOES_COMPOSICAO_COBRANCA_CP195,composicaoCobrancaClienteCp195} from './composicao-cobranca-cliente-cp195.mjs';
 import {executarCentralNoTickI165} from './central/runner-central-i165.mjs';
 import {executarRecepcaoPedidosClienteCp175} from './recepcao-pedidos-cliente-cp175.mjs';
 import {dependenciasRuntimeUploadPostI166} from './upload-post-servico-i166.mjs';
@@ -27,7 +28,7 @@ const emailNaoConfiguradoI165=async()=>{throw falhaCanalI165('O canal de e-mail 
 /* U3 (10/11/2026): a equipe inteira passa por esta callable (aprovar, agendar, publicar, listas). Com maxInstances:1 global
    e 4 pedidos por servidor, o 5º esperava na fila (latência medida até 55 s) e o site esgotava o tempo → faixa vermelha.
    As gravações são transacionais e idempotentes por operacaoId, então vários servidores são seguros. */
-export const programacaoIndependenteGetI165=onCall({timeoutSeconds:120,concurrency:4,maxInstances:10,cors:['https://get-started.agency','https://www.get-started.agency']},async r=>{try{return ACOES_PLANOS_PUBLICOS_CP109.includes(r.data?.acao)?await operarPlanoPublicoCp109(db,r.data||{}):ACOES_PEDIDO_AJUSTE_CLIENTE_CP193.includes(r.data?.acao)?await operarPedidoAjusteClienteCp193(db,r.auth,r.data||{}):await operarI165(db,r.auth,r.data||{},{midia:{originBrowser:r.rawRequest?.headers?.origin||'https://get-started.agency'}});}catch(e){throw new HttpsError(e.code==='i165/auth'?'unauthenticated':'failed-precondition',e.message,{codigo:e.code||'i165/falha',naoImplicaAusenciaDeCommit:true});}});
+export const programacaoIndependenteGetI165=onCall({timeoutSeconds:120,concurrency:4,maxInstances:10,cors:['https://get-started.agency','https://www.get-started.agency']},async r=>{try{return ACOES_PLANOS_PUBLICOS_CP109.includes(r.data?.acao)?await operarPlanoPublicoCp109(db,r.data||{}):ACOES_PEDIDO_AJUSTE_CLIENTE_CP193.includes(r.data?.acao)?await operarPedidoAjusteClienteCp193(db,r.auth,r.data||{}):ACOES_COMPOSICAO_COBRANCA_CP195.includes(r.data?.acao)?await composicaoCobrancaClienteCp195(db,r.auth,r.data||{}):await operarI165(db,r.auth,r.data||{},{midia:{originBrowser:r.rawRequest?.headers?.origin||'https://get-started.agency'}});}catch(e){throw new HttpsError(e.code==='i165/auth'?'unauthenticated':'failed-precondition',e.message,{codigo:e.code||'i165/falha',naoImplicaAusenciaDeCommit:true});}});
 export const videoOperacionalGetI165=onDocumentWritten({document:'videos_producao/{id}',timeoutSeconds:120},e=>sincronizarVideoI165(db,e.params.id,{eventoId:e.id,antes:e.data?.before?.exists?e.data.before.data():null,depoisEvento:e.data?.after?.exists?e.data.after.data():null}));
 export const postagemOperacionalGetI165=onDocumentWritten({document:'postagens/{id}',timeoutSeconds:120},e=>sincronizarPostagemI165(db,e.params.id));
 // CP190 (10/11/2026): legenda corrigida no calendário chega à postagem (ou vira demanda para a Cecília/Chris).

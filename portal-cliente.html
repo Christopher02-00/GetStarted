@@ -227,7 +227,8 @@ import {pendenciaAgendadaI90} from './gs-legenda-qualidade-i79.mjs?v=3894f00ee57
   import { connectFirestoreEmulator, getFirestore, onSnapshot, collection, getDocsFromServer, addDoc, doc, getDocFromServer, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, orderBy, runTransaction, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { cobrancasVisiveisI38 } from './cobranca-portal-manual.mjs?v=i38-1';
   import { nomeSessaoPublicaI39, entradaPortalI39 } from './sessao-publica-i39.mjs?v=i39-1';
-  import { connectAuthEmulator, getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { connectAuthEmulator, getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js"
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAyvxHHInEQMpcNHKY__lj3T2G5cikGoyw",
@@ -2995,7 +2996,7 @@ function conferirAprovacaoI56(cal,esperado){
       let html='<div class="card"><h2>💳 Pagamento</h2><div class="sub">Os pagamentos aparecem aqui depois da conferência manual da agência.</div><button class="btn secondary" type="button" data-atualizar-pagamento-i38 style="width:auto;">Atualizar pagamentos</button></div>';
       if(!liberadas.length)html+='<div class="card"><b>Nenhuma cobrança liberada neste Portal.</b><div class="sub" style="margin:8px 0 0;">Se precisar conferir um pagamento, fale com a Get Started.</div></div>';
       for(const {pagamento:p,cobranca:c} of liberadas){
-        html+=`<div class="card"><div class="nome">${brlPortal(c.valor)}</div><div class="meta">${esc(rotuloCompetenciaPagamentoPortal(c.competencia))} · vencimento ${esc(formatarDataBR(c.vencimento))}</div><div class="meta">Conferido pela agência em ${esc(formatarDataBR(c.conferidaEm))}.</div>`;
+        html+=`<div class="card" data-composicao-cp195="${esc(p.id)}"><div class="nome">${brlPortal(c.valor)}</div><div class="meta">${esc(rotuloCompetenciaPagamentoPortal(c.competencia))} · vencimento ${esc(formatarDataBR(c.vencimento))}</div><div class="meta">Conferido pela agência em ${esc(formatarDataBR(c.conferidaEm))}.</div>`;
         if(c.comprovanteEmAnalise)html+='<p class="sub">📎 Comprovante recebido. Aguarde a conferência da equipe antes de fazer outro pagamento.</p>';
         else html+=`<div style="background:var(--deep);border-radius:10px;padding:12px;margin-top:12px;"><div class="meta">Chave PIX (${PIX_GET.tipo})</div><div class="nome" style="word-break:break-all;">${PIX_GET.chave}</div><div class="meta">${PIX_GET.banco} · ${PIX_GET.titular}</div><button class="btn" style="margin-top:10px;" type="button" onclick="copiarPix()">Copiar chave PIX</button></div><div class="field" style="margin-top:12px;"><label>Já pagou? Envie o link do comprovante</label><input type="text" id="compMensal_${escAttr(p.id)}" placeholder="Link do comprovante"></div><button class="btn secondary" type="button" onclick="enviarComprovanteMensal('${p.id}')">Enviar comprovante</button><button class="btn secondary" type="button" onclick="comprovantePeloWhats('${c.competencia}',${c.valor})">Prefiro mandar pelo WhatsApp</button>`;
         html+='</div>';
@@ -3004,9 +3005,27 @@ function conferirAprovacaoI56(cal,esperado){
       if(indisponiveis.length)html+='<div class="card"><b>Parte do histórico precisa de conferência.</b><p class="sub">Esses registros não foram apresentados como cobrança.</p></div>';
       if(historico.length){const rotulos={pago:'Pago',isento:'Cortesia',cancelado:'Cancelado',encerrado:'Encerrado',excluido:'Arquivado'};html+='<details class="card"><summary>Histórico de pagamentos</summary>'+historico.slice(0,12).map(p=>`<div class="item"><b>${esc(rotuloCompetenciaPagamentoPortal(p.__competenciaPortal))}</b> · ${esc(rotulos[p.__statusPortal]||'Encerrado')}<div class="meta">${brlPortal(p.__valorPortal)}${p.pagoEm?' · em '+esc(formatarDataBR(p.pagoEm)):''}</div></div>`).join('')+'</details>';}
       cont.innerHTML=html;cont.querySelector('[data-atualizar-pagamento-i38]')?.addEventListener('click',carregarPagamentoCliente);
+      pintarComposicaoCobrancaCp195(cont,slug,geracao);
     }catch(e){if(esperada!==__leituraPagamentoI38||clienteAtual?.slug!==clienteEsperado)return;document.getElementById('lembretePagamentoI38')?.remove();console.error('Financeiro do Portal indisponível:',e?.code||e?.message);cont.innerHTML='<div class="card" role="alert"><b>Não foi possível confirmar os pagamentos agora.</b><p class="sub">Isso não confirma pagamento nem cobrança. Tente novamente quando a conexão voltar.</p><button class="btn secondary" type="button" data-atualizar-pagamento-i38>Tentar novamente</button></div>';cont.querySelector('[data-atualizar-pagamento-i38]')?.addEventListener('click',carregarPagamentoCliente);}
   }
 
+
+  /* CP195 (10/11/2026, pedido do Chris): o pagador de uma cobrança agrupada vê quanto é de cada empresa.
+     Somente leitura pelo servidor (o Portal não lê o financeiro do grupo). Falha aqui não esconde a cobrança. */
+  let chamarGetCp195=null;
+  async function pintarComposicaoCobrancaCp195(cont,slug,geracao){
+    try{
+      chamarGetCp195??=httpsCallable(getFunctions(app,'southamerica-east1'),'programacaoIndependenteGetI165',{timeout:45000});
+      const r=(await chamarGetCp195({acao:'cliente_cobranca_composicao_cp195'}))?.data;
+      if(clienteAtual?.slug!==slug||geracao!==__leituraPagamentoI38||r?.schema!==1||r.cliente!==slug)return;
+      for(const x of r.composicoes||[]){
+        const card=[...cont.querySelectorAll('[data-composicao-cp195]')].find(el=>el.dataset.composicaoCp195===x.pagamentoId);
+        if(!card||card.querySelector('.composicaoCp195'))continue;
+        const linhas=[{nome:x.nomePagador,parte:x.partePagador},...x.partes].map(l=>`<div class="item" style="display:flex;justify-content:space-between;gap:12px;"><span>${esc(l.nome)}</span><b>${brlPortal(l.parte)}</b></div>`).join('');
+        card.querySelector('.nome')?.insertAdjacentHTML('afterend',`<div class="composicaoCp195" style="margin:10px 0;"><div class="meta">Como se divide este valor</div>${linhas}</div>`);
+      }
+    }catch(e){console.info('Divisão da cobrança indisponível agora:',e?.code||e?.message);}
+  }
   /* Faixa suave no topo do portal — so a partir de 1 dia antes, e some
      sozinha quando o pagamento e conferido. */
 function pintarLembretePagamentoI38(pagamentos,slug){

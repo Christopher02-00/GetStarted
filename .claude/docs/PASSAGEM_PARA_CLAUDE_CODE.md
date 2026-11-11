@@ -9,7 +9,7 @@
 Você assume a manutenção do Site Get (repositório `Christopher02-00/GetStarted`, no Mac do Chris). Antes de qualquer coisa:
 1. Leia este documento inteiro — ele é a verdade sobre ambientes, estrutura, regras, o que já foi feito e o que falta.
 2. Leia o `AGENTS.md` do repositório inteiro. É lei.
-3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (130/130) antes de mexer em qualquer código.
+3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (141/141) antes de mexer em qualquer código.
 
 Regras com o Chris: um PR por assunto; portão de jornadas verde (e `--movel` quando mexer em tela) antes de todo PR; bug novo vira jornada nova (vermelha antes, verde depois); rules, Functions e dados de produção só com ok nominal dele. Ao fechar cada etapa: linguagem simples, diga a próxima etapa e quantas faltam, nunca deixe nada em aberto, só conclua a 100%.
 
@@ -103,7 +103,7 @@ Base real anonimizada (R2): workflow manual `exportar-firestore.yml` gera o arte
 **Processo (vigente desde 08/11/2026, decidido pelo Chris):**
 1. Todo pedido vira **árvore de impacto + 1 ficha por unidade** (escritores, leitores, papéis, rules, legado). Skill `get-arvore-do-pedido`.
 2. **Um PR por unidade**, branch própria, menor diff que resolve a causa-raiz. Skill `get-mudanca-segura`.
-3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 130/130) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
+3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 141/141) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
 4. PR com 5 blocos: **Entendimento / Alterações / Provas de validação / Riscos-pendências / Próximo passo**. Esperar o CI, merge, conferir no ar (`fetch` do arquivo em get-started.agency), atualizar os docs do projeto no mesmo dia. Rollback = `git revert`. Skill `get-publicacao-e-rollback`.
 5. Chris autorizou Claude a fazer branch → PR → CI → merge → conferência **sozinho** ("eu autorizo tudo, siga em frente"). O que ainda **pede aviso antes**: publicar **rules** no Firebase (hoje automático via workflow, então avisar no PR), deploy de **Functions**, qualquer **escrita em dados de produção** (migração/correção) — essas exigem ok nominal.
 6. Sempre que um pedido contrariar `AGENTS.md`/invariantes, **dizer qual é a regra vigente e esperar a decisão**, em vez de executar.
@@ -208,10 +208,16 @@ Auditoria em 4 trechos (equipe, cliente, legendas, entrada/saída), com ~20 acha
 | #98 | Ficha do cliente alterada avisa o Chris (CP198, gatilho `fichaClienteGetCp198`) | J49 |
 | #99 | Ex-cliente mensalista volta como avulso no mesmo cadastro | J50 |
 | #100 | Rules: link do cliente não apaga conteúdos nem comentários (CP199) | J51 |
+| #103 | Devolução com recado longo aceita até 30 mil caracteres e a recusa explica o tamanho | J52 |
+| #104 | Jornada permanente do CP196 e J04/J25 sem virada de meia-noite | J53 |
+| #105 | Gestão lê as demandas uma vez por login (eram três) | J54 |
+| #106 | **Etapa 2 (parte 1, CP200):** link do cliente e Portal leem a cópia `calendarios_cliente/{slug}` só com meses liberados; aprovar/texto/observação/recado pelo servidor; gatilho mantém a cópia · `v2026.11.11-2` + deploy das Functions + 38 cópias preenchidas | J55 vermelha→verde |
+| #107 | **Etapa 2 (parte 2, CP200):** rules negam ao cliente o `calendarios/{slug}` original · ruleset `599296b4…` · `v2026.11.11-3` | J55 (original negado) |
 - Dados de produção (ok nominal do Chris, 10/11): Clínica Zeiss Araucária apagada (39 docs) e retirada do grupo de cobrança. A Zeiss mantém R$ 4.500, com parte própria de R$ 1.500. O backup está fora do repo.
 - Conta `claude-site-get`: ganhou Cloud Scheduler Admin. Política de limpeza `firebase-functions-cleanup` criada (PR #83).
 - Portão no main em 10/11 22h: 128/128 desktop e móvel (antes do #100); CI do #100: 130/130.
-- Pendentes: rules etapa 2 (link do cliente ainda LÊ o documento inteiro, incluindo meses futuros — servir projeção pelo servidor); caminho "fora da pauta" de vídeo com item sumido estoura 1000 expressões); mensagem da devolução > 10.000 (branch `fix/devolucao-longa-mensagem-certa`, sem jornada); jornada sintética do CP196; medir de novo leituras e latência.
+- Etapa 2 das rules concluída em 11/11 (#106/#107). Gatilho conferido em produção (cópia acompanhou em 6 s). Portão 141/141 desktop e móvel.
+- Pendentes: caminho "fora da pauta" de vídeo com item sumido estoura 1000 expressões (mover para o servidor, como CP193/CP200); medir de novo leituras e latência (base 11/11: 3,4 mi leituras/24 h, antes do #105); opcional: demandas da gestão só abertas + últimos 30 dias.
 
 **Pedido de 09–10/11/2026 (4 unidades, Claude Code):**
 | U | O quê | PR / versão | Prova |

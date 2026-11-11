@@ -6,7 +6,12 @@ export const nome = 'Vídeo: distribuição → edição → aprovação → cli
 
 const VID = 'v-mochi-3'; // seed: sem editor, aguardando_edicao (cliente comum; Stokki tem fluxo próprio multi-plataforma → jornada separada)
 const esperar = async (fn, ms = 12000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1000)); } return null; }; // 1 s: leitura REST frequente aborta transações no emulador
-const hojeISO = () => { const d = new Date(Date.now() - 3 * 3600000); /* BRT */ return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// Data/hora JÁ PASSADAS em São Paulo, sem depender do fuso do computador nem da virada da meia-noite
+// (pendência de 10/11/2026: o CI rodou às 00:0x e "hoje 00:15" ainda era futuro → o servidor recusou "fato futuro").
+const agoraSP = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value])); return { data: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) }; };
+const ontemSP = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(Date.now() - 86400000));
+const passadoSP = () => { const a = agoraSP(); if (process.env.ENSAIO_MADRUGADA) a.min = 5; return a.min >= 40 ? { data: a.data, agenda: '00:01', publicada: '00:15' } : { data: ontemSP(), agenda: '23:30', publicada: '23:40' }; };
+const hojeISO = () => passadoSP().data;
 const amanhaISO = () => { const d = new Date(Date.now() + 86400000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
@@ -81,7 +86,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForSelector(`#dataPost_${post.id}`, { timeout: 15000 });
     // agenda para hoje 00:01 (já passou): assim a confirmação de publicação fica devida no passo 7, como na operação real
     await page.fill(`#dataPost_${post.id}`, hojeISO());
-    await page.fill(`#horaPost_${post.id}`, '00:01');
+    await page.fill(`#horaPost_${post.id}`, passadoSP().agenda);
     await page.evaluate(p => window.salvarAgendamentoPostagem(p), post.id); // botão "Revisar agendamento"
     // painel "Conferir agendamento": marcar a conferência e salvar
     const check = page.getByText(/Conferi a origem, a data e o horário/).first();
@@ -97,7 +102,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.locator('#view-postagens button').filter({ hasText: /Conferir publicação real/ }).filter({ hasNotText: /Já foi/ }).first().click();
     const painel = page.locator('text=Conferir a publicação real').first(); await painel.waitFor({ timeout: 15000 });
     const data = page.locator('input[type="date"]:visible').last(); await data.fill(hojeISO());
-    const hora = page.locator('input[type="time"]:visible').last(); await hora.fill('00:15'); // já passou (o servidor recusa 'fato futuro')
+    const hora = page.locator('input[type="time"]:visible').last(); await hora.fill(passadoSP().publicada); // já passou (o servidor recusa 'fato futuro')
     await page.locator('textarea:visible').last().fill('https://www.instagram.com/p/ensaio-j04/');
     await page.locator('button:visible').filter({ hasText: /Confirmar|Registrar|publicação/ }).filter({ hasNotText: /Conferir publicação real|Fechar|Pedir|Desfazer/ }).last().click();
   }, () => esperar(async () => { const p = await postagem(); return p?.status === 'postado' ? 'status postado' : null; }))) return;

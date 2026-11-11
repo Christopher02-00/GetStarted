@@ -7,7 +7,12 @@ export const id = 'J25';
 export const nome = 'Stokki: legenda por plataforma → agendar por rede → publicar por rede';
 const VID = 'v-stokki-j25'; // criado aqui sem editor; percorre o caminho real (como a J04) para nascer com os campos de produção
 const esperar = async (fn, ms = 20000) => { const f = Date.now() + ms; while (Date.now() < f) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1000)); } return null; };
-const hojeISO = () => { const d = new Date(Date.now() - 3 * 3600000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// Data/hora JÁ PASSADAS em São Paulo, sem depender do fuso do computador nem da virada da meia-noite
+// (pendência de 10/11/2026: o CI rodou às 00:0x e "hoje 00:15" ainda era futuro → o servidor recusou "fato futuro").
+const agoraSP = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(x => [x.type, x.value])); return { data: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) }; };
+const ontemSP = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(Date.now() - 86400000));
+const passadoSP = () => { const a = agoraSP(); if (process.env.ENSAIO_MADRUGADA) a.min = 5; return a.min >= 40 ? { data: a.data, agenda: '00:01', publicada: '00:15' } : { data: ontemSP(), agenda: '23:30', publicada: '23:40' }; };
+const hojeISO = () => passadoSP().data;
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   await seed.set('clientes_config', 'stokki', { modoAprovacaoCliente: 'manual', prazoTacitaHorasUteis: 24, whatsappCobranca: '', excluido: false, clienteInativo: false, tipoEntrega: 'postagem_completa' });
@@ -89,7 +94,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await abrirPainelStokki(page);
     for (const r of ['instagram', 'tiktok']) {
       const bloco = redeNoPainel(page, post.id, r); await bloco.waitFor({ timeout: 15000 });
-      await bloco.locator('[data-stokki-data]').fill(hojeISO()); await bloco.locator('[data-stokki-hora]').fill('00:01');
+      await bloco.locator('[data-stokki-data]').fill(hojeISO()); await bloco.locator('[data-stokki-hora]').fill(passadoSP().agenda);
       await bloco.locator('[data-stokki-acao="agendar"]').click();
       await confirmarNoCartao(page, post.id);
       const ok = await esperar(async () => (await postagem())?.publicacaoStokki?.redes?.[r]?.data ? true : null, 20000);
@@ -113,7 +118,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     // conferência do servidor: dia e hora reais (no passado; o servidor recusa fato futuro) e a prova
     const card = page.locator(`[data-stokki-post="${post.id}"]`);
     await card.locator('[data-post165-campo][type=date]:visible').last().fill(hojeISO());
-    await card.locator('[data-post165-campo][type=time]:visible').last().fill('00:15');
+    await card.locator('[data-post165-campo][type=time]:visible').last().fill(passadoSP().publicada);
     await card.locator('textarea[data-post165-campo]:visible').last().fill(link);
     await confirmarNoCartao(page, post.id, true);
   };

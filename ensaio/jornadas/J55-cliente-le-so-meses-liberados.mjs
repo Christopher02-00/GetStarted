@@ -37,9 +37,9 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       try { await fb.getDocFromServer(fb.doc(fb.db, 'calendarios', window.__clienteId)); out.original = 'lido'; } catch (e) { out.original = String(e.code || e.message); }
       return out;
     }, { escondido: ESCONDIDO });
-    const okA = leitura.caminho === 'calendarios_cliente/' + CLIENTE && !leitura.temEscondido && leitura.temDezembro; // o original passa a ser negado no PR das rules (CP200 parte 2)
+    const okA = leitura.caminho === 'calendarios_cliente/' + CLIENTE && !leitura.temEscondido && leitura.temDezembro && /permission/i.test(leitura.original);
     await foto(page, 'J55-leitura');
-    registrar({ jornada: id, caso: 'cliente lê só a cópia com meses liberados', ok: okA && !erros.filter(erroGrave).length, ms: Date.now() - t0,
+    registrar({ jornada: id, caso: 'cliente lê só a cópia com meses liberados; o original é negado', ok: okA && !erros.filter(erroGrave).length, ms: Date.now() - t0,
       detalhe: `lê ${leitura.caminho || '?'} · rascunho de janeiro ${leitura.temEscondido ? 'VISÍVEL' : 'escondido'} · dezembro ${leitura.temDezembro ? 'visível' : 'AUSENTE'} · original → ${leitura.original}` });
 
     // B) aprovação pelo link: grava no calendário real pelo servidor e a cópia acompanha

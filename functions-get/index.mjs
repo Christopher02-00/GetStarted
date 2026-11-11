@@ -16,6 +16,7 @@ import {defineSecret,defineString} from 'firebase-functions/params';
 import {operarI165} from './operacoes.mjs';
 import {sincronizarVideoI165,sincronizarPostagemI165} from './acompanhamento.mjs';
 import {sincronizarLegendaCalendarioCp190} from './legenda-calendario-cp190.mjs';
+import {avisarFichaClienteCp198} from './ficha-cliente-avisa-cp198.mjs';
 import {avisarAprovacaoClienteCp191} from './aprovacao-cliente-avisos-cp191.mjs';
 import {executarAcompanhamentoI165} from './reconciliacao.mjs';
 import {criarPushI165,criarEmailI165} from './despacho.mjs';
@@ -34,5 +35,7 @@ export const videoOperacionalGetI165=onDocumentWritten({document:'videos_produca
 export const postagemOperacionalGetI165=onDocumentWritten({document:'postagens/{id}',timeoutSeconds:120},e=>sincronizarPostagemI165(db,e.params.id));
 // CP190 (10/11/2026): legenda corrigida no calendário chega à postagem (ou vira demanda para a Cecília/Chris).
 // CP191: avisos de aprovação/remoção do cliente e "mês inteiro aprovado" (Cecília), um por mudança.
+// CP198: ficha do cliente mudou depois do documento confirmado → demanda para o Chris readotar (a trava continua).
+export const fichaClienteGetCp198=onDocumentWritten({document:'info_extras_cliente/{slug}',timeoutSeconds:120},e=>avisarFichaClienteCp198(db,e.params.slug,e.data?.before?.exists?e.data.before.data():null,e.data?.after?.exists?e.data.after.data():null));
 export const calendarioLegendaGetCp190=onDocumentWritten({document:'calendarios/{slug}',timeoutSeconds:120},async e=>{const antes=e.data?.before?.exists?e.data.before.data():null,depois=e.data?.after?.exists?e.data.after.data():null;await avisarAprovacaoClienteCp191(db,e.params.slug,antes,depois);return sincronizarLegendaCalendarioCp190(db,e.params.slug,antes,depois);});
 export const acompanhamentoOperacionalGetI165=onSchedule({schedule:'every 5 minutes',timeZone:'America/Sao_Paulo',timeoutSeconds:540,concurrency:1,retryCount:0,...(emailDeployAtivoI165?{secrets:[chaveEmail]}:{})},async()=>{const agora=new Date(),enviarPush=criarPushI165(db,{messaging:getMessaging(),auth:getAuth()}),enviarEmail=emailDeployAtivoI165?criarEmailI165(db,{serviceId:servicoEmail.value(),templateId:modeloEmail.value(),publicKey:publicaEmail.value(),privateKey:chaveEmail.value()}):emailNaoConfiguradoI165;let recepcao;try{recepcao=await executarRecepcaoPedidosClienteCp175(db,{agora});}catch(e){console.error('CP175: recepção automática precisa de conferência',String(e.message||e).slice(0,500));recepcao={ativa:true,estado:'conferir_origens',erros:[{servico:'recepcao_pedidos_cliente_cp175',erro:String(e.message||e).slice(0,500)}]};}const operacional=await executarAcompanhamentoI165(db,{agora,uploadPost:dependenciasRuntimeUploadPostI166(db),enviarPush,enviarEmail});const central=await executarCentralNoTickI165(db,{demandaIdsCp175:recepcao?.demandaIds||[],errosRecepcaoCp175:recepcao?.erros||[],agora,enviarPush,enviarEmail});return {recepcao,operacional,central};});

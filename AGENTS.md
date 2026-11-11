@@ -232,6 +232,23 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
 
 **Invariante V113 — pedido de ajuste do cliente:** calendário `liberado` permanece bloqueado para edição até existir um pedido explícito confirmado. O botão `Enviar pedido de ajuste` relê o calendário e, numa única transação, muda somente a competência exata para `ajuste_interno` e cria o aviso determinístico da Gabi; sucesso visual só aparece depois do commit. Item moderno usa `itemId`; legado só aceita índice/dia/nome inequívocos. Comentário geral, aprovação simples, outro mês, outro cliente ou estado não liberado nunca reabrem. Clique duplo/retry convergem e erro permanece erro. Pedido anterior à V113 é recuperado apenas por ação humana da equipe, com motivo e confirmação; nenhum conteúdo é apagado. `calendario.html` e `calendarios.html` continuam byte a byte idênticos.
 
+### Invariantes da auditoria do percurso (10/11/2026)
+
+- **Limite de 1000 expressões das rules.** Gravação do navegador em documento grande (calendário com vários meses, vídeo com histórico) estoura o limite do Firestore e volta `permission-denied` sem motivo. Gravação nova de cliente ou da gestão nesses documentos vai pela callable, e a Function repete em JS as mesmas conferências da regra. Exemplos: CP193 (pedido de ajuste do cliente), CP194 (somente edição), CP195 (divisão da cobrança no Portal). Não acrescente condição nova nas rules de `calendarios`/`videos_producao` sem medir esse custo.
+- **Legenda.** O item do calendário é a fonte. O gatilho `calendarioLegendaGetCp190` faz assim:
+  - postagem `aguardando_agendamento` com o texto antigo recebe o novo;
+  - postagem `agendado` vira demanda para a Cecília;
+  - postagem corrigida direto não é sobrescrita (vira demanda para o Chris);
+  - texto alterado pelo cliente vira demanda para o Chris.
+  Postagem de conteúdo com pedido de ajuste pendente não herda a legenda recusada.
+- **Avisos de aprovação do cliente** (aprovou, removeu, mês inteiro → Cecília) são criados só pelo servidor (CP191), com id determinístico. O navegador do cliente não cria esses avisos.
+- **Cliente que saiu.** O motor não gera kit, "Confirmar publicação" nem aprovação tácita. As pendências viram 1 demanda para a Cecília e 1 para a Amanda. Nada é apagado sozinho (decisão do Chris, 10/11).
+- **Cobrança agrupada.** Membro sem contrato no mês fica fora da soma e gera o conflito `MEMBRO_DO_GRUPO_SEM_CONTRATO`. O Portal do pagador mostra a divisão com a mesma conta. A Zeiss mantém R$ 4.500 (decisão do Chris, 10/11).
+- **Revisão com rodada nova.** Se o Chris começa a rodada nova com a base nova enquanto o mês está com a Amanda, a devolução dela vale e liga o mês à base nova (CP196).
+- **Ficha do cliente.** Mudar a ficha depois do documento confirmado mantém a trava do CP183 e cria demanda para o Chris readotar (CP198).
+- **Ex-cliente.** O ex-cliente mensalista volta como avulso no mesmo cadastro. Nunca crie outro.
+- **Exclusão física.** A Clínica Zeiss Araucária foi apagada em 10/11 a pedido nominal do Chris: 39 documentos, com backup fora do repositório nas notas da sessão. Exclusão física continua exigindo ok nominal.
+
 ## Evidência e entrega
 
 - Nunca declare uma correção validada sem informar comando ou método, resultado e limite do teste.

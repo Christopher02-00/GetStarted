@@ -16,6 +16,16 @@ const labels={cancelado:'Pedido cancelado anteriormente',pendente:'Ainda não ex
 const clone=x=>JSON.parse(JSON.stringify(x));
 const sha=s=>createHash('sha256').update(s).digest('hex');
 export const idDemandaAjusteCp112=op=>'entrada_i54_'+sha(JSON.stringify(['avisos_do_cliente',op]));
+/** CP201 (11/11/2026, Fedalto 2026-11): dia e data de um conteúdo já programado ou publicado são fato da produção, não
+ * edição — a mesma regra do retrato do cliente (GetAprovacaoI68.aprovacaoNoRetrato). Antes, programar uma postagem depois da
+ * publicação fazia toda liberação de correção (CP121/CP123) e a adoção (CP129) acusarem "outra versão editorial" para sempre.
+ * Devolve os itens publicados com o dia/data de produção dos atuais, só para comparar. */
+export function alinharDatasProducaoCp201(publicados,atuais){
+ const porId=new Map();for(const a of atuais||[]){const id=String(a?.itemId||'').trim();if(id)porId.set(id,[...(porId.get(id)||[]),a]);}
+ return (publicados||[]).map(p=>{const l=porId.get(String(p?.itemId||'').trim()),a=l?.length===1?l[0]:null;
+  if(!p||!a||a.excluido||!(a.posted===true||a.agendado===true)||!/^\d{4}-\d{2}-\d{2}$/.test(String(a.dataPostagem||'')))return p;
+  const c={...p,dataPostagem:a.dataPostagem};if(Number.isInteger(Number(a.day))&&Number(a.day)>=1&&Number(a.day)<=31)c.day=a.day;return c;});
+}
 export function hashConteudoAjusteCp112(item,mes){return hashEditorialI172(Object.fromEntries(CAMPOS_EDITORIAIS_I172.filter(k=>Object.hasOwn(item,k)||k==='mes').map(k=>[k,k==='mes'?(item.mes||mes):item[k]])));}
 const marca=(cal,mes)=>cal.aprovacaoMeses?.[mes]||{};
 const retrato=(cal,mes)=>marca(cal,mes).retratoLiberadoV115;
@@ -84,7 +94,8 @@ export function elegibilidadeReliberacaoAjustesCp121(c,cal,rows,ator){
  if(!resumoAjustesCp112(rows).liberacaoPermitida)return nao('Ainda há pedidos deste mês sem aprovação individual.',n);
  if(novos.some(r=>r.status!=='aprovado'||!r.s||r.s.hashConteudo!==r.hashConteudo||r.s.aprovacao?.hashConteudo!==r.hashConteudo||r.s.aprovacao?.revisaoConteudo!==r.s.versao||r.s.aprovacao?.por!=='Amanda'||r.s.dependencia||!dataValida(r.s.aprovacao?.em)))return nao('A versão de uma correção mudou. Confira o pedido antes de liberar.',n);
  const atuais=(cal.items||[]).filter(i=>i&&mesDoItemCalendario(cal,i)===mes),identidade=itens=>hashEditorialI172(itens.filter(i=>!i.excluido).map(i=>[i.itemId,hashConteudoAjusteCp112(i,mes)]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
- if(!Array.isArray(pub.items)||!atuais.some(i=>!i.excluido)||editorialI148(atuais)!==editorialI148(pub.items)||identidade(atuais)!==identidade(pub.items))return nao('O conteúdo do mês mudou depois da publicação. Confira a revisão completa antes de liberar.',n);
+ const publicados=Array.isArray(pub.items)?alinharDatasProducaoCp201(pub.items,atuais):null;
+ if(!publicados||!atuais.some(i=>!i.excluido)||editorialI148(atuais)!==editorialI148(publicados)||identidade(atuais)!==identidade(publicados))return nao('O conteúdo do mês mudou depois da publicação. Confira a revisão completa antes de liberar.',n);
  return {disponivel:true,quantidade:n,motivo:''};
 }
 export function exigirLiberacaoAjustesCp112(rows,assinaturaEsperada){const r=resumoAjustesCp112(rows);e(r.liberacaoPermitida,'Ainda há ajustes sem aprovação individual: '+r.motivos.join('; ')+'. Revise cada pedido; o mês não foi liberado.');if(rows.some(x=>!encerrado(x)))e(assinaturaEsperada===r.assinatura,'A revisão dos ajustes mudou. Confira as justificativas e a versão atual antes de liberar o mês.');return r;}

@@ -9,7 +9,7 @@ import {fonteFisicaClienteR4,mesDoItemCalendario} from './lib/guardas-stokki-i16
 import {hashPreparacaoPreservadaI172,contextoLegadoEditorialI172} from './editorial-legado-i172.mjs';
 import {chavesR80,textoR80,cicloR80} from './central-preparacao-validacao-r80.mjs';
 import {hashEditorialI172} from './editorial-contrato-i172.mjs';
-import {hashConteudoAjusteCp112} from './ajustes-calendarios-cp112.mjs';
+import {hashConteudoAjusteCp112,alinharDatasProducaoCp201} from './ajustes-calendarios-cp112.mjs';
 import {editorialI148} from './central/lib/gs-aprovacoes-calendarios-i148.mjs';
 import {isDeepStrictEqual} from 'node:util';
 
@@ -40,7 +40,7 @@ function origemPublicacaoObservada(id,r,cal){
  exigir(st.schema===1&&st.revisao===1&&st.rodada===0&&!Object.hasOwn(st,'ultimaOperacao')&&(!Object.hasOwn(st,'historico')||Array.isArray(st.historico)&&st.historico.length===0)&&!Object.hasOwn(st,'correcaoIndividualCp115'),'A continuidade possui outra autoridade editorial; a publicação anterior não será adotada como se fosse nova.');
  const marca=cal?.aprovacaoMeses?.[id.competencia],retrato=marca?.retratoLiberadoV115;
  exigir(marca?.status==='liberado'&&retrato?.schemaVersion===1&&retrato.mes===id.competencia&&retrato.publicadoPor==='Amanda'&&marca.aprovadoPor==='Amanda'&&typeof retrato.publicadoEm==='string'&&Number.isFinite(Date.parse(retrato.publicadoEm))&&retrato.publicadoEm===marca.aprovadoEm&&Array.isArray(retrato.items),'A publicação anterior precisa confirmar o mesmo mês, retrato e data já registrados.');
- const raw=(cal.items||[]).filter(i=>i&&!i.excluido&&mesDoItemCalendario(cal,i)===id.competencia),pub=retrato.items.filter(i=>i&&!i.excluido),edicao=items=>items.map(i=>({itemId:i.itemId,hash:hashConteudoAjusteCp112(i,id.competencia)})).sort((a,b)=>a.itemId.localeCompare(b.itemId));
+ const raw=(cal.items||[]).filter(i=>i&&!i.excluido&&mesDoItemCalendario(cal,i)===id.competencia),pub=alinharDatasProducaoCp201(retrato.items.filter(i=>i&&!i.excluido),raw),edicao=items=>items.map(i=>({itemId:i.itemId,hash:hashConteudoAjusteCp112(i,id.competencia)})).sort((a,b)=>a.itemId.localeCompare(b.itemId));
  exigir(raw.length>0&&raw.length<=300&&pub.length===raw.length&&raw.every(i=>typeof i.itemId==='string'&&i.itemId)&&new Set(raw.map(i=>i.itemId)).size===raw.length&&pub.every(i=>typeof i.itemId==='string'&&i.itemId)&&new Set(pub.map(i=>i.itemId)).size===pub.length&&editorialI148(raw)===editorialI148(pub)&&isDeepStrictEqual(edicao(raw),edicao(pub)),'Os conteúdos atuais não correspondem integralmente à publicação preservada. Nenhuma publicação foi fabricada.');
  return {retrato:structuredClone(retrato),retratoHash:hashEditorialI172(retrato),idsEdicao:edicao(raw),publicadoEm:retrato.publicadoEm};
 }

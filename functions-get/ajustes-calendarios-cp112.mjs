@@ -97,13 +97,17 @@ export function elegibilidadeReliberacaoAjustesCp121(c,cal,rows,ator){
  /* CP202 (11/11/2026, Bluefit/Place/Divina 2026-11): pedido feito pelo CLIENTE deixa o mês em ajuste_interno (por 'Cliente').
     Depois que o Chris corrige e a Amanda aprova cada pedido, este é o único caminho de volta ao cliente — antes ele exigia
     status 'liberado' e fase 'publicada', e o mês ficava travado. Devolução da própria Amanda (por 'Amanda') não entra aqui. */
- const pedidoDoCliente=m.status==='ajuste_interno'&&m.por==='Cliente'&&/^cal_ajuste_v113_[a-f0-9]{48}$/.test(String(m.pedidoAjusteOperationId||''))&&['nao_iniciada','aberta','publicada'].includes(st?.fase);
- if(c.modo!=='continuar_legado'||st?.correcaoIndividualCp115?.schema===1||!(pedidoDoCliente||st?.fase==='publicada'&&m.status==='liberado'))return nao();
+ const legado=c.modo==='continuar_legado',pedidoClienteCp193=m.status==='ajuste_interno'&&m.por==='Cliente'&&/^cal_ajuste_v113_[a-f0-9]{48}$/.test(String(m.pedidoAjusteOperationId||''));
+ /* CP203 (11/11/2026, Zeiss 2026-11 / Vitalle 2026-12): o mesmo caminho no processo novo (I155). Lá a "entrega" do ciclo
+    aceita nova publicação (preserva a primeira e atualiza publicacaoAtual); exige a base enviada e a publicação atual da Amanda. */
+ const i155=!c.modo&&c.criacao?.enviadoRevisao===true&&!!c.criacao.base&&c.criacao.base===c.documentos?.consolidadoEnviado&&cal.planejamentoBasesI155?.[mes]===c.criacao.base&&!!c.entrega&&!!c.publicacaoAtual&&c.publicacaoAtual.base===c.criacao.base;
+ const pedidoDoCliente=pedidoClienteCp193&&(legado?['nao_iniciada','aberta','publicada'].includes(st?.fase):i155);
+ if(legado?(st?.correcaoIndividualCp115?.schema===1||!(pedidoDoCliente||st?.fase==='publicada'&&m.status==='liberado')):!pedidoDoCliente)return nao();
  const novos=rows.filter(r=>!encerrado(r)&&r.aprovacaoAtual&&!r.histPublico);
  if(!novos.length)return nao();
  const n=novos.length,pendente='As correções aprovadas ainda precisam de liberação ao cliente.';
  if(ator.papel!=='Amanda')return nao(pendente,n);
- if(!pub||pub.schemaVersion!==1||pub.mes!==mes||pub.publicadoPor!=='Amanda'||!dataValida(pub.publicadoEm)||m.aprovadoEm!==pub.publicadoEm||m.aprovadoPor!=='Amanda'||((st.publicacaoAtual||!pedidoDoCliente)&&(st.publicacaoAtual?.por!=='Amanda'||st.publicacaoAtual?.em!==pub.publicadoEm||!isDeepStrictEqual(st.publicacaoAtual?.retrato,pub))))return nao('A publicação anterior precisa ser conferida antes de liberar as correções.',n);
+ if(!pub||pub.schemaVersion!==1||pub.mes!==mes||pub.publicadoPor!=='Amanda'||!dataValida(pub.publicadoEm)||m.aprovadoEm!==pub.publicadoEm||m.aprovadoPor!=='Amanda'||(legado?((st.publicacaoAtual||!pedidoDoCliente)&&(st.publicacaoAtual?.por!=='Amanda'||st.publicacaoAtual?.em!==pub.publicadoEm||!isDeepStrictEqual(st.publicacaoAtual?.retrato,pub))):(c.publicacaoAtual.aprovadoEm!==pub.publicadoEm||!isDeepStrictEqual(c.publicacaoAtual.retrato,pub))))return nao('A publicação anterior precisa ser conferida antes de liberar as correções.',n);
  if(!resumoAjustesCp112(rows).liberacaoPermitida)return nao('Ainda há pedidos deste mês sem aprovação individual.',n);
  if(novos.some(r=>r.status!=='aprovado'||!r.s||r.s.hashConteudo!==r.hashConteudo||r.s.aprovacao?.hashConteudo!==r.hashConteudo||r.s.aprovacao?.revisaoConteudo!==r.s.versao||r.s.aprovacao?.por!=='Amanda'||r.s.dependencia||!dataValida(r.s.aprovacao?.em)))return nao('A versão de uma correção mudou. Confira o pedido antes de liberar.',n);
  const atuais=(cal.items||[]).filter(i=>i&&mesDoItemCalendario(cal,i)===mes),identidade=itens=>hashEditorialI172(itens.filter(i=>!i.excluido).map(i=>[i.itemId,hashConteudoAjusteCp112(i,mes)]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));

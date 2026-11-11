@@ -17,14 +17,15 @@ export async function composicaoCobrancaClienteCp195(db, auth, dados, { agora = 
     const pags = await tx.get(db.collection('pagamentos_mensais').where('cliente', '==', slug));
     const membros = [...new Set(grupos.flatMap(g => (g.membros || []).map(m => m.slug || m.canonicalId)).filter(Boolean))];
     const nomes = new Map();
-    for (const m of [slug, ...membros]) { const e = await tx.get(db.doc('clientes_extras/' + m)); nomes.set(m, String(e.data()?.nome || m)); }
+    const ativos = new Set(); // mesma regra do escritório: empresa sem contrato ativo (saiu) fica fora da conta
+    for (const m of [slug, ...membros]) { const [e, ct] = await Promise.all([tx.get(db.doc('clientes_extras/' + m)), tx.get(db.doc('contratos_cliente/' + m))]); nomes.set(m, String(e.data()?.nome || m)); if (ct.exists && ct.data().status === 'ativo' && ct.data().excluido !== true) ativos.add(m); }
     const composicoes = [];
     for (const d of pags.docs) {
       const p = d.data(), comp = String(p.competencia || '');
       const g = grupos.find(x => /^20\d{2}-(0[1-9]|1[0-2])$/.test(x.desde || '') && comp >= x.desde);
       if (!g || ['isento', 'cancelado'].includes(String(p.status || ''))) continue;
       const valor = Number(p.valorDevido || 0);
-      const partes = (g.membros || []).map(m => ({ cliente: m.slug || m.canonicalId, nome: nomes.get(m.slug || m.canonicalId) || m.slug, parte: Number(m.parte || 0) }));
+      const partes = (g.membros || []).filter(m => ativos.has(m.slug || m.canonicalId)).map(m => ({ cliente: m.slug || m.canonicalId, nome: nomes.get(m.slug || m.canonicalId) || m.slug, parte: Number(m.parte || 0) }));
       const soma = partes.reduce((t, x) => t + x.parte, 0);
       if (!(valor > 0) || valor - soma < 0) continue; // conta que não fecha não é mostrada ao cliente (o escritório aponta o conflito)
       composicoes.push({ pagamentoId: d.id, competencia: comp, valor, partePagador: valor - soma, nomePagador: nomes.get(slug), partes, grupo: String(g.nome || g.id || '') });

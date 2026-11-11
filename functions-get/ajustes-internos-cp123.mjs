@@ -3,7 +3,7 @@ import {TIPO_ADICAO_CP142,CAMPOS_ADICAO_CP142,adicaoCp142,idAdicionalCp142,valid
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {hashEditorialI172,hashPedidoEditorialI172,CAMPOS_DATA_SUBSTITUICAO_CP147,validarDataSubstituicaoCp147} from './editorial-contrato-i172.mjs';
-import {hashConteudoAjusteCp112,alinharDatasProducaoCp201} from './ajustes-calendarios-cp112.mjs';
+import {hashConteudoAjusteCp112,comparacaoPublicacaoCp202} from './ajustes-calendarios-cp112.mjs';
 import {provaPublicacaoCorrecaoTxCp115} from './correcao-conteudo-pedido-cp115.mjs';
 import {provaPublicacaoAdotadaCp129} from './adocao-preparacao-cp129.mjs';
 import {mesDoItemCalendario} from './lib/guardas-stokki-i165.mjs';
@@ -61,8 +61,8 @@ function conferirBaseRegistro(c,cal,ctx,r){
 export function resumoInternosCp123(c,cal,ctx,ator){
  const ativos=ctx.rows.filter(x=>active(x.data)),motivos=[];for(const x of ativos){const r=x.data;try{const item=conferirBaseRegistro(c,cal,ctx,r);exigirSubstituicaoPronta(item,r);e(r.estado==='aprovado'&&r.aprovacao?.por==='Amanda'&&r.aprovacao.versao===r.versao&&r.aprovacao.hashConteudo===r.hashConteudo&&(!substituicao(r)||r.aprovacao.confirmarSubstituicaoCp129===true)&&r.hashConteudo===hashConteudoAjusteCp112(conteudoVirtualInternoCp123(item,r.conteudo),c.competencia),'A versão ainda depende da revisão individual da Amanda.');}catch(err){motivos.push(r.titulo+': '+err.message);}}
  const pub=publico(c,cal),raw=(cal.items||[]).filter(i=>i&&mesDoItemCalendario(cal,i)===c.competencia),identidade=itens=>hashEditorialI172(itens.filter(i=>!i.excluido).map(i=>[i.itemId,hashConteudoAjusteCp112(i,c.competencia)]).sort((a,b)=>a[0].localeCompare(b[0])));
- const publicados=pub?alinharDatasProducaoCp201(pub.items,raw):null;
- if(ativos.length&&(!pub||editorialI148(raw)!==editorialI148(publicados)||identidade(raw)!==identidade(publicados)))motivos.push('O mês contém outra versão editorial ainda não reconciliada. Preserve todos os ajustes e confira a revisão.');
+ const cmp=pub?comparacaoPublicacaoCp202(raw,pub.items):null;
+ if(ativos.length&&(!pub||editorialI148(cmp.atuais)!==editorialI148(cmp.publicados)||identidade(cmp.atuais)!==identidade(cmp.publicados)))motivos.push('O mês contém outra versão editorial ainda não reconciliada. Preserve todos os ajustes e confira a revisão.');
  const assinatura=hashEditorialI172(ativos.map(x=>[x.data.id,x.assinatura]).sort((a,b)=>a[0].localeCompare(b[0]))),permitida=motivos.length===0;
  return{assinatura,liberacaoPermitida:permitida,motivos,quantidade:ativos.length,disponivel:ator.papel==='Amanda'&&ativos.length>0&&permitida&&baseValida(c,cal,ctx.prova)};
 }

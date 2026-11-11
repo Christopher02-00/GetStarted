@@ -35,8 +35,9 @@ export async function runClientIntake() {
   const expressions = {
     // CP193 (10/11/2026): o aviso do pedido de ajuste é montado pelo servidor; o contrato é o mesmo.
     v113: literal(read('functions-get/pedido-ajuste-cliente-cp193.mjs'), 'const aviso={cliente:slug,'),
-    cp151: literal(calendarSource, "tx.set(avisoRef,{\n        cliente,clienteNome:nome,titulo:"),
-    i35: literal(calendarSource, "tx.set(fb.doc(fb.db,'avisos_do_cliente',operationId+'_chris'),"),
+    // CP200 (11/11/2026): o recado (cp151) e a observação (i35) do cliente são gravados pelo servidor; o contrato é o mesmo.
+    cp151: literal(read('functions-get/calendario-cliente-cp200.mjs'), "tx.set(avisoRef,{\n        cliente,clienteNome:nome,titulo:"),
+    i35: literal(read('functions-get/calendario-cliente-cp200.mjs'), "tx.set(db.doc('avisos_do_cliente/' + operationId + '_chris'), "),
     cp152: literal(portalSource, 'tx.set(avisoRef,{...identidadePedido,')
   };
   const calRef = b.db.doc('calendarios/qa-cliente');

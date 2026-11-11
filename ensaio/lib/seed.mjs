@@ -27,12 +27,19 @@ function v(x) {
   if (typeof x === 'object') return { mapValue: { fields: Object.fromEntries(Object.entries(x).map(([k, y]) => [k, v(y)])) } };
   throw new Error('tipo não suportado: ' + typeof x);
 }
+let projecaoCp200Cache = null;
+async function projecaoCp200() {
+  projecaoCp200Cache ??= (await import(new URL('../../functions-get/calendario-cliente-cp200.mjs', import.meta.url).href)).projecaoClienteCp200;
+  return projecaoCp200Cache;
+}
 export function criarSeed(portas) {
   const base = `http://127.0.0.1:${portas.firestore}/v1/projects/${PROJETO}/databases/(default)/documents`;
   const H = { 'Authorization': 'Bearer owner', 'Content-Type': 'application/json' };
-  async function set(colecao, id, dados) {
+  async function set(colecao, id, dados, { semCopiaCp200 = false } = {}) {
     const r = await fetch(`${base}/${colecao}/${encodeURIComponent(id)}`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: v(dados).mapValue.fields }) });
     if (!r.ok) throw new Error(`seed ${colecao}/${id}: ${r.status} ${await r.text()}`);
+    // CP200: o link do cliente lê a cópia `calendarios_cliente`; em produção o gatilho a mantém. Aqui ela já nasce junto.
+    if (colecao === 'calendarios' && !semCopiaCp200) await set('calendarios_cliente', id, (await projecaoCp200())(dados));
   }
   async function get(colecao, id) {
     const r = await fetch(`${base}/${colecao}/${encodeURIComponent(id)}`, { headers: H });
@@ -166,6 +173,7 @@ export async function seedReal(seed, dir, { log = console.log, portas } = {}) {
       if (!r.ok) throw new Error(`seedReal ${colecao}: ${r.status} ${(await r.text()).slice(0, 300)}`);
     }
     total += docs.length; cols++;
+    if (colecao === 'calendarios') { const projetar = await projecaoCp200(); for (const { __id, ...dados } of docs) await seed.set('calendarios_cliente', __id.split('/').pop(), projetar(dados)); }
   }
   // os usuários do emulador precisam bater com usuarios_equipe reais: garante uid/ativo para a equipe atual
   for (const p of EQUIPE) { const atual = await seed.get('usuarios_equipe', p.email); await seed.set('usuarios_equipe', p.email, { ...(atual || { pessoa: p.pessoa, criadoEm: iso(hoje) }), pessoa: p.pessoa, email: p.email, ativo: true, excluido: false, uid: uids[p.pessoa] }); } // e-mail da equipe é identidade operacional (as Functions comparam com o token): nunca o valor anonimizado

@@ -2,6 +2,7 @@
 // Antes: a regra do cliente só exigia mexer em items/comments/updatedAt — pelo console, quem tivesse o link podia gravar a
 // lista inteira (apagar conteúdos, zerar comentários). Agora: mudar o número de conteúdos ou diminuir comentários é negado.
 // As ações normais do cliente (aprovar, texto, recado) continuam cobertas pelas J20/J35/J38/J34.
+// CP200 (11/11/2026): o cliente nem grava mais o original — a tentativa mira `calendarios/{slug}` direto e segue negada.
 import fs from 'node:fs';
 import path from 'node:path';
 import { RAIZ } from '../lib/emulador.mjs';
@@ -27,9 +28,10 @@ export async function executar({ amb, seed, nav, erroGrave, registrar, esperarNe
     await page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window.__fb?.docRef && window.__modoCal === 'cliente', null, { timeout: 30000 });
     const r = await page.evaluate(async () => {
-      const fb = window.__fb, out = [];
-      const tenta = async (patch) => { try { await fb.setDoc(fb.docRef, { ...patch, updatedAt: new Date().toISOString() }, { merge: true }); return 'permitido'; } catch (e) { return String(e.code || e.message); } };
-      const snap = await fb.getDocFromServer(fb.docRef), d = snap.data();
+      const fb = window.__fb, out = [], original = fb.doc(fb.db, 'calendarios', window.__clienteId);
+      const limite = (p, nome) => Promise.race([p, new Promise((_, r) => setTimeout(() => r(Object.assign(Error(nome + ' sem resposta'), { code: nome + '-travou' })), 20000))]);
+      const tenta = async (patch) => { try { await limite(fb.setDoc(original, { ...patch, updatedAt: new Date().toISOString() }, { merge: true }), 'gravar'); return 'permitido'; } catch (e) { return String(e.code || e.message); } };
+      const snap = await limite(fb.getDocFromServer(fb.docRef), 'ler'), d = snap.data();
       out.push(await tenta({ items: (d.items || []).slice(1) }));
       out.push(await tenta({ comments: [] }));
       return out;

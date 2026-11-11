@@ -9,7 +9,7 @@
 Você assume a manutenção do Site Get (repositório `Christopher02-00/GetStarted`, no Mac do Chris). Antes de qualquer coisa:
 1. Leia este documento inteiro — ele é a verdade sobre ambientes, estrutura, regras, o que já foi feito e o que falta.
 2. Leia o `AGENTS.md` do repositório inteiro. É lei.
-3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (107/107) antes de mexer em qualquer código.
+3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (130/130) antes de mexer em qualquer código.
 
 Regras com o Chris: um PR por assunto; portão de jornadas verde (e `--movel` quando mexer em tela) antes de todo PR; bug novo vira jornada nova (vermelha antes, verde depois); rules, Functions e dados de produção só com ok nominal dele. Ao fechar cada etapa: linguagem simples, diga a próxima etapa e quantas faltam, nunca deixe nada em aberto, só conclua a 100%.
 
@@ -103,7 +103,7 @@ Base real anonimizada (R2): workflow manual `exportar-firestore.yml` gera o arte
 **Processo (vigente desde 08/11/2026, decidido pelo Chris):**
 1. Todo pedido vira **árvore de impacto + 1 ficha por unidade** (escritores, leitores, papéis, rules, legado). Skill `get-arvore-do-pedido`.
 2. **Um PR por unidade**, branch própria, menor diff que resolve a causa-raiz. Skill `get-mudanca-segura`.
-3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 107/107) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
+3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 130/130) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
 4. PR com 5 blocos: **Entendimento / Alterações / Provas de validação / Riscos-pendências / Próximo passo**. Esperar o CI, merge, conferir no ar (`fetch` do arquivo em get-started.agency), atualizar os docs do projeto no mesmo dia. Rollback = `git revert`. Skill `get-publicacao-e-rollback`.
 5. Chris autorizou Claude a fazer branch → PR → CI → merge → conferência **sozinho** ("eu autorizo tudo, siga em frente"). O que ainda **pede aviso antes**: publicar **rules** no Firebase (hoje automático via workflow, então avisar no PR), deploy de **Functions**, qualquer **escrita em dados de produção** (migração/correção) — essas exigem ok nominal.
 6. Sempre que um pedido contrariar `AGENTS.md`/invariantes, **dizer qual é a regra vigente e esperar a decisão**, em vez de executar.
@@ -186,6 +186,32 @@ Portão atual: **47/47 casos** (J01–J06, J09–J14 + 2 sentinelas), desktop e 
 - **Roteiros e calendários das empresas novas:** ficam com o Chris, em outra conversa.
 
 Incidente do dia: o merge do #46 publicou o código do cofre antes de a regra chegar ao Firebase (503 por >20 min) e gravar credencial falhou por ~15 min → revertido (#50). Lições: publicação paciente (#53) e código tolerante a regra atrasada (#54).
+
+**Auditoria do percurso + urgentes de 10/11/2026 (Claude Code):**
+Auditoria em 4 trechos (equipe, cliente, legendas, entrada/saída), com ~20 achados. Notas em `side-session-notes/…/auditoria-percurso/`.
+| PR | O quê | Prova |
+|---|---|---|
+| #84 | Comentário da revisão interna não aparece para o cliente | J34 |
+| #85 | Legenda corrigida no calendário chega à postagem (CP190, gatilho `calendarioLegendaGetCp190`) | J35 |
+| #86 | Postagem manual antes do mês existir não trava o mês | J36 |
+| #87 | Contador "Esperando sua revisão" com o filtro da fila | J37 |
+| #88 | "Encaminhar ao editor" de somente edição pelo servidor (CP194) — rules estouravam 1000 expressões | J41 |
+| #89 | Pedido de ajuste do cliente pelo servidor em calendário grande (CP193) — Zeiss | J42 (fixture anonimizada) |
+| #90 | "Não precisa agendar" com item sem ponteiro (Fedalto) | J43 |
+| #91 | Devolução da Amanda com rodada nova (CP196) — Little Elephant 2026-12 | prova com cópia real (fora do repo) |
+| #92 | Portal do pagador mostra a divisão da cobrança agrupada (CP195) | J44 |
+| #93 | Avisos de aprovação do cliente pelo servidor (CP191) | J38 |
+| #94 | Cliente que saiu não gera kit/demanda/tácita; pendências viram 1 demanda | J39 |
+| #95 | Postagem não herda legenda que o cliente pediu para ajustar | J40 |
+| #96 | Cobrança agrupada: empresa sem contrato fora da soma + aviso | J46 |
+| #97 | Pedido de legenda do Portal vira a legenda do conteúdo escolhido (CP197) | J48 |
+| #98 | Ficha do cliente alterada avisa o Chris (CP198, gatilho `fichaClienteGetCp198`) | J49 |
+| #99 | Ex-cliente mensalista volta como avulso no mesmo cadastro | J50 |
+| #100 | Rules: link do cliente não apaga conteúdos nem comentários (CP199) | J51 |
+- Dados de produção (ok nominal do Chris, 10/11): Clínica Zeiss Araucária apagada (39 docs) e retirada do grupo de cobrança. A Zeiss mantém R$ 4.500, com parte própria de R$ 1.500. O backup está fora do repo.
+- Conta `claude-site-get`: ganhou Cloud Scheduler Admin. Política de limpeza `firebase-functions-cleanup` criada (PR #83).
+- Portão no main em 10/11 22h: 128/128 desktop e móvel (antes do #100); CI do #100: 130/130.
+- Pendentes: rules etapa 2 (link do cliente ainda LÊ o documento inteiro, incluindo meses futuros — servir projeção pelo servidor); caminho "fora da pauta" de vídeo com item sumido estoura 1000 expressões); mensagem da devolução > 10.000 (branch `fix/devolucao-longa-mensagem-certa`, sem jornada); jornada sintética do CP196; medir de novo leituras e latência.
 
 **Pedido de 09–10/11/2026 (4 unidades, Claude Code):**
 | U | O quê | PR / versão | Prova |

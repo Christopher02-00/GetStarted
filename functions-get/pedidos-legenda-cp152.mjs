@@ -7,6 +7,8 @@ import {validarCadastroI165,hashI165} from './contexto.mjs';
 import {exigirI165 as e,idFisicoI165} from './lib/gs-contexto-operacional-i165.mjs';
 import GetEmpresasOtavioI144 from './lib/empresas-cp101-i165.mjs';
 import {envelopeCentralR80} from './codec-central-r80.mjs';
+import {legendaUtilizavelI79} from './lib/gs-legenda-qualidade-i79.mjs';
+import {mesDoItemCalendario} from './lib/guardas-agendamento-cp101-i165.mjs';
 
 export const ACOES_PEDIDOS_LEGENDA_CP152=Object.freeze(['pedidos_legenda_conferir_cp152','pedido_legenda_entregar_cp152','pedido_legenda_cancelar_tentativa_cp152']);
 const TIPOS=Object.freeze(['pedido_legenda','ajuste_legenda','legenda','correcao_legenda']);
@@ -37,7 +39,7 @@ export function calcularStatusPortalPorDemandasCp152(grupo,statusFallback){
 function validar(d){
  e(d&&typeof d==='object'&&!Array.isArray(d)&&ACOES_PEDIDOS_LEGENDA_CP152.includes(d.acao),'legenda-entrada','Ação de legenda inválida.');
  const entrega=d.acao!=='pedidos_legenda_conferir_cp152',individual=entrega||Object.hasOwn(d,'demandaId');
- const keys=[...COMUNS,...(individual?ORIGEM:[]),...(!individual&&Object.hasOwn(d,'cursores')?['cursores']:[]),...(entrega?['operacao','assinaturaEsperada','provaTexto','provaImagemUrl','repararAcompanhamento',...(Object.hasOwn(d,'entregaPublicaCp183')?['entregaPublicaCp183']:[])]:[])];
+ const keys=[...COMUNS,...(individual?ORIGEM:[]),...(!individual&&Object.hasOwn(d,'cursores')?['cursores']:[]),...(entrega?['operacao','assinaturaEsperada','provaTexto','provaImagemUrl','repararAcompanhamento',...(Object.hasOwn(d,'entregaPublicaCp183')?['entregaPublicaCp183']:[]),...(Object.hasOwn(d,'aplicarLegendaCp197')?['aplicarLegendaCp197']:[])]:[])];
  e(Object.keys(d).length===keys.length&&Object.keys(d).every(k=>keys.includes(k))&&keys.every(k=>Object.hasOwn(d,k)),'legenda-campos','Confira os campos desta tentativa.');
  e(texto(d.sessao,180)&&d.sessao.length>0,'legenda-sessao','Confira a sessão atual.');
  if(!individual&&Object.hasOwn(d,'cursores'))e(d.cursores&&typeof d.cursores==='object'&&!Array.isArray(d.cursores)&&Object.keys(d.cursores).length===2&&CAIXAS.every(c=>Object.hasOwn(d.cursores,c)&&(d.cursores[c]===null||d.cursores[c]===''||idFisicoI165(d.cursores[c]))),'legenda-cursor','Recomece esta conferência de pedidos.');
@@ -162,11 +164,31 @@ export async function operarPedidosLegendaCp152(db,auth,p,{agora=new Date()}={})
    e(atual===undefined,'legenda-resposta-existente','Este pedido já tem resposta pública. Confira a mesma resposta antes de tentar outra.');
    respostaPublica={schema:1,cliente:f.cliente,origemId:f.d.origemAvisoId,demandaId:p.demandaId,texto:publica.texto.trim(),link,por:ator.real,em:agora.toISOString(),operacao:p.operacao};
   }
+  /* CP197 (decisão do Chris 10/11/2026): "Este texto é a legenda nova" → a legenda do conteúdo no calendário passa a ser o texto
+     entregue. O gatilho CP190 leva à postagem (não agendada) ou avisa a Cecília (agendada). Só com o pedido ligado a um conteúdo. */
+  let legendaCp197=null;
+  if(p.aplicarLegendaCp197!==undefined){
+   const alvo=p.aplicarLegendaCp197;
+   e(alvo&&typeof alvo==='object'&&!Array.isArray(alvo)&&Object.keys(alvo).sort().join('|')==='competencia|itemId','cp197-campo','Confira o conteúdo escolhido para a legenda nova.');
+   if(!aprovada){
+    const comp=String(alvo.competencia||''),itemId=String(alvo.itemId||'');
+    e(/^20\d{2}-(0[1-9]|1[0-2])$/.test(comp)&&!!itemId,'cp197-item','Escolha o conteúdo do calendário que recebe a legenda nova.');
+    e(legendaUtilizavelI79(textoProva),'cp197-legenda','O texto entregue não é uma legenda utilizável. Escreva a legenda completa ou desmarque a opção.');
+    const cref=db.doc('calendarios/'+f.cliente),cs=await tx.get(cref),cal=cs.data()||{};
+    e(cs.exists&&cal.excluido!==true&&Array.isArray(cal.items),'cp197-calendario','O calendário deste cliente não foi encontrado.');
+    const hits=cal.items.map((it,i)=>({it,i})).filter(({it})=>it&&it.excluido!==true&&it.itemId===itemId&&mesDoItemCalendario(cal,it)===comp);
+    e(hits.length===1,'cp197-item','O conteúdo do pedido não está mais no calendário (ou está duplicado). Corrija no editor do mês.');
+    e(hits[0].it.posted!==true&&hits[0].it.postado!==true,'cp197-publicado','Este conteúdo já foi publicado; a legenda não foi trocada.');
+    const items=cal.items.slice();items[hits[0].i]={...hits[0].it,legenda:textoProva,legendaAtualizadaPor:'Chris',legendaAtualizadaEm:agora.toISOString(),legendaPedidoClienteCp197:p.demandaId};
+    legendaCp197={ref:cref,patch:{items,updatedAt:agora.toISOString()}};
+   }
+  }
   const atualizarParent=!!f.parent&&(!aprovada||p.repararAcompanhamento),finalizada={...f.d,status:'aprovada'},calculado=atualizarParent?calcularStatusPortalPorDemandasCp152(f.grupo.map(r=>r.id===p.demandaId?finalizada:r.body),'concluida'):null;
   const r={schema:1,demandaId:p.demandaId,operacao:{id:p.operacao,estado:aprovada&&!p.repararAcompanhamento?'ja_concluida':'novo',confirmada:true},statusDemanda:'aprovada',statusPortal:calculado?.status||f.parent?.status||null,reparoApenas:aprovada&&p.repararAcompanhamento,respostaClienteDisponivel:!!respostaPublica,semAprovacaoEditorial:true};
   if(!aprovada){e(Array.isArray(f.d.historico||[])&&(f.d.historico||[]).length<1000,'legenda-historico','Preserve o histórico antes de continuar.');tx.update(f.dref,{status:'aprovada',provaTexto:textoProva,provaImagemUrl:imagem,concluidaEm:FieldValue.serverTimestamp(),concluidoPor:ator.real,notaConclusao:'Aviso — não precisa de aprovação.',entregaLegendaCp152:{schema:1,operacao:p.operacao,autorUid:ator.uid,atorReal:ator.real,papelOperado:ator.papel,em:agora.toISOString()},historico:[...(f.d.historico||[]),{acao:'Concluiu o pedido de legenda do cliente',por:ator.real,papelOperado:ator.papel,autorUid:ator.uid,em:agora.toISOString(),operacao:p.operacao}]});}
   if(atualizarParent){const patch={status:calculado.status,responsaveisStatus:calculado.responsaveisStatus,atualizadoEm:FieldValue.serverTimestamp()};if(calculado.status==='concluida'&&f.parent.status!=='concluida')patch.concluidaEmI93=FieldValue.serverTimestamp();if(calculado.status!=='concluida'&&f.parent.status==='concluida')patch.concluidaEmI93=null;tx.update(f.pref,patch);}
   if(respostaPublica){e(Array.isArray(f.d.historico||[])&&(f.d.historico||[]).length<1000,'legenda-historico','Preserve o histórico antes de continuar.');tx.update(f.parent?f.pref:f.aref,{respostaLegendaPublicaCp183:respostaPublica});if(aprovada)tx.update(f.dref,{historico:[...(f.d.historico||[]),{acao:'Disponibilizou resposta pública ao cliente',por:ator.real,papelOperado:ator.papel,autorUid:ator.uid,em:agora.toISOString(),operacao:p.operacao}]});}
+  if(legendaCp197){tx.update(legendaCp197.ref,legendaCp197.patch);r.legendaAplicadaCp197=true;}
   tx.create(opref,{schema:1,hashPedido,uid:ator.uid,atorReal:ator.real,papel:ator.papel,em:agora.toISOString(),resultado:r});return r;
  });
  return envelopeCentralR80(resultado);

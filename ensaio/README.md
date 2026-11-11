@@ -61,6 +61,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J43 | "Não precisa agendar" com item do calendário sem ponteiro para a postagem: a Cecília retira com motivo e a pauta fica intacta | Cecília |
 | J44 | Portal do pagador de cobrança agrupada (Zeiss) mostra "Como se divide este valor": parte da Zeiss e de cada empresa, a mesma conta do escritório (CP195) | cliente |
 | J46 | Cobrança agrupada com empresa que saiu (contrato encerrado): a parte dela fica fora da conta (Zeiss R$ 3.700) e Mensalidades avisa para revisar o grupo | Chris |
+| J48 | Pedido de legenda pelo Portal: o cliente pede → o Chris entrega escolhendo o conteúdo → legenda do calendário trocada e a postagem não agendada recebe o texto (CP197 + CP190) | cliente, Chris |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 **Cobertura de cliques (P10):** `ENSAIO_COBERTURA=1 node ensaio/rodar.mjs` grava `ensaio/saida/cobertura.json` (funções do site que rodaram, pela cobertura do Chromium) e `python3 ferramentas/cobertura_handlers.py escritorio.html` cruza com todos os `onclick`. Linha de base de 09/11: 80/593 handlers do escritório com jornada, 2/25 do portal, 5/42 do calendário. O CI (desktop) falha quando entra um handler novo sem jornada.

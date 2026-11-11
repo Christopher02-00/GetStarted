@@ -31,7 +31,7 @@ export async function runClientIntake() {
   const {FieldValue} = await import('firebase-admin/firestore');
   const intake = await import(moduleURL('functions-get/recepcao-pedidos-cliente-cp175.mjs'));
   const {sincronizarPedidosClienteCp175} = await import(moduleURL('functions-get/central/notificacoes.mjs'));
-  const portalSource = read('portal-cliente.html');
+  const calendarSource = read('calendario.html'), portalSource = read('portal-cliente.html');
   const expressions = {
     // CP193 (10/11/2026): o aviso do pedido de ajuste é montado pelo servidor; o contrato é o mesmo.
     v113: literal(read('functions-get/pedido-ajuste-cliente-cp193.mjs'), 'const aviso={cliente:slug,'),

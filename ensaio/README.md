@@ -65,6 +65,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J49 | Ficha do cliente alterada depois do documento confirmado: o Chris recebe "Ficha do cliente mudou · cliente · mês" em Minhas Demandas (CP198). Usa o ciclo da J06 | Chris |
 | J50 | Ex-cliente mensalista (arquivado) volta para trabalho avulso no mesmo cadastro: config avulso, datas de saída limpas, lead convertido | Amanda |
 | J51 | Link do cliente não apaga conteúdos nem zera comentários do calendário pelo console (rules CP199); calendário intacto. Usa o calendário da J06 | cliente |
+| J52 | Devolução com recado longo (12 mil caracteres, recado + observações): aceita até 30 mil e o mês volta para o Chris em ajuste (fluxo da J06 com a Zeiss) | Amanda, Chris |
 | RULES | Sentinela: nenhuma **escrita** negada pelas rules durante as jornadas (leituras negadas por papel são só informativas). As frases "maximum of 1000 expressions"/"evaluation error" no log são diagnóstico verboso do emulador para pedidos **já negados** — não acontecem em produção | — |
 
 **Cobertura de cliques (P10):** `ENSAIO_COBERTURA=1 node ensaio/rodar.mjs` grava `ensaio/saida/cobertura.json` (funções do site que rodaram, pela cobertura do Chromium) e `python3 ferramentas/cobertura_handlers.py escritorio.html` cruza com todos os `onclick`. Linha de base de 09/11: 80/593 handlers do escritório com jornada, 2/25 do portal, 5/42 do calendário. O CI (desktop) falha quando entra um handler novo sem jornada.

@@ -248,6 +248,7 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
 - **Ficha do cliente.** Mudar a ficha depois do documento confirmado mantém a trava do CP183 e cria demanda para o Chris readotar (CP198).
 - **Ex-cliente.** O ex-cliente mensalista volta como avulso no mesmo cadastro. Nunca crie outro.
 - **Exclusão física.** A Clínica Zeiss Araucária foi apagada em 10/11 a pedido nominal do Chris: 39 documentos, com backup fora do repositório nas notas da sessão. Exclusão física continua exigindo ok nominal.
+- **O cliente só lê o que pode ver (CP200, 11/11).** O link do cliente e o Portal leem `calendarios_cliente/{slug}`, uma cópia que o servidor mantém (gatilho do calendário + cada ação do cliente). A cópia só traz o mês liberado, o arquivado e o mês em revisão que já tinha sido publicado. Mês escondido vira marcador vazio na mesma posição, porque o pedido de ajuste usa a posição. As rules negam ao cliente o `calendarios/{slug}` original. Aprovar, texto, observação e recado do cliente são gravados pelo servidor (`programacaoIndependenteGetI165`, ações `cliente_*_cp200`). Nunca grave a cópia pelo navegador, nem devolva o documento original para o cliente. Calendário novo ou corrigido por script: rode `scripts/projecao-cliente-cp200.mjs --aplicar`.
 
 ## Evidência e entrega
 

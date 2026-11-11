@@ -632,6 +632,8 @@
     /* A sessão só é criada se as regras confirmarem a chave. Não lemos o
        documento que guarda os dois segredos para o navegador. */
     window.__modoCal = tokenEquipe ? 'equipe' : 'cliente';
+    /* CP200 (11/11/2026): o link do cliente lê só a cópia com os meses que ele pode ver; quem grava nela é o servidor. */
+    if(!tokenEquipe&&window.__fb)window.__fb.docRef=doc(db,'calendarios_cliente',clienteId);
     window.__fbAuthUid=String(auth.currentUser?.uid||'');
     if(tokenEquipe) window.__papelCalendarioEquipe='Equipe';
     return true;
@@ -2381,21 +2383,14 @@ async function aprovarModalClienteI56(){
   try{
     conferirTela();
     const fb=contexto.fb;
-    if(!fb?.runTransaction||!fb.db||!fb.docRef)throw Error('Sem conexão com o servidor. Tente novamente; o conteúdo continua aberto.');
+    if(!fb?.chamarGetCp193)throw Error('Sem conexão com o servidor. Tente novamente; o conteúdo continua aberto.');
     const aprovar=!contexto.esperado.aprovado;
-    const confirmado=await fb.runTransaction(fb.db,async tx=>{
-      conferirTela();
-      const snap=await tx.get(fb.docRef);conferirTela();
-      if(!snap.exists())throw Error('Calendário não encontrado.');
-      const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
-      const alvo=conferirAprovacaoI56(servidor,contexto.esperado);
-      if(!!alvo.item.apr===aprovar)return {mudou:false,servidor,item:alvo.item,indice:alvo.indice};
-      const items=(servidor.items||[]).map(it=>it?({...it}):it),agora=new Date().toISOString();
-      items[alvo.indice].revisaoPendenteI68=aprovar?false:!!alvo.item.revisaoPendenteI68;
-      items[alvo.indice].apr=aprovar;items[alvo.indice].aprPor=aprovar?'cliente':'';items[alvo.indice].aprEm=aprovar?agora:'';
-      conferirTela();tx.set(fb.docRef,{items,updatedAt:agora},{merge:true});
-      return {mudou:true,servidor:{...servidor,items,updatedAt:agora},item:items[alvo.indice],indice:alvo.indice};
-    });
+    /* CP200 (11/11/2026): a aprovação é gravada pelo servidor, com a mesma conferência de antes. */
+    let resposta;
+    try{resposta=(await fb.chamarGetCp193({acao:'cliente_aprovar_cp200',aprovar,esperado:contexto.esperado})).data;}
+    catch(e){throw Error(e?.message||'o servidor não confirmou.');}
+    if(resposta?.schema!==1||!resposta.projecao)throw Error('o servidor não confirmou.');
+    const confirmado={mudou:resposta.mudou===true,servidor:resposta.projecao};
     if(!identidadeConfere())return true;
     if(telaConfere()){
       data=projetarCalendarioClienteV115(confirmado.servidor);
@@ -3764,37 +3759,13 @@ async function avisarEquipeDoRecado(txt,registro,contexto={fb:window.__fb,client
   try{
     conferir();
     const fb=contexto.fb,cliente=contexto.cliente;
-    if(!fb?.runTransaction||!fb.doc||!fb.docRef||fb.docRef.path!=='calendarios/'+cliente)throw Error('A origem do calendário precisa ser conferida.');
+    if(!fb?.chamarGetCp193||fb.docRef?.id!==cliente)throw Error('A origem do calendário precisa ser conferida.');
     if(!registro?.id||registro.porCliente!==true||registro.text!==txt||typeof registro.date!=='string'||typeof registro.mes!=='string')throw Error('O comentário de origem precisa ser conferido antes de avisar a equipe.');
-    const avisoId='cal_recado_cp151_'+registro.id,avisoRef=fb.doc(fb.db,'avisos_do_cliente',avisoId);
-    const confirmado=await fb.runTransaction(fb.db,async tx=>{
-      conferir();
-      const snap=await tx.get(fb.docRef);conferir();
-      if(!snap.exists())throw Error('O calendário de origem não foi encontrado.');
-      const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{}),comments=servidor.comments;
-      if(!Array.isArray(comments))throw Error('Os comentários de origem precisam ser conferidos.');
-      const alvos=comments.map((c,i)=>({c,i})).filter(({c})=>c?.id===registro.id);
-      if(alvos.length>1||(!alvos.length&&!opcoes.criarSeAusente))throw Error('O comentário de origem não é único neste calendário.');
-      const atual=alvos.length?alvos[0].c:registro,indice=alvos.length?alvos[0].i:-1;
-      if(atual.porCliente!==true||atual.text!==txt||atual.date!==registro.date||atual.mes!==registro.mes)throw Error('O comentário de origem mudou. Nenhum aviso foi enviado.');
-      const marca={schema:1,avisoId,paraQuem:'Chris',texto:txt};
-      if(Object.hasOwn(atual,'encaminhamentoCp151')){
-        const m=atual.encaminhamentoCp151;
-        if(!m||typeof m!=='object'||Array.isArray(m)||Object.keys(m).sort().join('|')!=='avisoId|paraQuem|schema|texto'||m.schema!==1||m.avisoId!==avisoId||m.paraQuem!=='Chris'||m.texto!==txt)throw Error('O recibo do comentário precisa ser conferido.');
-        return{registro:atual,comments,jaConfirmado:true};
-      }
-      const nome=window.nomeClienteCalendarioR4(servidor.client||cliente);
-      const atualizado={...atual,encaminhamentoCp151:marca},novos=comments.slice();if(indice<0)novos.unshift(atualizado);else novos[indice]=atualizado;
-      conferir();
-      tx.set(avisoRef,{
-        cliente,clienteNome:nome,titulo:'💬 '+nome+' comentou no calendário',
-        descricao:'"'+txt+'"\n\nEstá no calendário dele, na aba de comentários. Confira o pedido na Central de ajustes.',
-        texto:txt,paraQuem:'Chris',tipo:'comentario_calendario',operationId:registro.id,comentarioId:registro.id,
-        competencia:registro.mes,lido:false,viraDemanda:true,criadoEm:registro.date
-      });
-      tx.update(fb.docRef,{comments:novos,...(indice<0?{updatedAt:new Date().toISOString()}:{})});
-      return{registro:atualizado,comments:novos,jaConfirmado:false};
-    });
+    /* CP200 (11/11/2026): o recado e o aviso ao Chris são gravados pelo servidor, com a mesma conferência de antes. */
+    conferir();
+    const resposta=(await fb.chamarGetCp193({acao:'cliente_recado_cp200',registro:{id:registro.id,text:registro.text,date:registro.date,mes:registro.mes}})).data;
+    if(resposta?.schema!==1||!resposta.registro||!Array.isArray(resposta.comments))throw Error('O servidor não confirmou o recado.');
+    const confirmado={registro:resposta.registro,comments:resposta.comments,jaConfirmado:resposta.jaConfirmado===true};
     if(!vigente())return confirmado;
     data.comments=confirmado.comments;Object.assign(registro,confirmado.registro);renderFeedback();
     avisarTela('Recado confirmado na Central de ajustes.');
@@ -4674,34 +4645,13 @@ async function salvarTextosClienteI68(){
   campos.forEach(id=>document.getElementById(id).disabled=true);recibo.textContent='Salvando e conferindo…';
   try{
     conferir();const fb=c.fb;
-    if(!fb?.runTransaction||!fb.doc||fb.docRef?.path!=='calendarios/'+c.cliente)throw Error('Conexão indisponível. Tente novamente.');
-    const resultado=await fb.runTransaction(fb.db,async tx=>{
-      conferir();const snap=await tx.get(fb.docRef);conferir();
-      if(!snap.exists())throw Error('Calendário não encontrado.');
-      const cal=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{});
-      const anterior=(cal.comments||[]).find(x=>x.operationId===operationId);
-      if(anterior){
-        const itens=(cal.items||[]).filter(x=>x&&!x.excluido&&String(x.itemId||'')===String(anterior.itemId||c.esperado.id)&&mesDoItemNoCalendarioI56(cal,x)===c.esperado.mes);
-        if(itens.length!==1||String(itens[0].desc||'')!==textos.desc||String(itens[0].legenda||'')!==textos.legenda)throw Error('O texto já foi salvo e recebeu outra alteração. Atualize para conferir; seu rascunho está preservado.');
-        return {cal,item:itens[0],mudou:false};
-      }
-      const alvo=conferirAprovacaoI56(cal,c.esperado);
-      const antigo={desc:String(alvo.item.desc||''),legenda:String(alvo.item.legenda||'')};
-      if(antigo.desc===textos.desc&&antigo.legenda===textos.legenda)return {cal,item:alvo.item,mudou:false};
-      const agora=new Date().toISOString();
-      const alterado={...alvo.item,...textos};
-      if(!String(alterado.itemId||'').trim()){alterado.origemLegadaI68=GetAprovacaoI68.assinatura({...alvo.item,mes:c.esperado.mes});alterado.itemId='calitem_i68_'+hashDeterministicoPedidoV113(JSON.stringify([c.cliente,c.esperado.mes,c.esperado.versao]));}
-      if(textos.desc.trim())alterado.roteiroDispensado=false;
-      if(textos.legenda!==antigo.legenda){alterado.legendaAtualizadaPor='Cliente';alterado.legendaAtualizadaEm=agora;}
-      alterado.textosPublicadosClienteI68={...textos,roteiroDispensado:!!alterado.roteiroDispensado,em:agora};
-      const item=GetAprovacaoI68.revisar(alvo.item,alterado,{por:'Cliente',em:agora});
-      const items=cal.items.slice();items[alvo.indice]=item;
-      const comentario={operationId,itemId:item.itemId,competencia:c.esperado.mes,mes:c.esperado.mes,who:'Cliente',por:'Cliente',porCliente:true,date:agora,
-        text:'Texto atualizado pelo cliente — '+String(item.name||'Conteúdo'),antes:antigo,depois:textos,tipo:'texto_cliente_i68'};
-      const comments=[...(cal.comments||[]),comentario];
-      conferir();tx.set(fb.docRef,{items,comments,updatedAt:agora},{merge:true});
-      return {cal:{...cal,items,comments,updatedAt:agora},item,mudou:true};
-    });
+    if(!fb?.chamarGetCp193||fb.docRef?.id!==c.cliente)throw Error('Conexão indisponível. Tente novamente.');
+    /* CP200 (11/11/2026): o texto do cliente é gravado pelo servidor, com a mesma conferência de antes. */
+    let resposta;
+    try{resposta=(await fb.chamarGetCp193({acao:'cliente_textos_cp200',esperado:c.esperado,textos,operationId})).data;}
+    catch(e){throw Error(e?.message||'o servidor não confirmou.');}
+    if(resposta?.schema!==1||!resposta.projecao)throw Error('o servidor não confirmou.');
+    const resultado={cal:resposta.projecao,item:{itemId:resposta.itemId},mudou:resposta.mudou===true};
     if(!mesmaTela())return true;
     try{localStorage.removeItem(c.chave);}catch(e){}
     data=projetarCalendarioClienteV115(resultado.cal);window.__calFonteClienteV115=resultado.cal;
@@ -4742,26 +4692,15 @@ function prepararObservacaoClienteI35(it){
 async function registrarObservacaoClienteI35({cliente,mes,itemId,revisao,texto}){
   const fb=window.__fb||{},uid=String(window.__fbAuthUid||'');
   if(window.__modoCal!=='cliente'||!uid)throw Error('Abra esta ação pelo portal do cliente.');
-  if(cliente!==String(window.__clienteId||'')||fb.docRef?.path!=='calendarios/'+cliente)throw Error('A origem do calendário mudou. Reabra o conteúdo antes de enviar.');
+  if(cliente!==String(window.__clienteId||'')||fb.docRef?.id!==cliente)throw Error('A origem do calendário mudou. Reabra o conteúdo antes de enviar.');
   if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes)||!itemId||!revisao||!texto.trim()||texto.length>3000)throw Error('Confira o conteúdo e escreva uma observação de até 3.000 caracteres.');
-  if(!fb.runTransaction||!fb.doc)throw Error('Conexão indisponível. Tente novamente.');
-  const operationId='cal_obs_i35_'+hashDeterministicoPedidoV113(JSON.stringify([uid,cliente,mes,itemId,revisao,texto]));
-  return fb.runTransaction(fb.db,async tx=>{
-    const snap=await tx.get(fb.docRef);if(!snap.exists())throw Error('Calendário não encontrado.');
-    const servidor=window.validarFonteCalendarioR4(fb.docRef,snap.data()||{}),comments=servidor.comments||[];
-    if(!Array.isArray(comments))throw Error('Os comentários precisam ser conferidos pela equipe.');
-    const existente=comments.find(c=>c.id===operationId);
-    if(existente){if(existente.autorUid!==uid||existente.text!==texto||existente.itemId!==itemId||existente.mes!==mes)throw Error('O recibo mudou. Confira os comentários antes de reenviar.');return{registro:existente,jaConfirmado:true};}
-    const marca=servidor.aprovacaoMeses?.[mes];
-    if(!['ajuste_interno','aguardando_interna','aprovado_interno'].includes(estadoEfetivoNoCalendarioV113(servidor,mes))||GetAprovacaoI68.liberacaoPublica(marca,mes)!==revisao)throw Error('A revisão deste mês mudou. Seu texto continua nesta tela; reabra o conteúdo para conferir o estado atual.');
-    const retrato=retratoLiberadoDoMesV115(servidor,mes),alvos=(retrato?.items||[]).filter(i=>i&&i.itemId===itemId&&!i.excluido&&mesDoItemNoCalendario(servidor,{...i,mes:i.mes||mes})===mes);
-    if(alvos.length!==1||itemJaNaEsteira(alvos[0]))throw Error('O conteúdo não está disponível para observação nesta versão. Confira com a equipe.');
-    const item=alvos[0],agora=new Date().toISOString(),nome=window.nomeClienteCalendarioR4(servidor.client||cliente);
-    const registro={id:operationId,text:texto,date:agora,porCliente:true,por:'Cliente',origem:'observacao_conteudo_i35',mes,itemId,itemNome:String(item.name||''),autorUid:uid,revisao};
-    tx.update(fb.docRef,{comments:[registro,...comments],updatedAt:agora});
-    for(const paraQuem of ['Chris'])tx.set(fb.doc(fb.db,'avisos_do_cliente',operationId+'_chris'),{cliente,clienteNome:nome,titulo:'💬 '+nome+' comentou: '+String(item.name||'conteúdo').slice(0,70),descricao:'Observação adicional durante ajuste — '+texto+'\n\nConteúdo: '+String(item.name||'')+'\nMês: '+mes+'\nA aprovação continua pausada até a equipe publicar a revisão.',texto,paraQuem,lido:false,viraDemanda:true,tipo:'observacao_calendario',operationId,competencia:mes,itemId,criadoEm:agora});
-    return{registro,jaConfirmado:false};
-  });
+  if(!fb.chamarGetCp193)throw Error('Conexão indisponível. Tente novamente.');
+  /* CP200 (11/11/2026): a observação e o aviso ao Chris são gravados pelo servidor, com a mesma conferência de antes. */
+  let resposta;
+  try{resposta=(await fb.chamarGetCp193({acao:'cliente_observacao_cp200',mes,itemId,revisao,texto})).data;}
+  catch(e){throw Error(e?.message||'O servidor não confirmou.');}
+  if(resposta?.schema!==1||!resposta.registro)throw Error('O servidor não confirmou a observação.');
+  return {registro:resposta.registro,jaConfirmado:resposta.jaConfirmado===true};
 }
 async function enviarObservacaoClienteI35(){
   if(observacaoClienteEmCursoI35||!contextoObservacaoClienteI35)return;

@@ -1293,7 +1293,8 @@ function mensagemSelecaoVaziaI58(itens,filtro){
     let dadosCal=null;
     let leituraEmCache=false;
     try{
-      const snap=await comTimeoutPortal(getDoc(doc(db,'calendarios',slugDaLeitura)),'Calendário do Portal');
+      /* CP200 (11/11/2026): o Portal lê só a cópia com os meses que o cliente pode ver (gravada pelo servidor). */
+      const snap=await comTimeoutPortal(getDoc(doc(db,'calendarios_cliente',slugDaLeitura)),'Calendário do Portal');
       if(!leituraAindaAtual()) return;
       if(!snap.exists()){
         window.__calendarioPortalConfirmado=null;
@@ -1694,23 +1695,11 @@ function conferirAprovacaoI56(cal,esperado){
       const telaConfere=()=>sessaoConfere()&&botao.isConnected&&leitura?.cliente===clienteInicial&&leitura?.uid===uidInicial&&leitura?.token===tokenInicial&&String(window.__mesPortal||mesAlvo)===mesAlvo;
       const conferirTela=()=>{conferirSessao();if(!telaConfere())throw Error('A tela mudou. Atualize o calendário e abra o conteúdo novamente.');};
       conferirTela();
-      const ref=doc(db,'calendarios',slugInicial);
-      const confirmado=await runTransaction(db,async tx=>{
-        conferirSessao();
-        const snap=await tx.get(ref);
-        conferirSessao();
-        if(!snap.exists()) throw new Error('Calendário não encontrado.');
-        const dados=snap.data()||{},items=(dados.items||[]).map(item=>item?({...item}):item);
-        if(!documentoCalendarioPortalCanonicoR4(slugInicial,dados)) throw new Error('A identidade deste calendário diverge da ZEISS. Nada foi aprovado.');
-        conferirTela();
-        const alvo=conferirAprovacaoI56(dados,leitura.esperado).indice;
-        if(items[alvo].apr)return {item:items[alvo],items,mudou:false};
-        const agora=new Date().toISOString();
-        items[alvo].revisaoPendenteI68=false;items[alvo].apr=true;items[alvo].aprPor='cliente';items[alvo].aprEm=agora;items[alvo].aprovadoPeloClienteEm=agora;
-        conferirTela();
-        tx.set(ref,{items,updatedAt:agora},{merge:true});
-        return {item:items[alvo],items,mudou:true};
-      });
+      /* CP200 (11/11/2026): a aprovação é gravada pelo servidor, com a mesma conferência de antes. */
+      const chamarGetCp200=httpsCallable(getFunctions(app,'southamerica-east1'),'programacaoIndependenteGetI165',{timeout:45000});
+      const resposta=(await chamarGetCp200({acao:'cliente_aprovar_cp200',aprovar:true,origem:'portal',esperado:leitura.esperado})).data;
+      if(resposta?.schema!==1||!resposta.projecao||!resposta.item) throw new Error('O servidor não confirmou a aprovação.');
+      const confirmado={item:resposta.item,items:Array.isArray(resposta.projecao.items)?resposta.projecao.items:[],mudou:resposta.mudou===true};
       if(!sessaoConfere()) return;
       if(!confirmado.mudou){if(telaConfere())carregarCalendario();return;}
       const itemConfirmado=confirmado.item,items=confirmado.items;

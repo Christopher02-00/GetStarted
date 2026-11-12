@@ -1,5 +1,5 @@
 import {montarPortaContinuidadeCp129} from './gs-adocao-continuidade-cp129.mjs?v=db5b1206a7bdb1929c6638d30645095fbfa8644335a1aa36d31ecb449132f5e0';
-import {montarAjustesInternosCp123} from './gs-ajustes-internos-cp123.mjs?v=4ccd840e800c77b585964e8cd40f89b02203de052cb8ededfab732e76bcc5d67';
+import {montarAjustesInternosCp123} from './gs-ajustes-internos-cp123.mjs?v=5eed523673281e2ab8e9f00c06b76358cb0583e6dc009ae925f3134101c1b349';
 import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=779fc5e64773af2344416016bd01878fe89757cbb9c64cc2a212e4b474b28a88';
 /* Editor humano; persistência editorial pertence exclusivamente às ações HTTP I172. */
 export const CAMPOS_EDITOR_I172=Object.freeze(['itemId','empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','mes','stage','fmt','dataFlexivel','bloco','dataPostagem']);
@@ -184,7 +184,7 @@ function montarEditorCalendarioBaseI172(root,{ciclo,origemEditorial='',demandaId
   adotar(atual);guardar();sucesso='Ajuste interno confirmado. A liberação ao cliente continua sendo uma decisão separada.';render();
   try{await aoAtualizar?.(copia(atual));}catch{}
  }
- function montarInternosSeAutorizadoCp140(d){if(legado||painelInternosCp123||d?.internosCp123?.preparacaoSomenteCp140!==true)return;exigir(origemEditorial===''&&d.ciclo?.modo!=='continuar_legado','A origem deste ajuste precisa ser confirmada pelo servidor.');hostInternosCp123.hidden=false;painelInternosCp123=montarAjustesInternosCp123(hostInternosCp123,{ciclo,origemEditorial:'',contexto,chamar,storage,aoAtualizar:atualizarAposInternoCp123,aoRevisarLiberacao:revisarLiberacaoCp121,uuid});}
+ function montarInternosSeAutorizadoCp140(d){if(legado||painelInternosCp123||d?.internosCp123?.preparacaoSomenteCp140!==true&&d?.internosCp123?.processoNovoCp208!==true&&!(d?.internosCp123?.ajustes||[]).length)return;exigir(origemEditorial===''&&d.ciclo?.modo!=='continuar_legado','A origem deste ajuste precisa ser confirmada pelo servidor.');hostInternosCp123.hidden=false;painelInternosCp123=montarAjustesInternosCp123(hostInternosCp123,{ciclo,origemEditorial:'',contexto,chamar,storage,aoAtualizar:atualizarAposInternoCp123,aoRevisarLiberacao:revisarLiberacaoCp121,uuid});}
  if(legado)painelInternosCp123=montarAjustesInternosCp123(hostInternosCp123,{ciclo,origemEditorial,contexto,chamar,storage,aoAtualizar:atualizarAposInternoCp123,aoRevisarLiberacao:revisarLiberacaoCp121,uuid});
  painelCp112=montarPainelAjustesCp112(hostAjustesCp112,{ciclo,origemEditorial,demandaId,contexto,chamar,storage,aoAtualizar:atualizarAposAjusteCp112,aoRevisarLiberacao:revisarLiberacaoCp121,uuid});
  root.addEventListener('input',change);root.addEventListener('change',change);root.addEventListener('click',click);render();

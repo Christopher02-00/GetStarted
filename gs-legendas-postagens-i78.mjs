@@ -1,4 +1,4 @@
-import {precisaRevisarI106} from './gs-identidade-conteudo-i106.mjs?v=i144-1';
+import {precisaRevisarI106} from './gs-identidade-conteudo-i106.mjs?v=393ffe3bdd8f2256c6af026c5f7857dbce06b407e9783ff728e3c0db4429b9bc';
 import {legendaUtilizavelI79,camposPendentesI79,pendenciaLegendaI79} from './gs-legenda-qualidade-i79.mjs?v=3894f00ee572c762d75e28e54163c8fbf97128ee4465634f03070d28251a11cd';
 // I78: consulta compartilhada. Textos e vínculo de produção nunca são escritos aqui.
 export const CAMPOS = {legenda:'Legenda principal',legendaInstagram:'Instagram',legendaYoutube:'YouTube',legendaLinkedin:'LinkedIn',legendaTiktok:'TikTok'};

@@ -36,13 +36,17 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await extras.fill(NOMES.join('\n')); await page.dispatchEvent(`#extras_${AG}`, 'input');
     await page.waitForFunction(idd => { const b = document.getElementById('btnConfirmarGravacao_' + idd); return b && !b.disabled; }, AG, { timeout: 8000 });
     await page.click(`#btnConfirmarGravacao_${AG}`);
+    // CP207: cada vídeo digitado é identificado (conteúdo do calendário ou extra com descrição). Sem calendário: extra.
+    const dialogo = page.locator('dialog#identificarEnvioI106'); await dialogo.waitFor({ timeout: 15000 });
+    for (let i = 0; i < NOMES.length; i++) { const s = dialogo.locator(`section[data-linha="${i}"]`); await s.locator('[data-tipo]').selectOption('extra'); await s.locator('[data-descricao]').fill('Vídeo extra do ensaio J11: ' + NOMES[i]); }
+    await dialogo.locator('[data-confirmar]').click();
     // sinal da UI antes de ler o banco: o cartão sai da lista (sessão concluída) ou o botão some/desabilita
     await page.waitForFunction(idd => { const b = document.getElementById('btnConfirmarGravacao_' + idd); return !b || b.disabled; }, AG, { timeout: 30000 });
     await page.waitForTimeout(2500);
   }, () => esperar(async () => {
     const vs = await videosNovos(); const ag = (await seed.listar('agendamentos')).find(a => a.id === AG);
     if (vs.length !== NOMES.length) return null;
-    const ok = vs.every(v => v.status === 'aguardando_edicao' && !v.editorAtribuido && v.cliente === 'bluefit');
+    const ok = vs.every(v => v.status === 'aguardando_edicao' && !v.editorAtribuido && v.cliente === 'bluefit' && v.identificacaoConteudoI106?.modo === 'extra' && /ensaio J11/.test(v.identificacaoConteudoI106?.descricao || ''));
     return ok ? `${vs.length} vídeos aguardando_edicao sem editor · sessão ${ag?.status}` : `vídeos com estado inesperado: ${vs.map(v => v.status + '/' + (v.editorAtribuido || '-')).join(', ')}`;
   }, 25000))) return;
 

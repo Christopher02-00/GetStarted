@@ -252,6 +252,7 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
 - **Emulador e ternário nas rules.** Trocar `cond?(A):(B)` por `cond&&A` na regra de update de `calendarios` fez o emulador travar a gravação ("ternary operator predicate is always boolean") sem negar nem responder. Mantenha a forma ternária (`cond?(A):false`).
 - **Data de produção não é edição (CP201, 11/11).** Ao comparar o calendário atual com o retrato publicado (liberar ajuste interno CP123, reliberar pedidos CP121, adotar CP129), dia e data de conteúdo já programado ou publicado vêm do calendário atual — a mesma regra do retrato do cliente. Use `alinharDatasProducaoCp201`; nunca compare campo a campo sem ela.
 - **Pedido do cliente volta ao cliente (CP202, 11/11).** Mês em `ajuste_interno` por 'Cliente' (pedido CP193) com todos os pedidos aprovados pela Amanda é liberado pelo CP121 ("Liberar correções ao cliente"), sem reenviar o mês inteiro. Na comparação com o retrato ficam de fora só os conteúdos desses pedidos aprovados e as peças criadas pela programação (`comparacaoPublicacaoCp202`). Devolução da Amanda não usa este caminho.
+- **Acompanhamento automático (CP205, 11/11).** O servidor escreve o andamento real do cliente em `processos_cliente/{slug}.timelineAuto` (vídeo, postagem, calendário, relatório, gravação); a equipe continua escrevendo à mão em `timeline`. Só frases para o cliente: nunca motivo de ajuste, parecer, revisão interna. Nova origem de andamento entra em `acompanhamento-cliente-cp205.mjs`, não no Portal.
 
 ## Evidência e entrega
 

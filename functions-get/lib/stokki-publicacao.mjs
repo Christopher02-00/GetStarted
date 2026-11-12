@@ -1,4 +1,5 @@
 import {legendaUtilizavelI79,exigirLegendaI79,legendaExternaAprovadaI79,camposPendentesI79} from './gs-legenda-qualidade-i79.mjs?v=3894f00ee572c762d75e28e54163c8fbf97128ee4465634f03070d28251a11cd';
+import {REDES_DIRETRIZ_STOKKI_CP204,conferirLegendaStokkiCp204,bloqueioDiretrizStokkiCp204} from './gs-diretriz-legenda-stokki-cp204.mjs';
 /* Stokki I30. Fonte única: postagens. Projeções não escrevem; o adaptador
    transacional do Escritório confirma sessão, vídeo, identidade e recibo. */
 export const REDES=Object.freeze([
@@ -53,6 +54,8 @@ export function prepararLegendas(p,selecionadas,textos,por,em,permitirSemLegenda
   for(const r of REDES){
     const texto=String(textos[r.id]||(permitirSemLegendaI90?p[r.campo]:'')||'').trim();
     if(selecionadas.includes(r.id)&&(!permitirSemLegendaI90||texto))exigir(legendaUtilizavelI79(texto),`Preencha a legenda de ${r.nome} (até 20 mil caracteres).`);
+    /* CP204: diretriz da Stokki (manual da Andrea) — termos proibidos não seguem para a Cecília. */
+    if(selecionadas.includes(r.id)){const bl=bloqueioDiretrizStokkiCp204({[r.campo]:texto});exigir(!bl,bl);}
     patch[r.campo]=selecionadas.includes(r.id)?texto:(permitirSemLegendaI90?String(p[r.campo]||''):'');
   }
   patch.legenda=patch[escolhidas[0].campo]||(permitirSemLegendaI90?String(p.legenda||''):'');
@@ -128,6 +131,7 @@ export function alterar(p,acao,ctx){
     case 'adicionar':
     case 'corrigir_legenda': {
       const texto=String(acao.texto||'').trim();exigirLegendaI79(texto);
+      {const bl=bloqueioDiretrizStokkiCp204({[REDES.find(x=>x.id===acao.rede)?.campo||'legenda']:texto});exigir(!bl,bl);}
       const def=REDES.find(x=>x.id===acao.rede);patch[def.campo]=texto;
       if(s.selecionadas[0]===acao.rede)patch.legenda=texto;
       r.checks=[];r.conferidaEm='';r.conferidaPor='';break;
@@ -180,11 +184,20 @@ export function pendencias(posts,agora=horarioBrasilia()){
   }
   return out;
 }
+/* CP204: estratégicas = redes que receberam legenda própria no calendário (diferente da legenda geral herdada). */
+export function redesEstrategicasCp204(p){
+  const geral=String(p?.legenda||'').trim();
+  return REDES.filter(r=>{const t=String(p?.[r.campo]||'').trim();return !!t&&t!==geral;}).map(r=>r.id);
+}
+function avisosDiretrizCp204(campo,texto){
+  const {bloqueios,avisos}=conferirLegendaStokkiCp204(campo,texto);
+  return [...bloqueios.map(x=>`<li style="color:#e07a7a">${esc(x)}</li>`),...avisos.map(x=>`<li style="color:#e0c56a">${esc(x)}</li>`)].join('');
+}
 export function formularioLegendas(p){
-  const selecionadas=p.publicacaoStokki?.selecionadas||[];
+  const salvas=p.publicacaoStokki?.selecionadas||[],selecionadas=salvas.length?salvas:redesEstrategicasCp204(p);
   return `<section data-stokki-legendas="${esc(p.id)}"><p>Escolha onde este vídeo será publicado. Só as redes selecionadas seguem para Cecília.</p>
     <div style="display:flex;flex-wrap:wrap;gap:12px">${REDES.map(r=>`<label style="display:flex;align-items:center;gap:5px;color:${r.cor}"><input type="checkbox" data-stokki-selecao="${r.id}" style="width:auto" ${selecionadas.includes(r.id)?'checked':''}> ${r.nome}</label>`).join('')}</div>
-    ${REDES.map(r=>`<div class="field" data-stokki-campo="${r.id}" ${selecionadas.includes(r.id)?'':'hidden'}><label>${r.nome}</label><textarea id="legenda_${esc(p.id)}_${r.campo}" data-stokki-texto="${r.id}" maxlength="20000">${esc(p[r.campo]||'')}</textarea></div>`).join('')}</section>`;
+    ${REDES.map(r=>`<div class="field" data-stokki-campo="${r.id}" ${selecionadas.includes(r.id)?'':'hidden'}><label>${r.nome}</label><textarea id="legenda_${esc(p.id)}_${r.campo}" data-stokki-texto="${r.id}" maxlength="20000" placeholder="${esc(REDES_DIRETRIZ_STOKKI_CP204.find(x=>x.campo===r.campo)?.dica||'')}">${esc(p[r.campo]||'')}</textarea><p class="muted" style="font-size:12px;margin:4px 0 0">Diretriz Stokki · ${esc(REDES_DIRETRIZ_STOKKI_CP204.find(x=>x.campo===r.campo)?.dica||'')}</p>${(()=>{const l=avisosDiretrizCp204(r.campo,p[r.campo]||'');return l?`<ul style="font-size:12px;margin:4px 0 0;padding-left:18px">${l}</ul>`:'';})()}</div>`).join('')}${!salvas.length&&selecionadas.length?'<p style="font-size:12px">Marcamos as redes que receberam legenda própria no calendário. Confira antes de salvar.</p>':''}</section>`;
 }
 export function lerLegendas(form){
   const selecionadas=Array.from(form.querySelectorAll('[data-stokki-selecao]:checked'),x=>x.dataset.stokkiSelecao);

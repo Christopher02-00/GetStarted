@@ -1,4 +1,5 @@
 import {coletarAjustesTxCp112,invalidacoesAjustesCp112} from './ajustes-calendarios-cp112.mjs';
+import {bloqueioDiretrizStokkiCp204} from './lib/gs-diretriz-legenda-stokki-cp204.mjs';
 import {validadeBaseI155Cp111,documentoEfetivoI155Cp111,desconsideracaoI155Cp111} from './central/lib/gs-transicao-insumos-cp111.mjs';
 /* Estratégia interna por ciclo/itemId; os conteúdos e a publicação continuam no calendário oficial. */
 import {isDeepStrictEqual} from 'node:util';
@@ -56,7 +57,7 @@ function entrada(d){
  if(d.acao==='planejamento_criar_campanha_cp120'){identificador(d.itemId);conferirNovaCampanhaCp120(d.campanha,c);}
  if(d.itemId)identificador(d.itemId);
  if(d.acao==='planejamento_adotar_demanda_cp109'){identificador(d.demandaId);falhar(d.confirmarClienteCompetencia===true,'Confirme explicitamente o cliente e o mês desta demanda.');}
- if(d.acao==='planejamento_salvar_roteiro_cp109'){texto(d.roteiro,30000,'o roteiro');falhar(typeof d.roteiroDispensado==='boolean'&&!(d.roteiro.trim()&&d.roteiroDispensado),'Preencha o roteiro ou marque dispensa explícita.');for(const k of LEGENDAS_CP109)if(Object.hasOwn(d,k)){falhar(k==='legenda'||c.cliente==='stokki','As legendas por plataforma pertencem somente à Stokki.');texto(d[k],30000,'a legenda');}}
+ if(d.acao==='planejamento_salvar_roteiro_cp109'){texto(d.roteiro,30000,'o roteiro');falhar(typeof d.roteiroDispensado==='boolean'&&!(d.roteiro.trim()&&d.roteiroDispensado),'Preencha o roteiro ou marque dispensa explícita.');for(const k of LEGENDAS_CP109)if(Object.hasOwn(d,k)){falhar(k==='legenda'||c.cliente==='stokki','As legendas por plataforma pertencem somente à Stokki.');texto(d[k],30000,'a legenda');if(c.cliente==='stokki'){const bl=bloqueioDiretrizStokkiCp204({[k]:d[k]});falhar(!bl,bl);}}}/* CP204 */
  return c;
 }
 /* Criação restrita ao planejamento atual: reutiliza campanhas e seus leitores físicos. */

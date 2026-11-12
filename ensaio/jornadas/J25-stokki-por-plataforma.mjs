@@ -76,6 +76,19 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   }, () => esperar(async () => { const p = await postagem(); return p ? `postagem ${p.id} ${p.status}` : null; }))) return;
   const post = await postagem();
 
+  // 1b. CP204 (11/11/2026, diretriz da Andrea): "gôndola" é termo proibido na Stokki → a legenda não segue; o formulário mostra a diretriz.
+  if (!await passo('1b Chris usa termo proibido → recusado pela diretriz', 'Chris', async page => {
+    await page.evaluate(() => irPara('postagens', document.getElementById('navPostagens')));
+    await page.evaluate(() => setPostagensSub('legenda', null)); await page.waitForTimeout(1500);
+    await page.evaluate(() => mudarEtapaLegendasI66('videos'));
+    const form = page.locator(`[data-stokki-legendas="${post.id}"]`);
+    await form.waitFor({ timeout: 20000 });
+    await form.locator('[data-stokki-selecao="instagram"]').check();
+    await page.fill(`#legenda_${post.id}_legendaInstagram`, 'Ensaio J25 — a ponta de gôndola do showroom Stokki. #stokki');
+    await page.evaluate(p => window.salvarLegenda(p), post.id);
+    await page.waitForFunction(() => /gôndola" é proibido na Stokki/.test(document.body.innerText), null, { timeout: 15000 });
+  }, async () => { const p = await postagem(); return p?.status === 'aguardando_legenda' && !/g[oô]ndola/i.test(p.legendaInstagram || '') ? 'recusado · postagem segue aguardando legenda' : null; })) return;
+
   // 2. Chris escolhe Instagram + TikTok e escreve uma legenda para cada
   if (!await passo('2 Chris escreve legendas de Instagram e TikTok', 'Chris', async page => {
     await page.evaluate(() => irPara('postagens', document.getElementById('navPostagens')));

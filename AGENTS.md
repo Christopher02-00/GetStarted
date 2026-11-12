@@ -252,6 +252,7 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
 - **Emulador e ternário nas rules.** Trocar `cond?(A):(B)` por `cond&&A` na regra de update de `calendarios` fez o emulador travar a gravação ("ternary operator predicate is always boolean") sem negar nem responder. Mantenha a forma ternária (`cond?(A):false`).
 - **Data de produção não é edição (CP201, 11/11).** Ao comparar o calendário atual com o retrato publicado (liberar ajuste interno CP123, reliberar pedidos CP121, adotar CP129), dia e data de conteúdo já programado ou publicado vêm do calendário atual — a mesma regra do retrato do cliente. Use `alinharDatasProducaoCp201`; nunca compare campo a campo sem ela.
 - **Pedido do cliente volta ao cliente (CP202, 11/11).** Mês em `ajuste_interno` por 'Cliente' (pedido CP193) com todos os pedidos aprovados pela Amanda é liberado pelo CP121 ("Liberar correções ao cliente"), sem reenviar o mês inteiro. Na comparação com o retrato ficam de fora só os conteúdos desses pedidos aprovados e as peças criadas pela programação (`comparacaoPublicacaoCp202`). Devolução da Amanda não usa este caminho.
+- **Legendas da Stokki (CP204, 11/11).** A diretriz da Andrea vive em `gs-diretriz-legenda-stokki-cp204.mjs` (cópia idêntica em `functions-get/lib/`): "chão de fábrica" e "gôndola" bloqueiam a gravação (editor, planejamento, postagem e correção por rede); o resto é aviso. Redes estratégicas = as que recebem legenda própria no calendário. Texto para a IA de conteúdo: `docs/diretrizes/stokki-legendas-para-ia.md`.
 
 ## Evidência e entrega
 

@@ -52,6 +52,14 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       await seed.set('info_extras_cliente', CLIENTE, { ...atual, texto: adotada.texto, clienteNome: adotada.clienteNome, atualizadoPor: adotada.atualizadoPor }); }
   else if (adotada && adotada.existe === false && await seed.get('info_extras_cliente', CLIENTE))
     await fetch(`http://127.0.0.1:${amb.portas.firestore}/v1/projects/${PROJETO}/databases/(default)/documents/info_extras_cliente/${CLIENTE}`, { method: 'DELETE', headers: { Authorization: 'Bearer owner' } });
+  // Jornadas anteriores (ex.: J35) corrigem textos de dezembro direto no calendário, sem nova publicação — o servidor
+  // recusa liberar nesse caso (correto). Aqui o mês parte sem edições soltas: os campos editoriais voltam ao publicado.
+  { const cal = await seed.get('calendarios', CLIENTE), pub = cal?.aprovacaoMeses?.[MES]?.retratoLiberadoV115?.items || [];
+    const CAMPOS = ['day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','obsFilmmaker','obsCliente','fmt','stage','dataFlexivel','dataPostagem','bloco','empresaOtavio'];
+    let mexeu = false;
+    const items = (cal.items || []).map(it => { const p = it && it.mes === MES && !it.excluido && pub.find(x => x.itemId === it.itemId); if (!p || it.agendado || it.posted) return it;
+      const c = { ...it }; for (const k of CAMPOS) { if (JSON.stringify(c[k] ?? null) !== JSON.stringify(p[k] ?? null)) { mexeu = true; if (p[k] === undefined) delete c[k]; else c[k] = p[k]; } } return c; });
+    if (mexeu) { const { id: _c, ...semId } = cal; await seed.set('calendarios', CLIENTE, { ...semId, items }); } }
   await amb.aguardarFunctionsOciosas?.();
   const { page, erros, fechar } = await nav.novaPagina();
   try {

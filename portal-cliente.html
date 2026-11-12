@@ -1150,37 +1150,36 @@ import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/
     const ctx=contextoFiltroPortalI58,el=document.getElementById('gravacoesPortalI61');
     if(el&&ctx&&ctx.cliente===clienteAtual?.slug)GetGravacoesI61.reader(el,{cliente:ctx.cliente,mes:ctx.mes,itens:ctx.itens,store:gravacoesPortalStoreI61});
   }
-  async function carregarAcompanhamento(){
-    const cont = document.getElementById('painelAcompanhamento');
-    cont.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDoc(doc(db,'processos_cliente', clienteAtual.slug));
-    const dados = snap.exists() ? snap.data() : null;
-
-    if(!dados || !(dados.timeline||[]).length){
+  /* CP205 (11/11/2026): o acompanhamento se atualiza sozinho. O servidor registra em `timelineAuto` o andamento real
+     (vídeo em edição/ajuste/para aprovar/aprovado, postagem agendada/publicada, calendário, relatório do mês, gravação);
+     a equipe continua podendo registrar à mão em `timeline`. As duas listas aparecem juntas, ao vivo. */
+  let pararAcompanhamentoCp205=null;
+  function desenharAcompanhamentoCp205(cont,dados){
+    const empresaOk=x=>!x?.empresaOtavio||GetEmpresasOtavioI144.corresponde(clienteAtual.slug,x,empresaPortalI144);
+    const timeline=[...(dados?.timeline||[]).map(x=>({...x,auto:false})),...(dados?.timelineAuto||[]).filter(x=>x&&x.auto===true&&empresaOk(x))]
+      .filter(x=>x&&x.status).sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
+    if(!timeline.length){
       cont.innerHTML = chamadaGravacoesI61+`<div class="card">
         <h2><svg class="ic"><use href="#i-activity"/></svg>Histórico geral do projeto</h2>
-        <div class="sub" style="margin-bottom:0;">Assim que a equipe começar a atualizar o andamento do seu projeto, tudo aparece aqui em tempo real.</div>
+        <div class="sub" style="margin-bottom:0;">Assim que o seu projeto andar — calendário, gravação, edição, aprovação ou postagem — tudo aparece aqui em tempo real.</div>
       </div>`;
       return;
     }
-
-    const idxAtual = ETAPAS_PROCESSO.indexOf(dados.etapaAtual);
-    const pct = idxAtual >= 0 ? Math.round(((idxAtual+1)/ETAPAS_PROCESSO.length)*100) : 0;
-    const timeline = (dados.timeline||[]).slice().reverse();
+    const recente=timeline[0],etapa=recente.auto?(recente.etapa||recente.status):(dados.etapaAtual||recente.status);
     const melhorias = (dados.melhorias||[]).slice().reverse();
 
     let html = `<div class="card">
       <h2><svg class="ic"><use href="#i-activity"/></svg>Histórico geral do projeto</h2>
-      <div class="nome" style="font-size:16px;margin:10px 0 8px;">${esc(dados.etapaAtual||'Em andamento')}</div>
-      <div class="meta">Etapa informada pela equipe. O acompanhamento das gravações está no calendário.</div>
+      <div class="nome" style="font-size:16px;margin:10px 0 8px;">${esc(etapa||'Em andamento')}</div>
+      <div class="meta">Atualizado automaticamente conforme o andamento do seu projeto. O acompanhamento das gravações também está no calendário.</div>
     </div>`;
 
     html += `<div class="card"><h2 style="font-size:14px;"><svg class="ic"><use href="#i-clock"/></svg>Linha do tempo</h2>`;
     html += timeline.map(t => `
-      <div class="item" style="border-left:3px solid var(--yellow);">
+      <div class="item" style="border-left:3px solid var(--yellow);" ${t.auto?'data-acomp-auto-cp205':''}>
         <div class="nome">${esc(t.status||'')}</div>
-        <div class="meta">${t.data ? dataBR(t.data) : ''}${t.responsavel ? ' · por '+esc(t.responsavel)+', da nossa equipe' : ''}</div>
-        ${t.obs ? '<div class="meta" style="margin-top:4px;">'+esc(t.obs)+'</div>' : ''}
+        <div class="meta">${t.data ? dataBR(t.data) : ''}${t.auto ? ' · atualização automática' : t.responsavel ? ' · por '+esc(t.responsavel)+', da nossa equipe' : ''}</div>
+        ${!t.auto && t.obs ? '<div class="meta" style="margin-top:4px;">'+esc(t.obs)+'</div>' : ''}
       </div>
     `).join('');
     html += `</div>`;
@@ -1195,6 +1194,22 @@ import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/
     html += `</div>`;
 
     cont.innerHTML = chamadaGravacoesI61+html;
+  }
+  async function carregarAcompanhamento(){
+    const cont = document.getElementById('painelAcompanhamento');
+    cont.innerHTML = '<div class="empty">Carregando...</div>';
+    const slug=String(clienteAtual?.slug||'');
+    try{pararAcompanhamentoCp205?.();}catch(e){}
+    pararAcompanhamentoCp205=null;
+    await new Promise((resolver,rejeitar)=>{
+      let primeira=true;
+      const parar=onSnapshot(doc(db,'processos_cliente',slug),snap=>{
+        if(String(clienteAtual?.slug||'')!==slug){parar();return;}
+        desenharAcompanhamentoCp205(cont,snap.exists()?snap.data():null);
+        if(primeira){primeira=false;resolver();}
+      },erro=>{if(primeira){primeira=false;rejeitar(erro);}else console.error('Acompanhamento ao vivo interrompido:',erro);});
+      pararAcompanhamentoCp205=parar;
+    });
   }
 
   // I37: excluído continua no histórico; agendado/postado já saiu da aprovação.

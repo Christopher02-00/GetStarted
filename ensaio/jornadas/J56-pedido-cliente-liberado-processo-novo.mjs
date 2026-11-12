@@ -44,6 +44,15 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   const cal0 = await seed.get('calendarios', CLIENTE);
   if (cal0?.aprovacaoMeses?.[MES]?.status !== 'liberado' || !(await seed.get('planejamento_social_i155', CICLO))) { fim('preparação', false, 'depende da J06 (dezembro liberado pelo processo novo)'); return; }
+  // A J49 muda a ficha da Bluefit para testar o aviso da ficha; com ficha nova o servidor exige que o Chris readote a fonte
+  // (CP183) antes de mexer no mês. Aqui a ficha volta à versão que este ciclo adotou — o cenário da Amanda, sem ficha nova.
+  const cicloJ56 = await seed.get('planejamento_social_i155', CICLO), adotada = cicloJ56?.documentos?.baseDocumentoUnicoCp183?.infoCliente || cicloJ56?.criacao?.infoClienteCp183;
+  if (adotada?.existe) { const { id: _i, ...atual } = (await seed.get('info_extras_cliente', CLIENTE)) || {};
+    if (atual.texto !== adotada.texto || atual.clienteNome !== adotada.clienteNome || atual.atualizadoPor !== adotada.atualizadoPor)
+      await seed.set('info_extras_cliente', CLIENTE, { ...atual, texto: adotada.texto, clienteNome: adotada.clienteNome, atualizadoPor: adotada.atualizadoPor }); }
+  else if (adotada && adotada.existe === false && await seed.get('info_extras_cliente', CLIENTE))
+    await fetch(`http://127.0.0.1:${amb.portas.firestore}/v1/projects/${PROJETO}/databases/(default)/documents/info_extras_cliente/${CLIENTE}`, { method: 'DELETE', headers: { Authorization: 'Bearer owner' } });
+  await amb.aguardarFunctionsOciosas?.();
   const { page, erros, fechar } = await nav.novaPagina();
   try {
     // 1) Cliente pede ajuste pelo link (tela real, CP193)

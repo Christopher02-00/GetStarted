@@ -11,9 +11,9 @@ import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
 export const id = 'J65';
 export const nome = 'Observação por conteúdo de 3.500 caracteres chega inteira ao Chris (sem corte em 1.000)';
 
-const CLIENTE = 'mochi', NOME = 'Mochi', MES = '2026-12', CICLO = `${MES}__${CLIENTE}`;
+const CLIENTE = 'mochi', NOME = 'Mochi', MES = '2027-01', CICLO = `${MES}__${CLIENTE}`;
 const TITULO1 = 'Ensaio J65 — Mochi de pistache', TITULO2 = 'Ensaio J65 — Bastidores da cozinha';
-const DOC = path.join(process.cwd(), 'ensaio/.runtime/j65-mochi-dez.txt');
+const DOC = path.join(process.cwd(), 'ensaio/.runtime/j65-mochi-jan.txt');
 const esperar = async (fn, ms = 15000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1000)); } return null; };
 
 // ACHADO F-09: enquanto a Central ainda carrega, o clique em "Calendários e conteúdos" é ignorado em silêncio → repete até a view abrir
@@ -51,6 +51,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   if (!await passo('1 Amanda inclui o ciclo e envia o documento', 'Amanda', async page => {
     await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
     const v = page.locator('#view-planejamentoPreparacaoR80');
+    { const mesCampo = v.locator('input[type=month]').first(); if (await mesCampo.count()) { await mesCampo.fill(MES); await mesCampo.dispatchEvent('change'); await page.waitForTimeout(2500); } }
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
@@ -108,6 +109,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   await passo('3 Amanda devolve com observação de 3.500 caracteres', 'Amanda', async page => {
     await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
     const v = page.locator('#view-planejamentoPreparacaoR80');
+    { const mesCampo = v.locator('input[type=month]').first(); if (await mesCampo.count()) { await mesCampo.fill(MES); await mesCampo.dispatchEvent('change'); await page.waitForTimeout(2500); } }
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();

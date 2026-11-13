@@ -23,6 +23,7 @@ import {executarAcompanhamentoI165} from './reconciliacao.mjs';
 import {acompanharCp205,eventoVideoCp205,eventoPostagemCp205,eventosCalendarioCp205,eventoAnaliseCp205,eventoAgendamentoCp205} from './acompanhamento-cliente-cp205.mjs';
 import {criarPushI165,criarEmailI165} from './despacho.mjs';
 import {falhaCanalI165} from './transmissoes.mjs';
+import {acompanharLegendaCp214} from './legenda-sem-vinculo-cp214.mjs';
 initializeApp();const db=getFirestore();setGlobalOptions({region:'southamerica-east1',maxInstances:1,memory:'512MiB',serviceAccount:'firebase-adminsdk-fbsvc@get-started-4956d.iam.gserviceaccount.com'});
 // Internal deploy capability. Keep this value consistent during deployment analysis and runtime.
 const emailDeployAtivoI165=process.env.GET_I165_DEPLOY_EMAIL_ENABLED==='true';
@@ -44,6 +45,8 @@ export const calendarioLegendaGetCp190=onDocumentWritten({document:'calendarios/
 const antesDepoisCp205=e=>[e.data?.before?.exists?e.data.before.data():null,e.data?.after?.exists?e.data.after.data():null];
 export const acompanhamentoVideoGetCp205=onDocumentWritten({document:'videos_producao/{id}',timeoutSeconds:60},e=>acompanharCp205(db,eventoVideoCp205(e.params.id,...antesDepoisCp205(e))));
 export const acompanhamentoPostagemGetCp205=onDocumentWritten({document:'postagens/{id}',timeoutSeconds:60},e=>acompanharCp205(db,eventoPostagemCp205(e.params.id,...antesDepoisCp205(e))));
+// CP214: vídeo aprovado sem conteúdo no calendário → uma demanda de legenda para a Amanda; fecha sozinha quando a postagem anda.
+export const legendaSemVinculoGetCp214=onDocumentWritten({document:'postagens/{id}',timeoutSeconds:60},e=>acompanharLegendaCp214(db,e.params.id,...antesDepoisCp205(e)));
 export const acompanhamentoAnaliseGetCp205=onDocumentWritten({document:'analises_mensais_i108/{id}',timeoutSeconds:60},e=>acompanharCp205(db,eventoAnaliseCp205(e.params.id,...antesDepoisCp205(e))));
 export const acompanhamentoGravacaoGetCp205=onDocumentWritten({document:'agendamentos/{id}',timeoutSeconds:60},e=>acompanharCp205(db,eventoAgendamentoCp205(e.params.id,...antesDepoisCp205(e))));
 export const acompanhamentoOperacionalGetI165=onSchedule({schedule:'every 5 minutes',timeZone:'America/Sao_Paulo',timeoutSeconds:540,concurrency:1,retryCount:0,...(emailDeployAtivoI165?{secrets:[chaveEmail]}:{})},async()=>{const agora=new Date(),enviarPush=criarPushI165(db,{messaging:getMessaging(),auth:getAuth()}),enviarEmail=emailDeployAtivoI165?criarEmailI165(db,{serviceId:servicoEmail.value(),templateId:modeloEmail.value(),publicKey:publicaEmail.value(),privateKey:chaveEmail.value()}):emailNaoConfiguradoI165;let recepcao;try{recepcao=await executarRecepcaoPedidosClienteCp175(db,{agora});}catch(e){console.error('CP175: recepção automática precisa de conferência',String(e.message||e).slice(0,500));recepcao={ativa:true,estado:'conferir_origens',erros:[{servico:'recepcao_pedidos_cliente_cp175',erro:String(e.message||e).slice(0,500)}]};}const operacional=await executarAcompanhamentoI165(db,{agora,uploadPost:dependenciasRuntimeUploadPostI166(db),enviarPush,enviarEmail});const central=await executarCentralNoTickI165(db,{demandaIdsCp175:recepcao?.demandaIds||[],errosRecepcaoCp175:recepcao?.erros||[],agora,enviarPush,enviarEmail});return {recepcao,operacional,central};});

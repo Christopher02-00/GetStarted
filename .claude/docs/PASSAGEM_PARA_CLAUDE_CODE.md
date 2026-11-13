@@ -9,7 +9,7 @@
 Você assume a manutenção do Site Get (repositório `Christopher02-00/GetStarted`, no Mac do Chris). Antes de qualquer coisa:
 1. Leia este documento inteiro — ele é a verdade sobre ambientes, estrutura, regras, o que já foi feito e o que falta.
 2. Leia o `AGENTS.md` do repositório inteiro. É lei.
-3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (160/160) antes de mexer em qualquer código.
+3. Leia `ensaio/README.md` e rode `node ensaio/rodar.mjs` para confirmar o portão verde (169/169) antes de mexer em qualquer código.
 
 Regras com o Chris: um PR por assunto; portão de jornadas verde (e `--movel` quando mexer em tela) antes de todo PR; bug novo vira jornada nova (vermelha antes, verde depois); rules, Functions e dados de produção só com ok nominal dele. Ao fechar cada etapa: linguagem simples, diga a próxima etapa e quantas faltam, nunca deixe nada em aberto, só conclua a 100%.
 
@@ -103,7 +103,7 @@ Base real anonimizada (R2): workflow manual `exportar-firestore.yml` gera o arte
 **Processo (vigente desde 08/11/2026, decidido pelo Chris):**
 1. Todo pedido vira **árvore de impacto + 1 ficha por unidade** (escritores, leitores, papéis, rules, legado). Skill `get-arvore-do-pedido`.
 2. **Um PR por unidade**, branch própria, menor diff que resolve a causa-raiz. Skill `get-mudanca-segura`.
-3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 160/160) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
+3. **Portão obrigatório antes do PR:** `node ensaio/rodar.mjs` verde (hoje 169/169) e, quando toca interface, também `--movel`. Bug novo → jornada nova no mesmo PR, **vermelha antes e verde depois** (contraprova). Skill `get-prova-de-jornada`.
 4. PR com 5 blocos: **Entendimento / Alterações / Provas de validação / Riscos-pendências / Próximo passo**. Esperar o CI, merge, conferir no ar (`fetch` do arquivo em get-started.agency), atualizar os docs do projeto no mesmo dia. Rollback = `git revert`. Skill `get-publicacao-e-rollback`.
 5. Chris autorizou Claude a fazer branch → PR → CI → merge → conferência **sozinho** ("eu autorizo tudo, siga em frente"). O que ainda **pede aviso antes**: publicar **rules** no Firebase (hoje automático via workflow, então avisar no PR), deploy de **Functions**, qualquer **escrita em dados de produção** (migração/correção) — essas exigem ok nominal.
 6. Sempre que um pedido contrariar `AGENTS.md`/invariantes, **dizer qual é a regra vigente e esperar a decisão**, em vez de executar.
@@ -231,6 +231,9 @@ Auditoria em 4 trechos (equipe, cliente, legendas, entrada/saída), com ~20 acha
 | #124 | **CP211:** "Não precisa agendar" em vídeo sem ligação — não reproduzido; J63 protege o caminho (painel I165 com motivo) | J63 verde |
 | #125 | Docs CP210/CP211, portão 157/157 | — |
 | #126 | **CP212:** servidor recusa retirar conteúdo com pedido do cliente em aberto; conteúdo já retirado não trava o mês (pedido "conteúdo retirado" → encerrar com explicação ao cliente, visível no Acompanhamento) · functions pela branch (ok do Chris 13/11) · `v2026.11.13-2` · Mochi 2026-12 volta a carregar | J64 vermelha→verde |
+| #127 | Docs CP212, portão 160/160 | — |
+| #128 | **CP213:** observação por conteúdo até 8.000 caracteres, contador e aviso — sem corte silencioso (Stokki 2026-12) · `v2026.11.13-4` | J65 vermelha→verde |
+| #129 | **CP214:** vídeo aprovado sem conteúdo no calendário vira demanda de legenda da Amanda (cria e fecha sozinha, sem duplicar) · functions pela branch (ok do Chris) · 8 demandas criadas para os parados (script `scripts/legenda-sem-vinculo-cp214.mjs`) · `v2026.11.13-3` | J66 vermelha→verde |
 
 Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub verde nos dois PRs. CP208 em 12/11: portão 152/152 computador e celular; conferido no ar na Fedalto 2026-12 (quadro "Ajustes internos" com "+ Adicionar conteúdo interno"). Acompanhamento automático (CP205) conferido em produção: 16 entradas reais em 8 clientes na manhã de 12/11.
 - Dados de produção (ok nominal do Chris, 10/11): Clínica Zeiss Araucária apagada (39 docs) e retirada do grupo de cobrança. A Zeiss mantém R$ 4.500, com parte própria de R$ 1.500. O backup está fora do repo.

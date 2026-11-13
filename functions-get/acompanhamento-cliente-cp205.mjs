@@ -63,6 +63,15 @@ export function eventosCalendarioCp205(slug, antes, depois, agora = new Date()) 
     const etapa = c === 'liberado' ? 'Calendário enviado para aprovação' : 'Calendário editorial em desenvolvimento';
     out.push({ cliente: slug, origem: 'calendario', origemId: m, estado: c, etapa, status: texto });
   }
+  // CP212 (13/11/2026): pedido do cliente encerrado porque o conteúdo saiu do calendário — o cliente vê a explicação.
+  const pedidosAntes = antes?.pedidosAjusteClienteI71 || {};
+  for (const [op, p] of Object.entries(depois.pedidosAjusteClienteI71 || {})) {
+    const x = p?.cancelamentoCp143;
+    if (x?.schema !== 1 || x.conteudoRetiradoCp212 !== true || pedidosAntes[op]?.cancelamentoCp143?.conteudoRetiradoCp212 === true) continue;
+    const motivo = String(x.motivo || '').trim().slice(0, 600), nome = String(p.itemNome || 'o conteúdo').slice(0, 160);
+    out.push({ cliente: slug, origem: 'pedido_ajuste', origemId: String(op).slice(0, 120), estado: 'encerrado_conteudo_retirado', etapa: 'Pedido de ajuste respondido',
+      status: 'Seu pedido sobre “' + nome + '” foi respondido: ' + (motivo || 'o conteúdo saiu do calendário.') });
+  }
   return out;
 }
 

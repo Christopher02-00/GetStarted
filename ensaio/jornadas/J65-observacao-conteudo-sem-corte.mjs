@@ -1,5 +1,5 @@
 // J65 — CP213 (13/11/2026, Stokki 2026-12): a observação por conteúdo que a Amanda escreve ao devolver era cortada em 1.000
-// caracteres sem aviso (o roteiro colado chegou ao Chris terminando no meio da frase). Mesmo caminho da J52, com a Hitech:
+// caracteres sem aviso (o roteiro colado chegou ao Chris terminando no meio da frase). Mesmo caminho da J52, com a Mochi:
 // Amanda cola 3.500 caracteres na observação de um conteúdo → contador visível → devolve → o recado chega inteiro ao Chris
 // (último trecho presente) no calendário e em "Retornos da Amanda". Colar acima de 8.000 é recusado com aviso.
 // Fluxo da J06 com a Zeiss: Amanda inclui o documento → Chris cria e envia → Amanda devolve com 12 mil caracteres.
@@ -11,9 +11,9 @@ import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
 export const id = 'J65';
 export const nome = 'Observação por conteúdo de 3.500 caracteres chega inteira ao Chris (sem corte em 1.000)';
 
-const CLIENTE = 'hitech', NOME = 'Hitech', MES = '2026-12', CICLO = `${MES}__${CLIENTE}`;
-const TITULO1 = 'Ensaio J65 — Notebook gamer', TITULO2 = 'Ensaio J65 — Assistência técnica';
-const DOC = path.join(process.cwd(), 'ensaio/.runtime/j65-hitech-dez.txt');
+const CLIENTE = 'mochi', NOME = 'Mochi', MES = '2026-12', CICLO = `${MES}__${CLIENTE}`;
+const TITULO1 = 'Ensaio J65 — Mochi de pistache', TITULO2 = 'Ensaio J65 — Bastidores da cozinha';
+const DOC = path.join(process.cwd(), 'ensaio/.runtime/j65-mochi-dez.txt');
 const esperar = async (fn, ms = 15000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1000)); } return null; };
 
 // ACHADO F-09: enquanto a Central ainda carrega, o clique em "Calendários e conteúdos" é ignorado em silêncio → repete até a view abrir
@@ -54,7 +54,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
-    await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 }); // "Confere antes de seguir": iniciar a preparação
+    await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 6000 }).catch(() => {}); // "Confere antes de seguir": iniciar a preparação (pode já estar iniciada no portão completo)
     await page.waitForFunction(() => /No ciclo|revisão \d/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
     await v.locator('input[type=file]').first().setInputFiles(DOC); await page.waitForTimeout(1500);
     await v.getByRole('button', { name: /^Ler documento$/ }).click();

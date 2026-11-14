@@ -236,6 +236,7 @@ Auditoria em 4 trechos (equipe, cliente, legendas, entrada/saída), com ~20 acha
 | #129 | **CP214:** vídeo aprovado sem conteúdo no calendário vira demanda de legenda da Amanda (cria e fecha sozinha, sem duplicar) · functions pela branch (ok do Chris) · 8 demandas criadas para os parados (script `scripts/legenda-sem-vinculo-cp214.mjs`) · `v2026.11.13-3` | J66 vermelha→verde |
 | #130 | Docs CP213/CP214, portão 169/169 | — |
 | #131 | **CP215:** pedido do cliente e ajuste interno no mesmo mês saem numa liberação só; "Trazer para a versão atual" para rascunho sobre publicação anterior; motivos dizem quem faz o quê · functions pela branch (ok do Chris) · `v2026.11.13-5` · Fedalto 2026-12 liberada pela Amanda com os 2 pedidos e os 2 carrosséis | J60b e J67 vermelhas→verdes |
+| #133 (merge direto `ef0574d`) | **Cofre:** senha revelada aparecia toda em MAIÚSCULAS (`.prioTag` tem `text-transform:uppercase`). Os dados nunca mudaram; só a tela. Span da senha com `text-transform:none`; J15 lê `innerText`. PR #133 foi fechado sem explicação às 11h39 de 14/11; sem `gh` nem Chrome na máquina, o merge foi direto no `main` e o CI rodou no push. | `v2026.11.14-1` |
 
 Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub verde nos dois PRs. CP208 em 12/11: portão 152/152 computador e celular; conferido no ar na Fedalto 2026-12 (quadro "Ajustes internos" com "+ Adicionar conteúdo interno"). Acompanhamento automático (CP205) conferido em produção: 16 entradas reais em 8 clientes na manhã de 12/11.
 - Dados de produção (ok nominal do Chris, 10/11): Clínica Zeiss Araucária apagada (39 docs) e retirada do grupo de cobrança. A Zeiss mantém R$ 4.500, com parte própria de R$ 1.500. O backup está fora do repo.
@@ -289,6 +290,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 - **Emuladores java órfãos** — se o Chromium "Target crashed" no ensaio, `pkill -f cloud-firestore-emulator; pkill -f functionsEmulatorRuntime` (o `parar()` já faz; só acontece se o processo for morto no meio).
 - **Transaction lock timeout no ensaio** — nunca listar coleção por REST durante uma transação do app; esperar o sinal da UI (regra 1 do `ensaio/README.md`).
 - **Chamadas 400 `i165/*` com base real** — a maioria é anonimização ou base incompleta; conferir `ensaio/.runtime/functions-chamadas.log` antes de abrir ficha contra o site.
+- **14/11: Homebrew sumiu do Mac do Chris** (`/opt/homebrew` vazio): sem `node`, `gh`, `firebase-tools` nem Java. O portão local não roda; o CI do GitHub roda. Há um node 22 em `~/site Get — atualizado/.../RUNTIME_PERSISTENTE/node-v22.23.4-darwin-arm64/bin/node` para scripts avulsos. Reinstalar: Homebrew + `brew install node gh openjdk` + `npm i -g firebase-tools` + `gh auth login`.
 - **No Mac do Chris** o shell remoto do Claude não sobe por falta de disco (< 17 GB livres) — irrelevante para o Claude Code local, mas explica por que downloads passaram pelo Chrome.
 
 ---

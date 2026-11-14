@@ -7,7 +7,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {programacaoAtivaI165} from './lib/gs-contexto-operacional-i165.mjs';
 import {processoAtivoI164} from './central/lib/gs-processo-calendarios-i164.mjs';
 import {exigirCentralR80 as e,chavesR80,textoR80,cicloR80,idR80,inteiroR80,mapaR80} from './central-preparacao-validacao-r80.mjs';
-export const ACOES_INTERNOS_CP123=Object.freeze(['central_editor_interno_fila_cp123','central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123']);
+export const ACOES_INTERNOS_CP123=Object.freeze(['central_editor_interno_fila_cp123','central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123','central_editor_interno_rebase_cp123']);
 export const ACOES_ADOCAO_CP129=Object.freeze(['central_editor_adocao_ler_cp129','central_editor_adotar_preparacao_cp129']);
 export const ACOES_EDITORIAL_I172=Object.freeze(['central_editor_ler','central_editor_interno_conferir_cp142','central_editor_iniciar','central_editor_preparacao_cp140','central_editor_salvar','central_editor_enviar_revisao','central_editor_decidir',...ACOES_INTERNOS_CP123,...ACOES_ADOCAO_CP129,...ACOES_LEITURA_DEVOLUCAO_CP155]);
 export const MUTACOES_EDITORIAL_I172=Object.freeze(['iniciar_criacao','enviado_revisao','devolvido_revisao','entrega']);
@@ -44,7 +44,7 @@ export function validarEntradaEditorialI172(d){
 
  if(d.acao==='central_editor_interno_conferir_cp142'){
   const {acaoConferida,...base}=d;
-  e(['central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123'].includes(acaoConferida),'Confira a ação original desta tentativa.');
+  e(['central_editor_interno_iniciar_cp123','central_editor_interno_salvar_cp123','central_editor_interno_enviar_cp123','central_editor_interno_decidir_cp123','central_editor_interno_rebase_cp123'].includes(acaoConferida),'Confira a ação original desta tentativa.');
   validarEntradaInternaCp123({...base,acao:acaoConferida});return d;
  }
  if(ACOES_INTERNOS_CP123.includes(d.acao))return validarEntradaInternaCp123(d);

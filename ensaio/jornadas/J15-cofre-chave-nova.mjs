@@ -67,7 +67,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar, esperarNe
     await page.evaluate(() => irPara('cofreCecilia', document.getElementById('navCofreCecilia')));
     const btn = `button[onclick*="revelarSenhaCofreCecilia('${docId}')"]`;
     await page.waitForSelector(btn, { timeout: 20000 }); await page.click(btn);
-    return esperar(() => page.evaluate(i => (document.getElementById('senhaCeciliaRevelada_' + i)?.textContent || '').replace('🔓', '').trim(), docId), 10000);
+    return esperar(() => page.evaluate(i => (document.getElementById('senhaCeciliaRevelada_' + i)?.innerText || '').replace('🔓', '').trim(), docId), 10000);
   };
   const abrirCofreGerencia = async page => {
     await entrarGerencia(page);

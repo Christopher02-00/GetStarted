@@ -985,6 +985,11 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 **Correção exigida:** o motor da gestão parte de `clientesDeConteudoRecorrente()`, normaliza aliases e ignora soft-deletes. Na mesma tela, a Cecília recebe uma projeção operacional equivalente baseada somente em `clientes_config`, sem consultar contrato, mensalidade ou financeiro. Registros históricos permanecem preservados no banco.
 > **LEI:** alertas de conteúdo mensal usam a fonte canônica da carteira recorrente; a projeção para papel operacional não consulta coleções financeiras, nunca ressuscita cliente encerrado e nunca apaga histórico para fazê-lo desaparecer.
 
+### 52.6 Três telas, três respostas — e a Amanda sem a porta outra vez (16/11/2026)
+**Prova:** com a Central R87 ativa, `gs-central-unificada-r87.mjs` escondia `navControlePostagem` da Amanda (a exceção era só da Cecília) — a 4ª camada da §52.1. E "até quando" tinha três contas: a tela do controle coloria pela data manual, a tela antiga só via `agendado`, o resumo do painel somava data do calendário como cobertura (contra a §52.2).
+**Correção:** `gs-ate-quando-postagens.mjs` é a única conta (`projetarAteQuando`, com a regra do alerta `coberturaPostagensAteQuando`); as três telas leem `carregarProjecaoAteQuando()`. A data vem das postagens ativas; o calendário mostra o que falta agendar e a frequência planejada; a anotação manual é só nota com divergência. Jornada J69.
+> **LEI:** "até quando o cliente tem conteúdo" tem uma projeção só. Tela nova que responda essa pergunta lê a mesma projeção; esconder entrada da barra por uma camada nova (Central, atalho) exige a exceção do papel autorizado na mesma mudança.
+
 ## 53. GATE OBRIGATÓRIO — ALERTAS DE COBERTURA V64
 
 - [x] Amanda enxerga “Postagem Até Quando” no dia a dia; Chris e Cecília continuam autorizados; demais papéis não navegam nem renderizam a tela.

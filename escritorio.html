@@ -2102,7 +2102,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
   import * as FinanceiroCore from "./financeiro-core.mjs?v=bd5028fb6d17b8375f846eabe1758a7351959ade459c523993d5e632e7a346c7";
   import { criarCofre } from "./gs-cofre.mjs?v=e5edc471dc58c7f3d415297e6442a0889d8d18c6300ff8702b4a7d8f1b902da9";
   import { criarCastasOperacionais } from "./gs-castas-operacionais.mjs?v=3913918010933a758224a5915ce48441b9b194ec114f9d8ce1092e796be3a830";
-  import {coberturaPostagensAteQuando,projetarAteQuando,ordenarAteQuando,contarFaixasAteQuando,htmlResumoAteQuando,htmlDetalheAteQuando,htmlErroAteQuando,textoPrazoAteQuando,COR_FAIXA_ATE_QUANDO} from "./gs-ate-quando-postagens.mjs?v=3b38f8b856f7d87e20301aaee9feff13b04066daf62fd0ec3f8e320ed5dac949";
+  import {coberturaPostagensAteQuando,projetarAteQuando,ordenarAteQuando,contarFaixasAteQuando,htmlResumoAteQuando,htmlDetalheAteQuando,htmlErroAteQuando,textoPrazoAteQuando,COR_FAIXA_ATE_QUANDO,slugsComCalendarioAteQuando,tituloAlertaCoberturaAteQuando,descricaoAlertaCoberturaAteQuando,textoEventoAteQuando,htmlAcoesAlertaCoberturaAteQuando} from "./gs-ate-quando-postagens.mjs?v=44fe09730ebee0d3bfb9f5b3fb4cfa3164db0558610b88800ce2fdf3131f2f45";
   import { instalarFinanceiroV104 } from "./financeiro-ui-v104.mjs?v=408cdb667da4662b6142ac76d118d202c65d289fffb851723d581cdb3cbc1174";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { connectFirestoreEmulator, Timestamp, getFirestore, collection, addDoc as _addDocFB, getDocs as _getDocsFB, getDocsFromServer as _getDocsFromServerFB, getDocFromServer as _getDocFromServerFB, doc, getDoc, setDoc as _setDocFB, deleteDoc as _deleteDocFB, updateDoc as _updateDocFB, query, where, or as _orFB, documentId, orderBy, limit, serverTimestamp, onSnapshot, arrayUnion, runTransaction as _runTransactionFB, writeBatch as _writeBatchFB, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -34146,6 +34146,7 @@ window.setGerenciaSub = function(qual, el){
       <div class="linha"><b>Descrição:</b> ${linkifyDescricao(d.descricao || 'sem descrição')}</div>
       ${htmlEditarDescricaoCp181(d,'minha')}
       ${htmlOrigemCampanhaI153(d)}
+      ${htmlAcoesAlertaCoberturaAteQuando(d,usuarioAtual)}
       ${htmlRepasseCp148(d)}
       ${htmlRevisaoEsperaCp149(d)}
       ${htmlMotivoRefazerI161(d)}
@@ -41519,8 +41520,8 @@ window.setGerenciaSub = function(qual, el){
   }
   /* 16/11/2026: a regra mora em gs-ate-quando-postagens.mjs — a mesma das telas "até quando". */
   const IDENT_ATE_QUANDO={slug:slugClienteCanonico,nome:nomeClienteCanonico,norm:normNomeCliente};
-  function calcularCoberturaPostagens(postagens, clientes, hoje){
-    return coberturaPostagensAteQuando(postagens, clientes, hoje, IDENT_ATE_QUANDO);
+  function calcularCoberturaPostagens(postagens, clientes, hoje, slugsComCalendario){
+    return coberturaPostagensAteQuando(postagens, clientes, hoje, IDENT_ATE_QUANDO, slugsComCalendario);
   }
   window.calcularCoberturaPostagens=calcularCoberturaPostagens;
 
@@ -41557,6 +41558,7 @@ window.setGerenciaSub = function(qual, el){
       .normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,180);
   }
   function alertaCoberturaAindaValido(alerta, estado){
+    if(alerta.etapaCobertura==='sem_postagem_programada') return !!estado && estado.evento==='sem_postagem_programada';
     if(!estado || !estado.ultimaData || alerta.ultimaPostagemProgramada!==estado.ultimaData || estado.temCoberturaFutura) return false;
     if(alerta.etapaCobertura==='ultima_postagem') return estado.diasSemPostagem!==null && estado.diasSemPostagem<3;
     if(alerta.etapaCobertura==='tres_dias_sem_postagem') return estado.diasSemPostagem>=3;
@@ -41566,11 +41568,13 @@ window.setGerenciaSub = function(qual, el){
     const hoje=hojeLocal();
     /* Falha de qualquer leitura aborta a rodada. Não existe catch que
        converta erro do Firestore em carteira vazia e feche alertas reais. */
-    const [postSnap,clientes]=await Promise.all([
-      snapshotOperacional('postagens'), clientesCalendarioRecorrentesConfirmados()
+    const [postSnap,clientes,calSnap]=await Promise.all([
+      snapshotOperacional('postagens'), clientesCalendarioRecorrentesConfirmados(), obterCalendariosCompartilhados()
     ]);
     const postagens=postSnap.docs.map(d=>({id:d.id,...(d.data()||{})}));
-    const cobertura=calcularCoberturaPostagens(postagens,clientes,hoje);
+    /* U3 (16/11/2026): cliente com calendário e nenhuma postagem ativa também é avisado (antes nunca era). */
+    const comCalendario=slugsComCalendarioAteQuando(calSnap.docs.filter(d=>fonteFisicaClienteR4(d.id,d.data())).map(d=>({id:d.id,data:d.data()||{}})),IDENT_ATE_QUANDO);
+    const cobertura=calcularCoberturaPostagens(postagens,clientes,hoje,comCalendario);
     const porSlug=new Map(cobertura.map(e=>[e.slug,e]));
     const demandasSnap=await snapshotOperacional('demandas');
     const alertasAbertos=demandasSnap.docs.filter(d=>{
@@ -41583,7 +41587,9 @@ window.setGerenciaSub = function(qual, el){
       const alerta=registro.data()||{};
       const estado=porSlug.get(slugClienteCanonico(alerta.clienteSlugRef||alerta.cliente||''));
       if(alertaCoberturaAindaValido(alerta,estado)) continue;
-      const motivo=estado?.temCoberturaFutura
+      const motivo=estado?.temCoberturaFutura&&alerta.etapaCobertura==='sem_postagem_programada'
+        ? 'Postagem programada até '+formatarDataBR(estado.ultimaData)+'.'
+        : estado?.temCoberturaFutura
         ? 'Nova cobertura programada até '+formatarDataBR(estado.ultimaData)+'.'
         : alerta.etapaCobertura==='ultima_postagem' && estado?.diasSemPostagem>=3
           ? 'Substituído pelo alerta de três dias sem postagem.'
@@ -41597,13 +41603,8 @@ window.setGerenciaSub = function(qual, el){
 
     for(const estado of cobertura.filter(e=>e.evento)){
       const id=idAlertaCoberturaPostagem(estado), ref=doc(db,'demandas',id);
-      const titulo=estado.evento==='ultima_postagem'
-        ? '📲 '+(estado.diasSemPostagem===0?'Hoje sai':'Saiu o')+' último conteúdo programado — '+estado.nome
-        : '🥶 '+estado.nome+' está há '+estado.diasSemPostagem+' dias sem postagem programada';
-      const descricao=(estado.evento==='ultima_postagem'
-        ? (estado.diasSemPostagem===0?'A última data com conteúdo programado para este cliente é hoje':'A última data com conteúdo programado para este cliente foi há '+estado.diasSemPostagem+' dia(s)')+' ('+formatarDataBR(estado.ultimaData)+'), com '+estado.qtdNaUltimaData+' conteúdo(s).'
-        : 'A última postagem registrada para este cliente estava programada para '+formatarDataBR(estado.ultimaData)+'. Já são '+estado.diasSemPostagem+' dias sem nova cobertura.')+
-        '\n\nConfira em “Postagem Até Quando” e organize a próxima programação. Se o caso pedir, a Amanda pode avaliar e acionar manualmente o Protocolo Cápsula. Nenhuma cápsula foi acionada por este aviso.';
+      const titulo=tituloAlertaCoberturaAteQuando(estado);
+      const descricao=descricaoAlertaCoberturaAteQuando(estado);
       const criada=await runTransaction(db,async tx=>{
         const existente=await tx.get(ref);
         if(existente.exists()) return false;
@@ -41613,7 +41614,7 @@ window.setGerenciaSub = function(qual, el){
           etapaCobertura:estado.evento,ultimaPostagemProgramada:estado.ultimaData,
           diasSemPostagem:estado.diasSemPostagem,qtdNaUltimaData:estado.qtdNaUltimaData,
           chaveCobertura:estado.slug+'|'+estado.ultimaData+'|'+estado.evento,
-          prazoData:hoje,prazoHora:estado.evento==='ultima_postagem'?'19:00':'12:00',
+          prazoData:hoje,prazoHora:estado.evento==='ultima_postagem'?'19:00':'12:00',avaliarCapsula:estado.evento!=='ultima_postagem',
           status:'pendente',provaTexto:'',provaImagemUrl:'',emailEnviado:false,
           criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()
         });
@@ -41621,7 +41622,7 @@ window.setGerenciaSub = function(qual, el){
       });
       if(criada){
         registrarLogAutomacao('alerta_cobertura_postagem',id,estado.slug+' · '+estado.evento+' · '+estado.ultimaData);
-        if(usuarioAtual==='Amanda') dispararNotificacaoNavegador(titulo,'Abra “Postagem Até Quando” para conferir. A decisão de cápsula continua manual.');
+        if(usuarioAtual==='Amanda') dispararNotificacaoNavegador(titulo,'Abra “Postagem Até Quando” para conferir. Se faltar conteúdo, avalie o conteúdo cápsula — a decisão é sua.');
       }
     }
   }
@@ -49991,7 +49992,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     `${alertasReais.length?`<div class="card" style="border:2px solid var(--red);margin-bottom:16px;">
       <h2>🚨 ${alertasReais.length} cliente(s) exigem atenção da Amanda</h2>
       <div class="desc">Calculado pelas postagens programadas de qualquer formato. O aviso não aciona cápsula automaticamente.</div>
-      ${alertasReais.map(l=>`<div class="meta" style="margin-top:7px;"><b>${esc(l.nome)}:</b> ${l.evento==='ultima_postagem'?(l.diasSemPostagem===0?'o último conteúdo programado sai hoje':'o último conteúdo programado saiu há '+l.diasSemPostagem+' dia(s)'):l.diasSemPostagem+' dias sem nova postagem programada'}.</div>`).join('')}
+      ${alertasReais.map(l=>`<div class="meta" style="margin-top:7px;"><b>${esc(l.nome)}:</b> ${esc(textoEventoAteQuando(l))}</div>`).join('')}
     </div>`:''}
     <div class="desc" style="margin-bottom:8px;">A data vem das postagens agendadas (qualquer formato). O calendário mostra o que ainda falta agendar. A anotação abaixo de cada cliente é só nota.</div>
     ${htmlResumoAteQuando(contas)}` + linhas.map(l => {
@@ -50020,10 +50021,9 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
           <div class="meta" data-ate-quando-prazo style="color:${borda};font-weight:800;">${esc(textoPrazoAteQuando(l))}</div>
         </div>
         ${l.evento?`<div style="margin-top:10px;padding:10px 12px;border-radius:9px;background:var(--redbg);border-left:3px solid var(--red);">
-          <div class="meta" style="color:var(--red);font-weight:800;">${l.evento==='ultima_postagem'
-            ? (l.diasSemPostagem===0?'🚨 Hoje sai':'🚨 Saiu há '+l.diasSemPostagem+' dia(s) o')+' último conteúdo programado ('+l.qtdNaUltimaData+' nesta data).'
-            : '🥶 '+l.diasSemPostagem+' dias sem nova postagem programada.'}</div>
-          ${usuarioAtual==='Amanda'?'<button class="btn secondary" style="width:auto;margin-top:8px;padding:6px 12px;font-size:11px;" onclick="irParaCapsulaAmanda()">Avaliar Protocolo Cápsula manualmente</button>':''}
+          <div class="meta" data-ate-quando-evento="${l.evento}" style="color:var(--red);font-weight:800;">${esc(textoEventoAteQuando(l))}</div>
+          ${l.evento!=='ultima_postagem'?'<div class="meta" style="margin-top:4px;">Conteúdo cápsula: pré-programado, só precisa de edição, sem gravação.</div>':''}
+          ${usuarioAtual==='Amanda'?'<button class="btn secondary" data-alerta-capsula-acao="painel" style="width:auto;margin-top:8px;padding:6px 12px;font-size:11px;" onclick="irParaCapsulaAmanda()">🥶 Avaliar conteúdo cápsula</button>':''}
         </div>`:''}
         ${htmlDetalheAteQuando(l)}
         ${nota}

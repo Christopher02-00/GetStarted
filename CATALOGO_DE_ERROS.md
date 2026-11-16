@@ -990,6 +990,11 @@ Como segunda barreira, mês anterior permanece consultável, mas o editor não o
 **Correção:** `gs-ate-quando-postagens.mjs` é a única conta (`projetarAteQuando`, com a regra do alerta `coberturaPostagensAteQuando`); as três telas leem `carregarProjecaoAteQuando()`. A data vem das postagens ativas; o calendário mostra o que falta agendar e a frequência planejada; a anotação manual é só nota com divergência. Jornada J69.
 > **LEI:** "até quando o cliente tem conteúdo" tem uma projeção só. Tela nova que responda essa pergunta lê a mesma projeção; esconder entrada da barra por uma camada nova (Central, atalho) exige a exceção do papel autorizado na mesma mudança.
 
+### 52.7 Cliente sem nenhuma postagem nunca era avisado (16/11/2026)
+**Prova:** o alerta só nascia a partir da última data programada; cliente da carteira com calendário e nenhuma postagem ativa ficava fora. O Chris pediu de volta o aviso de cápsula.
+**Correção:** evento `sem_postagem_programada` (carteira recorrente + calendário com conteúdo ativo + nenhuma postagem ativa com data), id estável `alerta_cobertura_<slug>__sem_postagem_programada`, encerrado por soft-delete quando a postagem aparece. Títulos dizem "avaliar conteúdo cápsula" e a demanda tem o botão do painel manual (só Amanda). Jornada J70.
+> **LEI:** a §52.3 continua: o aviso fala de cápsula e leva ao painel, mas nenhuma automação escreve em `capsulas_clientes` nem chama `acionarCapsulaAmanda()`.
+
 ## 53. GATE OBRIGATÓRIO — ALERTAS DE COBERTURA V64
 
 - [x] Amanda enxerga “Postagem Até Quando” no dia a dia; Chris e Cecília continuam autorizados; demais papéis não navegam nem renderizam a tela.

@@ -96,7 +96,10 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const t = await lerTela(page), f = conferir(t);
     const outras = await page.evaluate(async slug => {
       const ler = raiz => { const c = raiz.querySelector(`[data-ate-quando-cliente="${slug}"]`); return { ate: c?.dataset.ate ?? null, resumo: ['acaba3', 'semana', 'folga', 'semNada'].map(k => raiz.querySelector(`[data-ate-quando-resumo="${k}"] .num`)?.textContent.trim()).join('/') }; };
-      await renderConteudoAteQuando(); const b = ler(document.getElementById('gerenciaConteudoAteQuando'));
+      // tela antiga pela própria rota (o renderer é do módulo, não global)
+      irPara('conteudoAteQuando', null);
+      const fim = Date.now() + 30000; while (Date.now() < fim && !document.querySelector(`#gerenciaConteudoAteQuando [data-ate-quando-cliente="${slug}"]`)) await new Promise(r => setTimeout(r, 500));
+      const b = ler(document.getElementById('gerenciaConteudoAteQuando'));
       const div = document.createElement('div'); div.innerHTML = await htmlPostagemAteQuandoResumo(); const c = ler(div);
       return { b, c };
     }, SLUG);

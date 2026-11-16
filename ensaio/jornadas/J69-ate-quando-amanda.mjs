@@ -86,7 +86,6 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   await passo('a1 Amanda abre pela barra lateral com a Central ativa', 'Amanda', pelaBarra);
   await passo('a2 Cecília abre pela barra lateral', 'Cecília', pelaBarra);
   await passo('a3 Chris abre pela Central e as três telas dão a mesma resposta', 'Chris', async page => {
-    const menu = await menuVisivel(page);
     await page.evaluate(() => window.abrirEntradaCentralR87());
     await page.waitForSelector('#centralUnificadaR87:not([hidden]) [data-grupo-r87="publicar"]', { timeout: 30000 });
     await page.click('#centralUnificadaR87 [data-grupo-r87="publicar"]');
@@ -105,6 +104,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     }, SLUG);
     if (outras.b.ate !== t?.ate || outras.b.resumo !== t?.resumo) f.push(`tela antiga diz ${outras.b.ate} · ${outras.b.resumo}`);
     if (outras.c.resumo !== t?.resumo) f.push(`resumo do painel diz ${outras.c.resumo}`);
+    const menu = await menuVisivel(page); // no fim: no celular abrir a barra cobre a Central
     return { ok: !f.length, detalhe: (f.length ? f.join(' · ') : `Central → até ${t.ate} · três telas com resumo ${t.resumo}`) + ` · barra do Chris ${menu.includes('navControlePostagem') ? 'COM' : 'sem'} o item (como antes)` };
   });
   await passo('d Helo não tem a porta nem a tela', 'Helo', async page => {

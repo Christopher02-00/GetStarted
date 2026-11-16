@@ -1,4 +1,4 @@
-// J68 — CP216 (16/11/2026, Luís + Amanda, empresas do Otávio): a sessão estava aberta só para a Zeiss e o Luís precisou
+// J68 — CP221 (16/11/2026, Luís + Amanda, empresas do Otávio): a sessão estava aberta só para a Zeiss e o Luís precisou
 // subir vídeos da Ótica Hauer pelo "Gravado avulso". Os vídeos saíam "Ótica Hauer — Vídeo" e a Amanda ainda via
 // "Identificar conteúdo", mesmo com o conteúdo escolhido.
 //  1. Luís: Gravado avulso → digita "Vídeo" → escolhe o conteúdo do calendário → o vídeo nasce com o título do conteúdo
@@ -81,7 +81,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   // 3. Cecília: "Agendar a mesma saída para outro cliente" preenche o formulário.
   await passo('3 Cecília: "Agendar a mesma saída" preenche o formulário', 'Cecília', async page => {
     await page.evaluate(() => irPara('agendamento', document.getElementById('navAgendamento')));
-    const b = page.locator('[data-mesma-saida-cp216="ag-j68"]');
+    const b = page.locator('[data-mesma-saida-cp221="ag-j68"]');
     const tem = await b.waitFor({ timeout: 20000 }).then(() => true, () => false);
     const aviso = await page.locator('#view-agendamento').innerText().then(t => t.includes('Gravação com vários clientes? Agende uma sessão por cliente'));
     if (!tem) return { ok: false, detalhe: `botão "Agendar a mesma saída" ausente · aviso ${aviso ? 'sim' : 'não'}` };

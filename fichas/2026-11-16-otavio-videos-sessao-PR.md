@@ -1,11 +1,11 @@
-fix(gravacoes): vídeo avulso sai completo e "Agendar a mesma saída" para outro cliente (CP216)
+fix(gravacoes): vídeo avulso sai completo e "Agendar a mesma saída" para outro cliente (CP221)
 
 ## Entendimento
 Luís (16/11): a sessão aberta era só da Zeiss e ele precisava subir vídeos da Ótica Hauer, Ótica São José e clínicas. Subiu pelo "Gravado avulso" e a Amanda recebeu "Clínica dos Olhos Hauer — Vídeo", com "Identificar conteúdo" ainda na tela, mesmo com o conteúdo escolhido. Unidade U1 de 1 (ficha `fichas/2026-11-16-otavio-videos-sessao.md`).
 
 ## Alterações
 - `escritorio.html` (git hash-object 64a6a9e2 → 1ab63130):
-  - `lancarVideos`: título `<Cliente> — <conteúdo do calendário>` quando o nome digitado é genérico ("Vídeo", "Vídeo 2"). Na transação, `ligarAvulsosAoCalendarioCp216` grava `calendarItemId/calendarCompetencia/calendarClienteSlug/calendarItemIdx` + ocupação I28 no mesmo commit, com os helpers da sessão. Se a pauta não puder ser ocupada, o vídeo fica como hoje (referência I106). Digest e ids `i67_` sem mudança.
+  - `lancarVideos`: título `<Cliente> — <conteúdo do calendário>` quando o nome digitado é genérico ("Vídeo", "Vídeo 2"). Na transação, `ligarAvulsosAoCalendarioCp221` grava `calendarItemId/calendarCompetencia/calendarClienteSlug/calendarItemIdx` + ocupação I28 no mesmo commit, com os helpers da sessão. Se a pauta não puder ser ocupada, o vídeo fica como hoje (referência I106). Digest e ids `i67_` sem mudança.
   - Lista de gravações (Chris/Amanda/Cecília): botão "Agendar a mesma saída para outro cliente", com clique por delegação (nenhum `window.*` novo). Copia data, hora, local, tipo, equipe, estilo, referências e observações, depois limpa e foca o cliente. `agendarGravacao` não mudou.
   - Aviso no formulário: "Gravação com vários clientes? Agende uma sessão por cliente — cada um vê o próprio calendário."
 - `ensaio/jornadas/J68-avulso-completo-e-mesma-saida.mjs` (nova), `ensaio/README.md` (linha J68), `CLAUDE.md` (portão 177/177).

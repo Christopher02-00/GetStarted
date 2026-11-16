@@ -1,4 +1,4 @@
-# otavio-videos-sessao — vídeo avulso sai completo e "Agendar a mesma saída" para outro cliente (CP216)
+# otavio-videos-sessao — vídeo avulso sai completo e "Agendar a mesma saída" para outro cliente (CP221)
 Pedido original (16/11, Luís): "a sessão aberta no site é Zeiss, mas preciso subir para Ótica Hauer, Ótica São José e as clínicas — pode abrir a sessão?" · Amanda viu 3 vídeos "Clínica dos Olhos Hauer — Vídeo", com "Identificar conteúdo" ainda na tela.
 Unidade: U1 de 1 · Tipo: erro (A) + ajuste (B)
 Reprodução: emulador, J68 vermelha no código do `main` (passos 1, 2 e 3).
@@ -26,10 +26,10 @@ RAIZ B: lista de gravações agendadas (renderListaAgendamentos) — só Chris/A
 ```
 
 ## Mudança (escritorio.html)
-- `tituloAvulsoCp216`: nome genérico ("Vídeo", "Vídeo 2", vazio de texto) + conteúdo escolhido → `<Cliente> — <título do conteúdo>`; nome real digitado fica.
-- `ligarAvulsosAoCalendarioCp216` (dentro da transação do envio, depois de `validarEscolhasEnvioI106`): reaproveita os helpers I28 da sessão (`refOcupacaoI28`, `itemExatoOcupacaoI28`, `dadosReciboOcupacaoI28`) e grava os campos nativos + ocupação no mesmo commit. Qualquer impedimento → vídeo como hoje (referência I106). A ligação nativa substitui `referenciaLegendaI78`, como no checklist da sessão.
+- `tituloAvulsoCp221`: nome genérico ("Vídeo", "Vídeo 2", vazio de texto) + conteúdo escolhido → `<Cliente> — <título do conteúdo>`; nome real digitado fica.
+- `ligarAvulsosAoCalendarioCp221` (dentro da transação do envio, depois de `validarEscolhasEnvioI106`): reaproveita os helpers I28 da sessão (`refOcupacaoI28`, `itemExatoOcupacaoI28`, `dadosReciboOcupacaoI28`) e grava os campos nativos + ocupação no mesmo commit. Qualquer impedimento → vídeo como hoje (referência I106). A ligação nativa substitui `referenciaLegendaI78`, como no checklist da sessão.
 - Digest/ids `i67_` não mudam (entrada do digest é a mesma); "Conferir último envio" segue igual.
-- Lista de gravações: botão "Agendar a mesma saída para outro cliente" (clique por delegação no contêiner, sem `window.*` novo) → `preencherMesmaSaidaCp216` copia data, hora, local, tipo, equipe, estilo, referências e observações, limpa e foca o cliente. Aviso fixo no formulário: "Gravação com vários clientes? Agende uma sessão por cliente — cada um vê o próprio calendário."
+- Lista de gravações: botão "Agendar a mesma saída para outro cliente" (clique por delegação no contêiner, sem `window.*` novo) → `preencherMesmaSaidaCp221` copia data, hora, local, tipo, equipe, estilo, referências e observações, limpa e foca o cliente. Aviso fixo no formulário: "Gravação com vários clientes? Agende uma sessão por cliente — cada um vê o próprio calendário."
 - Ficou inline (não em módulo): depende dos helpers I28 inline e evita a cascata de `?v=` (i106 → i78 → escritório).
 
 ## O que NÃO muda

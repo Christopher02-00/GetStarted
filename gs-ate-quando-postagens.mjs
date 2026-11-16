@@ -42,8 +42,15 @@ function carteira(clientes, ident) {
 }
 const postagemConta = p => !!p && p.excluido !== true && STATUS_COBERTURA_ATE_QUANDO.includes(String(p.status || '')) && ISO.test(String(p.dataAgendada || '').slice(0, 10));
 
-/* A regra de cobertura do alerta da Amanda (§52.2–52.4), movida do escritório sem mudar o resultado. */
-export function coberturaPostagensAteQuando(postagens, clientes, hoje, ident) {
+/* Cliente com calendário (algum conteúdo ativo): é a prova de que ele deveria ter postagem programada. */
+export function slugsComCalendarioAteQuando(calendarios, ident) {
+  const r = new Set();
+  (Array.isArray(calendarios) ? calendarios : []).forEach(c => { const itens = c?.data?.items; if (Array.isArray(itens) && itens.some(i => i && i.excluido !== true)) r.add(ident.slug(c.id || '')); });
+  return r;
+}
+/* A regra de cobertura do alerta da Amanda (§52.2–52.4). 16/11/2026 (U3): cliente da carteira com calendário e
+   NENHUMA postagem ativa com data também gera evento ('sem_postagem_programada') — antes ele nunca era avisado. */
+export function coberturaPostagensAteQuando(postagens, clientes, hoje, ident, slugsComCalendario = null) {
   const { ativos, slugDaPostagem } = carteira(clientes, ident);
   const porSlug = new Map();
   (Array.isArray(postagens) ? postagens : []).forEach(p => {
@@ -61,7 +68,8 @@ export function coberturaPostagensAteQuando(postagens, clientes, hoje, ident) {
     const temCoberturaFutura = !!ultimaData && ultimaData > hoje;
     const diasSemPostagem = diferenca === null ? null : Math.max(0, diferenca);
     const evento = !!ultimaData && !temCoberturaFutura && diferenca >= 0 && diferenca < 3 ? 'ultima_postagem' :
-      (!!ultimaData && !temCoberturaFutura && diferenca >= 3 ? 'tres_dias_sem_postagem' : '');
+      (!!ultimaData && !temCoberturaFutura && diferenca >= 3 ? 'tres_dias_sem_postagem' :
+        (!ultimaData && slugsComCalendario instanceof Set && slugsComCalendario.has(cliente.slug) ? 'sem_postagem_programada' : ''));
     return { ...cliente, ultimaData, qtdNaUltimaData: registro.qtdNaUltimaData || 0, temCoberturaFutura, diasSemPostagem, evento };
   });
 }
@@ -76,7 +84,7 @@ function dataDoItem(item, mes) {
 
 /* Projeção por cliente. `calendarios`/`manual` = null quando a leitura falhou: a linha diz "indisponível", nunca "nada". */
 export function projetarAteQuando({ clientes, postagens, calendarios = null, manual = null, hoje, ident, mesDoItem = (_c, i) => i?.mes || '' }) {
-  const cobertura = coberturaPostagensAteQuando(postagens, clientes, hoje, ident);
+  const cobertura = coberturaPostagensAteQuando(postagens, clientes, hoje, ident, Array.isArray(calendarios) ? slugsComCalendarioAteQuando(calendarios, ident) : null);
   const { slugDaPostagem } = carteira(clientes, ident);
   const mesAtual = hoje.slice(0, 7), proximoMes = mesSeguinteAteQuando(mesAtual), inicio30 = somarDiasISO(hoje, -29);
   const porCliente = new Map(cobertura.map(c => [c.slug, { agendados: [], real30: 0, postagensPorId: new Map(), postagensPorItem: new Map() }]));
@@ -186,4 +194,37 @@ export function htmlDetalheAteQuando(l, { aberto = false } = {}) {
 }
 export function htmlErroAteQuando(mensagem) {
   return `<div class="card" data-ate-quando-erro style="border:2px solid var(--red);"><h2>⚠️ Não consegui montar o "até quando" agora</h2><div class="desc">${escH(mensagem)}</div><div class="meta" style="margin-top:8px;">Nenhum número foi mostrado para não parecer que os clientes estão sem conteúdo. Recarregue a tela em instantes.</div></div>`;
+}
+
+// ---- alerta de cobertura → cápsula (§52.3: só avisa a Amanda; a decisão e o painel são manuais)
+export const TEXTO_CAPSULA_ATE_QUANDO = 'Conteúdo cápsula = conteúdo pré-programado que só precisa de edição, sem gravação, para o cliente não ficar sem postagem. A decisão é sua: abra o painel Cápsula e escolha. Nenhuma cápsula foi acionada por este aviso.';
+export function tituloAlertaCoberturaAteQuando(e) {
+  if (e.evento === 'sem_postagem_programada') return '🥶 ' + e.nome + ' sem nenhuma postagem programada — avaliar conteúdo cápsula';
+  if (e.evento === 'tres_dias_sem_postagem') return '🥶 ' + e.nome + ' sem postagem programada há ' + e.diasSemPostagem + ' dias — avaliar conteúdo cápsula';
+  return '📲 ' + (e.diasSemPostagem === 0 ? 'Hoje sai' : 'Saiu o') + ' último conteúdo programado — ' + e.nome;
+}
+export function descricaoAlertaCoberturaAteQuando(e) {
+  const base = e.evento === 'sem_postagem_programada'
+    ? 'O cliente tem calendário, mas nenhuma postagem ativa com data (agendada ou publicada) no sistema.'
+    : e.evento === 'tres_dias_sem_postagem'
+      ? 'A última postagem registrada para este cliente estava programada para ' + dataBR(e.ultimaData) + '. Já são ' + e.diasSemPostagem + ' dias sem nova cobertura.'
+      : (e.diasSemPostagem === 0 ? 'A última data com conteúdo programado para este cliente é hoje' : 'A última data com conteúdo programado para este cliente foi há ' + e.diasSemPostagem + ' dia(s)') + ' (' + dataBR(e.ultimaData) + '), com ' + e.qtdNaUltimaData + ' conteúdo(s).';
+  return base + '\n\nConfira em “Postagem Até Quando” e organize a próxima programação. Se não der tempo de gravar: ' + TEXTO_CAPSULA_ATE_QUANDO;
+}
+export function textoEventoAteQuando(e) {
+  if (e.evento === 'sem_postagem_programada') return '🥶 Sem nenhuma postagem programada — avaliar conteúdo cápsula.';
+  if (e.evento === 'tres_dias_sem_postagem') return '🥶 ' + e.diasSemPostagem + ' dias sem postagem programada — avaliar conteúdo cápsula.';
+  return (e.diasSemPostagem === 0 ? '🚨 Hoje sai' : '🚨 Saiu há ' + e.diasSemPostagem + ' dia(s) o') + ' último conteúdo programado (' + e.qtdNaUltimaData + ' nesta data).';
+}
+/* Botões do alerta na demanda. O painel Cápsula só para a Amanda (é dela a decisão). */
+export function htmlAcoesAlertaCoberturaAteQuando(d, pessoa) {
+  if (!d || d.tipoEspecial !== 'alerta_cobertura_postagem') return '';
+  return `<div class="card" data-alerta-capsula style="border:1px solid var(--yellow);margin:12px 0;">
+    <div class="meta">${escH(TEXTO_CAPSULA_ATE_QUANDO)}</div>
+    <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:8px;">
+      ${pessoa === 'Amanda' ? '<button class="btn green" data-alerta-capsula-acao="painel" onclick="fecharModal();irParaCapsulaAmanda()">🥶 Avaliar conteúdo cápsula</button>' : ''}
+      <button class="btn secondary" data-alerta-capsula-acao="ate-quando" onclick="fecharModal();irPara('controlePostagem',document.getElementById('navControlePostagem'))">📆 Ver Postagem Até Quando</button>
+    </div>
+    <div class="meta" style="margin-top:6px;opacity:.7;">O aviso fecha sozinho quando o cliente voltar a ter postagem agendada.</div>
+  </div>`;
 }

@@ -1072,7 +1072,7 @@ body:has(#overlayView.show) #botaoNovaDemandaGlobal{display:none!important;}
           <h2>Nova gravação</h2>
           <div id="avisoQtdHoje"></div>
           <div class="row2">
-            <div class="field"><label for="agCliente">Cliente</label><select id="agCliente" onchange="mostrarHistoricoCliente(); mostrarSolicitacoesDoCalendario();"></select><div id="agClientesEstadoI85" class="meta" role="status" style="margin-top:6px;"></div><button id="agClientesAtualizarI85" type="button" class="btn secondary" style="width:auto;margin-top:8px;padding:8px 12px;" onclick="atualizarClientesAgendamentoI85()">Atualizar clientes</button></div>
+            <div class="field"><label for="agCliente">Cliente</label><select id="agCliente" onchange="mostrarHistoricoCliente(); mostrarSolicitacoesDoCalendario();"></select><div id="agClientesEstadoI85" class="meta" role="status" style="margin-top:6px;"></div><button id="agClientesAtualizarI85" type="button" class="btn secondary" style="width:auto;margin-top:8px;padding:8px 12px;" onclick="atualizarClientesAgendamentoI85()">Atualizar clientes</button><div class="meta" id="agVariosClientesCp221" style="margin-top:6px;">Gravação com vários clientes? Agende uma sessão por cliente — cada um vê o próprio calendário.</div></div>
             <div class="field"><label>Tipo</label><select id="agTipo"><option value="fixo">Cliente fixo</option><option value="avulso">Avulso (fora do banco)</option></select></div>
           </div>
           <div id="historicoClienteMes"></div>
@@ -6965,6 +6965,39 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     mostrarToast('Dados da tentativa restaurados. Clique em Enviar para conferir, sem duplicar o lote.');
     return true;
   };
+  /* CP221 (16/11/2026, Otávio/Luís): vídeo do "Gravado avulso" identificado a um conteúdo do calendário nasce como o da
+     sessão — título com o conteúdo quando o nome digitado é genérico ("Vídeo", "Vídeo 2") e ligação nativa
+     (calendarItemId + ocupação I28, mesma regra e mesmas conferências da sessão). Se a pauta não puder ser ocupada
+     (já gravada/postada, outro vídeo, preparação I28 pendente), o vídeo fica como hoje: com a referência I106. */
+  const nomeGenericoCp221=n=>/^(v[ií]deo)?[\s\d.#ºª°-]*$/i.test(String(n||'').trim());
+  function tituloAvulsoCp221(cliente,nome,escolha){
+    const t=String(escolha?.linha?.titulo||'').trim();
+    if(!t||t==='Sem título'||!nomeGenericoCp221(nome))return cliente+' — '+nome;
+    return (t.toLowerCase().startsWith(String(cliente).toLowerCase())?t:cliente+' — '+t).slice(0,300);
+  }
+  async function ligarAvulsosAoCalendarioCp221(tx,videos,escolhas,slug,uid){
+    const saida=videos.map(v=>({dados:{...v.data}}));
+    const alvos=videos.map((v,i)=>{const l=escolhas[i]?.linha;
+      return l&&l.calendarId===slug&&segmentoOcupacaoI28(String(l.itemId||''))&&/^\d{4}-(0[1-9]|1[0-2])$/.test(l.competencia||'')
+        ?{cliente:slug,calendarioDocumentoId:slug,competencia:l.competencia,itemId:String(l.itemId)}:null;});
+    if(!alvos.some(Boolean))return saida;
+    const gate=await tx.get(doc(db,'calendarios_vinculos_controle','i28'));
+    if(!gate.exists()||gate.data()?.pronto!==true||gate.data()?.versao!==28)return saida;
+    const cal=await tx.get(doc(db,'calendarios',slug));
+    if(!cal.exists())return saida;
+    const usados=new Set();
+    for(let i=0;i<videos.length;i++){
+      const alvo=alvos[i];if(!alvo)continue;
+      const ref=refOcupacaoI28(alvo);if(usados.has(ref.path))continue;
+      let par;try{par=itemExatoOcupacaoI28(cal.data(),alvo);}catch(e){continue;} // pauta já produzida: fica a referência I106
+      if((await tx.get(ref)).exists())continue;
+      const d={...saida[i].dados,calendarItemId:alvo.itemId,calendarCompetencia:alvo.competencia,calendarClienteSlug:slug,calendarItemIdx:par.idx};
+      try{if(GetEmpresasOtavioI144.ativo(slug)&&GetEmpresasOtavioI144.bruto(d)!==GetEmpresasOtavioI144.bruto(par.item))continue;Object.assign(d,GetEmpresasOtavioI144.conferir(slug,d,par.item));}catch(e){continue;}
+      delete d.referenciaLegendaI78; // a ligação nativa substitui a referência (como no checklist da sessão)
+      usados.add(ref.path);saida[i]={dados:d,ocupacaoRef:ref,recibo:dadosReciboOcupacaoI28(videos[i].id,alvo,'gravacao',uid)};
+    }
+    return saida;
+  }
   let __identificandoEnvioI106=false;
   window.lancarVideos = async function(){
     if(!podeLancarVideo(usuarioAtual)||envioMateriaisEmCursoI52()||__identificandoEnvioI106)return false;
@@ -7000,7 +7033,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
         const escolhasI106=externo?nomes.map(()=>({modo:'extra',linha:null})):await escolherConteudosI106({document,nomes,linhas:fonteI106.linhas,cliente:identidade.nome,clienteSlug:identidade.slug,validar,disponivel:fonteI106.disponivel});
         if(!escolhasI106)return false;validar();
         const emI106=new Date().toISOString();
-        const titulos=nomes.map(n=>(origem==='recebido'?'✂️ ':'')+identidade.nome+' — '+n);
+        const titulos=nomes.map((n,i)=>(origem==='recebido'?'✂️ ':'')+tituloAvulsoCp221(identidade.nome,n,escolhasI106[i]));
         const repetidos=snap.docs.filter(d=>!d.data().excluido&&!['finalizado','arquivado'].includes(d.data().status)&&titulos.some(t=>t.toLowerCase()===String(d.data().titulo||'').toLowerCase()));
         if(repetidos.length&&!confirm('Já existe vídeo com esse nome para '+identidade.nome+'. Se for o mesmo material, cancele. Criar outra versão mesmo assim?'))return false;
         validar();
@@ -7023,7 +7056,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
           const fonte=await lerIdentidadesClienteI106(identidade.slug);validar();
           const escolhas=await escolherConteudosI106({document,nomes,linhas:fonte.linhas,cliente:identidade.nome,clienteSlug:identidade.slug,validar,anteriores:pendente.escolhasI106||[]});
           if(!escolhas)return false;validar();const em=new Date().toISOString();
-          pendente.videos.forEach((v,i)=>{v.data.identificacaoConteudoI106=identificacaoI106(escolhas[i],atorRealDaSessao(),em);delete v.data.referenciaLegendaI78;delete v.data.empresaOtavio;Object.assign(v.data,GetEmpresasOtavioI144.campos(identidade.slug,escolhas[i].linha||escolhas[i]));if(escolhas[i].linha)v.data.referenciaLegendaI78=referenciaEscolhidaI106(escolhas[i].linha,identidade.slug,atorRealDaSessao(),em);});
+          pendente.videos.forEach((v,i)=>{v.data.titulo=(pendente.form.origem==='recebido'?'✂️ ':'')+tituloAvulsoCp221(identidade.nome,nomes[i],escolhas[i]);v.data.identificacaoConteudoI106=identificacaoI106(escolhas[i],atorRealDaSessao(),em);delete v.data.referenciaLegendaI78;delete v.data.empresaOtavio;Object.assign(v.data,GetEmpresasOtavioI144.campos(identidade.slug,escolhas[i].linha||escolhas[i]));if(escolhas[i].linha)v.data.referenciaLegendaI78=referenciaEscolhidaI106(escolhas[i].linha,identidade.slug,atorRealDaSessao(),em);});
           pendente.escolhasI106=escolhas.map(e=>({...e,fontes:fonte.fontes}));
           delete pendente.reidentificarI106;sessionStorage.setItem(chave,JSON.stringify(pendente));
         }
@@ -7037,7 +7070,10 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
           return;
         }
         await validarEscolhasEnvioI106(tx,pendente.escolhasI106||[],identidade.slug);validar();
-        pendente.videos.forEach((v,i)=>tx.set(refs[i],{...v.data,criadoEm:serverTimestamp()}));
+        const gravadosCp221=pendente.form.origem==='gravado'&&pendente.form.cliente!=='__externo__'
+          ?await ligarAvulsosAoCalendarioCp221(tx,pendente.videos,pendente.escolhasI106||[],identidade.slug,uid):pendente.videos.map(v=>({dados:v.data}));
+        validar();
+        gravadosCp221.forEach((v,i)=>{tx.set(refs[i],{...v.dados,criadoEm:serverTimestamp()});if(v.ocupacaoRef)tx.set(v.ocupacaoRef,v.recibo);});
         // I83B: conserva o recibo atômico sem criar outra cobrança para a mesma fila.
         tx.set(avisoRef,{...pendente.demanda,...(!pendente.form.editor?{
           titulo:'Recibo · '+pendente.demanda.titulo,status:'aprovada',ehAviso:true,reciboEnvioI83B:true,
@@ -12440,16 +12476,42 @@ window.atualizarClientesAgendamentoI85=()=>popularClientesAgendamento();
             <span class="selo pendente">${esc(a.status)}</span>
             ${podeAdministrar ? `<button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10px;" onclick="reposicionarAgendamento('${a.id}')">📆 Mudar dia</button>
             <button class="btn red" style="width:auto;padding:4px 10px;font-size:10px;" onclick="cancelarAgendamento('${a.id}')">Cancelar</button>
-            <button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10px;opacity:.65;" onclick="apagarAgendamento('${a.id}')" title="Só quando foi criada por engano">🗑️</button>` : ''}
+            <button class="btn secondary" style="width:auto;padding:4px 10px;font-size:10px;opacity:.65;" onclick="apagarAgendamento('${a.id}')" title="Só quando foi criada por engano">🗑️</button>
+            <button type="button" class="btn secondary" style="width:auto;padding:4px 10px;font-size:10px;" data-mesma-saida-cp221="${escAttr(a.id)}">Agendar a mesma saída para outro cliente</button>` : ''}
           </div>
         </div>
       `).join('');
+      // CP221: um clique na lista (sem handler global) copia a saída para o formulário; agendarGravacao segue igual.
+      cont.onclick = podeAdministrar ? (ev => { const b = ev.target.closest('[data-mesma-saida-cp221]'); if(b) preencherMesmaSaidaCp221(futuros.find(a => a.id === b.dataset.mesmaSaidaCp221)); }) : null;
     }catch(e){
       console.error('Falha ao carregar gravações agendadas:', e);
       cont.innerHTML = '<div class="card" style="border:2px solid var(--red);"><b>⚠️ Não consegui carregar as gravações.</b><div class="meta" style="margin-top:6px;">Nenhum dado foi removido.</div><button class="btn secondary" style="margin-top:10px;" onclick="renderListaAgendamentos()">Tentar novamente</button></div>';
     }
   }
   window.renderListaAgendamentos = renderListaAgendamentos;
+  /* CP221 (16/11/2026, Luís/Otávio): gravação conjunta = uma sessão por cliente. Copia data, hora, local, tipo, equipe,
+     estilo, referências e observações da sessão escolhida; o cliente fica vazio para a coordenação escolher o próximo. */
+  function preencherMesmaSaidaCp221(a){
+    if(!a||!['Chris','Amanda','Cecília'].includes(usuarioAtual))return;
+    const por=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v??'';};
+    por('agData',a.data);por('agHora',a.hora||'10:00');por('agLocal',a.local);por('agEstilo',a.estilo);
+    por('agReferencias',(Array.isArray(a.referencias)?a.referencias:[]).join('\n'));por('agObsFilmmaker',a.obsFilmmaker);
+    if(['fixo','avulso'].includes(a.tipo))por('agTipo',a.tipo);
+    const cont=document.getElementById('agEquipeLinhas');
+    if(cont){
+      cont.replaceChildren();delete cont.dataset.equipeFixa;
+      equipeDoAgendamento(a).forEach(p=>{adicionarLinhaEquipeInterna();const l=cont.lastElementChild;
+        const pessoa=l?.querySelector('.agEquipePessoa'),papel=l?.querySelector('.agEquipePapel');
+        if(pessoa&&[...pessoa.options].some(o=>o.value===p.nome))pessoa.value=p.nome;
+        if(papel&&[...papel.options].some(o=>o.value===p.papel))papel.value=p.papel;});
+      garantirLinhaEquipe();
+    }
+    const mes=document.getElementById('agCompetenciaCalendario');if(mes)delete mes.dataset.manual;
+    document.getElementById('agData')?.dispatchEvent(new Event('change'));
+    const cli=document.getElementById('agCliente');
+    if(cli){cli.value='';cli.dispatchEvent(new Event('change'));cli.scrollIntoView({block:'center'});cli.focus();}
+    mostrarToast('Saída de '+formatarDataBR(a.data)+(a.hora?' às '+a.hora:'')+' copiada. Escolha o outro cliente e confira o mês da pauta.');
+  }
 
   window.trocarFilmmakerAgendamento = async function(id, filmmaker){
     if(!['Chris','Amanda','Cecília'].includes(usuarioAtual)){

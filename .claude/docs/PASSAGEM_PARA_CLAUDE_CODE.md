@@ -268,6 +268,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | C Cookiery (CP218) — Recebi com data real | ✅ no ar (+ revisão: o botão lê o campo de data ao lado dele, mesma mensalidade em duas telas); **feito em produção**: 2026-04 paga em 10/04 (caixa abril 0 → 1.700; novembro igual) | main bc96cc2, J73 |
 | A Place (CP216) — correção individual × ajustes internos | ✅ site + Functions no ar (17/11); J71 vermelha antes, verde depois. Produção: a trava sumiu; as 2 peças estão "Aguardando revisão da Amanda" (sem "Trazer para a versão atual"). Falta só a Amanda aprovar peças e pedido e liberar | PR #134 |
 | D Mochi (CP219) — retirar peça CP142 de mês liberado | ✅ site + Functions no ar (17/11); J74 vermelha antes, verde depois. Produção: Chris pediu a retirada de "A arte do delivery" (dia 22) e "Foto de prato" (dia 28) de 2026-11; aguardam a Amanda aprovar e liberar | PR #135 |
+| F Little Elephant (CP222) — ficha mudou, editor sem botão para readotar | site no ar após o PR #136 (J49b vermelha antes, verde depois); readoção em produção e Functions (texto CP198) só com ok do Chris | PR #136 |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

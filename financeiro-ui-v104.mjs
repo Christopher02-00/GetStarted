@@ -68,6 +68,25 @@ function listaSnapshot(snap){
 
 function hojeIso(deps){ return texto(deps.hojeLocal()).slice(0,10); }
 
+/* CP218 (Chris, 16/11/2026 — Cookiery): "Recebi" grava a data REAL do pagamento, não o dia do clique.
+   Faixa aceita: do 1º dia do mês anterior à competência (pagamento adiantado) até hoje; nunca no futuro.
+   A competência não muda; o caixa usa esta data (pagoEm). */
+export function limitesDataRecebimentoMensalidade(competencia,hoje){
+  const c=texto(competencia), h=texto(hoje).slice(0,10);
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(c)||!/^\d{4}-\d{2}-\d{2}$/.test(h)) return null;
+  const [a,m]=c.split('-').map(Number), anterior=m===1?`${a-1}-12`:`${a}-${String(m-1).padStart(2,'0')}`;
+  return {min:`${anterior}-01`,max:h};
+}
+export function validarDataRecebimentoMensalidade(valor,competencia,hoje){
+  const data=texto(valor).slice(0,10), lim=limitesDataRecebimentoMensalidade(competencia,hoje);
+  if(!lim) return {ok:false,erro:'Competência ou data de hoje inválida.'};
+  const [a,m,d]=data.split('-').map(Number), real=new Date(Date.UTC(a,(m||1)-1,d||1));
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(data)||real.getUTCFullYear()!==a||real.getUTCMonth()!==m-1||real.getUTCDate()!==d) return {ok:false,erro:'Informe a data real do pagamento (dia/mês/ano).'};
+  if(data>lim.max) return {ok:false,erro:'A data do pagamento não pode ser no futuro.'};
+  if(data<lim.min) return {ok:false,erro:`A data do pagamento não pode ser antes de ${lim.min.split('-').reverse().join('/')} (mês anterior à competência).`};
+  return {ok:true,data};
+}
+
 function rotuloEstadoCobranca(estado,dias){
   if(estado==='vence_amanha') return 'vence amanhã';
   if(estado==='vence_hoje') return 'vence hoje';
@@ -104,6 +123,10 @@ export function instalarFinanceiroV104(deps){
   let aberturaContratosI132=0;
 
   function pessoa(){ return texto(usuarioAtual()); }
+  function campoDataRecebimento(v){
+    const lim=limitesDataRecebimentoMensalidade(v.competencia,hojeLocal());
+    return `<div class="field" style="max-width:190px;margin:0;"><label>Data real do pagamento</label><input type="date" id="mensPagoEm_${escAttr(v.id)}" value="${escAttr(hojeLocal().slice(0,10))}" max="${escAttr(lim?.max||'')}" min="${escAttr(lim?.min||'')}"></div>`;
+  }
   function canFinanceiro(){ return pessoa()==='Chris'; }
   function canContratos(){ return ['Chris','Amanda'].includes(pessoa()); }
   function invalidar(){ caches.clear(); carregamentos.clear(); geracaoCacheI94++; revalidarI94=true; }
@@ -348,7 +371,7 @@ function competenciaDeDataCaixa(valor){
       const porDia={}; linhas.forEach(v=>{const d=numero(v.diaVencimento)||10;(porDia[d]??=[]).push(v);});
       for(const dia of Object.keys(porDia).map(Number).sort((a,b)=>a-b)){
         const grupo=porDia[dia];
-        html+=`<div class="faixaDem aberta"><div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${grupo.length})</span><span class="seta">▾</span></div><div class="faixaItens">${grupo.map(v=>`<div class="item" style="border-left:3px solid ${v.sit.cor};"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${v.sit.selo}">${esc(v.cobertoPor?'Coberta pelo grupo':v.sit.rotulo)}</span></div><div class="meta">${v.cobertoPor?`Parte: ${brl(v.parteGrupo)} · coberta pela cobrança de ${esc(nomes.get(v.cobertoPor)||v.cobertoPor)}`:`${brl(v.valorDevido)} · ${v.materializada?'documento confirmado':'obrigação derivada, ainda sem documento'}`}</div><div class="btnrow" style="margin-top:8px;">${!['pago','isento','cancelado'].includes(v.sit.k)?`<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Recebi</button>${v.pagamentoEntradaPendente?'':`<button class="btn secondary" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','isento')">🎁 Cortesia</button>`}`:''}</div>${['pago','isento'].includes(v.sit.k)&&!v.cobertoPor?'<div class="meta" style="margin-top:8px;">Estado encerrado. Uma correção exige lançamento auditado; esta tela não reabre cobranças silenciosamente.</div>':''}</div>`).join('')}</div></div>`;
+        html+=`<div class="faixaDem aberta"><div class="faixaHead" onclick="toggleFaixaDemandas(this)">Dia ${dia} <span class="qtd">(${grupo.length})</span><span class="seta">▾</span></div><div class="faixaItens">${grupo.map(v=>`<div class="item" style="border-left:3px solid ${v.sit.cor};"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${v.sit.selo}">${esc(v.cobertoPor?'Coberta pelo grupo':v.sit.rotulo)}</span></div><div class="meta">${v.cobertoPor?`Parte: ${brl(v.parteGrupo)} · coberta pela cobrança de ${esc(nomes.get(v.cobertoPor)||v.cobertoPor)}`:`${brl(v.valorDevido)} · ${v.materializada?'documento confirmado':'obrigação derivada, ainda sem documento'}`}</div><div class="btnrow" style="margin-top:8px;">${!['pago','isento','cancelado'].includes(v.sit.k)?`${v.pagamentoEntradaPendente?'':campoDataRecebimento(v)}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago',this)">✔ Recebi</button>${v.pagamentoEntradaPendente?'':`<button class="btn secondary" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','isento')">🎁 Cortesia</button>`}`:''}</div>${['pago','isento'].includes(v.sit.k)&&!v.cobertoPor?'<div class="meta" style="margin-top:8px;">Estado encerrado. Uma correção exige lançamento auditado; esta tela não reabre cobranças silenciosamente.</div>':''}</div>`).join('')}</div></div>`;
       }
       box.innerHTML=html;
       return true;
@@ -359,7 +382,7 @@ function competenciaDeDataCaixa(valor){
     }
   };
 
-  async function materializarOuAtualizarMensalidade(id,status){
+  async function materializarOuAtualizarMensalidade(id,status,pagoEmReal=''){
     if(!canFinanceiro()) throw new Error('Ação exclusiva do Financeiro do Chris.');
     const linha=w.__mensalidadesV103?.[id]||w.__cobrancasV103?.[id];
     if(!linha) throw new Error('Atualize a tela antes de confirmar esta mensalidade.');
@@ -380,25 +403,33 @@ function competenciaDeDataCaixa(valor){
           throw new Error('Estado encerrado não pode ser trocado sem uma correção financeira auditada.');
         }
       }
-      const dados={status,atualizadoPor:pessoa(),atualizadoEm:serverTimestamp(),pagoEm:status==='pago'?hojeLocal():''};
+      const dados={status,atualizadoPor:pessoa(),atualizadoEm:serverTimestamp(),pagoEm:status==='pago'?(pagoEmReal||hojeLocal()):''};
       if(status==='isento') Object.assign(dados,{cortesiaDoMes:false,motivoIsencao:'cortesia manual'});
       if(status==='aberto') Object.assign(dados,{cortesiaDoMes:false,cortesiaPermanente:false,motivoIsencao:''});
       if(!pgSnap.exists()) Object.assign(dados,{cliente:linha.canonicalId,clienteNome:linha.clienteNome||linha.canonicalId,competencia:linha.competencia,valorDevido:atual.valorDevido,diaVencimento:atual.diaVencimento||10,comprovante:'',criadoEm:serverTimestamp(),origemMaterializacao:'acao_explicita_v103'});
       tx.set(ref,dados,{merge:true});
     });
     const recibo=await getDoc(ref);
-    if(!recibo.exists()||Core.statusMensalidade(recibo.data())!==status) throw new Error('A transação terminou, mas o recibo não confirmou o estado solicitado. Não repita; atualize.');
+    if(!recibo.exists()||Core.statusMensalidade(recibo.data())!==status||(status==='pago'&&pagoEmReal&&texto(recibo.data().pagoEm).slice(0,10)!==pagoEmReal)) throw new Error('A transação terminou, mas o recibo não confirmou o estado solicitado. Não repita; atualize.');
   }
 
-  w.marcarMensalidadeV103=async function(id,status){
+  w.marcarMensalidadeV103=async function(id,status,origem=null){
     const linha=w.__mensalidadesV103?.[id]||w.__cobrancasV103?.[id];
     if(status==='pago'&&linha?.pagamentoEntradaPendente===true) return w.abrirPrimeiroPagamentoMensalidadeI94(id);
     if(locks.has('mens:'+id)) return false;
     if(!['pago','isento','aberto'].includes(status)) return false;
-    if(!confirm(`Confirmar mensalidade como ${status.toUpperCase()}?`)) return false;
+    let pagoEmReal='';
+    if(status==='pago'){
+      // a mesma mensalidade pode aparecer em Mensalidades e na Régua: lê o campo ao lado do botão clicado
+      const campo=origem?.closest?.(".btnrow")?.querySelector?.(`input[id="mensPagoEm_${id}"]`)||w.document?.getElementById(`mensPagoEm_${id}`);
+      const validada=validarDataRecebimentoMensalidade(campo?campo.value:hojeLocal(),linha?.competencia,hojeLocal());
+      if(!validada.ok){ mostrarToast(validada.erro,'erro'); return false; }
+      pagoEmReal=validada.data;
+    }
+    if(!confirm(status==='pago'?`Confirmar mensalidade ${linha?.competencia||''} como PAGA em ${pagoEmReal.split('-').reverse().join('/')}? O caixa usa esta data; a competência não muda.`:`Confirmar mensalidade como ${status.toUpperCase()}?`)) return false;
     locks.add('mens:'+id);
     try{
-      await materializarOuAtualizarMensalidade(id,status);
+      await materializarOuAtualizarMensalidade(id,status,pagoEmReal);
       invalidar(); mostrarToast('Mensalidade confirmada com recibo.');
       await Promise.all([w.renderMensalidades(),w.renderFinanceiro(),w.renderCobranca()]);
       return true;
@@ -436,7 +467,7 @@ function competenciaDeDataCaixa(valor){
           const contatoAusente=telefone?'':`<div style="display:flex;gap:6px;align-items:center;margin-top:7px;"><input id="whatsRapidoV103_${escAttr(v.id)}" placeholder="(41) 99999-9999" style="flex:1;"><button class="btn secondary" style="width:auto;" onclick="salvarWhatsRapidoV103('${escJs(v.id)}','${escJs(v.canonicalId)}')">Salvar número privado</button></div>`;
           const acao=tipo==='proxima'
             ? '<div class="meta" style="margin-top:7px;">Previsão somente leitura; nenhuma cobrança é criada antes da competência.</div>'
-            : `<div class="btnrow" style="margin-top:8px;">${v.materializada&&cobravel?`<button class="btn secondary" style="width:auto;" onclick="abrirCobranca('${escJs(v.id)}')">${cobradoHoje?'Abrir conversa novamente':'Abrir cobrança'}</button>`:!v.materializada?`<button class="btn secondary" style="width:auto;" onclick="materializarCobrancaV103('${escJs(v.id)}')">Criar cobrança deste mês</button>`:'<span class="meta">Fora da janela de cobrança; permanece somente como previsão.</span>'}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">✔ Já recebi</button></div>${v.materializada&&cobravel&&!cobradoHoje?`<button id="confirmarCobranca_${escAttr(v.id)}" class="btn secondary" style="width:auto;margin-top:7px;border-color:var(--green);" hidden onclick="confirmarEnvioCobrancaV103('${escJs(v.id)}')">Confirmar que enviei</button>`:''}${!v.materializada?'<div class="meta" style="margin-top:7px;">Depois da criação confirmada, clique novamente em “Abrir cobrança”. Isso evita bloqueio de pop-up.</div>':''}`;
+            : `<div class="btnrow" style="margin-top:8px;">${v.materializada&&cobravel?`<button class="btn secondary" style="width:auto;" onclick="abrirCobranca('${escJs(v.id)}')">${cobradoHoje?'Abrir conversa novamente':'Abrir cobrança'}</button>`:!v.materializada?`<button class="btn secondary" style="width:auto;" onclick="materializarCobrancaV103('${escJs(v.id)}')">Criar cobrança deste mês</button>`:'<span class="meta">Fora da janela de cobrança; permanece somente como previsão.</span>'}${v.pagamentoEntradaPendente?'':campoDataRecebimento(v)}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago',this)">✔ Já recebi</button></div>${v.materializada&&cobravel&&!cobradoHoje?`<button id="confirmarCobranca_${escAttr(v.id)}" class="btn secondary" style="width:auto;margin-top:7px;border-color:var(--green);" hidden onclick="confirmarEnvioCobrancaV103('${escJs(v.id)}')">Confirmar que enviei</button>`:''}${!v.materializada?'<div class="meta" style="margin-top:7px;">Depois da criação confirmada, clique novamente em “Abrir cobrança”. Isso evita bloqueio de pop-up.</div>':''}`;
           return `<div class="item" style="margin-top:9px;${cobradoHoje?'opacity:.62;':''}"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${cobradoHoje?'aprovada':classeEstadoCobranca(c.estado)}">${cobradoHoje?'✔ cobrado hoje':esc(rotuloEstadoCobranca(c.estado,c.dias))}</span></div><div class="meta">${brl(v.valorDevido)} · ${esc(nomeMes(v.competencia))}${v.materializada?'':' · obrigação derivada'}</div>${contatoAusente}${acao}</div>`;
         }).join('');
         return `<div class="card" style="border-left:4px solid ${tipo==='anterior'?'var(--red)':tipo==='atual'?'var(--yellow)':'var(--line)'};"><h2>${titulo}</h2><div class="desc">${sub}</div>${corpo||'<div class="empty">Nenhum item nesta seção.</div>'}</div>`;
@@ -544,7 +575,7 @@ function competenciaDeDataCaixa(valor){
         const contato=`<div class="meta" style="margin-top:5px;">WhatsApp: <b>${esc(rotuloContato)}</b>${origemContato}${telefone?` · <button class="linkBtn" onclick="alternarEdicaoWhatsV104('${escJs(v.id)}')">Editar contato</button>`:''}</div>${contatoBloqueado?'<div class="meta" style="color:var(--red);">A cobrança fica bloqueada até os números divergentes serem revisados.</div>':''}${editor}`;
         const acao=previsao
           ? '<div class="meta" style="margin-top:7px;">Previsão; ainda não é uma cobrança.</div>'
-          : `<div class="btnrow" style="margin-top:8px;">${v.materializada&&cobravel&&contatoDisponivel?`<button class="btn secondary" style="width:auto;" onclick="abrirCobranca('${escJs(v.id)}')">${cobradoHoje?'Abrir conversa novamente':'Abrir cobrança'}</button>`:v.materializada&&cobravel?'<span class="meta">Cadastre ou revise o WhatsApp antes de abrir a cobrança.</span>':!v.materializada?`<button class="btn secondary" style="width:auto;" onclick="materializarCobrancaV103('${escJs(v.id)}')">Criar cobrança deste mês</button>`:'<span class="meta">Ainda fora da janela de cobrança.</span>'}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago')">${v.pagamentoEntradaPendente?'Confirmar primeiro pagamento':'✔ Já recebi'}</button></div>${v.materializada&&cobravel&&contatoDisponivel&&!cobradoHoje?`<button id="confirmarCobranca_${escAttr(v.id)}" class="btn secondary" style="width:auto;margin-top:7px;border-color:var(--green);" hidden onclick="confirmarEnvioCobrancaV103('${escJs(v.id)}')">Confirmar que enviei</button>`:''}`;
+          : `<div class="btnrow" style="margin-top:8px;">${v.materializada&&cobravel&&contatoDisponivel?`<button class="btn secondary" style="width:auto;" onclick="abrirCobranca('${escJs(v.id)}')">${cobradoHoje?'Abrir conversa novamente':'Abrir cobrança'}</button>`:v.materializada&&cobravel?'<span class="meta">Cadastre ou revise o WhatsApp antes de abrir a cobrança.</span>':!v.materializada?`<button class="btn secondary" style="width:auto;" onclick="materializarCobrancaV103('${escJs(v.id)}')">Criar cobrança deste mês</button>`:'<span class="meta">Ainda fora da janela de cobrança.</span>'}${v.pagamentoEntradaPendente?'':campoDataRecebimento(v)}<button class="btn green" style="width:auto;" onclick="marcarMensalidadeV103('${escJs(v.id)}','pago',this)">${v.pagamentoEntradaPendente?'Confirmar primeiro pagamento':'✔ Já recebi'}</button></div>${v.materializada&&cobravel&&contatoDisponivel&&!cobradoHoje?`<button id="confirmarCobranca_${escAttr(v.id)}" class="btn secondary" style="width:auto;margin-top:7px;border-color:var(--green);" hidden onclick="confirmarEnvioCobrancaV103('${escJs(v.id)}')">Confirmar que enviei</button>`:''}`;
         return `<div class="item" data-regua-linha="${escAttr(v.id)}" data-contato-estado="${escAttr(contatoResolvido.estado)}" style="margin-top:7px;${cobradoHoje?'opacity:.72;':''}"><div class="top"><div class="nome">${esc(nomeLinha(v,nomes))}</div><span class="selo ${cobradoHoje?'aprovada':classeEstadoCobranca(c.estado)}">${cobradoHoje?'✔ cobrado hoje':esc(rotuloEstadoCobranca(c.estado,c.dias))}</span></div><div class="meta">${brl(v.valorDevido)} · ${esc(nomeMes(v.competencia))}${v.materializada?'':' · ainda não criada'}</div>${contato}${acao}<button class="btn secondary" style="width:auto;margin-top:8px" onclick="abrirValorContratoCliente('${escJs(v.canonicalId)}')">Dados do contrato</button></div>`;
       };
       const comprovantes=reg.comprovantesEmAnalise?.itens||[];

@@ -85,7 +85,8 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     if (!copia) throw new Error('a cópia do cliente não recebeu o mês');
     const idx = copia.items.findIndex(i => i?.itemId === 'calitem_j71_vitrine');
     await page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(i => { try { return typeof openEdit === 'function' && data.items[i]?.itemId === 'calitem_j71_vitrine'; } catch { return false; } }, idx, { timeout: 30000 });
+    // mesma espera da J56/J60B: a página do cliente usa a cópia do cliente (calendarios_cliente), de onde vem o índice
+    await page.waitForFunction(() => /Liberado — o cliente já vê/.test(document.body.innerText) && typeof openEdit === 'function', null, { timeout: 30000 });
     await page.evaluate(i => openEdit(i), idx);
     await page.waitForSelector('#mObsCliente', { state: 'visible', timeout: 15000 });
     await page.fill('#mObsCliente', 'Pedido do cliente (J71): trocar o roteiro da vitrine.');

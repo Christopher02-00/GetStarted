@@ -61,7 +61,8 @@ export async function subir({ log = console.log } = {}) {
   for (const k of ['FIRESTORE_EMULATOR_HOST', 'FIREBASE_AUTH_EMULATOR_HOST', 'GOOGLE_APPLICATION_CREDENTIALS']) delete env[k];
   // os emuladores só falam com localhost: nenhum proxy (o proxy do ambiente responde 'request blocked' a chamadas internas)
   for (const k of Object.keys(env)) if (/proxy/i.test(k)) delete env[k];
-  const env2 = { ...env, GET_I166_MIDIA_ENABLED: 'false', GET_I165_DEPLOY_EMAIL_ENABLED: 'false', NO_PROXY: '127.0.0.1,localhost,' + (env.NO_PROXY || ''), no_proxy: '127.0.0.1,localhost,' + (env.no_proxy || '') };
+  // 17/11/2026: com ~186 casos, o Firestore do emulador estourava os 4 GB padrão do Java no fim da bateria (OutOfMemoryError na J70 → 500/fetch failed). 6 GB cabe no Mac (16 GB) e no runner do CI (16 GB).
+  const env2 = { ...env, JAVA_TOOL_OPTIONS: ((env.JAVA_TOOL_OPTIONS || '') + ' -Xmx6g').trim(), GET_I166_MIDIA_ENABLED: 'false', GET_I165_DEPLOY_EMAIL_ENABLED: 'false', NO_PROXY: '127.0.0.1,localhost,' + (env.NO_PROXY || ''), no_proxy: '127.0.0.1,localhost,' + (env.no_proxy || '') };
   const proc = spawn('firebase', ['emulators:start', '--only', 'firestore,auth,functions', '--project', PROJETO, '--config', cfgPath], { env: env2, stdio: ['ignore', logFile, logFile], cwd: RUNTIME });
   const matar = () => { try { proc.kill('SIGKILL'); } catch {} };
   process.on('exit', matar); process.on('SIGINT', () => { matar(); process.exit(130); }); process.on('uncaughtException', e => { console.error(e); matar(); process.exit(1); });

@@ -257,6 +257,27 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 - Hipótese descartada com prova: "recusas normais acendiam a faixa vermelha" (J34 verde também no código antigo; nenhum `console.error` junta o código do erro ao texto).
 - Próximo candidato de desempenho (ficha própria): a gestão assina as 4.671 demandas inteiras a cada abertura (~190 mil leituras/dia, 4,9 MB no celular da Amanda).
 
+## 5-B. Estado em 17/11/2026 (Claude Code — pedidos de 16/11)
+| Unidade | Situação | Onde |
+|---|---|---|
+| U1 vídeos Otávio (CP221) | ✅ no ar | main 53c0e8a |
+| U2 "Postagem Até Quando" (Amanda) | ✅ no ar; J69 desktop e celular | main 20bb972, e8a842a |
+| U3 aviso de cápsula | ✅ no ar; J70 estável (motor só na rodada frequente) | main 4422145, feed8de |
+| E quadro de ajustes da Amanda (CP220) | ✅ site no ar; ✅ Functions publicadas | main 1307bbf, J75 |
+| B Fior (CP217) — adiar saída efetiva | ✅ no ar; **feito em produção** (17/11): saída adiada para 30/11, último mês 2026-10, nenhuma mensalidade nova, postagens voltaram à fila da Cecília | main c95db68, J72 |
+| C Cookiery (CP218) — Recebi com data real | ✅ no ar (+ revisão: o botão lê o campo de data ao lado dele, mesma mensalidade em duas telas); **feito em produção**: 2026-04 paga em 10/04 (caixa abril 0 → 1.700; novembro igual) | main bc96cc2, J73 |
+| A Place (CP216) — correção individual × ajustes internos | ✅ site + Functions no ar (17/11); J71 vermelha antes, verde depois. Produção: a trava sumiu; as 2 peças estão "Aguardando revisão da Amanda" (sem "Trazer para a versão atual"). Falta só a Amanda aprovar peças e pedido e liberar | PR #134 |
+| D Mochi (CP219) — retirar peça CP142 de mês liberado | ✅ site + Functions no ar (17/11); J74 vermelha antes, verde depois. Produção: Chris pediu a retirada de "A arte do delivery" (dia 22) e "Foto de prato" (dia 28) de 2026-11; aguardam a Amanda aprovar e liberar | PR #135 |
+
+Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
+
+Lições de 16–17/11:
+- **Uma unidade por vez, sem agentes em paralelo.** Em 16/11, 5–6 agentes disputaram o único emulador; a trava `/tmp/ensaio-gate.lock` emperrou duas vezes. Trava correta: `until mkdir /tmp/ensaio-gate.lock; do sleep 10; done; trap 'rmdir …' EXIT`. Nunca `pgrep` para esperar (casa com os próprios shells); `pkill -f '[c]loud-firestore-emulator'` (o colchete evita matar o próprio shell).
+- **Memória do emulador:** com ~190 casos o Firestore do emulador estourava os 4 GB padrão do Java (OutOfMemoryError na J70). `ensaio/lib/emulador.mjs` passa `-Xmx6g`. A causa do acúmulo (back-channel "too many pending messages" a partir da J66–J68) não foi identificada; é só do ambiente de teste.
+- **Ordem das jornadas:** jornadas que dividem cliente+mês se quebram quando uma passa a ir até o fim (J71 × J75, ambas Hitech 2027-03). Cada jornada nova escolhe um cliente+mês que ninguém usa (`grep -l "2027-0X" ensaio/jornadas/*`).
+- **Fluxo mais rápido sem perder prova:** no Mac só as jornadas da unidade + dependências + contraprova vermelha; a bateria inteira (desktop e celular em paralelo) roda no PR do GitHub; só junta no main com tudo verde.
+- **zsh não separa `$F` em palavras:** listas de arquivos em script usam array `F=(a b c)` e `${F[@]}`.
+
 ## 5. Pendências
 
 | # | Título | O que fazer e por quê | Prioridade | Afeta | Situação |

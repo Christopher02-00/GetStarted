@@ -26188,6 +26188,86 @@ async function registrarGravacaoRealizadaNucleo(agId){
     }catch(e){ console.error('Falha ao cancelar/reativar cliente:',e); mostrarToast('Não consegui concluir; nenhum histórico foi apagado: '+(e.message||e),'erro'); }
   };
 
+  /* CP217 (Chris, 16/11/2026 — Fior Restaurante): adiar uma saída que já ficou efetiva. O mesmo registro de saída ganha a
+     nova data e volta a "programada"; config, cadastro, contrato e o acesso canônico voltam ao estado de saída programada.
+     A competência final não muda: nenhuma mensalidade é criada, reaberta ou alterada, e o contrato mantém as vigências.
+     O adiamento entra em `adiamentosSaida` (de, para, quem, quando, motivo). Não é reativação: não abre ciclo novo. */
+  let __adiandoSaidaCp217=false;
+  async function adiarSaidaEfetivaCentralCp217(slug,chaveArquivo,btn){
+    if(!['Amanda','Chris'].includes(usuarioAtual)) return false;
+    try{ slug=exigirClienteOperacionalR4(slug); }
+    catch(e){ mostrarToast(e.message,'erro'); return false; }
+    slug=slugClienteCanonico(slug);
+    const saida=(window.__clientesArquivadosCentral||{})[chaveArquivo];
+    if(!saida?.id||saida.arquivoColecao!=='clientes_encerrados'||slugClienteCanonico(saida.slug||'')!==slug){ mostrarToast('Não encontrei o registro de saída. Atualize o Arquivo e tente novamente.','erro'); return false; }
+    const cartao=btn?.closest('details')||document;
+    const novaData=String(cartao.querySelector('[data-adiar-saida-data]')?.value||'');
+    const motivo=String(cartao.querySelector('[data-adiar-saida-motivo]')?.value||'').trim();
+    const hoje=hojeLocal();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(novaData)||novaData<=hoje){ mostrarToast('Informe a nova data de saída (depois de hoje).','erro'); return false; }
+    if(motivo.length<5){ mostrarToast('Escreva em poucas palavras por que a saída foi adiada.','erro'); return false; }
+    const ultima=String(saida.ultimaCompetenciaPagamento||'');
+    if(!competenciaFinanceiraValida(ultima)){ mostrarToast('Esta saída não tem o último mês financeiro. Ela não pode ser adiada por aqui.','erro'); return false; }
+    if(__adiandoSaidaCp217){ mostrarToast('Este adiamento já está sendo gravado. Aguarde o recibo.','erro'); return false; }
+    const nome=nomeClienteCanonico(slug,saida.fichaSnapshot?.nome||saida.nome||slug);
+    if(!confirm('Adiar a saída de '+nome+' para '+formatarDataBR(novaData)+'? Até essa data o cliente volta para a operação (fila de postagens, Portal). O último mês no Financeiro continua '+ultima+': nenhuma mensalidade será criada ou reaberta. O adiamento fica registrado no histórico.')) return false;
+    __adiandoSaidaCp217=true;
+    if(btn){ btn.disabled=true; btn.textContent='Conferindo e salvando...'; }
+    try{
+      exigirClienteOperacionalR4(slug,saida); exigirClienteOperacionalR4(slug,saida.fichaSnapshot||{});
+      const leadColecao=saida.leadColecao==='leads_pessoa_fisica'?'leads_pessoa_fisica':'leads_avulsos';
+      const refs={config:doc(db,'clientes_config',slug),extra:saida.extraId?doc(db,'clientes_extras',saida.extraId):null,cadastro:saida.cadastroId?doc(db,'cadastros_clientes',saida.cadastroId):null,lead:saida.leadId?doc(db,leadColecao,saida.leadId):null,contrato:doc(db,'contratos_cliente',slug),saida:doc(db,'clientes_encerrados',saida.id),acesso:doc(db,'clientes_acesso',slug),stories:doc(db,'stories_clientes',slug)};
+      const acessoPrevio=await getDoc(refs.acesso);
+      const tokenId=acessoPrevio.exists()?String(acessoPrevio.data().token||''):'';
+      const tokenRef=tokenId&&!tokenId.includes('/')?doc(db,'clientes_portal_tokens',tokenId):null;
+      const lista=__validarReferenciasFirestore([...Object.values(refs),tokenRef].filter(Boolean),'o adiamento da saída');
+      const limiteAcesso=new Date(novaData+'T00:00:00-03:00');
+      await runTransaction(db,async tx=>{
+        const snaps=await Promise.all(lista.map(r=>tx.get(r))); const porCaminho=new Map(lista.map((r,i)=>[r.path,snaps[i]]));
+        const existe=r=>!!r&&!!porCaminho.get(r.path)?.exists();
+        const dados=r=>porCaminho.get(r.path)?.data?.()||{};
+        if(!existe(refs.saida)) throw new Error('O registro de saída não existe mais.');
+        const d=dados(refs.saida);
+        if(d.excluido===true||d.statusSaida==='cancelada'||!saidaClienteJaEfetiva(d,hoje)) throw new Error('Esta saída não está mais efetiva (outra aba já adiou, cancelou ou reativou). Atualize o Arquivo.');
+        if(slugClienteCanonico(d.slug||'')!==slug||String(d.ultimaCompetenciaPagamento||'')!==ultima) throw new Error('O registro de saída mudou enquanto o adiamento era preparado. Atualize o Arquivo.');
+        const ponteiro=String(dados(refs.config).saidaAtivaId||'');
+        if(ponteiro&&ponteiro!==saida.id) throw new Error('Outra saída ('+ponteiro+') é a saída canônica deste cliente. Confira no Arquivo.');
+        if(!existe(refs.contrato)) throw new Error('Contrato do cliente não encontrado. Use a reativação.');
+        const ctr=dados(refs.contrato);
+        if(String(ctr.ultimaCompetenciaPagamento||'')!==ultima) throw new Error('O contrato tem outro último mês ('+String(ctr.ultimaCompetenciaPagamento||'vazio')+'). Confira antes de adiar.');
+        if(tokenRef&&String(dados(refs.acesso).token||'')!==tokenId) throw new Error('A credencial do Portal mudou durante o adiamento. Atualize o Arquivo.');
+        const agenda={saidaProgramadaPara:novaData,saidaAtualizadaPor:usuarioAtual,saidaAtualizadaEm:serverTimestamp()};
+        tx.set(refs.config,{...agenda,saidaAtivaId:saida.id,clienteInativo:false,inativoDesde:deleteField(),inativoMotivo:deleteField(),inativoPor:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp()},{merge:true});
+        if(existe(refs.extra)) tx.set(refs.extra,{...agenda,excluido:false,excluidoPor:deleteField(),excluidoEm:deleteField(),motivoExclusao:deleteField()},{merge:true});
+        if(existe(refs.cadastro)) tx.set(refs.cadastro,{...agenda,statusGerencia:'oficializado',arquivadoPor:deleteField(),arquivadoEm:deleteField(),motivoArquivamento:deleteField()},{merge:true});
+        if(existe(refs.lead)) tx.set(refs.lead,{...agenda,statusGerencia:'convertido',arquivadoPor:deleteField(),arquivadoEm:deleteField(),motivoArquivamento:deleteField()},{merge:true});
+        tx.set(refs.contrato,{...agenda,status:'ativo',encerradoEm:deleteField(),encerradoPor:deleteField(),motivoEncerramento:deleteField()},{merge:true});
+        const acessoDe={ativo:true,ativoAte:limiteAcesso,saidaProgramadaPara:novaData,desativadoEm:deleteField(),desativadoPor:deleteField()};
+        if(existe(refs.acesso)) tx.set(refs.acesso,acessoDe,{merge:true});
+        if(existe(tokenRef)&&slugClienteCanonico(dados(tokenRef).cliente||'')===slug) tx.set(tokenRef,acessoDe,{merge:true});
+        if(existe(refs.stories)&&saida.fichaSnapshot?.incluiStories===true) tx.set(refs.stories,{...acessoDe,motivoDesativacao:deleteField()},{merge:true});
+        const historico=Array.isArray(d.adiamentosSaida)?d.adiamentosSaida:[];
+        tx.set(refs.saida,{dataSaida:novaData,statusSaida:'programada',efetivadaEm:deleteField(),efetivadaPor:deleteField(),atualizadoPor:usuarioAtual,atualizadoEm:serverTimestamp(),
+          adiamentosSaida:[...historico,{de:dataOperacionalISO(d.dataSaida),para:novaData,ultimaCompetenciaPagamento:ultima,motivo,por:usuarioAtual,em:new Date().toISOString(),statusAnterior:String(d.statusSaida||''),efetivadaEmAnterior:d.efetivadaEm||null,efetivadaPorAnterior:String(d.efetivadaPor||'')}]},{merge:true});
+      });
+      const [reciboSaida,reciboConfig]=await Promise.all([getDoc(refs.saida),getDoc(refs.config)]);
+      if(reciboSaida.data()?.dataSaida!==novaData||reciboSaida.data()?.statusSaida!=='programada'||reciboConfig.data()?.clienteInativo!==false) throw new Error('A transação terminou, mas o recibo não confirmou o adiamento. Não repita; atualize e confira o protocolo '+saida.id+'.');
+      window.limparCacheDeClientes(); limparCacheIndicadores(); await carregarClientesExtras();
+      try{ await sincronizarAutomacaoFuncoesFixas(); }catch(e){ console.error('Adiamento salvo; automações sincronizarão no motor:',e); }
+      try{ await window.castaDosClientes(); }catch(e){ console.error('Adiamento salvo; a classificação da equipe será publicada na próxima leitura:',e); }
+      mostrarToast('Saída de '+nome+' adiada para '+formatarDataBR(novaData)+'. Último mês no Financeiro: '+ultima+'; nenhuma mensalidade foi criada. Protocolo: '+saida.id+'.');
+      await window.renderCentralEntradaClientes();
+      return true;
+    }catch(e){
+      console.error('Falha ao adiar a saída:',e);
+      mostrarToast('Nada foi alterado: '+(e.message||e),'erro');
+      return false;
+    }finally{
+      __adiandoSaidaCp217=false;
+      if(btn&&btn.isConnected){ btn.disabled=false; btn.textContent='Adiar a saída'; }
+    }
+  }
+
   async function efetivarSaidasProgramadas(){
     if(!['Amanda','Chris'].includes(usuarioAtual) || window.__operacaoDelegadaChris) return {processadas:[],falhas:[]};
     const snap=await getDocs(collection(db,'clientes_encerrados'));
@@ -27085,6 +27165,11 @@ async function registrarGravacaoRealizadaNucleo(agId){
         const valorPreservado=Number(valorContratoNaCompetencia(contrato,hojeLocal().slice(0,7))||f.valorMensal||v.valorMensal||0);
         const vencimentoPreservado=Number(contrato.diaVencimento||f.diaVencimento||v.diaVencimento||0);
         const chaveArquivo=chaveArquivoCliente(v);
+        /* CP217: saída efetiva pode ser adiada sem cobrança nova (mesmo registro, mesma competência final). */
+        const ponteiroSaidaCp217=String(configsBrutos[slug]?.saidaAtivaId||'');
+        const podeAdiarCp217=mensalista&&!aliasOuFusao&&v.arquivoColecao==='clientes_encerrados'&&saidaClienteJaEfetiva(v)&&competenciaFinanceiraValida(String(v.ultimaCompetenciaPagamento||''))&&(!ponteiroSaidaCp217||ponteiroSaidaCp217===v.id);
+        const amanhaCp217=new Date(Date.parse(hojeLocal()+'T12:00:00Z')+86400000).toISOString().slice(0,10);
+        const blocoAdiarCp217=podeAdiarCp217?`<div class="card" style="margin-top:12px;border-color:var(--green);"><b>Adiar a saída (o cliente continua até a nova data)</b><div class="desc">Use quando o cliente vai continuar mais alguns dias para terminar entregas. O mesmo registro de saída ganha a nova data. O último mês no Financeiro continua <b>${esc(v.ultimaCompetenciaPagamento)}</b>: nenhuma mensalidade é criada ou reaberta. O adiamento fica no histórico.</div><div class="field" style="margin-top:10px;"><label>Nova data de saída</label><input type="date" data-adiar-saida-data="${escAttr(chaveArquivo)}" min="${escAttr(amanhaCp217)}"></div><div class="field"><label>Motivo do adiamento</label><textarea data-adiar-saida-motivo="${escAttr(chaveArquivo)}" placeholder="Ex.: continuar até as últimas postagens"></textarea></div><button class="btn" type="button" style="width:auto;" data-adiar-saida="${escAttr(chaveArquivo)}" data-adiar-saida-slug="${escAttr(slug)}">Adiar a saída</button></div>`:'';
         const camposReativacao=podeReativar?`<div class="card" style="margin-top:12px;border-color:var(--yellow);background:rgba(255,193,7,.06);">
           <b>${contratos[slug]?'Condições do contrato na reativação':'Dados financeiros da nova entrada'}</b>
           <div class="desc">Amanda confere estes dados antes de recuperar a mesma ficha e o mesmo Portal. Nenhum cadastro novo será criado.${contratos[slug]?' O contrato existente mantém seu valor e vencimento. Alterações são feitas pelo Chris em Valores dos contratos após a reativação.':''}</div>
@@ -27098,7 +27183,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
         </div>`:podeReabrirAvulsoI21?`<div class="desc" style="margin-top:10px;">Reabrir somente o cadastro não reabre serviços nem restaura Portal ou Stories automaticamente. Nenhum pagamento é alterado.</div><button class="btn" style="width:auto;margin-top:10px;" onclick="${escAttr('alterarClienteAvulsoI21('+JSON.stringify(slug)+',"reabrir",'+JSON.stringify(v.id)+')')}">Reabrir somente o cadastro avulso</button>`:'<div class="meta" style="margin-top:9px;">Registro histórico preservado; não cria outra identidade.</div>';
         const nomeArquivo=f.nome||v.nome||v.clienteNome||v.slug||'Cliente';
         const buscaArquivo=normNomeCliente([nomeArquivo,f.plano,v.servicos,v.motivo,v.motivoDetalhe,v.motivoArquivamento].filter(Boolean).join(' '));
-        return `<details class="item" data-arquivo-cliente="${escAttr(buscaArquivo)}" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(nomeArquivo)}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${ultima?' · último mês financeiro '+esc(ultima):''}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Instagram preservado:</b> ${esc(f.instagram||'—')}<br><b>Contato financeiro:</b> preservado e acessível somente ao Chris no Financeiro<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}${f.aniversario?'<br><b>Aniversário:</b> '+esc(f.aniversario):''}${f.contatos?'<br><b>Outros contatos operacionais:</b> '+esc(f.contatos):''}${ultima?'<br><b>Último mês no Financeiro:</b> '+esc(ultima):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${camposReativacao}</details>`;
+        return `<details class="item" data-arquivo-cliente="${escAttr(buscaArquivo)}" style="cursor:default;"><summary style="cursor:pointer;"><b>${esc(nomeArquivo)}</b> <span class="selo pendente">${v.statusSaida==='programada'?'SAÍDA PROGRAMADA':'ARQUIVADO'}</span><div class="meta">${esc(v.dataSaida||'')}${ultima?' · último mês financeiro '+esc(ultima):''}${v.motivo?' · '+esc(v.motivo):''}</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Instagram preservado:</b> ${esc(f.instagram||'—')}<br><b>Contato financeiro:</b> preservado e acessível somente ao Chris no Financeiro<br><b>Plano/serviço:</b> ${esc([f.plano,v.servicos].filter(Boolean)[0]||'—')}${f.planoDetalhes?' — '+esc(f.planoDetalhes):''}${f.aniversario?'<br><b>Aniversário:</b> '+esc(f.aniversario):''}${f.contatos?'<br><b>Outros contatos operacionais:</b> '+esc(f.contatos):''}${ultima?'<br><b>Último mês no Financeiro:</b> '+esc(ultima):''}<br><b>Motivo detalhado:</b> ${esc(v.motivoDetalhe||v.motivoArquivamento||'—')}<br><b>Pendências finais:</b> ${esc(v.pendenciasFinais||'—')}<br><b>Portal:</b> dados preservados; acesso do cliente ${v.statusSaida==='programada'?'permanece até a data de saída':'encerrado'}.</div>${blocoAdiarCp217}${camposReativacao}</details>`;
       };
       const htmlHistoricoCancelado=v=>{ const f=v.fichaSnapshot||v; return `<details class="item" style="cursor:default;opacity:.8;"><summary style="cursor:pointer;"><b>${esc(f.nome||v.nome||v.slug||'Cliente')}</b> <span class="selo">SAÍDA CANCELADA</span><div class="meta">${esc(v.dataSaida||'')} · preservada somente como histórico</div></summary><div class="meta" style="margin-top:10px;line-height:1.7;"><b>Motivo original:</b> ${esc(v.motivoDetalhe||v.motivo||'—')}<br><b>Cancelamento/reativação:</b> ${esc(v.motivoExclusao||v.motivoCancelamento||'Registro substituído sem apagar histórico')}<br>Este evento não conta como saída ativa e não oferece nova ação de reativação.</div></details>`; };
       const modoArquivo=window.__centralClientesModo==='arquivo';
@@ -27126,6 +27211,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
         <details class="card" style="margin-top:28px;"><summary style="cursor:pointer;font-weight:800;">Histórico de saídas canceladas e reativações (${historicoSaidasCanceladas.length})</summary><div class="desc">Eventos preservados para auditoria; não são clientes arquivados nem criam outra identidade.</div>${historicoSaidasCanceladas.length?historicoSaidasCanceladas.map(htmlHistoricoCancelado).join(''):'<div class="empty">Nenhuma saída cancelada.</div>'}</details>
       </div>`;
       box.innerHTML=cabecalhoCentral+resumoCiclo+(modoArquivo?blocoArquivo:blocoOperacao);
+      if(modoArquivo) box.querySelectorAll('button[data-adiar-saida]').forEach(b=>b.addEventListener('click',()=>adiarSaidaEfetivaCentralCp217(b.dataset.adiarSaidaSlug,b.dataset.adiarSaida,b)));
       if(window.__focoSaidaClientes){
         window.__focoSaidaClientes=false;
         setTimeout(()=>{ document.getElementById('centralSaidasClientes')?.scrollIntoView({behavior:'smooth',block:'start'}); document.getElementById('saidaRapidaCliente')?.focus(); },0);

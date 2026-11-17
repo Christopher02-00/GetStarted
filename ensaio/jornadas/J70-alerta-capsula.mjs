@@ -23,14 +23,16 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   const capsulasAntes = (await seed.listar('capsulas_clientes')).length;
   const alertas = async () => (await seed.listar('demandas')).filter(d => d.tipoEspecial === 'alerta_cobertura_postagem' && (d.cliente === SLUG || d.clienteSlugRef === SLUG));
 
-  const rodada = async (r, acao) => {
-    await seed.set('sistema', 'motor_lock', { ultimaExecucao: 'liberado-pelo-ensaio', ultimaManutencaoDia: '2000-01-01' });
+  // só a rodada frequente (onde mora a cobertura): libera a trava sem forçar a manutenção diária
+  const rodada = async (r, acao, pronto = null) => {
+    await seed.set('sistema', 'motor_lock', { ultimaExecucao: 'liberado-pelo-ensaio', ultimaManutencaoDia: hoje });
     const { page, erros, fechar } = await nav.novaPagina();
     try {
       page.on('dialog', d => d.accept());
       await entrarComo(page, amb.url(), 'Amanda');
-      await esperar(async () => (await seed.get('sistema', 'motor_lock'))?.ultimaManutencaoDia === hoje);
-      await page.waitForTimeout(5000);
+      await esperar(async () => (await seed.get('sistema', 'motor_lock'))?.ultimaExecucao !== 'liberado-pelo-ensaio');
+      if (pronto) await esperar(pronto, 60000);
+      await page.waitForTimeout(6000);
       const extra = acao ? await acao(page) : null;
       await foto(page, 'J70-rodada' + r);
       return { graves: erros.filter(erroGrave), extra };
@@ -46,7 +48,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       const botao = await page.locator('#modalConteudo [data-alerta-capsula-acao="painel"]').count();
       if (botao) { await page.locator('#modalConteudo [data-alerta-capsula-acao="painel"]').click(); await page.waitForTimeout(2000); }
       return { botao: botao === 1, painel: await page.evaluate(() => !!document.getElementById('view-capsulaAmanda')?.classList.contains('active')) };
-    });
+    }, async () => (await alertas()).length > 0);
     const l1 = await alertas(), abertos = l1.filter(d => d.status === 'pendente' && d.excluido !== true);
     const a = abertos[0];
     const ok = abertos.length === 1 && l1.length === 1 && a.destinatario === 'Amanda' && a.etapaCobertura === 'sem_postagem_programada' && /cápsula/.test(a.titulo || '') && /cápsula/i.test(a.descricao || '') && r1.extra?.botao && r1.extra?.painel && !r1.graves.length;
@@ -63,7 +65,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     try {
       await seed.set('postagens', 'j70-post', { cliente: SLUG, clienteNome: NOME, titulo: 'Gelato de pistache (J70)', legenda: 'Legenda J70', status: 'agendado', dataAgendada: somar(hoje, 3), horaAgendada: '11:00', calendarItemId: 'calitem_j70_1', origemManual: true, excluido: false, criadoEm: agora });
       await amb.aguardarFunctionsOciosas?.();
-      const r3 = await rodada(3); const l3 = await alertas();
+      const r3 = await rodada(3, null, async () => (await alertas()).some(d => d.status === 'cancelado_automaticamente')); const l3 = await alertas();
       const fechado = l3.find(d => d.etapaCobertura === 'sem_postagem_programada');
       const abertos = l3.filter(d => d.status === 'pendente' && d.excluido !== true);
       registrar({ jornada: id, caso: 'c postagem agendada fecha o aviso sozinho (soft-delete)', ok: !!fechado && fechado.status === 'cancelado_automaticamente' && fechado.excluido === true && !abertos.length && !r3.graves.length, ms: Date.now() - t,

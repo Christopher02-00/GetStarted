@@ -21,7 +21,7 @@ async function abrirEditor(page, continuar = false) {
   await page.getByRole('button', { name: /^Abrir materiais do mês$/ }).click({ timeout: 20000 }); await page.waitForTimeout(3000);
   const aba = page.getByRole('button', { name: /^Criar e aprovar$/ }).first(); if (await aba.isVisible().catch(() => false)) { await aba.click(); await page.waitForTimeout(2500); }
   const ed = page.getByRole('button', { name: /^Abrir editor oficial nesta competência$/ }).first();
-  if (continuar && !await ed.isVisible({ timeout: 5000 }).catch(() => false)) { // depois de readotar: ligar a criação à base readotada
+  if (continuar && !await ed.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) { // depois de readotar: ligar a criação à base readotada
     const base = page.getByRole('button', { name: /^(Conferir base e continuar|Confirmar nova base após comparação)$/ }).first(); await base.evaluate(el => el.scrollIntoView({ block: 'center' })); await base.click();
     try { await page.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 8000 }); } catch {}
     await ed.waitFor({ timeout: 30000 }); }
@@ -44,7 +44,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     passos.push(travado ? 'editor travado pela ficha' : 'editor NÃO mostrou o aviso da ficha');
     if (!travado) throw new Error('pré-condição: o editor não travou pela ficha');
     const ir = page.getByRole('button', { name: /Conferir e readotar a base/ }).first();
-    if (!await ir.isVisible({ timeout: 8000 }).catch(() => false)) { await foto(page, 'J49b-editor-sem-botao'); throw new Error('o editor travado não oferece o botão para readotar a base'); }
+    if (!await ir.waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false)) { await foto(page, 'J49b-editor-sem-botao'); throw new Error('o editor travado não oferece o botão para readotar a base'); }
     await ir.evaluate(el => el.scrollIntoView({ block: 'center' })); await ir.click(); passos.push('editor → readotar');
     // 2. a página do cliente e mês mostra o botão de adotar (o mesmo documento confirmado)
     const adotar = page.getByRole('button', { name: ADOTAR }).first();

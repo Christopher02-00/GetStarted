@@ -35,7 +35,9 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForFunction(() => !/Carregando fila de edição/.test(document.getElementById('gerenciaVideos')?.innerText || ''), null, { timeout: 20000 }).catch(() => {});
     const naFila = await page.evaluate(([a, b]) => { const s = [...document.querySelectorAll('#gerenciaVideos section')].find(x => /Sem editor — distribuir agora/.test(x.innerText)); const t = s?.innerText || '';
       const conta = r => (t.match(new RegExp(r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?! repetido)', 'g')) || []).length; return { dif: conta(a), rep: (t.match(new RegExp(b, 'g')) || []).length }; }, [TIT_DIF, TIT_REP]);
-    const graves = erros.filter(erroGrave);
+    // Na bateria inteira a rodada diária também confere o vídeo que a J57 deixa ("V118: órfão preservado…"): é a
+    // proteção do V118 avisando no console, não erro desta jornada. Só essa mensagem conhecida é ignorada.
+    const graves = erros.filter(erroGrave).filter(e => !/V118: órfão preservado para conferência/.test(String(e)));
     await foto(page, 'J76-amanda-sem-editor');
     const ok = !!rodou && !escondidos.length && naFila.dif >= 2 && naFila.rep >= 2 && !!aviso && !graves.length;
     registrar({ jornada: id, caso, ok, ms: Date.now() - t0,

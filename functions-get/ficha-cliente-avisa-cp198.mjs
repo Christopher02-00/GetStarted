@@ -24,7 +24,7 @@ export async function avisarFichaClienteCp198(db, slug, antes, depois, { agora =
     const nome = String(depois?.clienteNome || c.clienteNome || slug);
     const criada = await db.runTransaction(async tx => { const x = await tx.get(ref); if (x.exists) return false; tx.set(ref, {
       titulo: `Ficha do cliente mudou · ${nome} · ${c.competencia}`,
-      descricao: `A ficha de informações de ${nome} foi alterada depois que o documento de ${c.competencia} foi confirmado. Por segurança, o editor desse mês fica travado até você readotar o documento com a ficha atual (Central → documentos do cliente → adotar o documento). O documento e o histórico continuam preservados.`,
+      descricao: `A ficha de informações de ${nome} foi alterada depois que o documento de ${c.competencia} foi confirmado. Por segurança, o editor desse mês fica travado até você readotar o documento com a ficha atual (abra o editor oficial do mês e toque em "Conferir e readotar a base com a ficha atual"; ou, nos materiais do mês, no documento completo de referências e campanhas, use "Conferir / atualizar base com a ficha atual"). O documento e o histórico continuam preservados.`,
       destinatario: 'Chris', remetente: 'Sistema', status: 'pendente', prazoData: dataBr(agora), prazoHora: '18:00', cliente: slug, criadoEm: agora.toISOString(), excluido: false,
       origemCp198: { schema: 1, ciclo: s.id, competencia: c.competencia } }); return true; });
     if (criada) criadas.push(id);

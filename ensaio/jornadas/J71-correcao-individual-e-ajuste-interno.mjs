@@ -83,11 +83,13 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     // (a) cliente pede ajuste pelo link → recepção → Chris corrige o conteúdo (CP115) e envia à Amanda
     const copia = await esperar(async () => { const c = await seed.get('calendarios_cliente', CLIENTE); return c?.items?.some(i => i?.itemId === 'calitem_j71_vitrine') ? c : null; });
     if (!copia) throw new Error('a cópia do cliente não recebeu o mês');
-    const idx = copia.items.findIndex(i => i?.itemId === 'calitem_j71_vitrine');
     await page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
     // mesma espera da J56/J60B: a página do cliente usa a cópia do cliente (calendarios_cliente), de onde vem o índice
     await page.waitForFunction(() => /Liberado — o cliente já vê/.test(document.body.innerText) && typeof openEdit === 'function', null, { timeout: 30000 });
-    await page.evaluate(i => openEdit(i), idx);
+    // o índice é o da lista da página (outros meses do cliente mudam a posição na bateria inteira), achado pelo itemId
+    const idxPagina = await page.evaluate(() => data.items.findIndex(i => i?.itemId === 'calitem_j71_vitrine'));
+    if (idxPagina < 0) throw new Error('a página do cliente não mostra o conteúdo da vitrine');
+    await page.evaluate(i => openEdit(i), idxPagina);
     await page.waitForSelector('#mObsCliente', { state: 'visible', timeout: 15000 });
     await page.fill('#mObsCliente', 'Pedido do cliente (J71): trocar o roteiro da vitrine.');
     await page.click('#btnEnviarObsCliente');

@@ -40389,17 +40389,25 @@ window.setGerenciaSub = function(qual, el){
       }
     }
     // --- vídeos iguais do mesmo cliente ---
+    // CP223 (clínicas do Otávio, 16/11/2026): título genérico ("<Cliente> — Vídeo") não identifica o vídeo. O mesmo vídeo
+    // é o mesmo cliente + título + conteúdo do calendário + envio. Vídeo sem editor nunca é escondido em silêncio: a
+    // repetição suspeita vira um aviso para a Amanda conferir, e os vídeos continuam em "Sem editor".
     const vSnap = await getDocs(collection(db,'videos_producao'));
     const gv = {};
     vSnap.forEach(d => { const v=d.data();
       if(v.excluido || ['finalizado','arquivado'].includes(v.status)) return;
-      const k = (v.cliente||'') + '||' + norm(v.titulo);
-      (gv[k] = gv[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||0 });
+      const k = [v.cliente||'', norm(v.titulo), String(v.referenciaLegendaI78?.itemId||v.calendarItemId||''), String(v.envioManualI67||'')].join('||');
+      (gv[k] = gv[k] || []).push({ id:d.id, ts:v.criadoEm?.seconds||Date.parse(v.criadoEm||'')||0, semEditor:!v.editorAtribuido, cliente:v.cliente||'', clienteNome:v.clienteNome||v.cliente||'', titulo:v.titulo||'' });
     });
     let nV = 0;
     for(const [k, lista] of Object.entries(gv)){
       if(lista.length < 2) continue;
-      lista.sort((a,b)=>a.ts-b.ts);
+      lista.sort((a,b)=>a.ts-b.ts||a.id.localeCompare(b.id));
+      if(lista.some(x=>x.semEditor)){
+        const ids=lista.map(x=>x.id),x0=lista[0];
+        await window.criarDemandaSegura({titulo:'Vídeos possivelmente repetidos · '+x0.clienteNome+' · '+x0.titulo,descricao:'A conferência automática encontrou '+lista.length+' vídeos sem editor com o mesmo cliente, título, conteúdo do calendário e envio. Nenhum foi escondido: todos continuam em "Sem editor — distribuir agora". Confira se são o mesmo arquivo antes de distribuir.\n\nVídeos: '+ids.join(', '),destinatario:'Amanda',remetente:'Sistema',status:'pendente',cliente:x0.cliente,prazoData:window.dataLocal(new Date()),prazoHora:'18:00',excluido:false,origemCp223:{schema:1,videos:ids}});
+        continue;
+      }
       for(const dup of lista.slice(1)){
         await updateDoc(doc(db,'videos_producao', dup.id), {
           excluido:true, excluidoPor:'sistema (duplicata)', excluidoEm: new Date().toISOString()

@@ -40,7 +40,7 @@ o conteúdo corrigido do pedido contava como divergência.
 O que NÃO muda: rules, tela, pedidos do cliente, publicação, conteúdo já liberado, texto das peças.
 
 ## Testes
-J71 (Hitech 2027-03, continuidade antiga): publicação P1 → peça CP142 enviada sobre P1 → publicação P2 registrada (recibo I172) →
+J71 (Hitech 2027-04 — março é da J75, continuidade antiga): publicação P1 → peça CP142 enviada sobre P1 → publicação P2 registrada (recibo I172) →
 cliente pede ajuste → Chris corrige (CP115) e envia à Amanda. Vermelha no `main` (sem "trazer"/aprovar); verde depois: peça trazida
 com o mesmo texto, Amanda aprova pedido e peça, UMA liberação leva os dois. Portão inteiro + `--movel`.
 

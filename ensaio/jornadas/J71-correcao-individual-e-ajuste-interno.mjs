@@ -1,7 +1,7 @@
 // J71 — CP216 (16/11/2026, Place 2026-11): pedido do cliente em correção individual (CP115) e peça adicional CP142 feita antes da
 // última publicação, no MESMO mês da continuidade antiga. Antes: a base dos ajustes internos exigia o mês publicado e sem escopo CP115
 // → peça "A publicação deste mês mudou…", sem "Trazer para a versão atual", sem aprovação da Amanda, liberação bloqueada.
-// Cenário (Hitech, mar/2027; ninguém mais usa este mês): P1 → peça enviada sobre P1 → P2 registrada pela Central (recibo I172) →
+// Cenário (Hitech, abr/2027; a J75 usa mar/2027, ninguém mais usa abril): P1 → peça enviada sobre P1 → P2 registrada pela Central (recibo I172) →
 // cliente pede ajuste pelo link → Chris corrige (CP115) e envia à Amanda. Esperado: a peça vem para a versão atual com o MESMO texto,
 // a Amanda aprova o pedido e a peça, e UMA liberação leva os dois.
 import path from 'node:path';
@@ -11,7 +11,7 @@ import { RAIZ, PROJETO } from '../lib/emulador.mjs';
 import { foto } from '../lib/navegador.mjs';
 export const id = 'J71';
 export const nome = 'Pedido em correção individual (CP115) e peça adicional antiga no mesmo mês saem numa liberação só';
-const CLIENTE = 'hitech', MES = '2027-03', CICLO = `${MES}__${CLIENTE}`;
+const CLIENTE = 'hitech', MES = '2027-04', CICLO = `${MES}__${CLIENTE}`;
 const EMAILS = { Chris: 'christopherveloso0@gmail.com', Amanda: 'amandachamorrosm@gmail.com' };
 const NOVA_DESC = 'Roteiro da vitrine corrigido conforme o pedido do cliente (J71).';
 const PECA = { day: 28, fmt: 'Carrossel', stage: 'Topo', name: 'Ensaio J71 — Black Friday na loja', ref: '', referenciaDispensada: true,
@@ -87,7 +87,8 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     // mesma espera da J56/J60B: a página do cliente usa a cópia do cliente (calendarios_cliente), de onde vem o índice
     await page.waitForFunction(() => /Liberado — o cliente já vê/.test(document.body.innerText) && typeof openEdit === 'function', null, { timeout: 30000 });
     // o índice é o da lista da página (outros meses do cliente mudam a posição na bateria inteira), achado pelo itemId
-    const idxPagina = await page.evaluate(() => data.items.findIndex(i => i?.itemId === 'calitem_j71_vitrine'));
+    // `data` é interno do módulo da página: acha o índice abrindo cada conteúdo e lendo o nome no editor
+    const idxPagina = await page.evaluate(nome => { for (let i = 0; i < 500; i++) { try { openEdit(i); } catch (e) { return -1; } const achou = document.getElementById('mName')?.value === nome; closeModal(); if (achou) return i; } return -1; }, 'Hitech — Reels da vitrine (J71)');
     if (idxPagina < 0) throw new Error('a página do cliente não mostra o conteúdo da vitrine');
     await page.evaluate(i => openEdit(i), idxPagina);
     await page.waitForSelector('#mObsCliente', { state: 'visible', timeout: 15000 });

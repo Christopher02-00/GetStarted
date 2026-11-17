@@ -77,7 +77,9 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   };
 
   const cal0 = await seed.get('calendarios', B.cliente);
-  if (cal0?.aprovacaoMeses?.[B.mes]?.status !== 'liberado' || !(await seed.get('planejamento_social_i155', B.ciclo))) { fim('preparação', false, 'depende da J06/J56/J60 (Bluefit dezembro liberado pelo processo novo)'); return; }
+  // na bateria inteira a J64 deixa dezembro em ajuste pedido pelo Cliente; pela CP215 a peça interna também cabe ali (o servidor decide em `adicionar`)
+  const stB = cal0?.aprovacaoMeses?.[B.mes];
+  if (!(stB?.status === 'liberado' || (stB?.status === 'ajuste_interno' && stB?.por === 'Cliente')) || !(await seed.get('planejamento_social_i155', B.ciclo))) { fim('preparação', false, 'depende da J06/J56/J60 (Bluefit dezembro liberado pelo processo novo)'); return; }
   await amb.aguardarFunctionsOciosas?.();
   let idB, idH;
   try {

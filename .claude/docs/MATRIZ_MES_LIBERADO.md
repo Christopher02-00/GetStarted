@@ -65,7 +65,7 @@ Flags que mudam o caminho:
    - A tela não diz isso, e "Conferir pedidos no servidor" não muda nada.
    - Em produção (17/11, leitura): o editor da Fedalto 2026-12 abre editável, com os 10 pedidos "Ainda não executado".
 2. **Ficha mudou:** com a ficha nova, o editor recusa salvar até readotar (CP222 resolveu com o botão).
-3. **🟨 Tela do cliente:** depois do 1º pedido, o próximo sem recarregar a página é recusado ("Este conteúdo mudou desde que você abriu"). O cliente vê "Não consegui confirmar o ajuste no servidor… tente novamente", e não "atualize a página".
+3. **🟩 (U2, 18/11; J77 casos 6 e 7) Tela do cliente:** dois pedidos seguidos sem recarregar entram os dois (a recusa vinha da trava da U5). Quando a conferência da tela recusa porque a equipe mudou o conteúdo aberto, a mensagem agora manda copiar o texto e atualizar a página. Antes: depois do 1º pedido, o próximo sem recarregar a página é recusado ("Este conteúdo mudou desde que você abriu"). O cliente vê "Não consegui confirmar o ajuste no servidor… tente novamente", e não "atualize a página".
 4. **CP193:** aceita novo pedido com `liberadoEmAnterior` preenchido. Falta provar com o mês já enviado à Amanda.
 5. **CP140 complemento de preparação** só com `aguardando_interna`. Falta provar ajuste interno novo com pedido do cliente já enviado.
 6. **🟥 Processo antigo:** o CP115 só tem prova com `liberado`+publicada, escopo CP115 ou reabertura do cliente. Com o mês em `ajuste_interno` aberto pela Amanda ou por ajuste interno (sem escopo CP115), o pedido do cliente fica sem prova e sem saída. É a mesma família do CP201 e do CP216.

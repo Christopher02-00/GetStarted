@@ -277,6 +277,7 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
   - Cada mudança é independente por conteúdo; só a liberação final do mês junta tudo.
   - Toda recusa diz o motivo e o próximo passo, com o botão para quem resolve.
   - U1: no processo novo (I155) o CP115 não existe (`contextoPublicado` exige `continuar_legado`). `dtoCorrecaoCp115(r,ator,c)` explica o caminho do editor, e o painel CP112 mostra "Ir para o conteúdo no editor" (`ir-conteudo-cp224`, opção `aoIrConteudo`). Incidente: Fedalto 2026-12. Jornada J77 (`J60d`).
+  - U5: o CP193 (`jaAberto`) só conta pedidos criados depois de `retratoLiberadoV115.publicadoEm || liberadoEmAnterior`, o mesmo corte de `pedidosPendentes` na tela do cliente. Pedido já resolvido antes da última liberação não trava novo pedido no mesmo conteúdo. Servidor e tela precisam usar sempre o mesmo corte. J77, caso 5.
 
 ## Evidência e entrega
 

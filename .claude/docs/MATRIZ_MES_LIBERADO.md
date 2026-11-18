@@ -43,7 +43,7 @@ Flags que mudam o caminho:
 | Estado ＼ Ação | a1 | a2 | a3 | a4 | a5 | a6 | a7 | a8 | a9/a10 |
 |---|---|---|---|---|---|---|---|---|---|
 | **L** | 🟩 P J56/J77 | — | — | 🟩 P J60/J60B | 🟩 P J74 | — | — | — | 🟩 P J49b |
-| **AC** (1 pedido) | 🟥 P J77 (7): conteúdo que já teve pedido resolvido antes da última liberação é recusado | 🟩 P J77: recusa certa, "Este conteúdo já está em ajuste" | 🟨 P J77 (1) | 🟩 C CP215: o pedido aberto vale como base | ? | 🟩 P J64 | 🟩 P J56/J77 | 🟩 P J56/J77 | 🟩 P J49b (2) |
+| **AC** (1 pedido) | 🟩 P J77 (7): conteúdo que já teve pedido resolvido antes da última liberação aceita novo pedido (U5, 18/11) | 🟩 P J77: recusa certa, "Este conteúdo já está em ajuste" | 🟨 P J77 (1) | 🟩 C CP215: o pedido aberto vale como base | ? | 🟩 P J64 | 🟩 P J56/J77 | 🟩 P J56/J77 | 🟩 P J49b (2) |
 | **AC** (N pedidos + CP142 + CP123 liberados = Fedalto) | 🟨 P J77 (3) | 🟩 | 🟨 P J77 (1) | ? | ? | ? | 🟩 P J77 | 🟩 P J77 | ? |
 | **AA** (devolução) | ? | — | 🟩 P J52 | ? | ? | ? | 🟩 | 🟩 | ? |
 | **AI / AP** | ? (4) | — | — | 🟨 C (5) | ? | ? | 🟩 | 🟩 | ? |
@@ -59,7 +59,7 @@ Flags que mudam o caminho:
 
 ## Notas (as células marcadas)
 
-1. **🟨 Fedalto, a causa real do "sem saída".**
+1. **🟩 (U1, 18/11) Fedalto, a causa real do "sem saída".**
    - Em todo pedido do processo novo, o Chris vê "A publicação anterior e a origem deste pedido precisam de conferência… Use Conferir pedidos no servidor". A frase sai de `dtoCorrecaoCp115` (functions-get/correcao-conteudo-pedido-cp115.mjs), porque `contextoPublicado` exige `c.modo==='continuar_legado'`. O CP115 nunca vale no processo novo.
    - O caminho do processo novo existe e funciona (P J77): corrigir no editor ("Salvar conteúdos"), escrever a explicação ("Salvar explicação e execução"), enviar; a Amanda aprova cada um; "Liberar correções ao cliente".
    - A tela não diz isso, e "Conferir pedidos no servidor" não muda nada.
@@ -70,7 +70,7 @@ Flags que mudam o caminho:
 5. **CP140 complemento de preparação** só com `aguardando_interna`. Falta provar ajuste interno novo com pedido do cliente já enviado.
 6. **🟥 Processo antigo:** o CP115 só tem prova com `liberado`+publicada, escopo CP115 ou reabertura do cliente. Com o mês em `ajuste_interno` aberto pela Amanda ou por ajuste interno (sem escopo CP115), o pedido do cliente fica sem prova e sem saída. É a mesma família do CP201 e do CP216.
 
-7. **🟥 CP193 conta pedido antigo como aberto** (achado na J77, 17/11). `jaAberto` olha todos os pedidos do mesmo conteúdo na competência, inclusive os de antes da última liberação, já resolvidos. Depois de qualquer novo pedido reabrir o mês, aquele conteúdo fica recusado com "Este conteúdo já está em ajuste", sem saída para o cliente. Correção: U5 (só pedidos criados depois de `liberadoEmAnterior`).
+7. **🟩 (U5, 18/11) CP193 contava pedido antigo como aberto** (achado na J77, 17/11). `jaAberto` olha todos os pedidos do mesmo conteúdo na competência, inclusive os de antes da última liberação, já resolvidos. Depois de qualquer novo pedido reabrir o mês, aquele conteúdo fica recusado com "Este conteúdo já está em ajuste", sem saída para o cliente. Correção: U5 (só pedidos criados depois de `liberadoEmAnterior`).
 
 ## Regra (vai para o AGENTS.md)
 

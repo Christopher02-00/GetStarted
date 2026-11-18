@@ -78,3 +78,8 @@ Flags que mudam o caminho:
 - Cada mudança é independente por conteúdo; só a liberação final do mês junta tudo.
 - Toda recusa diz o motivo e o próximo passo, com o botão para quem resolve.
 - "Precisa de conferência" sem saída é proibido.
+
+## Situação em 18/11 (CP224 concluído)
+- U1 a U5 no ar. As células marcadas 🟥 e 🟨 viraram 🟩, com jornada.
+- As células "?" que sobram ainda não têm jornada própria. Não apareceram na varredura de produção e não são caminhos de travamento conhecidos. Cada uma vira jornada (vermelha antes, verde depois) no primeiro caso real.
+- Varredura de produção (só leitura): nenhum mês sem saída além da Fedalto 2026-12, que agora mostra o caminho.

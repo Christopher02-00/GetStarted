@@ -272,6 +272,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | G Clínicas do Otávio (CP223) — limpeza de duplicatas escondia vídeo | ✅ no ar; J76 vermelha antes, verde depois; vídeo da Mochi (06/11) restaurado com ok do Chris | PR #137, J76 |
 | H Fedalto (CP224 U1) — pedidos do processo novo mostravam "precisam de conferência" sem saída | ✅ site + Functions no ar (18/11); J77 vermelha antes, verde depois; em produção os 10 pedidos abertos da Fedalto 2026-12 mostram o próximo passo e o botão. Faltam U2–U5 (matriz em `.claude/docs/MATRIZ_MES_LIBERADO.md`) | PR #138, J77 |
 | I CP224 U5 — pedido antigo já resolvido travava novo pedido do cliente no mesmo conteúdo | ✅ Functions no ar (18/11); J77 caso 5 vermelho antes, verde depois | PR #140, J77 |
+| J CP224 U2/U3/U4 — tela do cliente manda atualizar; processo antigo provado (J78); diagnóstico "Por que este mês não avança?" | ✅ no ar (18/11). Fedalto 2026-12: os 10 pedidos estão com o Chris, com o próximo passo na tela; nada a corrigir em dados | PR #142, #143, #144 |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

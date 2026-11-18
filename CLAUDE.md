@@ -8,7 +8,7 @@ Leia nesta ordem, antes de qualquer mudança:
 ## Processo obrigatório (skills em `.claude/skills/`)
 - **get-arvore-do-pedido** — todo pedido vira unidades + árvore de impacto + 1 ficha por unidade, antes de tocar código.
 - **get-mudanca-segura** — uma unidade = uma branch = um PR; menor diff na raiz; sem globais novos; PR em 5 blocos (Entendimento / Alterações / Provas de validação / Riscos-pendências / Próximo passo).
-- **get-prova-de-jornada** — `node ensaio/rodar.mjs` verde (hoje 210/210) antes de todo merge — no Mac as jornadas da unidade + dependências + contraprova vermelha, a bateria inteira (desktop e celular) no CI do PR (`ensaio/README.md` regra 9); `--movel` quando mexer em interface; bug novo vira jornada nova, vermelha antes e verde depois.
+- **get-prova-de-jornada** — `node ensaio/rodar.mjs` verde (hoje 217/217) antes de todo merge — no Mac as jornadas da unidade + dependências + contraprova vermelha, a bateria inteira (desktop e celular) no CI do PR (`ensaio/README.md` regra 9); `--movel` quando mexer em interface; bug novo vira jornada nova, vermelha antes e verde depois.
 - **get-publicacao-e-rollback** — CI verde → merge → conferir no ar (`https://get-started.agency`) → atualizar docs. Rollback = `git revert`.
 
 ## O que só o Chris autoriza (ok nominal)

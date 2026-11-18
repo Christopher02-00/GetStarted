@@ -278,6 +278,10 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
   - Toda recusa diz o motivo e o próximo passo, com o botão para quem resolve.
   - U1: no processo novo (I155) o CP115 não existe (`contextoPublicado` exige `continuar_legado`). `dtoCorrecaoCp115(r,ator,c)` explica o caminho do editor, e o painel CP112 mostra "Ir para o conteúdo no editor" (`ir-conteudo-cp224`, opção `aoIrConteudo`). Incidente: Fedalto 2026-12. Jornada J77 (`J60d`).
   - U5: o CP193 (`jaAberto`) só conta pedidos criados depois de `retratoLiberadoV115.publicadoEm || liberadoEmAnterior`, o mesmo corte de `pedidosPendentes` na tela do cliente. Pedido já resolvido antes da última liberação não trava novo pedido no mesmo conteúdo. Servidor e tela precisam usar sempre o mesmo corte. J77, caso 5.
+  - U2: na tela do cliente (`enviarObsDoCliente`), uma recusa da conferência local (conteúdo mudou desde que abriu) manda copiar o texto e atualizar a página. Nunca "tente novamente" para o que repetir não resolve. J77, casos 6 e 7.
+  - U3: no processo antigo, o mês em ajuste sem escopo CP115 e com pedido do cliente não se forma: com pedido aberto, o mês inteiro não pode ser enviado (CP182). Provado na J78; nenhum código mudou.
+  - U4: o painel CP112 abre com "Por que este mês não avança?" (`diagnosticoCp224`): com quem está cada pedido, o próximo passo e o que falta para liberar. Só lê o dto. Jornada J77.
+  - Varredura em produção (18/11, só leitura): dos 44 meses de 2026-11 e 2026-12, só a Fedalto 2026-12 tinha pedidos abertos (10). Os 29 pedidos de cliente desde 01/11 viraram demanda.
 
 ## Evidência e entrega
 

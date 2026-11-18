@@ -2,7 +2,7 @@
 Pedido original (literal): "'Missing or insufficient permissions' ao salvar legenda (caso da Amanda na Stokki, 18/11). Correção na raiz, para todos os clientes e papéis."
 Unidade: U1 de 1 · Tipo: erro
 Sintoma observado: a Amanda salva a primeira legenda de um vídeo da Stokki e recebe "Missing or insufficient permissions".
-Reprodução: emulador, J79, vermelha no main:
+Reprodução: emulador, J61b, vermelha no main:
 - Amanda e Cecília são barradas na Stokki com 4 redes.
 - A Cecília também é barrada em qualquer vídeo cujo `postagemId` ainda está vazio.
 - O Chris passa.
@@ -17,7 +17,7 @@ RAIZ: quem pode legendar (tela CP209 × rules dH/dI × vínculo do vídeo)
 ├─ HUMANOS    : Chris, Amanda, Cecília (Fernanda e Gabrielle saíram; barradas pela saída da equipe CP183)
 ├─ RULES      : postagens dH/dI; videos_producao (nova regra curta do postagemId)
 ├─ LEGADO     : vídeo sem ponteiro usa a confirmação manual (corredor V123, sem publicacaoStokki), sem mudança
-└─ COLATERAL  : J25, J61, J66, J04, J06, J35, J19 verdes no computador; J25, J61 e J79 no celular
+└─ COLATERAL  : J25, J61, J66, J04, J06, J35, J19 verdes no computador; J25, J61 e J61b no celular
 Mudança:
 - `papeis-funcoes.json` é a fonte única (legendar, agendar, ativos).
 - `scripts/papeis-cp225.mjs` gera o bloco das rules e a lista da tela, e confere a divergência no CI.
@@ -26,7 +26,7 @@ Mudança:
 - O `permission-denied` na legenda mostra quem pode, guarda o texto e abre uma demanda com id fixo para o Chris.
 O que NÃO muda: legendas já salvas, histórico, vínculos existentes e quem legenda na tela (mesma lista).
 Testes:
-- J79, 12 casos: Amanda, Cecília e Chris × Stokki com 4 redes, Stokki sem ponteiro e vídeo comum sem ponteiro. Mais a contraprova da Helo (editora), barrada com mensagem clara.
+- J61b, 12 casos: Amanda, Cecília e Chris × Stokki com 4 redes, Stokki sem ponteiro e vídeo comum sem ponteiro. Mais a contraprova da Helo (editora), barrada com mensagem clara.
 - Divergência: mudar só a tela faz o script falhar.
 Risco residual:
 - O tamanho compilado das rules só é medido no deploy.

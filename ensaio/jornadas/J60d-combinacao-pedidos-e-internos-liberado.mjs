@@ -203,6 +203,9 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     if (await page.waitForSelector('#mObsCliente', { state: 'visible', timeout: 6000 }).then(() => true).catch(() => false)) {
       const c7 = (await dbA.doc('calendarios/' + CLIENTE).get()).data(); c7.items = c7.items.map(x => x && x.itemId === alvos[0] ? { ...x, desc: (x.desc || '') + ' (mudado pela equipe — J77d)' } : x);
       await dbA.doc('calendarios/' + CLIENTE).set(c7);
+      // a página do cliente confere pela cópia do cliente: a mudança da equipe chega às duas (sem esperar o espelho das Functions)
+      const k7 = (await dbA.doc('calendarios_cliente/' + CLIENTE).get()).data(); k7.items = (k7.items || []).map(x => x && x.itemId === alvos[0] ? { ...x, desc: (x.desc || '') + ' (mudado pela equipe — J77d)' } : x);
+      await dbA.doc('calendarios_cliente/' + CLIENTE).set(k7);
       await page.fill('#mObsCliente', 'Pedido em conteúdo que a equipe acabou de mudar (J77d).'); await page.click('#btnEnviarObsCliente');
       await page.waitForTimeout(5000);
       aviso7 = await page.evaluate(() => document.getElementById('avisoSalvamento')?.innerText.trim() || '');

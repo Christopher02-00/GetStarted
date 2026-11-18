@@ -174,6 +174,46 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await dbA.doc('calendarios/' + CLIENTE).set(calAntes); await new Promise(r => setTimeout(r, 3000)); await dbA.doc('calendarios_cliente/' + CLIENTE).set(copiaAntes);
     const devolvido = (await seed.get('calendarios', CLIENTE))?.aprovacaoMeses?.[MES]?.status === 'liberado';
     fim('depois de liberar, o cliente pede de novo em conteúdos que já tiveram pedido (U5)', novos.length === alvos.length && devolvido, `${novos.length} de ${alvos.length} aceitos · dezembro devolvido liberado: ${devolvido}` + (recusas.length ? ' · recusados: ' + recusas.join(', ') : ''));
+    // 6) CP224 U2: dois pedidos seguidos SEM recarregar a página. O 2º precisa entrar ou dizer com clareza o que fazer
+    // (nunca "Não consegui confirmar… tente novamente", que manda repetir o que não vai funcionar).
+    const seguidos = [], telas6 = [];
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof openEdit === 'function' && /Calendário em revisão|Liberado — o cliente já vê|Em ajuste/.test(document.body.innerText), null, { timeout: 30000 }); await page.waitForTimeout(1500);
+    for (const itemId of alvos) {
+      const nomeAlvo = (copia0.items || []).find(x => x && x.itemId === itemId)?.name || '';
+      const k = await page.evaluate(nome => { try { closeModal(); } catch {} for (let k = 0; k < 400; k++) { try { openEdit(k); } catch { return -1; } if (document.getElementById('mName')?.value === nome) return k; try { closeModal(); } catch {} } return -1; }, nomeAlvo);
+      const campo = k >= 0 && await page.waitForSelector('#mObsCliente', { state: 'visible', timeout: 6000 }).then(() => true).catch(() => false);
+      if (!campo) { telas6.push(itemId.slice(0, 14) + ': sem campo de pedido'); continue; }
+      await page.fill('#mObsCliente', `Pedido seguido sem recarregar (J77c) em ${itemId}.`); await page.click('#btnEnviarObsCliente');
+      const o = await esperar(async () => { const c = await seed.get('calendarios', CLIENTE); return Object.values(c.pedidosAjusteClienteI71 || {}).find(x => x.itemId === itemId && /J77c/.test(x.texto || ''))?.operationId; }, 12000);
+      const aviso = await page.evaluate(() => [...document.querySelectorAll('.toast,[role=alert],[role=status]')].map(e => e.innerText.trim()).filter(Boolean).slice(-1)[0] || '');
+      if (o) seguidos.push(o); else telas6.push(itemId.slice(0, 14) + ': "' + aviso.slice(0, 120) + '"');
+    }
+    for (const o of seguidos) await dbA.doc('avisos_do_cliente/' + o).delete();
+    await dbA.doc('calendarios/' + CLIENTE).set(calAntes); await new Promise(r => setTimeout(r, 3000)); await dbA.doc('calendarios_cliente/' + CLIENTE).set(copiaAntes);
+    const genericos = telas6.filter(t => /tente novamente|Não consegui confirmar/.test(t));
+    fim('dois pedidos seguidos sem recarregar: o 2º entra ou diz o que fazer (U2)', seguidos.length === alvos.length || (seguidos.length >= 1 && !genericos.length && telas6.every(t => /atualiz|recarreg/i.test(t))), `${seguidos.length} de ${alvos.length} aceitos` + (telas6.length ? ' · tela: ' + telas6.join(' | ') : ''));
+    // 7) CP224 U2: a equipe muda o conteúdo enquanto o cliente está com ele aberto. A recusa diz o motivo e o próximo passo
+    // ("atualize a página"), e não "Não consegui confirmar… tente novamente".
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof openEdit === 'function' && /Liberado — o cliente já vê/.test(document.body.innerText), null, { timeout: 30000 }); await page.waitForTimeout(1500);
+    const nome7 = (copia0.items || []).find(x => x && x.itemId === alvos[0])?.name || '';
+    await page.evaluate(nome => { for (let k = 0; k < 400; k++) { try { openEdit(k); } catch { return -1; } if (document.getElementById('mName')?.value === nome) return k; try { closeModal(); } catch {} } return -1; }, nome7);
+    let aviso7 = 'sem campo de pedido';
+    if (await page.waitForSelector('#mObsCliente', { state: 'visible', timeout: 6000 }).then(() => true).catch(() => false)) {
+      const c7 = (await dbA.doc('calendarios/' + CLIENTE).get()).data(); c7.items = c7.items.map(x => x && x.itemId === alvos[0] ? { ...x, desc: (x.desc || '') + ' (mudado pela equipe — J77d)' } : x);
+      await dbA.doc('calendarios/' + CLIENTE).set(c7);
+      // a página do cliente confere pela cópia do cliente: a mudança da equipe chega às duas (sem esperar o espelho das Functions)
+      const k7 = (await dbA.doc('calendarios_cliente/' + CLIENTE).get()).data(); k7.items = (k7.items || []).map(x => x && x.itemId === alvos[0] ? { ...x, desc: (x.desc || '') + ' (mudado pela equipe — J77d)' } : x);
+      await dbA.doc('calendarios_cliente/' + CLIENTE).set(k7);
+      await page.fill('#mObsCliente', 'Pedido em conteúdo que a equipe acabou de mudar (J77d).'); await page.click('#btnEnviarObsCliente');
+      await page.waitForTimeout(5000);
+      aviso7 = await page.evaluate(() => document.getElementById('avisoSalvamento')?.innerText.trim() || '');
+    }
+    const entrou7 = Object.values((await seed.get('calendarios', CLIENTE)).pedidosAjusteClienteI71 || {}).filter(x => /J77d/.test(x.texto || ''));
+    for (const o of entrou7) await dbA.doc('avisos_do_cliente/' + o.operationId).delete();
+    await dbA.doc('calendarios/' + CLIENTE).set(calAntes); await new Promise(r => setTimeout(r, 3000)); await dbA.doc('calendarios_cliente/' + CLIENTE).set(copiaAntes);
+    fim('equipe mudou o conteúdo aberto: a recusa manda atualizar a página (U2)', !entrou7.length && /atualize a página/i.test(aviso7) && !/tente novamente/i.test(aviso7), `pedido ${entrou7.length ? 'ENTROU' : 'recusado'} · tela: "${aviso7.slice(0, 160)}"`);
   } catch (e) { await foto(page, 'J77-falha'); fim('fluxo', false, String(e).replace(/\s+/g, ' ').slice(0, 400) + ' · ' + etapas.slice(-8).join(' → ')); }
   finally { await fechar(); }
 }

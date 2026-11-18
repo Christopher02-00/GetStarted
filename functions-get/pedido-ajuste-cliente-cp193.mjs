@@ -78,7 +78,9 @@ export async function operarPedidoAjusteClienteCp193(db, auth, dados, { agora = 
     const mapa = { ...(cal.aprovacaoMeses || {}) }, anterior = mapa[competencia] || {};
     const status = String(anterior.status || '');
     exigir(status === 'liberado' || (ESTADOS_AJUSTE.includes(status) && String(anterior.liberadoEmAnterior || '') !== ''), 'cp193/estado', 'O calendário não está disponível para novos pedidos.');
-    const jaAberto = Object.values(pedidos).some(p => p && p.competencia === competencia && String(p.itemId || '') === itemId && !p.cancelamentoCp143 && p.operationId !== operationId && status !== 'liberado');
+    // CP224 U5: mesmo corte da tela do cliente (pedidosPendentes, gs-aprovacao-conteudo-i68.js): pedido de antes da última publicação já foi resolvido.
+    const publicadoUltimo = String(anterior.retratoLiberadoV115?.publicadoEm || anterior.liberadoEmAnterior || '');
+    const jaAberto = Object.values(pedidos).some(p => p && p.competencia === competencia && String(p.itemId || '') === itemId && !p.cancelamentoCp143 && p.operationId !== operationId && status !== 'liberado' && (!publicadoUltimo || !p.criadoEm || String(p.criadoEm) > publicadoUltimo));
     exigir(!jaAberto, 'gs/ajuste-ja-aberto', 'Este conteúdo já está em ajuste. Você pode enviar pedidos nos outros conteúdos.');
     const em = agora.toISOString(), itemNome = String(item.name || item.nome || '').trim();
     const liberadoEm = status === 'liberado' ? String(anterior.em || anterior.aprovadoEm || '') : String(anterior.liberadoEmAnterior || anterior.retratoLiberadoV115?.publicadoEm || '');

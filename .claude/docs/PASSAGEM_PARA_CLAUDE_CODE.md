@@ -273,6 +273,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | H Fedalto (CP224 U1) — pedidos do processo novo mostravam "precisam de conferência" sem saída | ✅ site + Functions no ar (18/11); J77 vermelha antes, verde depois; em produção os 10 pedidos abertos da Fedalto 2026-12 mostram o próximo passo e o botão. Faltam U2–U5 (matriz em `.claude/docs/MATRIZ_MES_LIBERADO.md`) | PR #138, J77 |
 | I CP224 U5 — pedido antigo já resolvido travava novo pedido do cliente no mesmo conteúdo | ✅ Functions no ar (18/11); J77 caso 5 vermelho antes, verde depois | PR #140, J77 |
 | J CP224 U2/U3/U4 — tela do cliente manda atualizar; processo antigo provado (J78); diagnóstico "Por que este mês não avança?" | ✅ no ar (18/11). Fedalto 2026-12: os 10 pedidos estão com o Chris, com o próximo passo na tela; nada a corrigir em dados | PR #142, #143, #144 |
+| K Stokki (CP225) — Amanda/Cecília recebiam "Missing or insufficient permissions" na legenda | ✅ rules no ar (18/11, sha256 c4d3d726…, ok nominal do Chris); J61b vermelha antes (7/12), verde depois (12/12); papéis em `papeis-funcoes.json` + `scripts/papeis-cp225.mjs` (CI confere). Falta: a Amanda salvar as 2 legendas pendentes da Stokki ("Os maiores gargalos da black friday", "Logística reversa") | PR #147, J61b |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

@@ -54,8 +54,8 @@ Flags que mudam o caminho:
 |---|---|---|---|---|
 | **L** + fase publicada | 🟩 | 🟩 C `contextoPublicado` | 🟩 P J71/J75 | 🟩 |
 | **AC** (reabertura CP182) | 🟩 | 🟩 C `reaberturaClienteCp182`, só para o ÚLTIMO pedido (m.pedidoAjusteOperationId) | ? | 🟩 |
-| **AC** + escopo CP115 aberto | ? | 🟩 C escopado | 🟩 P J71 (CP216) | 🟩 |
-| **AA**/AI/AP sem escopo CP115 | — | 🟥 C (6) | ? | 🟩 |
+| **AC** + escopo CP115 aberto | 🟩 P J78 (2 pedidos) | 🟩 C escopado | 🟩 P J71 (CP216) | 🟩 |
+| **AA**/AI/AP sem escopo CP115 | — | 🟩 P J78 (6): não se forma | ? | 🟩 |
 
 ## Notas (as células marcadas)
 
@@ -68,7 +68,7 @@ Flags que mudam o caminho:
 3. **🟩 (U2, 18/11; J77 casos 6 e 7) Tela do cliente:** dois pedidos seguidos sem recarregar entram os dois (a recusa vinha da trava da U5). Quando a conferência da tela recusa porque a equipe mudou o conteúdo aberto, a mensagem agora manda copiar o texto e atualizar a página. Antes: depois do 1º pedido, o próximo sem recarregar a página é recusado ("Este conteúdo mudou desde que você abriu"). O cliente vê "Não consegui confirmar o ajuste no servidor… tente novamente", e não "atualize a página".
 4. **CP193:** aceita novo pedido com `liberadoEmAnterior` preenchido. Falta provar com o mês já enviado à Amanda.
 5. **CP140 complemento de preparação** só com `aguardando_interna`. Falta provar ajuste interno novo com pedido do cliente já enviado.
-6. **🟥 Processo antigo:** o CP115 só tem prova com `liberado`+publicada, escopo CP115 ou reabertura do cliente. Com o mês em `ajuste_interno` aberto pela Amanda ou por ajuste interno (sem escopo CP115), o pedido do cliente fica sem prova e sem saída. É a mesma família do CP201 e do CP216.
+6. **🟩 (U3, 18/11; J78) Processo antigo: o estado não se forma.** Com dois pedidos, os dois têm prova. Com um pedido aberto, o mês inteiro não pode ser enviado (trava CP182, que diz o próximo passo), então a Amanda não tem o que devolver por cima dele. Hipótese original: o CP115 só tem prova com `liberado`+publicada, escopo CP115 ou reabertura do cliente. Com o mês em `ajuste_interno` aberto pela Amanda ou por ajuste interno (sem escopo CP115), o pedido do cliente fica sem prova e sem saída. É a mesma família do CP201 e do CP216.
 
 7. **🟩 (U5, 18/11) CP193 contava pedido antigo como aberto** (achado na J77, 17/11). `jaAberto` olha todos os pedidos do mesmo conteúdo na competência, inclusive os de antes da última liberação, já resolvidos. Depois de qualquer novo pedido reabrir o mês, aquele conteúdo fica recusado com "Este conteúdo já está em ajuste", sem saída para o cliente. Correção: U5 (só pedidos criados depois de `liberadoEmAnterior`).
 

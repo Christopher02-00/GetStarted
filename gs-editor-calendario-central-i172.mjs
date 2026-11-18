@@ -1,6 +1,6 @@
 import {montarPortaContinuidadeCp129} from './gs-adocao-continuidade-cp129.mjs?v=db5b1206a7bdb1929c6638d30645095fbfa8644335a1aa36d31ecb449132f5e0';
 import {montarAjustesInternosCp123} from './gs-ajustes-internos-cp123.mjs?v=700b402e0403acb26901a3f4fd2c227a7ab7a6660021b7689571147e100d2a65';
-import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=72e14de8e56cf955837f246daf30eb08d69252ed9eb8f2f87920030681e41396';
+import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=ae095ebef37db799eefb850192b243ceab46744e5b3adf592ec0923573ef220e';
 /* Editor humano; persistência editorial pertence exclusivamente às ações HTTP I172. */
 export const CAMPOS_EDITOR_I172=Object.freeze(['itemId','empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','mes','stage','fmt','dataFlexivel','bloco','dataPostagem']);
 const EMPRESAS=Object.freeze([{id:'otica_hauer',nome:'Ótica Hauer'},{id:'otica_sao_jose',nome:'Ótica São José'},{id:'clinica_olhos_hauer',nome:'Clínica dos Olhos Hauer'},{id:'clinica_sao_jose',nome:'Clínica São José'}]);

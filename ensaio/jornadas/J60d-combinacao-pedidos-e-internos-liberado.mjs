@@ -153,6 +153,27 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const cal = await seed.get('calendarios', CLIENTE), m = cal.aprovacaoMeses[MES], r = m.retratoLiberadoV115.items;
     const corrigidos = alvos.every(a => /J77/.test(r.find(i => i.itemId === a)?.desc || '')), pecas = adicionais.every(a => r.some(i => i.itemId === a) || !pubAntes.some(i => i.itemId === a)), mesmos = pubAntes.every(x => r.some(i => i.itemId === x.itemId));
     fim('liberação leva os pedidos, mantém as peças CP142 e os demais conteúdos', m.status === 'liberado' && corrigidos && pecas && mesmos && !errosChris.filter(erroGrave).length, `mês ${m.status} · corrigidos ${corrigidos} · peças CP142 mantidas ${pecas} · conteúdos mantidos ${mesmos}`);
+    // 5) depois da nova liberação, o cliente pede de novo nos MESMOS conteúdos (CP224 U5). O 1º pedido reabre o mês; o 2º,
+    // em outro conteúdo que também já teve pedido resolvido, não pode ser recusado por "já está em ajuste" (o pedido antigo
+    // é de antes da última liberação).
+    const dbA = getFirestore(app), calAntes = (await dbA.doc('calendarios/' + CLIENTE).get()).data(), copiaAntes = (await dbA.doc('calendarios_cliente/' + CLIENTE).get()).data();
+    const novos = [], recusas = [], url = amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`);
+    for (const itemId of alvos) {
+      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      await page.waitForFunction(() => typeof openEdit === 'function' && /Calendário em revisão|Liberado — o cliente já vê|Em ajuste/.test(document.body.innerText), null, { timeout: 30000 }); await page.waitForTimeout(1500);
+      const nomeAlvo = (copia0.items || []).find(x => x && x.itemId === itemId)?.name || '';
+      const k = await page.evaluate(nome => { for (let k = 0; k < 400; k++) { try { openEdit(k); } catch { return -1; } if (document.getElementById('mName')?.value === nome) return k; try { closeModal(); } catch {} } return -1; }, nomeAlvo);
+      const campo = k >= 0 && await page.waitForSelector('#mObsCliente', { state: 'visible', timeout: 6000 }).then(() => true).catch(() => false);
+      if (!campo) { recusas.push(itemId.slice(0, 14) + ' (sem campo de pedido)'); continue; }
+      await page.fill('#mObsCliente', `Novo pedido depois da liberação (J77b) em ${itemId}.`); await page.click('#btnEnviarObsCliente');
+      const o = await esperar(async () => { const c = await seed.get('calendarios', CLIENTE); return Object.values(c.pedidosAjusteClienteI71 || {}).find(x => x.itemId === itemId && /J77b/.test(x.texto || ''))?.operationId; });
+      if (o) novos.push(o); else recusas.push(itemId.slice(0, 14) + ' (' + erros.map(String).filter(e => /V113/.test(e)).slice(-1)[0]?.replace(/.*Error: /, '').slice(0, 90) + ')');
+    }
+    // devolve dezembro liberado para as jornadas seguintes (J64 e outras dependem disso): só dados do emulador
+    for (const o of novos) await dbA.doc('avisos_do_cliente/' + o).delete();
+    await dbA.doc('calendarios/' + CLIENTE).set(calAntes); await new Promise(r => setTimeout(r, 3000)); await dbA.doc('calendarios_cliente/' + CLIENTE).set(copiaAntes);
+    const devolvido = (await seed.get('calendarios', CLIENTE))?.aprovacaoMeses?.[MES]?.status === 'liberado';
+    fim('depois de liberar, o cliente pede de novo em conteúdos que já tiveram pedido (U5)', novos.length === alvos.length && devolvido, `${novos.length} de ${alvos.length} aceitos · dezembro devolvido liberado: ${devolvido}` + (recusas.length ? ' · recusados: ' + recusas.join(', ') : ''));
   } catch (e) { await foto(page, 'J77-falha'); fim('fluxo', false, String(e).replace(/\s+/g, ' ').slice(0, 400) + ' · ' + etapas.slice(-8).join(' → ')); }
   finally { await fechar(); }
 }

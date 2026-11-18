@@ -129,6 +129,10 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
         const b = ui.page.locator(`[data-pedido="${dosPedidos[0].id}"] [data-action="ir-conteudo-cp224"]`); await b.evaluate(el => el.scrollIntoView({ block: 'center' })); await b.click(); await ui.page.waitForTimeout(1200);
         foco = await ui.page.evaluate(item => { const el = document.activeElement; return el?.closest?.('[data-card]')?.dataset.card === item ? 'ok' : 'foco em ' + (el?.tagName || 'nada'); }, alvo.itemId); }
       await foto(ui.page, 'J77-chris-pedidos');
+      // CP224 U4: "Por que este mês não avança?" diz com quem está cada pedido e o próximo passo
+      const diag = await ui.page.evaluate(() => document.querySelector('[data-diagnostico-cp224]')?.innerText.replace(/\s+/g, ' ') || '');
+      const okDiag = /Por que este mês não avança\?/.test(diag) && new RegExp('Com o Chris \\(' + ops.length + '\\)').test(diag) && /corrigir o conteúdo/.test(diag) && /Liberação:/.test(diag);
+      fim('Chris (tela): "Por que este mês não avança?" mostra com quem está cada pedido e o próximo passo (U4)', okDiag, diag ? diag.slice(0, 260) : 'diagnóstico ausente');
       fim('Chris (tela): cada pedido diz o próximo passo e o botão leva ao conteúdo no editor', dosPedidos.length === ops.length && !enganam.length && !semBotao.length && foco === 'ok',
         `${dosPedidos.length} pedidos na tela · com "precisam de conferência": ${enganam.length} · sem botão: ${semBotao.length} · botão → ${foco || 'não testado'}` + (dosPedidos[0] ? ' · texto: "' + dosPedidos[0].texto.replace(/\s+/g, ' ').slice(0, 140) + '"' : ''));
     } catch (e) { await foto(ui.page, 'J77-chris-falha'); fim('Chris (tela): cada pedido diz o próximo passo e o botão leva ao conteúdo no editor', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }

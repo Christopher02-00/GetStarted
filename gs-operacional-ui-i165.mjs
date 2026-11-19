@@ -74,13 +74,16 @@ export function criarFluxoAprovacaoI165({contexto,chamar,storage,novoId,quandoMu
  async function abrir(id){
   if(!idFisicoI165(id))throw Error('Reabra o vídeo pela lista.');const c=ctx(),s=restaurar(id,c);if(pendente(s)){emitir(s,c);return copiar(s);}
   const ticket=(s.ticket||0)+1;s.ticket=ticket;s.aberta=true;s.estado='preparando';s.mensagem='Conferindo a entrega que chegou…';emitir(s,c);
-  try{const r=await chamar(c.papel==='Amanda'?'preparar_orientacao_video':'preparar_aprovacao_video',{videoId:id,papelOperado:c.papel,sessao:c.sessao,uidEsperado:c.uid,atorRealEsperado:c.atorReal});
+  try{const base={videoId:id,papelOperado:c.papel,sessao:c.sessao,uidEsperado:c.uid,atorRealEsperado:c.atorReal};let r=null;
+   /* CP230: a Amanda também aprova a qualidade. Vídeo esperando qualidade → mesma preparação do Chris; senão, a orientação dela. */
+   if(c.papel==='Amanda'){try{r=await chamar('preparar_aprovacao_video',base);if(r?.foraDoFluxo===true||r?.fluxoCp108!=='qualidade_chris')r=null;}catch{r=null;}if(!atual(c,s,ticket))return {tardia:true};}
+   if(!r)r=await chamar(c.papel==='Amanda'?'preparar_orientacao_video':'preparar_aprovacao_video',base);
    if(!atual(c,s,ticket))return {tardia:true};
    if(r?.video?.id!==id)throw Error('A entrega ainda não foi confirmada.');
    if(r.foraDoFluxo===true){s.snapshot=r;s.estado='fora_fluxo';s.mensagem=String(r.motivo||'Esta entrega está em outra etapa. Nenhuma aprovação foi reaberta.');emitir(s,c);return copiar(s);}
    if(!r.assinaturaEsperada||!urlSeguraI165(r.video.linkFinalizado))throw Error('A entrega e o link ainda não foram confirmados.');
-   if(r.fluxoCp108!==(c.papel==='Amanda'?'orientacao_amanda':'qualidade_chris'))throw Error('A versão desta conferência ainda não separou qualidade e programação. Atualize a tela antes de continuar.');
-   conferirCampanhasPreparoI165(r);s.snapshot=r;s.estado='pronta';s.mensagem=c.papel==='Amanda'?'A qualidade já foi conferida. Combine a postagem sem aprovar o vídeo de novo.':'Confira a qualidade desta entrega. A data do calendário segue para a Cecília; campanhas e exceções ficam com a Amanda.';
+   if(!(r.fluxoCp108==='qualidade_chris'||c.papel==='Amanda'&&r.fluxoCp108==='orientacao_amanda'))throw Error('A versão desta conferência ainda não separou qualidade e programação. Atualize a tela antes de continuar.');
+   conferirCampanhasPreparoI165(r);s.snapshot=r;s.estado='pronta';s.mensagem=r.fluxoCp108==='orientacao_amanda'?'A qualidade já foi conferida. Combine a postagem sem aprovar o vídeo de novo.':'Confira a qualidade desta entrega. A data do calendário segue para a Cecília; campanhas e exceções ficam com a Amanda.';
    const anterior=r.diretrizAnterior?.politica;
    if(!s.editado&&r.compromisso?.data)s.campos={...s.campos,modalidade:'data',data:r.compromisso.data,hora:r.compromisso.hora||''};
    else if(!s.editado&&anterior&&['data','semana'].includes(anterior.modalidade))s.campos={...vazio(),...anterior};
@@ -98,7 +101,7 @@ export function criarFluxoAprovacaoI165({contexto,chamar,storage,novoId,quandoMu
   }catch(e){s.estado='incerta';s.mensagem='Ainda não consegui confirmar esta tentativa. Use “Conferir anterior” antes de mudar qualquer coisa.';s.erro=String(e.message||'');emitir(s,c);return {incerta:true};}
  }
  async function confirmar(id){const c=ctx(),s=restaurar(id,c);if(pendente(s))throw Error('Confira a tentativa anterior antes de enviar outra.');if(s.estado!=='pronta'||!s.snapshot)throw Error('Confira a entrega atual antes de aprovar.');
-  const qualidade=s.snapshot.fluxoCp108==='qualidade_chris';if(s.snapshot.fluxoCp108!==(c.papel==='Amanda'?'orientacao_amanda':'qualidade_chris'))throw Error('Confira novamente a versão atual desta ação.');const escolha=qualidade?null:opcaoCampanhaI165(s.snapshot,s.campos.campanhaChave);if(escolha&&s.snapshot.diretrizNecessaria===false)throw Error('Uma entrega direta não pode receber campanha de postagem.');
+  const qualidade=s.snapshot.fluxoCp108==='qualidade_chris';if(!(s.snapshot.fluxoCp108==='qualidade_chris'||c.papel==='Amanda'&&s.snapshot.fluxoCp108==='orientacao_amanda'))throw Error('Confira novamente a versão atual desta ação.');const escolha=qualidade?null:opcaoCampanhaI165(s.snapshot,s.campos.campanhaChave);if(escolha&&s.snapshot.diretrizNecessaria===false)throw Error('Uma entrega direta não pode receber campanha de postagem.');
   let diretriz;if(!qualidade&&s.snapshot.diretrizNecessaria!==false){diretriz=politicaFormularioI165(s.campos);const cp=s.snapshot.compromisso||escolha;if(cp&&(diretriz.modalidade!=='data'||diretriz.data!==cp.data||!diretriz.hora||cp.hora&&diretriz.hora!==cp.hora))throw Error('Este conteúdo tem uma campanha com data combinada. Mantenha a data e informe o horário correto da postagem.');}
   const payload={videoId:id,operacaoId:novoId(),assinaturaEsperada:s.snapshot.assinaturaEsperada,papelOperado:c.papel,sessao:c.sessao,uidEsperado:c.uid,atorRealEsperado:c.atorReal,campanhaEscolhida:escolha?copiar(escolha.escolha):null,compromissoEsperado:copiar(s.snapshot.compromisso||null),...(diretriz?{diretriz}:{})};
   if(!idFisicoI165(payload.operacaoId))throw Error('Não consegui identificar esta tentativa.');s.acaoIntencao=qualidade?'aprovar_video':'salvar_orientacao_video';s.intencao=congelar(copiar(payload));s.estado='enviando';try{salvar(s,c,true);}catch(e){s.intencao=null;s.estado='pronta';throw e;}return enviar(s,c);
@@ -147,7 +150,7 @@ export function criarUiOperacionalI165({document,window,contexto,carregarConfig,
     /* F-U1 (10/11/2026, pedido do Chris): aprovar a qualidade volta a ser um clique. A conferência do servidor
        (mesma assinatura, recibo idempotente, revalidação na transação) continua; só o segundo botão saiu.
        A orientação da Amanda (formulário com campos) continua em dois passos. */
-    const pronta=fluxo.estado(id);if(!existe&&vigente()&&pronta.estado==='pronta'&&pronta.snapshot?.fluxoCp108==='qualidade_chris'&&contexto().papel==='Chris')await fluxo.confirmar(id);
+    const pronta=fluxo.estado(id);if(!existe&&vigente()&&pronta.estado==='pronta'&&pronta.snapshot?.fluxoCp108==='qualidade_chris'&&['Chris','Amanda'].includes(contexto().papel))await fluxo.confirmar(id);
    }catch(e){if(!abertura.cancelada&&capturada===chaveContexto(contexto())){if(abertura.el?.isConnected)abertura.el.innerHTML='<section class="i165-operacional"><p role="alert">Não consegui abrir esta conferência agora. Seu rascunho foi mantido. Tente abrir novamente.</p></section>';toast('Não consegui abrir a conferência. '+e.message,'erro');}}finally{if(aberturasCp156.get(id)===abertura)aberturasCp156.delete(id);}return true;})();
   return abertura.promise;
  }

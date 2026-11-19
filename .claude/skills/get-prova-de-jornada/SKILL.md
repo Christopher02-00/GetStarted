@@ -45,6 +45,13 @@ Nunca declarar o nível 3 sem a pessoa. Nunca usar "documento fictício" em prod
 ## Contraprova (obrigatória para correção de bug)
 Antes de corrigir, a jornada **falha** no `main` (vermelho reproduzido). Depois, passa. Sem o vermelho antes, não se sabe se o teste testa alguma coisa — registrar na ficha "não reproduzido" e tratar como hipótese.
 
+## Regras de prova desde 19/11/2026 (retrospectiva)
+- **Pelo clique, no papel real**: toda ação nova ou corrigida tem ao menos 1 caso que clica o botão na tela, logado como a pessoa que reclamou. Chamada direta ao servidor prova o servidor, não a tela (CP226b passou na jornada e falhou no ar).
+- **Seed = o caso real**: o vermelho reproduz o MESMO estado do dado de produção (ex.: mês republicado depois do ajuste; sessão já concluída; vídeo na fila), não um estado parecido.
+- **Mensagem citada = botão testado**: se a tela diz "use X", a jornada clica X naquele estado.
+- **Aparelho**: reclamação de tablet/celular → `--movel` obrigatório na contraprova e no verde.
+- **Depois do deploy**: abrir o caso real no ar pela tela (somente leitura, ou o gesto autorizado) e escrever o que a pessoa vai ver. Só então dizer "resolvido".
+
 ## Verificação estática que acompanha (não substitui)
 `ferramentas/verificar_caminhos.py` (cliques→funções, `irPara`→views, ids, duplicatas) em `escritorio.html` e `portal-cliente.html`; baseline em 08/11/2026: 0 handlers quebrados, 2 rotas sem view estática (`capsulaAmanda`, `estrategiaCp109` — criadas dinamicamente), 13 ids mortos. O PR não pode piorar o baseline.
 

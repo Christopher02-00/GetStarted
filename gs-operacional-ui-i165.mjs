@@ -147,7 +147,7 @@ export function criarUiOperacionalI165({document,window,contexto,carregarConfig,
     /* F-U1 (10/11/2026, pedido do Chris): aprovar a qualidade volta a ser um clique. A conferência do servidor
        (mesma assinatura, recibo idempotente, revalidação na transação) continua; só o segundo botão saiu.
        A orientação da Amanda (formulário com campos) continua em dois passos. */
-    const pronta=fluxo.estado(id);if(!existe&&vigente()&&pronta.estado==='pronta'&&pronta.snapshot?.fluxoCp108==='qualidade_chris'&&contexto().papel==='Chris')await fluxo.confirmar(id);
+    const pronta=fluxo.estado(id);if(!existe&&vigente()&&pronta.estado==='pronta'&&pronta.snapshot?.fluxoCp108==='qualidade_chris'&&['Chris','Amanda'].includes(contexto().papel))await fluxo.confirmar(id);
    }catch(e){if(!abertura.cancelada&&capturada===chaveContexto(contexto())){if(abertura.el?.isConnected)abertura.el.innerHTML='<section class="i165-operacional"><p role="alert">Não consegui abrir esta conferência agora. Seu rascunho foi mantido. Tente abrir novamente.</p></section>';toast('Não consegui abrir a conferência. '+e.message,'erro');}}finally{if(aberturasCp156.get(id)===abertura)aberturasCp156.delete(id);}return true;})();
   return abertura.promise;
  }

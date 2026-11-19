@@ -14,7 +14,7 @@ function qualidadeSomenteChrisCp108(video,dados,ctx,reciboAnterior,em){
  return {estado:'novo',patchVideo:{status:'aguardando_cliente',aprovadoInternoEm:em,aprovadoPor:ctx.papel,clienteAprovou:false,ultimaCorrecaoSolicitada:'',enviadoParaCliente:false},diretriz:null,recibo:{schema:1,tipo:'qualidade_chris_cp108',escopo:'operacional_i165_cp101',videoId:video.id,operacaoId:dados.operacaoId,intencao,autoria:{uid:ctx.uid,papel:ctx.papel,atorReal:ctx.atorReal},em},requerLeituraAtual:true,acaoPosterior:'conferir-configuracao-e-usar-confirmacao-cliente-canonica'};
 }
 export async function prepararAprovacaoVideoI165(db,auth,dados,{agora=new Date()}={}){
- const ator=identidadeTokenI165(auth,dados.papelOperado,dados.sessao||'aprovacao');exigirI165(ator.papel==='Chris'&&idFisicoI165(dados.videoId),'aprovacao','A revisão principal de qualidade é do Chris. A Amanda organiza a postagem na fila dela.');
+ const ator=identidadeTokenI165(auth,dados.papelOperado,dados.sessao||'aprovacao');exigirI165(['Chris','Amanda'].includes(ator.papel)&&idFisicoI165(dados.videoId),'aprovacao','A aprovação de qualidade é do Chris ou da Amanda.');
  return db.runTransaction(async tx=>{
   await contextoTxI165(db,tx,ator,'aprovacao');const s=await tx.get(db.doc('videos_producao/'+dados.videoId));exigirI165(s.exists,'video','O vídeo não existe mais.');const v={...s.data(),id:s.id};
   exigirI165(v.excluido!==true&&v.status==='aguardando_aprovacao'&&typeof v.linkFinalizado==='string'&&v.linkFinalizado.trim(),'estado-video','A entrega atual não está disponível para esta aprovação.');
@@ -40,7 +40,8 @@ export async function aprovarVideoI165(db,auth,dados,{agora=new Date()}={}) {
  const vr=db.doc('videos_producao/'+dados.videoId),dr=db.doc('video_programacao_i165/'+dados.videoId),rr=refOperacaoI165(db,ator,dados.operacaoId),pedidoHash=hashPedidoI165(ator,dados);
  return db.runTransaction(async tx=>{
   const [contexto,vs,ds,rs]=await Promise.all([contextoTxI165(db,tx,ator,'aprovacao'),tx.get(vr),tx.get(dr),tx.get(rr)]);if(rs.exists)return {...conferirReciboPedidoI165(rs.data(),ator,pedidoHash),nenhumaPostagemCriada:true};exigirI165(vs.exists,'video','O vídeo não existe mais.');const video={...vs.data(),id:vs.id};
-  exigirI165(ator.papel==='Chris','papel','Novas aprovações de qualidade são do Chris. A Amanda organiza a postagem sem reaprovar o vídeo.');
+  /* CP230 (19/11/2026, decisão do Chris): a Amanda também aprova a qualidade do vídeo, como o Chris (revoga a parte "só o Chris" da CP108). */
+  exigirI165(['Chris','Amanda'].includes(ator.papel),'papel','A aprovação de qualidade é do Chris ou da Amanda.');
   exigirI165(dados.diretriz===undefined&&dados.campanhaEscolhida==null,'somente-qualidade','A aprovação do Chris não define datas, prioridade ou nova campanha. Reabra a entrega na versão atual.');
   const cliente=await clienteTxI165(db,tx,video.cliente,em);exigirI165(cliente.clienteAtivo,'cliente-inativo','O cliente saiu da operação; confira o trabalho antes de aprovar.');
   const fora=semPostagem(video,cliente);

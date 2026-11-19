@@ -100,10 +100,13 @@ export function elegibilidadeReliberacaoAjustesCp121(c,cal,rows,ator){
  /* CP202 (11/11/2026, Bluefit/Place/Divina 2026-11): pedido feito pelo CLIENTE deixa o mês em ajuste_interno (por 'Cliente').
     Depois que o Chris corrige e a Amanda aprova cada pedido, este é o único caminho de volta ao cliente — antes ele exigia
     status 'liberado' e fase 'publicada', e o mês ficava travado. Devolução da própria Amanda (por 'Amanda') não entra aqui. */
- const legado=c.modo==='continuar_legado',pedidoClienteCp193=m.status==='ajuste_interno'&&m.por==='Cliente'&&/^cal_ajuste_v113_[a-f0-9]{48}$/.test(String(m.pedidoAjusteOperationId||''));
+ /* CP237 (19/11/2026, Stokki 2026-12): a devolução do PEDIDO pela Amanda (reabrirCalendario) regrava o mês por 'Amanda' e, no
+    processo novo, reabre a criação. É o mesmo mês com pedido do cliente: depois de aprovar a correção, a liberação volta a ser
+    este caminho (a mesma regra da CP233 para os ajustes internos). */
+ const legado=c.modo==='continuar_legado',pedidoClienteCp193=m.status==='ajuste_interno'&&['Cliente','Amanda'].includes(m.por)&&/^cal_ajuste_v113_[a-f0-9]{48}$/.test(String(m.pedidoAjusteOperationId||''))&&!!pub;
  /* CP203 (11/11/2026, Zeiss 2026-11 / Vitalle 2026-12): o mesmo caminho no processo novo (I155). Lá a "entrega" do ciclo
     aceita nova publicação (preserva a primeira e atualiza publicacaoAtual); exige a base enviada e a publicação atual da Amanda. */
- const i155=!c.modo&&c.criacao?.enviadoRevisao===true&&!!c.criacao.base&&c.criacao.base===c.documentos?.consolidadoEnviado&&cal.planejamentoBasesI155?.[mes]===c.criacao.base&&!!c.entrega&&!!c.publicacaoAtual&&c.publicacaoAtual.base===c.criacao.base;
+ const i155=!c.modo&&(c.criacao?.enviadoRevisao===true||pedidoClienteCp193)&&!!c.criacao.base&&c.criacao.base===c.documentos?.consolidadoEnviado&&cal.planejamentoBasesI155?.[mes]===c.criacao.base&&!!c.entrega&&!!c.publicacaoAtual&&c.publicacaoAtual.base===c.criacao.base;
  const pedidoDoCliente=pedidoClienteCp193&&(legado?['nao_iniciada','aberta','publicada'].includes(st?.fase):i155);
  if(legado?(st?.correcaoIndividualCp115?.schema===1||!(pedidoDoCliente||st?.fase==='publicada'&&m.status==='liberado')):!pedidoDoCliente)return nao();
  const novos=rows.filter(r=>!encerrado(r)&&r.aprovacaoAtual&&!r.histPublico);

@@ -284,6 +284,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | T Ensaio (19/11) — portão: log do emulador de 512 MB+ quebrava a sentinela das rules (bateria inteira) | ✅ no ar (19/11): sentinela lê o log linha a linha; bateria do CI em 4 fatias (~30 min) | ramo `fix/ensaio-log-grande-linha-a-linha` |
 | S CP235 (19/11) — Cecília: agendar em data diferente do calendário vira pedido à Amanda com 1 clique (Zeiss 12/11 e 20/11) | ✅ no ar (19/11). Cecília: data diferente vira pedido à Amanda (demanda VeGnTyob); vídeo da Cookiery "O Único Carrinho" cancelado com ok do Chris | J88 |
 | U CP236 (19/11) — vincular a demanda do Chris em Planejamento e roteiros escondia "Abrir editor oficial do mês" (Clínica dos Olhos Hauer 2026-12) | ✅ no ar (19/11): vincular a demanda não esconde "Abrir editor oficial do mês" (J89) | — |
+| V CP237 (19/11) — Stokki 2026-12: pedido aprovado, diagnóstico manda liberar, mas a Amanda não tem botão (mês devolvido por ela antes) | 🔄 em andamento — ramo `fix/cp237-liberar-depois-de-devolucao-do-mes` | — |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

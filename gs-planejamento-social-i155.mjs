@@ -381,6 +381,9 @@ export function criarRepositorio(io,contexto,{clientes,origens,calendario,ausenc
       }else if(acao==='entrega'){
         exigirPapel(ctx,GESTAO);
         const s=await tx.get(doc(db,'calendarios',c.cliente)),cal=s.data(),m=cal?.aprovacaoMeses?.[c.competencia],snapshot=m?.retratoLiberadoV115;
+        /* CP233 (19/11/2026, Fedalto): a devolução de um pedido do cliente reabre a criação (enviadoRevisao:false) num ciclo já
+           publicado. Liberar de novo a MESMA base publicada é a continuação desse ciclo: a criação volta a constar como enviada. */
+        if(c.criacao&&!c.criacao.enviadoRevisao&&c.publicacaoAtual?.base===c.criacao.base)c.criacao={...c.criacao,enviadoRevisao:true};
         if(!estadoEtapas(c).consolidado||!c.criacao?.enviadoRevisao||cal?.planejamentoBasesI155?.[c.competencia]!==c.criacao.base||m?.status!=='liberado'||!m.aprovadoEm||m.aprovadoEm<c.criadoEm||!snapshot||snapshot.mes!==c.competencia||!snapshot.items?.length||m.aprovadoPor!=='Amanda')throw Error('Ainda falta a aprovação da Amanda e a versão deste ciclo efetivamente disponível no Portal.');
         const visivel=await calendario(c.cliente,c.competencia,cal);if(!visivel.disponivel||visivel.assinatura!==JSON.stringify(snapshot.items))throw Error('A projeção do Portal não confirmou a mesma versão.');
         const instante=m.aprovadoEm>snapshot.publicadoEm?m.aprovadoEm:snapshot.publicadoEm;

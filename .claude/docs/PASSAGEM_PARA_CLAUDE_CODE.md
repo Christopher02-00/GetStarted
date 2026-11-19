@@ -279,6 +279,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | N CP231 (19/11) — retirar conteúdo normal de mês liberado; ajuste devolvido vira retirada ou é descartado | ✅ site + Functions no ar (v2026.11.19-5, ok nominal do Chris). **Feito em produção:** Cookiery 2026-11, dia 23 virou retirada e foi enviado à Amanda (aviso: 1 vídeo na fila, a Amanda arquiva). Falta: a Amanda aprovar, arquivar o vídeo e liberar (21, 25 e 26 chegam ao cliente) | PR #155, J84 |
 | O CP232 (19/11) — aba Calendários de Aprovações: pedidos do cliente + ajustes internos numa fila só, com o que trava a liberação | ✅ site + Functions no ar. Produção: Cookiery mostra "Falta: dia 23, com a Amanda"; Fedalto mostra os 9 pedidos + 3 internos; Juliane 2026-12 já foi liberada hoje (9 pedidos), por isso não aparece | PR #157, J85 |
 | P CP230 (19/11) — a Amanda aprova a qualidade dos vídeos como o Chris (revoga o "só o Chris" da CP108) | ✅ site + Functions no ar (v2026.11.19-6, ok nominal do Chris) | PR #158, J83 |
+| S CP235 (19/11) — Cecília: agendar em data diferente do calendário vira pedido à Amanda com 1 clique (Zeiss 12/11 e 20/11) | 🔄 em andamento — ramo `fix/cp235-data-diferente-vira-pedido-amanda` | J88 |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

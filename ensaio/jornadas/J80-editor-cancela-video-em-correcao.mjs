@@ -23,7 +23,9 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await campo.evaluate((el, m) => { el.value = m; el.dispatchEvent(new Event('input', { bubbles: true })); }, MOTIVO);
     await page.locator('#cancelarVideoBox_' + VID + ' button', { hasText: 'Confirmar cancelamento' }).evaluate(el => el.click());
     let v = null; for (let i = 0; i < 20; i++) { await page.waitForTimeout(1000); v = await seed.get('videos_producao', VID); if (v?.excluido) break; }
-    const aviso = (await seed.listar('demandas')).find(d => d.destinatario === 'Amanda' && d.videoId === VID && !d.excluido);
+    // O aviso à Amanda e o redesenho da lista vêm logo depois da exclusão; na bateria inteira levam alguns segundos.
+    let aviso = null; for (let i = 0; i < 20 && !aviso; i++) { aviso = (await seed.listar('demandas')).find(d => d.destinatario === 'Amanda' && d.videoId === VID && !d.excluido); if (!aviso) await page.waitForTimeout(1000); }
+    await page.waitForFunction(t => !(document.getElementById('videosMeus')?.innerText || '').includes(t), TIT, { timeout: 15000 }).catch(() => {});
     const toast = await page.evaluate(() => [...document.querySelectorAll('.toast,[role=alert],[role=status]')].map(t => t.innerText).filter(Boolean).slice(-2).join(' | '));
     const aindaNaLista = await page.evaluate(t => (document.getElementById('videosMeus')?.innerText || '').includes(t), TIT);
     const graves = erros.filter(erroGrave);

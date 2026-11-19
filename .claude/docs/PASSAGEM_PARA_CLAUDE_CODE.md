@@ -281,6 +281,8 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | P CP230 (19/11) — a Amanda aprova a qualidade dos vídeos como o Chris (revoga o "só o Chris" da CP108) | ✅ site + Functions no ar (v2026.11.19-6, ok nominal do Chris) | PR #158, J83 |
 | Q CP233 (19/11) — Fedalto 2026-12: devolução de pedido do cliente deixava os ajustes internos sem "Trazer" e sem liberação | 🔄 em andamento — PR #162 pronto (J86 16/16), CI rodando; Functions autorizadas pelo Chris; depois a Amanda devolve o 16 e libera | PR #162, J86 |
 | R CP234 (19/11) — Nathan: 2º filmmaker complementa sessão já registrada pelo 1º (Zeiss 12/11) | 🔄 em andamento — ramo `fix/cp234-complementar-sessao-registrada` | J87 |
+| T Ensaio (19/11) — portão: log do emulador de 512 MB+ quebrava a sentinela das rules (bateria inteira) | 🔄 em andamento — leitura linha a linha em `ensaio/rodar.mjs` | ramo `fix/ensaio-log-grande-linha-a-linha` |
+| S CP235 (19/11) — Cecília: agendar em data diferente do calendário vira pedido à Amanda com 1 clique (Zeiss 12/11 e 20/11) | 🔄 em andamento — ramo `fix/cp235-data-diferente-vira-pedido-amanda` | J88 |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

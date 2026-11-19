@@ -17,13 +17,16 @@ concurrency:
   cancel-in-progress: true
 jobs:
   jornadas:
-    name: jornadas (${{ matrix.tela }})
+    name: jornadas (${{ matrix.tela }}, ${{ matrix.fatia }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         tela: [desktop, movel]
+        # 19/11/2026 (velocidade): a bateria inteira levava 50–60 min em série. Duas fatias paralelas por tela,
+        # cada uma com o próprio emulador: a = J01–J49; b = J50+ com as dependências J06/J55/J56 na frente.
+        fatia: [a, b]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -55,22 +58,54 @@ jobs:
           node montar-cdn.mjs
       - name: Papéis iguais na tela e nas rules (CP225)
         run: node scripts/papeis-cp225.mjs
-      - name: Bateria de jornadas
-        run: node ensaio/rodar.mjs ${{ matrix.tela == 'movel' && '--movel' || '' }}
+      - name: Bateria de jornadas (fatia)
+        run: |
+          if [ "${{ matrix.fatia }}" = a ]; then L=$(ls ensaio/jornadas/*.mjs | xargs -n1 basename | sort | awk '$0<"J50"' | paste -sd, -)
+          else L=$( (ls ensaio/jornadas/*.mjs | xargs -n1 basename | sort | grep -E '^(J06|J55|J56)-'; ls ensaio/jornadas/*.mjs | xargs -n1 basename | sort | awk '$0>="J50"' | grep -vE '^(J55|J56)-') | paste -sd, -); fi
+          echo "jornadas: $L"
+          node ensaio/rodar.mjs ${{ matrix.tela == 'movel' && '--movel' || '' }} --jornadas "$L"
         env:
           ENSAIO_COBERTURA: ${{ matrix.tela == 'desktop' && '1' || '' }}
-      - name: Cobertura de cliques (P10)
+      - name: Cobertura desta fatia
         if: matrix.tela == 'desktop'
-        run: |
-          for h in escritorio.html portal-cliente.html calendario.html; do python3 ferramentas/cobertura_handlers.py "$h"; done
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cobertura-${{ matrix.fatia }}
+          path: ensaio/saida/cobertura.json
+          retention-days: 3
       - name: Fotos e logs do ensaio
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ensaio-${{ matrix.tela }}
+          name: ensaio-${{ matrix.tela }}-${{ matrix.fatia }}
           path: |
             ensaio/saida/
             ensaio/.runtime/*.log
           retention-days: 7
           if-no-files-found: warn
           include-hidden-files: true  # ensaio/.runtime/*.log (OutOfMemoryError do emulador aparece aqui)
+  cobertura:
+    name: cobertura de cliques (P10)
+    needs: jornadas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: cobertura-*
+          path: cob
+      - name: Juntar as fatias e conferir
+        run: |
+          python3 - <<'PY'
+          import json,glob,os
+          tot={}
+          for f in glob.glob('cob/*/cobertura.json'):
+              for k,v in json.load(open(f)).items(): tot.setdefault(k,set()).update(v)
+          os.makedirs('ensaio/saida',exist_ok=True)
+          json.dump({k:sorted(v) for k,v in tot.items()},open('ensaio/saida/cobertura.json','w'),indent=1)
+          print('fatias:',len(glob.glob('cob/*/cobertura.json')))
+          PY
+          for h in escritorio.html portal-cliente.html calendario.html; do python3 ferramentas/cobertura_handlers.py "$h"; done

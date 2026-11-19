@@ -18,6 +18,21 @@ Chris costuma ditar pedidos longos com vários assuntos. Antes de qualquer coisa
 - Erro: reproduzir no emulador (skill `get-prova-de-jornada`) ou, se depender de dado real, ler o dado em produção (somente leitura) e descrever exatamente o estado que gera o sintoma. Sem reprodução → é hipótese, e a ficha diz "hipótese".
 - Ajuste/novo: localizar o processo equivalente que já existe. No Site Get **quase tudo já existe em alguma forma**; criar paralelo é a segunda maior causa de bug.
 
+## Passo 1b — CASO REAL PRIMEIRO (obrigatório desde 19/11/2026, retrospectiva)
+Erros que se repetiram e esta regra impede: atalho que não resolvia o Nathan (CP229), mensagem mandando usar botão que não existe (Fedalto, CP232), recusa só no ar (CP226b).
+1. **Ouvir e ver tudo**: transcrever todo áudio (`whisper-cli` + `ffmpeg` em `iCloud/.../FERRAMENTAS`), ver o vídeo inteiro (quadros com `ffmpeg -vf fps=…,tile=4x2`), ler cada print. Escrever em 1 linha **o que a pessoa tenta fazer** (não o que a tela diz).
+2. **Abrir o caso no ar, somente leitura, no papel e no aparelho de quem reclamou** (perfil, tablet/celular) e ler o dado real (Firestore/servidor). A causa só é "causa" quando explica exatamente aquela tela com aquele dado.
+3. **Necessidade ≠ sintoma**: se a correção não faz a pessoa concluir o gesto que ela tentava, não é correção. Atalho/aviso/texto nunca fecha um erro sozinho.
+
+## Passo 2b — TODOS os ramos (lista de conferência; colar na ficha com ✅/n.a.)
+- [ ] **Ação nova/alterada**: contrato do servidor (`ACOES_*`, `validarEntrada*`), roteador, lista `EDITORIAL` de `gs-central-preparacao-http-r80.mjs`, regex de tentativa guardada na tela, `acaoConferida` (CP226b).
+- [ ] **Resposta nova do servidor**: validação na tela **e** onde a tela GUARDA o estado (ex.: `__filaInternaCp123`) (CP232).
+- [ ] **Ramos por papel na tela**: Chris / Amanda / Cecília / editor — cada um percorre o mesmo caminho? Há `if(papel==='X')` que manda para outro fluxo? (CP230)
+- [ ] **Onde o painel monta**: o contêiner está visível na aba em que a pessoa está? (CP228)
+- [ ] **Toda mensagem aponta para uma saída que existe** naquele estado e para aquele papel: `grep` o nome do botão citado e a condição que o mostra. Mensagem sem saída disponível = bug (Fedalto, CP232/CP233).
+- [ ] **Estado que trava** (liberação, fila, mês): lista a saída e com quem está; a saída funciona.
+- [ ] **Outros produtores do mesmo estado**: quem mais grava aquilo (editor, Central, motor, portal) e deixa o mesmo estado sem saída? Corrigir a classe inteira, não o caso (ex.: qualquer republicação deixa ajustes internos sobre a versão anterior).
+
 ## Passo 2 — Montar a árvore de impacto
 Para o estado/dado/tela tocado, responder com `grep` e leitura real (não de memória):
 

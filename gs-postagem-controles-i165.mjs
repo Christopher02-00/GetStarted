@@ -164,6 +164,10 @@ export function criarUiPostagensI165({document,contexto,carregarConfig,chamar,st
    /* U4 (10/11/2026): para a Cecília, "Encerrar sem publicar" recusado (só a Amanda decide) abre na hora o pedido à Amanda,
       em vez de deixar a postagem parada na fila. Com a exceção já aprovada, o encerramento passa direto. */
    if(res?.recusada&&tipo==='publicacao'&&fluxo.estado(tipo,id).campos?.tipo==='cancelar'&&contexto().papel==='Cecília'&&el.isConnected){toast('Só a Amanda pode tirar esta postagem da fila. Abri o pedido para ela — escreva o motivo (ex.: vídeo de telão, não vai ser publicado).','erro');await abrirFluxo('solicitar_excecao',id,cont,{tipo:'cancelar',rede:fluxo.estado(tipo,id).campos?.rede||'geral'});}
+   /* CP235 (19/11/2026, Cecília, Zeiss; decisão do Chris "Pedido à Amanda"): agendar em data diferente da data específica do
+      calendário é decisão da Amanda. A recusa ("A Amanda precisa decidir esta mudança") abre na hora o pedido à Amanda com a
+      data e o horário escolhidos, em vez de deixar a postagem parada sem saída. */
+   {const est=fluxo.estado(tipo,id);if(tipo==='programar'&&contexto().papel==='Cecília'&&el.isConnected&&/A Amanda precisa decidir esta mudan/.test(String(res?.motivo||'')+' '+String(est?.mensagem||'')+' '+String(est?.erro||''))){toast('Esta data é diferente da combinada no calendário. Abri o pedido para a Amanda — confira a data e escreva o motivo.','erro');await abrirFluxo('solicitar_excecao',id,cont,{tipo:'agendar',data:est.campos?.data||'',hora:est.campos?.hora||'',...(est.campos?.rede?{rede:est.campos.rede}:{})});}}
   }catch(err){if(el.isConnected&&montagens.get(mk(tipo,id))?.contexto===contextoChave(contexto())){const p=el.querySelector('[data-post165-erro]');if(p)p.textContent=err.message;}}finally{if(b.isConnected)b.disabled=false;}};desenhar(fluxo.estado(tipo,id));return el;}
  async function ativa(){const cfg=await carregarConfig();return programacaoAtivaI165(cfg)&&cfg.habilidades?.programacao===true;}
  function alvo(id,origem='fila'){

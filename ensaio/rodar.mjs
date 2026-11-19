@@ -49,9 +49,14 @@ try {
   // olha o que importa: ESCRITA negada = o site tentou gravar onde a regra proíbe (bug do site ou da regra) → vermelho.
   // Leitura negada é esperada para papéis sem acesso (F-03) → só informativo.
   try {
-    const log = fs.readFileSync(path.join(RAIZ, 'ensaio/.runtime/firestore-debug.log'), 'utf8');
+    // 19/11/2026: na bateria inteira o log passou de 512 MB e readFileSync estourava ("Cannot create a string longer than
+    // 0x1fffffe8"). Lido linha a linha: a linha que vem logo depois do marcador é o detalhe da negação.
     // REST: "PERMISSION_DENIED: \n<detalhe>"; SDK (WebChannel): "Operation failed: \n<detalhe>" — o detalhe traz "for 'update' @ L…"
-    const blocos = [...log.matchAll(/(?:PERMISSION_DENIED|Operation failed): ?\n([^\n]*for '(?:get|list|create|update|delete)'[^\n]*)/g)].map(m => m[1]);
+    const blocos = [];
+    { const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: fs.createReadStream(path.join(RAIZ, 'ensaio/.runtime/firestore-debug.log'), { encoding: 'utf8' }), crlfDelay: Infinity });
+      let marcou = false;
+      for await (const linha of rl) { if (marcou && /for '(?:get|list|create|update|delete)'/.test(linha)) blocos.push(linha); marcou = /(?:PERMISSION_DENIED|Operation failed): ?$/.test(linha); } }
     const metodos = b => [...new Set([...b.matchAll(/for '(get|list|create|update|delete)' @ (L\d+)/g)].map(m => m[1] + '@' + m[2]))];
     const escritas = [], leituras = [];
     const daJornada = ms => negacoesEsperadas.find(e => e.vistas < e.vezes && ms.some(m => { const [met, l] = m.split('@L'); return met === e.metodo && +l >= e.linhas[0] && +l <= e.linhas[1]; }));

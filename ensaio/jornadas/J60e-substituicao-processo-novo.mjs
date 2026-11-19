@@ -3,7 +3,7 @@
 // Continua a J60/J60b/J60d (Bluefit, dezembro liberado pelo processo novo). Caminho real, com as mesmas ações da tela:
 //  1. Tela: Chris abre o editor oficial de dezembro → o tipo "Substituir conteúdo" aparece no ajuste interno.
 //  2. Servidor: Chris substitui um conteúdo (título, formato, referência, textos e data dia N → N-1), envia; Amanda aprova.
-//  3. Servidor: um ajuste comum já APROVADO vira substituição no mesmo registro (mesmo id, histórico, textos), volta a
+//  3. Tela + servidor: um ajuste comum já APROVADO vira substituição pelo botão da tela no mesmo registro (mesmo id, histórico, textos), volta a
 //     rascunho; Chris troca título, formato e data, envia; Amanda aprova de novo.
 //  4. Contraprova: a Amanda não transforma ajuste (só o Chris, autor).
 //  5. Amanda libera → título, formato, dia e data de postagem novos no retrato liberado e na cópia do cliente.
@@ -44,6 +44,18 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     if (d?.motivoRecusa) throw new Error(acao + ' recusado: ' + d.motivoRecusa);
     return d;
   }
+  async function abrirEditor(page) {
+      await page.waitForSelector('#navPlanejamentoPreparacaoR80', { timeout: 20000 }); await abrirMenuSeMovel(page); await page.click('#navPlanejamentoPreparacaoR80');
+      await page.waitForFunction(() => { const v = document.getElementById('view-estrategiaCp109'); return v && getComputedStyle(v).display !== 'none' && v.innerText.trim().length > 50; }, null, { timeout: 20000 });
+      const v = page.locator('#view-estrategiaCp109'); await v.locator('select').first().waitFor({ timeout: 20000 });
+      await v.locator('select').first().selectOption({ label: NOME }); await v.locator('input[type=month]').first().fill(MES);
+      await v.getByRole('button', { name: /Abrir cliente e mês/ }).click();
+      await page.getByRole('button', { name: /^Abrir materiais do mês$/ }).click({ timeout: 20000 }); await page.waitForTimeout(3000);
+      const aba = page.getByRole('button', { name: /^Criar e aprovar$/ }).first(); if (await aba.isVisible().catch(() => false)) { await aba.click(); await page.waitForTimeout(2500); }
+      const ed = page.getByRole('button', { name: /^Abrir editor oficial nesta competência$/ }).first(); await ed.evaluate(el => el.scrollIntoView({ block: 'center' })); await ed.click();
+      await page.waitForSelector('#planejamentoEditorI172 article', { timeout: 30000 });
+      await page.waitForFunction(() => { const s = document.querySelector('.ai123'); return s && !/Conferindo os ajustes internos/.test(s.innerText); }, null, { timeout: 30000 }).catch(() => {});
+  }
   const ler = pessoa => chamar(pessoa, 'central_editor_ler', { ciclo: CICLO });
   const ajuste = (d, idA) => d.internosCp123.ajustes.find(x => x.id === idA);
 
@@ -57,16 +69,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     try {
       page.on('dialog', d => d.accept());
       await entrarComo(page, amb.url(), 'Chris'); await page.waitForTimeout(2500);
-      await page.waitForSelector('#navPlanejamentoPreparacaoR80', { timeout: 20000 }); await abrirMenuSeMovel(page); await page.click('#navPlanejamentoPreparacaoR80');
-      await page.waitForFunction(() => { const v = document.getElementById('view-estrategiaCp109'); return v && getComputedStyle(v).display !== 'none' && v.innerText.trim().length > 50; }, null, { timeout: 20000 });
-      const v = page.locator('#view-estrategiaCp109'); await v.locator('select').first().waitFor({ timeout: 20000 });
-      await v.locator('select').first().selectOption({ label: NOME }); await v.locator('input[type=month]').first().fill(MES);
-      await v.getByRole('button', { name: /Abrir cliente e mês/ }).click();
-      await page.getByRole('button', { name: /^Abrir materiais do mês$/ }).click({ timeout: 20000 }); await page.waitForTimeout(3000);
-      const aba = page.getByRole('button', { name: /^Criar e aprovar$/ }).first(); if (await aba.isVisible().catch(() => false)) { await aba.click(); await page.waitForTimeout(2500); }
-      const ed = page.getByRole('button', { name: /^Abrir editor oficial nesta competência$/ }).first(); await ed.evaluate(el => el.scrollIntoView({ block: 'center' })); await ed.click();
-      await page.waitForSelector('#planejamentoEditorI172 article', { timeout: 30000 });
-      await page.waitForFunction(() => { const s = document.querySelector('.ai123'); return s && !/Conferindo os ajustes internos/.test(s.innerText); }, null, { timeout: 30000 }).catch(() => {});
+      await abrirEditor(page);
       const r = await page.evaluate(() => { const s = document.querySelector('.ai123'), sel = s?.querySelector('select[data-start="tipoAjuste"]'); return { h2: s?.querySelector('h2')?.textContent || '(sem quadro)', tipos: sel ? [...sel.options].map(o => o.value) : null }; });
       await foto(page, 'J60e-chris-dezembro');
       const graves = erros.filter(erroGrave);
@@ -142,8 +145,22 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     try { await chamar('Amanda', 'central_editor_interno_converter_cp226', { ciclo: CICLO, operacao: op(), assinaturaEsperada: b.assinatura, ajusteId: b.id }); } catch (e) { barrada = String(e.message || e); }
     d = await ler('Chris'); b = ajuste(d, b.id);
     const versaoAntes = b.versao, idB = b.id, conv = b.capacidades?.converterCp226 === true;
-    d = await chamar('Chris', 'central_editor_interno_converter_cp226', { ciclo: CICLO, operacao: op(), assinaturaEsperada: b.assinatura, ajusteId: b.id });
-    b = ajuste(d, idB);
+    // Chris transforma pela TELA (botão + confirmação), como no caso real do Camargo's (a lista de ações da tela barrava).
+    let telaConv = '';
+    { const { page, fechar } = await nav.novaPagina();
+      try {
+        page.on('dialog', x => x.accept()); await entrarComo(page, amb.url(), 'Chris'); await page.waitForTimeout(2500); await abrirEditor(page);
+        const card = page.locator(`[data-interno-cp123="${idB}"]`); await card.waitFor({ timeout: 30000 });
+        const abrirConv = card.locator('[data-action="converter-form"]'); await abrirConv.evaluate(el => el.scrollIntoView({ block: 'center' })); await abrirConv.click();
+        await card.locator('[data-confirma-conversao]').check(); const ok = card.locator('[data-action="converter"]'); await ok.evaluate(el => el.scrollIntoView({ block: 'center' })); await ok.click();
+        etapas.push('Chris(tela):converter');
+        const fin = await esperar(async () => { const x = ajuste(await ler('Chris'), idB); return x?.tipoAjuste === 'substituicao_cp129' ? x : null; }, 30000);
+        telaConv = fin ? 'ok' : 'recusado: ' + (await page.locator('.ai123 .aviso').first().innerText().catch(() => '(sem aviso)')).replace(/\s+/g, ' ').slice(0, 200);
+        if (!fin) await foto(page, 'J60e-converter-falha');
+      } catch (e) { telaConv = 'falha: ' + String(e).replace(/\s+/g, ' ').slice(0, 200); }
+      finally { await fechar(); } }
+    if (telaConv !== 'ok') throw new Error('transformar pela tela ' + telaConv);
+    d = await ler('Chris'); b = ajuste(d, idB);
     const mesmo = !!b && b.tipoAjuste === 'substituicao_cp129' && b.estado === 'rascunho' && b.versao === versaoAntes + 1 && ['desc', 'legenda', 'obs'].every(k => b.conteudo[k] === textosB[k]) && Object.hasOwn(b.conteudo, 'fmt');
     const conteudoB = { ...b.conteudo, name: novoB.name, fmt: novoB.fmt, day: novoB.day, dataPostagem: dataDe(novoB.day), dataFlexivel: false };
     d = await chamar('Chris', 'central_editor_interno_salvar_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: b.assinatura, ajusteId: idB, conteudo: conteudoB, confirmacaoEditorial: true });

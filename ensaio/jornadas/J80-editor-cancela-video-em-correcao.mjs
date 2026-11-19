@@ -18,10 +18,17 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await entrarComo(page, amb.url(), 'Cecília'); await page.waitForTimeout(2500);
     await page.evaluate(async () => { const c = document.getElementById('videosMeus'); let p = c; while (p) { if (p.style) p.style.display = ''; p = p.parentElement; } await window.renderMeusVideos(); });
     const btn = page.locator('#videosMeus button', { hasText: 'Cancelar esse vídeo' }).first();
-    await btn.waitFor({ state: 'attached', timeout: 20000 }); await btn.evaluate(el => el.click());
-    const campo = page.locator('#cancelarVideoBox_' + VID + ' textarea'); await campo.waitFor({ state: 'attached', timeout: 10000 });
-    await campo.evaluate((el, m) => { el.value = m; el.dispatchEvent(new Event('input', { bubbles: true })); }, MOTIVO);
-    await page.locator('#cancelarVideoBox_' + VID + ' button', { hasText: 'Confirmar cancelamento' }).evaluate(el => el.click());
+    await btn.waitFor({ state: 'attached', timeout: 20000 }); await page.waitForTimeout(3000);
+    // A lista pode se redesenhar enquanto a caixa está aberta (bateria inteira é mais lenta): abre, preenche e confirma de novo se sumir.
+    for (let tentativa = 0; tentativa < 3; tentativa++) {
+      await page.locator('#videosMeus button', { hasText: 'Cancelar esse vídeo' }).first().evaluate(el => el.click());
+      const campo = page.locator('#cancelarVideoBox_' + VID + ' textarea'); if (!await campo.waitFor({ state: 'attached', timeout: 10000 }).then(() => true).catch(() => false)) continue;
+      await campo.evaluate((el, m) => { el.value = m; el.dispatchEvent(new Event('input', { bubbles: true })); }, MOTIVO);
+      const ok = page.locator('#cancelarVideoBox_' + VID + ' button', { hasText: 'Confirmar cancelamento' }); if (!await ok.count()) continue;
+      await ok.evaluate(el => el.click());
+      let feito = false; for (let i = 0; i < 30 && !feito; i++) { await page.waitForTimeout(1000); feito = (await seed.get('videos_producao', VID))?.excluido === true; }
+      if (feito) break;
+    }
     let v = null; for (let i = 0; i < 20; i++) { await page.waitForTimeout(1000); v = await seed.get('videos_producao', VID); if (v?.excluido) break; }
     // O aviso à Amanda e o redesenho da lista vêm logo depois da exclusão; na bateria inteira levam alguns segundos.
     let aviso = null; for (let i = 0; i < 20 && !aviso; i++) { aviso = (await seed.listar('demandas')).find(d => d.destinatario === 'Amanda' && d.videoId === VID && !d.excluido); if (!aviso) await page.waitForTimeout(1000); }

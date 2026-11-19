@@ -75,7 +75,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       const card = q.locator('article', { has: page.locator('[data-retirada-cp219]') }).first();
       await card.waitFor({ timeout: 30000 });
       await card.locator('button[data-action="enviar"]').click();
-      await page.waitForFunction(() => /Retirada da peça · Aguardando revisão da Amanda/.test(document.querySelector('.ai123')?.innerText || ''), null, { timeout: 30000 });
+      await page.waitForFunction(() => /Retirada do conteúdo · Aguardando revisão da Amanda/.test(document.querySelector('.ai123')?.innerText || ''), null, { timeout: 30000 });
       await foto(page, 'J74-chris-pediu-retirada');
       const graves = erros.filter(erroGrave);
       registrar({ jornada: id, caso: '1 Chris pede pela tela a retirada da peça adicional e envia à Amanda', ok: !graves.length, ms: Date.now() - t1, detalhe: 'retirada aguardando a Amanda' + (graves.length ? ' | ' + graves[0] : '') });

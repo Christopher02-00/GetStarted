@@ -1,5 +1,5 @@
 import {montarPortaContinuidadeCp129} from './gs-adocao-continuidade-cp129.mjs?v=db5b1206a7bdb1929c6638d30645095fbfa8644335a1aa36d31ecb449132f5e0';
-import {montarAjustesInternosCp123} from './gs-ajustes-internos-cp123.mjs?v=fffe21292d422935a5052834a0a7b1b07428a3875cd70dcced6eeba313277221';
+import {montarAjustesInternosCp123} from './gs-ajustes-internos-cp123.mjs?v=79788fe51008cc595ec7ceb2667b017c748c8ae0f772f1bc027a179b6752dc7e';
 import {montarPainelAjustesCp112} from './gs-ajustes-calendarios-cp112.mjs?v=ae095ebef37db799eefb850192b243ceab46744e5b3adf592ec0923573ef220e';
 /* Editor humano; persistência editorial pertence exclusivamente às ações HTTP I172. */
 export const CAMPOS_EDITOR_I172=Object.freeze(['itemId','empresaOtavio','day','name','desc','roteiroDispensado','legenda','legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin','ref','referenciaDispensada','obs','preparacaoGravacao','mes','stage','fmt','dataFlexivel','bloco','dataPostagem']);

@@ -9,3 +9,9 @@ empresa do Otávio por vídeo (empresaExtras), ocupação da pauta (I28), rules 
 Mudança: sessão `realizado` com o usuário na equipe, sem nenhum registro dele, até 21 dias → aparece "· complementar o envio";
 os vídeos novos somam (conteudosRealizados/producao/qtd), `complementosCp234` guarda quem e quando; nada do 1º é alterado.
 Testes: J87 (vermelha: a sessão não aparece; verde: soma, vídeo criado com o Nathan; contraprova: o Luís não vê complemento).
+
+Achado no caminho (2º defeito do mesmo gesto): em sessão da Zeiss (grupo do Otávio) um vídeo marcado como "extra" quebrava o
+"Confirmar identificação" (`Cannot read properties of null`) quando a etiqueta antiga de empresa estava vazia — o campo não é
+desenhado e o diálogo lia `empresa.value`. Corrigido em `gs-identidade-conteudo-i106.mjs` (usa a empresa fixa do envio ou nenhuma).
+Recibo pós-gravação também reconhece o complemento (antes dizia "não consegui confirmar o recibo").
+Provas: J87 vermelha no main (sessão não aparece) → verde 4/4; vizinhas J03/J68/J82/J87 11/11; --movel 4/4.

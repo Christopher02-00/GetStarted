@@ -32,6 +32,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   try {
     page.on('dialog', d => d.accept());
     await entrarComo(page, amb.url(), 'Nathan'); await page.waitForTimeout(2500);
+    await page.evaluate(() => { const o = window.mostrarToast; window.__toastsJ87 = []; window.mostrarToast = (m, k) => { window.__toastsJ87.push(String(m)); try { o?.(m, k); } catch (e) {} }; });
     const r = await abrirEnvio(page);
     if (!r.tem) { await foto(page, 'J87-sem-sessao'); registrar({ jornada: id, caso, ok: false, ms: Date.now() - t0, detalhe: 'a sessão da Zeiss não aparece em "Qual gravação"' }); return; }
     await page.selectOption('#sessaoEnvioI52', AG); await page.waitForTimeout(2500);
@@ -42,13 +43,18 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       const emp = document.getElementById('empresaExtras_' + ag); if (emp && emp.options && emp.options.length > 1 && !emp.value) set(emp, emp.options[1].value); }, AG);
     await page.waitForTimeout(800);
     await page.evaluate(ag => { const b = document.getElementById('btnConfirmarGravacao_' + ag); if (b) { b.disabled = false; b.click(); } }, AG);
+    // o sistema pergunta de qual conteúdo é cada vídeo digitado: este é um extra
+    const abriu = await page.waitForFunction(() => !!document.querySelector('dialog#identificarEnvioI106[open] [data-tipo]'), null, { timeout: 40000 }).then(() => true).catch(() => false);
+    if (abriu) await page.evaluate(() => { const d = [...document.querySelectorAll('dialog#identificarEnvioI106[open]')].pop(); const t = d.querySelector('section[data-linha="0"] [data-tipo]');
+      t.value = 'extra'; t.dispatchEvent(new Event('change', { bubbles: true })); const x = d.querySelector('section[data-linha="0"] [data-descricao]'); x.value = 'Extra filmado pelo Nathan (J87)'; x.dispatchEvent(new Event('input', { bubbles: true }));
+      d.querySelector('[data-confirmar]').click(); });
     const ag = await esperar(async () => { const x = await seed.get('agendamentos', AG); return (x?.conteudosRealizados || []).length >= 2 ? x : null; });
     const vids = (await seed.listar('videos_producao')).filter(v => v.cliente === 'zeiss' && /Vídeo do Nathan \(J87\)/.test(v.titulo || v.nome || '') && !v.excluido);
-    const toast = await page.evaluate(() => [...document.querySelectorAll('.toast,[role=alert]')].map(t => t.innerText).filter(Boolean).slice(-2).join(' | '));
+    const toast = await page.evaluate(() => (window.__toastsJ87 || []).slice(-3).join(' | ') + ' || erro: ' + (window.__ultimoErroConfirmacaoGravacao || '-') + ' || aviso: ' + ([...document.querySelectorAll('dialog#identificarEnvioI106')].map(d => (d.open ? 'ABERTO:' : 'fechado:') + (d.querySelector('[data-aviso]')?.textContent || '') + ' tipo=' + (d.querySelector('[data-tipo]')?.value || '')).join(' ; ')));
     const graves = erros.filter(erroGrave);
     await foto(page, 'J87-nathan-complementou');
     const okAg = !!ag && ag.qtdVideosRealizados === 2 && ag.conteudosRealizados[0]?.filmmaker === 'Luís' && ag.conteudosRealizados[1]?.filmmaker === 'Nathan' && ag.finalizadoPor === 'Luís' && (ag.complementosCp234 || []).some(c => c.por === 'Nathan');
-    registrar({ jornada: id, caso, ok: /complementar/.test(r.rotulo) && okAg && vids.length === 1 && !graves.length, ms: Date.now() - t0,
+    registrar({ jornada: id, caso, ok: /complementar/.test(r.rotulo) && okAg && vids.length === 1 && !/não consegui confirmar o recibo/.test(toast) && !graves.length, ms: Date.now() - t0,
       detalhe: `rótulo "${r.rotulo}" · sessão ${ag ? ag.qtdVideosRealizados + ' vídeos (' + ag.conteudosRealizados.map(c => c.filmmaker).join('+') + ')' : 'NÃO somou'} · vídeo do Nathan ${vids.length ? 'criado (' + (vids[0].filmmaker || '?') + ')' : 'NÃO criado'} · tela: ${toast.slice(0, 160)}` + (graves.length ? ' | ' + graves[0].slice(0, 200) : '') });
   } catch (e) { await foto(page, 'J87-falha'); registrar({ jornada: id, caso, ok: false, ms: Date.now() - t0, detalhe: String(e).replace(/\s+/g, ' ').slice(0, 300) }); }
   finally { await fechar(); }

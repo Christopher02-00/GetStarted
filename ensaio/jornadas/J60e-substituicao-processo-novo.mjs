@@ -80,9 +80,29 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   let A, B, novoA, novoB;
   try {
     let d = await ler('Chris');
-    const aptos = (d.internosCp123?.aptos || []).filter(i => i.dia > 1 && !/^adicional_cp142_/.test(i.itemId));
-    if (aptos.length < 2) { fim('2 substituição no processo novo', false, `poucos conteúdos aptos em dezembro (${aptos.length})`); return; }
-    A = aptos[aptos.length - 1]; B = aptos[aptos.length - 2];
+    // Peças próprias da J60e (os conteúdos de dezembro são usados por outras jornadas pelo título): duas peças adicionais
+    // liberadas pelo caminho da CP142 viram os alvos A e B.
+    const proprias = [];
+    for (const [dia, nome] of [[12, 'Ensaio J60e — Peça A'], [15, 'Ensaio J60e — Peça B']]) {
+      const itemId = 'adicional_cp142_' + [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+      d = await chamar('Chris', 'central_editor_interno_iniciar_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: d.assinatura, itemId, motivo: 'Peça de apoio da J60e.',
+        esperadaRevisao: d.ciclo.revisao, publicacaoHash: d.internosCp123.publicacaoHash, tipoAjuste: 'adicao_cp142' });
+      let x = d.internosCp123.ajustes.find(r => r.itemId === itemId);
+      d = await chamar('Chris', 'central_editor_interno_salvar_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: x.assinatura, ajusteId: x.id, conteudo: { day: dia, fmt: 'Reel', stage: 'Topo', name: nome, ref: '', referenciaDispensada: true,
+        desc: 'Abre na loja com o calor. Mostra os ventiladores em uso. Fecha com o convite para visitar.', legenda: 'Calor de dezembro? Venha conhecer os ventiladores na loja e escolha o seu.', obs: 'Imagens reais da loja.', preparacaoGravacao: '' } });
+      x = ajuste(d, x.id);
+      d = await chamar('Chris', 'central_editor_interno_enviar_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: x.assinatura, ajusteId: x.id });
+      d = await ler('Amanda'); x = ajuste(d, x.id);
+      d = await chamar('Amanda', 'central_editor_interno_decidir_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: x.assinatura, ajusteId: x.id, decisao: 'aprovar', motivo: '' });
+      d = await ler('Chris'); proprias.push(itemId);
+    }
+    d = await ler('Amanda');
+    await chamar('Amanda', 'central_editor_decidir', { ciclo: CICLO, operacao: op(), assinaturaEsperada: d.assinatura, esperadaRevisao: d.ciclo.revisao, decisao: 'publicar', motivo: '',
+      assinaturaAjustesCp112: d.ajustesCp112.assinatura, assinaturaInternosCp123: d.internosCp123.assinatura });
+    d = await ler('Chris');
+    const aptos = (d.internosCp123?.aptos || []).filter(i => proprias.includes(i.itemId)).sort((a, b) => b.dia - a.dia);
+    if (aptos.length < 2) { fim('2 substituição no processo novo', false, `as peças próprias da J60e não ficaram aptas (${aptos.length})`); return; }
+    A = aptos[0]; B = aptos[1];
     novoA = { name: 'Ensaio J60e — Ventilador ou climatizador: qual escolher', fmt: 'Carrossel', ref: 'https://www.instagram.com/p/ensaioJ60eA/', day: A.dia - 1 };
     novoB = { name: 'Ensaio J60e — Três jeitos de refrescar a sala', fmt: 'Reel', day: B.dia - 1 };
 

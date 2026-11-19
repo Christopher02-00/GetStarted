@@ -15,8 +15,10 @@ RAIZ: aprovação de qualidade (videos_producao: aguardando_aprovacao → aguard
 ├─ LEGADO      : recibo continua com tipo 'qualidade_chris_cp108' (nome de dado, não de pessoa); aprovadoPor = quem aprovou
 └─ EFEITO      : depois da aprovação, nada exige aprovadoPor==='Chris' (conferido por grep em telas, servidor e rules)
 
-Mudança: liberar 'Amanda' nos 3 pontos (servidor 2 checks, módulo 1 clique, tela antiga 2 checks) e trocar os textos.
+Mudança: liberar 'Amanda' no servidor (preparar e aprovar), no módulo da tela (1 clique; para a Amanda a tela tenta primeiro a
+preparação de qualidade e, se o vídeo não está esperando qualidade, segue para a orientação de postagem dela) e na lista
+"Aprovar vídeos" (a Amanda passa a ver a mesma lista e os mesmos botões do Chris, em vez do bloco só de leitura).
 O que NÃO muda: orientação de postagem da Amanda, confirmação do cliente, pedido de correção, rules.
-Testes: J83 nova (Amanda aprova com 1 clique: vermelha antes, verde depois) + J31/J04 (Chris segue igual), desktop e --movel.
+Testes: J83 nova (vermelha no main: sem botão; verde 13/13 com J04/J31/J40); vizinhas J04/J25/J31/J32/J33/J40/J43/J59/J83 33/33; --movel 4/4.
 Publicação: deploy das Functions (ok nominal do Chris) antes do merge da tela.
 Regra vigente avisada: CP108 dizia "só o Chris"; o Chris pediu a mudança nesta conversa.

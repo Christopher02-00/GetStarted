@@ -1,5 +1,5 @@
 import {idFisicoI165,jsonCanonicoI165,programacaoAtivaI165,dataCivilI165,horaCivilI165} from './gs-contexto-operacional-i165.mjs';
-import {escI165,urlSeguraI165,politicaFormularioI165} from './gs-operacional-ui-i165.mjs?v=041210dbffa19f32eb225bb3dbf5a4cb6ec5fbc3dd431f2838df6ed82376f8f7';
+import {escI165,urlSeguraI165,politicaFormularioI165} from './gs-operacional-ui-i165.mjs?v=ec9daf6501b8332471acaddf7efc3952464caf856f74716216c20b1c51f15661';
 const copia=x=>JSON.parse(JSON.stringify(x));
 const congelar=x=>{if(x&&typeof x==='object'){Object.values(x).forEach(congelar);Object.freeze(x);}return x;};
 const contextoChave=c=>jsonCanonicoI165([c?.uid||'',c?.papel||'',c?.atorReal||'',c?.sessao||'',c?.rota||'']);

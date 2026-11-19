@@ -51,6 +51,8 @@ Corpo (cinco blocos curtos, sempre os mesmos):
 Anexar a ficha (`fichas/…md`) no PR.
 
 ## Quando parar
+- **Velocidade (19/11/2026)**: enquanto o CI de uma unidade roda, investigar/preparar a próxima (pipeline, nunca ocioso). Unidades que tocam o mesmo arquivo do servidor vão **empilhadas** (branch sobre branch) e as Functions publicam uma vez, da ponta. Com ok nominal dado, deixar um vigia que espera o CI, publica, junta e confere — sem esperar nova mensagem.
+- Falha do CI por tempo/memória do emulador não é "rodar de novo": achar a causa (heap, ordem, espera) antes do 2º disparo.
 - Duas tentativas na mesma hipótese sem evidência nova → parar, voltar ao diagnóstico, avisar Chris.
 - Árvore cresceu além do previsto → parar, reescrever a ficha, avisar.
 - Mudança compartilhada (login/`etapaSegura`, identidade, bootstrap, rules, helper global) → exige bateria transversal completa, não a mínima.

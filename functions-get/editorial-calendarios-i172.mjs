@@ -3,7 +3,7 @@ import {conferirAutoridadeUnicaTxCp183} from './documento-unico-cp183.mjs';
 import {ACOES_LEITURA_DEVOLUCAO_CP155,operarLeituraDevolucoesCp155} from './devolucoes-mensais-cp155.mjs';
 import {operarAdocaoPreparacaoCp129} from './adocao-preparacao-cp129.mjs';
 import {coletarInternosTxCp123,dtoInternosCp123,resumoInternosCp123,operarInternoCp123,conferirOperacaoInternaCp142,prepararPublicacaoInternosCp123,concluirPublicacaoInternosCp123,filaInternosCp123} from './ajustes-internos-cp123.mjs';
-import {coletarAjustesTxCp112,resumoAjustesCp112,exigirLiberacaoAjustesCp112,notasLiberadasCp112,pedidosLiberadosCp112,invalidacoesAjustesCp112,prepararReenvioAjustesCp112,elegibilidadeReliberacaoAjustesCp121} from './ajustes-calendarios-cp112.mjs';
+import {coletarAjustesTxCp112,resumoAjustesCp112,exigirLiberacaoAjustesCp112,notasLiberadasCp112,pedidosLiberadosCp112,invalidacoesAjustesCp112,prepararReenvioAjustesCp112,elegibilidadeReliberacaoAjustesCp121,comparacaoPublicacaoCp202,mudancasDiretasCp238,assinaturaMudancasDiretasCp238} from './ajustes-calendarios-cp112.mjs';
 import {validadeBaseI155Cp111} from './central/lib/gs-transicao-insumos-cp111.mjs';
 /* Writers oficiais mensais por ações fechadas no callable instalado. Nenhum CRUD ou ativação. */
 import {isDeepStrictEqual} from 'node:util';
@@ -73,7 +73,15 @@ function envioIndividualCp182(rows){
  const ativos=rows.filter(r=>!r.inativo&&!r.histPublico&&!r.cancelado);
  return {bloqueado:ativos.length>0,quantidade:ativos.length,motivo:!ativos.length?'':ativos.every(r=>r.aprovacaoAtual)?'Os ajustes individuais já foram aprovados. Amanda precisa liberar essas correções pelo fluxo de liberação, sem reenviar o mês inteiro.':'Este mês tem pedidos individuais em andamento. Abra cada pedido, salve a correção e use Enviar este ajuste para a Amanda. O envio do calendário inteiro fica separado para preservar essas revisões.'};
 }
-async function dtoAtualTx(db,tx,c,cal,ator,operacao=null){const [rows,internos]=await Promise.all([coletarAjustesTxCp112(db,tx,cal,c.id,c),coletarInternosTxCp123(db,tx,c,cal)]),d=dto(c,cal,ator,operacao),reliberacaoCp121=elegibilidadeReliberacaoAjustesCp121(c,cal,rows,ator),internosCp123=dtoInternosCp123(c,cal,internos,ator),envioCp182=envioIndividualCp182(rows);return {...d,assinatura:assinatura(c,cal,internos),capacidades:{...d.capacidades,enviar:d.capacidades.enviar&&!envioCp182.bloqueado,complementarPreparacao:d.capacidades.complementarPreparacao&&internos.rows.length===0&&!rows.some(r=>!r.inativo),decidir:d.capacidades.decidir||reliberacaoCp121.disponivel||internosCp123.disponivel},ajustesCp112:resumoAjustesCp112(rows),envioIndividualCp182:envioCp182,reliberacaoCp121,internosCp123};}
+/* CP238 (20/11/2026, Fedalto e Stokki 2026-12): uma lista só por mês do que muda para o cliente sem registro aprovado (edição direta no
+   editor, retirada, conteúdo novo). Fica de fora o que esta liberação já leva por registro: pedidos aprovados (CP112), ajustes internos
+   aprovados (CP123) e o escopo da correção individual (CP115/CP216). A Amanda confere no checklist; a decisão exige a assinatura. */
+function mudancasDiretasMesCp238(c,cal,rows,internos){
+ const mes=c.competencia,pub=cal.aprovacaoMeses?.[mes]?.retratoLiberadoV115;if(!Array.isArray(pub?.items))return [];
+ const cobertos=[...rows.filter(r=>r.aprovacaoAtual&&!r.histPublico&&!r.inativo).map(r=>r.item?.itemId),...(internos?.rows||[]).filter(x=>x.data?.estado==='aprovado').map(x=>x.data.itemId),...Object.keys(c._estadoLegado?.correcaoIndividualCp115?.itens||{})].filter(Boolean);
+ return mudancasDiretasCp238(comparacaoPublicacaoCp202(itensMes(cal,mes),pub.items,cobertos),mes);
+}
+async function dtoAtualTx(db,tx,c,cal,ator,operacao=null){const [rows,internos]=await Promise.all([coletarAjustesTxCp112(db,tx,cal,c.id,c),coletarInternosTxCp123(db,tx,c,cal)]),d=dto(c,cal,ator,operacao),reliberacaoCp121=elegibilidadeReliberacaoAjustesCp121(c,cal,rows,ator),internosCp123=dtoInternosCp123(c,cal,internos,ator),envioCp182=envioIndividualCp182(rows),diretasCp238=ator.papel==='Amanda'&&(reliberacaoCp121.disponivel||internosCp123.disponivel)?mudancasDiretasMesCp238(c,cal,rows,internos):[];return {...d,assinatura:assinatura(c,cal,internos),capacidades:{...d.capacidades,enviar:d.capacidades.enviar&&!envioCp182.bloqueado,complementarPreparacao:d.capacidades.complementarPreparacao&&internos.rows.length===0&&!rows.some(r=>!r.inativo),decidir:d.capacidades.decidir||reliberacaoCp121.disponivel||internosCp123.disponivel},ajustesCp112:resumoAjustesCp112(rows),envioIndividualCp182:envioCp182,reliberacaoCp121,internosCp123,...(diretasCp238.length?{mudancasDiretasCp238:diretasCp238,assinaturaMudancasDiretasCp238:assinaturaMudancasDiretasCp238(diretasCp238)}:{})};}
 function interna(d,acao,dados,revisao,hash){return {acao:'central_mutar',uidEsperado:d.uidEsperado,atorRealEsperado:d.atorRealEsperado,papelOperado:d.papelOperado,sessao:d.sessao,ciclo:d.ciclo,acaoPreparacao:acao,dados,esperadaRevisao:revisao,operacao:d.operacao+'_ciclo',hashPedidoEditorial:hash};}
 export async function operarEditorialCalendariosI172(db,auth,pedido,{agora=new Date()}={}){
  validarEntradaEditorialI172(pedido);const ator=validarContaEsperadaI165(auth,pedido);e(['Chris','Amanda'].includes(ator.papel),'A pesquisa e o apoio de legenda não dão acesso ao editor.');
@@ -116,7 +124,7 @@ export async function operarEditorialCalendariosI172(db,auth,pedido,{agora=new D
   if(old.exists){const r=old.data();conferirRecibo(r);return {...r,recuperada:true};}
   e(baseEfetivaI172(c),'A base atual está desconsiderada ou inválida; preserve o histórico e confira os insumos antes de alterar.');
   const internosCp123=await coletarInternosTxCp123(db,tx,c,cal);
-  if(assinatura(c,cal,internosCp123)!==pedido.assinaturaEsperada||pedido.esperadaRevisao!==undefined&&c.revisao!==pedido.esperadaRevisao){const r=recusar(c,cal);tx.create(backup,{...cal,__cliente:id.cliente,__salvoEm:em,__itens:cal.items.length,__reciboEditorialI172:r});tx.create(autoridade,r);return r;}const st=estado(cal,id.competencia),ajustesCp112=await coletarAjustesTxCp112(db,tx,cal,pedido.ciclo,c);let patch,acaoCiclo=null,publicacaoInternosCp123=null;
+  if(assinatura(c,cal,internosCp123)!==pedido.assinaturaEsperada||pedido.esperadaRevisao!==undefined&&c.revisao!==pedido.esperadaRevisao){const r=recusar(c,cal);tx.create(backup,{...cal,__cliente:id.cliente,__salvoEm:em,__itens:cal.items.length,__reciboEditorialI172:r});tx.create(autoridade,r);return r;}const st=estado(cal,id.competencia),ajustesCp112=await coletarAjustesTxCp112(db,tx,cal,pedido.ciclo,c);let patch,acaoCiclo=null,publicacaoInternosCp123=null,diretasCp238=[];
   if(pedido.acao==='central_editor_preparacao_cp140'){e(internosCp123.rows.length===0&&!ajustesCp112.some(r=>!r.inativo),'Preserve os pedidos e use o ajuste individual existente.');patch=prepararComplementoPreparacaoCp140(c,cal,pedido,ator,em);}
   else if(pedido.acao==='central_editor_salvar'){
     e(c.modo!=='estrategico_cp109','Os roteiros estratégicos são salvos por Chris ou Amanda na mesma Central.');
@@ -134,6 +142,8 @@ export async function operarEditorialCalendariosI172(db,auth,pedido,{agora=new D
   }else{
    const reliberarCp121=pedido.decisao==='publicar'&&elegibilidadeReliberacaoAjustesCp121(c,cal,ajustesCp112,ator).disponivel;
    const reliberarInternosCp123=pedido.decisao==='publicar'&&resumoInternosCp123(c,cal,internosCp123,ator).disponivel;
+   /* CP238: mudança feita direto no editor depois da última liberação só vai ao cliente conferida pela Amanda no checklist. */
+   if(reliberarCp121||reliberarInternosCp123){diretasCp238=mudancasDiretasMesCp238(c,cal,ajustesCp112,internosCp123);e(!diretasCp238.length||pedido.assinaturaMudancasDiretasCp238===assinaturaMudancasDiretasCp238(diretasCp238),'Há mudanças feitas direto no editor que ainda não foram conferidas nesta liberação. Abra o mês de novo, confira a lista de mudanças no checklist e libere.');}
    /* CP196 (10/11/2026, Little Elephant 2026-12): o Chris começou uma rodada nova com a base nova enquanto o mês estava com a
       Amanda para revisar. O ciclo diz "base nova, não enviada" e o calendário ainda carrega a base antiga → ninguém decidia nem
       editava. A devolução da Amanda passa a valer nesse caso: o mês volta para o Chris em ajuste, já ligado à base nova. */
@@ -146,7 +156,7 @@ export async function operarEditorialCalendariosI172(db,auth,pedido,{agora=new D
   const invalidacoesCp112=pedido.acao==='central_editor_salvar'?invalidacoesAjustesCp112(ajustesCp112,{...cal,...patch},id.competencia,ator,em,pedido.operacao):[];
   const estrategia=c.modo==='estrategico_cp109'?await prepararDecisaoEstrategicaCp109(db,tx,c,cal,pedido,ator,em,pedido.decisao==='publicar'?patch.aprovacaoMeses[id.competencia].retratoLiberadoV115:null,{ajustesCp112}):null;
   const next=c.modo==='continuar_legado'?proximoEstadoLegadoEditorialI172(c,pedido,ator,em,{retrato:pedido.decisao==='publicar'?patch.aprovacaoMeses[id.competencia].retratoLiberadoV115:null}):null,depois=estrategia?contextoEstrategicoCp109({id:c.id,cliente:c.cliente,competencia:c.competencia},estrategia.next,{...cal,...patch}):next?contextoDepoisLegadoEditorialI172(c,next):c;if(next||estrategia)acaoCiclo=null;
-  const recibo={schema:1,origemEditorial:pedido.origemEditorial||null,acao:pedido.acao,ciclo:pedido.ciclo,operacao:pedido.operacao,hashPedido:hash,uid:ator.uid,papel:ator.papel,atorReal:ator.real,em,revisaoCiclo:c.revisao,acaoCiclo,assinaturaDepois:assinatura(depois,{...cal,...patch}),retratoPublicacao:pedido.decisao==='publicar'?patch.aprovacaoMeses[id.competencia].retratoLiberadoV115:null};
+  const recibo={schema:1,origemEditorial:pedido.origemEditorial||null,acao:pedido.acao,ciclo:pedido.ciclo,operacao:pedido.operacao,hashPedido:hash,uid:ator.uid,papel:ator.papel,atorReal:ator.real,em,revisaoCiclo:c.revisao,acaoCiclo,assinaturaDepois:assinatura(depois,{...cal,...patch}),retratoPublicacao:pedido.decisao==='publicar'?patch.aprovacaoMeses[id.competencia].retratoLiberadoV115:null,...(diretasCp238.length?{mudancasDiretasCp238:diretasCp238.map(x=>({itemId:x.itemId,tipo:x.tipo,titulo:x.titulo}))}:{})};
   if(publicacaoInternosCp123)for(const w of concluirPublicacaoInternosCp123(publicacaoInternosCp123,patch.aprovacaoMeses[id.competencia].retratoLiberadoV115,ator,pedido,em))tx.update(w.ref,w.patch);
   for(const w of invalidacoesCp112)tx.update(w.ref,w.patch);
   if(next)tx.update(db.doc('continuidade_calendarios_i164/'+pedido.ciclo),{editorialI172:next});

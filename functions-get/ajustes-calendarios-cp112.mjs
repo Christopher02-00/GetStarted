@@ -36,6 +36,19 @@ export function comparacaoPublicacaoCp202(atuais,publicados,idsAprovados=[]){
  return {atuais:at,publicados:alinharDatasProducaoCp201((publicados||[]).filter(p=>p&&!fora.has(String(p.itemId||''))),at)};
 }
 export function hashConteudoAjusteCp112(item,mes){return hashEditorialI172(Object.fromEntries(CAMPOS_EDITORIAIS_I172.filter(k=>Object.hasOwn(item,k)||k==='mes').map(k=>[k,k==='mes'?(item.mes||mes):item[k]])));}
+/** CP238 (20/11/2026, Fedalto e Stokki 2026-12): o editor deixa mudar qualquer conteúdo do mês publicado reaberto por pedido (texto,
+ * retirada, conteúdo novo), mas a liberação só aceitava diferença coberta por registro aprovado e o envio do mês inteiro fica travado
+ * pelo pedido: ninguém liberava. Toda diferença fora de registro vira esta lista, que a Amanda confere no checklist da liberação
+ * (editor I172); a decisão leva a assinatura da lista. Recebe o resultado de comparacaoPublicacaoCp202 (datas de produção já alinhadas). */
+const CAMPOS_MUDANCA_CP238=[...new Set([...CAMPOS_EDITORIAIS_I172,'obsFilmmaker','obsCliente'])].filter(k=>k!=='itemId'&&k!=='mes');
+export function mudancasDiretasCp238(cmp,mes){
+ const mapa=l=>new Map((l||[]).filter(i=>i&&!i.excluido&&i.itemId).map(i=>[String(i.itemId),i])),a=mapa(cmp?.atuais),p=mapa(cmp?.publicados),out=[];
+ const igual=(x,y)=>hashConteudoAjusteCp112(x,mes)===hashConteudoAjusteCp112(y,mes)&&editorialI148([x])===editorialI148([y]);
+ for(const id of new Set([...a.keys(),...p.keys()])){const x=a.get(id),y=p.get(id);if(x&&y&&igual(x,y))continue;const b=x||y,dia=Number(b.day);
+  out.push({itemId:id,titulo:String(b.name||'Conteúdo').slice(0,300),dia:Number.isInteger(dia)&&dia>=1&&dia<=31?dia:null,tipo:!y?'novo':!x?'retirado':'alterado',campos:x&&y?CAMPOS_MUDANCA_CP238.filter(k=>JSON.stringify(x[k]??null)!==JSON.stringify(y[k]??null)):[],hashConteudo:x?hashConteudoAjusteCp112(x,mes):''});}
+ return out.sort((u,v)=>(u.dia??99)-(v.dia??99)||u.itemId.localeCompare(v.itemId));
+}
+export const assinaturaMudancasDiretasCp238=l=>hashEditorialI172((l||[]).map(x=>[x.itemId,x.tipo,x.hashConteudo]));
 const marca=(cal,mes)=>cal.aprovacaoMeses?.[mes]||{};
 const retrato=(cal,mes)=>marca(cal,mes).retratoLiberadoV115;
 function listaPedidos(cal,mes){const m={...(cal.pedidosAjusteClienteI71||{})};if(cal.pedidoAjusteCliente?.operationId)m[cal.pedidoAjusteCliente.operationId]??=cal.pedidoAjusteCliente;const p=Object.values(m).filter(x=>x?.competencia===mes);e(p.length<=100,'Há mais de100pedidos neste mês. Nada foi omitido.');e(new Set(p.map(x=>x.operationId)).size===p.length,'Há pedidos com identidade repetida.');return p;}
@@ -116,9 +129,11 @@ export function elegibilidadeReliberacaoAjustesCp121(c,cal,rows,ator){
  if(!pub||pub.schemaVersion!==1||pub.mes!==mes||pub.publicadoPor!=='Amanda'||!dataValida(pub.publicadoEm)||m.aprovadoEm!==pub.publicadoEm||m.aprovadoPor!=='Amanda'||(legado?((st.publicacaoAtual||!pedidoDoCliente)&&(st.publicacaoAtual?.por!=='Amanda'||st.publicacaoAtual?.em!==pub.publicadoEm||!isDeepStrictEqual(st.publicacaoAtual?.retrato,pub))):(c.publicacaoAtual.aprovadoEm!==pub.publicadoEm||!isDeepStrictEqual(c.publicacaoAtual.retrato,pub))))return nao('A publicação anterior precisa ser conferida antes de liberar as correções.',n);
  if(!resumoAjustesCp112(rows).liberacaoPermitida)return nao('Ainda há pedidos deste mês sem aprovação individual.',n);
  if(novos.some(r=>r.status!=='aprovado'||!r.s||r.s.hashConteudo!==r.hashConteudo||r.s.aprovacao?.hashConteudo!==r.hashConteudo||r.s.aprovacao?.revisaoConteudo!==r.s.versao||r.s.aprovacao?.por!=='Amanda'||r.s.dependencia||!dataValida(r.s.aprovacao?.em)))return nao('A versão de uma correção mudou. Confira o pedido antes de liberar.',n);
- const atuais=(cal.items||[]).filter(i=>i&&mesDoItemCalendario(cal,i)===mes),identidade=itens=>hashEditorialI172(itens.filter(i=>!i.excluido).map(i=>[i.itemId,hashConteudoAjusteCp112(i,mes)]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+ const atuais=(cal.items||[]).filter(i=>i&&mesDoItemCalendario(cal,i)===mes);
  const cmp=Array.isArray(pub.items)?comparacaoPublicacaoCp202(atuais,pub.items,novos.map(r=>r.item?.itemId).filter(Boolean)):null;
- if(!cmp||!atuais.some(i=>!i.excluido)||editorialI148(cmp.atuais)!==editorialI148(cmp.publicados)||identidade(cmp.atuais)!==identidade(cmp.publicados))return nao('O conteúdo do mês mudou depois da publicação. Confira a revisão completa antes de liberar.',n);
+ /* CP238 (20/11/2026): diferença fora dos pedidos aprovados não recusa mais; o editor I172 a lista no checklist da Amanda e a decisão
+    exige a assinatura dessa lista (mudancasDiretasCp238). */
+ if(!cmp||!atuais.some(i=>!i.excluido))return nao('O conteúdo do mês mudou depois da publicação. Confira a revisão completa antes de liberar.',n);
  return {disponivel:true,quantidade:n,motivo:''};
 }
 export function exigirLiberacaoAjustesCp112(rows,assinaturaEsperada){const r=resumoAjustesCp112(rows);e(r.liberacaoPermitida,'Ainda há ajustes sem aprovação individual: '+r.motivos.join('; ')+'. Revise cada pedido; o mês não foi liberado.');if(rows.some(x=>!encerrado(x)))e(assinaturaEsperada===r.assinatura,'A revisão dos ajustes mudou. Confira as justificativas e a versão atual antes de liberar o mês.');return r;}

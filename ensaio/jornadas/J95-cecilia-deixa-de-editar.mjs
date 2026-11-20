@@ -5,12 +5,14 @@
 //  2. Vídeo antigo ainda com a Cecília: a Amanda vê "revisar responsável" e "Mudar pra…" oferece só Helo e João Victor.
 //  3. "Somente edição" (CP194): a tela oferece só Helo e João Victor e o servidor não aceita a Cecília.
 //  4. A Cecília entra: sem "Meus Vídeos" (fila de editor); os menus da secretaria/produção continuam.
+// CP243 (20/11/2026, Chris: "pode tirar ele da edição, ele é só filmmaker"): o Nathan também sai da edição.
+//  5. O Nathan entra: sem "Meus Vídeos"; continua com "Lançar gravação" (filmmaker); o servidor não o aceita no somente edição.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { RAIZ } from '../lib/emulador.mjs';
 import { entrarComo, entrarGerencia, foto } from '../lib/navegador.mjs';
 export const id = 'J95';
-export const nome = 'Cecília deixa de ser editora: só Helo e João Victor recebem edição; o histórico dela fica e ela mantém a secretaria';
+export const nome = 'Cecília e Nathan deixam de editar: só Helo e João Victor recebem edição; o histórico fica, a Cecília mantém a secretaria e o Nathan a filmagem';
 const A = 'j95-sem-editor', B = 'j95-da-cecilia', C = 'j95-somente-edicao';
 const TA = 'Mochi — Vídeo J95 sem editor', TB = 'Mochi — Vídeo J95 ainda com a Cecília', TC = 'Mochi — Vídeo J95 somente edição';
 const ESPERADOS = ['Helo', 'João Victor'];
@@ -67,6 +69,21 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
         `Meus Vídeos ${meus ? 'AINDA aparece' : 'fora'} · menus ${Object.entries(menus).map(([k, v]) => k.replace('nav', '') + (v ? '✓' : '✗')).join(' ')} · gravações ${fila ? '✓' : '✗'}${graves.length ? ' · erro: ' + graves[0] : ''}`);
       await foto(page, 'J95-cecilia');
     } catch (e) { await foto(page, 'J95-falha-cecilia'); fim('4 Cecília', false, String(e).replace(/\s+/g, ' ').slice(0, 260)); } finally { await fechar(); } }
+
+  // 5) Nathan: só filmmaker (CP243)
+  { const { page, erros, fechar } = await nav.novaPagina();
+    try { page.on('dialog', d => d.accept());
+      await entrarComo(page, amb.url(), 'Nathan'); await page.waitForTimeout(3000);
+      await page.evaluate(() => irPara('videos', document.getElementById('navVideos'))).catch(() => {});
+      await page.waitForTimeout(1500);
+      const vis = id => page.evaluate(i => { const s = document.getElementById(i); return !!s && getComputedStyle(s).display !== 'none'; }, id);
+      const meus = await vis('subtabMeusVideos'), lancar = await vis('subtabLancarGravacao');
+      const { EDITORES_SOMENTE_EDICAO_CP194 } = await import(pathToFileURL(path.join(RAIZ, 'functions-get/encaminhamento-somente-edicao-cp194.mjs')).href);
+      const graves = erros.filter(erroGrave);
+      fim('5 Nathan sem "Meus Vídeos", com "Lançar gravação"; o servidor não o aceita no somente edição', !meus && lancar && !EDITORES_SOMENTE_EDICAO_CP194.includes('Nathan') && !graves.length,
+        `Meus Vídeos ${meus ? 'AINDA aparece' : 'fora'} · Lançar gravação ${lancar ? '✓' : '✗'} · servidor aceita: ${EDITORES_SOMENTE_EDICAO_CP194.join(', ')}${graves.length ? ' · erro: ' + graves[0] : ''}`);
+      await foto(page, 'J95-nathan');
+    } catch (e) { await foto(page, 'J95-falha-nathan'); fim('5 Nathan', false, String(e).replace(/\s+/g, ' ').slice(0, 260)); } finally { await fechar(); } }
 
   // os vídeos da J95 saem da fila (soft-delete) para não mudar a carga dos editores nas jornadas seguintes
   for (const k of [A, B, C]) { const x = await seed.get('videos_producao', k); if (!x) continue; const { id: _i, ...dados } = x; await seed.set('videos_producao', k, { ...dados, excluido: true, excluidoPor: 'ensaio-j95', excluidoEm: new Date().toISOString() }); }

@@ -3,11 +3,10 @@ import {TIPO_ADICAO_CP142,CAMPOS_ADICAO_CP142,adicaoCp142,idAdicionalCp142,valid
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {hashEditorialI172,hashPedidoEditorialI172,CAMPOS_DATA_SUBSTITUICAO_CP147,validarDataSubstituicaoCp147} from './editorial-contrato-i172.mjs';
-import {hashConteudoAjusteCp112,comparacaoPublicacaoCp202} from './ajustes-calendarios-cp112.mjs';
+import {hashConteudoAjusteCp112} from './ajustes-calendarios-cp112.mjs';
 import {provaPublicacaoCorrecaoTxCp115} from './correcao-conteudo-pedido-cp115.mjs';
 import {provaPublicacaoAdotadaCp129} from './adocao-preparacao-cp129.mjs';
 import {mesDoItemCalendario} from './lib/guardas-stokki-i165.mjs';
-import {editorialI148} from './central/lib/gs-aprovacoes-calendarios-i148.mjs';
 import aprovacao from './gs-aprovacao-conteudo-i68-editorial.mjs';
 import {CAMPOS_I79} from './lib/gs-legenda-qualidade-i79.mjs';
 import {exigirCentralR80 as e} from './central-preparacao-validacao-r80.mjs';
@@ -114,13 +113,11 @@ function conferirBaseRegistro(c,cal,ctx,r){
 export function resumoInternosCp123(c,cal,ctx,ator){
  const ativos=ctx.rows.filter(x=>active(x.data)),motivos=[],nome=r=>'“'+((adicaoCp142(r)||substituicao(r))&&r.conteudo?.name||r.titulo||'Conteúdo')+'”';
  for(const x of ativos){const r=x.data;if(rebaseDisponivelCp215(c,cal,ctx,r)){motivos.push('Chris ou Amanda: traga o ajuste interno '+nome(r)+' para a versão atual (botão “Trazer para a versão atual” em Ajustes internos).');continue;}try{const item=conferirBaseRegistro(c,cal,ctx,r);exigirSubstituicaoPronta(item,r);if(r.estado==='enviado')throw Error('__amanda');if(['rascunho','devolvido'].includes(r.estado))throw Error('__chris');e(r.estado==='aprovado'&&r.aprovacao?.por==='Amanda'&&r.aprovacao.versao===r.versao&&r.aprovacao.hashConteudo===r.hashConteudo&&(!substituicao(r)||r.aprovacao.confirmarSubstituicaoCp129===true)&&r.hashConteudo===hashConteudoAjusteCp112(conteudoVirtualInternoCp123(item,r.conteudo),c.competencia),'A versão ainda depende da revisão individual da Amanda.');}catch(err){motivos.push(err.message==='__amanda'?'Amanda: revise e aprove o ajuste interno '+nome(r)+' em Ajustes internos.':err.message==='__chris'?'Chris: '+(r.estado==='devolvido'?'a Amanda devolveu':'está em preparação')+' o ajuste interno '+nome(r)+'. Saídas em Ajustes internos: refazer e enviar de novo, “Descartar este ajuste” (mantém a versão liberada) ou “Retirar este conteúdo do mês”.':nome(r)+': '+err.message);}}
- const pub=publico(c,cal),raw=(cal.items||[]).filter(i=>i&&mesDoItemCalendario(cal,i)===c.competencia),identidade=itens=>hashEditorialI172(itens.filter(i=>!i.excluido).map(i=>[i.itemId,hashConteudoAjusteCp112(i,c.competencia)]).sort((a,b)=>a[0].localeCompare(b[0])));
- // CP215: com pedido do cliente aberto, as correções desses conteúdos são conferidas pela própria revisão dos pedidos (CP112/CP121).
- const idsPedidosCp215=pedidoClienteAbertoCp215(marca(c,cal))?Object.values(cal.pedidosAjusteClienteI71||{}).filter(p=>p?.competencia===c.competencia&&!p.cancelamentoCp143&&p.itemId).map(p=>p.itemId):[];
- // CP216: na correção individual, os conteúdos do escopo CP115 são conferidos pela própria revisão do pedido.
- const idsCp216=correcaoIndividualCp216(c,cal)?Object.keys(c._estadoLegado.correcaoIndividualCp115.itens||{}):[];
- const cmp=pub?comparacaoPublicacaoCp202(raw,pub.items,[...idsPedidosCp215,...idsCp216]):null;
- if(ativos.length&&(!pub||editorialI148(cmp.atuais)!==editorialI148(cmp.publicados)||identidade(cmp.atuais)!==identidade(cmp.publicados)))motivos.push('O mês contém outra versão editorial ainda não reconciliada. Preserve todos os ajustes e confira a revisão.');
+ const pub=publico(c,cal);
+ /* CP238 (20/11/2026, Fedalto 2026-12): a diferença do mês fora dos registros (edição direta no editor, retirada, conteúdo novo) não
+    recusa mais aqui. O editor I172 monta uma lista só por mês (fora pedidos aprovados, ajustes internos aprovados e escopo CP115/CP216),
+    a Amanda confere no checklist da liberação e a decisão exige a assinatura dessa lista. Sem publicação conferida continua recusado. */
+ if(ativos.length&&!pub)motivos.push('O mês contém outra versão editorial ainda não reconciliada. Preserve todos os ajustes e confira a revisão.');
  const assinatura=hashEditorialI172(ativos.map(x=>[x.data.id,x.assinatura]).sort((a,b)=>a[0].localeCompare(b[0]))),permitida=motivos.length===0;
  return{assinatura,liberacaoPermitida:permitida,motivos,quantidade:ativos.length,disponivel:ator.papel==='Amanda'&&ativos.length>0&&permitida&&baseValida(c,cal,ctx.prova)};
 }

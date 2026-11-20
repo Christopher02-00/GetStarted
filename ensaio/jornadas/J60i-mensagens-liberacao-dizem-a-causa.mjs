@@ -9,7 +9,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { RAIZ, PROJETO } from '../lib/emulador.mjs';
 import { createRequire } from 'node:module';
-import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
+import { entrarComo, entrarGerencia, foto } from '../lib/navegador.mjs';
 export const id = 'J92';
 export const nome = 'Liberação travada por ajuste interno: a tela da Amanda diz a causa certa (não "pedidos sem aprovação") e o painel não promete o botão';
 const CLIENTE = 'bluefit', NOME = 'Bluefit', MES = '2026-12', CICLO = `${MES}__${CLIENTE}`;
@@ -45,18 +45,15 @@ export async function executar({ amb, seed, nav, registrar }) {
     return d;
   }
   const ler = pessoa => chamar(pessoa, 'central_editor_ler', { ciclo: CICLO });
-  async function abrirEditor(page) { // mesmo caminho da J90: Planejamento → cliente e mês → materiais → editor oficial
-    await page.waitForSelector('#navPlanejamentoPreparacaoR80', { timeout: 20000 }); await abrirMenuSeMovel(page); await page.click('#navPlanejamentoPreparacaoR80');
-    await page.waitForFunction(() => { const v = document.getElementById('view-estrategiaCp109'); return v && getComputedStyle(v).display !== 'none' && v.innerText.trim().length > 50; }, null, { timeout: 20000 });
-    const v = page.locator('#view-estrategiaCp109'); await v.locator('select').first().waitFor({ timeout: 20000 });
-    await v.locator('select').first().selectOption({ label: NOME }); await v.locator('input[type=month]').first().fill(MES);
-    await v.getByRole('button', { name: /Abrir cliente e mês/ }).click();
-    await page.getByRole('button', { name: /^Abrir materiais do mês$/ }).click({ timeout: 20000 }); await page.waitForTimeout(3000);
-    const aba = page.getByRole('button', { name: /^Criar e aprovar$/ }).first(); if (await aba.isVisible().catch(() => false)) { await aba.click(); await page.waitForTimeout(2500); }
-    const ed = page.getByRole('button', { name: /^Abrir editor oficial nesta competência$/ }).first(); await ed.evaluate(el => el.scrollIntoView({ block: 'center' })); await ed.click();
+  async function abrirEditor(page) { // Amanda: Aprovações → Calendários → a mesma função do botão "Conferir e liberar" (CP237)
+    await entrarGerencia(page); await page.waitForTimeout(1500);
+    await page.evaluate(() => { window.irParaAprovacoes?.(); }); await page.waitForTimeout(1500); await page.evaluate(() => window.filtrarAprovacoes?.('calendarios'));
+    await page.locator(`[data-liberacao-cp160="${CICLO}"]`).first().waitFor({ state: 'attached', timeout: 30000 });
+    await page.evaluate(([c, m]) => window.abrirEditorPedidosCp237(c, m), [CLIENTE, MES]);
     await page.waitForSelector('#planejamentoEditorI172 article', { timeout: 30000 });
     await page.waitForFunction(() => { const s = document.querySelector('.ai123'); return s && !/Conferindo os ajustes internos/.test(s.innerText); }, null, { timeout: 30000 }).catch(() => {});
     await page.waitForFunction(() => document.querySelector('[data-diagnostico-cp224]') || /Não há pedidos de ajuste/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(1500);
   }
   const mesDe = i => i && (i.mes === MES || (!i.mes && String(i.dataPostagem || '').startsWith(MES)));
   const livre = i => mesDe(i) && !i.excluido && !i.posted && !i.agendado && !i.gravado && !i.postagemId;
@@ -102,7 +99,7 @@ export async function executar({ amb, seed, nav, registrar }) {
     d = await ler('Chris'); const pecaId = 'adicional_cp142_' + hex();
     d = await chamar('Chris', 'central_editor_interno_iniciar_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: d.assinatura, itemId: pecaId, motivo: 'Peça adicional da J92.', esperadaRevisao: d.ciclo.revisao, publicacaoHash: d.internosCp123.publicacaoHash, tipoAjuste: 'adicao_cp142' });
     let x = d.internosCp123.ajustes.find(r => r.itemId === pecaId);
-    d = await chamar('Chris', 'central_editor_interno_salvar_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: x.assinatura, ajusteId: x.id, conteudo: { day: 21, fmt: 'Reel', stage: 'Topo', name: 'Ensaio J92 — Peça em preparação', ref: '', referenciaDispensada: true, desc: 'Roteiro da peça da J92.', legenda: 'Legenda da peça adicional da J92.', obs: '', preparacaoGravacao: '' } });
+    d = await chamar('Chris', 'central_editor_interno_salvar_cp123', { ciclo: CICLO, operacao: op(), assinaturaEsperada: x.assinatura, ajusteId: x.id, conteudo: { day: 21, fmt: 'Reel', stage: 'Topo', name: 'Ensaio J92 — Peça em preparação', ref: '', referenciaDispensada: true, desc: 'Roteiro da peça da J92.', legenda: 'Legenda da peça adicional da J92.', obs: 'Imagens reais da loja.', preparacaoGravacao: '' } });
     x = d.internosCp123.ajustes.find(r => r.id === x.id);
 
     // 1 e 2) tela da Amanda no editor do mês

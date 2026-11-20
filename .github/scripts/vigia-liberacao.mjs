@@ -1,6 +1,7 @@
 // Vigia da liberação (CP240, 20/11/2026). SÓ LEITURA. Roda o próprio código do servidor (central_editor_ler do editor I172) como a
 // Amanda em cada mês com pedido do cliente ou ajuste interno em andamento e classifica:
-//   VERMELHO  — tudo aprovado, há o que liberar e a Amanda NÃO tem botão (a classe Fedalto/Stokki de 19–20/11), ou pedido sem saída;
+//   VERMELHO  — mês atual ou futuro: tudo aprovado, há o que liberar e a Amanda NÃO tem botão (classe Fedalto/Stokki), pedido sem saída
+//               ou editor que não abre (mês que já passou: amarelo "mês passado", CP240b);
 //   AMARELO   — esperando alguém (Chris corrigir/enviar, Amanda revisar/liberar) — mostra com quem;
 //   VERDE     — nada pendente.
 // Uso: node .github/scripts/vigia-liberacao.mjs [--json saida.json]   (credencial: GOOGLE_APPLICATION_CREDENTIALS, conta só-leitura)
@@ -62,7 +63,7 @@ export async function vigiarLiberacoesCp240(dbReal, { agora = new Date(), emailA
   }
   for (const s of (await dbReal.collection('revisoes_ajustes_cp112').get()).docs) { const r = s.data(); if (ESTADOS_ABERTOS_PEDIDO.includes(r.estado)) add(r.ciclo, 'pedido ' + r.estado); }
   for (const s of (await dbReal.collection('calendarios_ajustes_internos_cp123').get()).docs) { const r = s.data(); if (r.estado && !FINAIS_INTERNO.includes(r.estado)) add(r.ciclo, 'ajuste interno ' + r.estado); }
-  const linhas = [];
+  const linhas = [], mesAtual = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(agora).slice(0, 7);
   for (const [ciclo, porque] of [...ciclos].sort()) {
     const legado = (await dbReal.doc('continuidade_calendarios_i164/' + ciclo).get()).data()?.ativo === true;
     const pedido = { acao: 'central_editor_ler', ciclo, uidEsperado: uid, atorRealEsperado: 'Amanda', papelOperado: 'Amanda', sessao: 'vigia_cp240', ...(legado ? { origemEditorial: 'continuar_legado' } : {}) };
@@ -72,6 +73,9 @@ export async function vigiarLiberacoesCp240(dbReal, { agora = new Date(), emailA
     } catch (e) {
       linhas.push({ ciclo, processo: legado ? 'antigo' : 'novo', porque, nivel: 'vermelho', estado: '', resumo: 'o editor não abre para a Amanda', motivos: [String(e.message || e).slice(0, 400)] });
     }
+    /* CP240b (20/11/2026, decisão do Chris: "a Ynayhe fica sem calendário em outubro, foi em documento"): mês que já passou não recebe mais
+       liberação; a pendência antiga continua listada, em amarelo, sem derrubar o vigia. Mês atual e futuros continuam vermelhos. */
+    const l = linhas.at(-1); if (l.nivel === 'vermelho' && ciclo.slice(0, 7) < mesAtual) { l.nivel = 'amarelo'; l.resumo = 'mês passado (não bloqueia): ' + l.resumo; }
   }
   return linhas;
 }

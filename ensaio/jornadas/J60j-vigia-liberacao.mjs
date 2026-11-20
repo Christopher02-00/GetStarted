@@ -108,6 +108,10 @@ export async function executar({ amb, seed, nav, registrar }) {
     fim('3 tudo aprovado e sem botão: o vigia fica VERMELHO com o motivo, e a Amanda vê o mesmo motivo na tela', l?.nivel === 'vermelho' && /sem botão de liberar/.test(l.resumo) && !!motivoServidor && tela === 'a Amanda vê o motivo do servidor',
       `${l ? l.nivel + ': ' + l.resumo : 'fora da lista'} · motivo: ${motivoServidor.slice(0, 160) || '-'} · tela: ${tela}`);
 
+    // 3b) CP240b: o mesmo mês travado, visto depois que ele passou, fica amarelo "mês passado" (não derruba o vigia)
+    const lp = (await vigia.vigiarLiberacoesCp240(db, { agora: new Date('2027-01-15T12:00:00Z') })).find(x => x.ciclo === CICLO);
+    fim('3b mês que já passou: a mesma pendência fica amarela "mês passado", sem derrubar o vigia', lp?.nivel === 'amarelo' && /^mês passado \(não bloqueia\)/.test(lp.resumo), lp ? `${lp.nivel}: ${lp.resumo}` : 'fora da lista');
+
     // 4) o vigia nunca grava
     let recusa = '';
     try { await vigia.somenteLeitura(db).runTransaction(async tx => tx.update(ref, { updatedAt: 'x' })); recusa = 'GRAVOU'; } catch (e) { recusa = String(e.message || e); }

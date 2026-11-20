@@ -153,6 +153,12 @@ export function prepararReenvioAjustesCp112(cal,mes,em,rows,preparar,mesDoItem){
  const revisado=preparar(view,mes,em,mesDoItem);return revisado.items===cal.items?cal:{...cal,items:revisado.items};
 }
 function reabrirCalendario(db,c,cal,ator,em,operacao,motivo,itemId){
+ /* CP241 (20/11/2026, Fedalto e Stokki 2026-12): no processo novo, devolver UM pedido do cliente regravava o mês inteiro ('ajuste_interno'
+    por 'Amanda') e reabria a criação (rodada nova): a fila de retornos do Chris (CP155) ganhava erro sem saída, o cliente lia "em preparação"
+    e cada leitor do estado precisou de remendo (CP233, CP237). O mês publicado com pedido do cliente já está aberto para o Chris corrigir;
+    a devolução fica só no pedido (revisão 'devolvido' + demanda de volta ao Chris, gravados por quem chama). */
+ const atualCp241=marca(cal,c.competencia);
+ if(!c.modo&&c.criacao&&atualCp241.status==='ajuste_interno'&&/^cal_ajuste_v113_[a-f0-9]{48}$/.test(String(atualCp241.pedidoAjusteOperationId||''))&&atualCp241.retratoLiberadoV115?.schemaVersion===1)return [];
  const mes=c.competencia,m={...marca(cal,mes),mes,status:'ajuste_interno',por:'Amanda',em,motivoAjuste:motivo},patch={aprovacaoMeses:{...(cal.aprovacaoMeses||{}),[mes]:m},updatedAt:em};if(cal.aprovacaoInterna?.mes===mes)patch.aprovacaoInterna=m;
  const writes=[{ref:db.doc('calendarios/'+c.cliente),patch}];
  if(c.modo==='continuar_legado'){const st=c._estadoLegado,h=st.historico||[];e(Array.isArray(h)&&h.length<1000,'O histórico editorial precisa de conferência.');writes.push({ref:db.doc('continuidade_calendarios_i164/'+c.id),patch:{editorialI172:{...st,revisao:st.revisao+1,fase:'devolvida',retornoMotivo:motivo,retornoEm:em,por:ator.real,autorUid:ator.uid,em,ultimaOperacao:operacao,historico:[...h,{acao:'ajuste_calendario_decidir_cp112',decisao:'devolver',por:ator.real,uid:ator.uid,em,operacao}]}}});}

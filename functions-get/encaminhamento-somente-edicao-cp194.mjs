@@ -10,7 +10,9 @@ import {validarContaEsperadaI165} from './intencao-operacao.mjs';
 import {exigirI165,idFisicoI165} from './lib/gs-contexto-operacional-i165.mjs';
 
 export const ACOES_SOMENTE_EDICAO_CP194 = Object.freeze(['somente_edicao_tratar_cp194']);
-export const EDITORES_SOMENTE_EDICAO_CP194 = Object.freeze(['Helo', 'João Victor', 'Cecília', 'Nathan']); // mesma lista das rules
+// CP242 (20/11/2026): a Cecília não edita mais (secretaria/produção). As rules ainda a listam no caminho antigo do navegador,
+// que a tela não usa desde a CP194 (o encaminhamento passa por aqui).
+export const EDITORES_SOMENTE_EDICAO_CP194 = Object.freeze(['Helo', 'João Victor', 'Nathan']);
 
 export function materialUrlCp194(valor) {
   const texto = String(valor || '').trim();

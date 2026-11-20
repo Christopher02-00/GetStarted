@@ -12,7 +12,8 @@ import {exigirI165,idFisicoI165} from './lib/gs-contexto-operacional-i165.mjs';
 export const ACOES_SOMENTE_EDICAO_CP194 = Object.freeze(['somente_edicao_tratar_cp194']);
 // CP242 (20/11/2026): a Cecília não edita mais (secretaria/produção). As rules ainda a listam no caminho antigo do navegador,
 // que a tela não usa desde a CP194 (o encaminhamento passa por aqui).
-export const EDITORES_SOMENTE_EDICAO_CP194 = Object.freeze(['Helo', 'João Victor', 'Nathan']);
+// CP243 (20/11/2026): o Nathan também não edita mais (só filmmaker).
+export const EDITORES_SOMENTE_EDICAO_CP194 = Object.freeze(['Helo', 'João Victor']);
 
 export function materialUrlCp194(valor) {
   const texto = String(valor || '').trim();

@@ -166,9 +166,16 @@ export async function executar({ amb, seed, nav, registrar }) {
     let link = '';
     { const cli = await nav.novaPagina();
       try { await cli.page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
-        const vis = await esperar(async () => cli.page.evaluate(([novo, saiu, peca]) => { const t = document.body.innerText; return t.includes(novo) && !t.includes(saiu) && (!peca || t.includes(peca)) ? 'ok' : null; }, [NOVO_TITULO, alvoRetirar.name, pecaId ? PECA : '']), 30000);
-        link = vis ? 'o link do cliente mostra o novo' + (pecaId ? ' e a peça' : '') + ' e não mostra o retirado' : 'o link NÃO reflete a liberação';
-      } catch (e) { link = 'falha no link: ' + String(e).slice(0, 160); } finally { await cli.fechar(); } }
+        // mesmo caminho da J06 (caso 4): selo de liberado, "Lista por semana" e o título no texto ou no HTML da página
+        await cli.page.waitForFunction(() => /Liberado — o cliente já vê/.test(document.body.innerText), null, { timeout: 30000 });
+        try { await cli.page.getByRole('button', { name: /Lista por semana/ }).click({ timeout: 5000 }); } catch {}
+        const leitura = await esperar(async () => { const r = await cli.page.evaluate(([novo, saiu, peca]) => { const t = document.body.innerText, h = t + ' ' + document.body.innerHTML;
+          return { novo: h.includes(novo), peca: !peca || h.includes(peca), saiu: t.includes(saiu) }; }, [NOVO_TITULO, alvoRetirar.name, pecaId ? PECA : '']);
+          return r.novo && r.peca && !r.saiu ? r : null; }, 30000);
+        if (leitura) link = 'o link do cliente mostra o novo' + (pecaId ? ' e a peça' : '') + ' e não mostra o retirado';
+        else { const r = await cli.page.evaluate(([novo, saiu, peca]) => { const t = document.body.innerText, h = t + ' ' + document.body.innerHTML; return `novo ${h.includes(novo)} · peça ${!peca || h.includes(peca)} · retirado visível ${t.includes(saiu)}`; }, [NOVO_TITULO, alvoRetirar.name, pecaId ? PECA : '']);
+          await foto(cli.page, `J91${tag}-link-cliente`); link = 'o link NÃO reflete a liberação: ' + r; }
+      } catch (e) { link = 'falha no link: ' + String(e).replace(/\s+/g, ' ').slice(0, 160); await foto(cli.page, `J91${tag}-link-cliente`).catch(() => {}); } finally { await cli.fechar(); } }
     caso(4, 'o cliente recebe a correção, o texto mudado e o conteúdo novo' + (comPeca ? ' e a peça' : '') + '; o retirado some', retOk && /^o link do cliente mostra/.test(link), `retrato ${retOk ? 'completo' : 'INCOMPLETO'} · ${link}`);
 
     // 5) o mês sai da fila de liberação da Amanda

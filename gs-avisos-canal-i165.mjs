@@ -125,6 +125,13 @@ export function opcoesVapidAvisosI165(d){
  if(d?.vapidMode==='firebase_default')return {};
  throw Error('O canal de aparelho ainda precisa ser configurado. A fila continua no sistema.');
 }
+/* CP246 (21/11/2026, Programa Estabilidade): no iPhone/iPad o aviso no celular só existe com o Get instalado na Tela de Início
+   (Safari aberto direto não oferece Notification). Antes a tela dizia só "este navegador não oferece" — e a Amanda, a Cecília e o
+   João Victor nunca tiveram aparelho ligado. Agora diz o passo exato. */
+export function motivoSemAvisosCp246(nav){const ua=String(nav?.userAgent||''),ios=/iPhone|iPad|iPod/.test(ua)||(/Macintosh/.test(ua)&&Number(nav?.maxTouchPoints)>1),instalado=nav?.standalone===true;
+ if(ios&&!instalado)return 'No iPhone, os avisos só chegam com o Get instalado: no Safari, toque em Compartilhar → “Adicionar à Tela de Início”, abra o Get pelo ícone novo, entre com o seu Google e toque em “Ativar no meu aparelho”. A fila continua no sistema.';
+ if(ios)return 'Atualize o iPhone (iOS 16.4 ou mais novo) para receber os avisos no Get instalado. A fila continua no sistema.';
+ return 'Este navegador não oferece os avisos de aparelho. No celular, abra o Get no Chrome (Android) ou instale o Get na Tela de Início (iPhone). A fila continua no sistema.';}
 function ambientePadrao(){return {window,Notification:globalThis.Notification,serviceWorker:globalThis.navigator?.serviceWorker,crypto:globalThis.crypto,setInterval:(...a)=>globalThis.setInterval(...a),clearInterval:(...a)=>globalThis.clearInterval(...a),agora:()=>Date.now(),carregarMessaging:()=>import('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js')};}
 export function esperarServiceWorkerAtivoI165(reg,{vigente=()=>true,timeoutMs=20000,programar=(f,t)=>globalThis.setTimeout(f,t),cancelarTimer=t=>globalThis.clearTimeout(t)}={}){
  let encerrar=()=>{};
@@ -273,7 +280,7 @@ export function montarAvisosCanalI165(root,{io,contexto,abrirEditor,abrirPostage
  async function preConferir(e,r){
   if(!atual(e)||!pushAtivo())return null;
   if(c.papel!==c.atorReal||c.delegada){aparelho={pronto:false,motivo:'Use o Google da própria pessoa para ativar este aparelho.'};render();return null;}
-  if(!ambiente.Notification||!ambiente.serviceWorker||!ambiente.crypto?.subtle){aparelho={pronto:false,motivo:'Este navegador não oferece os avisos de aparelho necessários. A fila continua no sistema.'};render();return null;}
+  if(!ambiente.Notification||!ambiente.serviceWorker||!ambiente.crypto?.subtle){aparelho={pronto:false,motivo:motivoSemAvisosCp246(ambiente.window?.navigator)};render();return null;}
   try{const g=await io.confirmarGoogle();if(!atual(e)||!pushAtivo())return null;
    if(!cadastroProprioAvisosI165(c,g,r?.cadastroProprio))throw Error('O Google e o cadastro ativo da própria pessoa precisam ser confirmados.');
    aparelho={pronto:true,opcoesVapid:opcoesVapidAvisosI165(r.web)};render();return aparelho;

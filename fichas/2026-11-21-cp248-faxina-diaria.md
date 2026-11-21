@@ -14,7 +14,10 @@ Retrato (exportação de 21/11, só leitura):
   - 157 são "confirmar publicação" de postagens agendadas cuja data já passou: 35 de 3 a 7 dias, 48 de 8 a 14 e 73 de 15 a 30.
 - Os 416 avisos informativos do cliente não lidos não aparecem em tela nem contador e não pesam no número de ninguém, então ficam como estão.
 
-Correção: faxina do servidor `faxinaOperacaoGetCp248` (a cada 2 h, idempotente, item por item em transação) — `functions-get/faxina-diaria-cp248.mjs`:
+Correção: faxina do servidor — `functions-get/faxina-diaria-cp248.mjs`, chamada pelo agendamento que já existe (`acompanhamentoOperacionalGetI165`, a cada
+5 min) no máximo a cada 2 h (`faxinaSeDevidaCp248`; retoma na volta seguinte se parar no limite de 4 min). Idempotente, item por item em transação.
+Por que não uma função agendada própria: a 1ª publicação (run 44931891557) criou `faxinaOperacaoGetCp248` pela metade — a conta de publicação
+não pode definir o IAM de quem chama. Ela é apagada pelo passo novo `apagar_funcao` do workflow de publicação (nome exato, só modo publicar).
 1. **Agendada vencida**: com a data agendada há 2 dias ou mais, a postagem é confirmada pelo **mesmo caminho** da confirmação da Cecília.
    - Esse caminho é: fontes + conferência factual + calendário + vídeo `finalizado` + baixa das demandas do ciclo.
    - Autor "Sistema (confirmação automática)", com prova que explica a regra e a marca `confirmacaoAutomaticaCp248`.
@@ -32,12 +35,12 @@ RAIZ: itens que esperam uma confirmação ou uma aprovação que não muda nada
 │               calendário e Portal do cliente (publicado), Acompanhamento CP205
 ├─ PAPÉIS     : Cecília (confirma/retira antes de 2 dias; desfaz depois), Amanda (as dela fecham), cliente (vê publicado)
 ├─ RULES      : sem mudança (servidor)
-├─ AUTOMAÇÕES : faxina a cada 2 h; gatilhos CP244/CP245 continuam para o caso novo
+├─ AUTOMAÇÕES : faxina no agendamento de 5 min (máx. a cada 2 h); gatilhos CP244/CP245 continuam para o caso novo
 ├─ LEGADO     : 143 entregas da Amanda + 157 publicações da Cecília + a postagem da Camargo's, na 1ª rodada depois da publicação
 └─ EFEITO     : o número da Amanda e o da Cecília passam a mostrar só o que alguém precisa fazer
 
 Testes:
-- J102 com 8/8:
+- J102 com 9/9 (inclui a faxina no agendamento de 5 min, que espera 2 h e retoma a rodada parcial):
   - a agendada pela tela (legenda do Chris, agendamento da Cecília), 3 dias depois, fica publicada pelo caminho oficial, com o vídeo finalizado, e sai da fila da Cecília;
   - no horário real não toca;
   - a tarefa antiga da Amanda fecha e sai da tela dela;

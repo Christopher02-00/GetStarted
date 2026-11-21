@@ -1,5 +1,5 @@
 // CP248 (21/11/2026, decisão do Chris: "quero uma correção definitiva… Amanda ou Cecília costumam ter números terríveis de coisas em aberto
-// que são verificações do sistema"; autorizou as opções recomendadas). Faxina do servidor, a cada 2 horas, idempotente e reversível:
+// que são verificações do sistema"; autorizou as opções recomendadas). Faxina do servidor (no agendamento de 5 min já existente, no máximo a cada 2 h), idempotente e reversível:
 //  1. Postagem AGENDADA cuja data passou há 2 dias conta como publicada ("confirmada automaticamente — agendada na plataforma"), pelo MESMO
 //     caminho da confirmação da Cecília (fontes + conferência factual + calendário + vídeo finalizado + demandas do ciclo). Antes disso a
 //     Cecília pode confirmar ou retirar ("não saiu"); depois, "desfazer publicação" continua valendo. Stokki (por plataforma), sem horário
@@ -62,11 +62,13 @@ export async function confirmarPublicacaoAutomaticaCp248(db, postagemId, { agora
 }
 
 /** Uma rodada completa da faxina. Nunca para no primeiro erro: cada item é uma transação e entra no relatório. */
-export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelatorio = true } = {}) {
-  const r = { schema: 1, em: agora.toISOString(), limiteConfirmacao: limiteConfirmacaoCp248(agora), publicadas: [], puladas: [], fechadasSemAprovador: [], postagensEncerradas: [], erros: [] };
+export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelatorio = true, prazoMs = Infinity } = {}) {
+  const r = { schema: 1, em: agora.toISOString(), limiteConfirmacao: limiteConfirmacaoCp248(agora), publicadas: [], puladas: [], fechadasSemAprovador: [], postagensEncerradas: [], erros: [], parcial: false };
+  const inicio = Date.now(), semTempo = () => { if (Date.now() - inicio > prazoMs) { r.parcial = true; return true; } return false; };
   // 1) publicações agendadas vencidas
   const ag = await db.collection('postagens').where('status', '==', 'agendado').get();
   for (const s of ag.docs) {
+    if (semTempo()) break;
     const p = { ...s.data(), id: s.id };
     if (!candidataConfirmacaoCp248(p, agora)) { if (p.publicacaoStokki && dataCivil(p.dataAgendada) && p.dataAgendada <= r.limiteConfirmacao) r.puladas.push({ id: s.id, motivo: 'Stokki: confirmação por plataforma' }); continue; }
     try { const x = await confirmarPublicacaoAutomaticaCp248(db, s.id, { agora }); if (x.acao === 'publicada') r.publicadas.push(s.id); else if (x.acao === 'pulada') r.puladas.push({ id: s.id, motivo: x.motivo }); }
@@ -75,6 +77,7 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
   // 2) entregas do sistema sem aprovador possível (CP245, inclusive o legado)
   const ent = await db.collection('demandas').where('status', '==', 'concluida_aguardando_aprovacao').get();
   for (const s of ent.docs) {
+    if (semTempo()) break;
     if (!semAprovadorCp245(s.data())) continue;
     try { const x = await fecharSemAprovadorCp245(db, s.id, { agora }); if (x.acao === 'fechada') r.fechadasSemAprovador.push(s.id); }
     catch (e) { r.erros.push({ id: s.id, etapa: 'sem_aprovador', erro: String(e?.message || e).slice(0, 200) }); }
@@ -82,11 +85,21 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
   // 3) postagens antes da rede com o vídeo na Lixeira (CP244, inclusive o legado)
   const vids = await db.collection('videos_producao').where('excluido', '==', true).get();
   for (const s of vids.docs) {
+    if (semTempo()) break;
     const pid = String(s.data().postagemId || '').trim() || 'video_' + s.id, ps = await db.doc('postagens/' + pid).get();
     if (!ps.exists || ps.data().excluido === true || ['arquivada_sem_postagem', 'cancelada_manual', 'cancelada_video_trafego', 'postado', 'finalizado'].includes(ps.data().status)) continue;
     try { const x = await sincronizarPostagemVideoExcluidoCp244(db, s.id, { agora }); if (x.acao === 'encerrada') r.postagensEncerradas.push(pid); }
     catch (e) { r.erros.push({ id: pid, etapa: 'video_excluido', erro: String(e?.message || e).slice(0, 200) }); }
   }
-  if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set({ ...r, puladas: r.puladas.slice(0, 200), totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length } });
+  if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set({ ...r, puladas: r.puladas.slice(0, 200), parcial: r.parcial, totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length } });
   return r;
+}
+
+/** Ponto de entrada no agendamento que já existe (acompanhamentoOperacionalGetI165, a cada 5 min): roda no máximo a cada 2 h, ou de novo
+ * na próxima volta se a rodada anterior parou no limite de tempo. Uma função agendada própria exigiria permissão de IAM que a publicação não tem. */
+export async function faxinaSeDevidaCp248(db, { agora = new Date(), intervaloMs = 2 * 3600e3, prazoMs = 240e3 } = {}) {
+  const s = await db.doc('sistema/faxina_cp248').get(), ult = s.exists ? s.data() : null;
+  if (ult && ult.parcial !== true && Date.parse(ult.em) > agora.getTime() - intervaloMs) return { estado: 'aguardando', ultima: ult.em };
+  const r = await executarFaxinaCp248(db, { agora, prazoMs });
+  return { estado: r.parcial ? 'parcial' : 'completa', publicadas: r.publicadas.length, puladas: r.puladas.length, fechadas: r.fechadasSemAprovador.length, encerradas: r.postagensEncerradas.length, erros: r.erros.length };
 }

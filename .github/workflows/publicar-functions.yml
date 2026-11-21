@@ -15,6 +15,11 @@ on:
         default: conferir
         type: choice
         options: [conferir, publicar]
+      apagar_funcao:
+        description: 'opcional, só com modo=publicar: nome exato de UMA função do codebase get-operacao a apagar antes do deploy (ex.: função que ficou pela metade)'
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -46,6 +51,18 @@ jobs:
           JSON
           cp functions-get/runtime.example.env functions-get/.env.get-started-4956d
           (cd functions-get && npm i --no-package-lock --no-audit --no-fund --silent)
+      # 21/11/2026 (CP248): uma função agendada nova ficou criada pela metade (a conta de publicação não pode definir o IAM de quem chama).
+      # Sem apagar, toda publicação seguinte aborta (função fora do código) ou falha (atualização refaz o IAM). Só com nome exato e modo=publicar.
+      - name: Apagar uma função (opcional)
+        if: steps.secret.outputs.tem == 'true' && github.event_name == 'workflow_dispatch' && inputs.modo == 'publicar' && inputs.apagar_funcao != ''
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FN: ${{ inputs.apagar_funcao }}
+        run: |
+          printf '%s' "$FN" | grep -Eq '^[A-Za-z][A-Za-z0-9]{2,80}$' || { echo "::error::nome de função inválido"; exit 1; }
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@15.34.1 functions:delete "$FN" --region southamerica-east1 --project get-started-4956d --force --non-interactive
       - name: Firebase deploy (${{ github.event_name == 'workflow_dispatch' && inputs.modo || 'conferir' }})
         if: steps.secret.outputs.tem == 'true'
         env:

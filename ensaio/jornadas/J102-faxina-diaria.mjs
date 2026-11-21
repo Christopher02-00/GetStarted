@@ -107,7 +107,13 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const rm = await fx.executarFaxinaCp248(mem, { agora: new Date() }), d = docs.get('demandas/legado-j102');
     fim('6 faxina fecha o legado sem nenhuma escrita prévia (como as 143 de produção)', rm.fechadasSemAprovador.includes('legado-j102') && d.status === 'aprovada' && d.fechamentoSemAprovadorCp245?.schema === 1 && d.provaTexto === 'feito' && !!docs.get('sistema/faxina_cp248'),
       `fechadas ${rm.fechadasSemAprovador.length} · status ${d.status} · relatório ${docs.get('sistema/faxina_cp248') ? 'sim' : 'NÃO'}`);
-  } catch (e) { fim('6 faxina fecha o legado (banco em memória)', false, String(e).replace(/\s+/g, ' ').slice(0, 240)); }
+    // 7) no agendamento de 5 min: logo depois de uma rodada completa, espera 2 h; rodada parcial (limite de tempo) roda de novo na próxima volta
+    const a1 = await fx.faxinaSeDevidaCp248(mem, { agora: new Date() });
+    docs.set('sistema/faxina_cp248', { ...docs.get('sistema/faxina_cp248'), parcial: true });
+    const a2 = await fx.faxinaSeDevidaCp248(mem, { agora: new Date() });
+    const a3 = await fx.faxinaSeDevidaCp248(mem, { agora: new Date(Date.now() + 2.1 * 3600e3) });
+    fim('7 faxina no agendamento de 5 min: espera 2 h, retoma rodada parcial', a1.estado === 'aguardando' && a2.estado === 'completa' && a3.estado === 'completa', `logo depois: ${a1.estado} · após parcial: ${a2.estado} · 2 h depois: ${a3.estado}`);
+  } catch (e) { fim('6/7 faxina no banco em memória', false, String(e).replace(/\s+/g, ' ').slice(0, 240)); }
   // limpeza
   for (const [c, k] of [['postagens', POST], ['postagens', STK], ['videos_producao', VID], ['demandas', DEM]]) { const x = await seed.get(c, k); if (!x) continue; const { id: _i, ...dados } = x; await seed.set(c, k, { ...dados, excluido: true }); }
 }

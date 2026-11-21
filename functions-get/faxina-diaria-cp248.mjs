@@ -58,29 +58,38 @@ export async function confirmarPublicacaoAutomaticaCp248(db, postagemId, { agora
       notaConclusao: 'Publicação confirmada automaticamente (agendada na plataforma, ' + DIAS_CONFIRMACAO_AUTOMATICA_CP248 + ' dias sem relato de falha).',
       resolucaoPublicacaoI165: { postagemId: p.id, ciclo: baixas.ciclo, operacaoId, acao: 'publicar', em } });
     return { acao: 'publicada', calendario: !!cal.ref, demandas: baixas.docs.length };
-  });
+  }, { maxAttempts: 3 });
 }
 
 /** Uma rodada completa da faxina. Nunca para no primeiro erro: cada item é uma transação e entra no relatório. */
-export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelatorio = true, prazoMs = Infinity } = {}) {
+// 21/11 (1ª rodada em produção): a 12ª confirmação ficou esperando lock (os gatilhos das confirmações anteriores do mesmo cliente
+// mexem no calendário e nas postagens) e a volta estourou os 9 min sem relatório. Agora: limite por item, progresso gravado a cada 10.
+export const LIMITE_ITEM_MS_CP248 = 30e3;
+const comLimite = (promessa, ms) => { let t; return Promise.race([promessa, new Promise((_, rej) => { t = setTimeout(() => rej(Object.assign(Error('tempo esgotado neste item; volta na próxima rodada'), { code: 'cp248/tempo' })), ms); })]).finally(() => clearTimeout(t)); };
+export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelatorio = true, prazoMs = Infinity, limiteItemMs = LIMITE_ITEM_MS_CP248 } = {}) {
   const r = { schema: 1, em: agora.toISOString(), limiteConfirmacao: limiteConfirmacaoCp248(agora), publicadas: [], puladas: [], fechadasSemAprovador: [], postagensEncerradas: [], erros: [], parcial: false };
   const inicio = Date.now(), semTempo = () => { if (Date.now() - inicio > prazoMs) { r.parcial = true; return true; } return false; };
+  const relatorio = (extra = {}) => ({ ...r, puladas: r.puladas.slice(0, 200), atualizadoEm: new Date().toISOString(), totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length }, ...extra });
+  let feitos = 0; const progresso = async () => { if (gravarRelatorio && ++feitos % 10 === 0) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true })); };
+  if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true }));
   // 1) publicações agendadas vencidas
   const ag = await db.collection('postagens').where('status', '==', 'agendado').get();
   for (const s of ag.docs) {
     if (semTempo()) break;
     const p = { ...s.data(), id: s.id };
     if (!candidataConfirmacaoCp248(p, agora)) { if (p.publicacaoStokki && dataCivil(p.dataAgendada) && p.dataAgendada <= r.limiteConfirmacao) r.puladas.push({ id: s.id, motivo: 'Stokki: confirmação por plataforma' }); continue; }
-    try { const x = await confirmarPublicacaoAutomaticaCp248(db, s.id, { agora }); if (x.acao === 'publicada') r.publicadas.push(s.id); else if (x.acao === 'pulada') r.puladas.push({ id: s.id, motivo: x.motivo }); }
-    catch (e) { r.puladas.push({ id: s.id, motivo: String(e?.message || e).slice(0, 200) }); }
+    try { const x = await comLimite(confirmarPublicacaoAutomaticaCp248(db, s.id, { agora }), limiteItemMs); if (x.acao === 'publicada') r.publicadas.push(s.id); else if (x.acao === 'pulada') r.puladas.push({ id: s.id, motivo: x.motivo }); }
+    catch (e) { r.puladas.push({ id: s.id, motivo: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
+    await progresso();
   }
   // 2) entregas do sistema sem aprovador possível (CP245, inclusive o legado)
   const ent = await db.collection('demandas').where('status', '==', 'concluida_aguardando_aprovacao').get();
   for (const s of ent.docs) {
     if (semTempo()) break;
     if (!semAprovadorCp245(s.data())) continue;
-    try { const x = await fecharSemAprovadorCp245(db, s.id, { agora }); if (x.acao === 'fechada') r.fechadasSemAprovador.push(s.id); }
-    catch (e) { r.erros.push({ id: s.id, etapa: 'sem_aprovador', erro: String(e?.message || e).slice(0, 200) }); }
+    try { const x = await comLimite(fecharSemAprovadorCp245(db, s.id, { agora }), limiteItemMs); if (x.acao === 'fechada') r.fechadasSemAprovador.push(s.id); }
+    catch (e) { r.erros.push({ id: s.id, etapa: 'sem_aprovador', erro: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
+    await progresso();
   }
   // 3) postagens antes da rede com o vídeo na Lixeira (CP244, inclusive o legado)
   const vids = await db.collection('videos_producao').where('excluido', '==', true).get();
@@ -88,11 +97,30 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
     if (semTempo()) break;
     const pid = String(s.data().postagemId || '').trim() || 'video_' + s.id, ps = await db.doc('postagens/' + pid).get();
     if (!ps.exists || ps.data().excluido === true || ['arquivada_sem_postagem', 'cancelada_manual', 'cancelada_video_trafego', 'postado', 'finalizado'].includes(ps.data().status)) continue;
-    try { const x = await sincronizarPostagemVideoExcluidoCp244(db, s.id, { agora }); if (x.acao === 'encerrada') r.postagensEncerradas.push(pid); }
-    catch (e) { r.erros.push({ id: pid, etapa: 'video_excluido', erro: String(e?.message || e).slice(0, 200) }); }
+    try { const x = await comLimite(sincronizarPostagemVideoExcluidoCp244(db, s.id, { agora }), limiteItemMs); if (x.acao === 'encerrada') r.postagensEncerradas.push(pid); }
+    catch (e) { r.erros.push({ id: pid, etapa: 'video_excluido', erro: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
   }
-  if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set({ ...r, puladas: r.puladas.slice(0, 200), parcial: r.parcial, totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length } });
+  if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: false, parcial: r.parcial }));
   return r;
+}
+
+/** No agendamento de 5 min: só PEDE a rodada (grava um documento pequeno), nunca roda a faxina ali — a 1ª rodada dentro do agendamento
+ * travou numa confirmação e derrubou as voltas seguintes dos avisos. A rodada roda na função própria disparada por esse pedido. */
+export async function pedirFaxinaSeDevidaCp248(db, { agora = new Date(), intervaloMs = 2 * 3600e3 } = {}) {
+  const s = await db.doc('sistema/faxina_cp248').get(), ult = s.exists ? s.data() : null, t = agora.getTime();
+  if (ult?.emAndamento === true && Date.parse(ult.atualizadoEm || ult.em) > t - 12 * 60e3) return { estado: 'em_andamento' };
+  if (ult && ult.parcial !== true && ult.emAndamento !== true && Date.parse(ult.em) > t - intervaloMs) return { estado: 'aguardando', ultima: ult.em };
+  const p = await db.doc('sistema/faxina_cp248_pedido').get();
+  if (p.exists && Date.parse(p.data().em) > t - 12 * 60e3) return { estado: 'pedido_recente' };
+  await db.doc('sistema/faxina_cp248_pedido').set({ em: agora.toISOString(), motivo: !ult ? 'primeira' : ult.parcial ? 'continuar' : 'intervalo' });
+  return { estado: 'pedida' };
+}
+
+/** Função própria (gatilho em sistema/faxina_cp248_pedido): uma rodada com até 7 min, sem disputar o tempo do agendamento dos avisos. */
+export async function rodarFaxinaPedidaCp248(db, antes, depois, { prazoMs = 420e3 } = {}) {
+  if (!depois?.em || antes?.em === depois.em) return { estado: 'nada' };
+  const r = await executarFaxinaCp248(db, { agora: new Date(), prazoMs });
+  return { estado: r.parcial ? 'parcial' : 'completa', publicadas: r.publicadas.length, puladas: r.puladas.length, fechadas: r.fechadasSemAprovador.length, encerradas: r.postagensEncerradas.length };
 }
 
 /** Ponto de entrada no agendamento que já existe (acompanhamentoOperacionalGetI165, a cada 5 min): roda no máximo a cada 2 h, ou de novo

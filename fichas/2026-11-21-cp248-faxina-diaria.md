@@ -50,3 +50,12 @@ Testes:
 - Contraprova (sem a faxina): vermelha, porque nada confirma e nada fecha.
 
 Publicação: Functions (ok geral de 20/11 + decisão de 21/11). Depois: conferir o relatório da 1ª rodada e rodar o vigia da operação.
+
+## 1ª rodada em produção (21/11, 18:49 UTC) e correção
+- **O que aconteceu:** a faxina rodou dentro do agendamento e confirmou 10 publicações. Na 12ª, a transação esperou lock: os gatilhos das confirmações anteriores do mesmo cliente mexem no calendário e nas postagens. A volta estourou os 9 min sem relatório, e as voltas seguintes dos avisos foram descartadas enquanto ela rodava (avisos e recepção de pedidos a cada ~10 min em vez de 5).
+- **Como foi achado:** pela exportação só leitura (`postadoEm` 18:49 em 10 postagens, `config_notificacoes_i165/estado` parado em 18:49) e pela mesma faxina rodada em memória sobre os dados reais (112 publicadas, 145 fechadas, 1 encerrada, 0 erros).
+- **Correção:**
+  - o agendamento só grava o pedido; a rodada roda na função própria `faxinaOperacaoGetCp248` (gatilho do pedido, 540 s);
+  - limite de 30 s e no máximo 3 tentativas por item; o item que estoura volta na próxima rodada;
+  - relatório gravado no início e a cada 10 itens (`emAndamento`/`parcial`).
+- **J102:** 10/10, incluindo o gatilho real do emulador (o pedido roda a rodada e grava o relatório; logo depois não pede de novo).

@@ -15,7 +15,9 @@ import { somenteLeitura } from './vigia-liberacao.mjs';
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const mod = f => import(pathToFileURL(path.join(RAIZ, 'functions-get', f)).href);
 const LIMITE_DOC = 1048576, ALERTA_DOC = 700 * 1024, PERIGO_DOC = 900 * 1024;
-const PEDIDO_ABERTO = ['pendente', 'rascunho', 'dependencia', 'enviado', 'devolvido', 'aprovado'], INTERNO_FINAL = ['publicado', 'substituido', 'descartado', 'cancelado'];
+// 'aprovado' é o estado final de uma correção aprovada pela Amanda: com o mês liberado de novo, ela já foi ao cliente (pedidosLiberadosCp112).
+// Só conta como pendente enquanto o mês ainda espera a nova liberação.
+const PEDIDO_ABERTO = ['pendente', 'rascunho', 'dependencia', 'enviado', 'devolvido'], INTERNO_FINAL = ['publicado', 'substituido', 'descartado', 'cancelado'];
 const proxMes = (m, n = 1) => { const [a, b] = m.split('-').map(Number), d = new Date(Date.UTC(a, b - 1 + n, 1)); return d.toISOString().slice(0, 7); };
 
 export async function prevooCalendarios(dbReal, { competencias, agora = new Date() } = {}) {
@@ -54,7 +56,7 @@ export async function prevooCalendarios(dbReal, { competencias, agora = new Date
         // mês anterior: o que ainda está aberto
         const mAnt = cal.aprovacaoMeses?.[anterior];
         if (mAnt && ['ajuste_interno', 'aguardando_interna', 'aprovado_interno'].includes(mAnt.status)) add('amarelo', `${anterior} ainda em ${mAnt.status} (por ${mAnt.por || '?'})`, mAnt.status === 'ajuste_interno' ? 'Chris' : 'Amanda');
-        const pAnt = revs.filter(r => r.ciclo === anterior + '__' + slug && PEDIDO_ABERTO.includes(r.estado)), iAnt = ints.filter(r => r.ciclo === anterior + '__' + slug && r.estado && !INTERNO_FINAL.includes(r.estado));
+        const mesAntLiberado = ['liberado', 'arquivado'].includes(mAnt?.status), pAnt = revs.filter(r => r.ciclo === anterior + '__' + slug && (PEDIDO_ABERTO.includes(r.estado) || (r.estado === 'aprovado' && !mesAntLiberado))), iAnt = ints.filter(r => r.ciclo === anterior + '__' + slug && r.estado && !INTERNO_FINAL.includes(r.estado));
         if (pAnt.length) add('amarelo', `${pAnt.length} pedido(s) do cliente de ${anterior} em aberto (${[...new Set(pAnt.map(r => r.estado))].join(', ')})`, 'Chris/Amanda');
         if (iAnt.length) add('amarelo', `${iAnt.length} ajuste(s) interno(s) de ${anterior} em aberto`, 'Chris/Amanda');
       }

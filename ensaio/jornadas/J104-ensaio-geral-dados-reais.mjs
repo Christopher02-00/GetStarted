@@ -57,7 +57,8 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
   if (!await passo('1 Amanda inclui o ciclo e envia o documento', 'Amanda', async page => {
     await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await irParaMes(page);
     const v = page.locator('#view-planejamentoPreparacaoR80');
-    const sel = v.locator('select').last();
+    // seletor de cliente pelo campo (clientes de grupo, como a Zeiss, ganham um seletor "Empresa" depois dele)
+    const sel = v.locator('select[data-field="documentoClienteCp120"]').first();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
     await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 }); // "Confere antes de seguir": iniciar a preparação
@@ -121,7 +122,8 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
   if (!await passo('3 Amanda conclui a revisão e libera', 'Amanda', async page => {
     await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await irParaMes(page);
     const v = page.locator('#view-planejamentoPreparacaoR80');
-    const sel = v.locator('select').last();
+    // seletor de cliente pelo campo (clientes de grupo, como a Zeiss, ganham um seletor "Empresa" depois dele)
+    const sel = v.locator('select[data-field="documentoClienteCp120"]').first();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
     const aba = v.getByRole('button', { name: /^Criar e aprovar$/ }).first(); await aba.waitFor({ timeout: 20000 }); await aba.evaluate(el => el.scrollIntoView({ block: 'center' })); await aba.click();
@@ -135,7 +137,10 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForTimeout(8000);
   }, () => esperar(async () => { const cal = await calendario(); const ap = cal?.aprovacaoMeses?.[MES]; const st = typeof ap === 'string' ? ap : ap?.status || ap?.estado; return /liberado/.test(String(st || '')) ? `aprovacaoMeses[${MES}] = ${st}` : null; }, 25000))) return;
 
-  // 4. Cliente lê pelo link público (calendario.html?cliente=&t=&mes=)
+  // 4. Cliente lê pelo link público (calendario.html?cliente=&t=&mes=). A página lê a cópia do cliente (calendarios_cliente), que o gatilho
+  //    CP200 atualiza depois da liberação: espera a cópia (até 3 min) e registra quanto demorou.
+  { const t1 = Date.now(); const copia = await esperar(async () => { const c = await seed.get('calendarios_cliente', CLIENTE); return ['liberado', 'arquivado'].includes(c?.aprovacaoMeses?.[MES]?.status) ? c : null; }, 180000);
+    registrar({ jornada: id, caso: '4a cópia do cliente atualizada depois da liberação', ok: !!copia, ms: Date.now() - t1, detalhe: copia ? `em ${Math.round((Date.now() - t1) / 1000)} s` : 'a cópia não recebeu o mês liberado em 3 min' }); }
   if (!await passo('4 Cliente lê o calendário liberado pelo link', null, async page => {
     await page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => /Liberado — o cliente já vê/.test(document.body.innerText), null, { timeout: 30000 });
@@ -147,13 +152,20 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
   await passo('5 Luís vê o calendário em modo gravação', 'Luís', async page => {
     await page.evaluate(() => window.irParaCalendarioDeCampo());
     await page.waitForSelector('#campoClientes', { timeout: 15000 });
-    const alvo = page.locator('#campoClientes').getByText(new RegExp(NOME)).first(); await alvo.click({ timeout: 10000 });
+    const alvo = page.locator('#campoClientes').getByText(new RegExp(NOME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).first(); await alvo.click({ timeout: 10000 });
+    // a tela de campo abre no mês corrente com conteúdo; o filmmaker troca para o mês da pauta pela aba (ex.: "Janeiro 2027")
+    const nomeMes = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(MES + '-15T12:00:00Z')).replace(' de ', ' ');
+    const aba = page.getByRole('button', { name: new RegExp('^' + nomeMes + '$', 'i') }).first(); if (await aba.count()) { await aba.click({ timeout: 10000 }); await page.waitForTimeout(1500); }
     await page.waitForFunction(t => (document.getElementById('campoConteudo')?.innerText || '').includes(t), TITULO1, { timeout: 25000 });
   }, async page => { const txt = await page.evaluate(() => document.getElementById('campoConteudo')?.innerText || ''); return txt.includes(TITULO1) ? 'conteúdo do mês visível para o filmmaker' : null; });
 }
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   if (!process.env.ENSAIO_DADOS_REAIS) { registrar({ jornada: id, caso: 'só com dados reais (ENSAIO_DADOS_REAIS)', ok: true, ms: 0, detalhe: 'pulada na bateria comum' }); return; }
+  // carregar a cópia real dispara milhares de gatilhos; o ensaio só começa com a fila vazia (senão a cópia do cliente atrasa por fila, não por defeito)
+  { const t0 = Date.now(), log = path.join(process.cwd(), 'ensaio/.runtime/emulator.log'), conta = () => (fs.readFileSync(log, 'utf8').match(/Beginning execution of/g) || []).length;
+    let ultimo = -1, desde = Date.now(); while (Date.now() - t0 < 15 * 60e3) { const n = conta(); if (n !== ultimo) { ultimo = n; desde = Date.now(); } else if (Date.now() - desde > 30e3) break; await new Promise(r => setTimeout(r, 2000)); }
+    await amb.aguardarFunctionsOciosas?.(60e3); registrar({ jornada: id, caso: 'fila de gatilhos do seed esvaziada', ok: true, ms: Date.now() - t0, detalhe: `${Math.round((Date.now() - t0) / 1000)} s · ${ultimo} execuções` }); }
   const clientes = (process.env.ENSAIO_CLIENTES || PADRAO).split(',').map(x => x.trim()).filter(Boolean);
   const configs = await seed.listar('clientes_config'), cals = await seed.listar('calendarios');
   for (const slug of clientes) {

@@ -9,7 +9,9 @@ export async function consultarOperacionaisI165(db,auth,dados,{agora=new Date()}
  exigirI165(Array.isArray(dados.ids)&&dados.ids.length<=20&&dados.ids.every(idFisicoI165),'lista','Confira até20 conteúdos físicos.');
  if(!edicao)exigirI165(['Amanda','Chris','Cecília'].includes(ator.papel),'papel','Esta fila pertence à operação de postagem.');
  const ids=[...new Set(dados.ids)],resultado=(linhas,erros)=>({linhas,erros,nenhumaEscrita:true,contratoUiRevisao:2});
- const erro=(id,e)=>({id,codigo:e.code||'i165/fonte-indisponivel',mensagem:'Este conteúdo não foi conferido; a fila original foi mantida.'});
+ // CP247 (21/11/2026, robô de cliques J98): a tela só dizia "Não consegui conferir N conteúdo(s)" — sem dizer quais nem por quê.
+ // Agora cada erro leva o título, o cliente e o motivo real (as mensagens de exigirI165 já são texto para a equipe).
+ const erro=(id,e,fonte=null)=>({id,codigo:e.code||'i165/fonte-indisponivel',mensagem:'Este conteúdo não foi conferido; a fila original foi mantida.',motivo:String(e?.message||'').slice(0,300),titulo:String(fonte?.titulo||'').slice(0,160),cliente:String(fonte?.clienteNome||fonte?.cliente||'').slice(0,80)});
  if(!ids.length)return resultado([],[]);
  try{return await db.runTransaction(async tx=>{
    // Uma única fotografia de leitura; referências comuns não são relidas por conteúdo.
@@ -21,7 +23,7 @@ export async function consultarOperacionaisI165(db,auth,dados,{agora=new Date()}
    const tx=leitor;
    if(edicao){const [s,e]=await Promise.all([tx.get(db.doc('videos_producao/'+id)),tx.get(db.doc('programacao_episodios_i165/'+id))]);exigirI165(s.exists,'video','O vídeo não foi confirmado.');const v={...s.data(),id};exigirI165(v.editorAtribuido===ator.papel||ator.papel==='Chris','editor','Este vídeo pertence a outro responsável.');const cliente=await clienteTxI165(db,tx,v.cliente,agora);return {video:selecionar(v,['id','cliente','clienteNome','empresaOtavio','titulo','editorAtribuido','status','prazoEntrega','prioridade','correcao']),obrigacoes:e.exists&&cliente.clienteAtivo?obrigacaoEdicaoI165(v,e.data()):[],estado:e.exists?'conferido':'episodio_a_conferir',motivo:e.exists?'':'A atribuição está visível; o aviso do serviço ainda precisa de conferência.'};}
    const f=await fontesPostagemTxI165(db,tx,id,agora),p=projetarPostagemServidorI165(f,cfg,agora);return {postagem:selecionar(f.post,['id','cliente','clienteNome','empresaOtavio','titulo','status','videoId','calendarClienteSlug','calendarCompetencia','calendarItemId']),politica:f.diretriz?.politica||null,programacaoCp111:f.programacaoCp111,legadoProgramacao:f.legadoProgramacao,obrigacoes:p.obrigacoes,estado:p.estado,motivo:p.motivo||'',revisao:f.diretriz?.revisao||0};
-   }catch(e){return {erro:erro(id,e)};}}));
+   }catch(e){let fonte=null;try{const s=await leituras.get((edicao?'videos_producao/':'postagens/')+id);fonte=s?.exists?s.data():null;}catch{}return {erro:erro(id,e,fonte)};}}));
    return resultado(linhas.filter(l=>!l.erro),linhas.filter(l=>l.erro).map(l=>l.erro));
  },{readOnly:true});}catch(e){return resultado([],ids.map(id=>erro(id,e)));}
 }

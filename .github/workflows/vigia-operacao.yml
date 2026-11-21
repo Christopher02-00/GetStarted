@@ -1,0 +1,36 @@
+name: Vigia da operação (só leitura)
+# Programa Estabilidade (21/11/2026). Todo dia de manhã roda o Raio-X da operação (.github/scripts/raio-x-operacao.mjs) nos dados
+# reais, SÓ LEITURA (conta claude-site-get, Cloud Datastore Viewer; o script só faz get()). Regras: o que entra (cliente, gravação,
+# pedido) chega a alguém ativo; o que alguém entrega tem quem receba/aprove; vídeo↔postagem↔calendário com a mesma identidade;
+# avisos chegam a quem precisa. Vermelho = item travado sem dono → o run falha (o GitHub avisa por e-mail) e o resumo do run diz
+# o quê, de quem e quem resolve. Amarelo = fila parada com dono (só informa). Legado já levado ao Chris: .github/raio-x-conhecidos.json.
+on:
+  schedule:
+    - cron: '41 11 * * *'   # 08:41 BRT
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vigia-operacao
+  cancel-in-progress: false
+jobs:
+  raio-x:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Dependências das Functions (sem lockfile)
+        run: cd functions-get && npm i --no-package-lock --no-audit --no-fund --silent
+      - name: Raio-X (só leitura)
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$SA" || { echo "::error::FIREBASE_SERVICE_ACCOUNT ausente"; exit 1; }
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          node .github/scripts/raio-x-operacao.mjs

@@ -7,6 +7,7 @@
 //  4. Stokki (confirmação por plataforma) não é confirmada sozinha: fica com a Cecília e aparece no relatório.
 //  5. O relatório da rodada fica em sistema/faxina_cp248.
 //  6. O legado (sem nenhuma escrita, como as 143 de produção) é fechado pela própria faxina (banco em memória, sem gatilho).
+//  8. Produção: o agendamento de 5 min só pede a rodada; a função própria (gatilho do pedido) roda e grava o relatório.
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -114,6 +115,16 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const a3 = await fx.faxinaSeDevidaCp248(mem, { agora: new Date(Date.now() + 2.1 * 3600e3) });
     fim('7 faxina no agendamento de 5 min: espera 2 h, retoma rodada parcial', a1.estado === 'aguardando' && a2.estado === 'completa' && a3.estado === 'completa', `logo depois: ${a1.estado} · após parcial: ${a2.estado} · 2 h depois: ${a3.estado}`);
   } catch (e) { fim('6/7 faxina no banco em memória', false, String(e).replace(/\s+/g, ' ').slice(0, 240)); }
+  // 8) produção: o agendamento só PEDE (sistema/faxina_cp248_pedido) e a função própria roda a rodada — aqui o gatilho real do emulador
+  try {
+    const antes = Date.now();
+    await db.doc('sistema/faxina_cp248').set({ em: new Date(Date.now() - 3 * 3600e3).toISOString(), parcial: false, emAndamento: false, totais: {} });
+    const ped = await fx.pedirFaxinaSeDevidaCp248(db, { agora: new Date() });
+    const rel8 = await esperar(async () => { const x = await seed.get('sistema', 'faxina_cp248'); return x && Date.parse(x.em) >= antes - 1000 && x.emAndamento === false ? x : null; }, 90000);
+    const ped2 = await fx.pedirFaxinaSeDevidaCp248(db, { agora: new Date() });
+    fim('8 o agendamento só pede; a função própria roda a rodada e grava o relatório; logo depois não pede de novo', ped.estado === 'pedida' && !!rel8 && ['aguardando', 'pedido_recente'].includes(ped2.estado),
+      `pedido: ${ped.estado} · relatório da função: ${rel8 ? JSON.stringify(rel8.totais) : 'NÃO chegou'} · logo depois: ${ped2.estado}`);
+  } catch (e) { fim('8 faxina pela função própria', false, String(e).replace(/\s+/g, ' ').slice(0, 240)); }
   // limpeza
   for (const [c, k] of [['postagens', POST], ['postagens', STK], ['videos_producao', VID], ['demandas', DEM]]) { const x = await seed.get(c, k); if (!x) continue; const { id: _i, ...dados } = x; await seed.set(c, k, { ...dados, excluido: true }); }
 }

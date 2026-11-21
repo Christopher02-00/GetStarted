@@ -59,3 +59,8 @@ Publicação: Functions (ok geral de 20/11 + decisão de 21/11). Depois: conferi
   - limite de 30 s e no máximo 3 tentativas por item; o item que estoura volta na próxima rodada;
   - relatório gravado no início e a cada 10 itens (`emAndamento`/`parcial`).
 - **J102:** 10/10, incluindo o gatilho real do emulador (o pedido roda a rodada e grava o relatório; logo depois não pede de novo).
+- **Ajuste depois da exportação das 19:44:**
+  - a versão antiga, dentro do agendamento, tinha confirmado 92 publicações (67 às 18:49, 8 às 19:03 e 17 às 19:17), devagar, porque cada confirmação esperava as anteriores do mesmo cliente;
+  - as 145 tarefas da Amanda ficavam para o fim e nunca eram alcançadas.
+  - Agora a ordem é: primeiro fecha as entregas sem aprovador (rápido), depois as postagens de vídeo na Lixeira, por último as publicações, **revezando clientes** (a seguinte nunca é do mesmo cliente da anterior).
+  - Em memória, sobre os dados reais das 19:44: 145 fechadas, 1 encerrada, 52 publicadas, 0 erros.

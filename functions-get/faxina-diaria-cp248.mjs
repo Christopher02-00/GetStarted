@@ -72,17 +72,7 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
   const relatorio = (extra = {}) => ({ ...r, puladas: r.puladas.slice(0, 200), atualizadoEm: new Date().toISOString(), totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length }, ...extra });
   let feitos = 0; const progresso = async () => { if (gravarRelatorio && ++feitos % 10 === 0) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true })); };
   if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true }));
-  // 1) publicações agendadas vencidas
-  const ag = await db.collection('postagens').where('status', '==', 'agendado').get();
-  for (const s of ag.docs) {
-    if (semTempo()) break;
-    const p = { ...s.data(), id: s.id };
-    if (!candidataConfirmacaoCp248(p, agora)) { if (p.publicacaoStokki && dataCivil(p.dataAgendada) && p.dataAgendada <= r.limiteConfirmacao) r.puladas.push({ id: s.id, motivo: 'Stokki: confirmação por plataforma' }); continue; }
-    try { const x = await comLimite(confirmarPublicacaoAutomaticaCp248(db, s.id, { agora }), limiteItemMs); if (x.acao === 'publicada') r.publicadas.push(s.id); else if (x.acao === 'pulada') r.puladas.push({ id: s.id, motivo: x.motivo }); }
-    catch (e) { r.puladas.push({ id: s.id, motivo: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
-    await progresso();
-  }
-  // 2) entregas do sistema sem aprovador possível (CP245, inclusive o legado)
+  // 1) entregas do sistema sem aprovador possível (rápido; vem primeiro para nunca ficar para depois) (CP245, inclusive o legado)
   const ent = await db.collection('demandas').where('status', '==', 'concluida_aguardando_aprovacao').get();
   for (const s of ent.docs) {
     if (semTempo()) break;
@@ -91,7 +81,7 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
     catch (e) { r.erros.push({ id: s.id, etapa: 'sem_aprovador', erro: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
     await progresso();
   }
-  // 3) postagens antes da rede com o vídeo na Lixeira (CP244, inclusive o legado)
+  // 2) postagens antes da rede com o vídeo na Lixeira (CP244, inclusive o legado)
   const vids = await db.collection('videos_producao').where('excluido', '==', true).get();
   for (const s of vids.docs) {
     if (semTempo()) break;
@@ -99,6 +89,19 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
     if (!ps.exists || ps.data().excluido === true || ['arquivada_sem_postagem', 'cancelada_manual', 'cancelada_video_trafego', 'postado', 'finalizado'].includes(ps.data().status)) continue;
     try { const x = await comLimite(sincronizarPostagemVideoExcluidoCp244(db, s.id, { agora }), limiteItemMs); if (x.acao === 'encerrada') r.postagensEncerradas.push(pid); }
     catch (e) { r.erros.push({ id: pid, etapa: 'video_excluido', erro: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
+  }
+  // 3) publicações agendadas vencidas (as mais lentas: cada uma dispara gatilhos)
+  const ag = await db.collection('postagens').where('status', '==', 'agendado').get();
+  // revezamento por cliente: a confirmação seguinte nunca é do mesmo cliente da anterior (os gatilhos dela mexem no mesmo calendário)
+  const porCliente = new Map(); for (const d of ag.docs) { const c = String(d.data().cliente || ''); if (!porCliente.has(c)) porCliente.set(c, []); porCliente.get(c).push(d); }
+  const filas = [...porCliente.values()], ordem = []; for (let k = 0; filas.some(f => f.length); k++) for (const f of filas) if (f.length) ordem.push(f.shift());
+  for (const s of ordem) {
+    if (semTempo()) break;
+    const p = { ...s.data(), id: s.id };
+    if (!candidataConfirmacaoCp248(p, agora)) { if (p.publicacaoStokki && dataCivil(p.dataAgendada) && p.dataAgendada <= r.limiteConfirmacao) r.puladas.push({ id: s.id, motivo: 'Stokki: confirmação por plataforma' }); continue; }
+    try { const x = await comLimite(confirmarPublicacaoAutomaticaCp248(db, s.id, { agora }), limiteItemMs); if (x.acao === 'publicada') r.publicadas.push(s.id); else if (x.acao === 'pulada') r.puladas.push({ id: s.id, motivo: x.motivo }); }
+    catch (e) { r.puladas.push({ id: s.id, motivo: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
+    await progresso();
   }
   if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: false, parcial: r.parcial }));
   return r;

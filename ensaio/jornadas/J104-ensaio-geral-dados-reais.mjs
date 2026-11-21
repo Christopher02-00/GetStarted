@@ -153,7 +153,7 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
   await passo('5 Luís vê o calendário em modo gravação', 'Luís', async page => {
     await page.evaluate(() => window.irParaCalendarioDeCampo());
     await page.waitForSelector('#campoClientes', { timeout: 15000 });
-    const alvo = page.locator('#campoClientes').getByText(NOME, { exact: true }).first(); await alvo.click({ timeout: 10000 });
+    const alvo = page.locator('#campoClientes').getByText(new RegExp('^\\s*' + NOME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$|·|—|-)')).first(); // começa com o nome: não casa "Clínica Zeiss Araucária" await alvo.click({ timeout: 10000 });
     // a tela de campo abre no mês corrente com conteúdo; o filmmaker troca para o mês da pauta pela aba do mês (data-campo-competencia)
     const aba = page.locator(`[data-campo-competencia="${MES}"]`).first(); await aba.waitFor({ timeout: 20000 }); await aba.click({ timeout: 10000 });
     await page.waitForFunction(m => document.querySelector(`[data-campo-competencia="${m}"]`)?.classList.contains('green'), MES, { timeout: 15000 }).catch(() => {});

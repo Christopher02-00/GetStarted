@@ -70,7 +70,8 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 }); // conferência do texto
     await page.waitForFunction(() => !/Confira o documento:/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 30000 });
     await page.waitForTimeout(2000);
-  }, () => esperar(async () => { const c = await ciclo(); return c?.incluido === true && c.documentos?.confirmacoes ? `ciclo ${CICLO} incluído · revisão ${c.revisao} · documento confirmado` : null; }, 20000))) return;
+  }, () => esperar(async () => { const c = await ciclo(); // clientes de grupo (ex.: Zeiss) guardam a confirmação no formato do documento único: vale confirmação OU documento enviado ao Chris
+    return c?.incluido === true && (c.documentos?.confirmacoes || c.documentos?.consolidadoEnviado) ? `ciclo ${CICLO} incluído · revisão ${c.revisao} · documento confirmado` : null; }, 20000))) return;
 
   // 2. Chris abre o editor oficial, cria 2 conteúdos, salva e envia para a Amanda revisar
   if (!await passo('2 Chris cria conteúdos e envia para revisão', 'Chris', async page => {
@@ -154,7 +155,8 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForSelector('#campoClientes', { timeout: 15000 });
     const alvo = page.locator('#campoClientes').getByText(new RegExp(NOME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).first(); await alvo.click({ timeout: 10000 });
     // a tela de campo abre no mês corrente com conteúdo; o filmmaker troca para o mês da pauta pela aba do mês (data-campo-competencia)
-    const aba = page.locator(`[data-campo-competencia="${MES}"]`).first(); if (await aba.count()) { await aba.click({ timeout: 10000 }); await page.waitForTimeout(1500); }
+    const aba = page.locator(`[data-campo-competencia="${MES}"]`).first(); await aba.waitFor({ timeout: 20000 }); await aba.click({ timeout: 10000 });
+    await page.waitForFunction(m => document.querySelector(`[data-campo-competencia="${m}"]`)?.classList.contains('green'), MES, { timeout: 15000 }).catch(() => {});
     await page.waitForFunction(t => (document.getElementById('campoConteudo')?.innerText || '').includes(t), TITULO1, { timeout: 25000 });
   }, async page => { const txt = await page.evaluate(() => document.getElementById('campoConteudo')?.innerText || ''); return txt.includes(TITULO1) ? 'conteúdo do mês visível para o filmmaker' : null; });
 }

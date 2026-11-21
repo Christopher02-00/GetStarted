@@ -1,0 +1,44 @@
+name: Checagem prévia dos calendários (só leitura)
+# Programa Estabilidade (21/11/2026, pedido do Chris: "99% de assertividade e fluidez" ao fazer os calendários da equipe).
+# Para cada cliente da carteira dos próximos meses, roda o PRÓPRIO código do servidor (leitura do editor oficial I172) como o Chris e
+# como a Amanda, nos dados reais e SÓ LEITURA (conta claude-site-get, Cloud Datastore Viewer; a transação recusa escrita), e diz:
+# 🟩 pronto para o Chris · 🟨 esperando uma pessoa (quem e o quê) · 🟥 o sistema travaria (o run falha e o GitHub avisa).
+on:
+  schedule:
+    - cron: '31 10 * * *'   # 07:31 BRT, antes do expediente
+  workflow_dispatch:
+    inputs:
+      competencias:
+        description: 'meses separados por vírgula (ex.: 2026-12,2027-01); vazio = próximos dois'
+        required: false
+        default: ''
+        type: string
+  pull_request:
+    paths: ['.github/scripts/prevoo-calendarios.mjs', '.github/workflows/prevoo-calendarios.yml']
+permissions:
+  contents: read
+concurrency:
+  group: prevoo-calendarios
+  cancel-in-progress: false
+jobs:
+  prevoo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Dependências das Functions (sem lockfile)
+        run: cd functions-get && npm i --no-package-lock --no-audit --no-fund --silent
+      - name: Checagem prévia (só leitura)
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          COMPETENCIAS: ${{ github.event_name == 'workflow_dispatch' && inputs.competencias || '' }}
+        run: |
+          test -n "$SA" || { echo "::error::FIREBASE_SERVICE_ACCOUNT ausente"; exit 1; }
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          node .github/scripts/prevoo-calendarios.mjs "$COMPETENCIAS"

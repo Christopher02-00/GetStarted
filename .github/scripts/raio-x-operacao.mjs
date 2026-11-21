@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const COLECOES_RAIO_X = ['usuarios_equipe', 'demandas', 'videos_producao', 'postagens', 'calendarios', 'calendarios_cliente', 'revisoes_ajustes_cp112',
@@ -117,6 +117,9 @@ export function raioXOperacao(dados, hoje = new Date().toISOString().slice(0, 10
     if (p.status === 'aguardando_agendamento') { const e = dias(ts(p.legendaEm) || ts(p.criadoEm)); if (e > 3) add('amarelo', 'D4 legenda pronta esperando agendamento há mais de 3 dias', p.__id, `${p.clienteNome || p.cliente} · ${e} dias`, 'Cecília (agendar)'); }
   }
   for (const [q, n] of Object.entries(atrasadasPor)) add('amarelo', 'D2 agendadas que já passaram sem confirmação de publicação', q, `${n} postagem(ns) com data passada há mais de 2 dias`, q + ' (confirmar em Publicações para conferir)');
+  // D5 (só com os dados reais): a conferência do próprio servidor (fontesPostagemTxI165) recusa a postagem → na fila ela aparece como
+  // "não pôde ser conferido" e a Cecília não consegue programar/confirmar pelo caminho normal (CP247).
+  for (const x of Array.isArray(dados.__naoConferidas) ? dados.__naoConferidas : []) add('vermelho', 'D5 postagem que o servidor não consegue conferir', x.id, `${x.cliente} · ${x.status} · “${curto(x.titulo, 50)}” — ${curto(x.motivo, 110)}`, 'conferência técnica (identidade da postagem)');
 
   // F — o que vem do cliente chega a alguém (desde a conversão I54 com vínculo, 11/09/2026)
   for (const a of L('avisos_do_cliente')) {
@@ -162,12 +165,23 @@ async function lerFirestore() {
   const { initializeApp, applicationDefault } = req('firebase-admin/app'), { getFirestore } = req('firebase-admin/firestore');
   const projectId = process.argv.includes('--projeto') ? process.argv[process.argv.indexOf('--projeto') + 1] : 'get-started-4956d';
   initializeApp(process.env.FIRESTORE_EMULATOR_HOST ? { projectId } : { credential: applicationDefault(), projectId });
-  const db = getFirestore(), dados = {};
-  // só leitura: get() de coleções; nenhuma escrita existe neste caminho
+  return lerDadosRaioX(getFirestore());
+}
+
+/** Lê as coleções do Raio-X e roda a conferência D5. SÓ LEITURA: get() de coleções e transações readOnly. */
+export async function lerDadosRaioX(db) {
+  const dados = {};
   for (const c of COLECOES_RAIO_X) {
     let q = db.collection(c);
     if (c === 'notificacoes_operacionais_i165') q = q.where('estado', '==', 'pendente');
     dados[c] = (await q.get()).docs.map(s => ({ __id: s.id, ...s.data() }));
+  }
+  // D5: a mesma conferência que a fila da Cecília usa, em transação SÓ LEITURA, para cada postagem ativa
+  const { fontesPostagemTxI165 } = await import(pathToFileURL(path.join(RAIZ, 'functions-get/fontes.mjs')).href);
+  dados.__naoConferidas = [];
+  for (const p of dados.postagens.filter(p => !p.excluido && !POST_FINAL.includes(p.status))) {
+    try { await db.runTransaction(tx => fontesPostagemTxI165(db, tx, p.__id, new Date()), { readOnly: true }); }
+    catch (e) { dados.__naoConferidas.push({ id: p.__id, status: p.status, cliente: p.clienteNome || p.cliente, titulo: p.titulo, motivo: String(e?.message || e).slice(0, 200) }); }
   }
   return dados;
 }

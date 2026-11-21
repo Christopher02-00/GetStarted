@@ -153,9 +153,8 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     await page.evaluate(() => window.irParaCalendarioDeCampo());
     await page.waitForSelector('#campoClientes', { timeout: 15000 });
     const alvo = page.locator('#campoClientes').getByText(new RegExp(NOME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).first(); await alvo.click({ timeout: 10000 });
-    // a tela de campo abre no mês corrente com conteúdo; o filmmaker troca para o mês da pauta pela aba (ex.: "Janeiro 2027")
-    const nomeMes = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(MES + '-15T12:00:00Z')).replace(' de ', ' ');
-    const aba = page.getByRole('button', { name: new RegExp('^' + nomeMes + '$', 'i') }).first(); if (await aba.count()) { await aba.click({ timeout: 10000 }); await page.waitForTimeout(1500); }
+    // a tela de campo abre no mês corrente com conteúdo; o filmmaker troca para o mês da pauta pela aba do mês (data-campo-competencia)
+    const aba = page.locator(`[data-campo-competencia="${MES}"]`).first(); if (await aba.count()) { await aba.click({ timeout: 10000 }); await page.waitForTimeout(1500); }
     await page.waitForFunction(t => (document.getElementById('campoConteudo')?.innerText || '').includes(t), TITULO1, { timeout: 25000 });
   }, async page => { const txt = await page.evaluate(() => document.getElementById('campoConteudo')?.innerText || ''); return txt.includes(TITULO1) ? 'conteúdo do mês visível para o filmmaker' : null; });
 }

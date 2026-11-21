@@ -29,7 +29,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       const itens = (await menuVisivel(page)).filter(idn => /^nav[A-Z]/.test(idn) && !/^navgroup/.test(idn) && !/Sair|Logout/i.test(idn));
       for (const idn of itens) {
         const abriu = await page.evaluate(idn => { const el = document.getElementById(idn); if (!el) return false; el.click(); return true; }, idn).catch(() => false);
-        if (!abriu) continue; telas++;
+        if (!abriu) continue; telas++; let ultimo = '(abrir a tela)';
         await page.waitForTimeout(2000);
         const view = await page.evaluate(() => [...document.querySelectorAll('.view')].find(v => getComputedStyle(v).display !== 'none')?.id || '');
         if (!view) { problemas.push(`${idn}: nenhuma view visível`); continue; }
@@ -54,7 +54,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
         for (const a of alvos) {
           const antes = erros.length;
           const ok = await page.evaluate(sel => { const el = document.querySelector(`[data-robo-j98="${sel}"]`); if (!el || el.offsetParent === null) return false; el.click(); return true; }, a.sel).catch(() => false);
-          if (!ok) continue; cliques++;
+          if (!ok) continue; cliques++; ultimo = a.txt || a.oc;
           const h = (a.oc.match(/^[\s(]*(?:window\.)?([A-Za-z_$][\w$]*)\s*\(/) || [])[1] || (a.oc.startsWith('[') ? a.oc : ''); if (h) handlers.add(h);
           await page.waitForTimeout(450);
           const novos = erros.slice(antes).filter(erroGrave);
@@ -65,7 +65,8 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
           if (!ainda) { await page.evaluate(idn => document.getElementById(idn)?.click(), idn).catch(() => {}); await page.waitForTimeout(1200); }
         }
         const texto = await page.evaluate(view => (document.getElementById(view)?.innerText || ''), view).catch(() => '');
-        const m = texto.match(RUIM); if (m) problemas.push(`${idn} → ${view}: texto "${m[0]}"`);
+        const m = texto.match(RUIM);
+        if (m) { const i = texto.indexOf(m[0]); problemas.push(`${idn} → ${view}: texto "${texto.slice(Math.max(0, i - 80), i + 220).replace(/\s+/g, ' ')}" (último clique: “${ultimo}”)`); await foto(page, `J98-${pessoa}-${idn}-texto`); }
       }
       registrar({ jornada: id, caso: `${pessoa}: ${telas} telas · ${cliques} cliques`, ok: problemas.length === 0, ms: Date.now() - t0, detalhe: problemas.length ? problemas.slice(0, 5).join(' | ') : `${cliques} cliques sem erro` });
     } catch (e) { registrar({ jornada: id, caso: `${pessoa}: robô`, ok: false, ms: Date.now() - t0, detalhe: String(e).replace(/\s+/g, ' ').slice(0, 240) }); }

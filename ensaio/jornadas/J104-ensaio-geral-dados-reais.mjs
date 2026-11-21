@@ -59,7 +59,7 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     const v = page.locator('#view-planejamentoPreparacaoR80');
     // seletor de cliente pelo campo (clientes de grupo, como a Zeiss, ganham um seletor "Empresa" depois dele)
     const sel = v.locator('select[data-field="documentoClienteCp120"]').first();
-    const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
+    await sel.selectOption(CLIENTE); // pelo identificador: "Zeiss" também casaria com "Clínica Zeiss Araucária"
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
     await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 }); // "Confere antes de seguir": iniciar a preparação
     await page.waitForFunction(() => /No ciclo|revisão \d/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
@@ -125,7 +125,7 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     const v = page.locator('#view-planejamentoPreparacaoR80');
     // seletor de cliente pelo campo (clientes de grupo, como a Zeiss, ganham um seletor "Empresa" depois dele)
     const sel = v.locator('select[data-field="documentoClienteCp120"]').first();
-    const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
+    await sel.selectOption(CLIENTE); // pelo identificador: "Zeiss" também casaria com "Clínica Zeiss Araucária"
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
     const aba = v.getByRole('button', { name: /^Criar e aprovar$/ }).first(); await aba.waitFor({ timeout: 20000 }); await aba.evaluate(el => el.scrollIntoView({ block: 'center' })); await aba.click();
     await page.waitForFunction(() => /Amanda precisa revisar esta versão/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 30000 }); await page.waitForTimeout(2500);
@@ -153,7 +153,7 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
   await passo('5 Luís vê o calendário em modo gravação', 'Luís', async page => {
     await page.evaluate(() => window.irParaCalendarioDeCampo());
     await page.waitForSelector('#campoClientes', { timeout: 15000 });
-    const alvo = page.locator('#campoClientes').getByText(new RegExp(NOME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).first(); await alvo.click({ timeout: 10000 });
+    const alvo = page.locator('#campoClientes').getByText(NOME, { exact: true }).first(); await alvo.click({ timeout: 10000 });
     // a tela de campo abre no mês corrente com conteúdo; o filmmaker troca para o mês da pauta pela aba do mês (data-campo-competencia)
     const aba = page.locator(`[data-campo-competencia="${MES}"]`).first(); await aba.waitFor({ timeout: 20000 }); await aba.click({ timeout: 10000 });
     await page.waitForFunction(m => document.querySelector(`[data-campo-competencia="${m}"]`)?.classList.contains('green'), MES, { timeout: 15000 }).catch(() => {});

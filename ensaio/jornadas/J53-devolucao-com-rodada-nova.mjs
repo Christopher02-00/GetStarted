@@ -73,7 +73,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click(); await page.waitForTimeout(2500);
     await v.locator('input[type=file]').first().setInputFiles(DOC); await page.waitForTimeout(1500);
     await v.getByRole('button', { name: /^Ler documento$/ }).click();
-    await page.waitForFunction(() => /Documento lido e guardado/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
+    await page.waitForFunction(() => /Arquivo lido, mas o documento ainda NÃO foi enviado/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
     await v.getByRole('button', { name: /^Confirmar e enviar documento$/ }).click();
     await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 });
     await page.waitForTimeout(4000);

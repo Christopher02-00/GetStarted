@@ -21,8 +21,8 @@ Caminho sem prova ou sem vigia é um ponto cego: criar os dois antes de mexer ne
 ## 2. Calendário (preparação → criação → revisão → liberação → cliente)
 | Etapa | Quem | Próximo | Prova | Vigia |
 |---|---|---|---|---|
-| Preparação / documento | Amanda | Chris cria | J06, J49, J49b | — |
-| Criação e envio | Chris | Amanda revisa | J06, J36, J53 | vigia da liberação |
+| Preparação / documento | Amanda | Chris cria | J06, J49, J49b, J104 (dados reais) | checagem prévia (07:31) |
+| Criação e envio | Chris | Amanda revisa | J06, J36, J53, J104 (dados reais) | checagem prévia (editor lido como Chris e Amanda), vigia da liberação |
 | Revisão / devolução | Amanda | Chris refaz ou libera | J52, J53, J60f, J60k | vigia da liberação |
 | Liberação | Amanda | cliente e filmmaker leem | J06, J55, J60h | E1, E2, vigia da liberação |
 | Ajuste interno em mês liberado | Chris → Amanda | libera junto | J60, J60b–J60e, J62, J67, J71, J84 | B3, vigia da liberação |

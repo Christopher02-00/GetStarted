@@ -19,7 +19,9 @@ Por que havia manutenção todo dia, por 7 meses (diagnóstico do Raio-X de 21/1
 ## O ciclo (sempre nesta ordem)
 1. **Ler os vigias:**
    - **Vigia da operação**: `.github/workflows/vigia-operacao.yml`, 08:41 BRT; regras em `.github/scripts/raio-x-operacao.mjs`;
-   - **Vigia da liberação**: `vigia-liberacao.yml`, 09:23 e 16:47.
+   - **Vigia da liberação**: `vigia-liberacao.yml`, 09:23 e 16:47;
+   - **Checagem prévia dos calendários**: `prevoo-calendarios.yml`, 07:31 BRT. Lista, cliente a cliente, se o Chris consegue iniciar, editar e enviar o mês corrente e o seguinte, e quem resolve quando não. Script: `.github/scripts/prevoo-calendarios.mjs`. Vermelho = o Chris travaria no editor; amarelo = esperando alguém (normalmente a preparação da Amanda).
+   - **Antes de um mês de produção**, rode a `J104` com dados reais, nos clientes com histórico de problema: `ENSAIO_DADOS_REAIS=<exportação> node ensaio/rodar.mjs --jornadas J104`. Ela cobre preparação → criação → liberação → cliente → filmmaker, com `ENSAIO_MES` e `ENSAIO_CLIENTES` opcionais.
    Um run vermelho é prioridade antes de qualquer pedido novo. No local:
    `node .github/scripts/raio-x-operacao.mjs --exportacao <pasta da exportação> --detalhe` (exportação pelo workflow só-leitura; nunca commitar).
 2. **Para cada vermelho, achar o caminho no código** (quem escreveu aquele estado, por que nada tira dele). A pergunta é sempre: *qual estado não tem saída, e quem deveria dar a saída?*

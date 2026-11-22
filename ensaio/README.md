@@ -96,3 +96,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 10. **Cada jornada nova usa um cliente+mês que nenhuma outra usa** (`grep -l "2027-0X" ensaio/jornadas/*`). J71 e J75 dividiam Hitech 2027-03 e uma quebrava a outra quando a primeira passou a ir até o fim.
 11. **Memória do emulador:** `ensaio/lib/emulador.mjs` sobe o Firestore com `-Xmx9g` (o CI público tem 16 GB); com 4 GB a bateria inteira estourava (OutOfMemoryError na J70) e com 6 GB voltou a estourar perto da J72 quando a bateria passou de 227 casos (CP226, 19/11).
 12. **zsh não separa `$VAR` em palavras:** listas de arquivos em script usam array (`F=(a b); git checkout X -- ${F[@]}`).
+13. **Ensaio geral com dados reais (J104, 21/11).** `ENSAIO_DADOS_REAIS=<exportação> node ensaio/rodar.mjs --jornadas J104` (opcionais `ENSAIO_MES=2027-01`, `ENSAIO_CLIENTES=slug1,slug2`; padrão = os 8 clientes com histórico de problema). Lições:
+    - o seed real enfileira ~12.400 execuções de gatilho (~8 min), e a jornada espera 30 s sem execução nova antes de começar; sem isso, a cópia do cliente atrasa e parece bug;
+    - escolha cliente pelo identificador (`selectOption(slug)`, `onclick^="abrirCampoDoCliente('slug',"`), nunca pelo nome: "Zeiss" casa com "Clínica Zeiss Araucária", e o texto do cartão do filmmaker muda (nº de conteúdos, HOJE);
+    - no Linux, `PLAYWRIGHT_BROWSERS_PATH` tem de apontar para o Chromium da versão instalada.

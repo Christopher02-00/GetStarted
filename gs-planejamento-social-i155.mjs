@@ -5,7 +5,7 @@ import {montarRecepcaoDocumentosCp133} from './gs-recepcao-documentos-cp133.mjs?
 import {candidatasAgendaI167,selecionarFonteAgendaI167,proporVinculoAgendaI167,conferirVinculoAgendaI167,conferirIdsAgendaI167,projetarFontesAgendaI167} from './gs-agenda-fonte-i167-i155.mjs';
 import {retratoInfoClienteI164,mesmaInfoClienteI164} from './gs-contexto-cliente-i164.mjs';
 import {validarRecorrenciaI164} from './gs-processo-calendarios-i164.mjs';
-import {criarArquivosPlanejamento,prepararArquivo,textoDocumentoComLinksCp124} from './gs-arquivos-planejamento-i164.mjs?v=53b9b5525627eb9e36861a78636a3ad1deca30cbeb1c77a6f4e25139a3f04cb5';
+import {criarArquivosPlanejamento,prepararArquivo,textoDocumentoComLinksCp124} from './gs-arquivos-planejamento-i164.mjs?v=5a7c069acedcdcfe6eea1a164d4ef5be9ffd8c46bd3a9633534e99ab0aa6db2a';
 import {ACOES_CORRECAO_I155_CP111,SITUACOES_REUNIAO_CP111,desconsideracaoI155Cp111,documentoEfetivoI155Cp111,materiaisEfetivosI155Cp111,estadoEtapasI155Cp111,validadeBaseI155Cp111,situacaoReuniaoI155Cp111,estadoTriagemI155Cp111,assinaturaTriagemI155Cp111,assinaturaPedidoCorrecaoI155Cp111,fontePesquisaDocumentalCp124,fontePesquisaCp124,mesmaFontePesquisaCp124} from './gs-transicao-insumos-cp111.mjs?v=8ceb9d500c99b93619650e856be3573c8b22d6a188ca977617a7d736bb8dcbb7';
 export const COLECAO = 'planejamento_social_i155';
 import {PESQUISA_RESPONSAVEL_R81,PAPEL_PESQUISA_ANTERIOR_R81,PAPEIS_PLANEJAMENTO_R81,atribuicaoAnteriorPreservadaR81} from './gs-papeis-planejamento-r81.mjs';
@@ -652,7 +652,15 @@ export function montarCentral(root,{repo,contexto,compacto=false,preparacao=fals
     const id=aberto.id,tipo=docFinalidade,empresa=docEmpresaAtual,g=geracao,rev=aberto.revisao,campos=JSON.stringify(vals());
     const vigente=()=>sessao()&&geracao===g&&aberto?.id===id&&aberto?.revisao===rev&&docFinalidade===tipo&&docEmpresaAtual===empresa&&q('[data-arquivo-i164]')===input&&input.files?.[0]===file&&JSON.stringify(vals())===campos;
     travar();sinalizarArquivoSelecionadoCp177(input,'Lendo '+file.name+' e conferindo o original… Ainda não foi enviado.');aviso('Lendo o arquivo selecionado. A entrega anterior não representa este novo arquivo.');
-    const preparado=await prepararArquivo(file);if(!vigente())return null;
+    let preparado;try{preparado=await prepararArquivo(file);}catch(e){
+      if(e?.codigo!=='grande_cp252'||!vigente())throw e;
+      // CP252: arquivo acima de 4 MB → a Amanda decide enviar o texto completo dele como o original (.txt)
+      bloquear(false);const mb=(e.bytes/1048576).toFixed(1).replace('.',',');
+      if(!await confirmarTela(`${e.nome} tem ${mb} MB e o original aceito vai até 4 MB. Posso enviar o TEXTO completo dele (${e.paginas||'?'} página(s), ${e.texto.length.toLocaleString('pt-BR')} caracteres) como o documento deste cliente e mês. O arquivo grande continua com você. Enviar o texto?`)){sinalizarArquivoSelecionadoCp177(input,'Nada foi enviado. Reduza o arquivo para até 4 MB ou envie o texto dele.');return null;}
+      let dt;try{dt=new DataTransfer();dt.items.add(new File([`Texto completo extraído de ${e.nome} (${mb} MB${e.paginas?', '+e.paginas+' página(s)':''}).\n\n`+textoDocumentoComLinksCp124(e,'')],e.nome.replace(/\.[^.]+$/,'')+'-texto.txt',{type:'text/plain'}));}catch{throw Error('Este navegador não consegue transformar o texto em arquivo. Reduza o arquivo para até 4 MB.');}
+      input.files=dt.files;return lerArquivoSelecionadoCp177(vals(),travar);
+    }
+    if(!vigente())return null;
     const arquivoId='arq_'+preparado.sha256,chave=chaveMaterial(tipo,empresa),confirmado=docPor(materiaisVigentes(aberto)[chave]);
     const vazio=!String(v.docTexto||'').trim()&&!String(v.docLink||'').trim()&&!String(v.docPendencias||'').trim()&&v.docFonte===tituloDocumento(tipo);
     const igualConfirmado=confirmado&&['docTexto','docFonte','docLink','docPendencias','docArquivoId'].every(k=>String(v[k]||'')===String(({docTexto:confirmado.texto,docFonte:confirmado.fonte,docLink:confirmado.link,docPendencias:confirmado.pendencias,docArquivoId:confirmado.arquivoId})[k]||''));

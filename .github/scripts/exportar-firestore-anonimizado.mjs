@@ -61,5 +61,26 @@ async function baixar(colecao) {
 }
 const colecoes = await listarColecoes(); const resumo = [];
 for (const c of colecoes) { const docs = await baixar(c); fs.writeFileSync(`${SAIDA}/${c}.json`, JSON.stringify(docs)); resumo.push({ colecao: c, documentos: docs.length }); console.log(`${c}: ${docs.length}`); }
+// Subcoleções dos ciclos (22/11, documentos da Amanda): os documentos, os arquivos e os eventos de cada ciclo moram em
+// planejamento_social_i155/{ciclo}/{registros|arquivos|eventos}. Vão para exportacao/subcolecoes/<coleção>/<sub>.json com __pai = id do pai;
+// a pasta fica fora do seed do ensaio (o seed só lê os .json da raiz).
+const PAIS_COM_SUBCOLECOES = ['planejamento_social_i155', 'planejamento_estrategico_cp109'];
+async function listarSubcolecoes(caminho) {
+  const ids = []; let pageToken = '';
+  do { const r = await fetch(`${base}/${caminho}:listCollectionIds`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ pageSize: 300, ...(pageToken ? { pageToken } : {}) }) });
+    if (!r.ok) throw new Error(`${caminho}: ${r.status} ${await r.text()}`); const j = await r.json(); ids.push(...(j.collectionIds || [])); pageToken = j.nextPageToken || ''; } while (pageToken);
+  return ids;
+}
+for (const pai of PAIS_COM_SUBCOLECOES.filter(c => colecoes.includes(c))) {
+  const porSub = {};
+  for (const d of JSON.parse(fs.readFileSync(`${SAIDA}/${pai}.json`, 'utf8'))) {
+    for (const sub of await listarSubcolecoes(`${pai}/${encodeURIComponent(d.__id)}`)) {
+      const filhos = await baixar(`${pai}/${encodeURIComponent(d.__id)}/${sub}`);
+      (porSub[sub] ||= []).push(...filhos.map(f => ({ __pai: d.__id, ...f })));
+    }
+  }
+  fs.mkdirSync(`${SAIDA}/subcolecoes/${pai}`, { recursive: true });
+  for (const [sub, docs] of Object.entries(porSub)) { fs.writeFileSync(`${SAIDA}/subcolecoes/${pai}/${sub}.json`, JSON.stringify(docs)); resumo.push({ colecao: `${pai}/*/${sub}`, documentos: docs.length }); console.log(`${pai}/*/${sub}: ${docs.length}`); }
+}
 fs.writeFileSync(`${SAIDA}/_resumo.json`, JSON.stringify({ projeto, exportadoEm: new Date().toISOString(), colecoes: resumo }, null, 1));
 console.log(`OK · ${colecoes.length} coleções · ${resumo.reduce((a, b) => a + b.documentos, 0)} documentos (anonimizados)`);

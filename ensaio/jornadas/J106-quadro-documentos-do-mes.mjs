@@ -97,4 +97,14 @@ export async function executar({ amb, nav, erroGrave, registrar }) {
     } catch (e) { await foto(page, 'J106-chris-falha'); registrar({ jornada: id, caso: '2 Chris vê o mesmo quadro', ok: false, ms: Date.now() - t0, detalhe: String(e).replace(/\s+/g, ' ').slice(0, 300) }); }
     finally { await fechar(); }
   }
+  // 3) Raio-X H2 (regra pura, dados sintéticos): versão nova guardada e não enviada há dias → acusa; mês já liberado → não acusa
+  try {
+    const rx = await import(pathToFileURL(path.join(RAIZ, '.github/scripts/raio-x-operacao.mjs')).href);
+    const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }), tres = new Date(Date.now() - 3 * 864e5).toISOString();
+    const ciclo = (id, extra = {}) => ({ __id: id, cliente: id.slice(9), clienteNome: id.slice(9), competencia: id.slice(0, 7), incluido: true, criadoEm: tres, atualizadoEm: tres,
+      documentos: { consolidadoEnviado: 'doc_a', materiais: { campanha__geral: 'doc_a' }, rascunhos: { campanha__geral: 'doc_b' } }, ...extra });
+    const out = rx.raioXOperacao({ planejamento_social_i155: [ciclo(`${MES}__parado`), ciclo(`${MES}__liberado`, { publicacaoAtual: { base: 'doc_a' } })] }, hoje);
+    const h2 = out.filter(o => o.regra.startsWith('H2'));
+    registrar({ jornada: id, caso: '3 Raio-X H2: versão nova parada acusa; mês liberado não', ok: h2.length === 1 && h2[0].ref.startsWith(`${MES}__parado`), ms: Date.now() - t0, detalhe: h2.map(o => o.detalhe).join(' | ') || 'H2 não acusou' });
+  } catch (e) { registrar({ jornada: id, caso: '3 Raio-X H2', ok: false, ms: Date.now() - t0, detalhe: String(e).slice(0, 240) }); }
 }

@@ -148,6 +148,17 @@ export function raioXOperacao(dados, hoje = new Date().toISOString().slice(0, 10
       if (certo < soma(atual, -1) || porId.get(certo + '__' + c.cliente)?.documentos?.consolidadoEnviado) continue;
       add('amarelo', 'H1 documento enviado para um mês que já passou', c.__id, `${c.clienteNome || c.cliente} · foi para ${ext(c.competencia)} em ${ts(c.documentos?.enviadoEm || c.criadoEm).slice(0, 10)} (${c.documentos?.enviadoPor || c.autorNome || '?'}) · o mês certo é ${ext(certo)}`, 'Amanda (reenviar o documento no mês certo)', ts(c.criadoEm).slice(0, 10));
     }
+    // H2 (CP251): versão nova do documento guardada e não enviada há mais de 1 dia — o Chris continua criando sobre a anterior
+    for (const c of preps) {
+      if (!c.competencia || c.competencia < soma(atual, -1) || c.incluido === false || c.publicacaoAtual) continue; // mês já liberado: a versão nova não muda o que o cliente recebeu
+      const d = c.documentos || {};
+      for (const [k, rid] of Object.entries(d.rascunhos || {})) {
+        if (!k.startsWith('campanha__') || !d.materiais?.[k] || d.materiais[k] === rid) continue;
+        const ev = ts(c.atualizadoEm).slice(0, 10), idade = dias(ev);
+        if (idade !== null && idade < 1) continue;
+        add('amarelo', 'H2 versão nova do documento guardada e não enviada', c.__id + '|' + k, `${c.clienteNome || c.cliente} · ${ext(c.competencia)} · o Chris continua vendo a versão anterior${idade !== null ? ` · há ${idade} dia(s)` : ''}`, 'Amanda (Confirmar e enviar documento, ou descartar a versão nova)', ev);
+      }
+    }
   }
 
   // G — avisos da operação: chegam a quem precisa?

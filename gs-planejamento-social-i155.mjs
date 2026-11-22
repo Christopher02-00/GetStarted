@@ -478,7 +478,7 @@ export function montarCentral(root,{repo,contexto,compacto=false,preparacao=fals
     const tam=b=>Number.isFinite(b)?(b>=1048576?(b/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(b/1024))+' KB'):'';
     const formato=m=>({'application/pdf':'PDF','application/vnd.openxmlformats-officedocument.wordprocessingml.document':'Word','text/plain':'texto','text/markdown':'texto'})[m]||'';
     const linhas=lista.map(x=>{const c=x.c,d=c?.documentos||{},ativo=!!c&&c.incluido!==false,enviado=ativo&&!!d.consolidadoEnviado;
-      const chaves=Object.keys(d.rascunhos||{}).filter(k=>k.startsWith('campanha__')),novaSemEnvio=enviado&&chaves.some(k=>d.materiais?.[k]&&d.rascunhos[k]!==d.materiais[k]),guardadoSemEnvio=ativo&&!enviado&&chaves.some(k=>d.rascunhos[k]&&!d.materiais?.[k]);
+      const chaves=Object.keys(d.rascunhos||{}).filter(k=>k.startsWith('campanha__')),novaSemEnvio=enviado&&!c.publicacaoAtual&&chaves.some(k=>d.materiais?.[k]&&d.rascunhos[k]!==d.materiais[k]),guardadoSemEnvio=ativo&&!enviado&&chaves.some(k=>d.rascunhos[k]&&!d.materiais?.[k]);
       const base=d.baseDocumentoUnicoCp183,arq=base?[formato(base.mime),tam(base.bytes)].filter(Boolean).join(' · '):'';
       const estado=enviado?'enviado':guardadoSemEnvio?'guardado':ativo?'aberta':c?'historico':'sem';
       const texto={enviado:'✅ Enviado ao Chris',guardado:'⚠️ Guardado, mas ainda não enviado',aberta:'⏳ Pasta aberta, documento ainda não enviado',historico:'— Fora deste mês (histórico preservado)',sem:'○ Sem documento'}[estado];

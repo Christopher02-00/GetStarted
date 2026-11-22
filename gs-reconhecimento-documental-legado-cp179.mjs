@@ -1,6 +1,6 @@
 /* CP179: reconhecer uma entrega documental já confirmada pelo serviço vigente.
  * Não reconfirma arquivo, não aprova pessoa e não modifica calendário. */
-import{assinaturaOrigemDemandaCp138,hashPedidoDocumentoCp138,identidadeOrigemCompativelCp138}from'./gs-planejamento-social-i155.mjs?v=c0f0c3c0a7beb4b60113a4de41755d6a59ca984198ea8e4a75112835d74211d8';
+import{assinaturaOrigemDemandaCp138,hashPedidoDocumentoCp138,identidadeOrigemCompativelCp138}from'./gs-planejamento-social-i155.mjs?v=f5deaf09aa745cf873a285ae5aaac3ca78700fbe067f3a9888fff42a90e06e25';
 const camposContexto=['uid','nome','atorReal','sessao','geracao'],ocupadas=new Set();
 const idValido=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(x),hashValido=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 const exigir=(ok,msg)=>{if(!ok)throw Error(msg);};

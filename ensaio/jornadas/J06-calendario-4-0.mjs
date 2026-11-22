@@ -3,7 +3,7 @@
 // O servidor exige a ordem (central/preparacao); cada etapa é confirmada pelas Cloud Functions reais no emulador.
 import path from 'node:path';
 import fs from 'node:fs';
-import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
+import { entrarComo, foto, abrirMenuSeMovel, escolherMesCentral } from '../lib/navegador.mjs';
 export const id = 'J06';
 export const nome = 'Calendário 4.0: preparação (Amanda) → criação (Chris) → revisão/liberação (Amanda) → cliente e filmmaker leem';
 
@@ -45,7 +45,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   // 1. Amanda inclui o ciclo e envia o documento completo
   if (!await passo('1 Amanda inclui o ciclo e envia o documento', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
@@ -54,7 +54,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForFunction(() => /No ciclo|revisão \d/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
     await v.locator('input[type=file]').first().setInputFiles(DOC); await page.waitForTimeout(1500);
     await v.getByRole('button', { name: /^Ler documento$/ }).click();
-    await page.waitForFunction(() => /Documento lido e guardado/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
+    await page.waitForFunction(() => /Arquivo lido, mas o documento ainda NÃO foi enviado/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
     await v.getByRole('button', { name: /^Confirmar e enviar documento$/ }).click();
     await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 }); // conferência do texto
     await page.waitForFunction(() => !/Confira o documento:/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 30000 });
@@ -109,7 +109,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   // 3. Amanda conclui a revisão (libera ao cliente)
   if (!await passo('3 Amanda conclui a revisão e libera', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);

@@ -42,8 +42,11 @@ function mammothLocal(){
   });
 }
 export async function prepararArquivo(file){
-  if(!file||!Number.isInteger(file.size)||file.size<1||file.size>LIMITE_ARQUIVO)throw Error('Escolha um PDF, DOCX ou texto de até 4 MB.');
-  const extensao=String(file.name||'').split('.').pop().toLowerCase(),tipo=TIPOS_ARQUIVO[extensao];
+  /* CP252 (22/11): PDF ou Word acima de 4 MB era recusado aqui, no navegador, sem rastro e sem saída ("não ia"). Agora o texto é lido até
+     40 MB e devolvido no erro `grande_cp252`; a tela oferece enviar o TEXTO completo como o original (.txt). O limite do original não muda. */
+  if(!file||!Number.isInteger(file.size)||file.size<1)throw Error('Escolha um PDF, DOCX ou texto de até 4 MB.');
+  const extensao=String(file.name||'').split('.').pop().toLowerCase(),tipo=TIPOS_ARQUIVO[extensao],grandeCp252=file.size>LIMITE_ARQUIVO;
+  if(grandeCp252&&(file.size>40*1024*1024||!['pdf','docx'].includes(extensao)))throw Error('Escolha um PDF, DOCX ou texto de até 4 MB.');
   if(!tipo)throw Error('Use PDF, DOCX, TXT ou MD. Outros formatos não são enviados.');
   const buffer=await file.arrayBuffer(),bytes=new Uint8Array(buffer);let texto='',paginas=0;const linksExtraidos=[];
   if(extensao==='pdf'){
@@ -62,6 +65,7 @@ export async function prepararArquivo(file){
   texto=String(texto||'').replace(/\u0000/g,'').trim();
   if(!texto)throw Error('Não encontrei texto legível. Se for um documento escaneado, envie a versão com texto ou registre o conteúdo no campo antes de confirmar. Nenhuma etapa foi concluída.');
   if(texto.length>60000)throw Error('O documento tem mais de 60 mil caracteres. Divida em documentos menores; não cortamos o conteúdo.');
+  if(grandeCp252)throw Object.assign(Error(`${file.name} tem ${(file.size/1048576).toFixed(1).replace('.',',')} MB e o original aceito vai até 4 MB.`),{codigo:'grande_cp252',texto,paginas,linksExtraidos,nome:String(file.name).slice(0,180),bytes:file.size});
   return {nome:String(file.name).slice(0,180),tipo,bytes:bytes.length,sha256:await digesto(bytes),texto,paginas,buffer:bytes,linksExtraidos};
 }
 export function criarArquivosPlanejamento(io,contexto){

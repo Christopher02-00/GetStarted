@@ -5,7 +5,7 @@
 // O servidor exige a ordem (central/preparacao); cada etapa é confirmada pelas Cloud Functions reais no emulador.
 import path from 'node:path';
 import fs from 'node:fs';
-import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
+import { entrarComo, foto, abrirMenuSeMovel, escolherMesCentral } from '../lib/navegador.mjs';
 export const id = 'J53';
 export const nome = 'Devolução da Amanda vale quando o Chris já começou a rodada com a base nova (caso Little Elephant)';
 
@@ -66,14 +66,14 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   // 2. Amanda manda o documento novo (base B) enquanto o mês está com ela
   if (!await passo('2 Amanda envia o documento novo', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click(); await page.waitForTimeout(2500);
     await v.locator('input[type=file]').first().setInputFiles(DOC); await page.waitForTimeout(1500);
     await v.getByRole('button', { name: /^Ler documento$/ }).click();
-    await page.waitForFunction(() => /Documento lido e guardado/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
+    await page.waitForFunction(() => /Arquivo lido, mas o documento ainda NÃO foi enviado/.test(document.getElementById('view-planejamentoPreparacaoR80')?.innerText || ''), null, { timeout: 20000 });
     await v.getByRole('button', { name: /^Confirmar e enviar documento$/ }).click();
     await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 });
     await page.waitForTimeout(4000);
@@ -89,7 +89,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   // 4. Amanda devolve: antes ficava "guardada, mas não confirmada" para sempre; agora volta para o Chris na base B
   await passo('4 Amanda devolve e destrava', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);

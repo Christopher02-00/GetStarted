@@ -30,7 +30,7 @@ Por que havia manutenção todo dia, por 7 meses (diagnóstico do Raio-X de 21/1
    - Dado antigo só com ok nominal do Chris, e depois da correção do caminho.
    - Até o ok, o item entra em `.github/raio-x-conhecidos.json` (amarelo "conhecido") com o motivo.
 4. **Provar** (skill get-prova-de-jornada): jornada nova com o caso real, **vermelha sem a correção e verde com ela**, mais as vizinhas.
-5. **Prevenir:** todo erro novo que o Raio-X não pegou vira **regra nova** em `raio-x-operacao.mjs`, na família certa (A a G abaixo), testada na exportação real: nenhum falso positivo (como o E2 das peças programadas da CP202).
+5. **Prevenir:** todo erro novo que o Raio-X não pegou vira **regra nova** em `raio-x-operacao.mjs`, na família certa (A a H abaixo), testada na exportação real: nenhum falso positivo (como o E2 das peças programadas da CP202).
 6. **Publicar e conferir** (get-publicacao-e-rollback) e **rodar o vigia de novo** (workflow_dispatch). Fechar só com o vigia sem o item.
 
 ## Famílias de regras do Raio-X (o que NUNCA pode acontecer)
@@ -64,6 +64,10 @@ Por que havia manutenção todo dia, por 7 meses (diagnóstico do Raio-X de 21/1
 - **G · avisos**:
   - pendente para pessoa desligada (G1);
   - pessoa sem celular ligado aos avisos (G2).
+- **H · documentos da preparação (Amanda → Chris)**:
+  - documento enviado para um mês que já passou (H1, CP249);
+  - versão nova guardada e não enviada em mês ainda não liberado (H2, CP251).
+  - Na tela, o quadro do mês (CP251) mostra a mesma verdade para a Amanda e o Chris.
 
 ## Regras de desenho que evitam erro (aplicar em toda mudança)
 1. **Todo estado de espera tem dono e saída.** Se um estado novo espera alguém, diga quem (`aprovacaoEhDe`, destinatário, revisor explícito) e qual botão tira dele. Sem dono possível, o servidor fecha sozinho com nota (CP245).

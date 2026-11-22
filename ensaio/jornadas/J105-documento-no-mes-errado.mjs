@@ -42,7 +42,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     if (mes.tag === 'SELECT') await campo.selectOption(PASSADO); else { await campo.fill(PASSADO); await campo.dispatchEvent('change'); }
     await page.waitForFunction(m => (document.getElementById('view-planejamentoPreparacaoR80')?.innerText || '').includes(m), mesPorExtenso(PASSADO), { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(2500);
-    const aviso = await page.evaluate(() => !!document.querySelector('#view-planejamentoPreparacaoR80 [data-mes-passado-cp249]'));
+    const aviso = await page.waitForSelector('#view-planejamentoPreparacaoR80 [data-mes-passado-cp249]', { timeout: 15000 }).then(() => true).catch(() => false);
     const sel = v.locator('select[data-field="documentoClienteCp120"]').first(); await sel.waitFor({ timeout: 15000 }); await sel.selectOption(CLIENTE);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
     await v.getByRole('button', { name: /^Confirmar esta ação$/ }).click({ timeout: 10000 }).catch(() => {});

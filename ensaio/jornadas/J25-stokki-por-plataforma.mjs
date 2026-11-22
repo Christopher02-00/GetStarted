@@ -115,6 +115,19 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await bloco.locator('[data-stokki-url]').fill(link);
     await bloco.locator('[data-stokki-acao="publicar"]').click();
     await page.waitForTimeout(2500);
+    // CP253 (Cecília: "aperto em já postado e não acontece nada"): a conferência tem de aparecer NA plataforma clicada, à vista (sem a automação
+    // rolar a tela), e continuar lá se o painel se redesenhar (antes ela ia para o fim do cartão, fora da vista, e um redesenho a apagava).
+    const ondeCp253 = async () => page.evaluate(([pid, r]) => { const f = document.getElementById('postagemOperacionalI165_stokki_' + pid); if (!f) return { existe: false };
+      const rect = f.getBoundingClientRect(), dlg = f.closest('dialog'), dr = dlg?.getBoundingClientRect();
+      return { existe: true, naPlataforma: f.closest('[data-stokki-rede]')?.dataset.stokkiRede === r, naVista: rect.height > 0 && rect.top < (dr ? dr.bottom : innerHeight) && rect.bottom > (dr ? dr.top : 0) }; }, [post.id, rede]);
+    const antesCp253 = await ondeCp253();
+    await page.evaluate(() => document.querySelector('dialog[data-stokki-painel][open] [data-stokki-historico]')?.click()); await page.waitForTimeout(1500);
+    const depoisCp253 = await ondeCp253();
+    if (rede === 'instagram') registrar({ jornada: id, caso: '4a conferência aparece na plataforma clicada, à vista, e sobrevive ao redesenho do painel', ok: !!(antesCp253.existe && antesCp253.naPlataforma && antesCp253.naVista && depoisCp253.existe && depoisCp253.naPlataforma), ms: 0,
+      detalhe: `antes: ${JSON.stringify(antesCp253)} · depois do redesenho: ${JSON.stringify(depoisCp253)}` });
+    // depois de um redesenho a conferência pede "Atualizar esta proposta" (orientação reconferida, CP110) — é o gesto da Cecília
+    { const atualizar = page.locator(`#postagemOperacionalI165_stokki_${post.id} [data-post165-acao="abrir"]`).first();
+      if (await atualizar.count() && await atualizar.isVisible()) { await atualizar.click(); await page.waitForTimeout(2500); } }
     // conferência do servidor: dia e hora reais (no passado; o servidor recusa fato futuro) e a prova
     const card = page.locator(`[data-stokki-post="${post.id}"]`);
     await card.locator('[data-post165-campo][type=date]:visible').last().fill(hojeISO());

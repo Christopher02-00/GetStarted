@@ -6,7 +6,10 @@
 // ENSAIO_CLIENTES=slug1,slug2 (padrão: os clientes que mais deram problema) · ENSAIO_MES=2027-01.
 import path from 'node:path';
 import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { RAIZ } from '../lib/emulador.mjs';
 import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
+import { chegadaAmanda, chegadaCliente } from '../lib/chegada.mjs';
 export const id = 'J104';
 export const nome = 'Ensaio geral com dados reais: ciclo de janeiro inteiro, cliente por cliente (preparação → criação → liberação → cliente → filmmaker)';
 
@@ -110,6 +113,10 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForTimeout(6000);
   }, () => esperar(async () => { const cal = await calendario(); const n = itensMes(cal).filter(i => [TITULO1, TITULO2].includes(i.name)).length; const c = await ciclo(); return n === 2 ? `2 conteúdos salvos no calendário · ciclo revisão ${c?.revisao}` : (cal ? `calendário com ${itensMes(cal).length} itens do mês` : null); }, 25000))) return;
 
+  // 2b. V3: a Amanda recebe o calendário para aprovar (aviso do servidor + revisão idêntica ao que o Chris salvou)
+  { const t2 = Date.now(), r = await chegadaAmanda({ amb, nav, erroGrave, ciclo: CICLO, cliente: CLIENTE, mes: MES, titulos: [TITULO1, TITULO2], rotulo: 'J104-' + CLIENTE });
+    registrar({ jornada: id, caso: `2b Amanda recebe o aviso e a revisão mostra os conteúdos exatamente como o Chris salvou`, ok: r.ok, ms: Date.now() - t2, detalhe: r.detalhe }); if (!r.ok) return; }
+
   // 3a. Antes da liberação, o cliente NÃO pode ver o mês (contraprova permanente: o mutante "qualquer mês liberado" cai aqui)
   if (!await passo('3a Cliente não vê o mês antes da liberação', null, async page => {
     await page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
@@ -150,6 +157,10 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForFunction(t => (document.body.innerText + ' ' + document.body.innerHTML).includes(t), TITULO1, { timeout: 20000 });
   }, async page => { const txt = await page.evaluate(() => document.body.innerText + ' ' + document.body.innerHTML); const lib = /Liberado — o cliente já vê/.test(txt); return lib && txt.includes(TITULO1) && txt.includes(TITULO2) ? 'mês liberado · os 2 títulos aparecem para o cliente' : (lib ? 'liberado, mas títulos não encontrados' : null); })) return;
 
+  // 4b. V3: o cliente vê exatamente o que a Amanda aprovou (aprovado = calendário = cópia do cliente = o que ele abre)
+  { const t4 = Date.now(), r = await chegadaCliente({ amb, nav, erroGrave, cliente: CLIENTE, nome: NOME, mes: MES, titulos: [TITULO1, TITULO2], token: `tok-${CLIENTE}`, rotulo: 'J104-' + CLIENTE });
+    registrar({ jornada: id, caso: `4b o cliente vê exatamente o que a Amanda aprovou, campo por campo`, ok: r.ok, ms: Date.now() - t4, detalhe: r.detalhe }); }
+
   // 5. Luís vê o calendário do cliente em modo gravação
   await passo('5 Luís vê o calendário em modo gravação', 'Luís', async page => {
     await page.evaluate(() => window.irParaCalendarioDeCampo());
@@ -170,7 +181,15 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   { const t0 = Date.now(), log = path.join(process.cwd(), 'ensaio/.runtime/emulator.log'), conta = () => (fs.readFileSync(log, 'utf8').match(/Beginning execution of/g) || []).length;
     let ultimo = -1, desde = Date.now(); while (Date.now() - t0 < 15 * 60e3) { const n = conta(); if (n !== ultimo) { ultimo = n; desde = Date.now(); } else if (Date.now() - desde > 30e3) break; await new Promise(r => setTimeout(r, 2000)); }
     await amb.aguardarFunctionsOciosas?.(60e3); registrar({ jornada: id, caso: 'fila de gatilhos do seed esvaziada', ok: true, ms: Date.now() - t0, detalhe: `${Math.round((Date.now() - t0) / 1000)} s · ${ultimo} execuções` }); }
-  const clientes = (process.env.ENSAIO_CLIENTES || PADRAO).split(',').map(x => x.trim()).filter(Boolean);
+  // ENSAIO_CLIENTES=carteira → todos os clientes da carteira do mês (a mesma regra do servidor: carteiraCanonicaI164)
+  let clientes = (process.env.ENSAIO_CLIENTES || PADRAO).split(',').map(x => x.trim()).filter(Boolean);
+  if (clientes.length === 1 && clientes[0] === 'carteira') {
+    const { carteiraCanonicaI164 } = await import(pathToFileURL(path.join(RAIZ, 'functions-get/central/lib/gs-carteira-calendarios-i164.mjs')).href);
+    const linhas = l => l.map(({ id, ...data }) => ({ id, data }));
+    const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    clientes = carteiraCanonicaI164({ extras: linhas(await seed.listar('clientes_extras')), configs: linhas(await seed.listar('clientes_config')), hoje, competencia: MES }).carteira.map(c => c.slug || c.id).sort();
+    registrar({ jornada: id, caso: `carteira de ${MES}: ${clientes.length} cliente(s)`, ok: clientes.length > 0, ms: 0, detalhe: clientes.join(', ') });
+  }
   const configs = await seed.listar('clientes_config'), cals = await seed.listar('calendarios');
   for (const slug of clientes) {
     CLIENTE = slug; CICLO = `${MES}__${slug}`;

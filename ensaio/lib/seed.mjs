@@ -36,8 +36,16 @@ export function criarSeed(portas) {
   const base = `http://127.0.0.1:${portas.firestore}/v1/projects/${PROJETO}/databases/(default)/documents`;
   const H = { 'Authorization': 'Bearer owner', 'Content-Type': 'application/json' };
   async function set(colecao, id, dados, { semCopiaCp200 = false } = {}) {
-    const r = await fetch(`${base}/${colecao}/${encodeURIComponent(id)}`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: v(dados).mapValue.fields }) });
-    if (!r.ok) throw new Error(`seed ${colecao}/${id}: ${r.status} ${await r.text()}`);
+    // 22/11 (CI do main, J101): um gatilho anterior ainda segurava o documento e o emulador devolveu 409 "Transaction lock timeout" — o emulador
+    // segura o lock por ~20 s depois de uma execução que morreu (regra 1 do README). O dado de teste espera e tenta de novo; outro erro falha na hora.
+    let r, corpo = '';
+    for (let tentativa = 1; tentativa <= 4; tentativa++) {
+      r = await fetch(`${base}/${colecao}/${encodeURIComponent(id)}`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: v(dados).mapValue.fields }) });
+      if (r.ok) break; corpo = await r.text();
+      if (r.status !== 409 || !/lock timeout|ABORTED/i.test(corpo) || tentativa === 4) break;
+      await new Promise(res => setTimeout(res, 8000 * tentativa));
+    }
+    if (!r.ok) throw new Error(`seed ${colecao}/${id}: ${r.status} ${corpo}`);
     // CP200: o link do cliente lê a cópia `calendarios_cliente`; em produção o gatilho a mantém. Aqui ela já nasce junto.
     if (colecao === 'calendarios' && !semCopiaCp200) await set('calendarios_cliente', id, (await projecaoCp200())(dados));
   }

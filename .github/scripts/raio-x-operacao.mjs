@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const COLECOES_RAIO_X = ['usuarios_equipe', 'demandas', 'videos_producao', 'postagens', 'calendarios', 'calendarios_cliente', 'revisoes_ajustes_cp112',
-  'calendarios_ajustes_internos_cp123', 'avisos_do_cliente', 'notificacoes_operacionais_i165', 'notificacoes_dispositivos_i165'];
+  'calendarios_ajustes_internos_cp123', 'avisos_do_cliente', 'notificacoes_operacionais_i165', 'notificacoes_dispositivos_i165', 'planejamento_social_i155'];
 export const EDITORES_RAIO_X = ['Helo', 'João Victor'];
 const GESTAO = ['Chris', 'Amanda'];
 const POST_FINAL = ['cancelada_manual', 'cancelada_video_trafego', 'arquivada_sem_postagem', 'postado', 'finalizado'];
@@ -132,6 +132,22 @@ export function raioXOperacao(dados, hoje = new Date().toISOString().slice(0, 10
     if (String(em) >= '2026-09-11' && a.viraDemanda === true && a.lido === false && !a.demandaInternaId && idade !== null && idade <= 1 && horas > 4)
       add('amarelo', 'F3 pedido do cliente esperando a pessoa abrir Minhas Demandas', a.__id, `${a.cliente} · ${a.tipo || 'pedido'} · para ${a.paraQuem}`, (a.paraQuem || 'Amanda') + ' (abrir Minhas Demandas)');
     if (a.paraQuem && !ativo(a.paraQuem) && idade !== null && idade <= 14) add('vermelho', 'F2 aviso do cliente indo para pessoa desligada', a.__id, `${a.cliente} · para ${a.paraQuem} · ${String(em).slice(0, 10)}`, 'conferência técnica');
+  }
+
+  // H — documentos da preparação (Amanda → Chris)
+  // H1 (CP249, 22/11): ciclo criado para um mês que já tinha passado. Os documentos de janeiro da Master Chef e da Divina Cantina foram para
+  // janeiro de 2026 em 20/11/2026 e "sumiram" do mês certo. Some quando o mês certo (mesmo mês, ano seguinte) recebe o documento.
+  { const MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    const ext = m => /^\d{4}-\d{2}$/.test(m || '') ? MES[Number(m.slice(5)) - 1] + ' de ' + m.slice(0, 4) : String(m || '');
+    const soma = (m, n) => { const [a, b] = m.split('-').map(Number), d = new Date(Date.UTC(a, b - 1 + n, 1)); return d.toISOString().slice(0, 7); };
+    const mesBRT = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(new Date(iso)).slice(0, 7) : '';
+    const preps = L('planejamento_social_i155'), porId = new Map(preps.map(c => [c.__id, c])), atual = hoje.slice(0, 7);
+    for (const c of preps) {
+      const cr = mesBRT(ts(c.criadoEm)); if (!cr || !c.competencia || c.competencia >= soma(cr, -1)) continue;
+      let certo = c.competencia; while (certo < cr) certo = soma(certo, 12);
+      if (certo < soma(atual, -1) || porId.get(certo + '__' + c.cliente)?.documentos?.consolidadoEnviado) continue;
+      add('amarelo', 'H1 documento enviado para um mês que já passou', c.__id, `${c.clienteNome || c.cliente} · foi para ${ext(c.competencia)} em ${ts(c.documentos?.enviadoEm || c.criadoEm).slice(0, 10)} (${c.documentos?.enviadoPor || c.autorNome || '?'}) · o mês certo é ${ext(certo)}`, 'Amanda (reenviar o documento no mês certo)', ts(c.criadoEm).slice(0, 10));
+    }
   }
 
   // G — avisos da operação: chegam a quem precisa?

@@ -51,7 +51,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   if (!await passo('1 Amanda inclui o ciclo e envia o documento', 'Amanda', async page => {
     await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
     const v = page.locator('#view-planejamentoPreparacaoR80');
-    { const mesCampo = v.locator('input[type=month]').first(); if (await mesCampo.count()) { await mesCampo.fill(MES); await mesCampo.dispatchEvent('change'); await page.waitForTimeout(2500); } }
+    { const mesCampo = v.locator('[data-field="competencia"]').first(); if (await mesCampo.count() && await mesCampo.inputValue() !== MES) { if (await mesCampo.evaluate(el => el.tagName) === 'SELECT') await mesCampo.selectOption(MES); else { await mesCampo.fill(MES); await mesCampo.dispatchEvent('change'); } await page.waitForTimeout(2500); } } // CP249: o mês é uma lista
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();
@@ -109,7 +109,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   await passo('3 Amanda devolve com observação de 3.500 caracteres', 'Amanda', async page => {
     await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
     const v = page.locator('#view-planejamentoPreparacaoR80');
-    { const mesCampo = v.locator('input[type=month]').first(); if (await mesCampo.count()) { await mesCampo.fill(MES); await mesCampo.dispatchEvent('change'); await page.waitForTimeout(2500); } }
+    { const mesCampo = v.locator('[data-field="competencia"]').first(); if (await mesCampo.count() && await mesCampo.inputValue() !== MES) { if (await mesCampo.evaluate(el => el.tagName) === 'SELECT') await mesCampo.selectOption(MES); else { await mesCampo.fill(MES); await mesCampo.dispatchEvent('change'); } await page.waitForTimeout(2500); } } // CP249: o mês é uma lista
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
     await v.getByRole('button', { name: /Abrir documentos deste cliente/ }).click();

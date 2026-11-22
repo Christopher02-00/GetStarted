@@ -15,7 +15,7 @@ import {ACAO_VINCULO_DOCUMENTO_CP154,vincularEntregaDocumentoCp154,ACAO_DECISAO_
 import {carteiraCanonicaI164} from './central/lib/gs-carteira-calendarios-i164.mjs';
 import {obterFeriados} from './central-feriados-copia-r80.mjs';
 import {criarIoAdminCentralR80} from './central-preparacao-io-r80.mjs';
-import {entradaCentralR80,prepararArquivoWireR80,ACOES_CENTRAL_HTTP_R80,exigirCentralR80 as e,PARTE_R80} from './central-preparacao-validacao-r80.mjs';
+import {entradaCentralR80,prepararArquivoWireR80,ACOES_CENTRAL_HTTP_R80,exigirCentralR80 as e,PARTE_R80,cicloR80,ACOES_ENVIO_CP249,mesDeEnvioCp249} from './central-preparacao-validacao-r80.mjs';
 import {envelopeCentralR80} from './codec-central-r80.mjs';
 export {ACOES_CENTRAL_HTTP_R80};
 import {PAPEIS_PLANEJAMENTO_R81} from './central/lib/gs-papeis-planejamento-r81.mjs';
@@ -26,6 +26,7 @@ function calendarioMes(c,mes){if(!c)return null;return {excluido:c.excluido||fal
 export async function operarCentralPreparacaoR80(db,auth,pedido,{agora=new Date(),editorialInterna=false}={}){
  if(editorialInterna)validarEntradaMutacaoEditorialInternaI172(pedido);else entradaCentralR80(pedido);const ator=validarContaEsperadaI165(auth,pedido);e(papeis.includes(ator.papel)||pedido.acao==='central_capacidades'&&ator.papel==='Cecília','A preparação pertence ao Christopher, Amanda e Gabi.');
  if(pedido.acao==='central_mutar'&&pedido.acaoPreparacao==='desconsiderar_confirmacao')e(ator.papel==='Amanda','A desconsideração de confirmação pertence à Amanda.');
+ if(pedido.acao==='central_mutar'&&ACOES_ENVIO_CP249.includes(pedido.acaoPreparacao))mesDeEnvioCp249(cicloR80(pedido.ciclo).competencia,agora); // CP249: nunca enviar para um mês que já passou
  async function gate(tx,{capacidades=false}={}){
   const [cfg,cad,processo]=await Promise.all([tx.get(db.doc('programacao_config_i165/ativo')),tx.get(db.doc('usuarios_equipe/'+ator.email)),tx.get(db.doc('processo_calendarios_i164/ativo'))]);
   validarCadastroI165(ator,cad.data());const exclusivo=processoAtivoI164(processo.data()),ativa=capacidadePreparacaoEditorialI172(cfg.data(),processo.exists,processo.data());

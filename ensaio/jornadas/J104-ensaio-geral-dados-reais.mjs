@@ -20,7 +20,8 @@ const esperar = async (fn, ms = 15000) => { const fim = Date.now() + ms; while (
 async function irParaMes(page) {
   const c = page.locator('#view-planejamentoPreparacaoR80 [data-field="competencia"]').first();
   if (!await c.count()) return;
-  if (await c.inputValue() !== MES) { await c.fill(MES); await c.dispatchEvent('change'); await page.waitForTimeout(3500); }
+  // CP249: o mês dos conteúdos é uma lista (mês por extenso); antes era um campo de mês
+  if (await c.inputValue() !== MES) { if (await c.evaluate(el => el.tagName) === 'SELECT') await c.selectOption(MES); else { await c.fill(MES); await c.dispatchEvent('change'); } await page.waitForTimeout(3500); }
 }
 // ACHADO F-09: enquanto a Central ainda carrega, o clique em "Calendários e conteúdos" é ignorado em silêncio → repete até a view abrir
 async function abrirCentral(page, viewId) {

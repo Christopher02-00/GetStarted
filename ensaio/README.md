@@ -100,3 +100,6 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
     - o seed real enfileira ~12.400 execuções de gatilho (~8 min), e a jornada espera 30 s sem execução nova antes de começar; sem isso, a cópia do cliente atrasa e parece bug;
     - escolha cliente pelo identificador (`selectOption(slug)`, `onclick^="abrirCampoDoCliente('slug',"`), nunca pelo nome: "Zeiss" casa com "Clínica Zeiss Araucária", e o texto do cartão do filmmaker muda (nº de conteúdos, HOJE);
     - no Linux, `PLAYWRIGHT_BROWSERS_PATH` tem de apontar para o Chromium da versão instalada.
+    - **V3 (22/11):** a J104 confere também a chegada à Amanda (aviso "Calendário para revisar" gerado pela rodada do servidor + revisão idêntica ao salvo) e ao cliente (aprovado = calendário = cópia do cliente = o que ele abre), com `ensaio/lib/chegada.mjs` (o mesmo da J06);
+    - `ENSAIO_CLIENTES=carteira` roda a carteira inteira do mês, mas o emulador degrada depois de ~8 clientes ("tempo limite de 8000 ms", páginas que não carregam): rode em **lotes de até 8 clientes**, um emulador novo por lote, com um mês sem pastas (ex.: `ENSAIO_MES=2027-02`);
+    - escolha o cliente sempre pelo identificador também na tela do Chris (`selectOption(slug)`): o nome do calendário pode vir com outra grafia ("VIP" × "Vip").

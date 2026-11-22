@@ -81,7 +81,7 @@ async function umCliente({ amb, seed, nav, erroGrave, registrar }) {
   if (!await passo('2 Chris cria conteúdos e envia para revisão', 'Chris', async page => {
     await abrirCentral(page, 'view-estrategiaCp109');
     const v = page.locator('#view-estrategiaCp109'); await v.locator('select').first().waitFor({ timeout: 20000 });
-    await v.locator('select').first().selectOption({ label: NOME }); await v.locator('input[type=month]').first().fill(MES);
+    await v.locator('select').first().selectOption(CLIENTE); /* pelo identificador: o nome do calendário pode vir com outra grafia ("VIP" × "Vip", "Iphone" × "iPhone") */ await v.locator('input[type=month]').first().fill(MES);
     await v.getByRole('button', { name: /Abrir cliente e mês/ }).click();
     await v.getByRole('button', { name: /Abrir editor oficial do mês/ }).click({ timeout: 20000 });
     await page.waitForSelector('#ed172_pecas', { timeout: 30000 });

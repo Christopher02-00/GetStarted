@@ -16,9 +16,9 @@ Base da medida:
 | Entrar no Escritório (Amanda e Chris) | Baixa ~15 MB a cada entrada e em cada aparelho: demandas 5,9 MB (98% encerradas), calendários 4,5 MB, vídeos 2,6 MB, postagens 1,5 MB. São ~228 consultas ao abrir. O mesmo acontece quando o Chris troca de perfil. | Proposta 4 (abaixo) |
 | Cada ação da gestão (concluir, entregar, abrir pelo aviso, repasse…) | +0,37 s para remontar as 5.395 demandas, mesmo vindo da memória | **CP255** (PR) |
 | Radar de Perdas | Recalculava a cada minuto em qualquer tela (4 coleções, 2 consultas, redesenho) | **CP254** (PR #190) |
-| Saúde das Automações (Chris) | Lê os 15.646 registros (3,4 MB) do servidor a cada abertura | Código (L1-d) + retenção |
-| Resgate de versões de calendário (Chris) | Cada busca baixa as 894 versões (80 MB) para achar as de 1 cliente | Código (L1-d) |
-| Armazenamento do aparelho | As tentativas de aprovação e de postagem ficam guardadas para sempre, uma por vídeo ou postagem. A lista é relida inteira a cada tela. Se o espaço do navegador encher, o aparelho recusa guardar a próxima tentativa e nada é enviado. | Código (L1-d) |
+| Saúde das Automações (Chris) | Lê os 15.646 registros (3,4 MB) do servidor a cada abertura | **CP257** (lê só 30 dias) + retenção |
+| Resgate de versões de calendário (Chris) | A busca baixaria as 894 versões (80 MB) para achar as de 1 cliente. Mas com a Central nova ativa (como está no ar), a aba "Resgatar" redireciona para a Central e essa busca não roda para ninguém. | Sem mudança (sem ganho real hoje) |
+| Armazenamento do aparelho | As tentativas de aprovação e de postagem ficam guardadas para sempre, uma por vídeo ou postagem. A lista é relida inteira a cada tela. Se o espaço do navegador encher, o aparelho recusa guardar a próxima tentativa e nada é enviado. O histórico local chegava a 21 cópias e nenhuma tela lê. | **CP258** (saem as confirmadas; histórico ≤ 5) |
 
 ## 2. Dados antigos no servidor (proposta de retenção)
 
@@ -30,7 +30,7 @@ A exclusão física é ok nominal do Chris. Antes de apagar: cópia completa (ex
 | `email_throttle` | 11.981 (1,4 MB) | A trava de 2 h dos e-mails imediatos | Apagar mais de 7 dias (~10.100) | ~1.800 |
 | `log_automacoes` | 15.646 (3,4 MB). 4.529 são "email_FALHOU" de agosto a outubro (cota do EmailJS). | Só a tela Saúde (janelas de 24 h e 7 dias) | Apagar mais de 90 dias (4.652) | ~11.000 |
 | `log_acessos` | 2.300 | Botão de consulta | Apagar mais de 90 dias (609) | ~1.700 |
-| `calendarios_versoes` | 894 (80,6 MB) | Rede de segurança do resgate | **Manter** (quase tudo tem menos de 90 dias; a economia seria de só 12 MB). Corrigir a leitura (item 1). | 894 |
+| `calendarios_versoes` | 894 (80,6 MB) | Rede de segurança do resgate | **Manter** (quase tudo tem menos de 90 dias; a economia seria de só 12 MB) | 894 |
 | `notificacoes_operacionais_i165` resolvidas | 1.811 | Histórico dos avisos | Manter: todas têm menos de 30 dias | — |
 | `transmissoes_i165` recusadas | 1.920 | Recibos dos avisos no celular | Manter: todas têm menos de 30 dias (ver sinal no item 5) | — |
 | `log_operacoes_delegadas` | 5.166 | Auditoria do Chris operando outro perfil | Manter (auditoria) | — |
@@ -56,9 +56,12 @@ anteriores a outubro. São baixados por Chris, Amanda e Cecília e pela página 
 
 ## 4. Código acumulado
 
-- **Arquivos mortos** (ninguém importa): `gs-conferencia-cecilia-i63.js` e `gs-gravacoes-cliente-i61.js`. Remover.
+- **Arquivos mortos** (ninguém importa): `gs-conferencia-cecilia-i63.js` e `gs-gravacoes-cliente-i61.js`.
+  Nenhuma tela baixa esses arquivos, então eles não pesam para quem usa. Saem na próxima limpeza de repositório, sem PR próprio.
   O `financeiro-ui-v103.mjs` ainda é usado por testes do financeiro, então fica.
-- **Trechos mortos no `escritorio.html`**: código depois de um `return`, `decidirEditor` (nunca chamado), uma verificação fora do motor e uma função sem chamador. Remover.
+- **Trechos mortos no `escritorio.html`**: código depois de um `return` (marcado "código histórico preservado"), `decidirEditor` (nunca chamado),
+  uma verificação fora do motor e uma função sem chamador. Somam poucos KB de 3,97 MB.
+  Removê-los não deixa nada mais fluido, então ficam até alguém mexer nessas áreas (decisão: não vale o risco de um PR só para isso).
 - **Function sem uso**: `digestsI165` (resumo por e-mail desligado). Fica registrada; a remoção entra junto com a próxima publicação das Functions.
 
 ## 5. Sinal operacional encontrado (não é acúmulo)
@@ -78,6 +81,6 @@ Os avisos continuam no sistema. Para receber no celular, basta seguir o passo de
 
 1. CP254 Radar à vista (PR #190).
 2. CP255 conferir só a demanda tocada.
-3. L1-d (cada item é um PR): Saúde lê só a janela que mostra; resgate lê só o cliente escolhido; armazenamento do aparelho sem acúmulo; código morto.
+3. CP257 Saúde lê só 30 dias (J111 verde) · CP258 aparelho sem acúmulo (J112 6/6 verde). Um PR cada.
 4. Retenção dos dados (item 2), com ok do Chris: Function de faxina com rodada só de contagem primeiro, depois a exclusão, e conferência pelo vigia.
 5. Proposta 4 (demandas abertas na entrada), depois da semana de produção de janeiro, com ficha própria.

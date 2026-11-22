@@ -3,7 +3,7 @@
 // Esperado: o mês segue em criação (igual ao escritório, estadoMesCal). Auditoria do percurso, 10/11/2026.
 import path from 'node:path';
 import fs from 'node:fs';
-import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
+import { entrarComo, foto, abrirMenuSeMovel, escolherMesCentral } from '../lib/navegador.mjs';
 export const id = 'J36';
 export const nome = 'Postagem manual agendada antes do mês existir não deixa o mês "liberado": o Chris consegue começar a criação';
 
@@ -44,7 +44,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   // 1. Amanda inclui o ciclo e envia o documento completo
   if (!await passo('1 Amanda inclui o ciclo e envia o documento', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);

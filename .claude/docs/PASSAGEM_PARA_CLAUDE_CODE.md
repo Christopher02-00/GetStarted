@@ -330,6 +330,7 @@ Lições de 16–17/11:
 | P14 | **Deploy das Functions por workflow** | Hoje não sei como as Functions chegam à produção; criar workflow (`firebase deploy --only functions`) com a conta de serviço (precisa de papel extra: Cloud Functions Developer + Service Account User) — só com ok do Chris. | média | `functions-get/`, workflows | bloqueada (papéis IAM) |
 | P15 | **Scripts legados vermelhos** | Resolvida em 09/11/2026: Chris decidiu aposentar `scripts/preflight.mjs`/`regression-critical.mjs`; o `ensaio/` é a suíte oficial e o `AGENTS.md` foi atualizado. | — | `AGENTS.md` | concluída |
 | P16 | **Simplificar `abrirCentral` na J06** | Com F-09 publicado, o laço de 5 tentativas da J06 pode cair para 1 clique. | baixa | `ensaio/jornadas/J06` | não começou |
+| P17 | **Jornadas com mês fixo (22/11)** | 2026-12 aparece em 29 lugares das jornadas. Desde 22/11 as jornadas da Amanda escolhem o mês explicitamente (`escolherMesCentral`), então não quebram em 1º/12, quando a Central passa a abrir em 2027-01. A partir de **01/02/2027** o servidor recusa envio para 2026-12 (CP249: só do mês passado em diante): migrar para meses relativos (`somarMes(mesAtualBRT(), n)`, como J105–J107), começando pela J06 e pelas que dependem do ciclo dela (J49, J55, J60…). | alta (prazo 31/01/2027) | `ensaio/jornadas` | não começou |
 
 ---
 

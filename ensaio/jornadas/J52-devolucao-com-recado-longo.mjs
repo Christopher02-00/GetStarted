@@ -4,7 +4,7 @@
 // O servidor exige a ordem (central/preparacao); cada etapa é confirmada pelas Cloud Functions reais no emulador.
 import path from 'node:path';
 import fs from 'node:fs';
-import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
+import { entrarComo, foto, abrirMenuSeMovel, escolherMesCentral } from '../lib/navegador.mjs';
 export const id = 'J52';
 export const nome = 'Devolução com recado longo (12 mil caracteres) é aceita e o mês volta para o Chris';
 
@@ -46,7 +46,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   // 1. Amanda inclui o ciclo e envia o documento completo
   if (!await passo('1 Amanda inclui o ciclo e envia o documento', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);
@@ -102,7 +102,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   //    "Conte ao Chris o que precisa ajustar."; agora vai até 30 mil e o mês volta para o Chris em ajuste.
   const RECADO = ('Ajustar o gancho, trocar a música e refazer o fechamento com o CTA da loja. '.repeat(160)).slice(0, 12000);
   await passo('3 Amanda devolve com recado longo', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);

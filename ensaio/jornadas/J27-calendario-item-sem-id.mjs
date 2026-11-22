@@ -4,7 +4,7 @@
 // aplica com backup e recibo, sem mudar título/estado; depois o salvar grava.
 import path from 'node:path';
 import fs from 'node:fs';
-import { entrarComo, foto, abrirMenuSeMovel } from '../lib/navegador.mjs';
+import { entrarComo, foto, abrirMenuSeMovel, escolherMesCentral } from '../lib/navegador.mjs';
 export const id = 'J27';
 export const nome = 'Calendário com item antigo sem itemId: recusa explica → V102 aplica (backup+recibo) → salvar grava';
 
@@ -72,7 +72,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   // 1. Amanda inclui o ciclo e envia o documento completo
   if (!await passo('1 Amanda inclui o ciclo e envia o documento', 'Amanda', async page => {
-    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000);
+    await abrirCentral(page, 'view-planejamentoPreparacaoR80'); await page.waitForTimeout(3000); await escolherMesCentral(page, MES);
     const v = page.locator('#view-planejamentoPreparacaoR80');
     const sel = v.locator('select').last();
     const opt = await sel.locator('option').filter({ hasText: new RegExp(NOME) }).first().getAttribute('value'); await sel.selectOption(opt);

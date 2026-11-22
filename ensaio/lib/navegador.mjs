@@ -99,6 +99,14 @@ export async function abrirMenuSeMovel(page) {
   const h = page.locator('#hamburgerBtn');
   if (await h.isVisible().catch(() => false) && !(await page.evaluate(() => document.getElementById('sidebarEl')?.classList.contains('open')))) { await h.click(); await page.waitForTimeout(600); }
 }
+/** Central da Amanda (preparação R80): escolhe o mês dos conteúdos explicitamente. A tela abre no mês seguinte ao de hoje; jornadas com mês
+ *  fixo (ex.: 2026-12) não podem depender disso (em 1º/12/2026 o padrão vira 2027-01). Aceita a lista por extenso (CP249) e o campo antigo. */
+export async function escolherMesCentral(page, mes) {
+  const c = page.locator('#view-planejamentoPreparacaoR80 [data-field="competencia"]').first();
+  if (!(await c.count()) || await c.inputValue() === mes) return;
+  if (await c.evaluate(el => el.tagName) === 'SELECT') await c.selectOption(mes); else { await c.fill(mes); await c.dispatchEvent('change'); }
+  await page.waitForTimeout(3000);
+}
 export async function menuVisivel(page) {
   await abrirMenuSeMovel(page);
   return page.evaluate(() => Array.from(document.querySelectorAll('[id^="nav"]'))

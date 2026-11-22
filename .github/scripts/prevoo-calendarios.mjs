@@ -34,6 +34,12 @@ export async function prevooCalendarios(dbReal, { competencias, agora = new Date
   const cals = new Map((await dbReal.collection('calendarios').get()).docs.map(s => [s.id, s]));
   const revs = (await dbReal.collection('revisoes_ajustes_cp112').get()).docs.map(s => s.data());
   const ints = (await dbReal.collection('calendarios_ajustes_internos_cp123').get()).docs.map(s => s.data());
+  const { mesPorExtenso, somarMes } = await mod('lib/gs-estado-mes.mjs');
+  // CP249: ciclo criado para um mês que já tinha passado (ex.: janeiro de 2026 enviado em 20/11/2026) — o documento "some" do mês certo
+  const tsIso = v => typeof v === 'string' ? v : v?.toDate ? v.toDate().toISOString() : v?._seconds ? new Date(v._seconds * 1000).toISOString() : '';
+  const mesBRT = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(new Date(iso)).slice(0, 7) : '';
+  const ciclosErrados = (await dbReal.collection('planejamento_social_i155').get()).docs.map(x => ({ id: x.id, ...x.data() }))
+    .filter(c => { const cr = mesBRT(tsIso(c.criadoEm)); return cr && c.competencia < somarMes(cr, -1); });
   const linhas = [];
   for (const comp of competencias) {
     const carteira = carteiraCanonicaI164({ extras: rows(extras), configs: rows(configs), hoje, competencia: comp }).carteira.map(x => x.slug).sort();
@@ -65,6 +71,9 @@ export async function prevooCalendarios(dbReal, { competencias, agora = new Date
       const legado = (await dbReal.doc('continuidade_calendarios_i164/' + ciclo).get()).data()?.ativo === true;
       l.processo = legado ? 'antigo' : 'novo';
       l.estado = cal?.aprovacaoMeses?.[comp]?.status || (prep ? 'preparação' : 'sem preparação');
+      const errado = !prep && ciclosErrados.find(c => c.cliente === slug && c.competencia.slice(5) === comp.slice(5) && c.competencia < comp);
+      if (!legado && errado) { const em = tsIso(errado.documentos?.enviadoEm || errado.criadoEm);
+        add('amarelo', `o documento de ${mesPorExtenso(comp)} foi para ${mesPorExtenso(errado.competencia)}, um mês que já tinha passado (${errado.documentos?.consolidadoEnviado ? 'enviado' : 'incluído'} em ${em ? new Date(em).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '?'} por ${errado.documentos?.enviadoPor || errado.autorNome || '?'})`, `Amanda (reenviar o documento em ${mesPorExtenso(comp)})`); linhas.push(l); continue; }
       if (!legado && !prep) { add('amarelo', 'preparação do mês ainda não incluída', 'Amanda (Planejamento Social Media → incluir o cliente no mês)'); linhas.push(l); continue; }
       if (!legado && prep && !prep.documentos?.consolidadoEnviado) add('amarelo', 'documento consolidado ainda não enviado ao Chris', 'Amanda (enviar o documento do mês)');
       for (const [nome, auth] of Object.entries(atores)) {

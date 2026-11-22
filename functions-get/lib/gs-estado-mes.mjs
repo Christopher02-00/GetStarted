@@ -4,6 +4,12 @@
 // regra. A cópia da raiz (gs-estado-mes.mjs) e a do servidor (functions-get/lib/gs-estado-mes.mjs) são idênticas (verificar_duplicatas).
 export const COMPETENCIA = /^20\d{2}-(0[1-9]|1[0-2])$/;
 export const MESES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+// CP249 (22/11): o mês sempre com o ano por extenso. "2026-01" na tela levou dois documentos de janeiro para janeiro de 2026.
+export function mesPorExtenso(mes) { if (!COMPETENCIA.test(mes || '')) return String(mes || ''); const [a, m] = mes.split('-').map(Number); return MESES_PT[m - 1].toLowerCase() + ' de ' + a; }
+/** Mês corrente no horário de Brasília (AAAA-MM). */
+export function mesAtualBRT(agora = new Date()) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(agora).slice(0, 7); }
+/** Soma n meses a AAAA-MM. */
+export function somarMes(mes, n) { const [a, m] = mes.split('-').map(Number), d = new Date(Date.UTC(a, m - 1 + n, 1)); return d.toISOString().slice(0, 7); }
 export function mesRefDoTexto(valor) {
   const t = String(valor || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const iso = t.match(/\b(20\d{2})[-\/.](0?[1-9]|1[0-2])\b/);

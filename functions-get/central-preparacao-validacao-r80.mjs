@@ -1,3 +1,4 @@
+import {mesPorExtenso,mesAtualBRT,somarMes} from './lib/gs-estado-mes.mjs';
 const mesR80Cp138=v=>typeof v==='string'&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(v);
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
@@ -9,6 +10,14 @@ export const ACOES_CENTRAL_HTTP_R80=Object.freeze(['central_documento_unico_ler_
 export const CAMPOS_REFERENCIA_R80=Object.freeze(['id','empresaOtavio','link','autorPerfil','postadoEm','consultadoEm','ideia','motivo','adaptacao','metricas','comentarios','filtro','selecionada','parecerAmanda','origemColecao','origemId','estadoTriagemCp111']);
 export const MAX_JSON_NORMAL_R80=1024*1024,MAX_JSON_ARQUIVO_R80=6*1024*1024,MAX_ARQUIVO_R80=4*1024*1024,PARTE_R80=700*1024;
 export const mapaR80=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&Object.getPrototypeOf(v)===Object.prototype;
+/* CP249 (22/11, Master Chef e Divina Cantina): o documento de janeiro foi para janeiro de 2026, um mês que já tinha passado, e "sumiu"
+   para o Chris. Enviar (incluir, documento, confirmar, consolidado, referência, lote) só vale do mês passado em diante. Consultar continua igual. */
+export const ACOES_ENVIO_CP249=['incluir','documento','confirmar_documento','enviar_consolidado','referencia','entregar_lote'];
+export function mesDeEnvioCp249(competencia,agora){
+ const atual=mesAtualBRT(agora);if(competencia>=somarMes(atual,-1))return;
+ let certo=competencia;while(certo<atual)certo=somarMes(certo,12);
+ const ext=mesPorExtenso(competencia);exigirCentralR80(false,`${ext[0].toUpperCase()+ext.slice(1)} já passou. Nada foi gravado. Confira o mês dos conteúdos no topo da tela — talvez seja ${mesPorExtenso(certo)}.`);
+}
 export function exigirCentralR80(ok,msg){if(!ok)throw Object.assign(new Error(msg),{code:'central/preparacao'});}
 const e=exigirCentralR80;
 export function chavesR80(v,permitidas,obrigatorias=[]){e(mapaR80(v)&&Object.keys(v).every(k=>permitidas.includes(k))&&obrigatorias.every(k=>Object.hasOwn(v,k)),'Confira os campos desta operação do planejamento.');}

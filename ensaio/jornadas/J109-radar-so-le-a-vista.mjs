@@ -1,6 +1,6 @@
 // J109 — CP254 (22/11/2026, pedido do Chris: "dados e atualizações antigas que pesam e travam o sistema"). O Radar (Gerência → Relatórios →
 // Painel Operacional da Amanda; Resumo Executivo do Chris) recalcula a partir das coleções INTEIRAS de agendamentos, vídeos, postagens e
-// stories (~2.500 documentos; 12 s por recálculo no ensaio com os dados reais). A condição só conferia se o elemento existia: depois de aberto
+// stories (~2.500 documentos) e faz 2 consultas ao servidor a cada recálculo. A condição só conferia se o elemento existia: depois de aberto
 // uma vez, continuava recalculando a cada 60 s, no foco da janela e a cada mudança, em qualquer tela.
 // Esperado: fora da tela do Radar, nenhum recálculo; com o Radar à vista, ele continua se atualizando.
 import { entrarComo, foto, entrarGerencia } from '../lib/navegador.mjs';

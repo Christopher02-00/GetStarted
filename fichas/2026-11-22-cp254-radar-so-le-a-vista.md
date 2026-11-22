@@ -6,8 +6,9 @@ e acaba travando … tem que ser cirúrgico e assertivo". Unidade: L1-a (CP254) 
 Caso medido (ensaio com os dados reais de 22/11, sonda de rede + tempo):
 - O Radar de Perdas (Gerência → Relatórios → Painel Operacional da Amanda; Resumo Executivo do Chris) recalcula a partir de 4 coleções
   inteiras (agendamentos, vídeos, postagens, stories: ~2.500 documentos) e 2 consultas ao servidor (acompanhamentos e demandas do Radar).
-- Para a gestão, as 4 coleções vêm da memória dos ouvintes em tempo real (o Firestore reaproveita o alvo já aberto; a sonda não viu
-  pedido novo ao servidor). O custo é no aparelho: montar e projetar tudo de novo e redesenhar o Radar. Medido: 12 s por recálculo.
+- Para a gestão, as 4 coleções vêm da memória dos ouvintes em tempo real (o Firestore reaproveita o alvo já aberto; a sonda no navegador
+  não viu pedido novo ao servidor: 1 a 484 ms cada). O custo repetido é no aparelho (montar, projetar e redesenhar o Radar) mais as
+  2 consultas ao servidor. Correção: os 12 s vistos antes no ensaio eram lentidão do emulador com 16 mil documentos, não do site no ar.
 - O agendamento roda a cada 60 s, no foco da janela, quando a aba volta a ficar visível e a cada mudança em tempo real.
 - A condição só conferia se o elemento `.radar-i110` EXISTIA. Depois de aberto uma vez, ele fica no DOM (aba escondida) e o recálculo
   continuava em qualquer tela do Escritório, o dia inteiro, para a Amanda e para o Chris.

@@ -4,6 +4,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { entrarComo, foto, abrirMenuSeMovel, escolherMesCentral } from '../lib/navegador.mjs';
+import { chegadaAmanda, chegadaCliente } from '../lib/chegada.mjs';
 export const id = 'J06';
 export const nome = 'Calendário 4.0: preparação (Amanda) → criação (Chris) → revisão/liberação (Amanda) → cliente e filmmaker leem';
 
@@ -97,6 +98,10 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForTimeout(6000);
   }, () => esperar(async () => { const cal = await calendario(); const n = itensMes(cal).filter(i => [TITULO1, TITULO2].includes(i.name)).length; const c = await ciclo(); return n === 2 ? `2 conteúdos salvos no calendário · ciclo revisão ${c?.revisao}` : (cal ? `calendário com ${itensMes(cal).length} itens do mês` : null); }, 25000))) return;
 
+  // 2b. V3: a Amanda RECEBE o calendário para aprovar — aviso do servidor "Calendário para revisar" e revisão idêntica ao que o Chris salvou
+  { const t2 = Date.now(), r = await chegadaAmanda({ amb, nav, erroGrave, ciclo: CICLO, cliente: CLIENTE, mes: MES, titulos: [TITULO1, TITULO2], rotulo: 'J06' });
+    registrar({ jornada: id, caso: '2b Amanda recebe o aviso e a revisão mostra os conteúdos exatamente como o Chris salvou', ok: r.ok, ms: Date.now() - t2, detalhe: r.detalhe }); if (!r.ok) return; }
+
   // 3a. Antes da liberação, o cliente NÃO pode ver o mês (contraprova permanente: o mutante "qualquer mês liberado" cai aqui)
   if (!await passo('3a Cliente não vê o mês antes da liberação', null, async page => {
     await page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
@@ -132,6 +137,10 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     try { await page.getByRole('button', { name: /Lista por semana/ }).click({ timeout: 5000 }); } catch {}
     await page.waitForFunction(t => (document.body.innerText + ' ' + document.body.innerHTML).includes(t), TITULO1, { timeout: 20000 });
   }, async page => { const txt = await page.evaluate(() => document.body.innerText + ' ' + document.body.innerHTML); const lib = /Liberado — o cliente já vê/.test(txt); return lib && txt.includes(TITULO1) && txt.includes(TITULO2) ? 'mês liberado · os 2 títulos aparecem para o cliente' : (lib ? 'liberado, mas títulos não encontrados' : null); })) return;
+
+  // 4b. V3: o cliente vê EXATAMENTE o que a Amanda aprovou (aprovado = calendário = cópia do cliente = tela do cliente, campo por campo)
+  { const t4 = Date.now(), r = await chegadaCliente({ amb, nav, erroGrave, cliente: CLIENTE, nome: NOME, mes: MES, titulos: [TITULO1, TITULO2], token: `tok-${CLIENTE}`, rotulo: 'J06' });
+    registrar({ jornada: id, caso: '4b o cliente vê exatamente o que a Amanda aprovou, campo por campo', ok: r.ok, ms: Date.now() - t4, detalhe: r.detalhe }); }
 
   // 5. Luís vê o calendário do cliente em modo gravação
   await passo('5 Luís vê o calendário em modo gravação', 'Luís', async page => {

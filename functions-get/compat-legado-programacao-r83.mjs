@@ -65,8 +65,11 @@ export function validarProgramacaoCp111(f,acao){
  if(p.modo==='orientacao_amanda')return validarOperacaoProgramacaoI165(f.diretriz,acao);
  if(acao.data===p.dataSugerida&&(!p.horaSugerida||acao.hora===p.horaSugerida))return {permitida:true,excecaoAplicada:false,fonteProgramacaoCp111:p.modo};
  const ex=acao.excecao;
- exigirI165(ex?.autorizada===true&&ex.por==='Amanda'&&typeof ex.motivo==='string'&&ex.motivo.trim()&&ex.revisaoDiretriz===(f.diretriz?.revisao||0)&&ex.assinaturaDiretriz===assinaturaBaseProgramacaoCp111(f)&&ex.proposta===chaveExcecaoI165(acao),'excecao-necessaria','Este compromisso tem data específica. A Amanda precisa decidir esta mudança.');
- return {permitida:true,excecaoAplicada:true,fonteProgramacaoCp111:p.modo};
+ if(ex?.autorizada===true&&ex.por==='Amanda'&&typeof ex.motivo==='string'&&ex.motivo.trim()&&ex.revisaoDiretriz===(f.diretriz?.revisao||0)&&ex.assinaturaDiretriz===assinaturaBaseProgramacaoCp111(f)&&ex.proposta===chaveExcecaoI165(acao))return {permitida:true,excecaoAplicada:true,fonteProgramacaoCp111:p.modo};
+ /* CP269 (23/11/2026, Chris: "isso daí tem que ser livre pra ela … quem decide quando vai ser postado é dependendo da falta de conteúdo";
+    caixa de perguntas: "Livre em tudo"). Revoga a CP235: data fixa do calendário e data de campanha são SUGESTÃO para a Cecília. Ela
+    agenda em outra data sem pedido à Amanda; o que era combinado fica registrado na postagem (agendamentoForaDoCombinadoCp269). */
+ return {permitida:true,excecaoAplicada:false,fonteProgramacaoCp111:p.modo,foraDoCombinadoCp269:{schema:1,modo:p.modo,dataCombinada:p.dataSugerida||'',horaCombinada:p.horaSugerida||''}};
 }
 export function validarAcaoFonteProgramacaoI165(f,acao,ator){
  /* U4 (10/11/2026, decisão do Chris): a Cecília pode retirar da fila, sem publicar, um conteúdo que não vai sair (ex.: vídeo de

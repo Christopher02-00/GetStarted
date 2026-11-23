@@ -142,7 +142,11 @@ export function validarOperacaoProgramacaoI165(diretriz, {acao, data = '', hora 
   if (acao === 'agendar' && dentroDaDiretrizI165(politica,data,hora)) return {permitida:true, excecaoAplicada:false};
   const proposta = chaveExcecaoI165({acao,data,hora,rede});
   // The endpoint must load this immutable decision. Passing client-controlled JSON is not authorization.
-  exigirI165(excecao?.autorizada === true && excecao.por === 'Amanda' && texto(excecao.motivo) && excecao.revisaoDiretriz === diretriz.revisao && excecao.assinaturaDiretriz === assinaturaDiretrizI165(diretriz) && excecao.proposta === proposta, 'excecao-necessaria', 'A Amanda precisa decidir esta mudança específica antes de continuar.');
+  const excecaoValida = excecao?.autorizada === true && excecao.por === 'Amanda' && texto(excecao.motivo) && excecao.revisaoDiretriz === diretriz.revisao && excecao.assinaturaDiretriz === assinaturaDiretrizI165(diretriz) && excecao.proposta === proposta;
+  /* CP269 (23/11/2026, Chris: "Livre em tudo"): agendar fora da orientação da Amanda (data, semana ou prazo) não pede mais exceção.
+     A orientação é sugestão; o que era combinado volta no resultado para ficar registrado na postagem. Retirar continua como antes. */
+  if (acao === 'agendar' && !excecaoValida) return {permitida:true, excecaoAplicada:false, foraDoCombinadoCp269:{schema:1, modo:'orientacao_amanda', dataCombinada: politica.modalidade === 'data' ? String(politica.data || '') : '', horaCombinada: String(politica.hora || ''), semanaCombinada: politica.modalidade === 'semana' ? String(politica.inicioSemana || '') : '', ateCombinado: String(politica.programarAte || '')}};
+  exigirI165(excecaoValida, 'excecao-necessaria', 'A Amanda precisa decidir esta mudança específica antes de continuar.');
   return {permitida:true, excecaoAplicada:true};
 }
 

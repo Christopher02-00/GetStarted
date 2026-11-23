@@ -33,3 +33,13 @@ Atualização (23/11, publicação):
 - J115 caso 5: o pedido da faxina dispara a retenção. No emulador não há Storage, a cópia falha e nada é apagado (ponta a ponta).
 - J114: a contagem é comparada antes/depois pelo carimbo do relatório, porque a faxina de outra jornada pode gravá-lo.
 - Publicação: `apagar_funcao=retencaoRegistrosGetL1`, para remover a função que ficou pela metade.
+
+Atualização CP261c (23/11, 1ª rodada em produção às 07:29 UTC):
+- A cópia recusou: "The specified bucket does not exist". O Storage do projeto nunca foi criado; as Functions de mídia também dependem
+  de um bucket configurado que não está ligado. A trava funcionou: **nada foi apagado** (relatório: copiados 0, apagados 0, com o motivo).
+- Correção: a cópia vai para o próprio Firestore, na coleção `retencao_l1_copias` (só servidor; as rules negam o que não está listado).
+  São blocos de até ~600 KB (o limite do documento é 1 MiB), gravados e confirmados ANTES da exclusão.
+  Os 31 mil registros viram ~20 documentos de cópia, restauráveis a partir do JSON.
+- J115 caso 5: no emulador a cópia agora dá certo de ponta a ponta (pedido da faxina → cópia → exclusão; o registro está na cópia).
+  Caso 6: cópia grande dividida em partes volta inteira.
+- J114: se o script do vigia falhar, a jornada mostra o erro real dele (assim foi achada uma função apagada por engano na troca).

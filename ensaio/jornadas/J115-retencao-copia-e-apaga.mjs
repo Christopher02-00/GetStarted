@@ -5,8 +5,9 @@
 //  2. a cópia traz cada registro apagado, com os dados (datas fiéis), antes da exclusão;
 //  3. se a cópia falhar, nada daquela coleção é apagado e o relatório diz por quê;
 //  4. o limite por rodada é respeitado e a rodada seguinte continua; o relatório fica em sistema/retencao_l1;
-//  5. ligação real: o pedido da faxina (sistema/faxina_cp248_pedido) dispara a função da faxina e, logo depois dela, a retenção. No emulador
-//     não há Storage, então a cópia falha — e, ponta a ponta, nada é apagado e o relatório diz por quê.
+//  5. ligação real: o pedido da faxina (sistema/faxina_cp248_pedido) dispara a função da faxina e, logo depois dela, a retenção: a cópia vai
+//     para retencao_l1_copias (Firestore; o Storage do projeto não existe) e só então o registro velho sai;
+//  6. cópia grande é dividida em partes (limite do documento) e cada parte volta inteira, com os mesmos ids e dados.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { RAIZ } from '../lib/emulador.mjs';
@@ -73,9 +74,20 @@ export async function executar({ amb, seed, registrar }) {
     const ped = await fx.pedirFaxinaSeDevidaCp248(db, { agora: new Date() });
     let rel5 = null; for (let i = 0; i < 90 && !rel5; i++) { await new Promise(r => setTimeout(r, 1000)); const x = (await db.doc('sistema/retencao_l1').get()).data(); if (x && Date.parse(x.em) >= antes - 1000) rel5 = x; } // só a função grava aqui
     const ficou = await existe('log_acessos', 'j115-gatilho-velho'), linhaAcessos = rel5?.linhas?.find(l => l.colecao === 'log_acessos');
-    const coerente = linhaAcessos && (linhaAcessos.erro ? ficou && linhaAcessos.apagados === 0 : !ficou && linhaAcessos.copiados >= 1);
-    registrar({ jornada: id, caso: '5 o pedido da faxina dispara a retenção logo depois; sem cópia (emulador sem Storage), nada é apagado', ok: ped.estado === 'pedida' && !!rel5 && !!coerente, ms: Date.now() - t0,
-      detalhe: `pedido ${ped.estado} · relatório ${rel5 ? 'gravado pela função' : 'NÃO chegou'} · log_acessos: ${linhaAcessos ? (linhaAcessos.erro ? 'cópia falhou → ' + (ficou ? 'nada apagado' : 'APAGOU SEM CÓPIA') : 'copiado ' + linhaAcessos.copiados + ', apagado ' + linhaAcessos.apagados) : '—'}` });
+    const copiasL = (await db.collection("retencao_l1_copias").where("colecao", "==", "log_acessos").get()).docs.map(d => d.data());
+    const naCopia = copiasL.some(c => (c.ids || []).includes('j115-gatilho-velho') && JSON.parse(c.docs).some(x => x.id === 'j115-gatilho-velho' && x.dados?.pessoa === 'Ensaio'));
+    const coerente = linhaAcessos && !linhaAcessos.erro && !ficou && linhaAcessos.copiados >= 1 && naCopia;
+    registrar({ jornada: id, caso: '5 o pedido da faxina dispara a retenção: copia no Firestore e só então apaga', ok: ped.estado === 'pedida' && !!rel5 && !!coerente, ms: Date.now() - t0,
+      detalhe: `pedido ${ped.estado} · relatório ${rel5 ? 'gravado pela função' : 'NÃO chegou'} · log_acessos: ${linhaAcessos ? (linhaAcessos.erro ? 'ERRO: ' + linhaAcessos.erro.slice(0, 80) : 'copiado ' + linhaAcessos.copiados + ', apagado ' + linhaAcessos.apagados) : '—'} · registro ${ficou ? 'AINDA EXISTE' : 'saiu'} · ${naCopia ? 'está na cópia' : 'NÃO ESTÁ NA CÓPIA'}` });
+    // 6) cópia dividida em partes
+    const { criarCopiaFirestoreRetencaoL1 } = await import(pathToFileURL(path.join(RAIZ, 'functions-get/retencao-l1.mjs')).href);
+    const grandes = Array.from({ length: 12 }, (_, i) => ({ id: 'j115-parte-' + i, dados: { texto: 'x'.repeat(3000), n: i } }));
+    const ref6 = await criarCopiaFirestoreRetencaoL1({ db, limiteBytes: 10000 })('ensaio_j115', grandes);
+    const partes = (await db.collection('retencao_l1_copias').where('colecao', '==', 'ensaio_j115').get()).docs.map(d => d.data());
+    const devolvidos = partes.flatMap(c => JSON.parse(c.docs)), inteiros = devolvidos.length === 12 && grandes.every(g => devolvidos.some(x => x.id === g.id && x.dados.n === g.dados.n && x.dados.texto.length === 3000));
+    registrar({ jornada: id, caso: '6 cópia grande é dividida em partes e volta inteira', ok: partes.length > 1 && inteiros && partes.every(c => c.partes === partes.length && c.total === 12), ms: Date.now() - t0,
+      detalhe: `${partes.length} parte(s) · ${devolvidos.length}/12 registros de volta · ${inteiros ? 'dados iguais' : 'DIFERENTES'} · ${ref6}` });
+    for (const d of (await db.collection('retencao_l1_copias').where('colecao', '==', 'ensaio_j115').get()).docs) await d.ref.delete();
     await db.doc('log_acessos/j115-gatilho-velho').delete().catch(() => {});
     for (const [c, k] of docs) await db.doc(c + '/' + k).delete().catch(() => {});
   } catch (e) { registrar({ jornada: id, caso: 'retenção copia e apaga', ok: false, ms: Date.now() - t0, detalhe: String(e).replace(/\s+/g, ' ').slice(0, 300) }); }

@@ -48,8 +48,10 @@ export async function executar({ amb, seed, registrar }) {
     registrar({ jornada: id, caso: '2 nada é gravado nem apagado', ok: intactos && !relatorioGravado, ms: Date.now() - t0,
       detalhe: `${intactos ? 'todos os registros continuam' : 'REGISTRO SUMIU'} · ${relatorioGravado ? 'GRAVOU sistema/retencao_l1' : 'nenhuma gravação'}` });
     // 3) o script do vigia imprime o mesmo
-    const saida = execFileSync(process.execPath, [path.join(RAIZ, '.github/scripts/contar-retencao-l1.mjs'), '--projeto', PROJETO],
-      { env: { ...process.env, FIRESTORE_EMULATOR_HOST: '127.0.0.1:' + amb.portas.firestore, GITHUB_STEP_SUMMARY: '' }, encoding: 'utf8', timeout: 60000 });
+    let saida = '';
+    try { saida = execFileSync(process.execPath, [path.join(RAIZ, '.github/scripts/contar-retencao-l1.mjs'), '--projeto', PROJETO],
+      { env: { ...process.env, FIRESTORE_EMULATOR_HOST: '127.0.0.1:' + amb.portas.firestore, GITHUB_STEP_SUMMARY: '' }, encoding: 'utf8', timeout: 60000 }); }
+    catch (e) { throw Error('script do vigia falhou: ' + String(e.stderr || e.message).split('\n').filter(l => l.trim() && !/MetadataLookupWarning|trace-warnings|^\s+at /.test(l)).slice(-4).join(' | ')); }
     const esperadoTxt = relatorioRetencaoL1(agoraL, 'X').split('\n').filter(l => l.startsWith('| `')).map(l => l.split('|').slice(-4, -1).join('|').trim());
     const linhasScript = saida.split('### Última rodada')[0].split('\n').filter(l => l.startsWith('| `')).map(l => l.split('|').slice(-4, -1).join('|').trim());
     const igual = esperadoTxt.length === 4 && JSON.stringify(esperadoTxt) === JSON.stringify(linhasScript) && /só leitura/.test(saida);

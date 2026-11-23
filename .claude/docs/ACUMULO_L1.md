@@ -18,7 +18,18 @@ Base da medida:
 | Radar de Perdas | Recalculava a cada minuto em qualquer tela (4 coleções, 2 consultas, redesenho) | **CP254** (PR #190) |
 | Saúde das Automações (Chris) | Lê os 15.646 registros (3,4 MB) do servidor a cada abertura | **CP257** (lê só 30 dias) + retenção |
 | Resgate de versões de calendário (Chris) | A busca baixaria as 894 versões (80 MB) para achar as de 1 cliente. Mas com a Central nova ativa (como está no ar), a aba "Resgatar" redireciona para a Central e essa busca não roda para ninguém. | Sem mudança (sem ganho real hoje) |
+| Início do Chris, de sexta a domingo | O Panorama da Semana relia os 116 resumos diários (0,9 MB) a cada minuto com a tela aberta | **CP259** (lê só a semana) |
 | Armazenamento do aparelho | As tentativas de aprovação e de postagem ficam guardadas para sempre, uma por vídeo ou postagem. A lista é relida inteira a cada tela. Se o espaço do navegador encher, o aparelho recusa guardar a próxima tentativa e nada é enviado. O histórico local chegava a 21 cópias e nenhuma tela lê. | **CP258** (saem as confirmadas; histórico ≤ 5) |
+
+Todos os temporizadores do Escritório foram conferidos (8 ao todo):
+- **Corrigidos:** Radar (CP254) e Resumo do Dia do Chris (CP259).
+- **Já estavam corretos:**
+  - Central de Comando: para sozinha fora da tela.
+  - Agenda da equipe: é desmontada ao sair do Início e da agenda.
+  - Aviso do checklist: lê só a pessoa e o dia.
+  - Motor: de hora em hora, a partir da memória.
+  - Acompanhamento de trabalhos da Central: só enquanto há trabalho em andamento.
+  - Mascote: só animação.
 
 ## 2. Dados antigos no servidor (proposta de retenção)
 
@@ -81,6 +92,6 @@ Os avisos continuam no sistema. Para receber no celular, basta seguir o passo de
 
 1. CP254 Radar à vista (PR #190).
 2. CP255 conferir só a demanda tocada.
-3. CP257 Saúde lê só 30 dias (J111 verde) · CP258 aparelho sem acúmulo (J112 6/6 verde). Um PR cada.
+3. CP257 Saúde lê só 30 dias (J111 verde) · CP258 aparelho sem acúmulo (J112 6/6 verde) · CP259 panorama lê só a semana (J113 verde). Um PR cada.
 4. Retenção dos dados (item 2), com ok do Chris: Function de faxina com rodada só de contagem primeiro, depois a exclusão, e conferência pelo vigia.
 5. Proposta 4 (demandas abertas na entrada), depois da semana de produção de janeiro, com ficha própria.

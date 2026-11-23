@@ -1,7 +1,9 @@
 // CP260 (22–23/11/2026, varredura de acúmulo L1). Política ÚNICA de retenção dos registros técnicos que nenhuma tela usa.
 // Fase 1 (CP260): só CONTAGEM, em leitura pura — o vigia diário mostra quanto cada regra pegaria.
 // Fase 2 (CP261, ok nominal do Chris em 23/11 sobre os números de produção: 31.179 registros): exclusão a cada 2 h, na rodada da faxina CP248, com CÓPIA antes —
-// cada registro que sai é gravado num arquivo JSON no Storage (retencao-l1/AAAA-MM-DD/…); se a cópia falhar, nada daquela coleção é apagado.
+// cada registro que sai é copiado ANTES para a coleção `retencao_l1_copias` (blocos JSON de até ~600 KB, só servidor); se a cópia falhar,
+// nada daquela coleção é apagado. (23/11: o Storage do projeto não existe — a 1ª rodada recusou a cópia e não apagou nada; por isso a cópia
+// fica no próprio Firestore.)
 //  - fila_emails: já enviados, ou não enviados com mais de 30 dias (o resumo por e-mail está desligado desde 09/11 — nada enfileira nem
 //    lê; se for religado, a fila recente fica intacta).
 //  - email_throttle: mais de 7 dias (a trava vale 2 h).
@@ -54,7 +56,6 @@ export function relatorioRetencaoL1(linhas, quando) {
     `| **Total** | | | **${soma('total')}** | **${soma('pegaria')}** | **${soma('fica')}** |`].join('\n');
 }
 
-export const BUCKET_RETENCAO_L1 = 'get-started-4956d.firebasestorage.app';
 export const LIMITE_POR_RODADA_RETENCAO_L1 = 6000;
 /** Na rodada da faxina CP248 (a cada 2 h), depois dela: lote menor para caber no tempo da função. */
 export const LIMITE_RODADA_FAXINA_RETENCAO_L1 = 2000;
@@ -99,12 +100,21 @@ export async function aplicarRetencaoL1(db, {agora = new Date(), limitePorRodada
   return relatorio;
 }
 
-/** Cópia no Storage do projeto: retencao-l1/AAAA-MM-DD/<coleção>-<instante>.json (um arquivo por coleção e rodada). */
-export function criarCopiaStorageRetencaoL1({storage, bucket = BUCKET_RETENCAO_L1, agora = () => new Date()} = {}) {
+/** Cópia no próprio Firestore: `retencao_l1_copias/<coleção>__<instante>__<parte>`, blocos de até ~600 KB (o limite do documento é 1 MiB).
+ *  Gravada e confirmada ANTES da exclusão; devolve a lista dos ids das cópias. Nenhuma tela lê esta coleção. */
+export function criarCopiaFirestoreRetencaoL1({db, agora = () => new Date(), limiteBytes = 600000} = {}) {
   return async (colecao, docs) => {
-    const quando = agora(), nome = `retencao-l1/${quando.toISOString().slice(0, 10)}/${colecao}-${quando.getTime()}.json`;
-    await storage.bucket(bucket).file(nome).save(JSON.stringify({schema: 1, colecao, em: quando.toISOString(), total: docs.length, docs}), {contentType: 'application/json', resumable: false});
-    return nome;
+    const quando = agora(), partes = []; let atual = [], tamanho = 0;
+    for (const d of docs) { const t = Buffer.byteLength(JSON.stringify(d)); if (atual.length && tamanho + t > limiteBytes) { partes.push(atual); atual = []; tamanho = 0; } atual.push(d); tamanho += t; }
+    if (atual.length) partes.push(atual);
+    const ids = partes.map((_, i) => `${colecao}__${quando.getTime()}__${String(i + 1).padStart(3, '0')}`);
+    for (let i = 0; i < partes.length; i += 20) {
+      const lote = db.batch();
+      partes.slice(i, i + 20).forEach((docsParte, k) => lote.set(db.doc('retencao_l1_copias/' + ids[i + k]),
+        {schema: 1, colecao, em: quando.toISOString(), parte: i + k + 1, partes: partes.length, total: docs.length, ids: docsParte.map(x => x.id), docs: JSON.stringify(docsParte)}));
+      await lote.commit();
+    }
+    return ids.length === 1 ? ids[0] : `${ids[0]} … ${ids.length} partes`;
   };
 }
 

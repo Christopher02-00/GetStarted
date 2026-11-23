@@ -1,4 +1,4 @@
-import {avisosSemDuplicacaoPublicacaoCp125} from './gs-fila-publicacoes-cp125.mjs?v=ee326ab50c12eedab602b6077386f313e5df03894e9582576e8fa488e025fd59';
+import {avisosSemDuplicacaoPublicacaoCp125} from './gs-fila-publicacoes-cp125.mjs?v=d47eba9ed16611f539da9affc6ce23ce26ec37831b2994034437640efc61d099';
 /* I165 R63: feed independente. Abrir um aviso não conclui a fonte. */
 import {programacaoAtivaI165} from './gs-contexto-operacional-i165.mjs';
 export const ESCOPO_AVISOS_I165='operacional_i165_cp101';

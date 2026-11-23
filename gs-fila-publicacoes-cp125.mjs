@@ -12,6 +12,8 @@ export function linhasPublicacoesCp125(posts,agoraLocal){
   const stokki=p.publicacaoStokki?.versao===1;if(!stokki&&p.status!=='agendado')continue;
   for(const rede of redesPostagemDispensaI118(p)){const a=agendaRedeDispensaI118(p,rede);if(!a||a.retirada||dispensaRetroativaRedeI118(p,rede)||a.conferidaEm)continue;
    if(!stokki&&a.publicadaEm)continue;if(stokki&&!a.data&&!a.publicadaEm)continue;
+   /* CP262 (23/11): plataforma antiga confirmada automaticamente pela faxina (prova automaticaCp262) não pede a conferência de 8 itens. */
+   if(stokki&&a.publicadaEm&&p.provasPublicacaoI165?.[rede]?.automaticaCp262===true)continue;
    const key=chavePublicacaoCp125(p.id,rede);if(seen.has(key))throw Error('A mesma postagem e plataforma apareceram duas vezes.');seen.add(key);
    const dataValida=dataCivilI165(a.data),horaValida=horaCivilI165(a.hora||'00:00'),quando=dataValida&&horaValida?a.data+'T'+(a.hora||'00:00'):'',elegivel=!!a.publicadaEm||!!quando&&quando<=agoraLocal;
    rows.push({key,id:p.id,rede,stokki,cliente:p.cliente||'',clienteNome:p.clienteNome||p.cliente||'Cliente',titulo:p.titulo||'Conteúdo',data:a.data||'',hora:a.hora||'',fase:a.publicadaEm?'conferir_plataforma':!quando?'data_a_conferir':elegivel?'conferir_publicacao':'futura',elegivel,postagem:p});

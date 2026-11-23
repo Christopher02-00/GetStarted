@@ -219,6 +219,65 @@ async function tratarFato(id,entrada={},contArg=null){const c=copia(contexto()),
  async function tratarStokki(id,acaoStokki,assinaturaExibida,cont){const c=copia(contexto()),a=capturarCont(cont);if(c.papel==='Cecília'&&acaoStokki?.tipo==='publicar'&&cont?.dataset?.publicacaoCp125!==id&&cont?.closest?.('[data-publicacao-cp125]')?.dataset.publicacaoCp125!==id&&typeof abrirFilaPublicacao==='function'){await abrirFilaPublicacao(id,acaoStokki.rede);return{tratada:true,resultado:{ok:false,redirecionadaCp125:true}};}try{const habilitada=await ativa();if(contextoChave(c)!==contextoChave(contexto())||!contVigente(a))return{tratada:true,resultado:{ok:false,contextoMudou:true,conferenciaAbertaI165:true}};if(!habilitada&&!fluxo.pendente('stokki',id))return{tratada:false};montar('stokki',id,cont);await fluxo.abrir('stokki',id,{acaoStokki,assinaturaExibida});return{tratada:true,resultado:{ok:false,conferenciaAbertaI165:true}};}catch(e){if(contVigente(a))toast(e.message,'erro');return{tratada:true,resultado:{ok:false,conferenciaAbertaI165:true}};}}
  async function pedirNaRede(id,cont,entrada){return abrirFluxo('solicitar_excecao',id,cont,entrada);}
  async function recuperarNaFilaCp125(tipo,id,cont){if(contexto().papel!=='Cecília'||!['publicacao','stokki'].includes(tipo)||cont?.dataset?.publicacaoCp125!==id||!cont.isConnected)return false;const s=fluxo.estado(tipo,id);if(!pendente(s)||!(tipo==='publicacao'&&s.intencao?.tipo==='publicar'||tipo==='stokki'&&s.intencao?.acaoStokki?.tipo==='publicar'))return false;montar(tipo,id,cont);revelar(tipo,id);return true;}
- return {fluxo,recuperarNaFilaCp125,tratarAgendamento,bloquearWriterCliente,restaurarPendentes,anexarFicha,anexarPedidos,mostrarPedido,anexarHistoricoPedidos,anexarStokki,tratarFato,tratarStokki,pedirNaRede};
+ /* CP266 (23/11/2026, Chris: "aprovar mais de uma coisa de uma vez … tudo de uma semana inteira"; caixa de perguntas: agendamento da
+    Cecília em lote com CONFERÊNCIA ÚNICA no lugar da marcação por postagem). Cada postagem passa pelo MESMO caminho do "Revisar
+    agendamento": preparar_programacao (origem, orientação e assinatura atuais) → proposta (data da lista ou sugerida pela orientação) →
+    programar, uma por uma. O painel mostra a orientação integral de cada uma (htmlOrientacaoIntegralCp110) e UMA marcação vale para as
+    listadas; só então cada proposta recebe orientacaoConferidaCp110. Fica de fora (para a ficha individual): sem data/horário, origem a
+    conferir, tentativa anterior pendente. Data diferente da combinada (CP235) para o lote nela e abre o pedido à Amanda. */
+ async function agendarLoteCp266(itens,painel){
+  const c=copia(contexto()),vigente=()=>contextoChave(c)===contextoChave(contexto());
+  if(!['Cecília','Amanda','Chris'].includes(c.papel)||!Array.isArray(itens)||!painel)return false;
+  if(!await ativa()){toast('O agendamento em lote usa a conferência do servidor, que não está ativa agora. Agende pela ficha de cada postagem.','erro');return false;}
+  estilo();const lista=itens.filter(it=>idFisicoI165(it?.id)).slice(0,30),prontas=[],ficam=[];
+  painel.innerHTML='<section class="i165-post-action" data-lote-agendar-cp266><h3>Agendar várias de uma vez</h3><p role="status">Conferindo a origem e a orientação de cada postagem (0 de '+lista.length+')…</p></section>';
+  for(const it of lista){
+   if(!vigente())return false;
+   const st=painel.querySelector('[role=status]');if(st)st.textContent='Conferindo a origem e a orientação de cada postagem ('+(prontas.length+ficam.length)+' de '+lista.length+')…';
+   if(fluxo.pendente('programar',it.id)){ficam.push({...it,motivo:'tem uma tentativa anterior para conferir na ficha'});continue;}
+   await fluxo.abrir('programar',it.id,{tipo:'agendar',data:it.data||'',hora:it.hora||'',remarcar:false});
+   const e=fluxo.estado('programar',it.id);
+   if(e.estado!=='pronta'){ficam.push({...it,motivo:e.mensagem||'não foi conferida agora'});continue;}
+   if(!dataCivilI165(e.campos.data)||!horaCivilI165(e.campos.hora)){ficam.push({...it,motivo:'escolha a data e o horário na ficha'});continue;}
+   if(precisaConferenciaCp110(e)&&!conferenciaOrientacaoDisponivelCp110(e)){ficam.push({...it,motivo:'a origem desta postagem precisa ser conferida na ficha'});continue;}
+   prontas.push({...it,data:e.campos.data,hora:e.campos.hora,marca:JSON.stringify([e.campos.data,e.campos.hora,e.snapshot?.assinaturaEsperada||''])});
+  }
+  if(!vigente())return false;
+  const dia=v=>String(v).split('-').reverse().join('/');
+  painel.innerHTML='<section class="i165-post-action" data-lote-agendar-cp266><h3>Agendar '+prontas.length+' postage'+(prontas.length===1?'m':'ns')+' de uma vez</h3>'
+   +(prontas.length?'<p>Leia a origem e a orientação de cada uma. Confirme também cada agendamento na plataforma: este registro não publica sozinho.</p>'
+    +prontas.map(p=>'<article data-lote-item-cp266="'+escI165(p.id)+'" style="border-top:1px solid var(--line);padding:10px 0"><label class="i165-ack-cp110"><input type="checkbox" data-lote-incluir-cp266 checked> Incluir no lote</label><b>'+escI165(p.titulo||p.id)+'</b><p><b>Vai agendar:</b> '+escI165(dia(p.data)+' às '+p.hora)+'</p>'+htmlOrientacaoIntegralCp110(fluxo.estado('programar',p.id))+'</article>').join('')
+    +'<label class="i165-ack-cp110"><input type="checkbox" data-lote-ack-cp266>Conferi a origem, a data e o horário de todas as postagens marcadas acima e, quando houver, o prazo e o recado da campanha.</label>'
+    +'<div class="i165-acoes"><button type="button" data-lote-confirmar-cp266>Salvar os agendamentos marcados</button></div>':'<p>Nenhuma postagem está pronta para o lote.</p>')
+   +(ficam.length?'<details open><summary>Ficam para a ficha de cada uma · '+ficam.length+'</summary>'+ficam.map(f=>'<p>'+escI165((f.titulo||f.id)+' — '+f.motivo)+'</p>').join('')+'</details>':'')
+   +'<p role="status"></p></section>';
+  return new Promise(resolve=>{
+   let rodando=false;
+   painel.onclick=async ev=>{
+    const b=ev.target.closest?.('[data-lote-confirmar-cp266]');if(!b||rodando||!vigente())return;
+    if(!painel.querySelector('[data-lote-ack-cp266]')?.checked){toast('Marque a conferência única antes de salvar.','erro');return;}
+    const marcadas=prontas.filter(p=>[...painel.querySelectorAll('[data-lote-item-cp266]')].find(x=>x.dataset.loteItemCp266===p.id)?.querySelector('[data-lote-incluir-cp266]')?.checked);
+    if(!marcadas.length){toast('Marque pelo menos uma postagem para incluir no lote.','erro');return;}
+    rodando=true;b.disabled=true;painel.querySelectorAll('[data-lote-incluir-cp266],[data-lote-ack-cp266]').forEach(x=>{x.disabled=true;});const st=painel.querySelector('section > [role=status]');let feitas=0,parou='';
+    for(const p of marcadas){
+     if(!vigente()){parou='o perfil mudou';break;}
+     if(st)st.textContent='Salvando '+(feitas+1)+' de '+marcadas.length+'…';
+     const e=fluxo.estado('programar',p.id);
+     if(e.estado!=='pronta'||JSON.stringify([e.campos.data,e.campos.hora,e.snapshot?.assinaturaEsperada||''])!==p.marca){parou=(p.titulo||p.id)+' mudou depois da conferência; abra a ficha dela';break;}
+     try{fluxo.editar('programar',p.id,{orientacaoConferidaCp110:true});}catch(err){parou=(p.titulo||p.id)+': '+err.message;break;}
+     const res=await fluxo.confirmar('programar',p.id),f=fluxo.estado('programar',p.id);
+     if(f.estado==='confirmada'){feitas++;const art=[...painel.querySelectorAll('[data-lote-item-cp266]')].find(x=>x.dataset.loteItemCp266===p.id);if(art)art.style.opacity='.5';continue;}
+     if(/A Amanda precisa decidir esta mudan/.test(String(res?.motivo||'')+' '+String(f.mensagem||'')+' '+String(f.erro||''))){
+      parou=(p.titulo||p.id)+': a data é diferente da combinada no calendário — abri o pedido para a Amanda nesta postagem';
+      const cont=alvo(p.id,'fila');if(cont?.isConnected)await abrirFluxo('solicitar_excecao',p.id,cont,{tipo:'agendar',data:f.campos?.data||'',hora:f.campos?.hora||''});
+     }else parou=(p.titulo||p.id)+': '+(f.erro||f.mensagem||res?.motivo||'não foi confirmada; confira na ficha');
+     break;
+    }
+    const msg=parou?feitas+' agendamento(s) salvo(s). Parei em “'+parou+'”. As outras continuam na fila.':feitas+' agendamentos salvos de uma vez.';
+    if(painel.isConnected&&st)st.textContent=msg;toast(msg,parou?'erro':undefined);rodando=false;resolve({feitas,parou});
+   };
+  });
+ }
+ return {fluxo,recuperarNaFilaCp125,tratarAgendamento,agendarLoteCp266,bloquearWriterCliente,restaurarPendentes,anexarFicha,anexarPedidos,mostrarPedido,anexarHistoricoPedidos,anexarStokki,tratarFato,tratarStokki,pedirNaRede};
 
 }

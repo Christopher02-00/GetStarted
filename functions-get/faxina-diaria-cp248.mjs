@@ -2,7 +2,7 @@
 // que são verificações do sistema"; autorizou as opções recomendadas). Faxina do servidor (no agendamento de 5 min já existente, no máximo a cada 2 h), idempotente e reversível:
 //  1. Postagem AGENDADA cuja data passou há 2 dias conta como publicada ("confirmada automaticamente — agendada na plataforma"), pelo MESMO
 //     caminho da confirmação da Cecília (fontes + conferência factual + calendário + vídeo finalizado + demandas do ciclo). Antes disso a
-//     Cecília pode confirmar ou retirar ("não saiu"); depois, "desfazer publicação" continua valendo. Stokki (por plataforma), sem horário
+//     Cecília pode confirmar ou retirar ("não saiu"); depois, "desfazer publicação" continua valendo. Stokki: por plataforma desde 23/11 (CP262). Sem horário
 //     agendado ou com a fonte que o servidor não confere ficam com a Cecília e entram no relatório.
 //  2. Tarefa do sistema concluída pela Amanda esperando uma aprovação que ninguém pode dar fecha (mesma regra da CP245, agora também para o
 //     legado de agosto a novembro).
@@ -16,6 +16,7 @@ import {instanteI165,horarioBrasiliaI165} from './lib/gs-contexto-operacional-i1
 import {cicloFonteAlertaCanonicoV135} from './lib/guardas-agendamento-cp101-i165.mjs';
 import {semAprovadorCp245,fecharSemAprovadorCp245} from './tarefa-sistema-sem-aprovador-cp245.mjs';
 import {sincronizarPostagemVideoExcluidoCp244} from './video-excluido-postagem-cp244.mjs';
+import {redesVencidasStokkiCp262,confirmarRedeStokkiAutomaticaCp262} from './stokki-confirmacao-automatica-cp262.mjs';
 
 export const DIAS_CONFIRMACAO_AUTOMATICA_CP248 = 2;
 export const POR_CP248 = 'Sistema (confirmação automática)';
@@ -98,7 +99,16 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
   for (const s of ordem) {
     if (semTempo()) break;
     const p = { ...s.data(), id: s.id };
-    if (!candidataConfirmacaoCp248(p, agora)) { if (p.publicacaoStokki && dataCivil(p.dataAgendada) && p.dataAgendada <= r.limiteConfirmacao) r.puladas.push({ id: s.id, motivo: 'Stokki: confirmação por plataforma' }); continue; }
+    if (!candidataConfirmacaoCp248(p, agora)) {
+      // CP262: Stokki — a mesma regra, por plataforma (mesmo caminho da confirmação manual; conferência de 8 itens dispensada e marcada)
+      for (const rede of redesVencidasStokkiCp262(p, r.limiteConfirmacao)) {
+        if (semTempo()) break;
+        try { const x = await comLimite(confirmarRedeStokkiAutomaticaCp262(db, s.id, rede, { agora, limite: r.limiteConfirmacao }), limiteItemMs); if (x.acao === 'publicada') r.publicadas.push(s.id + '#' + rede); else if (x.acao === 'pulada') r.puladas.push({ id: s.id + '#' + rede, motivo: x.motivo }); }
+        catch (e) { r.puladas.push({ id: s.id + '#' + rede, motivo: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
+        await progresso();
+      }
+      continue;
+    }
     try { const x = await comLimite(confirmarPublicacaoAutomaticaCp248(db, s.id, { agora }), limiteItemMs); if (x.acao === 'publicada') r.publicadas.push(s.id); else if (x.acao === 'pulada') r.puladas.push({ id: s.id, motivo: x.motivo }); }
     catch (e) { r.puladas.push({ id: s.id, motivo: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
     await progresso();

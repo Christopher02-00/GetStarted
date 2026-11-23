@@ -94,7 +94,8 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   fim('3 tarefa antiga do sistema da Amanda fecha e sai da tela dela', d1?.status === 'aprovada' && d1?.fechamentoSemAprovadorCp245?.schema === 1 && /J102/.test(d1?.provaTexto || '') && aguardando === false && !graves3.length,
     `status ${d1?.status} · marca ${d1?.fechamentoSemAprovadorCp245 ? 'sim' : 'NÃO'} · prova intacta ${/J102/.test(d1?.provaTexto || '') ? 'sim' : 'NÃO'} · na tela ${aguardando ? 'AINDA' : 'não'}${graves3.length ? ' · erro: ' + graves3[0] : ''}`);
   const s1 = await seed.get('postagens', STK);
-  fim('4 Stokki não é confirmada sozinha (fica com a Cecília, no relatório)', s1?.status === 'agendado' && r.puladas.some(x => x.id === STK), `Stokki ${s1?.status} · no relatório ${r.puladas.some(x => x.id === STK) ? 'sim' : 'NÃO'}`);
+  // CP262 (23/11): a Stokki é confirmada por plataforma vencida (J116); sem plataforma agendada vencida, nada é tocado
+  fim('4 Stokki sem plataforma vencida não é tocada', s1?.status === 'agendado' && !r.publicadas.some(x => String(x).startsWith(STK)), `Stokki ${s1?.status} · confirmadas ${r.publicadas.filter(x => String(x).startsWith(STK)).length}`);
   const rel = await seed.get('sistema', 'faxina_cp248');
   fim('5 relatório da rodada em sistema/faxina_cp248', !!rel?.totais && rel.totais.publicadas >= 1 && Array.isArray(rel.publicadas) && rel.publicadas.includes(POST), rel?.totais ? JSON.stringify(rel.totais) : 'sem relatório');
   // 6) o legado de verdade não recebe escrita (em produção nenhum gatilho dispara nas 143 antigas): a faxina sozinha fecha.

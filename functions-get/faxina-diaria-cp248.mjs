@@ -17,6 +17,7 @@ import {cicloFonteAlertaCanonicoV135} from './lib/guardas-agendamento-cp101-i165
 import {semAprovadorCp245,fecharSemAprovadorCp245} from './tarefa-sistema-sem-aprovador-cp245.mjs';
 import {sincronizarPostagemVideoExcluidoCp244} from './video-excluido-postagem-cp244.mjs';
 import {redesVencidasStokkiCp262,confirmarRedeStokkiAutomaticaCp262} from './stokki-confirmacao-automatica-cp262.mjs';
+import {executarEncerramentosCp263} from './encerramento-antigos-cp263.mjs';
 
 export const DIAS_CONFIRMACAO_AUTOMATICA_CP248 = 2;
 export const POR_CP248 = 'Sistema (confirmação automática)';
@@ -70,7 +71,7 @@ const comLimite = (promessa, ms) => { let t; return Promise.race([promessa, new 
 export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelatorio = true, prazoMs = Infinity, limiteItemMs = LIMITE_ITEM_MS_CP248 } = {}) {
   const r = { schema: 1, em: agora.toISOString(), limiteConfirmacao: limiteConfirmacaoCp248(agora), publicadas: [], puladas: [], fechadasSemAprovador: [], postagensEncerradas: [], erros: [], parcial: false };
   const inicio = Date.now(), semTempo = () => { if (Date.now() - inicio > prazoMs) { r.parcial = true; return true; } return false; };
-  const relatorio = (extra = {}) => ({ ...r, puladas: r.puladas.slice(0, 200), atualizadoEm: new Date().toISOString(), totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length }, ...extra });
+  const relatorio = (extra = {}) => ({ ...r, puladas: r.puladas.slice(0, 200), atualizadoEm: new Date().toISOString(), totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, encerradosCp263: (r.encerradosCp263 || []).length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length }, ...extra });
   let feitos = 0; const progresso = async () => { if (gravarRelatorio && ++feitos % 10 === 0) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true })); };
   if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true }));
   // 1) entregas do sistema sem aprovador possível (rápido; vem primeiro para nunca ficar para depois) (CP245, inclusive o legado)
@@ -82,6 +83,9 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
     catch (e) { r.erros.push({ id: s.id, etapa: 'sem_aprovador', erro: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
     await progresso();
   }
+  // 1b) CP263: avisos "esperando você" com a origem encerrada e decisões "pular legenda" de postagem encerrada fecham; e, uma vez, os itens
+  //     antigos que o Chris autorizou encerrar em 23/11
+  if (!semTempo()) { try { const e = await executarEncerramentosCp263(db, { agora, semTempo }); r.encerradosCp263 = e.encerrados; r.erros.push(...e.erros); } catch (e) { r.erros.push({ id: '', etapa: 'encerramentos_cp263', erro: String(e?.message || e).slice(0, 200) }); } }
   // 2) postagens antes da rede com o vídeo na Lixeira (CP244, inclusive o legado)
   const vids = await db.collection('videos_producao').where('excluido', '==', true).get();
   for (const s of vids.docs) {

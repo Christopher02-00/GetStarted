@@ -112,4 +112,4 @@ Retenção dos dados (item 2): contagem de produção em 23/11 deu 45.416 regist
 2. CP255 conferir só a demanda tocada.
 3. CP257 Saúde lê só 30 dias (J111 verde) · CP258 aparelho sem acúmulo (J112 6/6 verde) · CP259 panorama lê só a semana (J113 verde). Um PR cada.
 4. Retenção dos dados (item 2), com ok do Chris: Function de faxina com rodada só de contagem primeiro, depois a exclusão, e conferência pelo vigia.
-5. Proposta 4 (demandas abertas na entrada), depois da semana de produção de janeiro, com ficha própria.
+5. Proposta 4 (demandas abertas na entrada), depois da semana de produção de janeiro — ficha pronta: `fichas/2026-11-23-proposta4-demandas-abertas-na-entrada.md` (P4a anti-repetição no servidor → P4b leitor único de histórico → P4c filtro do ouvinte).

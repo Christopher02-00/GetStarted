@@ -99,6 +99,13 @@ No ar, com prova vermelha e verde de cada um e bateria de 353/353 nas duas telas
 
 Retenção dos dados (item 2): contagem de produção em 23/11 deu 45.416 registros, dos quais 31.179 saem. Ok nominal do Chris dado sobre esses números. CP260 (contagem diária no vigia) e CP261 (rotina a cada 2 h que copia para o Storage e só então apaga).
 
+### Retenção em produção (atualização de 23/11, tarde)
+- 07:29, 09:41 e 11:50 UTC: a cópia ia para o Storage, que **não existe** no projeto → cópia recusada → **nada apagado** (a trava funcionou).
+- CP261c (PR #201, Functions 11:51 UTC): a cópia vai para `retencao_l1_copias` (Firestore, blocos de até ~600 KB), gravada antes de apagar.
+- **14:00 UTC, 1ª rodada com cópia: 6.647 registros copiados e apagados** (fila_emails 2.000, email_throttle 2.000, log_automacoes 2.000,
+  log_acessos 647 — este zerou o que tinha para sair). O restante (~24,6 mil) sai sozinho, 2.000 por coleção a cada 2 h: ~12 h.
+- Conferência diária: vigia da operação, passo "Retenção L1" (contagem e última rodada).
+
 ## 8. Ordem de execução (planejada)
 
 1. CP254 Radar à vista (PR #190).

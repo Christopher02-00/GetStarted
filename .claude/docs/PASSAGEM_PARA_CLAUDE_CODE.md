@@ -307,6 +307,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | AP CP257 (22/11, varredura L1) — Saúde das Automações lia os 15.646 registros a cada abertura | **No ar (22/11, PR #192, merge 6ca54ce; conferido no ar).** Lê só os últimos 30 dias. J111 vermelha (log inteiro; registro de 100 dias lido) → verde. |
 | AQ CP258 (22/11, varredura L1) — tentativas confirmadas ficavam no aparelho para sempre (histórico local só crescia) | **No ar (23/11, PR #193, merge c5b0a79; módulos conferidos no ar byte a byte).** Saem os confirmados com a etapa seguinte feita; histórico ≤ 5. J112 6/6 (vermelha antes); vizinhas J25/J33/J31/J40/J61b 30/30. |
 | AR CP259 (22/11, varredura L1) — Panorama da Semana do Início relia os 116 resumos diários a cada minuto (sexta a domingo) | **No ar (23/11, PR #194, merge 66e5c38; conferido no ar).** Bateria 353/353 (desktop e celular). Lê só os dias da semana. J113 vermelha (todos os resumos) → verde (só a semana; soma igual). |
+| AS CP260 (23/11, retenção L1 — fase 1) — contar, só leitura, o que a retenção pegaria | PR (esta branch). Política única em `functions-get/retencao-l1.mjs` (não importada pelo index: nada publicado). Passo novo no vigia da operação imprime total/sairia/fica. J114 5/5 (vermelha antes). Fase 2 (exclusão com cópia) só com a confirmação do Chris sobre os números. |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

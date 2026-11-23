@@ -49,10 +49,10 @@ export async function executar({ amb, seed, registrar }) {
     const saida = execFileSync(process.execPath, [path.join(RAIZ, '.github/scripts/contar-retencao-l1.mjs'), '--projeto', PROJETO],
       { env: { ...process.env, FIRESTORE_EMULATOR_HOST: '127.0.0.1:' + amb.portas.firestore, GITHUB_STEP_SUMMARY: '' }, encoding: 'utf8', timeout: 60000 });
     const esperadoTxt = relatorioRetencaoL1(agoraL, 'X').split('\n').filter(l => l.startsWith('| `')).map(l => l.split('|').slice(-4, -1).join('|').trim());
-    const linhasScript = saida.split('\n').filter(l => l.startsWith('| `')).map(l => l.split('|').slice(-4, -1).join('|').trim());
-    const igual = esperadoTxt.length === 4 && JSON.stringify(esperadoTxt) === JSON.stringify(linhasScript) && /Nada foi apagado/.test(saida);
+    const linhasScript = saida.split('### Última rodada')[0].split('\n').filter(l => l.startsWith('| `')).map(l => l.split('|').slice(-4, -1).join('|').trim());
+    const igual = esperadoTxt.length === 4 && JSON.stringify(esperadoTxt) === JSON.stringify(linhasScript) && /só leitura/.test(saida);
     registrar({ jornada: id, caso: '3 o script do vigia imprime o relatório com os mesmos números', ok: igual, ms: Date.now() - t0,
-      detalhe: igual ? '4 coleções iguais; "Nada foi apagado" no relatório' : 'script: ' + saida.replace(/\s+/g, ' ').slice(0, 240) });
+      detalhe: igual ? '4 coleções iguais; "só leitura" no relatório' : 'script: ' + saida.replace(/\s+/g, ' ').slice(0, 240) });
     for (const [c, k] of docs) await db.doc(c + '/' + k).delete(); // só os documentos do ensaio
   } catch (e) { registrar({ jornada: id, caso: 'retenção só conta', ok: false, ms: Date.now() - t0, detalhe: String(e).replace(/\s+/g, ' ').slice(0, 300) }); }
 }

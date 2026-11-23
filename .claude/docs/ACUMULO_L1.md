@@ -97,7 +97,7 @@ No ar, com prova vermelha e verde de cada um e bateria de 353/353 nas duas telas
 - CP258: aparelho (PR #193);
 - CP259: panorama (PR #194).
 
-A retenção dos dados (item 2) está pronta e testada no emulador, com o modo só de contagem e o modo de exclusão, e aguarda o ok nominal do Chris.
+Retenção dos dados (item 2): contagem de produção em 23/11 deu 45.416 registros, dos quais 31.179 saem. Ok nominal do Chris dado sobre esses números. CP260 (contagem diária no vigia) e CP261 (rotina a cada 2 h que copia para o Storage e só então apaga).
 
 ## 8. Ordem de execução (planejada)
 

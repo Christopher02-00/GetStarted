@@ -47915,6 +47915,7 @@ Observações do cliente: ${l.observacoes||'—'}`;
       return;
     }
     if(!cont.children.length)cont.innerHTML = '<div class="card"><div class="desc">Carregando...</div></div>';
+    if(!cont.__loteEntregasCp264){cont.__loteEntregasCp264=true;cont.addEventListener('click',e=>{const b=e.target.closest?.('[data-aprovar-lote-cp264]');if(b&&cont.contains(b))void aprovarEntregasDaPessoaCp264(b.dataset.aprovarLoteCp264);});}
     const filaInternaCp123=atualizarFilaInternaCp123();
     await providenciasUiCp140().atualizarProjecao();
     await carregarTodasDemandas();
@@ -48125,11 +48126,49 @@ Observações do cliente: ${l.observacoes||'—'}`;
   /* Uma implementação da faixa, usada pelo ramo "tudo" e pelo ramo
      "só demandas". Copiar isto em dois lugares é como nascem as duas
      verdades que passei a semana desmontando. */
+  /* CP264 (23/11/2026, Chris: "aprovar mais de uma coisa de uma vez, por exemplo aprovar tudo de uma semana inteira").
+     Em 30 dias a Amanda aprovou 283 entregas, uma por uma (até 33 num dia). Entrega COMUM = a que o "✔ Aprovar" de cada
+     cartão aprova direto, sem abrir outro fluxo: documento (CP138/CP154), aviso de espera (CP149), entrada do portal
+     (CP150/I54 → CP112), providência (CP140), pedido de exclusão (I112) e qualquer tipo especial continuam um por um.
+     O lote chama o MESMO aprovarDemanda (transação que relê e compara a assinatura da entrega), item a item. */
+  function entregaComumCp264(d, pessoa){
+    return !!d && !d.excluido && !d.tipoEspecial && podeConferirEntregaCp149(d, pessoa) && aprovacaoEhDe(d, pessoa)
+      && !ehIdDemandaEntradaCp150(d.id) && !ehIdProvidenciaCp140(d.id) && !/^entrada_i54_/.test(String(d.id||''))
+      && !ehAvisoExclusaoI112(d) && !revisorEntregaOrganizacaoCp154(d) && !exigeCaminhoDocumentoCp138(d) && !d.entregaDocumentoCp138;
+  }
+  let __loteEntregasCp264 = false;
+  const __vistoEntregasCp264 = new Map(); // id → assinatura da entrega como foi desenhada na tela (o lote só aprova o que foi lido)
+  async function aprovarEntregasDaPessoaCp264(nome){
+    if(__loteEntregasCp264) return mostrarToast('Já estou aprovando um grupo. Aguarde o resumo.');
+    const pessoa = usuarioAtual;
+    const itens = todasDemandas.filter(d => d.destinatario === nome && d.status === 'concluida_aguardando_aprovacao' && entregaComumCp264(d, pessoa));
+    if(itens.length < 2) return mostrarToast('Não há mais de uma entrega comum de ' + nomeEquipeI126(nome) + ' para aprovar junto. Use o botão de cada cartão.', 'erro');
+    const lista = itens.slice(0, 40).map(d => '• ' + String(nomeDaDemanda(d).completo || d.titulo || d.id).slice(0, 90)).join('\n') + (itens.length > 40 ? '\n• … e mais ' + (itens.length - 40) : '');
+    if(!confirm('Aprovar de uma vez as ' + itens.length + ' entregas de ' + nomeEquipeI126(nome) + '?\n\n' + lista + '\n\nCada uma é conferida de novo no servidor. A que tiver mudado depois de você ler fica na lista para abrir.')) return;
+    __loteEntregasCp264 = true; let aprovadas = 0; const ficaram = [];
+    try{
+      for(const d0 of itens){
+        if(usuarioAtual !== pessoa) break;
+        const d = todasDemandas.find(x => x.id === d0.id), nomeItem = '“' + String(nomeDaDemanda(d0).completo || d0.titulo || '').slice(0, 60) + '”';
+        if(!d || __vistoEntregasCp264.get(d0.id) !== assinaturaEntregaI161(d)){ ficaram.push(nomeItem + ' mudou depois de você ler'); continue; }
+        const o = {loteCp264: true};
+        if(await aprovarDemanda(d0.id, o) === true) aprovadas++; else ficaram.push(nomeItem + ': ' + (o.motivoCp264 || 'não confirmada'));
+      }
+    } finally { __loteEntregasCp264 = false; }
+    if(usuarioAtual !== pessoa) return;
+    mostrarToast(ficaram.length
+      ? '✔ ' + aprovadas + ' aprovada(s) de ' + nomeEquipeI126(nome) + '. ' + ficaram.length + ' ficou(aram) na lista para abrir: ' + ficaram[0]
+      : '✔ ' + aprovadas + ' entregas de ' + nomeEquipeI126(nome) + ' aprovadas de uma vez — saíram da lista.', ficaram.length ? 'erro' : undefined);
+    carregarGerencia();
+    atualizarFilaAprovacao();
+  }
   function htmlFaixaAprovacao(nome, itens, daPessoa){
       const dono = itens.every(daPessoa);
+      const comunsCp264 = itens.filter(d => entregaComumCp264(d, usuarioAtual)).length;
+      itens.forEach(d => __vistoEntregasCp264.set(d.id, assinaturaEntregaI161(d)));
       return `<div class="faixaDem aberta" data-faixa="aprov_${esc(nome)}">
         <div class="faixaHead" onclick="toggleFaixaDemandas(this)">${esc(nomeEquipeI126(nome))} <span class="qtd">(${itens.length})</span>${dono?'':'<span class="qtd" style="opacity:.6;"> · não é sua</span>'}<span class="seta">▾</span></div>
-        <div class="faixaItens">${itens.map(d => `
+        <div class="faixaItens">${comunsCp264 >= 2 ? `<div class="btnrow" style="margin:4px 0 10px;align-items:center;gap:10px;flex-wrap:wrap;"><button class="btn green" style="width:auto;padding:7px 16px;font-size:12px;" data-aprovar-lote-cp264="${escAttr(nome)}">✔ Aprovar as ${comunsCp264} entregas de ${esc(nomeEquipeI126(nome))}</button><span class="meta" style="opacity:.75;">Leia os relatos abaixo antes. Documento, ajuste e aviso continuam um por um.</span></div>` : ''}${itens.map(d => `
           <div class="item" style="border-left:3px solid var(--yellow);">
             <div class="top" style="cursor:pointer;" onclick="abrirDemandaGerencia('${d.id}')"><div class="nome">${tituloDemanda(d)}</div><span class="selo pendente">entregue</span></div>
             ${d.provaTexto ? '<div class="meta" style="margin-top:6px;background:var(--deep);padding:9px 11px;border-radius:7px;">"'+esc(d.provaTexto)+'"</div>' : '<div class="meta" style="margin-top:6px;opacity:.7;">Sem relato — abre pra ver.</div>'}
@@ -51922,7 +51961,10 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     const chave=chaveDecisaoDocumentoCp154(ctx,id);globalThis.sessionStorage.setItem(chave+':historico:'+t.operacao,JSON.stringify(t));globalThis.sessionStorage.removeItem(chave);const atual={id,...snap.data()},i=todasDemandas.findIndex(d=>d.id===id);if(i>=0)todasDemandas[i]=atual;else todasDemandas.push(atual);return abrirDemandaGerencia(id);
   };
 
-  window.aprovarDemanda = async function(id){
+  window.aprovarDemanda = async function(id,opcoesCp264){
+    // CP264: no lote só entra entrega comum; qualquer outra volta sem abrir fluxo nenhum (fica na lista)
+    const loteCp264=opcoesCp264?.loteCp264===true;
+    if(loteCp264&&!entregaComumCp264(todasDemandas.find(x=>x.id===id),usuarioAtual)){opcoesCp264.motivoCp264='não é uma entrega comum';return false;}
     if(ehIdDemandaEntradaCp150(id))return abrirDemandaEntradaCp150(id);
     if(ehAvisoEsperaCp149(todasDemandas.find(d=>d.id===id)))return abrirAvisoEsperaCp149(id);
     if(ehIdProvidenciaCp140(id))return providenciasUiCp140().abrir(id);
@@ -51939,7 +51981,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     if(exigeCaminhoDocumentoCp138(d)||documentalCp138){if(d.status==='aprovada'){mostrarToast('Esta entrega já foi aprovada. O histórico não será reaberto.');return false;}if(!d.entregaDocumentoCp138&&(documentalCp138||!relatoLiberadoCp138(d))){const modal=document.getElementById('modalConteudo');orientarEntregaDocumentoCp138(d,modal);mostrarToast('Confira a entrega do documento antes de aprovar. Outra atividade precisa ser escolhida explicitamente.','erro');return false;}}
     const assinaturaI161=assinaturaEntregaI161(d),pessoaI161=usuarioAtual,uidI161=auth.currentUser?.uid,sessaoI161=sessaoServicoManual();
     try{await runTransaction(db,async tx=>{const ref=doc(db,'demandas',id),snap=await tx.get(ref);if(!snap.exists()||snap.data().excluido||assinaturaEntregaI161(snap.data())!==assinaturaI161||usuarioAtual!==pessoaI161||auth.currentUser?.uid!==uidI161||sessaoServicoManual()!==sessaoI161)throw Error('A entrega ou o perfil mudou. Atualize a fila e confira novamente.');if((revisorEsperaAprovacaoCp149(d)||revisorEsperaAprovacaoCp149(snap.data()))&&(jsonEstavel(d.bloqueio??null)!==jsonEstavel(snap.data().bloqueio??null)||revisorEsperaAprovacaoCp149(snap.data())!==pessoaI161))throw Error('A pessoa chamada para conferir mudou. Abra a mesma entrega novamente.');if((revisorDocumentoCp154||revisorEntregaOrganizacaoCp154({id,...snap.data()}))&&revisorEntregaOrganizacaoCp154({id,...snap.data()})!==pessoaI161)throw Error('A pessoa responsável pela revisão documental mudou. Reabra a mesma entrega.');if(exigeCaminhoDocumentoCp138(snap.data())||snap.data().entregaDocumentoCp138){if(assinaturaRevisaoDocumentoCp138(snap.data())!==assinaturaDocumentoCp138)throw Error('O documento ou a origem mudou depois de abrir esta revisão. Confira a mesma demanda novamente.');if(!mesmaIdentidadeDocumentoCp138(contextoDocumentoCp138))throw Error('O perfil mudou durante a revisão.');await conferirReciboDocumentoDemandaCp138(tx,id,snap.data());if(!mesmaIdentidadeDocumentoCp138(contextoDocumentoCp138))throw Error('O perfil mudou durante a revisão.');}tx.update(ref,{status:'aprovada',aprovadoEm:new Date().toISOString(),aprovadoPor:pessoaI161||'?'});});}
-    catch(err){mostrarToast(err.message||'Não consegui confirmar a aprovação. Consulte a demanda antes de repetir.','erro');return false;}
+    catch(err){if(loteCp264){opcoesCp264.motivoCp264=err.message||'não confirmada no servidor';return false;}mostrarToast(err.message||'Não consegui confirmar a aprovação. Consulte a demanda antes de repetir.','erro');return false;}
     if(!mesmaIdentidadeEsperaCp149(contextoSincroniaCp149))return true;
     registrarHistorico('demandas', id, 'Aprovada por ' + (usuarioAtual||'?'));
     /* 27/07/2026 — quem entregou nunca sabia que tinha sido aprovado. */
@@ -51962,6 +52004,7 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     }
     await sincronizarAvisosEsperaCp149(id,contextoSincroniaCp149);
     if(!mesmaIdentidadeEsperaCp149(contextoSincroniaCp149))return true;
+    if(loteCp264)return true; // CP264: o lote redesenha e avisa uma vez só, no fim
     fecharModal();
     mostrarToast('✔ Aprovado — saiu da lista de ' + nomeEquipeI126(d?.destinatario || 'quem entregou') + '.');
     carregarGerencia();

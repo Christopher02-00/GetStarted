@@ -72,6 +72,8 @@ export async function programarI165(db,auth,dados,{agora=new Date(),conferirExte
   if(input.tipo==='agendar'&&guard.midiaArquivoI166?.aplicavel)patch.midiaAgendadaI166={...guard.midiaArquivoI166.snapshot,agendadoEm:em,agendadoPor:ator.real};
   if(externo?.uploadPostI166)patch.uploadPostI166=externo.uploadPostI166;
   if(input.tipo==='agendar')patch.ultimaConferenciaAgendamentoCp110={...guard.conferenciaOrientacaoCp110,operacaoId:input.operacaoId};
+  // CP269: agendar fora da data combinada é livre para a Cecília; o que era combinado fica registrado (null quando dentro do combinado).
+  if(input.tipo==='agendar')patch.agendamentoForaDoCombinadoCp269=guard.resultado.foraDoCombinadoCp269?{...guard.resultado.foraDoCombinadoCp269,data:input.data,hora:input.hora,por:ator.real,em}:null;
   // All reads ended above; quality/client/caption data are not rewritten by scheduling.
   const pr=db.doc('postagens/'+p.id);tx.update(pr,patch);
   if(usaCal){if(cs.exists)tx.update(cr,{items,updatedAt:em});else tx.set(cr,{...cal,items,updatedAt:em});}

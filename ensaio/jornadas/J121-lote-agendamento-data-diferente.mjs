@@ -1,9 +1,9 @@
-// J121 — CP266 + CP235 (23/11/2026). No agendamento em lote da Cecília, uma postagem cujo conteúdo do calendário tem data específica e
-// recebe outra data é decisão da Amanda (CP235, J88). Esperado: o lote salva a anterior (data livre), PARA na de data marcada sem
-// agendá-la, abre na postagem o "Pedir uma mudança para a Amanda" com a data e o horário escolhidos e diz no resumo onde parou.
+// J121 — CP266 + CP269 (23/11/2026). No agendamento em lote da Cecília, uma das postagens tem data específica no calendário e recebe
+// outra data. Até a CP269 isso era decisão da Amanda (CP235) e o lote parava; agora (Chris: "Livre em tudo") a data do calendário é
+// sugestão. Esperado: o lote salva as duas; a de data marcada guarda o que era combinado; nenhum pedido à Amanda é aberto.
 import { entrarComo, foto } from '../lib/navegador.mjs';
 export const id = 'J121';
-export const nome = 'Agendamento em lote: a postagem com data marcada no calendário para o lote e abre o pedido à Amanda';
+export const nome = 'Agendamento em lote: a postagem com data marcada no calendário também salva, com o registro do combinado (CP269)';
 const CLIENTE = 'hitech', MES = '2027-10';
 const esperar = async (fn, ms = 20000) => { const f = Date.now() + ms; while (Date.now() < f) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1000)); } return null; };
 const CASOS = [
@@ -43,15 +43,16 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.evaluate(() => window.fecharModal?.());
     const pedido = await esperar(async () => page.evaluate(() => { const h = [...document.querySelectorAll('h2,h3,h4')].find(x => /Pedir uma mudança para a Amanda/.test(x.textContent) && x.offsetParent);
       if (!h) return null; let box = h.parentElement; while (box && !box.querySelector('input[type=date]')) box = box.parentElement;
-      return { datas: [...(box?.querySelectorAll('input[type=date]') || [])].map(i => i.value), horas: [...(box?.querySelectorAll('input[type=time]') || [])].map(i => i.value), card: box?.closest('[data-postagem-i165]')?.dataset.postagemI165 || '' }; }), 20000);
+      return { datas: [...(box?.querySelectorAll('input[type=date]') || [])].map(i => i.value), horas: [...(box?.querySelectorAll('input[type=time]') || [])].map(i => i.value), card: box?.closest('[data-postagem-i165]')?.dataset.postagemI165 || '' }; }), 3000);
     await foto(page, 'J121-pedido');
     const livre = await seed.get('postagens', 'video_j121-livre'), marcada = await seed.get('postagens', 'video_j121-marcada');
     const graves = erros.filter(erroGrave);
-    fim('1 o lote salva a de data livre e para na de data marcada, sem agendá-la', noPainel.includes('video_j121-livre') && noPainel.includes('video_j121-marcada') && livre?.status === 'agendado' && livre?.dataAgendada === `${MES}-14`
-      && marcada?.status === 'aguardando_agendamento' && /Parei em .*Data marcada \(J121\).*pedido para a Amanda/.test(resumo),
-      `no painel: ${noPainel.filter(x => /j121/.test(x)).length} do ensaio · livre → ${livre?.status} ${livre?.dataAgendada || ''} · marcada → ${marcada?.status} · resumo: “${resumo.slice(0, 220)}”`);
-    fim('2 abre na postagem o pedido à Amanda com a data e o horário escolhidos', !!pedido && pedido.datas.includes(`${MES}-23`) && pedido.horas.includes('12:00') && !graves.length,
-      pedido ? `pedido aberto (cartão ${pedido.card || '?'}) · ${pedido.datas.join('/')} ${pedido.horas.join('/')}` : 'pedido NÃO aberto' + (graves.length ? ' · ' + graves[0].slice(0, 200) : ''));
+    const reg = marcada?.agendamentoForaDoCombinadoCp269;
+    fim('1 o lote salva as duas, inclusive a de data marcada, sem parar', noPainel.includes('video_j121-livre') && noPainel.includes('video_j121-marcada') && livre?.status === 'agendado' && livre?.dataAgendada === `${MES}-14`
+      && marcada?.status === 'agendado' && marcada?.dataAgendada === `${MES}-23` && /^2 agendamentos salvos de uma vez/.test(resumo) && !livre?.agendamentoForaDoCombinadoCp269,
+      `livre → ${livre?.status} ${livre?.dataAgendada || ''} · marcada → ${marcada?.status} ${marcada?.dataAgendada || ''} · resumo: “${resumo.slice(0, 160)}”`);
+    fim('2 a de data marcada guarda o combinado e nenhum pedido à Amanda é aberto', reg?.modo === 'compromisso_calendario' && reg.dataCombinada === `${MES}-20` && reg.data === `${MES}-23` && !pedido && !graves.length,
+      `registro ${reg ? reg.modo + ': combinado ' + reg.dataCombinada + ' → agendado ' + reg.data : 'AUSENTE'} · pedido à Amanda ${pedido ? 'ABERTO' : 'não abriu'}` + (graves.length ? ' · ' + graves[0].slice(0, 200) : ''));
   } catch (e) { await foto(page, 'J121-falha').catch(() => {}); fim('lote com data marcada', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }
   finally { await fechar(); }
   for (const c of CASOS) { const x = await seed.get('postagens', 'video_' + c.vid); if (x) { const { id: _i, ...d } = x; await seed.set('postagens', 'video_' + c.vid, { ...d, excluido: true }); } }

@@ -88,7 +88,18 @@ Os avisos continuam no sistema. Para receber no celular, basta seguir o passo de
 - Por isso, o "conserto do cache depois de gravar" (CP256) foi **descartado**: o ganho seria de milissegundos e o risco não compensa.
 - Os 12 s por recálculo do Radar vistos no ensaio eram lentidão do emulador, não do site no ar.
 
-## 7. Ordem de execução
+## 7. Situação em 23/11
+
+No ar, com prova vermelha e verde de cada um e bateria de 353/353 nas duas telas (desktop e celular):
+- CP254: Radar (PR #190);
+- CP255: demanda tocada (PR #191);
+- CP257: Saúde (PR #192);
+- CP258: aparelho (PR #193);
+- CP259: panorama (PR #194).
+
+A retenção dos dados (item 2) está pronta e testada no emulador, com o modo só de contagem e o modo de exclusão, e aguarda o ok nominal do Chris.
+
+## 8. Ordem de execução (planejada)
 
 1. CP254 Radar à vista (PR #190).
 2. CP255 conferir só a demanda tocada.

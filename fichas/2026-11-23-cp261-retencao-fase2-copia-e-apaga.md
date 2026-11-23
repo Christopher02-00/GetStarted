@@ -24,3 +24,12 @@ Testes:
 - Bateria inteira no CI.
 - Depois da publicação: o vigia mostra as rodadas e a contagem caindo até perto de zero (cerca de 3 rodadas, ~6 h).
 Risco residual: o Storage do projeto passa a guardar as cópias (≈ 10 MB no total). Uma limpeza das cópias antigas pode ser decidida depois.
+
+Atualização (23/11, publicação):
+- A 1ª publicação falhou só na função agendada nova `retencaoRegistrosGetL1`: "Failed to set the IAM Policy". A conta do workflow tem
+  Cloud Functions Developer e não define o invoker. As demais funções foram atualizadas e nada da retenção rodou.
+- Correção: sem função nova. A retenção roda na rodada da faxina CP248 (`faxinaOperacaoGetCp248`, a cada 2 h), depois dela
+  e só se a faxina terminou em menos de 5 min, com no máximo 2.000 por coleção. Protegida por try/catch: nunca derruba a faxina.
+- J115 caso 5: o pedido da faxina dispara a retenção. No emulador não há Storage, a cópia falha e nada é apagado (ponta a ponta).
+- J114: a contagem é comparada antes/depois pelo carimbo do relatório, porque a faxina de outra jornada pode gravá-lo.
+- Publicação: `apagar_funcao=retencaoRegistrosGetL1`, para remover a função que ficou pela metade.

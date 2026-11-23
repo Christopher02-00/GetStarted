@@ -16,6 +16,8 @@ export async function executar({ amb, seed, registrar }) {
   // linha de base: o que já existe no ensaio
   const { contarRetencaoL1, relatorioRetencaoL1 } = await import(pathToFileURL(path.join(RAIZ, 'functions-get/retencao-l1.mjs')).href);
   try {
+    await amb.aguardarFunctionsOciosas?.(); // a faxina de outra jornada pode estar gravando o relatório da retenção agora
+    const relAntes = await db.doc('sistema/retencao_l1').get(), carimbo = d => d.exists ? d.updateTime.toMillis() : 0;
     const base = Object.fromEntries((await contarRetencaoL1(db)).map(l => [l.colecao, l]));
     const docs = [
       ['fila_emails', 'j114-enviado-novo', { enviado: true, criadoEm: ts(1) }, true],
@@ -42,7 +44,7 @@ export async function executar({ amb, seed, registrar }) {
       detalhe: difs.length ? 'DIFERENÇAS: ' + difs.join('; ') : agoraL.map(l => `${l.colecao} ${l.pegaria}/${l.total}`).join(' · ') });
     // 2) nada gravado nem apagado
     const intactos = (await Promise.all(docs.map(([c, k]) => db.doc(c + '/' + k).get()))).every(s => s.exists);
-    const relatorioGravado = (await db.doc('sistema/retencao_l1').get()).exists;
+    const relatorioGravado = carimbo(await db.doc('sistema/retencao_l1').get()) !== carimbo(relAntes); // a contagem não grava
     registrar({ jornada: id, caso: '2 nada é gravado nem apagado', ok: intactos && !relatorioGravado, ms: Date.now() - t0,
       detalhe: `${intactos ? 'todos os registros continuam' : 'REGISTRO SUMIU'} · ${relatorioGravado ? 'GRAVOU sistema/retencao_l1' : 'nenhuma gravação'}` });
     // 3) o script do vigia imprime o mesmo

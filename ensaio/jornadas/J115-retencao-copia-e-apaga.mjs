@@ -4,7 +4,9 @@
 //     ficam os recentes, a fila não enviada recente e o registro sem data;
 //  2. a cópia traz cada registro apagado, com os dados (datas fiéis), antes da exclusão;
 //  3. se a cópia falhar, nada daquela coleção é apagado e o relatório diz por quê;
-//  4. o limite por rodada é respeitado e a rodada seguinte continua; o relatório fica em sistema/retencao_l1.
+//  4. o limite por rodada é respeitado e a rodada seguinte continua; o relatório fica em sistema/retencao_l1;
+//  5. ligação real: o pedido da faxina (sistema/faxina_cp248_pedido) dispara a função da faxina e, logo depois dela, a retenção. No emulador
+//     não há Storage, então a cópia falha — e, ponta a ponta, nada é apagado e o relatório diz por quê.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { RAIZ } from '../lib/emulador.mjs';
@@ -60,6 +62,21 @@ export async function executar({ amb, seed, registrar }) {
     const gravado = (await db.doc('sistema/retencao_l1').get()).data();
     registrar({ jornada: id, caso: '4 limite por rodada respeitado, a rodada seguinte continua e o relatório fica gravado', ok: l1.apagados === 3 && l1.limiteAtingido && resto === 2 && l2.apagados === 2 && gravado?.linhas?.length === 4, ms: Date.now() - t0,
       detalhe: `rodada 1: ${l1.apagados} (limite ${l1.limiteAtingido ? 'atingido' : 'não'}) · restavam ${resto} · rodada 2: ${l2.apagados} · relatório ${gravado ? 'gravado' : 'AUSENTE'}` });
+    // 5) ligação real pela função da faxina (gatilho do emulador)
+    await seed.set('log_acessos', 'j115-gatilho-velho', { quando: ts(200).toISOString(), pessoa: 'Ensaio' });
+    await amb.aguardarFunctionsOciosas?.();
+    await db.doc('sistema/faxina_cp248_pedido').delete().catch(() => {}); await db.doc('sistema/retencao_l1').delete().catch(() => {}); // estado limpo
+    await amb.aguardarFunctionsOciosas?.();
+    const antes = Date.now();
+    await db.doc('sistema/faxina_cp248').set({ em: new Date(Date.now() - 3 * 3600e3).toISOString(), parcial: false, emAndamento: false, totais: {} });
+    const fx = await import(pathToFileURL(path.join(RAIZ, 'functions-get/faxina-diaria-cp248.mjs')).href);
+    const ped = await fx.pedirFaxinaSeDevidaCp248(db, { agora: new Date() });
+    let rel5 = null; for (let i = 0; i < 90 && !rel5; i++) { await new Promise(r => setTimeout(r, 1000)); const x = (await db.doc('sistema/retencao_l1').get()).data(); if (x && Date.parse(x.em) >= antes - 1000) rel5 = x; } // só a função grava aqui
+    const ficou = await existe('log_acessos', 'j115-gatilho-velho'), linhaAcessos = rel5?.linhas?.find(l => l.colecao === 'log_acessos');
+    const coerente = linhaAcessos && (linhaAcessos.erro ? ficou && linhaAcessos.apagados === 0 : !ficou && linhaAcessos.copiados >= 1);
+    registrar({ jornada: id, caso: '5 o pedido da faxina dispara a retenção logo depois; sem cópia (emulador sem Storage), nada é apagado', ok: ped.estado === 'pedida' && !!rel5 && !!coerente, ms: Date.now() - t0,
+      detalhe: `pedido ${ped.estado} · relatório ${rel5 ? 'gravado pela função' : 'NÃO chegou'} · log_acessos: ${linhaAcessos ? (linhaAcessos.erro ? 'cópia falhou → ' + (ficou ? 'nada apagado' : 'APAGOU SEM CÓPIA') : 'copiado ' + linhaAcessos.copiados + ', apagado ' + linhaAcessos.apagados) : '—'}` });
+    await db.doc('log_acessos/j115-gatilho-velho').delete().catch(() => {});
     for (const [c, k] of docs) await db.doc(c + '/' + k).delete().catch(() => {});
   } catch (e) { registrar({ jornada: id, caso: 'retenção copia e apaga', ok: false, ms: Date.now() - t0, detalhe: String(e).replace(/\s+/g, ' ').slice(0, 300) }); }
 }

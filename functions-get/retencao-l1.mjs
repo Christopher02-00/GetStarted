@@ -1,6 +1,6 @@
 // CP260 (22–23/11/2026, varredura de acúmulo L1). Política ÚNICA de retenção dos registros técnicos que nenhuma tela usa.
 // Fase 1 (CP260): só CONTAGEM, em leitura pura — o vigia diário mostra quanto cada regra pegaria.
-// Fase 2 (CP261, ok nominal do Chris em 23/11 sobre os números de produção: 31.179 registros): exclusão diária com CÓPIA antes —
+// Fase 2 (CP261, ok nominal do Chris em 23/11 sobre os números de produção: 31.179 registros): exclusão a cada 2 h, na rodada da faxina CP248, com CÓPIA antes —
 // cada registro que sai é gravado num arquivo JSON no Storage (retencao-l1/AAAA-MM-DD/…); se a cópia falhar, nada daquela coleção é apagado.
 //  - fila_emails: já enviados, ou não enviados com mais de 30 dias (o resumo por e-mail está desligado desde 09/11 — nada enfileira nem
 //    lê; se for religado, a fila recente fica intacta).
@@ -56,6 +56,8 @@ export function relatorioRetencaoL1(linhas, quando) {
 
 export const BUCKET_RETENCAO_L1 = 'get-started-4956d.firebasestorage.app';
 export const LIMITE_POR_RODADA_RETENCAO_L1 = 6000;
+/** Na rodada da faxina CP248 (a cada 2 h), depois dela: lote menor para caber no tempo da função. */
+export const LIMITE_RODADA_FAXINA_RETENCAO_L1 = 2000;
 
 /** JSON fiel do documento (Timestamp → {__ts}, referência → {__ref}), para a cópia poder ser restaurada. */
 export function paraJsonRetencaoL1(v) {

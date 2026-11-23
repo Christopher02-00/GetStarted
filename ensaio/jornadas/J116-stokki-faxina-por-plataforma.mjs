@@ -25,6 +25,11 @@ const hojeISO = () => passadoSP().data;
 
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
+  // caso 5: postagem da Stokki com uma plataforma vencida há 5 dias e outra futura — criada já no início (sem disputa de travas no emulador)
+  const STK2 = 'j116-stokki-faxina', d5 = new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10), fut = new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
+  const rv = () => ({ data: '', hora: '', retirada: false, publicadaEm: '', publicadaPor: '', url: '', checks: [], conferidaEm: '', conferidaPor: '' });
+  await seed.set('postagens', STK2, { cliente: 'stokki', clienteNome: 'Stokki', titulo: 'Stokki — J116 faxina', status: 'agendado', dataAgendada: d5, horaAgendada: '10:00', excluido: false, criadoEm: new Date(),
+    publicacaoStokki: { versao: 1, revisao: 1, selecionadas: ['instagram', 'linkedin'], redes: { instagram: { ...rv(), data: d5, hora: '10:00' }, linkedin: { ...rv(), data: fut, hora: '10:00' } } } });
   await seed.set('clientes_config', 'stokki', { modoAprovacaoCliente: 'manual', prazoTacitaHorasUteis: 24, whatsappCobranca: '', excluido: false, clienteInativo: false, tipoEntrega: 'postagem_completa' });
   const d = new Date(Date.now() - 6 * 86400000), dia = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   await seed.set('videos_producao', VID, { cliente: 'stokki', clienteNome: 'Stokki', titulo: 'Ensaio J116 confirmação automática', status: 'aguardando_edicao', data: dia, editorAtribuido: '', excluido: false });
@@ -141,10 +146,6 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const x4 = await cp.confirmarRedeStokkiAutomaticaCp262(db, post.id, 'tiktok', { limite: hoje }), p4 = await postagem();
     fim('4 repetir não muda nada', x4.acao === 'nada' && JSON.stringify(p4.publicacaoStokki) === JSON.stringify(p3.publicacaoStokki), `ação ${x4.acao}`);
     // 5) ligação pela faxina: plataforma vencida há 5 dias é tentada; a futura não
-    const STK2 = 'j116-stokki-faxina', d5 = new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10), fut = new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
-    const rv = () => ({ data: '', hora: '', retirada: false, publicadaEm: '', publicadaPor: '', url: '', checks: [], conferidaEm: '', conferidaPor: '' });
-    await seed.set('postagens', STK2, { cliente: 'stokki', clienteNome: 'Stokki', titulo: 'Stokki — J116 faxina', status: 'agendado', dataAgendada: d5, horaAgendada: '10:00', excluido: false, criadoEm: new Date(),
-      publicacaoStokki: { versao: 1, revisao: 1, selecionadas: ['instagram', 'linkedin'], redes: { instagram: { ...rv(), data: d5, hora: '10:00' }, linkedin: { ...rv(), data: fut, hora: '10:00' } } } });
     const fx = await import(pathToFileURL(path.join(RAIZ, 'functions-get/faxina-diaria-cp248.mjs')).href);
     const r5 = await fx.executarFaxinaCp248(db, { gravarRelatorio: false });
     const tentou = [...r5.publicadas, ...r5.puladas.map(x => x.id)].filter(x => String(x).startsWith(STK2 + '#'));

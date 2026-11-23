@@ -2,16 +2,19 @@
 import {exigirCentralR80 as e,chavesR80,textoR80} from './central-preparacao-validacao-r80.mjs';
 export const TIPO_ADICAO_CP142='adicao_cp142';
 export const CAMPOS_ADICAO_CP142=Object.freeze(['day','fmt','stage','name','ref','referenciaDispensada','desc','legenda','obs','preparacaoGravacao']);
+/* CP268 (23/11/2026, Chris: "se vc recomenda … eu aprovo"): em mês com conteúdo de legenda por plataforma, a peça adicional nasce com as
+   quatro legendas por plataforma (opcionais no contrato; o registro, criado no início, decide se as tem). Mês só com a legenda principal: igual. */
+export const REDES_ADICAO_CP268=Object.freeze(['legendaInstagram','legendaTiktok','legendaYoutube','legendaLinkedin']);
 export const adicaoCp142=r=>r?.tipoAjuste===TIPO_ADICAO_CP142;
 export const idAdicionalCp142=id=>/^adicional_cp142_[a-f0-9]{32}$/.test(id||'');
 export function validarConteudoAdicaoCp142(v,mes){
- chavesR80(v,CAMPOS_ADICAO_CP142,CAMPOS_ADICAO_CP142);
+ chavesR80(v,[...CAMPOS_ADICAO_CP142,...REDES_ADICAO_CP268],CAMPOS_ADICAO_CP142);
  e(Number.isInteger(v.day)&&v.day>=1&&v.day<=(mes?new Date(Number(mes.slice(0,4)),Number(mes.slice(5)),0).getDate():31),'Confira o dia da peça adicional neste mês.');
  e(typeof v.referenciaDispensada==='boolean','Confirme se esta peça dispensa uma referência externa.');
- for(const k of CAMPOS_ADICAO_CP142.filter(k=>!['day','referenciaDispensada'].includes(k)))textoR80(v[k],['desc','legenda'].includes(k)?30000:['obs','preparacaoGravacao'].includes(k)?10000:2000,k);
+ for(const k of [...CAMPOS_ADICAO_CP142,...REDES_ADICAO_CP268.filter(k=>Object.hasOwn(v,k))].filter(k=>!['day','referenciaDispensada'].includes(k)))textoR80(v[k],['desc','legenda',...REDES_ADICAO_CP268].includes(k)?30000:['obs','preparacaoGravacao'].includes(k)?10000:2000,k);
  e(!!v.fmt.trim()&&!!v.stage.trim(),'Informe o formato e a etapa da peça adicional.');return v;
 }
-export function conteudoInicialAdicaoCp142(){return{day:1,fmt:'Reel',stage:'topo',name:'',ref:'',referenciaDispensada:false,desc:'',legenda:'',obs:'',preparacaoGravacao:''};}
+export function conteudoInicialAdicaoCp142(redes=false){return{day:1,fmt:'Reel',stage:'topo',name:'',ref:'',referenciaDispensada:false,desc:'',legenda:'',obs:'',preparacaoGravacao:'',...(redes?Object.fromEntries(REDES_ADICAO_CP268.map(k=>[k,''])):{})};}
 // CP208: a inclusão vale para a continuidade antiga e para o mês liberado do processo novo (ciclo sem modo).
 const cicloAceitaAdicaoCp208=c=>c?.modo==='continuar_legado'||c?.modo===undefined;
 export function baseAdicionalCp142(c,itemId){e(cicloAceitaAdicaoCp208(c)&&idAdicionalCp142(itemId),'Esta inclusão pertence ao mês legado e a um novo ID reservado.');return{itemId,mes:c.competencia,...conteudoInicialAdicaoCp142()};}

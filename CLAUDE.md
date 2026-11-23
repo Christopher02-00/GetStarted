@@ -8,7 +8,7 @@ Leia nesta ordem, antes de qualquer mudança:
 ## Processo obrigatório (skills em `.claude/skills/`)
 - **get-arvore-do-pedido** — todo pedido vira unidades + árvore de impacto + 1 ficha por unidade, antes de tocar código.
 - **get-mudanca-segura** — uma unidade = uma branch = um PR; menor diff na raiz; sem globais novos; PR em 5 blocos (Entendimento / Alterações / Provas de validação / Riscos-pendências / Próximo passo).
-- **get-prova-de-jornada** — `node ensaio/rodar.mjs` verde (hoje 398/398) antes de todo merge — no Mac as jornadas da unidade + dependências + contraprova vermelha, a bateria inteira (desktop e celular) no CI do PR (`ensaio/README.md` regra 9); `--movel` quando mexer em interface; bug novo vira jornada nova, vermelha antes e verde depois.
+- **get-prova-de-jornada** — `node ensaio/rodar.mjs` verde (hoje 406/406: 219 + 187 por modo) antes de todo merge — no Mac as jornadas da unidade + dependências + contraprova vermelha, a bateria inteira (desktop e celular) no CI do PR (`ensaio/README.md` regra 9); `--movel` quando mexer em interface; bug novo vira jornada nova, vermelha antes e verde depois.
 - **get-publicacao-e-rollback** — CI verde → merge → conferir no ar (`https://get-started.agency`) → atualizar docs. Rollback = `git revert`.
 - **get-guardiao-operacao** — todo dia e depois de toda publicação: ler a checagem prévia dos calendários (`prevoo-calendarios.yml`, 07:31), o vigia da operação (`vigia-operacao.yml`, Raio-X com 26 regras) e o da liberação. Vermelho = estado sem saída: corrigir o CAMINHO (servidor, idempotente, reversível), provar vermelho/verde e virar regra nova do Raio-X. O dado antigo só muda com ok do Chris (`.github/raio-x-conhecidos.json` até lá). Mapa dos caminhos: `.claude/docs/MAPA_DA_OPERACAO.md`.
 

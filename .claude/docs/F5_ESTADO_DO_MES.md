@@ -16,7 +16,7 @@ sem fechar os antigos, e telas diferentes calculam o estado do mês cada uma do 
   - **outubro de 2026 a janeiro de 2027: 100% iguais**;
   - divergem só em meses passados: em 12 casos de agosto o escritório diz "rascunho" e o cliente "liberado"; no caso VIP 2026-09 a leitura crua dá "arquivado" e a efetiva "liberado".
   - Risco **latente**: a próxima mudança numa cópia faz as outras discordarem num mês vivo.
-- **Campo antigo** `aprovacaoInterna`: existe em 24 calendários, mas só em meses até 2026-09 ou em documentos sem mês. Nenhum mês vivo depende dele.
+- **Campo antigo** `aprovacaoInterna`: existe em 24 calendários (27 em 23/11: o cadastro de cliente novo também o cria, sem mês — ver ficha U6), mas só em meses até 2026-09 ou em documentos sem mês. Nenhum mês vivo depende dele.
 
 ## Unidades (uma por PR, nesta ordem)
 | # | Unidade | Tipo | Mudança de comportamento |
@@ -36,6 +36,10 @@ Decisão do Chris (23/11, caixa de perguntas): **preparar agora, publicar depois
 - U2 e U3: **medidas** com o export só leitura de 23/11 (`TZ=America/Sao_Paulo node ferramentas/f5_comparar_estado_mes.mjs <exportacao>/calendarios.json`):
   escritório × módulo 1.353 comparações / 36 diferenças, todas em 2026-08 (0 em meses vivos); link do cliente × módulo 0 diferenças.
   Fichas: `fichas/2026-11-23-f5-u2-escritorio-usa-modulo.md`, `fichas/2026-11-23-f5-u3-link-do-cliente-usa-modulo.md`.
+- U4 **medida** (24/11, `ferramentas/f5_comparar_servidor_u4.mjs`): editor I172 × módulo 0 diferenças em meses vivos hoje; outubro diverge a partir de
+  30/11 e novembro a partir de 30/12 (o editor do servidor segue "liberado" no que a tela já mostra "arquivado"); as 3 cópias de `mesDoItem` 0 diferenças.
+- U5 **medida** (24/11, `ferramentas/f5_comparar_pedido_aberto_u5.mjs`): as 5 cópias de "pedido do cliente aberto" concordam nos meses vivos de hoje;
+  na tabela-verdade 13 de 24 casos discordam (ex.: Amanda devolveu o pedido — caso CP237) → a U5a decide uma resposta por caso antes de trocar chamadores.
 - U4, U5, U6: **inventário pronto** (abaixo) e fichas escritas (`fichas/2026-11-23-f5-u4-…`, `…-u5-…`, `…-u6-…`).
 - Nenhum código do site mudou nesta preparação. Cada unidade sai num PR próprio depois de janeiro; U4–U6 mexem em Functions → ok nominal do Chris.
 

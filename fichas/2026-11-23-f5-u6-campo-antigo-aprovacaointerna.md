@@ -9,7 +9,8 @@ depende dele. Mesmo assim o servidor ainda ESPELHA a marca nele, com dois crité
 - I172:141/153/154 (enviar/devolver/publicar) espelham quando `usaLegado(cal, mes)`.
 - 4º escritor (achado 24/11 no export): o cadastro de cliente mensalista (`modelarClienteMensalistaUnificado`, escritorio.html ~27871) cria
   o calendário novo com `aprovacaoInterna:{status:'rascunho'}` SEM mês — por isso o campo passou de 24 para 27 calendários (Zeiss Araucária,
-  Thiago Vale, Gessyka Vale, 17–18/11). É inofensivo (sem mês, `aprovacaoCompativel` ignora; 0 calendários com o campo em mês vivo),
+  Thiago Vale, Gessyka Vale, 17–18/11). É inofensivo: sem mapa por mês, `aprovacaoCompativel` devolve esse "rascunho" — o estado certo de calendário novo — até a primeira marca
+  em `aprovacaoMeses`, que passa a valer (0 calendários com o campo em mês vivo);
   mas a U6 deixa de criá-lo também.
 Leitores do campo: `aprovacaoCompativel` (módulo), `estado()` do I172 (U4a), `marcaPublicacaoI92`, `gs-aprovacoes-calendarios-i148:9`,
 CP200:58–62, I68:100–107, cópias de `mesDoItem` (guardas Stokki/agendamento).

@@ -108,6 +108,11 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       const t = await toasts(page);
       await foto(page, 'J128-luis-avulso-mensalista');
       fim('6 avulso de mensalista: aviso "abra a sessão" e envio recusado sem marcar conteúdo extra', aviso && depois === antes && /abra a sessão/.test(t), `aviso ${aviso} · vídeos ${antes}→${depois} · ${t}`);
+      // 6b. o botão do aviso leva à sessão já com o cliente escolhido
+      await page.locator('#avisoMensalistaCp273 button').click();
+      const leva = await page.waitForFunction(() => document.getElementById('clienteSessaoCp273')?.value === 'mochi', null, { timeout: 25000 }).then(() => true).catch(() => false);
+      await foto(page, 'J128-luis-aviso-leva-a-sessao');
+      fim('6b o botão do aviso abre "Abrir sessão" com o cliente já escolhido', leva, leva ? 'Mochi escolhida no bloco da sessão' : 'não levou à sessão');
     });
   } catch (e) { fim('filmmaker abre a sessão', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }
 }

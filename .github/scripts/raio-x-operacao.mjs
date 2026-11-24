@@ -9,10 +9,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { postagemDecidivelCp272, situacaoPostagemCp272 } from '../../functions-get/lib/gs-solicitacoes-orfas-cp272.mjs';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const COLECOES_RAIO_X = ['usuarios_equipe', 'demandas', 'videos_producao', 'postagens', 'calendarios', 'calendarios_cliente', 'revisoes_ajustes_cp112',
-  'calendarios_ajustes_internos_cp123', 'avisos_do_cliente', 'notificacoes_operacionais_i165', 'notificacoes_dispositivos_i165', 'planejamento_social_i155'];
+  'calendarios_ajustes_internos_cp123', 'avisos_do_cliente', 'notificacoes_operacionais_i165', 'notificacoes_dispositivos_i165', 'planejamento_social_i155', 'programacao_solicitacoes_i165'];
 export const EDITORES_RAIO_X = ['Helo', 'João Victor'];
 const GESTAO = ['Chris', 'Amanda'];
 const POST_FINAL = ['cancelada_manual', 'cancelada_video_trafego', 'arquivada_sem_postagem', 'postado', 'finalizado'];
@@ -120,6 +121,9 @@ export function raioXOperacao(dados, hoje = new Date().toISOString().slice(0, 10
   // D5 (só com os dados reais): a conferência do próprio servidor (fontesPostagemTxI165) recusa a postagem → na fila ela aparece como
   // "não pôde ser conferido" e a Cecília não consegue programar/confirmar pelo caminho normal (CP247).
   for (const x of Array.isArray(dados.__naoConferidas) ? dados.__naoConferidas : []) add('vermelho', 'D5 postagem que o servidor não consegue conferir', x.id, `${x.cliente} · ${x.status} · “${curto(x.titulo, 50)}” — ${curto(x.motivo, 110)}`, 'conferência técnica (identidade da postagem)');
+
+  // D6 (CP272): pedido de mudança à Amanda pendente com a postagem fora da operação — a decisão recusa (conferirFonte); a faxina fecha em até 2 h
+  for (const x of L('programacao_solicitacoes_i165')) { if (x.estado !== 'pendente') continue; const p = postPorId.get(x.postagemId); if (!postagemDecidivelCp272(p)) add('amarelo', 'D6 pedido de mudança à Amanda que ninguém consegue decidir (postagem fora da operação)', x.__id, `${x.cliente || '?'} · postagem ${situacaoPostagemCp272(p)} · pedido de ${String(x.em || '').slice(0, 10)}`, 'faxina do servidor (CP272, até 2 h)'); }
 
   // F — o que vem do cliente chega a alguém (desde a conversão I54 com vínculo, 11/09/2026)
   for (const a of L('avisos_do_cliente')) {

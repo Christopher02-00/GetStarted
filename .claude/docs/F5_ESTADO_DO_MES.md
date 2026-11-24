@@ -38,6 +38,8 @@ Decisão do Chris (23/11, caixa de perguntas): **preparar agora, publicar depois
   Fichas: `fichas/2026-11-23-f5-u2-escritorio-usa-modulo.md`, `fichas/2026-11-23-f5-u3-link-do-cliente-usa-modulo.md`.
 - U4 **medida** (24/11, `ferramentas/f5_comparar_servidor_u4.mjs`): editor I172 × módulo 0 diferenças em meses vivos hoje; outubro diverge a partir de
   30/11 e novembro a partir de 30/12 (o editor do servidor segue "liberado" no que a tela já mostra "arquivado"); as 3 cópias de `mesDoItem` 0 diferenças.
+- U5 **medida** (24/11, `ferramentas/f5_comparar_pedido_aberto_u5.mjs`): as 5 cópias de "pedido do cliente aberto" concordam nos meses vivos de hoje;
+  na tabela-verdade 13 de 24 casos discordam (ex.: Amanda devolveu o pedido — caso CP237) → a U5a decide uma resposta por caso antes de trocar chamadores.
 - U4, U5, U6: **inventário pronto** (abaixo) e fichas escritas (`fichas/2026-11-23-f5-u4-…`, `…-u5-…`, `…-u6-…`).
 - Nenhum código do site mudou nesta preparação. Cada unidade sai num PR próprio depois de janeiro; U4–U6 mexem em Functions → ok nominal do Chris.
 

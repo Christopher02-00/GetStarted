@@ -14,6 +14,19 @@ Condições escritas mais de uma vez: "pedido do cliente aberto" (5 versões: cp
 "marca publicada" (7 lugares), "prova do retrato" (8 lugares), "cadeia de base I155" (3), "escopo CP115/CP216" (2), "conjunto em revisão" (7).
 Foram exatamente essas cópias que divergiram nos incidentes de novembro (CP215, CP233, CP237, CP238, CP241).
 
+Medição (24/11, `node ferramentas/f5_comparar_pedido_aberto_u5.mjs <exportacao>/calendarios.json`; a ferramenta para com erro se uma
+das 5 cópias mudar de texto):
+- dados reais de 23/11: 102 marcas de mês, 4 em `ajuste_interno`; as 5 cópias **concordam em todos os meses vivos** (só Zeiss 2026-08,
+  pedido antigo sem operação, discorda);
+- tabela-verdade (24 casos possíveis): **13 discordam**. Os que importam para a U5a (decidir UMA resposta antes de trocar chamadores):
+  · Amanda devolveu o pedido (por Amanda + operação + retrato — o caso CP237 da Stokki): CP123/CP112 dizem "pedido aberto"; CP115 e o
+    aviso ao cliente (CP205) dizem que não (o cliente recebe "em preparação pela equipe");
+  · pedido sem retrato (publicação antiga): só a reliberação CP112:119 e o CP205 veem pedido;
+  · marca por Chris com operação: só o processo novo CP112:161 vê pedido;
+  · pedido antigo sem operação: só o CP205 vê pedido.
+  Parte disso é intencional (CP115 é a correção individual, só do cliente; CP205 é o texto do aviso) — a U5a escreve qual é a regra de cada
+  caso e as primitivas recebem o "para quê" (liberar, corrigir, avisar) em vez de cada um reescrever a condição.
+
 Proposta de fronteira única (sem código ainda) — módulo `functions-get/lib/gs-liberacao-mes.mjs`:
 `decisaoLiberacaoMes(c, cal, {ajustesCp112, internosCp123, ator, agora})` → `{origem ('legado'|'i155'|'estrategico'), estado (efetivo),
 marca (crua), publicacao:{conferida, retrato, prova, motivo}, pedidoClienteAberto, caminho ('revisao'|'reliberacao'|null),

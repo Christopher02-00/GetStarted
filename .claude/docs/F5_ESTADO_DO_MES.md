@@ -16,7 +16,7 @@ sem fechar os antigos, e telas diferentes calculam o estado do mês cada uma do 
   - **outubro de 2026 a janeiro de 2027: 100% iguais**;
   - divergem só em meses passados: em 12 casos de agosto o escritório diz "rascunho" e o cliente "liberado"; no caso VIP 2026-09 a leitura crua dá "arquivado" e a efetiva "liberado".
   - Risco **latente**: a próxima mudança numa cópia faz as outras discordarem num mês vivo.
-- **Campo antigo** `aprovacaoInterna`: existe em 24 calendários, mas só em meses até 2026-09 ou em documentos sem mês. Nenhum mês vivo depende dele.
+- **Campo antigo** `aprovacaoInterna`: existe em 24 calendários (27 em 23/11: o cadastro de cliente novo também o cria, sem mês — ver ficha U6), mas só em meses até 2026-09 ou em documentos sem mês. Nenhum mês vivo depende dele.
 
 ## Unidades (uma por PR, nesta ordem)
 | # | Unidade | Tipo | Mudança de comportamento |

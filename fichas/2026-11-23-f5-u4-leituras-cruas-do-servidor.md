@@ -26,6 +26,15 @@ situação do ciclo I155:66–76, CP109:95/149/249, CP155:22–25/117, CP123:220
 provas de publicação (CP112:127, CP123:73/94/100, CP129:42, CP115:24), recibo I148:17–19, presença de mês (agenda/processo I164),
 CP193 de idempotência, CP155:64–66 (data de autoridade).
 
+Medição (24/11, export só leitura de 23/11, `TZ=America/Sao_Paulo node ferramentas/f5_comparar_servidor_u4.mjs <exportacao>/calendarios.json`):
+- U4a `estado()` do I172 × módulo, 1.353 comparações: **hoje (ref 23/11) 0 diferenças em meses vivos** (só 12 × 2026-08 e o VIP 2026-09).
+  Com o calendário andando: **a partir de 30/11, outubro (18 calendários)** e **a partir de 30/12, novembro (25)** ficam "liberado" no editor
+  do servidor e "arquivado" no módulo (= o que o escritório e o cliente já mostram). É a divergência latente que a U4a fecha.
+- U4c `mesDoItemCalendario` das 3 guardas × `mesDoItem` do módulo: 1.547 itens, **0 diferenças** → troca segura.
+Efeito da U4a para a equipe (avisar o Chris antes de publicar): mês arquivado automaticamente deixa de aceitar no servidor o que hoje só
+"liberado" aceita (ex.: ajuste interno CP267, pedido do cliente CP193). A saída já existe: "reabrir por 30 dias" no escritório (`reabertoAte`,
+escritorio.html ~49811) — depois de reaberto, o módulo volta a dar "liberado".
+
 Mudança (quando publicar), em 3 PRs pequenos dentro da U4:
 - U4a: `estado()` do I172 passa a ser `estadoDoMes` do módulo (o resto do editor herda); prova: comparação nos dados reais de
   `estado()` antigo × módulo para todos os ciclos ativos (ferramenta a criar no mesmo molde de `ferramentas/f5_comparar_estado_mes.mjs`);

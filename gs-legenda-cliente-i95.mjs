@@ -1,5 +1,5 @@
 import {legendaUtilizavelI79} from './gs-legenda-qualidade-i79.mjs?v=3894f00ee572c762d75e28e54163c8fbf97128ee4465634f03070d28251a11cd';
-import {eventos} from './stokki-publicacao.mjs?v=74904e5e908d6c2e4a6c8b2bafac17c513efd59bd014d9e0205db7d5ddbb3569';
+import {eventos} from './stokki-publicacao.mjs?v=28da7965851c765fca040dbb62d48a90a50b326df7259b6c14758429349f5962';
 
 // Projeção de leitura. Não injeta texto operacional no calendário editorial.
 const campos=[['legenda','Legenda da publicação'],['legendaInstagram','Legenda · Instagram'],['legendaTiktok','Legenda · TikTok'],['legendaYoutube','Legenda · YouTube'],['legendaLinkedin','Legenda · LinkedIn']];

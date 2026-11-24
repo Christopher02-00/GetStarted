@@ -52,6 +52,8 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.selectOption('#videoCliente', SLUG);
     await page.fill('#videoData', hoje);
     await page.fill('#videoNomesPrincipais', 'Vídeo');
+    // CP273 (24/11): avulso de mensalista pelo filmmaker manda abrir a sessão; aqui o caso é o avulso marcado como conteúdo extra
+    await page.waitForFunction(() => !document.getElementById('avisoMensalistaCp273')?.hidden, null, { timeout: 15000 }); await page.check('#avulsoExtraCp273');
     await page.locator('#btnLancarVideos').scrollIntoViewIfNeeded(); await page.click('#btnLancarVideos');
     const dialogo = page.locator('dialog#identificarEnvioI106'); await dialogo.waitFor({ timeout: 15000 });
     const s0 = dialogo.locator('section[data-linha="0"]');

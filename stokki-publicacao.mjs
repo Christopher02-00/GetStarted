@@ -168,13 +168,18 @@ export function eventos(posts){
   }
   return out.sort((a,b)=>(a.data+a.hora).localeCompare(b.data+b.hora));
 }
+// CP270 (24/11): plataforma confirmada pelo Sistema (CP262, prova automaticaCp262) não pede a conferência de 8 itens — a MESMA regra da
+// fila "Publicações para conferir" (gs-fila-publicacoes-cp125.mjs). Antes o painel continuava pedindo e o vídeo postado nunca saía da lista.
+export const conferenciaDispensadaCp270=(p,id)=>!!p?.publicacaoStokki?.redes?.[id]?.publicadaEm&&p?.provasPublicacaoI165?.[id]?.automaticaCp262===true;
+// Plataforma terminada: retirada, conferida, dispensada pela CP262 ou com cobrança retroativa dispensada (I118).
+const redeTerminadaCp270=(p,id,r)=>!!(r?.retirada||r?.conferidaEm||conferenciaDispensadaCp270(p,id)||dispensaRetroativaRedeI118(p,id));
 export function pendencias(posts,agora=horarioBrasilia()){
   const out=[];
   for(const p of posts){
     if(!usaFluxo(p)||p.excluido===true||!['aguardando_agendamento','agendado','postado'].includes(p.status))continue;
     const s=validarPlano(p);
     for(const id of s.selecionadas){const r=s.redes[id],d=REDES.find(x=>x.id===id);
-      if(r.retirada||r.conferidaEm)continue;
+      if(r.retirada||r.conferidaEm||conferenciaDispensadaCp270(p,id))continue;
       const tipo=r.publicadaEm?'conferir':!r.data?'agendar':`${r.data}T${r.hora}`<=agora?'confirmar':'';
       if(tipo&&!(['confirmar','conferir'].includes(tipo)&&dispensaRetroativaRedeI118(p,id)))out.push({id:p.id,rede:id,tipo,titulo:p.titulo||'Vídeo',nome:d.nome});
     }
@@ -233,14 +238,14 @@ export function criarOperacao(api){
     const s=p.publicacaoStokki,d=REDES.find(x=>x.id===r),v=s.redes[r],dispensa=dispensaRetroativaRedeI118(p,r);
     const a=(tipo,texto)=>`<button type="button" class="btn secondary" data-stokki-acao="${tipo}" style="width:auto">${texto}</button>`;
     return `<section data-stokki-rede="${r}" style="border:1px solid var(--line,#777);border-radius:10px;padding:14px;margin:12px 0;min-width:0">
-      ${badge(d)} <b>${v.retirada?'Retirada do plano':dispensa?'Cobrança retroativa dispensada':v.conferidaEm?'Conferida por '+esc(v.conferidaPor):v.publicadaEm?'Publicação confirmada — conferir':v.data?'Agendada':'Aguardando agendamento'}</b>
+      ${badge(d)} <b>${v.retirada?'Retirada do plano':dispensa?'Cobrança retroativa dispensada':v.conferidaEm?'Conferida por '+esc(v.conferidaPor):conferenciaDispensadaCp270(p,r)?'Publicada pelo Sistema — conferência dispensada':v.publicadaEm?'Publicação confirmada — conferir':v.data?'Agendada':'Aguardando agendamento'}</b>
       ${!v.retirada&&!legendaExternaAprovadaI79(p)&&!legendaUtilizavelI79(p[d.campo])?'<p style="color:var(--yellow)">Legenda pendente com o Chris · o agendamento pode ser registrado.</p>':''}<details><summary>Legenda / correção manual</summary><textarea data-stokki-legenda maxlength="20000" style="width:100%;min-height:100px">${esc(p[d.campo]||'')}</textarea><button type="button" data-stokki-copiar>Copiar legenda</button>${!v.retirada?a('corrigir_legenda','Salvar legenda corrigida'):''}<p>Corrigir aqui registra o texto usado na rede. Se já publicou, ajuste também na plataforma; a conferência será reaberta.</p></details>
       ${dispensa?`<p>Dispensa administrativa em ${esc(dispensa.em)} por ${esc(dispensa.por)}. Agendamento original: ${esc(v.data)} às ${esc(v.hora)}. Esta dispensa não confirma publicação nem os oito itens de qualidade.</p>`:''}
       ${v.retirada?a('restaurar','Restaurar esta plataforma'):!v.publicadaEm?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0"><label>Data<input data-stokki-data type="date" value="${esc(v.data)}"></label><label>Horário de Brasília<input data-stokki-hora type="time" value="${esc(v.hora)}"></label></div>
         ${a('agendar',v.data?'Corrigir data/horário':'Registrar agendamento')}${v.data?a('desagendar','Desfazer agendamento'):''}
         ${v.data&&!dispensa?`<label>Link da publicação (opcional)<input data-stokki-url type="url" placeholder="https://..."></label>${a('publicar','Confirmar que publicou nesta plataforma')}`:''}
         ${a('retirar','Retirar esta plataforma do plano')}`:`<p>${esc(v.data)} às ${esc(v.hora)} · Confirmada por ${esc(v.publicadaPor)}<br>${linkSeguro(v.url,'Abrir publicação para conferir')}</p>
-        ${!v.conferidaEm&&!dispensa?CHECKS.map((t,i)=>`<label style="display:flex;align-items:flex-start;gap:8px;margin:8px 0"><input type="checkbox" data-stokki-check="${i}" style="width:auto">${t}</label>`).join('')+a('conferir','Concluir conferência para Amanda e Cecília'):''}
+        ${!v.conferidaEm&&!dispensa?(conferenciaDispensadaCp270(p,r)?'<details><summary>Conferir mesmo assim (opcional)</summary>':'')+CHECKS.map((t,i)=>`<label style="display:flex;align-items:flex-start;gap:8px;margin:8px 0"><input type="checkbox" data-stokki-check="${i}" style="width:auto">${t}</label>`).join('')+a('conferir','Concluir conferência para Amanda e Cecília')+(conferenciaDispensadaCp270(p,r)?'</details>':''):''}
         ${a('desfazer_publicacao','Desfazer confirmação feita por engano')}`}
     </section>`;
   }
@@ -250,10 +255,14 @@ export function criarOperacao(api){
     painel.innerHTML=`<div style="position:sticky;top:-20px;z-index:1;background:#252627;padding:8px 0;display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 style="margin:0;font-size:19px">Stokki — publicações e conferências</h2><button data-stokki-fechar type="button" style="flex-shrink:0;background:#ffd029;color:#171717;border:0;border-radius:6px;padding:9px">Fechar ×</button></div><p>Uma linha por plataforma. Alterações são manuais; nenhuma publicação é marcada pelo relógio. Correções ficam no histórico.</p><div data-stokki-feedback role="status"></div>`;
     if(erro){painel.insertAdjacentHTML('beforeend',`<p role="alert">${esc(erro)}</p><button data-stokki-recarregar>Recarregar</button>`);return;}
     const registros=posts.filter(p=>ehStokki(p)&&p.excluido!==true&&(usaFluxo(p)||['aguardando_legenda','aguardando_agendamento'].includes(p.status)));
-    const encerrado=p=>{try{return usaFluxo(p)&&(todasCobrancasRetroativasDispensadasI118(p)||['postado','cancelada_manual'].includes(p.status)&&Object.values(validarPlano(p).redes).every(r=>r.retirada||r.conferidaEm));}catch{return false;}};
+    const encerrado=p=>{try{return usaFluxo(p)&&(todasCobrancasRetroativasDispensadasI118(p)||['postado','cancelada_manual'].includes(p.status)&&Object.entries(validarPlano(p).redes).every(([id,r])=>redeTerminadaCp270(p,id,r)));}catch{return false;}};
+    // CP270: a lista vem por etapa (o que falta fazer primeiro; o que já foi publicado e só espera a conferência, separado no fim).
+    const etapaCp270=p=>{if(encerrado(p))return 3;if(!p.publicacaoStokki||!['aguardando_agendamento','agendado','postado','cancelada_manual'].includes(p.status))return 0;
+      try{const s=validarPlano(p),abertas=s.selecionadas.filter(id=>!redeTerminadaCp270(p,id,s.redes[id])).map(id=>s.redes[id]);
+        return abertas.some(r=>!r.data)?0:abertas.some(r=>!r.publicadaEm)?1:abertas.length?2:3;}catch{return 0;}};
     const validos=registros.filter(p=>mostrarHistorico||!encerrado(p));
     painel.insertAdjacentHTML('beforeend',`<button type="button" class="btn secondary" data-stokki-historico>${mostrarHistorico?'Mostrar somente em operação':'Mostrar também concluídos e retirados'} (${registros.filter(encerrado).length})</button>`);
-    painel.insertAdjacentHTML('beforeend',validos.map(p=>{
+    const cartao=p=>{
       const video=linkSeguro(p.linkVideo,'Abrir vídeo aprovado')||'<span>Link do vídeo indisponível: confira a origem na esteira de vídeos.</span>';
       if(!p.publicacaoStokki)return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3><p>${video}</p>${api.htmlReferencia?.(p)||''}<p>Escolha onde este vídeo será publicado. A legenda pode ser completada depois, sem alterar o agendamento.</p><details><summary>Legenda já existente (para copiar)</summary><p style="white-space:pre-wrap">${esc(p.legenda||'')}</p></details><section data-stokki-rede="">${formularioLegendas(p)}<button type="button" class="btn" data-stokki-acao="definir_redes">Confirmar plataformas deste vídeo</button></section></article>`;
       try{validarPlano(p);return `<article data-stokki-post="${esc(p.id)}" class="card"><h3>${esc(p.titulo||'Vídeo')}</h3><p>${video}</p>${api.htmlReferencia?.(p)||''}
@@ -261,7 +270,10 @@ export function criarOperacao(api){
           (p.publicacaoStokki.selecionadas.length<4?`<details><summary>Adicionar uma plataforma que faltou</summary><section data-stokki-rede=""><label>Plataforma<select data-stokki-adicionar>${REDES.filter(r=>!p.publicacaoStokki.selecionadas.includes(r.id)).map(r=>`<option value="${r.id}">${r.nome}</option>`).join('')}</select></label><label>Legenda<textarea data-stokki-legenda maxlength="20000"></textarea></label><button type="button" class="btn secondary" data-stokki-acao="adicionar">Adicionar plataforma e legenda</button></section></details>`:''):'<p>O vídeo está em revisão/legenda. As publicações anteriores ficam preservadas; aguarde o fluxo de aprovação.</p>'}
         <details><summary>Histórico de correções</summary>${(p.historico||[]).filter(x=>String(x.acao).startsWith('Stokki —')).slice().reverse().map(x=>`<div style="margin:10px 0">${esc(x.em)} · ${esc(x.por)} · ${esc(x.acao)}<br><small>${historicoLegivel(x)}</small></div>`).join('')||'Sem correções registradas.'}</details></article>`;}
       catch(e){return `<p role="alert">${esc(p.titulo)}: ${esc(e.message)}</p>`;}
-    }).join('')||'<p>Nenhum vídeo no novo fluxo ainda. Os anteriores continuam na mesma fila. Chris prepara as legendas e as plataformas; Amanda e Cecília conferem as publicações.</p>');
+    };
+    const ETAPAS_CP270=[[0,'Para agendar'],[1,'Agendadas — falta confirmar a publicação'],[2,'Já publicadas — só falta a conferência'],[3,'Concluídos e retirados']];
+    painel.insertAdjacentHTML('beforeend',ETAPAS_CP270.map(([n,t])=>{const ps=validos.filter(p=>etapaCp270(p)===n);
+      return ps.length?`<h3 data-stokki-etapa="${n}" style="margin:22px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--line,#777);font-size:16px">${t} · ${ps.length}</h3>`+ps.map(cartao).join(''):'';}).join('')||'<p>Nenhum vídeo no novo fluxo ainda. Os anteriores continuam na mesma fila. Chris prepara as legendas e as plataformas; Amanda e Cecília conferem as publicações.</p>');
     api.aoDesenharI165?.(painel,posts);
   }
   function fecharComConferenciaI84(){

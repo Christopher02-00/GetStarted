@@ -4,9 +4,10 @@ import {exigirI165,idFisicoI165,instanteI165,jsonCanonicoI165,dataCivilI165,hora
 import {assinaturaDiretrizI165,chaveExcecaoI165} from './lib/gs-diretriz-publicacao-i165.mjs';
 import {identidadeTokenI165,contextoTxI165,hashI165} from './contexto.mjs';
 import {fontesPostagemTxI165} from './fontes.mjs';
+import {postagemDecidivelCp272} from './lib/gs-solicitacoes-orfas-cp272.mjs'; // CP272: a mesma regra decide e fecha pedido órfão
 const texto=v=>typeof v==='string'?v.trim():'';
 function proposta(d){exigirI165(['agendar','cancelar'].includes(d.tipo),'acao','Escolha uma ação específica para a Amanda conferir.');const data=d.data||'',hora=d.hora||'',rede=d.rede||'geral';if(d.tipo==='agendar')exigirI165(dataCivilI165(data)&&horaCivilI165(hora),'agenda','Confira a data e o horário da proposta.');else exigirI165(!data&&!hora,'cancelar','Cancelar não deve inventar um novo agendamento.');return{acao:d.tipo,data,hora,rede,chave:chaveExcecaoI165({acao:d.tipo,data,hora,rede})};}
-function conferirFonte(f){exigirI165(f.clienteAtivo&&f.configEntrega.modo==='postagem'&&(f.diretriz||f.programacaoCp111?.disponivel)&&f.post.excluido!==true&&!f.post.arquivado&&['aguardando_legenda','aguardando_agendamento','agendado'].includes(f.post.status),'fonte','O conteúdo e a diretriz precisam estar ativos nesta conferência.');if(f.video)exigirI165(f.video.status==='aprovado'&&f.video.clienteAprovou===true,'cliente','A confirmação real do cliente ainda não foi concluída.');}
+function conferirFonte(f){exigirI165(f.clienteAtivo&&f.configEntrega.modo==='postagem'&&(f.diretriz||f.programacaoCp111?.disponivel)&&postagemDecidivelCp272(f.post),'fonte','O conteúdo e a diretriz precisam estar ativos nesta conferência.');if(f.video)exigirI165(f.video.status==='aprovado'&&f.video.clienteAprovou===true,'cliente','A confirmação real do cliente ainda não foi concluída.');}
 function assinaturaFonte(f){const s=assinaturaFonteProgramacaoCp111(f);exigirI165(s.length<=180000,'fonte-grande','A fonte excedeu o limite de conferência; nada foi cortado.');return s;}
 const refOp=(db,a,id,tipo)=>refIntencaoI165(db,a,tipo,{operacaoId:id});
 export async function prepararExcecaoI165(db,auth,d,{agora=new Date()}={}){

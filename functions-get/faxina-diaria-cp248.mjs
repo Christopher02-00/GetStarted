@@ -18,6 +18,7 @@ import {semAprovadorCp245,fecharSemAprovadorCp245} from './tarefa-sistema-sem-ap
 import {sincronizarPostagemVideoExcluidoCp244} from './video-excluido-postagem-cp244.mjs';
 import {redesVencidasStokkiCp262,confirmarRedeStokkiAutomaticaCp262} from './stokki-confirmacao-automatica-cp262.mjs';
 import {executarEncerramentosCp263} from './encerramento-antigos-cp263.mjs';
+import {encerrarSolicitacoesOrfasCp272} from './solicitacoes-orfas-cp272.mjs';
 
 export const DIAS_CONFIRMACAO_AUTOMATICA_CP248 = 2;
 export const POR_CP248 = 'Sistema (confirmação automática)';
@@ -71,7 +72,7 @@ const comLimite = (promessa, ms) => { let t; return Promise.race([promessa, new 
 export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelatorio = true, prazoMs = Infinity, limiteItemMs = LIMITE_ITEM_MS_CP248 } = {}) {
   const r = { schema: 1, em: agora.toISOString(), limiteConfirmacao: limiteConfirmacaoCp248(agora), publicadas: [], puladas: [], fechadasSemAprovador: [], postagensEncerradas: [], erros: [], parcial: false };
   const inicio = Date.now(), semTempo = () => { if (Date.now() - inicio > prazoMs) { r.parcial = true; return true; } return false; };
-  const relatorio = (extra = {}) => ({ ...r, puladas: r.puladas.slice(0, 200), atualizadoEm: new Date().toISOString(), totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, encerradosCp263: (r.encerradosCp263 || []).length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length }, ...extra });
+  const relatorio = (extra = {}) => ({ ...r, puladas: r.puladas.slice(0, 200), atualizadoEm: new Date().toISOString(), totais: { publicadas: r.publicadas.length, puladas: r.puladas.length, fechadasSemAprovador: r.fechadasSemAprovador.length, encerradosCp263: (r.encerradosCp263 || []).length, solicitacoesOrfasCp272: (r.solicitacoesOrfasCp272 || []).length, postagensEncerradas: r.postagensEncerradas.length, erros: r.erros.length }, ...extra });
   let feitos = 0; const progresso = async () => { if (gravarRelatorio && ++feitos % 10 === 0) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true })); };
   if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: true, parcial: true }));
   // 1) entregas do sistema sem aprovador possível (rápido; vem primeiro para nunca ficar para depois) (CP245, inclusive o legado)
@@ -117,6 +118,8 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
     catch (e) { r.puladas.push({ id: s.id, motivo: String(e?.message || e).slice(0, 200) }); if (e?.code === 'cp248/tempo') r.parcial = true; }
     await progresso();
   }
+  // 4) CP272: pedido de mudança à Amanda cuja postagem saiu da operação (inclusive pelas confirmações acima) fecha com nota
+  if (!semTempo()) { try { const o = await encerrarSolicitacoesOrfasCp272(db, { agora, semTempo }); r.solicitacoesOrfasCp272 = o.encerradas; r.erros.push(...o.erros); } catch (e) { r.erros.push({ id: '', etapa: 'solicitacoes_orfas_cp272', erro: String(e?.message || e).slice(0, 200) }); } }
   if (gravarRelatorio) await db.doc('sistema/faxina_cp248').set(relatorio({ emAndamento: false, parcial: r.parcial }));
   return r;
 }

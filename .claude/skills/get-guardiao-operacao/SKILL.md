@@ -55,6 +55,8 @@ Por que havia manutenção todo dia, por 7 meses (diagnóstico do Raio-X de 21/1
   - agendada que passou sem confirmação (D2);
   - esperando legenda (D3);
   - esperando agendamento (D4).
+  - postagem que o servidor não consegue conferir (D5);
+  - pedido de mudança à Amanda que ninguém consegue decidir, com a postagem fora da operação (D6, CP272 — a faxina fecha).
 - **E · calendário**:
   - conteúdo sem identidade ou com identidade repetida (E1);
   - cópia do cliente diferente do liberado (E2).

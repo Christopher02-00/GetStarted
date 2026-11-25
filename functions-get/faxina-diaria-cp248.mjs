@@ -19,6 +19,7 @@ import {sincronizarPostagemVideoExcluidoCp244} from './video-excluido-postagem-c
 import {redesVencidasStokkiCp262,confirmarRedeStokkiAutomaticaCp262} from './stokki-confirmacao-automatica-cp262.mjs';
 import {executarEncerramentosCp263} from './encerramento-antigos-cp263.mjs';
 import {encerrarSolicitacoesOrfasCp272} from './solicitacoes-orfas-cp272.mjs';
+import {executarPedidosOrfaosCp274} from './pedidos-orfaos-ynayhe-cp274.mjs';
 
 export const DIAS_CONFIRMACAO_AUTOMATICA_CP248 = 2;
 export const POR_CP248 = 'Sistema (confirmação automática)';
@@ -87,6 +88,8 @@ export async function executarFaxinaCp248(db, { agora = new Date(), gravarRelato
   // 1b) CP263: avisos "esperando você" com a origem encerrada e decisões "pular legenda" de postagem encerrada fecham; e, uma vez, os itens
   //     antigos que o Chris autorizou encerrar em 23/11
   if (!semTempo()) { try { const e = await executarEncerramentosCp263(db, { agora, semTempo }); r.encerradosCp263 = e.encerrados; r.erros.push(...e.erros); } catch (e) { r.erros.push({ id: '', etapa: 'encerramentos_cp263', erro: String(e?.message || e).slice(0, 200) }); } }
+  // 1c) CP274: os 3 pedidos órfãos da Ynayhe de out/2026 (lista fechada autorizada pelo Chris em 25/11) — uma vez, idempotente
+  if (!semTempo()) { try { const o = await executarPedidosOrfaosCp274(db, { agora }); r.pedidosOrfaosCp274 = o.feitos; r.erros.push(...o.erros); } catch (e) { r.erros.push({ id: '', etapa: 'pedidos_orfaos_cp274', erro: String(e?.message || e).slice(0, 200) }); } }
   // 2) postagens antes da rede com o vídeo na Lixeira (CP244, inclusive o legado)
   const vids = await db.collection('videos_producao').where('excluido', '==', true).get();
   for (const s of vids.docs) {

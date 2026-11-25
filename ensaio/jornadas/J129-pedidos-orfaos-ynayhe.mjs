@@ -48,4 +48,5 @@ export async function executar({ amb, seed, registrar }) {
     const depois = JSON.stringify((await db.doc('calendarios/ynayhe').get()).data() || {});
     fim('4 repetir não muda nada', antes === depois, antes === depois ? 'igual' : 'MUDOU');
   } catch (e) { fim('pedidos órfãos da Ynayhe', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }
+  await amb.aguardarFunctionsOciosas?.(); // os gatilhos do calendário terminam antes da próxima jornada
 }

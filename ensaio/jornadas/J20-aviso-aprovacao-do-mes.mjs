@@ -18,7 +18,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     cal.items.push({ itemId: 'j20-novembro', name: 'Ensaio J20 — conteúdo de novembro', mes: '2026-11', day: 3, apr: true, excluido: false });
     const { id: _ignora, ...semId } = cal;
     await seed.set('calendarios', CLIENTE, semId);
-    const avisosAntes = (await seed.listar('avisos_do_cliente')).length;
+    const avisosAntes = (await seed.listar('avisos_do_cliente')).filter(a => /aprovou/.test(String(a.titulo || ''))).length; // compara o mesmo tipo de aviso (J129 cria avisos de pedido)
     page.on('dialog', d => d.accept());
     await page.goto(amb.url('calendario.html', `&cliente=${CLIENTE}&t=tok-${CLIENTE}&mes=${MES}`), { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => /Liberado — o cliente já vê/.test(document.body.innerText), null, { timeout: 30000 });

@@ -68,9 +68,8 @@ Base real anonimizada (R2): workflow manual `exportar-firestore.yml` gera o arte
 | `scripts/` | `preflight.mjs`, `regression-critical.mjs` + 60 `regression-v*` — **já falham no `main`** (49 FAIL / falha imediata); não servem de portão hoje. |
 | `.qa-get/` | Suíte do CI (única que roda no GitHub). |
 | `.github/workflows/` | `qa-get.yml` (CI), `publicar-rules.yml` (rules → Firebase), `exportar-firestore.yml` (R2). `.github/scripts/` tem os dois scripts Node correspondentes. |
-| `rollback_v95…v107/` | Cópias antigas de `escritorio.html`/rules (31 MB). Só histórico. |
 | `AGENTS.md` (58 KB) | **Leia inteiro.** Regras de engenharia e todos os incidentes/invariantes acumulados desde julho (Codex). É lei. |
-| `CATALOGO_DE_ERROS.md` (269 KB), `RELATORIO_V*.md`, `MANIFESTO_SHA256_V*.txt`, `LEIA-ME_*`, `DIAGNOSTICO_*` | Histórico do Codex (público no Pages). |
+| `CATALOGO_DE_ERROS.md` (269 KB), `RELATORIO_V*.md`, `LEIA-ME_*`, `DIAGNOSTICO_*` | Histórico do Codex (fora do Pages). As pastas `rollback_v*`, os `MANIFESTO_SHA256_*`/`UPLOAD_V*` e os scripts legados de `scripts/` saíram na Limpeza 2027 (LZ2, 26/11); o histórico do Git guarda. |
 | `videos/` (32 MB), `Planos.pdf` (catálogo comercial oficial, V80), `vendor-planejamento/` | Mídia e libs. |
 
 **Coleções principais e campos que importam:**
@@ -119,7 +118,7 @@ Base real anonimizada (R2): workflow manual `exportar-firestore.yml` gera o arte
 - Rules publicam por workflow com conta de serviço só-leitura+rules (criada pelo Chris em 08/11) para não depender de `firebase deploy` manual.
 - A sentinela de rules mede **escritas negadas** (o site tentou gravar onde a regra proíbe). As frases "maximum of 1000 expressions"/"evaluation error" no log do emulador são diagnóstico verboso de pedido já negado — **não** acontecem em produção (provado por bisseção em 09/11). Não "corrigir" rules por causa delas.
 - Stories (J07) ficou fora da bateria: cadeia parada desde 02/10 (Gabrielle inativa).
-- `scripts/preflight.mjs`/`regression-critical.mjs` são legado vermelho; o portão real é `ensaio/`. Não gastar tempo neles sem decisão do Chris.
+- Os scripts legados de `scripts/` (preflight, regression-*) foram apagados na LZ2 (26/11); o portão real é `ensaio/` + `.qa-get/`.
 
 **Legado/frágil (cuidado):**
 - `escritorio.html` é um arquivo só de 3,9 MB; ferramentas de busca precisam de `grep -n -o` com janelas (linhas de 100 KB). Nunca fazer substituição global.
@@ -324,6 +323,7 @@ Portão em 12/11 com CP206 + CP207: 149/149 computador e celular; CI do GitHub v
 | BG CP273 (24/11, Chris: "os filmmakers ainda não conseguem abrir sessão dos clientes… sobem como avulso os mensalistas"; decisão: "Filmmaker abre a sessão") | **No ar (24/11, PR #216, merge 58ef00e; rules publicadas 17:49 UTC com o ok nominal do Chris — ruleset c13fea10; escritório no ar com a CP273).** Desde 14/11 nenhuma gravação de mensalista na agenda; filmmaker sem aba de agendar e rules só da gestão → avulso. Agora o filmmaker abre a sessão no envio (só mensalista, data ≤ hoje, ele sozinho, aprovada, checklist do mês); avulso de mensalista manda abrir a sessão (conteúdo extra só marcando). J128 vermelha no main → 12/12; vizinhas 29/29; celular 17/17. Legado: 50 avulsos sem ligação seguem com "Identificar conteúdo". |
 | BH CP274 (25/11, Chris: arquivar as 3 demandas órfãs da Ynayhe de out/2026; ok: "Fechar os 3 no calendário") — pedidos órfãos fecham no calendário | **No ar e conferido (25/11, PR #218, merge 82619d8; Functions publicadas com ok nominal; vigia da liberação 20:30 UTC sem Ynayhe 2026-10). No mesmo PR: `qa-get.yml` com Java 21 (a versão exata saiu do índice Temurin) e J20 comparando só avisos de "aprovou".** As 3 demandas já estavam arquivadas desde 09/10 (Amanda); nenhuma outra entrada_i54_ aberta para inativo. O que travava era o calendário (3 pedidos abertos + outubro em ajuste pelo Cliente). Faxina, uma vez, lista fechada: pedidos cancelados (formato CP143), avisos cancelados, outubro arquivado com a marca anterior; nada apagado. J129 vermelha → 4/4; vizinhas 30/30. |
 | BI LZ1 (26/11, Programa Limpeza 2027; catálogo decidido pelo Chris: https://claude.ai/artifact/M91tkpvgWfhNqShYSdXBfu — "esses 12 … pode apagar o risco que encontrou logo · No geral ok pode começar") — páginas soltas fora do site | **Publicado no merge do PR da LZ1.** Saíram `demandas.html` e `painel-tv.html` (mesma senha escrita no HTML; o banco já recusava leitura sem login), `Calendarios_Clientes_Get.html` (16 clientes; links sem chave já não abriam), `cadastros.html`, `roteiros.html`, `links.html`, `Calendario_Editorial_Interativo_Get.html` e a aba Gerência › Painel de TV. Ficha `fichas/2026-11-26-lz1-paginas-de-risco.md`. Próximas unidades LZ2–LZ8 na mesma ordem do catálogo. |
+| BJ LZ2 (26/11, Limpeza 2027: cod-rollback e cod-modulos; scripts já aposentados em 09/11) — peso do repositório | **Publicado no merge do PR da LZ2.** Saíram 11 pastas `rollback_v*` (31 MB), `gs-gravacoes-cliente-i61.js`, `gs-conferencia-cecilia-i63.js`, `financeiro-ui-v103.mjs`, os scripts legados de `scripts/` (86 itens) e os manifestos `MANIFESTO_SHA256_*`/`UPLOAD_V*`. Nada carregava esses arquivos. Ficha `fichas/2026-11-26-lz2-peso-do-repositorio.md`. |
 
 Autorizações nominais do Chris (16/11): publicar Functions; Fior adiar para 30/11; Cookiery Recebi 10/04; Place e Mochi (lado do Chris). Aprovações e liberações continuam sendo da Amanda.
 

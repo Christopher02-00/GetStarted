@@ -1,11 +1,15 @@
-// J113 — CP259 (22/11/2026, varredura de acúmulo). De sexta a domingo o Início do Chris mostra o "Panorama da Semana" e redesenha a cada
-// minuto (atualização dos retornos mensais). Cada redesenho baixava do servidor TODOS os resumos diários (116 documentos, ~0,9 MB nos dados
-// reais; a coleção não tem ouvinte, então é leitura de fato) para somar só os dias da semana. Esperado: o redesenho pede só os dias da semana
-// (consulta com filtro pelo identificador, que é a data) e o panorama soma exatamente os mesmos dias — os resumos antigos não entram.
-// O dia da semana de "agora" é fixado em domingo na página (getDay), para a jornada não depender do dia em que roda.
+// J113 — CP259 (22/11) + LZ4 (26/11/2026, Limpeza 2027, catálogo decidido pelo Chris). A CP259 provava que o "Panorama da Semana" do
+// Início do Chris lia só os dias da semana. Na LZ4 o Chris decidiu enxugar o Início: o Resumo do Dia fica só com o que pede ação
+// (Crítico agora, Quem cobrar hoje, Suas pendências, Clientes) e saem o Panorama da Semana, os números congelados, "Quem mandou bem",
+// reincidências e "já estava ontem"; o calendário de gravações do fim da tela, os atalhos de setor e o painel "Somente edição" saem do
+// Início. O dia de "agora" é fixado em domingo (antes, o dia do panorama).
+// Esperado (contraprova vermelha no código anterior: o panorama, o calendário e os atalhos aparecem):
+//  1. no domingo, o redesenho do Início do Chris não faz NENHUMA consulta aos resumos diários (só o de hoje, por id);
+//  2. o Resumo do Dia tem as 4 seções de ação e nenhuma das que saíram;
+//  3. o Início não tem calendário de gravações, atalhos de setor nem o painel "Somente edição".
 import { entrarComo, foto } from '../lib/navegador.mjs';
 export const id = 'J113';
-export const nome = 'Panorama da Semana do Início lê só os dias da semana (não os 116 resumos)';
+export const nome = 'Início enxuto (LZ4): Resumo do Dia só com o que pede ação, sem panorama/calendário/atalhos, sem ler resumos antigos';
 
 function alvosDoCorpo(corpo) {
   const out = [];
@@ -19,34 +23,38 @@ function alvosDoCorpo(corpo) {
 const diaLocal = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }); };
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
-  const t0 = Date.now();
-  // semana (domingo fixado: começa 6 dias atrás): hoje (0, já gerado) + 3 resumos com 1+2+4 = 7 concluídas; fora da semana: 2 resumos com 100 cada
-  const resumo = n => ({ data: '', numeros: { demandasConcluidas: n, videosEntregues: 0, postagensPublicadas: 0, gravacoesRealizadasOntem: 0, gravacoesPlanejadasOntem: 0 }, quemCobrar: [], emDia: [], criticos: [], reincidencias: [], naoResolvidoOntem: [], clientes: {} });
+  const t0 = Date.now(), fim = (caso, ok, detalhe) => registrar({ jornada: id, caso, ok: !!ok, ms: Date.now() - t0, detalhe });
+  const resumo = n => ({ data: '', numeros: { demandasConcluidas: n, videosEntregues: 0, postagensPublicadas: 0, gravacoesRealizadasOntem: 0, gravacoesPlanejadasOntem: 0, gravacoesHoje: 3 },
+    quemCobrar: [{ pessoa: 'Helo', motivo: 'Legenda parada (J113)', dias: 2 }], emDia: [{ pessoa: 'Yas', producao: 2 }], criticos: [{ texto: 'Crítico de teste (J113)' }],
+    reincidencias: [{ texto: 'Reincidência de teste (J113)', dias: 3 }], naoResolvidoOntem: ['Pendência de ontem (J113)'], clientes: { entradas: [], ajustes: [], pedidosPendentes: 0 } });
   for (const [n, v] of [[0, 0], [1, 1], [2, 2], [3, 4], [10, 100], [20, 100]]) await seed.set('resumos_diarios', diaLocal(n), { ...resumo(v), data: diaLocal(n) });
   const { page, erros, fechar } = await nav.novaPagina();
   try {
     page.on('dialog', d => d.accept());
-    await page.addInitScript(() => { const g = Date.prototype.getDay; Date.prototype.getDay = function () { return window.__diaJ113 != null && Math.abs(this.getTime() - Date.now()) < 5000 ? window.__diaJ113 : g.call(this); }; window.__diaJ113 = 0; }); // só o "agora" vira domingo; datas calculadas seguem reais
+    await page.addInitScript(() => { const g = Date.prototype.getDay; Date.prototype.getDay = function () { return window.__diaJ113 != null && Math.abs(this.getTime() - Date.now()) < 5000 ? window.__diaJ113 : g.call(this); }; window.__diaJ113 = 0; });
     let contando = false; const alvos = [];
     page.on('request', r => { if (contando && r.method() === 'POST' && /\/Listen\/channel/.test(r.url())) alvos.push(...alvosDoCorpo(r.postData())); });
     await entrarComo(page, amb.url(), 'Chris'); await page.waitForTimeout(3000);
     await page.evaluate(() => irPara('inicio', document.getElementById('navInicio')));
     await page.waitForFunction(() => /Resumo do Dia/.test(document.getElementById('resumoDiarioBox')?.innerText || ''), null, { timeout: 60000 });
     await page.waitForTimeout(2000);
-    // o redesenho periódico (o mesmo do minuto) é disparado pelo foco da janela
     contando = true;
     await page.evaluate(() => { document.getElementById('resumoDiarioBox').insertAdjacentHTML('beforeend', '<i data-j113></i>'); window.dispatchEvent(new Event('focus')); });
-    await page.waitForFunction(() => { const b = document.getElementById('resumoDiarioBox'); return b && !b.querySelector('[data-j113]') && /Panorama da Semana/.test(b.innerText || ''); }, null, { timeout: 75000 }).catch(() => {});
-    await page.waitForTimeout(2000); contando = false;
-    const txt = await page.evaluate(() => (document.getElementById('resumoDiarioBox')?.innerHTML || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '));
-    const doResumo = alvos.filter(a => a.colecao === 'resumos_diarios'), inteiras = doResumo.filter(a => !a.filtro).length;
-    const soma = (txt.match(/Concluídas:\s*(\d+)\s*demandas/) || [])[1];
+    await page.waitForFunction(() => { const b = document.getElementById('resumoDiarioBox'); return b && !b.querySelector('[data-j113]') && /Resumo do Dia/.test(b.innerText || ''); }, null, { timeout: 75000 }).catch(() => {});
+    await page.waitForTimeout(2500); contando = false;
+    const doResumo = alvos.filter(a => a.colecao === 'resumos_diarios');
+    fim('1 no domingo o redesenho não consulta os resumos antigos (nenhuma consulta à coleção)', doResumo.length === 0, `${doResumo.length} consulta(s) aos resumos diários`);
+    const txt = await page.evaluate(() => (document.getElementById('resumoDiarioBox')?.innerText || '').replace(/\s+/g, ' '));
+    const ficam = ['Crítico agora', 'Quem cobrar hoje', 'Suas pendências', 'Clientes'].filter(t => !txt.includes(t));
+    const sairam = ['Panorama da Semana', 'Quem mandou bem', 'Números', 'Reincidências', 'Já estava no resumo de ontem'].filter(t => txt.includes(t));
+    fim('2 Resumo do Dia só com as 4 seções de ação', !ficam.length && !sairam.length, `faltando: ${ficam.join(', ') || 'nada'} · ainda aparecem: ${sairam.join(', ') || 'nada'}`);
+    const inicio = await page.evaluate(() => ({ cal: !!document.getElementById('calendarioVisualHomeBox'), atalhos: !!document.getElementById('setorAtalhos'),
+      somenteEdicao: !!document.getElementById('edicaoManualInicioI34'), texto: (document.getElementById('view-inicio')?.innerText || '') }));
+    fim('3 Início sem calendário de gravações, sem atalhos de setor e sem o painel Somente edição', !inicio.cal && !inicio.atalhos && !inicio.somenteEdicao && !/Calendário de Gravações|Direção Geral/.test(inicio.texto),
+      `calendário ${inicio.cal ? 'PRESENTE' : 'fora'} · atalhos ${inicio.atalhos ? 'PRESENTES' : 'fora'} · somente edição ${inicio.somenteEdicao ? 'PRESENTE' : 'fora'}`);
+    await foto(page, 'J113-inicio-chris');
     const graves = erros.filter(erroGrave);
-    await foto(page, 'J113-panorama');
-    registrar({ jornada: id, caso: '1 o redesenho pede só os dias da semana (nenhuma leitura de todos os resumos)', ok: doResumo.length >= 1 && inteiras === 0, ms: Date.now() - t0,
-      detalhe: `${doResumo.length} consulta(s) aos resumos · ${inteiras} de todos os resumos` });
-    registrar({ jornada: id, caso: '2 o panorama soma os mesmos dias (7 concluídas; os antigos não entram)', ok: soma === '7' && !graves.length, ms: Date.now() - t0,
-      detalhe: `panorama: ${soma ?? 'NÃO APARECEU'} concluída(s)${graves.length ? ' · erro: ' + graves[0] : ''}` });
-  } catch (e) { await foto(page, 'J113-falha'); registrar({ jornada: id, caso: 'panorama lê só a semana', ok: false, ms: Date.now() - t0, detalhe: String(e).replace(/\s+/g, ' ').slice(0, 300) }); }
+    fim('4 sem erro grave no Início do Chris', !graves.length, graves.length ? graves[0] : 'nenhum');
+  } catch (e) { await foto(page, 'J113-falha'); fim('Início enxuto', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }
   finally { await fechar(); }
 }

@@ -6,7 +6,7 @@ export function areasCentralR87(papel){
  return [
   ...(GESTAO.includes(papel)?[...(papel==='Amanda'?[ITEM('materiais','Enviar documento do cliente','preparar')]:[]),ITEM('estrategia','Central de calendários','preparar'),ITEM('acervo','Banco de referências','preparar'),ITEM('planos','Planos de ação','preparar'),...(papel==='Amanda'?[]:[ITEM('materiais','Enviar documentos','preparar')]),ITEM('informacoes','Informações dos clientes','preparar'),ITEM('datas',papel==='Chris'?'Agenda da equipe':'Organização das datas','preparar'),ITEM('rascunho',papel==='Chris'?'Meus roteiros':'Calendários e roteiros','conteudo'),ITEM('aprovar','Revisar e enviar','conteudo'),ITEM('visaoMes','Visão do mês','conteudo'),ITEM('ajustes','Ajustes compartilhados','conteudo')]:[]),
   ITEM('calendarios','Calendários existentes','conteudo'),
-  ...(GESTAO.includes(papel)?[ITEM('stories','Stories','conteudo')]:[]),ITEM('legendas','Legendas','conteudo'),
+  ITEM('legendas','Legendas','conteudo'),
   ...(papel==='Cecília'?[ITEM('visaoMes','Prazos do mês','publicar')]:[]),
   ITEM('campanhas','Campanhas e datas','publicar'),ITEM('agendar','Fila de agendamento','publicar'),ITEM('programados','Programados','publicar'),...(papel==='Cecília'?[ITEM('entregas','Entregas finalizadas','publicar'),ITEM('esteira','Consultar esteira de vídeos','publicar')]:[]),ITEM('envios','Links de envio e resgate','publicar'),ITEM('captacao','Captação','publicar'),ITEM('cobertura','Postagem até quando','publicar')
  ];
@@ -14,7 +14,7 @@ export function areasCentralR87(papel){
 export function areaDaRotaR87(view,{calSub='',postSub='',ultima=''}={}){
  if(view==='estrategiaCp109')return ['estrategia','rascunho'].includes(ultima)?ultima:'estrategia';
  const novas={referenciasCp109:'acervo',planosAcaoCp109:'planos',consultaClienteCp109:'consulta',ajustesCp109:'ajustes',visaoMesCp109:'visaoMes'};if(novas[view])return novas[view];
- const mapa={planejamentoPreparacaoR80:'materiais',agendaOrganizacao:'datas',informacoesCentralR87:'informacoes',referencias:'acervo',stories:'stories',campanhas:'campanhas',agendamento:'captacao',controlePostagem:'cobertura'};
+ const mapa={planejamentoPreparacaoR80:'materiais',agendaOrganizacao:'datas',informacoesCentralR87:'informacoes',referencias:'acervo',campanhas:'campanhas',agendamento:'captacao',controlePostagem:'cobertura'};
  if(view==='videos')return 'entregas';if(view==='producao')return 'esteira';
  if(view==='postagens')return postSub==='legenda'?'legendas':postSub==='gradeMes'?'programados':'agendar';
  if(view==='calendarios')return ['links','envio'].includes(calSub)?'envios':'calendarios';
@@ -25,7 +25,7 @@ const CSS=`.central-r87{max-width:1240px;margin:0 auto 20px;padding:22px;border:
 const GRUPOS=[['preparar','1 · Preparar','Cliente, materiais e datas'],['conteudo','2 · Criar e revisar','Roteiros, aprovação e legendas'],['publicar','3 · Publicar','Campanhas, envio e agendamento']];
 /* Entradas que continuam na barra lateral com a Central ativa. 16/11/2026: a Amanda tinha perdido "Postagem Até Quando" (§52.1). */
 const MANTIDOS_NA_BARRA={Amanda:['navPostagens','navControlePostagem'],'Cecília':['navPostagens','navCalendarios','navControlePostagem']};
-const NAVS=['navPostagens','navCalendarios','navStories','navAcompCampanhas','navControlePostagem','navAgendamento'];
+const NAVS=['navPostagens','navCalendarios','navAcompCampanhas','navControlePostagem','navAgendamento'];
 const chave=c=>JSON.stringify(['uid','nome','atorReal','sessao','geracao'].map(k=>c?.[k]??''));
 export function criarCentralUnificadaR87({documento=document,contexto,abrir,conferir,aoErro=()=>{}}){
  let vivo=true,atual=null,box=null,ultima='',contextKey='',click=null;const escondidos=new Map();

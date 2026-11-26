@@ -1,7 +1,8 @@
 // J70 — Aviso de cápsula (16/11/2026, pedido do Chris: "trazer de volta o aviso de conteúdo cápsula"). Dentro da §52.3:
 // o motor só AVISA a Amanda; a decisão e o painel são manuais. Faltava o caso do cliente com calendário e NENHUMA postagem
 // ativa — esse cliente nunca era avisado. Casos:
-//  (a) cliente com calendário e sem postagem → 1 alerta para a Amanda, com o texto de cápsula e o botão para o painel manual;
+//  (a) cliente com calendário e sem postagem → 1 alerta para a Amanda, com o texto de cápsula e o botão para o Postagem Até Quando
+//      (LZ3c, 26/11: o painel manual do Protocolo Cápsula saiu do Escritório por decisão do Chris; o botão para ele não aparece mais);
 //  (b) a 2ª rodada do motor não duplica;
 //  (c) postagem futura agendada → o alerta fecha sozinho (soft-delete), sem alerta novo;
 //  (d) nada é gravado em `capsulas_clientes`.
@@ -45,16 +46,17 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
       const a = (await alertas()).find(d => d.status === 'pendente'); if (!a) return { botao: false };
       await page.waitForFunction(id => (window.todasDemandas || []).some?.(d => d.id === id), a.id, { timeout: 30000 }).catch(() => {});
       await page.evaluate(id => abrirDemandaMinha(id), a.id); await page.waitForTimeout(1500);
-      const botao = await page.locator('#modalConteudo [data-alerta-capsula-acao="painel"]').count();
-      if (botao) { await page.locator('#modalConteudo [data-alerta-capsula-acao="painel"]').click(); await page.waitForTimeout(2000); }
-      return { botao: botao === 1, painel: await page.evaluate(() => !!document.getElementById('view-capsulaAmanda')?.classList.contains('active')) };
+      const semPainel = await page.locator('#modalConteudo [data-alerta-capsula-acao="painel"]').count() === 0;
+      const ateQuando = await page.locator('#modalConteudo [data-alerta-capsula-acao="ate-quando"]').count();
+      if (ateQuando) { await page.locator('#modalConteudo [data-alerta-capsula-acao="ate-quando"]').click(); await page.waitForTimeout(2000); }
+      return { botao: semPainel, painel: ateQuando === 1 && await page.evaluate(() => !!document.getElementById('view-controlePostagem')?.classList.contains('active')) };
     }, async () => (await alertas()).length > 0);
     const l1 = await alertas(), abertos = l1.filter(d => d.status === 'pendente' && d.excluido !== true);
     const a = abertos[0];
     const ok = abertos.length === 1 && l1.length === 1 && a.destinatario === 'Amanda' && a.etapaCobertura === 'sem_postagem_programada' && /cápsula/.test(a.titulo || '') && /cápsula/i.test(a.descricao || '') && r1.extra?.botao && r1.extra?.painel && !r1.graves.length;
-    registrar({ jornada: id, caso: 'a cliente sem postagem → 1 aviso de cápsula para a Amanda com o botão do painel', ok, ms: Date.now() - t0,
-      detalhe: a ? `"${a.titulo}" para ${a.destinatario} · etapa ${a.etapaCobertura} · ${l1.length} alerta(s) · botão do painel ${r1.extra?.botao ? 'sim' : 'NÃO'} · painel ${r1.extra?.painel ? 'abriu' : 'NÃO abriu'}` + (r1.graves.length ? ' | ' + r1.graves[0] : '') : `nenhum alerta (${l1.length})` });
-  } catch (e) { registrar({ jornada: id, caso: 'a cliente sem postagem → 1 aviso de cápsula para a Amanda com o botão do painel', ok: false, ms: Date.now() - t0, detalhe: String(e).slice(0, 260) }); }
+    registrar({ jornada: id, caso: 'a cliente sem postagem → 1 aviso de cápsula para a Amanda com o botão do Postagem Até Quando', ok, ms: Date.now() - t0,
+      detalhe: a ? `"${a.titulo}" para ${a.destinatario} · etapa ${a.etapaCobertura} · ${l1.length} alerta(s) · botão da Cápsula ${r1.extra?.botao ? 'fora' : 'AINDA APARECE'} · Postagem Até Quando ${r1.extra?.painel ? 'abriu' : 'NÃO abriu'}` + (r1.graves.length ? ' | ' + r1.graves[0] : '') : `nenhum alerta (${l1.length})` });
+  } catch (e) { registrar({ jornada: id, caso: 'a cliente sem postagem → 1 aviso de cápsula para a Amanda com o botão do Postagem Até Quando', ok: false, ms: Date.now() - t0, detalhe: String(e).slice(0, 260) }); }
   // (b) segunda rodada não duplica
   { const t = Date.now();
     try { const r2 = await rodada(2); const l2 = await alertas();

@@ -25,7 +25,7 @@ const CSS=`.central-r87{max-width:1240px;margin:0 auto 20px;padding:22px;border:
 const GRUPOS=[['preparar','1 · Preparar','Cliente, materiais e datas'],['conteudo','2 · Criar e revisar','Roteiros, aprovação e legendas'],['publicar','3 · Publicar','Campanhas, envio e agendamento']];
 /* Entradas que continuam na barra lateral com a Central ativa. 16/11/2026: a Amanda tinha perdido "Postagem Até Quando" (§52.1). */
 const MANTIDOS_NA_BARRA={Amanda:['navPostagens','navControlePostagem'],'Cecília':['navPostagens','navCalendarios','navControlePostagem']};
-const NAVS=['navRoteiros','navReferencias','navPostagens','navCalendarios','navStories','navAcompCampanhas','navControlePostagem','navAgendamento'];
+const NAVS=['navPostagens','navCalendarios','navStories','navAcompCampanhas','navControlePostagem','navAgendamento'];
 const chave=c=>JSON.stringify(['uid','nome','atorReal','sessao','geracao'].map(k=>c?.[k]??''));
 export function criarCentralUnificadaR87({documento=document,contexto,abrir,conferir,aoErro=()=>{}}){
  let vivo=true,atual=null,box=null,ultima='',contextKey='',click=null;const escondidos=new Map();

@@ -6,7 +6,8 @@
 //  2. um clique + confirmação aprova as comuns pelo MESMO caminho do cartão (status 'aprovada', aprovadoPor Amanda);
 //  3. a entrega que mudou no servidor depois de a Amanda ler NÃO é aprovada (fica na lista com o texto novo) — o lote só aprova o que foi lido;
 //  4. a de tipo especial e a do Luís continuam esperando, intocadas;
-//  5. o resumo aparece uma vez e a faixa deixa de oferecer o lote; o cartão "Demandas aguardando aprovação" cai exatamente as aprovadas.
+//  5. o resumo aparece uma vez e a faixa deixa de oferecer o lote; o quadro da Aprovações ("demandas esperando você" + "com outra pessoa")
+//     cai exatamente as aprovadas. LZ5a (26/11): antes lia o cartão da Central de Comando, que saiu.
 import { entrarComo, foto, entrarGerencia } from '../lib/navegador.mjs';
 export const id = 'J118';
 export const nome = 'Amanda aprova as entregas comuns de uma pessoa de uma vez (o que mudou depois de ler e os tipos especiais ficam)';
@@ -29,11 +30,15 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   const { page, erros, fechar } = await nav.novaPagina();
   try {
     await entrarComo(page, amb.url(), 'Amanda'); await page.waitForTimeout(3000); await entrarGerencia(page);
-    // o cartão da Central é desenhado ao entrar na Gerência: lido numa página nova (como a Amanda abrindo de novo), igual à J117
+    // o quadro da Aprovações é lido numa página nova (como a Amanda abrindo de novo), igual à J117: a Gerência entra no Agora e,
+    // depois de ele montar, abre a Aprovações
     const cartao = async () => { const p2 = await nav.novaPagina(); try {
         await entrarComo(p2.page, amb.url(), 'Amanda'); await p2.page.waitForTimeout(3000); await entrarGerencia(p2.page);
-        await p2.page.waitForFunction(() => /demandas aguardando aprova/i.test(document.getElementById('gerenciaComando')?.innerText || ''), null, { timeout: 45000 }); await p2.page.waitForTimeout(2500);
-        return await p2.page.evaluate(() => { const c = [...document.querySelectorAll('#gerenciaComando .resumoCard')].find(x => /demandas aguardando aprova/i.test(x.innerText)); return c ? Number(c.querySelector('.num')?.textContent) : NaN; });
+        await p2.page.waitForFunction(() => /Esperando você decidir/i.test(document.getElementById('gerenciaAgora')?.textContent || ''), null, { timeout: 45000 });
+        await p2.page.evaluate(() => setGerenciaSub('demandasAguardando', document.querySelector('.subtab[data-sub=demandasAguardando]')));
+        await p2.page.waitForFunction(() => /demandas esperando você/i.test(document.getElementById('gerenciaDemandasAguardando')?.innerText || ''), null, { timeout: 45000 }); await p2.page.waitForTimeout(2500);
+        return await p2.page.evaluate(() => { const ler = re => { const c = [...document.querySelectorAll('#gerenciaDemandasAguardando .resumoCard')].find(x => re.test(x.innerText)); return c ? Number(c.querySelector('.num')?.textContent) : NaN; };
+          return ler(/demandas esperando você/i) + ler(/com outra pessoa/i); });
       } finally { await p2.fechar(); } };
     const antes = await cartao();
     await page.evaluate(() => setGerenciaSub('demandasAguardando', document.querySelector('.subtab[data-sub=demandasAguardando]')));
@@ -64,7 +69,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const botaoDepois = await botaoG.count();
     await foto(page, 'J118-depois');
     const depois = await cartao();
-    fim('5 a faixa deixa de oferecer o lote e o cartão "Demandas aguardando aprovação" cai exatamente as aprovadas', botaoDepois === 0 && Number.isFinite(antes) && antes - depois === aprovadas.length && !erros.filter(erroGrave).length,
+    fim('5 a faixa deixa de oferecer o lote e o quadro da Aprovações cai exatamente as aprovadas', botaoDepois === 0 && Number.isFinite(antes) && antes - depois === aprovadas.length && !erros.filter(erroGrave).length,
       `botão depois: ${botaoDepois} · cartão antes ${antes} · depois ${depois} (esperado −${aprovadas.length}) · erros: ${erros.filter(erroGrave).slice(-2).join(' | ').slice(0, 200) || 'nenhum'}`);
   } catch (e) { await foto(page, 'J118-falha').catch(() => {}); fim('aprovação em lote das entregas', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }
   finally { await fechar(); }

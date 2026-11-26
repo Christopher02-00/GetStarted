@@ -222,7 +222,6 @@ export function htmlAcoesAlertaCoberturaAteQuando(d, pessoa) {
   return `<div class="card" data-alerta-capsula style="border:1px solid var(--yellow);margin:12px 0;">
     <div class="meta">${escH(TEXTO_CAPSULA_ATE_QUANDO)}</div>
     <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:8px;">
-      ${pessoa === 'Amanda' ? '<button class="btn green" data-alerta-capsula-acao="painel" onclick="fecharModal();irParaCapsulaAmanda()">🥶 Avaliar conteúdo cápsula</button>' : ''}
       <button class="btn secondary" data-alerta-capsula-acao="ate-quando" onclick="fecharModal();irPara('controlePostagem',document.getElementById('navControlePostagem'))">📆 Ver Postagem Até Quando</button>
     </div>
     <div class="meta" style="margin-top:6px;opacity:.7;">O aviso fecha sozinho quando o cliente voltar a ter postagem agendada.</div>

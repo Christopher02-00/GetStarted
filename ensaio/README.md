@@ -39,7 +39,7 @@ Nunca aponta para `get-started-4956d`; o gancho no `escritorio.html`/`portal-cli
 | J21 | Cecília cancela duas sessões da Mochi (Luís) → o Luís recebe dois avisos, um por sessão (backlog Codex P18) | Cecília, Luís |
 | J22 | E-mail com EmailJS sem cota (dublê) e fila com pessoa desligada → 1 tentativa só, nenhuma para a Gabrielle, 1 aviso `email_cota_esgotada` (backlog P39) | Chris |
 | J23 | Resumo por e-mail desligado (decisão do Chris, 09/11): com fila pendente e EmailJS dublê, o motor não envia resumo e a fila fica intacta | Chris |
-| J24 | Sem rede: a Cecília abre Get Academy e cofre → as telas avisam indisponível em vez de "Nenhum…" (P12/R5) | Cecília |
+| J24 | Sem rede: a Cecília abre o cofre e as Demandas → as telas avisam indisponível em vez de "Nenhum…" (P12/R5) | Cecília |
 | J25 | Stokki por plataforma: vídeo da edição ao cliente (como a J04) → Chris escreve legendas de Instagram e TikTok → Cecília agenda cada rede (conferência do servidor no cartão) → confirma cada publicação pela fila "Publicações para conferir" → "agendado" com 1 rede, "postado" com as 2 (P3) | Amanda, Helo, Chris, Cecília |
 | J26 | Menu: "Registro do dia" da Júlia (conta Fernanda, desligada) não aparece para Amanda e Chris; o registro salvo em `diario_equipe_i118` continua lá | Amanda, Chris |
 | J27 | Calendário com item antigo sem `itemId`: salvar no editor I172 é recusado e a mensagem aponta cliente, mês, dia e item e o caminho → Chris aplica "Corrigir identidades" (V102) com backup e recibo, sem mudar título nem estado → o salvar grava | Amanda, Chris |

@@ -1,11 +1,11 @@
 // J24 — Sem rede, lista não confirmada não vira "Nenhum…" nem "Carregando" eterno (P12/R5; AGENTS: falha nunca vira lista vazia).
 // Achado com a base real (09/11): sem rede, Get Academy dizia "Nenhum curso cadastrado" e o cofre da Cecília
-// "Nenhuma credencial ativa", embora houvesse dados; Atrasadas (Cecília) ficava carregando para sempre. O Diário (Amanda) já avisava; saiu do menu em 09/11 (J26), então saiu daqui.
+// "Nenhuma credencial ativa", embora houvesse dados; Atrasadas (Cecília) ficava carregando para sempre. O Diário (Amanda) já avisava; saiu do menu em 09/11 (J26), então saiu daqui. O Get Academy saiu do Escritório na LZ3b (26/11).
 import { entrarComo, foto } from '../lib/navegador.mjs';
 export const id = 'J24';
 export const nome = 'Sem rede: telas avisam indisponível em vez de "nenhum" ou "carregando" eterno';
 const CASOS = [
-  ['Cecília', [['navGetAcademy', 'view-getAcademy', /Nenhum curso cadastrado/], ['navCofreCecilia', 'view-cofreCecilia', /Nenhuma credencial ativa/],
+  ['Cecília', [['navCofreCecilia', 'view-cofreCecilia', /Nenhuma credencial ativa/],
     ['navAtrasadas', 'view-atrasadas', /Carregando suas demandas/]]],
 ];
 const AVISO = /indisponível|sem conexão|não consegui|não foi possível|não respondeu|não carregou/i;

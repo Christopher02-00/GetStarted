@@ -3728,9 +3728,6 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     if(await marcarItemChecklistI59(itemId,true,prova)){fecharModal();return true;}return false;
   };
 
-  function contarStreakDiario(funcionario, diasHistorico){
-    return diasHistorico;
-  }
 
   async function calcularStreak(funcionario){
     const template = templatesEfetivos[funcionario]?.["Diário"];
@@ -5466,9 +5463,6 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     __cacheCasta = m;
     return m;
   };
-  window.castaDoClienteSync = function(slug){
-    return ((__cacheCasta || {})[slug] || { tipo:'indefinido', origem:'ainda não classificado' });
-  };
   /* ===== QUEM NAO DEVE PROCESSO MENSAL ==============================
      Eu tinha colocado `indefinido` aqui e minha propria suite de testes
      me pegou (teste 18: "se o banco falhar, a meta nao fica vazia —
@@ -6292,71 +6286,8 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     cont.innerHTML = html;
   }
 
-  async function contarAbertosPorEditor(){
-    const snap = await getDocs(collection(db,'videos_producao'));
-    /* ===== CORRIGIDO 27/07/2026 =====
-       A conta incluía vídeo "aguardando aprovação" e "aguardando cliente" —
-       coisas que NÃO estão na mão do editor: ele já entregou e está esperando
-       outra pessoa. Isso inflava a carga de todo mundo (a Cecília aparecia
-       com 19 vídeos tendo 2 pra editar) e fazia a distribuição achar que
-       todos estavam estourados. Agora conta só o que ele tem pra fazer:
-       aguardando edição e correção. */
-    const contagem = {}; EDITORES_GERAL.forEach(e => contagem[e]=0);
-    snap.forEach(d => {
-      const v = d.data();
-      if(v.excluido) return;
-      if(!['aguardando_edicao','correcao'].includes(v.status)) return;
-      if(contagem[v.editorAtribuido] !== undefined) contagem[v.editorAtribuido]++;
-    });
-    return contagem;
-  }
 
-  async function decidirEditor(clienteSlug, ignorarAfinidade){
-    const afinidadeSnap = ignorarAfinidade ? null : await getDoc(doc(db,'editores_afinidade', clienteSlug));
-    const editorPreferido = afinidadeSnap?.exists() ? afinidadeSnap.data().editorAtual : (ignorarAfinidade ? null : (AFINIDADE_INICIAL[clienteSlug] || null));
-    const contagem = await contarAbertosPorEditor();
-    if(editorPreferido && contagem[editorPreferido] < EDITORES_CONFIG[editorPreferido].capacidade){
-      return editorPreferido;
-    }
-    let melhor = EDITORES_GERAL[0], melhorFolga = -999;
-    EDITORES_GERAL.forEach(e => {
-      const folga = EDITORES_CONFIG[e].capacidade - contagem[e];
-      if(folga > melhorFolga){ melhorFolga = folga; melhor = e; }
-    });
-    return melhor;
-  }
 
-  /* ===== RAIZ DO PROBLEMA — CORRIGIDO 22/07/2026 (pedido do Chris) =====
-     She Joias e Dra. Júlia caíram na fila de legenda/agendamento por
-     engano porque, quando um cliente avulso/extra nasce (direto num
-     lançamento de vídeo, num agendamento, ou no cadastro dedicado), NADA
-     perguntava se ele precisa desse processo completo ou se é entrega
-     única (cliente posta sozinho). O padrão viraava sempre "postagem
-     completa" — o mais arriscado dos dois, porque some silenciosamente na
-     Central de Legendas até alguém notar. Essa função fecha esse buraco
-     na origem: toda vez que um cliente novo é criado, grava JUNTO o
-     tipoEntrega — sem depender de ninguém lembrar de configurar depois. */
-  /* ===== A CASTA PERGUNTADA NA FONTE — 03/08/2026 ===================
-     Pedido do Chris: "nenhum cliente avulso que entra, ou que e
-     cadastrado na pagina quando o videomaker vai subir algum video,
-     deve precisar de calendario nem nada dessas coisas, que sao
-     processos internos da agencia para os nossos clientes mensalistas".
-
-     O jeito de garantir isso e nao deixar cliente nascer sem casta. Ja
-     existia esse padrao aqui pra `tipoEntrega` desde 22/07 — usei o
-     mesmo caminho, no mesmo momento, pelos mesmos pontos de criacao.
-
-     A ORDEM IMPORTA: pergunta a casta PRIMEIRO. Se e avulso, entrega
-     direta e consequencia (avulso nao entra no processo de postagem da
-     casa), e a segunda pergunta nem aparece. Menos clique e menos
-     chance de errar — quem responde as vezes e o videomaker em campo,
-     no celular. */
-  function perguntarCastaClienteNovo(nomeCliente){
-    const ehMensalista = confirm('Cliente novo "' + nomeCliente + '" — que tipo de cliente é?\n\n' +
-      'OK = MENSALISTA. Paga plano mensal. Entra nos processos da casa: calendário editorial, referências, ciclo do dia 15.\n\n' +
-      'Cancelar = AVULSO. Trabalho pontual, sem plano mensal. NÃO entra em calendário nem em nenhuma cobrança de processo mensal.');
-    return ehMensalista ? 'mensalista' : 'avulso';
-  }
   async function definirCastaCliente(slug, tipoCliente, quemDefiniu){
     try{
       await setDoc(doc(db,'clientes_config', slug),
@@ -6365,30 +6296,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
       return true;
     }catch(e){ console.error('Falha ao gravar a casta do cliente ' + slug + ':', e); return false; }
   }
-  /* Um caminho so pra "acabei de criar um cliente, classifica ele". */
-  async function classificarClienteNovo(slug, nome, quemDefiniu){
-    const casta = perguntarCastaClienteNovo(nome);
-    if(casta === 'avulso'){
-      await definirCastaCliente(slug, 'avulso', quemDefiniu);
-      await definirTipoEntregaClienteNovo(slug, 'entrega_direta', quemDefiniu);
-      mostrarToast(nome + ' entrou como AVULSO — fora de calendário e dos processos mensais.');
-      return 'entrega_direta';
-    }
-    await definirCastaCliente(slug, 'mensalista', quemDefiniu);
-    const te = perguntarTipoEntregaClienteNovo(nome);
-    await definirTipoEntregaClienteNovo(slug, te, quemDefiniu);
-    return te;
-  }
 
-  async function definirTipoEntregaClienteNovo(slug, tipoEntrega, quemDefiniu){
-    try{
-      await setDoc(doc(db,'clientes_config', slug), { tipoEntrega, atualizadoPor: quemDefiniu + ' (definido na criação do cliente)', atualizadoEm: serverTimestamp() }, { merge: true });
-    }catch(e){ console.error('Falha ao gravar tipoEntrega do cliente novo '+slug+':', e); }
-  }
-  function perguntarTipoEntregaClienteNovo(nomeCliente){
-    const ehAvulso = !confirm('Cliente novo "' + nomeCliente + '":\n\nOK = a Get Started vai escrever legenda e agendar as postagens dele (cliente de gerenciamento de redes — mensalista ou avulso que a gente posta).\n\nCancelar = ele é entrega única / avulso e posta sozinho — não precisa de legenda nem agendamento, vai direto pra "Entregas Finalizadas" assim que aprovar.');
-    return ehAvulso ? 'entrega_direta' : 'postagem_completa';
-  }
 
   /* Aviso pontual pra gestão, no mesmo formato de demanda que o resto do
      site usa. Não repete o mesmo aviso no mesmo dia pro mesmo assunto. */
@@ -6467,7 +6375,6 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
     }
     return __carregamentoEnvioI52;
   }
-  window.abrirTrabalhoPontualI51 = function(){return escolherOrigemMaterial('avulso');};
   /* Fim I52 — área de envio. */
   window.filtrarChecklistFilmagemI51 = function(agId,texto){
     const box=document.getElementById('checklistFilmagem_'+agId);if(!box)return;
@@ -7896,12 +7803,6 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const snap=await getDoc(doc(db,'clientes_config',slug));
     return snap.exists()?{...CONFIG_CLIENTE_PADRAO,...snap.data()}:{...CONFIG_CLIENTE_PADRAO};
   }
-  async function obterConfigCliente(slug){
-    try{
-      return await obterConfigClienteEstrito(slug);
-    }catch(e){ console.error('Falha ao ler config do cliente '+slug+':', e); }
-    return {...CONFIG_CLIENTE_PADRAO,__indisponivel:true};
-  }
 
   const ORDEM_STATUS_POSTAGEM={
     aguardando_legenda:10, legenda_pronta:15, aguardando_agendamento:20,
@@ -8258,28 +8159,6 @@ window.htmlVideosPorDia = function(lista, compacto, alvoId, mostrarEditor){
     const vinculo=String(p?.vinculoSessao||'');
     return ['declarado_em_campo','declarado_legado'].includes(vinculo) &&
       !String(p?.calendarItemId||'') && !Number.isInteger(p?.calendarItemIdx);
-  }
-  async function postagemComVinculoDaProducao(p){
-    const dados={...(p||{})};
-    const vinculoCompleto=(dados.vinculoSessao||dados.calendarItemId)&&
-      (!dados.calendarItemId||dados.calendarCompetencia);
-    if(vinculoCompleto || !dados.videoId) return dados;
-    try{
-      const snap=await getDoc(doc(db,'videos_producao',String(dados.videoId)));
-      if(snap.exists()){
-        const video=snap.data()||{};
-        dados.vinculoSessao=String(video.vinculoSessao||'');
-        dados.calendarItemId=video.calendarItemId||null;
-        dados.calendarItemIdx=Number.isInteger(video.calendarItemIdx)?video.calendarItemIdx:null;
-        dados.calendarClienteSlug=video.calendarClienteSlug||null;
-        dados.calendarCompetencia=video.calendarCompetencia||null;
-      }else throw Object.assign(new Error('O vídeo de origem não existe; o calendário foi preservado.'),{code:'gs/vinculo-indisponivel'});
-    }catch(e){
-      console.error('Falha ao confirmar o vínculo da postagem com a pauta:',e);
-      if(e?.code==='gs/vinculo-indisponivel') throw e;
-      throw Object.assign(new Error('Não foi possível confirmar o vínculo da produção; o calendário foi preservado.'),{code:e?.code||'gs/vinculo-indisponivel',cause:e});
-    }
-    return dados;
   }
   window.escolherPostagemCanonicaPorVideo=escolherPostagemCanonicaPorVideo;
   window.idPostagemDeterministicaDoVideo=idPostagemDeterministicaDoVideo;
@@ -9431,18 +9310,6 @@ window.marcarClienteAprovouVideo = async function(id){
   };
   /* Fim I57 — prazo manual no cartão. */;
 
-  window.definirPrazoVideo = async function(id, valor){
-    if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão de vídeos.', 'erro'); return false; }
-    if(!valor) return;
-    const hoje = new Date();
-    let dataAlvo = new Date(hoje);
-    if(valor === 'amanha') dataAlvo.setDate(dataAlvo.getDate()+1);
-    const dataStr = dataLocal(dataAlvo);
-    const label = valor === 'hoje' ? 'Hoje (' + dataStr + ')' : 'Amanhã (' + dataStr + ')';
-    await updateDoc(doc(db,'videos_producao', id), { prazoEntrega: dataStr, prazoEntregaLabel: label });
-    mostrarToast('Prazo definido: ' + label);
-    renderGerenciaVideos();
-  };
 
   window.definirPrioridadeVideo = async function(id, cor){
     if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão de vídeos.', 'erro'); return false; }
@@ -9774,12 +9641,6 @@ window.marcarClienteAprovouVideo = async function(id){
     }
   };
 
-  window.aprovarExtra = async function(id){
-    if(!['Chris','Amanda'].includes(usuarioAtual)){ mostrarToast('Essa ação é da gestão.', 'erro'); return; }
-    await atualizarExtraEEncerrarAvisos(id, { aprovadoPeloChris:true, aprovadoPor: usuarioAtual||'?', aprovadoEm: new Date().toISOString() }, 'extra aprovado pela gestão');
-    mostrarToast('Aprovado — entrou na folha do mês seguinte à realização.');
-    renderGerenciaPagamentos();
-  };
 
   window.definirFilmmakerPagamento = async function(id, nome){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('Definir o responsável pelo extra é da Amanda.', 'erro'); return; }
@@ -13802,17 +13663,6 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
     return datas[0] || fallback || '';
   }
 
-  async function configsPrazoCalendarioCliente(){
-    const snap = await getDocs(collection(db,'tipos_tarefa_fixa'));
-    const porSlug = new Map();
-    snap.forEach(registro=>{
-      const tipo={id:registro.id,...registro.data()};
-      if(tipo.excluido || tipo.ativo===false || !ehConfigPrazoCalendarioCliente(tipo)) return;
-      const cliente=clienteDoTipoCalendarioLegado(tipo,{cliente:tipo.clienteSlug});
-      if(cliente) porSlug.set(cliente.slug,tipo);
-    });
-    return porSlug;
-  }
 
 
   function mesDaDemandaFixa(demanda){
@@ -14705,23 +14555,6 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
     </div>`;
   }
 
-  async function renderLegendasDoCalendario(){
-    const cont = document.getElementById('postagensConteudo');
-    let clientesMensalistas=[];
-    try{ clientesMensalistas=await clientesCalendarioRecorrentesConfirmados(); }
-    catch(e){ cont.innerHTML=htmlFalhaLeituraCalendarios('Não consegui confirmar os mensalistas com calendário',e); return; }
-    let html = `<div class="card">
-      <h2>📖 Legendas do Calendário — por cliente</h2>
-      <div class="desc">Consulta somente leitura das legendas escritas no calendário editorial. A edição continua no próprio calendário; a fila abaixo é a única porta que confirma a passagem Chris → Cecília.</div>
-      <div class="desc" style="margin-top:6px;">Vídeo manual sem itemId não herda legenda automaticamente: o Chris confirma explicitamente a postagem antes de avançar.</div>
-      <div class="field"><label>Cliente</label><select id="legCalCliente" onchange="carregarLegendasCliente()">
-        <option value="">Selecione...</option>
-        ${clientesMensalistas.map(c=>`<option value="${c.slug}">${esc(c.nome)}</option>`).join('')}
-      </select></div>
-    </div>
-    <div id="legCalLista"></div>`;
-    cont.innerHTML = html;
-  }
 
   /* ===== CLIENTE MULTI-PLATAFORMA — SÓ STOKKI POR ENQUANTO =====
      Pedido específico do Chris: pra Stokki, cada conteúdo pode separar 4
@@ -15087,59 +14920,7 @@ ${envioI52&&['Chris','Amanda'].includes(usuarioAtual)?`          <div class="car
   }
   window.htmlLegendasAgendamentoV124 = htmlLegendasAgendamentoV124;
 
-  window.carregarLegendasCliente = async function(){
-    const slug = document.getElementById('legCalCliente').value;
-    const listaBox = document.getElementById('legCalLista');
-    if(!slug){ listaBox.innerHTML = ''; return; }
-    listaBox.innerHTML = '<div class="empty">Carregando...</div>';
-    const snap = await getDoc(doc(db,'calendarios', slug));
-    if(!snap.exists()){ listaBox.innerHTML = '<div class="empty">Esse cliente ainda não tem calendário criado.</div>'; return; }
-    const dados = snap.data();
-    const items = (dados.items || []).slice().sort((a,b) => a.day - b.day);
-    if(!items.length){ listaBox.innerHTML = '<div class="empty">Nenhum conteúdo planejado ainda pra esse cliente.</div>'; return; }
 
-    const multiPlataforma = ehClienteMultiPlataforma(slug);
-    let html = '';
-    items.forEach((it, i) => {
-      const seloUsada = it.legendaUsadaEm ? `<span class="selo aprovado" style="margin-left:6px;">✅ Já usada num vídeo — ${new Date(it.legendaUsadaEm).toLocaleDateString('pt-BR')}</span>` : '';
-      if(multiPlataforma){
-        html += `<div class="item">
-          <div class="top"><div class="nome">Dia ${it.day} — ${esc(it.name)}</div><div class="meta">${it.apr ? '✅ Aprovado' : '⏳ Não aprovado ainda'}${seloUsada}</div></div>
-          ${preparacaoPublicaCp140(it).trim() ? '<div style="margin-top:7px;background:rgba(224,197,106,.10);border-left:3px solid var(--yellow);padding:8px 11px;border-radius:7px;"><span class="meta" style="font-weight:800;color:var(--yellow);">📌 Solicitação especial:</span> <span class="meta" style="white-space:pre-wrap;color:var(--fg);">'+esc(preparacaoPublicaCp140(it).trim())+'</span></div>' : ''}
-          <div class="desc" style="margin:6px 0;">Cliente com legenda separada por plataforma:</div>
-          ${PLATAFORMAS_LEGENDA.map(p => `
-            <div class="field" style="margin-top:8px;">
-              <label>${p.icone} ${p.label}</label>
-              <textarea id="legCal_${i}_${p.campo}" readonly placeholder="Sem legenda pro ${p.label}">${esc(it[p.campo]||'')}</textarea>
-              ${it[p.campo] ? '<button class="btn secondary" style="width:auto;margin-top:4px;padding:4px 10px;font-size:10.5px;" onclick="copiarLegendaCalendario('+i+',\''+slug+'\',\''+p.campo+'\')">⧉ Copiar</button>' : ''}
-            </div>
-          `).join('')}
-        </div>`;
-      } else {
-        const temLegenda = legendaUtilizavelI79(it.legenda);
-        html += `<div class="item" style="${!temLegenda ? 'border:2px solid var(--red);' : ''}">
-          <div class="top"><div class="nome">Dia ${it.day} — ${esc(it.name)}</div><div class="meta">${it.apr ? '✅ Aprovado' : '⏳ Não aprovado ainda'}${seloUsada}</div></div>
-          ${preparacaoPublicaCp140(it).trim() ? '<div style="margin-top:7px;background:rgba(224,197,106,.10);border-left:3px solid var(--yellow);padding:8px 11px;border-radius:7px;"><span class="meta" style="font-weight:800;color:var(--yellow);">📌 Solicitação especial:</span> <span class="meta" style="white-space:pre-wrap;color:var(--fg);">'+esc(preparacaoPublicaCp140(it).trim())+'</span></div>' : ''}
-          <div class="field" style="margin-top:8px;"><textarea id="legCal_${i}_legenda" readonly placeholder="Sem legenda cadastrada">${esc(it.legenda||'')}</textarea></div>
-          <div class="btnrow" style="margin-top:8px;">
-            ${temLegenda ? `<button class="btn secondary" onclick="copiarLegendaCalendario(${i}, '${slug}', 'legenda')">⧉ Copiar</button>` : ''}
-          </div>
-        </div>`;
-      }
-    });
-    listaBox.innerHTML = html;
-    window.__legendasCache = items;
-  };
-
-  window.copiarLegendaCalendario = function(idx, slug, campo){
-    campo = campo || 'legenda';
-    const legenda = window.__legendasCache[idx][campo];
-    navigator.clipboard.writeText(legenda).then(()=>{
-      mostrarToast('Legenda copiada! Já pode colar no agendamento.');
-    }).catch(()=>{
-      mostrarToast('Não consegui copiar — copia manualmente.', 'erro');
-    });
-  };
 
   /* ===== UNIFICAÇÃO DOS DOIS FORMATOS DE LEGENDA =====
      Formato (a): legenda pré-escrita no calendário editorial do cliente —
@@ -18053,12 +17834,6 @@ async function conferirAvisosCampanhasI153(forcar=false){
   }
   window.salvarPrazoCalendarioClienteCentral = salvarPrazoCalendarioClienteCentral;
 
-  window.salvarPrazoCalendarioDaGrade = async function(clienteSlug){
-    const data=document.getElementById('prazoCal_'+clienteSlug)?.value||'';
-    const inicio=document.getElementById('inicioCal_'+clienteSlug)?.value||'';
-    const obs=document.getElementById('obsPrazoCal_'+clienteSlug)?.value||'';
-    if(await salvarPrazoCalendarioClienteCentral(clienteSlug,data,inicio,obs)) renderEditarFuncoesFixas(document.getElementById('mesEditarFuncoesFixas')?.value);
-  };
 
   async function gerarHtmlPrazosCalendarios(){
     return '<div class="card"><h2>📅 Datas de criação dos calendários</h2><div class="desc">Organize as etapas e os responsáveis em Organização das datas. A antiga geração mensal da Gabi foi encerrada. As entregas anteriores continuam preservadas no mesmo histórico.</div><button class="btn secondary" onclick="irPara(\'agendaOrganizacao\')">Abrir calendário de organização</button></div>';
@@ -19173,7 +18948,6 @@ async function conferirAvisosCampanhasI153(forcar=false){
     finally{op.salvando=false;if(vigente()){op.ancora.disabled=false;inputs.forEach((e,i)=>e.disabled=disabled[i]);}}
   };
 
-  window.atualizarStatusIdeia=(id)=>abrirIdeiaPortalI140(id);
 
   /* Soft delete — some da tela, fica recuperavel no banco (mesmo padrao
      das anotacoes e dos videos: um clique errado nao pode apagar pra sempre). */
@@ -19315,40 +19089,7 @@ async function conferirAvisosCampanhasI153(forcar=false){
   window.abrirDetalheConteudoCliente=function(slug){
     return prepararAtalhoCalendarioI135(slug,CLIENTES_LISTA.find(c=>c.slug===slug)?.nome||slug,'Para editar, mudar o dia ou excluir um conteúdo, escolha o mês e use o editor oficial. Os conteúdos anteriores e o histórico ficam preservados.');
   };
-  // Compatibilidade: favoritos antigos não usam a posição do item como identidade.
-  window.editarItemConteudoCliente=function(slug){return abrirDetalheConteudoCliente(slug);};
-  window.reposicionarItemConteudoCliente=function(slug){return abrirDetalheConteudoCliente(slug);};
-  window.removerItemConteudoCliente=function(slug){return abrirDetalheConteudoCliente(slug);};
 
-  /* ===== 08/08/2026 — A TRAVA CONTRA CLIENTE DUPLICADO =====
-     O Chris achou 'Otica Araucaria' e 'Zeens' cadastrados como clientes
-     diferentes, sendo o mesmo. E 'Master Chef' / 'Master Chefe'.
-     A checagem que existia comparava so o slug EXATO — 'otica-visao-araucaria'
-     e 'zeens' nao colidem, entao passou batido.
-     Agora o site avisa quando o nome novo PARECE com um existente e pede
-     confirmacao. Nao bloqueia: pode existir cliente de nome parecido de
-     verdade. Mas obriga alguem a olhar antes de criar o segundo registro.
-     LIMITE HONESTO: nenhum algoritmo pega 'Otica Araucaria' = 'Zeens',
-     porque isso e conhecimento do negocio, nao semelhanca de texto. Para
-     esses casos a solucao e juntar os registros, nao prevenir. */
-  window.__normNomeCliente = function(s){
-    return String(s||'').toLowerCase().normalize('NFD')
-      .replace(/[\u0300-\u036f]/g,'')
-      .replace(/\b(ltda|me|epp|eireli|sa|s\/a|cia|comercio|comercial|servicos)\b/g,'')
-      .replace(/[^a-z0-9]/g,'');
-  };
-  window.clientesParecidos = function(nome, lista){
-    const a = window.__normNomeCliente(nome);
-    if(a.length < 3) return [];
-    return (lista || []).filter(c => {
-      const b = window.__normNomeCliente(c.nome);
-      if(!b || b.length < 3) return false;
-      if(a === b) return true;
-      if(a.startsWith(b) || b.startsWith(a)) return true;   // masterchef / masterchefe
-      if(a.includes(b) || b.includes(a)) return true;       // contido
-      return false;
-    });
-  };
 
   /* ===== 02/08/2026 — A DATA QUE ENTRAVA TORTA =======================
      Esta função pedia a data por `prompt` e gravava o que viesse, sem
@@ -21266,7 +21007,6 @@ async function registrarGravacaoRealizadaNucleo(agId){
     }
     if(!['inicio','agendaOrganizacao'].includes(nome))limparAgendaI167();
     if(nome !== 'calendarios') pararOuvinteCalendarioCampo(false);
-    registrarAtividadeUsuario();
     if(nome!=='acompanhamento')pararDeclaracoesI141();
     viewAtiva = nome; // Fase 2 — usado pelo dispatcher de tempo real
     document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
@@ -23023,13 +22763,6 @@ async function registrarGravacaoRealizadaNucleo(agId){
 
 
 
-  window.abrirArquivoClientesUnico=function(){
-    if(usuarioAtual!=='Chris'){ mostrarToast('Área exclusiva da gerência.','erro'); return false; }
-    irPara('cadastro',document.getElementById('navCadastro'));
-    const abaArquivo=document.querySelectorAll('#view-cadastro .subtab')[1];
-    setCadastroSub('arquivo',abaArquivo);
-    return true;
-  };
 
 
   async function carregarMensalistaRecebidoNosCampos(id){
@@ -25037,8 +24770,6 @@ window.setGerenciaSub = function(qual, el){
     document.getElementById('navInicio')?.classList.add('active');
     viewAtiva='inicio';
 
-    ultimoRegistroAtividade = 0;
-    registrarAtividadeUsuario();
     const cardQuem = document.getElementById('cardQuemSouEu');
     if(cardQuem) cardQuem.classList.toggle('compacto', !!usuarioAtual);
     atualizarVisibilidadeSidebarExclusiva();
@@ -26437,15 +26168,6 @@ window.setGerenciaSub = function(qual, el){
     });
   };
 
-  window.irParaConfirmarPublicacoes = function(){
-    if(usuarioAtual==='Cecília')return abrirFilaPublicacoesCp125();
-    const nav = document.getElementById('navPostagens');
-    if(nav) irPara('postagens', nav);
-    setTimeout(() => {
-      const el = document.getElementById('subtabConfirmarPub');
-      if(el) setPostagensSub('confirmar', el);
-    }, 300);
-  };
 
   /* ===== UM CAMINHO DIRETO PROS EXTRAS — 03/08/2026 =================
      O botão "abrir os extras" chamava `navegarGerenciaSub('pagamentos')`
@@ -26742,10 +26464,6 @@ window.setGerenciaSub = function(qual, el){
   atualizarVisibilidadeSidebarExclusiva();
 
 
-  window.atalhoGerenciaSub = function(sub){
-    const el = document.getElementById('navitemGerencia');
-    if(el) irParaGerenciaSub(sub, el);
-  };
 
   // FRENTE C5 — grupos colapsaveis do menu da Gerencia (estado no navegador)
   window.toggleGrupoGerencia = function(head){
@@ -28505,24 +28223,6 @@ window.setGerenciaSub = function(qual, el){
   }
 
 
-  /* Mutirao pra limpar os avisos que ficaram presos na fila antes da
-     correcao — sao os de origem 'cliente' (ideia/referencia mandada pelo
-     portal), que nunca deveriam ter pedido aprovacao. */
-  window.limparAvisosDaFila = async function(){
-    await carregarTodasDemandas();
-    const avisos = todasDemandas.filter(d => d.status === 'concluida_aguardando_aprovacao' && !ehAjusteEditorialCp112(d) && (d.ehAviso === true || d.origem === 'cliente'));
-    if(!avisos.length){ mostrarToast('Nenhum aviso preso na fila.'); return; }
-    if(!confirm('Encerrar ' + avisos.length + ' aviso(s) que estão ocupando a fila de aprovação?\n\nSão avisos do portal (cliente mandou ideia/referência), não tarefas — eles não precisam da sua aprovação.')) return;
-    for(const d of avisos){
-      await updateDoc(doc(db,'demandas', d.id), {
-        status: 'aprovada', concluidoPor: 'sistema (aviso não precisa de aprovação)', concluidoEm: serverTimestamp(),
-        notaConclusao: 'Encerrado na limpeza da fila — avisos do portal não pedem aprovação.'
-      });
-    }
-    registrarLogAutomacao('avisos_fila_limpos', '', avisos.length + ' aviso(s) encerrado(s)');
-    mostrarToast(avisos.length + ' aviso(s) saíram da fila.');
-    renderMinhasDemandasAtribuidas();
-  };
 
   /* ===== OS CONTADORES FICAVAM PRESOS NA PESSOA ANTERIOR — 28/07/2026 ===
      Testando ao vivo: entrei como Helo, que tem ZERO demandas, e o menu
@@ -31371,12 +31071,6 @@ window.setGerenciaSub = function(qual, el){
     if(!competenciaValidaControle(mes)) return mes||'Competência desconhecida';
     const [ano,m]=mes.split('-').map(Number);
     return new Intl.DateTimeFormat('pt-BR',{month:'long',year:'numeric',timeZone:'America/Sao_Paulo'}).format(new Date(ano,m-1,1));
-  }
-  function normalizarInstanteControle(valor){
-    if(valor?.toMillis) return valor.toMillis();
-    if(valor?.seconds) return Number(valor.seconds)*1000;
-    const n=Date.parse(String(valor||''));
-    return Number.isFinite(n)?n:0;
   }
   function atorControleConclusao(){
     const real=String(window.__pessoaAutenticadaReal||usuarioAtual||'');
@@ -35551,19 +35245,6 @@ window.setGerenciaSub = function(qual, el){
     return limpos;
   }
 
-  /* ===== COBERTURA REAL DE POSTAGENS — ALERTA EXCLUSIVO DA AMANDA ====
-     Pedido de 13/08/2026: avisar quando a última postagem programada de
-     um cliente sair e, se nada novo entrar, avisar de novo ao completar
-     três dias sem postagem.
-
-     A fonte é `postagens`, sem filtrar formato: foto, arte, carrossel e
-     vídeo contam do mesmo jeito. Gravação não é cobertura de postagem.
-     A função abaixo é pura para poder ser executada no sandbox dos testes. */
-  function diasCivisEntreISO(inicio, fim){
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(inicio||'')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(fim||''))) return null;
-    const [ai,mi,di]=inicio.split('-').map(Number), [af,mf,df]=fim.split('-').map(Number);
-    return Math.floor((Date.UTC(af,mf-1,df)-Date.UTC(ai,mi-1,di))/86400000);
-  }
   /* 16/11/2026: a regra mora em gs-ate-quando-postagens.mjs — a mesma das telas "até quando". */
   const IDENT_ATE_QUANDO={slug:slugClienteCanonico,nome:nomeClienteCanonico,norm:normNomeCliente};
   function calcularCoberturaPostagens(postagens, clientes, hoje, slugsComCalendario){
@@ -35881,33 +35562,6 @@ window.setGerenciaSub = function(qual, el){
   }
   window.resolverDemandasAlertasCanonicosV135=resolverDemandasAlertasCanonicosV135;
 
-  async function reconciliarDemandasAlertasCanonicosV135(){
-    /* Uma falha em qualquer leitura aborta antes da primeira escrita: erro
-       nunca é interpretado como fonte ausente. */
-    const [agSnap,postSnap,demSnap]=await Promise.all([
-      snapshotOperacional('agendamentos'),snapshotOperacional('postagens'),snapshotOperacional('demandas')
-    ]);
-    const agendamentos=agSnap.docs.map(d=>({id:d.id,...d.data()}));
-    const postagens=postSnap.docs.map(d=>({id:d.id,...d.data()}));
-    const demandas=demSnap.docs.map(d=>({id:d.id,...d.data()}));
-    const camposVinculoCanonico=['agendamentoId','agendamentoRefId','postagemId'];
-    const foto=resolverDemandasAlertasCanonicosV135({demandas,agendamentos,postagens,hoje:hojeLocal()});
-    const porId=new Map(demandas.map(d=>[d.id,d]));
-    let encerradas=0;
-    for(const item of foto.paraEncerrar){
-      const atual=porId.get(item.demandaId)||{};
-      if(['aprovada','cancelada','cancelada_automaticamente'].includes(String(atual.status||''))||atual.excluido===true) continue;
-      await updateDoc(doc(db,'demandas',item.demandaId),{
-        status:'cancelada_automaticamente',excluido:true,
-        concluidoPor:'sistema',concluidoEm:serverTimestamp(),
-        motivoExclusao:'V135 — a fonte canônica ficou '+item.estado+' ('+item.motivo+').',
-        notaConclusao:'Alerta encerrado por identidade exata; nenhum dado operacional foi inferido.'
-      });
-      registrarHistorico('demandas',item.demandaId,'Alerta V135 encerrado automaticamente',item.tipo+' '+item.fonteId+' — '+item.motivo);
-      encerradas++;
-    }
-    return {encerradas,inconsistencias:foto.inconsistencias,camposVinculoCanonico};
-  }
   /* ===== REDE DE SEGURANÇA COMPLETA DO CICLO DE POSTAGEM =====
      Cobre as 3 etapas onde algo pode ser esquecido:
      1. LEGENDA esquecida (aguardando_legenda parada 1+ dia) → demanda pra Gabrielle
@@ -36429,16 +36083,6 @@ window.setGerenciaSub = function(qual, el){
     }
   }
 
-  let ultimoRegistroAtividade = 0;
-  async function registrarAtividadeUsuario(){
-    if(!usuarioAtual) return;
-    const agora = Date.now();
-    if(agora - ultimoRegistroAtividade < 3 * 60000) return; // no maximo 1x a cada 3 min
-    ultimoRegistroAtividade = agora;
-    try {
-      await setDoc(doc(db,'presenca_funcionarios', usuarioAtual), { nome: usuarioAtual, ultimaAtividade: serverTimestamp() });
-    } catch(e){}
-  }
 
   /* ===== RESUMO DO DIA — 27/07/2026 =====
      Pedido do Chris: a partir das 17h, um retrato do dia na propria tela de
@@ -37962,10 +37606,6 @@ window.salvarPrazoVideo = async function(id){
     }
   };
 
-  function slugContrato(nome){
-    const bruto=(nome||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-    return slugClienteCanonico(bruto);
-  }
   const brl = v => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
 
 
@@ -40387,24 +40027,6 @@ window.salvarPrazoVideo = async function(id){
     return renderDemandasDaPessoa();
   };
 
-  window.excluirDemandaDoPainel = async function(id){
-    if(ehIdDemandaEntradaCp150(id))return abrirDemandaEntradaCp150(id);
-    if(ehIdProvidenciaCp140(id)){await providenciasUiCp140().abrir(id);return false;}
-    if(ehAvisoExclusaoI112(todasDemandas.find(d=>d.id===id)))return abrirPedidosExclusaoI112(id);
-    if(usuarioAtual !== 'Chris' && usuarioAtual !== 'Amanda'){ mostrarToast('Só o Chris ou a Amanda podem excluir demandas.', 'erro'); return; }
-    const d = todasDemandas.find(x=>x.id===id);
-    const titulo = d ? d.titulo : id;
-    if(!confirm('Arquivar a demanda "'+titulo+'"? Ela sai da operação, mas o histórico fica preservado.')) return;
-    try{
-      await updateDoc(doc(db,'demandas', id), {
-        excluido:true, excluidoPor:usuarioAtual||'?', excluidoEm:new Date().toISOString(),
-        motivoExclusao:'Excluída manualmente no painel de demandas'
-      });
-      registrarLogAutomacao('demanda_excluida_manual', id, 'Excluída (painel de atrasos) por ' + usuarioAtual + ' — "' + titulo + '"');
-      mostrarToast('Demanda arquivada com histórico preservado.');
-      renderDemandasDaEquipe();
-    }catch(e){ mostrarToast('Erro ao excluir: ' + e.message, 'erro'); }
-  };
 
   /* ===== LEADS AVULSOS — novo link de captação (avulso.html) =====
      Todo lead que preenche o microsite público avulso.html cai direto
@@ -41277,10 +40899,6 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     const r=botao?(cartao?.dataset.calendarioChave===slug+'|'+mes?cartao.__revisaoI148:null):__revisoesCalendariosI148.get(slug+'|'+mes);
     return r?.sessao===sessaoServicoManual()?r:null;
   }
-  function conferirRevisaoCalendarioI148(slug,mes,cal,estado,botao){
-    const r=obterRevisaoCalendarioI148(slug,mes,botao);
-    exigirRevisaoI148(r?.revisao,revisaoI148(slug,mes,cal,itensDoMesCalendario(cal,mes),estado));return r;
-  }
 
   window.__sequenciaFilaCalendariosV124 = Number(window.__sequenciaFilaCalendariosV124||0);
   window.htmlCalendariosParaRevisar = async function(opcoes){
@@ -41884,32 +41502,6 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
 
   window.enviarUmCalendario = function(slug,mes,btn){return window.liberarCalendario(slug,mes,btn);};
 
-  window.enviarTodosOsCalendarios = async function(btn){
-    if(usuarioAtual !== 'Amanda'){ mostrarToast('A decisão e o envio de calendários são da Amanda.', 'erro'); return; }
-    const box = document.getElementById('filaEnvioCalendarios');
-    const snap = await obterCalendariosCompartilhados();
-    const alvos = [];
-    snap.forEach(d => { const cal = d.data();
-      const meses = mesesDeCalendario(cal);
-      (meses.length ? meses : ['']).forEach(m => {
-        if(/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(m||'')) && estadoMesCal(cal, m) === 'aprovado_interno' && itensDoMesCalendario(cal, m).length){
-          alvos.push({ slug:d.id, mes:m });
-        }
-      });
-    });
-    const alvosPermitidos=await filtrarLinhasCalendariosPorCarteiraV127(alvos);
-    if(!alvosPermitidos.length){ mostrarToast('Nada represado de cliente ativo nesta competência.', 'erro'); return; }
-    if(!confirm('Enviar ' + alvosPermitidos.length + ' calendário(s) pros clientes agora?\n\nCada cliente passa a ver o mês no portal dele e pode aprovar. Dá pra enviar um a um depois, se preferir.')) return;
-    if(alvosPermitidos.some(a=>!obterRevisaoCalendarioI148(a.slug,a.mes))){mostrarToast('Revise cada calendário antes de concluir a publicação.','erro');return;}
-    if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
-    const resultado = await dispararCalendarios(alvosPermitidos.map(a=>({...a,revisaoVistaI148:obterRevisaoCalendarioI148(a.slug,a.mes)})));
-    if(resultado.falhas.length){
-      const nomes=resultado.falhas.map(f=>f.nome+(f.erro?' ('+f.erro+')':'')).join('; ');
-      mostrarToast(resultado.enviados.length+' calendário(s) enviados. Falharam '+resultado.falhas.length+': '+nomes,'erro');
-    }else mostrarToast(resultado.enviados.length + ' calendário(s) enviados pros clientes!');
-    if(btn){btn.disabled=false;btn.textContent='Enviar calendários revisados';}
-    renderFilaEnvioCalendarios();
-  };
 
   async function dispararCalendarios(alvos){
     if(usuarioAtual !== 'Amanda'){ mostrarToast('A decisão e o envio de calendários são da Amanda.', 'erro'); return {enviados:[],falhas:[]}; }
@@ -41996,14 +41588,6 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     return resultado;
   }
 
-  /* Aprovação e publicação são uma única decisão da Amanda. O cliente
-     recebe o mês no Portal; a Cecília pode copiar o mesmo link já
-     publicado, sem alterar estado nem criar outra porta de liberação. */
-  /* Compatibilidade para uma aba antiga ainda aberta. Não mantém uma
-     segunda regra: qualquer clique antigo cai no único fluxo atual. */
-  window.aprovarEEnviarAgora = function(slug, mes, btn){
-    return window.liberarCalendario(slug,mes,btn);
-  };
 
   const __calendariosPublicacaoEmCursoV124 = new Set();
   window.liberarCalendario = async function(slug, mes, btn){
@@ -42572,32 +42156,8 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
 
 
 
-  /* CP122: atalho da Yas para o mesmo formulário; não cria nem envia pedido. */
-  window.pedirMaterialAmandaCP122 = function(){
-    if(usuarioAtual!=='Yas')return false;
-    const modal=document.getElementById('modalConteudo'),overlay=document.getElementById('overlayView');
-    if(window.__criacaoDemandaPendente||(overlay?.classList.contains('show')&&modal?.querySelector('#novoTituloModal'))){
-      mostrarToast('Já tem um pedido aberto ou aguardando confirmação. Termine ele antes de abrir outro pra Amanda.','erro');return false;
-    }
-    if(abrirModalNovaDemanda()===false)return false;
-    const destino=document.getElementById('novoDestinatarioModal'),titulo=document.getElementById('novoTituloModal'),descricao=document.getElementById('novaDescModal');
-    if(!modal||!destino||!titulo||!descricao||!modal.contains(destino))return false;
-    destino.value='Amanda';
-    modal.querySelector('h2')?.insertAdjacentHTML('afterend','<p class="desc" data-cp122-guia>Conta qual material está faltando, de qual cliente e pra quando você precisa. Depois de criar o pedido, você acompanha em Minhas Demandas → Que eu enviei.</p>');
-    titulo.placeholder='Ex.: Preciso das fotos do cliente';
-    descricao.placeholder='Qual cliente e qual arquivo ou informação você precisa receber?';
-    titulo.focus();return true;
-  };
 
 
-  function tempoDesde(ms){
-    const min = Math.floor((Date.now() - ms) / 60000);
-    if(min < 2) return 'agora';
-    if(min < 60) return 'há ' + min + ' min';
-    const h = Math.floor(min/60);
-    if(h < 24) return 'há ' + h + 'h';
-    return 'há ' + Math.floor(h/24) + ' dia(s)';
-  }
 
   let __geracaoRenderGerenciaAmandaV124 = 0;
   window.renderGerenciaAmanda = async function(){
@@ -43444,8 +43004,6 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     validar();await criarDemandaSegura({titulo:'↪️ '+x.ctx.nome+' pediu pra repassar uma demanda',descricao:x.ctx.nome+' acha que esta demanda é de '+alvo+':\n\n"'+(x.base.titulo||'')+'"\n\nMotivo: '+motivo+'\n\nAbre a demanda original pra decidir. Enquanto você não decidir, ela continua com '+(x.base.destinatario||'?')+'.',destinatario:'Amanda',origem:'sistema',ehAviso:true,demandaOriginalId:x.id,ehPedidoRedirecionamento:true,prazoData:hojeLocal(),prazoHora:'19:00',status:'pendente'},{janelaMinutos:60});validar();
     fecharModal();await carregarTodasDemandas();if(!mesmaIdentidadeRepasseCp148(x.ctx))return;atualizarTodosOsBadges();renderMinhasDemandasAtribuidas();atualizarFilaAprovacao();mostrarToast('Pedido enviado. A Amanda decide — até lá a demanda continua com você.');
   }
-  // Todos os atalhos de gestão abrem a mesma confirmação visível.
-  window.aplicarRedirecionamento=function(id,alvo,motivo,quem){if(quem!==usuarioAtual||!['Chris','Amanda'].includes(usuarioAtual))return Promise.reject(Error('Reabra o perfil de gestão para repassar.'));return pedirRedirecionamento(id,{alvo,motivo});};
 
   window.decidirRedirecionamento = async function(id, aceitar){
     if(ehIdDemandaEntradaCp150(id))return abrirDemandaEntradaCp150(id);
@@ -44347,7 +43905,6 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
     });
     if(c.papel==='Cecília'){const raiz=slot.querySelector('[data-fila-publicacoes-cp125]');__filaPublicacoesCp125=criarFilaPublicacoesCp125({root:raiz,contexto:contextoAvisosMinimosI165,ler:lerFilaPublicacoesCp125,abrir:abrirPublicacaoDaFilaCp125,toast:mostrarToast,quandoMuda:()=>__avisosMinimosI165?.sincronizarFilaPublicacoes(),recuperacoes:()=>uiPostagensI165.fluxo.listar()});void __filaPublicacoesCp125.atualizar();}
   }
-  window.abrirAvisoOperacionalI165=id=>__avisosMinimosI165?.abrir(id)||false;
   window.addEventListener('pagehide',pararAvisosMinimosI165);
 
 
@@ -44650,7 +44207,6 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
       abrirModal:painel=>{const modal=document.getElementById('modalConteudo');modal.replaceChildren(painel);document.getElementById('overlayView').classList.add('show');},
       aoAtualizar:async(c)=>{const atual=c||contextoPreparacaoR80();const validar=()=>{if(!['uid','nome','atorReal','sessao','geracao'].every(k=>contextoPreparacaoR80()[k]===atual[k]))throw Error('O perfil mudou. O resultado está guardado no acesso original.');};await carregarTodasDemandas({servidor:true,validar});validar();atualizarTodosOsBadges();}});
   }
-  window.abrirProvidenciasGravacoesCp140=()=>providenciasUiCp140().listar();
 
   function contextoUiOperacionalI165(){return {uid:auth.currentUser?.uid||'',papel:usuarioAtual,atorReal:atorRealDaSessao(),sessao:sessaoServicoManual(),rota:JSON.stringify([viewAtiva,__postSubI84,__alvoAprovVideos,__navegacaoAvisosMinimosI165])};}
   function mesmaUiOperacionalI165(c){return JSON.stringify(c)===JSON.stringify(contextoUiOperacionalI165());}

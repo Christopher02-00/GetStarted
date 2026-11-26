@@ -53,7 +53,7 @@ Ela não muda a velocidade de entrada: essas coleções não são baixadas ao ab
 
 `demandas`: 5.387 documentos (5,9 MB). São 4.636 aprovadas, 235 canceladas, 479 pendentes e 26 aguardando aprovação.
 O ouvinte em tempo real da gestão traz todas a cada entrada. As telas do dia a dia usam só as abertas.
-O histórico (Arquivo de entregas, linha do tempo do cliente, relatório mensal, histórico de Minhas Demandas, rotinas que evitam aviso repetido)
+O histórico (linha do tempo do cliente, histórico de Minhas Demandas, rotinas que evitam aviso repetido; Arquivo de entregas e relatório mensal saíram na LZ3a, 26/11)
 usa as encerradas.
 
 **Proposta 4 (código, sem apagar nada, reversível):**

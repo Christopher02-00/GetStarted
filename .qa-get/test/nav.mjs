@@ -18,7 +18,7 @@ async function conferirDelegacao(){
  const w=new Window(),d=w.document;let changes=0,banners=0,motor=0;
  d.body.innerHTML='<select id="operacaoPapelEscolhido"><option>Gabrielle</option><option>Amanda</option></select><select id="euSouGlobal"><option>Chris</option><option>Amanda</option><option>Gabrielle</option></select><div id="painelOperacaoPerfisChris"></div>';
  w.__pessoaAutenticadaReal='Chris';w.__operacaoDelegadaChris='';w.mudarUsuarioGlobal=async()=>{changes++;};
- const ctx=vm.createContext({window:w,document:d,Option:w.Option,podeSairDiarioI118:()=>true,pararMotorAutomacoes:()=>{motor++;},atualizarBannerOperacaoPerfilChris:()=>{banners++;},mostrarToast:()=>{}});
+ const ctx=vm.createContext({window:w,document:d,Option:w.Option,pararMotorAutomacoes:()=>{motor++;},atualizarBannerOperacaoPerfilChris:()=>{banners++;},mostrarToast:()=>{}});
  vm.runInContext(declaration[0]+'\n'+entry[0]+'\n'+guard[0],ctx);
  try{
   d.getElementById('operacaoPapelEscolhido').value='Gabrielle';await w.entrarOperacaoPerfilChris();

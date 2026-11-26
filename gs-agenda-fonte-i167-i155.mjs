@@ -1,6 +1,7 @@
 /* A obrigação e suas datas permanecem na demanda I167. Esta ponte não escreve nela. */
 import {assinaturaOrganizacaoI167} from './gs-organizacao-social-repo-i167.mjs';
 import {PAPEIS_HISTORICOS_PLANEJAMENTO_R81,PAPEL_PESQUISA_ANTERIOR_R81} from './gs-papeis-planejamento-r81.mjs';
+const jsonOrdenadoLz11=v=>JSON.stringify(v,(_k,x)=>x&&typeof x==='object'&&!Array.isArray(x)&&!(typeof x.toMillis==='function')?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x); // LZ11: a ordem dos campos lidos do servidor não é garantida
 const ETAPAS = ['pesquisa','previa','reuniao','consolidado','criacao','revisao','disponivel'];
 const CORRESPONDENCIA = Object.freeze({referencias:'pesquisa',pesquisa:'pesquisa',previa:'previa',reuniao:'reuniao',consolidado:'consolidado',criacao:'criacao',revisao:'revisao',liberacao:'disponivel',disponivel:'disponivel'});
 const EMPRESAS = ['', 'otica_hauer','otica_sao_jose','clinica_olhos_hauer','clinica_sao_jose'];
@@ -48,7 +49,7 @@ export async function conferirVinculoAgendaI167(tx,io,c,etapa,a,{adocao=false}={
   if(o?.schema!==1||!idValido(o.demandaId)||o.cliente!==c.cliente||o.competencia!==c.competencia||o.etapa!==etapa)erro('O vínculo da organização está inconsistente. Nada foi alterado.');
   const s=await tx.get(io.doc(io.db,'demandas',o.demandaId));if(!s.exists())erro('Não consegui confirmar a ficha de origem. A etapa não foi recriada.');
   const d=s.data(),m=validarFonte(d,c,etapa,o.empresaId),campos=camposAgendaI167(d);if(adocao&&d.destinatario===PAPEL_PESQUISA_ANTERIOR_R81)erro('Atualize o responsável na mesma ficha da Organização antes de adotar este compromisso. A atribuição e a prova anteriores foram preservadas.');
-  if(m.etapa!==o.etapaOrganizacao||JSON.stringify(campos)!==JSON.stringify(o.campos)||Object.keys(campos).some(k=>a[k]!==campos[k]))erro('As datas ou o responsável mudaram na Organização das datas. Consulte e confirme essa ficha novamente; as entregas foram preservadas.');
+  if(m.etapa!==o.etapaOrganizacao||jsonOrdenadoLz11(campos)!==jsonOrdenadoLz11(o.campos)||Object.keys(campos).some(k=>a[k]!==campos[k]))erro('As datas ou o responsável mudaram na Organização das datas. Consulte e confirme essa ficha novamente; as entregas foram preservadas.');
   if(adocao&&await assinaturaOrganizacaoI167(d)!==o.assinatura)erro('A ficha mudou depois da sua leitura. Consulte novamente antes de vincular; a entrega atual foi preservada.');
   return {id:o.demandaId,etapa,empresaId:o.empresaId,titulo:d.titulo||'',status:d.status||'pendente',aguardandoAmanda:d.status==='concluida_aguardando_aprovacao',fonte:'demandas',campos};
 }
@@ -63,7 +64,7 @@ export async function projetarFontesAgendaI167(io,c) {
     try {
       const s=await io.getDocFromServer(io.doc(io.db,'demandas',o.demandaId));if(!s.exists())erro('Não consegui confirmar a ficha de origem.');
       const d=s.data();validarFonte(d,c,etapa,o.empresaId);const campos=camposAgendaI167(d);
-      fontes[etapa]={id:o.demandaId,status:d.status||'pendente',aguardandoAmanda:d.status==='concluida_aguardando_aprovacao',campos,desatualizada:JSON.stringify(campos)!==JSON.stringify(o.campos),conferida:true};
+      fontes[etapa]={id:o.demandaId,status:d.status||'pendente',aguardandoAmanda:d.status==='concluida_aguardando_aprovacao',campos,desatualizada:jsonOrdenadoLz11(campos)!==jsonOrdenadoLz11(o.campos),conferida:true};
     } catch(e) {fontes[etapa]={id:o.demandaId,conferida:false,erro:e.message||'A origem não foi conferida.'};}
   }
   Object.defineProperty(c,'fontesAgendaI167',{value:fontes,enumerable:false,configurable:true});return c;

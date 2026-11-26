@@ -4,7 +4,8 @@ export function retratoInfoClienteI164(existe,d={}){
   if(Object.values(r).some(v=>typeof v!=='string'&&typeof v!=='boolean')||r.texto.length>200000)throw Error('As informações deste cliente precisam ser conferidas antes de montar a base. Nenhum texto foi cortado.');
   return r;
 }
-export const mesmaInfoClienteI164=(a,b)=>!!a&&JSON.stringify(a)===JSON.stringify(b);
+const jsonOrdenadoLz11=v=>JSON.stringify(v,(_k,x)=>x&&typeof x==='object'&&!Array.isArray(x)&&!(typeof x.toMillis==='function')?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x); // LZ11: a ordem dos campos lidos do servidor não é garantida
+export const mesmaInfoClienteI164=(a,b)=>!!a&&jsonOrdenadoLz11(a)===jsonOrdenadoLz11(b);
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function montarInfoClienteI164(root,{io,contexto,clientes,clienteInicial=''}){
   const {db,doc,getDocFromServer,runTransaction,serverTimestamp}=io,ctx={...contexto()},editar=['Amanda','Chris'].includes(ctx.nome);

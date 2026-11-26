@@ -63,5 +63,9 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const graves = erros.filter(erroGrave).filter(e => /j131|aviso do servi[cç]o|pedidos recebidos|servico_i19|cadastro novo/i.test(e) && !/j131ruim/.test(e)); // a falha do caso 3 é proposital
     fim('4 sem erro grave no fluxo do aviso (além da falha proposital do caso 3)', !graves.length, graves[0] ? String(graves[0]).slice(0, 300) : 'nenhum');
   } catch (e) { await foto(page, 'J131-falha'); fim('Aviso de cadastro novo', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }
-  finally { await fechar(); }
+  finally {
+    await fechar();
+    // o pedido com recibo errado é proposital (caso 3): sai da fila para as jornadas seguintes da bateria não verem a falha no motor
+    await seed.set('leads_avulsos', RUIM, pedido(RUIM, { avisoDemandaId: 'servico_i19_outro_registro', excluido: true, status: 'arquivado', statusGerencia: 'arquivado' })).catch(() => {});
+  }
 }

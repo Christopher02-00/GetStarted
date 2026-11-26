@@ -2781,7 +2781,7 @@ import {statusDemandaI93,gruposDemandasI93,assinaturaDemandaI93,camposEdicaoI93,
 
      Não substitui o WhatsApp: o Chris continua fechando direto com quem
      ele quiser. Isto cobre quem entra sozinho pelo link, que hoje some. */
-  async function avisarCadastrosNovos(){const r=await avisarServicosNovosI19();if(r.falhas||r.interrompido)throw new Error('Avisos de serviço não confirmados: '+(r.falhas||0)+'. A rotina não foi concluída.');return r;}
+  async function avisarCadastrosNovos(){const r=await avisarServicosNovosI19();if(r.falhas||r.interrompido)throw new Error('Avisos de serviço não confirmados: '+(r.falhas||0)+'. A rotina não foi concluída.'+(r.motivo?' Motivo: '+String(r.motivo).slice(0,300):''));return r;}
 
   /* Do aviso direto pra Cecília, com os dados já preenchidos. */
   window.mandarParaCeciliaAgendar=async function(demandaId,leadId){return encaminharServicoCeciliaI19(demandaId,leadId);};
@@ -23467,20 +23467,20 @@ async function registrarGravacaoRealizadaNucleo(agId){
         : 'Reabrir somente o serviço de "'+(antes.nome||id)+'"? O cliente e o Portal não serão reativados. Um cliente encerrado continua sem autorização para trabalho novo.';
       if(!confirm(aviso)) return false;
       validarSessao();
-      const assinatura=JSON.stringify(antes),operacaoId=crypto.randomUUID();
+      const assinatura=assinaturaDadosClienteI21(antes),operacaoId=crypto.randomUUID();
       const resultado=await runTransaction(db,async tx=>{
         validarSessao();
         const snap=await tx.get(ref);
         validarSessao();
         if(!snap.exists()) throw new Error('O serviço foi removido durante a confirmação. Nada foi recriado.');
         const atual=snap.data();
-        if(JSON.stringify(atual)!==assinatura){
+        if(assinaturaDadosClienteI21(atual)!==assinatura){
           // Outra aba pode ter aplicado exatamente a mesma transição.
           if(temCicloServicoManual(atual)&&atual.excluido!==true&&estadoServicoManual(atual)===estado&&
              atual.cicloServico.revisao===(antes.cicloServico?.revisao||0)+1){
             const {cicloServico:novo,status:statusNovo,statusGerencia:gerenciaNova,...restoNovo}=atual;
             const {cicloServico:antigo,status:statusAntigo,statusGerencia:gerenciaAntiga,...restoAntigo}=antes;
-            if(JSON.stringify(restoNovo)===JSON.stringify(restoAntigo)) return {gravou:false};
+            if(assinaturaDadosClienteI21(restoNovo)===assinaturaDadosClienteI21(restoAntigo)) return {gravou:false};
           }
           throw new Error('O serviço mudou em outra aba. Reabra a ficha e confira antes de repetir.');
         }
@@ -23620,7 +23620,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
   async function relerClienteServicoI19(tx,plano,validar){
     if(!plano)return;
     const snaps=await Promise.all(plano.refs.map(r=>tx.get(r)));validar();
-    for(let i=0;i<snaps.length;i++) if(snaps[i].exists()!==plano.snaps[i].exists()||JSON.stringify(snaps[i].data())!==JSON.stringify(plano.snaps[i].data())) throw new Error('O cadastro do cliente mudou. Confira antes de encaminhar.');
+    for(let i=0;i<snaps.length;i++) if(snaps[i].exists()!==plano.snaps[i].exists()||assinaturaDadosClienteI21(snaps[i].data())!==assinaturaDadosClienteI21(plano.snaps[i].data())) throw new Error('O cadastro do cliente mudou. Confira antes de encaminhar.');
     const cfg=snaps[0].exists()?snaps[0].data():{};
     if(cfg.ativo===false||cfg.excluido===true||clienteInativoEfetivo(cfg)||snaps.some((s,i)=>plano.refs[i].path.startsWith('clientes_encerrados/')&&s.exists()&&saidaClienteJaEfetiva(s.data()))) throw new Error('O cliente está encerrado. Nenhum trabalho novo foi encaminhado.');
   }
@@ -23643,7 +23643,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
         if(anteriores.length>1)throw new Error('Há mais de um aviso antigo deste serviço. Confira as demandas originais; nenhum novo aviso foi criado.');
         if(anteriores.length===1){legado=anteriores[0];destinoId=legado.id;}
       }
-      const destino=doc(db,'demandas',destinoId),assinatura=JSON.stringify(l);
+      const destino=doc(db,'demandas',destinoId),assinatura=assinaturaDadosClienteI21(l);
       const linhas=[];
       if(l.nome)linhas.push('👤 '+l.nome);
       if(l.telefone)linhas.push('📱 '+l.telefone);
@@ -23656,11 +23656,11 @@ async function registrarGravacaoRealizadaNucleo(agId){
       return await runTransaction(db,async tx=>{
         validar();const [atual,dest]=await Promise.all([tx.get(ref),tx.get(destino)]);validar();
         if(!atual.exists()||!servicoElegivelAvisoI19(atual.data()))return {gravou:false};
-        if(JSON.stringify(atual.data())!==assinatura)throw new Error('O pedido mudou durante a conferência. O aviso não foi recriado.');
+        if(assinaturaDadosClienteI21(atual.data())!==assinatura)throw new Error('O pedido mudou durante a conferência. O aviso não foi recriado.');
         await relerClienteServicoI19(tx,cliente,validar);
         if(l.avisoDemandaId&&!dest.exists())throw new Error('O aviso registrado no recibo não foi encontrado. Nada foi recriado.');
         if(legado){
-          if(!dest.exists()||!avisoLegadoServicoI19(dest.data(),id)||JSON.stringify(dest.data())!==JSON.stringify(legado.data()))throw new Error('O aviso antigo mudou. Confira a demanda original; nada foi recriado.');
+          if(!dest.exists()||!avisoLegadoServicoI19(dest.data(),id)||assinaturaDadosClienteI21(dest.data())!==assinaturaDadosClienteI21(legado.data()))throw new Error('O aviso antigo mudou. Confira a demanda original; nada foi recriado.');
         }else if(dest.exists())exigirDemandaServicoI19(dest.data(),id,'aviso','');
         else tx.set(destino,{
           titulo:'🆕 Cadastro novo pelo site — '+(l.nome||'sem nome'),
@@ -23676,7 +23676,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
   }
   async function avisarServicosNovosI19(){
     if(!['Amanda','Chris'].includes(usuarioAtual)||!auth.currentUser?.uid)return {avisados:0,falhas:0,autorizado:false};
-    const sessao=sessaoServicoManual();let avisados=0,falhas=0;
+    const sessao=sessaoServicoManual();let avisados=0,falhas=0,motivo='';
     try{
       const snap=await comTimeoutCalendarioOperacional(_getDocsFromServerFB(collection(db,'leads_avulsos')),'Conferir solicitações novas',12000);
       if(sessao!==sessaoServicoManual())return {avisados,falhas,interrompido:true};
@@ -23684,10 +23684,10 @@ async function registrarGravacaoRealizadaNucleo(agId){
         if(sessao!==sessaoServicoManual())return {avisados,falhas,interrompido:true};
         if(!servicoElegivelAvisoI19(s.data()))continue;
         try{const r=await avisarUmServicoI19(s.id,sessao);if(r.gravou)avisados++;}
-        catch(e){falhas++;console.error('Não foi possível confirmar o aviso do serviço '+s.id+':',e);}
+        catch(e){falhas++;motivo=motivo||s.id+': '+String(e?.message||e);console.error('Não foi possível confirmar o aviso do serviço '+s.id+':',e);}
       }
-      return {avisados,falhas};
-    }catch(e){console.error('Não foi possível conferir os pedidos recebidos:',e);return {avisados,falhas:falhas+1};}
+      return {avisados,falhas,motivo};
+    }catch(e){console.error('Não foi possível conferir os pedidos recebidos:',e);return {avisados,falhas:falhas+1,motivo:motivo||'leitura dos pedidos: '+String(e?.message||e)};}
   }
   window.encaminharServicoCeciliaI19=async function(demandaId,leadId){
     if(!['Amanda','Chris'].includes(usuarioAtual)||!auth.currentUser?.uid){mostrarToast('Encaminhamento disponível para Amanda ou Chris autenticados.','erro');return false;}
@@ -23716,7 +23716,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
       if(complemento===null)return false;validar();
       const cliente=await conferirClienteServicoI19(l,validar);
       if(cliente?.bloqueado)throw new Error(cliente.motivo);
-      const assinaturaLead=JSON.stringify(l),assinaturaOrigem=JSON.stringify(origem),pessoa=usuarioAtual;
+      const assinaturaLead=assinaturaDadosClienteI21(l),assinaturaOrigem=assinaturaDadosClienteI21(origem),pessoa=usuarioAtual;
       const dados={
         titulo:'📅 Agendar gravação — '+(l.nome||'solicitação recebida'),
         descricao:'Encaminhamento autorizado por '+pessoa+'. Confira os dados e prepare o agendamento; este aviso não confirma contrato, pagamento nem gravação realizada.\n\n'+
@@ -23735,7 +23735,7 @@ async function registrarGravacaoRealizadaNucleo(agId){
         const atual=ls.data(),aviso=os.data();validarOrigem(aviso);
         if(aviso.encaminhamentoDemandaId===destinoId){if(!ds.exists())throw new Error('O recibo existe, mas o encaminhamento não foi encontrado.');exigirDemandaServicoI19(ds.data(),leadId,'encaminhamento',demandaId);return {gravou:false};}
         exigirServicoEncaminhavelI19(atual);
-        if(JSON.stringify(atual)!==assinaturaLead||JSON.stringify(aviso)!==assinaturaOrigem)throw new Error('O serviço ou aviso mudou em outra aba. Confira antes de repetir.');
+        if(assinaturaDadosClienteI21(atual)!==assinaturaLead||assinaturaDadosClienteI21(aviso)!==assinaturaOrigem)throw new Error('O serviço ou aviso mudou em outra aba. Confira antes de repetir.');
         await relerClienteServicoI19(tx,cliente,validar);
         if(ds.exists())exigirDemandaServicoI19(ds.data(),leadId,'encaminhamento',demandaId);else tx.set(destinoRef,dados);
         tx.update(origemRef,{status:'aprovada',concluidoPor:pessoa,concluidoEm:serverTimestamp(),notaConclusao:'Encaminhado para Cecília conferir e preparar o agendamento.',encaminhamentoDemandaId:destinoId});

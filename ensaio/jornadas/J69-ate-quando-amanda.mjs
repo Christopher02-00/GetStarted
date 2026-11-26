@@ -4,7 +4,8 @@
 //  (a) Amanda e Cecília abrem pela barra lateral; o Chris pela Central ("Postagem até quando") — a barra dele não muda;
 //  (b) cliente semeado: data até = última postagem agendada ativa; lista de agendados; lista do calendário ainda não agendado;
 //      frequência planejada (calendário) e real (últimos 30 dias); a anotação manual diferente aparece só como divergência;
-//  (c) a tela antiga e o resumo do painel dão a MESMA resposta (uma projeção);
+//  (c) a tela do controle e o resumo do painel dão a MESMA resposta (uma projeção); a tela antiga "Conteúdo Até Quando"
+//      saiu na Limpeza 2027 (LZ7a, 26/11) e não pode voltar a existir no DOM;
 //  (d) Helo não tem a porta e a tela não renderiza.
 import { entrarComo, foto, menuVisivel, abrirMenuSeMovel } from '../lib/navegador.mjs';
 export const id = 'J69';
@@ -85,7 +86,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
 
   await passo('a1 Amanda abre pela barra lateral com a Central ativa', 'Amanda', pelaBarra);
   await passo('a2 Cecília abre pela barra lateral', 'Cecília', pelaBarra);
-  await passo('a3 Chris abre pela Central e as três telas dão a mesma resposta', 'Chris', async page => {
+  await passo('a3 Chris abre pela Central e a tela e o resumo do painel dão a mesma resposta', 'Chris', async page => {
     await page.evaluate(() => window.abrirEntradaCentralR87());
     await page.waitForSelector('#centralUnificadaR87:not([hidden]) [data-grupo-r87="publicar"]', { timeout: 30000 });
     await page.click('#centralUnificadaR87 [data-grupo-r87="publicar"]');
@@ -95,17 +96,14 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const t = await lerTela(page), f = conferir(t);
     const outras = await page.evaluate(async slug => {
       const ler = raiz => { const c = raiz.querySelector(`[data-ate-quando-cliente="${slug}"]`); return { ate: c?.dataset.ate ?? null, resumo: ['acaba3', 'semana', 'folga', 'semNada'].map(k => raiz.querySelector(`[data-ate-quando-resumo="${k}"] .num`)?.textContent.trim()).join('/') }; };
-      // tela antiga pela própria rota (o renderer é do módulo, não global)
-      irPara('conteudoAteQuando', null);
-      const fim = Date.now() + 30000; while (Date.now() < fim && !document.querySelector(`#gerenciaConteudoAteQuando [data-ate-quando-cliente="${slug}"]`)) await new Promise(r => setTimeout(r, 500));
-      const b = ler(document.getElementById('gerenciaConteudoAteQuando'));
+      const antiga = !!document.getElementById('view-conteudoAteQuando') || !!document.getElementById('gerenciaConteudoAteQuando');
       const div = document.createElement('div'); div.innerHTML = await htmlPostagemAteQuandoResumo(); const c = ler(div);
-      return { b, c };
+      return { antiga, c };
     }, SLUG);
-    if (outras.b.ate !== t?.ate || outras.b.resumo !== t?.resumo) f.push(`tela antiga diz ${outras.b.ate} · ${outras.b.resumo}`);
+    if (outras.antiga) f.push('a tela antiga "Conteúdo Até Quando" voltou ao DOM');
     if (outras.c.resumo !== t?.resumo) f.push(`resumo do painel diz ${outras.c.resumo}`);
     const menu = await menuVisivel(page); // no fim: no celular abrir a barra cobre a Central
-    return { ok: !f.length, detalhe: (f.length ? f.join(' · ') : `Central → até ${t.ate} · três telas com resumo ${t.resumo}`) + ` · barra do Chris ${menu.includes('navControlePostagem') ? 'COM' : 'sem'} o item (como antes)` };
+    return { ok: !f.length, detalhe: (f.length ? f.join(' · ') : `Central → até ${t.ate} · tela e painel com resumo ${t.resumo}`) + ` · barra do Chris ${menu.includes('navControlePostagem') ? 'COM' : 'sem'} o item (como antes)` };
   });
   await passo('d Helo não tem a porta nem a tela', 'Helo', async page => {
     const menu = await menuVisivel(page);

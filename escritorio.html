@@ -9252,7 +9252,9 @@ window.marcarClienteAprovouVideo = async function(id){
          é o que está na mão dela; o resto vai embaixo, em cinza. */
       const dele = abertos.filter(v => v.editorAtribuido === ed);
       const naMao = dele.filter(v => ['aguardando_edicao','correcao'].includes(v.status)).length;
-      const esperando = dele.length - naMao;
+      // LZ5c (26/11): "esperando outros" é o que ele já entregou e espera aprovação ou o cliente (antes saía da lista
+      // dos vídeos em edição e dava sempre 0).
+      const esperando = todos.filter(v => v.editorAtribuido === ed && ['aguardando_aprovacao','aguardando_cliente'].includes(v.status)).length;
       const alvo = EDITORES_CONFIG[ed]?.capacidade || 0;
       html += `<div class="resumoCard clicavel  ${naMao>alvo?'red':''}" onclick="filtrarVideosAmandaI145('editor',${escAttr(JSON.stringify(ed))});">
         <div class="num">${naMao}</div>
@@ -24214,10 +24216,10 @@ window.setGerenciaSub = function(qual, el){
        Misturar os dois fazia o numero parecer catastrofe e por isso
        ninguem olhava — que e como o indicador perde utilidade. Agora
        sao dois numeros com nomes diferentes. */
-    let liberados = 0, semCal = 0, espRevisao = 0, represados = 0, mesVelho = 0, semPlano = 0;
+    let liberados = 0, semCal = 0, espRevisao = 0, represados = 0;
     const competenciaCalendariosIndicadores=competenciaOperacionalCalendario();
     let resumoCalendariosIndicadores={estado:'indisponivel',competencia:competenciaCalendariosIndicadores};
-    const nomesMesVelho = [], nomesSemCal = [], nomesSemPlano = [];
+    const nomesSemCal = [];
     try{
       const mesAgora = hojeLocal().slice(0,7);
       const alvo = await clientesCalendarioRecorrentesConfirmados(competenciaCalendariosIndicadores);
@@ -24241,12 +24243,10 @@ window.setGerenciaSub = function(qual, el){
         const cal = mapa[c.slug];
         const itens = ((cal||{}).items||[]).length;
         if(!itens){
-          if(temProducao(c)){ semPlano++; nomesSemPlano.push(c.nome); }
-          else { semCal++; nomesSemCal.push(c.nome); }
+          // LZ5c: com produção andando não é "sem nada montado" (o contador "sem plano" nunca aparecia e saiu)
+          if(!temProducao(c)){ semCal++; nomesSemCal.push(c.nome); }
           return;
         }
-        const m = mesMaisRecenteDoCal(cal);
-        if(m && m < mesAgora){ mesVelho++; nomesMesVelho.push(c.nome); }
       });
     }catch(e){ console.error('Indicadores: calendários', e); }
     /* Mesma função e mesmo filtro de carteira da fila (48810/49385): cliente
@@ -24270,66 +24270,10 @@ window.setGerenciaSub = function(qual, el){
     lista.push(I('semCal', 'Cliente sem nada montado', semCal, semCal?'alto':'ok', "irParaAtalho('calendarios')",
       semCal ? ('Nem calendário, nem vídeo, nem gravação: ' + nomesSemCal.join(', ') + '. Este é o caso grave — ninguém começou.')
              : 'Todo mensalista tem calendário ou produção andando.'));
-    lista.push(I('semPlano', 'Produção andando sem plano', semPlano, semPlano?'info':'ok', "irParaAtalho('calendarios')",
-      semPlano ? ('O trabalho está saindo, mas não existe calendário editorial montado: ' + nomesSemPlano.join(', ') + '. Não é urgente como o de cima, mas sem plano a gente trabalha reagindo.')
-               : 'Quem tem produção tem plano.'));
-    /* ===== CLIENTE QUE SAIU E CONTINUA DANDO TRABALHO — 02/08/2026 ====
-       Varredura de integridade no banco real. A Suellen saiu em 27/07 e
-       ainda tinha, em 02/08:
-         · 3 postagens AGENDADAS pra 06/08, 07/08 e 24/08
-         · 1 postagem esperando a Gabi escrever legenda
-         · 6 vídeos parados em "aprovado"
-       A Elliz Noivas, também de 27/07, tinha 1 vídeo esperando cliente.
 
-       Postagem agendada pra cliente que saiu ou sobe de verdade no
-       Instagram dele, ou faz alguém perder tempo procurando. Legenda de
-       cliente que saiu é trabalho jogado fora.
-
-       Nada disso aparecia em lugar nenhum: o sistema tira o cliente que
-       saiu das METAS, mas não da ESTEIRA. Este indicador fecha o buraco.
-       Ele não decide nada — mostra. O que fazer com uma postagem já
-       agendada é decisão de vocês, não do sistema. */
-    let saiuAberto = 0; const detalheSaiu = [];
-    try{
-      const encSnap = await getDocs(collection(db,'clientes_encerrados'));
-      const slugsFora = new Set(); const nomesFora = new Set();
-      encSnap.forEach(d => { const v = d.data(); if(!saidaClienteJaEfetiva(v)) return;
-        if(v.slug) slugsFora.add(v.slug);
-        if(v.nome) nomesFora.add(normNomeCliente(v.nome)); });
-      /* Os dois encerrados de julho foram gravados SEM slug. Casar só por
-         slug deixaria os dois de fora justamente da conferência que existe
-         por causa deles. Casa pelos dois. */
-      CLIENTES_LISTA.forEach(c => { if(nomesFora.has(normNomeCliente(c.nome))) slugsFora.add(c.slug); });
-      const doFora = x => { const c = String((x&&x.cliente)||'').toLowerCase();
-        if(slugsFora.has(c)) return true;
-        return [...nomesFora].some(n => n && c.includes(n.replace(/\s+/g,'-')));
-      };
-      const vAbertos = (vids||[]).filter(v => doFora(v) && !['finalizado','arquivado'].includes(v.status));
-      const pAbertas = (posts||[]).filter(p => doFora(p) && !['postado','arquivada_sem_postagem'].includes(p.status));
-      const agFut    = (agends||[]).filter(a => doFora(a) && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && String(a.data||'') >= hoje);
-      saiuAberto = vAbertos.length + pAbertas.length + agFut.length;
-      const porCliente = {};
-      [...vAbertos, ...pAbertas, ...agFut].forEach(x => { const k = x.clienteNome || x.cliente || '?';
-        porCliente[k] = (porCliente[k]||0) + 1; });
-      Object.entries(porCliente).forEach(([k,n]) => detalheSaiu.push(k + ' (' + n + ')'));
-    }catch(e){ console.error('Indicadores: trabalho de cliente que saiu', e); }
-    /* 02/08/2026 — o Chris pediu que isto ficasse BEM VISÍVEL pra Amanda.
-       Indicador no painel + sub-aba própria: os dois caminhos levam ao
-       mesmo lugar, porque o custo de ela não ver é o número do mês errado. */
-    const pubVencidas = (posts||[]).filter(p => p.status === 'agendado' && String(p.dataAgendada||'') < hoje);
-    lista.push(I('confirmarPub', 'Esperando confirmar que foi postado', pubVencidas.length,
-      pubVencidas.length ? 'alto' : 'ok', "irParaConfirmarPublicacoes()",
-      pubVencidas.length ? ('A data já passou e ninguém disse se foi ao ar. Enquanto isso, ' + pubVencidas.length + ' vídeo(s) continuam contando como trabalho em aberto.')
-                         : 'Tudo que tinha data passada já foi confirmado.'));
-
-    lista.push(I('clienteSaiuAberto', 'Trabalho de cliente que saiu', saiuAberto, saiuAberto?'alto':'ok',
-      "irParaAtalho('postagens')",
-      saiuAberto ? ('Continua na esteira depois da saída: ' + detalheSaiu.join(', ') + '. Postagem agendada pode subir sozinha no perfil dele.')
-                 : 'Nenhum trabalho aberto de cliente que saiu.'));
-
-    lista.push(I('calMesVelho', 'Calendário do mês passado', mesVelho, mesVelho?'alto':'ok', "irParaAtalho('calendarios')",
-      mesVelho ? ('Parece pronto e não está: ' + nomesMesVelho.slice(0,6).join(', ') + (nomesMesVelho.length>6 ? ' e mais ' + (nomesMesVelho.length-6) : '') + '. O filmmaker recebe conteúdo velho em campo.')
-               : 'Todos os calendários estão no mês atual.'));
+    /* LZ5c (26/11): saíram os contadores calculados e nunca mostrados — "sem plano", "esperando confirmar que foi
+       postado" (a aba Confirmar tem badge própria), "trabalho de cliente que saiu" (lia clientes_encerrados inteira a cada
+       cálculo; o vigia diário do servidor confere a saída) e "calendário do mês passado". */
 
     // ---------- DINHEIRO (só pro Chris) ----------
     if(pessoaIndicadores === 'Chris'){
@@ -24371,11 +24315,9 @@ window.setGerenciaSub = function(qual, el){
       vidAtrasados:['vídeos'],semEditor:['vídeos'],emEdicao:['vídeos'],emCorrecao:['vídeos'],
       aguardInterna:['vídeos'],aguardCliente:['vídeos'],entregHoje:['vídeos'],aprovHoje:['vídeos'],lixeira:['vídeos'],
       semLegenda:['postagens'],semAgendar:['postagens'],agendadas:['postagens'],postHoje:['postagens'],
-      confirmarPub:['postagens'],prox7:['postagens'],
-      calLiberados:['calendários'],calRevisao:['calendários'],calRepresados:['calendários'],calMesVelho:['calendários'],
+      prox7:['postagens'],
+      calLiberados:['calendários'],calRevisao:['calendários'],calRepresados:['calendários'],
       semCal:['calendários','vídeos','postagens','agendamentos'],
-      semPlano:['calendários','vídeos','postagens','agendamentos'],
-      clienteSaiuAberto:['vídeos','postagens','agendamentos'],
       extras:['pagamentos'],gravHoje:['agendamentos']
     };
     lista.forEach(indicador=>{
@@ -24526,11 +24468,10 @@ window.setGerenciaSub = function(qual, el){
   }
 
   function videoEstaAtrasado(v){
-    if(!['aguardando_edicao','correcao'].includes(v.status)) return false;
-    if(estaAusente(v.editorAtribuido)) return false;
-    const prazo = calcularPrazoEdicaoVideo(v);
-    if(!prazo) return false;
-    return new Date() > prazo;
+    // LZ5c (26/11): uma regra só para "vídeo atrasado" — o prazo gravado pela Amanda (videoAtrasado). Sem prazo, não há
+    // atraso (a conta de reserva de calcularPrazoEdicaoVideo inventava um). Editor ausente continua sem cobrança.
+    if(!v || estaAusente(v.editorAtribuido)) return false;
+    return videoAtrasado(v);
   }
 
   /* ===== FASE 4 — ESCALONAMENTO AUTOMÁTICO =====
@@ -27072,7 +27013,7 @@ window.setGerenciaSub = function(qual, el){
     // 5) Gravações do dia (filmmakers)
     if(CAMPO_MAIS_CHRIS.includes(usuarioAtual)){
       const hojeStr = hojeLocal();
-      cacheAgendamentos.filter(a => !a.excluido && a.data === hojeStr && a.status === 'agendado' && a.aprovado !== false).forEach(a => {
+      cacheAgendamentos.filter(a => !a.excluido && a.data === hojeStr && a.status === 'agendado' && a.aprovado !== false && pessoaNaEquipe(a, usuarioAtual)).forEach(a => { // LZ5c: só as da equipe dele
         itens.push({
           icone: '🎥', titulo: 'Gravação hoje: ' + (a.clienteNome||''), meta: a.hora||'',
           desc: 'Confirma modelos e local antes do horário.', urgencia: 'hoje', acao: `meuDiaAbrirGravacoes()`
@@ -28533,6 +28474,9 @@ window.setGerenciaSub = function(qual, el){
      Agora ela tem badge propria, com o que esta parado esperando decisao —
      pedido de prazo, demanda concluida aguardando aprovacao e pedido de
      pular legenda. Se o numero esta la, tem coisa parada. */
+  /* LZ5c (26/11): "pediu novo prazo" tem uma regra só — a da Aprovações. Pedido guardado numa demanda já aprovada ou
+     cancelada não espera decisão (o Agora e a badge contavam, a tela não mostrava). */
+  function pedidoDePrazoAbertoLz5c(d){ return !!d?.prazoSolicitado && !['aprovada','cancelada'].includes(String(d.status||'')); }
   async function atualizarBadgeGerencia(){
     const badge = document.getElementById('badgeGerencia');
     if(!badge || !['Chris','Amanda'].includes(usuarioAtual)){ if(badge) badge.style.display='none'; return; }
@@ -28550,7 +28494,7 @@ window.setGerenciaSub = function(qual, el){
       (todasDemandas||[]).forEach(v => {
         if(!demandaOperacionalVisivel(v)) return;
         // pedido de prazo e decisao da Amanda — nao conta pro Chris
-        if(v.prazoSolicitado){ if(ehAmanda) n++; return; }
+        if(pedidoDePrazoAbertoLz5c(v)){ if(ehAmanda) n++; return; }
         if(v.status !== 'concluida_aguardando_aprovacao') return;
         const praSiMesma = String(v.origem||'').toLowerCase() === String(v.destinatario||'').toLowerCase();
         if(v.destinatario === usuarioAtual && !praSiMesma) return;
@@ -33913,7 +33857,7 @@ window.setGerenciaSub = function(qual, el){
       postagensPublicadas: postagens.filter(p => !regularizacaoHistoricaPostagemCp117(p) && diaOperacional(p.postadoEm) === ontemStr).length,
       gravacoesPlanejadasOntem: agends.filter(a => a.data === ontemStr && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a)).length,
       gravacoesRealizadasOntem: agends.filter(a => a.data === ontemStr && a.status === 'realizado').length,
-      gravacoesHoje: agends.filter(a => a.data === hojeStr && a.status === 'agendado' && a.aprovado !== false).length
+      gravacoesHoje: agends.filter(a => a.data === hojeStr && a.status !== 'cancelado' && !sessaoSemCaptacaoI34(a) && a.aprovado !== false).length // LZ5c: mesma regra do Agora
     };
 
     /* ---------- QUEM COBRAR HOJE (estado atual, com chave estável pra
@@ -36888,7 +36832,7 @@ window.salvarPrazoVideo = async function(id){
         htmlIndicadores(ind, ['calLiberados','calRepresados','semCal'],
           '🗓️ Calendários', 'Clica em "no ar" pra abrir o calendário de um cliente.') +
         htmlIndicadores(ind, ['gravHoje','prox7'],
-          '📆 Agenda', 'Gravações de hoje e o que vai ao ar na semana.') +
+          '📆 Agenda', 'Gravações de hoje e as postagens agendadas para os próximos 7 dias.') +
         /* Dinheiro só aparece quando há o que pagar. Zerado, o bloco
            inteiro some — o Chris pediu, e um cartão em zero permanente
            só ocupa espaço. */
@@ -36940,7 +36884,7 @@ window.salvarPrazoVideo = async function(id){
     // ---- BLOCO 1: esperando VOCÊ ----
     const daPessoaAgora = d => aprovacaoEhDe(d, usuarioAtual);   // cópia 3 de 4 → função única
     const aprovar = demandasOperacionaisAgoraV135.filter(d => podeConferirEntregaCp149(d,usuarioAtual) && daPessoaAgora(d));
-    const prazos  = (usuarioAtual === 'Amanda' || estaAusente('Amanda')) ? demandasOperacionaisAgoraV135.filter(d => d.prazoSolicitado) : [];
+    const prazos  = (usuarioAtual === 'Amanda' || estaAusente('Amanda')) ? demandasOperacionaisAgoraV135.filter(pedidoDePrazoAbertoLz5c) : [];
     const videosAprovar = videos.filter(v => v.status === 'aguardando_aprovacao');
     const decisoesPendentes = demandasOperacionaisAgoraV135.filter(d => d.destinatario === usuarioAtual && d.status === 'pendente' && ehDemandaDeDecisao(d)).length;
     const totalVoce = aprovar.length + prazos.length + videosAprovar.length + decisoesPendentes;
@@ -40623,8 +40567,7 @@ window.salvarPrazoVideo = async function(id){
        seja, a badge dizia "tem 2 coisas esperando" e não havia tela onde
        ver os 2. Quem não soubesse abrir a demanda certa não achava.
        Achei isso por causa do pedido dela. */
-    const pedidosDePrazo = todasDemandas.filter(d => d.prazoSolicitado
-      && !['aprovada','cancelada'].includes(String(d.status||'')));
+    const pedidosDePrazo = todasDemandas.filter(pedidoDePrazoAbertoLz5c);
     /* Pedido de prazo é decisão da Amanda (regra da fase 2). O Chris vê
        se estiver cobrindo a ausência dela. */
     const prazosMeus = (pessoaDaFilaAprovacoes === 'Amanda' || (pessoaDaFilaAprovacoes === 'Chris' && estaAusente('Amanda'))) ? pedidosDePrazo : [];
@@ -43014,9 +42957,9 @@ ${podeConferirEntregaCp149(d,usuarioAtual)?`            <div class="btnrow" styl
   window.htmlResumoDoDiaAmanda = async function(){
     try{
       const hoje = hojeLocal();
-      const resolvidasHoje = todasDemandas.filter(d => d.status === 'aprovada' && d.concluidoEm?.seconds &&
-        dataLocal(new Date(d.concluidoEm.seconds*1000)) === hoje &&
-        (d.concluidoPor||'').includes(usuarioAtual||'—')).length;
+      // LZ5c (26/11): quem resolveu e quando vêm do evento final (a aprovação grava aprovadoPor/aprovadoEm, não concluídoEm).
+      const resolvidasHoje = todasDemandas.filter(d => { if(d.status !== 'aprovada') return false; const ev = eventoFinalDemandaI119(d);
+        return ev.em != null && dataLocal(new Date(ev.em)) === hoje && String(ev.responsavel||'').includes(usuarioAtual||'—'); }).length;
       return `<div class="card">
         <h2>✅ O que você resolveu hoje</h2>
         <div class="desc">O que espera você e o que está travado na equipe fica na aba <b>Agora</b>.</div>

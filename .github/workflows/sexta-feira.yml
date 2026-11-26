@@ -1,0 +1,64 @@
+name: Sexta-Feira · Guardião
+# Fase 1 (26/11/2026). Duas provas, uma fonte (sexta-feira/guardiao.mjs + sexta-feira/cofre/regras.json):
+#  • gabarito: todo PR e push na main roda os casos reais. Regra nova sem caso, regex quebrada, veto perdido
+#    ou veto a mais = vermelho, e nada entra.
+#  • ao vivo (de hora em hora, SÓ LEITURA): varre os calendários abertos e escreve no resumo do run o que está
+#    errado, com o trecho exato. Achado não derruba o run; só falha se não conseguir ler o servidor.
+on:
+  pull_request:
+    paths: ['sexta-feira/**', '.github/workflows/sexta-feira.yml']
+  push:
+    branches: [main]
+    paths: ['sexta-feira/**', '.github/workflows/sexta-feira.yml']
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sexta-feira-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  gabarito:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Gabarito do Guardião (casos reais)
+        run: node sexta-feira/testar-gabarito.mjs
+  ao-vivo:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Gabarito antes (código vermelho não varre)
+        run: node sexta-feira/testar-gabarito.mjs > /dev/null
+      - name: Dependências (só firebase-admin das Functions)
+        run: cd functions-get && npm i --no-package-lock --no-audit --no-fund --silent
+      - name: Varredura ao vivo (só leitura)
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$SA" || { echo "::error::FIREBASE_SERVICE_ACCOUNT ausente"; exit 1; }
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          node sexta-feira/varrer-ao-vivo.mjs --json "$RUNNER_TEMP/guardiao.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: guardiao-ao-vivo
+          path: ${{ runner.temp }}/guardiao.json
+          retention-days: 7
+          if-no-files-found: ignore

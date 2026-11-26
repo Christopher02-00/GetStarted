@@ -39,6 +39,14 @@ export async function executar({ amb, seed, nav, erroGrave, registrar, esperarNe
   };
   const casta = page => page.evaluate(async () => { limparCacheCasta(); return castaDosClientes(); });
 
+  // 0. LZ4 (26/11): o login da gestão publica a classificação para a equipe sem ninguém abrir tela nenhuma (antes vinha de carona no
+  //    "Meus extras" do Início; quando ele saiu, a Cecília ficaria com a classificação velha até a gestão abrir outra tela).
+  const t0Login = Date.now() - 2000;
+  await passo('0 o login da Amanda publica a classificação para a equipe', 'Amanda', async () => {
+    const novos = await esperar(async () => { const l = (await seed.listar('castas_operacionais')).filter(d => d.atualizadoPor === 'Amanda' && Date.parse(d.atualizadoEm || '') >= t0Login); return l.length ? l : null; });
+    return { ok: !!novos, detalhe: `documentos publicados neste login: ${novos ? novos.length : 0}` };
+  });
+
   // 1. Amanda classifica e publica a projeção.
   const amanda = await passo('1 Amanda classifica e publica para a equipe', 'Amanda', async page => {
     const m = await casta(page);

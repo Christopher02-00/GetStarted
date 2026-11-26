@@ -18,3 +18,7 @@ Fica para a LZ3 (mesmo código das telas que saem do menu): painéis Direção, 
 gravando os mesmos campos (o servidor/motor não muda) · J113 reescrita (o Panorama saiu).
 Testes: J113 nova (contraprova vermelha no código anterior: 1 consulta aos resumos, panorama/números/quem mandou bem, calendário,
 atalhos e somente edição presentes → verde agora 4/4); J95 (somente edição) 5/5; portão 1–3 verde.
+Achado no CI (J16, 26/11): o "Meus extras" do Início da gestão publicava, de carona, a classificação dos clientes para a equipe
+(castas_operacionais, que a Cecília lê) a cada login da Amanda/Chris; sem ele, o login não publicava (sonda: antes 23 docs → depois 0).
+A publicação continua no mesmo ponto, sem o painel. J16 caso 0 novo ("o login da Amanda publica a classificação"): vermelho na LZ4
+sem o ajuste, verde com ele; J16, J113, J95, J10: 45/45.

@@ -28,7 +28,10 @@ export async function executar({ amb, seed, registrar }) {
     ['log_automacoes', 'j115-novo', { tipo: 'motor_executado', executadoEm: ts(5) }, false],
     ['log_automacoes', 'j115-sem-data', { tipo: 'resumo_checklist_19h', quando: 'x' }, false],
     ['log_acessos', 'j115-velho', { quando: ts(100).toISOString(), pessoa: 'Ensaio' }, true],
-    ['log_acessos', 'j115-novo', { quando: ts(3).toISOString(), pessoa: 'Ensaio' }, false]
+    ['log_acessos', 'j115-novo', { quando: ts(3).toISOString(), pessoa: 'Ensaio' }, false],
+    // LZ10: presença sem leitor — mais de 1 dia sai (com cópia), a de agora fica
+    ['presenca_funcionarios', 'j115-presenca-velha', { nome: 'Ensaio', ultimaAtividade: ts(3) }, true],
+    ['presenca_funcionarios', 'j115-presenca-agora', { nome: 'Ensaio', ultimaAtividade: ts(0) }, false]
   ];
   const semear = async () => { for (const [c, k, d] of docs) await seed.set(c, k, d); };
   const existe = async (c, k) => (await db.doc(c + '/' + k).get()).exists;
@@ -40,8 +43,8 @@ export async function executar({ amb, seed, registrar }) {
     const falha = await aplicarRetencaoL1(db, { gravarCopia: async () => { throw Error('Storage fora do ar (ensaio)'); } });
     const intactos = (await Promise.all(docs.map(([c, k]) => existe(c, k)))).every(Boolean);
     const erros = falha.linhas.filter(l => /cópia falhou/.test(l.erro || '')).length, apagouAlgo = falha.linhas.some(l => l.apagados > 0);
-    registrar({ jornada: id, caso: '3 se a cópia falhar, nada sai e o relatório diz por quê', ok: intactos && erros === 4 && !apagouAlgo, ms: Date.now() - t0,
-      detalhe: `${intactos ? 'todos os registros continuam' : 'APAGOU SEM CÓPIA'} · ${erros}/4 coleção(ões) com o motivo no relatório` });
+    registrar({ jornada: id, caso: '3 se a cópia falhar, nada sai e o relatório diz por quê', ok: intactos && erros === 5 && !apagouAlgo, ms: Date.now() - t0,
+      detalhe: `${intactos ? 'todos os registros continuam' : 'APAGOU SEM CÓPIA'} · ${erros}/5 coleção(ões) com o motivo no relatório` });
     // 1 e 2) cópia ok → sai exatamente o que a regra pega, copiado antes
     const copias = {}, ordem = [];
     const rel = await aplicarRetencaoL1(db, { gravarCopia: async (c, lista) => { ordem.push('copia:' + c); for (const d of lista) if (!(await existe(c, d.id))) throw Error('apagou antes da cópia'); copias[c] = lista; return 'retencao-l1/ensaio/' + c + '.json'; } });
@@ -61,7 +64,7 @@ export async function executar({ amb, seed, registrar }) {
     const r2 = await aplicarRetencaoL1(db, { limitePorRodada: 3, gravarCopia: async () => 'ok' });
     const l2 = r2.linhas.find(l => l.colecao === 'email_throttle');
     const gravado = (await db.doc('sistema/retencao_l1').get()).data();
-    registrar({ jornada: id, caso: '4 limite por rodada respeitado, a rodada seguinte continua e o relatório fica gravado', ok: l1.apagados === 3 && l1.limiteAtingido && resto === 2 && l2.apagados === 2 && gravado?.linhas?.length === 4, ms: Date.now() - t0,
+    registrar({ jornada: id, caso: '4 limite por rodada respeitado, a rodada seguinte continua e o relatório fica gravado', ok: l1.apagados === 3 && l1.limiteAtingido && resto === 2 && l2.apagados === 2 && gravado?.linhas?.length === 5 /* LZ10: + presenca_funcionarios */, ms: Date.now() - t0,
       detalhe: `rodada 1: ${l1.apagados} (limite ${l1.limiteAtingido ? 'atingido' : 'não'}) · restavam ${resto} · rodada 2: ${l2.apagados} · relatório ${gravado ? 'gravado' : 'AUSENTE'}` });
     // 5) ligação real pela função da faxina (gatilho do emulador)
     await seed.set('log_acessos', 'j115-gatilho-velho', { quando: ts(200).toISOString(), pessoa: 'Ensaio' });

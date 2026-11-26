@@ -20,7 +20,7 @@ import {sincronizarLegendaCalendarioCp190} from './legenda-calendario-cp190.mjs'
 import {avisarFichaClienteCp198} from './ficha-cliente-avisa-cp198.mjs';
 import {avisarAprovacaoClienteCp191} from './aprovacao-cliente-avisos-cp191.mjs';
 import {executarAcompanhamentoI165} from './reconciliacao.mjs';
-import {acompanharCp205,eventoVideoCp205,eventoPostagemCp205,eventosCalendarioCp205,eventoAnaliseCp205,eventoAgendamentoCp205} from './acompanhamento-cliente-cp205.mjs';
+import {acompanharCp205,eventoVideoCp205,eventoPostagemCp205,eventosCalendarioCp205,eventoAgendamentoCp205} from './acompanhamento-cliente-cp205.mjs';
 import {criarPushI165,criarEmailI165} from './despacho.mjs';
 import {falhaCanalI165} from './transmissoes.mjs';
 import {acompanharLegendaCp214} from './legenda-sem-vinculo-cp214.mjs';
@@ -55,7 +55,6 @@ export const legendaSemVinculoGetCp214=onDocumentWritten({document:'postagens/{i
 export const videoExcluidoPostagemGetCp244=onDocumentWritten({document:'videos_producao/{id}',timeoutSeconds:60},e=>acompanharVideoExcluidoCp244(db,e.params.id,...antesDepoisCp205(e)));
 // CP245: tarefa do sistema concluída pela Amanda fecha direto (ninguém mais pode aprovar; antes ficava "aguardando aprovação" para sempre).
 export const tarefaSistemaSemAprovadorGetCp245=onDocumentWritten({document:'demandas/{id}',timeoutSeconds:30,maxInstances:3},e=>acompanharSemAprovadorCp245(db,e.params.id,...antesDepoisCp205(e)));
-export const acompanhamentoAnaliseGetCp205=onDocumentWritten({document:'analises_mensais_i108/{id}',timeoutSeconds:60},e=>acompanharCp205(db,eventoAnaliseCp205(e.params.id,...antesDepoisCp205(e))));
 export const acompanhamentoGravacaoGetCp205=onDocumentWritten({document:'agendamentos/{id}',timeoutSeconds:60},e=>acompanharCp205(db,eventoAgendamentoCp205(e.params.id,...antesDepoisCp205(e))));
 // CP248 (21/11, decisão do Chris): faxina em função própria, disparada pelo pedido que o agendamento grava (no máx. a cada 2 h; continua se
 // a rodada anterior parou) — agendada com 2 dias passados vira publicada (caminho oficial, desfazível), entrega do sistema sem aprovador

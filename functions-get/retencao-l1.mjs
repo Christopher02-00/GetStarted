@@ -9,13 +9,15 @@
 //  - email_throttle: mais de 7 dias (a trava vale 2 h).
 //  - log_automacoes: mais de 90 dias (a Saúde mostra 30 dias; o resumo das 19 h, sem executadoEm, não entra).
 //  - log_acessos: mais de 90 dias (o campo `quando` é texto ISO).
+//  - presenca_funcionarios: mais de 1 dia (LZ10, 26/11, ok do Chris: ninguém lê desde a LZ5a e nada grava desde a LZ7b; com cópia antes).
 import {Timestamp,FieldValue} from 'firebase-admin/firestore';
 
 export const POLITICA_RETENCAO_L1 = Object.freeze([
   Object.freeze({colecao: 'fila_emails', campo: 'criadoEm', dias: 30, tipo: 'ts', tambemEnviados: true, uso: 'nenhum (resumo por e-mail desligado em 09/11)'}),
   Object.freeze({colecao: 'email_throttle', campo: 'enviadoEm', dias: 7, tipo: 'ts', uso: 'trava de 2 h dos e-mails imediatos'}),
   Object.freeze({colecao: 'log_automacoes', campo: 'executadoEm', dias: 90, tipo: 'ts', uso: 'Saúde das Automações (30 dias)'}),
-  Object.freeze({colecao: 'log_acessos', campo: 'quando', dias: 90, tipo: 'iso', uso: 'consulta de acessos (botão)'})
+  Object.freeze({colecao: 'log_acessos', campo: 'quando', dias: 90, tipo: 'iso', uso: 'consulta de acessos (botão)'}),
+  Object.freeze({colecao: 'presenca_funcionarios', campo: 'ultimaAtividade', dias: 1, tipo: 'ts', uso: 'nenhum (o leitor saiu na LZ5a e a gravação na LZ7b)'})
 ]);
 
 /** Limite da regra: antes dele, o registro sai. Timestamp para campos de data; texto ISO para `quando`. */

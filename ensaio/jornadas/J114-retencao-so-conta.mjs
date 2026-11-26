@@ -54,7 +54,7 @@ export async function executar({ amb, seed, registrar }) {
     catch (e) { throw Error('script do vigia falhou: ' + String(e.stderr || e.message).split('\n').filter(l => l.trim() && !/MetadataLookupWarning|trace-warnings|^\s+at /.test(l)).slice(-4).join(' | ')); }
     const esperadoTxt = relatorioRetencaoL1(agoraL, 'X').split('\n').filter(l => l.startsWith('| `')).map(l => l.split('|').slice(-4, -1).join('|').trim());
     const linhasScript = saida.split('### Última rodada')[0].split('\n').filter(l => l.startsWith('| `')).map(l => l.split('|').slice(-4, -1).join('|').trim());
-    const igual = esperadoTxt.length === 4 && JSON.stringify(esperadoTxt) === JSON.stringify(linhasScript) && /só leitura/.test(saida);
+    const igual = esperadoTxt.length === 5 /* LZ10: + presenca_funcionarios */ && JSON.stringify(esperadoTxt) === JSON.stringify(linhasScript) && /só leitura/.test(saida);
     registrar({ jornada: id, caso: '3 o script do vigia imprime o relatório com os mesmos números', ok: igual, ms: Date.now() - t0,
       detalhe: igual ? '4 coleções iguais; "só leitura" no relatório' : 'script: ' + saida.replace(/\s+/g, ' ').slice(0, 240) });
     for (const [c, k] of docs) await db.doc(c + '/' + k).delete(); // só os documentos do ensaio

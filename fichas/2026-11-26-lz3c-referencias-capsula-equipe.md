@@ -19,4 +19,4 @@ RAIZ: navReferencias/view-referencias (perfis, hub, fora da meta), navCapsulaAma
 │  (?v atualizados)
 └─ REGRA: AGENTS.md (aviso de cápsula) atualizada — a demanda leva ao Postagem Até Quando
 Testes: sintaxe e caminhos verdes (1 item da linha de base resolvido); J70 caso (a) reescrito (sem botão da Cápsula, abre o Postagem Até
-Quando); J12, J01, J09, J37, J50, J109, J117, J118.
+Quando); J12, J01, J09, J37, J50, J109, J117, J118: 84/84.

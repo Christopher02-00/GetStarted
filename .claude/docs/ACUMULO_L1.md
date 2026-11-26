@@ -69,7 +69,7 @@ anteriores a outubro. São baixados por Chris, Amanda e Cecília e pela página 
 
 - **Arquivos mortos** (ninguém importa): `gs-conferencia-cecilia-i63.js` e `gs-gravacoes-cliente-i61.js`.
   Nenhuma tela baixa esses arquivos, então eles não pesam para quem usa. Saem na próxima limpeza de repositório, sem PR próprio.
-  O `financeiro-ui-v103.mjs` ainda é usado por testes do financeiro, então fica.
+  O `financeiro-ui-v103.mjs` só era usado pelos scripts legados aposentados em 09/11. **Os três saíram na LZ2 (26/11).**
 - **Trechos mortos no `escritorio.html`**: código depois de um `return` (marcado "código histórico preservado"), `decidirEditor` (nunca chamado),
   uma verificação fora do motor e uma função sem chamador. Somam poucos KB de 3,97 MB.
   Removê-los não deixa nada mais fluido, então ficam até alguém mexer nessas áreas (decisão: não vale o risco de um PR só para isso).

@@ -24,7 +24,7 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     await page.waitForFunction(() => ['equipe', 'bloqueado'].includes(window.__modoCal), null, { timeout: 45000 });
     await page.waitForTimeout(3000);
     const tela = await page.evaluate(t => ({ modo: window.__modoCal, aviso: document.getElementById('bloqueioAliasCentralR87')?.textContent || '',
-      link: document.querySelector('#bloqueioAliasCentralR87 a')?.getAttribute('href') || '', calendario: /Março 2027 \(1\)/.test(document.body.innerText), trecho: document.body.innerText.replace(/\s+/g, ' ').slice(0, 200) }), TITULO);
+      link: document.querySelector('#bloqueioAliasCentralR87 a')?.getAttribute('href') || '', calendario: /Março 2027 \(\d+\)/.test(document.body.innerText) /* outras jornadas também põem conteúdo em março */, trecho: document.body.innerText.replace(/\s+/g, ' ').slice(0, 200) }), TITULO);
     fim('1 a Cecília vê o calendário com o aviso de que a página só mostra e o link da Central', tela.modo === 'equipe' && /só mostra o calendário/i.test(tela.aviso) && /central=calendarios/.test(tela.link) && tela.calendario,
       `modo ${tela.modo} · aviso "${tela.aviso.slice(0, 90) || '—'}" · link ${tela.link ? 'sim' : 'não'} · calendário ${tela.calendario ? 'visível' : 'NÃO visível: ' + tela.trecho}`);
     const gravacao = await page.evaluate(async () => { try { await window.__exigirAliasEditorialPermitidoR87(); return 'liberada'; } catch (e) { return 'recusada: ' + e.message; } });

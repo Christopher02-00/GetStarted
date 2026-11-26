@@ -24,6 +24,7 @@ export function blocos(i) {
 }
 
 function vale(regra, slug, grupos) {
+  if (Array.isArray(regra.exceto) && regra.exceto.includes(slug)) return false;
   const c = regra.clientes;
   if (c === '*') return true;
   if (typeof c === 'string' && c.startsWith('@')) return (grupos[c.slice(1)] || []).includes(slug);
@@ -41,6 +42,15 @@ function dataPostagem(i) {
   return '';
 }
 const ehVideo = i => /reel|v[ií]deo|tiktok|short/i.test(String(i.fmt || ''));
+
+// Negação na mesma frase, logo antes do achado ("nenhuma fala com Ótica SJP", "Ninguém da equipe aparece", "1 modelo (não é da equipe)").
+// Só vale para regras com "negacao": true no Cofre. Regras de marca/palavra proibida (Botox, WhatsApp) nunca aceitam negação.
+const NEGACAO = /(?:\b(?:n[ãa]o|nunca|nenhum|nenhuma|ningu[ée]m|sem|evitar|proibido|jamais)\b)[^.!?\n]{0,30}$/i;
+export function negado(texto, ini) {
+  const antes = texto.slice(Math.max(0, ini - 45), ini);
+  const frase = antes.split(/[.!?\n]/).pop();
+  return NEGACAO.test(frase);
+}
 
 /**
  * Audita os itens de UM cliente. Devolve [{regra, nivel, msg, campo, trecho, dia, mes, titulo, itemId}].
@@ -65,6 +75,8 @@ export function auditar(cofre, slug, itens) {
         const re = /\b(?:at[ée]|dia|em)\s+(\d{1,2})\/(\d{1,2})\b/gi; let m;
         while ((m = re.exec(prep))) {
           const dd = +m[1], mm = +m[2];
+          // "postagem em 22/12" é data de postar, não de gravar
+          if (/post(agem|ar|a)\b[^.\n]{0,6}$/i.test(prep.slice(Math.max(0, m.index - 14), m.index))) continue;
           if (mm === lm && dd > ld) achados.push({ ...base, regra: r.id, nivel: r.nivel, msg: r.msg, campo: 'preparacao', trecho: trecho(prep, m.index, m.index + m[0].length) });
         }
         continue;
@@ -84,6 +96,7 @@ export function auditar(cofre, slug, itens) {
         if (r.campos === 'cliente' && !b.cliente) continue;
         re.lastIndex = 0; let m;
         while ((m = re.exec(b.texto))) {
+          if (r.negacao && negado(b.texto, m.index)) { if (!m[0].length) re.lastIndex++; continue; }
           achados.push({ ...base, regra: r.id, nivel: r.nivel, msg: r.msg, campo: b.campo, trecho: trecho(b.texto, m.index, m.index + m[0].length) });
           if (!m[0].length) re.lastIndex++;
         }

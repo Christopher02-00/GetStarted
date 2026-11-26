@@ -11,6 +11,8 @@ const { casos } = JSON.parse(fs.readFileSync(path.join(aqui, 'gabarito/guardiao.
 
 // 1) Toda regra do Cofre precisa ter pelo menos um caso que a prove (regra sem teste não entra).
 const provadas = new Set(casos.flatMap(c => c.deve));
+// toda regra de texto precisa compilar (26/11: um parêntese a mais quase entrou no Cofre)
+for (const r of cofre.regras) if (r.padrao) { try { new RegExp(r.padrao, 'giu'); } catch (e) { console.error(`REGRA QUEBRADA ${r.id}: ${e.message}`); process.exit(1); } }
 const semProva = cofre.regras.map(r => r.id).filter(id => !provadas.has(id));
 
 let falhas = 0;

@@ -1,6 +1,6 @@
 // VARREDURA AO VIVO · Sexta-Feira (Fase 1, 26/11/2026). SÓ LEITURA.
 // Roda o Guardião (mesmo código do gabarito) em todos os calendários abertos e escreve o resultado no resumo do run.
-//   node sexta-feira/varrer-ao-vivo.mjs [--meses 2026-12,2027-01] [--json saida.json]
+//   node sexta-feira/varrer-ao-vivo.mjs [--meses 2026-12,2027-01] [--json saida.json] [--incluir-passado]
 // Meses padrão: o mês atual e os 2 seguintes. Credencial: GOOGLE_APPLICATION_CREDENTIALS (conta só-leitura).
 // Não falha por achado (achado é trabalho, não quebra): falha só se não conseguir ler o servidor.
 import fs from 'node:fs';
@@ -32,6 +32,12 @@ initializeApp(process.env.FIRESTORE_EMULATOR_HOST ? { projectId } : { credential
 const snap = await getFirestore().collection('calendarios').get();
 const cal = {};
 snap.forEach(s => { cal[s.id] = s.data().items || []; });
+// Só o que ainda vai ao ar: conteúdo com data anterior a hoje (Brasília) já foi postado e é histórico, não trabalho.
+// (1ª rodada na main, 26/11: o mês corrente trouxe 20+ itens de novembro já publicados, de antes das regras.)
+const hojeBR = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+const dataItem = i => (i.dataPostagem && /^\d{4}-\d{2}-\d{2}$/.test(i.dataPostagem)) ? i.dataPostagem : (i.mes && i.day ? `${i.mes}-${String(i.day).padStart(2, '0')}` : '');
+const incluirPassado = process.argv.includes('--incluir-passado');
+for (const k of Object.keys(cal)) cal[k] = cal[k].filter(i => incluirPassado || !dataItem(i) || dataItem(i) >= hojeBR);
 const achados = auditarTudo(cofre, cal, mesesUsados);
 
 const grupos = {};
@@ -43,7 +49,7 @@ const erros = Object.entries(grupos).filter(([, g]) => g.nivel === 'erro');
 const avisos = Object.entries(grupos).filter(([, g]) => g.nivel !== 'erro');
 const linha = ([k, g]) => `- **${k}** — ${g.msg}  \n  “${g.titulo}” · ${g.trechos[0]}${g.trechos.length > 1 ? ` (+${g.trechos.length - 1})` : ''}`;
 const texto = [
-  `## Guardião ao vivo · Cofre ${cofre.versao} · meses ${mesesUsados.join(', ')}`,
+  `## Guardião ao vivo · Cofre ${cofre.versao} · meses ${mesesUsados.join(', ')} · ${incluirPassado ? 'com o já postado' : `de ${hojeBR} em diante`}`,
   `${snap.size} calendários lidos · ${erros.length} item(ns) com ERRO · ${avisos.length} aviso(s)`,
   '', '### Erros (precisam de correção)', ...(erros.length ? erros.map(linha) : ['- nenhum']),
   '', '### Avisos (conferir)', ...(avisos.length ? avisos.map(linha) : ['- nenhum'])

@@ -4,8 +4,9 @@
 //  1. aviso "esperando você" com a origem aprovada ou apagada fecha sozinho na rodada da faxina; com a origem ainda pendente, continua aberto;
 //  2. decisão "pular legenda?" de postagem encerrada fecha sozinha; de postagem ainda em andamento, continua;
 //  3. item da lista autorizada pelo Chris fecha com a nota da autorização; entrega antiga FORA da lista continua (nada é aprovado às cegas);
-//  4. repetir a rodada não muda nada; 5. o cartão "Demandas aguardando aprovação" da Central de Comando do Chris (onde esses itens apareciam)
-//     cai exatamente o número de itens fechados. (Nas telas da Amanda eles nem apareciam: era acúmulo invisível para ela.)
+//  4. repetir a rodada não muda nada; 5. o quadro de Aprovações do Chris ("demandas esperando você" + "com outra pessoa"), onde as entregas
+//     paradas aparecem, cai exatamente os itens fechados que estavam nele. (Nas telas da Amanda eles nem apareciam: era acúmulo invisível para ela.)
+//     LZ5a (26/11): antes o passo 5 lia o cartão da Central de Comando, que saiu; os avisos "esperando você" não entram na Aprovações (são o passo 1).
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { RAIZ } from '../lib/emulador.mjs';
@@ -36,9 +37,13 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
   const st = async k => (await seed.get('demandas', k))?.status;
   const cartaoChris = async () => { const { page, fechar } = await nav.novaPagina(); try {
       await entrarComo(page, amb.url(), 'Chris'); await page.waitForTimeout(3000); await entrarGerencia(page);
-      await page.waitForFunction(() => /demandas aguardando aprova/i.test(document.getElementById('gerenciaComando')?.innerText || ''), null, { timeout: 45000 }); await page.waitForTimeout(2500);
-      const n = await page.evaluate(() => { const c = [...document.querySelectorAll('#gerenciaComando .resumoCard')].find(x => /demandas aguardando aprova/i.test(x.innerText)); return c ? Number(c.querySelector('.num')?.textContent) : NaN; });
-      await foto(page, 'J117-chris-central'); return n; } finally { await fechar(); } };
+      // a Gerência entra no Agora; só depois de ele montar o Chris abre a Aprovações (senão a entrada ainda em curso volta para o Agora)
+      await page.waitForFunction(() => /Esperando você decidir/i.test(document.getElementById('gerenciaAgora')?.textContent || ''), null, { timeout: 45000 });
+      await page.evaluate(() => setGerenciaSub('demandasAguardando', document.querySelector('.subtab[data-sub=demandasAguardando]')));
+      await page.waitForFunction(() => /demandas esperando você/i.test(document.getElementById('gerenciaDemandasAguardando')?.innerText || ''), null, { timeout: 45000 }); await page.waitForTimeout(2500);
+      const n = await page.evaluate(() => { const ler = re => { const c = [...document.querySelectorAll('#gerenciaDemandasAguardando .resumoCard')].find(x => re.test(x.innerText)); return c ? Number(c.querySelector('.num')?.textContent) : NaN; };
+        return ler(/demandas esperando você/i) + ler(/com outra pessoa/i); });
+      await foto(page, 'J117-chris-aprovacoes'); return n; } finally { await fechar(); } };
   try {
     const antes = await cartaoChris();
     const fx = await import(pathToFileURL(path.join(RAIZ, 'functions-get/faxina-diaria-cp248.mjs')).href);
@@ -54,8 +59,8 @@ export async function executar({ amb, seed, nav, erroGrave, registrar }) {
     const r2 = await fx.executarFaxinaCp248(db, { gravarRelatorio: false });
     const repetidos = (r2.encerradosCp263 || []).filter(x => String(x.id).startsWith('j117') || x.id === 'Aino1OSTAgT2yvGMUuRg');
     fim('4 repetir a rodada não muda nada', repetidos.length === 0, `1ª rodada: ${(r.encerradosCp263 || []).length} encerrado(s) · 2ª rodada: ${repetidos.length} destes`);
-    const depois = await cartaoChris(), fechados = 4; // aviso origem aprovada, aviso origem apagada, pular-legenda cancelada, item autorizado
-    fim('5 o cartão "Demandas aguardando aprovação" do Chris cai exatamente os itens fechados', Number.isFinite(antes) && antes - depois === fechados, `antes ${antes} · depois ${depois} (esperado −${fechados})`);
+    const depois = await cartaoChris(), fechados = 2; // pular-legenda cancelada e item autorizado (os 2 avisos fechados não entram na Aprovações)
+    fim('5 o quadro de Aprovações do Chris cai exatamente os itens fechados que estavam nele', Number.isFinite(antes) && antes - depois === fechados, `antes ${antes} · depois ${depois} (esperado −${fechados})`);
   } catch (e) { fim('itens antigos presos', false, String(e).replace(/\s+/g, ' ').slice(0, 300)); }
   for (const k of Object.keys(docs)) { const x = await seed.get('demandas', k); if (x) { const { id: _i, ...d } = x; await seed.set('demandas', k, { ...d, excluido: true }); } }
 }

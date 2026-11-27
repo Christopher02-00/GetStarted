@@ -7,6 +7,7 @@
 //  (c) postagem futura agendada → o alerta fecha sozinho (soft-delete), sem alerta novo;
 //  (d) nada é gravado em `capsulas_clientes`.
 import { entrarComo, foto } from '../lib/navegador.mjs';
+import { rotinaPausadaG2a, registrarPausaG2a } from '../lib/pausas-g2a.mjs';
 export const id = 'J70';
 export const nome = 'Cliente sem postagem programada: 1 aviso de cápsula para a Amanda, sem duplicar, fecha sozinho, sem cápsula automática';
 const SLUG = 'j70gelato', NOME = 'Gelateria J70';
@@ -15,6 +16,7 @@ const somar = (iso, n) => { const [a, m, d] = iso.split('-').map(Number); return
 const esperar = async (fn, ms = 120000) => { const f = Date.now() + ms; while (Date.now() < f) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1500)); } return null; };
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
+  if (rotinaPausadaG2a('coberturaPostagensAmanda')) return registrarPausaG2a(registrar, id, 'coberturaPostagensAmanda');
   const hoje = hojeSP(), agora = new Date().toISOString();
   await seed.set('clientes_extras', SLUG, { slug: SLUG, nome: NOME, ativo: true, excluido: false, criadoEm: agora });
   await seed.set('clientes_config', SLUG, { modoAprovacaoCliente: 'manual', tipoCliente: 'mensalista', excluido: false });

@@ -4,6 +4,7 @@
 // Esperado: nada disso; em vez disso, 1 demanda "Cliente que saiu ainda tem pendências" para a Cecília e 1 para a Amanda
 // listando cada item, e a próxima rodada não repete.
 import { entrarComo, foto } from '../lib/navegador.mjs';
+import { rotinaPausadaG2a, registrarPausaG2a } from '../lib/pausas-g2a.mjs';
 export const id = 'J39';
 export const nome = 'Cliente que saiu: sem kit nem "Confirmar publicação"; 1 demanda de pendências para Cecília e Amanda';
 const SLUG = 'j39saiu', NOME = 'Cliente J39 que saiu';
@@ -12,6 +13,7 @@ const dia = n => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo
 const esperar = async (fn, ms = 120000) => { const f = Date.now() + ms; while (Date.now() < f) { const r = await fn(); if (r) return r; await new Promise(r => setTimeout(r, 1500)); } return null; };
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
+  if (rotinaPausadaG2a('postagensEsquecidas')) return registrarPausaG2a(registrar, id, 'postagensEsquecidas');
   const agora = new Date().toISOString();
   await seed.set('clientes_extras', SLUG, { slug: SLUG, nome: NOME, ativo: false, excluido: true, criadoEm: agora });
   await seed.set('clientes_config', SLUG, { modoAprovacaoCliente: 'manual', prazoTacitaHorasUteis: 24, clienteInativo: true, inativoDesde: dia(-3), excluido: false });

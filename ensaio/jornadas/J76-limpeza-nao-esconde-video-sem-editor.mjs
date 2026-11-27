@@ -5,6 +5,7 @@
 // Esperado: vídeos ligados a conteúdos diferentes (ou de envios diferentes) não são o mesmo vídeo. Mesmo a repetição de
 // verdade (mesmo conteúdo e mesmo envio) não é escondida quando está sem editor: a Amanda recebe um aviso.
 import { entrarComo, foto } from '../lib/navegador.mjs';
+import { rotinaPausadaG2a, registrarPausaG2a } from '../lib/pausas-g2a.mjs';
 export const id = 'J76';
 export const nome = 'Limpeza de duplicatas não esconde vídeo sem editor; repetição suspeita vira aviso para a Amanda';
 const hoje = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -12,6 +13,7 @@ const esperar = async (fn, ms = 120000) => { const f = Date.now() + ms; while (D
 const TIT_DIF = 'Bluefit — Vídeo J76', TIT_REP = 'Bluefit — Vídeo repetido J76';
 
 export async function executar({ amb, seed, nav, erroGrave, registrar }) {
+  if (rotinaPausadaG2a('varreduraDuplicatas')) return registrarPausaG2a(registrar, id, 'varreduraDuplicatas');
   const caso = 'limpeza roda → os 4 vídeos sem editor continuam na fila';
   const base = { cliente: 'bluefit', clienteNome: 'Bluefit', status: 'aguardando_edicao', editorAtribuido: '', excluido: false, avulso: true, enviadoPor: 'Luís' };
   const videos = {

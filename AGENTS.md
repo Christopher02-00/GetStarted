@@ -330,6 +330,8 @@ Em 23/08/2026, a Fedalto revelou que um pagamento físico fora da vigência podi
   - U4: o painel CP112 abre com "Por que este mês não avança?" (`diagnosticoCp224`): com quem está cada pedido, o próximo passo e o que falta para liberar. Só lê o dto. Jornada J77.
   - Varredura em produção (18/11, só leitura): dos 44 meses de 2026-11 e 2026-12, só a Fedalto 2026-12 tinha pedidos abertos (10). Os 29 pedidos de cliente desde 01/11 viraram demanda.
 
+- **Custo do Google: a rodada do servidor é a cada 30 min e lê a carteira uma vez (G1, 27/11).** A conta chegou a R$ 1.051 em 90 dias (123,5 mi leituras; processamento das Functions R$ 536) e o cartão foi recusado; o projeto passou a operar no limite gratuito (50 mil leituras e 20 mil gravações por dia) e o site parou à tarde (429 "Quota exceeded"). Medido com a cópia real: a rodada de 5 min lia ~5.100 documentos (288/dia ≈ 1,5 mi/dia); o envio de cada aviso relia `clientes_config` + `clientes_extras` inteiras (~3.100 leituras por rodada). Regras: (1) `acompanhamentoOperacionalGetI165` roda `every 30 minutes`; encurtar só com medição de custo e ok do Chris; (2) dentro da rodada, a carteira é lida uma vez (`memoDaRodadaI164`, presa ao `agora` da rodada); chamadas da tela usam `agora` próprio e continuam lendo fresco; (3) `saudeAvisosI165` tolera 45 min sem rodada; (4) toda leitura nova em rotina agendada ou em tela que abre sozinha passa pelo medidor antes do merge (leituras por rodada × rodadas por dia ≤ limite gratuito).
+
 ## Evidência e entrega
 
 - Nunca declare uma correção validada sem informar comando ou método, resultado e limite do teste.

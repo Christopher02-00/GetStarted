@@ -60,12 +60,17 @@ export function ocorrenciasCalendarioRevisaoI164(c,cal){
 /* U3 (10/11/2026): a rodada de 5 min lia clientes_extras + clientes_config inteiras POR CICLO (~6.400 vezes/dia,
    ~420 mil leituras/dia). Dentro da mesma rodada a carteira é lida uma vez (memo); fora da rodada (antes de cada envio)
    a leitura continua fresca, como antes. */
-function lerCarteiraBrutaI164(db,memo){if(memo&&memo.carteira)return memo.carteira;const p=Promise.all([db.collection('clientes_extras').get(),db.collection('clientes_config').get()]);if(memo)memo.carteira=p.catch(e=>{memo.carteira=null;throw e;});return p;}
-async function consultarRevisaoCalendarioI164(db,c,agora=new Date(),memo=null){if(!c?.incluido||!c.criacao?.base)return [];const s=await db.doc('calendarios/'+c.cliente).get();if(!s.exists)return [];const ocorrencias=ocorrenciasCalendarioRevisaoI164(c,s.data());if(!ocorrencias.length)return [];const [extras,configs]=await lerCarteiraBrutaI164(db,memo);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()})),carteira=carteiraCanonicaI164({extras:rows(extras),configs:rows(configs),competencia:c.competencia,hoje:horarioI165(agora).slice(0,10)});return carteira.carteira.some(x=>x.slug===c.cliente)?ocorrencias:[];}
+/* G1 (27/11/2026): o envio de cada aviso conferia a fonte sem a memória da rodada e relia a carteira inteira por aviso
+   (~3.100 leituras por rodada, medido com a cópia real). A rodada usa um único `agora` em todas as etapas: a memória fica
+   presa a ele (WeakMap) e some com a rodada. Chamadas da tela criam `agora` próprio, então continuam lendo fresco. */
+const memoRodadaI164=new WeakMap();
+function memoDaRodadaI164(agora){if(!agora||typeof agora!=='object')return null;let m=memoRodadaI164.get(agora);if(!m){m={};memoRodadaI164.set(agora,m);}return m;}
+function lerCarteiraBrutaI164(db,memo,agora){memo=memo||memoDaRodadaI164(agora);if(memo&&memo.carteira)return memo.carteira;const p=Promise.all([db.collection('clientes_extras').get(),db.collection('clientes_config').get()]);if(memo)memo.carteira=p.catch(e=>{memo.carteira=null;throw e;});return p;}
+async function consultarRevisaoCalendarioI164(db,c,agora=new Date(),memo=null){if(!c?.incluido||!c.criacao?.base)return [];const s=await db.doc('calendarios/'+c.cliente).get();if(!s.exists)return [];const ocorrencias=ocorrenciasCalendarioRevisaoI164(c,s.data());if(!ocorrencias.length)return [];const [extras,configs]=await lerCarteiraBrutaI164(db,memo,agora);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()})),carteira=carteiraCanonicaI164({extras:rows(extras),configs:rows(configs),competencia:c.competencia,hoje:horarioI165(agora).slice(0,10)});return carteira.carteira.some(x=>x.slug===c.cliente)?ocorrencias:[];}
 async function consultarEnvioCalendarioI164(db,c,agora=new Date(),memo=null){
  if(!c?.incluido||!c.criacao?.base||!c?.cliente||!c?.competencia)return [];
  const cal=await db.doc('calendarios/'+c.cliente).get();if(!cal.exists||cal.data()?.aprovacaoMeses?.[c.competencia]?.status!=='liberado')return [];
- const [registro,[extras,configs]]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(c.cliente,c.competencia)).get(),lerCarteiraBrutaI164(db,memo)]);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()}));
+ const [registro,[extras,configs]]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(c.cliente,c.competencia)).get(),lerCarteiraBrutaI164(db,memo,agora)]);const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()}));
  if(!calendarioEnviavelI164(c,cal.data(),{extras:rows(extras),configs:rows(configs),agora}))return [];
  return ocorrenciasCalendarioEnvioI164(c,cal.data(),registro.exists?registro.data():null);
 }
@@ -214,7 +219,7 @@ async function consultarCalendarioLegadoI164(db,id,agora,tipo='',memo=null){
  const [legado,ciclo,cal,processo]=await Promise.all([db.doc('continuidade_calendarios_i164/'+id).get(),db.doc('planejamento_social_i155/'+id).get(),db.doc('calendarios/'+cliente).get(),db.doc('processo_calendarios_i164/ativo').get()]);
  if(!legado.exists||!cal.exists||!processoAtivoI164(processo.data()))return [];
  if(legado.data().cliente!==cliente||legado.data().competencia!==competencia)throw Error('A continuidade não pertence ao cliente e mês desta origem.');
- const [registro,[extras,configs]]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(cliente,competencia)).get(),lerCarteiraBrutaI164(db,memo)]);
+ const [registro,[extras,configs]]=await Promise.all([db.doc('calendarios_envios_cecilia_i92/'+chaveEnvioI92(cliente,competencia)).get(),lerCarteiraBrutaI164(db,memo,agora)]);
  const rows=s=>s.docs.map(d=>({id:d.id,data:d.data()}));
  const carteira=carteiraCanonicaI164({extras:rows(extras),configs:rows(configs),competencia,hoje:horarioI165(agora).slice(0,10)});
  if(!carteira.carteira.some(x=>x.slug===cliente))return [];

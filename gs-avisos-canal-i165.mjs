@@ -102,7 +102,7 @@ export function avisoHabilitadoNoFeedR87(n,id,papel,config,{ativacaoCentralId=''
 }
 
 export function saudeAvisosI165(d,agora=Date.now()){
- const t=Date.parse(d?.ultimaExecucao||'');return d?.escopo===ESCOPO_AVISOS_I165&&d.estado==='conferido'&&Number.isFinite(t)&&agora-t>=-60000&&agora-t<=15*60000;
+ const t=Date.parse(d?.ultimaExecucao||'');return d?.escopo===ESCOPO_AVISOS_I165&&d.estado==='conferido'&&Number.isFinite(t)&&agora-t>=-60000&&agora-t<=45*60000;
 }
 export function resumoCanalAvisoI165(n){
  if(n?.canais?.push?.motivoCodigo==='sem_aparelho_ativo')return 'Os avisos deste aparelho ainda não foram ativados com o Google da própria pessoa. A atividade continua nesta fila.';
